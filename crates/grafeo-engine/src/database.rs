@@ -1252,6 +1252,42 @@ impl GrafeoDB {
         )
     }
 
+    /// Computes a node allowlist from property equality filters.
+    ///
+    /// Intersects `nodes_by_label(label)` with `find_nodes_by_property(key, value)`
+    /// for each filter entry. Returns `None` if filters is `None` or empty (meaning
+    /// no filtering), or `Some(set)` with the intersection (possibly empty).
+    #[cfg(feature = "vector-index")]
+    fn compute_filter_allowlist(
+        &self,
+        label: &str,
+        filters: Option<&std::collections::HashMap<String, Value>>,
+    ) -> Option<std::collections::HashSet<NodeId>> {
+        let filters = filters.filter(|f| !f.is_empty())?;
+
+        // Start with all nodes for this label
+        let label_nodes: std::collections::HashSet<NodeId> =
+            self.store.nodes_by_label(label).into_iter().collect();
+
+        let mut allowlist = label_nodes;
+
+        for (key, value) in filters {
+            let matching: std::collections::HashSet<NodeId> = self
+                .store
+                .find_nodes_by_property(key, value)
+                .into_iter()
+                .collect();
+            allowlist = allowlist.intersection(&matching).copied().collect();
+
+            // Short-circuit: empty intersection means no results possible
+            if allowlist.is_empty() {
+                return Some(allowlist);
+            }
+        }
+
+        Some(allowlist)
+    }
+
     /// Searches for the k nearest neighbors of a query vector.
     ///
     /// Uses the HNSW index created by [`create_vector_index`](Self::create_vector_index).
@@ -1263,6 +1299,8 @@ impl GrafeoDB {
     /// * `query` - Query vector (slice of floats)
     /// * `k` - Number of nearest neighbors to return
     /// * `ef` - Search beam width (higher = better recall, slower). Uses index default if `None`.
+    /// * `filters` - Optional property equality filters. Only nodes matching all
+    ///   `(key, value)` pairs will appear in results.
     ///
     /// # Returns
     ///
@@ -1275,6 +1313,7 @@ impl GrafeoDB {
         query: &[f32],
         k: usize,
         ef: Option<usize>,
+        filters: Option<&std::collections::HashMap<String, Value>>,
     ) -> Result<Vec<(grafeo_common::types::NodeId, f32)>> {
         let index = self.store.get_vector_index(label, property).ok_or_else(|| {
             grafeo_common::utils::error::Error::Internal(format!(
@@ -1282,9 +1321,15 @@ impl GrafeoDB {
             ))
         })?;
 
-        let results = match ef {
-            Some(ef_val) => index.search_with_ef(query, k, ef_val),
-            None => index.search(query, k),
+        let results = match self.compute_filter_allowlist(label, filters) {
+            Some(allowlist) => match ef {
+                Some(ef_val) => index.search_with_ef_and_filter(query, k, ef_val, &allowlist),
+                None => index.search_with_filter(query, k, &allowlist),
+            },
+            None => match ef {
+                Some(ef_val) => index.search_with_ef(query, k, ef_val),
+                None => index.search(query, k),
+            },
         };
 
         Ok(results)
@@ -1374,6 +1419,7 @@ impl GrafeoDB {
     /// * `queries` - Batch of query vectors
     /// * `k` - Number of nearest neighbors per query
     /// * `ef` - Search beam width (uses index default if `None`)
+    /// * `filters` - Optional property equality filters
     #[cfg(feature = "vector-index")]
     pub fn batch_vector_search(
         &self,
@@ -1382,6 +1428,7 @@ impl GrafeoDB {
         queries: &[Vec<f32>],
         k: usize,
         ef: Option<usize>,
+        filters: Option<&std::collections::HashMap<String, Value>>,
     ) -> Result<Vec<Vec<(grafeo_common::types::NodeId, f32)>>> {
         let index = self.store.get_vector_index(label, property).ok_or_else(|| {
             grafeo_common::utils::error::Error::Internal(format!(
@@ -1389,9 +1436,17 @@ impl GrafeoDB {
             ))
         })?;
 
-        let results = match ef {
-            Some(ef_val) => index.batch_search_with_ef(queries, k, ef_val),
-            None => index.batch_search(queries, k),
+        let results = match self.compute_filter_allowlist(label, filters) {
+            Some(allowlist) => match ef {
+                Some(ef_val) => {
+                    index.batch_search_with_ef_and_filter(queries, k, ef_val, &allowlist)
+                }
+                None => index.batch_search_with_filter(queries, k, &allowlist),
+            },
+            None => match ef {
+                Some(ef_val) => index.batch_search_with_ef(queries, k, ef_val),
+                None => index.batch_search(queries, k),
+            },
         };
 
         Ok(results)
@@ -1413,6 +1468,7 @@ impl GrafeoDB {
     /// * `lambda` - Relevance vs. diversity in \[0, 1\] (default: 0.5).
     ///   1.0 = pure relevance, 0.0 = pure diversity.
     /// * `ef` - HNSW search beam width (uses index default if `None`)
+    /// * `filters` - Optional property equality filters
     ///
     /// # Returns
     ///
@@ -1429,6 +1485,7 @@ impl GrafeoDB {
         fetch_k: Option<usize>,
         lambda: Option<f32>,
         ef: Option<usize>,
+        filters: Option<&std::collections::HashMap<String, Value>>,
     ) -> Result<Vec<(grafeo_common::types::NodeId, f32)>> {
         use grafeo_core::index::vector::mmr_select;
 
@@ -1441,10 +1498,16 @@ impl GrafeoDB {
         let fetch_k = fetch_k.unwrap_or(k.saturating_mul(4).max(k));
         let lambda = lambda.unwrap_or(0.5);
 
-        // Step 1: Fetch candidates from HNSW
-        let initial_results = match ef {
-            Some(ef_val) => index.search_with_ef(query, fetch_k, ef_val),
-            None => index.search(query, fetch_k),
+        // Step 1: Fetch candidates from HNSW (with optional filter)
+        let initial_results = match self.compute_filter_allowlist(label, filters) {
+            Some(allowlist) => match ef {
+                Some(ef_val) => index.search_with_ef_and_filter(query, fetch_k, ef_val, &allowlist),
+                None => index.search_with_filter(query, fetch_k, &allowlist),
+            },
+            None => match ef {
+                Some(ef_val) => index.search_with_ef(query, fetch_k, ef_val),
+                None => index.search(query, fetch_k),
+            },
         };
 
         if initial_results.is_empty() {

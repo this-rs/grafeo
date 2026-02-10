@@ -10,6 +10,7 @@ Adds SQL/PGQ (SQL:2023) graph queries, MMR search for RAG, auto-syncing vector i
 
 - **SQL/PGQ support**: you can now query your graph using standard SQL:2023 syntax, `SELECT ... FROM GRAPH_TABLE (MATCH ... COLUMNS ...)`. This also brings path functions (`LENGTH`, `NODES`, `EDGES`), DDL (`CREATE PROPERTY GRAPH`), and bindings across Python, Node.js, WASM, Go, and C
 - **MMR search**: find diverse, relevant results for RAG pipelines with a single `mmr_search()` call. Tune the `lambda` parameter to balance relevance vs. diversity. Available in all bindings
+- **Filtered vector search**: `vector_search()`, `batch_vector_search()`, and `mmr_search()` accept optional property equality filters to restrict results without post-filtering. Uses pre-computed allowlists from property indexes for efficient HNSW traversal. Available in Python, Node.js, C, and Go bindings
 - **Incremental vector indexing**: vector indexes now stay in sync automatically as nodes change, no manual rebuilds needed. Also adds `drop_vector_index()` and `rebuild_vector_index()` for explicit control
 - **CLI overhaul**: new `query`, `init`, `shell`, `version`, and `completions` commands. The interactive shell supports transactions, meta-commands (`:schema`, `:info`, `:stats`, `:format`, `:timing`), persistent history, CSV output, and `NO_COLOR` support
 - **CLI distribution**: install `grafeo-cli` via `cargo install`, `pip install`, or `npm install -g` on Linux, macOS, and Windows (x64 + ARM64)
@@ -93,7 +94,7 @@ Go and C bindings, so you can embed Grafeo in pretty much any language now.
 
 ## [0.4.0] - 2026-02-07
 
-Node.js/TypeScript bindings with full async support, Python vector search and transaction isolation, and a license change to AGPL-3.0.
+Node.js/TypeScript bindings with full async support, Python vector search and transaction isolation.
 
 ### Added
 
@@ -103,10 +104,6 @@ Node.js/TypeScript bindings with full async support, Python vector search and tr
 - **Batch vector APIs**: `batch_create_nodes()` and `batch_vector_search()` for Python and Node.js
 - Node.js CI testing across 3 OS x 3 Node.js versions (18, 20, 22)
 - `cargo-deny` integration for dependency auditing
-
-### Changed
-
-- **License changed from Apache-2.0 to AGPL-3.0**
 
 ### Fixed
 

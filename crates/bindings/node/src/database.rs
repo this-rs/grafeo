@@ -21,6 +21,21 @@ use crate::query::QueryResult;
 use crate::transaction::Transaction;
 use crate::types;
 
+/// Converts a serde_json filter map to a Grafeo filter map.
+fn convert_json_filters(
+    filters: Option<HashMap<String, serde_json::Value>>,
+) -> Result<Option<HashMap<String, Value>>> {
+    let Some(map) = filters else {
+        return Ok(None);
+    };
+    let mut result = HashMap::new();
+    for (key, val) in &map {
+        let grafeo_val = json_to_value(val)?;
+        result.insert(key.clone(), grafeo_val);
+    }
+    Ok(Some(result))
+}
+
 /// Validate a JavaScript number as a safe node ID.
 ///
 /// JavaScript numbers are f64, but entity IDs are u64. This rejects
@@ -507,7 +522,9 @@ impl JsGrafeoDB {
         query: Vec<f64>,
         k: u32,
         ef: Option<u32>,
+        filters: Option<HashMap<String, serde_json::Value>>,
     ) -> Result<Vec<Vec<f64>>> {
+        let filter_map = convert_json_filters(filters)?;
         let db = self.inner.clone();
         tokio::task::spawn_blocking(move || {
             let db = db.read();
@@ -519,6 +536,7 @@ impl JsGrafeoDB {
                     &query_f32,
                     k as usize,
                     ef.map(|v| v as usize),
+                    filter_map.as_ref(),
                 )
                 .map_err(NodeGrafeoError::from)
                 .map_err(napi::Error::from)?;
@@ -567,7 +585,9 @@ impl JsGrafeoDB {
         queries: Vec<Vec<f64>>,
         k: u32,
         ef: Option<u32>,
+        filters: Option<HashMap<String, serde_json::Value>>,
     ) -> Result<Vec<Vec<Vec<f64>>>> {
+        let filter_map = convert_json_filters(filters)?;
         let db = self.inner.clone();
         tokio::task::spawn_blocking(move || {
             let db = db.read();
@@ -582,6 +602,7 @@ impl JsGrafeoDB {
                     &queries_f32,
                     k as usize,
                     ef.map(|v| v as usize),
+                    filter_map.as_ref(),
                 )
                 .map_err(NodeGrafeoError::from)
                 .map_err(napi::Error::from)?;
@@ -612,7 +633,9 @@ impl JsGrafeoDB {
         fetch_k: Option<u32>,
         lambda_mult: Option<f64>,
         ef: Option<u32>,
+        filters: Option<HashMap<String, serde_json::Value>>,
     ) -> Result<Vec<Vec<f64>>> {
+        let filter_map = convert_json_filters(filters)?;
         let db = self.inner.clone();
         tokio::task::spawn_blocking(move || {
             let db = db.read();
@@ -626,6 +649,7 @@ impl JsGrafeoDB {
                     fetch_k.map(|v| v as usize),
                     lambda_mult.map(|v| v as f32),
                     ef.map(|v| v as usize),
+                    filter_map.as_ref(),
                 )
                 .map_err(NodeGrafeoError::from)
                 .map_err(napi::Error::from)?;

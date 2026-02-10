@@ -41,7 +41,7 @@ fn test_mmr_basic_search() {
     let db = setup_db();
 
     let results = db
-        .mmr_search("Doc", "emb", &[1.0, 0.0, 0.0], 3, None, None, None)
+        .mmr_search("Doc", "emb", &[1.0, 0.0, 0.0], 3, None, None, None, None)
         .expect("mmr search");
 
     assert_eq!(results.len(), 3, "should return k=3 results");
@@ -53,11 +53,20 @@ fn test_mmr_lambda_1_matches_knn() {
 
     // lambda=1.0 means pure relevance (same as kNN)
     let mmr_results = db
-        .mmr_search("Doc", "emb", &[1.0, 0.0, 0.0], 3, Some(20), Some(1.0), None)
+        .mmr_search(
+            "Doc",
+            "emb",
+            &[1.0, 0.0, 0.0],
+            3,
+            Some(20),
+            Some(1.0),
+            None,
+            None,
+        )
         .expect("mmr search");
 
     let knn_results = db
-        .vector_search("Doc", "emb", &[1.0, 0.0, 0.0], 3, None)
+        .vector_search("Doc", "emb", &[1.0, 0.0, 0.0], 3, None, None)
         .expect("knn search");
 
     // Same top-k results (same IDs, though order may differ slightly)
@@ -79,7 +88,16 @@ fn test_mmr_lambda_0_maximizes_diversity() {
 
     // lambda=0.0 means pure diversity
     let results = db
-        .mmr_search("Doc", "emb", &[1.0, 0.0, 0.0], 3, Some(20), Some(0.0), None)
+        .mmr_search(
+            "Doc",
+            "emb",
+            &[1.0, 0.0, 0.0],
+            3,
+            Some(20),
+            Some(0.0),
+            None,
+            None,
+        )
         .expect("mmr search");
 
     assert_eq!(results.len(), 3);
@@ -109,6 +127,7 @@ fn test_mmr_custom_fetch_k() {
             Some(3), // only fetch 3 candidates
             Some(0.5),
             None,
+            None,
         )
         .expect("mmr search");
 
@@ -121,7 +140,7 @@ fn test_mmr_k_greater_than_nodes() {
 
     // Request more than available
     let results = db
-        .mmr_search("Doc", "emb", &[1.0, 0.0, 0.0], 100, None, None, None)
+        .mmr_search("Doc", "emb", &[1.0, 0.0, 0.0], 100, None, None, None, None)
         .expect("mmr search");
 
     assert_eq!(results.len(), 5, "should return all nodes when k > count");
@@ -130,7 +149,7 @@ fn test_mmr_k_greater_than_nodes() {
 #[test]
 fn test_mmr_search_nonexistent_index_fails() {
     let db = GrafeoDB::new_in_memory();
-    let result = db.mmr_search("Nope", "emb", &[1.0, 0.0, 0.0], 3, None, None, None);
+    let result = db.mmr_search("Nope", "emb", &[1.0, 0.0, 0.0], 3, None, None, None, None);
     assert!(result.is_err());
 }
 
@@ -139,7 +158,16 @@ fn test_mmr_returns_distances() {
     let db = setup_db();
 
     let results = db
-        .mmr_search("Doc", "emb", &[1.0, 0.0, 0.0], 3, None, Some(1.0), None)
+        .mmr_search(
+            "Doc",
+            "emb",
+            &[1.0, 0.0, 0.0],
+            3,
+            None,
+            Some(1.0),
+            None,
+            None,
+        )
         .expect("mmr search");
 
     // All distances should be non-negative

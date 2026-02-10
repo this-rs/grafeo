@@ -123,20 +123,36 @@ CREATE VECTOR INDEX movie_embeddings ON :Movie(embedding)
 - **Go** (`github.com/GrafeoDB/grafeo/crates/bindings/go`) - CGO bindings with C FFI layer for cloud-native applications (0.4.1)
 - **WebAssembly** (`@grafeo-db/wasm`) - feature-gated platform code, wasm-bindgen bindings, 660 KB gzipped (0.4.2)
 
-### Ecosystem Integration
+### Ecosystem
 
 - **[grafeo-server](https://github.com/GrafeoDB/grafeo-server)** - standalone HTTP server with web UI, Docker image
 - **[grafeo-web](https://github.com/GrafeoDB/grafeo-web)** - Grafeo in the browser via IndexedDB, Web Workers, React/Vue/Svelte
+- **[grafeo-langchain](https://github.com/GrafeoDB/grafeo-langchain)** - LangChain integration: graph memory store, vector retriever, chat history
+- **[grafeo-llamaindex](https://github.com/GrafeoDB/grafeo-llamaindex)** - LlamaIndex integration: graph store, vector store, property graph index
+- **[grafeo-mcp](https://github.com/GrafeoDB/grafeo-mcp)** - Model Context Protocol server for LLM agent access
 
 ### Query Languages
 
-- **SQL/PGQ** (SQL:2023) - GRAPH_TABLE function for SQL-native graph queries (0.4.4)
+- **SQL/PGQ** (SQL:2023) - `GRAPH_TABLE` function for SQL-native graph queries (0.4.4)
+
+### Vector Search (0.4.4)
+
+- **Filtered vector search** - `vector_search()`, `batch_vector_search()`, and `mmr_search()` accept property equality filters via pre-computed allowlists
+- **MMR search** - Maximal Marginal Relevance for diverse, relevant results in RAG pipelines
+- **Incremental vector indexing** - vector indexes stay in sync automatically as nodes change
+
+### CLI (0.4.4)
+
+- **grafeo-cli** - `query`, `init`, `shell`, `version`, `completions` commands
+- **Interactive shell** - transactions, meta-commands, persistent history, CSV output
+- **Cross-platform distribution** - install via `cargo install`, `pip install`, or `npm install -g`
 
 ### Quality
 
-- Continued bug fixes
-- Stricter linting rules
-- Performance tuning based on real-world usage
+- All public API items documented (`missing_docs` lint workspace-wide)
+- AdminService trait for unified database introspection
+- Configurable cardinality estimation with `SelectivityConfig`
+- Continued bug fixes and stricter linting
 
 ---
 

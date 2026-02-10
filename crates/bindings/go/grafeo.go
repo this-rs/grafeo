@@ -167,12 +167,6 @@ func (db *Database) ExecuteSQL(query string) (*QueryResult, error) {
 	return parseResult(r)
 }
 
-// VectorResult holds a single nearest-neighbor search result.
-type VectorResult struct {
-	NodeID   uint64
-	Distance float32
-}
-
 // DropVectorIndex drops a vector index for the given label and property.
 // Returns true if the index existed and was removed.
 func (db *Database) DropVectorIndex(label, property string) bool {
@@ -195,42 +189,6 @@ func (db *Database) RebuildVectorIndex(label, property string) error {
 		return lastError()
 	}
 	return nil
-}
-
-// VectorSearch finds the k nearest neighbors of a query vector.
-// Requires the vector-index feature at compile time.
-func (db *Database) VectorSearch(label, property string, query []float32, k int, ef int) ([]VectorResult, error) {
-	cLabel := C.CString(label)
-	defer C.free(unsafe.Pointer(cLabel))
-	cProp := C.CString(property)
-	defer C.free(unsafe.Pointer(cProp))
-
-	var outIDs *C.uint64_t
-	var outDists *C.float
-	var outCount C.size_t
-
-	status := C.grafeo_vector_search(
-		db.handle, cLabel, cProp,
-		(*C.float)(unsafe.Pointer(&query[0])), C.size_t(len(query)),
-		C.size_t(k), C.int32_t(ef),
-		&outIDs, &outDists, &outCount,
-	)
-	if status != C.GRAFEO_OK {
-		return nil, lastError()
-	}
-	count := int(outCount)
-	if count == 0 {
-		return nil, nil
-	}
-	defer C.grafeo_free_vector_results(outIDs, outDists, outCount)
-
-	results := make([]VectorResult, count)
-	ids := unsafe.Slice((*uint64)(unsafe.Pointer(outIDs)), count)
-	dists := unsafe.Slice((*float32)(unsafe.Pointer(outDists)), count)
-	for i := range count {
-		results[i] = VectorResult{NodeID: ids[i], Distance: dists[i]}
-	}
-	return results, nil
 }
 
 // MmrSearch finds diverse nearest neighbors using Maximal Marginal Relevance.

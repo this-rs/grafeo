@@ -377,6 +377,101 @@ impl HnswIndex {
             .collect()
     }
 
+    /// Searches for the k nearest neighbors with an allowlist filter.
+    ///
+    /// Only nodes in the `allowlist` can appear in results. The HNSW graph
+    /// is still fully traversed for connectivity — the filter only restricts
+    /// the result set. The search beam width (`ef`) is automatically scaled
+    /// based on the allowlist selectivity to maintain recall.
+    ///
+    /// Returns an empty vector if the allowlist is empty.
+    #[must_use]
+    pub fn search_with_filter(
+        &self,
+        query: &[f32],
+        k: usize,
+        allowlist: &HashSet<NodeId>,
+    ) -> Vec<(NodeId, f32)> {
+        if allowlist.is_empty() {
+            return Vec::new();
+        }
+        // Auto-scale ef based on selectivity ratio
+        let total = self.nodes.read().len();
+        let selectivity = if total == 0 {
+            1.0
+        } else {
+            (allowlist.len() as f64 / total as f64).max(0.01)
+        };
+        let ef_scaled = ((self.config.ef as f64 / selectivity).ceil() as usize)
+            .min(total)
+            .max(k);
+        self.search_with_ef_and_filter(query, k, ef_scaled, allowlist)
+    }
+
+    /// Searches with a custom ef (beam width) and an allowlist filter.
+    ///
+    /// Only nodes in the `allowlist` can appear in results. Higher ef values
+    /// give better recall at the cost of latency.
+    ///
+    /// Returns an empty vector if the allowlist is empty.
+    #[must_use]
+    pub fn search_with_ef_and_filter(
+        &self,
+        query: &[f32],
+        k: usize,
+        ef: usize,
+        allowlist: &HashSet<NodeId>,
+    ) -> Vec<(NodeId, f32)> {
+        if allowlist.is_empty() {
+            return Vec::new();
+        }
+
+        assert_eq!(
+            query.len(),
+            self.config.dimensions,
+            "Query dimensions mismatch: expected {}, got {}",
+            self.config.dimensions,
+            query.len()
+        );
+
+        // Pre-normalize query for cosine metric
+        let query = if self.config.metric == super::DistanceMetric::Cosine {
+            let mut q = query.to_vec();
+            super::normalize(&mut q);
+            q
+        } else {
+            query.to_vec()
+        };
+
+        let nodes = self.nodes.read();
+        let entry_point = self.entry_point.read();
+        let max_level = *self.max_level.read();
+
+        if entry_point.is_none() || nodes.is_empty() {
+            return Vec::new();
+        }
+
+        let ep = entry_point.unwrap();
+
+        // Greedy search from top layer to layer 1
+        let mut current_ep = ep;
+        for lc in (1..=max_level).rev() {
+            current_ep = self.search_layer_single(&nodes, &query, current_ep, lc);
+        }
+
+        // Filtered beam search at layer 0
+        let ef_search = ef.max(k);
+        let candidates =
+            self.search_layer_filtered(&nodes, &query, current_ep, ef_search, 0, allowlist);
+
+        // Return top k
+        candidates
+            .into_iter()
+            .take(k)
+            .map(|n| (n.id, n.distance))
+            .collect()
+    }
+
     /// Removes a vector from the index.
     ///
     /// Returns true if the vector was found and removed.
@@ -534,6 +629,118 @@ impl HnswIndex {
                         // Keep only ef results
                         while results.len() > ef {
                             results.pop();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Convert to sorted vec
+        let mut result_vec: Vec<Neighbor> = results
+            .into_iter()
+            .map(|fc| Neighbor {
+                id: fc.id,
+                distance: fc.distance,
+            })
+            .collect();
+        result_vec.sort_by(|a, b| OrderedFloat(a.distance).cmp(&OrderedFloat(b.distance)));
+        result_vec
+    }
+
+    /// Beam search at a layer with an allowlist filter on the result set.
+    ///
+    /// All nodes are visited for graph traversal (neighbor links followed),
+    /// but only nodes in the `allowlist` can enter the result set. This
+    /// preserves HNSW connectivity while restricting which nodes are returned.
+    fn search_layer_filtered(
+        &self,
+        nodes: &HashMap<NodeId, HnswNode>,
+        query: &[f32],
+        ep: NodeId,
+        ef: usize,
+        layer: usize,
+        allowlist: &HashSet<NodeId>,
+    ) -> Vec<Neighbor> {
+        let ep_dist = self.node_distance(nodes, query, ep);
+
+        // Min-heap of candidates to explore
+        let mut candidates: BinaryHeap<Neighbor> = BinaryHeap::new();
+        candidates.push(Neighbor {
+            id: ep,
+            distance: ep_dist,
+        });
+
+        // best_seen tracks ALL visited candidates (for traversal termination)
+        let mut best_seen: BinaryHeap<FurthestCandidate> = BinaryHeap::new();
+        best_seen.push(FurthestCandidate {
+            id: ep,
+            distance: ep_dist,
+        });
+
+        // results only holds allowlisted nodes
+        let mut results: BinaryHeap<FurthestCandidate> = BinaryHeap::new();
+        if allowlist.contains(&ep) {
+            results.push(FurthestCandidate {
+                id: ep,
+                distance: ep_dist,
+            });
+        }
+
+        let mut visited: HashSet<NodeId> =
+            HashSet::with_capacity(nodes.len().min(ef.saturating_mul(4)));
+        visited.insert(ep);
+
+        while let Some(current) = candidates.pop() {
+            // Terminate when best candidate is worse than worst in best_seen
+            if let Some(furthest) = best_seen.peek()
+                && current.distance > furthest.distance
+                && best_seen.len() >= ef
+            {
+                break;
+            }
+
+            // Explore neighbors
+            if let Some(node) = nodes.get(&current.id)
+                && layer < node.neighbors.len()
+            {
+                for &neighbor in &node.neighbors[layer] {
+                    if visited.contains(&neighbor) {
+                        continue;
+                    }
+                    visited.insert(neighbor);
+
+                    let dist = self.node_distance(nodes, query, neighbor);
+
+                    // Update best_seen for traversal guidance
+                    let should_explore = best_seen.len() < ef
+                        || best_seen.peek().map_or(true, |f| dist < f.distance);
+
+                    if should_explore {
+                        candidates.push(Neighbor {
+                            id: neighbor,
+                            distance: dist,
+                        });
+                        best_seen.push(FurthestCandidate {
+                            id: neighbor,
+                            distance: dist,
+                        });
+                        while best_seen.len() > ef {
+                            best_seen.pop();
+                        }
+                    }
+
+                    // Only add to results if in allowlist
+                    if allowlist.contains(&neighbor) {
+                        let should_add = results.len() < ef
+                            || results.peek().map_or(true, |f| dist < f.distance);
+                        if should_add {
+                            results.push(FurthestCandidate {
+                                id: neighbor,
+                                distance: dist,
+                            });
+                            while results.len() > ef {
+                                results.pop();
+                            }
                         }
                     }
                 }
@@ -765,6 +972,59 @@ impl HnswIndex {
             queries
                 .iter()
                 .map(|query| self.search_with_ef(query, k, ef))
+                .collect()
+        }
+    }
+
+    /// Searches for k nearest neighbors for multiple queries with an allowlist filter.
+    ///
+    /// The beam width is automatically scaled based on allowlist selectivity.
+    #[must_use]
+    pub fn batch_search_with_filter(
+        &self,
+        queries: &[Vec<f32>],
+        k: usize,
+        allowlist: &HashSet<NodeId>,
+    ) -> Vec<Vec<(NodeId, f32)>> {
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            queries
+                .par_iter()
+                .map(|query| self.search_with_filter(query, k, allowlist))
+                .collect()
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            queries
+                .iter()
+                .map(|query| self.search_with_filter(query, k, allowlist))
+                .collect()
+        }
+    }
+
+    /// Searches with custom ef for multiple queries with an allowlist filter.
+    #[must_use]
+    pub fn batch_search_with_ef_and_filter(
+        &self,
+        queries: &[Vec<f32>],
+        k: usize,
+        ef: usize,
+        allowlist: &HashSet<NodeId>,
+    ) -> Vec<Vec<(NodeId, f32)>> {
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            queries
+                .par_iter()
+                .map(|query| self.search_with_ef_and_filter(query, k, ef, allowlist))
+                .collect()
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            queries
+                .iter()
+                .map(|query| self.search_with_ef_and_filter(query, k, ef, allowlist))
                 .collect()
         }
     }
@@ -1328,5 +1588,209 @@ mod tests {
 
         let results = index.search(&[1.0, 0.0, 0.0], 2);
         assert_eq!(results.len(), 2);
+    }
+
+    // ── Filtered search tests ─────────────────────────────────────
+
+    #[test]
+    fn test_filtered_search_returns_only_allowlisted() {
+        let config = HnswConfig::new(4, DistanceMetric::Euclidean);
+        let index = HnswIndex::with_seed(config, 42);
+
+        let vectors = create_test_vectors(50, 4);
+        for (i, vec) in vectors.iter().enumerate() {
+            index.insert(NodeId::new(i as u64 + 1), vec);
+        }
+
+        // Allowlist: only even-numbered nodes
+        let allowlist: HashSet<NodeId> = (1..=50).filter(|i| i % 2 == 0).map(NodeId::new).collect();
+
+        let results = index.search_with_filter(&vectors[25], 5, &allowlist);
+        assert!(!results.is_empty());
+        assert!(results.len() <= 5);
+
+        // Every result must be in the allowlist
+        for (id, _) in &results {
+            assert!(allowlist.contains(id), "Result {id:?} not in allowlist");
+        }
+    }
+
+    #[test]
+    fn test_filtered_search_empty_allowlist() {
+        let config = HnswConfig::new(4, DistanceMetric::Euclidean);
+        let index = HnswIndex::with_seed(config, 42);
+
+        let vectors = create_test_vectors(20, 4);
+        for (i, vec) in vectors.iter().enumerate() {
+            index.insert(NodeId::new(i as u64 + 1), vec);
+        }
+
+        let allowlist: HashSet<NodeId> = HashSet::new();
+        let results = index.search_with_filter(&vectors[5], 5, &allowlist);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_filtered_search_full_allowlist_matches_unfiltered() {
+        let config = HnswConfig::new(4, DistanceMetric::Euclidean);
+        let index = HnswIndex::with_seed(config, 42);
+
+        let vectors = create_test_vectors(50, 4);
+        for (i, vec) in vectors.iter().enumerate() {
+            index.insert(NodeId::new(i as u64 + 1), vec);
+        }
+
+        // Allowlist contains all nodes
+        let allowlist: HashSet<NodeId> = (1..=50).map(NodeId::new).collect();
+        let query = &vectors[25];
+
+        let unfiltered = index.search_with_ef(query, 5, 200);
+        let filtered = index.search_with_ef_and_filter(query, 5, 200, &allowlist);
+
+        // With full allowlist, results should match unfiltered (same ef)
+        assert_eq!(unfiltered.len(), filtered.len());
+        for (u, f) in unfiltered.iter().zip(filtered.iter()) {
+            assert_eq!(u.0, f.0);
+        }
+    }
+
+    #[test]
+    fn test_filtered_search_single_allowlisted_node() {
+        let config = HnswConfig::new(4, DistanceMetric::Euclidean);
+        let index = HnswIndex::with_seed(config, 42);
+
+        let vectors = create_test_vectors(50, 4);
+        for (i, vec) in vectors.iter().enumerate() {
+            index.insert(NodeId::new(i as u64 + 1), vec);
+        }
+
+        // Only one node allowed
+        let allowlist: HashSet<NodeId> = [NodeId::new(30)].into_iter().collect();
+        let results = index.search_with_filter(&vectors[25], 5, &allowlist);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, NodeId::new(30));
+    }
+
+    #[test]
+    fn test_filtered_search_sorted_by_distance() {
+        let config = HnswConfig::new(4, DistanceMetric::Euclidean);
+        let index = HnswIndex::with_seed(config, 42);
+
+        let vectors = create_test_vectors(100, 4);
+        for (i, vec) in vectors.iter().enumerate() {
+            index.insert(NodeId::new(i as u64 + 1), vec);
+        }
+
+        let allowlist: HashSet<NodeId> =
+            (1..=100).filter(|i| i % 3 == 0).map(NodeId::new).collect();
+
+        let results = index.search_with_filter(&[0.5, 0.5, 0.5, 0.5], 10, &allowlist);
+        for i in 1..results.len() {
+            assert!(results[i - 1].1 <= results[i].1);
+        }
+    }
+
+    #[test]
+    fn test_batch_filtered_search() {
+        let config = HnswConfig::new(4, DistanceMetric::Euclidean);
+        let index = HnswIndex::with_seed(config, 42);
+
+        let vectors = create_test_vectors(100, 4);
+        for (i, vec) in vectors.iter().enumerate() {
+            index.insert(NodeId::new(i as u64 + 1), vec);
+        }
+
+        // Allowlist: nodes 1..=50
+        let allowlist: HashSet<NodeId> = (1..=50).map(NodeId::new).collect();
+        let queries: Vec<Vec<f32>> = vec![vectors[10].clone(), vectors[70].clone()];
+
+        let all_results = index.batch_search_with_filter(&queries, 5, &allowlist);
+        assert_eq!(all_results.len(), 2);
+
+        for results in &all_results {
+            for (id, _) in results {
+                assert!(allowlist.contains(id));
+            }
+        }
+    }
+
+    #[test]
+    fn test_filtered_search_ef_scaling() {
+        // Verify that auto-scaling ef produces reasonable recall
+        let n = 500;
+        let dim = 8;
+        let k = 10;
+        let config = HnswConfig::new(dim, DistanceMetric::Euclidean).with_m(16);
+        let index = HnswIndex::with_seed(config, 42);
+
+        let mut seed: u64 = 99999;
+        let mut rand_f32 = || -> f32 {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            ((seed >> 33) as f32) / (u32::MAX as f32)
+        };
+
+        let vectors: Vec<Vec<f32>> = (0..n)
+            .map(|_| (0..dim).map(|_| rand_f32()).collect())
+            .collect();
+
+        for (i, vec) in vectors.iter().enumerate() {
+            index.insert(NodeId::new(i as u64), vec);
+        }
+
+        // 20% allowlist — moderate selectivity
+        let allowlist: HashSet<NodeId> = (0..n)
+            .filter(|i| i % 5 == 0)
+            .map(|i| NodeId::new(i as u64))
+            .collect();
+
+        let query: Vec<f32> = (0..dim).map(|_| rand_f32()).collect();
+
+        // Brute-force ground truth (only among allowlisted nodes)
+        let mut gt: Vec<(u64, f32)> = allowlist
+            .iter()
+            .map(|id| {
+                let dist = crate::index::vector::compute_distance(
+                    &query,
+                    &vectors[id.as_u64() as usize],
+                    DistanceMetric::Euclidean,
+                );
+                (id.as_u64(), dist)
+            })
+            .collect();
+        gt.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        let gt_set: std::collections::HashSet<u64> = gt.iter().take(k).map(|(id, _)| *id).collect();
+
+        let results = index.search_with_filter(&query, k, &allowlist);
+        let found: std::collections::HashSet<u64> =
+            results.iter().map(|(id, _)| id.as_u64()).collect();
+
+        let overlap = gt_set.intersection(&found).count();
+        let recall = overlap as f64 / k as f64;
+        assert!(
+            recall >= 0.60,
+            "Filtered recall {recall:.3} is below 0.60 threshold (20% selectivity)"
+        );
+    }
+
+    #[test]
+    fn test_filtered_search_cosine() {
+        let config = HnswConfig::new(4, DistanceMetric::Cosine);
+        let index = HnswIndex::with_seed(config, 42);
+
+        index.insert(NodeId::new(1), &[1.0, 0.0, 0.0, 0.0]);
+        index.insert(NodeId::new(2), &[0.0, 1.0, 0.0, 0.0]);
+        index.insert(NodeId::new(3), &[0.707, 0.707, 0.0, 0.0]);
+
+        let allowlist: HashSet<NodeId> = [NodeId::new(2), NodeId::new(3)].into_iter().collect();
+        let results = index.search_with_filter(&[0.9, 0.1, 0.0, 0.0], 2, &allowlist);
+
+        // Node 1 is closest overall but not in allowlist
+        assert!(!results.is_empty());
+        for (id, _) in &results {
+            assert!(allowlist.contains(id));
+        }
+        // Node 3 should be closest among allowed
+        assert_eq!(results[0].0, NodeId::new(3));
     }
 }

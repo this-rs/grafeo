@@ -994,7 +994,7 @@ pub extern "C" fn grafeo_vector_search(
     match db
         .inner
         .read()
-        .vector_search(label_str, prop_str, query_slice, k, ef_val)
+        .vector_search(label_str, prop_str, query_slice, k, ef_val, None)
     {
         Ok(results) => {
             let count = results.len();
@@ -1070,6 +1070,7 @@ pub extern "C" fn grafeo_mmr_search(
         fetch_k_val,
         lambda_val,
         ef_val,
+        None,
     ) {
         Ok(results) => {
             let count = results.len();

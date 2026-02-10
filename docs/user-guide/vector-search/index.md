@@ -27,6 +27,10 @@ Vector search allows you to find nodes based on the semantic similarity of their
 | **HNSW Index** | O(log n) approximate nearest neighbor search |
 | **Distance Metrics** | Cosine, Euclidean, Dot Product, Manhattan |
 | **Quantization** | Scalar (4x), Binary (32x), Product (8-192x) compression |
+| **Filtered Search** | Property equality filters via pre-computed ID allowlists |
+| **MMR Search** | Maximal Marginal Relevance for diverse RAG retrieval |
+| **Incremental Indexing** | Indexes stay in sync automatically as nodes change |
+| **Batch Operations** | `batch_create_nodes()` and `batch_vector_search()` |
 | **Hybrid Queries** | Combine graph patterns with vector similarity |
 | **SIMD Acceleration** | AVX2, SSE, NEON optimized distance computation |
 

@@ -2,15 +2,18 @@
 
 > A high-performance, embeddable graph database with a Rust core and no required C dependencies. Optional allocators (jemalloc/mimalloc) and TLS use C libraries for performance.
 
-Grafeo is designed for applications that need graph database capabilities without external dependencies. It can be embedded directly into Python or Rust applications.
+Grafeo is designed for applications that need graph database capabilities without external dependencies. It can be embedded directly into Python, Node.js, Go, Rust, C, or WebAssembly applications.
 
 ## Key Features
 
 - **Embeddable**: Single library, no external dependencies
 - **High Performance**: Vectorized execution, SIMD, columnar storage
 - **Pure Rust**: Memory-safe, fearless concurrency
-- **Python Bindings**: First-class Python support via PyO3
-- **ACID Transactions**: MVCC-based snapshot isolation
+- **Multi-Language Bindings**: Python (PyO3), Node.js/TypeScript (napi-rs), Go (CGO), WebAssembly (wasm-bindgen), C (FFI)
+- **ACID Transactions**: MVCC-based snapshot isolation with serializable option
+- **Vector Search**: HNSW index with quantization, filtered search, MMR
+- **6 Query Languages**: GQL, Cypher, Gremlin, GraphQL, SPARQL, SQL/PGQ
+- **CLI**: Interactive shell with transactions, meta-commands, and multi-format output
 
 ## Data Models
 
@@ -28,6 +31,7 @@ Grafeo supports two graph data models:
 | Gremlin | LPG | Apache TinkerPop traversal-based |
 | GraphQL | LPG/RDF | Schema-driven queries |
 | SPARQL | RDF | W3C standard for RDF |
+| SQL/PGQ | LPG | SQL:2023 GRAPH_TABLE for SQL-native graph queries |
 
 ## Installation
 
@@ -37,9 +41,31 @@ uv add grafeo
 # or: pip install grafeo
 ```
 
+Node.js:
+```bash
+npm install @grafeo-db/js
+```
+
+Go:
+```bash
+go get github.com/GrafeoDB/grafeo/crates/bindings/go
+```
+
 Rust:
 ```bash
 cargo add grafeo
+```
+
+WebAssembly:
+```bash
+npm install @grafeo-db/wasm
+```
+
+CLI:
+```bash
+cargo install grafeo-cli
+# or: pip install grafeo-cli
+# or: npm install -g @grafeo-db/cli
 ```
 
 ## Quick Start (Python)
@@ -73,6 +99,25 @@ for row in result:
     print(row['p.name'], row['friend.name'])
 ```
 
+## Quick Start (Node.js)
+
+```javascript
+const { GrafeoDB } = require('@grafeo-db/js');
+
+const db = new GrafeoDB();
+
+await db.execute(`
+    INSERT (:Person {name: 'Alice', age: 30})
+    INSERT (:Person {name: 'Bob', age: 25})
+`);
+
+const result = await db.execute(`
+    MATCH (p:Person) RETURN p.name, p.age
+`);
+
+console.log(result.rows);
+```
+
 ## Quick Start (Rust)
 
 ```rust
@@ -98,6 +143,41 @@ fn main() -> Result<(), grafeo_common::utils::error::Error> {
 }
 ```
 
+## Vector Search
+
+Grafeo has first-class vector support for AI/ML workloads:
+
+```python
+# Create nodes with embeddings
+n1 = db.create_node(["Doc"])
+db.set_node_property(n1, "emb", [0.1, 0.2, 0.3])
+db.set_node_property(n1, "user_id", 1)
+
+# Create HNSW index
+db.create_vector_index("Doc", "emb", dimensions=3, metric="cosine")
+
+# k-NN search
+results = db.vector_search("Doc", "emb", query=[0.1, 0.2, 0.3], k=10)
+
+# Filtered search (only user_id=1)
+results = db.vector_search("Doc", "emb", query=[0.1, 0.2, 0.3], k=10,
+                           filters={"user_id": 1})
+
+# MMR search (diverse results for RAG)
+results = db.mmr_search("Doc", "emb", query=[0.1, 0.2, 0.3], k=5,
+                        lambda_mult=0.5)
+```
+
+Features:
+- HNSW index with O(log n) approximate nearest neighbor search
+- Distance metrics: cosine, euclidean, dot product, manhattan
+- Quantization: scalar (4x), binary (32x), product (8-32x) compression
+- SIMD acceleration: AVX2, SSE, NEON
+- Filtered search with property equality filters (pre-filter via ID allowlist)
+- MMR (Maximal Marginal Relevance) for diverse retrieval
+- Incremental indexing: indexes stay in sync as nodes change
+- Batch operations: `batch_create_nodes()`, `batch_vector_search()`
+
 ## Python API
 
 ### Database
@@ -109,12 +189,19 @@ grafeo.GrafeoDB(
 ```
 
 Methods:
-- `execute(query: str) -> QueryResult`: Execute a query
+- `execute(query: str) -> QueryResult`: Execute a GQL query
 - `execute_cypher(query: str) -> QueryResult`: Execute Cypher
 - `execute_gremlin(query: str) -> QueryResult`: Execute Gremlin
 - `execute_graphql(query: str) -> QueryResult`: Execute GraphQL
 - `execute_sparql(query: str) -> QueryResult`: Execute SPARQL
+- `execute_sql(query: str) -> QueryResult`: Execute SQL/PGQ
 - `begin_transaction() -> Transaction`: Start a transaction
+- `create_node(labels) -> int`: Create a node
+- `create_edge(source, target, type, properties) -> int`: Create an edge
+- `set_node_property(id, key, value)`: Set a property
+- `vector_search(label, property, query, k, ef, filters) -> list`: k-NN search
+- `mmr_search(label, property, query, k, fetch_k, lambda_mult, ef, filters) -> list`: MMR search
+- `batch_vector_search(label, property, queries, k, ef, filters) -> list`: Batch search
 
 ### Transaction
 
@@ -168,21 +255,33 @@ MATCH (p:Person {name: 'Bob'})
 DETACH DELETE p
 ```
 
+SQL/PGQ:
+```sql
+SELECT * FROM GRAPH_TABLE (
+    MATCH (p:Person)-[:KNOWS]->(f:Person)
+    COLUMNS (p.name AS person, f.name AS friend)
+)
+```
+
 ## Architecture
 
 ### Crate Structure
 
-- **grafeo-common**: Foundation types, memory allocators
-- **grafeo-core**: LPG storage, indexes, execution engine
-- **grafeo-adapters**: Parsers, storage backends
-- **grafeo-engine**: Database facade, sessions, transactions
-- **grafeo-python** (`crates/bindings/python`): PyO3 bindings
+- **grafeo-common**: Foundation types, memory allocators, hashing utilities
+- **grafeo-core**: LPG/RDF storage, indexes (hash, btree, trie, adjacency, HNSW), execution engine
+- **grafeo-adapters**: Parsers (GQL, Cypher, Gremlin, GraphQL, SPARQL, SQL/PGQ), storage backends
+- **grafeo-engine**: Database facade, sessions, transaction management
+- **grafeo-cli**: Command-line interface with interactive shell
+- **grafeo-python** (`crates/bindings/python`): Python bindings via PyO3
+- **grafeo-node** (`crates/bindings/node`): Node.js/TypeScript bindings via napi-rs
+- **grafeo-c** (`crates/bindings/c`): C FFI layer
+- **grafeo-wasm** (`crates/bindings/wasm`): WebAssembly bindings via wasm-bindgen
 
 ### Query Processing Pipeline
 
-1. Parser: Query string → AST
+1. Parser: Query string -> AST
 2. Binder: Semantic analysis
-3. Planner: AST → Logical plan
+3. Planner: AST -> Logical plan
 4. Optimizer: Cost-based optimization
 5. Executor: Push-based execution
 
@@ -192,6 +291,18 @@ DETACH DELETE p
 - Adjacency list indexes for traversals
 - Zone maps for data skipping
 - WAL for durability
+- HNSW vector indexes with incremental sync
+
+## Ecosystem
+
+- **[grafeo-server](https://github.com/GrafeoDB/grafeo-server)** - HTTP server with REST API and web UI
+- **[grafeo-web](https://github.com/GrafeoDB/grafeo-web)** - Browser-based Grafeo via WebAssembly
+- **[grafeo-langchain](https://github.com/GrafeoDB/grafeo-langchain)** - LangChain integration
+- **[grafeo-llamaindex](https://github.com/GrafeoDB/grafeo-llamaindex)** - LlamaIndex integration
+- **[grafeo-mcp](https://github.com/GrafeoDB/grafeo-mcp)** - Model Context Protocol server
+- **[graph-bench](https://github.com/GrafeoDB/graph-bench)** - Benchmark suite
+- **[anywidget-graph](https://github.com/GrafeoDB/anywidget-graph)** - Interactive graph visualization widget
+- **[anywidget-vector](https://github.com/GrafeoDB/anywidget-vector)** - Interactive vector visualization widget
 
 ## Documentation
 

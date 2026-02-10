@@ -237,6 +237,8 @@ nav:
       - Aggregations: user-guide/sparql/aggregations.md
       - Property Paths: user-guide/sparql/paths.md
       - Built-in Functions: user-guide/sparql/functions.md
+    - SQL/PGQ Query Language:
+      - user-guide/sql-pgq/index.md
     - Vector Search:
       - user-guide/vector-search/index.md
       - Getting Started: user-guide/vector-search/basics.md
@@ -319,6 +321,14 @@ nav:
       - grafeo-core: api/rust/core.md
       - grafeo-adapters: api/rust/adapters.md
       - grafeo-engine: api/rust/engine.md
+    - Node.js API:
+      - api/node/index.md
+    - Go API:
+      - api/go/index.md
+    - WebAssembly API:
+      - api/wasm/index.md
+    - C API:
+      - api/c/index.md
     - Algorithms:
       - algorithms/index.md
       - Path Finding: algorithms/path-finding.md
@@ -342,6 +352,7 @@ nav:
     - Pull Requests: contributing/pull-requests.md
     - Ecosystem:
       - ecosystem/index.md
+      - grafeo-server: ecosystem/grafeo-server.md
       - Interactive Demo: ecosystem/interactive-demo.md
       - Performance Baselines: ecosystem/performance.md
       - graph-bench: ecosystem/graph-bench.md

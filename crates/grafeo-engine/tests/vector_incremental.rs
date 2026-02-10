@@ -32,7 +32,7 @@ fn test_incremental_insert_via_set_property() {
 
     // Search should find the new node (closest to [1, 0, 0])
     let results = db
-        .vector_search("Doc", "emb", &[1.0, 0.0, 0.0], 3, None)
+        .vector_search("Doc", "emb", &[1.0, 0.0, 0.0], 3, None, None)
         .expect("search");
 
     assert_eq!(results.len(), 3, "should find all 3 nodes");
@@ -60,7 +60,7 @@ fn test_incremental_batch_create_after_index() {
 
     // Search should find all 3 nodes
     let results = db
-        .vector_search("Doc", "emb", &[0.5, 0.5, 0.5], 10, None)
+        .vector_search("Doc", "emb", &[0.5, 0.5, 0.5], 10, None, None)
         .expect("search");
 
     assert_eq!(results.len(), 3, "should find original + batch nodes");
@@ -85,7 +85,7 @@ fn test_delete_removes_from_index() {
 
     // Search should NOT return n2
     let results = db
-        .vector_search("Doc", "emb", &[0.0, 1.0, 0.0], 10, None)
+        .vector_search("Doc", "emb", &[0.0, 1.0, 0.0], 10, None, None)
         .expect("search");
 
     let ids: Vec<u64> = results.iter().map(|(id, _)| id.as_u64()).collect();
@@ -115,7 +115,7 @@ fn test_label_after_vector_triggers_index() {
     // Now n2 has "Doc" label — should trigger auto-insert
 
     let results = db
-        .vector_search("Doc", "emb", &[0.0, 1.0, 0.0], 10, None)
+        .vector_search("Doc", "emb", &[0.0, 1.0, 0.0], 10, None, None)
         .expect("search");
 
     let ids: Vec<u64> = results.iter().map(|(id, _)| id.as_u64()).collect();
@@ -137,7 +137,7 @@ fn test_drop_vector_index() {
 
     // Search works
     assert!(
-        db.vector_search("Doc", "emb", &[1.0, 0.0, 0.0], 1, None)
+        db.vector_search("Doc", "emb", &[1.0, 0.0, 0.0], 1, None, None)
             .is_ok()
     );
 
@@ -147,7 +147,7 @@ fn test_drop_vector_index() {
 
     // Search now fails
     assert!(
-        db.vector_search("Doc", "emb", &[1.0, 0.0, 0.0], 1, None)
+        db.vector_search("Doc", "emb", &[1.0, 0.0, 0.0], 1, None, None)
             .is_err()
     );
 }
@@ -172,7 +172,7 @@ fn test_rebuild_vector_index() {
     db.rebuild_vector_index("Doc", "emb").expect("rebuild");
 
     let results = db
-        .vector_search("Doc", "emb", &[0.5, 0.5, 0.5], 10, None)
+        .vector_search("Doc", "emb", &[0.5, 0.5, 0.5], 10, None, None)
         .expect("search");
 
     assert_eq!(results.len(), 3, "rebuild should include all nodes");
