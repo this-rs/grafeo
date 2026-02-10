@@ -702,15 +702,6 @@ impl<Id: EntityId> PropertyColumn<Id> {
         self.values.is_empty() && self.compressed_count == 0
     }
 
-    /// Iterates over all (id, value) pairs in the hot buffer.
-    ///
-    /// Note: This only iterates over uncompressed values. For full iteration
-    /// including compressed values, use [`iter_all`].
-    #[allow(dead_code)]
-    pub fn iter(&self) -> impl Iterator<Item = (Id, &Value)> {
-        self.values.iter().map(|(&id, v)| (id, v))
-    }
-
     /// Returns compression statistics for this column.
     #[must_use]
     pub fn compression_stats(&self) -> CompressionStats {
@@ -733,7 +724,7 @@ impl<Id: EntityId> PropertyColumn<Id> {
 
     /// Returns whether the column has compressed data.
     #[must_use]
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn is_compressed(&self) -> bool {
         self.compressed.is_some()
     }

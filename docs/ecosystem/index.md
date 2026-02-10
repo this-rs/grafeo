@@ -8,7 +8,7 @@ The GrafeoDB ecosystem extends beyond the core database with visualization tools
 
     ---
 
-    HTTP server & web UI for Grafeo: REST API, transactions, single binary (~20MB Docker image).
+    HTTP server & web UI for Grafeo: REST API, transactions, single binary (~40MB Docker image).
 
     [:octicons-arrow-right-24: Learn more](grafeo-server.md)
 

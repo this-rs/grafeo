@@ -4,6 +4,32 @@ use super::ast::*;
 use super::lexer::{Lexer, Token, TokenKind};
 use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result, SourceSpan};
 
+/// Unescapes backslash-escaped characters in a string literal.
+fn unescape_string(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            match chars.next() {
+                Some('n') => result.push('\n'),
+                Some('r') => result.push('\r'),
+                Some('t') => result.push('\t'),
+                Some('\\') => result.push('\\'),
+                Some('\'') => result.push('\''),
+                Some('"') => result.push('"'),
+                Some(other) => {
+                    result.push('\\');
+                    result.push(other);
+                }
+                None => result.push('\\'),
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
 /// GQL Parser.
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
@@ -1082,8 +1108,17 @@ impl<'a> Parser<'a> {
             });
         }
 
-        // Check for STARTS WITH, ENDS WITH, CONTAINS
+        // Check for IN, STARTS WITH, ENDS WITH, CONTAINS
         match self.current.kind {
+            TokenKind::In => {
+                self.advance(); // consume IN
+                let right = self.parse_primary_expression()?;
+                return Ok(Expression::Binary {
+                    left: Box::new(left),
+                    op: BinaryOp::In,
+                    right: Box::new(right),
+                });
+            }
             TokenKind::Starts => {
                 self.advance(); // consume STARTS
                 self.expect(TokenKind::With)?; // expect WITH
@@ -1218,7 +1253,8 @@ impl<'a> Parser<'a> {
             }
             TokenKind::String => {
                 let text = &self.current.text;
-                let value = text[1..text.len() - 1].to_string(); // Remove quotes
+                let inner = &text[1..text.len() - 1]; // Remove quotes
+                let value = unescape_string(inner);
                 self.advance();
                 Ok(Expression::Literal(Literal::String(value)))
             }
@@ -2311,6 +2347,81 @@ mod tests {
             assert_eq!(stmt.metric, Some("cosine".to_string()));
         } else {
             panic!("Expected CreateVectorIndex statement");
+        }
+    }
+
+    #[test]
+    fn test_in_operator_with_list() {
+        let mut parser =
+            Parser::new("MATCH (n:Person) WHERE n.name IN ['Alice', 'Bob'] RETURN n.name");
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse error: {:?}", result.err());
+
+        if let Statement::Query(q) = result.unwrap() {
+            let where_clause = q.where_clause.expect("Expected WHERE clause");
+            if let WhereClause {
+                expression: Expression::Binary { op, right, .. },
+                ..
+            } = where_clause
+            {
+                assert_eq!(op, BinaryOp::In);
+                assert!(matches!(right.as_ref(), Expression::List(elems) if elems.len() == 2));
+            } else {
+                panic!("Expected Binary IN expression");
+            }
+        } else {
+            panic!("Expected Query statement");
+        }
+    }
+
+    #[test]
+    fn test_in_operator_with_integers() {
+        let mut parser = Parser::new("MATCH (n:Item) WHERE n.status IN [1, 2, 3] RETURN n");
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse error: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_string_escape_single_quotes() {
+        let mut parser = Parser::new(r#"MATCH (n) WHERE n.name = 'O\'Brien' RETURN n"#);
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse error: {:?}", result.err());
+
+        if let Statement::Query(q) = result.unwrap() {
+            let where_clause = q.where_clause.expect("Expected WHERE clause");
+            if let WhereClause {
+                expression: Expression::Binary { right, .. },
+                ..
+            } = where_clause
+            {
+                if let Expression::Literal(Literal::String(s)) = right.as_ref() {
+                    assert_eq!(s, "O'Brien");
+                } else {
+                    panic!("Expected string literal");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_string_escape_sequences() {
+        let mut parser = Parser::new(r#"MATCH (n) WHERE n.text = 'line1\nline2' RETURN n"#);
+        let result = parser.parse();
+        assert!(result.is_ok(), "Parse error: {:?}", result.err());
+
+        if let Statement::Query(q) = result.unwrap() {
+            let where_clause = q.where_clause.expect("Expected WHERE clause");
+            if let WhereClause {
+                expression: Expression::Binary { right, .. },
+                ..
+            } = where_clause
+            {
+                if let Expression::Literal(Literal::String(s)) = right.as_ref() {
+                    assert_eq!(s, "line1\nline2");
+                } else {
+                    panic!("Expected string literal");
+                }
+            }
         }
     }
 }

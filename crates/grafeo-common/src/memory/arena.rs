@@ -88,12 +88,6 @@ impl Chunk {
     fn used(&self) -> usize {
         self.offset.load(Ordering::Relaxed)
     }
-
-    /// Returns the remaining capacity in this chunk.
-    #[allow(dead_code)]
-    fn remaining(&self) -> usize {
-        self.capacity - self.used()
-    }
 }
 
 impl Drop for Chunk {

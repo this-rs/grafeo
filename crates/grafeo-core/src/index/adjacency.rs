@@ -80,7 +80,6 @@ impl AdjacencyChunk {
     ///
     /// The entries are sorted by destination node ID for better delta compression.
     /// Use this for cold chunks that won't be modified.
-    #[allow(dead_code)]
     fn compress(&self) -> CompressedAdjacencyChunk {
         // Sort entries by destination for better delta compression
         let mut entries: Vec<_> = self
@@ -266,7 +265,6 @@ impl AdjacencyList {
     /// Forces all hot chunks to be compressed to cold storage.
     ///
     /// Useful when memory pressure is high or the node is rarely accessed.
-    #[allow(dead_code)]
     fn freeze_all(&mut self) {
         for chunk in self.hot_chunks.drain(..) {
             if chunk.len() > 0 {

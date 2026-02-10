@@ -43,6 +43,8 @@ pub struct VariableLengthExpandOperator {
     exhausted: bool,
     /// Whether to output path length as an additional column.
     output_path_length: bool,
+    /// Whether to output full path detail (node list and edge list).
+    output_path_detail: bool,
 }
 
 /// A materialized input row.
@@ -71,6 +73,10 @@ struct OutputRow {
     target_id: NodeId,
     /// The path length (number of edges/hops).
     path_length: u32,
+    /// All nodes along the path (source through target), populated when tracking.
+    path_nodes: Option<Vec<NodeId>>,
+    /// All edges along the path, populated when tracking.
+    path_edges: Option<Vec<EdgeId>>,
 }
 
 impl VariableLengthExpandOperator {
@@ -100,12 +106,19 @@ impl VariableLengthExpandOperator {
             output_buffer: Vec::new(),
             exhausted: false,
             output_path_length: false,
+            output_path_detail: false,
         }
     }
 
     /// Enables path length output as an additional column.
     pub fn with_path_length_output(mut self) -> Self {
         self.output_path_length = true;
+        self
+    }
+
+    /// Enables full path detail output (node list and edge list columns).
+    pub fn with_path_detail_output(mut self) -> Self {
+        self.output_path_detail = true;
         self
     }
 
@@ -214,30 +227,62 @@ impl VariableLengthExpandOperator {
     fn process_input_row(&self, input_idx: usize, source_node: NodeId) -> Vec<OutputRow> {
         let mut results = Vec::new();
 
-        // BFS from source node
-        let mut frontier: VecDeque<(NodeId, u32, EdgeId)> = VecDeque::new();
+        if self.output_path_detail {
+            // BFS with full path tracking
+            // Frontier: (current_node, depth, last_edge, node_path, edge_path)
+            let mut frontier: VecDeque<(NodeId, u32, EdgeId, Vec<NodeId>, Vec<EdgeId>)> =
+                VecDeque::new();
 
-        // Initialize frontier with immediate neighbors
-        for (target, edge_id) in self.get_edges(source_node) {
-            frontier.push_back((target, 1, edge_id));
-        }
-
-        // Process frontier
-        while let Some((current_node, depth, edge_id)) = frontier.pop_front() {
-            // If within the hop range, add to results
-            if depth >= self.min_hops && depth <= self.max_hops {
-                results.push(OutputRow {
-                    input_idx,
-                    edge_id,
-                    target_id: current_node,
-                    path_length: depth,
-                });
+            for (target, edge_id) in self.get_edges(source_node) {
+                frontier.push_back((target, 1, edge_id, vec![source_node, target], vec![edge_id]));
             }
 
-            // If we haven't reached max depth, continue expanding
-            if depth < self.max_hops {
-                for (target, next_edge_id) in self.get_edges(current_node) {
-                    frontier.push_back((target, depth + 1, next_edge_id));
+            while let Some((current_node, depth, edge_id, nodes, edges)) = frontier.pop_front() {
+                if depth >= self.min_hops && depth <= self.max_hops {
+                    results.push(OutputRow {
+                        input_idx,
+                        edge_id,
+                        target_id: current_node,
+                        path_length: depth,
+                        path_nodes: Some(nodes.clone()),
+                        path_edges: Some(edges.clone()),
+                    });
+                }
+
+                if depth < self.max_hops {
+                    for (target, next_edge_id) in self.get_edges(current_node) {
+                        let mut new_nodes = nodes.clone();
+                        new_nodes.push(target);
+                        let mut new_edges = edges.clone();
+                        new_edges.push(next_edge_id);
+                        frontier.push_back((target, depth + 1, next_edge_id, new_nodes, new_edges));
+                    }
+                }
+            }
+        } else {
+            // BFS without path tracking (lightweight)
+            let mut frontier: VecDeque<(NodeId, u32, EdgeId)> = VecDeque::new();
+
+            for (target, edge_id) in self.get_edges(source_node) {
+                frontier.push_back((target, 1, edge_id));
+            }
+
+            while let Some((current_node, depth, edge_id)) = frontier.pop_front() {
+                if depth >= self.min_hops && depth <= self.max_hops {
+                    results.push(OutputRow {
+                        input_idx,
+                        edge_id,
+                        target_id: current_node,
+                        path_length: depth,
+                        path_nodes: None,
+                        path_edges: None,
+                    });
+                }
+
+                if depth < self.max_hops {
+                    for (target, next_edge_id) in self.get_edges(current_node) {
+                        frontier.push_back((target, depth + 1, next_edge_id));
+                    }
                 }
             }
         }
@@ -288,8 +333,9 @@ impl Operator for VariableLengthExpandOperator {
         // Build output chunk from buffer
         let num_input_cols = input_rows.first().map_or(0, |r| r.columns.len());
 
-        // Schema: [input_columns..., edge, target, (path_length)?]
-        let extra_cols = if self.output_path_length { 3 } else { 2 };
+        // Schema: [input_columns..., edge, target, (path_length)?, (path_nodes)?, (path_edges)?]
+        let extra_cols =
+            2 + usize::from(self.output_path_length) + usize::from(self.output_path_detail) * 2;
         let mut schema: Vec<LogicalType> = Vec::with_capacity(num_input_cols + extra_cols);
         if let Some(first_row) = input_rows.first() {
             for col_val in &first_row.columns {
@@ -305,6 +351,10 @@ impl Operator for VariableLengthExpandOperator {
         schema.push(LogicalType::Node);
         if self.output_path_length {
             schema.push(LogicalType::Int64);
+        }
+        if self.output_path_detail {
+            schema.push(LogicalType::Any); // path_nodes as Value::List
+            schema.push(LogicalType::Any); // path_edges as Value::List
         }
 
         let mut chunk = DataChunk::with_capacity(&schema, self.chunk_capacity);
@@ -344,6 +394,35 @@ impl Operator for VariableLengthExpandOperator {
                 col.push_value(grafeo_common::types::Value::Int64(i64::from(
                     out_row.path_length,
                 )));
+            }
+
+            // Add path detail columns if requested
+            if self.output_path_detail {
+                let base = num_input_cols + 2 + usize::from(self.output_path_length);
+
+                // Path nodes column
+                if let Some(col) = chunk.column_mut(base) {
+                    let nodes_list: Vec<grafeo_common::types::Value> = out_row
+                        .path_nodes
+                        .as_deref()
+                        .unwrap_or(&[])
+                        .iter()
+                        .map(|id| grafeo_common::types::Value::Int64(id.0 as i64))
+                        .collect();
+                    col.push_value(grafeo_common::types::Value::List(nodes_list.into()));
+                }
+
+                // Path edges column
+                if let Some(col) = chunk.column_mut(base + 1) {
+                    let edges_list: Vec<grafeo_common::types::Value> = out_row
+                        .path_edges
+                        .as_deref()
+                        .unwrap_or(&[])
+                        .iter()
+                        .map(|id| grafeo_common::types::Value::Int64(id.0 as i64))
+                        .collect();
+                    col.push_value(grafeo_common::types::Value::List(edges_list.into()));
+                }
             }
         }
 

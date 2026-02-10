@@ -3,12 +3,12 @@
 use std::collections::HashMap;
 
 use napi::bindgen_prelude::*;
-use napi::{JsObject, JsUnknown};
+use napi::sys;
 use napi_derive::napi;
 
 use grafeo_common::types::{EdgeId, NodeId, Value};
 
-use crate::types::value_to_js;
+use crate::types;
 
 /// A node in the graph with labels and properties.
 #[napi]
@@ -35,21 +35,22 @@ impl JsNode {
 
     /// Get a property value by key.
     #[napi]
-    pub fn get(&self, env: Env, key: String) -> Result<JsUnknown> {
+    pub fn get(&self, env: Env, key: String) -> Result<Unknown<'_>> {
         match self.properties.get(&key) {
-            Some(v) => value_to_js(&env, v),
-            None => Ok(env.get_undefined()?.into_unknown()),
+            Some(v) => types::value_to_js(env.raw(), v),
+            None => Ok(unsafe {
+                Unknown::from_raw_unchecked(
+                    env.raw(),
+                    <() as ToNapiValue>::to_napi_value(env.raw(), ())?,
+                )
+            }),
         }
     }
 
     /// Get all properties as a plain object.
     #[napi]
-    pub fn properties(&self, env: Env) -> Result<JsObject> {
-        let mut obj = env.create_object()?;
-        for (k, v) in &self.properties {
-            obj.set_named_property(k, value_to_js(&env, v)?)?;
-        }
-        Ok(obj)
+    pub fn properties(&self, env: Env) -> Result<Object<'_>> {
+        properties_to_object(env.raw(), &self.properties)
     }
 
     /// Check if the node has a specific label.
@@ -114,21 +115,22 @@ impl JsEdge {
 
     /// Get a property value by key.
     #[napi]
-    pub fn get(&self, env: Env, key: String) -> Result<JsUnknown> {
+    pub fn get(&self, env: Env, key: String) -> Result<Unknown<'_>> {
         match self.properties.get(&key) {
-            Some(v) => value_to_js(&env, v),
-            None => Ok(env.get_undefined()?.into_unknown()),
+            Some(v) => types::value_to_js(env.raw(), v),
+            None => Ok(unsafe {
+                Unknown::from_raw_unchecked(
+                    env.raw(),
+                    <() as ToNapiValue>::to_napi_value(env.raw(), ())?,
+                )
+            }),
         }
     }
 
     /// Get all properties as a plain object.
     #[napi]
-    pub fn properties(&self, env: Env) -> Result<JsObject> {
-        let mut obj = env.create_object()?;
-        for (k, v) in &self.properties {
-            obj.set_named_property(k, value_to_js(&env, v)?)?;
-        }
-        Ok(obj)
+    pub fn properties(&self, env: Env) -> Result<Object<'_>> {
+        properties_to_object(env.raw(), &self.properties)
     }
 
     /// String representation.
@@ -154,4 +156,20 @@ impl JsEdge {
             properties,
         }
     }
+}
+
+/// Create a JS object from a Grafeo property map.
+pub(crate) fn properties_to_object(
+    env: sys::napi_env,
+    properties: &HashMap<String, Value>,
+) -> Result<Object<'_>> {
+    let mut raw_obj = std::ptr::null_mut();
+    types::check_napi(unsafe { sys::napi_create_object(env, &raw mut raw_obj) })?;
+    let mut obj = Object::from_raw(env, raw_obj);
+    for (k, v) in properties {
+        let val_raw = types::value_to_napi(env, v)?;
+        let val_unknown = unsafe { Unknown::from_raw_unchecked(env, val_raw) };
+        obj.set_named_property(k, val_unknown)?;
+    }
+    Ok(obj)
 }

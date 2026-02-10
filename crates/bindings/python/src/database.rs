@@ -231,6 +231,42 @@ impl PyGrafeoDB {
         ))
     }
 
+    /// Execute a SQL/PGQ query (SQL:2023 GRAPH_TABLE).
+    #[cfg(feature = "sql-pgq")]
+    #[pyo3(signature = (query, params=None))]
+    fn execute_sql(
+        &self,
+        query: &str,
+        params: Option<&Bound<'_, pyo3::types::PyDict>>,
+        _py: Python<'_>,
+    ) -> PyResult<PyQueryResult> {
+        let db = self.inner.read();
+
+        let result = if let Some(p) = params {
+            let mut param_map = HashMap::new();
+            for (key, value) in p.iter() {
+                let key_str: String = key.extract()?;
+                let val = PyValue::from_py(&value)?;
+                param_map.insert(key_str, val);
+            }
+            db.execute_sql_with_params(query, param_map)
+                .map_err(PyGrafeoError::from)?
+        } else {
+            db.execute_sql(query).map_err(PyGrafeoError::from)?
+        };
+
+        let (nodes, edges) = extract_entities(&result, &db);
+
+        Ok(PyQueryResult::with_metrics(
+            result.columns,
+            result.rows,
+            nodes,
+            edges,
+            result.execution_time_ms,
+            result.rows_scanned,
+        ))
+    }
+
     /// Execute a GQL query asynchronously.
     ///
     /// This method returns a Python awaitable that can be used with asyncio.
@@ -818,6 +854,41 @@ impl PyGrafeoDB {
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 
+    /// Drop a vector index for the given label and property.
+    ///
+    /// Returns True if the index existed and was removed, False if not found.
+    ///
+    /// Args:
+    ///     label: Node label of the index
+    ///     property: Property name of the index
+    ///
+    /// Example:
+    ///     removed = db.drop_vector_index("Doc", "embedding")
+    fn drop_vector_index(&self, label: &str, property: &str) -> bool {
+        let db = self.inner.read();
+        db.drop_vector_index(label, property)
+    }
+
+    /// Rebuild a vector index by rescanning all matching nodes.
+    ///
+    /// Drops the existing index and recreates it from scratch, preserving
+    /// the original configuration (dimensions, metric, M, ef_construction).
+    ///
+    /// Args:
+    ///     label: Node label of the index
+    ///     property: Property name of the index
+    ///
+    /// Raises:
+    ///     RuntimeError: If no index exists for this label+property pair.
+    ///
+    /// Example:
+    ///     db.rebuild_vector_index("Doc", "embedding")
+    fn rebuild_vector_index(&self, label: &str, property: &str) -> PyResult<()> {
+        let db = self.inner.read();
+        db.rebuild_vector_index(label, property)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
     /// Search for the k nearest neighbors of a query vector.
     ///
     /// Uses the HNSW index created by create_vector_index().
@@ -919,6 +990,49 @@ impl PyGrafeoDB {
                     .map(|(id, dist)| (id.as_u64(), dist))
                     .collect()
             })
+            .collect())
+    }
+
+    /// Search for diverse nearest neighbors using Maximal Marginal Relevance (MMR).
+    ///
+    /// MMR balances relevance to the query with diversity among results,
+    /// avoiding redundant results in RAG pipelines.
+    ///
+    /// Args:
+    ///     label: Node label that was indexed
+    ///     property: Property that was indexed
+    ///     query: Query vector (list of floats)
+    ///     k: Number of diverse results to return
+    ///     fetch_k: Initial candidates from HNSW (default: 4*k)
+    ///     lambda_mult: Relevance vs diversity (0=diverse, 1=relevant). Default: 0.5.
+    ///     ef: Search beam width (higher = better recall, slower). Uses index default if None.
+    ///
+    /// Returns:
+    ///     List of (node_id, distance) tuples, ordered by MMR selection.
+    ///
+    /// Example:
+    ///     results = db.mmr_search("Doc", "embedding", [1.0, 0.0, 0.0], k=4, lambda_mult=0.5)
+    ///     for node_id, distance in results:
+    ///         print(f"Node {node_id}: distance={distance:.4f}")
+    #[pyo3(signature = (label, property, query, k, fetch_k=None, lambda_mult=None, ef=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn mmr_search(
+        &self,
+        label: &str,
+        property: &str,
+        query: Vec<f32>,
+        k: usize,
+        fetch_k: Option<usize>,
+        lambda_mult: Option<f32>,
+        ef: Option<usize>,
+    ) -> PyResult<Vec<(u64, f32)>> {
+        let db = self.inner.read();
+        let results = db
+            .mmr_search(label, property, &query, k, fetch_k, lambda_mult, ef)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        Ok(results
+            .into_iter()
+            .map(|(id, dist)| (id.as_u64(), dist))
             .collect())
     }
 

@@ -17,12 +17,6 @@ struct AsyncLogFile {
     writer: BufWriter<File>,
     /// Current size in bytes.
     size: u64,
-    /// File path.
-    #[allow(dead_code)]
-    path: PathBuf,
-    /// Sequence number (for log file ordering during recovery).
-    #[allow(dead_code)]
-    sequence: u64,
 }
 
 /// Async Write-Ahead Log manager with non-blocking I/O.
@@ -229,8 +223,6 @@ impl AsyncWalManager {
         let new_log = AsyncLogFile {
             writer: BufWriter::new(file),
             size: 0,
-            path: new_path,
-            sequence: new_sequence,
         };
 
         // Replace active log
@@ -397,8 +389,6 @@ impl AsyncWalManager {
             *guard = Some(AsyncLogFile {
                 writer: BufWriter::new(file),
                 size,
-                path,
-                sequence,
             });
         }
         Ok(())

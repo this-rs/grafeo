@@ -7,7 +7,7 @@ use grafeo_engine::GrafeoDB;
 use serde::Serialize;
 
 use crate::OutputFormat;
-use crate::output::{self, Format};
+use crate::output::{self, Format, format_bytes};
 
 /// Compaction result output.
 #[derive(Serialize)]
@@ -17,23 +17,6 @@ struct CompactionOutput {
     after_size_bytes: Option<usize>,
     space_saved_bytes: Option<usize>,
     space_saved_percent: Option<f64>,
-}
-
-/// Format bytes as human-readable string.
-fn format_bytes(bytes: usize) -> String {
-    const KB: usize = 1024;
-    const MB: usize = KB * 1024;
-    const GB: usize = MB * 1024;
-
-    if bytes >= GB {
-        format!("{:.2} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.2} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.2} KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{bytes} bytes")
-    }
 }
 
 /// Run the compact command.
@@ -59,7 +42,7 @@ pub fn run(path: &Path, dry_run: bool, format: OutputFormat, quiet: bool) -> Res
                     println!("{}", serde_json::to_string_pretty(&output)?);
                 }
             }
-            Format::Table => {
+            Format::Table | Format::Csv => {
                 let items = vec![
                     ("Mode", "Dry Run".to_string()),
                     ("Current Size", format_bytes(stats_before.memory_bytes)),
@@ -73,7 +56,6 @@ pub fn run(path: &Path, dry_run: bool, format: OutputFormat, quiet: bool) -> Res
         output::status("Compacting database...", quiet);
 
         // TODO: Implement actual compaction when API is available
-        // For now, just report current state
         let stats_after = db.detailed_stats();
 
         let space_saved = stats_before
@@ -101,7 +83,7 @@ pub fn run(path: &Path, dry_run: bool, format: OutputFormat, quiet: bool) -> Res
                     println!("{}", serde_json::to_string_pretty(&output)?);
                 }
             }
-            Format::Table => {
+            Format::Table | Format::Csv => {
                 let items = vec![
                     ("Before", format_bytes(stats_before.memory_bytes)),
                     ("After", format_bytes(stats_after.memory_bytes)),

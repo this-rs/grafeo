@@ -589,7 +589,10 @@ pub enum ReoptimizationDecision {
         corrections: HashMap<String, f64>,
     },
     /// Abort the query (catastrophic misestimate).
-    Abort { reason: String },
+    Abort {
+        /// The reason for aborting the query.
+        reason: String,
+    },
 }
 
 /// Evaluates whether re-optimization should occur based on context.
@@ -745,22 +748,32 @@ impl AdaptiveCheckpoint {
 pub enum AdaptiveEvent {
     /// A checkpoint was reached.
     CheckpointReached {
+        /// The checkpoint identifier.
         id: String,
+        /// The actual number of rows observed.
         actual_rows: u64,
+        /// The estimated number of rows from the optimizer.
         estimated: f64,
     },
     /// Re-optimization was triggered.
     ReoptimizationTriggered {
+        /// The checkpoint that triggered re-optimization.
         checkpoint_id: String,
+        /// The ratio between actual and estimated rows.
         deviation_ratio: f64,
     },
     /// Plan was switched.
     PlanSwitched {
+        /// The number of operators in the previous plan.
         old_operator_count: usize,
+        /// The number of operators in the new plan.
         new_operator_count: usize,
     },
     /// Execution completed.
-    ExecutionCompleted { total_rows: u64 },
+    ExecutionCompleted {
+        /// The total number of rows produced.
+        total_rows: u64,
+    },
 }
 
 /// Callback for observing adaptive execution events.

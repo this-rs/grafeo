@@ -1021,4 +1021,409 @@ mod tests {
             panic!("Expected Has step with within predicate");
         }
     }
+
+    // ── Traversal sources ────────────────────────────────────────
+
+    #[test]
+    fn test_parse_edge_source() {
+        let stmt = Parser::new("g.E()").parse().unwrap();
+        assert!(matches!(stmt.source, TraversalSource::E(None)));
+    }
+
+    #[test]
+    fn test_parse_addv_source() {
+        let stmt = Parser::new("g.addV('Person')").parse().unwrap();
+        assert!(matches!(&stmt.source, TraversalSource::AddV(Some(l)) if l == "Person"));
+    }
+
+    #[test]
+    fn test_parse_adde_source() {
+        let stmt = Parser::new("g.addE('KNOWS').from('a').to('b')")
+            .parse()
+            .unwrap();
+        assert!(matches!(&stmt.source, TraversalSource::AddE(l) if l == "KNOWS"));
+        assert_eq!(stmt.steps.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_v_with_ids() {
+        let stmt = Parser::new("g.V(1, 2, 3)").parse().unwrap();
+        if let TraversalSource::V(Some(ids)) = &stmt.source {
+            assert_eq!(ids.len(), 3);
+        } else {
+            panic!("Expected V with IDs");
+        }
+    }
+
+    // ── Navigation steps ─────────────────────────────────────────
+
+    #[test]
+    fn test_parse_in_step() {
+        let stmt = Parser::new("g.V().in('knows')").parse().unwrap();
+        assert!(matches!(&stmt.steps[0], Step::In(l) if l == &["knows"]));
+    }
+
+    #[test]
+    fn test_parse_both_step() {
+        let stmt = Parser::new("g.V().both('knows', 'follows')")
+            .parse()
+            .unwrap();
+        assert!(matches!(&stmt.steps[0], Step::Both(l) if l == &["knows", "follows"]));
+    }
+
+    #[test]
+    fn test_parse_oute_inv() {
+        let stmt = Parser::new("g.V().outE('knows').inV()").parse().unwrap();
+        assert_eq!(stmt.steps.len(), 2);
+        assert!(matches!(&stmt.steps[0], Step::OutE(l) if l == &["knows"]));
+        assert!(matches!(&stmt.steps[1], Step::InV));
+    }
+
+    #[test]
+    fn test_parse_one_both_bothv() {
+        let stmt = Parser::new("g.V().inE().bothV()").parse().unwrap();
+        assert!(matches!(&stmt.steps[0], Step::InE(l) if l.is_empty()));
+        assert!(matches!(&stmt.steps[1], Step::BothV));
+    }
+
+    #[test]
+    fn test_parse_outv_otherv() {
+        let stmt = Parser::new("g.E().outV()").parse().unwrap();
+        assert!(matches!(&stmt.steps[0], Step::OutV));
+
+        let stmt = Parser::new("g.V().outE().otherV()").parse().unwrap();
+        assert!(matches!(&stmt.steps[1], Step::OtherV));
+    }
+
+    // ── Filter steps ─────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_has_id() {
+        let stmt = Parser::new("g.V().hasId(1, 2, 3)").parse().unwrap();
+        if let Step::HasId(ids) = &stmt.steps[0] {
+            assert_eq!(ids.len(), 3);
+        } else {
+            panic!("Expected HasId step");
+        }
+    }
+
+    #[test]
+    fn test_parse_has_not() {
+        let stmt = Parser::new("g.V().hasNot('age')").parse().unwrap();
+        assert!(matches!(&stmt.steps[0], Step::HasNot(k) if k == "age"));
+    }
+
+    #[test]
+    fn test_parse_dedup() {
+        let stmt = Parser::new("g.V().dedup()").parse().unwrap();
+        assert!(matches!(&stmt.steps[0], Step::Dedup(k) if k.is_empty()));
+    }
+
+    #[test]
+    fn test_parse_skip() {
+        let stmt = Parser::new("g.V().skip(5)").parse().unwrap();
+        assert!(matches!(&stmt.steps[0], Step::Skip(5)));
+    }
+
+    #[test]
+    fn test_parse_range() {
+        let stmt = Parser::new("g.V().range(2, 5)").parse().unwrap();
+        assert!(matches!(&stmt.steps[0], Step::Range(2, 5)));
+    }
+
+    // ── Map steps ────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_value_map() {
+        let stmt = Parser::new("g.V().valueMap('name', 'age')")
+            .parse()
+            .unwrap();
+        assert!(matches!(&stmt.steps[0], Step::ValueMap(k) if k == &["name", "age"]));
+    }
+
+    #[test]
+    fn test_parse_element_map() {
+        let stmt = Parser::new("g.V().elementMap()").parse().unwrap();
+        assert!(matches!(&stmt.steps[0], Step::ElementMap(k) if k.is_empty()));
+    }
+
+    #[test]
+    fn test_parse_id_and_label() {
+        let stmt = Parser::new("g.V().id()").parse().unwrap();
+        assert!(matches!(&stmt.steps[0], Step::Id));
+
+        let stmt = Parser::new("g.V().label()").parse().unwrap();
+        assert!(matches!(&stmt.steps[0], Step::Label));
+    }
+
+    #[test]
+    fn test_parse_count() {
+        let stmt = Parser::new("g.V().count()").parse().unwrap();
+        assert!(matches!(&stmt.steps[0], Step::Count));
+    }
+
+    #[test]
+    fn test_parse_aggregate_functions() {
+        assert!(matches!(
+            &Parser::new("g.V().values('x').sum()")
+                .parse()
+                .unwrap()
+                .steps[1],
+            Step::Sum
+        ));
+        assert!(matches!(
+            &Parser::new("g.V().values('x').mean()")
+                .parse()
+                .unwrap()
+                .steps[1],
+            Step::Mean
+        ));
+        assert!(matches!(
+            &Parser::new("g.V().values('x').min()")
+                .parse()
+                .unwrap()
+                .steps[1],
+            Step::Min
+        ));
+        assert!(matches!(
+            &Parser::new("g.V().values('x').max()")
+                .parse()
+                .unwrap()
+                .steps[1],
+            Step::Max
+        ));
+    }
+
+    #[test]
+    fn test_parse_fold_unfold() {
+        let stmt = Parser::new("g.V().fold().unfold()").parse().unwrap();
+        assert!(matches!(&stmt.steps[0], Step::Fold));
+        assert!(matches!(&stmt.steps[1], Step::Unfold));
+    }
+
+    #[test]
+    fn test_parse_constant() {
+        let stmt = Parser::new("g.V().constant('default')").parse().unwrap();
+        assert!(matches!(&stmt.steps[0], Step::Constant(Value::String(_))));
+    }
+
+    #[test]
+    fn test_parse_path() {
+        let stmt = Parser::new("g.V().out().path()").parse().unwrap();
+        assert!(matches!(&stmt.steps[1], Step::Path));
+    }
+
+    #[test]
+    fn test_parse_select() {
+        let stmt = Parser::new("g.V().as('a').out().as('b').select('a', 'b')")
+            .parse()
+            .unwrap();
+        assert!(matches!(&stmt.steps[3], Step::Select(k) if k == &["a", "b"]));
+    }
+
+    #[test]
+    fn test_parse_project() {
+        let stmt = Parser::new("g.V().project('name', 'age')").parse().unwrap();
+        assert!(matches!(&stmt.steps[0], Step::Project(k) if k == &["name", "age"]));
+    }
+
+    #[test]
+    fn test_parse_order() {
+        let stmt = Parser::new("g.V().order()").parse().unwrap();
+        assert!(matches!(&stmt.steps[0], Step::Order(_)));
+    }
+
+    #[test]
+    fn test_parse_group_count() {
+        let stmt = Parser::new("g.V().groupCount()").parse().unwrap();
+        assert!(matches!(&stmt.steps[0], Step::GroupCount(_)));
+    }
+
+    #[test]
+    fn test_parse_group() {
+        let stmt = Parser::new("g.V().group()").parse().unwrap();
+        assert!(matches!(&stmt.steps[0], Step::Group(_)));
+    }
+
+    #[test]
+    fn test_parse_properties() {
+        let stmt = Parser::new("g.V().properties('name')").parse().unwrap();
+        assert!(matches!(&stmt.steps[0], Step::Properties(k) if k == &["name"]));
+    }
+
+    // ── Side effect steps ────────────────────────────────────────
+
+    #[test]
+    fn test_parse_as_step() {
+        let stmt = Parser::new("g.V().as('a')").parse().unwrap();
+        assert!(matches!(&stmt.steps[0], Step::As(l) if l == "a"));
+    }
+
+    #[test]
+    fn test_parse_aggregate() {
+        let stmt = Parser::new("g.V().aggregate('x')").parse().unwrap();
+        assert!(matches!(&stmt.steps[0], Step::Aggregate(l) if l == "x"));
+    }
+
+    #[test]
+    fn test_parse_store() {
+        let stmt = Parser::new("g.V().store('x')").parse().unwrap();
+        assert!(matches!(&stmt.steps[0], Step::Store(l) if l == "x"));
+    }
+
+    #[test]
+    fn test_parse_property() {
+        let stmt = Parser::new("g.addV('Person').property('name', 'Alice')")
+            .parse()
+            .unwrap();
+        if let Step::Property(prop) = &stmt.steps[0] {
+            assert_eq!(prop.key, "name");
+            assert_eq!(prop.value, Value::String("Alice".into()));
+        } else {
+            panic!("Expected Property step");
+        }
+    }
+
+    #[test]
+    fn test_parse_drop() {
+        let stmt = Parser::new("g.V().hasLabel('Temp').drop()")
+            .parse()
+            .unwrap();
+        assert!(matches!(&stmt.steps[1], Step::Drop));
+    }
+
+    // ── Predicate variants ───────────────────────────────────────
+
+    #[test]
+    fn test_parse_neq_predicate() {
+        let stmt = Parser::new("g.V().has('status', neq('inactive'))")
+            .parse()
+            .unwrap();
+        assert!(matches!(
+            &stmt.steps[0],
+            Step::Has(HasStep::KeyPredicate(_, Predicate::Neq(_)))
+        ));
+    }
+
+    #[test]
+    fn test_parse_lte_gte_predicates() {
+        let stmt = Parser::new("g.V().has('age', lte(50))").parse().unwrap();
+        assert!(matches!(
+            &stmt.steps[0],
+            Step::Has(HasStep::KeyPredicate(_, Predicate::Lte(_)))
+        ));
+
+        let stmt = Parser::new("g.V().has('age', gte(18))").parse().unwrap();
+        assert!(matches!(
+            &stmt.steps[0],
+            Step::Has(HasStep::KeyPredicate(_, Predicate::Gte(_)))
+        ));
+    }
+
+    #[test]
+    fn test_parse_between_predicate() {
+        let stmt = Parser::new("g.V().has('age', between(18, 65))")
+            .parse()
+            .unwrap();
+        if let Step::Has(HasStep::KeyPredicate(_, Predicate::Between(lo, hi))) = &stmt.steps[0] {
+            assert_eq!(*lo, Value::Int64(18));
+            assert_eq!(*hi, Value::Int64(65));
+        } else {
+            panic!("Expected between predicate");
+        }
+    }
+
+    #[test]
+    fn test_parse_without_predicate() {
+        let stmt = Parser::new("g.V().has('status', without('deleted', 'banned'))")
+            .parse()
+            .unwrap();
+        assert!(matches!(
+            &stmt.steps[0],
+            Step::Has(HasStep::KeyPredicate(_, Predicate::Without(v))) if v.len() == 2
+        ));
+    }
+
+    #[test]
+    fn test_parse_string_predicates() {
+        let stmt = Parser::new("g.V().has('name', containing('ali'))")
+            .parse()
+            .unwrap();
+        assert!(matches!(
+            &stmt.steps[0],
+            Step::Has(HasStep::KeyPredicate(_, Predicate::Containing(_)))
+        ));
+
+        let stmt = Parser::new("g.V().has('name', startingWith('A'))")
+            .parse()
+            .unwrap();
+        assert!(matches!(
+            &stmt.steps[0],
+            Step::Has(HasStep::KeyPredicate(_, Predicate::StartingWith(_)))
+        ));
+
+        let stmt = Parser::new("g.V().has('name', endingWith('son'))")
+            .parse()
+            .unwrap();
+        assert!(matches!(
+            &stmt.steps[0],
+            Step::Has(HasStep::KeyPredicate(_, Predicate::EndingWith(_)))
+        ));
+    }
+
+    // ── Edge creation (from/to) ──────────────────────────────────
+
+    #[test]
+    fn test_parse_from_to_labels() {
+        let stmt = Parser::new("g.addE('KNOWS').from('a').to('b')")
+            .parse()
+            .unwrap();
+        assert!(matches!(&stmt.steps[0], Step::From(FromTo::Label(l)) if l == "a"));
+        assert!(matches!(&stmt.steps[1], Step::To(FromTo::Label(l)) if l == "b"));
+    }
+
+    // ── has(label, key, value) ───────────────────────────────────
+
+    #[test]
+    fn test_parse_has_label_key_value() {
+        let stmt = Parser::new("g.V().has('Person', 'name', 'Alice')")
+            .parse()
+            .unwrap();
+        if let Step::Has(HasStep::LabelKeyValue(label, key, val)) = &stmt.steps[0] {
+            assert_eq!(label, "Person");
+            assert_eq!(key, "name");
+            assert_eq!(*val, Value::String("Alice".into()));
+        } else {
+            panic!("Expected LabelKeyValue has step");
+        }
+    }
+
+    // ── Complex multi-step traversals ────────────────────────────
+
+    #[test]
+    fn test_parse_complex_traversal() {
+        let stmt = Parser::new(
+            "g.V().hasLabel('Person').has('age', gt(25)).out('knows').dedup().values('name').limit(10)",
+        )
+        .parse()
+        .unwrap();
+        assert_eq!(stmt.steps.len(), 6);
+        assert!(matches!(&stmt.steps[0], Step::HasLabel(_)));
+        assert!(matches!(&stmt.steps[1], Step::Has(_)));
+        assert!(matches!(&stmt.steps[2], Step::Out(_)));
+        assert!(matches!(&stmt.steps[3], Step::Dedup(_)));
+        assert!(matches!(&stmt.steps[4], Step::Values(_)));
+        assert!(matches!(&stmt.steps[5], Step::Limit(10)));
+    }
+
+    #[test]
+    fn test_parse_vertex_creation_with_properties() {
+        let stmt = Parser::new("g.addV('Person').property('name', 'Alice').as('a')")
+            .parse()
+            .unwrap();
+        assert!(matches!(&stmt.source, TraversalSource::AddV(Some(l)) if l == "Person"));
+        assert_eq!(stmt.steps.len(), 2);
+        assert!(matches!(&stmt.steps[0], Step::Property(_)));
+        assert!(matches!(&stmt.steps[1], Step::As(_)));
+    }
 }

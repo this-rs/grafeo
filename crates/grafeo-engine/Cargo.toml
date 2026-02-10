@@ -50,12 +50,13 @@ cypher = ["grafeo-adapters/cypher"]
 sparql = ["grafeo-adapters/sparql"]
 gremlin = ["grafeo-adapters/gremlin"]
 graphql = ["grafeo-adapters/graphql"]
+sql-pgq = ["grafeo-adapters/sql-pgq"]  # SQL/PGQ (SQL:2023 GRAPH_TABLE)
 rdf = ["grafeo-core/rdf", "grafeo-adapters/rdf"]  # RDF graph model and planner
 parallel = ["rayon", "crossbeam", "grafeo-core/parallel", "grafeo-adapters/parallel"]  # Parallel execution
 wal = ["grafeo-adapters/wal"]  # Write-ahead log storage
 spill = ["grafeo-core/spill"]  # Disk spilling for out-of-core execution
 mmap = ["grafeo-core/mmap"]  # File-backed vector storage
-full = ["gql", "cypher", "sparql", "gremlin", "graphql", "rdf", "parallel", "wal", "spill", "mmap"]
+full = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq", "rdf", "parallel", "wal", "spill", "mmap"]
 vector-index = ["grafeo-core/vector-index"]  # HNSW vector index for k-NN search
 block-stm = []  # Block-STM parallel transaction execution
 

@@ -1,0 +1,37 @@
+{
+  "name": "@grafeo-db/cli",
+  "version": "0.4.4",
+  "description": "Command-line interface for Grafeo graph database",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GrafeoDB/grafeo",
+    "directory": "packages/grafeo-cli-npm"
+  },
+  "homepage": "https://grafeo.dev",
+  "keywords": [
+    "grafeo",
+    "graph",
+    "database",
+    "gql",
+    "cli"
+  ],
+  "bin": {
+    "grafeo": "bin/grafeo.js"
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "optionalDependencies": {
+    "@grafeo-db/cli-linux-x64": "0.4.4",
+    "@grafeo-db/cli-linux-arm64": "0.4.4",
+    "@grafeo-db/cli-darwin-x64": "0.4.4",
+    "@grafeo-db/cli-darwin-arm64": "0.4.4",
+    "@grafeo-db/cli-win32-x64": "0.4.4"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

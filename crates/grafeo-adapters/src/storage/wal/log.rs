@@ -100,9 +100,6 @@ struct LogFile {
     size: u64,
     /// File path.
     path: PathBuf,
-    /// Sequence number (for log file ordering during recovery).
-    #[allow(dead_code)]
-    sequence: u64,
 }
 
 /// Manages the Write-Ahead Log with rotation, checkpointing, and durability modes.
@@ -368,7 +365,6 @@ impl WalManager {
             writer: BufWriter::new(file),
             size: 0,
             path: new_path,
-            sequence: new_sequence,
         };
 
         // Replace active log
@@ -508,7 +504,6 @@ impl WalManager {
                 writer: BufWriter::new(file),
                 size,
                 path,
-                sequence,
             });
         }
         Ok(())

@@ -7,21 +7,10 @@ use serde::Serialize;
 use crate::output::{self, Format};
 use crate::{IndexCommands, OutputFormat};
 
-/// Index information output.
-#[derive(Serialize)]
-struct IndexOutput {
-    name: String,
-    index_type: String,
-    target: String,
-    property: Option<String>,
-    entry_count: usize,
-}
-
 /// Index statistics output.
 #[derive(Serialize)]
 struct IndexStatsOutput {
     total_indexes: usize,
-    indexes: Vec<IndexOutput>,
 }
 
 /// Run index commands.
@@ -37,12 +26,11 @@ pub fn run(cmd: IndexCommands, format: OutputFormat, quiet: bool) -> Result<()> 
                     if !quiet {
                         let output = IndexStatsOutput {
                             total_indexes: stats.index_count,
-                            indexes: vec![], // TODO: Get actual index list when API available
                         };
                         println!("{}", serde_json::to_string_pretty(&output)?);
                     }
                 }
-                Format::Table => {
+                Format::Table | Format::Csv => {
                     if !quiet {
                         println!("Total indexes: {}\n", stats.index_count);
 

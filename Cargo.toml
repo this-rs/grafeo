@@ -14,21 +14,21 @@ members = [
 ]
 
 [workspace.package]
-version = "0.4.3"
+version = "0.4.4"
 edition = "2024"
 rust-version = "1.91.1"
-license = "AGPL-3.0-or-later"
+license = "Apache-2.0"
 repository = "https://github.com/GrafeoDB/grafeo"
 authors = ["S.T. Grond"]
-description = "A pure-Rust, high-performance, embeddable graph database"
+description = "A high-performance, embeddable graph database with a Rust core and no required C dependencies"
 
 [workspace.dependencies]
 # Internal crates (default-features = false to allow per-crate control)
-grafeo-common = { path = "crates/grafeo-common", version = "0.4.3" }
-grafeo-core = { path = "crates/grafeo-core", version = "0.4.3", default-features = false }
-grafeo-adapters = { path = "crates/grafeo-adapters", version = "0.4.3", default-features = false }
-grafeo-engine = { path = "crates/grafeo-engine", version = "0.4.3", default-features = false }
-grafeo = { path = "crates/grafeo", version = "0.4.3" }
+grafeo-common = { path = "crates/grafeo-common", version = "0.4.4" }
+grafeo-core = { path = "crates/grafeo-core", version = "0.4.4", default-features = false }
+grafeo-adapters = { path = "crates/grafeo-adapters", version = "0.4.4", default-features = false }
+grafeo-engine = { path = "crates/grafeo-engine", version = "0.4.4", default-features = false }
+grafeo = { path = "crates/grafeo", version = "0.4.4" }
 
 # Error handling
 thiserror = "2.0"
@@ -62,7 +62,7 @@ bincode = { version = "2.0", features = ["serde"] }
 
 # Arrow & Polars
 arrow = "57.2.0"
-polars = "0.52.0"
+polars = "0.53.0"
 
 # Python bindings
 pyo3 = "0.27"
@@ -81,7 +81,7 @@ regex = "1.12.3"
 # Testing
 proptest = "1.10.0"
 criterion = "0.8.2"
-tempfile = "3.22"
+tempfile = "3.25"
 
 # Allocators (platform-optimized)
 tikv-jemallocator = "0.6"
@@ -92,14 +92,11 @@ rustc-hash = "2.1"
 
 # Vector index support
 ordered-float = "5.0"
-rand = "0.9"
+rand = "0.10"
 
 [workspace.lints.rust]
 unsafe_code = "warn"
-# TODO(0.4.x): Enable missing_docs = "warn" once all public items are documented
-# This requires adding documentation to all public types, functions, and modules.
-# Track progress by running: cargo doc --all-features 2>&1 | grep "missing documentation"
-# missing_docs = "warn"
+missing_docs = "warn"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

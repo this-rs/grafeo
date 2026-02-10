@@ -28,11 +28,9 @@ pub fn run(cmd: DataCommands, _format: OutputFormat, quiet: bool) -> Result<()> 
             let db = GrafeoDB::open(&path)
                 .with_context(|| format!("Failed to open database at {}", path.display()))?;
 
-            // Get counts for progress reporting
             let info = db.info();
 
             // TODO: Implement actual export when format handlers are available
-            // For now, use the native backup format
             db.save(&out)
                 .with_context(|| format!("Failed to export to {}", out.display()))?;
 
@@ -53,7 +51,6 @@ pub fn run(cmd: DataCommands, _format: OutputFormat, quiet: bool) -> Result<()> 
             );
 
             // TODO: Implement format detection and import
-            // For now, use native backup format
             let db = GrafeoDB::open(&input)
                 .with_context(|| format!("Failed to open dump at {}", input.display()))?;
             db.save(&path)

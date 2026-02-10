@@ -37,6 +37,9 @@ pub enum QueryLanguage {
     /// GraphQL for LPG
     #[cfg(feature = "graphql")]
     GraphQL,
+    /// SQL/PGQ (SQL:2023 GRAPH_TABLE)
+    #[cfg(feature = "sql-pgq")]
+    SqlPgq,
     /// SPARQL 1.1 for RDF
     #[cfg(feature = "sparql")]
     Sparql,
@@ -58,6 +61,8 @@ impl QueryLanguage {
             Self::Gremlin => true,
             #[cfg(feature = "graphql")]
             Self::GraphQL => true,
+            #[cfg(feature = "sql-pgq")]
+            Self::SqlPgq => true,
             #[cfg(feature = "sparql")]
             Self::Sparql => false,
             #[cfg(all(feature = "graphql", feature = "rdf"))]
@@ -288,6 +293,11 @@ impl QueryProcessor {
             QueryLanguage::GraphQL => {
                 use crate::query::graphql_translator;
                 graphql_translator::translate(query)
+            }
+            #[cfg(feature = "sql-pgq")]
+            QueryLanguage::SqlPgq => {
+                use crate::query::sql_pgq_translator;
+                sql_pgq_translator::translate(query)
             }
             #[allow(unreachable_patterns)]
             _ => Err(Error::Internal(format!(
@@ -595,6 +605,8 @@ fn substitute_in_operator(op: &mut LogicalOperator, params: &QueryParams) -> Res
             substitute_in_expression(&mut join.query_vector, params)?;
             substitute_in_operator(&mut join.input, params)?;
         }
+        // DDL operators have no expressions to substitute
+        LogicalOperator::CreatePropertyGraph(_) => {}
     }
     Ok(())
 }

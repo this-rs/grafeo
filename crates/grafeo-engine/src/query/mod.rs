@@ -38,6 +38,9 @@ pub mod gremlin_translator;
 #[cfg(feature = "graphql")]
 pub mod graphql_translator;
 
+#[cfg(feature = "sql-pgq")]
+pub mod sql_pgq_translator;
+
 #[cfg(all(feature = "graphql", feature = "rdf"))]
 pub mod graphql_rdf_translator;
 
@@ -70,6 +73,9 @@ pub use gremlin_translator::translate as translate_gremlin;
 
 #[cfg(feature = "graphql")]
 pub use graphql_translator::translate as translate_graphql;
+
+#[cfg(feature = "sql-pgq")]
+pub use sql_pgq_translator::translate as translate_sql_pgq;
 
 #[cfg(all(feature = "graphql", feature = "rdf"))]
 pub use graphql_rdf_translator::translate as translate_graphql_rdf;

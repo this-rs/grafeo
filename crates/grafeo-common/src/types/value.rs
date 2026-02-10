@@ -252,10 +252,12 @@ impl Value {
     }
 
     /// Serializes this value to bytes.
-    #[must_use]
-    pub fn serialize(&self) -> Vec<u8> {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value cannot be encoded (e.g. deeply nested structures).
+    pub fn serialize(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
         bincode::serde::encode_to_vec(self, bincode::config::standard())
-            .expect("Value serialization should not fail")
     }
 
     /// Deserializes a value from bytes.
@@ -461,7 +463,7 @@ pub struct HashableValue(pub Value);
 /// - `Bool` - false < true
 /// - `Timestamp` - chronological ordering
 ///
-/// Other types (`Null`, `Bytes`, `List`, `Map`) return `None` from `try_from`.
+/// Other types (`Null`, `Bytes`, `List`, `Map`) return `Err(())` from `try_from`.
 ///
 /// # Examples
 ///
@@ -561,25 +563,28 @@ impl From<f64> for OrderedFloat64 {
     }
 }
 
-impl OrderableValue {
+impl TryFrom<&Value> for OrderableValue {
+    type Error = ();
+
     /// Attempts to create an `OrderableValue` from a `Value`.
     ///
-    /// Returns `None` for types that don't have a natural ordering
-    /// (`Null`, `Bytes`, `List`, `Map`).
-    #[must_use]
-    pub fn try_from(value: &Value) -> Option<Self> {
+    /// Returns `Err(())` for types that don't have a natural ordering
+    /// (`Null`, `Bytes`, `List`, `Map`, `Vector`).
+    fn try_from(value: &Value) -> Result<Self, Self::Error> {
         match value {
-            Value::Int64(i) => Some(Self::Int64(*i)),
-            Value::Float64(f) => Some(Self::Float64(OrderedFloat64(*f))),
-            Value::String(s) => Some(Self::String(s.clone())),
-            Value::Bool(b) => Some(Self::Bool(*b)),
-            Value::Timestamp(t) => Some(Self::Timestamp(*t)),
+            Value::Int64(i) => Ok(Self::Int64(*i)),
+            Value::Float64(f) => Ok(Self::Float64(OrderedFloat64(*f))),
+            Value::String(s) => Ok(Self::String(s.clone())),
+            Value::Bool(b) => Ok(Self::Bool(*b)),
+            Value::Timestamp(t) => Ok(Self::Timestamp(*t)),
             Value::Null | Value::Bytes(_) | Value::List(_) | Value::Map(_) | Value::Vector(_) => {
-                None
+                Err(())
             }
         }
     }
+}
 
+impl OrderableValue {
     /// Converts this `OrderableValue` back to a `Value`.
     #[must_use]
     pub fn into_value(self) -> Value {
@@ -851,7 +856,7 @@ mod tests {
         ];
 
         for v in values {
-            let bytes = v.serialize();
+            let bytes = v.serialize().unwrap();
             let decoded = Value::deserialize(&bytes).unwrap();
             assert_eq!(v, decoded);
         }
@@ -933,9 +938,9 @@ mod tests {
 
     #[test]
     fn test_orderable_value_vector_unsupported() {
-        // Vectors don't have a natural ordering, so try_from should return None
+        // Vectors don't have a natural ordering, so try_from should return Err
         let v = Value::Vector(vec![0.1f32, 0.2, 0.3].into());
-        assert!(OrderableValue::try_from(&v).is_none());
+        assert!(OrderableValue::try_from(&v).is_err());
     }
 
     #[test]
@@ -1018,17 +1023,17 @@ mod tests {
     #[test]
     fn test_orderable_value_try_from() {
         // Supported types
-        assert!(OrderableValue::try_from(&Value::Int64(42)).is_some());
-        assert!(OrderableValue::try_from(&Value::Float64(std::f64::consts::PI)).is_some());
-        assert!(OrderableValue::try_from(&Value::String("test".into())).is_some());
-        assert!(OrderableValue::try_from(&Value::Bool(true)).is_some());
-        assert!(OrderableValue::try_from(&Value::Timestamp(Timestamp::from_secs(1000))).is_some());
+        assert!(OrderableValue::try_from(&Value::Int64(42)).is_ok());
+        assert!(OrderableValue::try_from(&Value::Float64(std::f64::consts::PI)).is_ok());
+        assert!(OrderableValue::try_from(&Value::String("test".into())).is_ok());
+        assert!(OrderableValue::try_from(&Value::Bool(true)).is_ok());
+        assert!(OrderableValue::try_from(&Value::Timestamp(Timestamp::from_secs(1000))).is_ok());
 
         // Unsupported types
-        assert!(OrderableValue::try_from(&Value::Null).is_none());
-        assert!(OrderableValue::try_from(&Value::Bytes(vec![1, 2, 3].into())).is_none());
-        assert!(OrderableValue::try_from(&Value::List(vec![].into())).is_none());
-        assert!(OrderableValue::try_from(&Value::Map(BTreeMap::new().into())).is_none());
+        assert!(OrderableValue::try_from(&Value::Null).is_err());
+        assert!(OrderableValue::try_from(&Value::Bytes(vec![1, 2, 3].into())).is_err());
+        assert!(OrderableValue::try_from(&Value::List(vec![].into())).is_err());
+        assert!(OrderableValue::try_from(&Value::Map(BTreeMap::new().into())).is_err());
     }
 
     #[test]

@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use napi::JsString;
 use napi::bindgen_prelude::*;
-use napi::{JsObject, JsString, JsUnknown};
 use napi_derive::napi;
 use parking_lot::RwLock;
 
@@ -20,6 +20,25 @@ use crate::graph::{JsEdge, JsNode};
 use crate::query::QueryResult;
 use crate::transaction::Transaction;
 use crate::types;
+
+/// Validate a JavaScript number as a safe node ID.
+///
+/// JavaScript numbers are f64, but entity IDs are u64. This rejects
+/// negative values, NaN, Infinity, and values beyond `Number.MAX_SAFE_INTEGER`.
+fn validate_node_id(id: f64) -> Result<NodeId> {
+    if !(0.0..=9_007_199_254_740_991.0).contains(&id) {
+        return Err(NodeGrafeoError::InvalidArgument(format!("Invalid node ID: {id}")).into());
+    }
+    Ok(NodeId(id as u64))
+}
+
+/// Validate a JavaScript number as a safe edge ID.
+fn validate_edge_id(id: f64) -> Result<EdgeId> {
+    if !(0.0..=9_007_199_254_740_991.0).contains(&id) {
+        return Err(NodeGrafeoError::InvalidArgument(format!("Invalid edge ID: {id}")).into());
+    }
+    Ok(EdgeId(id as u64))
+}
 
 /// Your connection to a Grafeo database.
 #[napi(js_name = "GrafeoDB")]
@@ -98,6 +117,44 @@ impl JsGrafeoDB {
                     .map_err(napi::Error::from)
             } else {
                 db.execute_cypher(&query)
+                    .map_err(NodeGrafeoError::from)
+                    .map_err(napi::Error::from)
+            }
+        })
+        .await
+        .map_err(|e| napi::Error::from_reason(e.to_string()))??;
+
+        let db = self.inner.read();
+        let (nodes, edges) = extract_entities(&result, &db);
+
+        Ok(QueryResult::with_metrics(
+            result.columns,
+            result.rows,
+            nodes,
+            edges,
+            result.execution_time_ms,
+            result.rows_scanned,
+        ))
+    }
+
+    /// Execute a SQL/PGQ query (SQL:2023 GRAPH_TABLE).
+    #[cfg(feature = "sql-pgq")]
+    #[napi(js_name = "executeSql")]
+    pub async fn execute_sql(
+        &self,
+        query: String,
+        params: Option<serde_json::Value>,
+    ) -> Result<QueryResult> {
+        let db = self.inner.clone();
+        let result = tokio::task::spawn_blocking(move || -> std::result::Result<_, napi::Error> {
+            let db = db.read();
+            let param_map = convert_json_params(params.as_ref())?;
+            if let Some(p) = param_map {
+                db.execute_sql_with_params(&query, p)
+                    .map_err(NodeGrafeoError::from)
+                    .map_err(napi::Error::from)
+            } else {
+                db.execute_sql(&query)
                     .map_err(NodeGrafeoError::from)
                     .map_err(napi::Error::from)
             }
@@ -222,7 +279,7 @@ impl JsGrafeoDB {
         &self,
         env: Env,
         labels: Vec<String>,
-        properties: Option<JsObject>,
+        properties: Option<Object<'_>>,
     ) -> Result<JsNode> {
         let db = self.inner.read();
         let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
@@ -234,7 +291,7 @@ impl JsGrafeoDB {
             for i in 0..len {
                 let key: JsString = keys.get_element(i)?;
                 let key_str = key.into_utf8()?.into_owned()?;
-                let value: JsUnknown = props_obj.get_named_property(&key_str)?;
+                let value: Unknown<'_> = props_obj.get_named_property(&key_str)?;
                 let val = types::js_to_value(&env, value)?;
                 props.push((grafeo_common::types::PropertyKey::new(key_str), val));
             }
@@ -254,11 +311,11 @@ impl JsGrafeoDB {
         source_id: f64,
         target_id: f64,
         edge_type: String,
-        properties: Option<JsObject>,
+        properties: Option<Object<'_>>,
     ) -> Result<JsEdge> {
         let db = self.inner.read();
-        let src = NodeId(source_id as u64);
-        let dst = NodeId(target_id as u64);
+        let src = validate_node_id(source_id)?;
+        let dst = validate_node_id(target_id)?;
 
         let id = if let Some(props_obj) = properties {
             let mut props = Vec::new();
@@ -267,7 +324,7 @@ impl JsGrafeoDB {
             for i in 0..len {
                 let key: JsString = keys.get_element(i)?;
                 let key_str = key.into_utf8()?.into_owned()?;
-                let value: JsUnknown = props_obj.get_named_property(&key_str)?;
+                let value: Unknown<'_> = props_obj.get_named_property(&key_str)?;
                 let val = types::js_to_value(&env, value)?;
                 props.push((grafeo_common::types::PropertyKey::new(key_str), val));
             }
@@ -281,10 +338,10 @@ impl JsGrafeoDB {
 
     /// Get a node by ID.
     #[napi(js_name = "getNode")]
-    pub fn get_node(&self, id: f64) -> Option<JsNode> {
+    pub fn get_node(&self, id: f64) -> Result<Option<JsNode>> {
+        let node_id = validate_node_id(id)?;
         let db = self.inner.read();
-        let node_id = NodeId(id as u64);
-        db.get_node(node_id).map(|node| {
+        Ok(db.get_node(node_id).map(|node| {
             let labels: Vec<String> = node.labels.iter().map(|s| s.to_string()).collect();
             let properties = node
                 .properties
@@ -292,15 +349,15 @@ impl JsGrafeoDB {
                 .map(|(k, v)| (k.as_str().to_string(), v))
                 .collect();
             JsNode::new(node_id, labels, properties)
-        })
+        }))
     }
 
     /// Get an edge by ID.
     #[napi(js_name = "getEdge")]
-    pub fn get_edge(&self, id: f64) -> Option<JsEdge> {
+    pub fn get_edge(&self, id: f64) -> Result<Option<JsEdge>> {
+        let edge_id = validate_edge_id(id)?;
         let db = self.inner.read();
-        let edge_id = EdgeId(id as u64);
-        db.get_edge(edge_id).map(|edge| {
+        Ok(db.get_edge(edge_id).map(|edge| {
             let properties = edge
                 .properties
                 .into_iter()
@@ -313,21 +370,23 @@ impl JsGrafeoDB {
                 edge.dst,
                 properties,
             )
-        })
+        }))
     }
 
     /// Delete a node by ID. Returns true if the node existed.
     #[napi(js_name = "deleteNode")]
-    pub fn delete_node(&self, id: f64) -> bool {
+    pub fn delete_node(&self, id: f64) -> Result<bool> {
+        let node_id = validate_node_id(id)?;
         let db = self.inner.read();
-        db.delete_node(NodeId(id as u64))
+        Ok(db.delete_node(node_id))
     }
 
     /// Delete an edge by ID. Returns true if the edge existed.
     #[napi(js_name = "deleteEdge")]
-    pub fn delete_edge(&self, id: f64) -> bool {
+    pub fn delete_edge(&self, id: f64) -> Result<bool> {
+        let edge_id = validate_edge_id(id)?;
         let db = self.inner.read();
-        db.delete_edge(EdgeId(id as u64))
+        Ok(db.delete_edge(edge_id))
     }
 
     /// Set a property on a node.
@@ -337,11 +396,12 @@ impl JsGrafeoDB {
         env: Env,
         id: f64,
         key: String,
-        value: JsUnknown,
+        value: Unknown<'_>,
     ) -> Result<()> {
+        let node_id = validate_node_id(id)?;
         let db = self.inner.read();
         let val = types::js_to_value(&env, value)?;
-        db.set_node_property(NodeId(id as u64), &key, val);
+        db.set_node_property(node_id, &key, val);
         Ok(())
     }
 
@@ -352,11 +412,12 @@ impl JsGrafeoDB {
         env: Env,
         id: f64,
         key: String,
-        value: JsUnknown,
+        value: Unknown<'_>,
     ) -> Result<()> {
+        let edge_id = validate_edge_id(id)?;
         let db = self.inner.read();
         let val = types::js_to_value(&env, value)?;
-        db.set_edge_property(EdgeId(id as u64), &key, val);
+        db.set_edge_property(edge_id, &key, val);
         Ok(())
     }
 
@@ -402,6 +463,36 @@ impl JsGrafeoDB {
             )
             .map_err(NodeGrafeoError::from)
             .map_err(napi::Error::from)
+        })
+        .await
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    }
+
+    /// Drop a vector index for the given label and property.
+    /// Returns true if the index existed and was removed.
+    #[cfg(feature = "vector-index")]
+    #[napi(js_name = "dropVectorIndex")]
+    pub async fn drop_vector_index(&self, label: String, property: String) -> Result<bool> {
+        let db = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            let db = db.read();
+            Ok(db.drop_vector_index(&label, &property))
+        })
+        .await
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    }
+
+    /// Rebuild a vector index by rescanning all matching nodes.
+    /// Preserves the original index configuration.
+    #[cfg(feature = "vector-index")]
+    #[napi(js_name = "rebuildVectorIndex")]
+    pub async fn rebuild_vector_index(&self, label: String, property: String) -> Result<()> {
+        let db = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            let db = db.read();
+            db.rebuild_vector_index(&label, &property)
+                .map_err(NodeGrafeoError::from)
+                .map_err(napi::Error::from)
         })
         .await
         .map_err(|e| napi::Error::from_reason(e.to_string()))?
@@ -503,6 +594,45 @@ impl JsGrafeoDB {
                         .collect::<Vec<Vec<f64>>>()
                 })
                 .collect::<Vec<Vec<Vec<f64>>>>())
+        })
+        .await
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    }
+
+    /// Search for diverse nearest neighbors using Maximal Marginal Relevance (MMR).
+    #[cfg(feature = "vector-index")]
+    #[napi(js_name = "mmrSearch")]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn mmr_search(
+        &self,
+        label: String,
+        property: String,
+        query: Vec<f64>,
+        k: u32,
+        fetch_k: Option<u32>,
+        lambda_mult: Option<f64>,
+        ef: Option<u32>,
+    ) -> Result<Vec<Vec<f64>>> {
+        let db = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            let db = db.read();
+            let query_f32: Vec<f32> = query.iter().map(|&v| v as f32).collect();
+            let results = db
+                .mmr_search(
+                    &label,
+                    &property,
+                    &query_f32,
+                    k as usize,
+                    fetch_k.map(|v| v as usize),
+                    lambda_mult.map(|v| v as f32),
+                    ef.map(|v| v as usize),
+                )
+                .map_err(NodeGrafeoError::from)
+                .map_err(napi::Error::from)?;
+            Ok(results
+                .into_iter()
+                .map(|(id, dist)| vec![id.as_u64() as f64, dist as f64])
+                .collect::<Vec<Vec<f64>>>())
         })
         .await
         .map_err(|e| napi::Error::from_reason(e.to_string()))?

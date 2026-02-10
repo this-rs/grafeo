@@ -139,6 +139,8 @@ impl Database {
             "gremlin" => self.inner.execute_gremlin(query),
             #[cfg(feature = "graphql")]
             "graphql" => self.inner.execute_graphql(query),
+            #[cfg(feature = "sql-pgq")]
+            "sql" => self.inner.execute_sql(query),
             other => {
                 let supported = supported_languages();
                 return Err(JsError::new(&format!(
@@ -216,5 +218,7 @@ fn supported_languages() -> String {
     langs.push("gremlin");
     #[cfg(feature = "graphql")]
     langs.push("graphql");
+    #[cfg(feature = "sql-pgq")]
+    langs.push("sql");
     langs.join(", ")
 }

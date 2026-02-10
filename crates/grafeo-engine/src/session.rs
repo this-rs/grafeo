@@ -505,6 +505,122 @@ impl Session {
         processor.process(query, QueryLanguage::GraphQL, Some(&params))
     }
 
+    /// Executes a SQL/PGQ query (SQL:2023 GRAPH_TABLE).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the query fails to parse or execute.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use grafeo_engine::GrafeoDB;
+    ///
+    /// let db = GrafeoDB::new_in_memory();
+    /// let session = db.session();
+    ///
+    /// let result = session.execute_sql(
+    ///     "SELECT * FROM GRAPH_TABLE (
+    ///         MATCH (n:Person)
+    ///         COLUMNS (n.name AS name)
+    ///     )"
+    /// )?;
+    /// ```
+    #[cfg(feature = "sql-pgq")]
+    pub fn execute_sql(&self, query: &str) -> Result<QueryResult> {
+        use crate::query::{
+            Executor, Planner, binder::Binder, cache::CacheKey, optimizer::Optimizer,
+            plan::LogicalOperator, processor::QueryLanguage, sql_pgq_translator,
+        };
+
+        // Parse and translate (always needed to check for DDL)
+        let logical_plan = sql_pgq_translator::translate(query)?;
+
+        // Handle DDL statements directly (they don't go through the query pipeline)
+        if let LogicalOperator::CreatePropertyGraph(ref cpg) = logical_plan.root {
+            return Ok(QueryResult {
+                columns: vec!["status".into()],
+                column_types: vec![grafeo_common::types::LogicalType::String],
+                rows: vec![vec![Value::from(format!(
+                    "Property graph '{}' created ({} node tables, {} edge tables)",
+                    cpg.name,
+                    cpg.node_tables.len(),
+                    cpg.edge_tables.len()
+                ))]],
+                execution_time_ms: None,
+                rows_scanned: None,
+            });
+        }
+
+        // Create cache key for query plans
+        let cache_key = CacheKey::new(query, QueryLanguage::SqlPgq);
+
+        // Try to get cached optimized plan
+        let optimized_plan = if let Some(cached_plan) = self.query_cache.get_optimized(&cache_key) {
+            cached_plan
+        } else {
+            // Semantic validation
+            let mut binder = Binder::new();
+            let _binding_context = binder.bind(&logical_plan)?;
+
+            // Optimize the plan
+            let optimizer = Optimizer::from_store(&self.store);
+            let plan = optimizer.optimize(logical_plan)?;
+
+            // Cache the optimized plan
+            self.query_cache.put_optimized(cache_key, plan.clone());
+
+            plan
+        };
+
+        // Get transaction context for MVCC visibility
+        let (viewing_epoch, tx_id) = self.get_transaction_context();
+
+        // Convert to physical plan with transaction context
+        let planner = Planner::with_context(
+            Arc::clone(&self.store),
+            Arc::clone(&self.tx_manager),
+            tx_id,
+            viewing_epoch,
+        )
+        .with_factorized_execution(self.factorized_execution);
+        let mut physical_plan = planner.plan(&optimized_plan)?;
+
+        // Execute the plan
+        let executor = Executor::with_columns(physical_plan.columns.clone());
+        executor.execute(physical_plan.operator.as_mut())
+    }
+
+    /// Executes a SQL/PGQ query with parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the query fails to parse or execute.
+    #[cfg(feature = "sql-pgq")]
+    pub fn execute_sql_with_params(
+        &self,
+        query: &str,
+        params: std::collections::HashMap<String, Value>,
+    ) -> Result<QueryResult> {
+        use crate::query::processor::{QueryLanguage, QueryProcessor};
+
+        // Get transaction context for MVCC visibility
+        let (viewing_epoch, tx_id) = self.get_transaction_context();
+
+        // Create processor with transaction context
+        let processor =
+            QueryProcessor::for_lpg_with_tx(Arc::clone(&self.store), Arc::clone(&self.tx_manager));
+
+        // Apply transaction context if in a transaction
+        let processor = if let Some(tx_id) = tx_id {
+            processor.with_tx_context(viewing_epoch, tx_id)
+        } else {
+            processor
+        };
+
+        processor.process(query, QueryLanguage::SqlPgq, Some(&params))
+    }
+
     /// Executes a SPARQL query.
     ///
     /// # Errors

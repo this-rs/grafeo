@@ -491,58 +491,80 @@ impl<'a> Lexer<'a> {
         }
 
         let text = &self.input[start..self.position];
-        match text.to_uppercase().as_str() {
-            "MATCH" => TokenKind::Match,
-            "RETURN" => TokenKind::Return,
-            "WHERE" => TokenKind::Where,
-            "AND" => TokenKind::And,
-            "OR" => TokenKind::Or,
-            "NOT" => TokenKind::Not,
+        Self::keyword_kind(text)
+    }
+
+    fn keyword_kind(text: &str) -> TokenKind {
+        use crate::query::keywords::CommonKeyword;
+
+        let upper = text.to_uppercase();
+        let upper = upper.as_str();
+
+        // Try common keywords first (shared across parsers)
+        if let Some(common) = CommonKeyword::from_uppercase(upper) {
+            return Self::map_common_keyword(common);
+        }
+
+        // GQL-specific keywords
+        match upper {
             "INSERT" => TokenKind::Insert,
-            "DELETE" => TokenKind::Delete,
-            "SET" => TokenKind::Set,
-            "REMOVE" => TokenKind::Remove,
-            "CREATE" => TokenKind::Create,
-            "NODE" => TokenKind::Node,
-            "EDGE" => TokenKind::Edge,
             "TYPE" => TokenKind::Type,
-            "AS" => TokenKind::As,
-            "DISTINCT" => TokenKind::Distinct,
-            "ORDER" => TokenKind::Order,
-            "BY" => TokenKind::By,
-            "ASC" => TokenKind::Asc,
-            "DESC" => TokenKind::Desc,
-            "SKIP" => TokenKind::Skip,
-            "LIMIT" => TokenKind::Limit,
-            "NULL" => TokenKind::Null,
-            "TRUE" => TokenKind::True,
-            "FALSE" => TokenKind::False,
-            "DETACH" => TokenKind::Detach,
-            "CALL" => TokenKind::Call,
-            "YIELD" => TokenKind::Yield,
-            "IN" => TokenKind::In,
-            "LIKE" => TokenKind::Like,
-            "IS" => TokenKind::Is,
-            "CASE" => TokenKind::Case,
-            "WHEN" => TokenKind::When,
-            "THEN" => TokenKind::Then,
-            "ELSE" => TokenKind::Else,
-            "END" => TokenKind::End,
-            "EXISTS" => TokenKind::Exists,
-            "OPTIONAL" => TokenKind::Optional,
-            "WITH" => TokenKind::With,
-            "UNWIND" => TokenKind::Unwind,
-            "MERGE" => TokenKind::Merge,
-            "HAVING" => TokenKind::Having,
-            "ON" => TokenKind::On,
-            "STARTS" => TokenKind::Starts,
-            "ENDS" => TokenKind::Ends,
-            "CONTAINS" => TokenKind::Contains,
             "VECTOR" => TokenKind::Vector,
             "INDEX" => TokenKind::Index,
             "DIMENSION" => TokenKind::Dimension,
             "METRIC" => TokenKind::Metric,
             _ => TokenKind::Identifier,
+        }
+    }
+
+    /// Maps a common keyword to the GQL token kind.
+    fn map_common_keyword(kw: crate::query::keywords::CommonKeyword) -> TokenKind {
+        use crate::query::keywords::CommonKeyword;
+        match kw {
+            CommonKeyword::Match => TokenKind::Match,
+            CommonKeyword::Return => TokenKind::Return,
+            CommonKeyword::Where => TokenKind::Where,
+            CommonKeyword::As => TokenKind::As,
+            CommonKeyword::Distinct => TokenKind::Distinct,
+            CommonKeyword::With => TokenKind::With,
+            CommonKeyword::Optional => TokenKind::Optional,
+            CommonKeyword::Order => TokenKind::Order,
+            CommonKeyword::By => TokenKind::By,
+            CommonKeyword::Asc => TokenKind::Asc,
+            CommonKeyword::Desc => TokenKind::Desc,
+            CommonKeyword::Limit => TokenKind::Limit,
+            CommonKeyword::Skip => TokenKind::Skip,
+            CommonKeyword::And => TokenKind::And,
+            CommonKeyword::Or => TokenKind::Or,
+            CommonKeyword::Not => TokenKind::Not,
+            CommonKeyword::In => TokenKind::In,
+            CommonKeyword::Is => TokenKind::Is,
+            CommonKeyword::Like => TokenKind::Like,
+            CommonKeyword::Null => TokenKind::Null,
+            CommonKeyword::True => TokenKind::True,
+            CommonKeyword::False => TokenKind::False,
+            CommonKeyword::Create => TokenKind::Create,
+            CommonKeyword::Delete => TokenKind::Delete,
+            CommonKeyword::Set => TokenKind::Set,
+            CommonKeyword::Remove => TokenKind::Remove,
+            CommonKeyword::Merge => TokenKind::Merge,
+            CommonKeyword::Detach => TokenKind::Detach,
+            CommonKeyword::On => TokenKind::On,
+            CommonKeyword::Call => TokenKind::Call,
+            CommonKeyword::Yield => TokenKind::Yield,
+            CommonKeyword::Exists => TokenKind::Exists,
+            CommonKeyword::Unwind => TokenKind::Unwind,
+            CommonKeyword::Node => TokenKind::Node,
+            CommonKeyword::Edge => TokenKind::Edge,
+            CommonKeyword::Having => TokenKind::Having,
+            CommonKeyword::Case => TokenKind::Case,
+            CommonKeyword::When => TokenKind::When,
+            CommonKeyword::Then => TokenKind::Then,
+            CommonKeyword::Else => TokenKind::Else,
+            CommonKeyword::End => TokenKind::End,
+            CommonKeyword::Starts => TokenKind::Starts,
+            CommonKeyword::Ends => TokenKind::Ends,
+            CommonKeyword::Contains => TokenKind::Contains,
         }
     }
 }

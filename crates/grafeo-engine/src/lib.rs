@@ -16,6 +16,9 @@
 //! - [`catalog`] - Schema metadata: labels, property keys, indexes
 //! - [`admin`] - Admin API types for inspection, backup, and maintenance
 
+/// The version of the grafeo-engine crate (from Cargo.toml).
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub mod admin;
 pub mod catalog;
 pub mod config;
@@ -25,9 +28,9 @@ pub mod session;
 pub mod transaction;
 
 pub use admin::{
-    CompactionStats, DatabaseInfo, DatabaseMode, DatabaseStats, DumpFormat, DumpMetadata,
-    IndexInfo, LpgSchemaInfo, RdfSchemaInfo, SchemaInfo, ValidationError, ValidationResult,
-    ValidationWarning, WalStatus,
+    AdminService, CompactionStats, DatabaseInfo, DatabaseMode, DatabaseStats, DumpFormat,
+    DumpMetadata, IndexInfo, LpgSchemaInfo, RdfSchemaInfo, SchemaInfo, ValidationError,
+    ValidationResult, ValidationWarning, WalStatus,
 };
 pub use catalog::{Catalog, CatalogError, IndexDefinition, IndexType};
 pub use config::{Config, ConfigError, DurabilityMode, GraphModel};

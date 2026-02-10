@@ -130,7 +130,7 @@ CREATE VECTOR INDEX movie_embeddings ON :Movie(embedding)
 
 ### Query Languages
 
-- **SQL/PGQ** (SQL:2023) - GRAPH_TABLE function for SQL-native graph queries
+- **SQL/PGQ** (SQL:2023) - GRAPH_TABLE function for SQL-native graph queries (0.4.4)
 
 ### Quality
 

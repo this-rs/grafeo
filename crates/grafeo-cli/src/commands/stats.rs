@@ -7,7 +7,7 @@ use grafeo_engine::GrafeoDB;
 use serde::Serialize;
 
 use crate::OutputFormat;
-use crate::output::{self, Format};
+use crate::output::{self, Format, format_bytes};
 
 /// Detailed database statistics.
 #[derive(Serialize)]
@@ -20,23 +20,6 @@ struct StatsOutput {
     index_count: usize,
     memory_bytes: usize,
     disk_bytes: Option<usize>,
-}
-
-/// Format bytes as human-readable string.
-fn format_bytes(bytes: usize) -> String {
-    const KB: usize = 1024;
-    const MB: usize = KB * 1024;
-    const GB: usize = MB * 1024;
-
-    if bytes >= GB {
-        format!("{:.2} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.2} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.2} KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{bytes} bytes")
-    }
 }
 
 /// Run the stats command.
@@ -62,7 +45,7 @@ pub fn run(path: &Path, format: OutputFormat, quiet: bool) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&output)?);
             }
         }
-        Format::Table => {
+        Format::Table | Format::Csv => {
             let items = vec![
                 ("Nodes", output.node_count.to_string()),
                 ("Edges", output.edge_count.to_string()),
@@ -83,42 +66,4 @@ pub fn run(path: &Path, format: OutputFormat, quiet: bool) -> Result<()> {
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_format_bytes_bytes() {
-        assert_eq!(format_bytes(0), "0 bytes");
-        assert_eq!(format_bytes(1), "1 bytes");
-        assert_eq!(format_bytes(512), "512 bytes");
-        assert_eq!(format_bytes(1023), "1023 bytes");
-    }
-
-    #[test]
-    fn test_format_bytes_kilobytes() {
-        assert_eq!(format_bytes(1024), "1.00 KB");
-        assert_eq!(format_bytes(1536), "1.50 KB");
-        assert_eq!(format_bytes(10240), "10.00 KB");
-        assert_eq!(format_bytes(1024 * 1024 - 1), "1024.00 KB");
-    }
-
-    #[test]
-    fn test_format_bytes_megabytes() {
-        assert_eq!(format_bytes(1024 * 1024), "1.00 MB");
-        assert_eq!(format_bytes(1024 * 1024 * 5), "5.00 MB");
-        assert_eq!(format_bytes(1024 * 1024 * 100), "100.00 MB");
-    }
-
-    #[test]
-    fn test_format_bytes_gigabytes() {
-        assert_eq!(format_bytes(1024 * 1024 * 1024), "1.00 GB");
-        assert_eq!(format_bytes(1024 * 1024 * 1024 * 2), "2.00 GB");
-        assert_eq!(
-            format_bytes(1024 * 1024 * 1024 + 512 * 1024 * 1024),
-            "1.50 GB"
-        );
-    }
 }

@@ -10,6 +10,9 @@
 //! | SPARQL | W3C SPARQL 1.1 | `sparql` | For RDF triple stores |
 //! | Gremlin | Apache TinkerPop | `gremlin` | Graph traversal DSL |
 //! | GraphQL | June 2018 spec | `graphql` | API query language |
+//! | SQL/PGQ | SQL:2023 (ISO 9075-16) | `sql-pgq` | SQL-native graph queries via GRAPH_TABLE |
+
+pub mod keywords;
 
 #[cfg(feature = "gql")]
 pub mod gql;
@@ -25,3 +28,6 @@ pub mod gremlin;
 
 #[cfg(feature = "graphql")]
 pub mod graphql;
+
+#[cfg(feature = "sql-pgq")]
+pub mod sql_pgq;

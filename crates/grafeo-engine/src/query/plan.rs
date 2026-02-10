@@ -152,6 +152,10 @@ pub enum LogicalOperator {
     /// - Computing aggregated embeddings and finding similar entities
     /// - Combining multiple vector sources with graph structure
     VectorJoin(VectorJoinOp),
+
+    // ==================== DDL Operators ====================
+    /// Define a property graph schema (SQL/PGQ DDL).
+    CreatePropertyGraph(CreatePropertyGraphOp),
 }
 
 /// Scan nodes from the graph.
@@ -855,6 +859,39 @@ pub struct ReturnItem {
     pub expression: LogicalExpression,
     /// Alias for the result column.
     pub alias: Option<String>,
+}
+
+/// Define a property graph schema (SQL/PGQ DDL).
+#[derive(Debug, Clone)]
+pub struct CreatePropertyGraphOp {
+    /// Graph name.
+    pub name: String,
+    /// Node table schemas (label name + column definitions).
+    pub node_tables: Vec<PropertyGraphNodeTable>,
+    /// Edge table schemas (type name + column definitions + references).
+    pub edge_tables: Vec<PropertyGraphEdgeTable>,
+}
+
+/// A node table in a property graph definition.
+#[derive(Debug, Clone)]
+pub struct PropertyGraphNodeTable {
+    /// Table name (maps to a node label).
+    pub name: String,
+    /// Column definitions as (name, type_name) pairs.
+    pub columns: Vec<(String, String)>,
+}
+
+/// An edge table in a property graph definition.
+#[derive(Debug, Clone)]
+pub struct PropertyGraphEdgeTable {
+    /// Table name (maps to an edge type).
+    pub name: String,
+    /// Column definitions as (name, type_name) pairs.
+    pub columns: Vec<(String, String)>,
+    /// Source node table name.
+    pub source_table: String,
+    /// Target node table name.
+    pub target_table: String,
 }
 
 /// A logical expression.

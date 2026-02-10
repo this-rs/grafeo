@@ -155,6 +155,122 @@ func (db *Database) ExecuteSPARQL(query string) (*QueryResult, error) {
 	return parseResult(r)
 }
 
+// ExecuteSQL runs a SQL/PGQ query (requires sql-pgq feature at compile time).
+func (db *Database) ExecuteSQL(query string) (*QueryResult, error) {
+	cQuery := C.CString(query)
+	defer C.free(unsafe.Pointer(cQuery))
+	r := C.grafeo_execute_sql(db.handle, cQuery)
+	if r == nil {
+		return nil, lastError()
+	}
+	defer C.grafeo_free_result(r)
+	return parseResult(r)
+}
+
+// VectorResult holds a single nearest-neighbor search result.
+type VectorResult struct {
+	NodeID   uint64
+	Distance float32
+}
+
+// DropVectorIndex drops a vector index for the given label and property.
+// Returns true if the index existed and was removed.
+func (db *Database) DropVectorIndex(label, property string) bool {
+	cLabel := C.CString(label)
+	defer C.free(unsafe.Pointer(cLabel))
+	cProp := C.CString(property)
+	defer C.free(unsafe.Pointer(cProp))
+	return C.grafeo_drop_vector_index(db.handle, cLabel, cProp) != 0
+}
+
+// RebuildVectorIndex drops and recreates a vector index, rescanning all
+// matching nodes. Preserves the original index configuration.
+func (db *Database) RebuildVectorIndex(label, property string) error {
+	cLabel := C.CString(label)
+	defer C.free(unsafe.Pointer(cLabel))
+	cProp := C.CString(property)
+	defer C.free(unsafe.Pointer(cProp))
+	status := C.grafeo_rebuild_vector_index(db.handle, cLabel, cProp)
+	if status != C.GRAFEO_OK {
+		return lastError()
+	}
+	return nil
+}
+
+// VectorSearch finds the k nearest neighbors of a query vector.
+// Requires the vector-index feature at compile time.
+func (db *Database) VectorSearch(label, property string, query []float32, k int, ef int) ([]VectorResult, error) {
+	cLabel := C.CString(label)
+	defer C.free(unsafe.Pointer(cLabel))
+	cProp := C.CString(property)
+	defer C.free(unsafe.Pointer(cProp))
+
+	var outIDs *C.uint64_t
+	var outDists *C.float
+	var outCount C.size_t
+
+	status := C.grafeo_vector_search(
+		db.handle, cLabel, cProp,
+		(*C.float)(unsafe.Pointer(&query[0])), C.size_t(len(query)),
+		C.size_t(k), C.int32_t(ef),
+		&outIDs, &outDists, &outCount,
+	)
+	if status != C.GRAFEO_OK {
+		return nil, lastError()
+	}
+	count := int(outCount)
+	if count == 0 {
+		return nil, nil
+	}
+	defer C.grafeo_free_vector_results(outIDs, outDists, outCount)
+
+	results := make([]VectorResult, count)
+	ids := unsafe.Slice((*uint64)(unsafe.Pointer(outIDs)), count)
+	dists := unsafe.Slice((*float32)(unsafe.Pointer(outDists)), count)
+	for i := range count {
+		results[i] = VectorResult{NodeID: ids[i], Distance: dists[i]}
+	}
+	return results, nil
+}
+
+// MmrSearch finds diverse nearest neighbors using Maximal Marginal Relevance.
+// fetchK is the number of HNSW candidates (use -1 for default 4*k).
+// lambda controls relevance vs diversity (0=diverse, 1=relevant; use -1 for default 0.5).
+// ef is the HNSW beam width (use -1 for default).
+func (db *Database) MmrSearch(label, property string, query []float32, k int, fetchK int, lambda float32, ef int) ([]VectorResult, error) {
+	cLabel := C.CString(label)
+	defer C.free(unsafe.Pointer(cLabel))
+	cProp := C.CString(property)
+	defer C.free(unsafe.Pointer(cProp))
+
+	var outIDs *C.uint64_t
+	var outDists *C.float
+	var outCount C.size_t
+
+	status := C.grafeo_mmr_search(
+		db.handle, cLabel, cProp,
+		(*C.float)(unsafe.Pointer(&query[0])), C.size_t(len(query)),
+		C.size_t(k), C.int32_t(fetchK), C.float(lambda), C.int32_t(ef),
+		&outIDs, &outDists, &outCount,
+	)
+	if status != C.GRAFEO_OK {
+		return nil, lastError()
+	}
+	count := int(outCount)
+	if count == 0 {
+		return nil, nil
+	}
+	defer C.grafeo_free_vector_results(outIDs, outDists, outCount)
+
+	results := make([]VectorResult, count)
+	ids := unsafe.Slice((*uint64)(unsafe.Pointer(outIDs)), count)
+	dists := unsafe.Slice((*float32)(unsafe.Pointer(outDists)), count)
+	for i := range count {
+		results[i] = VectorResult{NodeID: ids[i], Distance: dists[i]}
+	}
+	return results, nil
+}
+
 // NodeCount returns the number of nodes in the database.
 func (db *Database) NodeCount() int {
 	return int(C.grafeo_node_count(db.handle))

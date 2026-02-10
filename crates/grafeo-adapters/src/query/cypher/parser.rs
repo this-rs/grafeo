@@ -6,6 +6,32 @@ use super::ast::*;
 use super::lexer::{Lexer, Token, TokenKind};
 use grafeo_common::utils::error::{QueryError, QueryErrorKind, Result};
 
+/// Unescapes backslash-escaped characters in a string literal.
+fn unescape_string(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            match chars.next() {
+                Some('n') => result.push('\n'),
+                Some('r') => result.push('\r'),
+                Some('t') => result.push('\t'),
+                Some('\\') => result.push('\\'),
+                Some('\'') => result.push('\''),
+                Some('"') => result.push('"'),
+                Some(other) => {
+                    result.push('\\');
+                    result.push(other);
+                }
+                None => result.push('\\'),
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
 /// Cypher query parser.
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
@@ -977,9 +1003,9 @@ impl<'a> Parser<'a> {
                 Ok(Expression::Literal(Literal::Float(value)))
             }
             TokenKind::String => {
-                // Remove quotes
                 let text = &self.current.text;
-                let value = text[1..text.len() - 1].to_string();
+                let inner = &text[1..text.len() - 1];
+                let value = unescape_string(inner);
                 self.advance();
                 Ok(Expression::Literal(Literal::String(value)))
             }

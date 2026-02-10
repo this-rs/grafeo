@@ -1,6 +1,6 @@
 # Grafeo
 
-> A pure-Rust, high-performance, embeddable graph database with Python bindings.
+> A high-performance, embeddable graph database with a Rust core and no required C dependencies. Optional allocators (jemalloc/mimalloc) and TLS use C libraries for performance.
 
 Grafeo is designed for applications that need graph database capabilities without external dependencies. It can be embedded directly into Python or Rust applications.
 

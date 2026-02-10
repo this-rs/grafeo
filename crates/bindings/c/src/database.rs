@@ -262,6 +262,26 @@ pub extern "C" fn grafeo_execute_sparql(
     }
 }
 
+/// Execute a SQL/PGQ query (SQL:2023 GRAPH_TABLE).
+#[cfg(feature = "sql-pgq")]
+#[unsafe(no_mangle)]
+pub extern "C" fn grafeo_execute_sql(
+    db: *mut GrafeoDatabase,
+    query: *const c_char,
+) -> *mut GrafeoResult {
+    let db = db_ref_or_null!(db);
+    let Ok(query_str) = str_from_ptr(query) else {
+        return std::ptr::null_mut();
+    };
+    match db.inner.read().execute_sql(query_str) {
+        Ok(r) => build_result(&r),
+        Err(e) => {
+            set_error(&e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
 // =========================================================================
 // Result Access
 // =========================================================================
@@ -889,6 +909,53 @@ pub extern "C" fn grafeo_create_vector_index(
     }
 }
 
+/// Drop a vector index for the given label and property.
+/// Returns 1 if removed, 0 if not found.
+#[cfg(feature = "vector-index")]
+#[unsafe(no_mangle)]
+pub extern "C" fn grafeo_drop_vector_index(
+    db: *mut GrafeoDatabase,
+    label: *const c_char,
+    property: *const c_char,
+) -> i32 {
+    if db.is_null() {
+        set_last_error("Null database pointer");
+        return 0;
+    }
+    let db = unsafe { &*db };
+    let Ok(label_str) = str_from_ptr(label) else {
+        return 0;
+    };
+    let Ok(prop_str) = str_from_ptr(property) else {
+        return 0;
+    };
+    i32::from(db.inner.read().drop_vector_index(label_str, prop_str))
+}
+
+/// Rebuild a vector index by rescanning all matching nodes.
+/// Preserves original configuration.
+#[cfg(feature = "vector-index")]
+#[unsafe(no_mangle)]
+pub extern "C" fn grafeo_rebuild_vector_index(
+    db: *mut GrafeoDatabase,
+    label: *const c_char,
+    property: *const c_char,
+) -> GrafeoStatus {
+    let db = db_ref!(db);
+    let label_str = match str_from_ptr(label) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let prop_str = match str_from_ptr(property) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    match db.inner.read().rebuild_vector_index(label_str, prop_str) {
+        Ok(()) => GrafeoStatus::Ok,
+        Err(e) => set_error(&e),
+    }
+}
+
 /// Search for k nearest neighbors of a query vector.
 /// Results written to `out_ids` and `out_distances` arrays of length `*out_count`.
 /// Caller must free with `grafeo_free_vector_results`.
@@ -929,6 +996,81 @@ pub extern "C" fn grafeo_vector_search(
         .read()
         .vector_search(label_str, prop_str, query_slice, k, ef_val)
     {
+        Ok(results) => {
+            let count = results.len();
+            let mut ids: Vec<u64> = results.iter().map(|(id, _)| id.as_u64()).collect();
+            let mut dists: Vec<f32> = results.iter().map(|(_, d)| *d).collect();
+            ids.shrink_to_fit();
+            dists.shrink_to_fit();
+            let ids_ptr = ids.as_mut_ptr();
+            let dists_ptr = dists.as_mut_ptr();
+            std::mem::forget(ids);
+            std::mem::forget(dists);
+
+            // SAFETY: We checked these are non-null above.
+            unsafe {
+                *out_ids = ids_ptr;
+                *out_distances = dists_ptr;
+                *out_count = count;
+            }
+            GrafeoStatus::Ok
+        }
+        Err(e) => set_error(&e),
+    }
+}
+
+/// Search for diverse nearest neighbors using Maximal Marginal Relevance (MMR).
+/// Results written to `out_ids` and `out_distances` arrays of length `*out_count`.
+/// Caller must free with `grafeo_free_vector_results`.
+/// `fetch_k` and `ef` use -1 for defaults. `lambda` uses negative for default (0.5).
+#[cfg(feature = "vector-index")]
+#[unsafe(no_mangle)]
+pub extern "C" fn grafeo_mmr_search(
+    db: *mut GrafeoDatabase,
+    label: *const c_char,
+    property: *const c_char,
+    query: *const f32,
+    query_len: usize,
+    k: usize,
+    fetch_k: i32,
+    lambda: f32,
+    ef: i32,
+    out_ids: *mut *mut u64,
+    out_distances: *mut *mut f32,
+    out_count: *mut usize,
+) -> GrafeoStatus {
+    let db = db_ref!(db);
+    if query.is_null() || out_ids.is_null() || out_distances.is_null() || out_count.is_null() {
+        set_last_error("Null pointer argument");
+        return GrafeoStatus::ErrorNullPointer;
+    }
+    let label_str = match str_from_ptr(label) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let prop_str = match str_from_ptr(property) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    // SAFETY: Caller guarantees query points to query_len f32s.
+    let query_slice = unsafe { std::slice::from_raw_parts(query, query_len) };
+    let fetch_k_val = if fetch_k > 0 {
+        Some(fetch_k as usize)
+    } else {
+        None
+    };
+    let lambda_val = if lambda >= 0.0 { Some(lambda) } else { None };
+    let ef_val = if ef > 0 { Some(ef as usize) } else { None };
+
+    match db.inner.read().mmr_search(
+        label_str,
+        prop_str,
+        query_slice,
+        k,
+        fetch_k_val,
+        lambda_val,
+        ef_val,
+    ) {
         Ok(results) => {
             let count = results.len();
             let mut ids: Vec<u64> = results.iter().map(|(id, _)| id.as_u64()).collect();

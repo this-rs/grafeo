@@ -25,7 +25,6 @@ pub fn run(cmd: BackupCommands, _format: OutputFormat, quiet: bool) -> Result<()
             path,
             force,
         } => {
-            // Check if target exists
             if path.exists() && !force {
                 anyhow::bail!(
                     "Target path {} already exists. Use --force to overwrite.",
@@ -44,7 +43,6 @@ pub fn run(cmd: BackupCommands, _format: OutputFormat, quiet: bool) -> Result<()
 
             output::status(&format!("Restoring from {}...", backup.display()), quiet);
 
-            // Open backup and save to new location
             let db = GrafeoDB::open(&backup)
                 .with_context(|| format!("Failed to open backup at {}", backup.display()))?;
             db.save(&path)

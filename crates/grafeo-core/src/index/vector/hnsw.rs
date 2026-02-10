@@ -44,7 +44,7 @@ use crate::index::vector::HnswConfig;
 use grafeo_common::types::NodeId;
 use ordered_float::OrderedFloat;
 use parking_lot::RwLock;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
 
@@ -128,7 +128,7 @@ impl HnswIndex {
             nodes: RwLock::new(HashMap::new()),
             entry_point: RwLock::new(None),
             max_level: RwLock::new(0),
-            rng: RwLock::new(rand::rngs::StdRng::from_os_rng()),
+            rng: RwLock::new(rand::rngs::StdRng::from_rng(&mut rand::rng())),
         }
     }
 
@@ -143,7 +143,7 @@ impl HnswIndex {
             nodes: RwLock::new(HashMap::with_capacity(capacity)),
             entry_point: RwLock::new(None),
             max_level: RwLock::new(0),
-            rng: RwLock::new(rand::rngs::StdRng::from_os_rng()),
+            rng: RwLock::new(rand::rngs::StdRng::from_rng(&mut rand::rng())),
         }
     }
 

@@ -1,6 +1,6 @@
 ---
 title: Grafeo - High-Performance Graph Database
-description: A pure-Rust, embeddable graph database with Python, Node.js, Go, and WebAssembly bindings using GQL (ISO standard) query language.
+description: A high-performance, embeddable graph database with a Rust core and no required C dependencies. Python, Node.js, Go, and WebAssembly bindings. GQL (ISO standard) query language.
 hide:
   - navigation
   - toc
@@ -16,7 +16,7 @@ hide:
 
 # **Grafeo**
 
-### A pure-Rust, high-performance, embeddable graph database
+### A high-performance, embeddable graph database with a Rust core
 
 [Get Started](getting-started/index.md){ .md-button .md-button--primary }
 [View on GitHub](https://github.com/GrafeoDB/grafeo){ .md-button }
@@ -59,11 +59,11 @@ hide:
 
     Embed directly into your application with zero external dependencies. Perfect for edge computing, desktop apps, and serverless environments.
 
--   :fontawesome-brands-rust:{ .lg .middle } **Pure Rust**
+-   :fontawesome-brands-rust:{ .lg .middle } **Rust Core**
 
     ---
 
-    Written entirely in safe Rust with no C dependencies. Memory-safe by design with fearless concurrency.
+    Core database engine written in Rust with no required C dependencies. Optional allocators (jemalloc/mimalloc) and TLS use C libraries for performance. Memory-safe by design with fearless concurrency.
 
 -   :material-shield-check:{ .lg .middle } **ACID Transactions**
 

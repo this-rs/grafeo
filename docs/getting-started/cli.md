@@ -1,6 +1,6 @@
 ---
 title: Command-Line Interface
-description: Admin CLI for Grafeo database management.
+description: Grafeo CLI for querying, inspecting, and maintaining graph databases.
 tags:
   - getting-started
   - cli
@@ -9,56 +9,141 @@ tags:
 
 # Command-Line Interface
 
-Grafeo provides command-line tools for database administration. The CLI is designed for operators and DevOps: use the Python API for application logic, CLI for inspection and maintenance.
-
-## Two CLI Options
-
-Grafeo offers two CLI implementations:
-
-| CLI | Installation | Features |
-|-----|--------------|----------|
-| **Rust CLI** (`grafeo-cli`) | `cargo install grafeo-cli` | Full-featured, native performance |
-| **Python CLI** (`grafeo[cli]`) | `uv add grafeo[cli]` | Core commands, Python ecosystem |
-
-### Feature Comparison
-
-| Command | Rust CLI | Python CLI |
-|---------|----------|------------|
-| `info` | ✅ | ✅ |
-| `stats` | ✅ | ✅ |
-| `schema` | ✅ | ✅ |
-| `validate` | ✅ | ✅ |
-| `backup create/restore` | ✅ | ✅ |
-| `wal status/checkpoint` | ✅ | ✅ |
-| `index list/stats` | ✅ | — |
-| `data dump/load` | ✅ | — |
-| `compact` | ✅ | — |
+Grafeo ships a single Rust CLI binary (`grafeo`) for querying, inspecting, and maintaining databases. It includes an interactive REPL, admin commands, and multiple output formats.
 
 ## Installation
 
-### Rust CLI (Recommended)
+Install via any of these methods — they all provide the same CLI:
 
-For full functionality and native performance:
+=== "Cargo (Recommended)"
+
+    ```bash
+    cargo install grafeo-cli
+    ```
+
+=== "pip"
+
+    ```bash
+    pip install grafeo-cli
+    # or
+    uv add grafeo-cli
+    ```
+
+=== "npm"
+
+    ```bash
+    npm install -g @grafeo-db/cli
+    # or one-shot:
+    npx @grafeo-db/cli --version
+    ```
+
+=== "Download"
+
+    Pre-built binaries for all platforms are attached to every
+    [GitHub release](https://github.com/GrafeoDB/grafeo/releases).
+
+Verify the installation:
 
 ```bash
-cargo install grafeo-cli
+grafeo version
 ```
 
-### Python CLI
-
-For environments where Rust is not available:
+## Quick Start
 
 ```bash
-uv add grafeo[cli]
-# or
-pip install grafeo[cli]
-```
+# Create a new database
+grafeo init ./mydb
 
-The Python CLI requires the `click` package (installed automatically with `[cli]` extra).
+# Run a query
+grafeo query ./mydb "INSERT (:Person {name: 'Alice', age: 30})"
+grafeo query ./mydb "MATCH (n:Person) RETURN n.name, n.age"
+
+# Launch the interactive shell
+grafeo shell ./mydb
+```
 
 ## Commands
 
-### Database Inspection
+### Query Execution
+
+```bash
+# Inline query
+grafeo query ./mydb "MATCH (n) RETURN n LIMIT 10"
+
+# From a file
+grafeo query ./mydb --file query.gql
+
+# From stdin
+echo "MATCH (n) RETURN count(n)" | grafeo query ./mydb --stdin
+
+# With parameters
+grafeo query ./mydb "MATCH (n {name: \$name}) RETURN n" -p name=Alice
+
+# Choose query language (default: gql)
+grafeo query ./mydb "MATCH (n) RETURN n" --lang cypher
+grafeo query ./mydb "SELECT * FROM GRAPH_TABLE ..." --lang sql
+
+# Show execution time
+grafeo query ./mydb "MATCH (n) RETURN n" --timing
+
+# Truncate wide columns
+grafeo query ./mydb "MATCH (n) RETURN n" --max-width 40
+```
+
+### Interactive Shell (REPL)
+
+```bash
+grafeo shell ./mydb
+```
+
+```
+Grafeo 0.4.4 - Lpg mode, 42 nodes, 87 edges
+Type :help for commands, :quit to exit.
+
+grafeo> MATCH (n:Person) RETURN n.name, n.age
+┌──────────┬───────┐
+│ n.name   │ n.age │
+├──────────┼───────┤
+│ "Alice"  │ 30    │
+│ "Bob"    │ 25    │
+└──────────┴───────┘
+2 rows (0.8ms)
+
+grafeo> :begin
+Transaction started.
+grafeo[tx]> INSERT (:Person {name: 'Carol', age: 45})
+grafeo[tx]> :commit
+Transaction committed.
+```
+
+**Meta-commands:**
+
+| Command | Description |
+|---------|-------------|
+| `:help` | Show available commands |
+| `:quit` / Ctrl-D | Exit the shell |
+| `:schema` | Show labels, edge types, property keys |
+| `:info` | Show database info |
+| `:stats` | Show detailed statistics |
+| `:format <f>` | Set output format (`table`, `json`, `csv`) |
+| `:timing` | Toggle query timing display |
+| `:begin` | Start a transaction |
+| `:commit` | Commit the current transaction |
+| `:rollback` | Roll back the current transaction |
+
+Transaction keywords (`BEGIN`, `COMMIT`, `ROLLBACK`) also work as plain text.
+
+### Database Creation
+
+```bash
+# Create an LPG database (default)
+grafeo init ./mydb
+
+# Create an RDF database
+grafeo init ./mydb --mode rdf
+```
+
+### Inspection
 
 ```bash
 # Overview: counts, size, mode
@@ -70,58 +155,70 @@ grafeo stats ./mydb
 # Schema: labels, edge types, property keys
 grafeo schema ./mydb
 
-# Integrity check
+# Integrity check (exit code 2 on failure)
 grafeo validate ./mydb
 ```
 
-### Index Management (Rust CLI only)
+### Index Management
 
 ```bash
-# List all indexes
 grafeo index list ./mydb
-
-# Index statistics
 grafeo index stats ./mydb
 ```
 
 ### Backup & Restore
 
 ```bash
-# Create a native backup
 grafeo backup create ./mydb -o backup.grafeo
-
-# Restore from backup
 grafeo backup restore backup.grafeo ./restored --force
 ```
 
-### Data Export & Import (Rust CLI only)
+### Data Export & Import
 
 ```bash
-# Export to portable format (Parquet for LPG, Turtle for RDF)
 grafeo data dump ./mydb -o ./export/
-
-# Import from dump
 grafeo data load ./export/ ./newdb
 ```
 
 ### WAL Management
 
 ```bash
-# Show WAL status
 grafeo wal status ./mydb
-
-# Force checkpoint
 grafeo wal checkpoint ./mydb
 ```
 
-### Compaction (Rust CLI only)
+### Compaction
 
 ```bash
-# Compact the database
 grafeo compact ./mydb
-
-# Dry run (show what would be done)
 grafeo compact ./mydb --dry-run
+```
+
+### Shell Completions
+
+```bash
+# Generate completions for your shell
+grafeo completions bash > ~/.local/share/bash-completion/completions/grafeo
+grafeo completions zsh > ~/.zfunc/_grafeo
+grafeo completions fish > ~/.config/fish/completions/grafeo.fish
+grafeo completions powershell >> $PROFILE
+```
+
+### Version & Build Info
+
+```bash
+$ grafeo version
+grafeo 0.4.4
+
+Build:
+  rustc:    1.91.1
+  target:   x86_64
+  os:       linux
+  features: gql, cypher, sparql, sql-pgq
+
+Paths:
+  config:   /home/user/.config/grafeo
+  history:  /home/user/.config/grafeo/history
 ```
 
 ## Output Formats
@@ -129,63 +226,34 @@ grafeo compact ./mydb --dry-run
 All commands support multiple output formats:
 
 ```bash
-# Human-readable table (default)
-grafeo info ./mydb --format table
+# Auto-detect: table on TTY, JSON when piped
+grafeo info ./mydb
 
-# Machine-readable JSON
+# Explicit format
+grafeo info ./mydb --format table
 grafeo info ./mydb --format json
+grafeo info ./mydb --format csv
 ```
 
 ## Global Options
 
 | Option | Description |
 |--------|-------------|
-| `--format` | Output format: `table` (default) or `json` |
+| `--format <auto\|table\|json\|csv>` | Output format (default: `auto`) |
 | `--quiet`, `-q` | Suppress progress messages |
 | `--verbose`, `-v` | Enable debug logging |
+| `--no-color` | Disable colored output (also respects `NO_COLOR` env var) |
+| `--color` | Force colored output even when piped |
 | `--help` | Show help |
 | `--version` | Show version |
 
-## Examples
+## Exit Codes
 
-### Check database health
-
-```bash
-$ grafeo info ./production.db
-Property      | Value
---------------+-----------------
-Mode          | lpg
-Nodes         | 1,234,567
-Edges         | 5,432,100
-Persistent    | true
-Path          | ./production.db
-WAL Enabled   | true
-Version       | 0.3.0
-```
-
-### Export to JSON for scripting
-
-```bash
-$ grafeo info ./mydb --format json
-{
-  "mode": "lpg",
-  "node_count": 1234567,
-  "edge_count": 5432100,
-  "is_persistent": true,
-  "path": "./production.db",
-  "wal_enabled": true,
-  "version": "0.3.0"
-}
-```
-
-### Validate before deployment
-
-```bash
-$ grafeo validate ./mydb
-✓ Database is valid
-
-Errors: 0, Warnings: 0
-```
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | General error (runtime, I/O, query) |
+| 2 | Validation failed (`grafeo validate` found errors) |
 
 ## Python API Equivalents
 
@@ -208,12 +276,15 @@ print(db.schema())
 # Equivalent to: grafeo validate ./mydb
 print(db.validate())
 
-# Equivalent to: grafeo wal status ./mydb
-print(db.wal_status())
-
-# Equivalent to: grafeo wal checkpoint ./mydb
-db.wal_checkpoint()
-
-# Equivalent to: grafeo backup create ./mydb -o backup
-db.save("./backup")
+# Equivalent to: grafeo query ./mydb "MATCH (n) RETURN n"
+session = db.session()
+result = session.execute("MATCH (n) RETURN n")
 ```
+
+## Migrating from the Python CLI
+
+!!! note "Python CLI removed in 0.4.4"
+    The `grafeo[cli]` Python CLI (Click-based) has been removed. Install the Rust binary
+    instead via `cargo install grafeo-cli`, `pip install grafeo-cli`, or
+    `npm install -g @grafeo-db/cli`. All previous commands are available with the same
+    syntax, plus new features: `query`, `shell`, `init`, CSV output, and shell completions.

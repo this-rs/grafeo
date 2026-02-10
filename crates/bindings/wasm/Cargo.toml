@@ -36,7 +36,8 @@ cypher = ["grafeo-engine/cypher"]
 sparql = ["grafeo-engine/sparql", "grafeo-engine/rdf"]
 gremlin = ["grafeo-engine/gremlin"]
 graphql = ["grafeo-engine/graphql"]
-full = ["gql", "cypher", "sparql", "gremlin", "graphql"]
+sql-pgq = ["grafeo-engine/sql-pgq"]
+full = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]
 
 [lints]
 workspace = true

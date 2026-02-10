@@ -393,6 +393,158 @@ impl ColumnStats {
     }
 }
 
+/// Configurable selectivity defaults for cardinality estimation.
+///
+/// Controls the assumed selectivity for various predicate types when
+/// histogram or column statistics are unavailable. Adjusting these
+/// values can improve plan quality for workloads with known skew.
+#[derive(Debug, Clone)]
+pub struct SelectivityConfig {
+    /// Selectivity for unknown predicates (default: 0.1).
+    pub default: f64,
+    /// Selectivity for equality predicates without stats (default: 0.01).
+    pub equality: f64,
+    /// Selectivity for inequality predicates (default: 0.99).
+    pub inequality: f64,
+    /// Selectivity for range predicates without stats (default: 0.33).
+    pub range: f64,
+    /// Selectivity for string operations: STARTS WITH, ENDS WITH, CONTAINS, LIKE (default: 0.1).
+    pub string_ops: f64,
+    /// Selectivity for IN membership (default: 0.1).
+    pub membership: f64,
+    /// Selectivity for IS NULL (default: 0.05).
+    pub is_null: f64,
+    /// Selectivity for IS NOT NULL (default: 0.95).
+    pub is_not_null: f64,
+    /// Fraction assumed distinct for DISTINCT operations (default: 0.5).
+    pub distinct_fraction: f64,
+}
+
+impl SelectivityConfig {
+    /// Creates a new config with standard database defaults.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            default: 0.1,
+            equality: 0.01,
+            inequality: 0.99,
+            range: 0.33,
+            string_ops: 0.1,
+            membership: 0.1,
+            is_null: 0.05,
+            is_not_null: 0.95,
+            distinct_fraction: 0.5,
+        }
+    }
+}
+
+impl Default for SelectivityConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A single estimate-vs-actual observation for analysis.
+#[derive(Debug, Clone)]
+pub struct EstimationEntry {
+    /// Human-readable label for the operator (e.g., "NodeScan(Person)").
+    pub operator: String,
+    /// The cardinality estimate produced by the optimizer.
+    pub estimated: f64,
+    /// The actual row count observed at execution time.
+    pub actual: f64,
+}
+
+impl EstimationEntry {
+    /// Returns the estimation error ratio (actual / estimated).
+    ///
+    /// Values near 1.0 indicate accurate estimates.
+    /// Values > 1.0 indicate underestimation.
+    /// Values < 1.0 indicate overestimation.
+    #[must_use]
+    pub fn error_ratio(&self) -> f64 {
+        if self.estimated.abs() < f64::EPSILON {
+            if self.actual.abs() < f64::EPSILON {
+                1.0
+            } else {
+                f64::INFINITY
+            }
+        } else {
+            self.actual / self.estimated
+        }
+    }
+}
+
+/// Collects estimate vs actual cardinality data for query plan analysis.
+///
+/// After executing a query, call [`record()`](Self::record) for each
+/// operator with its estimated and actual cardinalities. Then use
+/// [`should_replan()`](Self::should_replan) to decide whether the plan
+/// should be re-optimized.
+#[derive(Debug, Clone, Default)]
+pub struct EstimationLog {
+    /// Recorded entries.
+    entries: Vec<EstimationEntry>,
+    /// Error ratio threshold that triggers re-planning (default: 10.0).
+    ///
+    /// If any operator's error ratio exceeds this, `should_replan()` returns true.
+    replan_threshold: f64,
+}
+
+impl EstimationLog {
+    /// Creates a new estimation log with the given re-planning threshold.
+    #[must_use]
+    pub fn new(replan_threshold: f64) -> Self {
+        Self {
+            entries: Vec::new(),
+            replan_threshold,
+        }
+    }
+
+    /// Records an estimate-vs-actual observation.
+    pub fn record(&mut self, operator: impl Into<String>, estimated: f64, actual: f64) {
+        self.entries.push(EstimationEntry {
+            operator: operator.into(),
+            estimated,
+            actual,
+        });
+    }
+
+    /// Returns all recorded entries.
+    #[must_use]
+    pub fn entries(&self) -> &[EstimationEntry] {
+        &self.entries
+    }
+
+    /// Returns whether any operator's estimation error exceeds the threshold,
+    /// indicating the plan should be re-optimized.
+    #[must_use]
+    pub fn should_replan(&self) -> bool {
+        self.entries.iter().any(|e| {
+            let ratio = e.error_ratio();
+            ratio > self.replan_threshold || ratio < 1.0 / self.replan_threshold
+        })
+    }
+
+    /// Returns the maximum error ratio across all entries.
+    #[must_use]
+    pub fn max_error_ratio(&self) -> f64 {
+        self.entries
+            .iter()
+            .map(|e| {
+                let r = e.error_ratio();
+                // Normalize so both over- and under-estimation are > 1.0
+                if r < 1.0 { 1.0 / r } else { r }
+            })
+            .fold(1.0_f64, f64::max)
+    }
+
+    /// Clears all entries.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+}
+
 /// Cardinality estimator.
 pub struct CardinalityEstimator {
     /// Statistics for each label/table.
@@ -403,18 +555,46 @@ pub struct CardinalityEstimator {
     default_selectivity: f64,
     /// Average edge fanout (outgoing edges per node).
     avg_fanout: f64,
+    /// Configurable selectivity defaults.
+    selectivity_config: SelectivityConfig,
 }
 
 impl CardinalityEstimator {
     /// Creates a new cardinality estimator with default settings.
     #[must_use]
     pub fn new() -> Self {
+        let config = SelectivityConfig::new();
         Self {
             table_stats: HashMap::new(),
             default_row_count: 1000,
-            default_selectivity: 0.1,
+            default_selectivity: config.default,
             avg_fanout: 10.0,
+            selectivity_config: config,
         }
+    }
+
+    /// Creates a new cardinality estimator with custom selectivity configuration.
+    #[must_use]
+    pub fn with_selectivity_config(config: SelectivityConfig) -> Self {
+        Self {
+            table_stats: HashMap::new(),
+            default_row_count: 1000,
+            default_selectivity: config.default,
+            avg_fanout: 10.0,
+            selectivity_config: config,
+        }
+    }
+
+    /// Returns the current selectivity configuration.
+    #[must_use]
+    pub fn selectivity_config(&self) -> &SelectivityConfig {
+        &self.selectivity_config
+    }
+
+    /// Creates an estimation log with the default re-planning threshold (10x).
+    #[must_use]
+    pub fn create_estimation_log() -> EstimationLog {
+        EstimationLog::new(10.0)
     }
 
     /// Creates a cardinality estimator pre-populated from store statistics.
@@ -622,8 +802,7 @@ impl CardinalityEstimator {
     /// Estimates distinct cardinality.
     fn estimate_distinct(&self, distinct: &DistinctOp) -> f64 {
         let input_cardinality = self.estimate(&distinct.input);
-        // Assume 50% distinct by default
-        (input_cardinality * 0.5).max(1.0)
+        (input_cardinality * self.selectivity_config.distinct_fraction).max(1.0)
     }
 
     /// Estimates limit cardinality.
@@ -707,16 +886,16 @@ impl CardinalityEstimator {
                 if let Some(selectivity) = self.try_equality_selectivity(left, right) {
                     return selectivity;
                 }
-                0.01
+                self.selectivity_config.equality
             }
             // Inequality is very unselective
-            BinaryOp::Ne => 0.99,
+            BinaryOp::Ne => self.selectivity_config.inequality,
             // Range predicates - use histogram if available
             BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
                 if let Some(selectivity) = self.try_range_selectivity(left, op, right) {
                     return selectivity;
                 }
-                0.33
+                self.selectivity_config.range
             }
             // Logical operators - recursively estimate sub-expressions
             BinaryOp::And => {
@@ -733,12 +912,11 @@ impl CardinalityEstimator {
                 (left_sel + right_sel - left_sel * right_sel).min(1.0)
             }
             // String operations
-            BinaryOp::StartsWith => 0.1,
-            BinaryOp::EndsWith => 0.1,
-            BinaryOp::Contains => 0.1,
-            BinaryOp::Like => 0.1,
+            BinaryOp::StartsWith | BinaryOp::EndsWith | BinaryOp::Contains | BinaryOp::Like => {
+                self.selectivity_config.string_ops
+            }
             // Collection membership
-            BinaryOp::In => 0.1,
+            BinaryOp::In => self.selectivity_config.membership,
             // Other operations
             _ => self.default_selectivity,
         }
@@ -870,8 +1048,8 @@ impl CardinalityEstimator {
     fn estimate_unary_selectivity(&self, op: UnaryOp, _operand: &LogicalExpression) -> f64 {
         match op {
             UnaryOp::Not => 1.0 - self.default_selectivity,
-            UnaryOp::IsNull => 0.05, // Assume 5% nulls
-            UnaryOp::IsNotNull => 0.95,
+            UnaryOp::IsNull => self.selectivity_config.is_null,
+            UnaryOp::IsNotNull => self.selectivity_config.is_not_null,
             UnaryOp::Neg => 1.0, // Negation doesn't change cardinality
         }
     }
@@ -889,7 +1067,7 @@ impl CardinalityEstimator {
         {
             return 1.0 / stats.distinct_count as f64;
         }
-        0.01 // Default for equality
+        self.selectivity_config.equality
     }
 
     /// Estimates range selectivity using column statistics.
@@ -915,7 +1093,7 @@ impl CardinalityEstimator {
             let overlap = (effective_upper - effective_lower).max(0.0);
             return (overlap / range).min(1.0).max(0.0);
         }
-        0.33 // Default for range
+        self.selectivity_config.range
     }
 }
 
@@ -1934,5 +2112,204 @@ mod tests {
         assert_eq!(histogram.min_value(), Some(5.0));
         // Max is the upper bound of the last bucket
         assert!(histogram.max_value().is_some());
+    }
+
+    // ==================== SelectivityConfig Tests ====================
+
+    #[test]
+    fn test_selectivity_config_defaults() {
+        let config = SelectivityConfig::new();
+        assert!((config.default - 0.1).abs() < f64::EPSILON);
+        assert!((config.equality - 0.01).abs() < f64::EPSILON);
+        assert!((config.inequality - 0.99).abs() < f64::EPSILON);
+        assert!((config.range - 0.33).abs() < f64::EPSILON);
+        assert!((config.string_ops - 0.1).abs() < f64::EPSILON);
+        assert!((config.membership - 0.1).abs() < f64::EPSILON);
+        assert!((config.is_null - 0.05).abs() < f64::EPSILON);
+        assert!((config.is_not_null - 0.95).abs() < f64::EPSILON);
+        assert!((config.distinct_fraction - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_custom_selectivity_config() {
+        let config = SelectivityConfig {
+            equality: 0.05,
+            range: 0.25,
+            ..SelectivityConfig::new()
+        };
+        let estimator = CardinalityEstimator::with_selectivity_config(config);
+        assert!((estimator.selectivity_config().equality - 0.05).abs() < f64::EPSILON);
+        assert!((estimator.selectivity_config().range - 0.25).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_custom_selectivity_affects_estimation() {
+        // Default: equality = 0.01 → 1000 * 0.01 = 10
+        let mut default_est = CardinalityEstimator::new();
+        default_est.add_table_stats("Person", TableStats::new(1000));
+
+        let filter = LogicalOperator::Filter(FilterOp {
+            predicate: LogicalExpression::Binary {
+                left: Box::new(LogicalExpression::Property {
+                    variable: "n".to_string(),
+                    property: "name".to_string(),
+                }),
+                op: BinaryOp::Eq,
+                right: Box::new(LogicalExpression::Literal(Value::String("Alice".into()))),
+            },
+            input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
+                variable: "n".to_string(),
+                label: Some("Person".to_string()),
+                input: None,
+            })),
+        });
+
+        let default_card = default_est.estimate(&filter);
+
+        // Custom: equality = 0.2 → 1000 * 0.2 = 200
+        let config = SelectivityConfig {
+            equality: 0.2,
+            ..SelectivityConfig::new()
+        };
+        let mut custom_est = CardinalityEstimator::with_selectivity_config(config);
+        custom_est.add_table_stats("Person", TableStats::new(1000));
+
+        let custom_card = custom_est.estimate(&filter);
+
+        assert!(custom_card > default_card);
+        assert!((custom_card - 200.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_custom_range_selectivity() {
+        let config = SelectivityConfig {
+            range: 0.5,
+            ..SelectivityConfig::new()
+        };
+        let mut estimator = CardinalityEstimator::with_selectivity_config(config);
+        estimator.add_table_stats("Person", TableStats::new(1000));
+
+        let filter = LogicalOperator::Filter(FilterOp {
+            predicate: LogicalExpression::Binary {
+                left: Box::new(LogicalExpression::Property {
+                    variable: "n".to_string(),
+                    property: "age".to_string(),
+                }),
+                op: BinaryOp::Gt,
+                right: Box::new(LogicalExpression::Literal(Value::Int64(30))),
+            },
+            input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
+                variable: "n".to_string(),
+                label: Some("Person".to_string()),
+                input: None,
+            })),
+        });
+
+        let cardinality = estimator.estimate(&filter);
+        // 1000 * 0.5 = 500
+        assert!((cardinality - 500.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_custom_distinct_fraction() {
+        let config = SelectivityConfig {
+            distinct_fraction: 0.8,
+            ..SelectivityConfig::new()
+        };
+        let mut estimator = CardinalityEstimator::with_selectivity_config(config);
+        estimator.add_table_stats("Person", TableStats::new(1000));
+
+        let distinct = LogicalOperator::Distinct(DistinctOp {
+            input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
+                variable: "n".to_string(),
+                label: Some("Person".to_string()),
+                input: None,
+            })),
+            columns: None,
+        });
+
+        let cardinality = estimator.estimate(&distinct);
+        // 1000 * 0.8 = 800
+        assert!((cardinality - 800.0).abs() < 1.0);
+    }
+
+    // ==================== EstimationLog Tests ====================
+
+    #[test]
+    fn test_estimation_log_basic() {
+        let mut log = EstimationLog::new(10.0);
+        log.record("NodeScan(Person)", 1000.0, 1200.0);
+        log.record("Filter(age > 30)", 100.0, 90.0);
+
+        assert_eq!(log.entries().len(), 2);
+        assert!(!log.should_replan()); // 1.2x and 0.9x are within 10x threshold
+    }
+
+    #[test]
+    fn test_estimation_log_triggers_replan() {
+        let mut log = EstimationLog::new(10.0);
+        log.record("NodeScan(Person)", 100.0, 5000.0); // 50x underestimate
+
+        assert!(log.should_replan());
+    }
+
+    #[test]
+    fn test_estimation_log_overestimate_triggers_replan() {
+        let mut log = EstimationLog::new(5.0);
+        log.record("Filter", 1000.0, 100.0); // 10x overestimate → ratio = 0.1
+
+        assert!(log.should_replan()); // 0.1 < 1/5 = 0.2
+    }
+
+    #[test]
+    fn test_estimation_entry_error_ratio() {
+        let entry = EstimationEntry {
+            operator: "test".into(),
+            estimated: 100.0,
+            actual: 200.0,
+        };
+        assert!((entry.error_ratio() - 2.0).abs() < f64::EPSILON);
+
+        let perfect = EstimationEntry {
+            operator: "test".into(),
+            estimated: 100.0,
+            actual: 100.0,
+        };
+        assert!((perfect.error_ratio() - 1.0).abs() < f64::EPSILON);
+
+        let zero_est = EstimationEntry {
+            operator: "test".into(),
+            estimated: 0.0,
+            actual: 0.0,
+        };
+        assert!((zero_est.error_ratio() - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_estimation_log_max_error_ratio() {
+        let mut log = EstimationLog::new(10.0);
+        log.record("A", 100.0, 300.0); // 3x
+        log.record("B", 100.0, 50.0); // 2x (normalized: 1/0.5 = 2)
+        log.record("C", 100.0, 100.0); // 1x
+
+        assert!((log.max_error_ratio() - 3.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_estimation_log_clear() {
+        let mut log = EstimationLog::new(10.0);
+        log.record("A", 100.0, 100.0);
+        assert_eq!(log.entries().len(), 1);
+
+        log.clear();
+        assert!(log.entries().is_empty());
+        assert!(!log.should_replan());
+    }
+
+    #[test]
+    fn test_create_estimation_log() {
+        let log = CardinalityEstimator::create_estimation_log();
+        assert!(log.entries().is_empty());
+        assert!(!log.should_replan());
     }
 }

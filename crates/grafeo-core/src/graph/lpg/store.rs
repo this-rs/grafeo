@@ -1269,6 +1269,28 @@ impl LpgStore {
         self.vector_indexes.read().get(&key).cloned()
     }
 
+    /// Removes a vector index for a label+property pair.
+    ///
+    /// Returns `true` if the index existed and was removed.
+    #[cfg(feature = "vector-index")]
+    pub fn remove_vector_index(&self, label: &str, property: &str) -> bool {
+        let key = format!("{label}:{property}");
+        self.vector_indexes.write().remove(&key).is_some()
+    }
+
+    /// Returns all vector index entries as `(key, index)` pairs.
+    ///
+    /// Keys are in `"label:property"` format.
+    #[cfg(feature = "vector-index")]
+    #[must_use]
+    pub fn vector_index_entries(&self) -> Vec<(String, Arc<HnswIndex>)> {
+        self.vector_indexes
+            .read()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+
     /// Finds all nodes that have a specific property value.
     ///
     /// If the property is indexed, this is O(1). Otherwise, it scans all nodes

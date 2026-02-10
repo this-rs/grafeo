@@ -86,11 +86,24 @@ pub fn run(path: &Path, format: OutputFormat, quiet: bool) -> Result<()> {
                         println!("{}", serde_json::to_string_pretty(&output)?);
                     }
                 }
+                Format::Csv => {
+                    if !quiet {
+                        println!("type,name,count");
+                        for label in &output.labels {
+                            println!("label,{},{}", label.name, label.count);
+                        }
+                        for edge_type in &output.edge_types {
+                            println!("edge_type,{},{}", edge_type.name, edge_type.count);
+                        }
+                        for key in &output.property_keys {
+                            println!("property_key,{},", key);
+                        }
+                    }
+                }
                 Format::Table => {
                     if !quiet {
                         println!("Mode: LPG (Labeled Property Graph)\n");
 
-                        // Labels table
                         let mut table = output::create_table();
                         output::add_header(&mut table, &["Label", "Count"]);
                         for label in &output.labels {
@@ -98,7 +111,6 @@ pub fn run(path: &Path, format: OutputFormat, quiet: bool) -> Result<()> {
                         }
                         println!("{table}\n");
 
-                        // Edge types table
                         let mut table = output::create_table();
                         output::add_header(&mut table, &["Edge Type", "Count"]);
                         for edge_type in &output.edge_types {
@@ -109,7 +121,6 @@ pub fn run(path: &Path, format: OutputFormat, quiet: bool) -> Result<()> {
                         }
                         println!("{table}\n");
 
-                        // Property keys table
                         let mut table = output::create_table();
                         output::add_header(&mut table, &["Property Keys"]);
                         for key in &output.property_keys {
@@ -142,17 +153,25 @@ pub fn run(path: &Path, format: OutputFormat, quiet: bool) -> Result<()> {
                         println!("{}", serde_json::to_string_pretty(&output)?);
                     }
                 }
+                Format::Csv => {
+                    if !quiet {
+                        println!("type,name,count");
+                        for pred in &output.predicates {
+                            println!("predicate,{},{}", pred.iri, pred.count);
+                        }
+                        for graph in &output.named_graphs {
+                            println!("named_graph,{},", graph);
+                        }
+                    }
+                }
                 Format::Table => {
                     if !quiet {
                         println!("Mode: RDF (Triple Store)\n");
-
-                        // Stats
                         println!(
                             "Subjects: {}, Objects: {}\n",
                             output.subject_count, output.object_count
                         );
 
-                        // Predicates table
                         let mut table = output::create_table();
                         output::add_header(&mut table, &["Predicate", "Count"]);
                         for pred in &output.predicates {
@@ -160,7 +179,6 @@ pub fn run(path: &Path, format: OutputFormat, quiet: bool) -> Result<()> {
                         }
                         println!("{table}\n");
 
-                        // Named graphs table
                         let mut table = output::create_table();
                         output::add_header(&mut table, &["Named Graphs"]);
                         for graph in &output.named_graphs {

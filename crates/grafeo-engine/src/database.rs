@@ -424,6 +424,35 @@ impl GrafeoDB {
         session.execute_graphql_with_params(query, params)
     }
 
+    /// Executes a SQL/PGQ query (SQL:2023 GRAPH_TABLE) and returns the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the query fails.
+    #[cfg(feature = "sql-pgq")]
+    pub fn execute_sql(&self, query: &str) -> Result<QueryResult> {
+        let session = self.session();
+        session.execute_sql(query)
+    }
+
+    /// Executes a SQL/PGQ query with parameters and returns the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the query fails.
+    #[cfg(feature = "sql-pgq")]
+    pub fn execute_sql_with_params(
+        &self,
+        query: &str,
+        params: std::collections::HashMap<String, grafeo_common::types::Value>,
+    ) -> Result<QueryResult> {
+        use crate::query::processor::{QueryLanguage, QueryProcessor};
+
+        // Create processor
+        let processor = QueryProcessor::for_lpg(Arc::clone(&self.store));
+        processor.process(query, QueryLanguage::SqlPgq, Some(&params))
+    }
+
     /// Executes a SPARQL query and returns the result.
     ///
     /// SPARQL queries operate on the RDF triple store.
@@ -694,7 +723,34 @@ impl GrafeoDB {
     ///
     /// If WAL is enabled, the operation is logged for durability.
     pub fn delete_node(&self, id: grafeo_common::types::NodeId) -> bool {
+        // Collect matching vector indexes BEFORE deletion removes labels
+        #[cfg(feature = "vector-index")]
+        let indexes_to_clean: Vec<std::sync::Arc<grafeo_core::index::vector::HnswIndex>> = self
+            .store
+            .get_node(id)
+            .map(|node| {
+                let mut indexes = Vec::new();
+                for label in &node.labels {
+                    let prefix = format!("{}:", label.as_str());
+                    for (key, index) in self.store.vector_index_entries() {
+                        if key.starts_with(&prefix) {
+                            indexes.push(index);
+                        }
+                    }
+                }
+                indexes
+            })
+            .unwrap_or_default();
+
         let result = self.store.delete_node(id);
+
+        // Remove from vector indexes after successful deletion
+        #[cfg(feature = "vector-index")]
+        if result {
+            for index in indexes_to_clean {
+                index.remove(id);
+            }
+        }
 
         #[cfg(feature = "wal")]
         if result && let Err(e) = self.log_wal(&WalRecord::DeleteNode { id }) {
@@ -713,6 +769,13 @@ impl GrafeoDB {
         key: &str,
         value: grafeo_common::types::Value,
     ) {
+        // Extract vector data before the value is moved into the store
+        #[cfg(feature = "vector-index")]
+        let vector_data = match &value {
+            grafeo_common::types::Value::Vector(v) => Some(v.clone()),
+            _ => None,
+        };
+
         // Log to WAL first
         #[cfg(feature = "wal")]
         if let Err(e) = self.log_wal(&WalRecord::SetNodeProperty {
@@ -724,6 +787,18 @@ impl GrafeoDB {
         }
 
         self.store.set_node_property(id, key, value);
+
+        // Auto-insert into matching vector indexes
+        #[cfg(feature = "vector-index")]
+        if let Some(vec) = vector_data
+            && let Some(node) = self.store.get_node(id)
+        {
+            for label in &node.labels {
+                if let Some(index) = self.store.get_vector_index(label.as_str(), key) {
+                    index.insert(id, &vec);
+                }
+            }
+        }
     }
 
     /// Adds a label to an existing node.
@@ -754,6 +829,24 @@ impl GrafeoDB {
                 label: label.to_string(),
             }) {
                 tracing::warn!("Failed to log AddNodeLabel to WAL: {}", e);
+            }
+        }
+
+        // Auto-insert into vector indexes for the newly-added label
+        #[cfg(feature = "vector-index")]
+        if result {
+            let prefix = format!("{label}:");
+            for (key, index) in self.store.vector_index_entries() {
+                if let Some(property) = key.strip_prefix(&prefix)
+                    && let Some(node) = self.store.get_node(id)
+                {
+                    let prop_key = grafeo_common::types::PropertyKey::new(property);
+                    if let Some(grafeo_common::types::Value::Vector(v)) =
+                        node.properties.get(&prop_key)
+                    {
+                        index.insert(id, v);
+                    }
+                }
             }
         }
 
@@ -1109,6 +1202,56 @@ impl GrafeoDB {
         Ok(())
     }
 
+    /// Drops a vector index for the given label and property.
+    ///
+    /// Returns `true` if the index existed and was removed, `false` if no
+    /// index was found.
+    ///
+    /// After dropping, [`vector_search`](Self::vector_search) for this
+    /// label+property pair will return an error.
+    #[cfg(feature = "vector-index")]
+    pub fn drop_vector_index(&self, label: &str, property: &str) -> bool {
+        let removed = self.store.remove_vector_index(label, property);
+        if removed {
+            tracing::info!("Vector index dropped: :{label}({property})");
+        }
+        removed
+    }
+
+    /// Drops and recreates a vector index, rescanning all matching nodes.
+    ///
+    /// This is useful after bulk inserts or when the index may be out of sync.
+    /// The previous index configuration (dimensions, metric, M, ef\_construction)
+    /// is preserved.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no vector index exists for this label+property pair,
+    /// or if the rebuild fails (e.g., no matching vectors found).
+    #[cfg(feature = "vector-index")]
+    pub fn rebuild_vector_index(&self, label: &str, property: &str) -> Result<()> {
+        let config = self
+            .store
+            .get_vector_index(label, property)
+            .map(|idx| idx.config().clone())
+            .ok_or_else(|| {
+                grafeo_common::utils::error::Error::Internal(format!(
+                    "No vector index found for :{label}({property}). Cannot rebuild."
+                ))
+            })?;
+
+        self.store.remove_vector_index(label, property);
+
+        self.create_vector_index(
+            label,
+            property,
+            Some(config.dimensions),
+            Some(config.metric.name()),
+            Some(config.m),
+            Some(config.ef_construction),
+        )
+    }
+
     /// Searches for the k nearest neighbors of a query vector.
     ///
     /// Uses the HNSW index created by [`create_vector_index`](Self::create_vector_index).
@@ -1173,7 +1316,7 @@ impl GrafeoDB {
         let prop_key = PropertyKey::new(property);
         let labels: &[&str] = &[label];
 
-        vectors
+        let ids: Vec<grafeo_common::types::NodeId> = vectors
             .into_iter()
             .map(|vec| {
                 let value = Value::Vector(vec.into());
@@ -1202,7 +1345,22 @@ impl GrafeoDB {
 
                 id
             })
-            .collect()
+            .collect();
+
+        // Auto-insert into matching vector index if one exists
+        #[cfg(feature = "vector-index")]
+        if let Some(index) = self.store.get_vector_index(label, property) {
+            for &id in &ids {
+                if let Some(node) = self.store.get_node(id) {
+                    let pk = grafeo_common::types::PropertyKey::new(property);
+                    if let Some(grafeo_common::types::Value::Vector(v)) = node.properties.get(&pk) {
+                        index.insert(id, v);
+                    }
+                }
+            }
+        }
+
+        ids
     }
 
     /// Searches for nearest neighbors for multiple query vectors in parallel.
@@ -1237,6 +1395,78 @@ impl GrafeoDB {
         };
 
         Ok(results)
+    }
+
+    /// Searches for diverse nearest neighbors using Maximal Marginal Relevance (MMR).
+    ///
+    /// MMR balances relevance (similarity to query) with diversity (dissimilarity
+    /// among selected results). This is the algorithm used by LangChain's
+    /// `mmr_traversal_search()` for RAG applications.
+    ///
+    /// # Arguments
+    ///
+    /// * `label` - Node label that was indexed
+    /// * `property` - Property that was indexed
+    /// * `query` - Query vector
+    /// * `k` - Number of diverse results to return
+    /// * `fetch_k` - Number of initial candidates from HNSW (default: `4 * k`)
+    /// * `lambda` - Relevance vs. diversity in \[0, 1\] (default: 0.5).
+    ///   1.0 = pure relevance, 0.0 = pure diversity.
+    /// * `ef` - HNSW search beam width (uses index default if `None`)
+    ///
+    /// # Returns
+    ///
+    /// `(NodeId, distance)` pairs in MMR selection order. The f32 is the original
+    /// distance from the query, matching [`vector_search`](Self::vector_search).
+    #[cfg(feature = "vector-index")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn mmr_search(
+        &self,
+        label: &str,
+        property: &str,
+        query: &[f32],
+        k: usize,
+        fetch_k: Option<usize>,
+        lambda: Option<f32>,
+        ef: Option<usize>,
+    ) -> Result<Vec<(grafeo_common::types::NodeId, f32)>> {
+        use grafeo_core::index::vector::mmr_select;
+
+        let index = self.store.get_vector_index(label, property).ok_or_else(|| {
+            grafeo_common::utils::error::Error::Internal(format!(
+                "No vector index found for :{label}({property}). Call create_vector_index() first."
+            ))
+        })?;
+
+        let fetch_k = fetch_k.unwrap_or(k.saturating_mul(4).max(k));
+        let lambda = lambda.unwrap_or(0.5);
+
+        // Step 1: Fetch candidates from HNSW
+        let initial_results = match ef {
+            Some(ef_val) => index.search_with_ef(query, fetch_k, ef_val),
+            None => index.search(query, fetch_k),
+        };
+
+        if initial_results.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Step 2: Retrieve stored vectors for MMR pairwise comparison
+        let candidates: Vec<(grafeo_common::types::NodeId, f32, std::sync::Arc<[f32]>)> =
+            initial_results
+                .into_iter()
+                .filter_map(|(id, dist)| index.get(id).map(|vec| (id, dist, vec)))
+                .collect();
+
+        // Step 3: Build slice-based candidates for mmr_select
+        let candidate_refs: Vec<(grafeo_common::types::NodeId, f32, &[f32])> = candidates
+            .iter()
+            .map(|(id, dist, vec)| (*id, *dist, vec.as_ref()))
+            .collect();
+
+        // Step 4: Run MMR selection
+        let metric = index.config().metric;
+        Ok(mmr_select(query, &candidate_refs, k, lambda, metric))
     }
 
     /// Drops an index on a node property.
@@ -1801,6 +2031,32 @@ impl Drop for GrafeoDB {
         if let Err(e) = self.close() {
             tracing::error!("Error closing database: {}", e);
         }
+    }
+}
+
+impl crate::admin::AdminService for GrafeoDB {
+    fn info(&self) -> crate::admin::DatabaseInfo {
+        self.info()
+    }
+
+    fn detailed_stats(&self) -> crate::admin::DatabaseStats {
+        self.detailed_stats()
+    }
+
+    fn schema(&self) -> crate::admin::SchemaInfo {
+        self.schema()
+    }
+
+    fn validate(&self) -> crate::admin::ValidationResult {
+        self.validate()
+    }
+
+    fn wal_status(&self) -> crate::admin::WalStatus {
+        self.wal_status()
+    }
+
+    fn wal_checkpoint(&self) -> Result<()> {
+        self.wal_checkpoint()
     }
 }
 

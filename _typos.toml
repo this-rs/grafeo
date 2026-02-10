@@ -13,6 +13,8 @@ extend-exclude = [
 # "fof" = friend-of-friend (standard graph query pattern)
 fof = "fof"
 fofName = "fofName"
+# "ue" appears in test comment "key=val=ue" (split-at-first-equals test)
+ue = "ue"
 
 [default.extend-identifiers]
 abd = "abd"         # Levenshtein distance test input

@@ -1,13 +1,13 @@
 //! Query results for the Node.js API.
 
 use napi::bindgen_prelude::*;
-use napi::{JsObject, JsUnknown};
+use napi::sys;
 use napi_derive::napi;
 
 use grafeo_common::types::Value;
 
 use crate::graph::{JsEdge, JsNode};
-use crate::types::value_to_js;
+use crate::types;
 
 /// Results from a query - access rows, nodes, and edges.
 #[napi]
@@ -48,7 +48,7 @@ impl QueryResult {
 
     /// Get a single row by index as a plain object.
     #[napi]
-    pub fn get(&self, env: Env, index: u32) -> Result<JsObject> {
+    pub fn get(&self, env: Env, index: u32) -> Result<Object<'_>> {
         let idx = index as usize;
         if idx >= self.rows.len() {
             return Err(napi::Error::new(
@@ -56,22 +56,22 @@ impl QueryResult {
                 "Row index out of range",
             ));
         }
-        self.row_to_object(&env, idx)
+        self.row_to_object(env.raw(), idx)
     }
 
     /// Get all rows as an array of objects.
     #[napi(js_name = "toArray")]
-    pub fn to_array(&self, env: Env) -> Result<Vec<JsObject>> {
+    pub fn to_array(&self, env: Env) -> Result<Vec<Object<'_>>> {
         let mut result = Vec::with_capacity(self.rows.len());
         for i in 0..self.rows.len() {
-            result.push(self.row_to_object(&env, i)?);
+            result.push(self.row_to_object(env.raw(), i)?);
         }
         Ok(result)
     }
 
     /// Get first column of first row (single value).
     #[napi]
-    pub fn scalar(&self, env: Env) -> Result<JsUnknown> {
+    pub fn scalar(&self, env: Env) -> Result<Unknown<'_>> {
         if self.rows.is_empty() {
             return Err(napi::Error::new(
                 napi::Status::GenericFailure,
@@ -84,7 +84,7 @@ impl QueryResult {
                 "No columns in result",
             ));
         }
-        value_to_js(&env, &self.rows[0][0])
+        types::value_to_js(env.raw(), &self.rows[0][0])
     }
 
     /// Get nodes found in the result.
@@ -101,27 +101,40 @@ impl QueryResult {
 
     /// Get all rows as an array of arrays (no column names).
     #[napi]
-    pub fn rows(&self, env: Env) -> Result<JsObject> {
-        let mut arr = env.create_array_with_length(self.rows.len())?;
+    pub fn rows(&self, env: Env) -> Result<Object<'_>> {
+        let env_raw = env.raw();
+        let mut arr = std::ptr::null_mut();
+        types::check_napi(unsafe {
+            sys::napi_create_array_with_length(env_raw, self.rows.len(), &raw mut arr)
+        })?;
         for (i, row) in self.rows.iter().enumerate() {
-            let mut row_arr = env.create_array_with_length(row.len())?;
+            let mut row_arr = std::ptr::null_mut();
+            types::check_napi(unsafe {
+                sys::napi_create_array_with_length(env_raw, row.len(), &raw mut row_arr)
+            })?;
             for (j, val) in row.iter().enumerate() {
-                row_arr.set_element(j as u32, value_to_js(&env, val)?)?;
+                let napi_val = types::value_to_napi(env_raw, val)?;
+                types::check_napi(unsafe {
+                    sys::napi_set_element(env_raw, row_arr, j as u32, napi_val)
+                })?;
             }
-            arr.set_element(i as u32, row_arr)?;
+            types::check_napi(unsafe { sys::napi_set_element(env_raw, arr, i as u32, row_arr) })?;
         }
-        Ok(arr)
+        Ok(Object::from_raw(env_raw, arr))
     }
 }
 
 impl QueryResult {
     /// Convert a row to a JS object with column names as keys.
-    #[allow(clippy::trivially_copy_pass_by_ref)]
-    fn row_to_object(&self, env: &Env, idx: usize) -> Result<JsObject> {
+    fn row_to_object(&self, env: sys::napi_env, idx: usize) -> Result<Object<'_>> {
         let row = &self.rows[idx];
-        let mut obj = env.create_object()?;
+        let mut raw_obj = std::ptr::null_mut();
+        types::check_napi(unsafe { sys::napi_create_object(env, &raw mut raw_obj) })?;
+        let mut obj = Object::from_raw(env, raw_obj);
         for (col, val) in self.columns.iter().zip(row.iter()) {
-            obj.set_named_property(col, value_to_js(env, val)?)?;
+            let val_raw = types::value_to_napi(env, val)?;
+            let val_unknown = unsafe { Unknown::from_raw_unchecked(env, val_raw) };
+            obj.set_named_property(col, val_unknown)?;
         }
         Ok(obj)
     }

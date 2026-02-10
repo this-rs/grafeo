@@ -1242,3 +1242,283 @@ mod cross_language_mutations {
         );
     }
 }
+
+mod gql_in_operator {
+    use super::*;
+
+    fn setup_db() -> GrafeoDB {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute("INSERT (:Person {name: 'Alice', age: 30})")
+            .unwrap();
+        session
+            .execute("INSERT (:Person {name: 'Bob', age: 25})")
+            .unwrap();
+        session
+            .execute("INSERT (:Person {name: 'Carol', age: 35})")
+            .unwrap();
+        db
+    }
+
+    #[test]
+    fn test_in_string_list() {
+        let db = setup_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (n:Person) WHERE n.name IN ['Alice', 'Bob'] RETURN n.name ORDER BY n.name",
+            )
+            .unwrap();
+        assert_eq!(result.row_count(), 2);
+        assert_eq!(result.rows[0][0], Value::String("Alice".into()));
+        assert_eq!(result.rows[1][0], Value::String("Bob".into()));
+    }
+
+    #[test]
+    fn test_in_integer_list() {
+        let db = setup_db();
+        let session = db.session();
+        let result = session
+            .execute("MATCH (n:Person) WHERE n.age IN [25, 35] RETURN n.name ORDER BY n.name")
+            .unwrap();
+        assert_eq!(result.row_count(), 2);
+        assert_eq!(result.rows[0][0], Value::String("Bob".into()));
+        assert_eq!(result.rows[1][0], Value::String("Carol".into()));
+    }
+
+    #[test]
+    fn test_in_single_element() {
+        let db = setup_db();
+        let session = db.session();
+        let result = session
+            .execute("MATCH (n:Person) WHERE n.name IN ['Carol'] RETURN n.name")
+            .unwrap();
+        assert_eq!(result.row_count(), 1);
+        assert_eq!(result.rows[0][0], Value::String("Carol".into()));
+    }
+
+    #[test]
+    fn test_in_no_match() {
+        let db = setup_db();
+        let session = db.session();
+        let result = session
+            .execute("MATCH (n:Person) WHERE n.name IN ['Dave', 'Eve'] RETURN n.name")
+            .unwrap();
+        assert_eq!(result.row_count(), 0);
+    }
+
+    #[test]
+    fn test_string_with_escaped_quote() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute(r"INSERT (:Person {name: 'O\'Brien'})")
+            .unwrap();
+        let result = session.execute("MATCH (n:Person) RETURN n.name").unwrap();
+        assert_eq!(result.row_count(), 1);
+        assert_eq!(result.rows[0][0], Value::String("O'Brien".into()));
+    }
+}
+
+// ============================================================================
+// Parameterized Query Tests
+// ============================================================================
+
+#[cfg(feature = "gql")]
+mod parameterized_queries {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn setup_db() -> GrafeoDB {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute("INSERT (:Person {name: 'Alice', age: 30})")
+            .unwrap();
+        session
+            .execute("INSERT (:Person {name: 'Bob', age: 25})")
+            .unwrap();
+        session
+            .execute("INSERT (:Person {name: 'Carol', age: 35})")
+            .unwrap();
+        db
+    }
+
+    #[test]
+    fn test_execute_with_params_string() {
+        let db = setup_db();
+        let session = db.session();
+
+        let mut params = HashMap::new();
+        params.insert("name".to_string(), Value::String("Alice".into()));
+
+        let result = session
+            .execute_with_params(
+                "MATCH (n:Person) WHERE n.name = $name RETURN n.name",
+                params,
+            )
+            .unwrap();
+        assert_eq!(result.row_count(), 1);
+        assert_eq!(result.rows[0][0], Value::String("Alice".into()));
+    }
+
+    #[test]
+    fn test_execute_with_params_integer() {
+        let db = setup_db();
+        let session = db.session();
+
+        let mut params = HashMap::new();
+        params.insert("min_age".to_string(), Value::Int64(28));
+
+        let result = session
+            .execute_with_params(
+                "MATCH (n:Person) WHERE n.age > $min_age RETURN n.name ORDER BY n.name",
+                params,
+            )
+            .unwrap();
+        assert_eq!(result.row_count(), 2);
+        assert_eq!(result.rows[0][0], Value::String("Alice".into()));
+        assert_eq!(result.rows[1][0], Value::String("Carol".into()));
+    }
+
+    #[test]
+    fn test_execute_with_multiple_params() {
+        let db = setup_db();
+        let session = db.session();
+
+        let mut params = HashMap::new();
+        params.insert("min_age".to_string(), Value::Int64(24));
+        params.insert("max_age".to_string(), Value::Int64(31));
+
+        let result = session
+            .execute_with_params(
+                "MATCH (n:Person) WHERE n.age >= $min_age AND n.age <= $max_age RETURN n.name ORDER BY n.name",
+                params,
+            )
+            .unwrap();
+        assert_eq!(result.row_count(), 2);
+        assert_eq!(result.rows[0][0], Value::String("Alice".into()));
+        assert_eq!(result.rows[1][0], Value::String("Bob".into()));
+    }
+
+    #[test]
+    fn test_db_level_execute_with_params() {
+        let db = setup_db();
+
+        let mut params = HashMap::new();
+        params.insert("name".to_string(), Value::String("Bob".into()));
+
+        let result = db
+            .execute_with_params("MATCH (n:Person) WHERE n.name = $name RETURN n.age", params)
+            .unwrap();
+        assert_eq!(result.row_count(), 1);
+        assert_eq!(result.rows[0][0], Value::Int64(25));
+    }
+}
+
+// ============================================================================
+// Language-specific execute methods on GrafeoDB
+// ============================================================================
+
+#[cfg(feature = "gremlin")]
+mod gremlin_db_execute {
+    use super::*;
+
+    #[test]
+    fn test_db_execute_gremlin() {
+        let db = create_social_network();
+        let result = db.execute_gremlin("g.V().hasLabel('Person')").unwrap();
+        assert_eq!(result.row_count(), 3);
+    }
+
+    #[test]
+    fn test_db_execute_gremlin_with_params() {
+        let db = create_social_network();
+        let params = std::collections::HashMap::new();
+        let result = db
+            .execute_gremlin_with_params("g.V().hasLabel('Person').count()", params)
+            .unwrap();
+        assert_eq!(result.row_count(), 1);
+    }
+}
+
+#[cfg(feature = "graphql")]
+mod graphql_db_execute {
+    use super::*;
+
+    #[test]
+    fn test_db_execute_graphql() {
+        let db = create_social_network();
+        let result = db.execute_graphql("query { person { name } }").unwrap();
+        assert_eq!(result.row_count(), 3);
+    }
+
+    #[test]
+    fn test_db_execute_graphql_with_params() {
+        let db = create_social_network();
+        let params = std::collections::HashMap::new();
+        let result = db
+            .execute_graphql_with_params("query { person { name } }", params)
+            .unwrap();
+        assert_eq!(result.row_count(), 3);
+    }
+}
+
+#[cfg(feature = "cypher")]
+mod cypher_db_execute {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_db_execute_cypher() {
+        let db = create_social_network();
+        let result = db.execute_cypher("MATCH (p:Person) RETURN p").unwrap();
+        assert_eq!(result.row_count(), 3);
+    }
+
+    #[test]
+    fn test_db_execute_cypher_with_params() {
+        let db = create_social_network();
+        let mut params = HashMap::new();
+        params.insert("name".to_string(), Value::String("Alice".into()));
+
+        let result = db
+            .execute_cypher_with_params(
+                "MATCH (p:Person) WHERE p.name = $name RETURN p.name",
+                params,
+            )
+            .unwrap();
+        assert_eq!(result.row_count(), 1);
+        assert_eq!(result.rows[0][0], Value::String("Alice".into()));
+    }
+}
+
+#[cfg(feature = "sql-pgq")]
+mod sql_pgq_db_execute {
+    use super::*;
+
+    #[test]
+    fn test_db_execute_sql() {
+        let db = create_social_network();
+        let result = db
+            .execute_sql(
+                "SELECT p.name FROM GRAPH_TABLE (MATCH (p:Person) COLUMNS (p.name AS name))",
+            )
+            .unwrap();
+        assert_eq!(result.row_count(), 3);
+    }
+
+    #[test]
+    fn test_db_execute_sql_with_params() {
+        let db = create_social_network();
+        let params = std::collections::HashMap::new();
+        let result = db
+            .execute_sql_with_params(
+                "SELECT p.name FROM GRAPH_TABLE (MATCH (p:Person) COLUMNS (p.name AS name))",
+                params,
+            )
+            .unwrap();
+        assert_eq!(result.row_count(), 3);
+    }
+}

@@ -15,7 +15,9 @@ pub mod cardinality;
 pub mod cost;
 pub mod join_order;
 
-pub use cardinality::{CardinalityEstimator, ColumnStats, TableStats};
+pub use cardinality::{
+    CardinalityEstimator, ColumnStats, EstimationLog, SelectivityConfig, TableStats,
+};
 pub use cost::{Cost, CostModel};
 pub use join_order::{BitSet, DPccp, JoinGraph, JoinGraphBuilder, JoinPlan};
 
@@ -116,6 +118,12 @@ impl Optimizer {
     /// Sets the cardinality estimator.
     pub fn with_cardinality_estimator(mut self, estimator: CardinalityEstimator) -> Self {
         self.card_estimator = estimator;
+        self
+    }
+
+    /// Sets the selectivity configuration for the cardinality estimator.
+    pub fn with_selectivity_config(mut self, config: SelectivityConfig) -> Self {
+        self.card_estimator = CardinalityEstimator::with_selectivity_config(config);
         self
     }
 

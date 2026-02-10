@@ -511,6 +511,8 @@ impl Binder {
                 self.validate_expression(&join.query_vector)?;
                 Ok(())
             }
+            // DDL operators don't need binding — they're handled before the binder
+            LogicalOperator::CreatePropertyGraph(_) => Ok(()),
         }
     }
 
@@ -652,14 +654,37 @@ impl Binder {
             },
         );
 
-        // Add path length variable for variable-length paths (for length(p) calls)
+        // Add path variables for variable-length paths
         if let Some(ref path_alias) = expand.path_alias {
+            // length(p) → _path_length_p
             let path_length_var = format!("_path_length_{}", path_alias);
             self.context.add_variable(
                 path_length_var.clone(),
                 VariableInfo {
                     name: path_length_var,
                     data_type: LogicalType::Int64,
+                    is_node: false,
+                    is_edge: false,
+                },
+            );
+            // nodes(p) → _path_nodes_p
+            let path_nodes_var = format!("_path_nodes_{}", path_alias);
+            self.context.add_variable(
+                path_nodes_var.clone(),
+                VariableInfo {
+                    name: path_nodes_var,
+                    data_type: LogicalType::Any,
+                    is_node: false,
+                    is_edge: false,
+                },
+            );
+            // edges(p) → _path_edges_p
+            let path_edges_var = format!("_path_edges_{}", path_alias);
+            self.context.add_variable(
+                path_edges_var.clone(),
+                VariableInfo {
+                    name: path_edges_var,
+                    data_type: LogicalType::Any,
                     is_node: false,
                     is_edge: false,
                 },

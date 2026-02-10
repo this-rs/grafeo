@@ -4,7 +4,7 @@ use anyhow::Result;
 use grafeo_engine::GrafeoDB;
 use serde::Serialize;
 
-use crate::output::{self, Format};
+use crate::output::{self, Format, format_bytes};
 use crate::{OutputFormat, WalCommands};
 
 /// WAL status output.
@@ -17,23 +17,6 @@ struct WalStatusOutput {
     record_count: usize,
     last_checkpoint: Option<u64>,
     current_epoch: u64,
-}
-
-/// Format bytes as human-readable string.
-fn format_bytes(bytes: usize) -> String {
-    const KB: usize = 1024;
-    const MB: usize = KB * 1024;
-    const GB: usize = MB * 1024;
-
-    if bytes >= GB {
-        format!("{:.2} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.2} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.2} KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{bytes} bytes")
-    }
 }
 
 /// Run WAL commands.
@@ -60,7 +43,7 @@ pub fn run(cmd: WalCommands, format: OutputFormat, quiet: bool) -> Result<()> {
                         println!("{}", serde_json::to_string_pretty(&output)?);
                     }
                 }
-                Format::Table => {
+                Format::Table | Format::Csv => {
                     let items = vec![
                         ("Enabled", output.enabled.to_string()),
                         ("Path", output.path.unwrap_or_else(|| "N/A".to_string())),
@@ -68,13 +51,9 @@ pub fn run(cmd: WalCommands, format: OutputFormat, quiet: bool) -> Result<()> {
                         ("Records", output.record_count.to_string()),
                         (
                             "Last Checkpoint",
-                            output.last_checkpoint.map_or_else(
-                                || "Never".to_string(),
-                                |ts| {
-                                    // Format timestamp
-                                    format!("{ts}")
-                                },
-                            ),
+                            output
+                                .last_checkpoint
+                                .map_or_else(|| "Never".to_string(), |ts| format!("{ts}")),
                         ),
                         ("Current Epoch", output.current_epoch.to_string()),
                     ];

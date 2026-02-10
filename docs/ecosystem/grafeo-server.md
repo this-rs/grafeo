@@ -7,7 +7,7 @@ Standalone HTTP server and web UI for the Grafeo graph database.
 
 ## Overview
 
-grafeo-server wraps the Grafeo engine in a REST API, turning it from an embeddable library into a standalone database server. Pure Rust, single binary, ~20MB Docker image.
+grafeo-server wraps the Grafeo engine in a REST API, turning it from an embeddable library into a standalone database server. Pure Rust, single binary, ~40MB Docker image.
 
 - **REST API** with auto-commit and explicit transaction modes
 - **Multi-language queries**: GQL, Cypher, GraphQL via dedicated endpoints

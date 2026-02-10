@@ -462,55 +462,75 @@ impl<'a> Lexer<'a> {
     }
 
     fn keyword_kind(text: &str) -> Option<TokenKind> {
-        // Case-insensitive keyword matching
-        match text.to_uppercase().as_str() {
-            "MATCH" => Some(TokenKind::Match),
-            "OPTIONAL" => Some(TokenKind::Optional),
-            "WHERE" => Some(TokenKind::Where),
-            "RETURN" => Some(TokenKind::Return),
-            "WITH" => Some(TokenKind::With),
-            "UNWIND" => Some(TokenKind::Unwind),
-            "AS" => Some(TokenKind::As),
-            "ORDER" => Some(TokenKind::Order),
-            "BY" => Some(TokenKind::By),
-            "ASC" => Some(TokenKind::Asc),
+        use crate::query::keywords::CommonKeyword;
+
+        let upper = text.to_uppercase();
+        let upper = upper.as_str();
+
+        // Try common keywords first (shared across parsers)
+        if let Some(common) = CommonKeyword::from_uppercase(upper) {
+            return Some(Self::map_common_keyword(common));
+        }
+
+        // Cypher-specific keywords
+        match upper {
             "ASCENDING" => Some(TokenKind::Ascending),
-            "DESC" => Some(TokenKind::Desc),
             "DESCENDING" => Some(TokenKind::Descending),
-            "SKIP" => Some(TokenKind::Skip),
-            "LIMIT" => Some(TokenKind::Limit),
-            "CREATE" => Some(TokenKind::Create),
-            "MERGE" => Some(TokenKind::Merge),
-            "DELETE" => Some(TokenKind::Delete),
-            "DETACH" => Some(TokenKind::Detach),
-            "SET" => Some(TokenKind::Set),
-            "REMOVE" => Some(TokenKind::Remove),
-            "ON" => Some(TokenKind::On),
-            "AND" => Some(TokenKind::And),
-            "OR" => Some(TokenKind::Or),
             "XOR" => Some(TokenKind::Xor),
-            "NOT" => Some(TokenKind::Not),
-            "IN" => Some(TokenKind::In),
-            "IS" => Some(TokenKind::Is),
-            "NULL" => Some(TokenKind::Null),
-            "TRUE" => Some(TokenKind::True),
-            "FALSE" => Some(TokenKind::False),
-            "CASE" => Some(TokenKind::Case),
-            "WHEN" => Some(TokenKind::When),
-            "THEN" => Some(TokenKind::Then),
-            "ELSE" => Some(TokenKind::Else),
-            "END" => Some(TokenKind::End),
-            "DISTINCT" => Some(TokenKind::Distinct),
-            "EXISTS" => Some(TokenKind::Exists),
             "COUNT" => Some(TokenKind::Count),
-            "STARTS" => Some(TokenKind::Starts),
-            "ENDS" => Some(TokenKind::Ends),
-            "CONTAINS" => Some(TokenKind::Contains),
-            "CALL" => Some(TokenKind::Call),
-            "YIELD" => Some(TokenKind::Yield),
             "UNION" => Some(TokenKind::Union),
             "ALL" => Some(TokenKind::All),
             _ => None,
+        }
+    }
+
+    /// Maps a common keyword to the Cypher token kind.
+    fn map_common_keyword(kw: crate::query::keywords::CommonKeyword) -> TokenKind {
+        use crate::query::keywords::CommonKeyword;
+        match kw {
+            CommonKeyword::Match => TokenKind::Match,
+            CommonKeyword::Return => TokenKind::Return,
+            CommonKeyword::Where => TokenKind::Where,
+            CommonKeyword::As => TokenKind::As,
+            CommonKeyword::Distinct => TokenKind::Distinct,
+            CommonKeyword::With => TokenKind::With,
+            CommonKeyword::Optional => TokenKind::Optional,
+            CommonKeyword::Order => TokenKind::Order,
+            CommonKeyword::By => TokenKind::By,
+            CommonKeyword::Asc => TokenKind::Asc,
+            CommonKeyword::Desc => TokenKind::Desc,
+            CommonKeyword::Limit => TokenKind::Limit,
+            CommonKeyword::Skip => TokenKind::Skip,
+            CommonKeyword::And => TokenKind::And,
+            CommonKeyword::Or => TokenKind::Or,
+            CommonKeyword::Not => TokenKind::Not,
+            CommonKeyword::In => TokenKind::In,
+            CommonKeyword::Is => TokenKind::Is,
+            CommonKeyword::Null => TokenKind::Null,
+            CommonKeyword::True => TokenKind::True,
+            CommonKeyword::False => TokenKind::False,
+            CommonKeyword::Create => TokenKind::Create,
+            CommonKeyword::Delete => TokenKind::Delete,
+            CommonKeyword::Set => TokenKind::Set,
+            CommonKeyword::Remove => TokenKind::Remove,
+            CommonKeyword::Merge => TokenKind::Merge,
+            CommonKeyword::Detach => TokenKind::Detach,
+            CommonKeyword::On => TokenKind::On,
+            CommonKeyword::Call => TokenKind::Call,
+            CommonKeyword::Yield => TokenKind::Yield,
+            CommonKeyword::Exists => TokenKind::Exists,
+            CommonKeyword::Unwind => TokenKind::Unwind,
+            CommonKeyword::Starts => TokenKind::Starts,
+            CommonKeyword::Ends => TokenKind::Ends,
+            CommonKeyword::Contains => TokenKind::Contains,
+            CommonKeyword::Case => TokenKind::Case,
+            CommonKeyword::When => TokenKind::When,
+            CommonKeyword::Then => TokenKind::Then,
+            CommonKeyword::Else => TokenKind::Else,
+            CommonKeyword::End => TokenKind::End,
+            // Keywords in CommonKeyword but not used in Cypher
+            // map to Identifier (they can appear as variable names)
+            _ => TokenKind::Identifier,
         }
     }
 

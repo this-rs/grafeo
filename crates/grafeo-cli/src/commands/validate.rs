@@ -10,6 +10,20 @@ use serde::Serialize;
 use crate::OutputFormat;
 use crate::output::{self, Format};
 
+/// Sentinel error indicating the database failed validation.
+///
+/// Main maps this to exit code 2.
+#[derive(Debug)]
+pub struct ValidationFailed;
+
+impl std::fmt::Display for ValidationFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("validation failed")
+    }
+}
+
+impl std::error::Error for ValidationFailed {}
+
 /// Validation result output.
 #[derive(Serialize)]
 struct ValidationOutput {
@@ -72,12 +86,33 @@ pub fn run(path: &Path, format: OutputFormat, quiet: bool) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&output)?);
             }
         }
+        Format::Csv => {
+            if !quiet {
+                println!("severity,code,message,context");
+                for error in &output.errors {
+                    println!(
+                        "error,{},{},{}",
+                        error.code,
+                        error.message,
+                        error.context.as_deref().unwrap_or("")
+                    );
+                }
+                for warning in &output.warnings {
+                    println!(
+                        "warning,{},{},{}",
+                        warning.code,
+                        warning.message,
+                        warning.context.as_deref().unwrap_or("")
+                    );
+                }
+            }
+        }
         Format::Table => {
             if !quiet {
                 if output.valid {
-                    println!("{}", console_format("✓ Database is valid", Color::Green));
+                    println!("{}", output::colored("Database is valid", Color::Green));
                 } else {
-                    println!("{}", console_format("✗ Database has errors", Color::Red));
+                    println!("{}", output::colored("Database has errors", Color::Red));
                 }
 
                 println!(
@@ -114,20 +149,33 @@ pub fn run(path: &Path, format: OutputFormat, quiet: bool) -> Result<()> {
         }
     }
 
-    // Return error exit code if validation failed
+    // Return error if validation failed (main maps this to exit code 2)
     if !output.valid {
-        std::process::exit(1);
+        anyhow::bail!(ValidationFailed);
     }
 
     Ok(())
 }
 
-/// Format a string with ANSI color for console output.
-fn console_format(text: &str, color: Color) -> String {
-    match color {
-        Color::Green => format!("\x1b[32m{}\x1b[0m", text),
-        Color::Red => format!("\x1b[31m{}\x1b[0m", text),
-        Color::Yellow => format!("\x1b[33m{}\x1b[0m", text),
-        _ => text.to_string(),
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validation_failed_display() {
+        let err = ValidationFailed;
+        assert_eq!(err.to_string(), "validation failed");
+    }
+
+    #[test]
+    fn test_validation_failed_is_error() {
+        let err: Box<dyn std::error::Error> = Box::new(ValidationFailed);
+        assert_eq!(err.to_string(), "validation failed");
+    }
+
+    #[test]
+    fn test_validation_failed_downcast() {
+        let err: anyhow::Error = ValidationFailed.into();
+        assert!(err.downcast_ref::<ValidationFailed>().is_some());
     }
 }

@@ -3,10 +3,10 @@ site_name: Grafeo
 site_url: https://grafeo.dev
 site_author: S.T. Grond
 site_description: >-
-  A pure-Rust, high-performance, embeddable graph database with Python, Node.js,
-  Go, and WebAssembly bindings. Supports LPG and RDF data models, multiple query
-  languages (GQL, Cypher, Gremlin, GraphQL, SPARQL), ACID transactions, and
-  extensible storage backends.
+  A high-performance, embeddable graph database with a Rust core and no required
+  C dependencies. Python, Node.js, Go, and WebAssembly bindings. Supports LPG and
+  RDF data models, multiple query languages (GQL, Cypher, Gremlin, GraphQL, SPARQL),
+  ACID transactions, and extensible storage backends.
 
 # Repository
 repo_name: GrafeoDB/grafeo

@@ -2,90 +2,107 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
-## [0.4.3] - 2026-02-08
+## [0.4.4] - 2026-02-11
 
-_Database Creation Options, Snapshot API & Ecosystem Integration_
+Adds SQL/PGQ (SQL:2023) graph queries, MMR search for RAG, auto-syncing vector indexes, and a fully rebuilt CLI with an interactive shell.
 
 ### Added
 
-- **Database creation options**: `GraphModel` enum (`Lpg`, `Rdf`) for per-database graph model selection, `DurabilityMode` exposed in config, `schema_constraints` toggle, `Config::validate()` with `ConfigError` enum
-- **Query routing**: Generic `execute()` on an RDF database returns a clear error instead of silently running GQL; explicit language methods (`execute_sparql()`, `execute_cypher()`, etc.) work on any database
-- **Inspection API**: `db.graph_model()` and `db.memory_limit()` for runtime introspection
-- **Snapshot export/import**: `GrafeoDB::export_snapshot()` / `import_snapshot()` for binary database serialization (bincode 2.0), enabling IndexedDB persistence in WASM and backup workflows
-- **WASM API expansion**: `executeWithLanguage()` for multi-language queries, `exportSnapshot()` / `importSnapshot()` for browser persistence, `schema()` for introspection, updated TypeScript definitions
-- 16 snapshot round-trip tests covering edge properties, multi-label nodes, all value types, collections, moderate datasets, version mismatch rejection, deterministic export
+- **SQL/PGQ support**: you can now query your graph using standard SQL:2023 syntax, `SELECT ... FROM GRAPH_TABLE (MATCH ... COLUMNS ...)`. This also brings path functions (`LENGTH`, `NODES`, `EDGES`), DDL (`CREATE PROPERTY GRAPH`), and bindings across Python, Node.js, WASM, Go, and C
+- **MMR search**: find diverse, relevant results for RAG pipelines with a single `mmr_search()` call. Tune the `lambda` parameter to balance relevance vs. diversity. Available in all bindings
+- **Incremental vector indexing**: vector indexes now stay in sync automatically as nodes change, no manual rebuilds needed. Also adds `drop_vector_index()` and `rebuild_vector_index()` for explicit control
+- **CLI overhaul**: new `query`, `init`, `shell`, `version`, and `completions` commands. The interactive shell supports transactions, meta-commands (`:schema`, `:info`, `:stats`, `:format`, `:timing`), persistent history, CSV output, and `NO_COLOR` support
+- **CLI distribution**: install `grafeo-cli` via `cargo install`, `pip install`, or `npm install -g` on Linux, macOS, and Windows (x64 + ARM64)
+- **Configurable cardinality estimation**: tune 9 selectivity parameters via `SelectivityConfig` and compare estimates vs. actuals with `EstimationLog`
+- **AdminService trait**: one interface for all database introspection and maintenance, `info()`, `detailed_stats()`, `schema()`, `validate()`, `wal_status()`, `wal_checkpoint()`
+- **GQL `IN` operator**: `WHERE n.name IN ['Alice', 'Bob']` now works in GQL
+- **String escape sequences**: `\'`, `\"`, `\\`, `\n`, `\r`, `\t` now work correctly in GQL, Cypher, and SQL/PGQ strings
+- Comprehensive binding READMEs for Node.js, C, and Python
+- All public API items are now documented (`missing_docs` lint enabled workspace-wide)
+- WASM build verification in CI with gzip size check
+
+### Fixed
+
+- **Node.js ID validation**: rejects negative, NaN, Infinity, and values above `MAX_SAFE_INTEGER`
+- **Error chain**: `Error::source()` now returns inner errors for `Transaction`, `Storage`, and `Query` variants
+- **Value::serialize()**: returns `Result` instead of panicking
+- **OrderableValue**: uses standard `TryFrom<&Value>` instead of a custom method
 
 ### Changed
 
-- Stricter Clippy linting: removed 4 more lint allows (`assigning_clones`, `stable_sort_primitive`, `inefficient_to_string`, `approx_constant`)
+- **Python CLI removed**: replaced by the unified `grafeo-cli` Rust binary (install via cargo, pip, or npm)
+- Consolidated duplicated `format_bytes()` into shared `output::formatter` module
+- Dead code cleanup, removed unused methods and struct fields
+- Clippy Phase 3 clean (4 performance lints resolved)
+
+## [0.4.3] - 2026-02-08
+
+Per-database graph model selection, snapshot export/import for backups and browser persistence, and expanded WASM APIs.
+
+### Added
+
+- **Database creation options**: choose between LPG and RDF graph models per database, configure durability mode, toggle schema constraints, and validate configs with clear error messages
+- **Query routing**: calling `execute()` on an RDF database now tells you what went wrong instead of silently running GQL. Use `execute_sparql()` and friends for cross-model queries
+- **Inspection API**: check your database's graph model and memory limit at runtime
+- **Snapshot export/import**: serialize your entire database to a binary snapshot for backups or WASM persistence via IndexedDB
+- **WASM API expansion**: `executeWithLanguage()` for multi-language queries, `exportSnapshot()` / `importSnapshot()` for browser persistence, `schema()` for introspection
+
+### Changed
+
 - Re-exported `GraphModel`, `DurabilityMode`, `ConfigError` from umbrella `grafeo` crate
 
 ### Fixed
 
-- Go badge on README now uses static shields.io badge (pkg.go.dev badge always showed "Go Reference")
-- Release workflow pings Go module proxy after tagging to ensure pkg.go.dev indexes new versions
+- Go badge on README now shows correctly
+- Release workflow pings Go module proxy so pkg.go.dev indexes new versions
 
 ## [0.4.2] - 2026-02-08
 
-_WebAssembly Bindings & Feature-Gated Platform Code_
+Grafeo now runs in the browser. WebAssembly bindings with TypeScript definitions, shipped at 660 KB gzipped.
 
 ### Added
 
-- **WebAssembly bindings** (`@grafeo-db/wasm`) via wasm-bindgen: `Database` constructor, `execute()` returning JS objects, `executeRaw()` with columns/rows/metadata, `nodeCount()`, `edgeCount()`, TypeScript definitions
-- **Feature-gated platform subsystems**: `parallel`, `spill`, `mmap`, `wal` are now Cargo features with sequential fallbacks, enabling `wasm32-unknown-unknown` compilation
-- `.cargo/config.toml` for wasm32 getrandom backend configuration
-- `[profile.minimal-size]` WASM build produces 660 KB gzipped binary (target was <800 KB)
+- **WebAssembly bindings** (`@grafeo-db/wasm`): run Grafeo in the browser with `execute()`, `executeRaw()`, `nodeCount()`, `edgeCount()`, and full TypeScript definitions
+- **Feature-gated platform subsystems**: `parallel`, `spill`, `mmap`, `wal` are now opt-in features, making `wasm32` compilation straightforward
+- WASM binary comes in at 660 KB gzipped (target was <800 KB)
 
 ### Fixed
 
-- Go module versioning on pkg.go.dev: release workflow now creates subdirectory-prefixed tags (`crates/bindings/go/vX.Y.Z`) required for Go modules in monorepo subdirectories
+- Go module versioning on pkg.go.dev now works correctly for monorepo subdirectories
 
 ### Changed
 
-- Internal crate dependencies use `default-features = false` in workspace root for per-crate feature control
-- `grafeo-engine` no longer depends on `tokio` directly (comes via `grafeo-adapters/wal` when needed)
-- SIMD fallback functions annotated `#[allow(dead_code)]` for non-x86/non-aarch64 targets
-- Stricter Clippy linting: removed 6 lint allows, enforcing idiomatic Rust patterns project-wide
-- Added targeted tests for binder validation, translator edge cases, range queries, and cardinality estimation
+- Internal crate dependencies use `default-features = false` for per-crate feature control
+- Stricter Clippy linting, removed 6 lint allows
 
 ## [0.4.1] - 2026-02-08
 
-_Go Bindings, C FFI & Coverage Improvements_
+Go and C bindings, so you can embed Grafeo in pretty much any language now.
 
 ### Added
 
-- **Go bindings** (`github.com/GrafeoDB/grafeo`) via CGO: full node/edge CRUD, property management, label operations, GQL/Cypher/SPARQL/Gremlin/GraphQL queries, ACID transactions with configurable isolation, HNSW vector search, property indexes, batch operations, admin info, 20 integration tests
-- **C FFI layer** (`grafeo-c`): C-compatible ABI for the Grafeo engine, chosen over pure-Go implementation to enable reuse for WASM bindings
-- Unit tests for config, admin types, WAL records, traversal algorithms, expand operators, variable-length expand, and network flow
-- Per-crate coverage component tracking in Codecov (common, core, adapters, engine)
+- **Go bindings** (`github.com/GrafeoDB/grafeo`): full node/edge CRUD, property and label management, multi-language queries, ACID transactions, HNSW vector search, batch operations, and admin APIs
+- **C FFI layer** (`grafeo-c`): C-compatible ABI for embedding Grafeo in any language
+- Per-crate coverage tracking in Codecov
 
 ### Fixed
 
 - npm publish workflow and removed old JS stub package
 - Node.js test version now dynamically read from Cargo.toml
-- Coverage report now excludes bindings, build scripts, and test code for accurate metrics
-
-### Changed
-
-- Updated copyright year in LICENSE
-- Codecov action upgraded to v5
-- Patch coverage target adjusted from 80% to 70%
+- Coverage report now excludes bindings and test code for accurate metrics
 
 ## [0.4.0] - 2026-02-07
 
-_Node.js/TypeScript Bindings, Vector Support & Code Quality_
+Node.js/TypeScript bindings with full async support, Python vector search and transaction isolation, and a license change to AGPL-3.0.
 
 ### Added
 
-- **Node.js/TypeScript bindings** (`@grafeo-db/js`) via napi-rs: full CRUD, async queries (GQL/Cypher/Gremlin/GraphQL/SPARQL), transactions, type mapping, TypeScript definitions, 67 integration tests
-- **Python vector support**: `list[float]` auto-converts to native vectors; `grafeo.vector()` constructor; `cosine_similarity()`, `euclidean_distance()`, `dot_product()`, `manhattan_distance()` in GQL; `create_vector_index()` with HNSW tuning params (m, ef_construction); `vector_search()` for programmatic k-NN
-- **Python transaction isolation**: `begin_transaction()` accepts `isolation_level` parameter: `"read_committed"`, `"snapshot"` (default), or `"serializable"`
+- **Node.js/TypeScript bindings** (`@grafeo-db/js`): full CRUD, async queries across all 5 languages, transactions, native type mapping, and TypeScript definitions
+- **Python vector support**: pass `list[float]` directly as vectors, use `grafeo.vector()`, query with distance functions in GQL, create HNSW indexes, and run k-NN search
+- **Python transaction isolation**: choose `"read_committed"`, `"snapshot"`, or `"serializable"` when starting a transaction
 - **Batch vector APIs**: `batch_create_nodes()` and `batch_vector_search()` for Python and Node.js
-- **Node.js vector APIs**: `createVectorIndex()`, `vectorSearch()`, `batchCreateNodes()`, `batchVectorSearch()` for full vector parity with Python
-- Node.js CI testing across 3 OS × 3 Node.js versions (18, 20, 22)
-- Miri CI job for undefined behavior detection on arena allocator
-- Arena allocator debug assertions for offset bounds and alignment validation
-- `cargo-deny` integration with updated `deny.toml` (v2 format)
+- Node.js CI testing across 3 OS x 3 Node.js versions (18, 20, 22)
+- `cargo-deny` integration for dependency auditing
 
 ### Changed
 
@@ -93,330 +110,139 @@ _Node.js/TypeScript Bindings, Vector Support & Code Quality_
 
 ### Fixed
 
-- GQL INSERT with list or `vector()` properties no longer silently drops values (planner constant-folding fix)
-- Multi-hop MATCH queries (3+ hops) no longer return duplicate rows due to factorized iterator skipping empty intermediate levels
-- GQL multi-hop patterns now filter intermediate target nodes by label (e.g., `(a:Person)-[:KNOWS]->(b:Employee)` correctly requires `b` to be an `Employee`)
-- GraphQL filter queries now accept `filter` as alias for `where` argument
-- GraphQL nested relationship queries now match edge types case-insensitively (uppercase convention)
+- GQL INSERT with list or `vector()` properties no longer silently drops values
+- Multi-hop MATCH queries (3+ hops) no longer return duplicate rows
+- GQL multi-hop patterns now correctly filter intermediate nodes by label
+- GraphQL filter queries accept `filter` as alias for `where`
+- GraphQL nested relationships match edge types case-insensitively
 - Transaction `execute()` rejects queries after commit/rollback
-- 33 Python lint issues (unused variables, ambiguous names, line length, unused imports)
-- 33 Rust clippy warnings from 6 previously suppressed lints
-- `deny.toml` migrated to cargo-deny v0.19 format
-- Pre-commit config typo (`end-of-file-fixers` → `end-of-file-fixer`)
 
 ### Improved
 
-- **HNSW recall**: Vamana-style diversity pruning with configurable alpha parameter
-- **HNSW speed**: Cosine vectors pre-normalized on insert (dot product instead of full cosine), HashMap pre-allocation, visited set capacity hints
-- Query optimizer uses actual store statistics (per-label node counts, per-edge-type degree) instead of hardcoded defaults
-- Arena allocator lock ordering documented for tiered-storage concurrent access
-- All 12 prek pre-commit hooks pass (including cargo-deny, ruff check, ruff format)
-- All query correctness tests now pass
+- **HNSW recall**: Vamana-style diversity pruning with configurable alpha
+- **HNSW speed**: pre-normalized cosine vectors, pre-allocated structures
+- Query optimizer uses actual store statistics instead of hardcoded defaults
 
 ## [0.3.4] - 2026-02-06
 
-_Quality of Life Improvements_
+Query timing, "did you mean?" error suggestions, and Python pagination.
 
 ### Added
 
-- **Query Performance Metrics**: Query results now include execution timing and row counts
-  - `QueryResult.execution_time_ms` - execution time in milliseconds
-  - `QueryResult.rows_scanned` - number of rows scanned during execution
-  - Python: `result.execution_time_ms` and `result.rows_scanned` properties
-
-- **Error Message Suggestions**: Fuzzy matching for helpful "Did you mean X?" hints
-  - Levenshtein distance-based matching for undefined variables and labels
-  - Case-insensitive comparison with configurable edit distance thresholds
-  - `find_similar()`, `format_suggestion()`, `format_suggestions()` utilities
-
-- **Python Pagination**: `get_nodes_by_label()` now supports `offset` parameter
-  - Enables efficient pagination: `db.get_nodes_by_label("Person", limit=10, offset=20)`
+- **Query performance metrics**: every result now includes `execution_time_ms` and `rows_scanned` so you can see exactly what happened
+- **"Did you mean?" suggestions**: typo in a variable or label name? Grafeo will suggest the closest match
+- **Python pagination**: `get_nodes_by_label()` now supports `offset` for efficient paging
 
 ### Documentation
 
-- **Troubleshooting Guide**: Common errors, debugging tips, and solutions
-- **Glossary**: Terminology reference for graph database concepts
-- **Migration Guide**: Moving from Neo4j, NetworkX, and other databases
-- **Security Guide**: Authentication patterns and secure deployment
-- **Performance Baselines**: Benchmark results and optimization guidance
-- **Example Notebooks**: Interactive anywidget visualizations for graphs and vectors
+- Troubleshooting guide, glossary, migration guide (from Neo4j, NetworkX, etc.), security guide, performance baselines, and example notebooks
 
 ## [0.3.3] - Unreleased
 
-_Hybrid Query Support & Vector Optimization_
-
 ### Added
 
-- **VectorJoin Operator**: Combines graph patterns with vector similarity search
-  - `VectorJoinOp` logical operator in query plans
-  - `VectorJoinOperator` physical operator with two modes:
-    - `with_static_query()` for constant query vectors
-    - `entity_to_entity()` for comparing embeddings between nodes
-  - Supports HNSW index and brute-force search
-  - Configurable k, similarity thresholds, and label filtering
-
-- **Vector Zone Maps**: Block-level pruning for vector search
-  - `VectorZoneMap` tracks magnitude bounds, centroid, and bounding box
-  - Centroid-based pruning with max_radius for block skipping
-  - Per-dimension min/max for hyperrectangle pruning
-  - `might_contain_within_distance()` for Euclidean and Cosine metrics
-
-- **Vector Cost & Cardinality Estimation**:
-  - `vector_scan_cost()` in optimizer with HNSW O(ef * log N) and brute-force O(N) models
-  - `vector_join_cost()` for hybrid query planning
-  - `estimate_vector_scan()` and `estimate_vector_join()` cardinality estimators
-  - Accounts for k parameter and similarity threshold selectivity
-
-- **Product Quantization (PQ)**: High-compression vector quantization
-  - `ProductQuantizer`: Splits vectors into M subvectors, quantizes each to K centroids
-  - K-means training with configurable iterations
-  - Asymmetric distance computation (ADC) using precomputed tables
-  - 8-32x compression with ~90% recall retention
-  - `QuantizationType::Product { num_subvectors }` variant
-  - Integrated with `QuantizedHnswIndex` for memory-efficient search
-
-- **Memory-Mapped Vector Storage**: Disk-backed storage for large datasets
-  - `VectorStorage` trait for storage backend abstraction
-  - `RamStorage`: In-memory HashMap storage (fastest access)
-  - `MmapStorage`: Memory-mapped file storage (low memory footprint)
-  - LRU cache for frequently accessed vectors
-  - Automatic persistence with custom file format
-
-- **Python Quantization API**: Vector quantization accessible from Python
-  - `grafeo.QuantizationType`: None, Scalar, Binary, Product variants
-  - `grafeo.ScalarQuantizer`: Train, quantize, dequantize, distance methods
-  - `grafeo.ProductQuantizer`: Train, quantize, reconstruct, asymmetric distance
-  - `grafeo.BinaryQuantizer`: Static quantize and hamming distance methods
+- **VectorJoin operator**: combine graph traversal with vector similarity in a single query, works with both static query vectors and entity-to-entity embedding comparisons
+- **Vector zone maps**: automatically skips irrelevant data blocks during vector search
+- **Vector cost estimation**: the query optimizer now understands vector scan costs and picks better plans
+- **Product quantization**: 8-32x memory compression for large vector datasets with ~90% recall retention
+- **Memory-mapped vector storage**: disk-backed storage with LRU caching for datasets that don't fit in RAM
+- **Python quantization API**: `ScalarQuantizer`, `ProductQuantizer`, and `BinaryQuantizer` accessible from Python
 
 ## [0.3.2] - Unreleased
 
-_Batch Read Optimizations & Code Quality_
-
 ### Added
 
-- **Selective Property Loading** (Projection Pushdown):
-  - `PropertyStorage::get_selective_batch()` - O(N×K) vs O(N×C) for subset of properties
-  - `LpgStore::get_nodes_properties_selective_batch()` wrapper method
-  - `LpgStore::get_edges_properties_selective_batch()` wrapper method
-  - Significant speedup when queries only need a few properties from many-column nodes
+- **Selective property loading**: fetch only the properties you need instead of all columns, much faster for wide nodes
+- **Parallel node scan**: 3-8x speedup on large scans (10K+ nodes) by distributing work across CPU cores
 
-- **Parallel Node Scan Source**:
-  - `ParallelNodeScanSource` for morsel-driven parallel execution
-  - Implements `ParallelSource` trait with partitioning support
-  - `with_label()` for filtered scans, `from_node_ids()` for pre-computed lists
-  - Enables 3-8x speedup on large scans (10K+ nodes) by saturating CPU cores
+### Improved
 
-### Changed
-
-- **MVCC Hot Path Optimizations**:
-  - Added `#[inline]` to `VersionChain::visible_at`, `visible_to`
-  - Added `#[inline]` to `ColdVersionRef::is_visible_at`, `is_visible_to`
-  - Added `#[inline]` to `VersionIndex::visible_at`, `visible_to`
-  - Reduces function call overhead during full table scans
-
-- **Delta Encoding Safety**:
-  - Added `debug_assert!` to verify input is sorted in `DeltaEncoding::encode()`
-  - Improved documentation clarifying sorted input requirement
-  - Prevents silent data corruption from unsorted input in debug builds
-
-- **Batch Property Reading**:
-  - Pre-allocated result vectors in `PropertyStorage::get_all_batch()`
-  - HashMap capacity hints based on column count (NebulaGraph MultiGet pattern)
-  - Reduces allocation overhead for bulk property retrieval
+- MVCC hot path inlined for faster full table scans
+- Batch property reads pre-allocate for less allocation overhead
 
 ## [0.3.1] - Unreleased
 
-_Vector Optimization & Cache Improvements_
-
 ### Added
 
-- **Vector Quantization**: Memory-efficient vector storage for large-scale similarity search
-  - `ScalarQuantizer`: f32 → u8 compression
-    - `train()` learns min/max per dimension from sample vectors
-    - Asymmetric distance computation
-  - `BinaryQuantizer`: f32 → 1-bit compression
-    - Sign-bit extraction with packed u64 storage
-    - SIMD-accelerated hamming distance (popcnt instruction)
-  - `QuantizationType` enum for configuration (None, Scalar, Binary)
-
-- **QuantizedHnswIndex**: HNSW with quantization and rescoring
-  - Two-phase search: approximate quantized → exact rescore
-  - Configurable rescore factor (default 2x candidates)
-  - Automatic quantizer training from insertion samples
-
-- **SIMD Vector Acceleration**: 4-8x faster distance computations
-  - AVX2 + FMA for modern x86_64 CPUs
-  - SSE fallback for older x86_64
-  - NEON support for ARM (aarch64)
-  - `simd_support()` function for runtime CPU detection
-  - Python `grafeo.simd_support()` diagnostic function
-
-- **Vector Batch Operations**:
-  - `batch_insert()` for HNSW index bulk loading
-  - `batch_search()` / `batch_search_with_ef()` for parallel multi-query search (rayon)
-  - `batch_search_slices()` for slice-based query batches
-
-- **VectorScan Operators**: Query execution for vector similarity search
-  - `VectorScanOp` logical operator in query plans
-  - `VectorScanOperator` physical operator (HNSW or brute-force)
-  - Distance/similarity threshold filtering
-  - Label-filtered brute-force search fallback
-
-- **Adaptive WAL Flusher**: `AdaptiveFlusher` with self-tuning timing based on actual flush duration
-  - Background thread adjusts wait time: `timeout = target_interval - last_flush_duration`
-  - Maintains consistent flush cadence regardless of disk speed
-  - `FlusherStats` for observability (flush count, avg/max times, exceeded target count)
-  - Graceful shutdown with final flush guarantee
-
-- **DurabilityMode::Adaptive**: New WAL durability mode for variable disk latency workloads
-  - Unlike `Batch` which checks thresholds inline, `Adaptive` uses dedicated flusher thread
-  - Prevents thundering herd problems when disk is slow
-
-- **FingerprintedHashIndex**: Sharded hash index with fingerprint-based fast rejection
-  - 64-shard concurrent access (similar to DashMap)
-  - 48-bit fingerprints for ~99.99% rejection rate without full key comparison
-  - `AtomicFingerprintStats` for thread-safe observability (lookups, rejections, comparisons)
-  - Useful for expensive key comparisons (strings) or future disk-backed indices
+- **Vector quantization**: compress vectors from f32 to u8 (scalar) or 1-bit (binary) for memory-efficient similarity search
+- **Quantized HNSW**: approximate quantized search followed by exact rescoring, best of both worlds
+- **SIMD acceleration**: 4-8x faster distance computations, automatically uses AVX2/FMA, SSE, or NEON depending on your CPU
+- **Vector batch operations**: `batch_insert()` and `batch_search()` for bulk loading and multi-query search
+- **VectorScan operators**: vector similarity search integrated into the query execution engine
+- **Adaptive WAL flusher**: self-tuning background flush that adjusts timing based on actual disk speed
+- **DurabilityMode::Adaptive**: new WAL mode for variable disk latency workloads
+- **Fingerprinted hash index**: sharded index with 48-bit fingerprints for near-instant miss detection
 
 ## [0.3.0] - Unreleased
 
-_AI Compatibility Release_
-
-Major release introducing **Vector as a first-class type** for AI/ML workloads. Graph + vector hybrid queries are the unique differentiator - no pure vector database can efficiently combine graph traversal with vector similarity.
+Vectors are now a first-class type. Graph + vector hybrid queries let you do things no pure vector database can.
 
 ### Added
 
-- **Vector Type Foundation**:
-  - `Value::Vector(Arc<[f32]>)` - First-class vector type with 4x compression vs f64
-  - `LogicalType::Vector(dim)` - Dimension-aware vector type for schema validation
-  - `as_vector()`, `is_vector()`, `vector_dimensions()` accessor methods
-  - `HashableValue` support for vectors (bit-level equality and hashing)
-  - Serialization support via serde
-
-- **Vector Distance Functions** (`grafeo-core/index/vector`):
-  - `cosine_distance()` / `cosine_similarity()` - For normalized embeddings
-  - `euclidean_distance()` / `euclidean_distance_squared()` - L2 distance
-  - `dot_product()` - Maximum inner product search
-  - `manhattan_distance()` - L1 distance, outlier-resistant
-  - `DistanceMetric` enum with `FromStr` for runtime configuration
-  - `normalize()` and `l2_norm()` utilities
-
-- **Brute-Force k-NN Search**:
-  - `brute_force_knn()` - O(n) exact nearest neighbor search
-  - `brute_force_knn_filtered()` - k-NN with predicate filtering
-  - `batch_distances()` - Efficient batch distance computation
-  - `VectorConfig` for dimensions and metric configuration
-
-- **HNSW Index** (feature: `vector-index`):
-  - `HnswIndex` - O(log n) approximate nearest neighbor search
-  - `HnswConfig` with tunable parameters (M, ef_construction, ef)
-  - Presets: `high_recall()`, `fast()` for common use cases
-  - Thread-safe concurrent reads with exclusive writes
-  - `insert()`, `search()`, `search_with_ef()`, `remove()` operations
-  - Seeded RNG option for reproducible benchmarks
-
-- **GQL Vector Syntax**:
-  - `VECTOR` keyword and `vector([...])` literal function
-  - `cosine_similarity()`, `euclidean_distance()`, `dot_product()`, `manhattan_distance()` functions
-  - `CREATE VECTOR INDEX name ON :Label(property) WITH (dimensions: N, metric: 'cosine')` statement
-  - `CreateVectorIndexStatement` AST node
-
-- **SPARQL Vector Functions**:
-  - `VECTOR(...)`, `COSINE_SIMILARITY(vec1, vec2)`, `EUCLIDEAN_DISTANCE(vec1, vec2)`
-  - `DOT_PRODUCT(vec1, vec2)`, `MANHATTAN_DISTANCE(vec1, vec2)`
-  - Enables hybrid queries: `SELECT ?doc WHERE { ?doc :embedding ?vec FILTER(COSINE_SIMILARITY(?vec, ?query) > 0.8) }`
-
-- **Serializable Snapshot Isolation (SSI)**:
-  - `IsolationLevel` enum: `ReadCommitted`, `SnapshotIsolation` (default), `Serializable`
-  - `begin_with_isolation()` for explicit isolation level selection
-  - SSI validation detects read-write conflicts to prevent write skew anomaly
-  - `TransactionError::SerializationFailure` for SSI violations
+- **Vector type**: store, hash, and serialize vectors natively with dimension-aware schema validation
+- **Distance functions**: cosine, euclidean, dot product, and manhattan distance
+- **Brute-force k-NN**: exact nearest neighbor search with optional predicate filtering
+- **HNSW index**: O(log n) approximate nearest neighbor search with tunable parameters and presets (`high_recall()`, `fast()`)
+- **GQL vector syntax**: `vector([...])` literals, distance functions, and `CREATE VECTOR INDEX` statements
+- **SPARQL vector functions**: `VECTOR()`, `COSINE_SIMILARITY()`, `EUCLIDEAN_DISTANCE()`, `DOT_PRODUCT()`, `MANHATTAN_DISTANCE()`
+- **Serializable snapshot isolation**: choose between `ReadCommitted`, `SnapshotIsolation`, or `Serializable` per transaction
 
 ### Fixed
 
-- **RDF Pending Delete Filtering**: `find_with_pending()` now correctly excludes pending deletes from query results within a transaction
+- RDF queries now correctly exclude pending deletes within a transaction
 
 ---
 
 ## [0.2.7] - 2026-02-05
 
-_Parallel Execution & Cache Patterns_
+New parallel execution primitives and a second-chance LRU cache for concurrent workloads.
 
 ### Added
 
-- **Second-Chance LRU Cache**: `SecondChanceLru<K, V>` with lock-free access marking via atomic bools
-- **Hash Fingerprinting**: `FingerprintBucket` for fast miss detection using upper hash bits
-- **Parallel Fold-Reduce Utilities**: `parallel_count`, `parallel_sum`, `parallel_stats`, `parallel_partition`
-- **Generic Collector Trait**: `Collector` and `PartitionCollector` for composable parallel aggregation
-  - Built-in collectors: `CountCollector`, `MaterializeCollector`, `LimitCollector`, `StatsCollector`
-
-### Improved
-
-- **Code Cleanup**: Removed unused CLI output functions, fixed incorrect dead_code allows
+- **Second-chance LRU cache**: lock-free access marking for better concurrent cache performance
+- **Parallel fold-reduce utilities**: `parallel_count`, `parallel_sum`, `parallel_stats`, `parallel_partition`
+- **Generic collector trait**: composable parallel aggregation with built-in count, materialize, limit, and stats collectors
 
 ---
 
 ## [0.2.6] - 2026-02-04
 
-_Filter Performance & Batch Read Optimizations_
+Zone map filtering at the chunk level and faster batch property reads.
 
 ### Added
 
-- **Local Clustering Coefficient Algorithm**: Triangle counting and clustering coefficients with parallel rayon execution
-- **Chunk-Level Zone Map Filtering**: `ChunkZoneHints` struct for attaching zone map metadata to `DataChunk`
-  - Enables filter operators to skip entire chunks when predicates can't match
-  - `might_match_chunk()` method on `Predicate` trait for chunk-level pruning
-- **ComparisonPredicate Zone Map Support**: Implements `might_match_chunk()` for equality and range operators
-  - Uses `might_contain_equal()`, `might_contain_less_than()`, `might_contain_greater_than()`
+- **Local clustering coefficient**: triangle counting with parallel execution
+- **Chunk-level zone map filtering**: skip entire data chunks when predicates can't match
 
 ### Improved
 
-- **Batch Property Retrieval**: `PropertyStorage::get_batch()` and `get_all_batch()` now acquire lock once
-  - Previously acquired lock per-entity, now single lock for entire batch
-  - Reduces lock contention for bulk property reads
-- **FilterOperator**: Changed recursive `next()` call to loop (prevents stack overflow on many empty chunks)
-  - Added zone map check before row-by-row predicate evaluation
+- Batch property retrieval now acquires a single lock instead of one per entity
+- Filter operator checks zone maps before row-by-row evaluation
 
 ### Documentation
 
-- **Added CONTRIBUTORS.md**: Feel free to join me and contribute to Grafeo's future!
-- Updated docs with references to other GrafeoDB projects
+- Added CONTRIBUTORS.md
 
 ---
 
 ## [0.2.5] - 2026-02-03
 
-_SPARQL Completeness & more performance Optimizations_
+Full SPARQL function coverage, platform allocators for faster memory allocation, and batch property APIs.
 
 ### Added
 
-- **SPARQL String Functions**: CONCAT, REPLACE, STRLEN, UCASE/UPPER, LCASE/LOWER, SUBSTR, STRSTARTS, STRENDS, CONTAINS, STRBEFORE, STRAFTER, ENCODE_FOR_URI
-- **SPARQL Type Functions**: COALESCE, IF, BOUND, STR, ISIRI/ISURI, ISBLANK, ISLITERAL, ISNUMERIC
-- **SPARQL Math Functions**: ABS, CEIL, FLOOR, ROUND
-- **SPARQL REGEX**: Pattern matching using the `regex` crate
-- **EXISTS/NOT EXISTS**: Proper subquery support with semi-joins (EXISTS) and anti-joins (NOT EXISTS)
-- **Platform Allocators**: Optional jemalloc (Linux/macOS) and mimalloc (Windows) for 10-20% faster allocations
-  - Enable via `jemalloc` or `mimalloc-allocator` feature flags
-- **Collection Type Aliases**: `GrafeoMap`, `GrafeoSet`, `GrafeoConcurrentMap` for consistent FxHash usage
-- **Batch Property APIs**: `get_node_property_batch()`, `get_nodes_properties_batch()` for efficient bulk reads
-- **Compound Predicate Optimization**: Filter pushdown now handles `n.a = 1 AND n.b = 2` compound predicates
-- **Range Query Support**: `find_nodes_in_range()` with zone map pruning for range predicates
-- **Python Batch APIs**: `get_nodes_by_label(label, limit)` and `get_property_batch(ids, prop)` for efficient bulk access
+- **Full SPARQL function coverage**: string functions (CONCAT, REPLACE, STRLEN, etc.), type functions (COALESCE, IF, BOUND, etc.), math functions (ABS, CEIL, FLOOR, ROUND), and REGEX
+- **EXISTS/NOT EXISTS**: proper subquery support with semi-joins and anti-joins
+- **Platform allocators**: optional jemalloc (Linux/macOS) or mimalloc (Windows) for 10-20% faster allocations
+- **Batch property APIs**: bulk reads for node properties
+- **Compound predicate optimization**: `n.a = 1 AND n.b = 2` now pushes down efficiently
+- **Range queries**: `find_nodes_in_range()` with zone map pruning
+- **Python batch APIs**: `get_nodes_by_label(label, limit)` and `get_property_batch(ids, prop)`
 
 ### Improved
 
-- **Community Detection**: Label propagation algorithm now O(E) instead of O(V²E) using backward adjacency
-  - Expected 100-500x improvement for large graphs
-- **Zone Map Integration**: Filter planning now uses zone maps for predicate pushdown
-  - Scans short-circuit with `EmptyOperator` when zone maps prove no matches possible
-- **Filter Equality**: Property index optimization extended to compound AND predicates
-- **Filter Range**: Zone map checks for range predicates (`<`, `>`, `<=`, `>=`)
-- **Pre-commit Hooks**: Added typos checker, cargo-deny (security/license), and ruff (Python linting)
-- **Profiling Profile**: Added `cargo build --profile profiling` for flamegraph analysis
-
-### Changed
-
-- Updated CONTRIBUTING.md with CI scripts and expanded testing documentation
+- Community detection (label propagation) is now O(E) instead of O(V^2 E), roughly 100-500x faster on large graphs
+- Zone maps integrated into filter planning for automatic predicate pushdown
 
 ---
 
@@ -426,33 +252,14 @@ Fixed release workflow `--exclude` flag (requires `--workspace`)
 
 ## [0.2.4] - 2026-02-02
 
-_Benchmark-Driven Performance Optimizations_
-
-Targeted improvements based on comparative benchmarks against LadybugDB, DuckDB, Neo4j, and Memgraph.
+Benchmark-driven optimizations: lock-free reads, direct lookup APIs, and much faster filters.
 
 ### Improved
 
-- **Single Read Performance**:
-  - **Lock-Free Concurrent Reads**: Hash indexes now use DashMap for lock-free reads
-    - 4-6x improvement under concurrent read workloads
-    - Sharded design eliminates global lock contention
-  - **Direct Lookup APIs**: New bypass methods for O(1) point reads without query planning
-    - `get_node(id)`, `get_node_property(id, key)`, `get_edge(id)`
-    - `get_neighbors_outgoing(node)`, `get_neighbors_incoming(node)`
-    - `get_nodes_batch(ids)` for efficient batch lookups
-    - 10-20x faster than equivalent MATCH queries
-  - **Expanded Hot Buffer**: Property storage hot buffer increased from 256 to 4096 entries
-    - Keeps more recent data uncompressed for faster reads
-  - **Adjacency Delta Buffer**: Increased inline SmallVec from 8 to 16 entries
-    - Better cache locality for common node degrees
-
-- **Filter Performance**:
-  - **Direct Property Access**: `LpgStore::get_node_property()` and `get_edge_property()`
-    - O(1) single-property lookup instead of loading all properties
-  - **PropertyPredicate Optimization**: Uses direct access instead of `get_node().get_property()`
-    - Avoids loading entire property map when only one value is needed
-  - **Batch Evaluation**: `evaluate_batch()` for better cache efficiency on large datasets
-  - Expected 20-50x improvement for equality and range filters
+- **Lock-free concurrent reads**: hash indexes now use DashMap, 4-6x improvement under concurrent workloads
+- **Direct lookup APIs**: O(1) point reads (`get_node()`, `get_node_property()`, `get_neighbors()`) that bypass query planning, 10-20x faster than equivalent MATCH queries
+- **Filter performance**: single-property lookups and batch evaluation, 20-50x improvement for equality and range filters
+- Better cache locality from expanded hot buffer and adjacency delta buffer sizes
 
 ---
 
@@ -460,204 +267,124 @@ Targeted improvements based on comparative benchmarks against LadybugDB, DuckDB,
 
 ### Added
 
-- **Succinct Data Structures** (feature: `succinct-indexes`):
-  - `SuccinctBitVector`: O(1) rank/select with superblock/block ranks and select sampling (<5% overhead)
-  - `EliasFano`: Quasi-succinct encoding for sparse monotonic sequences (near-optimal space)
-  - `WaveletTree`: Sequence rank/select/access in O(log σ) time for Ring Index foundation
-- **Block-STM Parallel Execution** (feature: `block-stm`):
-  - `ParallelExecutor`: 4-phase execution (optimistic → validate → re-execute → commit)
-  - `ExecutionResult`: Read/write set tracking for conflict detection
-  - Batch transaction API for ETL workloads (3-4x speedup on 4 cores with 0% conflicts)
-- **Ring Index for RDF** (feature: `ring-index`):
-  - `TripleRing`: Compact triple storage using wavelet trees (~3x space reduction vs HashMaps)
-  - `SuccinctPermutation`: O(1) navigation between SPO, POS, OSP orderings
-  - `RingIterator`: Efficient filtered iteration via wavelet tree select
-  - `LeapfrogRing`: Foundation for worst-case optimal joins over RDF patterns
+- **Succinct data structures** (feature: `succinct-indexes`): O(1) rank/select bitvectors, Elias-Fano encoding, and wavelet trees
+- **Block-STM parallel execution** (feature: `block-stm`): optimistic parallel transactions with conflict detection, 3-4x speedup on batch workloads
+- **Ring index for RDF** (feature: `ring-index`): compact triple storage using wavelet trees (~3x space reduction)
 
 ### Improved
 
-- **Query Plan Caching**: Optimized logical plans are now cached per-database, shared across sessions
-  - Repeated identical queries skip parsing, translation, binding, and optimization
-  - LRU cache with 1000 query capacity (500 parsed + 500 optimized)
-  - Expected 5-10x speedup for workloads with repeated queries (benchmarks, read-heavy apps)
+- **Query plan caching**: repeated queries skip parsing and optimization entirely, 5-10x speedup for read-heavy workloads
 
 ---
 
 ## [0.2.2] - Unreleased
 
-_Performance Tuning_
-
 ### Added
 
-- **Bidirectional Edge Indexing**: `edges_to()`, `in_degree()`, `out_degree()` methods for efficient incoming edge queries
-- **NUMA-Aware Scheduling**: Work-stealing scheduler now prefers same-node stealing to minimize cross-node memory access
-- **Leapfrog TrieJoin**: Worst-case optimal join (WCOJ) for cyclic patterns like triangles - O(N^1.5) vs O(N²)
-- **Cyclic Pattern Detection**: Planner detects triangle/clique patterns using DFS coloring
-- **WCOJ Cost Model**: `leapfrog_join_cost()` and `prefer_leapfrog_join()` for optimizer decisions
-- **Factorized Benefit Estimation**: `factorized_benefit()` for compression ratio predictions
-
-### Improved
-
-- **Direction::Incoming queries**: Now use `backward_adj` index for O(1) neighbor lookup
-- **NumaConfig**: Auto-detection heuristic for NUMA topology (2 nodes for >8 cores)
-- **Cost Model**: Extended with memory cost tracking via `Cost::with_memory()`
+- **Bidirectional edge indexing**: efficient incoming edge queries via `edges_to()`, `in_degree()`, `out_degree()`
+- **NUMA-aware scheduling**: work-stealing prefers same-node stealing to minimize cross-node memory access
+- **Leapfrog TrieJoin**: worst-case optimal joins for cyclic patterns like triangles, O(N^1.5) vs O(N^2)
 
 ---
 
 ## [0.2.1] - Unreleased
 
-_Tiered Storage_
-
 ### Added
 
-- **Tiered Version Index**: `VersionIndex` with `HotVersionRef`/`ColdVersionRef` separation using SmallVec (no heap for typical 1-2 versions)
-- **Compressed Epoch Store**: `CompressedEpochBlock` with zone maps for predicate pushdown
-- **Arena Extensions**: `alloc_value_with_offset()`, `read_at()` for tiered access patterns
-- **Epoch Freeze**: `freeze_epoch()` method to compress and archive old epochs
-- **Zone Maps**: Min/max tracking for node/edge IDs enables block skipping
-
-### Improved
-
-- **LpgStore Integration**: All CRUD operations now support hot/cold version reads (feature-gated)
-- **Memory Efficiency**: `OptionalEpochId` saves 4 bytes vs `Option<EpochId>` using u32 sentinel
-- **GC Performance**: Arena-based batch deallocation instead of per-version heap frees
-
-### Internal
-
-- Feature flag `tiered-storage` for opt-in (default off for backwards compatibility)
-- 635 tests pass with feature enabled, all tests pass with feature disabled
+- **Tiered version index**: hot/cold version separation for memory-efficient MVCC
+- **Compressed epoch store**: zone maps for predicate pushdown on archived data
+- **Epoch freeze**: compress and archive old epochs to reclaim memory
 
 ---
 
 ## [0.2.0] - 2026-02-01
 
-_Pre-workout_
+Performance foundation: factorized execution to avoid Cartesian products in multi-hop queries.
 
 ### Added
 
-- **Benchmarks**: Multi-hop traversal and fan-out pattern benchmarks for performance validation
-- **Factorized Execution**: Factorized vector types to avoid Cartesian product materialization, inspired by [Kùzu](https://kuzudb.com/)'s approach to worst-case optimal joins
-- **Factorized Expand**: Expand operator produces factorized output for multi-hop queries
-- **Factorized Aggregation**: COUNT, SUM, AVG, MIN, MAX on multi-hop queries without flattening
-- **ChunkState Abstraction**: Unified state tracking with cached multiplicities for O(1) access
-- **Factorized Selection Vectors**: Lazy filtering without data copying (O(n_physical) instead of O(n_logical))
-- **FactorizedFilterOperator**: Filter factorized data using selection vectors
-- **Improved Iteration**: PrecomputedIter and StreamingIter with SmallVec for cache-friendly traversal
-- **FactorizedOperator Trait**: Composable operators that produce/consume factorized data natively
+- **Factorized execution**: avoids Cartesian product materialization for multi-hop queries, inspired by [Kuzu](https://kuzudb.com/)
+- **Benchmarks**: multi-hop traversal and fan-out pattern benchmarks
 
 ### Changed
 
-- Version bump to 0.2.0, foundation complete, focusing on performance for 0.2.x
-- **Pre-commit Hooks**: Switched from Python-based pre-commit to [prek](https://github.com/j178/prek) (Rust-native, faster)
+- Version bump to 0.2.0, focusing on performance for 0.2.x
+- Switched from Python-based pre-commit to [prek](https://github.com/j178/prek) (Rust-native, faster)
 
 ---
 
 ## [0.1.4] - 2026-01-31
 
-_Foundation Complete_
+Label removal, direct label APIs for Python, and all query languages enabled by default.
 
 ### Added
 
-- **REMOVE Clause**: GQL parser now supports `REMOVE n:Label` for label removal and `REMOVE n.property` for property removal
-- **Label APIs**: Python methods for direct label manipulation - `add_node_label()`, `remove_node_label()`, `get_node_labels()`
-- **WAL Support**: Label operations now logged to write-ahead log for durability
-- **RDF Transaction Support**: SPARQL operations now support proper commit/rollback semantics with buffered writes
+- **REMOVE clause**: `REMOVE n:Label` and `REMOVE n.property` in GQL
+- **Label APIs**: `add_node_label()`, `remove_node_label()`, `get_node_labels()` in Python
+- **WAL support**: label operations now logged for durability
+- **RDF transactions**: SPARQL operations now support proper commit/rollback
 
 ### Changed
 
-- **Default Features**: All query languages (GQL, Cypher, Gremlin, GraphQL, SPARQL) now enabled by default - no feature flags needed
-- **Better Out-of-Box Experience**: Users get full functionality without any configuration
+- All query languages enabled by default, no feature flags needed
 
 ### Fixed
 
-- RDF store transaction rollback now properly discards uncommitted changes
-- npm publishing paths corrected for @grafeo-db/js and @grafeo-db/wasm packages
-- Go module path corrected to match directory structure
-
-### Documentation
-
-- README updated with new default feature status and label API examples
+- RDF transaction rollback properly discards uncommitted changes
+- npm and Go module publishing paths corrected
 
 ## [0.1.3] - 2026-01-30
 
-_Admin Tools & Performance_
+CLI for database administration, Python admin APIs, adaptive query execution, and property compression.
 
 ### Added
 
-- **CLI** (`grafeo-cli`): Full command-line interface for database administration - inspect, backup, export, manage WAL, and compact databases with table or JSON output
-- **Admin APIs**: Python bindings for introspection - `info()`, `detailed_stats()`, `schema()`, `validate()`, WAL management, and persistence utilities
-- **Adaptive Execution**: Runtime re-optimization when cardinality estimates deviate 3x+ from actual values
-- **Run-Length Encoding**: Compression for repetitive data with zigzag encoding and efficient iterators
-- **Property Compression**: Type-specific codecs (Dictionary, Delta, RLE) with hot buffer pattern
-- **Pre-commit Hooks**: Automated `cargo fmt` and `clippy` checks before commits
+- **CLI** (`grafeo-cli`): inspect, backup, export, manage WAL, and compact databases from the command line
+- **Admin APIs**: Python bindings for `info()`, `detailed_stats()`, `schema()`, `validate()`, and WAL management
+- **Adaptive execution**: runtime re-optimization when cardinality estimates deviate 3x+ from actuals
+- **Property compression**: type-specific codecs (dictionary, delta, RLE) with hot buffer pattern
 
 ### Improved
 
-- **Query Optimizer**: Projection pushdown and improved join reordering
-- **Cardinality Estimation**: Histogram-based estimation with adaptive feedback loop
-- **Parsers**: Better edge patterns (Cypher), more traversal steps (Gremlin), improved pattern matching (GQL)
-- **Aggregate Operator**: Parallel hash aggregation with improved memory efficiency
-- **Adjacency Index**: Bloom filters for faster edge membership tests
-- **RDF Planner**: Major improvements to triple pattern handling and optimization
-
-### Documentation
-
-- CLI guide at `docs/getting-started/cli.md`
-- README expanded with admin API examples and CLI usage
+- Query optimizer: projection pushdown and better join reordering
+- Cardinality estimation: histogram-based with adaptive feedback
+- Parsers: better edge patterns, traversal steps, and pattern matching across languages
 
 ## [0.1.2] - 2026-01-29
 
-_Testing & Documentation_
+Comprehensive Python test suite and documentation pass across all crates.
 
 ### Added
 
-- **Python Test Suite**: Comprehensive tests covering LPG and RDF graph operations
-- **Query Language Tests**: Coverage for all five languages; GQL, Cypher, Gremlin, GraphQL and SPARQL
-- **Test Infrastructure**: Fixtures, base classes, and shared utilities for consistent testing
-- **Plugin Tests**: NetworkX and solvOR integration tests across all query languages
+- Comprehensive Python test suite covering LPG, RDF, all 5 query languages, and plugin integrations
+- Docstring pass across all crates with tables, examples, and practical guidance
 
 ### Changed
 
-- **Database Implementation**: Core functionality now fully operational end-to-end
-- **Query Pipeline**: Complete execution path from parsing through result materialization
-
-### Documentation
-
-- Docstring pass across all crates - added tables, examples, and practical guidance
-- Python bindings documentation with NetworkX and solvOR library references
+- Core database functionality now fully operational end-to-end
 
 ## [0.1.1] - Unreleased
 
-_Query Languages & Python Bindings_
-
 ### Added
 
-- **GQL Parser**: Full ISO/IEC 39075 standard query language support
-- **Multi-Language Support**: Cypher, Gremlin, GraphQL and SPARQL translators
-- **MVCC Transactions**: Snapshot isolation with multi-version concurrency control
-- **Index Types**: Hash indexes for equality, B-tree for range queries, trie for prefix matching, adjacency lists for traversals
-- **Storage Backends**: In-memory for speed, write-ahead log for durability
-- **Python Bindings**: PyO3-based API exposing full database functionality
+- **GQL parser**: full ISO/IEC 39075 standard support
+- **Multi-language support**: Cypher, Gremlin, GraphQL, and SPARQL translators
+- **MVCC transactions**: snapshot isolation with multi-version concurrency control
+- **Index types**: hash, B-tree, trie, and adjacency indexes
+- **Storage backends**: in-memory and write-ahead log
+- **Python bindings**: PyO3-based API exposing full database functionality
 
 ### Changed
 
-- **Breaking**: Renamed project from Graphos to Grafeo
+- Renamed project from Graphos to Grafeo
 
 ## [0.1.0] - Unreleased
 
-_Foundation_
-
 ### Added
 
-- **Core Architecture**: Modular crate structure designed for extensibility
-- **Crate Layout**:
-  - `grafeo-common`: Foundation types, memory allocators, hashing utilities
-  - `grafeo-core`: LPG storage engine, index structures, execution operators
-  - `grafeo-adapters`: Query parsers, storage backends, plugin system
-  - `grafeo-engine`: Database facade, session management, transaction coordination
-  - `grafeo-python`: Python bindings via PyO3
-- **Graph Models**: Labeled Property Graph (LPG) and RDF triple store support
-- **In-Memory Storage**: Fast graph operations without persistence overhead
+- **Core architecture**: modular crate structure (grafeo-common, grafeo-core, grafeo-adapters, grafeo-engine, grafeo-python)
+- **Graph models**: Labeled Property Graph (LPG) and RDF triple store
+- **In-memory storage**: fast graph operations without persistence overhead
 
 ---
 

@@ -1,6 +1,6 @@
 # grafeo
 
-Go bindings for [Grafeo](https://grafeo.dev) - a high-performance, pure-Rust, embeddable graph database.
+Go bindings for [Grafeo](https://grafeo.dev), a high-performance, embeddable graph database with a Rust core and no required C dependencies.
 
 ## Requirements
 

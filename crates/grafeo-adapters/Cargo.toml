@@ -54,10 +54,11 @@ cypher = []                   # Cypher parser (openCypher 9.0)
 sparql = []                   # SPARQL parser (W3C SPARQL 1.1)
 gremlin = []                  # Gremlin parser (Apache TinkerPop)
 graphql = []                  # GraphQL parser (spec-compliant)
+sql-pgq = ["gql"]             # SQL/PGQ parser (SQL:2023 GRAPH_TABLE)
 rdf = ["grafeo-core/rdf"]    # RDF graph model support
 wal = ["memmap2", "crc32fast", "tokio", "crossbeam"]  # Write-ahead log storage (requires filesystem)
 parallel = ["rayon", "grafeo-core/parallel"]  # Parallel algorithms (rayon)
-full = ["gql", "cypher", "sparql", "gremlin", "graphql", "rdf", "wal", "parallel"]
+full = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq", "rdf", "wal", "parallel"]
 
 [lints]
 workspace = true

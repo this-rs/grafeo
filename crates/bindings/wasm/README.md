@@ -1,7 +1,5 @@
 # @grafeo-db/wasm
 
-> **Status: Coming Soon** - This package is under active development.
-
 Low-level WebAssembly binary for [Grafeo](https://github.com/GrafeoDB/grafeo), a high-performance graph database.
 
 ## Which Package Do You Need?

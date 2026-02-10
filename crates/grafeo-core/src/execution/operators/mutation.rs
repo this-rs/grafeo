@@ -1003,4 +1003,508 @@ mod tests {
         assert_eq!(deleted, 1);
         assert_eq!(store.node_count(), 0);
     }
+
+    // ── Helper: reusable MockInput ───────────────────────────────
+
+    struct MockInput {
+        chunk: Option<DataChunk>,
+    }
+
+    impl MockInput {
+        fn boxed(chunk: DataChunk) -> Box<Self> {
+            Box::new(Self { chunk: Some(chunk) })
+        }
+    }
+
+    impl Operator for MockInput {
+        fn next(&mut self) -> OperatorResult {
+            Ok(self.chunk.take())
+        }
+        fn reset(&mut self) {}
+        fn name(&self) -> &'static str {
+            "MockInput"
+        }
+    }
+
+    // ── DeleteEdgeOperator ───────────────────────────────────────
+
+    #[test]
+    fn test_delete_edge() {
+        let store = create_test_store();
+
+        let n1 = store.create_node(&["Person"]);
+        let n2 = store.create_node(&["Person"]);
+        let eid = store.create_edge(n1, n2, "KNOWS");
+        assert_eq!(store.edge_count(), 1);
+
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        builder.column_mut(0).unwrap().push_int64(eid.0 as i64);
+        builder.advance_row();
+
+        let mut op = DeleteEdgeOperator::new(
+            Arc::clone(&store),
+            MockInput::boxed(builder.finish()),
+            0,
+            vec![LogicalType::Int64],
+        );
+
+        let chunk = op.next().unwrap().unwrap();
+        let deleted = chunk.column(0).unwrap().get_int64(0).unwrap();
+        assert_eq!(deleted, 1);
+        assert_eq!(store.edge_count(), 0);
+    }
+
+    #[test]
+    fn test_delete_edge_no_input_returns_none() {
+        let store = create_test_store();
+
+        // Empty chunk: MockInput returns None immediately
+        struct EmptyInput;
+        impl Operator for EmptyInput {
+            fn next(&mut self) -> OperatorResult {
+                Ok(None)
+            }
+            fn reset(&mut self) {}
+            fn name(&self) -> &'static str {
+                "EmptyInput"
+            }
+        }
+
+        let mut op = DeleteEdgeOperator::new(
+            Arc::clone(&store),
+            Box::new(EmptyInput),
+            0,
+            vec![LogicalType::Int64],
+        );
+
+        assert!(op.next().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_delete_multiple_edges() {
+        let store = create_test_store();
+
+        let n1 = store.create_node(&["N"]);
+        let n2 = store.create_node(&["N"]);
+        let e1 = store.create_edge(n1, n2, "R");
+        let e2 = store.create_edge(n2, n1, "S");
+        assert_eq!(store.edge_count(), 2);
+
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        builder.column_mut(0).unwrap().push_int64(e1.0 as i64);
+        builder.advance_row();
+        builder.column_mut(0).unwrap().push_int64(e2.0 as i64);
+        builder.advance_row();
+
+        let mut op = DeleteEdgeOperator::new(
+            Arc::clone(&store),
+            MockInput::boxed(builder.finish()),
+            0,
+            vec![LogicalType::Int64],
+        );
+
+        let chunk = op.next().unwrap().unwrap();
+        let deleted = chunk.column(0).unwrap().get_int64(0).unwrap();
+        assert_eq!(deleted, 2);
+        assert_eq!(store.edge_count(), 0);
+    }
+
+    // ── DeleteNodeOperator with DETACH ───────────────────────────
+
+    #[test]
+    fn test_delete_node_detach() {
+        let store = create_test_store();
+
+        let n1 = store.create_node(&["Person"]);
+        let n2 = store.create_node(&["Person"]);
+        store.create_edge(n1, n2, "KNOWS");
+        store.create_edge(n2, n1, "FOLLOWS");
+        assert_eq!(store.edge_count(), 2);
+
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        builder.column_mut(0).unwrap().push_int64(n1.0 as i64);
+        builder.advance_row();
+
+        let mut op = DeleteNodeOperator::new(
+            Arc::clone(&store),
+            MockInput::boxed(builder.finish()),
+            0,
+            vec![LogicalType::Int64],
+            true, // detach = true
+        );
+
+        let chunk = op.next().unwrap().unwrap();
+        let deleted = chunk.column(0).unwrap().get_int64(0).unwrap();
+        assert_eq!(deleted, 1);
+        assert_eq!(store.node_count(), 1);
+        assert_eq!(store.edge_count(), 0); // edges detached
+    }
+
+    // ── AddLabelOperator ─────────────────────────────────────────
+
+    #[test]
+    fn test_add_label() {
+        let store = create_test_store();
+
+        let node = store.create_node(&["Person"]);
+
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        builder.column_mut(0).unwrap().push_int64(node.0 as i64);
+        builder.advance_row();
+
+        let mut op = AddLabelOperator::new(
+            Arc::clone(&store),
+            MockInput::boxed(builder.finish()),
+            0,
+            vec!["Employee".to_string()],
+            vec![LogicalType::Int64],
+        );
+
+        let chunk = op.next().unwrap().unwrap();
+        let updated = chunk.column(0).unwrap().get_int64(0).unwrap();
+        assert_eq!(updated, 1);
+
+        // Verify label was added
+        let node_data = store.get_node(node).unwrap();
+        let labels: Vec<&str> = node_data.labels.iter().map(|l| l.as_ref()).collect();
+        assert!(labels.contains(&"Person"));
+        assert!(labels.contains(&"Employee"));
+    }
+
+    #[test]
+    fn test_add_multiple_labels() {
+        let store = create_test_store();
+
+        let node = store.create_node(&["Base"]);
+
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        builder.column_mut(0).unwrap().push_int64(node.0 as i64);
+        builder.advance_row();
+
+        let mut op = AddLabelOperator::new(
+            Arc::clone(&store),
+            MockInput::boxed(builder.finish()),
+            0,
+            vec!["LabelA".to_string(), "LabelB".to_string()],
+            vec![LogicalType::Int64],
+        );
+
+        let chunk = op.next().unwrap().unwrap();
+        let updated = chunk.column(0).unwrap().get_int64(0).unwrap();
+        assert_eq!(updated, 2); // 2 labels added
+
+        let node_data = store.get_node(node).unwrap();
+        let labels: Vec<&str> = node_data.labels.iter().map(|l| l.as_ref()).collect();
+        assert!(labels.contains(&"LabelA"));
+        assert!(labels.contains(&"LabelB"));
+    }
+
+    #[test]
+    fn test_add_label_no_input_returns_none() {
+        let store = create_test_store();
+
+        struct EmptyInput;
+        impl Operator for EmptyInput {
+            fn next(&mut self) -> OperatorResult {
+                Ok(None)
+            }
+            fn reset(&mut self) {}
+            fn name(&self) -> &'static str {
+                "EmptyInput"
+            }
+        }
+
+        let mut op = AddLabelOperator::new(
+            Arc::clone(&store),
+            Box::new(EmptyInput),
+            0,
+            vec!["Foo".to_string()],
+            vec![LogicalType::Int64],
+        );
+
+        assert!(op.next().unwrap().is_none());
+    }
+
+    // ── RemoveLabelOperator ──────────────────────────────────────
+
+    #[test]
+    fn test_remove_label() {
+        let store = create_test_store();
+
+        let node = store.create_node(&["Person", "Employee"]);
+
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        builder.column_mut(0).unwrap().push_int64(node.0 as i64);
+        builder.advance_row();
+
+        let mut op = RemoveLabelOperator::new(
+            Arc::clone(&store),
+            MockInput::boxed(builder.finish()),
+            0,
+            vec!["Employee".to_string()],
+            vec![LogicalType::Int64],
+        );
+
+        let chunk = op.next().unwrap().unwrap();
+        let updated = chunk.column(0).unwrap().get_int64(0).unwrap();
+        assert_eq!(updated, 1);
+
+        // Verify label was removed
+        let node_data = store.get_node(node).unwrap();
+        let labels: Vec<&str> = node_data.labels.iter().map(|l| l.as_ref()).collect();
+        assert!(labels.contains(&"Person"));
+        assert!(!labels.contains(&"Employee"));
+    }
+
+    #[test]
+    fn test_remove_nonexistent_label() {
+        let store = create_test_store();
+
+        let node = store.create_node(&["Person"]);
+
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        builder.column_mut(0).unwrap().push_int64(node.0 as i64);
+        builder.advance_row();
+
+        let mut op = RemoveLabelOperator::new(
+            Arc::clone(&store),
+            MockInput::boxed(builder.finish()),
+            0,
+            vec!["NonExistent".to_string()],
+            vec![LogicalType::Int64],
+        );
+
+        let chunk = op.next().unwrap().unwrap();
+        let updated = chunk.column(0).unwrap().get_int64(0).unwrap();
+        assert_eq!(updated, 0); // nothing removed
+    }
+
+    // ── SetPropertyOperator ──────────────────────────────────────
+
+    #[test]
+    fn test_set_node_property_constant() {
+        let store = create_test_store();
+
+        let node = store.create_node(&["Person"]);
+
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        builder.column_mut(0).unwrap().push_int64(node.0 as i64);
+        builder.advance_row();
+
+        let mut op = SetPropertyOperator::new_for_node(
+            Arc::clone(&store),
+            MockInput::boxed(builder.finish()),
+            0,
+            vec![(
+                "name".to_string(),
+                PropertySource::Constant(Value::String("Alice".into())),
+            )],
+            vec![LogicalType::Int64],
+        );
+
+        let chunk = op.next().unwrap().unwrap();
+        assert_eq!(chunk.row_count(), 1);
+
+        // Verify property was set
+        let node_data = store.get_node(node).unwrap();
+        assert_eq!(
+            node_data
+                .properties
+                .get(&grafeo_common::types::PropertyKey::new("name")),
+            Some(&Value::String("Alice".into()))
+        );
+    }
+
+    #[test]
+    fn test_set_node_property_from_column() {
+        let store = create_test_store();
+
+        let node = store.create_node(&["Person"]);
+
+        // Input: column 0 = node ID, column 1 = property value
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Int64, LogicalType::String]);
+        builder.column_mut(0).unwrap().push_int64(node.0 as i64);
+        builder
+            .column_mut(1)
+            .unwrap()
+            .push_value(Value::String("Bob".into()));
+        builder.advance_row();
+
+        let mut op = SetPropertyOperator::new_for_node(
+            Arc::clone(&store),
+            MockInput::boxed(builder.finish()),
+            0,
+            vec![("name".to_string(), PropertySource::Column(1))],
+            vec![LogicalType::Int64, LogicalType::String],
+        );
+
+        let chunk = op.next().unwrap().unwrap();
+        assert_eq!(chunk.row_count(), 1);
+
+        let node_data = store.get_node(node).unwrap();
+        assert_eq!(
+            node_data
+                .properties
+                .get(&grafeo_common::types::PropertyKey::new("name")),
+            Some(&Value::String("Bob".into()))
+        );
+    }
+
+    #[test]
+    fn test_set_edge_property() {
+        let store = create_test_store();
+
+        let n1 = store.create_node(&["N"]);
+        let n2 = store.create_node(&["N"]);
+        let eid = store.create_edge(n1, n2, "KNOWS");
+
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        builder.column_mut(0).unwrap().push_int64(eid.0 as i64);
+        builder.advance_row();
+
+        let mut op = SetPropertyOperator::new_for_edge(
+            Arc::clone(&store),
+            MockInput::boxed(builder.finish()),
+            0,
+            vec![(
+                "weight".to_string(),
+                PropertySource::Constant(Value::Float64(0.75)),
+            )],
+            vec![LogicalType::Int64],
+        );
+
+        let chunk = op.next().unwrap().unwrap();
+        assert_eq!(chunk.row_count(), 1);
+
+        let edge_data = store.get_edge(eid).unwrap();
+        assert_eq!(
+            edge_data
+                .properties
+                .get(&grafeo_common::types::PropertyKey::new("weight")),
+            Some(&Value::Float64(0.75))
+        );
+    }
+
+    #[test]
+    fn test_set_multiple_properties() {
+        let store = create_test_store();
+
+        let node = store.create_node(&["Person"]);
+
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        builder.column_mut(0).unwrap().push_int64(node.0 as i64);
+        builder.advance_row();
+
+        let mut op = SetPropertyOperator::new_for_node(
+            Arc::clone(&store),
+            MockInput::boxed(builder.finish()),
+            0,
+            vec![
+                (
+                    "name".to_string(),
+                    PropertySource::Constant(Value::String("Alice".into())),
+                ),
+                (
+                    "age".to_string(),
+                    PropertySource::Constant(Value::Int64(30)),
+                ),
+            ],
+            vec![LogicalType::Int64],
+        );
+
+        op.next().unwrap().unwrap();
+
+        let node_data = store.get_node(node).unwrap();
+        assert_eq!(
+            node_data
+                .properties
+                .get(&grafeo_common::types::PropertyKey::new("name")),
+            Some(&Value::String("Alice".into()))
+        );
+        assert_eq!(
+            node_data
+                .properties
+                .get(&grafeo_common::types::PropertyKey::new("age")),
+            Some(&Value::Int64(30))
+        );
+    }
+
+    #[test]
+    fn test_set_property_no_input_returns_none() {
+        let store = create_test_store();
+
+        struct EmptyInput;
+        impl Operator for EmptyInput {
+            fn next(&mut self) -> OperatorResult {
+                Ok(None)
+            }
+            fn reset(&mut self) {}
+            fn name(&self) -> &'static str {
+                "EmptyInput"
+            }
+        }
+
+        let mut op = SetPropertyOperator::new_for_node(
+            Arc::clone(&store),
+            Box::new(EmptyInput),
+            0,
+            vec![("x".to_string(), PropertySource::Constant(Value::Int64(1)))],
+            vec![LogicalType::Int64],
+        );
+
+        assert!(op.next().unwrap().is_none());
+    }
+
+    // ── Operator name() ──────────────────────────────────────────
+
+    #[test]
+    fn test_operator_names() {
+        let store = create_test_store();
+
+        struct EmptyInput;
+        impl Operator for EmptyInput {
+            fn next(&mut self) -> OperatorResult {
+                Ok(None)
+            }
+            fn reset(&mut self) {}
+            fn name(&self) -> &'static str {
+                "EmptyInput"
+            }
+        }
+
+        let op = DeleteEdgeOperator::new(
+            Arc::clone(&store),
+            Box::new(EmptyInput),
+            0,
+            vec![LogicalType::Int64],
+        );
+        assert_eq!(op.name(), "DeleteEdge");
+
+        let op = AddLabelOperator::new(
+            Arc::clone(&store),
+            Box::new(EmptyInput),
+            0,
+            vec!["L".to_string()],
+            vec![LogicalType::Int64],
+        );
+        assert_eq!(op.name(), "AddLabel");
+
+        let op = RemoveLabelOperator::new(
+            Arc::clone(&store),
+            Box::new(EmptyInput),
+            0,
+            vec!["L".to_string()],
+            vec![LogicalType::Int64],
+        );
+        assert_eq!(op.name(), "RemoveLabel");
+
+        let op = SetPropertyOperator::new_for_node(
+            Arc::clone(&store),
+            Box::new(EmptyInput),
+            0,
+            vec![],
+            vec![LogicalType::Int64],
+        );
+        assert_eq!(op.name(), "SetProperty");
+    }
 }

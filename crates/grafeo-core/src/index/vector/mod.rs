@@ -66,7 +66,9 @@
 //! let results = index.search(&query, 10);
 //! ```
 
+mod accessor;
 mod distance;
+mod mmr;
 pub mod quantization;
 mod simd;
 pub mod storage;
@@ -79,11 +81,13 @@ mod hnsw;
 #[cfg(feature = "vector-index")]
 mod quantized_hnsw;
 
+pub use accessor::{PropertyVectorAccessor, VectorAccessor};
 pub use distance::{
     DistanceMetric, compute_distance, cosine_distance, cosine_similarity, dot_product,
     euclidean_distance, euclidean_distance_squared, l2_norm, manhattan_distance, normalize,
     simd_support,
 };
+pub use mmr::mmr_select;
 pub use quantization::{BinaryQuantizer, ProductQuantizer, QuantizationType, ScalarQuantizer};
 #[cfg(feature = "mmap")]
 pub use storage::MmapStorage;

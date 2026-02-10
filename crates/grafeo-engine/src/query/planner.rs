@@ -518,9 +518,11 @@ impl Planner {
             )
             .with_tx_context(self.viewing_epoch, self.tx_id);
 
-            // If a path alias is set, enable path length output
+            // If a path alias is set, enable path length and detail output
             if expand.path_alias.is_some() {
-                expand_op = expand_op.with_path_length_output();
+                expand_op = expand_op
+                    .with_path_length_output()
+                    .with_path_detail_output();
             }
 
             Box::new(expand_op)
@@ -551,9 +553,11 @@ impl Planner {
 
         columns.push(expand.to_variable.clone());
 
-        // If a path alias is set, add a column for the path length
+        // If a path alias is set, add columns for path length, nodes, and edges
         if let Some(ref path_alias) = expand.path_alias {
             columns.push(format!("_path_length_{}", path_alias));
+            columns.push(format!("_path_nodes_{}", path_alias));
+            columns.push(format!("_path_edges_{}", path_alias));
         }
 
         Ok((operator, columns))
@@ -684,8 +688,15 @@ impl Planner {
                             Error::Internal(format!("Variable '{}' not found in input", name))
                         })?;
                         projections.push(ProjectExpr::Column(col_idx));
-                        // Use Node type for variables (they could be nodes, edges, or values)
-                        output_types.push(LogicalType::Node);
+                        // Path detail variables carry List values — use Any/Generic
+                        if name.starts_with("_path_nodes_")
+                            || name.starts_with("_path_edges_")
+                            || name.starts_with("_path_length_")
+                        {
+                            output_types.push(LogicalType::Any);
+                        } else {
+                            output_types.push(LogicalType::Node);
+                        }
                     }
                     LogicalExpression::Property { variable, property } => {
                         let col_idx = *variable_columns.get(variable).ok_or_else(|| {
@@ -751,6 +762,30 @@ impl Planner {
                                     return Err(Error::Internal(
                                         "length() argument must be a variable".to_string(),
                                     ));
+                                }
+                            }
+                            "nodes" | "edges" => {
+                                // nodes(p) / edges(p) returns the list of nodes/edges in the path
+                                if args.len() != 1 {
+                                    return Err(Error::Internal(format!(
+                                        "{}() requires exactly one argument",
+                                        name
+                                    )));
+                                }
+                                if let LogicalExpression::Variable(var_name) = &args[0] {
+                                    let col_idx =
+                                        *variable_columns.get(var_name).ok_or_else(|| {
+                                            Error::Internal(format!(
+                                                "Variable '{var_name}' not found in input",
+                                            ))
+                                        })?;
+                                    projections.push(ProjectExpr::Column(col_idx));
+                                    output_types.push(LogicalType::Any);
+                                } else {
+                                    return Err(Error::Internal(format!(
+                                        "{}() argument must be a variable",
+                                        name
+                                    )));
                                 }
                             }
                             // For other functions (head, tail, size, etc.), use expression evaluation

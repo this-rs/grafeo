@@ -277,6 +277,37 @@ pub struct DumpMetadata {
     pub extra: HashMap<String, String>,
 }
 
+/// Trait for administrative database operations.
+///
+/// Provides a uniform interface for introspection, validation, and
+/// maintenance operations. Used by the CLI, REST API, and bindings
+/// to inspect and manage a Grafeo database.
+///
+/// Implemented by [`GrafeoDB`](crate::GrafeoDB).
+pub trait AdminService {
+    /// Returns high-level database information (counts, mode, persistence).
+    fn info(&self) -> DatabaseInfo;
+
+    /// Returns detailed database statistics (memory, disk, indexes).
+    fn detailed_stats(&self) -> DatabaseStats;
+
+    /// Returns schema information (labels, edge types, property keys).
+    fn schema(&self) -> SchemaInfo;
+
+    /// Validates database integrity, returning errors and warnings.
+    fn validate(&self) -> ValidationResult;
+
+    /// Returns WAL (Write-Ahead Log) status.
+    fn wal_status(&self) -> WalStatus;
+
+    /// Forces a WAL checkpoint, flushing pending records to storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the checkpoint fails.
+    fn wal_checkpoint(&self) -> grafeo_common::utils::error::Result<()>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

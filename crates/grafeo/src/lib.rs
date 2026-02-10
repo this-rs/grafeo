@@ -1,6 +1,8 @@
 //! # Grafeo
 //!
-//! A high-performance, pure-Rust, embeddable graph database.
+//! A high-performance, embeddable graph database with a Rust core and no required
+//! C dependencies. Optional allocators (jemalloc/mimalloc) and TLS use C libraries
+//! for performance.
 //!
 //! If you're new here, start with [`GrafeoDB`] - that's your entry point for
 //! creating databases and running queries. Grafeo uses GQL (the ISO standard)

@@ -67,7 +67,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
-      - name: Build release binary
+      - name: Build release binaries
         run: cargo build --release --workspace --target ${{ matrix.target }} --exclude grafeo-python
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
@@ -75,17 +75,24 @@ jobs:
       - name: Package (Unix)
         if: matrix.archive == 'tar.gz'
         run: |
-          cd target/${{ matrix.target }}/release
-          tar czvf ../../../grafeo-${{ github.ref_name }}-${{ matrix.target }}.tar.gz grafeo* || true
-          cd ../../..
+          STAGING="grafeo-${{ github.ref_name }}-${{ matrix.target }}"
+          mkdir -p "$STAGING"
+          cp target/${{ matrix.target }}/release/grafeo "$STAGING/" || true
+          cp target/${{ matrix.target }}/release/libgrafeo_c.so "$STAGING/" || true
+          cp target/${{ matrix.target }}/release/libgrafeo_c.dylib "$STAGING/" || true
+          cp LICENSE README.md "$STAGING/"
+          tar czvf "${STAGING}.tar.gz" "$STAGING"
 
       - name: Package (Windows)
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          cd target/${{ matrix.target }}/release
-          Compress-Archive -Path grafeo*.exe -DestinationPath ../../../grafeo-${{ github.ref_name }}-${{ matrix.target }}.zip
-          cd ../../..
+          $staging = "grafeo-${{ github.ref_name }}-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path $staging
+          Copy-Item target/${{ matrix.target }}/release/grafeo.exe $staging/ -ErrorAction SilentlyContinue
+          Copy-Item target/${{ matrix.target }}/release/grafeo_c.dll $staging/ -ErrorAction SilentlyContinue
+          Copy-Item LICENSE, README.md $staging/
+          Compress-Archive -Path $staging -DestinationPath "${staging}.zip"
 
       - name: Upload Release Asset
         uses: actions/upload-release-asset@v1
@@ -96,6 +103,50 @@ jobs:
           asset_path: ./grafeo-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}
           asset_name: grafeo-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}
           asset_content_type: ${{ matrix.archive == 'zip' && 'application/zip' || 'application/gzip' }}
+
+      - name: Upload CLI binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: grafeo-cli-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/release/grafeo
+            target/${{ matrix.target }}/release/grafeo.exe
+          if-no-files-found: ignore
+
+  # Generate and upload SHA256 checksums for all release archives
+  checksums:
+    name: SHA256 Checksums
+    runs-on: ubuntu-latest
+    needs: [create-release, build-binaries]
+    steps:
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          # Collect all archive files
+          find . -name '*.tar.gz' -o -name '*.zip' | sort | while read -r f; do
+            sha256sum "$f" >> ../checksums.txt
+          done
+          # Also checksum the CLI binaries
+          find . -name 'grafeo' -o -name 'grafeo.exe' | sort | while read -r f; do
+            sha256sum "$f" >> ../checksums.txt
+          done
+          cat ../checksums.txt
+
+      - name: Upload checksums
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./checksums.txt
+          asset_name: grafeo-${{ github.ref_name }}-checksums.sha256
+          asset_content_type: text/plain
+        continue-on-error: true
 
   # Publish crates to crates.io (in dependency order)
   publish-crates:
@@ -139,6 +190,7 @@ jobs:
           publish_crate grafeo-adapters
           publish_crate grafeo-engine
           publish_crate grafeo
+          publish_crate grafeo-cli
 
   # Tag Go module (subdirectory modules need prefixed tags)
   tag-go-module:
@@ -194,6 +246,105 @@ jobs:
 
       - name: Publish @grafeo-db/js
         working-directory: crates/bindings/node
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        continue-on-error: true
+
+  # Publish CLI npm wrapper packages
+  publish-cli-npm:
+    name: Publish CLI to npm
+    runs-on: ubuntu-latest
+    needs: build-binaries
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            npm_platform: linux-x64
+            os: linux
+            cpu: x64
+            binary: grafeo
+          - target: aarch64-unknown-linux-gnu
+            npm_platform: linux-arm64
+            os: linux
+            cpu: arm64
+            binary: grafeo
+          - target: x86_64-apple-darwin
+            npm_platform: darwin-x64
+            os: darwin
+            cpu: x64
+            binary: grafeo
+          - target: aarch64-apple-darwin
+            npm_platform: darwin-arm64
+            os: darwin
+            cpu: arm64
+            binary: grafeo
+          - target: x86_64-pc-windows-msvc
+            npm_platform: win32-x64
+            os: win32
+            cpu: x64
+            binary: grafeo.exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Download CLI binary
+        uses: actions/download-artifact@v4
+        with:
+          name: grafeo-cli-${{ matrix.target }}
+          path: platform-pkg/
+
+      - name: Create platform package
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cd platform-pkg
+          cat > package.json << EOF
+          {
+            "name": "@grafeo-db/cli-${{ matrix.npm_platform }}",
+            "version": "${VERSION}",
+            "description": "Grafeo CLI binary for ${{ matrix.npm_platform }}",
+            "license": "AGPL-3.0-or-later",
+            "repository": {
+              "type": "git",
+              "url": "https://github.com/GrafeoDB/grafeo"
+            },
+            "os": ["${{ matrix.os }}"],
+            "cpu": ["${{ matrix.cpu }}"],
+            "files": ["${{ matrix.binary }}"]
+          }
+          EOF
+          chmod +x ${{ matrix.binary }} 2>/dev/null || true
+          ls -la
+
+      - name: Publish platform package
+        working-directory: platform-pkg
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        continue-on-error: true
+
+  # Publish main CLI npm launcher (after platform packages)
+  publish-cli-npm-launcher:
+    name: Publish @grafeo-db/cli
+    runs-on: ubuntu-latest
+    needs: publish-cli-npm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Publish launcher package
+        working-directory: packages/grafeo-cli-npm
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -1,4 +1,4 @@
-A pure-Rust, high-performance, embeddable graph database supporting both **Labeled Property Graph (LPG)** and **RDF** data models.
+A high-performance, embeddable graph database with a Rust core and no required C dependencies, supporting both **Labeled Property Graph (LPG)** and **RDF** data models. Optional allocators (jemalloc/mimalloc) and TLS use C libraries for performance.
 
 ## Features
 

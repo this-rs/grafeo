@@ -43,7 +43,7 @@ pub fn run(path: &Path, format: OutputFormat, quiet: bool) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&output)?);
             }
         }
-        Format::Table => {
+        Format::Table | Format::Csv => {
             let items = vec![
                 ("Mode", output.mode),
                 ("Nodes", output.node_count.to_string()),
