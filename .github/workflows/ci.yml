@@ -103,8 +103,8 @@ jobs:
       - name: Setup Miri sysroot
         run: cargo +nightly miri setup
 
-      - name: Clean Miri target directory
-        run: rm -rf target/miri
+      - name: Clean target directory
+        run: cargo +nightly clean
 
       - name: Run Miri on grafeo-common
         run: cargo +nightly miri test --all-features -p grafeo-common
