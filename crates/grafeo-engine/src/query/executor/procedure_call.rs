@@ -16,7 +16,7 @@ use grafeo_core::graph::lpg::LpgStore;
 ///
 /// On the first call to [`next()`](Operator::next), the algorithm is executed and
 /// the full result is cached. Subsequent calls yield rows in chunks of
-/// [`CHUNK_SIZE`] until exhausted.
+/// `CHUNK_SIZE` until exhausted.
 pub struct ProcedureCallOperator {
     store: Arc<LpgStore>,
     algorithm: Arc<dyn GraphAlgorithm>,
