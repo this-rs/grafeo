@@ -117,9 +117,9 @@ Grafeo supports openCypher 9.0 with these differences:
 | `WITH` | Supported | Supported |
 | `UNWIND` | Supported | Supported |
 | `OPTIONAL MATCH` | Supported | Supported |
-| `CALL procedures` | Limited | Not supported |
+| `CALL procedures` | Limited | Supported (built-in algorithms) |
 | `APOC functions` | No | Use Python instead |
-| `Graph algorithms` | Requires GDS | Built-in via `db.algorithms` |
+| `Graph algorithms` | Requires GDS | Built-in via `db.algorithms` or `CALL` |
 
 ### Replacing APOC with Python
 

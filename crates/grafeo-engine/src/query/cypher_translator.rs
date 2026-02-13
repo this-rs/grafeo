@@ -4,11 +4,11 @@
 //! that can be optimized and executed.
 
 use crate::query::plan::{
-    AggregateExpr, AggregateFunction, AggregateOp, BinaryOp, CreateEdgeOp, CreateNodeOp,
-    DeleteNodeOp, DistinctOp, ExpandDirection, ExpandOp, FilterOp, LeftJoinOp, LimitOp,
-    LogicalExpression, LogicalOperator, LogicalPlan, MergeOp, NodeScanOp, ProjectOp, Projection,
-    RemoveLabelOp, ReturnItem, ReturnOp, SetPropertyOp, ShortestPathOp, SkipOp, SortKey, SortOp,
-    SortOrder, UnaryOp, UnwindOp,
+    AggregateExpr, AggregateFunction, AggregateOp, BinaryOp, CallProcedureOp, CreateEdgeOp,
+    CreateNodeOp, DeleteNodeOp, DistinctOp, ExpandDirection, ExpandOp, FilterOp, LeftJoinOp,
+    LimitOp, LogicalExpression, LogicalOperator, LogicalPlan, MergeOp, NodeScanOp, ProcedureYield,
+    ProjectOp, Projection, RemoveLabelOp, ReturnItem, ReturnOp, SetPropertyOp, ShortestPathOp,
+    SkipOp, SortKey, SortOp, SortOrder, UnaryOp, UnwindOp,
 };
 use grafeo_adapters::query::cypher::{self, ast};
 use grafeo_common::types::Value;
@@ -79,7 +79,36 @@ impl CypherTranslator {
             ast::Clause::Delete(delete_clause) => self.translate_delete(delete_clause, input),
             ast::Clause::Set(set_clause) => self.translate_set(set_clause, input),
             ast::Clause::Remove(remove_clause) => self.translate_remove(remove_clause, input),
+            ast::Clause::Call(call) => self.translate_call_clause(call, input),
         }
+    }
+
+    fn translate_call_clause(
+        &self,
+        call: &ast::CallClause,
+        _input: Option<LogicalOperator>,
+    ) -> Result<LogicalOperator> {
+        let arguments = call
+            .arguments
+            .iter()
+            .map(|a| self.translate_expression(a))
+            .collect::<Result<Vec<_>>>()?;
+
+        let yield_items = call.yield_items.as_ref().map(|items| {
+            items
+                .iter()
+                .map(|item| ProcedureYield {
+                    field_name: item.field_name.clone(),
+                    alias: item.alias.clone(),
+                })
+                .collect()
+        });
+
+        Ok(LogicalOperator::CallProcedure(CallProcedureOp {
+            name: call.procedure_name.clone(),
+            arguments,
+            yield_items,
+        }))
     }
 
     fn translate_match(

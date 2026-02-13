@@ -8,8 +8,8 @@ use grafeo_common::utils::error::SourceSpan;
 
 // Re-use GQL pattern and expression types for the inner MATCH clause
 pub use crate::query::gql::ast::{
-    AliasedPattern, BinaryOp, EdgeDirection, EdgePattern, Expression, Literal, MatchClause,
-    NodePattern, PathPattern, Pattern, UnaryOp,
+    AliasedPattern, BinaryOp, CallStatement, EdgeDirection, EdgePattern, Expression, Literal,
+    MatchClause, NodePattern, PathPattern, Pattern, UnaryOp, YieldItem,
 };
 
 /// A SQL/PGQ statement.
@@ -19,6 +19,8 @@ pub enum Statement {
     Select(SelectStatement),
     /// A `CREATE PROPERTY GRAPH` DDL statement.
     CreatePropertyGraph(CreatePropertyGraphStatement),
+    /// A `CALL procedure(args)` statement (SQL:2003+).
+    Call(CallStatement),
 }
 
 /// A complete SQL/PGQ SELECT statement.

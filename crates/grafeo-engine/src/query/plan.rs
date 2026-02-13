@@ -156,6 +156,10 @@ pub enum LogicalOperator {
     // ==================== DDL Operators ====================
     /// Define a property graph schema (SQL/PGQ DDL).
     CreatePropertyGraph(CreatePropertyGraphOp),
+
+    // ==================== Procedure Call Operators ====================
+    /// Invoke a stored procedure (CALL ... YIELD).
+    CallProcedure(CallProcedureOp),
 }
 
 /// Scan nodes from the graph.
@@ -892,6 +896,32 @@ pub struct PropertyGraphEdgeTable {
     pub source_table: String,
     /// Target node table name.
     pub target_table: String,
+}
+
+// ==================== Procedure Call Types ====================
+
+/// A CALL procedure operation.
+///
+/// ```text
+/// CALL grafeo.pagerank({damping: 0.85}) YIELD nodeId, score
+/// ```
+#[derive(Debug, Clone)]
+pub struct CallProcedureOp {
+    /// Dotted procedure name, e.g. `["grafeo", "pagerank"]`.
+    pub name: Vec<String>,
+    /// Argument expressions (constants in Phase 1).
+    pub arguments: Vec<LogicalExpression>,
+    /// Optional YIELD clause: which columns to expose + aliases.
+    pub yield_items: Option<Vec<ProcedureYield>>,
+}
+
+/// A single YIELD item in a procedure call.
+#[derive(Debug, Clone)]
+pub struct ProcedureYield {
+    /// Column name from the procedure result.
+    pub field_name: String,
+    /// Optional alias (YIELD score AS rank).
+    pub alias: Option<String>,
 }
 
 /// A logical expression.

@@ -136,6 +136,74 @@ The `algorithms()` object provides these methods:
 - `minimum_spanning_tree()` - MST construction
 - `max_flow(source, sink)` - Maximum flow
 
+### From Query Languages (GQL, Cypher, SQL/PGQ)
+
+All 22 algorithms are available via `CALL` statements in any supported query language:
+
+```sql
+-- Run PageRank with default parameters
+CALL grafeo.pagerank()
+
+-- Run PageRank with custom parameters
+CALL grafeo.pagerank({damping: 0.85, max_iterations: 20})
+
+-- Select specific columns with YIELD
+CALL grafeo.pagerank() YIELD node_id, score
+
+-- Alias output columns
+CALL grafeo.pagerank() YIELD node_id AS id, score AS rank
+
+-- List all available procedures
+CALL grafeo.procedures()
+```
+
+Works the same way across all three languages:
+
+=== "GQL"
+
+    ```python
+    result = db.execute("CALL grafeo.pagerank()")
+    ```
+
+=== "Cypher"
+
+    ```python
+    result = db.execute_cypher("CALL grafeo.pagerank()")
+    ```
+
+=== "SQL/PGQ"
+
+    ```python
+    result = db.execute_sql("CALL grafeo.pagerank()")
+    ```
+
+### Available Procedures
+
+| Procedure | Category | Output Columns |
+|-----------|----------|----------------|
+| `grafeo.pagerank()` | Centrality | node_id, score |
+| `grafeo.betweenness_centrality()` | Centrality | node_id, centrality |
+| `grafeo.closeness_centrality()` | Centrality | node_id, centrality |
+| `grafeo.degree_centrality()` | Centrality | node_id, in_degree, out_degree, total_degree |
+| `grafeo.bfs(start)` | Traversal | node_id, depth |
+| `grafeo.dfs(start)` | Traversal | node_id, depth |
+| `grafeo.dijkstra(source)` | Shortest Path | node_id, distance |
+| `grafeo.bellman_ford(source)` | Shortest Path | node_id, distance, has_negative_cycle |
+| `grafeo.floyd_warshall()` | Shortest Path | source, target, distance |
+| `grafeo.connected_components()` | Components | node_id, component_id |
+| `grafeo.strongly_connected_components()` | Components | node_id, component_id |
+| `grafeo.topological_sort()` | Components | node_id, order |
+| `grafeo.louvain()` | Community | node_id, community_id, modularity |
+| `grafeo.label_propagation()` | Community | node_id, community_id |
+| `grafeo.clustering_coefficient()` | Clustering | node_id, coefficient, triangle_count |
+| `grafeo.kruskal()` | MST | source, target, weight |
+| `grafeo.prim()` | MST | source, target, weight |
+| `grafeo.max_flow(source, sink)` | Flow | source, target, flow, max_flow |
+| `grafeo.min_cost_max_flow(source, sink)` | Flow | source, target, flow, cost, max_flow |
+| `grafeo.articulation_points()` | Structure | node_id |
+| `grafeo.bridges()` | Structure | source, target |
+| `grafeo.k_core()` | Structure | node_id, core_number, max_core |
+
 ## NetworkX Integration
 
 For additional algorithms, use the NetworkX adapter:

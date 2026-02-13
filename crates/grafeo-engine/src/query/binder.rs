@@ -513,6 +513,8 @@ impl Binder {
             }
             // DDL operators don't need binding — they're handled before the binder
             LogicalOperator::CreatePropertyGraph(_) => Ok(()),
+            // Procedure calls don't need variable binding — arguments are constants
+            LogicalOperator::CallProcedure(_) => Ok(()),
         }
     }
 

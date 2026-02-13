@@ -61,6 +61,34 @@ pub enum Clause {
     Set(SetClause),
     /// REMOVE clause.
     Remove(RemoveClause),
+    /// CALL procedure clause.
+    Call(CallClause),
+}
+
+/// A CALL clause for invoking procedures.
+///
+/// ```text
+/// CALL name.space(args) [YIELD field [AS alias], ...]
+/// ```
+#[derive(Debug, Clone)]
+pub struct CallClause {
+    /// Qualified procedure name, e.g. `["grafeo", "pagerank"]`.
+    pub procedure_name: Vec<String>,
+    /// Positional arguments.
+    pub arguments: Vec<Expression>,
+    /// Optional YIELD clause.
+    pub yield_items: Option<Vec<YieldItem>>,
+    /// Source span.
+    pub span: Option<SourceSpan>,
+}
+
+/// A single YIELD item: `field_name [AS alias]`.
+#[derive(Debug, Clone)]
+pub struct YieldItem {
+    /// Column name from the procedure result.
+    pub field_name: String,
+    /// Optional alias.
+    pub alias: Option<String>,
 }
 
 /// A MATCH clause.

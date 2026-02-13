@@ -5,9 +5,10 @@
 //! translation follows the GQL translator pattern.
 
 use crate::query::plan::{
-    BinaryOp, CreatePropertyGraphOp, ExpandDirection, ExpandOp, FilterOp, LimitOp,
-    LogicalExpression, LogicalOperator, LogicalPlan, NodeScanOp, PropertyGraphEdgeTable,
-    PropertyGraphNodeTable, ReturnItem, ReturnOp, SkipOp, SortKey, SortOp, SortOrder, UnaryOp,
+    BinaryOp, CallProcedureOp, CreatePropertyGraphOp, ExpandDirection, ExpandOp, FilterOp, LimitOp,
+    LogicalExpression, LogicalOperator, LogicalPlan, NodeScanOp, ProcedureYield,
+    PropertyGraphEdgeTable, PropertyGraphNodeTable, ReturnItem, ReturnOp, SkipOp, SortKey, SortOp,
+    SortOrder, UnaryOp,
 };
 use grafeo_adapters::query::sql_pgq::{self, ast};
 use grafeo_common::types::Value;
@@ -32,6 +33,7 @@ impl SqlPgqTranslator {
         match stmt {
             ast::Statement::Select(select) => self.translate_select(select),
             ast::Statement::CreatePropertyGraph(cpg) => self.translate_create_property_graph(cpg),
+            ast::Statement::Call(call) => self.translate_call(call),
         }
     }
 
@@ -111,6 +113,34 @@ impl SqlPgqTranslator {
         plan = self.translate_columns(&select.graph_table.columns, plan)?;
 
         Ok(LogicalPlan::new(plan))
+    }
+
+    // ==================== CALL Translation ====================
+
+    fn translate_call(&self, call: &ast::CallStatement) -> Result<LogicalPlan> {
+        let arguments = call
+            .arguments
+            .iter()
+            .map(|a| self.translate_expression(a, None))
+            .collect::<Result<Vec<_>>>()?;
+
+        let yield_items = call.yield_items.as_ref().map(|items| {
+            items
+                .iter()
+                .map(|item| ProcedureYield {
+                    field_name: item.field_name.clone(),
+                    alias: item.alias.clone(),
+                })
+                .collect()
+        });
+
+        Ok(LogicalPlan::new(LogicalOperator::CallProcedure(
+            CallProcedureOp {
+                name: call.procedure_name.clone(),
+                arguments,
+                yield_items,
+            },
+        )))
     }
 
     // ==================== MATCH Translation ====================
@@ -490,6 +520,13 @@ impl SqlPgqTranslator {
                     when_clauses,
                     else_clause: else_result,
                 })
+            }
+            ast::Expression::Map(entries) => {
+                let entries = entries
+                    .iter()
+                    .map(|(k, v)| Ok((k.clone(), self.translate_expression(v, table_alias)?)))
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(LogicalExpression::Map(entries))
             }
             ast::Expression::ExistsSubquery { .. } => Err(Error::Internal(
                 "EXISTS subquery not supported in SQL/PGQ".into(),

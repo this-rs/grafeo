@@ -6,10 +6,10 @@
 
 use crate::query::plan::{
     AddLabelOp, AggregateFunction as LogicalAggregateFunction, AggregateOp, AntiJoinOp, BinaryOp,
-    CreateEdgeOp, CreateNodeOp, DeleteEdgeOp, DeleteNodeOp, DistinctOp, ExpandDirection, ExpandOp,
-    FilterOp, JoinOp, JoinType, LeftJoinOp, LimitOp, LogicalExpression, LogicalOperator,
-    LogicalPlan, MergeOp, NodeScanOp, RemoveLabelOp, ReturnOp, SetPropertyOp, ShortestPathOp,
-    SkipOp, SortOp, SortOrder, UnaryOp, UnionOp, UnwindOp,
+    CallProcedureOp, CreateEdgeOp, CreateNodeOp, DeleteEdgeOp, DeleteNodeOp, DistinctOp,
+    ExpandDirection, ExpandOp, FilterOp, JoinOp, JoinType, LeftJoinOp, LimitOp, LogicalExpression,
+    LogicalOperator, LogicalPlan, MergeOp, NodeScanOp, RemoveLabelOp, ReturnOp, SetPropertyOp,
+    ShortestPathOp, SkipOp, SortOp, SortOrder, UnaryOp, UnionOp, UnwindOp,
 };
 use grafeo_common::types::{EpochId, TxId};
 use grafeo_common::types::{LogicalType, Value};
@@ -423,6 +423,7 @@ impl Planner {
             LogicalOperator::RemoveLabel(remove_label) => self.plan_remove_label(remove_label),
             LogicalOperator::SetProperty(set_prop) => self.plan_set_property(set_prop),
             LogicalOperator::ShortestPath(sp) => self.plan_shortest_path(sp),
+            LogicalOperator::CallProcedure(call) => self.plan_call_procedure(call),
             LogicalOperator::Empty => Err(Error::Internal("Empty plan".to_string())),
             LogicalOperator::VectorScan(_) => Err(Error::Internal(
                 "VectorScan requires vector-index feature".to_string(),
@@ -2857,6 +2858,111 @@ impl Planner {
         Ok((operator, columns))
     }
 
+    /// Plans a CALL procedure operator.
+    fn plan_call_procedure(
+        &self,
+        call: &CallProcedureOp,
+    ) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        use crate::procedures::{self, BuiltinProcedures};
+
+        static PROCEDURES: std::sync::OnceLock<BuiltinProcedures> = std::sync::OnceLock::new();
+        let registry = PROCEDURES.get_or_init(BuiltinProcedures::new);
+
+        // Special case: grafeo.procedures() lists all procedures
+        let resolved_name = call.name.join(".");
+        if resolved_name == "grafeo.procedures" || resolved_name == "procedures" {
+            let result = procedures::procedures_result(registry);
+            return self.plan_static_result(result, &call.yield_items);
+        }
+
+        // Look up the algorithm
+        let algorithm = registry.get(&call.name).ok_or_else(|| {
+            Error::Internal(format!(
+                "Unknown procedure: '{}'. Use CALL grafeo.procedures() to list available procedures.",
+                call.name.join(".")
+            ))
+        })?;
+
+        // Evaluate arguments to Parameters
+        let params = procedures::evaluate_arguments(&call.arguments, algorithm.parameters());
+
+        // Canonical column names for this algorithm (user-facing names)
+        let canonical_columns = procedures::output_columns_for_name(algorithm.as_ref());
+
+        // Determine output columns from YIELD or algorithm defaults
+        let yield_columns = call.yield_items.as_ref().map(|items| {
+            items
+                .iter()
+                .map(|item| (item.field_name.clone(), item.alias.clone()))
+                .collect::<Vec<_>>()
+        });
+
+        let output_columns = if let Some(yield_cols) = &yield_columns {
+            yield_cols
+                .iter()
+                .map(|(name, alias)| alias.clone().unwrap_or_else(|| name.clone()))
+                .collect()
+        } else {
+            canonical_columns.clone()
+        };
+
+        let operator = Box::new(
+            crate::query::executor::procedure_call::ProcedureCallOperator::new(
+                Arc::clone(&self.store),
+                algorithm,
+                params,
+                yield_columns,
+                canonical_columns,
+            ),
+        );
+
+        Ok((operator, output_columns))
+    }
+
+    /// Plans a static result set (e.g., from `grafeo.procedures()`).
+    fn plan_static_result(
+        &self,
+        result: grafeo_adapters::plugins::AlgorithmResult,
+        yield_items: &Option<Vec<crate::query::plan::ProcedureYield>>,
+    ) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        // Determine output columns and column indices
+        let (output_columns, column_indices) = if let Some(items) = yield_items {
+            let mut cols = Vec::new();
+            let mut indices = Vec::new();
+            for item in items {
+                let idx = result
+                    .columns
+                    .iter()
+                    .position(|c| c == &item.field_name)
+                    .ok_or_else(|| {
+                        Error::Internal(format!(
+                            "YIELD column '{}' not found (available: {})",
+                            item.field_name,
+                            result.columns.join(", ")
+                        ))
+                    })?;
+                indices.push(idx);
+                cols.push(
+                    item.alias
+                        .clone()
+                        .unwrap_or_else(|| item.field_name.clone()),
+                );
+            }
+            (cols, indices)
+        } else {
+            let indices: Vec<usize> = (0..result.columns.len()).collect();
+            (result.columns.clone(), indices)
+        };
+
+        let operator = Box::new(StaticResultOperator {
+            rows: result.rows,
+            column_indices,
+            row_index: 0,
+        });
+
+        Ok((operator, output_columns))
+    }
+
     /// Plans an ADD LABEL operator.
     fn plan_add_label(&self, add_label: &AddLabelOp) -> Result<(Box<dyn Operator>, Vec<String>)> {
         let (input_op, columns) = self.plan_operator(&add_label.input)?;
@@ -3357,6 +3463,52 @@ impl Operator for SingleResultOperator {
 
     fn name(&self) -> &'static str {
         "SingleResult"
+    }
+}
+
+/// An operator that yields a static set of rows (for `grafeo.procedures()` etc.).
+struct StaticResultOperator {
+    rows: Vec<Vec<Value>>,
+    column_indices: Vec<usize>,
+    row_index: usize,
+}
+
+impl Operator for StaticResultOperator {
+    fn next(&mut self) -> grafeo_core::execution::operators::OperatorResult {
+        use grafeo_core::execution::DataChunk;
+
+        if self.row_index >= self.rows.len() {
+            return Ok(None);
+        }
+
+        let remaining = self.rows.len() - self.row_index;
+        let chunk_rows = remaining.min(1024);
+        let col_count = self.column_indices.len();
+
+        let col_types: Vec<LogicalType> = vec![LogicalType::Any; col_count];
+        let mut chunk = DataChunk::with_capacity(&col_types, chunk_rows);
+
+        for row_offset in 0..chunk_rows {
+            let row = &self.rows[self.row_index + row_offset];
+            for (col_idx, &src_idx) in self.column_indices.iter().enumerate() {
+                let value = row.get(src_idx).cloned().unwrap_or(Value::Null);
+                if let Some(col) = chunk.column_mut(col_idx) {
+                    col.push_value(value);
+                }
+            }
+        }
+        chunk.set_count(chunk_rows);
+
+        self.row_index += chunk_rows;
+        Ok(Some(chunk))
+    }
+
+    fn reset(&mut self) {
+        self.row_index = 0;
+    }
+
+    fn name(&self) -> &'static str {
+        "StaticResult"
     }
 }
 

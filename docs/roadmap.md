@@ -170,6 +170,12 @@ CREATE VECTOR INDEX movie_embeddings ON :Movie(embedding)
 
 - **Change data capture** (`cdc` feature) — before/after property snapshots for all mutations, `history()` and `changes_between()` APIs
 
+### Procedure Calls (0.5.2)
+
+- **CALL statement** — `CALL grafeo.<algorithm>() [YIELD columns]` in GQL, Cypher, and SQL/PGQ
+- **22 built-in algorithms** — all graph algorithms accessible via query strings (PageRank, Dijkstra, BFS, Louvain, etc.)
+- **Procedure registry** — `CALL grafeo.procedures()` lists all available procedures
+
 ### Engine Improvements (0.5.0)
 
 - **Topology-only HNSW** — ~50% memory reduction for vector workloads

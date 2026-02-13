@@ -118,6 +118,9 @@ impl<'a> Parser<'a> {
                     self.advance();
                     clauses.push(Clause::Limit(self.parse_expression()?));
                 }
+                TokenKind::Call => {
+                    clauses.push(Clause::Call(self.parse_call_clause()?));
+                }
                 _ => break,
             }
         }
@@ -130,6 +133,68 @@ impl<'a> Parser<'a> {
             clauses,
             span: None,
         }))
+    }
+
+    /// Parses a CALL clause: `CALL name.space(args) [YIELD field [AS alias], ...]`.
+    fn parse_call_clause(&mut self) -> Result<CallClause> {
+        let span_start = self.current.span.start;
+        self.expect(TokenKind::Call)?;
+
+        // Parse dotted procedure name
+        let mut name_parts = vec![self.expect_identifier()?];
+        while self.current.kind == TokenKind::Dot {
+            self.advance();
+            name_parts.push(self.expect_identifier()?);
+        }
+
+        // Parse argument list
+        self.expect(TokenKind::LParen)?;
+        let mut arguments = Vec::new();
+        if self.current.kind != TokenKind::RParen {
+            arguments.push(self.parse_expression()?);
+            while self.current.kind == TokenKind::Comma {
+                self.advance();
+                arguments.push(self.parse_expression()?);
+            }
+        }
+        self.expect(TokenKind::RParen)?;
+
+        // Parse optional YIELD clause
+        let yield_items = if self.current.kind == TokenKind::Yield {
+            self.advance();
+            let mut items = vec![self.parse_cypher_yield_item()?];
+            while self.current.kind == TokenKind::Comma {
+                self.advance();
+                items.push(self.parse_cypher_yield_item()?);
+            }
+            Some(items)
+        } else {
+            None
+        };
+
+        Ok(CallClause {
+            procedure_name: name_parts,
+            arguments,
+            yield_items,
+            span: Some(grafeo_common::utils::error::SourceSpan::new(
+                span_start,
+                self.current.span.start,
+                1,
+                1,
+            )),
+        })
+    }
+
+    /// Parses a single YIELD item: `field_name [AS alias]`.
+    fn parse_cypher_yield_item(&mut self) -> Result<YieldItem> {
+        let field_name = self.expect_identifier()?;
+        let alias = if self.current.kind == TokenKind::As {
+            self.advance();
+            Some(self.expect_identifier()?)
+        } else {
+            None
+        };
+        Ok(YieldItem { field_name, alias })
     }
 
     fn parse_match_clause(&mut self) -> Result<MatchClause> {

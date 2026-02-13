@@ -579,6 +579,8 @@ fn substitute_in_operator(op: &mut LogicalOperator, params: &QueryParams) -> Res
         }
         // DDL operators have no expressions to substitute
         LogicalOperator::CreatePropertyGraph(_) => {}
+        // Procedure calls: arguments could contain parameters but we handle at execution time
+        LogicalOperator::CallProcedure(_) => {}
     }
     Ok(())
 }

@@ -11,6 +11,36 @@ pub enum Statement {
     DataModification(DataModificationStatement),
     /// A schema statement (CREATE NODE TYPE, etc.)
     Schema(SchemaStatement),
+    /// A procedure call statement (CALL ... YIELD).
+    Call(CallStatement),
+}
+
+/// A CALL procedure statement (ISO GQL Section 15).
+///
+/// ```text
+/// CALL procedure_name(args) [YIELD field [AS alias], ...]
+/// ```
+#[derive(Debug, Clone)]
+pub struct CallStatement {
+    /// Qualified procedure name, e.g. `["grafeo", "pagerank"]`.
+    pub procedure_name: Vec<String>,
+    /// Positional arguments passed to the procedure.
+    pub arguments: Vec<Expression>,
+    /// Optional YIELD clause selecting result columns.
+    pub yield_items: Option<Vec<YieldItem>>,
+    /// Source span.
+    pub span: Option<SourceSpan>,
+}
+
+/// A single YIELD item: `field_name [AS alias]`.
+#[derive(Debug, Clone)]
+pub struct YieldItem {
+    /// Column name from the procedure result.
+    pub field_name: String,
+    /// Optional alias.
+    pub alias: Option<String>,
+    /// Source span.
+    pub span: Option<SourceSpan>,
 }
 
 /// A query statement.
@@ -466,6 +496,8 @@ pub enum Expression {
         /// The inner query pattern to check for existence.
         query: Box<QueryStatement>,
     },
+    /// A map literal: `{key: value, ...}`.
+    Map(Vec<(String, Expression)>),
 }
 
 /// A literal value.

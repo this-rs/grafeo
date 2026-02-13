@@ -2,6 +2,15 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
+## [0.5.2] - 2026-02-13
+
+### Added
+
+- **CALL procedure support**: invoke any of the 22 built-in graph algorithms directly from query strings using `CALL grafeo.<algorithm>() [YIELD columns]`. Supported in GQL, Cypher, and SQL/PGQ
+- **YIELD clause**: select and alias specific output columns from procedure results (`CALL grafeo.pagerank() YIELD node_id, score AS rank`)
+- **Procedure listing**: `CALL grafeo.procedures()` returns all available procedures with descriptions, parameters, and output columns
+- **Map literal arguments**: pass named parameters to algorithms (`CALL grafeo.pagerank({damping: 0.85, max_iterations: 20})`)
+
 ## [0.5.1] - 2026-02-12
 
 All new functionality for the 0.5.x series: hybrid search (BM25 + vector), built-in ONNX embeddings, change data capture, fully supporting the grafeo-memory AI memory package.

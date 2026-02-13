@@ -61,6 +61,7 @@ impl<'a> Parser<'a> {
     pub fn parse(&mut self) -> Result<Statement> {
         let stmt = match self.current.kind {
             TokenKind::Create => self.parse_create_statement()?,
+            TokenKind::Call => self.parse_call_statement()?,
             _ => Statement::Select(self.parse_select_statement()?),
         };
 
@@ -169,6 +170,72 @@ impl<'a> Parser<'a> {
 
         Ok(SelectItem {
             expression,
+            alias,
+            span: None,
+        })
+    }
+
+    // ==================== CALL Statement Parsing ====================
+
+    fn parse_call_statement(&mut self) -> Result<Statement> {
+        let span_start = self.current.span.start;
+        self.expect(TokenKind::Call)?;
+
+        // Parse dotted procedure name: grafeo.pagerank
+        let mut name_parts = vec![self.expect_identifier()?];
+        while self.current.kind == TokenKind::Dot {
+            self.advance();
+            name_parts.push(self.expect_identifier()?);
+        }
+
+        // Parse argument list: (arg1, arg2, ...)
+        self.expect(TokenKind::LParen)?;
+        let mut arguments = Vec::new();
+        if self.current.kind != TokenKind::RParen {
+            arguments.push(self.parse_expression()?);
+            while self.current.kind == TokenKind::Comma {
+                self.advance();
+                arguments.push(self.parse_expression()?);
+            }
+        }
+        self.expect(TokenKind::RParen)?;
+
+        // Parse optional YIELD clause
+        let yield_items = if self.current.kind == TokenKind::Yield {
+            self.advance();
+            let mut items = vec![self.parse_yield_item()?];
+            while self.current.kind == TokenKind::Comma {
+                self.advance();
+                items.push(self.parse_yield_item()?);
+            }
+            Some(items)
+        } else {
+            None
+        };
+
+        Ok(Statement::Call(CallStatement {
+            procedure_name: name_parts,
+            arguments,
+            yield_items,
+            span: Some(grafeo_common::utils::error::SourceSpan::new(
+                span_start,
+                self.current.span.start,
+                1,
+                1,
+            )),
+        }))
+    }
+
+    fn parse_yield_item(&mut self) -> Result<YieldItem> {
+        let field_name = self.expect_identifier()?;
+        let alias = if self.current.kind == TokenKind::As {
+            self.advance();
+            Some(self.expect_identifier()?)
+        } else {
+            None
+        };
+        Ok(YieldItem {
+            field_name,
             alias,
             span: None,
         })
@@ -762,6 +829,11 @@ impl<'a> Parser<'a> {
                 self.expect(TokenKind::RBracket)?;
                 Ok(Expression::List(items))
             }
+            TokenKind::LBrace => {
+                // Map literal: {key: value, ...}
+                let props = self.parse_property_map()?;
+                Ok(Expression::Map(props))
+            }
             _ => Err(self.error(&format!(
                 "Expected expression, found {:?}",
                 self.current.kind
@@ -854,6 +926,8 @@ impl<'a> Parser<'a> {
                 | TokenKind::Tables
                 | TokenKind::Key
                 | TokenKind::References
+                | TokenKind::Call
+                | TokenKind::Yield
         )
     }
 

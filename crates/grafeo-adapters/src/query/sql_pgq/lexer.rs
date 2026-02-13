@@ -96,6 +96,12 @@ pub enum TokenKind {
     /// REFERENCES
     References,
 
+    // Procedure keywords
+    /// CALL
+    Call,
+    /// YIELD
+    Yield,
+
     // Literals
     /// Integer literal
     Integer,
@@ -494,6 +500,8 @@ impl<'a> Lexer<'a> {
             CommonKeyword::Create => TokenKind::Create,
             CommonKeyword::Node => TokenKind::Node,
             CommonKeyword::Edge => TokenKind::Edge,
+            CommonKeyword::Call => TokenKind::Call,
+            CommonKeyword::Yield => TokenKind::Yield,
             // Keywords recognized by CommonKeyword but not used in SQL/PGQ
             // are mapped to Identifier (they can appear as table/column names)
             _ => TokenKind::Identifier,

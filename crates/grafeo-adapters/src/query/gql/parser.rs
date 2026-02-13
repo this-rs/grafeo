@@ -178,8 +178,97 @@ impl<'a> Parser<'a> {
                     self.parse_create_schema().map(Statement::Schema)
                 }
             }
-            _ => Err(self.error("Expected MATCH, INSERT, DELETE, MERGE, UNWIND, or CREATE")),
+            TokenKind::Call => self.parse_call_statement().map(Statement::Call),
+            _ => Err(self.error("Expected MATCH, INSERT, DELETE, MERGE, UNWIND, CREATE, or CALL")),
         }
+    }
+
+    /// Parses a CALL procedure statement.
+    ///
+    /// ```text
+    /// CALL name.space(args) [YIELD field [AS alias], ...]
+    /// ```
+    fn parse_call_statement(&mut self) -> Result<CallStatement> {
+        let span_start = self.current.span.start;
+        self.expect(TokenKind::Call)?;
+
+        // Parse dotted procedure name: ident { . ident }
+        if !self.is_identifier() {
+            return Err(self.error("Expected procedure name after CALL"));
+        }
+        let mut name_parts = vec![self.get_identifier_name()];
+        self.advance();
+        while self.current.kind == TokenKind::Dot {
+            self.advance();
+            if !self.is_identifier() {
+                return Err(self.error("Expected identifier after '.'"));
+            }
+            name_parts.push(self.get_identifier_name());
+            self.advance();
+        }
+
+        // Parse argument list: ( [expr { , expr }] )
+        self.expect(TokenKind::LParen)?;
+        let mut arguments = Vec::new();
+        if self.current.kind != TokenKind::RParen {
+            arguments.push(self.parse_expression()?);
+            while self.current.kind == TokenKind::Comma {
+                self.advance();
+                arguments.push(self.parse_expression()?);
+            }
+        }
+        self.expect(TokenKind::RParen)?;
+
+        // Parse optional YIELD clause
+        let yield_items = if self.current.kind == TokenKind::Yield {
+            self.advance();
+            Some(self.parse_yield_list()?)
+        } else {
+            None
+        };
+
+        Ok(CallStatement {
+            procedure_name: name_parts,
+            arguments,
+            yield_items,
+            span: Some(SourceSpan::new(span_start, self.current.span.start, 1, 1)),
+        })
+    }
+
+    /// Parses a YIELD item list: `field [AS alias] { , field [AS alias] }`.
+    fn parse_yield_list(&mut self) -> Result<Vec<YieldItem>> {
+        let mut items = vec![self.parse_yield_item()?];
+        while self.current.kind == TokenKind::Comma {
+            self.advance();
+            items.push(self.parse_yield_item()?);
+        }
+        Ok(items)
+    }
+
+    /// Parses a single YIELD item: `field_name [AS alias]`.
+    fn parse_yield_item(&mut self) -> Result<YieldItem> {
+        let span_start = self.current.span.start;
+        if !self.is_identifier() {
+            return Err(self.error("Expected field name in YIELD"));
+        }
+        let field_name = self.get_identifier_name();
+        self.advance();
+        let alias = if self.current.kind == TokenKind::As {
+            self.advance();
+            if !self.is_identifier() {
+                return Err(self.error("Expected alias after AS"));
+            }
+            let alias_name = self.get_identifier_name();
+            self.advance();
+            Some(alias_name)
+        } else {
+            None
+        };
+        Ok(YieldItem {
+            field_name,
+            alias,
+            span: Some(SourceSpan::new(span_start, self.current.span.start, 1, 1)),
+        })
     }
 
     fn parse_query(&mut self) -> Result<QueryStatement> {
@@ -1385,6 +1474,11 @@ impl<'a> Parser<'a> {
                 Ok(Expression::ExistsSubquery {
                     query: Box::new(inner_query),
                 })
+            }
+            TokenKind::LBrace => {
+                // Map literal: {key: value, ...}
+                let entries = self.parse_property_map()?;
+                Ok(Expression::Map(entries))
             }
             _ => Err(self.error("Expected expression")),
         }

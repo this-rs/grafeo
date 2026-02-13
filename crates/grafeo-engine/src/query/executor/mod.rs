@@ -2,6 +2,8 @@
 //!
 //! Executes physical plans and produces results.
 
+pub mod procedure_call;
+
 use std::time::Instant;
 
 use crate::config::AdaptiveConfig;

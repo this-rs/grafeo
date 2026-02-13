@@ -27,6 +27,7 @@ pub mod config;
 pub mod database;
 #[cfg(feature = "embed")]
 pub mod embedding;
+pub mod procedures;
 pub mod query;
 pub mod session;
 pub mod transaction;

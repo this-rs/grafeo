@@ -22,6 +22,7 @@ Cypher uses ASCII-art style pattern matching to query and manipulate graph data.
 | Create | `CREATE (:Label {prop: value})` |
 | Update | `SET n.property = value` |
 | Delete | `DELETE n` |
+| Call procedure | `CALL grafeo.pagerank() YIELD score` |
 
 ## Learn More
 

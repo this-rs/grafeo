@@ -3,11 +3,11 @@
 //! Translates GQL AST to the common logical plan representation.
 
 use crate::query::plan::{
-    AddLabelOp, AggregateExpr, AggregateFunction, AggregateOp, BinaryOp, CreateEdgeOp,
-    CreateNodeOp, DeleteNodeOp, DistinctOp, ExpandDirection, ExpandOp, FilterOp, JoinOp, JoinType,
-    LeftJoinOp, LimitOp, LogicalExpression, LogicalOperator, LogicalPlan, MergeOp, NodeScanOp,
-    ProjectOp, Projection, RemoveLabelOp, ReturnItem, ReturnOp, SetPropertyOp, ShortestPathOp,
-    SkipOp, SortKey, SortOp, SortOrder, UnaryOp, UnwindOp,
+    AddLabelOp, AggregateExpr, AggregateFunction, AggregateOp, BinaryOp, CallProcedureOp,
+    CreateEdgeOp, CreateNodeOp, DeleteNodeOp, DistinctOp, ExpandDirection, ExpandOp, FilterOp,
+    JoinOp, JoinType, LeftJoinOp, LimitOp, LogicalExpression, LogicalOperator, LogicalPlan,
+    MergeOp, NodeScanOp, ProcedureYield, ProjectOp, Projection, RemoveLabelOp, ReturnItem,
+    ReturnOp, SetPropertyOp, ShortestPathOp, SkipOp, SortKey, SortOp, SortOrder, UnaryOp, UnwindOp,
 };
 use grafeo_adapters::query::gql::{self, ast};
 use grafeo_common::types::Value;
@@ -39,7 +39,34 @@ impl GqlTranslator {
             ast::Statement::Schema(_) => Err(Error::Internal(
                 "Schema DDL is not supported via execute(). Use create_vector_index() for vector indexes.".to_string(),
             )),
+            ast::Statement::Call(call) => self.translate_call(call),
         }
+    }
+
+    fn translate_call(&self, call: &ast::CallStatement) -> Result<LogicalPlan> {
+        let arguments = call
+            .arguments
+            .iter()
+            .map(|a| self.translate_expression(a))
+            .collect::<Result<Vec<_>>>()?;
+
+        let yield_items = call.yield_items.as_ref().map(|items| {
+            items
+                .iter()
+                .map(|item| ProcedureYield {
+                    field_name: item.field_name.clone(),
+                    alias: item.alias.clone(),
+                })
+                .collect()
+        });
+
+        Ok(LogicalPlan::new(LogicalOperator::CallProcedure(
+            CallProcedureOp {
+                name: call.procedure_name.clone(),
+                arguments,
+                yield_items,
+            },
+        )))
     }
 
     fn translate_query(&self, query: &ast::QueryStatement) -> Result<LogicalPlan> {
@@ -1051,6 +1078,13 @@ impl GqlTranslator {
                     when_clauses,
                     else_clause,
                 })
+            }
+            ast::Expression::Map(entries) => {
+                let entries = entries
+                    .iter()
+                    .map(|(k, v)| Ok((k.clone(), self.translate_expression(v)?)))
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(LogicalExpression::Map(entries))
             }
             ast::Expression::ExistsSubquery { query } => {
                 // Translate inner query to logical operator
