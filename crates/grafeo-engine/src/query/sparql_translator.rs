@@ -11,7 +11,7 @@ use crate::query::plan::{
 };
 use grafeo_adapters::query::sparql::{self, ast};
 use grafeo_common::types::Value;
-use grafeo_common::utils::error::{Error, Result};
+use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
 use std::collections::HashMap;
 
 /// Translates a SPARQL query string to a logical plan.
@@ -750,9 +750,10 @@ impl SparqlTranslator {
                 "http://www.w3.org/1999/02/22-rdf-syntax-ns#type".to_string(),
             )),
             // Complex property paths are not fully supported yet
-            _ => Err(Error::Internal(
-                "Complex property paths not yet supported".to_string(),
-            )),
+            _ => Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "Complex property paths not yet supported",
+            ))),
         }
     }
 

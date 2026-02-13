@@ -1544,6 +1544,19 @@ impl<'a> Parser<'a> {
             }),
             TokenKind::GroupConcat => self.parse_group_concat(),
 
+            // EXISTS / NOT EXISTS
+            TokenKind::Exists => {
+                self.advance();
+                let pattern = self.parse_group_graph_pattern()?;
+                Ok(Expression::Exists(Box::new(pattern)))
+            }
+            TokenKind::Not => {
+                self.advance();
+                self.expect(TokenKind::Exists)?;
+                let pattern = self.parse_group_graph_pattern()?;
+                Ok(Expression::NotExists(Box::new(pattern)))
+            }
+
             // String functions
             _ if self.is_built_in_function() => self.parse_built_in_function(),
 

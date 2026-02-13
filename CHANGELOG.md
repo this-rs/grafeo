@@ -2,6 +2,19 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
+## [0.5.3] - 2026-02-13
+
+### Improved
+
+- **Query error quality**: translator errors (GQL, Cypher, SQL/PGQ, GraphQL, SPARQL, Gremlin) now produce `QueryError` with semantic error codes (`GRAFEO-Q002`) instead of generic internal errors (`GRAFEO-X001`). Error messages are more actionable
+- **GraphQL range filters on direct arguments**: operator suffixes (`_gt`, `_lt`, `_gte`, `_lte`, `_ne`, `_contains`, `_starts_with`, `_ends_with`) now work on direct query arguments (`person(age_gt: 30)`) in addition to `where` clauses
+
+### Fixed
+
+- **SPARQL `FILTER NOT EXISTS`**: parser now recognizes `NOT EXISTS` and `EXISTS` as built-in calls in FILTER constraints, correctly producing anti-join / semi-join plans
+- **SPARQL `FILTER REGEX`**: added REGEX function evaluation in the RDF query planner (parser and translator already supported it, but the planner silently returned no matches)
+- Re-enabled 7 previously-skipped Python tests — all pass: GraphQL range/nested filters (fixed by direct argument operator parsing), SPARQL REGEX and NOT EXISTS (fixed by parser and planner additions)
+
 ## [0.5.2] - 2026-02-13
 
 ### Added

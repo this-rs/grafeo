@@ -12,7 +12,7 @@ use crate::query::plan::{
 };
 use grafeo_adapters::query::sql_pgq::{self, ast};
 use grafeo_common::types::Value;
-use grafeo_common::utils::error::{Error, Result};
+use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
 
 /// Translates a SQL/PGQ query string to a logical plan.
 pub fn translate(query: &str) -> Result<LogicalPlan> {
@@ -152,7 +152,12 @@ impl SqlPgqTranslator {
             plan = Some(self.translate_pattern(&aliased.pattern, plan)?);
         }
 
-        plan.ok_or_else(|| Error::Internal("Empty MATCH pattern".into()))
+        plan.ok_or_else(|| {
+            Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "Empty MATCH pattern",
+            ))
+        })
     }
 
     fn translate_pattern(
@@ -528,9 +533,10 @@ impl SqlPgqTranslator {
                     .collect::<Result<Vec<_>>>()?;
                 Ok(LogicalExpression::Map(entries))
             }
-            ast::Expression::ExistsSubquery { .. } => Err(Error::Internal(
-                "EXISTS subquery not supported in SQL/PGQ".into(),
-            )),
+            ast::Expression::ExistsSubquery { .. } => Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "EXISTS subquery not supported in SQL/PGQ",
+            ))),
         }
     }
 
@@ -592,17 +598,23 @@ impl SqlPgqTranslator {
             if !edge_table.source_table.is_empty()
                 && !node_table_names.contains(edge_table.source_table.as_str())
             {
-                return Err(Error::Internal(format!(
-                    "Edge table '{}' references unknown source table '{}'",
-                    edge_table.name, edge_table.source_table
+                return Err(Error::Query(QueryError::new(
+                    QueryErrorKind::Semantic,
+                    format!(
+                        "Edge table '{}' references unknown source table '{}'",
+                        edge_table.name, edge_table.source_table
+                    ),
                 )));
             }
             if !edge_table.target_table.is_empty()
                 && !node_table_names.contains(edge_table.target_table.as_str())
             {
-                return Err(Error::Internal(format!(
-                    "Edge table '{}' references unknown target table '{}'",
-                    edge_table.name, edge_table.target_table
+                return Err(Error::Query(QueryError::new(
+                    QueryErrorKind::Semantic,
+                    format!(
+                        "Edge table '{}' references unknown target table '{}'",
+                        edge_table.name, edge_table.target_table
+                    ),
                 )));
             }
         }
@@ -672,7 +684,12 @@ impl SqlPgqTranslator {
                 op: BinaryOp::And,
                 right: Box::new(pred),
             })
-            .ok_or_else(|| Error::Internal("Empty property predicate".into()))
+            .ok_or_else(|| {
+                Error::Query(QueryError::new(
+                    QueryErrorKind::Semantic,
+                    "Empty property predicate",
+                ))
+            })
     }
 
     fn get_last_variable(plan: &LogicalOperator) -> Result<String> {
@@ -681,7 +698,10 @@ impl SqlPgqTranslator {
             LogicalOperator::Expand(expand) => Ok(expand.to_variable.clone()),
             LogicalOperator::Filter(filter) => Self::get_last_variable(&filter.input),
             LogicalOperator::Project(project) => Self::get_last_variable(&project.input),
-            _ => Err(Error::Internal("Cannot get variable from operator".into())),
+            _ => Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "Cannot get variable from operator",
+            ))),
         }
     }
 }

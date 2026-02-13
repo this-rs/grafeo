@@ -3,7 +3,7 @@
 Tests SPARQL filter operations for RDF data model.
 Note: RDF uses triples instead of nodes/edges, so tests are structured differently.
 
-Note: Some SPARQL features (REGEX, NOT EXISTS) may not be fully implemented yet.
+Supports equality, range, string, compound, REGEX, and NOT EXISTS filters.
 """
 
 import time
@@ -169,7 +169,6 @@ class TestSPARQLFilters:
         rows = list(result)
         assert len(rows) >= 1, "Should find persons in NYC or under 10"
 
-    @pytest.mark.skip(reason="SPARQL REGEX function not yet implemented in parser")
     def test_filter_regex(self):
         """Test SPARQL FILTER with REGEX."""
         self._setup_person_data(100)
@@ -190,7 +189,6 @@ class TestSPARQLFilters:
         # Should match Person1, Person10-19, Person100-199, etc.
         assert len(rows) >= 1, "Should find persons with names starting with Person1"
 
-    @pytest.mark.skip(reason="SPARQL NOT EXISTS not yet implemented in parser")
     def test_filter_not_exists(self):
         """Test SPARQL FILTER NOT EXISTS."""
         # Create some persons, some with emails

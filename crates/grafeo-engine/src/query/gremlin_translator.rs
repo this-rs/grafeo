@@ -10,7 +10,7 @@ use crate::query::plan::{
 };
 use grafeo_adapters::query::gremlin::{self, ast};
 use grafeo_common::types::Value;
-use grafeo_common::utils::error::{Error, Result};
+use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Translates a Gremlin query string to a logical plan.
@@ -210,10 +210,18 @@ impl GremlinTranslator {
             }
         }
 
-        let from_var =
-            from_var.ok_or_else(|| Error::Internal("addE requires from() step".to_string()))?;
-        let to_var =
-            to_var.ok_or_else(|| Error::Internal("addE requires to() step".to_string()))?;
+        let from_var = from_var.ok_or_else(|| {
+            Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "addE requires from() step",
+            ))
+        })?;
+        let to_var = to_var.ok_or_else(|| {
+            Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "addE requires to() step",
+            ))
+        })?;
 
         // If plan is still empty (both from/to were labels), create a scan
         if matches!(plan, LogicalOperator::Empty) {
@@ -367,9 +375,10 @@ impl GremlinTranslator {
             }
             ast::TraversalSource::AddE(_label) => {
                 // AddE needs from/to steps to complete
-                Err(Error::Internal(
-                    "addE requires from() and to() steps".to_string(),
-                ))
+                Err(Error::Query(QueryError::new(
+                    QueryErrorKind::Semantic,
+                    "addE requires from() and to() steps",
+                )))
             }
         }
     }
@@ -1061,7 +1070,10 @@ impl GremlinTranslator {
                 op: UnaryOp::Not,
                 operand: Box::new(Self::translate_predicate(pred, expr)?),
             }),
-            _ => Err(Error::Internal("Unsupported predicate".to_string())),
+            _ => Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "Unsupported predicate",
+            ))),
         }
     }
 

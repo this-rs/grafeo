@@ -12,7 +12,7 @@ use crate::query::plan::{
 };
 use grafeo_adapters::query::cypher::{self, ast};
 use grafeo_common::types::Value;
-use grafeo_common::utils::error::{Error, Result};
+use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
 
 /// Translates a Cypher query string to a logical plan.
 pub fn translate(query: &str) -> Result<LogicalPlan> {
@@ -38,9 +38,18 @@ impl CypherTranslator {
             ast::Statement::Query(query) => self.translate_query(query),
             ast::Statement::Create(create) => self.translate_create_statement(create),
             ast::Statement::Merge(merge) => self.translate_merge_statement(merge),
-            ast::Statement::Delete(_) => Err(Error::Internal("DELETE not yet supported".into())),
-            ast::Statement::Set(_) => Err(Error::Internal("SET not yet supported".into())),
-            ast::Statement::Remove(_) => Err(Error::Internal("REMOVE not yet supported".into())),
+            ast::Statement::Delete(_) => Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "DELETE not yet supported",
+            ))),
+            ast::Statement::Set(_) => Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "SET not yet supported",
+            ))),
+            ast::Statement::Remove(_) => Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "REMOVE not yet supported",
+            ))),
         }
     }
 
@@ -51,7 +60,9 @@ impl CypherTranslator {
             plan = Some(self.translate_clause(clause, plan)?);
         }
 
-        let root = plan.ok_or_else(|| Error::Internal("Empty query".into()))?;
+        let root = plan.ok_or_else(|| {
+            Error::Query(QueryError::new(QueryErrorKind::Semantic, "Empty query"))
+        })?;
         Ok(LogicalPlan::new(root))
     }
 
@@ -122,7 +133,12 @@ impl CypherTranslator {
             plan = Some(self.translate_pattern(pattern, plan)?);
         }
 
-        plan.ok_or_else(|| Error::Internal("Empty MATCH pattern".into()))
+        plan.ok_or_else(|| {
+            Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "Empty MATCH pattern",
+            ))
+        })
     }
 
     fn translate_optional_match(
@@ -131,7 +147,12 @@ impl CypherTranslator {
         input: Option<LogicalOperator>,
     ) -> Result<LogicalOperator> {
         // OPTIONAL MATCH uses LEFT JOIN semantics
-        let input = input.ok_or_else(|| Error::Internal("OPTIONAL MATCH requires input".into()))?;
+        let input = input.ok_or_else(|| {
+            Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "OPTIONAL MATCH requires input",
+            ))
+        })?;
 
         // Build the match pattern
         let mut right: Option<LogicalOperator> = None;
@@ -139,7 +160,12 @@ impl CypherTranslator {
             right = Some(self.translate_pattern(pattern, right)?);
         }
 
-        let right = right.ok_or_else(|| Error::Internal("Empty OPTIONAL MATCH pattern".into()))?;
+        let right = right.ok_or_else(|| {
+            Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "Empty OPTIONAL MATCH pattern",
+            ))
+        })?;
 
         Ok(LogicalOperator::LeftJoin(LeftJoinOp {
             left: Box::new(input),
@@ -228,7 +254,12 @@ impl CypherTranslator {
                 op: BinaryOp::And,
                 right: Box::new(pred),
             })
-            .ok_or_else(|| Error::Internal("Empty property predicate".into()))
+            .ok_or_else(|| {
+                Error::Query(QueryError::new(
+                    QueryErrorKind::Semantic,
+                    "Empty property predicate",
+                ))
+            })
     }
 
     fn translate_path_pattern(
@@ -293,18 +324,20 @@ impl CypherTranslator {
         let path = match pattern {
             ast::Pattern::Path(p) => p,
             ast::Pattern::Node(_) => {
-                return Err(Error::Internal(
-                    "shortestPath requires a path pattern, not a node".into(),
-                ));
+                return Err(Error::Query(QueryError::new(
+                    QueryErrorKind::Semantic,
+                    "shortestPath requires a path pattern, not a node",
+                )));
             }
             ast::Pattern::NamedPath { pattern: inner, .. } => {
                 // Recursively get the path pattern
                 if let ast::Pattern::Path(p) = inner.as_ref() {
                     p
                 } else {
-                    return Err(Error::Internal(
-                        "shortestPath requires a path pattern".into(),
-                    ));
+                    return Err(Error::Query(QueryError::new(
+                        QueryErrorKind::Semantic,
+                        "shortestPath requires a path pattern",
+                    )));
                 }
             }
         };
@@ -466,7 +499,12 @@ impl CypherTranslator {
         where_clause: &ast::WhereClause,
         input: Option<LogicalOperator>,
     ) -> Result<LogicalOperator> {
-        let input = input.ok_or_else(|| Error::Internal("WHERE requires input".into()))?;
+        let input = input.ok_or_else(|| {
+            Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "WHERE requires input",
+            ))
+        })?;
         let predicate = self.translate_expression(&where_clause.predicate)?;
 
         Ok(LogicalOperator::Filter(FilterOp {
@@ -560,9 +598,10 @@ impl CypherTranslator {
                 ast::Pattern::Node(n) => n,
                 ast::Pattern::Path(path) => &path.start,
                 _ => {
-                    return Err(Error::Internal(
-                        "MERGE NamedPath must contain a node".into(),
-                    ));
+                    return Err(Error::Query(QueryError::new(
+                        QueryErrorKind::Semantic,
+                        "MERGE NamedPath must contain a node",
+                    )));
                 }
             },
         };
@@ -617,9 +656,10 @@ impl CypherTranslator {
                 .iter()
                 .map(|(k, v)| Ok((k.clone(), self.translate_expression(v)?)))
                 .collect(),
-            _ => Err(Error::Internal(
-                "Expected map expression for properties".into(),
-            )),
+            _ => Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "Expected map expression for properties",
+            ))),
         }
     }
 
@@ -673,7 +713,12 @@ impl CypherTranslator {
         return_clause: &ast::ReturnClause,
         input: Option<LogicalOperator>,
     ) -> Result<LogicalOperator> {
-        let input = input.ok_or_else(|| Error::Internal("RETURN requires input".into()))?;
+        let input = input.ok_or_else(|| {
+            Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "RETURN requires input",
+            ))
+        })?;
 
         // Check if RETURN contains aggregate functions
         let has_aggregates = match &return_clause.items {
@@ -734,9 +779,10 @@ impl CypherTranslator {
 
         let items = match &return_clause.items {
             ast::ReturnItems::All => {
-                return Err(Error::Internal(
-                    "Cannot use RETURN * with aggregates".into(),
-                ));
+                return Err(Error::Query(QueryError::new(
+                    QueryErrorKind::Semantic,
+                    "Cannot use RETURN * with aggregates",
+                )));
             }
             ast::ReturnItems::Explicit(items) => items,
         };
@@ -811,7 +857,12 @@ impl CypherTranslator {
         order_by: &ast::OrderByClause,
         input: Option<LogicalOperator>,
     ) -> Result<LogicalOperator> {
-        let input = input.ok_or_else(|| Error::Internal("ORDER BY requires input".into()))?;
+        let input = input.ok_or_else(|| {
+            Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "ORDER BY requires input",
+            ))
+        })?;
 
         let keys: Vec<SortKey> = order_by
             .items
@@ -838,7 +889,12 @@ impl CypherTranslator {
         expr: &ast::Expression,
         input: Option<LogicalOperator>,
     ) -> Result<LogicalOperator> {
-        let input = input.ok_or_else(|| Error::Internal("SKIP requires input".into()))?;
+        let input = input.ok_or_else(|| {
+            Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "SKIP requires input",
+            ))
+        })?;
         let count = self.eval_as_usize(expr)?;
 
         Ok(LogicalOperator::Skip(SkipOp {
@@ -852,7 +908,12 @@ impl CypherTranslator {
         expr: &ast::Expression,
         input: Option<LogicalOperator>,
     ) -> Result<LogicalOperator> {
-        let input = input.ok_or_else(|| Error::Internal("LIMIT requires input".into()))?;
+        let input = input.ok_or_else(|| {
+            Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "LIMIT requires input",
+            ))
+        })?;
         let count = self.eval_as_usize(expr)?;
 
         Ok(LogicalOperator::Limit(LimitOp {
@@ -872,7 +933,12 @@ impl CypherTranslator {
             plan = Some(self.translate_create_pattern(pattern, plan)?);
         }
 
-        plan.ok_or_else(|| Error::Internal("Empty CREATE pattern".into()))
+        plan.ok_or_else(|| {
+            Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "Empty CREATE pattern",
+            ))
+        })
     }
 
     fn translate_create_pattern(
@@ -960,7 +1026,9 @@ impl CypherTranslator {
             plan = Some(self.translate_create_pattern(pattern, plan)?);
         }
 
-        let root = plan.ok_or_else(|| Error::Internal("Empty CREATE".into()))?;
+        let root = plan.ok_or_else(|| {
+            Error::Query(QueryError::new(QueryErrorKind::Semantic, "Empty CREATE"))
+        })?;
         Ok(LogicalPlan::new(root))
     }
 
@@ -969,7 +1037,12 @@ impl CypherTranslator {
         delete_clause: &ast::DeleteClause,
         input: Option<LogicalOperator>,
     ) -> Result<LogicalOperator> {
-        let input = input.ok_or_else(|| Error::Internal("DELETE requires input".into()))?;
+        let input = input.ok_or_else(|| {
+            Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "DELETE requires input",
+            ))
+        })?;
 
         let mut plan = input;
 
@@ -983,9 +1056,10 @@ impl CypherTranslator {
                     input: Box::new(plan),
                 });
             } else {
-                return Err(Error::Internal(
-                    "DELETE only supports variable expressions".into(),
-                ));
+                return Err(Error::Query(QueryError::new(
+                    QueryErrorKind::Semantic,
+                    "DELETE only supports variable expressions",
+                )));
             }
         }
 
@@ -997,7 +1071,12 @@ impl CypherTranslator {
         set_clause: &ast::SetClause,
         input: Option<LogicalOperator>,
     ) -> Result<LogicalOperator> {
-        let input = input.ok_or_else(|| Error::Internal("SET requires input".into()))?;
+        let input = input.ok_or_else(|| {
+            Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "SET requires input",
+            ))
+        })?;
 
         let mut plan = input;
 
@@ -1045,7 +1124,10 @@ impl CypherTranslator {
                     });
                 }
                 ast::SetItem::Labels { .. } => {
-                    return Err(Error::Internal("SET labels not yet supported".into()));
+                    return Err(Error::Query(QueryError::new(
+                        QueryErrorKind::Semantic,
+                        "SET labels not yet supported",
+                    )));
                 }
             }
         }
@@ -1058,7 +1140,12 @@ impl CypherTranslator {
         remove_clause: &ast::RemoveClause,
         input: Option<LogicalOperator>,
     ) -> Result<LogicalOperator> {
-        let input = input.ok_or_else(|| Error::Internal("REMOVE requires input".into()))?;
+        let input = input.ok_or_else(|| {
+            Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "REMOVE requires input",
+            ))
+        })?;
 
         let mut plan = input;
 
@@ -1102,9 +1189,10 @@ impl CypherTranslator {
                         property: property.clone(),
                     })
                 } else {
-                    Err(Error::Internal(
-                        "Nested property access not supported".into(),
-                    ))
+                    Err(Error::Query(QueryError::new(
+                        QueryErrorKind::Semantic,
+                        "Nested property access not supported",
+                    )))
                 }
             }
             ast::Expression::IndexAccess { base, index } => {
@@ -1254,13 +1342,18 @@ impl CypherTranslator {
                     map_expr: Box::new(map_expr),
                 })
             }
-            ast::Expression::PatternComprehension { .. } => Err(Error::Internal(
-                "Pattern comprehension not yet supported".into(),
-            )),
-            ast::Expression::Exists(_) => Err(Error::Internal("EXISTS not yet supported".into())),
-            ast::Expression::CountSubquery(_) => {
-                Err(Error::Internal("COUNT subquery not yet supported".into()))
-            }
+            ast::Expression::PatternComprehension { .. } => Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "Pattern comprehension not yet supported",
+            ))),
+            ast::Expression::Exists(_) => Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "EXISTS not yet supported",
+            ))),
+            ast::Expression::CountSubquery(_) => Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "COUNT subquery not yet supported",
+            ))),
         }
     }
 
@@ -1292,7 +1385,10 @@ impl CypherTranslator {
             ast::BinaryOp::Div => BinaryOp::Div,
             ast::BinaryOp::Mod => BinaryOp::Mod,
             ast::BinaryOp::Pow => {
-                return Err(Error::Internal("Power operator not yet supported".into()));
+                return Err(Error::Query(QueryError::new(
+                    QueryErrorKind::Semantic,
+                    "Power operator not yet supported",
+                )));
             }
             ast::BinaryOp::Concat => BinaryOp::Concat,
             ast::BinaryOp::StartsWith => BinaryOp::StartsWith,
@@ -1308,7 +1404,10 @@ impl CypherTranslator {
             ast::UnaryOp::Not => UnaryOp::Not,
             ast::UnaryOp::Neg => UnaryOp::Neg,
             ast::UnaryOp::Pos => {
-                return Err(Error::Internal("Unary positive not yet supported".into()));
+                return Err(Error::Query(QueryError::new(
+                    QueryErrorKind::Semantic,
+                    "Unary positive not yet supported",
+                )));
             }
             ast::UnaryOp::IsNull => UnaryOp::IsNull,
             ast::UnaryOp::IsNotNull => UnaryOp::IsNotNull,
@@ -1321,10 +1420,16 @@ impl CypherTranslator {
                 if *i >= 0 {
                     Ok(*i as usize)
                 } else {
-                    Err(Error::Internal("Expected non-negative integer".into()))
+                    Err(Error::Query(QueryError::new(
+                        QueryErrorKind::Semantic,
+                        "Expected non-negative integer",
+                    )))
                 }
             }
-            _ => Err(Error::Internal("Expected integer literal".into())),
+            _ => Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "Expected integer literal",
+            ))),
         }
     }
 
@@ -1334,7 +1439,10 @@ impl CypherTranslator {
             LogicalOperator::Expand(expand) => Ok(expand.to_variable.clone()),
             LogicalOperator::Filter(filter) => Self::get_last_variable(&filter.input),
             LogicalOperator::Project(project) => Self::get_last_variable(&project.input),
-            _ => Err(Error::Internal("Cannot get variable from operator".into())),
+            _ => Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "Cannot get variable from operator",
+            ))),
         }
     }
 
@@ -1344,7 +1452,10 @@ impl CypherTranslator {
             Some(LogicalOperator::NodeScan(scan)) => Ok(scan.variable.clone()),
             Some(LogicalOperator::CreateEdge(edge)) => Ok(edge.to_variable.clone()),
             Some(other) => self.get_last_node_variable(&self.extract_input(other)),
-            None => Err(Error::Internal("No previous node variable".into())),
+            None => Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "No previous node variable",
+            ))),
         }
     }
 

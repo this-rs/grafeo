@@ -2309,6 +2309,34 @@ impl RdfExpressionPredicate {
                 }
             }
 
+            // REGEX - regular expression matching
+            "REGEX" => {
+                if args.len() < 2 {
+                    return None;
+                }
+                let text = match self.eval_expr(&args[0], chunk, row)? {
+                    Value::String(s) => s.to_string(),
+                    v => value_to_string(&v),
+                };
+                let pattern = match self.eval_expr(&args[1], chunk, row)? {
+                    Value::String(s) => s.to_string(),
+                    _ => return None,
+                };
+                // Optional flags argument (3rd arg): "i" for case-insensitive
+                let regex_pattern = if args.len() >= 3
+                    && let Some(Value::String(flags)) = self.eval_expr(&args[2], chunk, row)
+                    && flags.contains('i')
+                {
+                    format!("(?i){pattern}")
+                } else {
+                    pattern
+                };
+                match regex::Regex::new(&regex_pattern) {
+                    Ok(re) => Some(Value::Bool(re.is_match(&text))),
+                    Err(_) => None,
+                }
+            }
+
             // Unknown function
             _ => None,
         }

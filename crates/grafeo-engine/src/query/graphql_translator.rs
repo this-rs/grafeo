@@ -699,15 +699,16 @@ impl GraphQLTranslator {
                     }
                 }
             } else {
-                // Direct argument (legacy behavior): name: "Alice" → name = "Alice"
+                // Direct argument: name: "Alice" → name = "Alice", age_gt: 30 → age > 30
+                let (property, op) = self.parse_field_operator(&arg.name);
                 let prop = LogicalExpression::Property {
                     variable: var.to_string(),
-                    property: arg.name.clone(),
+                    property,
                 };
                 let value = LogicalExpression::Literal(arg.value.to_value());
                 predicates.push(LogicalExpression::Binary {
                     left: Box::new(prop),
-                    op: BinaryOp::Eq,
+                    op,
                     right: Box::new(value),
                 });
             }
@@ -755,7 +756,10 @@ impl GraphQLTranslator {
     /// Combines predicates with AND.
     fn combine_with_and(&self, predicates: Vec<LogicalExpression>) -> Result<LogicalExpression> {
         if predicates.is_empty() {
-            return Err(Error::Internal("No predicates".to_string()));
+            return Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "No predicates",
+            )));
         }
 
         let result = predicates
@@ -1377,6 +1381,168 @@ mod tests {
         assert!(
             result.is_ok(),
             "Multiple orderBy fields should work: {:?}",
+            result.err()
+        );
+    }
+
+    // ==================== Direct Argument Range Filter Tests ====================
+
+    #[test]
+    fn test_direct_arg_range_gt() {
+        // Direct argument (not wrapped in "where") should parse operator suffixes
+        let query = r#"{ user(age_gt: 30) { name } }"#;
+        let result = translate(query);
+        assert!(
+            result.is_ok(),
+            "Direct arg with _gt suffix should work: {:?}",
+            result.err()
+        );
+        let plan = result.unwrap();
+
+        fn find_filter_op(op: &LogicalOperator) -> Option<(BinaryOp, String)> {
+            match op {
+                LogicalOperator::Filter(f) => {
+                    if let LogicalExpression::Binary { op, left, .. } = &f.predicate
+                        && let LogicalExpression::Property { property, .. } = left.as_ref()
+                    {
+                        return Some((*op, property.clone()));
+                    }
+                    None
+                }
+                LogicalOperator::Return(r) => find_filter_op(&r.input),
+                _ => None,
+            }
+        }
+        let (op, prop) = find_filter_op(&plan.root).expect("Should have filter");
+        assert_eq!(op, BinaryOp::Gt, "Should use Gt operator, not Eq");
+        assert_eq!(prop, "age", "Should strip _gt suffix from property name");
+    }
+
+    #[test]
+    fn test_direct_arg_range_lt() {
+        let query = r#"{ user(age_lt: 18) { name } }"#;
+        let result = translate(query);
+        assert!(result.is_ok());
+        let plan = result.unwrap();
+
+        fn find_filter_op(op: &LogicalOperator) -> Option<BinaryOp> {
+            match op {
+                LogicalOperator::Filter(f) => {
+                    if let LogicalExpression::Binary { op, .. } = &f.predicate {
+                        Some(*op)
+                    } else {
+                        None
+                    }
+                }
+                LogicalOperator::Return(r) => find_filter_op(&r.input),
+                _ => None,
+            }
+        }
+        assert_eq!(find_filter_op(&plan.root), Some(BinaryOp::Lt));
+    }
+
+    #[test]
+    fn test_direct_arg_compound_range() {
+        // Two direct args with range suffixes should produce AND
+        let query = r#"{ user(age_gt: 20, age_lt: 40) { name } }"#;
+        let result = translate(query);
+        assert!(
+            result.is_ok(),
+            "Compound range direct args should work: {:?}",
+            result.err()
+        );
+        let plan = result.unwrap();
+
+        fn find_and_with_ops(op: &LogicalOperator) -> Option<(BinaryOp, BinaryOp)> {
+            match op {
+                LogicalOperator::Filter(f) => {
+                    if let LogicalExpression::Binary {
+                        op: BinaryOp::And,
+                        left,
+                        right,
+                    } = &f.predicate
+                    {
+                        let left_op = if let LogicalExpression::Binary { op, .. } = left.as_ref() {
+                            Some(*op)
+                        } else {
+                            None
+                        };
+                        let right_op = if let LogicalExpression::Binary { op, .. } = right.as_ref()
+                        {
+                            Some(*op)
+                        } else {
+                            None
+                        };
+                        if let (Some(l), Some(r)) = (left_op, right_op) {
+                            return Some((l, r));
+                        }
+                    }
+                    None
+                }
+                LogicalOperator::Return(r) => find_and_with_ops(&r.input),
+                _ => None,
+            }
+        }
+        let (l, r) = find_and_with_ops(&plan.root).expect("Should have AND with two range ops");
+        assert_eq!(l, BinaryOp::Gt);
+        assert_eq!(r, BinaryOp::Lt);
+    }
+
+    #[test]
+    fn test_direct_arg_equality_unchanged() {
+        // Plain direct args (no suffix) should still use Eq
+        let query = r#"{ user(name: "Alice") { age } }"#;
+        let result = translate(query);
+        assert!(result.is_ok());
+        let plan = result.unwrap();
+
+        fn find_filter_op(op: &LogicalOperator) -> Option<BinaryOp> {
+            match op {
+                LogicalOperator::Filter(f) => {
+                    if let LogicalExpression::Binary { op, .. } = &f.predicate {
+                        Some(*op)
+                    } else {
+                        None
+                    }
+                }
+                LogicalOperator::Return(r) => find_filter_op(&r.input),
+                _ => None,
+            }
+        }
+        assert_eq!(find_filter_op(&plan.root), Some(BinaryOp::Eq));
+    }
+
+    #[test]
+    fn test_direct_arg_contains_suffix() {
+        let query = r#"{ user(name_contains: "li") { name } }"#;
+        let result = translate(query);
+        assert!(result.is_ok());
+        let plan = result.unwrap();
+
+        fn find_filter_op(op: &LogicalOperator) -> Option<BinaryOp> {
+            match op {
+                LogicalOperator::Filter(f) => {
+                    if let LogicalExpression::Binary { op, .. } = &f.predicate {
+                        Some(*op)
+                    } else {
+                        None
+                    }
+                }
+                LogicalOperator::Return(r) => find_filter_op(&r.input),
+                _ => None,
+            }
+        }
+        assert_eq!(find_filter_op(&plan.root), Some(BinaryOp::Contains));
+    }
+
+    #[test]
+    fn test_nested_field_with_range_filter() {
+        // Nested field args should also parse operator suffixes
+        let query = r#"{ user { name friends(age_gt: 30) { name } } }"#;
+        let result = translate(query);
+        assert!(
+            result.is_ok(),
+            "Nested field with _gt suffix should work: {:?}",
             result.err()
         );
     }

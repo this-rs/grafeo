@@ -11,7 +11,7 @@ use crate::query::plan::{
 };
 use grafeo_adapters::query::gql::{self, ast};
 use grafeo_common::types::Value;
-use grafeo_common::utils::error::{Error, Result};
+use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
 
 /// Translates a GQL query string to a logical plan.
 ///
@@ -36,8 +36,12 @@ impl GqlTranslator {
         match stmt {
             ast::Statement::Query(query) => self.translate_query(query),
             ast::Statement::DataModification(dm) => self.translate_data_modification(dm),
-            ast::Statement::Schema(_) => Err(Error::Internal(
-                "Schema DDL is not supported via execute(). Use create_vector_index() for vector indexes.".to_string(),
+            ast::Statement::Schema(_) => Err(Error::Query(
+                QueryError::new(
+                    QueryErrorKind::Semantic,
+                    "Schema DDL is not supported via execute()",
+                )
+                .with_hint("Use create_vector_index() for vector indexes"),
             )),
             ast::Statement::Call(call) => self.translate_call(call),
         }
@@ -123,9 +127,10 @@ impl GqlTranslator {
                     (var, labels, props)
                 }
                 ast::Pattern::Path(_) => {
-                    return Err(Error::Internal(
-                        "MERGE with path patterns is not yet supported".to_string(),
-                    ));
+                    return Err(Error::Query(QueryError::new(
+                        QueryErrorKind::Semantic,
+                        "MERGE with path patterns is not yet supported",
+                    )));
                 }
             };
 
@@ -443,7 +448,12 @@ impl GqlTranslator {
             }
         }
 
-        plan.ok_or_else(|| Error::Internal("Empty MATCH clause".to_string()))
+        plan.ok_or_else(|| {
+            Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "Empty MATCH clause",
+            ))
+        })
     }
 
     /// Translates a shortestPath pattern into a logical operator.
@@ -460,9 +470,10 @@ impl GqlTranslator {
                 let target_node = if let Some(edge) = path.edges.last() {
                     &edge.target
                 } else {
-                    return Err(Error::Internal(
-                        "shortestPath requires a path pattern".to_string(),
-                    ));
+                    return Err(Error::Query(QueryError::new(
+                        QueryErrorKind::Semantic,
+                        "shortestPath requires a path pattern",
+                    )));
                 };
                 let edge_type = path.edges.first().and_then(|e| e.types.first().cloned());
                 let direction =
@@ -476,9 +487,10 @@ impl GqlTranslator {
                 (&path.source, target_node, edge_type, direction)
             }
             ast::Pattern::Node(_) => {
-                return Err(Error::Internal(
-                    "shortestPath requires a path pattern, not a single node".to_string(),
-                ));
+                return Err(Error::Query(QueryError::new(
+                    QueryErrorKind::Semantic,
+                    "shortestPath requires a path pattern, not a single node",
+                )));
             }
         };
 
@@ -858,9 +870,10 @@ impl GqlTranslator {
         // This is typically used as: MATCH (n:Label) DELETE n
 
         if delete.variables.is_empty() {
-            return Err(Error::Internal(
-                "DELETE requires at least one variable".to_string(),
-            ));
+            return Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "DELETE requires at least one variable",
+            )));
         }
 
         // For now, we only support deleting nodes (not edges directly)
@@ -898,9 +911,10 @@ impl GqlTranslator {
         // For standalone SET, we error - it should be part of a query.
 
         if set.assignments.is_empty() {
-            return Err(Error::Internal(
-                "SET requires at least one assignment".to_string(),
-            ));
+            return Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "SET requires at least one assignment",
+            )));
         }
 
         // Group assignments by variable
@@ -937,7 +951,10 @@ impl GqlTranslator {
         // A full implementation would handle multiple patterns
 
         if insert.patterns.is_empty() {
-            return Err(Error::Internal("Empty INSERT statement".to_string()));
+            return Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "Empty INSERT statement",
+            )));
         }
 
         let pattern = &insert.patterns[0];
@@ -974,9 +991,10 @@ impl GqlTranslator {
 
                 Ok(LogicalPlan::new(ret))
             }
-            ast::Pattern::Path(_) => {
-                Err(Error::Internal("Path INSERT not yet supported".to_string()))
-            }
+            ast::Pattern::Path(_) => Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "Path INSERT not yet supported",
+            ))),
         }
     }
 

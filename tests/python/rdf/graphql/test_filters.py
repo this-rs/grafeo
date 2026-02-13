@@ -2,7 +2,7 @@
 
 Tests GraphQL filter operations for RDF-like data model.
 
-Note: GraphQL filter syntax may not be fully implemented yet.
+Supports equality, range (age_gt/age_lt suffixes), string, and compound filters.
 """
 
 import time
@@ -68,9 +68,6 @@ class TestRDFGraphQLFilters:
         rows = list(result)
         assert len(rows) >= 1, "Should find at least 1 person with age 25"
 
-    @pytest.mark.skip(
-        reason="GraphQL range filter syntax (age_gt/age_lt) not yet implemented"
-    )
     def test_filter_range_basic(self):
         """Test GraphQL filter with range comparison."""
         self._setup_person_data(100)
@@ -141,9 +138,6 @@ class TestRDFGraphQLFilters:
         rows = list(result)
         assert len(rows) == 1, "Should find exactly 1 resource by URI"
 
-    @pytest.mark.skip(
-        reason="GraphQL nested query filters (age_gt on relationships) not yet implemented"
-    )
     def test_filter_with_relationship(self):
         """Test GraphQL filter with relationship traversal."""
         alice = self.db.create_node(

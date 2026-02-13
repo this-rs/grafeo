@@ -301,3 +301,160 @@ fn test_call_case_insensitive() {
     let result = session.execute("CALL grafeo.pagerank()");
     assert!(result.is_ok());
 }
+
+// ==================== Edge Cases & Error Paths ====================
+
+#[test]
+fn test_call_yield_nonexistent_column() {
+    let db = setup_graph();
+    let session = db.session();
+    let result = session.execute("CALL grafeo.pagerank() YIELD nonexistent_column");
+    assert!(result.is_err(), "YIELD of nonexistent column should fail");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("not found"),
+        "Error should mention column not found, got: {}",
+        err
+    );
+}
+
+#[test]
+fn test_call_yield_duplicate_columns() {
+    let db = setup_graph();
+    let session = db.session();
+    // YIELD same column twice with different aliases should work
+    let result = session.execute("CALL grafeo.pagerank() YIELD score AS s1, score AS s2");
+    assert!(
+        result.is_ok(),
+        "YIELD same column with different aliases should work: {:?}",
+        result.err()
+    );
+    let result = result.unwrap();
+    assert_eq!(result.columns.len(), 2);
+    assert_eq!(result.columns[0], "s1");
+    assert_eq!(result.columns[1], "s2");
+}
+
+#[test]
+fn test_call_procedures_list_has_expected_columns() {
+    let db = setup_graph();
+    let session = db.session();
+    let result = session.execute("CALL grafeo.procedures()").unwrap();
+
+    assert_eq!(result.columns[0], "name");
+    assert_eq!(result.columns[1], "description");
+    assert_eq!(result.columns[2], "parameters");
+    assert_eq!(result.columns[3], "output_columns");
+
+    // Every procedure should have a non-empty name
+    for row in &result.rows {
+        if let Value::String(name) = &row[0] {
+            assert!(!name.is_empty(), "Procedure name should not be empty");
+        } else {
+            panic!("Procedure name should be a string");
+        }
+    }
+}
+
+#[test]
+fn test_call_multiple_algorithms_on_same_graph() {
+    let db = setup_graph();
+    let session = db.session();
+
+    // Run several algorithms on the same graph to test they don't interfere
+    let pr = session.execute("CALL grafeo.pagerank()").unwrap();
+    let cc = session
+        .execute("CALL grafeo.connected_components()")
+        .unwrap();
+    let dc = session.execute("CALL grafeo.degree_centrality()").unwrap();
+    let bc = session
+        .execute("CALL grafeo.betweenness_centrality()")
+        .unwrap();
+
+    assert_eq!(pr.row_count(), 3);
+    assert_eq!(cc.row_count(), 3);
+    assert_eq!(dc.row_count(), 3);
+    assert_eq!(bc.row_count(), 3);
+}
+
+#[test]
+fn test_call_bfs_with_invalid_source() {
+    let db = setup_graph();
+    let session = db.session();
+    // BFS from a non-existent node
+    let result = session.execute("CALL grafeo.bfs(999999)");
+    // Should either return empty results or an error, not panic
+    match result {
+        Ok(r) => assert_eq!(
+            r.row_count(),
+            0,
+            "BFS from invalid source should return empty"
+        ),
+        Err(_) => {} // error is acceptable too
+    }
+}
+
+#[test]
+fn test_call_shortest_path_disconnected() {
+    let db = GrafeoDB::new_in_memory();
+    // Create two disconnected components
+    let a = db.create_node(&["Node"]);
+    let b = db.create_node(&["Node"]);
+    db.set_node_property(a, "name", Value::from("A"));
+    db.set_node_property(b, "name", Value::from("B"));
+    // No edge between them
+
+    let session = db.session();
+    let result = session.execute(&format!(
+        "CALL grafeo.shortest_path({}, {})",
+        a.as_u64(),
+        b.as_u64()
+    ));
+    // Should return empty (no path), not panic
+    match result {
+        Ok(r) => assert_eq!(r.row_count(), 0, "No path between disconnected nodes"),
+        Err(_) => {} // error is also acceptable
+    }
+}
+
+#[test]
+fn test_call_pagerank_single_node() {
+    let db = GrafeoDB::new_in_memory();
+    db.create_node(&["Isolated"]);
+
+    let session = db.session();
+    let result = session.execute("CALL grafeo.pagerank()").unwrap();
+    assert_eq!(result.row_count(), 1, "Single node should get PageRank");
+    if let Value::Float64(score) = &result.rows[0][1] {
+        assert!(
+            (*score - 1.0).abs() < 0.01,
+            "Single node should have PageRank ~1.0, got {}",
+            score
+        );
+    }
+}
+
+#[test]
+fn test_call_yield_all_then_specific() {
+    let db = setup_graph();
+    let session = db.session();
+
+    // First call without YIELD (get all columns)
+    let all = session.execute("CALL grafeo.pagerank()").unwrap();
+    // Then call with specific YIELD
+    let specific = session
+        .execute("CALL grafeo.pagerank() YIELD score")
+        .unwrap();
+
+    assert_eq!(
+        all.columns.len(),
+        2,
+        "Without YIELD: should get all columns"
+    );
+    assert_eq!(specific.columns.len(), 1, "With YIELD: should get 1 column");
+    assert_eq!(
+        all.row_count(),
+        specific.row_count(),
+        "Row counts should match"
+    );
+}

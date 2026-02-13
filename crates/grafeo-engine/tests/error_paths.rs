@@ -316,6 +316,132 @@ fn test_self_referencing_edge() {
 }
 
 // ============================================================================
+// Translator Error Quality (errors should be QueryError, not Internal)
+// ============================================================================
+
+#[test]
+fn test_gql_syntax_error_has_position_info() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    // Syntax errors from the parser should produce positioned error messages,
+    // not bare "Internal error" strings.
+    let result = session.execute("MATCH (n:Person RETURN n");
+    assert!(result.is_err());
+    let err_str = result.unwrap_err().to_string();
+    assert!(
+        !err_str.contains("Internal error"),
+        "Parser error should NOT be an internal error, got: {}",
+        err_str
+    );
+    // Should contain source position info (the --> arrow)
+    assert!(
+        err_str.contains("-->"),
+        "Parser error should include source position, got: {}",
+        err_str
+    );
+}
+
+#[test]
+fn test_translator_errors_not_internal() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    // Various translator errors should NOT produce GRAFEO-X internal errors.
+    // They should be query errors (GRAFEO-Q*).
+    let test_queries = [
+        "MATCH (n:Person) RETURN x.name", // undefined variable
+    ];
+
+    for query in &test_queries {
+        let result = session.execute(query);
+        if let Err(err) = result {
+            let err_str = err.to_string();
+            assert!(
+                !err_str.contains("GRAFEO-X"),
+                "Query '{}' should NOT produce an internal error, got: {}",
+                query,
+                err_str
+            );
+        }
+    }
+}
+
+#[test]
+fn test_gql_unknown_procedure_error_code() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    let result = session.execute("CALL grafeo.nonexistent()");
+    assert!(result.is_err());
+    let err_str = result.unwrap_err().to_string();
+    assert!(
+        err_str.contains("Unknown procedure"),
+        "Should say 'Unknown procedure', got: {}",
+        err_str
+    );
+}
+
+#[test]
+fn test_gql_yield_nonexistent_column_error() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    let result = session.execute("CALL grafeo.pagerank() YIELD nonexistent_column");
+    assert!(result.is_err());
+    let err_str = result.unwrap_err().to_string();
+    assert!(
+        err_str.contains("not found"),
+        "Should mention column not found, got: {}",
+        err_str
+    );
+}
+
+#[test]
+#[cfg(feature = "cypher")]
+fn test_cypher_unsupported_feature_error_is_query_error() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    // EXISTS subquery is not yet supported in Cypher translator
+    let result = session.execute_cypher("MATCH (n) WHERE EXISTS { (n)-[:KNOWS]->() } RETURN n");
+    assert!(result.is_err());
+    let err_str = result.unwrap_err().to_string();
+    // Should be GRAFEO-Q (query error), not GRAFEO-X (internal error)
+    assert!(
+        !err_str.contains("GRAFEO-X"),
+        "Unsupported Cypher feature should NOT be an internal error, got: {}",
+        err_str
+    );
+}
+
+#[test]
+#[cfg(feature = "graphql")]
+fn test_graphql_range_filter_end_to_end() {
+    let db = GrafeoDB::new_in_memory();
+    // Create test data
+    for i in 0..5 {
+        let n = db.create_node(&["Person"]);
+        db.set_node_property(n, "name", Value::String(format!("Person{}", i).into()));
+        db.set_node_property(n, "age", Value::Int64(20 + i * 10)); // 20, 30, 40, 50, 60
+    }
+
+    let session = db.session();
+    let result = session.execute_graphql(r#"{ person(age_gt: 25, age_lt: 55) { name age } }"#);
+    assert!(
+        result.is_ok(),
+        "GraphQL range filter should work: {:?}",
+        result.err()
+    );
+    let result = result.unwrap();
+    // Should match ages 30, 40, 50 (not 20, not 60)
+    assert_eq!(
+        result.row_count(),
+        3,
+        "Should find 3 persons with 25 < age < 55, got {}",
+        result.row_count()
+    );
+}
+
+// ============================================================================
 // Query Language Edge Cases
 // ============================================================================
 

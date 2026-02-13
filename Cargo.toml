@@ -14,7 +14,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.5.1"
+version = "0.5.3"
 edition = "2024"
 rust-version = "1.91.1"
 license = "Apache-2.0"
@@ -24,11 +24,11 @@ description = "A high-performance, embeddable graph database with support for LP
 
 [workspace.dependencies]
 # Internal crates (default-features = false to allow per-crate control)
-grafeo-common = { path = "crates/grafeo-common", version = "0.5.1" }
-grafeo-core = { path = "crates/grafeo-core", version = "0.5.1", default-features = false }
-grafeo-adapters = { path = "crates/grafeo-adapters", version = "0.5.1", default-features = false }
-grafeo-engine = { path = "crates/grafeo-engine", version = "0.5.1", default-features = false }
-grafeo = { path = "crates/grafeo", version = "0.5.1" }
+grafeo-common = { path = "crates/grafeo-common", version = "0.5.3" }
+grafeo-core = { path = "crates/grafeo-core", version = "0.5.3", default-features = false }
+grafeo-adapters = { path = "crates/grafeo-adapters", version = "0.5.3", default-features = false }
+grafeo-engine = { path = "crates/grafeo-engine", version = "0.5.3", default-features = false }
+grafeo = { path = "crates/grafeo", version = "0.5.3" }
 
 # Error handling
 thiserror = "2.0"
