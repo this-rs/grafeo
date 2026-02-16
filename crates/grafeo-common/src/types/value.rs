@@ -713,81 +713,71 @@ impl HashableValue {
     }
 }
 
-impl Hash for HashableValue {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        // Hash the discriminant first
-        std::mem::discriminant(&self.0).hash(state);
+/// Hashes a `Value` by reference without cloning nested values.
+fn hash_value<H: Hasher>(value: &Value, state: &mut H) {
+    std::mem::discriminant(value).hash(state);
 
-        match &self.0 {
-            Value::Null => {}
-            Value::Bool(b) => b.hash(state),
-            Value::Int64(i) => i.hash(state),
-            Value::Float64(f) => {
-                // Use bit representation for hashing floats
+    match value {
+        Value::Null => {}
+        Value::Bool(b) => b.hash(state),
+        Value::Int64(i) => i.hash(state),
+        Value::Float64(f) => f.to_bits().hash(state),
+        Value::String(s) => s.hash(state),
+        Value::Bytes(b) => b.hash(state),
+        Value::Timestamp(t) => t.hash(state),
+        Value::List(l) => {
+            l.len().hash(state);
+            for v in l.iter() {
+                hash_value(v, state);
+            }
+        }
+        Value::Map(m) => {
+            m.len().hash(state);
+            for (k, v) in m.iter() {
+                k.hash(state);
+                hash_value(v, state);
+            }
+        }
+        Value::Vector(v) => {
+            v.len().hash(state);
+            for &f in v.iter() {
                 f.to_bits().hash(state);
-            }
-            Value::String(s) => s.hash(state),
-            Value::Bytes(b) => b.hash(state),
-            Value::Timestamp(t) => t.hash(state),
-            Value::List(l) => {
-                l.len().hash(state);
-                for v in l.iter() {
-                    HashableValue(v.clone()).hash(state);
-                }
-            }
-            Value::Map(m) => {
-                m.len().hash(state);
-                for (k, v) in m.iter() {
-                    k.hash(state);
-                    HashableValue(v.clone()).hash(state);
-                }
-            }
-            Value::Vector(v) => {
-                v.len().hash(state);
-                for &f in v.iter() {
-                    f.to_bits().hash(state);
-                }
             }
         }
     }
 }
 
-impl PartialEq for HashableValue {
-    fn eq(&self, other: &Self) -> bool {
-        match (&self.0, &other.0) {
-            (Value::Float64(a), Value::Float64(b)) => {
-                // Compare by bits for consistent hash/eq behavior
-                a.to_bits() == b.to_bits()
-            }
-            (Value::List(a), Value::List(b)) => {
-                if a.len() != b.len() {
-                    return false;
-                }
-                a.iter()
-                    .zip(b.iter())
-                    .all(|(x, y)| HashableValue(x.clone()) == HashableValue(y.clone()))
-            }
-            (Value::Map(a), Value::Map(b)) => {
-                if a.len() != b.len() {
-                    return false;
-                }
-                a.iter().all(|(k, v)| {
-                    b.get(k)
-                        .is_some_and(|bv| HashableValue(v.clone()) == HashableValue(bv.clone()))
-                })
-            }
-            (Value::Vector(a), Value::Vector(b)) => {
-                if a.len() != b.len() {
-                    return false;
-                }
-                // Compare by bits for consistent hash/eq behavior
-                a.iter()
+impl Hash for HashableValue {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        hash_value(&self.0, state);
+    }
+}
+
+/// Compares two `Value`s for hashable equality by reference (bit-equal floats).
+fn values_hash_eq(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Float64(a), Value::Float64(b)) => a.to_bits() == b.to_bits(),
+        (Value::List(a), Value::List(b)) => {
+            a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| values_hash_eq(x, y))
+        }
+        (Value::Map(a), Value::Map(b)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .all(|(k, v)| b.get(k).is_some_and(|bv| values_hash_eq(v, bv)))
+        }
+        (Value::Vector(a), Value::Vector(b)) => {
+            a.len() == b.len()
+                && a.iter()
                     .zip(b.iter())
                     .all(|(x, y)| x.to_bits() == y.to_bits())
-            }
-            // For other types, use normal Value equality
-            _ => self.0 == other.0,
         }
+        _ => a == b,
+    }
+}
+
+impl PartialEq for HashableValue {
+    fn eq(&self, other: &Self) -> bool {
+        values_hash_eq(&self.0, &other.0)
     }
 }
 

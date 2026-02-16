@@ -2,6 +2,24 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
+## [0.5.6] - Unreleased
+
+Safety and performance improvements. Zero unsafe code remaining in property storage. Named graph management operators fully wired.
+
+### Added
+
+- **SPARQL COPY/MOVE/ADD graph operators**: `COPY <src> TO <dst>`, `MOVE <src> TO <dst>`, and `ADD <src> TO <dst>` now execute end-to-end with source-existence validation and SILENT support
+
+### Fixed
+
+- **GQL lexer UTF-8 panic**: multi-byte characters (e.g., `ç`, `ã`, CJK) in queries no longer cause `byte index is not a char boundary` panics. The lexer now advances by `char.len_utf8()` instead of a fixed 1 byte
+
+### Improved
+
+- **Safe ID conversions**: replaced final 3 `unsafe transmute_copy` calls in property column compression/decompression with safe `EntityId::as_u64()` / `from_u64()` methods. Removed 4 stale `#[allow(unsafe_code)]` attributes — property.rs is now fully safe
+- **Statistics access**: `LpgStore::statistics()` now returns `Arc<Statistics>` (cheap pointer clone) instead of deep-cloning the entire statistics struct on every query planner invocation
+- **HashableValue hashing/comparison**: recursive `Hash` and `PartialEq` impls for nested `List`/`Map`/`Vector` values now operate by reference instead of cloning each element, eliminating O(n) allocations per hash/compare operation
+
 ## [0.5.5] - 2026-02-16
 
 Small bugfixes and code quality improvements. 0.5.x will continue to be like this until bugs become extremely rare.

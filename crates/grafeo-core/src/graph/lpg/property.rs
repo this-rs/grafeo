@@ -806,7 +806,6 @@ impl<Id: EntityId> PropertyColumn<Id> {
     }
 
     /// Compresses integer values.
-    #[allow(unsafe_code)]
     fn compress_as_integers(&mut self) {
         // Extract integer values and their IDs
         let mut values: Vec<(u64, i64)> = Vec::new();
@@ -852,7 +851,6 @@ impl<Id: EntityId> PropertyColumn<Id> {
     }
 
     /// Compresses string values using dictionary encoding.
-    #[allow(unsafe_code)]
     fn compress_as_strings(&mut self) {
         let mut values: Vec<(u64, ArcStr)> = Vec::new();
         let mut non_str_values: FxHashMap<Id, Value> = FxHashMap::default();
@@ -860,8 +858,7 @@ impl<Id: EntityId> PropertyColumn<Id> {
         for (&id, value) in &self.values {
             match value {
                 Value::String(s) => {
-                    let id_u64 = unsafe { std::mem::transmute_copy::<Id, u64>(&id) };
-                    values.push((id_u64, s.clone()));
+                    values.push((id.as_u64(), s.clone()));
                 }
                 _ => {
                     non_str_values.insert(id, value.clone());
@@ -899,7 +896,6 @@ impl<Id: EntityId> PropertyColumn<Id> {
     }
 
     /// Compresses boolean values.
-    #[allow(unsafe_code)]
     fn compress_as_booleans(&mut self) {
         let mut values: Vec<(u64, bool)> = Vec::new();
         let mut non_bool_values: FxHashMap<Id, Value> = FxHashMap::default();
@@ -907,8 +903,7 @@ impl<Id: EntityId> PropertyColumn<Id> {
         for (&id, value) in &self.values {
             match value {
                 Value::Bool(b) => {
-                    let id_u64 = unsafe { std::mem::transmute_copy::<Id, u64>(&id) };
-                    values.push((id_u64, *b));
+                    values.push((id.as_u64(), *b));
                 }
                 _ => {
                     non_bool_values.insert(id, value.clone());
@@ -940,7 +935,6 @@ impl<Id: EntityId> PropertyColumn<Id> {
     }
 
     /// Decompresses all values back to the hot buffer.
-    #[allow(unsafe_code)]
     fn decompress_all(&mut self) {
         let Some(compressed) = self.compressed.take() else {
             return;
@@ -972,7 +966,7 @@ impl<Id: EntityId> PropertyColumn<Id> {
             } => {
                 for (i, id_u64) in index_to_id.iter().enumerate() {
                     if let Some(s) = encoding.get(i) {
-                        let id: Id = unsafe { std::mem::transmute_copy(id_u64) };
+                        let id = Id::from_u64(*id_u64);
                         self.values.insert(id, Value::String(ArcStr::from(s)));
                     }
                 }

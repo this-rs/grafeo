@@ -23,11 +23,6 @@ use grafeo_common::types::{EdgeId, EpochId, HashableValue, NodeId, PropertyKey, 
 use grafeo_common::utils::hash::{FxHashMap, FxHashSet};
 use parking_lot::RwLock;
 use std::cmp::Ordering as CmpOrdering;
-#[cfg(any(
-    feature = "tiered-storage",
-    feature = "vector-index",
-    feature = "text-index"
-))]
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -288,7 +283,7 @@ pub struct LpgStore {
 
     /// Statistics for cost-based optimization.
     /// Lock order: 8 (always last)
-    statistics: RwLock<Statistics>,
+    statistics: RwLock<Arc<Statistics>>,
 
     /// Whether statistics need recomputation after mutations.
     needs_stats_recompute: AtomicBool,
@@ -341,7 +336,7 @@ impl LpgStore {
             next_node_id: AtomicU64::new(0),
             next_edge_id: AtomicU64::new(0),
             current_epoch: AtomicU64::new(0),
-            statistics: RwLock::new(Statistics::new()),
+            statistics: RwLock::new(Arc::new(Statistics::new())),
             needs_stats_recompute: AtomicBool::new(true),
             config,
         }
@@ -2769,10 +2764,10 @@ impl LpgStore {
 
     // === Statistics ===
 
-    /// Returns the current statistics.
+    /// Returns the current statistics (cheap `Arc` clone, no deep copy).
     #[must_use]
-    pub fn statistics(&self) -> Statistics {
-        self.statistics.read().clone()
+    pub fn statistics(&self) -> Arc<Statistics> {
+        Arc::clone(&self.statistics.read())
     }
 
     /// Recomputes statistics if they are stale (i.e., after mutations).
@@ -2846,7 +2841,7 @@ impl LpgStore {
             }
         }
 
-        *self.statistics.write() = stats;
+        *self.statistics.write() = Arc::new(stats);
     }
 
     /// Recomputes statistics from current data.
@@ -2908,7 +2903,7 @@ impl LpgStore {
             }
         }
 
-        *self.statistics.write() = stats;
+        *self.statistics.write() = Arc::new(stats);
     }
 
     /// Estimates cardinality for a label scan.

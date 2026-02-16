@@ -420,4 +420,150 @@ mod tests {
             "Named graph should have 1 triple"
         );
     }
+
+    // ==================== COPY / MOVE / ADD ====================
+
+    #[test]
+    fn copy_named_graph_preserves_source() {
+        let db = rdf_db();
+        let session = db.session();
+
+        session
+            .execute_sparql(
+                r#"INSERT DATA {
+                    GRAPH <http://ex.org/src> {
+                        <http://ex.org/a> <http://ex.org/p> "1" .
+                        <http://ex.org/b> <http://ex.org/q> "2" .
+                    }
+                }"#,
+            )
+            .unwrap();
+
+        session
+            .execute_sparql("COPY <http://ex.org/src> TO <http://ex.org/dst>")
+            .unwrap();
+
+        // Source retained
+        let src = session
+            .execute_sparql(
+                r#"SELECT ?s WHERE {
+                    GRAPH <http://ex.org/src> { ?s ?p ?o }
+                }"#,
+            )
+            .unwrap();
+        assert_eq!(src.row_count(), 2, "Source should still have 2 triples");
+
+        // Destination has copy
+        let dst = session
+            .execute_sparql(
+                r#"SELECT ?s WHERE {
+                    GRAPH <http://ex.org/dst> { ?s ?p ?o }
+                }"#,
+            )
+            .unwrap();
+        assert_eq!(dst.row_count(), 2, "Dest should have 2 triples");
+    }
+
+    #[test]
+    fn move_named_graph_removes_source() {
+        let db = rdf_db();
+        let session = db.session();
+
+        session
+            .execute_sparql(
+                r#"INSERT DATA {
+                    GRAPH <http://ex.org/src> {
+                        <http://ex.org/a> <http://ex.org/p> "val" .
+                    }
+                }"#,
+            )
+            .unwrap();
+
+        session
+            .execute_sparql("MOVE <http://ex.org/src> TO <http://ex.org/dst>")
+            .unwrap();
+
+        // Source gone
+        let src = session
+            .execute_sparql(
+                r#"SELECT ?s WHERE {
+                    GRAPH <http://ex.org/src> { ?s ?p ?o }
+                }"#,
+            )
+            .unwrap();
+        assert_eq!(src.row_count(), 0, "Source should be empty after MOVE");
+
+        // Destination has data
+        let dst = session
+            .execute_sparql(
+                r#"SELECT ?s WHERE {
+                    GRAPH <http://ex.org/dst> { ?s ?p ?o }
+                }"#,
+            )
+            .unwrap();
+        assert_eq!(dst.row_count(), 1, "Dest should have 1 triple");
+    }
+
+    #[test]
+    fn add_merges_into_destination() {
+        let db = rdf_db();
+        let session = db.session();
+
+        session
+            .execute_sparql(
+                r#"INSERT DATA {
+                    GRAPH <http://ex.org/g1> {
+                        <http://ex.org/a> <http://ex.org/p> "from-g1" .
+                    }
+                    GRAPH <http://ex.org/g2> {
+                        <http://ex.org/b> <http://ex.org/q> "from-g2" .
+                    }
+                }"#,
+            )
+            .unwrap();
+
+        session
+            .execute_sparql("ADD <http://ex.org/g1> TO <http://ex.org/g2>")
+            .unwrap();
+
+        // g1 unchanged
+        let g1 = session
+            .execute_sparql(
+                r#"SELECT ?s WHERE {
+                    GRAPH <http://ex.org/g1> { ?s ?p ?o }
+                }"#,
+            )
+            .unwrap();
+        assert_eq!(g1.row_count(), 1, "g1 should still have 1 triple");
+
+        // g2 has union
+        let g2 = session
+            .execute_sparql(
+                r#"SELECT ?s WHERE {
+                    GRAPH <http://ex.org/g2> { ?s ?p ?o }
+                }"#,
+            )
+            .unwrap();
+        assert_eq!(g2.row_count(), 2, "g2 should have 2 triples after ADD");
+    }
+
+    #[test]
+    fn copy_nonexistent_source_errors() {
+        let db = rdf_db();
+        let session = db.session();
+        let result = session.execute_sparql("COPY <http://ex.org/nope> TO <http://ex.org/dst>");
+        assert!(result.is_err(), "COPY from nonexistent graph should error");
+    }
+
+    #[test]
+    fn copy_silent_nonexistent_source_ok() {
+        let db = rdf_db();
+        let session = db.session();
+        let result =
+            session.execute_sparql("COPY SILENT <http://ex.org/nope> TO <http://ex.org/dst>");
+        assert!(
+            result.is_ok(),
+            "COPY SILENT from nonexistent graph should succeed"
+        );
+    }
 }

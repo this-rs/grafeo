@@ -21,10 +21,10 @@ use grafeo_core::execution::operators::{
 use grafeo_core::graph::rdf::{Literal, RdfStore, Term, Triple, TriplePattern};
 
 use crate::query::plan::{
-    AggregateFunction as LogicalAggregateFunction, AggregateOp, AntiJoinOp, ClearGraphOp,
-    CreateGraphOp, DeleteTripleOp, DropGraphOp, FilterOp, InsertTripleOp, LeftJoinOp, LimitOp,
-    LogicalExpression, LogicalOperator, LogicalPlan, ModifyOp, SkipOp, SortOp, TripleComponent,
-    TripleScanOp, TripleTemplate,
+    AddGraphOp, AggregateFunction as LogicalAggregateFunction, AggregateOp, AntiJoinOp,
+    ClearGraphOp, CopyGraphOp, CreateGraphOp, DeleteTripleOp, DropGraphOp, FilterOp,
+    InsertTripleOp, LeftJoinOp, LimitOp, LogicalExpression, LogicalOperator, LogicalPlan, ModifyOp,
+    MoveGraphOp, SkipOp, SortOp, TripleComponent, TripleScanOp, TripleTemplate,
 };
 use crate::query::planner::{PhysicalPlan, convert_aggregate_function, convert_filter_expression};
 
@@ -105,6 +105,9 @@ impl RdfPlanner {
             LogicalOperator::ClearGraph(clear) => self.plan_clear_graph(clear),
             LogicalOperator::CreateGraph(create) => self.plan_create_graph(create),
             LogicalOperator::DropGraph(drop_op) => self.plan_drop_graph(drop_op),
+            LogicalOperator::CopyGraph(copy) => self.plan_copy_graph(copy),
+            LogicalOperator::MoveGraph(move_op) => self.plan_move_graph(move_op),
+            LogicalOperator::AddGraph(add) => self.plan_add_graph(add),
             LogicalOperator::Empty => Err(Error::Internal("Empty plan".to_string())),
             _ => Err(Error::Internal(format!(
                 "Unsupported RDF operator: {:?}",
@@ -860,6 +863,39 @@ impl RdfPlanner {
         Ok((operator, Vec::new()))
     }
 
+    /// Plans a COPY graph operator.
+    fn plan_copy_graph(&self, copy: &CopyGraphOp) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        let operator = Box::new(RdfCopyGraphOperator::new(
+            Arc::clone(&self.store),
+            copy.source.clone(),
+            copy.destination.clone(),
+            copy.silent,
+        ));
+        Ok((operator, Vec::new()))
+    }
+
+    /// Plans a MOVE graph operator.
+    fn plan_move_graph(&self, move_op: &MoveGraphOp) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        let operator = Box::new(RdfMoveGraphOperator::new(
+            Arc::clone(&self.store),
+            move_op.source.clone(),
+            move_op.destination.clone(),
+            move_op.silent,
+        ));
+        Ok((operator, Vec::new()))
+    }
+
+    /// Plans an ADD graph operator.
+    fn plan_add_graph(&self, add: &AddGraphOp) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        let operator = Box::new(RdfAddGraphOperator::new(
+            Arc::clone(&self.store),
+            add.source.clone(),
+            add.destination.clone(),
+            add.silent,
+        ));
+        Ok((operator, Vec::new()))
+    }
+
     /// Plans a SPARQL MODIFY operator (DELETE/INSERT WHERE).
     ///
     /// Per SPARQL 1.1 spec:
@@ -1443,6 +1479,181 @@ impl Operator for RdfDropGraphOperator {
 
     fn name(&self) -> &'static str {
         "RdfDropGraph"
+    }
+}
+
+// ============================================================================
+// RDF COPY/MOVE/ADD Graph Operators
+// ============================================================================
+
+/// Operator that copies all triples from one graph to another.
+struct RdfCopyGraphOperator {
+    store: Arc<RdfStore>,
+    source: Option<String>,
+    destination: Option<String>,
+    silent: bool,
+    done: bool,
+}
+
+impl RdfCopyGraphOperator {
+    fn new(
+        store: Arc<RdfStore>,
+        source: Option<String>,
+        destination: Option<String>,
+        silent: bool,
+    ) -> Self {
+        Self {
+            store,
+            source,
+            destination,
+            silent,
+            done: false,
+        }
+    }
+}
+
+impl Operator for RdfCopyGraphOperator {
+    fn next(&mut self) -> std::result::Result<Option<DataChunk>, OperatorError> {
+        if self.done {
+            return Ok(None);
+        }
+        self.done = true;
+
+        // Check source exists (unless silent)
+        if !self.silent
+            && let Some(ref name) = self.source
+            && self.store.graph(name).is_none()
+        {
+            return Err(OperatorError::Execution(format!(
+                "Source graph <{name}> does not exist"
+            )));
+        }
+
+        self.store
+            .copy_graph(self.source.as_deref(), self.destination.as_deref());
+        Ok(None)
+    }
+
+    fn reset(&mut self) {
+        self.done = false;
+    }
+
+    fn name(&self) -> &'static str {
+        "RdfCopyGraph"
+    }
+}
+
+/// Operator that moves all triples from one graph to another.
+struct RdfMoveGraphOperator {
+    store: Arc<RdfStore>,
+    source: Option<String>,
+    destination: Option<String>,
+    silent: bool,
+    done: bool,
+}
+
+impl RdfMoveGraphOperator {
+    fn new(
+        store: Arc<RdfStore>,
+        source: Option<String>,
+        destination: Option<String>,
+        silent: bool,
+    ) -> Self {
+        Self {
+            store,
+            source,
+            destination,
+            silent,
+            done: false,
+        }
+    }
+}
+
+impl Operator for RdfMoveGraphOperator {
+    fn next(&mut self) -> std::result::Result<Option<DataChunk>, OperatorError> {
+        if self.done {
+            return Ok(None);
+        }
+        self.done = true;
+
+        // Check source exists (unless silent)
+        if !self.silent
+            && let Some(ref name) = self.source
+            && self.store.graph(name).is_none()
+        {
+            return Err(OperatorError::Execution(format!(
+                "Source graph <{name}> does not exist"
+            )));
+        }
+
+        self.store
+            .move_graph(self.source.as_deref(), self.destination.as_deref());
+        Ok(None)
+    }
+
+    fn reset(&mut self) {
+        self.done = false;
+    }
+
+    fn name(&self) -> &'static str {
+        "RdfMoveGraph"
+    }
+}
+
+/// Operator that adds (merges) all triples from one graph into another.
+struct RdfAddGraphOperator {
+    store: Arc<RdfStore>,
+    source: Option<String>,
+    destination: Option<String>,
+    silent: bool,
+    done: bool,
+}
+
+impl RdfAddGraphOperator {
+    fn new(
+        store: Arc<RdfStore>,
+        source: Option<String>,
+        destination: Option<String>,
+        silent: bool,
+    ) -> Self {
+        Self {
+            store,
+            source,
+            destination,
+            silent,
+            done: false,
+        }
+    }
+}
+
+impl Operator for RdfAddGraphOperator {
+    fn next(&mut self) -> std::result::Result<Option<DataChunk>, OperatorError> {
+        if self.done {
+            return Ok(None);
+        }
+        self.done = true;
+
+        // Check source exists (unless silent)
+        if !self.silent
+            && let Some(ref name) = self.source
+            && self.store.graph(name).is_none()
+        {
+            return Err(OperatorError::Execution(format!(
+                "Source graph <{name}> does not exist"
+            )));
+        }
+
+        self.store
+            .add_graph(self.source.as_deref(), self.destination.as_deref());
+        Ok(None)
+    }
+
+    fn reset(&mut self) {
+        self.done = false;
+    }
+
+    fn name(&self) -> &'static str {
+        "RdfAddGraph"
     }
 }
 
@@ -2773,5 +2984,143 @@ mod tests {
         }
 
         assert_eq!(total_rows, 100);
+    }
+
+    #[test]
+    fn test_copy_graph_operator() {
+        let store = Arc::new(RdfStore::new());
+
+        // Insert triples into a named graph
+        store.create_graph("http://example.org/src");
+        let src = store.graph("http://example.org/src").unwrap();
+        src.insert(Triple::new(
+            Term::iri("http://example.org/a"),
+            Term::iri("http://example.org/p"),
+            Term::literal("val"),
+        ));
+        assert_eq!(src.len(), 1);
+
+        // Copy src -> dst via operator
+        let plan = LogicalPlan::new(LogicalOperator::CopyGraph(CopyGraphOp {
+            source: Some("http://example.org/src".to_string()),
+            destination: Some("http://example.org/dst".to_string()),
+            silent: false,
+        }));
+        let planner = RdfPlanner::new(Arc::clone(&store));
+        let physical = planner.plan(&plan).unwrap();
+        let mut op = physical.operator;
+        while op.next().unwrap().is_some() {}
+
+        // Source still has its data
+        assert_eq!(store.graph("http://example.org/src").unwrap().len(), 1);
+        // Destination has a copy
+        assert_eq!(store.graph("http://example.org/dst").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_move_graph_operator() {
+        let store = Arc::new(RdfStore::new());
+
+        store.create_graph("http://example.org/src");
+        let src = store.graph("http://example.org/src").unwrap();
+        src.insert(Triple::new(
+            Term::iri("http://example.org/a"),
+            Term::iri("http://example.org/p"),
+            Term::literal("val"),
+        ));
+
+        // Move src -> dst via operator
+        let plan = LogicalPlan::new(LogicalOperator::MoveGraph(MoveGraphOp {
+            source: Some("http://example.org/src".to_string()),
+            destination: Some("http://example.org/dst".to_string()),
+            silent: false,
+        }));
+        let planner = RdfPlanner::new(Arc::clone(&store));
+        let physical = planner.plan(&plan).unwrap();
+        let mut op = physical.operator;
+        while op.next().unwrap().is_some() {}
+
+        // Source is gone (move drops it)
+        assert!(store.graph("http://example.org/src").is_none());
+        // Destination has the data
+        assert_eq!(store.graph("http://example.org/dst").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_add_graph_operator() {
+        let store = Arc::new(RdfStore::new());
+
+        // Create src with 1 triple
+        store.create_graph("http://example.org/src");
+        store
+            .graph("http://example.org/src")
+            .unwrap()
+            .insert(Triple::new(
+                Term::iri("http://example.org/a"),
+                Term::iri("http://example.org/p"),
+                Term::literal("from-src"),
+            ));
+
+        // Create dst with 1 different triple
+        store.create_graph("http://example.org/dst");
+        store
+            .graph("http://example.org/dst")
+            .unwrap()
+            .insert(Triple::new(
+                Term::iri("http://example.org/b"),
+                Term::iri("http://example.org/q"),
+                Term::literal("from-dst"),
+            ));
+
+        // Add src -> dst via operator (merges)
+        let plan = LogicalPlan::new(LogicalOperator::AddGraph(AddGraphOp {
+            source: Some("http://example.org/src".to_string()),
+            destination: Some("http://example.org/dst".to_string()),
+            silent: false,
+        }));
+        let planner = RdfPlanner::new(Arc::clone(&store));
+        let physical = planner.plan(&plan).unwrap();
+        let mut op = physical.operator;
+        while op.next().unwrap().is_some() {}
+
+        // Source unchanged
+        assert_eq!(store.graph("http://example.org/src").unwrap().len(), 1);
+        // Destination has both triples (union)
+        assert_eq!(store.graph("http://example.org/dst").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_copy_nonexistent_source_errors_without_silent() {
+        let store = Arc::new(RdfStore::new());
+
+        let plan = LogicalPlan::new(LogicalOperator::CopyGraph(CopyGraphOp {
+            source: Some("http://example.org/nope".to_string()),
+            destination: Some("http://example.org/dst".to_string()),
+            silent: false,
+        }));
+        let planner = RdfPlanner::new(Arc::clone(&store));
+        let physical = planner.plan(&plan).unwrap();
+        let mut op = physical.operator;
+
+        // Should error because source doesn't exist
+        let result = op.next();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_copy_nonexistent_source_silent_ok() {
+        let store = Arc::new(RdfStore::new());
+
+        let plan = LogicalPlan::new(LogicalOperator::CopyGraph(CopyGraphOp {
+            source: Some("http://example.org/nope".to_string()),
+            destination: Some("http://example.org/dst".to_string()),
+            silent: true,
+        }));
+        let planner = RdfPlanner::new(Arc::clone(&store));
+        let physical = planner.plan(&plan).unwrap();
+        let mut op = physical.operator;
+
+        // Should succeed silently
+        assert!(op.next().is_ok());
     }
 }
