@@ -2,7 +2,7 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
-## [0.5.6] - Unreleased
+## [0.5.6] - 2026-02-18
 
 Safety and performance improvements. Zero unsafe code remaining in property storage. Named graph management operators fully integrated. UNWIND and FOR list expansion for batch operations.
 

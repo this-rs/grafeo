@@ -603,7 +603,7 @@ func TestVectorDropAndRebuild(t *testing.T) {
 	}
 
 	// Drop index
-	dropped, _ := db.DropVectorIndex("Doc", "emb")
+	dropped := db.DropVectorIndex("Doc", "emb")
 	if !dropped {
 		t.Error("expected index to be dropped")
 	}
