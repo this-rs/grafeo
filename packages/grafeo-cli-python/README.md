@@ -55,4 +55,4 @@ grafeo completions bash > ~/.local/share/bash-completion/completions/grafeo
 
 ## License
 
-AGPL-3.0-or-later
+Apache-2.0

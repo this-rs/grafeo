@@ -101,6 +101,25 @@ MATCH (p:Person {name: 'Alice'})-[r:KNOWS]->()
 DELETE r
 ```
 
+## UNWIND (List Expansion)
+
+Expand a list into individual rows. Useful for batch operations.
+
+```cypher
+-- Unwind a literal list
+UNWIND [1, 2, 3] AS x
+RETURN x
+
+-- Unwind with parameters (Python: db.execute_cypher(query, {'names': ['Alice', 'Bob']}))
+UNWIND $names AS name
+RETURN name
+
+-- Batch create relationships from a parameter list
+UNWIND $edges AS e
+MATCH (a:Person {name: e.from}), (b:Person {name: e.to})
+CREATE (a)-[:KNOWS]->(b)
+```
+
 ## Merge (Upsert)
 
 ```cypher

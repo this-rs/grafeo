@@ -629,45 +629,6 @@ impl GraphQLTranslator {
         Ok((plan, return_items))
     }
 
-    #[allow(dead_code)]
-    fn translate_nested_field(
-        &self,
-        field: &ast::Field,
-        input: LogicalOperator,
-        from_var: &str,
-    ) -> Result<(LogicalOperator, String)> {
-        let to_var = self.next_var();
-
-        // The field name is the edge type — preserve original case to match how edges are stored
-        let mut plan = LogicalOperator::Expand(ExpandOp {
-            from_variable: from_var.to_string(),
-            to_variable: to_var.clone(),
-            edge_variable: None,
-            direction: ExpandDirection::Outgoing,
-            edge_type: Some(field.name.clone()),
-            min_hops: 1,
-            max_hops: Some(1),
-            input: Box::new(input),
-            path_alias: None,
-        });
-
-        // Apply argument filters
-        if !field.arguments.is_empty() {
-            let filter = self.translate_arguments(&field.arguments, &to_var)?;
-            plan = LogicalOperator::Filter(FilterOp {
-                predicate: filter,
-                input: Box::new(plan),
-            });
-        }
-
-        // Process nested selections
-        if let Some(selection_set) = &field.selection_set {
-            plan = self.translate_selection_set(selection_set, plan, &to_var)?;
-        }
-
-        Ok((plan, to_var))
-    }
-
     /// Translates filter arguments to a predicate expression.
     /// Supports:
     /// - Direct arguments: `name: "Alice"` → `name = "Alice"`

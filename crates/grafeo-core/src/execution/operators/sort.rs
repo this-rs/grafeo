@@ -7,6 +7,7 @@ use std::cmp::Ordering;
 
 use grafeo_common::types::{LogicalType, Value};
 
+use super::value_utils::compare_values_total;
 use super::{Operator, OperatorError, OperatorResult};
 use crate::execution::DataChunk;
 use crate::execution::chunk::DataChunkBuilder;
@@ -178,24 +179,7 @@ fn compare_values_with_nulls(
             NullOrder::NullsFirst => Ordering::Greater,
             NullOrder::NullsLast => Ordering::Less,
         },
-        (Some(a), Some(b)) => compare_values(a, b),
-    }
-}
-
-/// Compares two values.
-fn compare_values(a: &Value, b: &Value) -> Ordering {
-    match (a, b) {
-        (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
-        (Value::Int64(a), Value::Int64(b)) => a.cmp(b),
-        (Value::Float64(a), Value::Float64(b)) => a.partial_cmp(b).unwrap_or(Ordering::Equal),
-        (Value::String(a), Value::String(b)) => a.cmp(b),
-        (Value::Int64(a), Value::Float64(b)) => {
-            (*a as f64).partial_cmp(b).unwrap_or(Ordering::Equal)
-        }
-        (Value::Float64(a), Value::Int64(b)) => {
-            a.partial_cmp(&(*b as f64)).unwrap_or(Ordering::Equal)
-        }
-        _ => Ordering::Equal,
+        (Some(a), Some(b)) => compare_values_total(a, b),
     }
 }
 

@@ -2,6 +2,7 @@
 
 use crate::execution::chunk::DataChunk;
 use crate::execution::operators::OperatorError;
+use crate::execution::operators::value_utils::compare_values_total;
 use crate::execution::pipeline::{ChunkSizeHint, PushOperator, Sink};
 #[cfg(feature = "spill")]
 use crate::execution::spill::{ExternalSort, SpillManager};
@@ -110,7 +111,7 @@ fn compare_rows(a: &[Value], b: &[Value], keys: &[SortKey]) -> Ordering {
                 NullOrder::First => Ordering::Greater,
                 NullOrder::Last => Ordering::Less,
             },
-            (Some(a), Some(b)) => compare_values(a, b),
+            (Some(a), Some(b)) => compare_values_total(a, b),
             _ => Ordering::Equal,
         };
 
@@ -125,17 +126,6 @@ fn compare_rows(a: &[Value], b: &[Value], keys: &[SortKey]) -> Ordering {
     }
 
     Ordering::Equal
-}
-
-/// Compare two values.
-fn compare_values(a: &Value, b: &Value) -> Ordering {
-    match (a, b) {
-        (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
-        (Value::Int64(a), Value::Int64(b)) => a.cmp(b),
-        (Value::Float64(a), Value::Float64(b)) => a.partial_cmp(b).unwrap_or(Ordering::Equal),
-        (Value::String(a), Value::String(b)) => a.cmp(b),
-        _ => Ordering::Equal,
-    }
 }
 
 impl PushOperator for SortPushOperator {

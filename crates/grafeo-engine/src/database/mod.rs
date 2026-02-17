@@ -1,0 +1,1012 @@
+//! The main database struct and operations.
+//!
+//! Start here with [`GrafeoDB`] - it's your handle to everything.
+//!
+//! Operations are split across focused submodules:
+//! - `query` - Query execution (execute, execute_cypher, etc.)
+//! - `crud` - Node/edge CRUD operations
+//! - `index` - Property, vector, and text index management
+//! - `search` - Vector, text, and hybrid search
+//! - `embed` - Embedding model management
+//! - `persistence` - Save, load, snapshots, iteration
+//! - `admin` - Stats, introspection, diagnostics, CDC
+
+mod admin;
+mod crud;
+#[cfg(feature = "embed")]
+mod embed;
+mod index;
+mod persistence;
+mod query;
+mod search;
+
+use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+
+use parking_lot::RwLock;
+
+#[cfg(feature = "wal")]
+use grafeo_adapters::storage::wal::{
+    DurabilityMode as WalDurabilityMode, WalConfig, WalManager, WalRecord, WalRecovery,
+};
+use grafeo_common::memory::buffer::{BufferManager, BufferManagerConfig};
+use grafeo_common::utils::error::Result;
+use grafeo_core::graph::lpg::LpgStore;
+#[cfg(feature = "rdf")]
+use grafeo_core::graph::rdf::RdfStore;
+
+use crate::config::Config;
+use crate::query::cache::QueryCache;
+use crate::session::Session;
+use crate::transaction::TransactionManager;
+
+/// Your handle to a Grafeo database.
+///
+/// Start here. Create one with [`new_in_memory()`](Self::new_in_memory) for
+/// quick experiments, or [`open()`](Self::open) for persistent storage.
+/// Then grab a [`session()`](Self::session) to start querying.
+///
+/// # Examples
+///
+/// ```
+/// use grafeo_engine::GrafeoDB;
+///
+/// // Quick in-memory database
+/// let db = GrafeoDB::new_in_memory();
+///
+/// // Add some data
+/// db.create_node(&["Person"]);
+///
+/// // Query it
+/// let session = db.session();
+/// let result = session.execute("MATCH (p:Person) RETURN p")?;
+/// # Ok::<(), grafeo_common::utils::error::Error>(())
+/// ```
+pub struct GrafeoDB {
+    /// Database configuration.
+    pub(super) config: Config,
+    /// The underlying graph store.
+    pub(super) store: Arc<LpgStore>,
+    /// RDF triple store (if RDF feature is enabled).
+    #[cfg(feature = "rdf")]
+    pub(super) rdf_store: Arc<RdfStore>,
+    /// Transaction manager.
+    pub(super) tx_manager: Arc<TransactionManager>,
+    /// Unified buffer manager.
+    pub(super) buffer_manager: Arc<BufferManager>,
+    /// Write-ahead log manager (if durability is enabled).
+    #[cfg(feature = "wal")]
+    pub(super) wal: Option<Arc<WalManager>>,
+    /// Query cache for parsed and optimized plans.
+    pub(super) query_cache: Arc<QueryCache>,
+    /// Shared commit counter for auto-GC across sessions.
+    pub(super) commit_counter: Arc<AtomicUsize>,
+    /// Whether the database is open.
+    pub(super) is_open: RwLock<bool>,
+    /// Change data capture log for tracking mutations.
+    #[cfg(feature = "cdc")]
+    pub(super) cdc_log: Arc<crate::cdc::CdcLog>,
+    /// Registered embedding models for text-to-vector conversion.
+    #[cfg(feature = "embed")]
+    pub(super) embedding_models:
+        RwLock<hashbrown::HashMap<String, Arc<dyn crate::embedding::EmbeddingModel>>>,
+}
+
+impl GrafeoDB {
+    /// Creates an in-memory database - fast to create, gone when dropped.
+    ///
+    /// Use this for tests, experiments, or when you don't need persistence.
+    /// For data that survives restarts, use [`open()`](Self::open) instead.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use grafeo_engine::GrafeoDB;
+    ///
+    /// let db = GrafeoDB::new_in_memory();
+    /// let session = db.session();
+    /// session.execute("INSERT (:Person {name: 'Alice'})")?;
+    /// # Ok::<(), grafeo_common::utils::error::Error>(())
+    /// ```
+    #[must_use]
+    pub fn new_in_memory() -> Self {
+        Self::with_config(Config::in_memory()).expect("In-memory database creation should not fail")
+    }
+
+    /// Opens a database at the given path, creating it if it doesn't exist.
+    ///
+    /// If you've used this path before, Grafeo recovers your data from the
+    /// write-ahead log automatically. First open on a new path creates an
+    /// empty database.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the path isn't writable or recovery fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use grafeo_engine::GrafeoDB;
+    ///
+    /// let db = GrafeoDB::open("./my_social_network")?;
+    /// # Ok::<(), grafeo_common::utils::error::Error>(())
+    /// ```
+    #[cfg(feature = "wal")]
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        Self::with_config(Config::persistent(path.as_ref()))
+    }
+
+    /// Creates a database with custom configuration.
+    ///
+    /// Use this when you need fine-grained control over memory limits,
+    /// thread counts, or persistence settings. For most cases,
+    /// [`new_in_memory()`](Self::new_in_memory) or [`open()`](Self::open)
+    /// are simpler.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database can't be created or recovery fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use grafeo_engine::{GrafeoDB, Config};
+    ///
+    /// // In-memory with a 512MB limit
+    /// let config = Config::in_memory()
+    ///     .with_memory_limit(512 * 1024 * 1024);
+    ///
+    /// let db = GrafeoDB::with_config(config)?;
+    /// # Ok::<(), grafeo_common::utils::error::Error>(())
+    /// ```
+    pub fn with_config(config: Config) -> Result<Self> {
+        // Validate configuration before proceeding
+        config
+            .validate()
+            .map_err(|e| grafeo_common::utils::error::Error::Internal(e.to_string()))?;
+
+        let store = Arc::new(LpgStore::new());
+        #[cfg(feature = "rdf")]
+        let rdf_store = Arc::new(RdfStore::new());
+        let tx_manager = Arc::new(TransactionManager::new());
+
+        // Create buffer manager with configured limits
+        let buffer_config = BufferManagerConfig {
+            budget: config.memory_limit.unwrap_or_else(|| {
+                (BufferManagerConfig::detect_system_memory() as f64 * 0.75) as usize
+            }),
+            spill_path: config
+                .spill_path
+                .clone()
+                .or_else(|| config.path.as_ref().map(|p| p.join("spill"))),
+            ..BufferManagerConfig::default()
+        };
+        let buffer_manager = BufferManager::new(buffer_config);
+
+        // Initialize WAL if persistence is enabled
+        #[cfg(feature = "wal")]
+        let wal = if config.wal_enabled {
+            if let Some(ref db_path) = config.path {
+                // Create database directory if it doesn't exist
+                std::fs::create_dir_all(db_path)?;
+
+                let wal_path = db_path.join("wal");
+
+                // Check if WAL exists and recover if needed
+                if wal_path.exists() {
+                    let recovery = WalRecovery::new(&wal_path);
+                    let records = recovery.recover()?;
+                    Self::apply_wal_records(&store, &records)?;
+                }
+
+                // Open/create WAL manager with configured durability
+                let wal_durability = match config.wal_durability {
+                    crate::config::DurabilityMode::Sync => WalDurabilityMode::Sync,
+                    crate::config::DurabilityMode::Batch {
+                        max_delay_ms,
+                        max_records,
+                    } => WalDurabilityMode::Batch {
+                        max_delay_ms,
+                        max_records,
+                    },
+                    crate::config::DurabilityMode::Adaptive { target_interval_ms } => {
+                        WalDurabilityMode::Adaptive { target_interval_ms }
+                    }
+                    crate::config::DurabilityMode::NoSync => WalDurabilityMode::NoSync,
+                };
+                let wal_config = WalConfig {
+                    durability: wal_durability,
+                    ..WalConfig::default()
+                };
+                let wal_manager = WalManager::with_config(&wal_path, wal_config)?;
+                Some(Arc::new(wal_manager))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Create query cache with default capacity (1000 queries)
+        let query_cache = Arc::new(QueryCache::default());
+
+        Ok(Self {
+            config,
+            store,
+            #[cfg(feature = "rdf")]
+            rdf_store,
+            tx_manager,
+            buffer_manager,
+            #[cfg(feature = "wal")]
+            wal,
+            query_cache,
+            commit_counter: Arc::new(AtomicUsize::new(0)),
+            is_open: RwLock::new(true),
+            #[cfg(feature = "cdc")]
+            cdc_log: Arc::new(crate::cdc::CdcLog::new()),
+            #[cfg(feature = "embed")]
+            embedding_models: RwLock::new(hashbrown::HashMap::new()),
+        })
+    }
+
+    /// Applies WAL records to restore the database state.
+    #[cfg(feature = "wal")]
+    fn apply_wal_records(store: &LpgStore, records: &[WalRecord]) -> Result<()> {
+        for record in records {
+            match record {
+                WalRecord::CreateNode { id, labels } => {
+                    let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+                    store.create_node_with_id(*id, &label_refs);
+                }
+                WalRecord::DeleteNode { id } => {
+                    store.delete_node(*id);
+                }
+                WalRecord::CreateEdge {
+                    id,
+                    src,
+                    dst,
+                    edge_type,
+                } => {
+                    store.create_edge_with_id(*id, *src, *dst, edge_type);
+                }
+                WalRecord::DeleteEdge { id } => {
+                    store.delete_edge(*id);
+                }
+                WalRecord::SetNodeProperty { id, key, value } => {
+                    store.set_node_property(*id, key, value.clone());
+                }
+                WalRecord::SetEdgeProperty { id, key, value } => {
+                    store.set_edge_property(*id, key, value.clone());
+                }
+                WalRecord::AddNodeLabel { id, label } => {
+                    store.add_label(*id, label);
+                }
+                WalRecord::RemoveNodeLabel { id, label } => {
+                    store.remove_label(*id, label);
+                }
+                WalRecord::TxCommit { .. }
+                | WalRecord::TxAbort { .. }
+                | WalRecord::Checkpoint { .. } => {
+                    // Transaction control records don't need replay action
+                    // (recovery already filtered to only committed transactions)
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // =========================================================================
+    // Session & Configuration
+    // =========================================================================
+
+    /// Opens a new session for running queries.
+    ///
+    /// Sessions are cheap to create - spin up as many as you need. Each
+    /// gets its own transaction context, so concurrent sessions won't
+    /// block each other on reads.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use grafeo_engine::GrafeoDB;
+    ///
+    /// let db = GrafeoDB::new_in_memory();
+    /// let session = db.session();
+    ///
+    /// // Run queries through the session
+    /// let result = session.execute("MATCH (n) RETURN count(n)")?;
+    /// # Ok::<(), grafeo_common::utils::error::Error>(())
+    /// ```
+    #[must_use]
+    pub fn session(&self) -> Session {
+        #[cfg(feature = "rdf")]
+        let mut session = Session::with_rdf_store_and_adaptive(
+            Arc::clone(&self.store),
+            Arc::clone(&self.rdf_store),
+            Arc::clone(&self.tx_manager),
+            Arc::clone(&self.query_cache),
+            self.config.adaptive.clone(),
+            self.config.factorized_execution,
+            self.config.graph_model,
+            self.config.query_timeout,
+            Arc::clone(&self.commit_counter),
+            self.config.gc_interval,
+        );
+        #[cfg(not(feature = "rdf"))]
+        let mut session = Session::with_adaptive(
+            Arc::clone(&self.store),
+            Arc::clone(&self.tx_manager),
+            Arc::clone(&self.query_cache),
+            self.config.adaptive.clone(),
+            self.config.factorized_execution,
+            self.config.graph_model,
+            self.config.query_timeout,
+            Arc::clone(&self.commit_counter),
+            self.config.gc_interval,
+        );
+
+        #[cfg(feature = "cdc")]
+        session.set_cdc_log(Arc::clone(&self.cdc_log));
+
+        // Suppress unused_mut when cdc is disabled
+        let _ = &mut session;
+
+        session
+    }
+
+    /// Returns the adaptive execution configuration.
+    #[must_use]
+    pub fn adaptive_config(&self) -> &crate::config::AdaptiveConfig {
+        &self.config.adaptive
+    }
+
+    /// Returns the configuration.
+    #[must_use]
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
+    /// Returns the graph data model of this database.
+    #[must_use]
+    pub fn graph_model(&self) -> crate::config::GraphModel {
+        self.config.graph_model
+    }
+
+    /// Returns the configured memory limit in bytes, if any.
+    #[must_use]
+    pub fn memory_limit(&self) -> Option<usize> {
+        self.config.memory_limit
+    }
+
+    /// Returns the underlying store.
+    ///
+    /// This provides direct access to the LPG store for algorithm implementations.
+    #[must_use]
+    pub fn store(&self) -> &Arc<LpgStore> {
+        &self.store
+    }
+
+    /// Garbage collects old MVCC versions that are no longer visible.
+    ///
+    /// Determines the minimum epoch required by active transactions and prunes
+    /// version chains older than that threshold. Also cleans up completed
+    /// transaction metadata in the transaction manager.
+    pub fn gc(&self) {
+        let min_epoch = self.tx_manager.min_active_epoch();
+        self.store.gc_versions(min_epoch);
+        self.tx_manager.gc();
+    }
+
+    /// Returns the buffer manager for memory-aware operations.
+    #[must_use]
+    pub fn buffer_manager(&self) -> &Arc<BufferManager> {
+        &self.buffer_manager
+    }
+
+    /// Returns the query cache.
+    #[must_use]
+    pub fn query_cache(&self) -> &Arc<QueryCache> {
+        &self.query_cache
+    }
+
+    // =========================================================================
+    // Lifecycle
+    // =========================================================================
+
+    /// Closes the database, flushing all pending writes.
+    ///
+    /// For persistent databases, this ensures everything is safely on disk.
+    /// Called automatically when the database is dropped, but you can call
+    /// it explicitly if you need to guarantee durability at a specific point.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the WAL can't be flushed (check disk space/permissions).
+    pub fn close(&self) -> Result<()> {
+        let mut is_open = self.is_open.write();
+        if !*is_open {
+            return Ok(());
+        }
+
+        // Commit and checkpoint WAL
+        #[cfg(feature = "wal")]
+        if let Some(ref wal) = self.wal {
+            let epoch = self.store.current_epoch();
+
+            // Use the last assigned transaction ID, or create a checkpoint-only tx
+            let checkpoint_tx = self.tx_manager.last_assigned_tx_id().unwrap_or_else(|| {
+                // No transactions have been started; begin one for checkpoint
+                self.tx_manager.begin()
+            });
+
+            // Log a TxCommit to mark all pending records as committed
+            wal.log(&WalRecord::TxCommit {
+                tx_id: checkpoint_tx,
+            })?;
+
+            // Then checkpoint
+            wal.checkpoint(checkpoint_tx, epoch)?;
+            wal.sync()?;
+        }
+
+        *is_open = false;
+        Ok(())
+    }
+
+    /// Returns the WAL manager if available.
+    #[cfg(feature = "wal")]
+    #[must_use]
+    pub fn wal(&self) -> Option<&Arc<WalManager>> {
+        self.wal.as_ref()
+    }
+
+    /// Logs a WAL record if WAL is enabled.
+    #[cfg(feature = "wal")]
+    pub(super) fn log_wal(&self, record: &WalRecord) -> Result<()> {
+        if let Some(ref wal) = self.wal {
+            wal.log(record)?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for GrafeoDB {
+    fn drop(&mut self) {
+        if let Err(e) = self.close() {
+            tracing::error!("Error closing database: {}", e);
+        }
+    }
+}
+
+impl crate::admin::AdminService for GrafeoDB {
+    fn info(&self) -> crate::admin::DatabaseInfo {
+        self.info()
+    }
+
+    fn detailed_stats(&self) -> crate::admin::DatabaseStats {
+        self.detailed_stats()
+    }
+
+    fn schema(&self) -> crate::admin::SchemaInfo {
+        self.schema()
+    }
+
+    fn validate(&self) -> crate::admin::ValidationResult {
+        self.validate()
+    }
+
+    fn wal_status(&self) -> crate::admin::WalStatus {
+        self.wal_status()
+    }
+
+    fn wal_checkpoint(&self) -> Result<()> {
+        self.wal_checkpoint()
+    }
+}
+
+// =========================================================================
+// Query Result Types
+// =========================================================================
+
+/// The result of running a query.
+///
+/// Contains rows and columns, like a table. Use [`iter()`](Self::iter) to
+/// loop through rows, or [`scalar()`](Self::scalar) if you expect a single value.
+///
+/// # Examples
+///
+/// ```
+/// use grafeo_engine::GrafeoDB;
+///
+/// let db = GrafeoDB::new_in_memory();
+/// db.create_node(&["Person"]);
+///
+/// let result = db.execute("MATCH (p:Person) RETURN count(p) AS total")?;
+///
+/// // Check what we got
+/// println!("Columns: {:?}", result.columns);
+/// println!("Rows: {}", result.row_count());
+///
+/// // Iterate through results
+/// for row in result.iter() {
+///     println!("{:?}", row);
+/// }
+/// # Ok::<(), grafeo_common::utils::error::Error>(())
+/// ```
+#[derive(Debug)]
+pub struct QueryResult {
+    /// Column names from the RETURN clause.
+    pub columns: Vec<String>,
+    /// Column types - useful for distinguishing NodeId/EdgeId from plain integers.
+    pub column_types: Vec<grafeo_common::types::LogicalType>,
+    /// The actual result rows.
+    pub rows: Vec<Vec<grafeo_common::types::Value>>,
+    /// Query execution time in milliseconds (if timing was enabled).
+    pub execution_time_ms: Option<f64>,
+    /// Number of rows scanned during query execution (estimate).
+    pub rows_scanned: Option<u64>,
+}
+
+impl QueryResult {
+    /// Creates a new empty query result.
+    #[must_use]
+    pub fn new(columns: Vec<String>) -> Self {
+        let len = columns.len();
+        Self {
+            columns,
+            column_types: vec![grafeo_common::types::LogicalType::Any; len],
+            rows: Vec::new(),
+            execution_time_ms: None,
+            rows_scanned: None,
+        }
+    }
+
+    /// Creates a new empty query result with column types.
+    #[must_use]
+    pub fn with_types(
+        columns: Vec<String>,
+        column_types: Vec<grafeo_common::types::LogicalType>,
+    ) -> Self {
+        Self {
+            columns,
+            column_types,
+            rows: Vec::new(),
+            execution_time_ms: None,
+            rows_scanned: None,
+        }
+    }
+
+    /// Sets the execution metrics on this result.
+    pub fn with_metrics(mut self, execution_time_ms: f64, rows_scanned: u64) -> Self {
+        self.execution_time_ms = Some(execution_time_ms);
+        self.rows_scanned = Some(rows_scanned);
+        self
+    }
+
+    /// Returns the execution time in milliseconds, if available.
+    #[must_use]
+    pub fn execution_time_ms(&self) -> Option<f64> {
+        self.execution_time_ms
+    }
+
+    /// Returns the number of rows scanned, if available.
+    #[must_use]
+    pub fn rows_scanned(&self) -> Option<u64> {
+        self.rows_scanned
+    }
+
+    /// Returns the number of rows.
+    #[must_use]
+    pub fn row_count(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// Returns the number of columns.
+    #[must_use]
+    pub fn column_count(&self) -> usize {
+        self.columns.len()
+    }
+
+    /// Returns true if the result is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    /// Extracts a single value from the result.
+    ///
+    /// Use this when your query returns exactly one row with one column,
+    /// like `RETURN count(n)` or `RETURN sum(p.amount)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the result has multiple rows or columns.
+    pub fn scalar<T: FromValue>(&self) -> Result<T> {
+        if self.rows.len() != 1 || self.columns.len() != 1 {
+            return Err(grafeo_common::utils::error::Error::InvalidValue(
+                "Expected single value".to_string(),
+            ));
+        }
+        T::from_value(&self.rows[0][0])
+    }
+
+    /// Returns an iterator over the rows.
+    pub fn iter(&self) -> impl Iterator<Item = &Vec<grafeo_common::types::Value>> {
+        self.rows.iter()
+    }
+}
+
+/// Converts a [`grafeo_common::types::Value`] to a concrete Rust type.
+///
+/// Implemented for common types like `i64`, `f64`, `String`, and `bool`.
+/// Used by [`QueryResult::scalar()`] to extract typed values.
+pub trait FromValue: Sized {
+    /// Attempts the conversion, returning an error on type mismatch.
+    fn from_value(value: &grafeo_common::types::Value) -> Result<Self>;
+}
+
+impl FromValue for i64 {
+    fn from_value(value: &grafeo_common::types::Value) -> Result<Self> {
+        value
+            .as_int64()
+            .ok_or_else(|| grafeo_common::utils::error::Error::TypeMismatch {
+                expected: "INT64".to_string(),
+                found: value.type_name().to_string(),
+            })
+    }
+}
+
+impl FromValue for f64 {
+    fn from_value(value: &grafeo_common::types::Value) -> Result<Self> {
+        value
+            .as_float64()
+            .ok_or_else(|| grafeo_common::utils::error::Error::TypeMismatch {
+                expected: "FLOAT64".to_string(),
+                found: value.type_name().to_string(),
+            })
+    }
+}
+
+impl FromValue for String {
+    fn from_value(value: &grafeo_common::types::Value) -> Result<Self> {
+        value.as_str().map(String::from).ok_or_else(|| {
+            grafeo_common::utils::error::Error::TypeMismatch {
+                expected: "STRING".to_string(),
+                found: value.type_name().to_string(),
+            }
+        })
+    }
+}
+
+impl FromValue for bool {
+    fn from_value(value: &grafeo_common::types::Value) -> Result<Self> {
+        value
+            .as_bool()
+            .ok_or_else(|| grafeo_common::utils::error::Error::TypeMismatch {
+                expected: "BOOL".to_string(),
+                found: value.type_name().to_string(),
+            })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create_in_memory_database() {
+        let db = GrafeoDB::new_in_memory();
+        assert_eq!(db.node_count(), 0);
+        assert_eq!(db.edge_count(), 0);
+    }
+
+    #[test]
+    fn test_database_config() {
+        let config = Config::in_memory().with_threads(4).with_query_logging();
+
+        let db = GrafeoDB::with_config(config).unwrap();
+        assert_eq!(db.config().threads, 4);
+        assert!(db.config().query_logging);
+    }
+
+    #[test]
+    fn test_database_session() {
+        let db = GrafeoDB::new_in_memory();
+        let _session = db.session();
+        // Session should be created successfully
+    }
+
+    #[cfg(feature = "wal")]
+    #[test]
+    fn test_persistent_database_recovery() {
+        use grafeo_common::types::Value;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test_db");
+
+        // Create database and add some data
+        {
+            let db = GrafeoDB::open(&db_path).unwrap();
+
+            let alice = db.create_node(&["Person"]);
+            db.set_node_property(alice, "name", Value::from("Alice"));
+
+            let bob = db.create_node(&["Person"]);
+            db.set_node_property(bob, "name", Value::from("Bob"));
+
+            let _edge = db.create_edge(alice, bob, "KNOWS");
+
+            // Explicitly close to flush WAL
+            db.close().unwrap();
+        }
+
+        // Reopen and verify data was recovered
+        {
+            let db = GrafeoDB::open(&db_path).unwrap();
+
+            assert_eq!(db.node_count(), 2);
+            assert_eq!(db.edge_count(), 1);
+
+            // Verify nodes exist
+            let node0 = db.get_node(grafeo_common::types::NodeId::new(0));
+            assert!(node0.is_some());
+
+            let node1 = db.get_node(grafeo_common::types::NodeId::new(1));
+            assert!(node1.is_some());
+        }
+    }
+
+    #[cfg(feature = "wal")]
+    #[test]
+    fn test_wal_logging() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("wal_test_db");
+
+        let db = GrafeoDB::open(&db_path).unwrap();
+
+        // Create some data
+        let node = db.create_node(&["Test"]);
+        db.delete_node(node);
+
+        // WAL should have records
+        if let Some(wal) = db.wal() {
+            assert!(wal.record_count() > 0);
+        }
+
+        db.close().unwrap();
+    }
+
+    #[cfg(feature = "wal")]
+    #[test]
+    fn test_wal_recovery_multiple_sessions() {
+        // Tests that WAL recovery works correctly across multiple open/close cycles
+        use grafeo_common::types::Value;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("multi_session_db");
+
+        // Session 1: Create initial data
+        {
+            let db = GrafeoDB::open(&db_path).unwrap();
+            let alice = db.create_node(&["Person"]);
+            db.set_node_property(alice, "name", Value::from("Alice"));
+            db.close().unwrap();
+        }
+
+        // Session 2: Add more data
+        {
+            let db = GrafeoDB::open(&db_path).unwrap();
+            assert_eq!(db.node_count(), 1); // Previous data recovered
+            let bob = db.create_node(&["Person"]);
+            db.set_node_property(bob, "name", Value::from("Bob"));
+            db.close().unwrap();
+        }
+
+        // Session 3: Verify all data
+        {
+            let db = GrafeoDB::open(&db_path).unwrap();
+            assert_eq!(db.node_count(), 2);
+
+            // Verify properties were recovered correctly
+            let node0 = db.get_node(grafeo_common::types::NodeId::new(0)).unwrap();
+            assert!(node0.labels.iter().any(|l| l.as_str() == "Person"));
+
+            let node1 = db.get_node(grafeo_common::types::NodeId::new(1)).unwrap();
+            assert!(node1.labels.iter().any(|l| l.as_str() == "Person"));
+        }
+    }
+
+    #[cfg(feature = "wal")]
+    #[test]
+    fn test_database_consistency_after_mutations() {
+        // Tests that database remains consistent after a series of create/delete operations
+        use grafeo_common::types::Value;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("consistency_db");
+
+        {
+            let db = GrafeoDB::open(&db_path).unwrap();
+
+            // Create nodes
+            let a = db.create_node(&["Node"]);
+            let b = db.create_node(&["Node"]);
+            let c = db.create_node(&["Node"]);
+
+            // Create edges
+            let e1 = db.create_edge(a, b, "LINKS");
+            let _e2 = db.create_edge(b, c, "LINKS");
+
+            // Delete middle node and its edge
+            db.delete_edge(e1);
+            db.delete_node(b);
+
+            // Set properties on remaining nodes
+            db.set_node_property(a, "value", Value::Int64(1));
+            db.set_node_property(c, "value", Value::Int64(3));
+
+            db.close().unwrap();
+        }
+
+        // Reopen and verify consistency
+        {
+            let db = GrafeoDB::open(&db_path).unwrap();
+
+            // Should have 2 nodes (a and c), b was deleted
+            // Note: node_count includes deleted nodes in some implementations
+            // What matters is that the non-deleted nodes are accessible
+            let node_a = db.get_node(grafeo_common::types::NodeId::new(0));
+            assert!(node_a.is_some());
+
+            let node_c = db.get_node(grafeo_common::types::NodeId::new(2));
+            assert!(node_c.is_some());
+
+            // Middle node should be deleted
+            let node_b = db.get_node(grafeo_common::types::NodeId::new(1));
+            assert!(node_b.is_none());
+        }
+    }
+
+    #[cfg(feature = "wal")]
+    #[test]
+    fn test_close_is_idempotent() {
+        // Calling close() multiple times should not cause errors
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("close_test_db");
+
+        let db = GrafeoDB::open(&db_path).unwrap();
+        db.create_node(&["Test"]);
+
+        // First close should succeed
+        assert!(db.close().is_ok());
+
+        // Second close should also succeed (idempotent)
+        assert!(db.close().is_ok());
+    }
+
+    #[test]
+    fn test_query_result_has_metrics() {
+        // Verifies that query results include execution metrics
+        let db = GrafeoDB::new_in_memory();
+        db.create_node(&["Person"]);
+        db.create_node(&["Person"]);
+
+        #[cfg(feature = "gql")]
+        {
+            let result = db.execute("MATCH (n:Person) RETURN n").unwrap();
+
+            // Metrics should be populated
+            assert!(result.execution_time_ms.is_some());
+            assert!(result.rows_scanned.is_some());
+            assert!(result.execution_time_ms.unwrap() >= 0.0);
+            assert_eq!(result.rows_scanned.unwrap(), 2);
+        }
+    }
+
+    #[test]
+    fn test_empty_query_result_metrics() {
+        // Verifies metrics are correct for queries returning no results
+        let db = GrafeoDB::new_in_memory();
+        db.create_node(&["Person"]);
+
+        #[cfg(feature = "gql")]
+        {
+            // Query that matches nothing
+            let result = db.execute("MATCH (n:NonExistent) RETURN n").unwrap();
+
+            assert!(result.execution_time_ms.is_some());
+            assert!(result.rows_scanned.is_some());
+            assert_eq!(result.rows_scanned.unwrap(), 0);
+        }
+    }
+
+    #[cfg(feature = "cdc")]
+    mod cdc_integration {
+        use super::*;
+
+        #[test]
+        fn test_node_lifecycle_history() {
+            let db = GrafeoDB::new_in_memory();
+
+            // Create
+            let id = db.create_node(&["Person"]);
+            // Update
+            db.set_node_property(id, "name", "Alice".into());
+            db.set_node_property(id, "name", "Bob".into());
+            // Delete
+            db.delete_node(id);
+
+            let history = db.history(id).unwrap();
+            assert_eq!(history.len(), 4); // create + 2 updates + delete
+            assert_eq!(history[0].kind, crate::cdc::ChangeKind::Create);
+            assert_eq!(history[1].kind, crate::cdc::ChangeKind::Update);
+            assert!(history[1].before.is_none()); // first set_node_property has no prior value
+            assert_eq!(history[2].kind, crate::cdc::ChangeKind::Update);
+            assert!(history[2].before.is_some()); // second update has prior "Alice"
+            assert_eq!(history[3].kind, crate::cdc::ChangeKind::Delete);
+        }
+
+        #[test]
+        fn test_edge_lifecycle_history() {
+            let db = GrafeoDB::new_in_memory();
+
+            let alice = db.create_node(&["Person"]);
+            let bob = db.create_node(&["Person"]);
+            let edge = db.create_edge(alice, bob, "KNOWS");
+            db.set_edge_property(edge, "since", 2024i64.into());
+            db.delete_edge(edge);
+
+            let history = db.history(edge).unwrap();
+            assert_eq!(history.len(), 3); // create + update + delete
+            assert_eq!(history[0].kind, crate::cdc::ChangeKind::Create);
+            assert_eq!(history[1].kind, crate::cdc::ChangeKind::Update);
+            assert_eq!(history[2].kind, crate::cdc::ChangeKind::Delete);
+        }
+
+        #[test]
+        fn test_create_node_with_props_cdc() {
+            let db = GrafeoDB::new_in_memory();
+
+            let id = db.create_node_with_props(
+                &["Person"],
+                vec![
+                    ("name", grafeo_common::types::Value::from("Alice")),
+                    ("age", grafeo_common::types::Value::from(30i64)),
+                ],
+            );
+
+            let history = db.history(id).unwrap();
+            assert_eq!(history.len(), 1);
+            assert_eq!(history[0].kind, crate::cdc::ChangeKind::Create);
+            // Props should be captured
+            let after = history[0].after.as_ref().unwrap();
+            assert_eq!(after.len(), 2);
+        }
+
+        #[test]
+        fn test_changes_between() {
+            let db = GrafeoDB::new_in_memory();
+
+            let id1 = db.create_node(&["A"]);
+            let _id2 = db.create_node(&["B"]);
+            db.set_node_property(id1, "x", 1i64.into());
+
+            // All events should be at the same epoch (in-memory, epoch doesn't advance without tx)
+            let changes = db
+                .changes_between(
+                    grafeo_common::types::EpochId(0),
+                    grafeo_common::types::EpochId(u64::MAX),
+                )
+                .unwrap();
+            assert_eq!(changes.len(), 3); // 2 creates + 1 update
+        }
+    }
+}

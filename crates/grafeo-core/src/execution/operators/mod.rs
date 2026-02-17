@@ -40,6 +40,7 @@ pub mod single_row;
 mod sort;
 mod union;
 mod unwind;
+pub mod value_utils;
 mod variable_length_expand;
 mod vector_join;
 

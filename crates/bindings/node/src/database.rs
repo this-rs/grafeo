@@ -11,7 +11,7 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use parking_lot::RwLock;
 
-use grafeo_common::types::{EdgeId, LogicalType, NodeId, Value};
+use grafeo_common::types::{EdgeId, NodeId, Value};
 use grafeo_engine::config::Config;
 use grafeo_engine::database::{GrafeoDB, QueryResult as EngineQueryResult};
 
@@ -1090,75 +1090,69 @@ fn fetch_edge(db: &GrafeoDB, id: EdgeId) -> Result<JsEdge> {
 /// Extract nodes and edges from query results based on column types.
 pub(crate) fn extract_entities(
     result: &EngineQueryResult,
-    db: &GrafeoDB,
+    _db: &GrafeoDB,
 ) -> (Vec<JsNode>, Vec<JsEdge>) {
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
     let mut seen_node_ids = HashSet::new();
     let mut seen_edge_ids = HashSet::new();
 
-    let node_cols: Vec<usize> = result
-        .column_types
-        .iter()
-        .enumerate()
-        .filter_map(|(i, t)| {
-            if *t == LogicalType::Node {
-                Some(i)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let edge_cols: Vec<usize> = result
-        .column_types
-        .iter()
-        .enumerate()
-        .filter_map(|(i, t)| {
-            if *t == LogicalType::Edge {
-                Some(i)
-            } else {
-                None
-            }
-        })
-        .collect();
-
+    // After resolve_entities(), node/edge columns contain Value::Map with metadata.
+    // Scan all values for maps that look like resolved nodes or edges.
     for row in &result.rows {
-        for &col_idx in &node_cols {
-            if let Some(Value::Int64(id)) = row.get(col_idx) {
-                let node_id = NodeId(*id as u64);
-                if seen_node_ids.insert(node_id)
-                    && let Some(node) = db.get_node(node_id)
+        for value in row {
+            if let Value::Map(map) = value {
+                // Check for node: has _id and _labels
+                if let (Some(Value::Int64(id)), Some(Value::List(labels))) =
+                    (map.get(&"_id".into()), map.get(&"_labels".into()))
                 {
-                    let labels: Vec<String> = node.labels.iter().map(|s| s.to_string()).collect();
-                    let properties: HashMap<String, Value> = node
-                        .properties
-                        .into_iter()
-                        .map(|(k, v)| (k.as_str().to_string(), v))
-                        .collect();
-                    nodes.push(JsNode::new(node_id, labels, properties));
+                    let node_id = NodeId(*id as u64);
+                    if seen_node_ids.insert(node_id) {
+                        let label_strings: Vec<String> = labels
+                            .iter()
+                            .filter_map(|v| {
+                                if let Value::String(s) = v {
+                                    Some(s.to_string())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        let properties: HashMap<String, Value> = map
+                            .iter()
+                            .filter(|(k, _)| !k.as_str().starts_with('_'))
+                            .map(|(k, v)| (k.as_str().to_string(), v.clone()))
+                            .collect();
+                        nodes.push(JsNode::new(node_id, label_strings, properties));
+                    }
                 }
-            }
-        }
-
-        for &col_idx in &edge_cols {
-            if let Some(Value::Int64(id)) = row.get(col_idx) {
-                let edge_id = EdgeId(*id as u64);
-                if seen_edge_ids.insert(edge_id)
-                    && let Some(edge) = db.get_edge(edge_id)
-                {
-                    let properties: HashMap<String, Value> = edge
-                        .properties
-                        .into_iter()
-                        .map(|(k, v)| (k.as_str().to_string(), v))
-                        .collect();
-                    edges.push(JsEdge::new(
-                        edge_id,
-                        edge.edge_type.to_string(),
-                        edge.src,
-                        edge.dst,
-                        properties,
-                    ));
+                // Check for edge: has _id, _type, _source, _target
+                else if let (
+                    Some(Value::Int64(id)),
+                    Some(Value::String(edge_type)),
+                    Some(Value::Int64(src)),
+                    Some(Value::Int64(dst)),
+                ) = (
+                    map.get(&"_id".into()),
+                    map.get(&"_type".into()),
+                    map.get(&"_source".into()),
+                    map.get(&"_target".into()),
+                ) {
+                    let edge_id = EdgeId(*id as u64);
+                    if seen_edge_ids.insert(edge_id) {
+                        let properties: HashMap<String, Value> = map
+                            .iter()
+                            .filter(|(k, _)| !k.as_str().starts_with('_'))
+                            .map(|(k, v)| (k.as_str().to_string(), v.clone()))
+                            .collect();
+                        edges.push(JsEdge::new(
+                            edge_id,
+                            edge_type.to_string(),
+                            NodeId(*src as u64),
+                            NodeId(*dst as u64),
+                            properties,
+                        ));
+                    }
                 }
             }
         }

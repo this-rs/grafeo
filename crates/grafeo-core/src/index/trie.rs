@@ -44,11 +44,6 @@ impl TrieNode {
         self.children.get(&key)
     }
 
-    #[allow(dead_code)]
-    fn children_keys(&self) -> impl Iterator<Item = NodeId> + '_ {
-        self.children.keys().copied()
-    }
-
     fn children_sorted(&self) -> Vec<NodeId> {
         let mut keys: Vec<_> = self.children.keys().copied().collect();
         keys.sort();

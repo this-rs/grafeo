@@ -109,6 +109,12 @@ pub enum TokenKind {
     Ends,
     /// CONTAINS keyword.
     Contains,
+    /// FOR keyword (GQL standard list iteration).
+    For,
+    /// ORDINALITY keyword (FOR ... WITH ORDINALITY, 1-based index).
+    Ordinality,
+    /// OFFSET keyword (FOR ... WITH OFFSET, 0-based index).
+    Offset,
     /// VECTOR keyword (for vector index and type).
     Vector,
     /// INDEX keyword (for CREATE INDEX).
@@ -362,7 +368,7 @@ impl<'a> Lexer<'a> {
                 } else {
                     self.column += 1;
                 }
-                self.position += 1;
+                self.position += ch.len_utf8();
             } else {
                 break;
             }
@@ -374,11 +380,10 @@ impl<'a> Lexer<'a> {
     }
 
     fn peek_char(&self) -> char {
-        if self.position + 1 < self.input.len() {
-            self.input[self.position + 1..]
-                .chars()
-                .next()
-                .unwrap_or('\0')
+        let ch = self.current_char();
+        let next_pos = self.position + ch.len_utf8();
+        if next_pos < self.input.len() {
+            self.input[next_pos..].chars().next().unwrap_or('\0')
         } else {
             '\0'
         }
@@ -386,7 +391,8 @@ impl<'a> Lexer<'a> {
 
     fn advance(&mut self) {
         if self.position < self.input.len() {
-            self.position += 1;
+            let ch = self.current_char();
+            self.position += ch.len_utf8();
             self.column += 1;
         }
     }
@@ -509,6 +515,9 @@ impl<'a> Lexer<'a> {
         match upper {
             "INSERT" => TokenKind::Insert,
             "TYPE" => TokenKind::Type,
+            "FOR" => TokenKind::For,
+            "ORDINALITY" => TokenKind::Ordinality,
+            "OFFSET" => TokenKind::Offset,
             "VECTOR" => TokenKind::Vector,
             "INDEX" => TokenKind::Index,
             "DIMENSION" => TokenKind::Dimension,
@@ -674,5 +683,80 @@ mod tests {
         assert_eq!(label.text, "`rdf:type`");
 
         assert_eq!(lexer.next_token().kind, TokenKind::RParen);
+    }
+
+    #[test]
+    fn test_multibyte_utf8_in_string() {
+        // Regression: lexer panicked with "byte index is not a char boundary"
+        // on multi-byte UTF-8 chars like ç (2 bytes), ã (2 bytes), é (2 bytes)
+        let mut lexer = Lexer::new("'François'");
+
+        let tok = lexer.next_token();
+        assert_eq!(tok.kind, TokenKind::String);
+        assert_eq!(tok.text, "'François'");
+
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_multibyte_utf8_multi_pattern_create() {
+        // The original bug report: multi-pattern CREATE with UTF-8 names
+        let query = "CREATE (:Person {id: 'p1', name: 'François'}), \
+                     (:Person {id: 'p2', name: 'São Paulo'})";
+        let mut lexer = Lexer::new(query);
+
+        // Should tokenize to completion without panicking
+        loop {
+            let tok = lexer.next_token();
+            if tok.kind == TokenKind::Eof {
+                break;
+            }
+            assert_ne!(
+                tok.kind,
+                TokenKind::Error,
+                "Unexpected error token: {:?}",
+                tok.text
+            );
+        }
+    }
+
+    #[test]
+    fn test_multibyte_utf8_various_scripts() {
+        // Test with CJK, emoji, and accented characters
+        let query = "'日本語' '한국어' '中文' 'café' 'naïve'";
+        let mut lexer = Lexer::new(query);
+
+        for expected in ["'日本語'", "'한국어'", "'中文'", "'café'", "'naïve'"] {
+            let tok = lexer.next_token();
+            assert_eq!(tok.kind, TokenKind::String, "Failed on {expected}");
+            assert_eq!(tok.text, expected);
+        }
+
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_ordinality_and_offset_tokens() {
+        let mut lexer = Lexer::new("FOR x IN list WITH ORDINALITY i");
+
+        assert_eq!(lexer.next_token().kind, TokenKind::For);
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // x
+        assert_eq!(lexer.next_token().kind, TokenKind::In);
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // list
+        assert_eq!(lexer.next_token().kind, TokenKind::With);
+        assert_eq!(lexer.next_token().kind, TokenKind::Ordinality);
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // i
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
+
+        let mut lexer = Lexer::new("FOR x IN list WITH OFFSET idx");
+
+        assert_eq!(lexer.next_token().kind, TokenKind::For);
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // x
+        assert_eq!(lexer.next_token().kind, TokenKind::In);
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // list
+        assert_eq!(lexer.next_token().kind, TokenKind::With);
+        assert_eq!(lexer.next_token().kind, TokenKind::Offset);
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // idx
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
     }
 }

@@ -30,7 +30,6 @@ pub struct Session {
     store: Arc<LpgStore>,
     /// RDF triple store (if RDF feature is enabled).
     #[cfg(feature = "rdf")]
-    #[allow(dead_code)]
     rdf_store: Arc<RdfStore>,
     /// Transaction manager.
     tx_manager: Arc<TransactionManager>,
@@ -350,7 +349,8 @@ impl Session {
         // Execute the plan
         let executor = Executor::with_columns(physical_plan.columns.clone())
             .with_deadline(self.query_deadline());
-        executor.execute(physical_plan.operator.as_mut())
+        let result = executor.execute(physical_plan.operator.as_mut())?;
+        Ok(result)
     }
 
     /// Executes a Gremlin query.
@@ -409,7 +409,8 @@ impl Session {
         // Execute the plan
         let executor = Executor::with_columns(physical_plan.columns.clone())
             .with_deadline(self.query_deadline());
-        executor.execute(physical_plan.operator.as_mut())
+        let result = executor.execute(physical_plan.operator.as_mut())?;
+        Ok(result)
     }
 
     /// Executes a Gremlin query with parameters.
@@ -498,7 +499,8 @@ impl Session {
         // Execute the plan
         let executor = Executor::with_columns(physical_plan.columns.clone())
             .with_deadline(self.query_deadline());
-        executor.execute(physical_plan.operator.as_mut())
+        let result = executor.execute(physical_plan.operator.as_mut())?;
+        Ok(result)
     }
 
     /// Executes a GraphQL query with parameters.
@@ -618,7 +620,8 @@ impl Session {
         // Execute the plan
         let executor = Executor::with_columns(physical_plan.columns.clone())
             .with_deadline(self.query_deadline());
-        executor.execute(physical_plan.operator.as_mut())
+        let result = executor.execute(physical_plan.operator.as_mut())?;
+        Ok(result)
     }
 
     /// Executes a SQL/PGQ query with parameters.

@@ -124,7 +124,7 @@ impl CompressedAdjacencyChunk {
     }
 
     /// Returns true if this chunk is empty.
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn is_empty(&self) -> bool {
         self.count == 0
     }
@@ -140,7 +140,6 @@ impl CompressedAdjacencyChunk {
     }
 
     /// Returns the approximate memory size in bytes.
-    #[allow(dead_code)]
     fn memory_size(&self) -> usize {
         // DeltaBitPacked: 8 bytes base + packed deltas
         // BitPackedInts: packed data
@@ -150,7 +149,7 @@ impl CompressedAdjacencyChunk {
     }
 
     /// Returns the compression ratio compared to uncompressed storage.
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn compression_ratio(&self) -> f64 {
         if self.count == 0 {
             return 1.0;
@@ -300,19 +299,17 @@ impl AdjacencyList {
     }
 
     /// Returns the number of entries in hot storage.
-    #[allow(dead_code)]
     fn hot_count(&self) -> usize {
         self.hot_chunks.iter().map(|c| c.len()).sum::<usize>() + self.delta_inserts.len()
     }
 
     /// Returns the number of entries in cold storage.
-    #[allow(dead_code)]
     fn cold_count(&self) -> usize {
         self.cold_chunks.iter().map(|c| c.len()).sum()
     }
 
     /// Returns the approximate memory size in bytes.
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn memory_size(&self) -> usize {
         // Hot chunks: full uncompressed size
         let hot_size = self.hot_chunks.iter().map(|c| c.len() * 16).sum::<usize>();
@@ -331,24 +328,6 @@ impl AdjacencyList {
         let deleted_size = self.deleted.len() * 16;
 
         hot_size + cold_size + delta_size + deleted_size
-    }
-
-    /// Returns the compression ratio for cold storage.
-    #[allow(dead_code)]
-    fn cold_compression_ratio(&self) -> f64 {
-        let total_cold_entries: usize = self.cold_chunks.iter().map(|c| c.len()).sum();
-        if total_cold_entries == 0 {
-            return 1.0;
-        }
-
-        let uncompressed_size = total_cold_entries * 16;
-        let compressed_size: usize = self.cold_chunks.iter().map(|c| c.memory_size()).sum();
-
-        if compressed_size == 0 {
-            return f64::INFINITY;
-        }
-
-        uncompressed_size as f64 / compressed_size as f64
     }
 }
 

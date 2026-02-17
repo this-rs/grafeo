@@ -571,43 +571,7 @@ impl AggregateState {
     }
 }
 
-/// Convert a value to f64 for numeric aggregations.
-/// Supports RDF values stored as strings by attempting numeric parsing.
-fn value_to_f64(value: &Value) -> Option<f64> {
-    match value {
-        Value::Int64(i) => Some(*i as f64),
-        Value::Float64(f) => Some(*f),
-        // RDF stores numeric literals as strings - try to parse them
-        Value::String(s) => s.parse::<f64>().ok(),
-        _ => None,
-    }
-}
-
-/// Compare two values.
-/// Supports RDF values stored as strings by attempting numeric parsing.
-fn compare_values(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
-    match (a, b) {
-        (Value::Int64(a), Value::Int64(b)) => Some(a.cmp(b)),
-        (Value::Float64(a), Value::Float64(b)) => a.partial_cmp(b),
-        (Value::String(a), Value::String(b)) => {
-            // Try numeric comparison first if both look like numbers
-            if let (Ok(a_num), Ok(b_num)) = (a.parse::<f64>(), b.parse::<f64>()) {
-                a_num.partial_cmp(&b_num)
-            } else {
-                Some(a.cmp(b))
-            }
-        }
-        (Value::Bool(a), Value::Bool(b)) => Some(a.cmp(b)),
-        (Value::Int64(a), Value::Float64(b)) => (*a as f64).partial_cmp(b),
-        (Value::Float64(a), Value::Int64(b)) => a.partial_cmp(&(*b as f64)),
-        // String-to-numeric comparisons for RDF
-        (Value::String(s), Value::Int64(i)) => s.parse::<f64>().ok()?.partial_cmp(&(*i as f64)),
-        (Value::String(s), Value::Float64(f)) => s.parse::<f64>().ok()?.partial_cmp(f),
-        (Value::Int64(i), Value::String(s)) => (*i as f64).partial_cmp(&s.parse::<f64>().ok()?),
-        (Value::Float64(f), Value::String(s)) => f.partial_cmp(&s.parse::<f64>().ok()?),
-        _ => None,
-    }
-}
+use super::value_utils::{compare_values, value_to_f64};
 
 /// A group key for hash-based aggregation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

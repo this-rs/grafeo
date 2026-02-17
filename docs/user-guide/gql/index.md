@@ -22,6 +22,8 @@ GQL uses pattern matching to query and manipulate graph data. The syntax is very
 | Create | `INSERT (:Label {prop: value})` |
 | Update | `SET n.property = value` |
 | Delete | `DELETE n` |
+| Unwind list | `UNWIND [1, 2, 3] AS x` |
+| For loop | `FOR x IN $items` |
 | Call procedure | `CALL grafeo.pagerank() YIELD score` |
 
 ## Learn More

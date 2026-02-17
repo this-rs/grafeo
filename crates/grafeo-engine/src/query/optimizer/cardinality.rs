@@ -1058,43 +1058,6 @@ impl CardinalityEstimator {
     fn get_column_stats(&self, label: &str, column: &str) -> Option<&ColumnStats> {
         self.table_stats.get(label)?.columns.get(column)
     }
-
-    /// Estimates equality selectivity using column statistics.
-    #[allow(dead_code)]
-    fn estimate_equality_with_stats(&self, label: &str, column: &str) -> f64 {
-        if let Some(stats) = self.get_column_stats(label, column)
-            && stats.distinct_count > 0
-        {
-            return 1.0 / stats.distinct_count as f64;
-        }
-        self.selectivity_config.equality
-    }
-
-    /// Estimates range selectivity using column statistics.
-    #[allow(dead_code)]
-    fn estimate_range_with_stats(
-        &self,
-        label: &str,
-        column: &str,
-        lower: Option<f64>,
-        upper: Option<f64>,
-    ) -> f64 {
-        if let Some(stats) = self.get_column_stats(label, column)
-            && let (Some(min), Some(max)) = (stats.min_value, stats.max_value)
-        {
-            let range = max - min;
-            if range <= 0.0 {
-                return 1.0;
-            }
-
-            let effective_lower = lower.unwrap_or(min).max(min);
-            let effective_upper = upper.unwrap_or(max).min(max);
-
-            let overlap = (effective_upper - effective_lower).max(0.0);
-            return (overlap / range).min(1.0).max(0.0);
-        }
-        self.selectivity_config.range
-    }
 }
 
 impl Default for CardinalityEstimator {

@@ -40,6 +40,49 @@ impl std::fmt::Debug for OnnxEmbeddingModel {
 }
 
 impl OnnxEmbeddingModel {
+    /// Loads a pre-configured embedding model, downloading from HuggingFace Hub if needed.
+    ///
+    /// For preset models, the ONNX model and tokenizer are automatically downloaded
+    /// on first use and cached locally. See [`EmbeddingModelConfig`](super::EmbeddingModelConfig)
+    /// for available presets.
+    #[cfg(feature = "embed")]
+    pub fn from_config(config: super::EmbeddingModelConfig) -> Result<Self> {
+        Self::from_config_with_options(config, super::EmbeddingOptions::default())
+    }
+
+    /// Loads a pre-configured embedding model with custom options.
+    ///
+    /// See [`EmbeddingOptions`](super::EmbeddingOptions) for batch size and thread configuration.
+    #[cfg(feature = "embed")]
+    pub fn from_config_with_options(
+        config: super::EmbeddingModelConfig,
+        options: super::EmbeddingOptions,
+    ) -> Result<Self> {
+        let resolved = super::download::resolve(&config)?;
+
+        let mut session = Session::builder()
+            .map_err(|e| Error::Internal(format!("Failed to create ONNX session builder: {e}")))?
+            .with_inter_threads(options.inter_threads)
+            .map_err(|e| Error::Internal(format!("Failed to set inter threads: {e}")))?
+            .with_intra_threads(options.intra_threads)
+            .map_err(|e| Error::Internal(format!("Failed to set intra threads: {e}")))?
+            .commit_from_file(&resolved.model_path)
+            .map_err(|e| Error::Internal(format!("Failed to load ONNX model: {e}")))?;
+
+        let tokenizer = Tokenizer::from_file(&resolved.tokenizer_path)
+            .map_err(|e| Error::Internal(format!("Failed to load tokenizer: {e}")))?;
+
+        let dimensions = Self::probe_dimensions(&mut session, &tokenizer)?;
+
+        Ok(Self {
+            session: Mutex::new(session),
+            tokenizer,
+            dimensions,
+            name: resolved.name,
+            batch_size: options.batch_size,
+        })
+    }
+
     /// Loads an embedding model from local ONNX model and tokenizer files.
     ///
     /// # Arguments

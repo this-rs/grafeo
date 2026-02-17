@@ -67,12 +67,6 @@ impl Operator for UnionOperator {
     }
 }
 
-/// Union all operator that includes duplicates.
-///
-/// This is the same as UnionOperator - kept for semantic clarity.
-#[allow(dead_code)]
-pub type UnionAllOperator = UnionOperator;
-
 #[cfg(test)]
 mod tests {
     use super::*;

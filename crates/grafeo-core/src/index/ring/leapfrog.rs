@@ -200,9 +200,6 @@ pub struct LeapfrogRing<'a> {
     ring: &'a TripleRing,
     /// Patterns to join.
     patterns: Vec<TriplePattern>,
-    /// Current bindings for variables (for future full leapfrog implementation).
-    #[allow(dead_code)]
-    bindings: Vec<Option<Term>>,
     /// Whether the join is exhausted.
     exhausted: bool,
 }
@@ -214,7 +211,6 @@ impl<'a> LeapfrogRing<'a> {
         Self {
             ring,
             patterns,
-            bindings: Vec::new(),
             exhausted,
         }
     }

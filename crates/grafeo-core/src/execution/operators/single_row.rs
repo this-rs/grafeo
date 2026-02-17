@@ -63,17 +63,13 @@ impl Operator for SingleRowOperator {
 /// This is used when zone map pre-filtering determines that a filter
 /// predicate cannot possibly match any data, allowing the entire scan
 /// to be skipped.
-pub struct EmptyOperator {
-    /// The schema of the empty result (kept for debugging/explain output).
-    #[allow(dead_code)]
-    schema: Vec<LogicalType>,
-}
+pub struct EmptyOperator;
 
 impl EmptyOperator {
-    /// Creates a new empty operator with the given schema.
+    /// Creates a new empty operator.
     #[must_use]
-    pub fn new(schema: Vec<LogicalType>) -> Self {
-        Self { schema }
+    pub fn new(_schema: Vec<LogicalType>) -> Self {
+        Self
     }
 }
 

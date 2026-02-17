@@ -273,16 +273,6 @@ pub struct NodeValueResultBuilder {
 }
 
 impl NodeValueResultBuilder {
-    /// Creates a new builder with the given value column name.
-    #[allow(dead_code)]
-    pub fn new(value_column_name: impl Into<String>) -> Self {
-        Self {
-            node_ids: Vec::new(),
-            values: Vec::new(),
-            value_column_name: value_column_name.into(),
-        }
-    }
-
     /// Creates a new builder with pre-allocated capacity.
     pub fn with_capacity(value_column_name: impl Into<String>, capacity: usize) -> Self {
         Self {

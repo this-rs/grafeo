@@ -300,13 +300,14 @@ impl OptionalEpochId {
     /// Creates an `OptionalEpochId` from an epoch.
     ///
     /// # Panics
-    /// Debug-panics if epoch exceeds u32::MAX - 1.
+    /// Panics if epoch exceeds u32::MAX - 1 (4,294,967,294).
     #[must_use]
     pub fn some(epoch: EpochId) -> Self {
-        debug_assert!(
+        assert!(
             epoch.as_u64() < u64::from(u32::MAX),
-            "epoch {} exceeds OptionalEpochId capacity",
-            epoch.as_u64()
+            "epoch {} exceeds OptionalEpochId capacity (max {})",
+            epoch.as_u64(),
+            u32::MAX as u64 - 1
         );
         Self(epoch.as_u64() as u32)
     }

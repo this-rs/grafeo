@@ -100,9 +100,6 @@ impl std::ops::AddAssign for Cost {
 pub struct CostModel {
     /// Cost per tuple processed by CPU.
     cpu_tuple_cost: f64,
-    /// Cost per I/O page read.
-    #[allow(dead_code)]
-    io_page_cost: f64,
     /// Cost per hash table lookup.
     hash_lookup_cost: f64,
     /// Cost per comparison in sorting.
@@ -119,7 +116,6 @@ impl CostModel {
     pub fn new() -> Self {
         Self {
             cpu_tuple_cost: 0.01,
-            io_page_cost: 1.0,
             hash_lookup_cost: 0.02,
             sort_comparison_cost: 0.02,
             avg_tuple_size: 100.0,

@@ -22,15 +22,11 @@ pub fn translate(query: &str) -> Result<LogicalPlan> {
 }
 
 /// Cypher AST to logical plan translator.
-struct CypherTranslator {
-    /// Variable counter for generating unique variable names.
-    #[allow(dead_code)]
-    var_counter: u32,
-}
+struct CypherTranslator;
 
 impl CypherTranslator {
     fn new() -> Self {
-        Self { var_counter: 0 }
+        Self
     }
 
     fn translate_statement(&self, stmt: &ast::Statement) -> Result<LogicalPlan> {
@@ -428,15 +424,6 @@ impl CypherTranslator {
         Ok(plan)
     }
 
-    #[allow(dead_code)]
-    fn translate_relationship_pattern(
-        &self,
-        rel: &ast::RelationshipPattern,
-        input: LogicalOperator,
-    ) -> Result<LogicalOperator> {
-        self.translate_relationship_pattern_with_alias(rel, input, None)
-    }
-
     fn translate_relationship_pattern_with_alias(
         &self,
         rel: &ast::RelationshipPattern,
@@ -570,6 +557,8 @@ impl CypherTranslator {
         Ok(LogicalOperator::Unwind(UnwindOp {
             expression,
             variable: unwind_clause.variable.clone(),
+            ordinality_var: None,
+            offset_var: None,
             input: Box::new(input),
         }))
     }
@@ -643,24 +632,6 @@ impl CypherTranslator {
             on_match,
             input: Box::new(input),
         }))
-    }
-
-    /// Extracts properties from a map expression.
-    #[allow(dead_code)]
-    fn extract_map_properties(
-        &self,
-        expr: &ast::Expression,
-    ) -> Result<Vec<(String, LogicalExpression)>> {
-        match expr {
-            ast::Expression::Map(pairs) => pairs
-                .iter()
-                .map(|(k, v)| Ok((k.clone(), self.translate_expression(v)?)))
-                .collect(),
-            _ => Err(Error::Query(QueryError::new(
-                QueryErrorKind::Semantic,
-                "Expected map expression for properties",
-            ))),
-        }
     }
 
     /// Extracts properties from a SET clause.

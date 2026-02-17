@@ -462,3 +462,193 @@ func TestDatabaseInfo(t *testing.T) {
 		t.Error("expected non-empty version in info")
 	}
 }
+
+// --- Execute with parameters ---
+
+func TestExecuteWithParams(t *testing.T) {
+	db, err := OpenInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	db.CreateNode([]string{"Person"}, map[string]any{"name": "Alice", "age": 30})
+	db.CreateNode([]string{"Person"}, map[string]any{"name": "Bob", "age": 25})
+
+	result, err := db.ExecuteWithParams(
+		"MATCH (n:Person) WHERE n.name = $name RETURN n.age",
+		`{"name":"Alice"}`,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Rows) != 1 {
+		t.Errorf("expected 1 row, got %d", len(result.Rows))
+	}
+}
+
+// --- Cypher execution ---
+
+func TestExecuteCypher(t *testing.T) {
+	db, err := OpenInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// Create data via GQL
+	db.CreateNode([]string{"Person"}, map[string]any{"name": "Alice"})
+
+	result, err := db.ExecuteCypher("MATCH (p:Person) RETURN p.name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Rows) != 1 {
+		t.Errorf("expected 1 row, got %d", len(result.Rows))
+	}
+}
+
+// --- Edge property remove ---
+
+func TestRemoveEdgeProperty(t *testing.T) {
+	db, err := OpenInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	a, _ := db.CreateNode([]string{"N"}, nil)
+	b, _ := db.CreateNode([]string{"N"}, nil)
+	edge, _ := db.CreateEdge(a.ID, b.ID, "R", map[string]any{"weight": 1.5})
+
+	removed, err := db.RemoveEdgeProperty(edge.ID, "weight")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !removed {
+		t.Error("expected property to be removed")
+	}
+
+	// Second remove returns false
+	removed2, _ := db.RemoveEdgeProperty(edge.ID, "weight")
+	if removed2 {
+		t.Error("expected false for already-removed property")
+	}
+}
+
+// --- Get nonexistent node ---
+
+func TestGetNonexistentNode(t *testing.T) {
+	db, err := OpenInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	_, err = db.GetNode(999)
+	if err == nil {
+		t.Error("expected error for nonexistent node")
+	}
+}
+
+// --- Query result metadata ---
+
+func TestQueryResultMetadata(t *testing.T) {
+	db, err := OpenInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	db.CreateNode([]string{"Person"}, map[string]any{"name": "Alice"})
+	db.CreateNode([]string{"Person"}, map[string]any{"name": "Bob"})
+
+	result, err := db.Execute("MATCH (n:Person) RETURN n.name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Columns) < 1 {
+		t.Error("expected at least 1 column")
+	}
+	if len(result.Rows) != 2 {
+		t.Errorf("expected 2 rows, got %d", len(result.Rows))
+	}
+	if result.ExecutionTimeMs < 0 {
+		t.Error("expected non-negative execution time")
+	}
+}
+
+// --- Vector drop and rebuild ---
+
+func TestVectorDropAndRebuild(t *testing.T) {
+	db, err := OpenInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	db.BatchCreateNodes("Doc", "emb", [][]float32{
+		{1.0, 0.0, 0.0},
+		{0.0, 1.0, 0.0},
+	})
+	db.CreateVectorIndex("Doc", "emb", WithDimensions(3))
+
+	// Search works
+	results, err := db.VectorSearch("Doc", "emb", []float32{1.0, 0.0, 0.0}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Errorf("expected 2 results, got %d", len(results))
+	}
+
+	// Drop index
+	dropped := db.DropVectorIndex("Doc", "emb")
+	if !dropped {
+		t.Error("expected index to be dropped")
+	}
+
+	// Rebuild index
+	if err := db.RebuildVectorIndex("Doc", "emb"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Search works again
+	results2, err := db.VectorSearch("Doc", "emb", []float32{1.0, 0.0, 0.0}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results2) != 2 {
+		t.Errorf("expected 2 results after rebuild, got %d", len(results2))
+	}
+}
+
+// --- Transaction with params ---
+
+func TestTransactionWithParams(t *testing.T) {
+	db, err := OpenInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	db.CreateNode([]string{"Person"}, map[string]any{"name": "Alice"})
+
+	tx, err := db.BeginTransaction()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := tx.ExecuteWithParams(
+		"MATCH (n:Person) WHERE n.name = $name RETURN n.name",
+		`{"name":"Alice"}`,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Rows) != 1 {
+		t.Errorf("expected 1 row, got %d", len(result.Rows))
+	}
+
+	tx.Rollback()
+}

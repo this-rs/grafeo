@@ -2,6 +2,7 @@
 
 use crate::execution::chunk::DataChunk;
 use crate::execution::operators::OperatorError;
+use crate::execution::operators::value_utils::compare_values;
 use crate::execution::pipeline::{ChunkSizeHint, PushOperator, Sink};
 use crate::execution::selection::SelectionVector;
 use grafeo_common::types::Value;
@@ -72,17 +73,6 @@ impl FilterPredicate for ColumnPredicate {
                 )
             }
         }
-    }
-}
-
-/// Helper to compare two values.
-fn compare_values(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
-    match (a, b) {
-        (Value::Int64(a), Value::Int64(b)) => Some(a.cmp(b)),
-        (Value::Float64(a), Value::Float64(b)) => a.partial_cmp(b),
-        (Value::String(a), Value::String(b)) => Some(a.cmp(b)),
-        (Value::Bool(a), Value::Bool(b)) => Some(a.cmp(b)),
-        _ => None,
     }
 }
 

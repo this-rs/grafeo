@@ -148,104 +148,152 @@ impl GqlTranslator {
     }
 
     fn translate_query(&self, query: &ast::QueryStatement) -> Result<LogicalPlan> {
-        // Start with the pattern scan (MATCH clauses)
         let mut plan = LogicalOperator::Empty;
+        let mut where_applied = false;
 
-        for match_clause in &query.match_clauses {
-            let match_plan = self.translate_match(match_clause)?;
-            if matches!(plan, LogicalOperator::Empty) {
-                plan = match_plan;
-            } else if match_clause.optional {
-                // OPTIONAL MATCH uses LEFT JOIN semantics
-                plan = LogicalOperator::LeftJoin(LeftJoinOp {
-                    left: Box::new(plan),
-                    right: Box::new(match_plan),
-                    condition: None,
+        // Process clauses in source order for correct variable scoping.
+        // When ordered_clauses is populated, use it; otherwise fall back to
+        // the legacy field-based ordering (for backward compatibility).
+        if !query.ordered_clauses.is_empty() {
+            for clause in &query.ordered_clauses {
+                // Apply WHERE filter before the first mutation clause so that
+                // MATCH ... WHERE ... CREATE/DELETE operates on filtered rows.
+                if !where_applied
+                    && matches!(
+                        clause,
+                        ast::QueryClause::Create(_)
+                            | ast::QueryClause::Delete(_)
+                            | ast::QueryClause::Set(_)
+                            | ast::QueryClause::Merge(_)
+                    )
+                {
+                    if let Some(where_clause) = &query.where_clause {
+                        let predicate = self.translate_expression(&where_clause.expression)?;
+                        plan = LogicalOperator::Filter(FilterOp {
+                            predicate,
+                            input: Box::new(plan),
+                        });
+                    }
+                    where_applied = true;
+                }
+
+                match clause {
+                    ast::QueryClause::Match(match_clause) => {
+                        if matches!(plan, LogicalOperator::Empty) {
+                            // No prior input — standard MATCH
+                            plan = self.translate_match(match_clause)?;
+                        } else if match_clause.optional {
+                            // OPTIONAL MATCH: left join (prior vars on left, match on right)
+                            let match_plan = self.translate_match(match_clause)?;
+                            plan = LogicalOperator::LeftJoin(LeftJoinOp {
+                                left: Box::new(plan),
+                                right: Box::new(match_plan),
+                                condition: None,
+                            });
+                        } else {
+                            // Non-optional MATCH after prior clauses (UNWIND, etc.)
+                            // Pass current plan as input so the MATCH's NodeScan creates
+                            // a nested loop join, keeping prior variables (like UNWIND
+                            // variables) in scope for property filters.
+                            let input = std::mem::replace(&mut plan, LogicalOperator::Empty);
+                            plan = self.translate_match_with_input(match_clause, Some(input))?;
+                        }
+                    }
+                    ast::QueryClause::Unwind(unwind_clause) => {
+                        let expression = self.translate_expression(&unwind_clause.expression)?;
+                        plan = LogicalOperator::Unwind(UnwindOp {
+                            expression,
+                            variable: unwind_clause.alias.clone(),
+                            ordinality_var: None,
+                            offset_var: None,
+                            input: Box::new(plan),
+                        });
+                    }
+                    ast::QueryClause::For(unwind_clause) => {
+                        let expression = self.translate_expression(&unwind_clause.expression)?;
+                        plan = LogicalOperator::Unwind(UnwindOp {
+                            expression,
+                            variable: unwind_clause.alias.clone(),
+                            ordinality_var: unwind_clause.ordinality_var.clone(),
+                            offset_var: unwind_clause.offset_var.clone(),
+                            input: Box::new(plan),
+                        });
+                    }
+                    ast::QueryClause::Create(create_clause) => {
+                        plan = self.translate_create_patterns(&create_clause.patterns, plan)?;
+                    }
+                    ast::QueryClause::Delete(delete_clause) => {
+                        for variable in &delete_clause.variables {
+                            plan = LogicalOperator::DeleteNode(DeleteNodeOp {
+                                variable: variable.clone(),
+                                detach: delete_clause.detach,
+                                input: Box::new(plan),
+                            });
+                        }
+                    }
+                    ast::QueryClause::Set(set_clause) => {
+                        for assignment in &set_clause.assignments {
+                            let value = self.translate_expression(&assignment.value)?;
+                            plan = LogicalOperator::SetProperty(SetPropertyOp {
+                                variable: assignment.variable.clone(),
+                                properties: vec![(assignment.property.clone(), value)],
+                                replace: false,
+                                input: Box::new(plan),
+                            });
+                        }
+                        for label_op in &set_clause.label_operations {
+                            plan = LogicalOperator::AddLabel(AddLabelOp {
+                                variable: label_op.variable.clone(),
+                                labels: label_op.labels.clone(),
+                                input: Box::new(plan),
+                            });
+                        }
+                    }
+                    ast::QueryClause::Merge(merge_clause) => {
+                        plan = self.translate_merge(merge_clause, plan)?;
+                    }
+                }
+            }
+        } else {
+            // Legacy path: process MATCH, then UNWIND, then MERGE separately
+            for match_clause in &query.match_clauses {
+                let match_plan = self.translate_match(match_clause)?;
+                if matches!(plan, LogicalOperator::Empty) {
+                    plan = match_plan;
+                } else if match_clause.optional {
+                    plan = LogicalOperator::LeftJoin(LeftJoinOp {
+                        left: Box::new(plan),
+                        right: Box::new(match_plan),
+                        condition: None,
+                    });
+                } else {
+                    plan = LogicalOperator::Join(JoinOp {
+                        left: Box::new(plan),
+                        right: Box::new(match_plan),
+                        join_type: JoinType::Cross,
+                        conditions: vec![],
+                    });
+                }
+            }
+
+            for unwind_clause in &query.unwind_clauses {
+                let expression = self.translate_expression(&unwind_clause.expression)?;
+                plan = LogicalOperator::Unwind(UnwindOp {
+                    expression,
+                    variable: unwind_clause.alias.clone(),
+                    ordinality_var: unwind_clause.ordinality_var.clone(),
+                    offset_var: unwind_clause.offset_var.clone(),
+                    input: Box::new(plan),
                 });
-            } else {
-                // Regular MATCH - combine with cross join (implicit join on shared variables)
-                plan = LogicalOperator::Join(JoinOp {
-                    left: Box::new(plan),
-                    right: Box::new(match_plan),
-                    join_type: JoinType::Cross,
-                    conditions: vec![],
-                });
+            }
+
+            for merge_clause in &query.merge_clauses {
+                plan = self.translate_merge(merge_clause, plan)?;
             }
         }
 
-        // Handle UNWIND clauses
-        for unwind_clause in &query.unwind_clauses {
-            let expression = self.translate_expression(&unwind_clause.expression)?;
-            plan = LogicalOperator::Unwind(UnwindOp {
-                expression,
-                variable: unwind_clause.alias.clone(),
-                input: Box::new(plan),
-            });
-        }
-
-        // Handle MERGE clauses
-        for merge_clause in &query.merge_clauses {
-            // Extract the pattern - we only support simple node patterns for now
-            let (variable, labels, match_properties) = match &merge_clause.pattern {
-                ast::Pattern::Node(node) => {
-                    let var = node
-                        .variable
-                        .clone()
-                        .unwrap_or_else(|| format!("_anon_{}", rand_id()));
-                    let labels = node.labels.clone();
-                    let props: Vec<(String, LogicalExpression)> = node
-                        .properties
-                        .iter()
-                        .map(|(k, v)| Ok((k.clone(), self.translate_expression(v)?)))
-                        .collect::<Result<_>>()?;
-                    (var, labels, props)
-                }
-                ast::Pattern::Path(_) => {
-                    return Err(Error::Query(QueryError::new(
-                        QueryErrorKind::Semantic,
-                        "MERGE with path patterns is not yet supported",
-                    )));
-                }
-            };
-
-            // Translate ON CREATE properties
-            let on_create: Vec<(String, LogicalExpression)> = merge_clause
-                .on_create
-                .as_ref()
-                .map(|assignments| {
-                    assignments
-                        .iter()
-                        .map(|a| Ok((a.property.clone(), self.translate_expression(&a.value)?)))
-                        .collect::<Result<Vec<_>>>()
-                })
-                .transpose()?
-                .unwrap_or_default();
-
-            // Translate ON MATCH properties
-            let on_match: Vec<(String, LogicalExpression)> = merge_clause
-                .on_match
-                .as_ref()
-                .map(|assignments| {
-                    assignments
-                        .iter()
-                        .map(|a| Ok((a.property.clone(), self.translate_expression(&a.value)?)))
-                        .collect::<Result<Vec<_>>>()
-                })
-                .transpose()?
-                .unwrap_or_default();
-
-            plan = LogicalOperator::Merge(MergeOp {
-                variable,
-                labels,
-                match_properties,
-                on_create,
-                on_match,
-                input: Box::new(plan),
-            });
-        }
-
-        // Apply WHERE filter
-        if let Some(where_clause) = &query.where_clause {
+        // Apply WHERE filter (skip if already applied before a mutation clause)
+        if !where_applied && let Some(where_clause) = &query.where_clause {
             let predicate = self.translate_expression(&where_clause.expression)?;
             plan = LogicalOperator::Filter(FilterOp {
                 predicate,
@@ -253,31 +301,45 @@ impl GqlTranslator {
             });
         }
 
-        // Handle SET clauses
-        for set_clause in &query.set_clauses {
-            // Handle property assignments
-            for assignment in &set_clause.assignments {
-                let value = self.translate_expression(&assignment.value)?;
-                plan = LogicalOperator::SetProperty(SetPropertyOp {
-                    variable: assignment.variable.clone(),
-                    properties: vec![(assignment.property.clone(), value)],
-                    replace: false,
-                    input: Box::new(plan),
-                });
+        // Legacy path: handle SET/REMOVE/CREATE/DELETE from individual fields.
+        // When ordered_clauses is used, these are already processed above.
+        if query.ordered_clauses.is_empty() {
+            for set_clause in &query.set_clauses {
+                for assignment in &set_clause.assignments {
+                    let value = self.translate_expression(&assignment.value)?;
+                    plan = LogicalOperator::SetProperty(SetPropertyOp {
+                        variable: assignment.variable.clone(),
+                        properties: vec![(assignment.property.clone(), value)],
+                        replace: false,
+                        input: Box::new(plan),
+                    });
+                }
+                for label_op in &set_clause.label_operations {
+                    plan = LogicalOperator::AddLabel(AddLabelOp {
+                        variable: label_op.variable.clone(),
+                        labels: label_op.labels.clone(),
+                        input: Box::new(plan),
+                    });
+                }
             }
-            // Handle label operations (SET n:Label)
-            for label_op in &set_clause.label_operations {
-                plan = LogicalOperator::AddLabel(AddLabelOp {
-                    variable: label_op.variable.clone(),
-                    labels: label_op.labels.clone(),
-                    input: Box::new(plan),
-                });
+
+            for create_clause in &query.create_clauses {
+                plan = self.translate_create_patterns(&create_clause.patterns, plan)?;
+            }
+
+            for delete_clause in &query.delete_clauses {
+                for variable in &delete_clause.variables {
+                    plan = LogicalOperator::DeleteNode(DeleteNodeOp {
+                        variable: variable.clone(),
+                        detach: delete_clause.detach,
+                        input: Box::new(plan),
+                    });
+                }
             }
         }
 
-        // Handle REMOVE clauses
+        // REMOVE clauses (not yet in ordered_clauses, always process)
         for remove_clause in &query.remove_clauses {
-            // Handle label removal (REMOVE n:Label)
             for label_op in &remove_clause.label_operations {
                 plan = LogicalOperator::RemoveLabel(RemoveLabelOp {
                     variable: label_op.variable.clone(),
@@ -285,28 +347,11 @@ impl GqlTranslator {
                     input: Box::new(plan),
                 });
             }
-            // Handle property removal (REMOVE n.prop) - set to null
             for (variable, property) in &remove_clause.property_removals {
                 plan = LogicalOperator::SetProperty(SetPropertyOp {
                     variable: variable.clone(),
                     properties: vec![(property.clone(), LogicalExpression::Literal(Value::Null))],
                     replace: false,
-                    input: Box::new(plan),
-                });
-            }
-        }
-
-        // Handle CREATE clauses (Cypher-style: MATCH ... CREATE ...)
-        for create_clause in &query.create_clauses {
-            plan = self.translate_create_patterns(&create_clause.patterns, plan)?;
-        }
-
-        // Handle DELETE clauses (Cypher-style: MATCH ... DELETE ...)
-        for delete_clause in &query.delete_clauses {
-            for variable in &delete_clause.variables {
-                plan = LogicalOperator::DeleteNode(DeleteNodeOp {
-                    variable: variable.clone(),
-                    detach: delete_clause.detach,
                     input: Box::new(plan),
                 });
             }
@@ -467,41 +512,18 @@ impl GqlTranslator {
         Ok(LogicalPlan::new(plan))
     }
 
-    /// Builds return items for an aggregate query.
-    #[allow(dead_code)]
-    fn build_aggregate_return_items(&self, items: &[ast::ReturnItem]) -> Result<Vec<ReturnItem>> {
-        let mut return_items = Vec::new();
-        let mut agg_idx = 0;
-
-        for item in items {
-            if contains_aggregate(&item.expression) {
-                // For aggregate expressions, use a variable reference to the aggregate result
-                let alias = item.alias.clone().unwrap_or_else(|| {
-                    if let ast::Expression::FunctionCall { name, .. } = &item.expression {
-                        format!("{}(...)", name.to_lowercase())
-                    } else {
-                        format!("agg_{}", agg_idx)
-                    }
-                });
-                return_items.push(ReturnItem {
-                    expression: LogicalExpression::Variable(format!("__agg_{}", agg_idx)),
-                    alias: Some(alias),
-                });
-                agg_idx += 1;
-            } else {
-                // Non-aggregate expressions are group-by columns
-                return_items.push(ReturnItem {
-                    expression: self.translate_expression(&item.expression)?,
-                    alias: item.alias.clone(),
-                });
-            }
-        }
-
-        Ok(return_items)
-    }
-
-    fn translate_match(&self, match_clause: &ast::MatchClause) -> Result<LogicalOperator> {
-        let mut plan: Option<LogicalOperator> = None;
+    /// Translates a MATCH clause with an optional initial input.
+    ///
+    /// When `initial_input` is provided (e.g. from a preceding UNWIND), the
+    /// first pattern's NodeScan receives it as input. This creates a nested
+    /// loop join that keeps prior variables (like UNWIND variables) in scope
+    /// so that property filters like `{id: x}` can reference them.
+    fn translate_match_with_input(
+        &self,
+        match_clause: &ast::MatchClause,
+        initial_input: Option<LogicalOperator>,
+    ) -> Result<LogicalOperator> {
+        let mut plan: Option<LogicalOperator> = initial_input;
 
         for aliased_pattern in &match_clause.patterns {
             // Handle shortestPath patterns specially
@@ -528,6 +550,10 @@ impl GqlTranslator {
                 "Empty MATCH clause",
             ))
         })
+    }
+
+    fn translate_match(&self, match_clause: &ast::MatchClause) -> Result<LogicalOperator> {
+        self.translate_match_with_input(match_clause, None)
     }
 
     /// Translates a shortestPath pattern into a logical operator.
@@ -599,15 +625,6 @@ impl GqlTranslator {
         }))
     }
 
-    #[allow(dead_code)]
-    fn translate_pattern(
-        &self,
-        pattern: &ast::Pattern,
-        input: Option<LogicalOperator>,
-    ) -> Result<LogicalOperator> {
-        self.translate_pattern_with_alias(pattern, input, None)
-    }
-
     fn translate_pattern_with_alias(
         &self,
         pattern: &ast::Pattern,
@@ -620,6 +637,68 @@ impl GqlTranslator {
                 self.translate_path_pattern_with_alias(path, input, path_alias)
             }
         }
+    }
+
+    /// Translates a MERGE clause into a MergeOp.
+    fn translate_merge(
+        &self,
+        merge_clause: &ast::MergeClause,
+        input: LogicalOperator,
+    ) -> Result<LogicalOperator> {
+        let (variable, labels, match_properties) = match &merge_clause.pattern {
+            ast::Pattern::Node(node) => {
+                let var = node
+                    .variable
+                    .clone()
+                    .unwrap_or_else(|| format!("_anon_{}", rand_id()));
+                let labels = node.labels.clone();
+                let props: Vec<(String, LogicalExpression)> = node
+                    .properties
+                    .iter()
+                    .map(|(k, v)| Ok((k.clone(), self.translate_expression(v)?)))
+                    .collect::<Result<_>>()?;
+                (var, labels, props)
+            }
+            ast::Pattern::Path(_) => {
+                return Err(Error::Query(QueryError::new(
+                    QueryErrorKind::Semantic,
+                    "MERGE with path patterns is not yet supported",
+                )));
+            }
+        };
+
+        let on_create: Vec<(String, LogicalExpression)> = merge_clause
+            .on_create
+            .as_ref()
+            .map(|assignments| {
+                assignments
+                    .iter()
+                    .map(|a| Ok((a.property.clone(), self.translate_expression(&a.value)?)))
+                    .collect::<Result<Vec<_>>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
+
+        let on_match: Vec<(String, LogicalExpression)> = merge_clause
+            .on_match
+            .as_ref()
+            .map(|assignments| {
+                assignments
+                    .iter()
+                    .map(|a| Ok((a.property.clone(), self.translate_expression(&a.value)?)))
+                    .collect::<Result<Vec<_>>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
+
+        Ok(LogicalOperator::Merge(MergeOp {
+            variable,
+            labels,
+            match_properties,
+            on_create,
+            on_match,
+            input: Box::new(input),
+        }))
     }
 
     /// Translates CREATE patterns to create operators.
@@ -799,15 +878,6 @@ impl GqlTranslator {
         }
 
         Ok(result)
-    }
-
-    #[allow(dead_code)]
-    fn translate_path_pattern(
-        &self,
-        path: &ast::PathPattern,
-        input: Option<LogicalOperator>,
-    ) -> Result<LogicalOperator> {
-        self.translate_path_pattern_with_alias(path, input, None)
     }
 
     fn translate_path_pattern_with_alias(

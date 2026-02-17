@@ -88,6 +88,39 @@ MATCH (p:Person {name: 'Alice'})-[r:KNOWS]->()
 DELETE r
 ```
 
+## UNWIND (List Expansion)
+
+Expand a list into individual rows. Useful for batch operations.
+
+```sql
+-- Unwind a literal list
+UNWIND [1, 2, 3] AS x
+RETURN x
+
+-- Unwind with parameters (Python: db.execute(query, {'names': ['Alice', 'Bob']}))
+UNWIND $names AS name
+RETURN name
+
+-- Batch create edges from a parameter list
+UNWIND $edges AS e
+MATCH (a:Person {name: e.from}), (b:Person {name: e.to})
+INSERT (a)-[:KNOWS]->(b)
+```
+
+## FOR (GQL Standard List Iteration)
+
+The GQL standard equivalent of UNWIND (ISO/IEC 39075 section 14.8).
+
+```sql
+-- Iterate over a list
+FOR x IN [4, 5, 6]
+RETURN x
+
+-- Batch insert nodes
+FOR person IN $people
+INSERT (:Person {name: person.name, age: person.age})
+```
+
 ## Merge (Upsert)
 
 ```sql

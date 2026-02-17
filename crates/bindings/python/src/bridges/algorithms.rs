@@ -13,6 +13,7 @@ use pyo3::types::PyDict;
 
 use grafeo_adapters::plugins::algorithms;
 use grafeo_common::types::NodeId;
+use grafeo_common::types::Value;
 use grafeo_engine::database::GrafeoDB;
 
 use crate::error::PyGrafeoError;
@@ -200,6 +201,69 @@ impl PyAlgorithms {
                 .collect();
             Ok(distances.into_pyobject(py)?.into_any().unbind())
         }
+    }
+
+    /// Single-source shortest paths with string node name support.
+    ///
+    /// LDBC Graphanalytics-compatible API: accepts node names (or numeric IDs
+    /// as strings) and returns distances keyed by node name.
+    ///
+    /// Args:
+    ///     source: Source node name (or numeric ID as string)
+    ///     weight_attr: Optional edge property name for weights (default: 1.0)
+    ///
+    /// Returns:
+    ///     Dict mapping node name (str) to distance (float)
+    #[pyo3(signature = (source, weight_attr=None))]
+    fn sssp(&self, source: &str, weight_attr: Option<&str>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let db = self.db.read();
+        let store = db.store();
+
+        // Resolve source: try integer parse first, then name property lookup
+        let source_id = if let Ok(id) = source.parse::<u64>() {
+            NodeId::new(id)
+        } else {
+            let candidates = store.find_nodes_by_property("name", &Value::from(source));
+            match candidates.len() {
+                0 => {
+                    return Err(PyGrafeoError::InvalidArgument(format!(
+                        "No node found with name '{source}'"
+                    ))
+                    .into());
+                }
+                1 => candidates[0],
+                _ => {
+                    return Err(PyGrafeoError::InvalidArgument(format!(
+                        "Multiple nodes found with name '{source}', use node ID instead"
+                    ))
+                    .into());
+                }
+            }
+        };
+
+        let result = algorithms::dijkstra(store, source_id, weight_attr);
+
+        // Map node IDs to names (falling back to string ID)
+        let distances: HashMap<String, f64> = result
+            .distances
+            .into_iter()
+            .map(|(node, dist)| {
+                let name = store
+                    .get_node(node)
+                    .and_then(|n| n.get_property("name").cloned())
+                    .and_then(|v| {
+                        if let Value::String(s) = v {
+                            Some(s.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_else(|| node.0.to_string());
+                (name, dist)
+            })
+            .collect();
+
+        Ok(distances.into_pyobject(py)?.into_any().unbind())
     }
 
     /// A* shortest path algorithm.

@@ -1,0 +1,321 @@
+//! Admin, introspection, and diagnostic operations for GrafeoDB.
+
+use std::path::Path;
+
+use grafeo_common::utils::error::Result;
+
+impl super::GrafeoDB {
+    // =========================================================================
+    // ADMIN API: Counts
+    // =========================================================================
+
+    /// Returns the number of nodes in the database.
+    #[must_use]
+    pub fn node_count(&self) -> usize {
+        self.store.node_count()
+    }
+
+    /// Returns the number of edges in the database.
+    #[must_use]
+    pub fn edge_count(&self) -> usize {
+        self.store.edge_count()
+    }
+
+    /// Returns the number of distinct labels in the database.
+    #[must_use]
+    pub fn label_count(&self) -> usize {
+        self.store.label_count()
+    }
+
+    /// Returns the number of distinct property keys in the database.
+    #[must_use]
+    pub fn property_key_count(&self) -> usize {
+        self.store.property_key_count()
+    }
+
+    /// Returns the number of distinct edge types in the database.
+    #[must_use]
+    pub fn edge_type_count(&self) -> usize {
+        self.store.edge_type_count()
+    }
+
+    // =========================================================================
+    // ADMIN API: Introspection
+    // =========================================================================
+
+    /// Returns true if this database is backed by a file (persistent).
+    ///
+    /// In-memory databases return false.
+    #[must_use]
+    pub fn is_persistent(&self) -> bool {
+        self.config.path.is_some()
+    }
+
+    /// Returns the database file path, if persistent.
+    ///
+    /// In-memory databases return None.
+    #[must_use]
+    pub fn path(&self) -> Option<&Path> {
+        self.config.path.as_deref()
+    }
+
+    /// Returns high-level database information.
+    ///
+    /// Includes node/edge counts, persistence status, and mode (LPG/RDF).
+    #[must_use]
+    pub fn info(&self) -> crate::admin::DatabaseInfo {
+        crate::admin::DatabaseInfo {
+            mode: crate::admin::DatabaseMode::Lpg,
+            node_count: self.store.node_count(),
+            edge_count: self.store.edge_count(),
+            is_persistent: self.is_persistent(),
+            path: self.config.path.clone(),
+            wal_enabled: self.config.wal_enabled,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        }
+    }
+
+    /// Returns detailed database statistics.
+    ///
+    /// Includes counts, memory usage, and index information.
+    #[must_use]
+    pub fn detailed_stats(&self) -> crate::admin::DatabaseStats {
+        #[cfg(feature = "wal")]
+        let disk_bytes = self.config.path.as_ref().and_then(|p| {
+            if p.exists() {
+                Self::calculate_disk_usage(p).ok()
+            } else {
+                None
+            }
+        });
+        #[cfg(not(feature = "wal"))]
+        let disk_bytes: Option<usize> = None;
+
+        crate::admin::DatabaseStats {
+            node_count: self.store.node_count(),
+            edge_count: self.store.edge_count(),
+            label_count: self.store.label_count(),
+            edge_type_count: self.store.edge_type_count(),
+            property_key_count: self.store.property_key_count(),
+            index_count: 0, // TODO: implement index tracking
+            memory_bytes: self.buffer_manager.allocated(),
+            disk_bytes,
+        }
+    }
+
+    /// Calculates total disk usage for the database directory.
+    #[cfg(feature = "wal")]
+    fn calculate_disk_usage(path: &Path) -> Result<usize> {
+        let mut total = 0usize;
+        if path.is_dir() {
+            for entry in std::fs::read_dir(path)? {
+                let entry = entry?;
+                let metadata = entry.metadata()?;
+                if metadata.is_file() {
+                    total += metadata.len() as usize;
+                } else if metadata.is_dir() {
+                    total += Self::calculate_disk_usage(&entry.path())?;
+                }
+            }
+        }
+        Ok(total)
+    }
+
+    /// Returns schema information (labels, edge types, property keys).
+    ///
+    /// For LPG mode, returns label and edge type information.
+    /// For RDF mode, returns predicate and named graph information.
+    #[must_use]
+    pub fn schema(&self) -> crate::admin::SchemaInfo {
+        let labels = self
+            .store
+            .all_labels()
+            .into_iter()
+            .map(|name| crate::admin::LabelInfo {
+                name: name.clone(),
+                count: self.store.nodes_with_label(&name).count(),
+            })
+            .collect();
+
+        let edge_types = self
+            .store
+            .all_edge_types()
+            .into_iter()
+            .map(|name| crate::admin::EdgeTypeInfo {
+                name: name.clone(),
+                count: self.store.edges_with_type(&name).count(),
+            })
+            .collect();
+
+        let property_keys = self.store.all_property_keys();
+
+        crate::admin::SchemaInfo::Lpg(crate::admin::LpgSchemaInfo {
+            labels,
+            edge_types,
+            property_keys,
+        })
+    }
+
+    /// Returns RDF schema information.
+    ///
+    /// Only available when the RDF feature is enabled.
+    #[cfg(feature = "rdf")]
+    #[must_use]
+    pub fn rdf_schema(&self) -> crate::admin::SchemaInfo {
+        let stats = self.rdf_store.stats();
+
+        let predicates = self
+            .rdf_store
+            .predicates()
+            .into_iter()
+            .map(|predicate| {
+                let count = self.rdf_store.triples_with_predicate(&predicate).len();
+                crate::admin::PredicateInfo {
+                    iri: predicate.to_string(),
+                    count,
+                }
+            })
+            .collect();
+
+        crate::admin::SchemaInfo::Rdf(crate::admin::RdfSchemaInfo {
+            predicates,
+            named_graphs: Vec::new(), // Named graphs not yet implemented in RdfStore
+            subject_count: stats.subject_count,
+            object_count: stats.object_count,
+        })
+    }
+
+    /// Validates database integrity.
+    ///
+    /// Checks for:
+    /// - Dangling edge references (edges pointing to non-existent nodes)
+    /// - Internal index consistency
+    ///
+    /// Returns a list of errors and warnings. Empty errors = valid.
+    #[must_use]
+    pub fn validate(&self) -> crate::admin::ValidationResult {
+        let mut result = crate::admin::ValidationResult::default();
+
+        // Check for dangling edge references
+        for edge in self.store.all_edges() {
+            if self.store.get_node(edge.src).is_none() {
+                result.errors.push(crate::admin::ValidationError {
+                    code: "DANGLING_SRC".to_string(),
+                    message: format!(
+                        "Edge {} references non-existent source node {}",
+                        edge.id.0, edge.src.0
+                    ),
+                    context: Some(format!("edge:{}", edge.id.0)),
+                });
+            }
+            if self.store.get_node(edge.dst).is_none() {
+                result.errors.push(crate::admin::ValidationError {
+                    code: "DANGLING_DST".to_string(),
+                    message: format!(
+                        "Edge {} references non-existent destination node {}",
+                        edge.id.0, edge.dst.0
+                    ),
+                    context: Some(format!("edge:{}", edge.id.0)),
+                });
+            }
+        }
+
+        // Add warnings for potential issues
+        if self.store.node_count() > 0 && self.store.edge_count() == 0 {
+            result.warnings.push(crate::admin::ValidationWarning {
+                code: "NO_EDGES".to_string(),
+                message: "Database has nodes but no edges".to_string(),
+                context: None,
+            });
+        }
+
+        result
+    }
+
+    /// Returns WAL (Write-Ahead Log) status.
+    ///
+    /// Returns None if WAL is not enabled.
+    #[must_use]
+    pub fn wal_status(&self) -> crate::admin::WalStatus {
+        #[cfg(feature = "wal")]
+        if let Some(ref wal) = self.wal {
+            return crate::admin::WalStatus {
+                enabled: true,
+                path: self.config.path.as_ref().map(|p| p.join("wal")),
+                size_bytes: wal.size_bytes(),
+                record_count: wal.record_count() as usize,
+                last_checkpoint: wal.last_checkpoint_timestamp(),
+                current_epoch: self.store.current_epoch().as_u64(),
+            };
+        }
+
+        crate::admin::WalStatus {
+            enabled: false,
+            path: None,
+            size_bytes: 0,
+            record_count: 0,
+            last_checkpoint: None,
+            current_epoch: self.store.current_epoch().as_u64(),
+        }
+    }
+
+    /// Forces a WAL checkpoint.
+    ///
+    /// Flushes all pending WAL records to the main storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the checkpoint fails.
+    pub fn wal_checkpoint(&self) -> Result<()> {
+        #[cfg(feature = "wal")]
+        if let Some(ref wal) = self.wal {
+            let epoch = self.store.current_epoch();
+            let tx_id = self
+                .tx_manager
+                .last_assigned_tx_id()
+                .unwrap_or_else(|| self.tx_manager.begin());
+            wal.checkpoint(tx_id, epoch)?;
+            wal.sync()?;
+        }
+        Ok(())
+    }
+
+    // =========================================================================
+    // ADMIN API: Change Data Capture
+    // =========================================================================
+
+    /// Returns the full change history for an entity (node or edge).
+    ///
+    /// Events are ordered chronologically by epoch.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the CDC feature is not enabled.
+    #[cfg(feature = "cdc")]
+    pub fn history(
+        &self,
+        entity_id: impl Into<crate::cdc::EntityId>,
+    ) -> Result<Vec<crate::cdc::ChangeEvent>> {
+        Ok(self.cdc_log.history(entity_id.into()))
+    }
+
+    /// Returns change events for an entity since the given epoch.
+    #[cfg(feature = "cdc")]
+    pub fn history_since(
+        &self,
+        entity_id: impl Into<crate::cdc::EntityId>,
+        since_epoch: grafeo_common::types::EpochId,
+    ) -> Result<Vec<crate::cdc::ChangeEvent>> {
+        Ok(self.cdc_log.history_since(entity_id.into(), since_epoch))
+    }
+
+    /// Returns all change events across all entities in an epoch range.
+    #[cfg(feature = "cdc")]
+    pub fn changes_between(
+        &self,
+        start_epoch: grafeo_common::types::EpochId,
+        end_epoch: grafeo_common::types::EpochId,
+    ) -> Result<Vec<crate::cdc::ChangeEvent>> {
+        Ok(self.cdc_log.changes_between(start_epoch, end_epoch))
+    }
+}

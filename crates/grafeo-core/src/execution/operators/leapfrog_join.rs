@@ -18,10 +18,6 @@ type RowId = (usize, usize, usize);
 
 /// A multi-way join intersection result.
 struct JoinResult {
-    /// The matched key value (intersection point).
-    /// Kept for debugging and potential future use in result verification.
-    #[allow(dead_code)]
-    key: NodeId,
     /// Row identifiers from each input that participated in this match.
     row_ids: Vec<Vec<RowId>>,
 }
@@ -206,7 +202,6 @@ impl LeapfrogJoinOperator {
             // Only add result if all inputs have matching rows
             if row_ids_per_input.iter().all(|ids| !ids.is_empty()) {
                 self.results.push(JoinResult {
-                    key,
                     row_ids: row_ids_per_input,
                 });
             }

@@ -19,7 +19,6 @@ use crate::execution::chunk_state::{FactorizedSelection, LevelSelection};
 use crate::execution::factorized_chunk::FactorizedChunk;
 use crate::graph::lpg::LpgStore;
 use grafeo_common::types::{PropertyKey, Value};
-use std::collections::HashMap;
 
 /// A predicate that can be evaluated on factorized data at a specific level.
 ///
@@ -450,9 +449,6 @@ pub struct FactorizedFilterOperator {
     input: LazyFactorizedChainOperator,
     /// The predicate to apply.
     predicate: Box<dyn FactorizedPredicate>,
-    /// Variable to column mappings (for complex predicates).
-    #[allow(dead_code)]
-    variable_columns: HashMap<String, (usize, usize)>, // (level, column)
     /// Whether to materialize the selection or keep it lazy.
     materialize: bool,
 }
@@ -466,22 +462,19 @@ impl FactorizedFilterOperator {
         Self {
             input,
             predicate,
-            variable_columns: HashMap::new(),
             materialize: false,
         }
     }
 
-    /// Creates a filter operator with variable mappings.
-    pub fn with_variables(
+    /// Creates a filter operator with materialization enabled.
+    pub fn with_materialize(
         input: LazyFactorizedChainOperator,
         predicate: Box<dyn FactorizedPredicate>,
-        variable_columns: HashMap<String, (usize, usize)>,
     ) -> Self {
         Self {
             input,
             predicate,
-            variable_columns,
-            materialize: false,
+            materialize: true,
         }
     }
 

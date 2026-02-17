@@ -17,6 +17,10 @@ pub struct UnwindOperator {
     variable_name: String,
     /// Schema of output columns (inherited from input plus the new column).
     output_schema: Vec<LogicalType>,
+    /// Whether to emit a 1-based ORDINALITY column.
+    emit_ordinality: bool,
+    /// Whether to emit a 0-based OFFSET column.
+    emit_offset: bool,
     /// Current input chunk being processed.
     current_chunk: Option<DataChunk>,
     /// Current row index within the chunk.
@@ -35,17 +39,23 @@ impl UnwindOperator {
     /// * `list_col_idx` - The column index containing the list to unwind
     /// * `variable_name` - The name of the new variable
     /// * `output_schema` - The schema for output (should include the new column type)
+    /// * `emit_ordinality` - Whether to emit a 1-based index column
+    /// * `emit_offset` - Whether to emit a 0-based index column
     pub fn new(
         child: Box<dyn Operator>,
         list_col_idx: usize,
         variable_name: String,
         output_schema: Vec<LogicalType>,
+        emit_ordinality: bool,
+        emit_offset: bool,
     ) -> Self {
         Self {
             child,
             list_col_idx,
             variable_name,
             output_schema,
+            emit_ordinality,
+            emit_offset,
             current_chunk: None,
             current_row: 0,
             current_list_idx: 0,
@@ -89,10 +99,18 @@ impl UnwindOperator {
             while self.current_row < chunk.row_count() {
                 if let Some(col) = chunk.column(self.list_col_idx)
                     && let Some(value) = col.get_value(self.current_row)
-                    && let Value::List(list_arc) = value
                 {
-                    // Found a list - store it and return first element
-                    let list: Vec<Value> = list_arc.iter().cloned().collect();
+                    // Extract list elements from either Value::List or Value::Vector
+                    let list = match value {
+                        Value::List(list_arc) => list_arc.iter().cloned().collect::<Vec<Value>>(),
+                        Value::Vector(vec_arc) => {
+                            vec_arc.iter().map(|f| Value::Float64(*f as f64)).collect()
+                        }
+                        _ => {
+                            self.current_row += 1;
+                            continue;
+                        }
+                    };
                     if !list.is_empty() {
                         self.current_list = Some(list);
                         return Ok(Some(self.emit_row()?));
@@ -128,10 +146,28 @@ impl UnwindOperator {
             }
         }
 
-        // Add the unwound element as the last column
-        let new_col_idx = self.output_schema.len() - 1;
-        if let Some(out_col) = builder.column_mut(new_col_idx) {
+        // Add the unwound element column.
+        // It's at the end of the output schema, minus any ordinality/offset columns.
+        let extra_cols = usize::from(self.emit_ordinality) + usize::from(self.emit_offset);
+        let element_col_idx = self.output_schema.len() - 1 - extra_cols;
+        if let Some(out_col) = builder.column_mut(element_col_idx) {
             out_col.push_value(element);
+        }
+
+        // Add ORDINALITY (1-based) if requested
+        let mut next_col = element_col_idx + 1;
+        if self.emit_ordinality {
+            if let Some(out_col) = builder.column_mut(next_col) {
+                out_col.push_value(Value::Int64((self.current_list_idx + 1) as i64));
+            }
+            next_col += 1;
+        }
+
+        // Add OFFSET (0-based) if requested
+        if self.emit_offset
+            && let Some(out_col) = builder.column_mut(next_col)
+        {
+            out_col.push_value(Value::Int64(self.current_list_idx as i64));
         }
 
         builder.advance_row();
@@ -219,6 +255,8 @@ mod tests {
             0,
             "x".to_string(),
             vec![LogicalType::Int64], // Output is just the unwound element
+            false,
+            false,
         );
 
         // Should produce 3 rows
@@ -244,8 +282,14 @@ mod tests {
             position: 0,
         };
 
-        let mut unwind =
-            UnwindOperator::new(Box::new(mock), 0, "x".to_string(), vec![LogicalType::Int64]);
+        let mut unwind = UnwindOperator::new(
+            Box::new(mock),
+            0,
+            "x".to_string(),
+            vec![LogicalType::Int64],
+            false,
+            false,
+        );
 
         let mut results = Vec::new();
         while let Ok(Some(chunk)) = unwind.next() {
@@ -263,8 +307,14 @@ mod tests {
             position: 0,
         };
 
-        let mut unwind =
-            UnwindOperator::new(Box::new(mock), 0, "x".to_string(), vec![LogicalType::Int64]);
+        let mut unwind = UnwindOperator::new(
+            Box::new(mock),
+            0,
+            "x".to_string(),
+            vec![LogicalType::Int64],
+            false,
+            false,
+        );
 
         assert!(unwind.next().unwrap().is_none());
     }
@@ -289,8 +339,14 @@ mod tests {
             position: 0,
         };
 
-        let mut unwind =
-            UnwindOperator::new(Box::new(mock), 0, "x".to_string(), vec![LogicalType::Int64]);
+        let mut unwind = UnwindOperator::new(
+            Box::new(mock),
+            0,
+            "x".to_string(),
+            vec![LogicalType::Int64],
+            false,
+            false,
+        );
 
         let mut count = 0;
         while let Ok(Some(_chunk)) = unwind.next() {
@@ -319,6 +375,8 @@ mod tests {
             0,
             "item".to_string(),
             vec![LogicalType::String],
+            false,
+            false,
         );
 
         let mut results = Vec::new();
@@ -341,6 +399,8 @@ mod tests {
             0,
             "my_var".to_string(),
             vec![LogicalType::Any],
+            false,
+            false,
         );
 
         assert_eq!(unwind.variable_name(), "my_var");
@@ -353,9 +413,96 @@ mod tests {
             position: 0,
         };
 
-        let unwind =
-            UnwindOperator::new(Box::new(mock), 0, "x".to_string(), vec![LogicalType::Any]);
+        let unwind = UnwindOperator::new(
+            Box::new(mock),
+            0,
+            "x".to_string(),
+            vec![LogicalType::Any],
+            false,
+            false,
+        );
 
         assert_eq!(unwind.name(), "Unwind");
+    }
+
+    #[test]
+    fn test_unwind_with_ordinality() {
+        // Create a chunk with a list column [10, 20, 30]
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Any]);
+        let list = Value::List(Arc::new([
+            Value::Int64(10),
+            Value::Int64(20),
+            Value::Int64(30),
+        ]));
+        builder.column_mut(0).unwrap().push_value(list);
+        builder.advance_row();
+        let chunk = builder.finish();
+
+        let mock = MockOperator {
+            chunks: vec![chunk],
+            position: 0,
+        };
+
+        // Output schema: [element (Any), ordinality (Int64)]
+        let mut unwind = UnwindOperator::new(
+            Box::new(mock),
+            0,
+            "x".to_string(),
+            vec![LogicalType::Any, LogicalType::Int64],
+            true,  // emit_ordinality
+            false, // emit_offset
+        );
+
+        let mut ordinalities = Vec::new();
+        while let Ok(Some(chunk)) = unwind.next() {
+            if let Some(col) = chunk.column(1)
+                && let Some(Value::Int64(v)) = col.get_value(0)
+            {
+                ordinalities.push(v);
+            }
+        }
+
+        // ORDINALITY is 1-based
+        assert_eq!(ordinalities, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_unwind_with_offset() {
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Any]);
+        let list = Value::List(Arc::new([
+            Value::Int64(10),
+            Value::Int64(20),
+            Value::Int64(30),
+        ]));
+        builder.column_mut(0).unwrap().push_value(list);
+        builder.advance_row();
+        let chunk = builder.finish();
+
+        let mock = MockOperator {
+            chunks: vec![chunk],
+            position: 0,
+        };
+
+        // Output schema: [element (Any), offset (Int64)]
+        let mut unwind = UnwindOperator::new(
+            Box::new(mock),
+            0,
+            "x".to_string(),
+            vec![LogicalType::Any, LogicalType::Int64],
+            false, // emit_ordinality
+            true,  // emit_offset
+        );
+
+        let mut offsets = Vec::new();
+        while let Ok(Some(chunk)) = unwind.next() {
+            if let Some(col) = chunk.column(1)
+                && let Some(Value::Int64(v)) = col.get_value(0)
+            {
+                offsets.push(v);
+            }
+        }
+
+        // OFFSET is 0-based
+        assert_eq!(offsets, vec![0, 1, 2]);
     }
 }

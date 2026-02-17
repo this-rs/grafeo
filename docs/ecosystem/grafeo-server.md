@@ -217,4 +217,4 @@ See the [grafeo-server README](https://github.com/GrafeoDB/grafeo-server#feature
 
 ## License
 
-AGPL-3.0-or-later
+Apache-2.0

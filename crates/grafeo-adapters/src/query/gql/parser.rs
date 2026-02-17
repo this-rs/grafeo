@@ -157,9 +157,11 @@ impl<'a> Parser<'a> {
     /// Parses the input into a statement.
     pub fn parse(&mut self) -> Result<Statement> {
         match self.current.kind {
-            TokenKind::Match | TokenKind::Optional | TokenKind::Unwind | TokenKind::Merge => {
-                self.parse_query().map(Statement::Query)
-            }
+            TokenKind::Match
+            | TokenKind::Optional
+            | TokenKind::Unwind
+            | TokenKind::Merge
+            | TokenKind::For => self.parse_query().map(Statement::Query),
             TokenKind::Insert => self
                 .parse_insert()
                 .map(|s| Statement::DataModification(DataModificationStatement::Insert(s))),
@@ -179,7 +181,10 @@ impl<'a> Parser<'a> {
                 }
             }
             TokenKind::Call => self.parse_call_statement().map(Statement::Call),
-            _ => Err(self.error("Expected MATCH, INSERT, DELETE, MERGE, UNWIND, CREATE, or CALL")),
+            _ => {
+                Err(self
+                    .error("Expected MATCH, INSERT, DELETE, MERGE, UNWIND, FOR, CREATE, or CALL"))
+            }
         }
     }
 
@@ -290,24 +295,52 @@ impl<'a> Parser<'a> {
     fn parse_query(&mut self) -> Result<QueryStatement> {
         let span_start = self.current.span.start;
 
-        // Parse MATCH clauses (including OPTIONAL MATCH)
         let mut match_clauses = Vec::new();
         let mut unwind_clauses = Vec::new();
         let mut merge_clauses = Vec::new();
         let mut create_clauses = Vec::new();
         let mut delete_clauses = Vec::new();
+        let mut ordered_clauses = Vec::new();
 
-        // Parse initial clauses (MATCH, OPTIONAL MATCH, UNWIND, MERGE)
+        // Parse clauses in source order, preserving sequence for variable scoping.
+        // MATCH, OPTIONAL MATCH, UNWIND, FOR, MERGE, CREATE/INSERT, DELETE can appear
+        // in any order before RETURN.
         loop {
             match self.current.kind {
                 TokenKind::Match | TokenKind::Optional => {
-                    match_clauses.push(self.parse_match_clause()?);
+                    let clause = self.parse_match_clause()?;
+                    ordered_clauses.push(QueryClause::Match(clause.clone()));
+                    match_clauses.push(clause);
                 }
                 TokenKind::Unwind => {
-                    unwind_clauses.push(self.parse_unwind_clause()?);
+                    let clause = self.parse_unwind_clause()?;
+                    ordered_clauses.push(QueryClause::Unwind(clause.clone()));
+                    unwind_clauses.push(clause);
+                }
+                TokenKind::For => {
+                    let clause = self.parse_for_clause()?;
+                    ordered_clauses.push(QueryClause::For(clause.clone()));
+                    unwind_clauses.push(clause);
                 }
                 TokenKind::Merge => {
-                    merge_clauses.push(self.parse_merge_clause()?);
+                    let clause = self.parse_merge_clause()?;
+                    ordered_clauses.push(QueryClause::Merge(clause.clone()));
+                    merge_clauses.push(clause);
+                }
+                TokenKind::Create => {
+                    let clause = self.parse_create_clause_in_query()?;
+                    ordered_clauses.push(QueryClause::Create(clause.clone()));
+                    create_clauses.push(clause);
+                }
+                TokenKind::Insert => {
+                    let clause = self.parse_insert()?;
+                    ordered_clauses.push(QueryClause::Create(clause.clone()));
+                    create_clauses.push(clause);
+                }
+                TokenKind::Delete | TokenKind::Detach => {
+                    let clause = self.parse_delete_clause_in_query()?;
+                    ordered_clauses.push(QueryClause::Delete(clause.clone()));
+                    delete_clauses.push(clause);
                 }
                 _ => break,
             }
@@ -320,10 +353,34 @@ impl<'a> Parser<'a> {
             None
         };
 
+        // After WHERE, allow CREATE/INSERT/DELETE/DETACH clauses
+        loop {
+            match self.current.kind {
+                TokenKind::Create => {
+                    let clause = self.parse_create_clause_in_query()?;
+                    ordered_clauses.push(QueryClause::Create(clause.clone()));
+                    create_clauses.push(clause);
+                }
+                TokenKind::Insert => {
+                    let clause = self.parse_insert()?;
+                    ordered_clauses.push(QueryClause::Create(clause.clone()));
+                    create_clauses.push(clause);
+                }
+                TokenKind::Delete | TokenKind::Detach => {
+                    let clause = self.parse_delete_clause_in_query()?;
+                    ordered_clauses.push(QueryClause::Delete(clause.clone()));
+                    delete_clauses.push(clause);
+                }
+                _ => break,
+            }
+        }
+
         // Parse SET clauses
         let mut set_clauses = Vec::new();
         while self.current.kind == TokenKind::Set {
-            set_clauses.push(self.parse_set_clause()?);
+            let clause = self.parse_set_clause()?;
+            ordered_clauses.push(QueryClause::Set(clause.clone()));
+            set_clauses.push(clause);
         }
 
         // Parse REMOVE clauses
@@ -332,32 +389,33 @@ impl<'a> Parser<'a> {
             remove_clauses.push(self.parse_remove_clause()?);
         }
 
-        // Parse CREATE clauses (Cypher-style: MATCH ... CREATE ...)
-        while self.current.kind == TokenKind::Create {
-            create_clauses.push(self.parse_create_clause_in_query()?);
-        }
-
-        // Parse DELETE clauses (Cypher-style: MATCH ... DELETE ...)
-        while self.current.kind == TokenKind::Delete || self.current.kind == TokenKind::Detach {
-            delete_clauses.push(self.parse_delete_clause_in_query()?);
-        }
-
         // Parse WITH clauses
         let mut with_clauses = Vec::new();
         while self.current.kind == TokenKind::With {
             with_clauses.push(self.parse_with_clause()?);
 
-            // After WITH, we can have more MATCH/UNWIND/MERGE clauses
+            // After WITH, we can have more clauses
             loop {
                 match self.current.kind {
                     TokenKind::Match | TokenKind::Optional => {
-                        match_clauses.push(self.parse_match_clause()?);
+                        let clause = self.parse_match_clause()?;
+                        ordered_clauses.push(QueryClause::Match(clause.clone()));
+                        match_clauses.push(clause);
                     }
                     TokenKind::Unwind => {
-                        unwind_clauses.push(self.parse_unwind_clause()?);
+                        let clause = self.parse_unwind_clause()?;
+                        ordered_clauses.push(QueryClause::Unwind(clause.clone()));
+                        unwind_clauses.push(clause);
+                    }
+                    TokenKind::For => {
+                        let clause = self.parse_for_clause()?;
+                        ordered_clauses.push(QueryClause::For(clause.clone()));
+                        unwind_clauses.push(clause);
                     }
                     TokenKind::Merge => {
-                        merge_clauses.push(self.parse_merge_clause()?);
+                        let clause = self.parse_merge_clause()?;
+                        ordered_clauses.push(QueryClause::Merge(clause.clone()));
+                        merge_clauses.push(clause);
                     }
                     _ => break,
                 }
@@ -405,7 +463,62 @@ impl<'a> Parser<'a> {
             delete_clauses,
             return_clause,
             having_clause,
+            ordered_clauses,
             span: Some(SourceSpan::new(span_start, self.current.span.end, 1, 1)),
+        })
+    }
+
+    /// Parses a FOR clause (GQL standard, ISO/IEC 39075 section 14.8).
+    /// `FOR variable IN expression` — desugars to an UnwindClause.
+    fn parse_for_clause(&mut self) -> Result<UnwindClause> {
+        let span_start = self.current.span.start;
+        self.expect(TokenKind::For)?;
+
+        // Parse variable name
+        if !self.is_identifier() {
+            return Err(self.error("Expected variable name after FOR"));
+        }
+        let alias = self.get_identifier_name();
+        self.advance();
+
+        // Expect IN keyword
+        self.expect(TokenKind::In)?;
+
+        // Parse expression (the list to iterate)
+        let expression = self.parse_expression()?;
+
+        // Parse optional WITH ORDINALITY/OFFSET
+        let (ordinality_var, offset_var) = if self.current.kind == TokenKind::With {
+            self.advance(); // consume WITH
+            if self.current.kind == TokenKind::Ordinality {
+                self.advance(); // consume ORDINALITY
+                if !self.is_identifier() {
+                    return Err(self.error("Expected variable name after ORDINALITY"));
+                }
+                let var = self.get_identifier_name();
+                self.advance();
+                (Some(var), None)
+            } else if self.current.kind == TokenKind::Offset {
+                self.advance(); // consume OFFSET
+                if !self.is_identifier() {
+                    return Err(self.error("Expected variable name after OFFSET"));
+                }
+                let var = self.get_identifier_name();
+                self.advance();
+                (None, Some(var))
+            } else {
+                return Err(self.error("Expected ORDINALITY or OFFSET after WITH"));
+            }
+        } else {
+            (None, None)
+        };
+
+        Ok(UnwindClause {
+            expression,
+            alias,
+            ordinality_var,
+            offset_var,
+            span: Some(SourceSpan::new(span_start, self.current.span.start, 1, 1)),
         })
     }
 
@@ -551,6 +664,8 @@ impl<'a> Parser<'a> {
         Ok(UnwindClause {
             expression,
             alias,
+            ordinality_var: None,
+            offset_var: None,
             span: Some(SourceSpan::new(span_start, self.current.span.end, 1, 1)),
         })
     }
@@ -1585,6 +1700,7 @@ impl<'a> Parser<'a> {
                 span: None,
             },
             having_clause: None,
+            ordered_clauses: vec![],
             span: None,
         })
     }
