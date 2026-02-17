@@ -191,6 +191,10 @@ pub struct UnwindClause {
     pub expression: Expression,
     /// The alias for each element.
     pub alias: String,
+    /// Optional variable for 1-based element position (FOR ... WITH ORDINALITY var).
+    pub ordinality_var: Option<String>,
+    /// Optional variable for 0-based element position (FOR ... WITH OFFSET var).
+    pub offset_var: Option<String>,
     /// Source span.
     pub span: Option<SourceSpan>,
 }

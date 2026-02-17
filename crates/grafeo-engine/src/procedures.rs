@@ -12,7 +12,7 @@ use grafeo_adapters::plugins::algorithms::{
     ConnectedComponentsAlgorithm, DegreeCentralityAlgorithm, DfsAlgorithm, DijkstraAlgorithm,
     FloydWarshallAlgorithm, GraphAlgorithm, KCoreAlgorithm, KruskalAlgorithm,
     LabelPropagationAlgorithm, LouvainAlgorithm, MaxFlowAlgorithm, MinCostFlowAlgorithm,
-    PageRankAlgorithm, PrimAlgorithm, StronglyConnectedComponentsAlgorithm,
+    PageRankAlgorithm, PrimAlgorithm, SsspAlgorithm, StronglyConnectedComponentsAlgorithm,
     TopologicalSortAlgorithm,
 };
 use grafeo_adapters::plugins::{AlgorithmResult, ParameterDef, Parameters};
@@ -55,6 +55,7 @@ impl BuiltinProcedures {
 
         // Shortest Path
         register(&mut algorithms, Arc::new(DijkstraAlgorithm));
+        register(&mut algorithms, Arc::new(SsspAlgorithm));
         register(&mut algorithms, Arc::new(BellmanFordAlgorithm));
         register(&mut algorithms, Arc::new(FloydWarshallAlgorithm));
 
@@ -167,7 +168,7 @@ fn output_columns_for(algo: &dyn GraphAlgorithm) -> Vec<String> {
             vec!["node_id".into(), "component_id".into()]
         }
         "topological_sort" => vec!["node_id".into(), "order".into()],
-        "dijkstra" => vec!["node_id".into(), "distance".into()],
+        "dijkstra" | "sssp" => vec!["node_id".into(), "distance".into()],
         "bellman_ford" => vec![
             "node_id".into(),
             "distance".into(),

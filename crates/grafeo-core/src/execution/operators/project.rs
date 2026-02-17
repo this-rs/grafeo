@@ -3,9 +3,9 @@
 use super::filter::{ExpressionPredicate, FilterExpression};
 use super::{Operator, OperatorError, OperatorResult};
 use crate::execution::DataChunk;
-use crate::graph::lpg::LpgStore;
-use grafeo_common::types::{LogicalType, Value};
-use std::collections::HashMap;
+use crate::graph::lpg::{Edge, LpgStore, Node};
+use grafeo_common::types::{LogicalType, PropertyKey, Value};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 /// A projection expression.
@@ -32,6 +32,16 @@ pub enum ProjectExpr {
         expr: FilterExpression,
         /// Variable name to column index mapping.
         variable_columns: HashMap<String, usize>,
+    },
+    /// Resolve a node ID column to a full node map with metadata and properties.
+    NodeResolve {
+        /// The column containing the node ID.
+        column: usize,
+    },
+    /// Resolve an edge ID column to a full edge map with metadata and properties.
+    EdgeResolve {
+        /// The column containing the edge ID.
+        column: usize,
     },
 }
 
@@ -138,8 +148,9 @@ impl Operator for ProjectOperator {
                     })?;
 
                     // Extract property for each row
+                    let prop_key = PropertyKey::new(property);
                     for row in input.selected_indices() {
-                        // Try to get node ID first, then edge ID
+                        // Try node ID, then edge ID, then map value (for UNWIND maps)
                         let value = if let Some(node_id) = input_col.get_node_id(row) {
                             store
                                 .get_node(node_id)
@@ -150,6 +161,8 @@ impl Operator for ProjectOperator {
                                 .get_edge(edge_id)
                                 .and_then(|edge| edge.get_property(property).cloned())
                                 .unwrap_or(Value::Null)
+                        } else if let Some(Value::Map(map)) = input_col.get_value(row) {
+                            map.get(&prop_key).cloned().unwrap_or(Value::Null)
                         } else {
                             Value::Null
                         };
@@ -201,6 +214,50 @@ impl Operator for ProjectOperator {
                         output_col.push_value(value);
                     }
                 }
+                ProjectExpr::NodeResolve { column } => {
+                    let input_col = input
+                        .column(*column)
+                        .ok_or_else(|| OperatorError::ColumnNotFound(format!("Column {column}")))?;
+
+                    let output_col = output.column_mut(i).unwrap();
+
+                    let store = self.store.as_ref().ok_or_else(|| {
+                        OperatorError::Execution("Store required for node resolution".to_string())
+                    })?;
+
+                    for row in input.selected_indices() {
+                        let value = if let Some(node_id) = input_col.get_node_id(row) {
+                            store
+                                .get_node(node_id)
+                                .map_or(Value::Null, |n| node_to_map(&n))
+                        } else {
+                            Value::Null
+                        };
+                        output_col.push_value(value);
+                    }
+                }
+                ProjectExpr::EdgeResolve { column } => {
+                    let input_col = input
+                        .column(*column)
+                        .ok_or_else(|| OperatorError::ColumnNotFound(format!("Column {column}")))?;
+
+                    let output_col = output.column_mut(i).unwrap();
+
+                    let store = self.store.as_ref().ok_or_else(|| {
+                        OperatorError::Execution("Store required for edge resolution".to_string())
+                    })?;
+
+                    for row in input.selected_indices() {
+                        let value = if let Some(edge_id) = input_col.get_edge_id(row) {
+                            store
+                                .get_edge(edge_id)
+                                .map_or(Value::Null, |e| edge_to_map(&e))
+                        } else {
+                            Value::Null
+                        };
+                        output_col.push_value(value);
+                    }
+                }
             }
         }
 
@@ -215,6 +272,56 @@ impl Operator for ProjectOperator {
     fn name(&self) -> &'static str {
         "Project"
     }
+}
+
+/// Converts a [`Node`] to a `Value::Map` with metadata and properties.
+///
+/// The map contains `_id` (integer), `_labels` (list of strings), and
+/// all node properties at the top level.
+fn node_to_map(node: &Node) -> Value {
+    let mut map = BTreeMap::new();
+    map.insert(
+        PropertyKey::new("_id"),
+        Value::Int64(node.id.as_u64() as i64),
+    );
+    let labels: Vec<Value> = node
+        .labels
+        .iter()
+        .map(|l| Value::String(l.clone()))
+        .collect();
+    map.insert(PropertyKey::new("_labels"), Value::List(labels.into()));
+    for (key, value) in &node.properties {
+        map.insert(key.clone(), value.clone());
+    }
+    Value::Map(Arc::new(map))
+}
+
+/// Converts an [`Edge`] to a `Value::Map` with metadata and properties.
+///
+/// The map contains `_id`, `_type`, `_source`, `_target`, and all edge
+/// properties at the top level.
+fn edge_to_map(edge: &Edge) -> Value {
+    let mut map = BTreeMap::new();
+    map.insert(
+        PropertyKey::new("_id"),
+        Value::Int64(edge.id.as_u64() as i64),
+    );
+    map.insert(
+        PropertyKey::new("_type"),
+        Value::String(edge.edge_type.clone()),
+    );
+    map.insert(
+        PropertyKey::new("_source"),
+        Value::Int64(edge.src.as_u64() as i64),
+    );
+    map.insert(
+        PropertyKey::new("_target"),
+        Value::Int64(edge.dst.as_u64() as i64),
+    );
+    for (key, value) in &edge.properties {
+        map.insert(key.clone(), value.clone());
+    }
+    Value::Map(Arc::new(map))
 }
 
 #[cfg(test)]
@@ -422,5 +529,136 @@ mod tests {
         let project =
             ProjectOperator::select_columns(Box::new(mock_scan), vec![0], vec![LogicalType::Int64]);
         assert_eq!(project.name(), "Project");
+    }
+
+    #[test]
+    fn test_project_node_resolve() {
+        // Create a store with a test node
+        let store = LpgStore::new();
+        let node_id = store.create_node(&["Person"]);
+        store.set_node_property(node_id, "name", Value::String("Alice".into()));
+        store.set_node_property(node_id, "age", Value::Int64(30));
+
+        // Create input chunk with a NodeId column
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Node]);
+        builder.column_mut(0).unwrap().push_node_id(node_id);
+        builder.advance_row();
+        let chunk = builder.finish();
+
+        let mock_scan = MockScanOperator {
+            chunks: vec![chunk],
+            position: 0,
+        };
+
+        let mut project = ProjectOperator::with_store(
+            Box::new(mock_scan),
+            vec![ProjectExpr::NodeResolve { column: 0 }],
+            vec![LogicalType::Any],
+            Arc::new(store),
+        );
+
+        let result = project.next().unwrap().unwrap();
+        assert_eq!(result.column_count(), 1);
+
+        let value = result.column(0).unwrap().get_value(0).unwrap();
+        if let Value::Map(map) = value {
+            assert_eq!(
+                map.get(&PropertyKey::new("_id")),
+                Some(&Value::Int64(node_id.as_u64() as i64))
+            );
+            assert!(map.get(&PropertyKey::new("_labels")).is_some());
+            assert_eq!(
+                map.get(&PropertyKey::new("name")),
+                Some(&Value::String("Alice".into()))
+            );
+            assert_eq!(map.get(&PropertyKey::new("age")), Some(&Value::Int64(30)));
+        } else {
+            panic!("Expected Value::Map, got {:?}", value);
+        }
+    }
+
+    #[test]
+    fn test_project_edge_resolve() {
+        let store = LpgStore::new();
+        let src = store.create_node(&["Person"]);
+        let dst = store.create_node(&["Company"]);
+        let edge_id = store.create_edge(src, dst, "WORKS_AT");
+        store.set_edge_property(edge_id, "since", Value::Int64(2020));
+
+        // Create input chunk with an EdgeId column
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Edge]);
+        builder.column_mut(0).unwrap().push_edge_id(edge_id);
+        builder.advance_row();
+        let chunk = builder.finish();
+
+        let mock_scan = MockScanOperator {
+            chunks: vec![chunk],
+            position: 0,
+        };
+
+        let mut project = ProjectOperator::with_store(
+            Box::new(mock_scan),
+            vec![ProjectExpr::EdgeResolve { column: 0 }],
+            vec![LogicalType::Any],
+            Arc::new(store),
+        );
+
+        let result = project.next().unwrap().unwrap();
+        let value = result.column(0).unwrap().get_value(0).unwrap();
+        if let Value::Map(map) = value {
+            assert_eq!(
+                map.get(&PropertyKey::new("_id")),
+                Some(&Value::Int64(edge_id.as_u64() as i64))
+            );
+            assert_eq!(
+                map.get(&PropertyKey::new("_type")),
+                Some(&Value::String("WORKS_AT".into()))
+            );
+            assert_eq!(
+                map.get(&PropertyKey::new("_source")),
+                Some(&Value::Int64(src.as_u64() as i64))
+            );
+            assert_eq!(
+                map.get(&PropertyKey::new("_target")),
+                Some(&Value::Int64(dst.as_u64() as i64))
+            );
+            assert_eq!(
+                map.get(&PropertyKey::new("since")),
+                Some(&Value::Int64(2020))
+            );
+        } else {
+            panic!("Expected Value::Map, got {:?}", value);
+        }
+    }
+
+    #[test]
+    fn test_project_resolve_missing_entity() {
+        use grafeo_common::types::NodeId;
+
+        let store = LpgStore::new();
+
+        // Create input chunk with a NodeId that doesn't exist in the store
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Node]);
+        builder
+            .column_mut(0)
+            .unwrap()
+            .push_node_id(NodeId::new(999));
+        builder.advance_row();
+        let chunk = builder.finish();
+
+        let mock_scan = MockScanOperator {
+            chunks: vec![chunk],
+            position: 0,
+        };
+
+        let mut project = ProjectOperator::with_store(
+            Box::new(mock_scan),
+            vec![ProjectExpr::NodeResolve { column: 0 }],
+            vec![LogicalType::Any],
+            Arc::new(store),
+        );
+
+        let result = project.next().unwrap().unwrap();
+        assert_eq!(result.column(0).unwrap().get_value(0), Some(Value::Null));
     }
 }

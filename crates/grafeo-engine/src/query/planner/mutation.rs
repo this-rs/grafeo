@@ -361,11 +361,29 @@ impl super::Planner {
         let mut output_schema = self.derive_schema_from_columns(&final_input_columns);
         output_schema.push(LogicalType::Any); // The unwound element type is dynamic
 
+        // Add ORDINALITY column (1-based index) if requested
+        let emit_ordinality = unwind.ordinality_var.is_some();
+        if let Some(ref ord_var) = unwind.ordinality_var {
+            columns.push(ord_var.clone());
+            output_schema.push(LogicalType::Int64);
+            self.scalar_columns.borrow_mut().insert(ord_var.clone());
+        }
+
+        // Add OFFSET column (0-based index) if requested
+        let emit_offset = unwind.offset_var.is_some();
+        if let Some(ref off_var) = unwind.offset_var {
+            columns.push(off_var.clone());
+            output_schema.push(LogicalType::Int64);
+            self.scalar_columns.borrow_mut().insert(off_var.clone());
+        }
+
         let operator: Box<dyn Operator> = Box::new(UnwindOperator::new(
             final_input_op,
             col_idx,
             unwind.variable.clone(),
             output_schema,
+            emit_ordinality,
+            emit_offset,
         ));
 
         Ok((operator, columns))
@@ -486,7 +504,11 @@ impl super::Planner {
 
         // Add path length column with the expected naming convention
         // The translator expects _path_length_{alias} format for length(p) calls
-        columns.push(format!("_path_length_{}", sp.path_alias));
+        let path_col_name = format!("_path_length_{}", sp.path_alias);
+        columns.push(path_col_name.clone());
+
+        // Mark path length as scalar so plan_return uses LogicalType::Any, not Node
+        self.scalar_columns.borrow_mut().insert(path_col_name);
 
         Ok((operator, columns))
     }

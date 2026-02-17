@@ -558,6 +558,10 @@ pub struct UnwindOp {
     pub expression: LogicalExpression,
     /// The variable name for each element.
     pub variable: String,
+    /// Optional variable for 1-based element position (ORDINALITY).
+    pub ordinality_var: Option<String>,
+    /// Optional variable for 0-based element position (OFFSET).
+    pub offset_var: Option<String>,
     /// Input operator.
     pub input: Box<LogicalOperator>,
 }

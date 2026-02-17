@@ -1642,4 +1642,253 @@ mod tests {
         let version_str = unsafe { std::ffi::CStr::from_ptr(v) }.to_str().unwrap();
         assert!(!version_str.is_empty());
     }
+
+    // ── Edge property CRUD ──
+
+    #[test]
+    fn test_edge_property_crud() {
+        let db = grafeo_open_memory();
+        let labels = CString::new(r#"["N"]"#).unwrap();
+        let id_a = grafeo_create_node(db, labels.as_ptr(), std::ptr::null());
+        let id_b = grafeo_create_node(db, labels.as_ptr(), std::ptr::null());
+
+        let edge_type = CString::new("R").unwrap();
+        let eid = grafeo_create_edge(db, id_a, id_b, edge_type.as_ptr(), std::ptr::null());
+        assert_ne!(eid, u64::MAX);
+
+        // Set edge property
+        let key = CString::new("weight").unwrap();
+        let value = CString::new("1.5").unwrap();
+        let status = grafeo_set_edge_property(db, eid, key.as_ptr(), value.as_ptr());
+        assert_eq!(status, GrafeoStatus::Ok);
+
+        // Remove edge property
+        let removed = grafeo_remove_edge_property(db, eid, key.as_ptr());
+        assert_eq!(removed, 1);
+
+        // Removing again returns 0
+        let removed2 = grafeo_remove_edge_property(db, eid, key.as_ptr());
+        assert_eq!(removed2, 0);
+
+        grafeo_close(db);
+        grafeo_free_database(db);
+    }
+
+    // ── Delete operations ──
+
+    #[test]
+    fn test_delete_node_and_edge() {
+        let db = grafeo_open_memory();
+        let labels = CString::new(r#"["N"]"#).unwrap();
+        let id_a = grafeo_create_node(db, labels.as_ptr(), std::ptr::null());
+        let id_b = grafeo_create_node(db, labels.as_ptr(), std::ptr::null());
+
+        let edge_type = CString::new("R").unwrap();
+        let eid = grafeo_create_edge(db, id_a, id_b, edge_type.as_ptr(), std::ptr::null());
+
+        assert_eq!(grafeo_node_count(db), 2);
+        assert_eq!(grafeo_edge_count(db), 1);
+
+        // Delete edge
+        assert_eq!(grafeo_delete_edge(db, eid), 1);
+        assert_eq!(grafeo_edge_count(db), 0);
+        // Second delete returns 0
+        assert_eq!(grafeo_delete_edge(db, eid), 0);
+
+        // Delete node
+        assert_eq!(grafeo_delete_node(db, id_a), 1);
+        assert_eq!(grafeo_node_count(db), 1);
+        assert_eq!(grafeo_delete_node(db, id_a), 0);
+
+        grafeo_close(db);
+        grafeo_free_database(db);
+    }
+
+    // ── Label operations ──
+
+    #[test]
+    fn test_label_operations() {
+        let db = grafeo_open_memory();
+        let labels = CString::new(r#"["Person"]"#).unwrap();
+        let id = grafeo_create_node(db, labels.as_ptr(), std::ptr::null());
+
+        // Add label
+        let label = CString::new("Employee").unwrap();
+        assert_eq!(grafeo_add_node_label(db, id, label.as_ptr()), 1);
+        // Adding same label returns 0
+        assert_eq!(grafeo_add_node_label(db, id, label.as_ptr()), 0);
+
+        // Get labels
+        let labels_json = grafeo_get_node_labels(db, id);
+        assert!(!labels_json.is_null());
+        let labels_str = unsafe { std::ffi::CStr::from_ptr(labels_json) }
+            .to_str()
+            .unwrap();
+        assert!(labels_str.contains("Person"));
+        assert!(labels_str.contains("Employee"));
+        grafeo_free_string(labels_json);
+
+        // Remove label
+        assert_eq!(grafeo_remove_node_label(db, id, label.as_ptr()), 1);
+        assert_eq!(grafeo_remove_node_label(db, id, label.as_ptr()), 0);
+
+        grafeo_close(db);
+        grafeo_free_database(db);
+    }
+
+    // ── Execute with parameters ──
+
+    #[test]
+    fn test_execute_with_params() {
+        let db = grafeo_open_memory();
+
+        // Create a node first
+        let create = CString::new("CREATE (:Person {name: 'Alice', age: 30})").unwrap();
+        let result = grafeo_execute(db, create.as_ptr());
+        if !result.is_null() {
+            grafeo_free_result(result);
+        }
+
+        // Query with parameters
+        let query = CString::new("MATCH (n:Person) WHERE n.name = $name RETURN n.age").unwrap();
+        let params = CString::new(r#"{"name":"Alice"}"#).unwrap();
+        let result = grafeo_execute_with_params(db, query.as_ptr(), params.as_ptr());
+        assert!(!result.is_null());
+        assert_eq!(grafeo_result_row_count(result), 1);
+        grafeo_free_result(result);
+
+        grafeo_close(db);
+        grafeo_free_database(db);
+    }
+
+    // ── Property index operations ──
+
+    #[test]
+    fn test_property_index_lifecycle() {
+        let db = grafeo_open_memory();
+        let prop = CString::new("name").unwrap();
+
+        // No index initially
+        assert_eq!(grafeo_has_property_index(db, prop.as_ptr()), 0);
+
+        // Create index
+        let status = grafeo_create_property_index(db, prop.as_ptr());
+        assert_eq!(status, GrafeoStatus::Ok);
+        assert_eq!(grafeo_has_property_index(db, prop.as_ptr()), 1);
+
+        // Create node with the property
+        let labels = CString::new(r#"["Person"]"#).unwrap();
+        let props = CString::new(r#"{"name":"Alice"}"#).unwrap();
+        grafeo_create_node(db, labels.as_ptr(), props.as_ptr());
+
+        // Find by property
+        let value = CString::new(r#""Alice""#).unwrap();
+        let mut out_ids: *mut u64 = std::ptr::null_mut();
+        let mut out_count: usize = 0;
+        let status = grafeo_find_nodes_by_property(
+            db,
+            prop.as_ptr(),
+            value.as_ptr(),
+            &raw mut out_ids,
+            &raw mut out_count,
+        );
+        assert_eq!(status, GrafeoStatus::Ok);
+        assert_eq!(out_count, 1);
+        if !out_ids.is_null() {
+            grafeo_free_node_ids(out_ids, out_count);
+        }
+
+        // Drop index
+        assert_eq!(grafeo_drop_property_index(db, prop.as_ptr()), 1);
+        assert_eq!(grafeo_has_property_index(db, prop.as_ptr()), 0);
+        assert_eq!(grafeo_drop_property_index(db, prop.as_ptr()), 0);
+
+        grafeo_close(db);
+        grafeo_free_database(db);
+    }
+
+    // ── Database info ──
+
+    #[test]
+    fn test_database_info() {
+        let db = grafeo_open_memory();
+        let labels = CString::new(r#"["Person"]"#).unwrap();
+        let props = CString::new(r#"{"name":"Alice"}"#).unwrap();
+        grafeo_create_node(db, labels.as_ptr(), props.as_ptr());
+
+        let info = grafeo_info(db);
+        assert!(!info.is_null());
+        let info_str = unsafe { std::ffi::CStr::from_ptr(info) }.to_str().unwrap();
+        assert!(info_str.contains("node_count"));
+        grafeo_free_string(info);
+
+        grafeo_close(db);
+        grafeo_free_database(db);
+    }
+
+    // ── Result metadata ──
+
+    #[test]
+    fn test_result_metadata() {
+        let db = grafeo_open_memory();
+        let create = CString::new("CREATE (:N {x: 1}), (:N {x: 2}), (:N {x: 3})").unwrap();
+        let result = grafeo_execute(db, create.as_ptr());
+        if !result.is_null() {
+            grafeo_free_result(result);
+        }
+
+        let query = CString::new("MATCH (n:N) RETURN n.x").unwrap();
+        let result = grafeo_execute(db, query.as_ptr());
+        assert!(!result.is_null());
+
+        assert_eq!(grafeo_result_row_count(result), 3);
+        let time = grafeo_result_execution_time_ms(result);
+        assert!(time >= 0.0);
+
+        grafeo_free_result(result);
+        grafeo_close(db);
+        grafeo_free_database(db);
+    }
+
+    // ── Edge accessor functions ──
+
+    #[test]
+    fn test_edge_accessors() {
+        let db = grafeo_open_memory();
+        let labels = CString::new(r#"["N"]"#).unwrap();
+        let id_a = grafeo_create_node(db, labels.as_ptr(), std::ptr::null());
+        let id_b = grafeo_create_node(db, labels.as_ptr(), std::ptr::null());
+
+        let edge_type = CString::new("KNOWS").unwrap();
+        let edge_props = CString::new(r#"{"since":2020}"#).unwrap();
+        let eid = grafeo_create_edge(db, id_a, id_b, edge_type.as_ptr(), edge_props.as_ptr());
+
+        let mut edge_ptr: *mut GrafeoEdge = std::ptr::null_mut();
+        let status = grafeo_get_edge(db, eid, &raw mut edge_ptr);
+        assert_eq!(status, GrafeoStatus::Ok);
+        assert!(!edge_ptr.is_null());
+
+        // Test all accessor functions
+        assert_eq!(grafeo_edge_id(edge_ptr), eid);
+        assert_eq!(grafeo_edge_source_id(edge_ptr), id_a);
+        assert_eq!(grafeo_edge_target_id(edge_ptr), id_b);
+
+        let type_ptr = grafeo_edge_type(edge_ptr);
+        assert!(!type_ptr.is_null());
+        let type_str = unsafe { std::ffi::CStr::from_ptr(type_ptr) }
+            .to_str()
+            .unwrap();
+        assert_eq!(type_str, "KNOWS");
+
+        let props_ptr = grafeo_edge_properties_json(edge_ptr);
+        assert!(!props_ptr.is_null());
+        let props_str = unsafe { std::ffi::CStr::from_ptr(props_ptr) }
+            .to_str()
+            .unwrap();
+        assert!(props_str.contains("2020"));
+
+        grafeo_free_edge(edge_ptr);
+        grafeo_close(db);
+        grafeo_free_database(db);
+    }
 }

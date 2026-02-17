@@ -149,38 +149,73 @@ impl GqlTranslator {
 
     fn translate_query(&self, query: &ast::QueryStatement) -> Result<LogicalPlan> {
         let mut plan = LogicalOperator::Empty;
+        let mut where_applied = false;
 
         // Process clauses in source order for correct variable scoping.
         // When ordered_clauses is populated, use it; otherwise fall back to
         // the legacy field-based ordering (for backward compatibility).
         if !query.ordered_clauses.is_empty() {
             for clause in &query.ordered_clauses {
+                // Apply WHERE filter before the first mutation clause so that
+                // MATCH ... WHERE ... CREATE/DELETE operates on filtered rows.
+                if !where_applied
+                    && matches!(
+                        clause,
+                        ast::QueryClause::Create(_)
+                            | ast::QueryClause::Delete(_)
+                            | ast::QueryClause::Set(_)
+                            | ast::QueryClause::Merge(_)
+                    )
+                {
+                    if let Some(where_clause) = &query.where_clause {
+                        let predicate = self.translate_expression(&where_clause.expression)?;
+                        plan = LogicalOperator::Filter(FilterOp {
+                            predicate,
+                            input: Box::new(plan),
+                        });
+                    }
+                    where_applied = true;
+                }
+
                 match clause {
                     ast::QueryClause::Match(match_clause) => {
-                        let match_plan = self.translate_match(match_clause)?;
                         if matches!(plan, LogicalOperator::Empty) {
-                            plan = match_plan;
+                            // No prior input — standard MATCH
+                            plan = self.translate_match(match_clause)?;
                         } else if match_clause.optional {
+                            // OPTIONAL MATCH: left join (prior vars on left, match on right)
+                            let match_plan = self.translate_match(match_clause)?;
                             plan = LogicalOperator::LeftJoin(LeftJoinOp {
                                 left: Box::new(plan),
                                 right: Box::new(match_plan),
                                 condition: None,
                             });
                         } else {
-                            plan = LogicalOperator::Join(JoinOp {
-                                left: Box::new(plan),
-                                right: Box::new(match_plan),
-                                join_type: JoinType::Cross,
-                                conditions: vec![],
-                            });
+                            // Non-optional MATCH after prior clauses (UNWIND, etc.)
+                            // Pass current plan as input so the MATCH's NodeScan creates
+                            // a nested loop join, keeping prior variables (like UNWIND
+                            // variables) in scope for property filters.
+                            let input = std::mem::replace(&mut plan, LogicalOperator::Empty);
+                            plan = self.translate_match_with_input(match_clause, Some(input))?;
                         }
                     }
-                    ast::QueryClause::Unwind(unwind_clause)
-                    | ast::QueryClause::For(unwind_clause) => {
+                    ast::QueryClause::Unwind(unwind_clause) => {
                         let expression = self.translate_expression(&unwind_clause.expression)?;
                         plan = LogicalOperator::Unwind(UnwindOp {
                             expression,
                             variable: unwind_clause.alias.clone(),
+                            ordinality_var: None,
+                            offset_var: None,
+                            input: Box::new(plan),
+                        });
+                    }
+                    ast::QueryClause::For(unwind_clause) => {
+                        let expression = self.translate_expression(&unwind_clause.expression)?;
+                        plan = LogicalOperator::Unwind(UnwindOp {
+                            expression,
+                            variable: unwind_clause.alias.clone(),
+                            ordinality_var: unwind_clause.ordinality_var.clone(),
+                            offset_var: unwind_clause.offset_var.clone(),
                             input: Box::new(plan),
                         });
                     }
@@ -246,6 +281,8 @@ impl GqlTranslator {
                 plan = LogicalOperator::Unwind(UnwindOp {
                     expression,
                     variable: unwind_clause.alias.clone(),
+                    ordinality_var: unwind_clause.ordinality_var.clone(),
+                    offset_var: unwind_clause.offset_var.clone(),
                     input: Box::new(plan),
                 });
             }
@@ -255,8 +292,8 @@ impl GqlTranslator {
             }
         }
 
-        // Apply WHERE filter
-        if let Some(where_clause) = &query.where_clause {
+        // Apply WHERE filter (skip if already applied before a mutation clause)
+        if !where_applied && let Some(where_clause) = &query.where_clause {
             let predicate = self.translate_expression(&where_clause.expression)?;
             plan = LogicalOperator::Filter(FilterOp {
                 predicate,
@@ -475,8 +512,18 @@ impl GqlTranslator {
         Ok(LogicalPlan::new(plan))
     }
 
-    fn translate_match(&self, match_clause: &ast::MatchClause) -> Result<LogicalOperator> {
-        let mut plan: Option<LogicalOperator> = None;
+    /// Translates a MATCH clause with an optional initial input.
+    ///
+    /// When `initial_input` is provided (e.g. from a preceding UNWIND), the
+    /// first pattern's NodeScan receives it as input. This creates a nested
+    /// loop join that keeps prior variables (like UNWIND variables) in scope
+    /// so that property filters like `{id: x}` can reference them.
+    fn translate_match_with_input(
+        &self,
+        match_clause: &ast::MatchClause,
+        initial_input: Option<LogicalOperator>,
+    ) -> Result<LogicalOperator> {
+        let mut plan: Option<LogicalOperator> = initial_input;
 
         for aliased_pattern in &match_clause.patterns {
             // Handle shortestPath patterns specially
@@ -503,6 +550,10 @@ impl GqlTranslator {
                 "Empty MATCH clause",
             ))
         })
+    }
+
+    fn translate_match(&self, match_clause: &ast::MatchClause) -> Result<LogicalOperator> {
+        self.translate_match_with_input(match_clause, None)
     }
 
     /// Translates a shortestPath pattern into a logical operator.

@@ -310,6 +310,30 @@ impl Binder {
                         is_edge: false,
                     },
                 );
+                // Add ORDINALITY variable if present (1-based index)
+                if let Some(ref ord_var) = unwind.ordinality_var {
+                    self.context.add_variable(
+                        ord_var.clone(),
+                        VariableInfo {
+                            name: ord_var.clone(),
+                            data_type: LogicalType::Int64,
+                            is_node: false,
+                            is_edge: false,
+                        },
+                    );
+                }
+                // Add OFFSET variable if present (0-based index)
+                if let Some(ref off_var) = unwind.offset_var {
+                    self.context.add_variable(
+                        off_var.clone(),
+                        VariableInfo {
+                            name: off_var.clone(),
+                            data_type: LogicalType::Int64,
+                            is_node: false,
+                            is_edge: false,
+                        },
+                    );
+                }
                 Ok(())
             }
 
@@ -1545,6 +1569,8 @@ mod tests {
                     LogicalExpression::Literal(grafeo_common::types::Value::Int64(2)),
                 ]),
                 variable: "item".to_string(),
+                ordinality_var: None,
+                offset_var: None,
                 input: Box::new(LogicalOperator::Empty),
             })),
         }));
@@ -1908,6 +1934,8 @@ mod tests {
                 input: Box::new(LogicalOperator::Unwind(UnwindOp {
                     expression: LogicalExpression::List(vec![]),
                     variable: "x".to_string(),
+                    ordinality_var: None,
+                    offset_var: None,
                     input: Box::new(LogicalOperator::Empty),
                 })),
                 path_alias: None,

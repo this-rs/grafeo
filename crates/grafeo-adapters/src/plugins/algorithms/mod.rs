@@ -101,6 +101,8 @@ pub use components::{
 };
 pub use flow::{MaxFlowAlgorithm, MinCostFlowAlgorithm};
 pub use mst::{KruskalAlgorithm, PrimAlgorithm};
-pub use shortest_path::{BellmanFordAlgorithm, DijkstraAlgorithm, FloydWarshallAlgorithm};
+pub use shortest_path::{
+    BellmanFordAlgorithm, DijkstraAlgorithm, FloydWarshallAlgorithm, SsspAlgorithm,
+};
 pub use structure::{ArticulationPointsAlgorithm, BridgesAlgorithm, KCoreAlgorithm};
 pub use traversal::{BfsAlgorithm, DfsAlgorithm};

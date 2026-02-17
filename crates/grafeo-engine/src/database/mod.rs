@@ -31,7 +31,6 @@ use grafeo_adapters::storage::wal::{
     DurabilityMode as WalDurabilityMode, WalConfig, WalManager, WalRecord, WalRecovery,
 };
 use grafeo_common::memory::buffer::{BufferManager, BufferManagerConfig};
-use grafeo_common::types::{EdgeId, LogicalType, NodeId, PropertyKey, Value};
 use grafeo_common::utils::error::Result;
 use grafeo_core::graph::lpg::LpgStore;
 #[cfg(feature = "rdf")]
@@ -636,131 +635,9 @@ impl QueryResult {
     pub fn iter(&self) -> impl Iterator<Item = &Vec<grafeo_common::types::Value>> {
         self.rows.iter()
     }
-
-    /// Resolves node and edge ID columns into property maps.
-    ///
-    /// When `RETURN n` is used in a query, the execution engine stores raw
-    /// internal IDs. This method looks up each ID in the store and replaces
-    /// it with a `Value::Map` containing all properties plus metadata
-    /// (`_id`, `_labels` for nodes; `_id`, `_type`, `_source`, `_target`
-    /// for edges).
-    ///
-    /// Call this after the executor produces results but before returning
-    /// to callers. Columns whose type was `Node` or `Edge` are changed to
-    /// `Any` after resolution.
-    pub fn resolve_entities(&mut self, store: &LpgStore) {
-        // Find columns that need resolution.
-        let node_cols: Vec<usize> = self
-            .column_types
-            .iter()
-            .enumerate()
-            .filter_map(|(i, t)| {
-                if *t == LogicalType::Node {
-                    Some(i)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let edge_cols: Vec<usize> = self
-            .column_types
-            .iter()
-            .enumerate()
-            .filter_map(|(i, t)| {
-                if *t == LogicalType::Edge {
-                    Some(i)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        if node_cols.is_empty() && edge_cols.is_empty() {
-            return;
-        }
-
-        // Resolve each row in place.
-        for row in &mut self.rows {
-            for &col in &node_cols {
-                if let Some(Value::Int64(id)) = row.get(col) {
-                    let node_id = NodeId::new(*id as u64);
-                    row[col] = store
-                        .get_node(node_id)
-                        .map_or(Value::Null, |n| node_to_map(&n));
-                }
-            }
-            for &col in &edge_cols {
-                if let Some(Value::Int64(id)) = row.get(col) {
-                    let edge_id = EdgeId::new(*id as u64);
-                    row[col] = store
-                        .get_edge(edge_id)
-                        .map_or(Value::Null, |e| edge_to_map(&e));
-                }
-            }
-        }
-
-        // Mark resolved columns as Any (they now contain Maps).
-        for &col in &node_cols {
-            self.column_types[col] = LogicalType::Any;
-        }
-        for &col in &edge_cols {
-            self.column_types[col] = LogicalType::Any;
-        }
-    }
 }
 
-/// Converts a [`Node`] to a `Value::Map` with metadata and properties.
-///
-/// The map contains `_id` (integer), `_labels` (list of strings), and
-/// all node properties at the top level.
-fn node_to_map(node: &grafeo_core::graph::lpg::Node) -> Value {
-    let mut map = std::collections::BTreeMap::new();
-    map.insert(
-        PropertyKey::new("_id"),
-        Value::Int64(node.id.as_u64() as i64),
-    );
-    let labels: Vec<Value> = node
-        .labels
-        .iter()
-        .map(|l| Value::String(l.clone()))
-        .collect();
-    map.insert(PropertyKey::new("_labels"), Value::List(labels.into()));
-    for (key, value) in &node.properties {
-        map.insert(key.clone(), value.clone());
-    }
-    Value::Map(Arc::new(map))
-}
-
-/// Converts an [`Edge`] to a `Value::Map` with metadata and properties.
-///
-/// The map contains `_id`, `_type`, `_source`, `_target`, and all edge
-/// properties at the top level.
-fn edge_to_map(edge: &grafeo_core::graph::lpg::Edge) -> Value {
-    let mut map = std::collections::BTreeMap::new();
-    map.insert(
-        PropertyKey::new("_id"),
-        Value::Int64(edge.id.as_u64() as i64),
-    );
-    map.insert(
-        PropertyKey::new("_type"),
-        Value::String(edge.edge_type.clone()),
-    );
-    map.insert(
-        PropertyKey::new("_source"),
-        Value::Int64(edge.src.as_u64() as i64),
-    );
-    map.insert(
-        PropertyKey::new("_target"),
-        Value::Int64(edge.dst.as_u64() as i64),
-    );
-    for (key, value) in &edge.properties {
-        map.insert(key.clone(), value.clone());
-    }
-    Value::Map(Arc::new(map))
-}
-
-/// Converts a [`Value`] to a concrete Rust type.
+/// Converts a [`grafeo_common::types::Value`] to a concrete Rust type.
 ///
 /// Implemented for common types like `i64`, `f64`, `String`, and `bool`.
 /// Used by [`QueryResult::scalar()`] to extract typed values.

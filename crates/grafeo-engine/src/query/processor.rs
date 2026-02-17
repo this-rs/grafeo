@@ -262,9 +262,6 @@ impl QueryProcessor {
         let executor = Executor::with_columns(physical_plan.columns.clone());
         let mut result = executor.execute(physical_plan.operator.as_mut())?;
 
-        // Resolve node/edge IDs to full property maps
-        result.resolve_entities(&self.lpg_store);
-
         // Add execution metrics
         let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
         let rows_scanned = result.rows.len() as u64; // Approximate: rows returned

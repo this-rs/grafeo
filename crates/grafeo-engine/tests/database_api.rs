@@ -298,6 +298,170 @@ fn test_to_memory_clones_data() {
     assert_eq!(clone.node_count(), 3);
 }
 
+// ── Snapshot export/import roundtrip ─────────────────────────────
+
+#[test]
+fn test_snapshot_export_import_roundtrip() {
+    let db = GrafeoDB::new_in_memory();
+    let a = db.create_node(&["Person"]);
+    db.set_node_property(a, "name", Value::String("Alice".into()));
+    db.set_node_property(a, "age", Value::Int64(30));
+    let b = db.create_node(&["Person"]);
+    db.set_node_property(b, "name", Value::String("Bob".into()));
+    db.create_edge(a, b, "KNOWS");
+
+    // Export
+    let snapshot = db.export_snapshot().expect("export should succeed");
+    assert!(!snapshot.is_empty(), "snapshot should not be empty");
+
+    // Import into a new database
+    let restored = GrafeoDB::import_snapshot(&snapshot).expect("import should succeed");
+    assert_eq!(restored.node_count(), 2);
+    assert_eq!(restored.edge_count(), 1);
+
+    // Verify data integrity
+    let session = restored.session();
+    let result = session
+        .execute("MATCH (n:Person {name: 'Alice'}) RETURN n.age")
+        .unwrap();
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], Value::Int64(30));
+}
+
+#[test]
+fn test_snapshot_import_invalid_data() {
+    let result = GrafeoDB::import_snapshot(b"not a valid snapshot");
+    assert!(result.is_err(), "invalid snapshot data should return error");
+}
+
+// ── Schema introspection ────────────────────────────────────────
+
+#[test]
+fn test_schema_returns_labels_and_edge_types() {
+    use grafeo_engine::SchemaInfo;
+
+    let db = GrafeoDB::new_in_memory();
+    let a = db.create_node(&["Person"]);
+    db.set_node_property(a, "name", Value::String("Alice".into()));
+    db.set_node_property(a, "age", Value::Int64(30));
+    let b = db.create_node(&["Company"]);
+    db.set_node_property(b, "name", Value::String("Acme".into()));
+    db.create_edge(a, b, "WORKS_AT");
+    db.create_edge(a, b, "LIKES");
+
+    let schema = db.schema();
+    match schema {
+        SchemaInfo::Lpg(lpg) => {
+            assert!(
+                lpg.labels.len() >= 2,
+                "schema should have at least 2 labels, got {:?}",
+                lpg.labels
+            );
+            assert!(
+                lpg.edge_types.len() >= 2,
+                "schema should have at least 2 edge types, got {:?}",
+                lpg.edge_types
+            );
+        }
+        _ => panic!("expected LPG schema for in-memory database"),
+    }
+}
+
+// ── Count methods ───────────────────────────────────────────────
+
+#[test]
+fn test_label_and_type_counts() {
+    let db = GrafeoDB::new_in_memory();
+    let a = db.create_node(&["Person"]);
+    let b = db.create_node(&["Company"]);
+    db.create_edge(a, b, "WORKS_AT");
+
+    assert!(db.label_count() >= 2);
+    assert!(db.edge_type_count() >= 1);
+    assert_eq!(db.node_count(), 2);
+    assert_eq!(db.edge_count(), 1);
+}
+
+// ── Persistence flag ────────────────────────────────────────────
+
+#[test]
+fn test_is_persistent_in_memory() {
+    let db = GrafeoDB::new_in_memory();
+    assert!(!db.is_persistent(), "in-memory db should not be persistent");
+}
+
+// ── WAL status ──────────────────────────────────────────────────
+
+#[test]
+fn test_wal_status_in_memory() {
+    let db = GrafeoDB::new_in_memory();
+    let status = db.wal_status();
+    // In-memory databases have no WAL
+    assert!(!status.enabled);
+}
+
+// ── Close in-memory ─────────────────────────────────────────────
+
+#[test]
+fn test_close_in_memory_database() {
+    let db = GrafeoDB::new_in_memory();
+    let a = db.create_node(&["N"]);
+    db.set_node_property(a, "x", Value::Int64(1));
+
+    // Close should succeed (no-op for in-memory)
+    db.close().expect("close should succeed for in-memory db");
+}
+
+// ── Execute with params ─────────────────────────────────────────
+
+#[test]
+fn test_execute_with_params() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    session.create_node_with_props(
+        &["Person"],
+        [
+            ("name", Value::String("Alice".into())),
+            ("age", Value::Int64(30)),
+        ],
+    );
+    session.create_node_with_props(
+        &["Person"],
+        [
+            ("name", Value::String("Bob".into())),
+            ("age", Value::Int64(25)),
+        ],
+    );
+
+    let params =
+        std::collections::HashMap::from([("name".to_string(), Value::String("Alice".into()))]);
+    let result = session
+        .execute_with_params("MATCH (n:Person) WHERE n.name = $name RETURN n.age", params)
+        .unwrap();
+
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], Value::Int64(30));
+}
+
+// ── Info updates after operations ───────────────────────────────
+
+#[test]
+fn test_info_updates_after_operations() {
+    let db = GrafeoDB::new_in_memory();
+    let info0 = db.info();
+    assert_eq!(info0.node_count, 0);
+    assert_eq!(info0.edge_count, 0);
+
+    let a = db.create_node(&["Person"]);
+    let b = db.create_node(&["Company"]);
+    db.create_edge(a, b, "WORKS_AT");
+
+    let info1 = db.info();
+    assert_eq!(info1.node_count, 2);
+    assert_eq!(info1.edge_count, 1);
+}
+
 // ── Multiple edge types and complex graph ────────────────────────
 
 #[test]

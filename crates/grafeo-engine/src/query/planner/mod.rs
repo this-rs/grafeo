@@ -68,6 +68,9 @@ pub struct Planner {
     /// Variables that hold scalar values (from UNWIND/FOR), not node/edge IDs.
     /// Used by plan_return to assign `LogicalType::Any` instead of `Node`.
     pub(super) scalar_columns: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Variables that hold edge IDs (from MATCH edge patterns).
+    /// Used by plan_return to emit `EdgeResolve` instead of `NodeResolve`.
+    pub(super) edge_columns: std::cell::RefCell<std::collections::HashSet<String>>,
 }
 
 impl Planner {
@@ -86,6 +89,7 @@ impl Planner {
             anon_edge_counter: std::cell::Cell::new(0),
             factorized_execution: true,
             scalar_columns: std::cell::RefCell::new(std::collections::HashSet::new()),
+            edge_columns: std::cell::RefCell::new(std::collections::HashSet::new()),
         }
     }
 
@@ -112,6 +116,7 @@ impl Planner {
             anon_edge_counter: std::cell::Cell::new(0),
             factorized_execution: true,
             scalar_columns: std::cell::RefCell::new(std::collections::HashSet::new()),
+            edge_columns: std::cell::RefCell::new(std::collections::HashSet::new()),
         }
     }
 

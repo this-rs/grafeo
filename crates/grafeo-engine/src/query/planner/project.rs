@@ -44,16 +44,20 @@ impl super::Planner {
                         let col_idx = *variable_columns.get(name).ok_or_else(|| {
                             Error::Internal(format!("Variable '{}' not found in input", name))
                         })?;
-                        projections.push(ProjectExpr::Column(col_idx));
-                        // Path detail variables and UNWIND/FOR scalar variables use Any/Generic
+                        // Path detail variables and UNWIND/FOR scalar variables pass through as-is
                         if name.starts_with("_path_nodes_")
                             || name.starts_with("_path_edges_")
                             || name.starts_with("_path_length_")
                             || self.scalar_columns.borrow().contains(name)
                         {
+                            projections.push(ProjectExpr::Column(col_idx));
+                            output_types.push(LogicalType::Any);
+                        } else if self.edge_columns.borrow().contains(name) {
+                            projections.push(ProjectExpr::EdgeResolve { column: col_idx });
                             output_types.push(LogicalType::Any);
                         } else {
-                            output_types.push(LogicalType::Node);
+                            projections.push(ProjectExpr::NodeResolve { column: col_idx });
+                            output_types.push(LogicalType::Any);
                         }
                     }
                     LogicalExpression::Property { variable, property } => {
@@ -185,8 +189,8 @@ impl super::Planner {
 
             Ok((operator, columns))
         } else {
-            // Simple case: just return variables
-            // Re-order columns to match return items if needed
+            // Simple case: all return items are bare variables
+            // Emit resolve variants for entity variables
             let mut projections = Vec::with_capacity(ret.items.len());
             let mut output_types = Vec::with_capacity(ret.items.len());
 
@@ -195,26 +199,37 @@ impl super::Planner {
                     let col_idx = *variable_columns.get(name).ok_or_else(|| {
                         Error::Internal(format!("Variable '{}' not found in input", name))
                     })?;
-                    projections.push(ProjectExpr::Column(col_idx));
                     if self.scalar_columns.borrow().contains(name) {
+                        projections.push(ProjectExpr::Column(col_idx));
+                        output_types.push(LogicalType::Any);
+                    } else if self.edge_columns.borrow().contains(name) {
+                        projections.push(ProjectExpr::EdgeResolve { column: col_idx });
                         output_types.push(LogicalType::Any);
                     } else {
-                        output_types.push(LogicalType::Node);
+                        projections.push(ProjectExpr::NodeResolve { column: col_idx });
+                        output_types.push(LogicalType::Any);
                     }
                 }
             }
 
-            // Only add ProjectOperator if reordering is needed
+            // Skip ProjectOperator only when all projections are plain Column pass-throughs
+            // (i.e., only scalar variables with no reordering). NodeResolve/EdgeResolve
+            // always require a ProjectOperator with store access.
             if projections.len() == input_columns.len()
                 && projections
                     .iter()
                     .enumerate()
                     .all(|(i, p)| matches!(p, ProjectExpr::Column(c) if *c == i))
             {
-                // No reordering needed
+                // No reordering or resolution needed
                 Ok((input_op, columns))
             } else {
-                let operator = Box::new(ProjectOperator::new(input_op, projections, output_types));
+                let operator = Box::new(ProjectOperator::with_store(
+                    input_op,
+                    projections,
+                    output_types,
+                    Arc::clone(&self.store),
+                ));
                 Ok((operator, columns))
             }
         }

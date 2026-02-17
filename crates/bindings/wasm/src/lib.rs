@@ -200,6 +200,131 @@ impl Database {
         serde_wasm_bindgen::to_value(&info).map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Creates a text index on a label+property pair for full-text (BM25) search.
+    ///
+    /// Indexes all existing nodes with matching label and string property values.
+    ///
+    /// ```js
+    /// db.createTextIndex("Article", "content");
+    /// ```
+    #[cfg(feature = "text-index")]
+    #[wasm_bindgen(js_name = "createTextIndex")]
+    pub fn create_text_index(&self, label: &str, property: &str) -> Result<(), JsError> {
+        self.inner
+            .create_text_index(label, property)
+            .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Drops a text index on a label+property pair.
+    ///
+    /// Returns `true` if the index existed and was removed.
+    #[cfg(feature = "text-index")]
+    #[wasm_bindgen(js_name = "dropTextIndex")]
+    pub fn drop_text_index(&self, label: &str, property: &str) -> bool {
+        self.inner.drop_text_index(label, property)
+    }
+
+    /// Rebuilds a text index by re-scanning all matching nodes.
+    ///
+    /// Use after bulk imports to refresh the index.
+    #[cfg(feature = "text-index")]
+    #[wasm_bindgen(js_name = "rebuildTextIndex")]
+    pub fn rebuild_text_index(&self, label: &str, property: &str) -> Result<(), JsError> {
+        self.inner
+            .rebuild_text_index(label, property)
+            .map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Performs full-text search using BM25 ranking.
+    ///
+    /// Returns an array of `{id, score}` objects, ordered by relevance.
+    ///
+    /// ```js
+    /// db.createTextIndex("Article", "content");
+    /// const results = db.textSearch("Article", "content", "graph database", 10);
+    /// // [{id: 42, score: 2.5}, {id: 17, score: 1.8}]
+    /// ```
+    #[cfg(feature = "text-index")]
+    #[wasm_bindgen(js_name = "textSearch")]
+    pub fn text_search(
+        &self,
+        label: &str,
+        property: &str,
+        query: &str,
+        k: usize,
+    ) -> Result<JsValue, JsError> {
+        let results = self
+            .inner
+            .text_search(label, property, query, k)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+
+        let arr = Array::new_with_length(results.len() as u32);
+        for (i, (id, score)) in results.iter().enumerate() {
+            let obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(
+                &obj,
+                &JsValue::from_str("id"),
+                &JsValue::from_f64(id.0 as f64),
+            );
+            let _ = js_sys::Reflect::set(
+                &obj,
+                &JsValue::from_str("score"),
+                &JsValue::from_f64(*score),
+            );
+            arr.set(i as u32, obj.into());
+        }
+        Ok(arr.into())
+    }
+
+    /// Performs hybrid search combining text (BM25) and vector similarity.
+    ///
+    /// Uses Reciprocal Rank Fusion to combine results from both indexes.
+    /// Returns an array of `{id, score}` objects.
+    ///
+    /// ```js
+    /// const results = db.hybridSearch("Article", "content", "embedding", "graph databases", 10);
+    /// ```
+    #[cfg(feature = "hybrid-search")]
+    #[wasm_bindgen(js_name = "hybridSearch")]
+    pub fn hybrid_search(
+        &self,
+        label: &str,
+        text_property: &str,
+        vector_property: &str,
+        query_text: &str,
+        k: usize,
+    ) -> Result<JsValue, JsError> {
+        let results = self
+            .inner
+            .hybrid_search(
+                label,
+                text_property,
+                vector_property,
+                query_text,
+                None,
+                k,
+                None,
+            )
+            .map_err(|e| JsError::new(&e.to_string()))?;
+
+        let arr = Array::new_with_length(results.len() as u32);
+        for (i, (id, score)) in results.iter().enumerate() {
+            let obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(
+                &obj,
+                &JsValue::from_str("id"),
+                &JsValue::from_f64(id.0 as f64),
+            );
+            let _ = js_sys::Reflect::set(
+                &obj,
+                &JsValue::from_str("score"),
+                &JsValue::from_f64(*score),
+            );
+            arr.set(i as u32, obj.into());
+        }
+        Ok(arr.into())
+    }
+
     /// Returns the Grafeo version.
     pub fn version() -> String {
         env!("CARGO_PKG_VERSION").to_string()

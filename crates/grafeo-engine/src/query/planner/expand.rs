@@ -78,6 +78,7 @@ impl super::Planner {
             self.anon_edge_counter.set(count + 1);
             format!("_anon_edge_{}", count)
         });
+        self.edge_columns.borrow_mut().insert(edge_col_name.clone());
         columns.push(edge_col_name);
 
         columns.push(expand.to_variable.clone());

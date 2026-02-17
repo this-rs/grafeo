@@ -674,6 +674,88 @@ impl GraphAlgorithm for DijkstraAlgorithm {
     }
 }
 
+/// Static parameter definitions for SSSP algorithm.
+static SSSP_PARAMS: OnceLock<Vec<ParameterDef>> = OnceLock::new();
+
+fn sssp_params() -> &'static [ParameterDef] {
+    SSSP_PARAMS.get_or_init(|| {
+        vec![
+            ParameterDef {
+                name: "source".to_string(),
+                description: "Source node name (string) or ID (integer as string)".to_string(),
+                param_type: ParameterType::String,
+                required: true,
+                default: None,
+            },
+            ParameterDef {
+                name: "weight".to_string(),
+                description: "Edge property name for weights (default: 1.0)".to_string(),
+                param_type: ParameterType::String,
+                required: false,
+                default: None,
+            },
+        ]
+    })
+}
+
+/// SSSP (Single-Source Shortest Paths) algorithm for LDBC Graphanalytics compatibility.
+///
+/// Wraps Dijkstra's algorithm with string-based node name resolution.
+/// The source parameter is a string node name (looked up via "name" property)
+/// or falls back to integer ID parsing.
+pub struct SsspAlgorithm;
+
+impl GraphAlgorithm for SsspAlgorithm {
+    fn name(&self) -> &str {
+        "sssp"
+    }
+
+    fn description(&self) -> &str {
+        "Single-source shortest paths (Dijkstra) with string node name support"
+    }
+
+    fn parameters(&self) -> &[ParameterDef] {
+        sssp_params()
+    }
+
+    fn execute(&self, store: &LpgStore, params: &Parameters) -> Result<AlgorithmResult> {
+        let source_str = params
+            .get_string("source")
+            .ok_or_else(|| Error::InvalidValue("source parameter required".to_string()))?;
+
+        // Resolve source: try integer parse first, then name property lookup
+        let source = if let Ok(id) = source_str.parse::<u64>() {
+            NodeId::new(id)
+        } else {
+            let candidates = store.find_nodes_by_property("name", &Value::from(source_str));
+            match candidates.len() {
+                0 => {
+                    return Err(Error::InvalidValue(format!(
+                        "No node found with name '{source_str}'"
+                    )));
+                }
+                1 => candidates[0],
+                _ => {
+                    return Err(Error::InvalidValue(format!(
+                        "Multiple nodes found with name '{source_str}', use node ID instead"
+                    )));
+                }
+            }
+        };
+
+        let weight_prop = params.get_string("weight");
+        let dijkstra_result = dijkstra(store, source, weight_prop);
+
+        let mut result = AlgorithmResult::new(vec!["node_id".to_string(), "distance".to_string()]);
+
+        for (node, distance) in dijkstra_result.distances {
+            result.add_row(vec![Value::Int64(node.0 as i64), Value::Float64(distance)]);
+        }
+
+        Ok(result)
+    }
+}
+
 /// Static parameter definitions for Bellman-Ford algorithm.
 static BELLMAN_FORD_PARAMS: OnceLock<Vec<ParameterDef>> = OnceLock::new();
 
@@ -962,5 +1044,52 @@ mod tests {
         let result = dijkstra(&store, n0, None);
         assert_eq!(result.distance_to(n1), Some(1.0));
         assert_eq!(result.distance_to(n2), Some(2.0));
+    }
+
+    #[test]
+    fn test_sssp_with_named_nodes() {
+        let store = LpgStore::new();
+        let n0 = store.create_node(&["Node"]);
+        let n1 = store.create_node(&["Node"]);
+        let n2 = store.create_node(&["Node"]);
+        store.set_node_property(n0, "name", Value::from("alice"));
+        store.set_node_property(n1, "name", Value::from("bob"));
+        store.set_node_property(n2, "name", Value::from("carol"));
+        store.create_edge_with_props(n0, n1, "KNOWS", [("weight", Value::Float64(1.0))]);
+        store.create_edge_with_props(n1, n2, "KNOWS", [("weight", Value::Float64(2.0))]);
+
+        let mut params = Parameters::new();
+        params.set_string("source", "alice");
+        params.set_string("weight", "weight");
+
+        let result = SsspAlgorithm.execute(&store, &params).unwrap();
+        assert_eq!(result.columns, vec!["node_id", "distance"]);
+        assert_eq!(result.row_count(), 3); // alice, bob, carol
+    }
+
+    #[test]
+    fn test_sssp_with_numeric_source() {
+        let store = LpgStore::new();
+        let n0 = store.create_node(&["Node"]);
+        let n1 = store.create_node(&["Node"]);
+        store.create_edge(n0, n1, "EDGE");
+
+        let mut params = Parameters::new();
+        params.set_string("source", n0.0.to_string());
+
+        let result = SsspAlgorithm.execute(&store, &params).unwrap();
+        assert_eq!(result.row_count(), 2);
+    }
+
+    #[test]
+    fn test_sssp_nonexistent_name() {
+        let store = LpgStore::new();
+        let _n0 = store.create_node(&["Node"]);
+
+        let mut params = Parameters::new();
+        params.set_string("source", "nonexistent");
+
+        let result = SsspAlgorithm.execute(&store, &params);
+        assert!(result.is_err());
     }
 }

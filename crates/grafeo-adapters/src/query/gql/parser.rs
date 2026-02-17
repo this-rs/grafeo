@@ -353,6 +353,28 @@ impl<'a> Parser<'a> {
             None
         };
 
+        // After WHERE, allow CREATE/INSERT/DELETE/DETACH clauses
+        loop {
+            match self.current.kind {
+                TokenKind::Create => {
+                    let clause = self.parse_create_clause_in_query()?;
+                    ordered_clauses.push(QueryClause::Create(clause.clone()));
+                    create_clauses.push(clause);
+                }
+                TokenKind::Insert => {
+                    let clause = self.parse_insert()?;
+                    ordered_clauses.push(QueryClause::Create(clause.clone()));
+                    create_clauses.push(clause);
+                }
+                TokenKind::Delete | TokenKind::Detach => {
+                    let clause = self.parse_delete_clause_in_query()?;
+                    ordered_clauses.push(QueryClause::Delete(clause.clone()));
+                    delete_clauses.push(clause);
+                }
+                _ => break,
+            }
+        }
+
         // Parse SET clauses
         let mut set_clauses = Vec::new();
         while self.current.kind == TokenKind::Set {
@@ -465,9 +487,37 @@ impl<'a> Parser<'a> {
         // Parse expression (the list to iterate)
         let expression = self.parse_expression()?;
 
+        // Parse optional WITH ORDINALITY/OFFSET
+        let (ordinality_var, offset_var) = if self.current.kind == TokenKind::With {
+            self.advance(); // consume WITH
+            if self.current.kind == TokenKind::Ordinality {
+                self.advance(); // consume ORDINALITY
+                if !self.is_identifier() {
+                    return Err(self.error("Expected variable name after ORDINALITY"));
+                }
+                let var = self.get_identifier_name();
+                self.advance();
+                (Some(var), None)
+            } else if self.current.kind == TokenKind::Offset {
+                self.advance(); // consume OFFSET
+                if !self.is_identifier() {
+                    return Err(self.error("Expected variable name after OFFSET"));
+                }
+                let var = self.get_identifier_name();
+                self.advance();
+                (None, Some(var))
+            } else {
+                return Err(self.error("Expected ORDINALITY or OFFSET after WITH"));
+            }
+        } else {
+            (None, None)
+        };
+
         Ok(UnwindClause {
             expression,
             alias,
+            ordinality_var,
+            offset_var,
             span: Some(SourceSpan::new(span_start, self.current.span.start, 1, 1)),
         })
     }
@@ -614,6 +664,8 @@ impl<'a> Parser<'a> {
         Ok(UnwindClause {
             expression,
             alias,
+            ordinality_var: None,
+            offset_var: None,
             span: Some(SourceSpan::new(span_start, self.current.span.end, 1, 1)),
         })
     }

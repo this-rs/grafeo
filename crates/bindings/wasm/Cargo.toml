@@ -40,7 +40,8 @@ sql-pgq = ["grafeo-engine/sql-pgq"]
 text-index = ["grafeo-engine/text-index"]
 hybrid-search = ["grafeo-engine/hybrid-search"]
 languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]
-full = ["languages"]
+vector-index = ["grafeo-engine/vector-index"]
+full = ["languages", "text-index", "hybrid-search", "vector-index"]
 
 [lints]
 workspace = true

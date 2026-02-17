@@ -111,6 +111,10 @@ pub enum TokenKind {
     Contains,
     /// FOR keyword (GQL standard list iteration).
     For,
+    /// ORDINALITY keyword (FOR ... WITH ORDINALITY, 1-based index).
+    Ordinality,
+    /// OFFSET keyword (FOR ... WITH OFFSET, 0-based index).
+    Offset,
     /// VECTOR keyword (for vector index and type).
     Vector,
     /// INDEX keyword (for CREATE INDEX).
@@ -512,6 +516,8 @@ impl<'a> Lexer<'a> {
             "INSERT" => TokenKind::Insert,
             "TYPE" => TokenKind::Type,
             "FOR" => TokenKind::For,
+            "ORDINALITY" => TokenKind::Ordinality,
+            "OFFSET" => TokenKind::Offset,
             "VECTOR" => TokenKind::Vector,
             "INDEX" => TokenKind::Index,
             "DIMENSION" => TokenKind::Dimension,
@@ -726,6 +732,31 @@ mod tests {
             assert_eq!(tok.text, expected);
         }
 
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_ordinality_and_offset_tokens() {
+        let mut lexer = Lexer::new("FOR x IN list WITH ORDINALITY i");
+
+        assert_eq!(lexer.next_token().kind, TokenKind::For);
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // x
+        assert_eq!(lexer.next_token().kind, TokenKind::In);
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // list
+        assert_eq!(lexer.next_token().kind, TokenKind::With);
+        assert_eq!(lexer.next_token().kind, TokenKind::Ordinality);
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // i
+        assert_eq!(lexer.next_token().kind, TokenKind::Eof);
+
+        let mut lexer = Lexer::new("FOR x IN list WITH OFFSET idx");
+
+        assert_eq!(lexer.next_token().kind, TokenKind::For);
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // x
+        assert_eq!(lexer.next_token().kind, TokenKind::In);
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // list
+        assert_eq!(lexer.next_token().kind, TokenKind::With);
+        assert_eq!(lexer.next_token().kind, TokenKind::Offset);
+        assert_eq!(lexer.next_token().kind, TokenKind::Identifier); // idx
         assert_eq!(lexer.next_token().kind, TokenKind::Eof);
     }
 }

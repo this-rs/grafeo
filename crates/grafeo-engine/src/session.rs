@@ -228,9 +228,6 @@ impl Session {
             .with_deadline(self.query_deadline());
         let mut result = executor.execute(physical_plan.operator.as_mut())?;
 
-        // Resolve node/edge IDs to full property maps
-        result.resolve_entities(&self.store);
-
         // Add execution metrics
         let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
         let rows_scanned = result.rows.len() as u64;
@@ -352,8 +349,7 @@ impl Session {
         // Execute the plan
         let executor = Executor::with_columns(physical_plan.columns.clone())
             .with_deadline(self.query_deadline());
-        let mut result = executor.execute(physical_plan.operator.as_mut())?;
-        result.resolve_entities(&self.store);
+        let result = executor.execute(physical_plan.operator.as_mut())?;
         Ok(result)
     }
 
@@ -413,8 +409,7 @@ impl Session {
         // Execute the plan
         let executor = Executor::with_columns(physical_plan.columns.clone())
             .with_deadline(self.query_deadline());
-        let mut result = executor.execute(physical_plan.operator.as_mut())?;
-        result.resolve_entities(&self.store);
+        let result = executor.execute(physical_plan.operator.as_mut())?;
         Ok(result)
     }
 
@@ -504,8 +499,7 @@ impl Session {
         // Execute the plan
         let executor = Executor::with_columns(physical_plan.columns.clone())
             .with_deadline(self.query_deadline());
-        let mut result = executor.execute(physical_plan.operator.as_mut())?;
-        result.resolve_entities(&self.store);
+        let result = executor.execute(physical_plan.operator.as_mut())?;
         Ok(result)
     }
 
@@ -626,8 +620,7 @@ impl Session {
         // Execute the plan
         let executor = Executor::with_columns(physical_plan.columns.clone())
             .with_deadline(self.query_deadline());
-        let mut result = executor.execute(physical_plan.operator.as_mut())?;
-        result.resolve_entities(&self.store);
+        let result = executor.execute(physical_plan.operator.as_mut())?;
         Ok(result)
     }
 

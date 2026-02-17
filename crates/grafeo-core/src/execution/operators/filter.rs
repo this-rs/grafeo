@@ -344,6 +344,11 @@ impl ExpressionPredicate {
                 {
                     return edge.get_property(property).cloned();
                 }
+                // Try as map value (e.g. from UNWIND with map elements)
+                if let Some(Value::Map(map)) = col.get_value(row) {
+                    let key = grafeo_common::types::PropertyKey::new(property);
+                    return map.get(&key).cloned();
+                }
                 None
             }
             FilterExpression::Binary { left, op, right } => {

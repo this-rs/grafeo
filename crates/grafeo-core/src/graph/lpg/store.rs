@@ -710,6 +710,10 @@ impl LpgStore {
                 }
             }
 
+            // Remove from text indexes before removing properties
+            #[cfg(feature = "text-index")]
+            self.remove_from_all_text_indexes(id);
+
             // Remove properties
             drop(nodes); // Release lock before removing properties
             drop(index);
@@ -756,6 +760,10 @@ impl LpgStore {
                     }
                 }
             }
+
+            // Remove from text indexes before removing properties
+            #[cfg(feature = "text-index")]
+            self.remove_from_all_text_indexes(id);
 
             // Remove properties
             drop(versions);
@@ -867,6 +875,10 @@ impl LpgStore {
         // Update property index before setting the property (needs to read old value)
         self.update_property_index_on_set(id, &prop_key, &value);
 
+        // Sync text index if applicable
+        #[cfg(feature = "text-index")]
+        self.update_text_index_on_set(id, key, &value);
+
         self.node_properties.set(id, prop_key, value);
 
         // Update props_count in record
@@ -886,6 +898,10 @@ impl LpgStore {
 
         // Update property index before setting the property (needs to read old value)
         self.update_property_index_on_set(id, &prop_key, &value);
+
+        // Sync text index if applicable
+        #[cfg(feature = "text-index")]
+        self.update_text_index_on_set(id, key, &value);
 
         self.node_properties.set(id, prop_key, value);
         // Note: props_count in record is not updated for tiered storage.
@@ -908,6 +924,10 @@ impl LpgStore {
         // Update property index before removing (needs to read old value)
         self.update_property_index_on_remove(id, &prop_key);
 
+        // Sync text index if applicable
+        #[cfg(feature = "text-index")]
+        self.update_text_index_on_remove(id, key);
+
         let result = self.node_properties.remove(id, &prop_key);
 
         // Update props_count in record
@@ -929,6 +949,10 @@ impl LpgStore {
 
         // Update property index before removing (needs to read old value)
         self.update_property_index_on_remove(id, &prop_key);
+
+        // Sync text index if applicable
+        #[cfg(feature = "text-index")]
+        self.update_text_index_on_remove(id, key);
 
         self.node_properties.remove(id, &prop_key)
         // Note: props_count in record is not updated for tiered storage.
@@ -1353,6 +1377,68 @@ impl LpgStore {
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect()
+    }
+
+    /// Updates text indexes when a node property is set.
+    ///
+    /// If the node has a label with a text index on this property key,
+    /// the index is updated with the new value (if it's a string).
+    #[cfg(feature = "text-index")]
+    fn update_text_index_on_set(&self, id: NodeId, key: &str, value: &Value) {
+        let text_indexes = self.text_indexes.read();
+        if text_indexes.is_empty() {
+            return;
+        }
+        let id_to_label = self.id_to_label.read();
+        let node_labels = self.node_labels.read();
+        if let Some(label_ids) = node_labels.get(&id) {
+            for &label_id in label_ids {
+                if let Some(label_name) = id_to_label.get(label_id as usize) {
+                    let index_key = format!("{label_name}:{key}");
+                    if let Some(index) = text_indexes.get(&index_key) {
+                        let mut idx = index.write();
+                        // Remove old entry first, then insert new if it's a string
+                        idx.remove(id);
+                        if let Value::String(text) = value {
+                            idx.insert(id, text);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Updates text indexes when a node property is removed.
+    #[cfg(feature = "text-index")]
+    fn update_text_index_on_remove(&self, id: NodeId, key: &str) {
+        let text_indexes = self.text_indexes.read();
+        if text_indexes.is_empty() {
+            return;
+        }
+        let id_to_label = self.id_to_label.read();
+        let node_labels = self.node_labels.read();
+        if let Some(label_ids) = node_labels.get(&id) {
+            for &label_id in label_ids {
+                if let Some(label_name) = id_to_label.get(label_id as usize) {
+                    let index_key = format!("{label_name}:{key}");
+                    if let Some(index) = text_indexes.get(&index_key) {
+                        index.write().remove(id);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Removes a node from all text indexes.
+    #[cfg(feature = "text-index")]
+    fn remove_from_all_text_indexes(&self, id: NodeId) {
+        let text_indexes = self.text_indexes.read();
+        if text_indexes.is_empty() {
+            return;
+        }
+        for (_, index) in text_indexes.iter() {
+            index.write().remove(id);
+        }
     }
 
     /// Finds all nodes that have a specific property value.

@@ -557,6 +557,8 @@ impl CypherTranslator {
         Ok(LogicalOperator::Unwind(UnwindOp {
             expression,
             variable: unwind_clause.variable.clone(),
+            ordinality_var: None,
+            offset_var: None,
             input: Box::new(input),
         }))
     }
