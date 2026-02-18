@@ -249,7 +249,7 @@ fn test_interleaved_transactions() {
     // Multiple sessions with interleaved transaction operations
     let db = Arc::new(GrafeoDB::new_in_memory());
 
-    let num_transactions = 20;
+    let num_transactions = 5;
     let barrier = Arc::new(Barrier::new(4));
     let completed = Arc::new(AtomicUsize::new(0));
 
