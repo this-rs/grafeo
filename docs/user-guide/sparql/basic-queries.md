@@ -181,6 +181,37 @@ WHERE {
 }
 ```
 
+## Named Graph Management
+
+SPARQL supports operations on named graphs:
+
+```sparql
+-- Copy all triples from one graph to another (replaces destination)
+COPY <http://example.org/source> TO <http://example.org/dest>
+
+-- Move all triples (copy + delete source)
+MOVE <http://example.org/source> TO <http://example.org/dest>
+
+-- Add triples from source to destination (merge, keeps existing)
+ADD <http://example.org/source> TO <http://example.org/dest>
+```
+
+Use `SILENT` to suppress errors when the source graph does not exist:
+
+```sparql
+COPY SILENT <http://example.org/missing> TO <http://example.org/dest>
+```
+
+Insert or delete triples in a specific named graph:
+
+```sparql
+INSERT DATA {
+    GRAPH <http://example.org/mygraph> {
+        <http://example.org/alice> <http://xmlns.com/foaf/0.1/name> "Alice" .
+    }
+}
+```
+
 ## Complete Example
 
 ```sparql

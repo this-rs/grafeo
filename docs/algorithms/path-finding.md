@@ -75,10 +75,31 @@ algs = db.algorithms()
 distances = algs.all_pairs_shortest_path()
 ```
 
+## Single-Source Shortest Paths (SSSP)
+
+Compute shortest-path distances from a single source to all reachable nodes,
+weighted by an edge property. Compatible with LDBC Graphanalytics.
+
+### Python API
+
+```python
+algs = db.algorithms()
+results = algs.sssp(source="Alice", weight_attr="cost")
+for node_id, distance in results:
+    print(f"Node {node_id}: distance {distance}")
+```
+
+### GQL / Cypher / SQL/PGQ
+
+```sql
+CALL grafeo.sssp('Alice', 'cost') YIELD node_id, distance
+```
+
 ## Algorithm Complexity
 
 | Algorithm | Time Complexity | Space |
 |-----------|-----------------|-------|
 | Shortest Path (BFS) | O(V + E) | O(V) |
 | Shortest Path (Dijkstra) | O((V + E) log V) | O(V) |
+| SSSP | O((V + E) log V) | O(V) |
 | All Pairs (Floyd-Warshall) | O(V^3) | O(V^2) |
