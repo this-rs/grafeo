@@ -32,6 +32,9 @@ Vector search finds nodes based on the semantic similarity of their embeddings r
 | **Incremental Indexing** | Indexes stay in sync automatically as nodes change |
 | **Batch Operations** | `batch_create_nodes()` and `batch_vector_search()` |
 | **Hybrid Queries** | Combine graph patterns with vector similarity |
+| **BM25 Text Search** | Full-text keyword search with inverted indexes |
+| **Hybrid Search** | Combined text + vector search with RRF or weighted fusion |
+| **Built-in Embeddings** | In-process ONNX embedding generation (opt-in `embed` feature) |
 | **SIMD Acceleration** | AVX2, SSE, NEON optimized distance computation |
 
 ## Quick Example
@@ -61,6 +64,45 @@ result = db.execute("""
 for row in result:
     print(f"{row['d.title']}: {row['similarity']:.3f}")
 ```
+
+## Text Search (BM25)
+
+Create inverted indexes for full-text keyword search with BM25 scoring:
+
+```python
+db.create_text_index("Document", "content")
+results = db.text_search("Document", "content", "graph database", k=10)
+for r in results:
+    print(f"Node {r['node_id']}: score {r['score']:.3f}")
+```
+
+Text indexes stay in sync automatically as nodes are created, updated, or deleted.
+
+## Hybrid Search
+
+Combine BM25 text scores with HNSW vector similarity via Reciprocal Rank Fusion:
+
+```python
+results = db.hybrid_search(
+    label="Document",
+    text_property="content", text_query="graph database",
+    vector_property="embedding", vector_query=query_vec,
+    k=10,
+)
+```
+
+## Built-in Embeddings
+
+Generate embeddings in-process with ONNX Runtime (requires the `embed` feature):
+
+```python
+from grafeo import load_embedding_model, EmbeddingModelConfig
+
+model = load_embedding_model(EmbeddingModelConfig.MiniLM_L6_v2)
+vectors = model.embed(["graph databases are fast", "hello world"])
+```
+
+Three presets are available: MiniLM-L6-v2 (22M params), MiniLM-L12-v2 (33M), and BGE-small-en-v1.5 (33M). Models are auto-downloaded from HuggingFace Hub on first use.
 
 ## Documentation
 

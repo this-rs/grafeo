@@ -121,6 +121,22 @@ FOR person IN $people
 INSERT (:Person {name: person.name, age: person.age})
 ```
 
+### FOR WITH ORDINALITY / OFFSET
+
+Track the position of each element during iteration:
+
+```sql
+-- 1-based index (ORDINALITY)
+FOR x IN ['a', 'b', 'c'] WITH ORDINALITY i
+RETURN x, i
+-- Returns: ('a', 1), ('b', 2), ('c', 3)
+
+-- 0-based index (OFFSET)
+FOR x IN ['a', 'b', 'c'] WITH OFFSET i
+RETURN x, i
+-- Returns: ('a', 0), ('b', 1), ('c', 2)
+```
+
 ## Merge (Upsert)
 
 ```sql

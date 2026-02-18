@@ -9,15 +9,15 @@ Safety and performance improvements. Zero unsafe code remaining in property stor
 ### Added
 
 - **UNWIND clause**: expand lists into individual rows for batch processing. `UNWIND [1, 2, 3] AS x RETURN x` produces 3 rows. Works with literal lists, parameter-substituted lists (`UNWIND $items AS x`), and vectors
-- **FOR statement** (GQL standard, ISO/IEC 39075 section 14.8): `FOR x IN [1, 2, 3] RETURN x` — the GQL-native equivalent of Cypher's UNWIND, desugars to the same execution plan
+- **FOR statement** (GQL standard, ISO/IEC 39075 section 14.8): `FOR x IN [1, 2, 3] RETURN x`: the GQL-native equivalent of Cypher's UNWIND, desugars to the same execution plan
 - **FOR WITH ORDINALITY/OFFSET**: `FOR x IN list WITH ORDINALITY i` emits a 1-based index; `FOR x IN list WITH OFFSET i` emits a 0-based index. Threaded through all 7 pipeline layers (lexer, AST, parser, translator, plan, planner, operator)
-- **Text index mutation sync**: text indexes are now automatically updated when node properties are set, removed, or when nodes are deleted — no manual `rebuildTextIndex()` needed
+- **Text index mutation sync**: text indexes are now automatically updated when node properties are set, removed, or when nodes are deleted, no manual `rebuildTextIndex()` needed
 - **WASM text/hybrid search bindings**: `createTextIndex`, `dropTextIndex`, `rebuildTextIndex`, `textSearch`, and `hybridSearch` methods added to the WASM `Database` class
-- **UNWIND + MATCH + INSERT**: batch mutation pattern — `UNWIND $edges AS e MATCH (a {name: e.from}), (b {name: e.to}) INSERT (a)-[:KNOWS]->(b)` creates edges in bulk from parameter lists
+- **UNWIND + MATCH + INSERT**: batch mutation pattern: `UNWIND $edges AS e MATCH (a {name: e.from}), (b {name: e.to}) INSERT (a)-[:KNOWS]->(b)` creates edges in bulk from parameter lists
 - **Ordered clause processing**: GQL translator now processes MATCH, UNWIND, FOR, INSERT, and RETURN clauses in source order, preserving variable scoping across clause boundaries
 - **SPARQL COPY/MOVE/ADD graph operators**: `COPY <src> TO <dst>`, `MOVE <src> TO <dst>`, and `ADD <src> TO <dst>` now execute end-to-end with source-existence validation and SILENT support
 - **Embedding model config + auto-download**: `EmbeddingModelConfig` enum with 3 presets (MiniLM-L6-v2, MiniLM-L12-v2, BGE-small-en-v1.5) and HuggingFace Hub auto-download via `load_embedding_model()`. Configurable batch size and ONNX thread count via `EmbeddingOptions`. Exposed in Python and Node.js bindings
-- **Native SSSP procedure**: `CALL grafeo.sssp('node_name', 'weight') YIELD node_id, distance` — single-source shortest paths with string-based node name resolution for LDBC Graphanalytics compatibility. Also exposed as `db.algorithms.sssp(source, weight_attr)` in Python
+- **Native SSSP procedure**: `CALL grafeo.sssp('node_name', 'weight') YIELD node_id, distance`: single-source shortest paths with string-based node name resolution for LDBC Graphanalytics compatibility. Also exposed as `db.algorithms.sssp(source, weight_attr)` in Python
 
 ### Fixed
 
@@ -27,13 +27,15 @@ Safety and performance improvements. Zero unsafe code remaining in property stor
 - **Map property access in UNWIND**: `e.src` / `e.tgt` property access on map values from UNWIND (e.g., `UNWIND $edges AS e MATCH (a {id: e.src})`) now works in both ProjectOperator and FilterExpression. Previously only node/edge IDs supported property access, returning NULL for maps
 - **`RETURN n` now returns full node/edge maps**: queries like `MATCH (n) RETURN n` now return `{_id, _labels, ...properties}` instead of a bare integer ID, matching Neo4j/Memgraph behavior. Resolution now happens inside the ProjectOperator pipeline (single-pass) instead of post-processing
 - **GQL lexer UTF-8 panic**: multi-byte characters (e.g., `ç`, `ã`, CJK) in queries no longer cause `byte index is not a char boundary` panics. The lexer now advances by `char.len_utf8()` instead of a fixed 1 byte
+- **Scalar column tracking in Return**: `plan_return` now correctly passes through scalar values from Project/Aggregate operators instead of applying NodeResolve. Fixes Gremlin `.values()`, `.count()`, and GQL `WITH expr AS alias` returning NULL
+- **Vector index rebuild after drop**: `rebuild_vector_index()` now works even when the index was previously dropped, inferring dimensions from existing data instead of requiring the old index to still exist
 
 ### Improved
 
-- **Safe ID conversions**: replaced final 3 `unsafe transmute_copy` calls in property column compression/decompression with safe `EntityId::as_u64()` / `from_u64()` methods. Removed 4 stale `#[allow(unsafe_code)]` attributes — property.rs is now fully safe
+- **Safe ID conversions**: replaced final 3 `unsafe transmute_copy` calls in property column compression/decompression with safe `EntityId::as_u64()` / `from_u64()` methods. Removed 4 stale `#[allow(unsafe_code)]` attributes, property.rs is now fully safe
 - **Statistics access**: `LpgStore::statistics()` now returns `Arc<Statistics>` (cheap pointer clone) instead of deep-cloning the entire statistics struct on every query planner invocation
 - **HashableValue hashing/comparison**: recursive `Hash` and `PartialEq` impls for nested `List`/`Map`/`Vector` values now operate by reference instead of cloning each element, eliminating O(n) allocations per hash/compare operation
-- **Entity resolution in ProjectOperator**: `RETURN n` entity resolution moved from 6-site post-processing (`resolve_entities()`) into `ProjectExpr::NodeResolve`/`EdgeResolve` variants inside the ProjectOperator pipeline — single-pass, automatic, no call sites to maintain
+- **Entity resolution in ProjectOperator**: `RETURN n` entity resolution moved from 6-site post-processing (`resolve_entities()`) into `ProjectExpr::NodeResolve`/`EdgeResolve` variants inside the ProjectOperator pipeline: single-pass, automatic, no call sites to maintain
 - **Test coverage**: ~100+ new tests across Rust integration tests (mutation planning, expressions, filter pushdown, search, WAL recovery), C/WASM/Go binding tests, Python integration tests (advanced queries, text/hybrid search, CDC), and Node.js tests
 
 ## [0.5.5] - 2026-02-16

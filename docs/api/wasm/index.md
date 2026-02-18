@@ -48,6 +48,35 @@ db.edgeCount();   // number of edges
 db.schema();      // database schema as JSON
 ```
 
+## Text Search
+
+Create BM25 text indexes and run full-text queries:
+
+```javascript
+db.createTextIndex("Document", "content");
+const results = db.textSearch("Document", "content", "graph database", 10);
+// [{nodeId, score}, ...]
+
+db.rebuildTextIndex("Document", "content");
+db.dropTextIndex("Document", "content");
+```
+
+## Hybrid Search
+
+Combine BM25 text scores with HNSW vector similarity:
+
+```javascript
+db.createTextIndex("Document", "content");
+db.createVectorIndex("Document", "embedding", { dimensions: 384 });
+
+const results = db.hybridSearch(
+    "Document",
+    "content", "graph database",     // text field + query
+    "embedding", queryVector,         // vector field + query
+    10                                // top-k
+);
+```
+
 ## Snapshots (Persistence)
 
 Export/import the entire database as a binary snapshot for IndexedDB persistence:

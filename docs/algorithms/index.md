@@ -112,6 +112,7 @@ The `algorithms()` object provides these methods:
 
 - `dijkstra(source, target)` - Dijkstra's algorithm
 - `shortest_path(source, target)` - Generic shortest path
+- `sssp(source, weight_attr)` - Single-source shortest paths (weighted)
 - `all_pairs_shortest_path()` - All-to-all shortest paths
 
 **Centrality:**
@@ -189,6 +190,7 @@ Works the same way across all three languages:
 | `grafeo.dfs(start)` | Traversal | node_id, depth |
 | `grafeo.dijkstra(source)` | Shortest Path | node_id, distance |
 | `grafeo.bellman_ford(source)` | Shortest Path | node_id, distance, has_negative_cycle |
+| `grafeo.sssp(source, weight)` | Shortest Path | node_id, distance |
 | `grafeo.floyd_warshall()` | Shortest Path | source, target, distance |
 | `grafeo.connected_components()` | Components | node_id, component_id |
 | `grafeo.strongly_connected_components()` | Components | node_id, component_id |
