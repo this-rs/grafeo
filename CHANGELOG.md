@@ -2,6 +2,16 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
+## [0.5.7] - Unreleased
+
+### Fixed
+
+- **UNWIND mutation property access**: `UNWIND $edges AS e MATCH (a {id: e.src}), (b {id: e.tgt}) CREATE (a)-[:REL {w: e.weight}]->(b)` now correctly resolves map property access (`e.src`, `e.weight`) in CREATE/SET property lists. Previously only column references and constants were supported, causing map properties to resolve as NULL
+
+### Improved
+
+- **LpgStore submodule split**: split the monolithic `store.rs` (4,600+ lines) into 10 focused submodules (node_ops, edge_ops, property_ops, traversal, schema, index, search, statistics, versioning). No public API changes. Same pattern as the earlier `database/` module split
+
 ## [0.5.6] - 2026-02-18
 
 Safety and performance improvements. Zero unsafe code remaining in property storage. Named graph management operators fully integrated. UNWIND and FOR list expansion for batch operations.
