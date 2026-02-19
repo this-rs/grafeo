@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use grafeo_common::types::{EdgeId, EpochId, LogicalType, NodeId, TxId, Value};
+use grafeo_common::types::{EdgeId, EpochId, LogicalType, NodeId, PropertyKey, TxId, Value};
 
 use super::{Operator, OperatorError, OperatorResult};
 use crate::execution::chunk::DataChunkBuilder;
@@ -46,6 +46,53 @@ pub enum PropertySource {
     Column(usize),
     /// Use a constant value.
     Constant(Value),
+    /// Access a named property from a map/node/edge in an input column.
+    PropertyAccess {
+        /// The column containing the map, node ID, or edge ID.
+        column: usize,
+        /// The property name to extract.
+        property: String,
+    },
+}
+
+impl PropertySource {
+    /// Resolves a property value from a data chunk row.
+    pub fn resolve(
+        &self,
+        chunk: &crate::execution::chunk::DataChunk,
+        row: usize,
+        store: &LpgStore,
+    ) -> Value {
+        match self {
+            PropertySource::Column(col_idx) => chunk
+                .column(*col_idx)
+                .and_then(|c| c.get_value(row))
+                .unwrap_or(Value::Null),
+            PropertySource::Constant(v) => v.clone(),
+            PropertySource::PropertyAccess { column, property } => {
+                let Some(col) = chunk.column(*column) else {
+                    return Value::Null;
+                };
+                // Try node ID first, then edge ID, then map value
+                if let Some(node_id) = col.get_node_id(row) {
+                    store
+                        .get_node(node_id)
+                        .and_then(|node| node.get_property(property).cloned())
+                        .unwrap_or(Value::Null)
+                } else if let Some(edge_id) = col.get_edge_id(row) {
+                    store
+                        .get_edge(edge_id)
+                        .and_then(|edge| edge.get_property(property).cloned())
+                        .unwrap_or(Value::Null)
+                } else if let Some(Value::Map(map)) = col.get_value(row) {
+                    let key = PropertyKey::new(property);
+                    map.get(&key).cloned().unwrap_or(Value::Null)
+                } else {
+                    Value::Null
+                }
+            }
+        }
+    }
 }
 
 impl CreateNodeOperator {
@@ -108,13 +155,7 @@ impl Operator for CreateNodeOperator {
 
                     // Set properties
                     for (prop_name, source) in &self.properties {
-                        let value = match source {
-                            PropertySource::Column(col_idx) => chunk
-                                .column(*col_idx)
-                                .and_then(|c| c.get_value(row))
-                                .unwrap_or(Value::Null),
-                            PropertySource::Constant(v) => v.clone(),
-                        };
+                        let value = source.resolve(&chunk, row, &self.store);
                         self.store.set_node_property(node_id, prop_name, value);
                     }
 
@@ -318,13 +359,7 @@ impl Operator for CreateEdgeOperator {
 
                 // Set properties
                 for (prop_name, source) in &self.properties {
-                    let value = match source {
-                        PropertySource::Column(col_idx) => chunk
-                            .column(*col_idx)
-                            .and_then(|c| c.get_value(row))
-                            .unwrap_or(Value::Null),
-                        PropertySource::Constant(v) => v.clone(),
-                    };
+                    let value = source.resolve(&chunk, row, &self.store);
                     self.store.set_edge_property(edge_id, prop_name, value);
                 }
 
@@ -817,13 +852,7 @@ impl Operator for SetPropertyOperator {
 
                 // Set all properties
                 for (prop_name, source) in &self.properties {
-                    let value = match source {
-                        PropertySource::Column(col_idx) => chunk
-                            .column(*col_idx)
-                            .and_then(|c| c.get_value(row))
-                            .unwrap_or(Value::Null),
-                        PropertySource::Constant(v) => v.clone(),
-                    };
+                    let value = source.resolve(&chunk, row, &self.store);
 
                     if self.is_edge {
                         self.store

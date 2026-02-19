@@ -442,7 +442,12 @@ impl Planner {
             LogicalOperator::RemoveLabel(remove_label) => self.plan_remove_label(remove_label),
             LogicalOperator::SetProperty(set_prop) => self.plan_set_property(set_prop),
             LogicalOperator::ShortestPath(sp) => self.plan_shortest_path(sp),
+            #[cfg(feature = "algos")]
             LogicalOperator::CallProcedure(call) => self.plan_call_procedure(call),
+            #[cfg(not(feature = "algos"))]
+            LogicalOperator::CallProcedure(_) => Err(Error::Internal(
+                "CALL procedures require the 'algos' feature".to_string(),
+            )),
             LogicalOperator::Empty => Err(Error::Internal("Empty plan".to_string())),
             LogicalOperator::VectorScan(_) => Err(Error::Internal(
                 "VectorScan requires vector-index feature".to_string(),

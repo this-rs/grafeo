@@ -2,6 +2,22 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
+## [0.5.7] - 2026-02-19
+
+### Fixed
+
+- **UNWIND mutation property access**: `UNWIND $edges AS e MATCH (a {id: e.src}), (b {id: e.tgt}) CREATE (a)-[:REL {w: e.weight}]->(b)` now correctly resolves map property access (`e.src`, `e.weight`) in CREATE/SET property lists. Previously only column references and constants were supported, causing map properties to resolve as NULL
+
+### Added
+
+- **`algos` feature flag**: graph algorithms (7,500+ LOC) are now gated behind an `algos` feature flag across grafeo-adapters, grafeo-engine, and Python bindings. Included in the `full` feature group so existing users are unaffected. Reduces compile time and binary size when algorithms are not needed
+
+### Improved
+
+- **LpgStore submodule split**: split the monolithic `store.rs` (4,600+ lines) into 10 focused submodules (node_ops, edge_ops, property_ops, traversal, schema, index, search, statistics, versioning). No public API changes. Same pattern as the earlier `database/` module split
+- **Translator consolidation**: extracted shared `is_aggregate_function` and `to_aggregate_function` helpers from GQL and Cypher translators into a common `translator_common` module, removing code duplication
+- **Doc-test fixes**: converted 9 ignored doc-tests to compilable `no_run` examples across fold.rs, cardinality.rs, and embedding config. Fixed incorrect function signatures in parallel_partition doc-test
+
 ## [0.5.6] - 2026-02-18
 
 Safety and performance improvements. Zero unsafe code remaining in property storage. Named graph management operators fully integrated. UNWIND and FOR list expansion for batch operations.

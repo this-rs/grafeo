@@ -6,6 +6,7 @@
 //! The [`algorithms`] module includes ready-to-use implementations of classic
 //! graph algorithms - traversals, shortest paths, centrality measures, and more.
 
+#[cfg(feature = "algos")]
 pub mod algorithms;
 mod registry;
 mod traits;

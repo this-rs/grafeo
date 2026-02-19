@@ -19,6 +19,7 @@ pub mod optimizer;
 pub mod plan;
 pub mod planner;
 pub mod processor;
+pub(crate) mod translator_common;
 
 #[cfg(feature = "rdf")]
 pub mod planner_rdf;

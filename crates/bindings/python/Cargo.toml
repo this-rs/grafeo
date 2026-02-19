@@ -36,9 +36,10 @@ text-index = ["grafeo-engine/text-index"]
 hybrid-search = ["grafeo-engine/hybrid-search"]
 cdc = ["grafeo-engine/cdc"]
 embed = ["grafeo-engine/embed"]
+algos = ["grafeo-engine/algos"]  # Graph algorithms (SSSP, PageRank, etc.)
 languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]
 ai = ["vector-index", "text-index", "hybrid-search", "cdc"]
-full = ["languages", "ai"]
+full = ["languages", "ai", "algos"]
 
 [lints]
 workspace = true

@@ -9,6 +9,7 @@ use crate::query::plan::{
     MergeOp, NodeScanOp, ProcedureYield, ProjectOp, Projection, RemoveLabelOp, ReturnItem,
     ReturnOp, SetPropertyOp, ShortestPathOp, SkipOp, SortKey, SortOp, SortOrder, UnaryOp, UnwindOp,
 };
+use crate::query::translator_common::{is_aggregate_function, to_aggregate_function};
 use grafeo_adapters::query::gql::{self, ast};
 use grafeo_common::types::Value;
 use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
@@ -1429,44 +1430,6 @@ fn rand_id() -> u32 {
     use std::sync::atomic::{AtomicU32, Ordering};
     static COUNTER: AtomicU32 = AtomicU32::new(0);
     COUNTER.fetch_add(1, Ordering::Relaxed)
-}
-
-/// Returns true if the function name is an aggregate function.
-fn is_aggregate_function(name: &str) -> bool {
-    matches!(
-        name.to_uppercase().as_str(),
-        "COUNT"
-            | "SUM"
-            | "AVG"
-            | "MIN"
-            | "MAX"
-            | "COLLECT"
-            | "STDEV"
-            | "STDDEV"
-            | "STDEVP"
-            | "STDDEVP"
-            | "PERCENTILE_DISC"
-            | "PERCENTILEDISC"
-            | "PERCENTILE_CONT"
-            | "PERCENTILECONT"
-    )
-}
-
-/// Converts a function name to an AggregateFunction enum.
-fn to_aggregate_function(name: &str) -> Option<AggregateFunction> {
-    match name.to_uppercase().as_str() {
-        "COUNT" => Some(AggregateFunction::Count),
-        "SUM" => Some(AggregateFunction::Sum),
-        "AVG" => Some(AggregateFunction::Avg),
-        "MIN" => Some(AggregateFunction::Min),
-        "MAX" => Some(AggregateFunction::Max),
-        "COLLECT" => Some(AggregateFunction::Collect),
-        "STDEV" | "STDDEV" => Some(AggregateFunction::StdDev),
-        "STDEVP" | "STDDEVP" => Some(AggregateFunction::StdDevPop),
-        "PERCENTILE_DISC" | "PERCENTILEDISC" => Some(AggregateFunction::PercentileDisc),
-        "PERCENTILE_CONT" | "PERCENTILECONT" => Some(AggregateFunction::PercentileCont),
-        _ => None,
-    }
 }
 
 /// Checks if an AST expression contains an aggregate function call.

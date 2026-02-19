@@ -58,13 +58,14 @@ graphql = ["grafeo-adapters/graphql"]
 sql-pgq = ["grafeo-adapters/sql-pgq"]  # SQL/PGQ (SQL:2023 GRAPH_TABLE)
 rdf = ["grafeo-core/rdf", "grafeo-adapters/rdf"]  # RDF graph model and planner
 parallel = ["rayon", "crossbeam", "grafeo-core/parallel", "grafeo-adapters/parallel"]  # Parallel execution
+algos = ["grafeo-adapters/algos"]  # Graph algorithm plugin (SSSP, PageRank, etc.)
 wal = ["grafeo-adapters/wal"]  # Write-ahead log storage
 spill = ["grafeo-core/spill"]  # Disk spilling for out-of-core execution
 mmap = ["grafeo-core/mmap"]  # File-backed vector storage
 # Convenience groups
 languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]  # All query language parsers
 ai = ["vector-index", "text-index", "hybrid-search", "cdc"]  # All AI/RAG features
-full = ["languages", "ai", "rdf", "parallel", "wal", "spill", "mmap"]
+full = ["languages", "ai", "rdf", "parallel", "algos", "wal", "spill", "mmap"]
 
 # Search & AI features
 vector-index = ["grafeo-core/vector-index"]  # HNSW vector index for k-NN search

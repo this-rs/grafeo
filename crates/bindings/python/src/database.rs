@@ -15,6 +15,7 @@ use grafeo_common::types::{EdgeId, LogicalType, NodeId, Value};
 use grafeo_engine::config::Config;
 use grafeo_engine::database::{GrafeoDB, QueryResult};
 
+#[cfg(feature = "algos")]
 use crate::bridges::{PyAlgorithms, PyNetworkXAdapter, PySolvORAdapter};
 use crate::error::PyGrafeoError;
 use crate::graph::{PyEdge, PyNode};
@@ -1663,6 +1664,7 @@ impl PyGrafeoDB {
     /// Example:
     ///     pr = db.algorithms.pagerank()
     ///     path = db.algorithms.dijkstra(1, 5)
+    #[cfg(feature = "algos")]
     #[getter]
     fn algorithms(&self) -> PyAlgorithms {
         PyAlgorithms::new(self.inner.clone())
@@ -1681,6 +1683,7 @@ impl PyGrafeoDB {
     ///     nx_adapter = db.as_networkx()
     ///     G = nx_adapter.to_networkx()  # Convert to NetworkX graph
     ///     pr = nx_adapter.pagerank()    # Use native Grafeo algorithms
+    #[cfg(feature = "algos")]
     #[pyo3(signature = (directed=true))]
     fn as_networkx(&self, directed: bool) -> PyNetworkXAdapter {
         PyNetworkXAdapter::new(self.inner.clone(), directed)
@@ -1695,6 +1698,7 @@ impl PyGrafeoDB {
     ///     solvor = db.as_solvor()
     ///     distance, path = solvor.shortest_path(1, 5)
     ///     result = solvor.max_flow(source=1, sink=10)
+    #[cfg(feature = "algos")]
     fn as_solvor(&self) -> PySolvORAdapter {
         PySolvORAdapter::new(self.inner.clone())
     }

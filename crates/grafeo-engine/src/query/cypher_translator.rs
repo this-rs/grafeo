@@ -10,6 +10,7 @@ use crate::query::plan::{
     ProjectOp, Projection, RemoveLabelOp, ReturnItem, ReturnOp, SetPropertyOp, ShortestPathOp,
     SkipOp, SortKey, SortOp, SortOrder, UnaryOp, UnwindOp,
 };
+use crate::query::translator_common::{is_aggregate_function, to_aggregate_function};
 use grafeo_adapters::query::cypher::{self, ast};
 use grafeo_common::types::Value;
 use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
@@ -1449,42 +1450,6 @@ fn contains_aggregate(expr: &ast::Expression) -> bool {
         }
         ast::Expression::Unary { operand, .. } => contains_aggregate(operand),
         _ => false,
-    }
-}
-
-/// Returns true if the function name is an aggregate function.
-fn is_aggregate_function(name: &str) -> bool {
-    matches!(
-        name.to_uppercase().as_str(),
-        "COUNT"
-            | "SUM"
-            | "AVG"
-            | "MIN"
-            | "MAX"
-            | "COLLECT"
-            | "STDEV"
-            | "STDDEV"
-            | "STDEVP"
-            | "STDDEVP"
-            | "PERCENTILEDISC"
-            | "PERCENTILECONT"
-    )
-}
-
-/// Converts a function name to an AggregateFunction enum.
-fn to_aggregate_function(name: &str) -> Option<AggregateFunction> {
-    match name.to_uppercase().as_str() {
-        "COUNT" => Some(AggregateFunction::Count),
-        "SUM" => Some(AggregateFunction::Sum),
-        "AVG" => Some(AggregateFunction::Avg),
-        "MIN" => Some(AggregateFunction::Min),
-        "MAX" => Some(AggregateFunction::Max),
-        "COLLECT" => Some(AggregateFunction::Collect),
-        "STDEV" | "STDDEV" => Some(AggregateFunction::StdDev),
-        "STDEVP" | "STDDEVP" => Some(AggregateFunction::StdDevPop),
-        "PERCENTILEDISC" => Some(AggregateFunction::PercentileDisc),
-        "PERCENTILECONT" => Some(AggregateFunction::PercentileCont),
-        _ => None,
     }
 }
 

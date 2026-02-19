@@ -190,7 +190,7 @@ pub(crate) enum ResolveInfo<'a> {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```no_run
 /// use grafeo_engine::embedding::EmbeddingOptions;
 ///
 /// let options = EmbeddingOptions::new()

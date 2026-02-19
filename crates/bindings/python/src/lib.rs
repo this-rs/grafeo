@@ -45,6 +45,7 @@ mod quantization;
 mod query;
 mod types;
 
+#[cfg(feature = "algos")]
 use bridges::{PyAlgorithms, PyNetworkXAdapter, PySolvORAdapter};
 use database::{AsyncQueryResult, AsyncQueryResultIter, PyGrafeoDB};
 use graph::{PyEdge, PyNode};
@@ -75,9 +76,12 @@ fn grafeo(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<AsyncQueryResult>()?;
     m.add_class::<AsyncQueryResultIter>()?;
     m.add_class::<PyValue>()?;
-    m.add_class::<PyAlgorithms>()?;
-    m.add_class::<PyNetworkXAdapter>()?;
-    m.add_class::<PySolvORAdapter>()?;
+    #[cfg(feature = "algos")]
+    {
+        m.add_class::<PyAlgorithms>()?;
+        m.add_class::<PyNetworkXAdapter>()?;
+        m.add_class::<PySolvORAdapter>()?;
+    }
 
     // Register quantization types
     quantization::register(m)?;

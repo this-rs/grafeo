@@ -121,9 +121,83 @@ fn test_unwind_create() {
         .execute_cypher("UNWIND [1, 2, 3] AS x CREATE (:Number {val: x})")
         .unwrap();
 
-    let result = session.execute("MATCH (n:Number) RETURN n.val").unwrap();
+    let result = session
+        .execute("MATCH (n:Number) RETURN n.val ORDER BY n.val")
+        .unwrap();
 
     assert_eq!(result.rows.len(), 3);
+    // Verify actual property values, not just row count
+    assert_eq!(result.rows[0][0], Value::Int64(1));
+    assert_eq!(result.rows[1][0], Value::Int64(2));
+    assert_eq!(result.rows[2][0], Value::Int64(3));
+}
+
+#[test]
+fn test_unwind_create_map_property_access() {
+    // Regression test: UNWIND with map list + property access in CREATE
+    // Previously all properties resolved to NULL (bug in plan_create_node)
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    session
+        .execute(
+            "UNWIND [{id: 'u1', name: 'Bob'}, {id: 'u2', name: 'Carol'}] AS props \
+             CREATE (:Test {id: props.id, name: props.name})",
+        )
+        .unwrap();
+
+    let result = session
+        .execute("MATCH (n:Test) RETURN n.id AS id, n.name AS name ORDER BY n.id")
+        .unwrap();
+
+    assert_eq!(result.rows.len(), 2);
+    assert_eq!(result.rows[0][0], Value::String("u1".into()));
+    assert_eq!(result.rows[0][1], Value::String("Bob".into()));
+    assert_eq!(result.rows[1][0], Value::String("u2".into()));
+    assert_eq!(result.rows[1][1], Value::String("Carol".into()));
+}
+
+#[test]
+fn test_unwind_param_create_map_property_access() {
+    // Same as above but with parameter substitution ($nodes instead of literal list)
+    use std::collections::BTreeMap;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use grafeo_common::types::PropertyKey;
+
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    let nodes = Value::List(Arc::from(vec![
+        Value::Map(Arc::new(BTreeMap::from([
+            (PropertyKey::new("id"), Value::String("u1".into())),
+            (PropertyKey::new("name"), Value::String("Bob".into())),
+        ]))),
+        Value::Map(Arc::new(BTreeMap::from([
+            (PropertyKey::new("id"), Value::String("u2".into())),
+            (PropertyKey::new("name"), Value::String("Carol".into())),
+        ]))),
+    ]));
+
+    let params = HashMap::from([("nodes".to_string(), nodes)]);
+
+    session
+        .execute_with_params(
+            "UNWIND $nodes AS props CREATE (:Test {id: props.id, name: props.name})",
+            params,
+        )
+        .unwrap();
+
+    let result = session
+        .execute("MATCH (n:Test) RETURN n.id AS id, n.name AS name ORDER BY n.id")
+        .unwrap();
+
+    assert_eq!(result.rows.len(), 2);
+    assert_eq!(result.rows[0][0], Value::String("u1".into()));
+    assert_eq!(result.rows[0][1], Value::String("Bob".into()));
+    assert_eq!(result.rows[1][0], Value::String("u2".into()));
+    assert_eq!(result.rows[1][1], Value::String("Carol".into()));
 }
 
 #[test]

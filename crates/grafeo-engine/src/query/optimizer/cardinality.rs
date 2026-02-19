@@ -91,7 +91,7 @@ impl HistogramBucket {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use grafeo_engine::query::optimizer::cardinality::EquiDepthHistogram;
 ///
 /// // Build a histogram from sorted values

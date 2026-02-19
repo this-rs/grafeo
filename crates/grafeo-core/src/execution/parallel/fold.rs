@@ -13,17 +13,17 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
 //! use grafeo_core::execution::parallel::fold::{parallel_count, parallel_sum};
 //! use rayon::prelude::*;
 //!
 //! let numbers: Vec<i32> = (0..1000).collect();
 //!
 //! // Count even numbers
-//! let even_count = parallel_count(numbers.par_iter(), |n| *n % 2 == 0);
+//! let even_count = parallel_count(numbers.par_iter(), |n: &&i32| **n % 2 == 0);
 //!
 //! // Sum all numbers
-//! let total: f64 = parallel_sum(numbers.par_iter(), |n| *n as f64);
+//! let total: f64 = parallel_sum(numbers.par_iter(), |n: &&i32| **n as f64);
 //! ```
 
 use rayon::prelude::*;
@@ -46,17 +46,17 @@ pub trait Mergeable: Send + Default {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use grafeo_core::execution::parallel::fold::fold_reduce;
 /// use rayon::prelude::*;
 ///
 /// let items = vec![1, 2, 3, 4, 5];
-/// let sum = fold_reduce(
+/// let sum: i32 = fold_reduce(
 ///     items.into_par_iter(),
-///     |acc, item| acc + item,
+///     |acc: i32, item| acc + item,
 ///     |a, b| a + b,
 /// );
-/// assert_eq!(sum, 15);
+/// assert_eq!(sum, 15i32);
 /// ```
 pub fn fold_reduce<T, I, F, M>(items: I, fold_fn: F, merge_fn: M) -> T
 where
@@ -89,7 +89,7 @@ where
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use grafeo_core::execution::parallel::fold::parallel_count;
 /// use rayon::prelude::*;
 ///
@@ -112,7 +112,7 @@ where
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use grafeo_core::execution::parallel::fold::parallel_sum;
 /// use rayon::prelude::*;
 ///
@@ -213,7 +213,7 @@ where
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use grafeo_core::execution::parallel::fold::parallel_try_collect;
 /// use rayon::prelude::*;
 ///
@@ -223,7 +223,7 @@ where
 ///     |s| s.parse::<i32>().map_err(|e| e.to_string()),
 /// );
 ///
-/// assert_eq!(successes, vec![1, 3]);
+/// assert_eq!(successes.len(), 2);
 /// assert_eq!(errors.len(), 2);
 /// ```
 pub fn parallel_try_collect<T, E, I, F, R>(items: I, process: F) -> (Vec<R>, Vec<E>)
@@ -308,15 +308,15 @@ where
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use grafeo_core::execution::parallel::fold::parallel_partition;
 /// use rayon::prelude::*;
 ///
 /// let items = vec![(1, "a"), (2, "b"), (1, "c"), (2, "d")];
-/// let groups = parallel_partition(items.into_par_iter(), |(k, _)| *k);
+/// let groups = parallel_partition(items.into_par_iter(), |(k, _)| *k, |(_, v)| v);
 ///
-/// assert_eq!(groups.get(&1).unwrap(), &vec!["a", "c"]);
-/// assert_eq!(groups.get(&2).unwrap(), &vec!["b", "d"]);
+/// assert_eq!(groups[&1].len(), 2);
+/// assert_eq!(groups[&2].len(), 2);
 /// ```
 pub fn parallel_partition<T, I, K, V, KeyFn, ValFn>(
     items: I,
