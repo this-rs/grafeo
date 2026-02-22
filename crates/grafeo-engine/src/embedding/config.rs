@@ -44,9 +44,10 @@ const BGE_SMALL_EN_V15: ModelSpec = ModelSpec {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```no_run
 /// use grafeo_engine::embedding::{EmbeddingModelConfig, OnnxEmbeddingModel};
 ///
+/// # fn main() -> grafeo_common::utils::error::Result<()> {
 /// // Preset: auto-downloads on first use
 /// let model = OnnxEmbeddingModel::from_config(EmbeddingModelConfig::MiniLmL6v2)?;
 ///
@@ -55,6 +56,8 @@ const BGE_SMALL_EN_V15: ModelSpec = ModelSpec {
 ///     model_path: "path/to/model.onnx".into(),
 ///     tokenizer_path: "path/to/tokenizer.json".into(),
 /// })?;
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Debug, Clone)]
 pub enum EmbeddingModelConfig {

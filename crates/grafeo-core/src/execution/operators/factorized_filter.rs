@@ -438,11 +438,21 @@ impl FactorizedPredicate for OrPredicate {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// # use grafeo_core::execution::operators::{
+/// #     FactorizedFilterOperator, PropertyPredicate, FactorizedCompareOp,
+/// #     LazyFactorizedChainOperator,
+/// # };
+/// # use grafeo_core::graph::lpg::LpgStore;
+/// # use grafeo_common::types::Value;
+/// # use std::sync::Arc;
+/// # fn example(expand_chain: LazyFactorizedChainOperator, store: Arc<LpgStore>) {
 /// // Query: MATCH (a)->(b)->(c) WHERE c.age > 30
-/// let expand_chain = LazyFactorizedChainOperator::new(store, scan, steps);
-/// let predicate = PropertyPredicate::new(2, 0, "age".to_string(), CompareOp::Gt, Value::Int64(30), store);
+/// let predicate = PropertyPredicate::new(
+///     2, 0, "age", FactorizedCompareOp::Gt, Value::Int64(30), store,
+/// );
 /// let filter = FactorizedFilterOperator::new(expand_chain, Box::new(predicate));
+/// # }
 /// ```
 pub struct FactorizedFilterOperator {
     /// The input operator providing factorized data.

@@ -131,8 +131,10 @@ impl FactorizedAggregate {
     ///
     /// # Example
     ///
-    /// ```ignore
-    /// let mut chunk = get_factorized_chunk();
+    /// ```rust
+    /// # use grafeo_core::execution::factorized_chunk::FactorizedChunk;
+    /// # use grafeo_core::execution::operators::FactorizedAggregate;
+    /// let mut chunk = FactorizedChunk::empty();
     /// let mults = chunk.path_multiplicities_cached();
     ///
     /// // Compute multiple aggregates with O(1) cached lookup each
@@ -220,11 +222,16 @@ impl FactorizedAggregate {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// # use grafeo_core::execution::operators::{
+/// #     FactorizedAggregateOperator, FactorizedAggregate,
+/// #     LazyFactorizedChainOperator,
+/// # };
+/// # fn example(expand_chain: LazyFactorizedChainOperator) {
 /// // Query: MATCH (a)->(b)->(c) RETURN COUNT(*)
-/// let expand_chain = LazyFactorizedChainOperator::new(store, scan, steps);
 /// let agg = FactorizedAggregateOperator::new(expand_chain, vec![FactorizedAggregate::count()]);
-/// // Returns a single row with the count, computed in O(n) instead of O(n²)
+/// // Returns a single row with the count, computed in O(n) instead of O(n^2)
+/// # }
 /// ```
 pub struct FactorizedAggregateOperator {
     /// The input operator providing factorized data.

@@ -9,7 +9,9 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```no_run
+//! # #[cfg(feature = "mmap")]
+//! # fn main() -> std::io::Result<()> {
 //! use grafeo_core::index::vector::storage::{MmapStorage, VectorStorage};
 //! use grafeo_common::types::NodeId;
 //!
@@ -17,10 +19,15 @@
 //! let storage = MmapStorage::create("vectors.bin", 384)?;
 //!
 //! // Store vectors
+//! let embedding = vec![0.1f32; 384];
 //! storage.insert(NodeId::new(1), &embedding)?;
 //!
 //! // Retrieve vectors (zero-copy when possible)
-//! let vec = storage.get(NodeId::new(1))?;
+//! let vec = storage.get(NodeId::new(1));
+//! # Ok(())
+//! # }
+//! # #[cfg(not(feature = "mmap"))]
+//! # fn main() {}
 //! ```
 
 use grafeo_common::types::NodeId;

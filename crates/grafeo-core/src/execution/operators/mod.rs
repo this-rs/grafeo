@@ -112,7 +112,9 @@ pub type OperatorResult = Result<Option<DataChunk>, OperatorError>;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```rust
+/// use grafeo_core::execution::operators::FactorizedData;
+///
 /// fn process_data(data: &dyn FactorizedData) {
 ///     if data.is_factorized() {
 ///         // Handle factorized path

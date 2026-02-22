@@ -16,7 +16,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use grafeo_core::index::vector::{
 //!     QuantizedHnswIndex, HnswConfig, DistanceMetric, QuantizationType
 //! };
@@ -24,12 +24,13 @@
 //!
 //! // Create config with scalar quantization
 //! let config = HnswConfig::new(384, DistanceMetric::Cosine);
-//! let mut index = QuantizedHnswIndex::new(config, QuantizationType::Scalar);
+//! let index = QuantizedHnswIndex::new(config, QuantizationType::Scalar);
 //!
 //! // Insert vectors (full precision stored internally, quantized for search)
 //! index.insert(NodeId::new(1), &vec![0.1f32; 384]);
 //!
 //! // Search with rescoring (default: rescore top 2*k candidates)
+//! let query = vec![0.15f32; 384];
 //! let results = index.search(&query, 10);
 //! ```
 

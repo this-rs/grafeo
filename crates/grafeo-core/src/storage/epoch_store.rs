@@ -32,18 +32,22 @@
 //!
 //! # Usage
 //!
-//! ```ignore
+//! ```
 //! use grafeo_core::storage::EpochStore;
+//! use grafeo_common::types::EpochId;
 //!
-//! let mut store = EpochStore::new();
+//! let store = EpochStore::new();
 //!
-//! // Freeze an epoch (called by TransactionManager)
-//! let node_entries = vec![(node_id, node_record), ...];
-//! let edge_entries = vec![(edge_id, edge_record), ...];
-//! let (node_refs, edge_refs) = store.freeze_epoch(epoch, &node_entries, &edge_entries);
+//! // Freeze an epoch with node/edge records
+//! let node_entries = vec![]; // Vec<(u64, NodeRecord)>
+//! let edge_entries = vec![]; // Vec<(u64, EdgeRecord)>
+//! let (node_refs, edge_refs) = store.freeze_epoch(
+//!     EpochId::new(1),
+//!     node_entries,
+//!     edge_entries,
+//! );
 //!
-//! // Read back a node from cold storage
-//! let node_record = store.get_node(&cold_ref)?;
+//! assert!(store.contains_epoch(EpochId::new(1)));
 //! ```
 
 use std::collections::HashMap;

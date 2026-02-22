@@ -27,19 +27,28 @@ use crate::index::vector::HnswIndex;
 ///
 /// # Example
 ///
-/// ```ignore
-/// use grafeo_core::execution::operators::VectorScanOperator;
+/// ```no_run
+/// use grafeo_core::execution::operators::{Operator, VectorScanOperator};
+/// use grafeo_core::index::vector::DistanceMetric;
+/// use grafeo_core::graph::lpg::LpgStore;
+/// use std::sync::Arc;
 ///
+/// # fn example() -> Result<(), grafeo_core::execution::operators::OperatorError> {
+/// let store = Arc::new(LpgStore::new());
 /// let query = vec![0.1f32, 0.2, 0.3];
-/// let mut scan = VectorScanOperator::brute_force(store, "embedding", query, 10, DistanceMetric::Cosine);
+/// let mut scan = VectorScanOperator::brute_force(
+///     store, "embedding", query, 10, DistanceMetric::Cosine,
+/// );
 ///
 /// while let Some(chunk) = scan.next()? {
 ///     for i in 0..chunk.row_count() {
-///         let node_id = chunk.column(0).get_node_id(i);
-///         let distance = chunk.column(1).get_float64(i);
-///         println!("Node {:?} at distance {}", node_id, distance);
+///         let node_id = chunk.column(0).and_then(|c| c.get_node_id(i));
+///         let distance = chunk.column(1).and_then(|c| c.get_float64(i));
+///         println!("Node {:?} at distance {:?}", node_id, distance);
 ///     }
 /// }
+/// # Ok(())
+/// # }
 /// ```
 pub struct VectorScanOperator {
     /// The store to fetch node properties from (for brute-force).

@@ -5,9 +5,10 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! use grafeo_engine::embedding::OnnxEmbeddingModel;
+//! ```no_run
+//! use grafeo_engine::embedding::{EmbeddingModel, OnnxEmbeddingModel};
 //!
+//! # fn main() -> grafeo_common::utils::error::Result<()> {
 //! let model = OnnxEmbeddingModel::from_files(
 //!     "all-MiniLM-L6-v2",
 //!     "model.onnx",
@@ -16,6 +17,8 @@
 //! let vectors = model.embed(&["Hello world", "Graph databases"])?;
 //! assert_eq!(vectors.len(), 2);
 //! assert_eq!(vectors[0].len(), model.dimensions());
+//! # Ok(())
+//! # }
 //! ```
 
 mod config;

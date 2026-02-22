@@ -8,7 +8,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```
 //! use grafeo_core::index::vector::VectorAccessor;
 //! use grafeo_common::types::NodeId;
 //! use std::sync::Arc;

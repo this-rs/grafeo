@@ -10,18 +10,22 @@
 //!
 //! ## Usage
 //!
-//! ```ignore
+//! ```no_run
+//! use grafeo_engine::query::cache::{QueryCache, CacheKey};
+//! use grafeo_engine::query::processor::QueryLanguage;
+//! use grafeo_engine::query::plan::{LogicalPlan, LogicalOperator};
+//!
 //! let cache = QueryCache::new(1000);
+//! let cache_key = CacheKey::new("MATCH (n) RETURN n", QueryLanguage::Gql);
 //!
 //! // Check cache first
 //! if let Some(plan) = cache.get_optimized(&cache_key) {
-//!     return execute(plan);
+//!     // use cached plan
 //! }
 //!
-//! // Parse and optimize
-//! let plan = parse_and_optimize(query)?;
-//! cache.put_optimized(cache_key, plan.clone());
-//! execute(plan)
+//! // Parse and optimize, then cache
+//! let plan = LogicalPlan::new(LogicalOperator::Empty);
+//! cache.put_optimized(cache_key, plan);
 //! ```
 
 use parking_lot::Mutex;
