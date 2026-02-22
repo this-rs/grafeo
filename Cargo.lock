@@ -1057,6 +1057,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "grafeo-bindings-common"
+version = "0.5.7"
+dependencies = [
+ "grafeo-common",
+ "grafeo-engine",
+ "serde_json",
+]
+
+[[package]]
 name = "grafeo-c"
 version = "0.5.7"
 dependencies = [

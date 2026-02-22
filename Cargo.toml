@@ -11,6 +11,7 @@ members = [
     "crates/bindings/node",
     "crates/bindings/c",
     "crates/bindings/wasm",
+    "crates/bindings/common",
 ]
 
 [workspace.package]
@@ -29,6 +30,7 @@ grafeo-core = { path = "crates/grafeo-core", version = "0.5.7", default-features
 grafeo-adapters = { path = "crates/grafeo-adapters", version = "0.5.7", default-features = false }
 grafeo-engine = { path = "crates/grafeo-engine", version = "0.5.7", default-features = false }
 grafeo = { path = "crates/grafeo", version = "0.5.7" }
+grafeo-bindings-common = { path = "crates/bindings/common", version = "0.5.7", default-features = false }
 
 # Error handling
 thiserror = "2.0"
