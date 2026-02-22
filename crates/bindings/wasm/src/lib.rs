@@ -314,4 +314,3 @@ impl Database {
         env!("CARGO_PKG_VERSION").to_string()
     }
 }
-
