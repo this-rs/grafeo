@@ -15,9 +15,13 @@
 mod types;
 mod utils;
 
+use std::collections::HashMap;
+
 use js_sys::Array;
 use wasm_bindgen::prelude::*;
 
+use grafeo_bindings_common::json::json_params_to_map;
+use grafeo_common::types::Value;
 use grafeo_engine::GrafeoDB;
 
 /// A Grafeo graph database instance running in WebAssembly.

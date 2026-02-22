@@ -112,12 +112,39 @@ impl Transaction {
 }
 
 impl Transaction {
-    pub(crate) fn new(db: Arc<RwLock<GrafeoDB>>) -> Result<Self> {
+    pub(crate) fn new(db: Arc<RwLock<GrafeoDB>>, isolation_level: Option<&str>) -> Result<Self> {
+        // Parse isolation level string
+        let level = match isolation_level {
+            Some("read_committed") => {
+                Some(grafeo_engine::transaction::IsolationLevel::ReadCommitted)
+            }
+            Some("serializable") => {
+                Some(grafeo_engine::transaction::IsolationLevel::Serializable)
+            }
+            Some("snapshot") | None => None, // snapshot is the default
+            Some(other) => {
+                return Err(NodeGrafeoError::InvalidArgument(format!(
+                    "Unknown isolation level '{}'. Use 'read_committed', 'snapshot', or 'serializable'",
+                    other
+                ))
+                .into());
+            }
+        };
+
         let mut session = {
             let db_guard = db.read();
             db_guard.session()
         };
-        session.begin_tx().map_err(NodeGrafeoError::from)?;
+
+        // Begin the transaction with the specified isolation level
+        if let Some(level) = level {
+            session
+                .begin_tx_with_isolation(level)
+                .map_err(NodeGrafeoError::from)?;
+        } else {
+            session.begin_tx().map_err(NodeGrafeoError::from)?;
+        }
+
         Ok(Self {
             db,
             session: parking_lot::Mutex::new(Some(session)),

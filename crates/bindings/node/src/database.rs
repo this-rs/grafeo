@@ -334,10 +334,12 @@ impl JsGrafeoDB {
         self.inner.read().edge_count() as u32
     }
 
-    /// Begin a transaction.
+    /// Begin a transaction with an optional isolation level.
+    ///
+    /// Isolation levels: "read_committed", "snapshot" (default), "serializable".
     #[napi(js_name = "beginTransaction")]
-    pub fn begin_transaction(&self) -> Result<Transaction> {
-        Transaction::new(self.inner.clone())
+    pub fn begin_transaction(&self, isolation_level: Option<String>) -> Result<Transaction> {
+        Transaction::new(self.inner.clone(), isolation_level.as_deref())
     }
 
     /// Create a vector similarity index on a node property.
@@ -671,6 +673,70 @@ impl JsGrafeoDB {
         })
         .await
         .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    }
+
+    /// Remove a property from a node. Returns true if the property existed.
+    #[napi(js_name = "removeNodeProperty")]
+    pub fn remove_node_property(&self, id: f64, key: String) -> Result<bool> {
+        let node_id = validate_node_id(id)?;
+        let db = self.inner.read();
+        Ok(db.remove_node_property(node_id, &key))
+    }
+
+    /// Remove a property from an edge. Returns true if the property existed.
+    #[napi(js_name = "removeEdgeProperty")]
+    pub fn remove_edge_property(&self, id: f64, key: String) -> Result<bool> {
+        let edge_id = validate_edge_id(id)?;
+        let db = self.inner.read();
+        Ok(db.remove_edge_property(edge_id, &key))
+    }
+
+    /// Add a label to an existing node. Returns true if the label was added.
+    #[napi(js_name = "addNodeLabel")]
+    pub fn add_node_label(&self, id: f64, label: String) -> Result<bool> {
+        let node_id = validate_node_id(id)?;
+        let db = self.inner.read();
+        Ok(db.add_node_label(node_id, &label))
+    }
+
+    /// Remove a label from a node. Returns true if the label was removed.
+    #[napi(js_name = "removeNodeLabel")]
+    pub fn remove_node_label(&self, id: f64, label: String) -> Result<bool> {
+        let node_id = validate_node_id(id)?;
+        let db = self.inner.read();
+        Ok(db.remove_node_label(node_id, &label))
+    }
+
+    /// Get all labels for a node. Returns null if the node doesn't exist.
+    #[napi(js_name = "getNodeLabels")]
+    pub fn get_node_labels(&self, id: f64) -> Result<Option<Vec<String>>> {
+        let node_id = validate_node_id(id)?;
+        let db = self.inner.read();
+        Ok(db.get_node_labels(node_id))
+    }
+
+    /// Returns high-level database information as a JSON object.
+    #[napi]
+    pub fn info(&self) -> Result<serde_json::Value> {
+        let db = self.inner.read();
+        let info = db.info();
+        serde_json::to_value(&info)
+            .map_err(|e| NodeGrafeoError::Database(e.to_string()).into())
+    }
+
+    /// Returns schema information (labels, edge types, property keys) as a JSON object.
+    #[napi]
+    pub fn schema(&self) -> Result<serde_json::Value> {
+        let db = self.inner.read();
+        let schema = db.schema();
+        serde_json::to_value(&schema)
+            .map_err(|e| NodeGrafeoError::Database(e.to_string()).into())
+    }
+
+    /// Returns the Grafeo engine version string.
+    #[napi]
+    pub fn version(&self) -> String {
+        env!("CARGO_PKG_VERSION").to_string()
     }
 
     /// Close the database.
