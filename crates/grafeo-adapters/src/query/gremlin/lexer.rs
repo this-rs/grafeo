@@ -89,60 +89,113 @@ pub enum TokenKind {
     Range,
 
     // Map steps
+
+    /// The `values()` property-value projection step.
     Values,
+    /// The `valueMap()` property-map projection step.
     ValueMap,
+    /// The `elementMap()` full-element projection step.
     ElementMap,
+    /// The `id()` element-id projection step.
     Id,
+    /// The `label()` element-label projection step.
     Label,
+    /// The `properties()` property projection step.
     Properties,
+    /// The `constant()` constant-value step.
     Constant,
+    /// The `count()` counting step.
     Count,
+    /// The `sum()` summation step.
     Sum,
+    /// The `mean()` averaging step.
     Mean,
+    /// The `min()` minimum step.
     Min,
+    /// The `max()` maximum step.
     Max,
+    /// The `fold()` list-aggregation step.
     Fold,
+    /// The `unfold()` list-expansion step.
     Unfold,
+    /// The `group()` grouping step.
     Group,
+    /// The `groupCount()` group-and-count step.
     GroupCount,
+    /// The `path()` traversal-path step.
     Path,
+    /// The `select()` label-selection step.
     Select,
+    /// The `project()` named-projection step.
     Project,
+    /// The `by()` modulator step.
     By,
+    /// The `order()` ordering step.
     Order,
+    /// The `coalesce()` first-available step.
     Coalesce,
+    /// The `optional()` optional-traversal step.
     Optional,
+    /// The `union()` branch-merging step.
     Union,
+    /// The `choose()` conditional branching step.
     Choose,
 
     // Side effect steps
+
+    /// The `as()` step-label alias.
     As,
+    /// The `sideEffect()` side-effect step.
     SideEffect,
+    /// The `aggregate()` eager collection step.
     Aggregate,
+    /// The `store()` lazy collection step.
     Store,
+    /// The `property()` property-mutation step.
     Property,
+    /// The `drop()` element-removal step.
     Drop,
 
     // Edge creation
+
+    /// The `from()` edge-source modulator.
     From,
+    /// The `to()` edge-target modulator.
     To,
 
     // Predicates (P.*)
+
+    /// The `P` predicate namespace.
     P,
+    /// The `eq()` equality predicate.
     Eq,
+    /// The `neq()` inequality predicate.
     Neq,
+    /// The `lt()` less-than predicate.
     Lt,
+    /// The `lte()` less-than-or-equal predicate.
     Lte,
+    /// The `gt()` greater-than predicate.
     Gt,
+    /// The `gte()` greater-than-or-equal predicate.
     Gte,
+    /// The `within()` collection-membership predicate.
     Within,
+    /// The `without()` collection-exclusion predicate.
     Without,
+    /// The `between()` range-inclusive predicate.
     Between,
+    /// The `inside()` range-exclusive predicate.
     Inside,
+    /// The `outside()` range-complement predicate.
     Outside,
+    /// The `containing()` substring predicate.
     Containing,
+    /// The `startingWith()` prefix predicate.
     StartingWith,
+    /// The `endingWith()` suffix predicate.
     EndingWith,
+    /// The `regex()` regular-expression predicate.
     Regex,
 
     // Tokens (T.*)
