@@ -92,13 +92,19 @@ pub enum CommonKeyword {
     On,
 
     // Subquery / procedure
+    /// The `CALL` keyword.
     Call,
+    /// The `YIELD` keyword.
     Yield,
+    /// The `EXISTS` keyword.
     Exists,
+    /// The `UNWIND` keyword.
     Unwind,
 
     // Graph structure
+    /// The `NODE` keyword.
     Node,
+    /// The `EDGE` keyword.
     Edge,
 
     // Aggregate / grouping

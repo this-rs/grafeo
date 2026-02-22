@@ -39,7 +39,6 @@ pub enum TokenKind {
     AddE,
 
     // Navigation steps
-
     /// The `out()` outgoing-adjacency step.
     Out,
     /// The `in()` incoming-adjacency step.
@@ -62,18 +61,32 @@ pub enum TokenKind {
     OtherV,
 
     // Filter steps
+
+    /// The `has()` property-filter step.
     Has,
+    /// The `hasLabel()` label-filter step.
     HasLabel,
+    /// The `hasId()` id-filter step.
     HasId,
+    /// The `hasNot()` property-absence filter step.
     HasNot,
+    /// The `filter()` general-purpose filter step.
     Filter,
+    /// The `where()` traversal-filter step.
     Where,
+    /// The `and()` logical conjunction step.
     And,
+    /// The `or()` logical disjunction step.
     Or,
+    /// The `not()` logical negation step.
     Not,
+    /// The `dedup()` deduplication step.
     Dedup,
+    /// The `limit()` result-limiting step.
     Limit,
+    /// The `skip()` result-skipping step.
     Skip,
+    /// The `range()` result-range step.
     Range,
 
     // Map steps
