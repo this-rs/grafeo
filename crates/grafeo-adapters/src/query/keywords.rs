@@ -108,11 +108,17 @@ pub enum CommonKeyword {
     Edge,
 
     // Aggregate / grouping
+    /// The `HAVING` keyword.
     Having,
+    /// The `CASE` keyword.
     Case,
+    /// The `WHEN` keyword.
     When,
+    /// The `THEN` keyword.
     Then,
+    /// The `ELSE` keyword.
     Else,
+    /// The `END` keyword.
     End,
 }
 

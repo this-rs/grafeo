@@ -61,7 +61,6 @@ pub enum TokenKind {
     OtherV,
 
     // Filter steps
-
     /// The `has()` property-filter step.
     Has,
     /// The `hasLabel()` label-filter step.
