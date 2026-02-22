@@ -720,8 +720,7 @@ impl JsGrafeoDB {
     pub fn info(&self) -> Result<serde_json::Value> {
         let db = self.inner.read();
         let info = db.info();
-        serde_json::to_value(&info)
-            .map_err(|e| NodeGrafeoError::Database(e.to_string()).into())
+        serde_json::to_value(&info).map_err(|e| NodeGrafeoError::Database(e.to_string()).into())
     }
 
     /// Returns schema information (labels, edge types, property keys) as a JSON object.
@@ -729,8 +728,7 @@ impl JsGrafeoDB {
     pub fn schema(&self) -> Result<serde_json::Value> {
         let db = self.inner.read();
         let schema = db.schema();
-        serde_json::to_value(&schema)
-            .map_err(|e| NodeGrafeoError::Database(e.to_string()).into())
+        serde_json::to_value(&schema).map_err(|e| NodeGrafeoError::Database(e.to_string()).into())
     }
 
     /// Returns the Grafeo engine version string.

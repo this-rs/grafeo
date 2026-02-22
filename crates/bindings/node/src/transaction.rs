@@ -118,9 +118,7 @@ impl Transaction {
             Some("read_committed") => {
                 Some(grafeo_engine::transaction::IsolationLevel::ReadCommitted)
             }
-            Some("serializable") => {
-                Some(grafeo_engine::transaction::IsolationLevel::Serializable)
-            }
+            Some("serializable") => Some(grafeo_engine::transaction::IsolationLevel::Serializable),
             Some("snapshot") | None => None, // snapshot is the default
             Some(other) => {
                 return Err(NodeGrafeoError::InvalidArgument(format!(

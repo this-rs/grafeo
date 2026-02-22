@@ -495,9 +495,7 @@ impl Database {
 
     /// Converts a JS params value (object or null/undefined) to an optional
     /// `HashMap<String, Value>` suitable for `execute_language`.
-    fn convert_params(
-        params: Option<JsValue>,
-    ) -> Result<Option<HashMap<String, Value>>, JsError> {
+    fn convert_params(params: Option<JsValue>) -> Result<Option<HashMap<String, Value>>, JsError> {
         let Some(js_val) = params else {
             return Ok(None);
         };
