@@ -8,10 +8,10 @@ use crate::query::plan::{
     LogicalExpression, LogicalOperator, LogicalPlan, NodeScanOp, ProjectOp, Projection, ReturnItem,
     ReturnOp, SetPropertyOp, SkipOp, SortKey, SortOp, SortOrder, UnaryOp,
 };
+use crate::query::translator_common::VarGen;
 use grafeo_adapters::query::gremlin::{self, ast};
 use grafeo_common::types::Value;
 use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
-use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Translates a Gremlin query string to a logical plan.
 ///
@@ -26,8 +26,8 @@ pub fn translate(query: &str) -> Result<LogicalPlan> {
 
 /// Translator from Gremlin AST to LogicalPlan.
 struct GremlinTranslator {
-    /// Counter for generating anonymous variables.
-    var_counter: AtomicU32,
+    /// Generator for anonymous variable names.
+    var_gen: VarGen,
 }
 
 /// Context for building an edge during traversal processing.
@@ -41,7 +41,7 @@ struct PendingEdge {
 impl GremlinTranslator {
     fn new() -> Self {
         Self {
-            var_counter: AtomicU32::new(0),
+            var_gen: VarGen::new(),
         }
     }
 
@@ -79,7 +79,7 @@ impl GremlinTranslator {
                         edge.to_var = Some(var);
                         // If we have both from and to, create the edge
                         if edge.from_var.is_some() && edge.to_var.is_some() {
-                            let edge_var = self.next_var();
+                            let edge_var = self.var_gen.next();
                             plan = LogicalOperator::CreateEdge(CreateEdgeOp {
                                 variable: Some(edge_var.clone()),
                                 from_variable: edge.from_var.take().unwrap(),
@@ -103,7 +103,7 @@ impl GremlinTranslator {
                     _ => {
                         // Non-edge step encountered, finalize edge if possible
                         if edge.from_var.is_some() && edge.to_var.is_some() {
-                            let edge_var = self.next_var();
+                            let edge_var = self.var_gen.next();
                             plan = LogicalOperator::CreateEdge(CreateEdgeOp {
                                 variable: Some(edge_var.clone()),
                                 from_variable: edge.from_var.take().unwrap(),
@@ -142,7 +142,7 @@ impl GremlinTranslator {
         if let Some(edge) = pending_edge
             && let (Some(from_var), Some(to_var)) = (edge.from_var, edge.to_var)
         {
-            let edge_var = self.next_var();
+            let edge_var = self.var_gen.next();
             plan = LogicalOperator::CreateEdge(CreateEdgeOp {
                 variable: Some(edge_var.clone()),
                 from_variable: from_var,
@@ -225,7 +225,7 @@ impl GremlinTranslator {
 
         // If plan is still empty (both from/to were labels), create a scan
         if matches!(plan, LogicalOperator::Empty) {
-            let scan_var = self.next_var();
+            let scan_var = self.var_gen.next();
             plan = LogicalOperator::NodeScan(NodeScanOp {
                 variable: scan_var,
                 label: None,
@@ -233,7 +233,7 @@ impl GremlinTranslator {
             });
         }
 
-        let edge_var = self.next_var();
+        let edge_var = self.var_gen.next();
         let create_edge = LogicalOperator::CreateEdge(CreateEdgeOp {
             variable: Some(edge_var.clone()),
             from_variable: from_var,
@@ -267,7 +267,7 @@ impl GremlinTranslator {
             ast::FromTo::Label(label) => Ok((label.clone(), plan)),
             ast::FromTo::Traversal(steps) => {
                 // Create a fresh NodeScan for the sub-traversal
-                let target_var = self.next_var();
+                let target_var = self.var_gen.next();
                 let mut sub_plan = LogicalOperator::NodeScan(NodeScanOp {
                     variable: target_var.clone(),
                     label: None,
@@ -306,7 +306,7 @@ impl GremlinTranslator {
     fn translate_source(&self, source: &ast::TraversalSource) -> Result<LogicalOperator> {
         match source {
             ast::TraversalSource::V(ids) => {
-                let var = self.next_var();
+                let var = self.var_gen.next();
                 let mut plan = LogicalOperator::NodeScan(NodeScanOp {
                     variable: var.clone(),
                     label: None,
@@ -329,15 +329,15 @@ impl GremlinTranslator {
             ast::TraversalSource::E(ids) => {
                 // Edge scan - need to scan nodes and expand
                 // Use Outgoing direction to get each edge exactly once (from its source node)
-                let var = self.next_var();
+                let var = self.var_gen.next();
                 let mut plan = LogicalOperator::NodeScan(NodeScanOp {
                     variable: var.clone(),
                     label: None,
                     input: None,
                 });
 
-                let edge_var = self.next_var();
-                let target_var = self.next_var();
+                let edge_var = self.var_gen.next();
+                let target_var = self.var_gen.next();
 
                 plan = LogicalOperator::Expand(ExpandOp {
                     from_variable: var,
@@ -365,7 +365,7 @@ impl GremlinTranslator {
                 Ok(plan)
             }
             ast::TraversalSource::AddV(label) => {
-                let var = self.next_var();
+                let var = self.var_gen.next();
                 Ok(LogicalOperator::CreateNode(CreateNodeOp {
                     variable: var,
                     labels: label.iter().cloned().collect(),
@@ -392,7 +392,7 @@ impl GremlinTranslator {
         match step {
             // Navigation steps
             ast::Step::Out(labels) => {
-                let target_var = self.next_var();
+                let target_var = self.var_gen.next();
                 let edge_type = labels.first().cloned();
                 let plan = LogicalOperator::Expand(ExpandOp {
                     from_variable: current_var.to_string(),
@@ -408,7 +408,7 @@ impl GremlinTranslator {
                 Ok((plan, Some(target_var)))
             }
             ast::Step::In(labels) => {
-                let target_var = self.next_var();
+                let target_var = self.var_gen.next();
                 let edge_type = labels.first().cloned();
                 let plan = LogicalOperator::Expand(ExpandOp {
                     from_variable: current_var.to_string(),
@@ -424,7 +424,7 @@ impl GremlinTranslator {
                 Ok((plan, Some(target_var)))
             }
             ast::Step::Both(labels) => {
-                let target_var = self.next_var();
+                let target_var = self.var_gen.next();
                 let edge_type = labels.first().cloned();
                 let plan = LogicalOperator::Expand(ExpandOp {
                     from_variable: current_var.to_string(),
@@ -440,8 +440,8 @@ impl GremlinTranslator {
                 Ok((plan, Some(target_var)))
             }
             ast::Step::OutE(labels) => {
-                let edge_var = self.next_var();
-                let target_var = self.next_var();
+                let edge_var = self.var_gen.next();
+                let target_var = self.var_gen.next();
                 let edge_type = labels.first().cloned();
                 let plan = LogicalOperator::Expand(ExpandOp {
                     from_variable: current_var.to_string(),
@@ -457,8 +457,8 @@ impl GremlinTranslator {
                 Ok((plan, Some(edge_var)))
             }
             ast::Step::InE(labels) => {
-                let edge_var = self.next_var();
-                let target_var = self.next_var();
+                let edge_var = self.var_gen.next();
+                let target_var = self.var_gen.next();
                 let edge_type = labels.first().cloned();
                 let plan = LogicalOperator::Expand(ExpandOp {
                     from_variable: current_var.to_string(),
@@ -474,8 +474,8 @@ impl GremlinTranslator {
                 Ok((plan, Some(edge_var)))
             }
             ast::Step::BothE(labels) => {
-                let edge_var = self.next_var();
-                let target_var = self.next_var();
+                let edge_var = self.var_gen.next();
+                let target_var = self.var_gen.next();
                 let edge_type = labels.first().cloned();
                 let plan = LogicalOperator::Expand(ExpandOp {
                     from_variable: current_var.to_string(),
@@ -812,7 +812,7 @@ impl GremlinTranslator {
                 Ok((plan, None))
             }
             ast::Step::AddV(label) => {
-                let var = self.next_var();
+                let var = self.var_gen.next();
                 let plan = LogicalOperator::CreateNode(CreateNodeOp {
                     variable: var.clone(),
                     labels: label.iter().cloned().collect(),
@@ -1116,7 +1116,7 @@ impl GremlinTranslator {
     }
 
     fn get_current_var(&self, source: &ast::TraversalSource) -> String {
-        let counter = self.var_counter.load(Ordering::Relaxed);
+        let counter = self.var_gen.current();
         match source {
             // For g.E(), the edge variable is counter-2 (since we generate: node, edge, target)
             ast::TraversalSource::E(_) => {
@@ -1131,11 +1131,6 @@ impl GremlinTranslator {
                 }
             }
         }
-    }
-
-    fn next_var(&self) -> String {
-        let n = self.var_counter.fetch_add(1, Ordering::Relaxed);
-        format!("_v{}", n)
     }
 }
 

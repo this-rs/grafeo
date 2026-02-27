@@ -10,6 +10,7 @@ use crate::query::plan::{
     PropertyGraphEdgeTable, PropertyGraphNodeTable, ReturnItem, ReturnOp, SkipOp, SortKey, SortOp,
     SortOrder, UnaryOp,
 };
+use crate::query::translator_common::combine_with_and;
 use grafeo_adapters::query::sql_pgq::{self, ast};
 use grafeo_common::types::Value;
 use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
@@ -737,7 +738,7 @@ impl SqlPgqTranslator {
         variable: &str,
         properties: &[(String, ast::Expression)],
     ) -> Result<LogicalExpression> {
-        properties
+        let predicates = properties
             .iter()
             .map(|(key, value)| {
                 let left = LogicalExpression::Property {
@@ -751,19 +752,9 @@ impl SqlPgqTranslator {
                     right: Box::new(right),
                 })
             })
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .reduce(|acc, pred| LogicalExpression::Binary {
-                left: Box::new(acc),
-                op: BinaryOp::And,
-                right: Box::new(pred),
-            })
-            .ok_or_else(|| {
-                Error::Query(QueryError::new(
-                    QueryErrorKind::Semantic,
-                    "Empty property predicate",
-                ))
-            })
+            .collect::<Result<Vec<_>>>()?;
+
+        combine_with_and(predicates)
     }
 
     fn get_last_variable(plan: &LogicalOperator) -> Result<String> {

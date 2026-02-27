@@ -9,7 +9,7 @@ use crate::query::plan::{
     MergeOp, NodeScanOp, ProcedureYield, ProjectOp, Projection, RemoveLabelOp, ReturnItem,
     ReturnOp, SetPropertyOp, ShortestPathOp, SkipOp, SortKey, SortOp, SortOrder, UnaryOp, UnwindOp,
 };
-use crate::query::translator_common::{is_aggregate_function, to_aggregate_function};
+use crate::query::translator_common::{combine_with_and, is_aggregate_function, to_aggregate_function};
 use grafeo_adapters::query::gql::{self, ast};
 use grafeo_common::types::Value;
 use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
@@ -852,33 +852,23 @@ impl GqlTranslator {
         variable: &str,
         properties: &[(String, ast::Expression)],
     ) -> Result<LogicalExpression> {
-        let mut predicates: Vec<LogicalExpression> = Vec::new();
+        let predicates = properties
+            .iter()
+            .map(|(prop_name, prop_value)| {
+                let left = LogicalExpression::Property {
+                    variable: variable.to_string(),
+                    property: prop_name.clone(),
+                };
+                let right = self.translate_expression(prop_value)?;
+                Ok(LogicalExpression::Binary {
+                    left: Box::new(left),
+                    op: BinaryOp::Eq,
+                    right: Box::new(right),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-        for (prop_name, prop_value) in properties {
-            let left = LogicalExpression::Property {
-                variable: variable.to_string(),
-                property: prop_name.clone(),
-            };
-            let right = self.translate_expression(prop_value)?;
-
-            predicates.push(LogicalExpression::Binary {
-                left: Box::new(left),
-                op: BinaryOp::Eq,
-                right: Box::new(right),
-            });
-        }
-
-        // Combine all predicates with AND
-        let mut result = predicates.remove(0);
-        for pred in predicates {
-            result = LogicalExpression::Binary {
-                left: Box::new(result),
-                op: BinaryOp::And,
-                right: Box::new(pred),
-            };
-        }
-
-        Ok(result)
+        combine_with_and(predicates)
     }
 
     fn translate_path_pattern_with_alias(

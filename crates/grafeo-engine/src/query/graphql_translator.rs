@@ -15,10 +15,10 @@ use crate::query::plan::{
     LogicalExpression, LogicalOperator, LogicalPlan, NodeScanOp, ReturnItem, ReturnOp,
     SetPropertyOp, SkipOp, SortKey, SortOp, SortOrder,
 };
+use crate::query::translator_common::{capitalize_first, VarGen};
 use grafeo_adapters::query::graphql::{self, ast};
 use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Translates a GraphQL query string to a logical plan.
 ///
@@ -53,8 +53,8 @@ struct ExtractedArgs<'a> {
 
 /// Translator from GraphQL AST to LogicalPlan.
 struct GraphQLTranslator {
-    /// Counter for generating anonymous variables.
-    var_counter: AtomicU32,
+    /// Generator for anonymous variable names.
+    var_gen: VarGen,
     /// Fragment definitions for resolution.
     fragments: HashMap<String, ast::FragmentDefinition>,
 }
@@ -62,7 +62,7 @@ struct GraphQLTranslator {
 impl GraphQLTranslator {
     fn new() -> Self {
         Self {
-            var_counter: AtomicU32::new(0),
+            var_gen: VarGen::new(),
             fragments: HashMap::new(),
         }
     }
@@ -93,7 +93,7 @@ impl GraphQLTranslator {
 
         // Create translator with fragments
         let translator = GraphQLTranslator {
-            var_counter: AtomicU32::new(0),
+            var_gen: VarGen::new(),
             fragments,
         };
 
@@ -163,7 +163,7 @@ impl GraphQLTranslator {
         field: &ast::Field,
         type_name: &str,
     ) -> Result<LogicalPlan> {
-        let var = self.next_var();
+        let var = self.var_gen.next();
 
         // Convert arguments to properties
         let properties: Vec<(String, LogicalExpression)> = field
@@ -179,7 +179,7 @@ impl GraphQLTranslator {
 
         let mut plan = LogicalOperator::CreateNode(CreateNodeOp {
             variable: var.clone(),
-            labels: vec![self.capitalize_first(type_name)],
+            labels: vec![capitalize_first(type_name)],
             properties,
             input: None,
         });
@@ -206,7 +206,7 @@ impl GraphQLTranslator {
         field: &ast::Field,
         type_name: &str,
     ) -> Result<LogicalPlan> {
-        let var = self.next_var();
+        let var = self.var_gen.next();
 
         // Need at least 2 arguments: one for filter, one for update
         if field.arguments.len() < 2 {
@@ -267,7 +267,7 @@ impl GraphQLTranslator {
         // Start with a node scan for the type
         let mut plan = LogicalOperator::NodeScan(NodeScanOp {
             variable: var.clone(),
-            label: Some(self.capitalize_first(type_name)),
+            label: Some(capitalize_first(type_name)),
             input: None,
         });
 
@@ -307,7 +307,7 @@ impl GraphQLTranslator {
         field: &ast::Field,
         type_name: &str,
     ) -> Result<LogicalPlan> {
-        let var = self.next_var();
+        let var = self.var_gen.next();
 
         // Need at least 1 argument for filter
         if field.arguments.is_empty() {
@@ -342,7 +342,7 @@ impl GraphQLTranslator {
         // First scan for the node
         let mut plan = LogicalOperator::NodeScan(NodeScanOp {
             variable: var.clone(),
-            label: Some(self.capitalize_first(type_name)),
+            label: Some(capitalize_first(type_name)),
             input: None,
         });
 
@@ -364,12 +364,12 @@ impl GraphQLTranslator {
 
     fn translate_root_field(&self, field: &ast::Field) -> Result<LogicalOperator> {
         // Root field name is the type/label to scan
-        let var = self.next_var();
+        let var = self.var_gen.next();
 
         // Start with a node scan using the field name as the label
         let mut plan = LogicalOperator::NodeScan(NodeScanOp {
             variable: var.clone(),
-            label: Some(self.capitalize_first(&field.name)),
+            label: Some(capitalize_first(&field.name)),
             input: None,
         });
 
@@ -589,7 +589,7 @@ impl GraphQLTranslator {
         input: LogicalOperator,
         from_var: &str,
     ) -> Result<(LogicalOperator, Vec<ReturnItem>)> {
-        let to_var = self.next_var();
+        let to_var = self.var_gen.next();
 
         // The field name is the edge type — preserve original case to match how edges are stored
         let mut plan = LogicalOperator::Expand(ExpandOp {
@@ -800,18 +800,6 @@ impl GraphQLTranslator {
         )))
     }
 
-    fn capitalize_first(&self, s: &str) -> String {
-        let mut chars = s.chars();
-        match chars.next() {
-            None => String::new(),
-            Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-        }
-    }
-
-    fn next_var(&self) -> String {
-        let n = self.var_counter.fetch_add(1, Ordering::Relaxed);
-        format!("_v{}", n)
-    }
 }
 
 #[cfg(test)]

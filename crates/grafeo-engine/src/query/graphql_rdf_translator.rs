@@ -14,10 +14,10 @@ use crate::query::plan::{
     BinaryOp, FilterOp, JoinOp, JoinType, LogicalExpression, LogicalOperator, LogicalPlan,
     ProjectOp, Projection, TripleComponent, TripleScanOp,
 };
+use crate::query::translator_common::{capitalize_first, VarGen};
 use grafeo_adapters::query::graphql::{self, ast};
 use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 /// RDF namespace constants.
 const RDF_TYPE: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
@@ -35,8 +35,8 @@ pub fn translate(query: &str, namespace: &str) -> Result<LogicalPlan> {
 
 /// Translator from GraphQL AST to RDF LogicalPlan.
 struct GraphQLRdfTranslator {
-    /// Counter for generating anonymous variables.
-    var_counter: AtomicU32,
+    /// Generator for anonymous variable names.
+    var_gen: VarGen,
     /// Base namespace for type IRIs.
     namespace: String,
     /// Fragment definitions for resolution.
@@ -46,7 +46,7 @@ struct GraphQLRdfTranslator {
 impl GraphQLRdfTranslator {
     fn new(namespace: &str) -> Self {
         Self {
-            var_counter: AtomicU32::new(0),
+            var_gen: VarGen::new(),
             namespace: namespace.to_string(),
             fragments: HashMap::new(),
         }
@@ -86,7 +86,7 @@ impl GraphQLRdfTranslator {
 
         // Create translator with fragments
         let translator = GraphQLRdfTranslator {
-            var_counter: AtomicU32::new(0),
+            var_gen: VarGen::new(),
             namespace: self.namespace.clone(),
             fragments,
         };
@@ -113,7 +113,7 @@ impl GraphQLRdfTranslator {
 
     fn translate_root_field(&self, field: &ast::Field) -> Result<LogicalOperator> {
         // Root field name becomes the RDF type
-        let subject_var = self.next_var();
+        let subject_var = self.var_gen.next();
         let type_iri = self.make_type_iri(&field.name);
 
         // Create triple pattern: ?subject rdf:type <Type>
@@ -223,7 +223,7 @@ impl GraphQLRdfTranslator {
         input: LogicalOperator,
         subject_var: &str,
     ) -> Result<(LogicalOperator, String)> {
-        let object_var = self.next_var();
+        let object_var = self.var_gen.next();
         let predicate_iri = self.make_predicate_iri(&field.name);
 
         // Create triple pattern: ?subject <predicate> ?object
@@ -245,7 +245,7 @@ impl GraphQLRdfTranslator {
         input: LogicalOperator,
         from_var: &str,
     ) -> Result<(LogicalOperator, Vec<Projection>)> {
-        let to_var = self.next_var();
+        let to_var = self.var_gen.next();
         let predicate_iri = self.make_predicate_iri(&field.name);
 
         // Create triple pattern: ?from <predicate> ?to
@@ -288,7 +288,7 @@ impl GraphQLRdfTranslator {
             // Each argument creates a filter
             // First, create a triple pattern for the property
             let predicate_iri = self.make_predicate_iri(&arg.name);
-            let object_var = self.next_var();
+            let object_var = self.var_gen.next();
 
             let triple = LogicalOperator::TripleScan(TripleScanOp {
                 subject: TripleComponent::Variable(subject_var.to_string()),
@@ -367,25 +367,13 @@ impl GraphQLRdfTranslator {
     }
 
     fn make_type_iri(&self, type_name: &str) -> String {
-        format!("{}{}", self.namespace, self.capitalize_first(type_name))
+        format!("{}{}", self.namespace, capitalize_first(type_name))
     }
 
     fn make_predicate_iri(&self, name: &str) -> String {
         format!("{}{}", self.namespace, name)
     }
 
-    fn capitalize_first(&self, s: &str) -> String {
-        let mut chars = s.chars();
-        match chars.next() {
-            None => String::new(),
-            Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-        }
-    }
-
-    fn next_var(&self) -> String {
-        let n = self.var_counter.fetch_add(1, Ordering::Relaxed);
-        format!("_v{}", n)
-    }
 }
 
 #[cfg(test)]
