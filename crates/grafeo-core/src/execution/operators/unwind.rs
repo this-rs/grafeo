@@ -93,7 +93,10 @@ impl UnwindOperator {
                 }
             }
 
-            let chunk = self.current_chunk.as_ref().unwrap();
+            let chunk = self
+                .current_chunk
+                .as_ref()
+                .expect("current_chunk is Some: checked above");
 
             // Find the next row with a list value
             while self.current_row < chunk.row_count() {
@@ -126,8 +129,14 @@ impl UnwindOperator {
 
     /// Emits a single row with the current list element.
     fn emit_row(&mut self) -> Result<DataChunk, super::OperatorError> {
-        let chunk = self.current_chunk.as_ref().unwrap();
-        let list = self.current_list.as_ref().unwrap();
+        let chunk = self
+            .current_chunk
+            .as_ref()
+            .expect("current_chunk is Some: set before emit_row call");
+        let list = self
+            .current_list
+            .as_ref()
+            .expect("current_list is Some: set before emit_row call");
         let element = list[self.current_list_idx].clone();
 
         // Build output row: copy all columns from input + add the unwound element

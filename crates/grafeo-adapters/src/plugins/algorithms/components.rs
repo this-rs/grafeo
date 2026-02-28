@@ -218,12 +218,15 @@ pub fn strongly_connected_components(store: &LpgStore) -> FxHashMap<NodeId, u64>
                 dfs_stack.pop();
 
                 // Check if this is an SCC root
-                let node_state = state.get(&node).unwrap();
+                let node_state = state.get(&node).expect("Tarjan: node visited");
                 if node_state.low_link == node_state.index {
                     // Pop the SCC from stack
                     loop {
-                        let w = stack.pop().unwrap();
-                        state.get_mut(&w).unwrap().on_stack = false;
+                        let w = stack.pop().expect("Tarjan: stack contains SCC members");
+                        state
+                            .get_mut(&w)
+                            .expect("Tarjan: node on stack has state")
+                            .on_stack = false;
                         result.insert(w, scc_id);
                         if w == node {
                             break;
@@ -234,8 +237,8 @@ pub fn strongly_connected_components(store: &LpgStore) -> FxHashMap<NodeId, u64>
 
                 // Update parent's low_link
                 if let Some((parent, _, _, _)) = dfs_stack.last() {
-                    let node_low = state.get(&node).unwrap().low_link;
-                    let parent_state = state.get_mut(parent).unwrap();
+                    let node_low = state.get(&node).expect("Tarjan: node visited").low_link;
+                    let parent_state = state.get_mut(parent).expect("Tarjan: parent visited");
                     if node_low < parent_state.low_link {
                         parent_state.low_link = node_low;
                     }
@@ -253,7 +256,7 @@ pub fn strongly_connected_components(store: &LpgStore) -> FxHashMap<NodeId, u64>
                     // Back edge: update low_link
                     // Extract index before mutable borrow
                     let neighbor_index = neighbor_state.index;
-                    let node_state = state.get_mut(&node).unwrap();
+                    let node_state = state.get_mut(&node).expect("Tarjan: node visited");
                     if neighbor_index < node_state.low_link {
                         node_state.low_link = neighbor_index;
                     }

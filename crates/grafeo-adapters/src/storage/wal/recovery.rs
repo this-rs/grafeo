@@ -491,3 +491,369 @@ mod tests {
         assert!(!records.is_empty(), "Should recover some records");
     }
 }
+
+/// Crash injection tests for WAL recovery.
+///
+/// These tests verify that WAL recovery produces a consistent state after
+/// simulated crashes at every crash point in the write path. The three crash
+/// points are:
+/// - `wal_before_write`: before writing length prefix + data + checksum
+/// - `wal_after_write`: after writing data but before durability handling
+/// - `wal_before_flush`: before fsync on TxCommit in Sync mode
+///
+/// Run with:
+/// ```bash
+/// cargo test -p grafeo-adapters --features "wal,testing-crash-injection" -- crash
+/// ```
+#[cfg(all(test, feature = "testing-crash-injection"))]
+mod crash_tests {
+    use super::*;
+    use grafeo_common::types::{EpochId, NodeId, TxId, Value};
+    use grafeo_core::testing::crash::{CrashResult, with_crash_at};
+    use tempfile::tempdir;
+
+    /// Helper: Sync durability config so all three crash points are reachable.
+    fn sync_config() -> super::super::WalConfig {
+        super::super::WalConfig {
+            durability: super::super::DurabilityMode::Sync,
+            ..Default::default()
+        }
+    }
+
+    /// Crash at `wal_before_write` — no record bytes reach disk.
+    /// Recovery should only return previously committed data.
+    #[test]
+    fn test_crash_before_write_discards_record() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+
+        // Seed one committed transaction
+        {
+            let wal = WalManager::with_config(&path, sync_config()).unwrap();
+            wal.log(&WalRecord::CreateNode {
+                id: NodeId::new(1),
+                labels: vec!["Committed".into()],
+            })
+            .unwrap();
+            wal.log(&WalRecord::TxCommit {
+                tx_id: TxId::new(1),
+            })
+            .unwrap();
+        }
+
+        // Crash at the first crash point (wal_before_write)
+        let p = path.clone();
+        let result = with_crash_at(1, move || {
+            let wal = WalManager::with_config(&p, sync_config()).unwrap();
+            wal.log(&WalRecord::CreateNode {
+                id: NodeId::new(2),
+                labels: vec!["Lost".into()],
+            })
+            .unwrap();
+        });
+        assert!(matches!(result, CrashResult::Crashed));
+
+        // Only the first committed tx should survive
+        let recovery = WalRecovery::new(&path);
+        let records = recovery.recover().unwrap();
+        assert_eq!(records.len(), 2, "CreateNode(1) + TxCommit(1)");
+    }
+
+    /// Crash at `wal_after_write` — data may be in BufWriter but no commit
+    /// marker. Recovery should discard the uncommitted record.
+    #[test]
+    fn test_crash_after_write_uncommitted_discarded() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+
+        // For a non-commit record the crash points are:
+        //   1 = wal_before_write, 2 = wal_after_write
+        let p = path.clone();
+        let result = with_crash_at(2, move || {
+            let wal = WalManager::with_config(&p, sync_config()).unwrap();
+            wal.log(&WalRecord::CreateNode {
+                id: NodeId::new(1),
+                labels: vec!["Partial".into()],
+            })
+            .unwrap();
+        });
+        assert!(matches!(result, CrashResult::Crashed));
+
+        // No committed tx ⇒ recovery returns nothing
+        let recovery = WalRecovery::new(&path);
+        let records = recovery.recover().unwrap();
+        assert_eq!(records.len(), 0, "Uncommitted records must be discarded");
+    }
+
+    /// Two committed transactions, then crash during the third.
+    /// Recovery should preserve exactly the first two.
+    #[test]
+    fn test_crash_preserves_prior_committed_transactions() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+
+        // Commit two transactions
+        {
+            let wal = WalManager::with_config(&path, sync_config()).unwrap();
+            wal.log(&WalRecord::CreateNode {
+                id: NodeId::new(1),
+                labels: vec!["T1".into()],
+            })
+            .unwrap();
+            wal.log(&WalRecord::TxCommit {
+                tx_id: TxId::new(1),
+            })
+            .unwrap();
+            wal.log(&WalRecord::CreateNode {
+                id: NodeId::new(2),
+                labels: vec!["T2".into()],
+            })
+            .unwrap();
+            wal.log(&WalRecord::TxCommit {
+                tx_id: TxId::new(2),
+            })
+            .unwrap();
+        }
+
+        // Third transaction crashes immediately
+        let p = path.clone();
+        let result = with_crash_at(1, move || {
+            let wal = WalManager::with_config(&p, sync_config()).unwrap();
+            wal.log(&WalRecord::CreateNode {
+                id: NodeId::new(3),
+                labels: vec!["T3".into()],
+            })
+            .unwrap();
+        });
+        assert!(matches!(result, CrashResult::Crashed));
+
+        // Both committed txs intact, third discarded
+        let recovery = WalRecovery::new(&path);
+        let records = recovery.recover().unwrap();
+        assert_eq!(records.len(), 4, "2 CreateNode + 2 TxCommit");
+    }
+
+    /// Crash during checkpoint — committed data must still be recoverable.
+    #[test]
+    fn test_crash_during_checkpoint_preserves_data() {
+        for crash_at in 1..15 {
+            let dir = tempdir().unwrap();
+            let path = dir.path().to_path_buf();
+
+            // Seed committed data
+            {
+                let wal = WalManager::with_config(&path, sync_config()).unwrap();
+                wal.log(&WalRecord::CreateNode {
+                    id: NodeId::new(1),
+                    labels: vec!["A".into()],
+                })
+                .unwrap();
+                wal.log(&WalRecord::TxCommit {
+                    tx_id: TxId::new(1),
+                })
+                .unwrap();
+            }
+
+            // Crash during checkpoint
+            let p = path.clone();
+            let _result = with_crash_at(crash_at, move || {
+                let wal = WalManager::with_config(&p, sync_config()).unwrap();
+                wal.checkpoint(TxId::new(1), EpochId::new(10)).unwrap();
+            });
+
+            // Committed data must survive regardless of checkpoint outcome
+            let recovery = WalRecovery::new(&path);
+            let records = recovery.recover().unwrap();
+            assert!(
+                !records.is_empty(),
+                "crash_at={crash_at}: committed data must survive checkpoint crash"
+            );
+        }
+    }
+
+    /// Crash with rotated log files — recovery should span all files.
+    #[test]
+    fn test_crash_with_log_rotation() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+
+        // Write enough to trigger rotation
+        {
+            let config = super::super::WalConfig {
+                durability: super::super::DurabilityMode::Sync,
+                max_log_size: 100, // force rotation
+                ..Default::default()
+            };
+            let wal = WalManager::with_config(&path, config).unwrap();
+            for i in 0..5 {
+                wal.log(&WalRecord::CreateNode {
+                    id: NodeId::new(i),
+                    labels: vec!["Rotated".into()],
+                })
+                .unwrap();
+            }
+            wal.log(&WalRecord::TxCommit {
+                tx_id: TxId::new(1),
+            })
+            .unwrap();
+        }
+
+        // Crash during additional write
+        let p = path.clone();
+        let result = with_crash_at(1, move || {
+            let config = super::super::WalConfig {
+                durability: super::super::DurabilityMode::Sync,
+                max_log_size: 100,
+                ..Default::default()
+            };
+            let wal = WalManager::with_config(&p, config).unwrap();
+            wal.log(&WalRecord::CreateNode {
+                id: NodeId::new(99),
+                labels: vec!["Crash".into()],
+            })
+            .unwrap();
+        });
+        assert!(matches!(result, CrashResult::Crashed));
+
+        // All committed data across rotated files should survive
+        let recovery = WalRecovery::new(&path);
+        let records = recovery.recover().unwrap();
+        assert_eq!(records.len(), 6, "5 CreateNode + 1 TxCommit");
+    }
+
+    /// Exhaustive sweep: crash at every possible point during a multi-record
+    /// transaction and verify recovery invariants.
+    ///
+    /// Invariants checked:
+    /// 1. Previously committed transactions always survive
+    /// 2. Recovery output never contains partial (uncommitted) transactions
+    #[test]
+    fn test_crash_sweep_all_points() {
+        for crash_at in 1..20 {
+            let dir = tempdir().unwrap();
+            let path = dir.path().to_path_buf();
+
+            // Seed one committed transaction
+            {
+                let wal = WalManager::with_config(&path, sync_config()).unwrap();
+                wal.log(&WalRecord::CreateNode {
+                    id: NodeId::new(1),
+                    labels: vec!["Base".into()],
+                })
+                .unwrap();
+                wal.log(&WalRecord::TxCommit {
+                    tx_id: TxId::new(1),
+                })
+                .unwrap();
+            }
+
+            // Attempt a second transaction with crash injection
+            let p = path.clone();
+            let result = with_crash_at(crash_at, move || {
+                let wal = WalManager::with_config(&p, sync_config()).unwrap();
+                wal.log(&WalRecord::CreateNode {
+                    id: NodeId::new(100),
+                    labels: vec!["New".into()],
+                })
+                .unwrap();
+                wal.log(&WalRecord::SetNodeProperty {
+                    id: NodeId::new(100),
+                    key: "name".into(),
+                    value: Value::String("test".into()),
+                })
+                .unwrap();
+                wal.log(&WalRecord::TxCommit {
+                    tx_id: TxId::new(2),
+                })
+                .unwrap();
+            });
+
+            // Verify recovery invariants
+            let recovery = WalRecovery::new(&path);
+            let records = recovery.recover().unwrap();
+
+            // Invariant 1: base committed tx always survives
+            assert!(
+                records.len() >= 2,
+                "crash_at={crash_at}: base tx must survive, got {} records",
+                records.len()
+            );
+
+            // Invariant 2: no partial transactions in output
+            let mut pending = 0usize;
+            for record in &records {
+                match record {
+                    WalRecord::TxCommit { .. }
+                    | WalRecord::TxAbort { .. }
+                    | WalRecord::Checkpoint { .. } => pending = 0,
+                    _ => pending += 1,
+                }
+            }
+            assert_eq!(
+                pending, 0,
+                "crash_at={crash_at}: recovery must not output partial transactions"
+            );
+
+            // If the operation completed, the second tx should also be present
+            if matches!(result, CrashResult::Completed(())) {
+                assert!(
+                    records.len() >= 5,
+                    "crash_at={crash_at}: completed run should include second tx"
+                );
+            }
+        }
+    }
+
+    /// Aborted transactions are not recovered even without a crash.
+    /// Verifies that TxAbort correctly discards pending records.
+    #[test]
+    fn test_abort_then_crash_discards_aborted_tx() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+
+        {
+            let wal = WalManager::with_config(&path, sync_config()).unwrap();
+            // Committed tx
+            wal.log(&WalRecord::CreateNode {
+                id: NodeId::new(1),
+                labels: vec!["Keep".into()],
+            })
+            .unwrap();
+            wal.log(&WalRecord::TxCommit {
+                tx_id: TxId::new(1),
+            })
+            .unwrap();
+            // Aborted tx
+            wal.log(&WalRecord::CreateNode {
+                id: NodeId::new(2),
+                labels: vec!["Discard".into()],
+            })
+            .unwrap();
+            wal.log(&WalRecord::TxAbort {
+                tx_id: TxId::new(2),
+            })
+            .unwrap();
+        }
+
+        // Crash during a third transaction
+        let p = path.clone();
+        let result = with_crash_at(1, move || {
+            let wal = WalManager::with_config(&p, sync_config()).unwrap();
+            wal.log(&WalRecord::CreateNode {
+                id: NodeId::new(3),
+                labels: vec!["Also lost".into()],
+            })
+            .unwrap();
+        });
+        assert!(matches!(result, CrashResult::Crashed));
+
+        let recovery = WalRecovery::new(&path);
+        let records = recovery.recover().unwrap();
+        // Only the committed tx (2 records)
+        assert_eq!(
+            records.len(),
+            2,
+            "Aborted + crashed records should both be discarded"
+        );
+    }
+}

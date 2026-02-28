@@ -93,8 +93,11 @@ pub fn label_propagation(store: &LpgStore, max_iterations: usize) -> FxHashMap<N
                 .collect();
 
             // Choose the smallest label in case of tie (deterministic)
-            let new_label = *max_labels.iter().min().unwrap();
-            let current_label = *labels.get(&node).unwrap();
+            let new_label = *max_labels
+                .iter()
+                .min()
+                .expect("max_labels non-empty: filtered from non-empty label_counts");
+            let current_label = *labels.get(&node).expect("node initialized with label");
 
             if new_label != current_label {
                 labels.insert(node, new_label);
@@ -116,7 +119,7 @@ pub fn label_propagation(store: &LpgStore, max_iterations: usize) -> FxHashMap<N
 
     labels
         .into_iter()
-        .map(|(node, label)| (node, *label_map.get(&label).unwrap()))
+        .map(|(node, label)| (node, *label_map.get(&label).expect("label present in map")))
         .collect()
 }
 
@@ -178,7 +181,7 @@ pub fn louvain(store: &LpgStore, resolution: f64) -> LouvainResult {
     let mut total_weight = 0.0;
 
     for &node in &nodes {
-        let i = *node_to_idx.get(&node).unwrap();
+        let i = *node_to_idx.get(&node).expect("node in index");
         for (neighbor, _edge_id) in store.edges_from(node, Direction::Outgoing) {
             if let Some(&j) = node_to_idx.get(&neighbor) {
                 // For undirected: add weight to both directions
@@ -292,7 +295,12 @@ pub fn louvain(store: &LpgStore, resolution: f64) -> LouvainResult {
     let communities: FxHashMap<NodeId, u64> = nodes
         .iter()
         .enumerate()
-        .map(|(i, &node)| (node, *comm_map.get(&community[i]).unwrap()))
+        .map(|(i, &node)| {
+            (
+                node,
+                *comm_map.get(&community[i]).expect("community in map"),
+            )
+        })
         .collect();
 
     // Compute final modularity

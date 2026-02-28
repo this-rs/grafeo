@@ -119,7 +119,9 @@ impl Operator for ProjectOperator {
                         OperatorError::ColumnNotFound(format!("Column {col_idx}"))
                     })?;
 
-                    let output_col = output.column_mut(i).unwrap();
+                    let output_col = output
+                        .column_mut(i)
+                        .expect("column exists: index matches projection schema");
 
                     // Copy selected rows
                     for row in input.selected_indices() {
@@ -130,7 +132,9 @@ impl Operator for ProjectOperator {
                 }
                 ProjectExpr::Constant(value) => {
                     // Push constant for each row
-                    let output_col = output.column_mut(i).unwrap();
+                    let output_col = output
+                        .column_mut(i)
+                        .expect("column exists: index matches projection schema");
                     for _ in input.selected_indices() {
                         output_col.push_value(value.clone());
                     }
@@ -141,7 +145,9 @@ impl Operator for ProjectOperator {
                         .column(*column)
                         .ok_or_else(|| OperatorError::ColumnNotFound(format!("Column {column}")))?;
 
-                    let output_col = output.column_mut(i).unwrap();
+                    let output_col = output
+                        .column_mut(i)
+                        .expect("column exists: index matches projection schema");
 
                     let store = self.store.as_ref().ok_or_else(|| {
                         OperatorError::Execution("Store required for property access".to_string())
@@ -175,7 +181,9 @@ impl Operator for ProjectOperator {
                         .column(*column)
                         .ok_or_else(|| OperatorError::ColumnNotFound(format!("Column {column}")))?;
 
-                    let output_col = output.column_mut(i).unwrap();
+                    let output_col = output
+                        .column_mut(i)
+                        .expect("column exists: index matches projection schema");
 
                     let store = self.store.as_ref().ok_or_else(|| {
                         OperatorError::Execution("Store required for edge type access".to_string())
@@ -194,7 +202,9 @@ impl Operator for ProjectOperator {
                     expr,
                     variable_columns,
                 } => {
-                    let output_col = output.column_mut(i).unwrap();
+                    let output_col = output
+                        .column_mut(i)
+                        .expect("column exists: index matches projection schema");
 
                     let store = self.store.as_ref().ok_or_else(|| {
                         OperatorError::Execution(
@@ -219,7 +229,9 @@ impl Operator for ProjectOperator {
                         .column(*column)
                         .ok_or_else(|| OperatorError::ColumnNotFound(format!("Column {column}")))?;
 
-                    let output_col = output.column_mut(i).unwrap();
+                    let output_col = output
+                        .column_mut(i)
+                        .expect("column exists: index matches projection schema");
 
                     let store = self.store.as_ref().ok_or_else(|| {
                         OperatorError::Execution("Store required for node resolution".to_string())
@@ -241,7 +253,9 @@ impl Operator for ProjectOperator {
                         .column(*column)
                         .ok_or_else(|| OperatorError::ColumnNotFound(format!("Column {column}")))?;
 
-                    let output_col = output.column_mut(i).unwrap();
+                    let output_col = output
+                        .column_mut(i)
+                        .expect("column exists: index matches projection schema");
 
                     let store = self.store.as_ref().ok_or_else(|| {
                         OperatorError::Execution("Store required for edge resolution".to_string())

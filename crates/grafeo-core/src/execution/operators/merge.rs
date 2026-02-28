@@ -145,7 +145,10 @@ impl Operator for MergeOperator {
 
         // Build output chunk with the node ID
         let mut builder = DataChunkBuilder::new(&[LogicalType::Node]);
-        builder.column_mut(0).unwrap().push_node_id(node_id);
+        builder
+            .column_mut(0)
+            .expect("column 0 exists: builder created with single-column schema")
+            .push_node_id(node_id);
         builder.advance_row();
 
         // Log for debugging (in real code, this would be removed)

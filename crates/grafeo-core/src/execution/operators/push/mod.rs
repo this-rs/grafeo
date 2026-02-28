@@ -21,7 +21,7 @@ mod limit;
 mod project;
 mod sort;
 
-pub use aggregate::{AggregateExpr, AggregateFunction, AggregatePushOperator};
+pub use aggregate::AggregatePushOperator;
 #[cfg(feature = "spill")]
 pub use aggregate::{DEFAULT_AGGREGATE_SPILL_THRESHOLD, SpillableAggregatePushOperator};
 pub use distinct::{DistinctMaterializingOperator, DistinctPushOperator};

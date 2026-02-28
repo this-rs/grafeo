@@ -394,6 +394,15 @@ impl LpgStore {
             .fetch_max(epoch.as_u64(), Ordering::AcqRel);
     }
 
+    /// Returns whether backward adjacency (incoming edge index) is available.
+    ///
+    /// When backward adjacency is enabled (the default), bidirectional search
+    /// algorithms can traverse from the target toward the source.
+    #[must_use]
+    pub fn has_backward_adjacency(&self) -> bool {
+        self.backward_adj.is_some()
+    }
+
     // === Internal Helpers ===
 
     pub(super) fn get_or_create_label_id(&self, label: &str) -> u32 {

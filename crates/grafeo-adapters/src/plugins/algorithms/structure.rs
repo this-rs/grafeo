@@ -52,7 +52,7 @@ pub fn articulation_points(store: &LpgStore) -> FxHashSet<NodeId> {
     // Build undirected adjacency list
     let mut adj: Vec<FxHashSet<usize>> = vec![FxHashSet::default(); n];
     for &node in &nodes {
-        let i = *node_to_idx.get(&node).unwrap();
+        let i = *node_to_idx.get(&node).expect("node in index");
         for (neighbor, _) in store.edges_from(node, Direction::Outgoing) {
             if let Some(&j) = node_to_idx.get(&neighbor) {
                 adj[i].insert(j);
@@ -91,7 +91,7 @@ pub fn articulation_points(store: &LpgStore) -> FxHashSet<NodeId> {
 
             if idx < neighbors.len() {
                 let v = neighbors[idx];
-                stack.last_mut().unwrap().1 += 1;
+                stack.last_mut().expect("DFS: stack non-empty").1 += 1;
 
                 if !visited[v] {
                     parent[v] = Some(u);
@@ -166,7 +166,7 @@ pub fn bridges(store: &LpgStore) -> Vec<(NodeId, NodeId)> {
     // Build undirected adjacency list
     let mut adj: Vec<FxHashSet<usize>> = vec![FxHashSet::default(); n];
     for &node in &nodes {
-        let i = *node_to_idx.get(&node).unwrap();
+        let i = *node_to_idx.get(&node).expect("node in index");
         for (neighbor, _) in store.edges_from(node, Direction::Outgoing) {
             if let Some(&j) = node_to_idx.get(&neighbor) {
                 adj[i].insert(j);
@@ -201,7 +201,7 @@ pub fn bridges(store: &LpgStore) -> Vec<(NodeId, NodeId)> {
 
             if idx < neighbors.len() {
                 let v = neighbors[idx];
-                stack.last_mut().unwrap().1 += 1;
+                stack.last_mut().expect("DFS: stack non-empty").1 += 1;
 
                 if !visited[v] {
                     parent[v] = Some(u);
@@ -301,7 +301,7 @@ pub fn kcore_decomposition(store: &LpgStore) -> KCoreResult {
     // Build undirected adjacency list and compute degrees
     let mut adj: Vec<FxHashSet<usize>> = vec![FxHashSet::default(); n];
     for &node in &nodes {
-        let i = *node_to_idx.get(&node).unwrap();
+        let i = *node_to_idx.get(&node).expect("node in index");
         for (neighbor, _) in store.edges_from(node, Direction::Outgoing) {
             if let Some(&j) = node_to_idx.get(&neighbor) {
                 adj[i].insert(j);
@@ -344,7 +344,10 @@ pub fn kcore_decomposition(store: &LpgStore) -> KCoreResult {
         }
 
         // Pick a vertex from the minimum degree bucket
-        let v = *buckets[min_deg].iter().next().unwrap();
+        let v = *buckets[min_deg]
+            .iter()
+            .next()
+            .expect("k-core: bucket non-empty at min_deg");
         buckets[min_deg].remove(&v);
         removed[v] = true;
         core[v] = min_deg;

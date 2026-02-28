@@ -326,7 +326,7 @@ pub fn clustering_coefficient_parallel(
         .fold(
             || (FxHashMap::default(), FxHashMap::default()),
             |(mut coeffs, mut triangles), &node| {
-                let node_neighbors = neighbors.get(&node).unwrap();
+                let node_neighbors = neighbors.get(&node).expect("node in neighbor map");
                 let k = node_neighbors.len();
 
                 let t = count_node_triangles(node_neighbors, &neighbors);

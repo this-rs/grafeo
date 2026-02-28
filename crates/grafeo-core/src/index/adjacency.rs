@@ -94,10 +94,13 @@ impl AdjacencyChunk {
         let sorted_dsts: Vec<u64> = entries.iter().map(|(d, _)| d.as_u64()).collect();
         let sorted_edges: Vec<u64> = entries.iter().map(|(_, e)| e.as_u64()).collect();
 
+        let max_destination = sorted_dsts.last().copied().unwrap_or(0);
+
         CompressedAdjacencyChunk {
             destinations: DeltaBitPacked::encode(&sorted_dsts),
             edge_ids: BitPackedInts::pack(&sorted_edges),
             count: entries.len(),
+            max_destination,
         }
     }
 }
@@ -115,6 +118,8 @@ struct CompressedAdjacencyChunk {
     edge_ids: BitPackedInts,
     /// Number of entries.
     count: usize,
+    /// Maximum destination node ID (last element in sorted order).
+    max_destination: u64,
 }
 
 impl CompressedAdjacencyChunk {
@@ -148,6 +153,31 @@ impl CompressedAdjacencyChunk {
         dest_size + edge_size
     }
 
+    /// Returns the minimum destination ID in this chunk.
+    #[must_use]
+    fn min_destination(&self) -> u64 {
+        self.destinations.base()
+    }
+
+    /// Returns `(destination, edge_id)` pairs where destination is in `[min, max]`.
+    ///
+    /// Uses zone-map pruning to skip chunks entirely when the range doesn't
+    /// overlap, then `partition_point` for efficient sub-range extraction.
+    fn destinations_in_range(&self, min: u64, max: u64) -> Vec<(NodeId, EdgeId)> {
+        if min > self.max_destination || max < self.destinations.base() {
+            return Vec::new();
+        }
+        let destinations = self.destinations.decode();
+        let edges = self.edge_ids.unpack();
+        let start = destinations.partition_point(|&d| d < min);
+        let end = destinations.partition_point(|&d| d <= max);
+        destinations[start..end]
+            .iter()
+            .zip(&edges[start..end])
+            .map(|(&d, &e)| (NodeId::new(d), EdgeId::new(e)))
+            .collect()
+    }
+
     /// Returns the compression ratio compared to uncompressed storage.
     #[cfg(test)]
     fn compression_ratio(&self) -> f64 {
@@ -163,12 +193,28 @@ impl CompressedAdjacencyChunk {
     }
 }
 
+/// Zone map entry for a single compressed cold chunk.
+///
+/// The skip index stores one entry per cold chunk, sorted by `min_destination`.
+/// Binary search on this index identifies which chunks might contain a target
+/// destination without decompressing any data.
+#[derive(Debug, Clone, Copy)]
+struct SkipIndexEntry {
+    /// Minimum destination ID in the chunk (from `DeltaBitPacked::base()`).
+    min_destination: u64,
+    /// Maximum destination ID in the chunk.
+    max_destination: u64,
+    /// Index into `AdjacencyList::cold_chunks`.
+    chunk_index: usize,
+}
+
 /// Adjacency list for a single node.
 ///
 /// Uses a tiered storage model:
 /// - **Hot chunks**: Recent data, uncompressed for fast modification
 /// - **Cold chunks**: Older data, compressed for memory efficiency
 /// - **Delta buffer**: Very recent insertions, not yet compacted
+/// - **Skip index**: Zone map over cold chunks for O(log n) point lookups
 #[derive(Debug)]
 struct AdjacencyList {
     /// Hot chunks (mutable, uncompressed) - for recent data.
@@ -182,6 +228,10 @@ struct AdjacencyList {
     delta_inserts: SmallVec<[(NodeId, EdgeId); 16]>,
     /// Set of deleted edge IDs.
     deleted: FxHashSet<EdgeId>,
+    /// Zone map skip index over cold chunks, sorted by `min_destination`.
+    /// Enables O(log n) point lookups and range queries without decompressing
+    /// all cold chunks.
+    skip_index: Vec<SkipIndexEntry>,
 }
 
 impl AdjacencyList {
@@ -191,6 +241,7 @@ impl AdjacencyList {
             cold_chunks: Vec::new(),
             delta_inserts: SmallVec::new(),
             deleted: FxHashSet::default(),
+            skip_index: Vec::new(),
         }
     }
 
@@ -244,6 +295,9 @@ impl AdjacencyList {
     }
 
     /// Compresses oldest hot chunks to cold storage if threshold exceeded.
+    ///
+    /// Builds skip index entries for each new cold chunk, enabling O(log n)
+    /// point lookups via zone-map pruning.
     fn maybe_compress_to_cold(&mut self) {
         // Keep at least COLD_COMPRESSION_THRESHOLD hot chunks for write performance
         while self.hot_chunks.len() > COLD_COMPRESSION_THRESHOLD {
@@ -257,19 +311,36 @@ impl AdjacencyList {
 
             // Compress and add to cold storage
             let compressed = oldest.compress();
+            let chunk_index = self.cold_chunks.len();
+            self.skip_index.push(SkipIndexEntry {
+                min_destination: compressed.min_destination(),
+                max_destination: compressed.max_destination,
+                chunk_index,
+            });
             self.cold_chunks.push(compressed);
         }
+        // Maintain sort order for binary search
+        self.skip_index.sort_unstable_by_key(|e| e.min_destination);
     }
 
     /// Forces all hot chunks to be compressed to cold storage.
     ///
     /// Useful when memory pressure is high or the node is rarely accessed.
+    /// Rebuilds the skip index to include all newly compressed chunks.
     fn freeze_all(&mut self) {
         for chunk in self.hot_chunks.drain(..) {
             if chunk.len() > 0 {
-                self.cold_chunks.push(chunk.compress());
+                let compressed = chunk.compress();
+                let chunk_index = self.cold_chunks.len();
+                self.skip_index.push(SkipIndexEntry {
+                    min_destination: compressed.min_destination(),
+                    max_destination: compressed.max_destination,
+                    chunk_index,
+                });
+                self.cold_chunks.push(compressed);
             }
         }
+        self.skip_index.sort_unstable_by_key(|e| e.min_destination);
     }
 
     fn iter(&self) -> impl Iterator<Item = (NodeId, EdgeId)> + '_ {
@@ -288,6 +359,103 @@ impl AdjacencyList {
             .chain(hot_iter)
             .chain(delta_iter)
             .filter(move |(_, edge_id)| !deleted.contains(edge_id))
+    }
+
+    /// Checks whether a specific destination node exists in this list.
+    ///
+    /// Uses the skip index for O(log n) lookup over cold chunks (only
+    /// decompresses chunks whose zone maps overlap the target). Then scans
+    /// hot chunks and the delta buffer linearly. Respects soft-deleted edges.
+    fn contains(&self, destination: NodeId) -> bool {
+        let dst_raw = destination.as_u64();
+        let deleted = &self.deleted;
+
+        // Cold chunks: use skip index to find candidate chunks
+        for entry in &self.skip_index {
+            if dst_raw < entry.min_destination || dst_raw > entry.max_destination {
+                continue;
+            }
+            let chunk = &self.cold_chunks[entry.chunk_index];
+            let decoded_dsts = chunk.destinations.decode();
+            let decoded_edges = chunk.edge_ids.unpack();
+            if let Ok(pos) = decoded_dsts.binary_search(&dst_raw) {
+                // Check this position and adjacent duplicates
+                let mut i = pos;
+                while i > 0 && decoded_dsts[i - 1] == dst_raw {
+                    i -= 1;
+                }
+                for j in i..decoded_dsts.len() {
+                    if decoded_dsts[j] != dst_raw {
+                        break;
+                    }
+                    if !deleted.contains(&EdgeId::new(decoded_edges[j])) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // Hot chunks: linear scan (small, unsorted)
+        for chunk in &self.hot_chunks {
+            for (dst, edge_id) in chunk.iter() {
+                if dst == destination && !deleted.contains(&edge_id) {
+                    return true;
+                }
+            }
+        }
+
+        // Delta buffer: linear scan
+        for &(dst, edge_id) in &self.delta_inserts {
+            if dst == destination && !deleted.contains(&edge_id) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Returns edges whose destination falls in `[min, max]` (inclusive).
+    ///
+    /// Uses skip index zone-map pruning over cold chunks, then linear scan
+    /// of hot chunks and delta buffer. Respects soft-deleted edges.
+    fn destinations_in_range(&self, min: NodeId, max: NodeId) -> Vec<(NodeId, EdgeId)> {
+        let min_raw = min.as_u64();
+        let max_raw = max.as_u64();
+        let deleted = &self.deleted;
+        let mut results = Vec::new();
+
+        // Cold chunks: skip index prunes non-overlapping chunks
+        for entry in &self.skip_index {
+            if entry.max_destination < min_raw || entry.min_destination > max_raw {
+                continue;
+            }
+            let chunk = &self.cold_chunks[entry.chunk_index];
+            results.extend(
+                chunk
+                    .destinations_in_range(min_raw, max_raw)
+                    .into_iter()
+                    .filter(|(_, eid)| !deleted.contains(eid)),
+            );
+        }
+
+        // Hot chunks: linear scan
+        for chunk in &self.hot_chunks {
+            for (dst, edge_id) in chunk.iter() {
+                if dst.as_u64() >= min_raw && dst.as_u64() <= max_raw && !deleted.contains(&edge_id)
+                {
+                    results.push((dst, edge_id));
+                }
+            }
+        }
+
+        // Delta buffer: linear scan
+        for &(dst, edge_id) in &self.delta_inserts {
+            if dst.as_u64() >= min_raw && dst.as_u64() <= max_raw && !deleted.contains(&edge_id) {
+                results.push((dst, edge_id));
+            }
+        }
+
+        results
     }
 
     fn neighbors(&self) -> impl Iterator<Item = NodeId> + '_ {
@@ -508,6 +676,34 @@ impl ChunkedAdjacency {
     /// Returns the number of nodes with adjacency lists.
     pub fn node_count(&self) -> usize {
         self.lists.read().len()
+    }
+
+    /// Checks if an edge from `src` to `dst` exists (not deleted).
+    ///
+    /// Uses zone-map skip index over cold chunks for O(log n) lookup
+    /// when most data is in cold storage. Hot chunks and the delta buffer
+    /// are scanned linearly.
+    #[must_use]
+    pub fn contains_edge(&self, src: NodeId, dst: NodeId) -> bool {
+        let lists = self.lists.read();
+        lists.get(&src).is_some_and(|list| list.contains(dst))
+    }
+
+    /// Returns edges from `src` whose destination is in `[min_dst, max_dst]`.
+    ///
+    /// Only decompresses cold chunks whose zone maps overlap the requested range.
+    #[must_use]
+    pub fn edges_in_range(
+        &self,
+        src: NodeId,
+        min_dst: NodeId,
+        max_dst: NodeId,
+    ) -> Vec<(NodeId, EdgeId)> {
+        let lists = self.lists.read();
+        lists
+            .get(&src)
+            .map(|list| list.destinations_in_range(min_dst, max_dst))
+            .unwrap_or_default()
     }
 
     /// Clears all adjacency lists.
@@ -1034,5 +1230,169 @@ mod tests {
 
         // Node C has no outgoing edges
         assert_eq!(forward.edges_from(c).len(), 0);
+    }
+
+    // === Skip Index Tests ===
+
+    #[test]
+    fn test_contains_edge_basic() {
+        let adj = ChunkedAdjacency::new();
+
+        adj.add_edge(NodeId::new(0), NodeId::new(1), EdgeId::new(0));
+        adj.add_edge(NodeId::new(0), NodeId::new(2), EdgeId::new(1));
+        adj.add_edge(NodeId::new(0), NodeId::new(3), EdgeId::new(2));
+
+        assert!(adj.contains_edge(NodeId::new(0), NodeId::new(1)));
+        assert!(adj.contains_edge(NodeId::new(0), NodeId::new(2)));
+        assert!(adj.contains_edge(NodeId::new(0), NodeId::new(3)));
+        assert!(!adj.contains_edge(NodeId::new(0), NodeId::new(4)));
+        assert!(!adj.contains_edge(NodeId::new(1), NodeId::new(0)));
+    }
+
+    #[test]
+    fn test_contains_edge_after_delete() {
+        let adj = ChunkedAdjacency::new();
+
+        adj.add_edge(NodeId::new(0), NodeId::new(1), EdgeId::new(10));
+        adj.add_edge(NodeId::new(0), NodeId::new(2), EdgeId::new(20));
+
+        assert!(adj.contains_edge(NodeId::new(0), NodeId::new(1)));
+
+        adj.mark_deleted(NodeId::new(0), EdgeId::new(10));
+
+        assert!(!adj.contains_edge(NodeId::new(0), NodeId::new(1)));
+        assert!(adj.contains_edge(NodeId::new(0), NodeId::new(2)));
+    }
+
+    #[test]
+    fn test_contains_edge_in_cold_storage() {
+        let adj = ChunkedAdjacency::with_chunk_capacity(8);
+
+        // Add enough edges to trigger hot→cold compression
+        for i in 0..100 {
+            adj.add_edge(NodeId::new(0), NodeId::new(100 + i), EdgeId::new(i));
+        }
+
+        adj.compact();
+        adj.freeze_all();
+
+        // All edges should be findable via skip index
+        for i in 0..100 {
+            assert!(
+                adj.contains_edge(NodeId::new(0), NodeId::new(100 + i)),
+                "Should find destination {} in cold storage",
+                100 + i
+            );
+        }
+
+        // Non-existent destinations should not be found
+        assert!(!adj.contains_edge(NodeId::new(0), NodeId::new(0)));
+        assert!(!adj.contains_edge(NodeId::new(0), NodeId::new(99)));
+        assert!(!adj.contains_edge(NodeId::new(0), NodeId::new(200)));
+    }
+
+    #[test]
+    fn test_contains_edge_in_delta_only() {
+        let adj = ChunkedAdjacency::new();
+
+        // Add just a few edges (stays in delta buffer)
+        adj.add_edge(NodeId::new(0), NodeId::new(5), EdgeId::new(0));
+        adj.add_edge(NodeId::new(0), NodeId::new(10), EdgeId::new(1));
+
+        assert!(adj.contains_edge(NodeId::new(0), NodeId::new(5)));
+        assert!(adj.contains_edge(NodeId::new(0), NodeId::new(10)));
+        assert!(!adj.contains_edge(NodeId::new(0), NodeId::new(7)));
+    }
+
+    #[test]
+    fn test_edges_in_range() {
+        let adj = ChunkedAdjacency::with_chunk_capacity(8);
+
+        // Add edges with destinations 100..200
+        for i in 0..100 {
+            adj.add_edge(NodeId::new(0), NodeId::new(100 + i), EdgeId::new(i));
+        }
+
+        adj.compact();
+
+        // Range [130, 140] should return 11 edges (130..=140)
+        let results = adj.edges_in_range(NodeId::new(0), NodeId::new(130), NodeId::new(140));
+        assert_eq!(
+            results.len(),
+            11,
+            "Expected 11 edges in range [130, 140], got {}",
+            results.len()
+        );
+
+        // Verify all results are in range
+        for (dst, _) in &results {
+            assert!(dst.as_u64() >= 130 && dst.as_u64() <= 140);
+        }
+
+        // Out-of-range query should return empty
+        let empty = adj.edges_in_range(NodeId::new(0), NodeId::new(200), NodeId::new(300));
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn test_skip_index_prunes_chunks() {
+        let adj = ChunkedAdjacency::with_chunk_capacity(8);
+
+        // Add edges in distinct ranges to create separate cold chunks
+        // Range A: destinations 100-107, Range B: 200-207, Range C: 300-307
+        for i in 0..8 {
+            adj.add_edge(NodeId::new(0), NodeId::new(100 + i), EdgeId::new(i));
+        }
+        adj.compact();
+
+        for i in 0..8 {
+            adj.add_edge(NodeId::new(0), NodeId::new(200 + i), EdgeId::new(100 + i));
+        }
+        adj.compact();
+
+        for i in 0..8 {
+            adj.add_edge(NodeId::new(0), NodeId::new(300 + i), EdgeId::new(200 + i));
+        }
+        adj.compact();
+        adj.freeze_all();
+
+        // contains_edge for each range
+        assert!(adj.contains_edge(NodeId::new(0), NodeId::new(103)));
+        assert!(adj.contains_edge(NodeId::new(0), NodeId::new(205)));
+        assert!(adj.contains_edge(NodeId::new(0), NodeId::new(307)));
+
+        // Values between ranges should not exist
+        assert!(!adj.contains_edge(NodeId::new(0), NodeId::new(150)));
+        assert!(!adj.contains_edge(NodeId::new(0), NodeId::new(250)));
+
+        // Range query spanning only one chunk range
+        let range_b = adj.edges_in_range(NodeId::new(0), NodeId::new(200), NodeId::new(207));
+        assert_eq!(range_b.len(), 8);
+    }
+
+    #[test]
+    fn test_contains_after_freeze_all() {
+        let adj = ChunkedAdjacency::with_chunk_capacity(8);
+
+        for i in 0..50 {
+            adj.add_edge(NodeId::new(0), NodeId::new(i + 1), EdgeId::new(i));
+        }
+
+        adj.compact();
+        adj.freeze_all();
+
+        // Verify all edges are in cold storage
+        let stats = adj.memory_stats();
+        assert_eq!(stats.hot_entries, 0);
+        assert_eq!(stats.cold_entries, 50);
+
+        // All edges should still be findable
+        for i in 0..50 {
+            assert!(
+                adj.contains_edge(NodeId::new(0), NodeId::new(i + 1)),
+                "Should find destination {} after freeze_all",
+                i + 1
+            );
+        }
     }
 }

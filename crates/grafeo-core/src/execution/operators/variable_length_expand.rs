@@ -159,7 +159,9 @@ impl VariableLengthExpandOperator {
                 // Materialize all columns
                 let mut columns = Vec::with_capacity(chunk.column_count());
                 for col_idx in 0..chunk.column_count() {
-                    let col = chunk.column(col_idx).unwrap();
+                    let col = chunk
+                        .column(col_idx)
+                        .expect("col_idx within column_count range");
                     let value = if let Some(node_id) = col.get_node_id(row_idx) {
                         ColumnValue::NodeId(node_id)
                     } else if let Some(edge_id) = col.get_edge_id(row_idx) {
@@ -328,7 +330,10 @@ impl Operator for VariableLengthExpandOperator {
             return Ok(None);
         }
 
-        let input_rows = self.input_rows.as_ref().unwrap();
+        let input_rows = self
+            .input_rows
+            .as_ref()
+            .expect("input_rows is Some: populated during BFS");
 
         // Build output chunk from buffer
         let num_input_cols = input_rows.first().map_or(0, |r| r.columns.len());

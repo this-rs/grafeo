@@ -2,6 +2,7 @@
 
 use crate::execution::chunk::DataChunk;
 use crate::execution::operators::OperatorError;
+use crate::execution::operators::accumulator::{AggregateExpr, AggregateFunction};
 use crate::execution::pipeline::{ChunkSizeHint, PushOperator, Sink};
 #[cfg(feature = "spill")]
 use crate::execution::spill::{PartitionedState, SpillManager};
@@ -12,90 +13,6 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 #[cfg(feature = "spill")]
 use std::sync::Arc;
-
-/// Aggregation function type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AggregateFunction {
-    /// Count rows or non-null values.
-    Count,
-    /// Sum of values.
-    Sum,
-    /// Minimum value.
-    Min,
-    /// Maximum value.
-    Max,
-    /// Average value.
-    Avg,
-    /// First value in group.
-    First,
-}
-
-/// Aggregate expression.
-#[derive(Debug, Clone)]
-pub struct AggregateExpr {
-    /// The aggregate function.
-    pub function: AggregateFunction,
-    /// Column index to aggregate (None for COUNT(*)).
-    pub column: Option<usize>,
-    /// Whether DISTINCT applies.
-    pub distinct: bool,
-}
-
-impl AggregateExpr {
-    /// Create a COUNT(*) expression.
-    pub fn count_star() -> Self {
-        Self {
-            function: AggregateFunction::Count,
-            column: None,
-            distinct: false,
-        }
-    }
-
-    /// Create a COUNT(column) expression.
-    pub fn count(column: usize) -> Self {
-        Self {
-            function: AggregateFunction::Count,
-            column: Some(column),
-            distinct: false,
-        }
-    }
-
-    /// Create a SUM(column) expression.
-    pub fn sum(column: usize) -> Self {
-        Self {
-            function: AggregateFunction::Sum,
-            column: Some(column),
-            distinct: false,
-        }
-    }
-
-    /// Create a MIN(column) expression.
-    pub fn min(column: usize) -> Self {
-        Self {
-            function: AggregateFunction::Min,
-            column: Some(column),
-            distinct: false,
-        }
-    }
-
-    /// Create a MAX(column) expression.
-    pub fn max(column: usize) -> Self {
-        Self {
-            function: AggregateFunction::Max,
-            column: Some(column),
-            distinct: false,
-        }
-    }
-
-    /// Create an AVG(column) expression.
-    pub fn avg(column: usize) -> Self {
-        Self {
-            function: AggregateFunction::Avg,
-            column: Some(column),
-            distinct: false,
-        }
-    }
-}
 
 /// Accumulator for aggregate state.
 #[derive(Debug, Clone, Default)]
@@ -149,7 +66,7 @@ impl Accumulator {
 
     fn finalize(&mut self, func: AggregateFunction) -> Value {
         match func {
-            AggregateFunction::Count => Value::Int64(self.count),
+            AggregateFunction::Count | AggregateFunction::CountNonNull => Value::Int64(self.count),
             AggregateFunction::Sum => {
                 if self.count == 0 {
                     Value::Null
@@ -167,6 +84,14 @@ impl Accumulator {
                 }
             }
             AggregateFunction::First => self.first.take().unwrap_or(Value::Null),
+            // Advanced functions not supported in push-based accumulator;
+            // these are handled by the pull-based AggregateState instead.
+            AggregateFunction::Last
+            | AggregateFunction::Collect
+            | AggregateFunction::StdDev
+            | AggregateFunction::StdDevPop
+            | AggregateFunction::PercentileDisc
+            | AggregateFunction::PercentileCont => Value::Null,
         }
     }
 }

@@ -19,6 +19,7 @@
 //!
 //! The [`push`] submodule has push-based variants for pipeline execution.
 
+pub mod accumulator;
 mod aggregate;
 mod distinct;
 mod expand;
@@ -44,9 +45,8 @@ pub mod value_utils;
 mod variable_length_expand;
 mod vector_join;
 
-pub use aggregate::{
-    AggregateExpr, AggregateFunction, HashAggregateOperator, SimpleAggregateOperator,
-};
+pub use accumulator::{AggregateExpr, AggregateFunction, HashableValue};
+pub use aggregate::{HashAggregateOperator, SimpleAggregateOperator};
 pub use distinct::DistinctOperator;
 pub use expand::ExpandOperator;
 pub use factorized_aggregate::{

@@ -793,7 +793,10 @@ impl Operator for NestedLoopJoinOperator {
                 }
             }
 
-            let left_chunk = self.current_left_chunk.as_ref().unwrap();
+            let left_chunk = self
+                .current_left_chunk
+                .as_ref()
+                .expect("left chunk is Some: loaded in loop above");
             let left_rows: Vec<usize> = left_chunk.selected_indices().collect();
 
             // Calculate right column count for potential unmatched rows

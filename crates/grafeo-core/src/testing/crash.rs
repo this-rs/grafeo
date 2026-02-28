@@ -1,9 +1,12 @@
 //! Crash injection for testing recovery paths.
 //!
 //! When the `testing-crash-injection` feature is enabled, [`maybe_crash`]
-//! counts down a global counter and panics when it reaches zero. Tests use
-//! [`with_crash_at`] to run a closure that crashes at a deterministic point,
-//! then verify that recovery produces a consistent state.
+//! counts down a **thread-local** counter and panics when it reaches zero.
+//! Tests use [`with_crash_at`] to run a closure that crashes at a
+//! deterministic point, then verify that recovery produces a consistent state.
+//!
+//! Thread-local storage ensures that concurrent tests never interfere with
+//! each other — only the thread that calls [`enable_crash_at`] is affected.
 //!
 //! When the feature is **disabled**, all functions compile to no-ops with zero
 //! runtime overhead.
@@ -26,45 +29,61 @@
 
 #[cfg(feature = "testing-crash-injection")]
 mod inner {
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::cell::Cell;
 
-    static CRASH_COUNTER: AtomicU64 = AtomicU64::new(u64::MAX);
-    static CRASH_ENABLED: AtomicBool = AtomicBool::new(false);
+    thread_local! {
+        static CRASH_COUNTER: Cell<u64> = const { Cell::new(u64::MAX) };
+        static CRASH_ENABLED: Cell<bool> = const { Cell::new(false) };
+    }
 
     /// Conditionally panic when the crash counter reaches zero.
     ///
     /// Insert this at interesting recovery boundaries (before/after WAL
     /// writes, flushes, checkpoints). When crash injection is disabled,
     /// this compiles to nothing.
+    ///
+    /// Uses thread-local state so concurrent tests don't interfere.
     #[inline]
     pub fn maybe_crash(point: &'static str) {
-        if !CRASH_ENABLED.load(Ordering::Relaxed) {
-            return;
-        }
-        let prev = CRASH_COUNTER.fetch_sub(1, Ordering::SeqCst);
-        assert!(prev != 1, "crash injection at: {point}");
+        CRASH_ENABLED.with(|enabled| {
+            if !enabled.get() {
+                return;
+            }
+            CRASH_COUNTER.with(|counter| {
+                let prev = counter.get();
+                counter.set(prev.wrapping_sub(1));
+                assert!(prev != 1, "crash injection at: {point}");
+            });
+        });
     }
 
     /// Enable crash injection to fire after `count` calls to [`maybe_crash`].
+    ///
+    /// Only affects the calling thread.
     pub fn enable_crash_at(count: u64) {
-        CRASH_COUNTER.store(count, Ordering::SeqCst);
-        CRASH_ENABLED.store(true, Ordering::SeqCst);
+        CRASH_COUNTER.with(|c| c.set(count));
+        CRASH_ENABLED.with(|e| e.set(true));
     }
 
     /// Disable crash injection (reset to no-op behavior).
+    ///
+    /// Only affects the calling thread.
     pub fn disable_crash() {
-        CRASH_ENABLED.store(false, Ordering::SeqCst);
-        CRASH_COUNTER.store(u64::MAX, Ordering::SeqCst);
+        CRASH_ENABLED.with(|e| e.set(false));
+        CRASH_COUNTER.with(|c| c.set(u64::MAX));
     }
 }
 
 #[cfg(not(feature = "testing-crash-injection"))]
 mod inner {
+    /// No-op when crash injection is disabled.
     #[inline(always)]
     pub fn maybe_crash(_point: &'static str) {}
 
+    /// No-op when crash injection is disabled.
     pub fn enable_crash_at(_count: u64) {}
 
+    /// No-op when crash injection is disabled.
     pub fn disable_crash() {}
 }
 

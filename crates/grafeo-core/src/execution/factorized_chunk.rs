@@ -466,7 +466,14 @@ impl FactorizedChunk {
 
         // Build filtered columns for the deepest level
         let mut new_columns: Vec<ValueVector> = (0..deepest.column_count())
-            .map(|i| ValueVector::with_type(deepest.column(i).unwrap().data_type()))
+            .map(|i| {
+                ValueVector::with_type(
+                    deepest
+                        .column(i)
+                        .expect("column exists: i < column_count")
+                        .data_type(),
+                )
+            })
             .collect();
 
         // Track new multiplicities for each parent
@@ -558,7 +565,14 @@ impl FactorizedChunk {
 
         // Build filtered columns
         let mut new_columns: Vec<ValueVector> = (0..col_count)
-            .map(|i| ValueVector::with_type(deepest.column(i).unwrap().data_type()))
+            .map(|i| {
+                ValueVector::with_type(
+                    deepest
+                        .column(i)
+                        .expect("column exists: i < column_count")
+                        .data_type(),
+                )
+            })
             .collect();
 
         let mut new_multiplicities: Vec<usize> = vec![0; parent_count];

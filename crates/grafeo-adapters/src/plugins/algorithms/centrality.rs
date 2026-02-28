@@ -273,18 +273,20 @@ pub fn betweenness_centrality(store: &LpgStore, normalized: bool) -> FxHashMap<N
 
         while let Some(v) = queue.pop_front() {
             stack.push(v);
-            let dist_v = *dist.get(&v).unwrap();
+            let dist_v = *dist.get(&v).expect("BFS: node popped from queue has dist");
 
             for (w, _) in store.edges_from(v, Direction::Outgoing) {
                 // First visit?
-                if *dist.get(&w).unwrap() < 0 {
+                if *dist.get(&w).expect("BFS: all nodes initialized with dist") < 0 {
                     dist.insert(w, dist_v + 1);
                     queue.push_back(w);
                 }
 
                 // Shortest path to w via v?
-                if *dist.get(&w).unwrap() == dist_v + 1 {
-                    let sigma_v = *sigma.get(&v).unwrap();
+                if *dist.get(&w).expect("BFS: all nodes initialized with dist") == dist_v + 1 {
+                    let sigma_v = *sigma
+                        .get(&v)
+                        .expect("BFS: all nodes initialized with sigma");
                     *sigma.entry(w).or_insert(0.0) += sigma_v;
                     predecessors.entry(w).or_default().push(v);
                 }
@@ -302,11 +304,15 @@ pub fn betweenness_centrality(store: &LpgStore, normalized: bool) -> FxHashMap<N
                 continue;
             }
 
-            let sigma_w = *sigma.get(&w).unwrap();
-            let delta_w = *delta.get(&w).unwrap();
+            let sigma_w = *sigma
+                .get(&w)
+                .expect("BFS: all nodes initialized with sigma");
+            let delta_w = *delta
+                .get(&w)
+                .expect("BFS: all nodes initialized with delta");
 
             for v in predecessors.get(&w).unwrap_or(&Vec::new()) {
-                let sigma_v = *sigma.get(v).unwrap();
+                let sigma_v = *sigma.get(v).expect("BFS: all nodes initialized with sigma");
                 let coeff = (sigma_v / sigma_w) * (1.0 + delta_w);
                 *delta.entry(*v).or_insert(0.0) += coeff;
             }
@@ -369,7 +375,7 @@ pub fn closeness_centrality(store: &LpgStore, wf_improved: bool) -> FxHashMap<No
         queue.push_back(source);
 
         while let Some(v) = queue.pop_front() {
-            let dist_v = *dist.get(&v).unwrap();
+            let dist_v = *dist.get(&v).expect("BFS: node popped from queue has dist");
 
             for (w, _) in store.edges_from(v, Direction::Outgoing) {
                 if !dist.contains_key(&w) {

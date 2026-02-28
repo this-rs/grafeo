@@ -230,7 +230,7 @@ impl Operator for ExpandOperator {
             let (target_id, edge_id) = self.current_edges[self.current_edge_idx];
 
             // Copy all input columns to output
-            let input = self.current_input.as_ref().unwrap();
+            let input = self.current_input.as_ref().expect("input loaded above");
             for col_idx in 0..input_col_count {
                 if let Some(input_col) = input.column(col_idx)
                     && let Some(output_col) = chunk.column_mut(col_idx)
