@@ -13,9 +13,9 @@ All notable changes to Grafeo, for future reference (and enjoyment).
 
 - **Shared accumulator module**: extracted `AggregateFunction`, `AggregateExpr`, and `HashableValue` from duplicate definitions in pull-based and push-based aggregate operators into a single `accumulator` module, eliminating ~200 lines of duplicated type definitions
 - **Thread-local crash injection**: crash injection mechanism now uses thread-local storage instead of global atomics, preventing interference between concurrent tests when `testing-crash-injection` is enabled
-- **Crash recovery tests**: 7 deterministic crash injection tests verifying WAL recovery invariants at every crash point — partial writes, uncommitted data, aborted transactions, checkpoint crashes, log rotation, and an exhaustive sweep across all crash points
+- **Crash recovery tests**: 7 deterministic crash injection tests verifying WAL recovery invariants at every crash point - partial writes, uncommitted data, aborted transactions, checkpoint crashes, log rotation, and an exhaustive sweep across all crash points
 - **Concurrent stress tests**: 6 multi-threaded stress tests covering concurrent writers (8 threads × 50 writes), mixed read/write workloads, transaction conflict patterns with interleaved commit/rollback, epoch pressure under load, rapid session lifecycle, and concurrent node+edge creation
-- **Hardened panic messages**: converted ~50 bare `unwrap()` calls to `expect()` with invariant descriptions across graph algorithms (centrality, community detection, components, flow, MST, structure, clustering) and execution operators (expand, join, unwind, project, merge, shortest path, variable-length expand, factorized chunks). No behavioral change — improves diagnostic quality if an internal invariant is ever violated
+- **Hardened panic messages**: converted ~50 bare `unwrap()` calls to `expect()` with invariant descriptions across graph algorithms (centrality, community detection, components, flow, MST, structure, clustering) and execution operators (expand, join, unwind, project, merge, shortest path, variable-length expand, factorized chunks). No behavioral change - improves diagnostic quality if an internal invariant is ever violated
 
 ## [0.5.9] - 2026-02-28
 

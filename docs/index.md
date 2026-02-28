@@ -33,7 +33,7 @@ hide:
 
     ---
 
-    Fastest graph database tested on the [LDBC Social Network Benchmark](ecosystem/graph-bench.md) — both embedded and as a server — with a lower memory footprint than other in-memory databases. Built in Rust with vectorized execution, adaptive chunking and SIMD-optimized operations.
+    Fastest graph database tested on the [LDBC Social Network Benchmark](ecosystem/graph-bench.md) - both embedded and as a server - with a lower memory footprint than other in-memory databases. Built in Rust with vectorized execution, adaptive chunking and SIMD-optimized operations.
 
 -   :material-database-search:{ .lg .middle } **Multi-Language Queries**
 

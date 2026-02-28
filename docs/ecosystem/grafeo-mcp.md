@@ -102,7 +102,7 @@ Supports stdio (default), SSE and streamable HTTP transports.
 
 ## See Also
 
-- **[grafeo-memory](grafeo-memory.md)** includes a built-in MCP server (`grafeo-memory-mcp`) that wraps the high-level memory API — extract, reconcile, search, summarize. If you need AI memory management rather than raw graph access, use that instead.
+- **[grafeo-memory](grafeo-memory.md)** includes a built-in MCP server (`grafeo-memory-mcp`) that wraps the high-level memory API - extract, reconcile, search, summarize. If you need AI memory management rather than raw graph access, use that instead.
 
 ## License
 

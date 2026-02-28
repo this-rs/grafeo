@@ -23,7 +23,7 @@ Grafeo supports both **Labeled Property Graph (LPG)** and **Resource Description
 
 - **Dual data model support**: LPG and RDF with optimized storage for each
 - **Multi-language queries**: GQL, Cypher, Gremlin, GraphQL, SPARQL and SQL/PGQ
-- Embeddable with zero external dependencies — no JVM, no Docker, no external processes
+- Embeddable with zero external dependencies - no JVM, no Docker, no external processes
 - **Multi-language bindings**: Python (PyO3), Node.js/TypeScript (napi-rs), Go (CGO), WebAssembly (wasm-bindgen)
 - In-memory and persistent storage modes
 - MVCC transactions with snapshot isolation

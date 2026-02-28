@@ -133,15 +133,15 @@ Use as a context manager. Multiple sessions in the same process are supported.
 
 Methods:
 
-- `add(messages, user_id=None, ..., memory_type="semantic")` → `AddResult` — extract and store memories
-- `search(query, user_id=None, k=10, ..., memory_type=None)` → `SearchResponse` — semantic + graph search
-- `update(memory_id, text)` → `MemoryEvent` — update a memory's text directly
-- `get_all(user_id=None, memory_type=None)` → `list[SearchResult]` — retrieve all memories
-- `delete(memory_id)` → `bool` — delete a memory
-- `delete_all(user_id=None)` → `int` — delete all memories for a user
-- `summarize(user_id=None, ...)` → `AddResult` — consolidate old memories
-- `history(memory_id)` → `list[HistoryEntry]` — get change history
-- `set_importance(memory_id, importance)` → `bool` — set importance score
+- `add(messages, user_id=None, ..., memory_type="semantic")` → `AddResult` -extract and store memories
+- `search(query, user_id=None, k=10, ..., memory_type=None)` → `SearchResponse` -semantic + graph search
+- `update(memory_id, text)` → `MemoryEvent` -update a memory's text directly
+- `get_all(user_id=None, memory_type=None)` → `list[SearchResult]` -retrieve all memories
+- `delete(memory_id)` → `bool` -delete a memory
+- `delete_all(user_id=None)` → `int` -delete all memories for a user
+- `summarize(user_id=None, ...)` → `AddResult` -consolidate old memories
+- `history(memory_id)` → `list[HistoryEntry]` -get change history
+- `set_importance(memory_id, importance)` → `bool` -set importance score
 
 ### Return Types
 
