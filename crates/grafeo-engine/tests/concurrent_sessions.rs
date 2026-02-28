@@ -514,3 +514,327 @@ fn test_multiple_sequential_transactions() {
         "All 5 sequential transactions should have committed"
     );
 }
+
+// ============================================================================
+// Concurrent Stress Tests
+// ============================================================================
+
+#[test]
+fn test_stress_concurrent_writers() {
+    // 8 threads each inserting 50 nodes simultaneously
+    let db = Arc::new(GrafeoDB::new_in_memory());
+
+    let num_threads = 8;
+    let writes_per_thread = 50;
+    let barrier = Arc::new(Barrier::new(num_threads));
+    let success_count = Arc::new(AtomicUsize::new(0));
+
+    let handles: Vec<_> = (0..num_threads)
+        .map(|tid| {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            let success_count = Arc::clone(&success_count);
+
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..writes_per_thread {
+                    let session = db.session();
+                    let query = format!("INSERT (:Stress {{thread: {tid}, seq: {i}}})");
+                    session.execute(&query).unwrap();
+                }
+                success_count.fetch_add(1, Ordering::Relaxed);
+            })
+        })
+        .collect();
+
+    for handle in handles {
+        handle.join().expect("Thread panicked");
+    }
+
+    assert_eq!(success_count.load(Ordering::Relaxed), num_threads);
+
+    // Verify total node count
+    let session = db.session();
+    let result = session.execute("MATCH (n:Stress) RETURN n").unwrap();
+    assert_eq!(
+        result.row_count(),
+        num_threads * writes_per_thread,
+        "All nodes should be created"
+    );
+}
+
+#[test]
+fn test_stress_concurrent_reads_during_writes() {
+    // Mixed workload: 4 writers + 8 readers operating simultaneously
+    let db = Arc::new(GrafeoDB::new_in_memory());
+
+    // Seed initial data
+    {
+        let session = db.session();
+        for i in 0..100 {
+            session
+                .execute(&format!("INSERT (:Item {{id: {i}}})"))
+                .unwrap();
+        }
+    }
+
+    let num_writers = 4;
+    let num_readers = 8;
+    let barrier = Arc::new(Barrier::new(num_writers + num_readers));
+    let read_errors = Arc::new(AtomicUsize::new(0));
+    let write_errors = Arc::new(AtomicUsize::new(0));
+
+    let mut handles = Vec::new();
+
+    // Writer threads
+    for tid in 0..num_writers {
+        let db = Arc::clone(&db);
+        let barrier = Arc::clone(&barrier);
+        let errors = Arc::clone(&write_errors);
+        handles.push(thread::spawn(move || {
+            barrier.wait();
+            for i in 0..20 {
+                let session = db.session();
+                let id = 1000 + tid * 100 + i;
+                if session
+                    .execute(&format!("INSERT (:Written {{id: {id}}})"))
+                    .is_err()
+                {
+                    errors.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }));
+    }
+
+    // Reader threads
+    for _ in 0..num_readers {
+        let db = Arc::clone(&db);
+        let barrier = Arc::clone(&barrier);
+        let errors = Arc::clone(&read_errors);
+        handles.push(thread::spawn(move || {
+            barrier.wait();
+            for _ in 0..20 {
+                let session = db.session();
+                if session.execute("MATCH (n:Item) RETURN n.id").is_err() {
+                    errors.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }));
+    }
+
+    for handle in handles {
+        handle.join().expect("Thread panicked");
+    }
+
+    assert_eq!(
+        read_errors.load(Ordering::Relaxed),
+        0,
+        "No read errors expected"
+    );
+    assert_eq!(
+        write_errors.load(Ordering::Relaxed),
+        0,
+        "No write errors expected"
+    );
+}
+
+#[test]
+fn test_stress_transaction_conflicts() {
+    // 8 threads with interleaved commit/rollback patterns
+    let db = Arc::new(GrafeoDB::new_in_memory());
+
+    let num_threads = 8;
+    let iterations = 10;
+    let barrier = Arc::new(Barrier::new(num_threads));
+    let completed = Arc::new(AtomicUsize::new(0));
+
+    let handles: Vec<_> = (0..num_threads)
+        .map(|tid| {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            let completed = Arc::clone(&completed);
+
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..iterations {
+                    let mut session = db.session();
+                    session.begin_tx().unwrap();
+                    let query = format!("INSERT (:TxNode {{thread: {tid}, iter: {i}}})");
+                    let _ = session.execute(&query);
+
+                    // Commit even iterations, rollback odd
+                    if i % 2 == 0 {
+                        let _ = session.commit();
+                    } else {
+                        let _ = session.rollback();
+                    }
+                }
+                completed.fetch_add(1, Ordering::Relaxed);
+            })
+        })
+        .collect();
+
+    for handle in handles {
+        handle.join().expect("Thread panicked");
+    }
+
+    assert_eq!(completed.load(Ordering::Relaxed), num_threads);
+
+    // Only committed nodes (even iterations) should exist
+    let session = db.session();
+    let result = session.execute("MATCH (n:TxNode) RETURN n").unwrap();
+    // Each thread commits 5 of 10 iterations (0, 2, 4, 6, 8)
+    let expected = num_threads * (iterations / 2);
+    assert_eq!(
+        result.row_count(),
+        expected,
+        "Only committed transactions should be visible"
+    );
+}
+
+#[test]
+fn test_stress_concurrent_epoch_pressure() {
+    // 4 threads each running 25 sequential transactions — creates many epochs
+    let db = Arc::new(GrafeoDB::new_in_memory());
+
+    let num_threads = 4;
+    let txns_per_thread = 25;
+    let barrier = Arc::new(Barrier::new(num_threads));
+    let completed = Arc::new(AtomicUsize::new(0));
+
+    let handles: Vec<_> = (0..num_threads)
+        .map(|tid| {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            let completed = Arc::clone(&completed);
+
+            thread::spawn(move || {
+                barrier.wait();
+                for i in 0..txns_per_thread {
+                    let mut session = db.session();
+                    session.begin_tx().unwrap();
+                    session
+                        .execute(&format!("INSERT (:Epoch {{thread: {tid}, txn: {i}}})"))
+                        .unwrap();
+                    session.commit().unwrap();
+                }
+                completed.fetch_add(1, Ordering::Relaxed);
+            })
+        })
+        .collect();
+
+    for handle in handles {
+        handle.join().expect("Thread panicked");
+    }
+
+    assert_eq!(completed.load(Ordering::Relaxed), num_threads);
+
+    // All nodes should be visible
+    let session = db.session();
+    let result = session.execute("MATCH (n:Epoch) RETURN n").unwrap();
+    assert_eq!(
+        result.row_count(),
+        num_threads * txns_per_thread,
+        "All epoch nodes should exist"
+    );
+}
+
+#[test]
+fn test_stress_rapid_session_lifecycle() {
+    // 16 threads rapidly creating, using, and dropping sessions
+    let db = Arc::new(GrafeoDB::new_in_memory());
+
+    let num_threads = 16;
+    let cycles = 100;
+    let barrier = Arc::new(Barrier::new(num_threads));
+    let completed = Arc::new(AtomicUsize::new(0));
+
+    let handles: Vec<_> = (0..num_threads)
+        .map(|_| {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            let completed = Arc::clone(&completed);
+
+            thread::spawn(move || {
+                barrier.wait();
+                for _ in 0..cycles {
+                    let session = db.session();
+                    let _ = session.execute("MATCH (n) RETURN n LIMIT 1");
+                    drop(session);
+                }
+                completed.fetch_add(1, Ordering::Relaxed);
+            })
+        })
+        .collect();
+
+    for handle in handles {
+        handle.join().expect("Thread panicked");
+    }
+
+    assert_eq!(
+        completed.load(Ordering::Relaxed),
+        num_threads,
+        "All threads should complete"
+    );
+}
+
+#[test]
+fn test_stress_concurrent_edges_and_nodes() {
+    // Create nodes and edges simultaneously from multiple threads
+    let db = Arc::new(GrafeoDB::new_in_memory());
+
+    // Seed some nodes first (needed for edge creation)
+    let session = db.session();
+    for i in 0..20 {
+        session
+            .execute(&format!("INSERT (:Hub {{id: {i}}})"))
+            .unwrap();
+    }
+    drop(session);
+
+    let num_threads = 4;
+    let barrier = Arc::new(Barrier::new(num_threads));
+    let completed = Arc::new(AtomicUsize::new(0));
+
+    let handles: Vec<_> = (0..num_threads)
+        .map(|tid| {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            let completed = Arc::clone(&completed);
+
+            thread::spawn(move || {
+                barrier.wait();
+                let session = db.session();
+                for i in 0..10 {
+                    // Create new nodes
+                    session
+                        .execute(&format!("INSERT (:Spoke {{thread: {tid}, id: {i}}})"))
+                        .unwrap();
+                    // Create edges between existing hub nodes
+                    let src = (tid * 5 + i) % 20;
+                    let dst = (tid * 5 + i + 1) % 20;
+                    let _ = session.execute(&format!(
+                        "MATCH (a:Hub {{id: {src}}}), (b:Hub {{id: {dst}}}) \
+                         INSERT (a)-[:LINK {{thread: {tid}}}]->(b)"
+                    ));
+                }
+                completed.fetch_add(1, Ordering::Relaxed);
+            })
+        })
+        .collect();
+
+    for handle in handles {
+        handle.join().expect("Thread panicked");
+    }
+
+    assert_eq!(completed.load(Ordering::Relaxed), num_threads);
+
+    // Verify spoke nodes were created
+    let session = db.session();
+    let result = session.execute("MATCH (n:Spoke) RETURN n").unwrap();
+    assert_eq!(
+        result.row_count(),
+        num_threads * 10,
+        "All spoke nodes should exist"
+    );
+}
