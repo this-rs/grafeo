@@ -7,7 +7,7 @@ use grafeo_common::types::Value;
 use grafeo_engine::GrafeoDB;
 
 #[test]
-#[ignore]
+#[ignore = "one-shot fixture generator, not a regular test"]
 fn generate_v1_snapshot_fixture() {
     let db = GrafeoDB::new_in_memory();
 
