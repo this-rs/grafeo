@@ -29,6 +29,7 @@ class BenchGremlinStorage(BaseBenchStorage):
             return list(db.execute_gremlin(query))
         except AttributeError:
             pytest.skip("Gremlin support not available")
+            return None
 
     def full_scan_query(self, label: str, limit: int = None) -> str:
         """Gremlin full scan query."""

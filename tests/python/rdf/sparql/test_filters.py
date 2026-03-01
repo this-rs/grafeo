@@ -32,8 +32,10 @@ class TestSPARQLFilters:
             return self.db.execute_sparql(query)
         except AttributeError:
             pytest.skip("SPARQL support not available")
+            return None
         except NotImplementedError:
             pytest.skip("SPARQL not implemented")
+            return None
 
     def _setup_person_data(self, count: int = 100):
         """Create Person triples using SPARQL INSERT DATA."""

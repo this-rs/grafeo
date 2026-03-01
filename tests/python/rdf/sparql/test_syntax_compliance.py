@@ -77,8 +77,10 @@ class TestSPARQLSelectBasics:
             return self.db.execute_sparql(query)
         except AttributeError:
             pytest.skip("SPARQL support not available")
+            return None
         except NotImplementedError:
             pytest.skip("SPARQL not implemented")
+            return None
 
     # =========================================================================
     # SELECT

@@ -18,8 +18,10 @@ def _exec(db, query: str):
         return db.execute_gremlin(query)
     except AttributeError:
         pytest.skip("Gremlin support not available")
+        return None
     except NotImplementedError:
         pytest.skip("Gremlin not implemented")
+        return None
 
 
 def _rows(db, query: str) -> list:

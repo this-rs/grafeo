@@ -13,8 +13,10 @@ def execute_graphql(db, query: str):
         return db.execute_graphql(query)
     except AttributeError:
         pytest.skip("GraphQL support not available in this build")
+        return None
     except NotImplementedError:
         pytest.skip("GraphQL not implemented")
+        return None
 
 
 class TestGraphQLMutations(BaseMutationsTest):

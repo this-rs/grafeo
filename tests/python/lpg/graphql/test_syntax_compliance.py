@@ -67,8 +67,10 @@ class TestGraphQLQueryOperations:
             return self.db.execute_graphql(query)
         except AttributeError:
             pytest.skip("GraphQL support not available")
+            return None
         except NotImplementedError:
             pytest.skip("GraphQL not implemented")
+            return None
 
     # =========================================================================
     # Basic Query Operations
@@ -312,8 +314,10 @@ class TestGraphQLMutationOperations:
             return self.db.execute_graphql(query)
         except AttributeError:
             pytest.skip("GraphQL support not available")
+            return None
         except NotImplementedError:
             pytest.skip("GraphQL not implemented")
+            return None
 
     # =========================================================================
     # Create Mutations

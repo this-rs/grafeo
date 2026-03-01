@@ -13,8 +13,10 @@ def execute_gremlin(db, query: str):
         return db.execute_gremlin(query)
     except AttributeError:
         pytest.skip("Gremlin support not available in this build")
+        return None
     except NotImplementedError:
         pytest.skip("Gremlin not implemented")
+        return None
 
 
 class TestGremlinTransactions(BaseTransactionsTest):
@@ -50,6 +52,7 @@ class TestGremlinTransactions(BaseTransactionsTest):
             return tx.execute_gremlin(query)
         except AttributeError:
             pytest.skip("Gremlin support not available")
+            return None
 
     def execute_query(self, db, query: str):
         """Execute query on database."""

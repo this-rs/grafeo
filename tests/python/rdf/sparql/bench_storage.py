@@ -30,6 +30,7 @@ class BenchSPARQLStorage(BaseBenchStorage):
             return list(db.execute_sparql(query))
         except AttributeError:
             pytest.skip("SPARQL support not available")
+            return None
 
     def full_scan_query(self, label: str, limit: int = None) -> str:
         """SPARQL full scan query using rdf:type."""

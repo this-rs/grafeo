@@ -29,6 +29,7 @@ class BenchGraphQLStorage(BaseBenchStorage):
             return list(db.execute_graphql(query))
         except AttributeError:
             pytest.skip("GraphQL support not available")
+            return None
 
     def full_scan_query(self, label: str, limit: int = None) -> str:
         """GraphQL full scan query."""

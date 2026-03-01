@@ -13,8 +13,10 @@ def execute_gremlin(db, query: str):
         return db.execute_gremlin(query)
     except AttributeError:
         pytest.skip("Gremlin support not available in this build")
+        return None
     except NotImplementedError:
         pytest.skip("Gremlin not implemented")
+        return None
 
 
 class TestGremlinMutations(BaseMutationsTest):
@@ -119,8 +121,10 @@ class TestGremlinMutationsDirect:
             return db.execute_gremlin(query)
         except AttributeError:
             pytest.skip("Gremlin support not available")
+            return None
         except NotImplementedError:
             pytest.skip("Gremlin not implemented")
+            return None
 
     def test_gremlin_add_vertex(self, db):
         """Test g.addV() vertex creation."""

@@ -70,8 +70,10 @@ class TestBasicNodeQueries:
             return self.db.execute_sql(query)
         except AttributeError:
             pytest.skip("SQL/PGQ support not available")
+            return None
         except NotImplementedError:
             pytest.skip("SQL/PGQ not implemented")
+            return None
 
     # =========================================================================
     # Basic SELECT with GRAPH_TABLE
@@ -336,8 +338,10 @@ class TestVariableLengthPaths:
             return self.db.execute_sql(query)
         except AttributeError:
             pytest.skip("SQL/PGQ support not available")
+            return None
         except NotImplementedError:
             pytest.skip("SQL/PGQ not implemented")
+            return None
 
     def test_variable_length_path(self):
         """SQL/PGQ: Variable-length path with range quantifier."""
@@ -382,8 +386,10 @@ class TestAggregatesInColumns:
             return self.db.execute_sql(query)
         except AttributeError:
             pytest.skip("SQL/PGQ support not available")
+            return None
         except NotImplementedError:
             pytest.skip("SQL/PGQ not implemented")
+            return None
 
     @pytest.mark.xfail(
         reason="Outer SQL aggregates on GRAPH_TABLE not yet supported",
@@ -416,8 +422,10 @@ class TestErrorHandling:
             return self.db.execute_sql(query)
         except AttributeError:
             pytest.skip("SQL/PGQ support not available")
+            return None
         except NotImplementedError:
             pytest.skip("SQL/PGQ not implemented")
+            return None
 
     def test_syntax_error_raises(self):
         """SQL/PGQ: Malformed SQL should raise an error."""

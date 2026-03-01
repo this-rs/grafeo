@@ -18,8 +18,10 @@ class TestGremlinFilters(BaseFilterAndLookupTest):
             return db.execute_gremlin(query)
         except AttributeError:
             pytest.skip("Gremlin support not available")
+            return None
         except NotImplementedError:
             pytest.skip("Gremlin not implemented")
+            return None
 
     def create_person_nodes(self, db, count: int = 1000) -> list:
         """Create Person nodes using direct API (faster than queries)."""
@@ -79,8 +81,10 @@ class TestGremlinFilterVerification:
             return db.execute_gremlin(query)
         except AttributeError:
             pytest.skip("Gremlin support not available")
+            return None
         except NotImplementedError:
             pytest.skip("Gremlin not implemented")
+            return None
 
     def test_filter_with_traversal(self, db):
         """Test filtering with traversal steps."""

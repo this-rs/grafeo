@@ -18,8 +18,10 @@ class TestGraphQLFilters(BaseFilterAndLookupTest):
             return db.execute_graphql(query)
         except AttributeError:
             pytest.skip("GraphQL support not available")
+            return None
         except NotImplementedError:
             pytest.skip("GraphQL not implemented")
+            return None
 
     def create_person_nodes(self, db, count: int = 1000) -> list:
         """Create Person nodes using direct API (faster than queries)."""
@@ -110,8 +112,10 @@ class TestGraphQLFilterVerification:
             return db.execute_graphql(query)
         except AttributeError:
             pytest.skip("GraphQL support not available")
+            return None
         except NotImplementedError:
             pytest.skip("GraphQL not implemented")
+            return None
 
     def test_filter_with_nested_query(self, db):
         """Test filtering with nested query."""
