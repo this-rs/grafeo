@@ -90,20 +90,21 @@ impl SparqlTranslator {
                 Vec::new()
             };
 
+            // Translate HAVING: rewrite aggregate calls as variable references
+            // to the computed aggregate column aliases
+            let having_expr = if let Some(having) = &select.solution_modifiers.having {
+                let raw = self.translate_expression(having)?;
+                Some(self.rewrite_aggregates_as_refs(&raw, &aggregates))
+            } else {
+                None
+            };
+
             plan = LogicalOperator::Aggregate(AggregateOp {
                 group_by: group_by_exprs,
                 aggregates,
                 input: Box::new(plan),
-                having: None, // SPARQL HAVING handled as separate Filter below
+                having: having_expr,
             });
-
-            // Apply HAVING if present
-            if let Some(having) = &select.solution_modifiers.having {
-                plan = LogicalOperator::Filter(FilterOp {
-                    predicate: self.translate_expression(having)?,
-                    input: Box::new(plan),
-                });
-            }
         }
 
         // Apply ORDER BY
@@ -127,6 +128,25 @@ impl SparqlTranslator {
             });
         }
 
+        // Apply projection before DISTINCT (so dedup operates on projected columns only)
+        if !has_aggregates {
+            let projections = self.translate_projection(&select.projection)?;
+            if !projections.is_empty() {
+                plan = LogicalOperator::Project(ProjectOp {
+                    projections,
+                    input: Box::new(plan),
+                });
+            }
+        }
+
+        // Apply DISTINCT/REDUCED (after projection, before OFFSET/LIMIT)
+        if select.modifier == ast::SelectModifier::Distinct {
+            plan = LogicalOperator::Distinct(DistinctOp {
+                input: Box::new(plan),
+                columns: None,
+            });
+        }
+
         // Apply OFFSET
         if let Some(offset) = select.solution_modifiers.offset {
             plan = LogicalOperator::Skip(SkipOp {
@@ -141,26 +161,6 @@ impl SparqlTranslator {
                 count: limit as usize,
                 input: Box::new(plan),
             });
-        }
-
-        // Apply DISTINCT/REDUCED
-        if select.modifier == ast::SelectModifier::Distinct {
-            plan = LogicalOperator::Distinct(DistinctOp {
-                input: Box::new(plan),
-                columns: None,
-            });
-        }
-
-        // Apply projection (but NOT for aggregate queries - aggregate already produces correct columns)
-        // For aggregate queries, the AggregateOp outputs columns with proper aliases
-        if !has_aggregates {
-            let projections = self.translate_projection(&select.projection)?;
-            if !projections.is_empty() {
-                plan = LogicalOperator::Project(ProjectOp {
-                    projections,
-                    input: Box::new(plan),
-                });
-            }
         }
 
         Ok(LogicalPlan::new(plan))
@@ -540,9 +540,26 @@ impl SparqlTranslator {
                 let mut minus_patterns: Vec<&ast::GraphPattern> = Vec::new();
                 let mut bind_patterns: Vec<(&ast::Expression, &String)> = Vec::new();
 
+                // Track NOT EXISTS / EXISTS patterns for join-level handling
+                let mut not_exists_patterns: Vec<&ast::GraphPattern> = Vec::new();
+                let mut exists_patterns: Vec<&ast::GraphPattern> = Vec::new();
+
                 for p in patterns {
                     match p {
-                        ast::GraphPattern::Filter(expr) => filter_exprs.push(expr),
+                        ast::GraphPattern::Filter(expr) => {
+                            // Extract FILTER NOT EXISTS / FILTER EXISTS into join
+                            // operations instead of filter predicates, since the
+                            // physical filter does not support subquery evaluation.
+                            match expr {
+                                ast::Expression::NotExists(inner) => {
+                                    not_exists_patterns.push(inner);
+                                }
+                                ast::Expression::Exists(inner) => {
+                                    exists_patterns.push(inner);
+                                }
+                                _ => filter_exprs.push(expr),
+                            }
+                        }
                         ast::GraphPattern::Optional(inner) => optional_patterns.push(inner),
                         ast::GraphPattern::Minus(inner) => minus_patterns.push(inner),
                         ast::GraphPattern::Bind {
@@ -592,6 +609,25 @@ impl SparqlTranslator {
                             left: Box::new(plan),
                             right: Box::new(inner_plan),
                         });
+                    }
+                }
+
+                // 4b. Apply FILTER NOT EXISTS as anti joins
+                for inner in not_exists_patterns {
+                    let inner_plan = self.translate_graph_pattern(inner)?;
+                    if !matches!(plan, LogicalOperator::Empty) {
+                        plan = LogicalOperator::AntiJoin(AntiJoinOp {
+                            left: Box::new(plan),
+                            right: Box::new(inner_plan),
+                        });
+                    }
+                }
+
+                // 4c. Apply FILTER EXISTS as semi joins (inner join)
+                for inner in exists_patterns {
+                    let inner_plan = self.translate_graph_pattern(inner)?;
+                    if !matches!(plan, LogicalOperator::Empty) {
+                        plan = self.join_patterns(plan, inner_plan);
                     }
                 }
 
@@ -1113,6 +1149,49 @@ impl SparqlTranslator {
             }))
         } else {
             Ok(None)
+        }
+    }
+
+    /// Rewrites aggregate function calls in a HAVING expression as variable
+    /// references to the already-computed aggregate column aliases.
+    fn rewrite_aggregates_as_refs(
+        &self,
+        expr: &LogicalExpression,
+        aggregates: &[AggregateExpr],
+    ) -> LogicalExpression {
+        match expr {
+            LogicalExpression::FunctionCall { name, .. } => {
+                // Match aggregate function names to their aliases
+                let upper = name.to_uppercase();
+                if matches!(
+                    upper.as_str(),
+                    "COUNT" | "SUM" | "AVG" | "MIN" | "MAX" | "SAMPLE" | "GROUP_CONCAT"
+                ) {
+                    // Find the matching aggregate by function name
+                    for agg in aggregates {
+                        let agg_name = format!("{:?}", agg.function).to_uppercase();
+                        if agg_name == upper
+                            || (upper == "AVG" && agg_name == "AVG")
+                            || (upper == "COUNT" && agg_name == "COUNT")
+                        {
+                            if let Some(alias) = &agg.alias {
+                                return LogicalExpression::Variable(alias.clone());
+                            }
+                        }
+                    }
+                }
+                expr.clone()
+            }
+            LogicalExpression::Binary { left, op, right } => LogicalExpression::Binary {
+                left: Box::new(self.rewrite_aggregates_as_refs(left, aggregates)),
+                op: *op,
+                right: Box::new(self.rewrite_aggregates_as_refs(right, aggregates)),
+            },
+            LogicalExpression::Unary { op, operand } => LogicalExpression::Unary {
+                op: *op,
+                operand: Box::new(self.rewrite_aggregates_as_refs(operand, aggregates)),
+            },
+            _ => expr.clone(),
         }
     }
 

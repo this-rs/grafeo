@@ -137,10 +137,6 @@ class TestSPARQLSelectBasics:
     # SELECT DISTINCT
     # =========================================================================
 
-    @pytest.mark.xfail(
-        reason="SELECT DISTINCT deduplication not yet implemented",
-        strict=False,
-    )
     def test_select_distinct(self):
         """SPARQL: SELECT DISTINCT eliminates duplicate bindings."""
         result = self._execute_sparql("""
@@ -373,10 +369,6 @@ class TestSPARQLSelectBasics:
         # Alice and Bob start with A or B
         assert len(rows) == 2
 
-    @pytest.mark.xfail(
-        reason="FILTER NOT EXISTS returns inverted results currently",
-        strict=False,
-    )
     def test_filter_not_exists(self):
         """SPARQL: FILTER NOT EXISTS excludes matching patterns."""
         result = self._execute_sparql("""
@@ -564,10 +556,6 @@ class TestSPARQLSelectBasics:
         # 3 distinct cities: NYC (2), LA (1), Boston (1)
         assert len(rows) >= 1, "GROUP BY should produce city groups"
 
-    @pytest.mark.xfail(
-        reason="HAVING clause not yet supported in GROUP BY",
-        strict=False,
-    )
     def test_having_filters_groups(self):
         """SPARQL: HAVING filters grouped results."""
         result = self._execute_sparql("""

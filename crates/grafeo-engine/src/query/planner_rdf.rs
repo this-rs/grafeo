@@ -14,15 +14,16 @@ use grafeo_common::utils::error::{Error, Result};
 use grafeo_core::execution::DataChunk;
 use grafeo_core::execution::operators::JoinType;
 use grafeo_core::execution::operators::{
-    BinaryFilterOp, FilterExpression, FilterOperator, HashAggregateOperator, JoinCondition,
-    LimitOperator, NestedLoopJoinOperator, Operator, OperatorError, Predicate, ProjectExpr,
-    ProjectOperator, SimpleAggregateOperator, SkipOperator, SortOperator, UnaryFilterOp,
+    BinaryFilterOp, DistinctOperator, FilterExpression, FilterOperator, HashAggregateOperator,
+    JoinCondition, LimitOperator, NestedLoopJoinOperator, Operator, OperatorError, Predicate,
+    ProjectExpr, ProjectOperator, SimpleAggregateOperator, SkipOperator, SortOperator,
+    UnaryFilterOp,
 };
 use grafeo_core::graph::rdf::{Literal, RdfStore, Term, Triple, TriplePattern};
 
 use crate::query::plan::{
     AddGraphOp, AggregateFunction as LogicalAggregateFunction, AggregateOp, AntiJoinOp,
-    ClearGraphOp, CopyGraphOp, CreateGraphOp, DeleteTripleOp, DropGraphOp, FilterOp,
+    ClearGraphOp, CopyGraphOp, CreateGraphOp, DeleteTripleOp, DistinctOp, DropGraphOp, FilterOp,
     InsertTripleOp, LeftJoinOp, LimitOp, LogicalExpression, LogicalOperator, LogicalPlan, ModifyOp,
     MoveGraphOp, SkipOp, SortOp, TripleComponent, TripleScanOp, TripleTemplate,
 };
@@ -98,7 +99,7 @@ impl RdfPlanner {
             LogicalOperator::LeftJoin(join) => self.plan_left_join(join),
             LogicalOperator::AntiJoin(join) => self.plan_anti_join(join),
             LogicalOperator::Union(union) => self.plan_union(union),
-            LogicalOperator::Distinct(distinct) => self.plan_operator(&distinct.input),
+            LogicalOperator::Distinct(distinct) => self.plan_distinct(distinct),
             LogicalOperator::InsertTriple(insert) => self.plan_insert_triple(insert),
             LogicalOperator::DeleteTriple(delete) => self.plan_delete_triple(delete),
             LogicalOperator::Modify(modify) => self.plan_modify(modify),
@@ -314,6 +315,14 @@ impl RdfPlanner {
         Ok((project_op, left_columns))
     }
 
+    /// Plans a DISTINCT operator.
+    fn plan_distinct(&self, distinct: &DistinctOp) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        let (input_op, columns) = self.plan_operator(&distinct.input)?;
+        let output_schema = derive_rdf_schema(&columns);
+        let operator = Box::new(DistinctOperator::new(input_op, output_schema));
+        Ok((operator, columns))
+    }
+
     /// Plans a LIMIT operator.
     fn plan_limit(&self, limit: &LimitOp) -> Result<(Box<dyn Operator>, Vec<String>)> {
         let (input_op, columns) = self.plan_operator(&limit.input)?;
@@ -481,7 +490,7 @@ impl RdfPlanner {
             );
         }
 
-        let operator: Box<dyn Operator> = if group_columns.is_empty() {
+        let mut operator: Box<dyn Operator> = if group_columns.is_empty() {
             Box::new(SimpleAggregateOperator::new(
                 input_op,
                 physical_aggregates,
@@ -495,6 +504,19 @@ impl RdfPlanner {
                 output_schema,
             ))
         };
+
+        // Apply HAVING clause filter if present
+        if let Some(having_expr) = &agg.having {
+            let having_var_columns: HashMap<String, usize> = output_columns
+                .iter()
+                .enumerate()
+                .map(|(i, name)| (name.clone(), i))
+                .collect();
+
+            let filter_expr = convert_filter_expression(having_expr)?;
+            let predicate = RdfExpressionPredicate::new(filter_expr, having_var_columns);
+            operator = Box::new(FilterOperator::new(operator, Box::new(predicate)));
+        }
 
         Ok((operator, output_columns))
     }
