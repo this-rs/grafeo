@@ -427,8 +427,12 @@ impl GqlTranslator {
             .any(|item| contains_aggregate(&item.expression));
 
         if has_aggregates {
-            // Extract aggregate and group-by expressions
-            let (aggregates, group_by) =
+            // Extract aggregate and group-by expressions.
+            // When a return item wraps an aggregate in a binary/unary expression
+            // (e.g. `count(n) > 0 AS exists`), we decompose it into:
+            //   1. An aggregate (`count(n)` with synthetic alias)
+            //   2. A post-aggregate projection (`_agg_0 > 0 AS exists`)
+            let (aggregates, group_by, post_return) =
                 self.extract_aggregates_and_groups(&query.return_clause.items)?;
 
             // Translate HAVING clause if present
@@ -438,14 +442,22 @@ impl GqlTranslator {
                 None
             };
 
-            // Insert Aggregate operator - this is the final operator for aggregate queries
-            // The aggregate operator produces the output columns directly
-            plan = LogicalOperator::Aggregate(AggregateOp {
+            let agg_op = LogicalOperator::Aggregate(AggregateOp {
                 group_by,
                 aggregates,
                 input: Box::new(plan),
                 having,
             });
+
+            if let Some(return_items) = post_return {
+                plan = LogicalOperator::Return(ReturnOp {
+                    items: return_items,
+                    distinct: query.return_clause.distinct,
+                    input: Box::new(agg_op),
+                });
+            } else {
+                plan = agg_op;
+            }
 
             // Apply ORDER BY for aggregate queries
             // Note: ORDER BY sort keys reference aggregate output columns (aliases)
@@ -1334,24 +1346,126 @@ impl GqlTranslator {
     }
 
     /// Extracts aggregate expressions and group-by expressions from RETURN items.
+    /// Extracts aggregate and group-by expressions from RETURN items.
+    ///
+    /// Returns `(aggregates, group_by, post_return)` where `post_return` is
+    /// `Some(...)` when any return item wraps an aggregate in a binary/unary
+    /// expression (e.g. `count(n) > 0 AS exists`).
     fn extract_aggregates_and_groups(
         &self,
         items: &[ast::ReturnItem],
-    ) -> Result<(Vec<AggregateExpr>, Vec<LogicalExpression>)> {
+    ) -> Result<(
+        Vec<AggregateExpr>,
+        Vec<LogicalExpression>,
+        Option<Vec<ReturnItem>>,
+    )> {
         let mut aggregates = Vec::new();
         let mut group_by = Vec::new();
+        let mut needs_post_return = false;
+        let mut post_return_items = Vec::new();
+        let mut agg_counter: u32 = 0;
 
         for item in items {
             if let Some(agg_expr) = self.try_extract_aggregate(&item.expression, &item.alias)? {
+                // Direct aggregate (e.g. `count(n) AS cnt`)
                 aggregates.push(agg_expr);
+                let agg_alias = item
+                    .alias
+                    .clone()
+                    .unwrap_or_else(|| format!("_agg_{agg_counter}"));
+                post_return_items.push(ReturnItem {
+                    expression: LogicalExpression::Variable(agg_alias),
+                    alias: item.alias.clone(),
+                });
+                agg_counter += 1;
+            } else if contains_aggregate(&item.expression) {
+                // Wrapped aggregate (e.g. `count(n) > 0 AS exists`)
+                needs_post_return = true;
+                let synthetic_alias = format!("_agg_{agg_counter}");
+                agg_counter += 1;
+
+                let (agg_expr, substitute) =
+                    self.extract_wrapped_aggregate(&item.expression, &synthetic_alias)?;
+                aggregates.push(agg_expr);
+                post_return_items.push(ReturnItem {
+                    expression: substitute,
+                    alias: item.alias.clone(),
+                });
             } else {
-                // Non-aggregate expressions become group-by keys
+                // Non-aggregate expression: group-by key
                 let expr = self.translate_expression(&item.expression)?;
-                group_by.push(expr);
+                group_by.push(expr.clone());
+                post_return_items.push(ReturnItem {
+                    expression: expr,
+                    alias: item.alias.clone(),
+                });
             }
         }
 
-        Ok((aggregates, group_by))
+        if needs_post_return {
+            Ok((aggregates, group_by, Some(post_return_items)))
+        } else {
+            Ok((aggregates, group_by, None))
+        }
+    }
+
+    /// Extracts an aggregate from inside a wrapping expression.
+    fn extract_wrapped_aggregate(
+        &self,
+        expr: &ast::Expression,
+        synthetic_alias: &str,
+    ) -> Result<(AggregateExpr, LogicalExpression)> {
+        match expr {
+            ast::Expression::FunctionCall { .. } => {
+                let agg = self
+                    .try_extract_aggregate(expr, &Some(synthetic_alias.to_string()))?
+                    .expect("contains_aggregate was true but try_extract_aggregate returned None");
+                let substitute = LogicalExpression::Variable(synthetic_alias.to_string());
+                Ok((agg, substitute))
+            }
+            ast::Expression::Binary { left, op, right } => {
+                let binary_op = self.translate_binary_op(*op);
+                if contains_aggregate(left) {
+                    let (agg, left_sub) = self.extract_wrapped_aggregate(left, synthetic_alias)?;
+                    let right_expr = self.translate_expression(right)?;
+                    Ok((
+                        agg,
+                        LogicalExpression::Binary {
+                            left: Box::new(left_sub),
+                            op: binary_op,
+                            right: Box::new(right_expr),
+                        },
+                    ))
+                } else {
+                    let (agg, right_sub) =
+                        self.extract_wrapped_aggregate(right, synthetic_alias)?;
+                    let left_expr = self.translate_expression(left)?;
+                    Ok((
+                        agg,
+                        LogicalExpression::Binary {
+                            left: Box::new(left_expr),
+                            op: binary_op,
+                            right: Box::new(right_sub),
+                        },
+                    ))
+                }
+            }
+            ast::Expression::Unary { op, operand } => {
+                let unary_op = self.translate_unary_op(*op);
+                let (agg, sub) = self.extract_wrapped_aggregate(operand, synthetic_alias)?;
+                Ok((
+                    agg,
+                    LogicalExpression::Unary {
+                        op: unary_op,
+                        operand: Box::new(sub),
+                    },
+                ))
+            }
+            _ => Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "Unsupported expression wrapping an aggregate",
+            ))),
+        }
     }
 
     /// Tries to extract an aggregate expression from an AST expression.

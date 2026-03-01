@@ -1665,6 +1665,149 @@ mod cypher_db_execute {
             .unwrap();
         assert_eq!(result.row_count(), 1);
     }
+
+    // === Cypher SET tests ===
+
+    #[test]
+    fn test_cypher_set_node_property() {
+        let db = GrafeoDB::new_in_memory();
+        db.execute_cypher("CREATE (n:Person {name: 'Alice'})")
+            .unwrap();
+
+        db.execute_cypher("MATCH (n:Person) WHERE n.name = 'Alice' SET n.age = 30")
+            .unwrap();
+
+        let result = db
+            .execute_cypher("MATCH (n:Person) WHERE n.name = 'Alice' RETURN n.age")
+            .unwrap();
+        assert_eq!(result.row_count(), 1);
+        let age = &result.rows[0][0];
+        assert_eq!(age, &Value::Int64(30));
+    }
+
+    #[test]
+    fn test_cypher_set_labels() {
+        let db = GrafeoDB::new_in_memory();
+        db.execute_cypher("CREATE (n:Person {name: 'Alice'})")
+            .unwrap();
+
+        db.execute_cypher("MATCH (n:Person) WHERE n.name = 'Alice' SET n:Employee")
+            .unwrap();
+
+        // Should now match as Employee
+        let result = db
+            .execute_cypher("MATCH (n:Employee) RETURN n.name")
+            .unwrap();
+        assert_eq!(result.row_count(), 1);
+        let name = &result.rows[0][0];
+        assert_eq!(name, &Value::String("Alice".into()));
+    }
+
+    // === Cypher DELETE tests ===
+
+    #[test]
+    fn test_cypher_delete_node() {
+        let db = GrafeoDB::new_in_memory();
+        db.execute_cypher("CREATE (n:Temp {name: 'ToDelete'})")
+            .unwrap();
+
+        let before = db.execute_cypher("MATCH (n:Temp) RETURN n").unwrap();
+        assert_eq!(before.row_count(), 1);
+
+        db.execute_cypher("MATCH (n:Temp) WHERE n.name = 'ToDelete' DETACH DELETE n")
+            .unwrap();
+
+        let after = db.execute_cypher("MATCH (n:Temp) RETURN n").unwrap();
+        assert_eq!(after.row_count(), 0);
+    }
+
+    #[test]
+    fn test_cypher_detach_delete_with_edges() {
+        let db = GrafeoDB::new_in_memory();
+        db.execute_cypher("CREATE (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})")
+            .unwrap();
+        db.execute_cypher(
+            "MATCH (a:Person), (b:Person) WHERE a.name = 'Alice' AND b.name = 'Bob' \
+             CREATE (a)-[:KNOWS]->(b)",
+        )
+        .unwrap();
+
+        // DETACH DELETE removes the node and its connected edges
+        db.execute_cypher("MATCH (n:Person) WHERE n.name = 'Alice' DETACH DELETE n")
+            .unwrap();
+
+        let result = db.execute_cypher("MATCH (n:Person) RETURN n.name").unwrap();
+        assert_eq!(result.row_count(), 1);
+        let name = &result.rows[0][0];
+        assert_eq!(name, &Value::String("Bob".into()));
+    }
+
+    // === Cypher REMOVE tests ===
+
+    #[test]
+    fn test_cypher_remove_property() {
+        let db = GrafeoDB::new_in_memory();
+        db.execute_cypher("CREATE (n:Person {name: 'Alice', age: 30})")
+            .unwrap();
+
+        db.execute_cypher("MATCH (n:Person) WHERE n.name = 'Alice' REMOVE n.age")
+            .unwrap();
+
+        let result = db
+            .execute_cypher("MATCH (n:Person) WHERE n.name = 'Alice' RETURN n.age")
+            .unwrap();
+        assert_eq!(result.row_count(), 1);
+        let age = &result.rows[0][0];
+        assert_eq!(age, &Value::Null);
+    }
+
+    #[test]
+    fn test_cypher_remove_label() {
+        let db = GrafeoDB::new_in_memory();
+        db.execute_cypher("CREATE (n:Person:Employee {name: 'Alice'})")
+            .unwrap();
+
+        db.execute_cypher("MATCH (n:Person) WHERE n.name = 'Alice' REMOVE n:Employee")
+            .unwrap();
+
+        // Should no longer match as Employee
+        let result = db.execute_cypher("MATCH (n:Employee) RETURN n").unwrap();
+        assert_eq!(result.row_count(), 0);
+
+        // Should still match as Person
+        let result = db.execute_cypher("MATCH (n:Person) RETURN n.name").unwrap();
+        assert_eq!(result.row_count(), 1);
+    }
+
+    // === Binary expression in RETURN ===
+
+    #[test]
+    fn test_cypher_return_count_gt_zero() {
+        let db = GrafeoDB::new_in_memory();
+        db.execute_cypher("CREATE (n:Person {name: 'Alice'})")
+            .unwrap();
+        db.execute_cypher("CREATE (n:Person {name: 'Bob'})")
+            .unwrap();
+
+        let result = db
+            .execute_cypher("MATCH (n:Person) RETURN count(n) > 0 AS exists")
+            .unwrap();
+        assert_eq!(result.row_count(), 1);
+        let exists = &result.rows[0][0];
+        assert_eq!(exists, &Value::Bool(true));
+    }
+
+    #[test]
+    fn test_cypher_return_count_gt_zero_empty() {
+        let db = GrafeoDB::new_in_memory();
+
+        let result = db
+            .execute_cypher("MATCH (n:Ghost) RETURN count(n) > 0 AS exists")
+            .unwrap();
+        assert_eq!(result.row_count(), 1);
+        let exists = &result.rows[0][0];
+        assert_eq!(exists, &Value::Bool(false));
+    }
 }
 
 #[cfg(feature = "sql-pgq")]

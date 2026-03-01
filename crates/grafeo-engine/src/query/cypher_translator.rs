@@ -4,11 +4,12 @@
 //! that can be optimized and executed.
 
 use crate::query::plan::{
-    AggregateExpr, AggregateFunction, AggregateOp, BinaryOp, CallProcedureOp, CreateEdgeOp,
-    CreateNodeOp, DeleteNodeOp, DistinctOp, ExpandDirection, ExpandOp, FilterOp, LeftJoinOp,
-    LimitOp, LogicalExpression, LogicalOperator, LogicalPlan, MergeOp, MergeRelationshipOp,
-    NodeScanOp, ProcedureYield, ProjectOp, Projection, RemoveLabelOp, ReturnItem, ReturnOp,
-    SetPropertyOp, ShortestPathOp, SkipOp, SortKey, SortOp, SortOrder, UnaryOp, UnwindOp,
+    AddLabelOp, AggregateExpr, AggregateFunction, AggregateOp, BinaryOp, CallProcedureOp,
+    CreateEdgeOp, CreateNodeOp, DeleteNodeOp, DistinctOp, ExpandDirection, ExpandOp, FilterOp,
+    LeftJoinOp, LimitOp, LogicalExpression, LogicalOperator, LogicalPlan, MergeOp,
+    MergeRelationshipOp, NodeScanOp, ProcedureYield, ProjectOp, Projection, RemoveLabelOp,
+    ReturnItem, ReturnOp, SetPropertyOp, ShortestPathOp, SkipOp, SortKey, SortOp, SortOrder,
+    UnaryOp, UnwindOp,
 };
 use crate::query::translator_common::{
     combine_with_and, is_aggregate_function, to_aggregate_function,
@@ -775,18 +776,31 @@ impl CypherTranslator {
         };
 
         if has_aggregates {
-            // Extract aggregates and group-by expressions
-            let (aggregates, group_by) = self.extract_aggregates_and_groups(return_clause)?;
+            // Extract aggregates and group-by expressions.
+            // When a return item wraps an aggregate in a binary/unary expression
+            // (e.g. `count(n) > 0 AS exists`), we decompose it into:
+            //   1. An aggregate (`count(n)` with synthetic alias)
+            //   2. A post-aggregate projection (`_agg_0 > 0 AS exists`)
+            let (aggregates, group_by, post_return) =
+                self.extract_aggregates_and_groups(return_clause)?;
 
-            Ok(LogicalOperator::Aggregate(AggregateOp {
+            let agg_op = LogicalOperator::Aggregate(AggregateOp {
                 group_by,
                 aggregates,
                 input: Box::new(input),
-                // Note: Cypher doesn't have HAVING syntax. Aggregate filtering is done via
-                // `WITH ... WHERE` pattern (e.g., `WITH n, count(*) AS cnt WHERE cnt > 10`)
-                // which is handled by translate_with() adding a Filter after Project.
                 having: None,
-            }))
+            });
+
+            if let Some(return_items) = post_return {
+                // Wrapped aggregates need a post-projection
+                Ok(LogicalOperator::Return(ReturnOp {
+                    items: return_items,
+                    distinct: return_clause.distinct,
+                    input: Box::new(agg_op),
+                }))
+            } else {
+                Ok(agg_op)
+            }
         } else {
             // Normal return without aggregates
             let items = match &return_clause.items {
@@ -816,12 +830,24 @@ impl CypherTranslator {
     }
 
     /// Extracts aggregate and group-by expressions from RETURN items.
+    ///
+    /// Returns `(aggregates, group_by, post_return)` where `post_return` is
+    /// `Some(...)` when any return item wraps an aggregate in a binary/unary
+    /// expression (e.g. `count(n) > 0 AS exists`). In that case a post-aggregate
+    /// `ReturnOp` must be chained to evaluate the outer expression.
     fn extract_aggregates_and_groups(
         &self,
         return_clause: &ast::ReturnClause,
-    ) -> Result<(Vec<AggregateExpr>, Vec<LogicalExpression>)> {
+    ) -> Result<(
+        Vec<AggregateExpr>,
+        Vec<LogicalExpression>,
+        Option<Vec<ReturnItem>>,
+    )> {
         let mut aggregates = Vec::new();
         let mut group_by = Vec::new();
+        let mut needs_post_return = false;
+        let mut post_return_items = Vec::new();
+        let mut agg_counter: u32 = 0;
 
         let items = match &return_clause.items {
             ast::ReturnItems::All => {
@@ -835,15 +861,114 @@ impl CypherTranslator {
 
         for item in items {
             if let Some(agg_expr) = self.try_extract_aggregate(&item.expression, &item.alias)? {
+                // Direct aggregate (e.g. `count(n) AS cnt`)
                 aggregates.push(agg_expr);
+                // For post-return passthrough: reference the aggregate by its alias
+                let agg_alias = item
+                    .alias
+                    .clone()
+                    .unwrap_or_else(|| format!("_agg_{agg_counter}"));
+                post_return_items.push(ReturnItem {
+                    expression: LogicalExpression::Variable(agg_alias),
+                    alias: item.alias.clone(),
+                });
+                agg_counter += 1;
+            } else if contains_aggregate(&item.expression) {
+                // Wrapped aggregate (e.g. `count(n) > 0 AS exists`)
+                needs_post_return = true;
+                let synthetic_alias = format!("_agg_{agg_counter}");
+                agg_counter += 1;
+
+                // Extract the innermost aggregate and build a substitute expression
+                let (agg_expr, substitute) =
+                    self.extract_wrapped_aggregate(&item.expression, &synthetic_alias)?;
+                aggregates.push(agg_expr);
+                post_return_items.push(ReturnItem {
+                    expression: substitute,
+                    alias: item.alias.clone(),
+                });
             } else {
-                // Non-aggregate expressions become group-by keys
+                // Non-aggregate expression: group-by key
                 let expr = self.translate_expression(&item.expression)?;
-                group_by.push(expr);
+                group_by.push(expr.clone());
+                post_return_items.push(ReturnItem {
+                    expression: expr,
+                    alias: item.alias.clone(),
+                });
             }
         }
 
-        Ok((aggregates, group_by))
+        if needs_post_return {
+            Ok((aggregates, group_by, Some(post_return_items)))
+        } else {
+            Ok((aggregates, group_by, None))
+        }
+    }
+
+    /// Extracts an aggregate from inside a wrapping expression and returns
+    /// both the aggregate and a substitute expression that references the
+    /// aggregate result by `synthetic_alias`.
+    ///
+    /// For `count(n) > 0`, returns:
+    /// - aggregate: `count(n)` with alias `synthetic_alias`
+    /// - substitute: `Variable(synthetic_alias) > Literal(0)`
+    fn extract_wrapped_aggregate(
+        &self,
+        expr: &ast::Expression,
+        synthetic_alias: &str,
+    ) -> Result<(AggregateExpr, LogicalExpression)> {
+        match expr {
+            ast::Expression::FunctionCall { .. } => {
+                // The expression IS an aggregate: extract it directly
+                let agg = self
+                    .try_extract_aggregate(expr, &Some(synthetic_alias.to_string()))?
+                    .expect("contains_aggregate was true but try_extract_aggregate returned None");
+                let substitute = LogicalExpression::Variable(synthetic_alias.to_string());
+                Ok((agg, substitute))
+            }
+            ast::Expression::Binary { left, op, right } => {
+                let binary_op = self.translate_binary_op(*op)?;
+                if contains_aggregate(left) {
+                    let (agg, left_sub) = self.extract_wrapped_aggregate(left, synthetic_alias)?;
+                    let right_expr = self.translate_expression(right)?;
+                    Ok((
+                        agg,
+                        LogicalExpression::Binary {
+                            left: Box::new(left_sub),
+                            op: binary_op,
+                            right: Box::new(right_expr),
+                        },
+                    ))
+                } else {
+                    let (agg, right_sub) =
+                        self.extract_wrapped_aggregate(right, synthetic_alias)?;
+                    let left_expr = self.translate_expression(left)?;
+                    Ok((
+                        agg,
+                        LogicalExpression::Binary {
+                            left: Box::new(left_expr),
+                            op: binary_op,
+                            right: Box::new(right_sub),
+                        },
+                    ))
+                }
+            }
+            ast::Expression::Unary { op, operand } => {
+                let unary_op = self.translate_unary_op(*op)?;
+                let (agg, sub) = self.extract_wrapped_aggregate(operand, synthetic_alias)?;
+                Ok((
+                    agg,
+                    LogicalExpression::Unary {
+                        op: unary_op,
+                        operand: Box::new(sub),
+                    },
+                ))
+            }
+            _ => Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "Unsupported expression wrapping an aggregate",
+            ))),
+        }
     }
 
     /// Tries to extract an aggregate expression from an AST expression.
@@ -1172,11 +1297,13 @@ impl CypherTranslator {
                         input: Box::new(plan),
                     });
                 }
-                ast::SetItem::Labels { .. } => {
-                    return Err(Error::Query(QueryError::new(
-                        QueryErrorKind::Semantic,
-                        "SET labels not yet supported",
-                    )));
+                ast::SetItem::Labels { variable, labels } => {
+                    // SET n:Label1:Label2 adds labels to the node
+                    plan = LogicalOperator::AddLabel(AddLabelOp {
+                        variable: variable.clone(),
+                        labels: labels.clone(),
+                        input: Box::new(plan),
+                    });
                 }
             }
         }

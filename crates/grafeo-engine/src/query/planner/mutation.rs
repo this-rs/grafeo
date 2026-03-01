@@ -115,13 +115,16 @@ impl super::Planner {
     }
 
     /// Plans a DELETE NODE operator.
+    ///
+    /// If the variable is tracked as an edge (via `edge_columns`), this
+    /// automatically delegates to [`DeleteEdgeOperator`] instead.
     pub(super) fn plan_delete_node(
         &self,
         delete: &DeleteNodeOp,
     ) -> Result<(Box<dyn Operator>, Vec<String>)> {
         let (input_op, columns) = self.plan_operator(&delete.input)?;
 
-        let node_column = columns
+        let col_idx = columns
             .iter()
             .position(|c| c == &delete.variable)
             .ok_or_else(|| {
@@ -135,18 +138,28 @@ impl super::Planner {
         let output_schema = vec![LogicalType::Int64];
         let output_columns = vec!["deleted_count".to_string()];
 
-        let operator = Box::new(
-            DeleteNodeOperator::new(
-                Arc::clone(&self.store),
-                input_op,
-                node_column,
-                output_schema,
-                delete.detach, // DETACH DELETE deletes connected edges first
-            )
-            .with_tx_context(self.viewing_epoch, self.tx_id),
-        );
+        // Auto-detect edge variables and use the correct operator
+        let is_edge = self.edge_columns.borrow().contains(&delete.variable);
 
-        Ok((operator, output_columns))
+        if is_edge {
+            let operator = Box::new(
+                DeleteEdgeOperator::new(Arc::clone(&self.store), input_op, col_idx, output_schema)
+                    .with_tx_context(self.viewing_epoch, self.tx_id),
+            );
+            Ok((operator, output_columns))
+        } else {
+            let operator = Box::new(
+                DeleteNodeOperator::new(
+                    Arc::clone(&self.store),
+                    input_op,
+                    col_idx,
+                    output_schema,
+                    delete.detach,
+                )
+                .with_tx_context(self.viewing_epoch, self.tx_id),
+            );
+            Ok((operator, output_columns))
+        }
     }
 
     /// Plans a DELETE EDGE operator.

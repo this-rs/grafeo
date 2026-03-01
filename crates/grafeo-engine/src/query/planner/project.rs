@@ -171,6 +171,17 @@ impl super::Planner {
                         // CASE can return any type - use Any
                         output_types.push(LogicalType::Any);
                     }
+                    LogicalExpression::Binary { .. }
+                    | LogicalExpression::Unary { .. }
+                    | LogicalExpression::List(_) => {
+                        // Convert complex expressions to FilterExpression for evaluation
+                        let filter_expr = self.convert_expression(&item.expression)?;
+                        projections.push(ProjectExpr::Expression {
+                            expr: filter_expr,
+                            variable_columns: variable_columns.clone(),
+                        });
+                        output_types.push(LogicalType::Any);
+                    }
                     _ => {
                         return Err(Error::Internal(format!(
                             "Unsupported RETURN expression: {:?}",
