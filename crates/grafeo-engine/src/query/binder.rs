@@ -928,9 +928,7 @@ impl Binder {
                 self.validate_expression(map_expr)?;
                 Ok(())
             }
-            LogicalExpression::ListPredicate {
-                list_expr, ..
-            } => {
+            LogicalExpression::ListPredicate { list_expr, .. } => {
                 // Validate the list expression against the outer context.
                 // The predicate uses the iteration variable which is locally
                 // scoped, so we skip validating it against the outer context.

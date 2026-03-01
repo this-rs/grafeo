@@ -246,12 +246,12 @@ impl super::Planner {
 
         // If there are duplicates, add a ProjectOperator to strip them
         if keep_indices.len() < join_columns.len() {
-            let proj_exprs: Vec<ProjectExpr> =
-                keep_indices.iter().map(|&i| ProjectExpr::Column(i)).collect();
-            let proj_types: Vec<LogicalType> = keep_indices
+            let proj_exprs: Vec<ProjectExpr> = keep_indices
                 .iter()
-                .map(|_| LogicalType::Any)
+                .map(|&i| ProjectExpr::Column(i))
                 .collect();
+            let proj_types: Vec<LogicalType> =
+                keep_indices.iter().map(|_| LogicalType::Any).collect();
             let operator = Box::new(ProjectOperator::new(join_op, proj_exprs, proj_types));
             Ok((operator, output_columns))
         } else {

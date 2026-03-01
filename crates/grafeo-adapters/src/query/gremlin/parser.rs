@@ -387,6 +387,93 @@ impl<'a> Parser<'a> {
                 Ok(Step::AddE(label))
             }
 
+            // Branch / conditional steps
+            TokenKind::And => {
+                self.expect(TokenKind::LParen)?;
+                let traversals = self.parse_inner_traversal_list()?;
+                self.expect(TokenKind::RParen)?;
+                Ok(Step::And(traversals))
+            }
+            TokenKind::Or => {
+                self.expect(TokenKind::LParen)?;
+                let traversals = self.parse_inner_traversal_list()?;
+                self.expect(TokenKind::RParen)?;
+                Ok(Step::Or(traversals))
+            }
+            TokenKind::Not => {
+                self.expect(TokenKind::LParen)?;
+                let steps = self.parse_inner_steps()?;
+                self.expect(TokenKind::RParen)?;
+                Ok(Step::Not(steps))
+            }
+            TokenKind::Where => {
+                self.expect(TokenKind::LParen)?;
+                // where() can take a traversal or a P.predicate
+                if self.check(TokenKind::P) {
+                    let pred = self.parse_predicate()?;
+                    self.expect(TokenKind::RParen)?;
+                    // We need a variable name for the predicate, use empty string
+                    Ok(Step::Where(WhereClause::Predicate(String::new(), pred)))
+                } else {
+                    let steps = self.parse_inner_steps()?;
+                    self.expect(TokenKind::RParen)?;
+                    Ok(Step::Where(WhereClause::Traversal(steps)))
+                }
+            }
+            TokenKind::Filter => {
+                self.expect(TokenKind::LParen)?;
+                let steps = self.parse_inner_steps()?;
+                self.expect(TokenKind::RParen)?;
+                // filter() takes a traversal, convert to Filter step
+                // We'll use the Where(Traversal) variant since it has the same semantics
+                Ok(Step::Where(WhereClause::Traversal(steps)))
+            }
+            TokenKind::Choose => {
+                self.expect(TokenKind::LParen)?;
+                // First argument is the condition (traversal)
+                let condition_steps = self.parse_inner_steps()?;
+                self.expect(TokenKind::Comma)?;
+                // Second argument is the true branch
+                let true_steps = self.parse_inner_steps()?;
+                // Optional third argument is the false branch
+                let false_steps = if self.check(TokenKind::Comma) {
+                    self.advance();
+                    Some(self.parse_inner_steps()?)
+                } else {
+                    None
+                };
+                self.expect(TokenKind::RParen)?;
+                Ok(Step::Choose(ChooseClause {
+                    condition: ChooseCondition::Traversal(condition_steps),
+                    true_branch: true_steps,
+                    false_branch: false_steps,
+                }))
+            }
+            TokenKind::Optional => {
+                self.expect(TokenKind::LParen)?;
+                let steps = self.parse_inner_steps()?;
+                self.expect(TokenKind::RParen)?;
+                Ok(Step::Optional(steps))
+            }
+            TokenKind::Union => {
+                self.expect(TokenKind::LParen)?;
+                let traversals = self.parse_inner_traversal_list()?;
+                self.expect(TokenKind::RParen)?;
+                Ok(Step::Union(traversals))
+            }
+            TokenKind::Coalesce => {
+                self.expect(TokenKind::LParen)?;
+                let traversals = self.parse_inner_traversal_list()?;
+                self.expect(TokenKind::RParen)?;
+                Ok(Step::Coalesce(traversals))
+            }
+            TokenKind::SideEffect => {
+                self.expect(TokenKind::LParen)?;
+                let steps = self.parse_inner_steps()?;
+                self.expect(TokenKind::RParen)?;
+                Ok(Step::SideEffect(steps))
+            }
+
             _ => Err(self.error(&format!("Unknown step: {:?}", token.kind))),
         }
     }
@@ -439,6 +526,8 @@ impl<'a> Parser<'a> {
             Some(TokenKind::Within) => Some(TokenKind::Within),
             Some(TokenKind::Without) => Some(TokenKind::Without),
             Some(TokenKind::Between) => Some(TokenKind::Between),
+            Some(TokenKind::Inside) => Some(TokenKind::Inside),
+            Some(TokenKind::Outside) => Some(TokenKind::Outside),
             Some(TokenKind::Containing) => Some(TokenKind::Containing),
             Some(TokenKind::StartingWith) => Some(TokenKind::StartingWith),
             Some(TokenKind::EndingWith) => Some(TokenKind::EndingWith),
@@ -490,6 +579,18 @@ impl<'a> Parser<'a> {
                 self.expect(TokenKind::Comma)?;
                 let end = self.parse_value()?;
                 Predicate::Between(start, end)
+            }
+            TokenKind::Inside => {
+                let start = self.parse_value()?;
+                self.expect(TokenKind::Comma)?;
+                let end = self.parse_value()?;
+                Predicate::Inside(start, end)
+            }
+            TokenKind::Outside => {
+                let start = self.parse_value()?;
+                self.expect(TokenKind::Comma)?;
+                let end = self.parse_value()?;
+                Predicate::Outside(start, end)
             }
             TokenKind::Containing => {
                 let s = self.parse_string()?;
@@ -571,6 +672,22 @@ impl<'a> Parser<'a> {
                 let end = self.parse_value()?;
                 self.expect(TokenKind::RParen)?;
                 Ok(Predicate::Between(start, end))
+            }
+            TokenKind::Inside => {
+                self.expect(TokenKind::LParen)?;
+                let start = self.parse_value()?;
+                self.expect(TokenKind::Comma)?;
+                let end = self.parse_value()?;
+                self.expect(TokenKind::RParen)?;
+                Ok(Predicate::Inside(start, end))
+            }
+            TokenKind::Outside => {
+                self.expect(TokenKind::LParen)?;
+                let start = self.parse_value()?;
+                self.expect(TokenKind::Comma)?;
+                let end = self.parse_value()?;
+                self.expect(TokenKind::RParen)?;
+                Ok(Predicate::Outside(start, end))
             }
             TokenKind::Containing => {
                 self.expect(TokenKind::LParen)?;
@@ -757,6 +874,35 @@ impl<'a> Parser<'a> {
         }
 
         Err(self.error("Expected label or traversal for from/to"))
+    }
+
+    /// Parse a chain of steps inside parentheses (e.g., `has('age', gt(29))` in
+    /// `and(has(...), has(...))`).  Steps are separated by dots: the caller is
+    /// responsible for consuming the outer delimiters.
+    fn parse_inner_steps(&mut self) -> Result<Vec<Step>> {
+        let mut steps = Vec::new();
+        // Parse first step
+        let step = self.parse_step()?;
+        steps.push(step);
+        // Parse chained steps separated by dots
+        while self.check(TokenKind::Dot) {
+            self.advance(); // consume '.'
+            let step = self.parse_step()?;
+            steps.push(step);
+        }
+        Ok(steps)
+    }
+
+    /// Parse a comma-separated list of inner traversals, e.g. inside
+    /// `and(has('age', gt(29)), has('city', 'NYC'))`.
+    fn parse_inner_traversal_list(&mut self) -> Result<Vec<Vec<Step>>> {
+        let mut traversals = Vec::new();
+        traversals.push(self.parse_inner_steps()?);
+        while self.check(TokenKind::Comma) {
+            self.advance(); // consume ','
+            traversals.push(self.parse_inner_steps()?);
+        }
+        Ok(traversals)
     }
 
     /// Parse a sub-traversal (e.g., g.V().has('name', 'Bob'))

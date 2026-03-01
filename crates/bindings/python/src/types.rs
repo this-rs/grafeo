@@ -147,7 +147,8 @@ impl PyValue {
             // coerced to float). This prevents [1, 2, 3] from being stored as an
             // embedding vector instead of a general-purpose list.
             if !v.is_empty() && v.iter().all(|item| item.is_instance_of::<PyFloat>()) {
-                let floats: Result<Vec<f32>, _> = v.iter().map(|item| item.extract::<f32>()).collect();
+                let floats: Result<Vec<f32>, _> =
+                    v.iter().map(|item| item.extract::<f32>()).collect();
                 if let Ok(floats) = floats {
                     return Ok(Value::Vector(floats.into()));
                 }

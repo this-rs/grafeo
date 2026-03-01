@@ -551,8 +551,7 @@ impl ExpressionPredicate {
                 let items: &[Value] = match &list_val {
                     Value::List(list) => list,
                     Value::Vector(vec) => {
-                        owned_items =
-                            vec.iter().map(|&f| Value::Float64(f64::from(f))).collect();
+                        owned_items = vec.iter().map(|&f| Value::Float64(f64::from(f))).collect();
                         &owned_items
                     }
                     _ => return None,
@@ -1520,10 +1519,7 @@ impl ExpressionPredicate {
                 s.parse::<f64>().is_ok_and(|n| (n - f).abs() < f64::EPSILON)
             }
             (Value::List(a), Value::List(b)) => {
-                a.len() == b.len()
-                    && a.iter()
-                        .zip(b.iter())
-                        .all(|(x, y)| self.values_equal(x, y))
+                a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| self.values_equal(x, y))
             }
             (Value::Map(a), Value::Map(b)) => {
                 a.len() == b.len()

@@ -318,7 +318,6 @@ class TestGremlinFilter:
 
     # -- boolean combinators -------------------------------------------
 
-    @pytest.mark.xfail(reason="and() filter step not yet implemented")
     def test_and_step(self, social_graph):
         """and() combines two filter conditions with logical AND."""
         db, _ = social_graph
@@ -329,7 +328,6 @@ class TestGremlinFilter:
         # Alice(30, NYC) and Charlie(35, NYC)
         assert len(rows) == 2
 
-    @pytest.mark.xfail(reason="or() filter step not yet implemented")
     def test_or_step(self, social_graph):
         """or() combines two filter conditions with logical OR."""
         db, _ = social_graph
@@ -340,7 +338,6 @@ class TestGremlinFilter:
         # Bob(LA) and Diana(Chicago)
         assert len(rows) == 2
 
-    @pytest.mark.xfail(reason="not() filter step not yet implemented")
     def test_not_step(self, social_graph):
         """not() negates a filter condition."""
         db, _ = social_graph
@@ -350,7 +347,6 @@ class TestGremlinFilter:
 
     # -- where / filter ------------------------------------------------
 
-    @pytest.mark.xfail(reason="where() filter step not yet implemented")
     def test_where_step(self, social_graph):
         """where() applies an inline filter to the traversal."""
         db, _ = social_graph
@@ -361,7 +357,6 @@ class TestGremlinFilter:
         # Alice and Bob have outgoing 'knows' edges
         assert len(rows) == 2
 
-    @pytest.mark.xfail(reason="filter() step not yet implemented")
     def test_filter_step(self, social_graph):
         """filter() applies a predicate to each traverser."""
         db, _ = social_graph
@@ -417,7 +412,6 @@ class TestGremlinMap:
 
     # -- element access ------------------------------------------------
 
-    @pytest.mark.xfail(reason="id() map step not supported in RETURN expression")
     def test_id_step(self, social_graph):
         """id() extracts vertex identifiers."""
         db, ids = social_graph
@@ -475,9 +469,6 @@ class TestGremlinMap:
         rows = _rows(db, "g.V().has('name', 'Alice').properties('name')")
         assert len(rows) >= 1
 
-    @pytest.mark.xfail(
-        reason="constant() step returns vertex data instead of the constant value"
-    )
     def test_constant_step(self, social_graph):
         """constant(val) injects a fixed value for each traverser."""
         db, _ = social_graph
@@ -614,7 +605,6 @@ class TestGremlinMap:
 
     # -- branching / conditional ---------------------------------------
 
-    @pytest.mark.xfail(reason="choose() step not yet implemented")
     def test_choose(self, social_graph):
         """choose(pred, true_branch, false_branch) routes traversers."""
         db, _ = social_graph
@@ -630,7 +620,6 @@ class TestGremlinMap:
         assert values.count("senior") == 2  # Alice(30), Charlie(35)
         assert values.count("junior") == 2  # Bob(25), Diana(28)
 
-    @pytest.mark.xfail(reason="optional() step not yet implemented")
     def test_optional(self, social_graph):
         """optional() keeps the current traverser when the inner traversal is empty."""
         db, _ = social_graph
@@ -641,7 +630,7 @@ class TestGremlinMap:
         )
         assert len(rows) >= 1
 
-    @pytest.mark.xfail(reason="union() step not yet implemented")
+    @pytest.mark.xfail(reason="union() mid-traversal branches need variable alignment")
     def test_union(self, social_graph):
         """union() merges results from multiple sub-traversals."""
         db, _ = social_graph
@@ -652,7 +641,9 @@ class TestGremlinMap:
         # 2 knows + 1 works_at = 3
         assert len(rows) == 3
 
-    @pytest.mark.xfail(reason="coalesce() step not yet implemented")
+    @pytest.mark.xfail(
+        reason="coalesce() mid-traversal branches need variable alignment"
+    )
     def test_coalesce(self, social_graph):
         """coalesce() returns the first non-empty traversal."""
         db, _ = social_graph
@@ -748,7 +739,6 @@ class TestGremlinSideEffects:
         after = len(_rows(db, "g.V().has('name', 'Alice').outE('knows')"))
         assert after == before - 1
 
-    @pytest.mark.xfail(reason="sideEffect() step not yet implemented")
     def test_side_effect(self, social_graph):
         """sideEffect() performs an action without altering the traversal."""
         db, _ = social_graph
@@ -837,7 +827,6 @@ class TestGremlinPredicates:
         # 25 <= age < 31: Bob(25), Diana(28), Alice(30)
         assert len(rows) == 3
 
-    @pytest.mark.xfail(reason="inside() predicate not yet parsed")
     def test_inside(self, social_graph):
         """inside(low, high) matches low < x < high (exclusive)."""
         db, _ = social_graph
@@ -845,7 +834,6 @@ class TestGremlinPredicates:
         # 25 < age < 35: Diana(28), Alice(30)
         assert len(rows) == 2
 
-    @pytest.mark.xfail(reason="outside() predicate not yet parsed")
     def test_outside(self, social_graph):
         """outside(low, high) matches x < low or x > high."""
         db, _ = social_graph
