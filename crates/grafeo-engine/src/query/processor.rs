@@ -530,6 +530,9 @@ fn substitute_in_operator(op: &mut LogicalOperator, params: &QueryParams) -> Res
             substitute_in_expression(&mut unwind.expression, params)?;
             substitute_in_operator(&mut unwind.input, params)?;
         }
+        LogicalOperator::MapCollect(mc) => {
+            substitute_in_operator(&mut mc.input, params)?;
+        }
         LogicalOperator::Merge(merge) => {
             for (_, expr) in &mut merge.match_properties {
                 substitute_in_expression(expr, params)?;

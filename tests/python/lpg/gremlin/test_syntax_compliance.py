@@ -534,9 +534,6 @@ class TestGremlinMap:
         grouped = rows[0]
         assert isinstance(grouped, dict)
 
-    @pytest.mark.xfail(
-        reason="groupCount().by() returns raw vertex data instead of count map"
-    )
     def test_group_count(self, social_graph):
         """groupCount().by() counts by key."""
         db, _ = social_graph

@@ -724,10 +724,32 @@ impl SparqlTranslator {
                 self.translate_graph_pattern(pattern)
             }
 
-            ast::GraphPattern::InlineData(_data) => {
-                // VALUES clause - inline data
-                // For now, return empty; full implementation needs a Values operator
-                Ok(LogicalOperator::Empty)
+            ast::GraphPattern::InlineData(data) => {
+                // VALUES clause: each row becomes a chain of BIND operators
+                // starting from Empty, and all rows are combined with UNION.
+                if data.values.is_empty() {
+                    return Ok(LogicalOperator::Empty);
+                }
+                let mut branches = Vec::new();
+                for row in &data.values {
+                    let mut plan = LogicalOperator::Empty;
+                    for (var, val) in data.variables.iter().zip(row.iter()) {
+                        if let Some(dv) = val {
+                            let value = self.data_value_to_value(dv);
+                            plan = LogicalOperator::Bind(BindOp {
+                                expression: LogicalExpression::Literal(value),
+                                variable: var.clone(),
+                                input: Box::new(plan),
+                            });
+                        }
+                    }
+                    branches.push(plan);
+                }
+                if branches.len() == 1 {
+                    Ok(branches.into_iter().next().unwrap())
+                } else {
+                    Ok(LogicalOperator::Union(UnionOp { inputs: branches }))
+                }
             }
         }
     }
@@ -804,6 +826,16 @@ impl SparqlTranslator {
             }
 
             return Ok(LogicalOperator::Union(UnionOp { inputs: branches }));
+        }
+
+        // Handle OneOrMore (path+): bounded expansion
+        if let ast::PropertyPath::OneOrMore(inner) = &triple.predicate {
+            return self.translate_one_or_more_path(triple, inner);
+        }
+
+        // Handle ZeroOrMore (path*): bounded expansion
+        if let ast::PropertyPath::ZeroOrMore(inner) = &triple.predicate {
+            return self.translate_zero_or_more_path(triple, inner);
         }
 
         let subject = self.translate_triple_term(&triple.subject)?;
@@ -1308,6 +1340,219 @@ impl SparqlTranslator {
         Value::String(lit.value.clone().into())
     }
 
+    /// Converts a SPARQL `DataValue` (from VALUES inline data) to a `Value`.
+    fn data_value_to_value(&self, dv: &ast::DataValue) -> Value {
+        match dv {
+            ast::DataValue::Iri(iri) => Value::String(self.resolve_iri(iri).into()),
+            ast::DataValue::Literal(lit) => self.literal_to_value(lit),
+        }
+    }
+
+    /// Translates a `OneOrMore` property path (`path+`) using bounded expansion.
+    ///
+    /// Expands to a `Union` of sequences from depth 1 to `MAX_DEPTH`, wrapped
+    /// in `Distinct` to deduplicate rows that appear at multiple depths.
+    fn translate_one_or_more_path(
+        &mut self,
+        triple: &ast::TriplePattern,
+        inner_path: &ast::PropertyPath,
+    ) -> Result<LogicalOperator> {
+        const MAX_DEPTH: usize = 10;
+
+        let subject = self.translate_triple_term(&triple.subject)?;
+        let object = self.translate_triple_term(&triple.object)?;
+        let graph = self.graph_context_stack.last().cloned();
+
+        let mut branches = Vec::new();
+
+        for depth in 1..=MAX_DEPTH {
+            let branch =
+                self.translate_fixed_depth_path(inner_path, &subject, &object, &graph, depth)?;
+            branches.push(branch);
+        }
+
+        let union = LogicalOperator::Union(UnionOp { inputs: branches });
+
+        // Wrap in Distinct to deduplicate across depths
+        Ok(LogicalOperator::Distinct(DistinctOp {
+            input: Box::new(union),
+            columns: None,
+        }))
+    }
+
+    /// Translates a `ZeroOrMore` property path (`path*`) using bounded expansion.
+    ///
+    /// Includes reflexive (0-hop) matches for every node that participates as
+    /// subject or object of the predicate, plus the same 1..`MAX_DEPTH` expansion
+    /// used by `OneOrMore`.
+    fn translate_zero_or_more_path(
+        &mut self,
+        triple: &ast::TriplePattern,
+        inner_path: &ast::PropertyPath,
+    ) -> Result<LogicalOperator> {
+        const MAX_DEPTH: usize = 10;
+
+        let subject = self.translate_triple_term(&triple.subject)?;
+        let object = self.translate_triple_term(&triple.object)?;
+        let graph = self.graph_context_stack.last().cloned();
+
+        let mut branches = Vec::new();
+
+        // 0-hop: reflexive matches from subjects of the predicate
+        let fresh_obj = TripleComponent::Variable(format!("_:refl{}", self.next_anon()));
+        let pred = self.translate_property_path(inner_path)?;
+        let subj_scan = LogicalOperator::TripleScan(TripleScanOp {
+            subject: subject.clone(),
+            predicate: pred,
+            object: fresh_obj,
+            graph: graph.clone(),
+            input: None,
+        });
+        let subj_reflexive = self.project_reflexive(&subject, &object, subj_scan)?;
+        branches.push(subj_reflexive);
+
+        // 0-hop: reflexive matches from objects of the predicate
+        let fresh_subj = TripleComponent::Variable(format!("_:refl{}", self.next_anon()));
+        let pred2 = self.translate_property_path(inner_path)?;
+        let obj_scan = LogicalOperator::TripleScan(TripleScanOp {
+            subject: fresh_subj,
+            predicate: pred2,
+            object: object.clone(),
+            graph: graph.clone(),
+            input: None,
+        });
+        let obj_reflexive = self.project_reflexive_from_object(&subject, &object, obj_scan)?;
+        branches.push(obj_reflexive);
+
+        // 1+ hops: same as OneOrMore
+        for depth in 1..=MAX_DEPTH {
+            let branch =
+                self.translate_fixed_depth_path(inner_path, &subject, &object, &graph, depth)?;
+            branches.push(branch);
+        }
+
+        let union = LogicalOperator::Union(UnionOp { inputs: branches });
+        Ok(LogicalOperator::Distinct(DistinctOp {
+            input: Box::new(union),
+            columns: None,
+        }))
+    }
+
+    /// Translates a property path at a fixed depth (number of hops).
+    ///
+    /// Depth 1 produces a single `TripleScan`. Depth N chains N scans with
+    /// freshly generated intermediate variables joined together.
+    fn translate_fixed_depth_path(
+        &mut self,
+        path: &ast::PropertyPath,
+        subject: &TripleComponent,
+        object: &TripleComponent,
+        graph: &Option<TripleComponent>,
+        depth: usize,
+    ) -> Result<LogicalOperator> {
+        if depth == 1 {
+            let predicate = self.translate_property_path(path)?;
+            return Ok(LogicalOperator::TripleScan(TripleScanOp {
+                subject: subject.clone(),
+                predicate,
+                object: object.clone(),
+                graph: graph.clone(),
+                input: None,
+            }));
+        }
+
+        // Multiple hops: chain triple scans with intermediate variables
+        let mut current_subject = subject.clone();
+        let mut plan = LogicalOperator::Empty;
+        let mut first = true;
+
+        for i in 0..depth {
+            let next_object = if i == depth - 1 {
+                object.clone()
+            } else {
+                TripleComponent::Variable(format!("_:path{}", self.next_anon()))
+            };
+
+            let predicate = self.translate_property_path(path)?;
+            let scan = LogicalOperator::TripleScan(TripleScanOp {
+                subject: current_subject,
+                predicate,
+                object: next_object.clone(),
+                graph: graph.clone(),
+                input: None,
+            });
+
+            if first {
+                plan = scan;
+                first = false;
+            } else {
+                plan = self.join_patterns(plan, scan);
+            }
+
+            current_subject = next_object;
+        }
+
+        Ok(plan)
+    }
+
+    /// Projects a scan so that the subject variable appears as both the subject
+    /// and object output variables, producing reflexive (0-hop) rows.
+    fn project_reflexive(
+        &self,
+        subject: &TripleComponent,
+        object: &TripleComponent,
+        input: LogicalOperator,
+    ) -> Result<LogicalOperator> {
+        if let (TripleComponent::Variable(s_var), TripleComponent::Variable(o_var)) =
+            (subject, object)
+        {
+            Ok(LogicalOperator::Project(ProjectOp {
+                projections: vec![
+                    Projection {
+                        expression: LogicalExpression::Variable(s_var.clone()),
+                        alias: Some(s_var.clone()),
+                    },
+                    Projection {
+                        expression: LogicalExpression::Variable(s_var.clone()),
+                        alias: Some(o_var.clone()),
+                    },
+                ],
+                input: Box::new(input),
+            }))
+        } else {
+            Ok(input)
+        }
+    }
+
+    /// Projects a scan so that the object variable appears as both the subject
+    /// and object output variables, producing reflexive (0-hop) rows.
+    fn project_reflexive_from_object(
+        &self,
+        subject: &TripleComponent,
+        object: &TripleComponent,
+        input: LogicalOperator,
+    ) -> Result<LogicalOperator> {
+        if let (TripleComponent::Variable(s_var), TripleComponent::Variable(o_var)) =
+            (subject, object)
+        {
+            Ok(LogicalOperator::Project(ProjectOp {
+                projections: vec![
+                    Projection {
+                        expression: LogicalExpression::Variable(o_var.clone()),
+                        alias: Some(s_var.clone()),
+                    },
+                    Projection {
+                        expression: LogicalExpression::Variable(o_var.clone()),
+                        alias: Some(o_var.clone()),
+                    },
+                ],
+                input: Box::new(input),
+            }))
+        } else {
+            Ok(input)
+        }
+    }
+
     fn next_anon(&mut self) -> u32 {
         let n = self.anon_counter;
         self.anon_counter += 1;
@@ -1760,5 +2005,239 @@ mod tests {
         } else {
             panic!("Expected DropGraph operator");
         }
+    }
+
+    // === BIND Expression Tests ===
+
+    #[test]
+    fn test_translate_bind_with_concat() {
+        let query = r#"
+            PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+            SELECT ?name ?label
+            WHERE {
+                ?person foaf:name ?name .
+                BIND (CONCAT(?name, " test") AS ?label)
+            }
+        "#;
+        let result = translate(query);
+        assert!(
+            result.is_ok(),
+            "BIND translation failed: {:?}",
+            result.err()
+        );
+        let plan = result.unwrap();
+
+        fn find_bind(op: &LogicalOperator) -> bool {
+            match op {
+                LogicalOperator::Bind(_) => true,
+                LogicalOperator::Project(p) => find_bind(&p.input),
+                LogicalOperator::Filter(f) => find_bind(&f.input),
+                _ => false,
+            }
+        }
+        assert!(find_bind(&plan.root), "Expected Bind operator in plan");
+    }
+
+    // === VALUES Inline Data Tests ===
+
+    #[test]
+    fn test_translate_values_inline_data() {
+        let query = r#"
+            PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+            SELECT ?name
+            WHERE {
+                VALUES ?person { <http://ex.org/alice> }
+                ?person foaf:name ?name .
+            }
+        "#;
+        let result = translate(query);
+        assert!(
+            result.is_ok(),
+            "VALUES translation failed: {:?}",
+            result.err()
+        );
+        let plan = result.unwrap();
+
+        // VALUES with a single value produces a Bind chain joined with the
+        // triple pattern. Walk the tree and verify we find at least one Bind.
+        fn find_bind(op: &LogicalOperator) -> bool {
+            match op {
+                LogicalOperator::Bind(_) => true,
+                LogicalOperator::Project(p) => find_bind(&p.input),
+                LogicalOperator::Filter(f) => find_bind(&f.input),
+                LogicalOperator::Join(j) => find_bind(&j.left) || find_bind(&j.right),
+                LogicalOperator::Union(u) => u.inputs.iter().any(find_bind),
+                _ => false,
+            }
+        }
+        assert!(find_bind(&plan.root), "Expected Bind from VALUES clause");
+    }
+
+    // === OneOrMore Property Path Tests ===
+
+    #[test]
+    fn test_translate_one_or_more_property_path() {
+        let query = "SELECT ?s ?o WHERE { ?s <http://ex.org/p>+ ?o }";
+        let result = translate(query);
+        assert!(
+            result.is_ok(),
+            "OneOrMore path translation failed: {:?}",
+            result.err()
+        );
+        let plan = result.unwrap();
+
+        // OneOrMore produces Distinct(Union(...))
+        fn find_distinct(op: &LogicalOperator) -> bool {
+            match op {
+                LogicalOperator::Distinct(_) => true,
+                LogicalOperator::Project(p) => find_distinct(&p.input),
+                _ => false,
+            }
+        }
+        assert!(
+            find_distinct(&plan.root),
+            "Expected Distinct wrapping the bounded expansion"
+        );
+
+        fn find_union_inside_distinct(op: &LogicalOperator) -> bool {
+            match op {
+                LogicalOperator::Distinct(d) => matches!(*d.input, LogicalOperator::Union(_)),
+                LogicalOperator::Project(p) => find_union_inside_distinct(&p.input),
+                _ => false,
+            }
+        }
+        assert!(
+            find_union_inside_distinct(&plan.root),
+            "Expected Union inside Distinct for OneOrMore path"
+        );
+    }
+
+    // === ZeroOrMore Property Path Tests ===
+
+    #[test]
+    fn test_translate_zero_or_more_property_path() {
+        let query = "SELECT ?s ?o WHERE { ?s <http://ex.org/p>* ?o }";
+        let result = translate(query);
+        assert!(
+            result.is_ok(),
+            "ZeroOrMore path translation failed: {:?}",
+            result.err()
+        );
+        let plan = result.unwrap();
+
+        // ZeroOrMore produces Distinct(Union(...)) with reflexive branches
+        fn find_distinct(op: &LogicalOperator) -> bool {
+            match op {
+                LogicalOperator::Distinct(_) => true,
+                LogicalOperator::Project(p) => find_distinct(&p.input),
+                _ => false,
+            }
+        }
+        assert!(
+            find_distinct(&plan.root),
+            "Expected Distinct wrapping the bounded expansion"
+        );
+
+        // The Union should have more branches than OneOrMore (reflexive + depth branches)
+        fn count_union_branches(op: &LogicalOperator) -> Option<usize> {
+            match op {
+                LogicalOperator::Distinct(d) => {
+                    if let LogicalOperator::Union(u) = d.input.as_ref() {
+                        Some(u.inputs.len())
+                    } else {
+                        None
+                    }
+                }
+                LogicalOperator::Project(p) => count_union_branches(&p.input),
+                _ => None,
+            }
+        }
+        let branch_count = count_union_branches(&plan.root)
+            .expect("Expected Union inside Distinct for ZeroOrMore path");
+        // ZeroOrMore has 2 reflexive branches + MAX_DEPTH (10) depth branches = 12
+        assert!(
+            branch_count > 10,
+            "ZeroOrMore should have reflexive branches plus depth branches, got {}",
+            branch_count
+        );
+    }
+
+    // === Sequence Property Path Tests ===
+
+    #[test]
+    fn test_translate_sequence_property_path() {
+        let query = r#"
+            SELECT ?name
+            WHERE {
+                ?person <http://ex.org/knows>/<http://ex.org/name> ?name
+            }
+        "#;
+        let result = translate(query);
+        assert!(
+            result.is_ok(),
+            "Sequence path translation failed: {:?}",
+            result.err()
+        );
+        let plan = result.unwrap();
+
+        // Sequence path expands into joined triple scans. Count TripleScan operators.
+        fn count_triple_scans(op: &LogicalOperator) -> usize {
+            match op {
+                LogicalOperator::TripleScan(_) => 1,
+                LogicalOperator::Project(p) => count_triple_scans(&p.input),
+                LogicalOperator::Filter(f) => count_triple_scans(&f.input),
+                LogicalOperator::Join(j) => {
+                    count_triple_scans(&j.left) + count_triple_scans(&j.right)
+                }
+                _ => 0,
+            }
+        }
+        let scan_count = count_triple_scans(&plan.root);
+        assert!(
+            scan_count >= 2,
+            "Sequence path should produce at least 2 joined TripleScans, got {}",
+            scan_count
+        );
+    }
+
+    // === Alternative Property Path Tests ===
+
+    #[test]
+    fn test_translate_alternative_property_path() {
+        let query = "SELECT ?v WHERE { ?s <http://a>|<http://b> ?v }";
+        let result = translate(query);
+        assert!(
+            result.is_ok(),
+            "Alternative path translation failed: {:?}",
+            result.err()
+        );
+        let plan = result.unwrap();
+
+        // Alternative path produces a Union of TripleScans
+        fn find_union(op: &LogicalOperator) -> bool {
+            match op {
+                LogicalOperator::Union(_) => true,
+                LogicalOperator::Project(p) => find_union(&p.input),
+                _ => false,
+            }
+        }
+        assert!(
+            find_union(&plan.root),
+            "Expected Union for alternative property path"
+        );
+
+        fn count_union_branches(op: &LogicalOperator) -> Option<usize> {
+            match op {
+                LogicalOperator::Union(u) => Some(u.inputs.len()),
+                LogicalOperator::Project(p) => count_union_branches(&p.input),
+                _ => None,
+            }
+        }
+        let branch_count =
+            count_union_branches(&plan.root).expect("Expected Union in plan for alternative path");
+        assert_eq!(
+            branch_count, 2,
+            "Alternative path with 2 predicates should have 2 Union branches"
+        );
     }
 }

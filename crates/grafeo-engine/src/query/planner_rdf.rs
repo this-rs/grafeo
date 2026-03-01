@@ -16,13 +16,13 @@ use grafeo_core::execution::operators::JoinType;
 use grafeo_core::execution::operators::{
     BinaryFilterOp, DistinctOperator, FilterExpression, FilterOperator, HashAggregateOperator,
     JoinCondition, LimitOperator, NestedLoopJoinOperator, Operator, OperatorError, Predicate,
-    ProjectExpr, ProjectOperator, SimpleAggregateOperator, SkipOperator, SortOperator,
-    UnaryFilterOp,
+    ProjectExpr, ProjectOperator, SimpleAggregateOperator, SingleRowOperator, SkipOperator,
+    SortOperator, UnaryFilterOp,
 };
 use grafeo_core::graph::rdf::{Literal, RdfStore, Term, Triple, TriplePattern};
 
 use crate::query::plan::{
-    AddGraphOp, AggregateFunction as LogicalAggregateFunction, AggregateOp, AntiJoinOp,
+    AddGraphOp, AggregateFunction as LogicalAggregateFunction, AggregateOp, AntiJoinOp, BindOp,
     ClearGraphOp, CopyGraphOp, CreateGraphOp, DeleteTripleOp, DistinctOp, DropGraphOp, FilterOp,
     InsertTripleOp, LeftJoinOp, LimitOp, LogicalExpression, LogicalOperator, LogicalPlan, ModifyOp,
     MoveGraphOp, SkipOp, SortOp, TripleComponent, TripleScanOp, TripleTemplate,
@@ -109,7 +109,8 @@ impl RdfPlanner {
             LogicalOperator::CopyGraph(copy) => self.plan_copy_graph(copy),
             LogicalOperator::MoveGraph(move_op) => self.plan_move_graph(move_op),
             LogicalOperator::AddGraph(add) => self.plan_add_graph(add),
-            LogicalOperator::Empty => Err(Error::Internal("Empty plan".to_string())),
+            LogicalOperator::Bind(bind) => self.plan_bind(bind),
+            LogicalOperator::Empty => Ok((Box::new(SingleRowOperator::new()), vec![])),
             _ => Err(Error::Internal(format!(
                 "Unsupported RDF operator: {:?}",
                 std::mem::discriminant(op)
@@ -423,6 +424,35 @@ impl RdfPlanner {
         }
 
         let operator = Box::new(ProjectOperator::new(input_op, projections, output_types));
+        Ok((operator, output_columns))
+    }
+
+    /// Plans a BIND operator.
+    ///
+    /// BIND adds a computed column to each row by evaluating an expression.
+    /// For example: `BIND (CONCAT(?name, " (age ", STR(?age), ")") AS ?label)`
+    fn plan_bind(&self, bind: &BindOp) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        let (input_op, input_columns) = self.plan_operator(&bind.input)?;
+
+        // Build variable-to-column mapping for expression evaluation
+        let variable_columns: HashMap<String, usize> = input_columns
+            .iter()
+            .enumerate()
+            .map(|(i, name)| (name.clone(), i))
+            .collect();
+
+        // Convert the BIND expression to a FilterExpression
+        let filter_expr = convert_filter_expression(&bind.expression)?;
+
+        // Build output columns: all input columns + the new BIND variable
+        let mut output_columns = input_columns;
+        output_columns.push(bind.variable.clone());
+
+        let operator = Box::new(RdfBindOperator::new(
+            input_op,
+            filter_expr,
+            variable_columns,
+        ));
         Ok((operator, output_columns))
     }
 
@@ -1879,6 +1909,96 @@ impl Operator for RdfUnionOperator {
 
     fn name(&self) -> &'static str {
         "RdfUnion"
+    }
+}
+
+// ============================================================================
+// RDF Bind Operator
+// ============================================================================
+
+/// Operator that appends a computed column to each row.
+///
+/// Used for SPARQL BIND expressions (e.g., `BIND (CONCAT(?x, ?y) AS ?z)`).
+/// Evaluates an expression using `RdfExpressionPredicate` and appends the
+/// result as a new column in the output chunk.
+struct RdfBindOperator {
+    /// Child operator providing input rows.
+    child: Box<dyn Operator>,
+    /// Expression to evaluate per row.
+    expression: FilterExpression,
+    /// Variable name to column index mapping for expression evaluation.
+    variable_columns: HashMap<String, usize>,
+}
+
+impl RdfBindOperator {
+    fn new(
+        child: Box<dyn Operator>,
+        expression: FilterExpression,
+        variable_columns: HashMap<String, usize>,
+    ) -> Self {
+        Self {
+            child,
+            expression,
+            variable_columns,
+        }
+    }
+}
+
+impl Operator for RdfBindOperator {
+    fn next(&mut self) -> std::result::Result<Option<DataChunk>, OperatorError> {
+        let Some(input) = self.child.next()? else {
+            return Ok(None);
+        };
+
+        let input_col_count = input.column_count();
+        let row_count = input.row_count();
+
+        // Build output schema: same as input + one extra String column for BIND result
+        let mut output_types: Vec<LogicalType> = Vec::with_capacity(input_col_count + 1);
+        for _ in 0..input_col_count {
+            output_types.push(LogicalType::String);
+        }
+        output_types.push(LogicalType::String);
+
+        let mut output = DataChunk::with_capacity(&output_types, row_count);
+
+        // Copy existing columns
+        for col_idx in 0..input_col_count {
+            let output_col = output
+                .column_mut(col_idx)
+                .expect("column exists: index within schema bounds");
+            if let Some(input_col) = input.column(col_idx) {
+                for row in input.selected_indices() {
+                    if let Some(value) = input_col.get_value(row) {
+                        output_col.push_value(value);
+                    } else {
+                        output_col.push_value(Value::Null);
+                    }
+                }
+            }
+        }
+
+        // Evaluate expression for each row and append as new column
+        let evaluator =
+            RdfExpressionPredicate::new(self.expression.clone(), self.variable_columns.clone());
+        let bind_col = output
+            .column_mut(input_col_count)
+            .expect("column exists: bind column is last in schema");
+        for row in input.selected_indices() {
+            let value = evaluator.eval(&input, row).unwrap_or(Value::Null);
+            bind_col.push_value(value);
+        }
+
+        output.set_count(row_count);
+        Ok(Some(output))
+    }
+
+    fn reset(&mut self) {
+        self.child.reset();
+    }
+
+    fn name(&self) -> &'static str {
+        "RdfBind"
     }
 }
 

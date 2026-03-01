@@ -573,6 +573,19 @@ impl Binder {
                 self.validate_expression(&join.query_vector)?;
                 Ok(())
             }
+            LogicalOperator::MapCollect(mc) => {
+                self.bind_operator(&mc.input)?;
+                self.context.add_variable(
+                    mc.alias.clone(),
+                    VariableInfo {
+                        name: mc.alias.clone(),
+                        data_type: LogicalType::Any,
+                        is_node: false,
+                        is_edge: false,
+                    },
+                );
+                Ok(())
+            }
             // DDL operators don't need binding — they're handled before the binder
             LogicalOperator::CreatePropertyGraph(_) => Ok(()),
             // Procedure calls: register yielded columns as variables for downstream operators

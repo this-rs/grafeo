@@ -1072,4 +1072,43 @@ mod tests {
             matches!(&ret.items[1].expression, LogicalExpression::Variable(v) if v == "_path_edges_p")
         );
     }
+
+    // === Outer Aggregate Tests ===
+
+    #[test]
+    fn test_translate_outer_aggregate_count() {
+        use crate::query::plan::AggregateFunction;
+
+        let plan = translate(
+            "SELECT COUNT(*) AS total FROM GRAPH_TABLE (
+                MATCH (n:Person)
+                COLUMNS (n.name AS name)
+            ) AS g",
+        )
+        .unwrap();
+
+        // The outer SELECT COUNT(*) should produce an Aggregate wrapping the
+        // GRAPH_TABLE result. Walk the tree to find it.
+        fn find_aggregate(op: &LogicalOperator) -> Option<&AggregateOp> {
+            match op {
+                LogicalOperator::Aggregate(a) => Some(a),
+                LogicalOperator::Return(r) => find_aggregate(&r.input),
+                LogicalOperator::Filter(f) => find_aggregate(&f.input),
+                LogicalOperator::Limit(l) => find_aggregate(&l.input),
+                LogicalOperator::Skip(s) => find_aggregate(&s.input),
+                _ => None,
+            }
+        }
+        let agg = find_aggregate(&plan.root).expect("Expected Aggregate operator for COUNT(*)");
+        assert_eq!(agg.aggregates.len(), 1, "Should have exactly one aggregate");
+        assert!(
+            matches!(agg.aggregates[0].function, AggregateFunction::Count),
+            "Aggregate function should be Count"
+        );
+        // COUNT(*) has no expression (None)
+        assert!(
+            agg.aggregates[0].expression.is_none(),
+            "COUNT(*) should have None expression"
+        );
+    }
 }

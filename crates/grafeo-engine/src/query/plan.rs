@@ -102,6 +102,10 @@ pub enum LogicalOperator {
     /// Unwind a list into individual rows.
     Unwind(UnwindOp),
 
+    /// Collect grouped key-value rows into a single Map value.
+    /// Used for Gremlin `groupCount()` semantics.
+    MapCollect(MapCollectOp),
+
     /// Merge a node pattern (match or create).
     Merge(MergeOp),
 
@@ -568,6 +572,20 @@ pub struct UnwindOp {
     /// Optional variable for 0-based element position (OFFSET).
     pub offset_var: Option<String>,
     /// Input operator.
+    pub input: Box<LogicalOperator>,
+}
+
+/// Collect grouped key-value rows into a single Map value.
+/// Used for Gremlin `groupCount()` semantics.
+#[derive(Debug, Clone)]
+pub struct MapCollectOp {
+    /// Variable holding the map key.
+    pub key_var: String,
+    /// Variable holding the map value.
+    pub value_var: String,
+    /// Output variable alias.
+    pub alias: String,
+    /// Input operator (typically a grouped aggregate).
     pub input: Box<LogicalOperator>,
 }
 

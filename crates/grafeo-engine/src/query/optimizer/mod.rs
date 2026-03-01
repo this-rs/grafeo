@@ -444,6 +444,10 @@ impl Optimizer {
                     Box::new(self.push_projections_recursive(*distinct.input, required));
                 LogicalOperator::Distinct(distinct)
             }
+            LogicalOperator::MapCollect(mut mc) => {
+                mc.input = Box::new(self.push_projections_recursive(*mc.input, required));
+                LogicalOperator::MapCollect(mc)
+            }
             other => other,
         }
     }
@@ -507,6 +511,10 @@ impl Optimizer {
             LogicalOperator::Expand(mut expand) => {
                 expand.input = Box::new(self.reorder_joins(*expand.input));
                 LogicalOperator::Expand(expand)
+            }
+            LogicalOperator::MapCollect(mut mc) => {
+                mc.input = Box::new(self.reorder_joins(*mc.input));
+                LogicalOperator::MapCollect(mc)
             }
             // Join operators are handled by the parent reorder_joins call
             other => other,
@@ -678,6 +686,10 @@ impl Optimizer {
             LogicalOperator::Aggregate(mut agg) => {
                 agg.input = Box::new(self.push_filters_down(*agg.input));
                 LogicalOperator::Aggregate(agg)
+            }
+            LogicalOperator::MapCollect(mut mc) => {
+                mc.input = Box::new(self.push_filters_down(*mc.input));
+                LogicalOperator::MapCollect(mc)
             }
             // Leaf operators and unsupported operators are returned as-is
             other => other,

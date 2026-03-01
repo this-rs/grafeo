@@ -5,9 +5,9 @@
 use crate::query::plan::{
     AggregateExpr, AggregateFunction, AggregateOp, BinaryOp, CreateEdgeOp, CreateNodeOp,
     DeleteNodeOp, DistinctOp, ExpandDirection, ExpandOp, FilterOp, JoinOp, JoinType, LeftJoinOp,
-    LimitOp, LogicalExpression, LogicalOperator, LogicalPlan, NodeScanOp, ProjectOp, Projection,
-    ReturnItem, ReturnOp, SetPropertyOp, SkipOp, SortKey, SortOp, SortOrder, UnaryOp, UnionOp,
-    UnwindOp,
+    LimitOp, LogicalExpression, LogicalOperator, LogicalPlan, MapCollectOp, NodeScanOp, ProjectOp,
+    Projection, ReturnItem, ReturnOp, SetPropertyOp, SkipOp, SortKey, SortOp, SortOrder, UnaryOp,
+    UnionOp, UnwindOp,
 };
 use crate::query::translator_common::VarGen;
 use grafeo_adapters::query::gremlin::{self, ast};
@@ -1036,10 +1036,10 @@ impl GremlinTranslator {
                         Ok((LogicalOperator::Sort(sort_op), None))
                     }
                     LogicalOperator::Aggregate(mut agg_op) => {
-                        // groupCount().by('key') - replace group_by with the by expression.
-                        // Extract the original variable from the existing group_by (set as
-                        // Variable(current_var) during groupCount()), since current_var
-                        // now points to the aggregate alias.
+                        // groupCount().by('key') - wrap aggregate in MapCollect.
+                        // Extract the original variable from the existing group_by
+                        // (set as Variable(current_var) during groupCount()), since
+                        // current_var now points to the aggregate alias.
                         let original_var =
                             if let Some(LogicalExpression::Variable(v)) = agg_op.group_by.first() {
                                 v.clone()
@@ -1047,8 +1047,33 @@ impl GremlinTranslator {
                                 current_var.to_string()
                             };
                         let by_expr = self.translate_by_modifier(by_modifier, &original_var);
+
+                        // Compute the key column name that the planner will produce
+                        // (mirrors `expression_to_string` in the planner).
+                        let key_var = match &by_expr {
+                            LogicalExpression::Property { variable, property } => {
+                                format!("{variable}.{property}")
+                            }
+                            LogicalExpression::Variable(name) => name.clone(),
+                            _ => "expr".to_string(),
+                        };
+
                         agg_op.group_by = vec![by_expr];
-                        Ok((LogicalOperator::Aggregate(agg_op), None))
+
+                        let value_var = agg_op
+                            .aggregates
+                            .first()
+                            .and_then(|a| a.alias.clone())
+                            .unwrap_or_else(|| "count".to_string());
+
+                        let alias = "_groupCount".to_string();
+                        let plan = LogicalOperator::MapCollect(MapCollectOp {
+                            key_var,
+                            value_var,
+                            alias: alias.clone(),
+                            input: Box::new(LogicalOperator::Aggregate(agg_op)),
+                        });
+                        Ok((plan, Some(alias)))
                     }
                     LogicalOperator::Project(mut proj_op) => {
                         // project('n','a').by('name').by('age')
@@ -1069,9 +1094,6 @@ impl GremlinTranslator {
                             .unwrap_or_else(|| current_var.to_string());
                         let by_expr = self.translate_by_modifier(by_modifier, &original_var);
                         for proj in &mut proj_op.projections {
-                            // Find the first projection whose expression still
-                            // matches the default placeholder (Property with the
-                            // alias as key). Replace with the actual by-expression.
                             if let LogicalExpression::Property { property, .. } = &proj.expression
                                 && proj.alias.as_deref() == Some(property.as_str())
                             {
@@ -1079,7 +1101,6 @@ impl GremlinTranslator {
                                 return Ok((LogicalOperator::Project(proj_op), None));
                             }
                         }
-                        // All projections already filled; ignore extra .by()
                         Ok((LogicalOperator::Project(proj_op), None))
                     }
                     _ => {
@@ -2556,5 +2577,523 @@ mod tests {
             } => {} // correct
             other => panic!("hasNot should produce IsNull, got: {:?}", other),
         }
+    }
+
+    // === Recursive helper functions for new tests ===
+
+    fn find_map_collect(op: &LogicalOperator) -> Option<&MapCollectOp> {
+        match op {
+            LogicalOperator::MapCollect(mc) => Some(mc),
+            LogicalOperator::Return(r) => find_map_collect(&r.input),
+            LogicalOperator::Filter(f) => find_map_collect(&f.input),
+            LogicalOperator::Project(p) => find_map_collect(&p.input),
+            _ => None,
+        }
+    }
+
+    fn find_union(op: &LogicalOperator) -> Option<&UnionOp> {
+        match op {
+            LogicalOperator::Union(u) => Some(u),
+            LogicalOperator::Return(r) => find_union(&r.input),
+            LogicalOperator::Filter(f) => find_union(&f.input),
+            LogicalOperator::Project(p) => find_union(&p.input),
+            _ => None,
+        }
+    }
+
+    fn find_aggregate(op: &LogicalOperator) -> Option<&AggregateOp> {
+        match op {
+            LogicalOperator::Aggregate(a) => Some(a),
+            LogicalOperator::Return(r) => find_aggregate(&r.input),
+            LogicalOperator::MapCollect(mc) => find_aggregate(&mc.input),
+            _ => None,
+        }
+    }
+
+    fn find_unwind(op: &LogicalOperator) -> Option<&UnwindOp> {
+        match op {
+            LogicalOperator::Unwind(u) => Some(u),
+            LogicalOperator::Return(r) => find_unwind(&r.input),
+            _ => None,
+        }
+    }
+
+    fn find_distinct_op(op: &LogicalOperator) -> Option<&DistinctOp> {
+        match op {
+            LogicalOperator::Distinct(d) => Some(d),
+            LogicalOperator::Return(r) => find_distinct_op(&r.input),
+            _ => None,
+        }
+    }
+
+    fn find_project(op: &LogicalOperator) -> Option<&ProjectOp> {
+        match op {
+            LogicalOperator::Project(p) => Some(p),
+            LogicalOperator::Return(r) => find_project(&r.input),
+            _ => None,
+        }
+    }
+
+    fn find_create_edge(op: &LogicalOperator) -> Option<&CreateEdgeOp> {
+        match op {
+            LogicalOperator::CreateEdge(e) => Some(e),
+            LogicalOperator::Return(r) => find_create_edge(&r.input),
+            _ => None,
+        }
+    }
+
+    // === MapCollect wrapping in By handler for Aggregate ===
+
+    #[test]
+    fn test_group_count_by_produces_map_collect() {
+        let result = translate("g.V().groupCount().by('city')");
+        assert!(
+            result.is_ok(),
+            "groupCount().by('city') should parse: {:?}",
+            result.err()
+        );
+        let plan = result.unwrap();
+
+        // The plan should contain a MapCollect wrapping an Aggregate
+        let mc = find_map_collect(&plan.root).expect("Expected MapCollect operator");
+        assert_eq!(mc.alias, "_groupCount");
+        assert_eq!(mc.value_var, "count");
+
+        // The input to MapCollect should be an Aggregate with a group_by
+        let agg = find_aggregate(&plan.root).expect("Expected Aggregate inside MapCollect");
+        assert_eq!(agg.aggregates.len(), 1);
+        assert_eq!(agg.aggregates[0].function, AggregateFunction::Count);
+        assert!(
+            !agg.group_by.is_empty(),
+            "Aggregate should have a group_by for the 'city' key"
+        );
+    }
+
+    // === values() with multiple keys ===
+
+    #[test]
+    fn test_values_multiple_keys_produces_union() {
+        let result = translate("g.V().values('name', 'age')");
+        assert!(
+            result.is_ok(),
+            "values('name','age') should parse: {:?}",
+            result.err()
+        );
+        let plan = result.unwrap();
+
+        // Multi-key values() should produce a Union of Projects
+        let union = find_union(&plan.root).expect("Expected Union for multi-key values()");
+        assert_eq!(
+            union.inputs.len(),
+            2,
+            "Union should have 2 branches (one per key)"
+        );
+
+        // Each branch should be a Project with a Property expression
+        for (i, branch) in union.inputs.iter().enumerate() {
+            match branch {
+                LogicalOperator::Project(proj) => {
+                    assert_eq!(proj.projections.len(), 1);
+                    match &proj.projections[0].expression {
+                        LogicalExpression::Property { property, .. } => {
+                            let expected = if i == 0 { "name" } else { "age" };
+                            assert_eq!(
+                                property, expected,
+                                "Branch {i} should project '{expected}'"
+                            );
+                        }
+                        other => {
+                            panic!("Expected Property expression in branch {i}, got: {other:?}")
+                        }
+                    }
+                }
+                other => panic!("Expected Project branch in Union, got: {other:?}"),
+            }
+        }
+    }
+
+    // === fold() produces Aggregate with Collect ===
+
+    #[test]
+    fn test_fold_with_values_produces_aggregate_collect() {
+        let result = translate("g.V().values('name').fold()");
+        assert!(
+            result.is_ok(),
+            "values('name').fold() should parse: {:?}",
+            result.err()
+        );
+        let plan = result.unwrap();
+
+        let agg = find_aggregate(&plan.root).expect("Expected Aggregate for fold()");
+        assert_eq!(agg.aggregates.len(), 1);
+        assert_eq!(agg.aggregates[0].function, AggregateFunction::Collect);
+        assert!(
+            agg.aggregates[0].expression.is_some(),
+            "Collect should have an expression to collect"
+        );
+        assert_eq!(
+            agg.aggregates[0].alias.as_deref(),
+            Some("fold"),
+            "fold() alias should be 'fold'"
+        );
+    }
+
+    // === unfold() produces Unwind ===
+
+    #[test]
+    fn test_unfold_produces_unwind() {
+        let result = translate("g.V().values('name').fold().unfold()");
+        assert!(
+            result.is_ok(),
+            "fold().unfold() should parse: {:?}",
+            result.err()
+        );
+        let plan = result.unwrap();
+
+        let unwind = find_unwind(&plan.root).expect("Expected Unwind for unfold()");
+        // The unwind expression should reference a variable (the fold alias)
+        match &unwind.expression {
+            LogicalExpression::Variable(var) => {
+                assert_eq!(var, "fold", "Unwind should reference the fold variable");
+            }
+            other => panic!("Expected Variable expression for Unwind, got: {other:?}"),
+        }
+    }
+
+    // === dedup() with navigation produces Distinct with column ===
+
+    #[test]
+    fn test_dedup_after_navigation_produces_distinct_with_column() {
+        let result = translate("g.V().out('knows').dedup()");
+        assert!(
+            result.is_ok(),
+            "out('knows').dedup() should parse: {:?}",
+            result.err()
+        );
+        let plan = result.unwrap();
+
+        let distinct = find_distinct_op(&plan.root).expect("Expected Distinct for dedup()");
+        // dedup() with no keys should deduplicate on the current variable
+        assert!(
+            distinct.columns.is_some(),
+            "Distinct should have column specification"
+        );
+        let cols = distinct.columns.as_ref().unwrap();
+        assert_eq!(cols.len(), 1, "Should deduplicate on a single column");
+    }
+
+    // === label() produces Project with Labels/IndexAccess ===
+
+    #[test]
+    fn test_label_produces_project_with_labels() {
+        let result = translate("g.V().label()");
+        assert!(result.is_ok());
+        let plan = result.unwrap();
+
+        let proj = find_project(&plan.root).expect("Expected Project for label()");
+        assert_eq!(proj.projections.len(), 1);
+        assert_eq!(proj.projections[0].alias.as_deref(), Some("label"));
+        // The expression should be IndexAccess(Labels, 0)
+        match &proj.projections[0].expression {
+            LogicalExpression::IndexAccess { base, .. } => {
+                assert!(
+                    matches!(base.as_ref(), LogicalExpression::Labels(_)),
+                    "IndexAccess base should be Labels"
+                );
+            }
+            other => panic!("Expected IndexAccess expression for label(), got: {other:?}"),
+        }
+    }
+
+    // === bothV() produces Union ===
+
+    #[test]
+    fn test_both_v_produces_union() {
+        let result = translate("g.E().bothV()");
+        assert!(
+            result.is_ok(),
+            "g.E().bothV() should parse: {:?}",
+            result.err()
+        );
+        let plan = result.unwrap();
+
+        let union = find_union(&plan.root).expect("Expected Union for bothV()");
+        assert_eq!(
+            union.inputs.len(),
+            2,
+            "bothV() Union should have 2 branches (source and target)"
+        );
+
+        // Each branch should be a Project referencing a variable
+        for (i, branch) in union.inputs.iter().enumerate() {
+            match branch {
+                LogicalOperator::Project(proj) => {
+                    assert_eq!(proj.projections.len(), 1);
+                    assert!(
+                        matches!(
+                            &proj.projections[0].expression,
+                            LogicalExpression::Variable(_)
+                        ),
+                        "Branch {i} should project a Variable"
+                    );
+                }
+                other => panic!("Expected Project in bothV() Union branch {i}, got: {other:?}"),
+            }
+        }
+    }
+
+    // === as()/select() variable label mapping ===
+
+    #[test]
+    fn test_as_select_produces_project() {
+        let result = translate("g.V().has('name','Alice').as('a').out('knows').select('a')");
+        assert!(result.is_ok(), "as/select should parse: {:?}", result.err());
+        let plan = result.unwrap();
+
+        // select('a') should produce a Project referencing the variable stored by as('a')
+        let proj = find_project(&plan.root).expect("Expected Project for select('a')");
+        assert_eq!(proj.projections.len(), 1);
+        assert_eq!(
+            proj.projections[0].alias.as_deref(),
+            Some("a"),
+            "Projection alias should match the select key"
+        );
+        // The expression should reference the original variable
+        match &proj.projections[0].expression {
+            LogicalExpression::Variable(var) => {
+                assert!(
+                    !var.is_empty(),
+                    "select('a') should reference a non-empty variable"
+                );
+            }
+            other => panic!("Expected Variable expression for select, got: {other:?}"),
+        }
+    }
+
+    // === union() produces Union with branches ===
+
+    #[test]
+    fn test_union_produces_union_with_branches() {
+        let result = translate("g.V().union(out('knows'), out('works_at'))");
+        assert!(result.is_ok(), "union() should parse: {:?}", result.err());
+        let plan = result.unwrap();
+
+        let union = find_union(&plan.root).expect("Expected Union for union()");
+        assert_eq!(union.inputs.len(), 2, "union() should have 2 branches");
+
+        // Each branch should end with a Project (for alias alignment)
+        // wrapping an Expand
+        for (i, branch) in union.inputs.iter().enumerate() {
+            match branch {
+                LogicalOperator::Project(proj) => {
+                    // The input should contain an Expand
+                    fn has_expand(op: &LogicalOperator) -> bool {
+                        match op {
+                            LogicalOperator::Expand(_) => true,
+                            LogicalOperator::Project(p) => has_expand(&p.input),
+                            LogicalOperator::Filter(f) => has_expand(&f.input),
+                            _ => false,
+                        }
+                    }
+                    assert!(
+                        has_expand(&proj.input),
+                        "Branch {i} should contain an Expand"
+                    );
+                }
+                other => panic!("Expected Project wrapping branch {i}, got: {other:?}"),
+            }
+        }
+    }
+
+    // === coalesce() produces Union ===
+
+    #[test]
+    fn test_coalesce_produces_union() {
+        let result = translate("g.V().coalesce(out('knows'), out('works_at'))");
+        assert!(
+            result.is_ok(),
+            "coalesce() should parse: {:?}",
+            result.err()
+        );
+        let plan = result.unwrap();
+
+        let union = find_union(&plan.root).expect("Expected Union for coalesce()");
+        assert_eq!(union.inputs.len(), 2, "coalesce() should have 2 branches");
+    }
+
+    // === project().by() produces correct Project ===
+
+    #[test]
+    fn test_project_by_produces_correct_projections() {
+        let result = translate("g.V().project('n','a').by('name').by('age')");
+        assert!(
+            result.is_ok(),
+            "project().by() should parse: {:?}",
+            result.err()
+        );
+        let plan = result.unwrap();
+
+        let proj = find_project(&plan.root).expect("Expected Project for project().by()");
+        assert_eq!(
+            proj.projections.len(),
+            2,
+            "project('n','a') should have 2 projections"
+        );
+
+        // Check aliases
+        assert_eq!(proj.projections[0].alias.as_deref(), Some("n"));
+        assert_eq!(proj.projections[1].alias.as_deref(), Some("a"));
+
+        // After .by('name').by('age'), the first projection's expression should reference 'name'
+        // and the second should reference 'age'
+        match &proj.projections[0].expression {
+            LogicalExpression::Property { property, .. } => {
+                assert_eq!(property, "name", "First projection should use 'name'");
+            }
+            other => panic!("Expected Property for first projection, got: {other:?}"),
+        }
+        match &proj.projections[1].expression {
+            LogicalExpression::Property { property, .. } => {
+                assert_eq!(property, "age", "Second projection should use 'age'");
+            }
+            other => panic!("Expected Property for second projection, got: {other:?}"),
+        }
+    }
+
+    // === addE().property() edge creation with properties ===
+
+    #[test]
+    fn test_add_e_with_property_produces_create_edge() {
+        let result = translate(
+            "g.addE('knows').from('a').to('b').property('since', 2020).property('weight', 0.5)",
+        );
+        assert!(
+            result.is_ok(),
+            "addE with properties should parse: {:?}",
+            result.err()
+        );
+        let plan = result.unwrap();
+
+        let edge = find_create_edge(&plan.root).expect("Expected CreateEdge");
+        assert_eq!(edge.edge_type, "knows");
+        assert_eq!(edge.from_variable, "a");
+        assert_eq!(edge.to_variable, "b");
+        assert_eq!(edge.properties.len(), 2, "Edge should have 2 properties");
+        assert_eq!(edge.properties[0].0, "since");
+        assert_eq!(edge.properties[1].0, "weight");
+    }
+
+    // === Additional edge cases ===
+
+    #[test]
+    fn test_values_single_key_produces_project() {
+        // Verify that single-key values() does NOT produce a Union
+        let result = translate("g.V().values('name')");
+        assert!(result.is_ok());
+        let plan = result.unwrap();
+
+        // Single key should produce a Project, not a Union
+        assert!(
+            find_union(&plan.root).is_none(),
+            "Single-key values() should not produce a Union"
+        );
+        // The Project under the Return should contain the property projection
+        let proj = find_project(&plan.root).expect("Expected Project for single-key values()");
+        assert_eq!(proj.projections.len(), 1);
+        match &proj.projections[0].expression {
+            LogicalExpression::Property { property, .. } => {
+                assert_eq!(property, "name");
+            }
+            other => panic!("Expected Property in Project, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_dedup_no_keys_deduplicates_on_current_var() {
+        let result = translate("g.V().dedup()");
+        assert!(result.is_ok());
+        let plan = result.unwrap();
+
+        let distinct = find_distinct_op(&plan.root).expect("Expected Distinct");
+        let cols = distinct
+            .columns
+            .as_ref()
+            .expect("dedup() should specify columns");
+        assert_eq!(cols.len(), 1, "dedup() with no keys should use 1 column");
+    }
+
+    #[test]
+    fn test_fold_on_bare_traversal() {
+        // fold() directly on g.V() should collect all vertices
+        let result = translate("g.V().fold()");
+        assert!(result.is_ok());
+        let plan = result.unwrap();
+
+        let agg = find_aggregate(&plan.root).expect("Expected Aggregate for fold()");
+        assert_eq!(agg.aggregates[0].function, AggregateFunction::Collect);
+    }
+
+    #[test]
+    fn test_select_multiple_keys_produces_multi_column() {
+        let result =
+            translate("g.V().has('name','Alice').as('a').out('knows').as('b').select('a','b')");
+        assert!(
+            result.is_ok(),
+            "select('a','b') should parse: {:?}",
+            result.err()
+        );
+        let plan = result.unwrap();
+
+        // Multi-key select should produce a Project with 2 projections
+        let proj = find_project(&plan.root).expect("Expected Project for multi-key select");
+        assert_eq!(
+            proj.projections.len(),
+            2,
+            "select('a','b') should have 2 projections"
+        );
+        let aliases: Vec<_> = proj
+            .projections
+            .iter()
+            .filter_map(|p| p.alias.as_deref())
+            .collect();
+        assert!(aliases.contains(&"a"), "Should have alias 'a'");
+        assert!(aliases.contains(&"b"), "Should have alias 'b'");
+    }
+
+    #[test]
+    fn test_union_single_branch() {
+        let result = translate("g.V().union(out('knows'))");
+        assert!(
+            result.is_ok(),
+            "single-branch union should parse: {:?}",
+            result.err()
+        );
+        let plan = result.unwrap();
+
+        let union = find_union(&plan.root).expect("Expected Union");
+        assert_eq!(
+            union.inputs.len(),
+            1,
+            "Single-branch union should have 1 input"
+        );
+    }
+
+    #[test]
+    fn test_group_count_without_by_produces_aggregate() {
+        // groupCount() without by() still creates an Aggregate
+        let result = translate("g.V().groupCount()");
+        assert!(
+            result.is_ok(),
+            "groupCount() should parse: {:?}",
+            result.err()
+        );
+        let plan = result.unwrap();
+
+        let agg = find_aggregate(&plan.root).expect("Expected Aggregate for groupCount()");
+        assert_eq!(agg.aggregates[0].function, AggregateFunction::Count);
+        assert!(
+            !agg.group_by.is_empty(),
+            "groupCount() should have a group_by expression"
+        );
     }
 }
