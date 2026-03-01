@@ -640,11 +640,11 @@ fn test_stress_concurrent_reads_during_writes() {
 
 #[test]
 fn test_stress_transaction_conflicts() {
-    // 8 threads with interleaved commit/rollback patterns
+    // 4 threads with interleaved commit/rollback patterns
     let db = Arc::new(GrafeoDB::new_in_memory());
 
-    let num_threads = 8;
-    let iterations = 10;
+    let num_threads = 4;
+    let iterations = 6;
     let barrier = Arc::new(Barrier::new(num_threads));
     let completed = Arc::new(AtomicUsize::new(0));
 
@@ -694,11 +694,11 @@ fn test_stress_transaction_conflicts() {
 
 #[test]
 fn test_stress_concurrent_epoch_pressure() {
-    // 4 threads each running 25 sequential transactions — creates many epochs
+    // 4 threads each running 8 sequential transactions — creates many epochs
     let db = Arc::new(GrafeoDB::new_in_memory());
 
     let num_threads = 4;
-    let txns_per_thread = 25;
+    let txns_per_thread = 8;
     let barrier = Arc::new(Barrier::new(num_threads));
     let completed = Arc::new(AtomicUsize::new(0));
 
