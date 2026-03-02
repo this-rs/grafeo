@@ -17,6 +17,7 @@ All notable changes to Grafeo, for future reference (and enjoyment).
 
 ### Improved
 
+- **Variable-length path traversal**: BFS path tracking now uses shared-prefix `Rc` segments instead of cloning full path vectors at each expansion step, reducing per-edge cost from O(depth) to O(1)
 - **Unit test coverage**: added tests for `with_store()` integration, snapshot round-trips, Cypher aggregate/union translation, and `LpgStore::clear()`
 
 ## [0.5.11] - 2026-03-02

@@ -6,6 +6,7 @@ use crate::graph::Direction;
 use crate::graph::GraphStore;
 use grafeo_common::types::{EdgeId, EpochId, LogicalType, NodeId, TxId};
 use std::collections::VecDeque;
+use std::rc::Rc;
 use std::sync::Arc;
 
 /// An expand operator that handles variable-length path patterns like `*1..3`.
@@ -77,6 +78,53 @@ struct OutputRow {
     path_nodes: Option<Vec<NodeId>>,
     /// All edges along the path, populated when tracking.
     path_edges: Option<Vec<EdgeId>>,
+}
+
+/// A shared-prefix path segment for efficient BFS path tracking.
+///
+/// Instead of cloning entire `Vec<NodeId>` / `Vec<EdgeId>` at each BFS expansion
+/// step (O(depth) per clone), segments form an `Rc`-linked list that shares common
+/// prefixes. Expansion costs O(1) (one `Rc::clone` + one allocation). Full paths
+/// are only materialized when emitting output rows.
+struct PathSegment {
+    /// The node at this position in the path.
+    node: NodeId,
+    /// The edge taken to reach this node. `None` for the source/root node.
+    edge: Option<EdgeId>,
+    /// Parent segment, or `None` for the root.
+    parent: Option<Rc<PathSegment>>,
+}
+
+impl PathSegment {
+    /// Materializes the full node path from root to this segment.
+    fn collect_nodes(&self, depth: u32) -> Vec<NodeId> {
+        let mut nodes = Vec::with_capacity(depth as usize + 1);
+        self.collect_nodes_into(&mut nodes);
+        nodes
+    }
+
+    fn collect_nodes_into(&self, nodes: &mut Vec<NodeId>) {
+        if let Some(parent) = &self.parent {
+            parent.collect_nodes_into(nodes);
+        }
+        nodes.push(self.node);
+    }
+
+    /// Materializes the full edge path from root to this segment.
+    fn collect_edges(&self, depth: u32) -> Vec<EdgeId> {
+        let mut edges = Vec::with_capacity(depth as usize);
+        self.collect_edges_into(&mut edges);
+        edges
+    }
+
+    fn collect_edges_into(&self, edges: &mut Vec<EdgeId>) {
+        if let Some(parent) = &self.parent {
+            parent.collect_edges_into(edges);
+        }
+        if let Some(edge) = self.edge {
+            edges.push(edge);
+        }
+    }
 }
 
 impl VariableLengthExpandOperator {
@@ -231,34 +279,45 @@ impl VariableLengthExpandOperator {
         let mut results = Vec::new();
 
         if self.output_path_detail {
-            // BFS with full path tracking
-            // Frontier: (current_node, depth, last_edge, node_path, edge_path)
-            let mut frontier: VecDeque<(NodeId, u32, EdgeId, Vec<NodeId>, Vec<EdgeId>)> =
-                VecDeque::new();
+            // BFS with shared-prefix path tracking via Rc<PathSegment>.
+            // Frontier: (current_node, depth, last_edge, path_segment)
+            let mut frontier: VecDeque<(NodeId, u32, EdgeId, Rc<PathSegment>)> = VecDeque::new();
+
+            let root = Rc::new(PathSegment {
+                node: source_node,
+                edge: None,
+                parent: None,
+            });
 
             for (target, edge_id) in self.get_edges(source_node) {
-                frontier.push_back((target, 1, edge_id, vec![source_node, target], vec![edge_id]));
+                let segment = Rc::new(PathSegment {
+                    node: target,
+                    edge: Some(edge_id),
+                    parent: Some(Rc::clone(&root)),
+                });
+                frontier.push_back((target, 1, edge_id, segment));
             }
 
-            while let Some((current_node, depth, edge_id, nodes, edges)) = frontier.pop_front() {
+            while let Some((current_node, depth, edge_id, segment)) = frontier.pop_front() {
                 if depth >= self.min_hops && depth <= self.max_hops {
                     results.push(OutputRow {
                         input_idx,
                         edge_id,
                         target_id: current_node,
                         path_length: depth,
-                        path_nodes: Some(nodes.clone()),
-                        path_edges: Some(edges.clone()),
+                        path_nodes: Some(segment.collect_nodes(depth)),
+                        path_edges: Some(segment.collect_edges(depth)),
                     });
                 }
 
                 if depth < self.max_hops {
                     for (target, next_edge_id) in self.get_edges(current_node) {
-                        let mut new_nodes = nodes.clone();
-                        new_nodes.push(target);
-                        let mut new_edges = edges.clone();
-                        new_edges.push(next_edge_id);
-                        frontier.push_back((target, depth + 1, next_edge_id, new_nodes, new_edges));
+                        let new_segment = Rc::new(PathSegment {
+                            node: target,
+                            edge: Some(next_edge_id),
+                            parent: Some(Rc::clone(&segment)),
+                        });
+                        frontier.push_back((target, depth + 1, next_edge_id, new_segment));
                     }
                 }
             }
