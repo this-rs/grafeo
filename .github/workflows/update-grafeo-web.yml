@@ -3,6 +3,12 @@ name: Update grafeo-web
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Grafeo version (e.g. 0.5.12)'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -15,7 +21,11 @@ jobs:
       - name: Extract version
         id: version
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
@@ -44,10 +54,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Install dependencies
-        run: npm install
+        run: |
+          rm -f package-lock.json
+          npm install
 
       - name: Update @grafeo-db/wasm dependency
         run: |
