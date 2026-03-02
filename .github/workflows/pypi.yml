@@ -32,7 +32,7 @@ jobs:
           manylinux: auto
           rust-toolchain: stable
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-linux-${{ matrix.platform.target }}
           path: dist
@@ -60,7 +60,7 @@ jobs:
           manylinux: musllinux_1_2
           rust-toolchain: stable
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-musllinux-${{ matrix.platform.target }}
           path: dist
@@ -87,7 +87,7 @@ jobs:
           args: --release --out dist -m crates/bindings/python/Cargo.toml
           sccache: "true"
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-windows-${{ matrix.platform.target }}
           path: dist
@@ -113,7 +113,7 @@ jobs:
           args: --release --out dist -m crates/bindings/python/Cargo.toml
           sccache: "true"
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-macos-${{ matrix.platform.target }}
           path: dist
@@ -128,7 +128,7 @@ jobs:
           command: sdist
           args: --out dist -m crates/bindings/python/Cargo.toml
       - name: Upload sdist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-sdist
           path: dist
