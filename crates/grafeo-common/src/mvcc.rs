@@ -230,6 +230,14 @@ impl<T> VersionChain<T> {
         self.versions.truncate(keep_count);
     }
 
+    /// Returns an iterator over all versions with their metadata, newest first.
+    ///
+    /// Each item is `(&VersionInfo, &T)` giving both the visibility metadata
+    /// and a reference to the version data.
+    pub fn history(&self) -> impl Iterator<Item = (&VersionInfo, &T)> {
+        self.versions.iter().map(|v| (&v.info, &v.data))
+    }
+
     /// Returns a reference to the latest version's data regardless of visibility.
     #[must_use]
     pub fn latest(&self) -> Option<&T> {
@@ -496,6 +504,15 @@ impl VersionRef {
     pub fn is_cold(&self) -> bool {
         matches!(self, Self::Cold(_))
     }
+
+    /// Returns the epoch when this version was deleted, if any.
+    #[must_use]
+    pub fn deleted_epoch(&self) -> Option<EpochId> {
+        match self {
+            Self::Hot(h) => h.deleted_epoch.get(),
+            Self::Cold(c) => c.deleted_epoch.get(),
+        }
+    }
 }
 
 /// Tiered version index - replaces `VersionChain<T>` for hot/cold storage.
@@ -708,6 +725,41 @@ impl VersionIndex {
             // All cold versions are older, only keep those >= min_epoch
             self.cold.retain(|v| v.epoch.as_u64() >= min_epoch.as_u64());
         }
+    }
+
+    /// Returns epoch IDs of all versions, newest first.
+    ///
+    /// Combines hot and cold versions, sorted by epoch descending.
+    #[must_use]
+    pub fn version_epochs(&self) -> Vec<EpochId> {
+        let mut epochs: Vec<EpochId> = self
+            .hot
+            .iter()
+            .map(|v| v.epoch)
+            .chain(self.cold.iter().map(|v| v.epoch))
+            .collect();
+        epochs.sort_by_key(|e| std::cmp::Reverse(e.as_u64()));
+        epochs
+    }
+
+    /// Returns all version references with their metadata, newest first.
+    ///
+    /// Each item is `(EpochId, Option<EpochId>, VersionRef)` giving
+    /// the created epoch, deleted epoch, and a reference to read the data.
+    #[must_use]
+    pub fn version_history(&self) -> Vec<(EpochId, Option<EpochId>, VersionRef)> {
+        let mut versions: Vec<(EpochId, Option<EpochId>, VersionRef)> = self
+            .hot
+            .iter()
+            .map(|v| (v.epoch, v.deleted_epoch.get(), VersionRef::Hot(*v)))
+            .chain(
+                self.cold
+                    .iter()
+                    .map(|v| (v.epoch, v.deleted_epoch.get(), VersionRef::Cold(*v))),
+            )
+            .collect();
+        versions.sort_by_key(|v| std::cmp::Reverse(v.0.as_u64()));
+        versions
     }
 
     /// Returns a reference to the latest version regardless of visibility.

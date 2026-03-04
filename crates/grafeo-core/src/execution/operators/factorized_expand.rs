@@ -106,7 +106,7 @@ impl FactorizedExpandOperator {
     /// Gets neighbors for a source node with type and visibility filtering.
     fn get_neighbors(&self, source_id: NodeId) -> Vec<(NodeId, EdgeId)> {
         let epoch = self.viewing_epoch;
-        let tx = self.tx_id.unwrap_or(TxId::SYSTEM);
+        let tx_id = self.tx_id;
 
         self.store
             .edges_from(source_id, self.direction)
@@ -127,14 +127,22 @@ impl FactorizedExpandOperator {
                     return false;
                 }
 
-                // Filter by visibility if we have tx context
+                // Filter by visibility
                 if let Some(epoch) = epoch {
-                    let edge_visible = self.store.get_edge_versioned(*edge_id, epoch, tx).is_some();
-                    let target_visible = self
-                        .store
-                        .get_node_versioned(*target_id, epoch, tx)
-                        .is_some();
-                    edge_visible && target_visible
+                    if let Some(tx) = tx_id {
+                        let edge_visible =
+                            self.store.get_edge_versioned(*edge_id, epoch, tx).is_some();
+                        let target_visible = self
+                            .store
+                            .get_node_versioned(*target_id, epoch, tx)
+                            .is_some();
+                        edge_visible && target_visible
+                    } else {
+                        let edge_visible = self.store.get_edge_at_epoch(*edge_id, epoch).is_some();
+                        let target_visible =
+                            self.store.get_node_at_epoch(*target_id, epoch).is_some();
+                        edge_visible && target_visible
+                    }
                 } else {
                     true
                 }
@@ -401,7 +409,7 @@ impl FactorizedExpandChain {
         edge_types: Vec<String>,
     ) -> Result<(), OperatorError> {
         let epoch = self.viewing_epoch;
-        let tx = self.tx_id.unwrap_or(TxId::SYSTEM);
+        let tx_id = self.tx_id;
 
         // Get the deepest level to find source nodes
         let deepest_level = chunk.level_count() - 1;
@@ -452,12 +460,20 @@ impl FactorizedExpandChain {
                         return false;
                     }
 
-                    // Filter by visibility if we have tx context
+                    // Filter by visibility
                     if let Some(e) = epoch {
-                        let edge_visible = self.store.get_edge_versioned(*edge_id, e, tx).is_some();
-                        let target_visible =
-                            self.store.get_node_versioned(*target_id, e, tx).is_some();
-                        edge_visible && target_visible
+                        if let Some(tx) = tx_id {
+                            let edge_visible =
+                                self.store.get_edge_versioned(*edge_id, e, tx).is_some();
+                            let target_visible =
+                                self.store.get_node_versioned(*target_id, e, tx).is_some();
+                            edge_visible && target_visible
+                        } else {
+                            let edge_visible = self.store.get_edge_at_epoch(*edge_id, e).is_some();
+                            let target_visible =
+                                self.store.get_node_at_epoch(*target_id, e).is_some();
+                            edge_visible && target_visible
+                        }
                     } else {
                         true
                     }

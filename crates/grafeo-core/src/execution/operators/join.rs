@@ -94,6 +94,11 @@ impl HashKey {
                         .collect(),
                 )
             }
+            Value::Path { nodes, edges } => {
+                let mut parts: Vec<_> = nodes.iter().map(HashKey::from_value).collect();
+                parts.extend(edges.iter().map(HashKey::from_value));
+                HashKey::Composite(parts)
+            }
         }
     }
 

@@ -132,6 +132,68 @@ impl super::GrafeoDB {
         self.store.get_node(id)
     }
 
+    /// Gets a node as it existed at a specific epoch.
+    ///
+    /// Uses pure epoch-based visibility (not transaction-aware), so the node
+    /// is visible if and only if `created_epoch <= epoch` and it was not
+    /// deleted at or before `epoch`.
+    #[must_use]
+    pub fn get_node_at_epoch(
+        &self,
+        id: grafeo_common::types::NodeId,
+        epoch: grafeo_common::types::EpochId,
+    ) -> Option<grafeo_core::graph::lpg::Node> {
+        self.store.get_node_at_epoch(id, epoch)
+    }
+
+    /// Gets an edge as it existed at a specific epoch.
+    ///
+    /// Uses pure epoch-based visibility (not transaction-aware).
+    #[must_use]
+    pub fn get_edge_at_epoch(
+        &self,
+        id: grafeo_common::types::EdgeId,
+        epoch: grafeo_common::types::EpochId,
+    ) -> Option<grafeo_core::graph::lpg::Edge> {
+        self.store.get_edge_at_epoch(id, epoch)
+    }
+
+    /// Returns all versions of a node with their creation/deletion epochs.
+    ///
+    /// Properties and labels reflect the current state (not versioned per-epoch).
+    #[must_use]
+    pub fn get_node_history(
+        &self,
+        id: grafeo_common::types::NodeId,
+    ) -> Vec<(
+        grafeo_common::types::EpochId,
+        Option<grafeo_common::types::EpochId>,
+        grafeo_core::graph::lpg::Node,
+    )> {
+        self.store.get_node_history(id)
+    }
+
+    /// Returns all versions of an edge with their creation/deletion epochs.
+    ///
+    /// Properties reflect the current state (not versioned per-epoch).
+    #[must_use]
+    pub fn get_edge_history(
+        &self,
+        id: grafeo_common::types::EdgeId,
+    ) -> Vec<(
+        grafeo_common::types::EpochId,
+        Option<grafeo_common::types::EpochId>,
+        grafeo_core::graph::lpg::Edge,
+    )> {
+        self.store.get_edge_history(id)
+    }
+
+    /// Returns the current epoch of the database.
+    #[must_use]
+    pub fn current_epoch(&self) -> grafeo_common::types::EpochId {
+        self.store.current_epoch()
+    }
+
     /// Deletes a node and all its edges.
     ///
     /// If WAL is enabled, the operation is logged for durability.

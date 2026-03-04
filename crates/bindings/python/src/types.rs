@@ -305,6 +305,24 @@ impl PyValue {
                     .unbind()
                     .into_any()
             }
+            Value::Path { nodes, edges } => {
+                let dict = PyDict::new(py);
+                let py_nodes: Vec<Py<PyAny>> = nodes.iter().map(|v| Self::to_py(v, py)).collect();
+                let py_edges: Vec<Py<PyAny>> = edges.iter().map(|v| Self::to_py(v, py)).collect();
+                dict.set_item(
+                    "nodes",
+                    PyList::new(py, py_nodes)
+                        .expect("PyList creation only fails on memory exhaustion"),
+                )
+                .expect("dict.set_item only fails on memory exhaustion");
+                dict.set_item(
+                    "edges",
+                    PyList::new(py, py_edges)
+                        .expect("PyList creation only fails on memory exhaustion"),
+                )
+                .expect("dict.set_item only fails on memory exhaustion");
+                dict.unbind().into_any()
+            }
         }
     }
 }

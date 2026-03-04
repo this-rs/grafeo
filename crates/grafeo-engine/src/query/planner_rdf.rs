@@ -2384,6 +2384,75 @@ impl RdfExpressionPredicate {
                     _ => None,
                 }
             }
+            BinaryFilterOp::Like => {
+                match (left, right) {
+                    (Value::String(s), Value::String(pattern)) => {
+                        // Convert SQL LIKE pattern to regex
+                        let mut re_pat = String::with_capacity(pattern.len() + 4);
+                        re_pat.push('^');
+                        let mut chars = pattern.chars().peekable();
+                        while let Some(ch) = chars.next() {
+                            match ch {
+                                '%' => re_pat.push_str(".*"),
+                                '_' => re_pat.push('.'),
+                                '\\' => {
+                                    if let Some(next) = chars.next() {
+                                        if ".+*?^${}()|[]\\".contains(next) {
+                                            re_pat.push('\\');
+                                        }
+                                        re_pat.push(next);
+                                    }
+                                }
+                                _ => {
+                                    if ".+*?^${}()|[]\\".contains(ch) {
+                                        re_pat.push('\\');
+                                    }
+                                    re_pat.push(ch);
+                                }
+                            }
+                        }
+                        re_pat.push('$');
+                        match regex::Regex::new(&re_pat) {
+                            Ok(re) => Some(Value::Bool(re.is_match(s))),
+                            Err(_) => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            BinaryFilterOp::Concat => match (left, right) {
+                (Value::String(a), Value::String(b)) => {
+                    let mut s = String::with_capacity(a.len() + b.len());
+                    s.push_str(a);
+                    s.push_str(b);
+                    Some(Value::String(s.into()))
+                }
+                (Value::String(a), other) => {
+                    let b = match other {
+                        Value::Int64(i) => i.to_string(),
+                        Value::Float64(f) => f.to_string(),
+                        Value::Bool(b) => b.to_string(),
+                        _ => return None,
+                    };
+                    let mut s = String::with_capacity(a.len() + b.len());
+                    s.push_str(a);
+                    s.push_str(&b);
+                    Some(Value::String(s.into()))
+                }
+                (other, Value::String(b)) => {
+                    let a = match other {
+                        Value::Int64(i) => i.to_string(),
+                        Value::Float64(f) => f.to_string(),
+                        Value::Bool(bo) => bo.to_string(),
+                        _ => return None,
+                    };
+                    let mut s = String::with_capacity(a.len() + b.len());
+                    s.push_str(&a);
+                    s.push_str(b);
+                    Some(Value::String(s.into()))
+                }
+                _ => None,
+            },
         }
     }
 
@@ -2981,6 +3050,9 @@ fn value_to_string(value: &Value) -> String {
         Value::Vector(v) => {
             let parts: Vec<String> = v.iter().map(|f| f.to_string()).collect();
             format!("vector([{}])", parts.join(", "))
+        }
+        Value::Path { nodes, edges } => {
+            format!("<path: {} nodes, {} edges>", nodes.len(), edges.len())
         }
     }
 }

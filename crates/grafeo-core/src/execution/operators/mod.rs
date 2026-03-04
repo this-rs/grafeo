@@ -76,8 +76,9 @@ pub use limit::{LimitOperator, LimitSkipOperator, SkipOperator};
 pub use map_collect::MapCollectOperator;
 pub use merge::{MergeOperator, MergeRelationshipConfig, MergeRelationshipOperator};
 pub use mutation::{
-    AddLabelOperator, CreateEdgeOperator, CreateNodeOperator, DeleteEdgeOperator,
-    DeleteNodeOperator, PropertySource, RemoveLabelOperator, SetPropertyOperator,
+    AddLabelOperator, ConstraintValidator, CreateEdgeOperator, CreateNodeOperator,
+    DeleteEdgeOperator, DeleteNodeOperator, PropertySource, RemoveLabelOperator,
+    SetPropertyOperator,
 };
 pub use project::{ProjectExpr, ProjectOperator};
 pub use push::{
@@ -227,6 +228,9 @@ pub enum OperatorError {
     /// Execution error.
     #[error("execution error: {0}")]
     Execution(String),
+    /// Schema constraint violation during a write operation.
+    #[error("constraint violation: {0}")]
+    ConstraintViolation(String),
 }
 
 /// The core trait for pull-based operators.

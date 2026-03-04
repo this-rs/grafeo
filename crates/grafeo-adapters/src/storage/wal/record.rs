@@ -100,6 +100,106 @@ pub enum WalRecord {
         label: String,
     },
 
+    // === Schema DDL Records ===
+    /// Register a node type definition.
+    CreateNodeType {
+        /// Type name (corresponds to a label).
+        name: String,
+        /// Property definitions: (name, data_type, nullable).
+        properties: Vec<(String, String, bool)>,
+        /// Constraints: (kind, property_names). kind = "unique", "primary_key", "not_null".
+        constraints: Vec<(String, Vec<String>)>,
+    },
+
+    /// Drop a node type definition.
+    DropNodeType {
+        /// Type name.
+        name: String,
+    },
+
+    /// Register an edge type definition.
+    CreateEdgeType {
+        /// Type name.
+        name: String,
+        /// Property definitions: (name, data_type, nullable).
+        properties: Vec<(String, String, bool)>,
+        /// Constraints: (kind, property_names).
+        constraints: Vec<(String, Vec<String>)>,
+    },
+
+    /// Drop an edge type definition.
+    DropEdgeType {
+        /// Type name.
+        name: String,
+    },
+
+    /// Create an index.
+    CreateIndex {
+        /// Index name.
+        name: String,
+        /// Target label.
+        label: String,
+        /// Target property.
+        property: String,
+        /// Index kind: "property", "text", "vector", "btree".
+        index_type: String,
+    },
+
+    /// Drop an index.
+    DropIndex {
+        /// Index name.
+        name: String,
+    },
+
+    /// Create a constraint.
+    CreateConstraint {
+        /// Constraint name.
+        name: String,
+        /// Target label.
+        label: String,
+        /// Target properties.
+        properties: Vec<String>,
+        /// Constraint kind: "unique", "node_key", "not_null", "exists".
+        kind: String,
+    },
+
+    /// Drop a constraint.
+    DropConstraint {
+        /// Constraint name.
+        name: String,
+    },
+
+    /// Register a graph type definition.
+    CreateGraphType {
+        /// Type name.
+        name: String,
+        /// Allowed node types.
+        node_types: Vec<String>,
+        /// Allowed edge types.
+        edge_types: Vec<String>,
+        /// Whether unlisted types are allowed.
+        open: bool,
+    },
+
+    /// Drop a graph type definition.
+    DropGraphType {
+        /// Type name.
+        name: String,
+    },
+
+    /// Register a schema namespace.
+    CreateSchema {
+        /// Schema name.
+        name: String,
+    },
+
+    /// Drop a schema namespace.
+    DropSchema {
+        /// Schema name.
+        name: String,
+    },
+
+    // === Transaction Control ===
     /// Transaction commit.
     TxCommit {
         /// Transaction ID.

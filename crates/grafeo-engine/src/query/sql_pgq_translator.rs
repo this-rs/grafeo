@@ -320,6 +320,12 @@ impl SqlPgqTranslator {
         match pattern {
             ast::Pattern::Node(node) => self.translate_node_pattern(node, input),
             ast::Pattern::Path(path) => self.translate_path_pattern(path, input),
+            ast::Pattern::Quantified { .. } | ast::Pattern::Union(_) => {
+                Err(Error::Query(QueryError::new(
+                    QueryErrorKind::Semantic,
+                    "SQL/PGQ does not support quantified or union patterns",
+                )))
+            }
         }
     }
 
@@ -706,9 +712,12 @@ impl SqlPgqTranslator {
                     index: Box::new(index_expr),
                 })
             }
-            ast::Expression::LetIn { .. } => Err(Error::Query(QueryError::new(
+            ast::Expression::LetIn { .. }
+            | ast::Expression::ListComprehension { .. }
+            | ast::Expression::ListPredicate { .. }
+            | ast::Expression::Reduce { .. } => Err(Error::Query(QueryError::new(
                 QueryErrorKind::Semantic,
-                "LET expressions not supported in SQL/PGQ",
+                "This expression type is not supported in SQL/PGQ",
             ))),
         }
     }

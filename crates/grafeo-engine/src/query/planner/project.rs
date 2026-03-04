@@ -27,6 +27,24 @@ impl super::Planner {
         input_op: Box<dyn Operator>,
         input_columns: Vec<String>,
     ) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        // Expand RETURN * wildcard: replace with all user-visible input columns
+        let expanded_items;
+        let items = if ret.items.len() == 1
+            && matches!(&ret.items[0].expression, LogicalExpression::Variable(n) if n == "*")
+        {
+            expanded_items = input_columns
+                .iter()
+                .filter(|col| !col.starts_with('_')) // Skip internal columns
+                .map(|col| crate::query::plan::ReturnItem {
+                    expression: LogicalExpression::Variable(col.clone()),
+                    alias: None,
+                })
+                .collect::<Vec<_>>();
+            &expanded_items
+        } else {
+            &ret.items
+        };
+
         // Build variable to column index mapping
         let variable_columns: HashMap<String, usize> = input_columns
             .iter()
@@ -35,8 +53,7 @@ impl super::Planner {
             .collect();
 
         // Extract column names from return items
-        let columns: Vec<String> = ret
-            .items
+        let columns: Vec<String> = items
             .iter()
             .map(|item| {
                 item.alias.clone().unwrap_or_else(|| {
@@ -47,17 +64,16 @@ impl super::Planner {
             .collect();
 
         // Check if we need a project operator (for property access or expression evaluation)
-        let needs_project = ret
-            .items
+        let needs_project = items
             .iter()
             .any(|item| !matches!(&item.expression, LogicalExpression::Variable(_)));
 
         if needs_project {
             // Build project expressions
-            let mut projections = Vec::with_capacity(ret.items.len());
-            let mut output_types = Vec::with_capacity(ret.items.len());
+            let mut projections = Vec::with_capacity(items.len());
+            let mut output_types = Vec::with_capacity(items.len());
 
-            for item in &ret.items {
+            for item in items {
                 match &item.expression {
                     LogicalExpression::Variable(name) => {
                         let col_idx = *variable_columns.get(name).ok_or_else(|| {
@@ -239,10 +255,10 @@ impl super::Planner {
         } else {
             // Simple case: all return items are bare variables
             // Emit resolve variants for entity variables
-            let mut projections = Vec::with_capacity(ret.items.len());
-            let mut output_types = Vec::with_capacity(ret.items.len());
+            let mut projections = Vec::with_capacity(items.len());
+            let mut output_types = Vec::with_capacity(items.len());
 
-            for item in &ret.items {
+            for item in items {
                 if let LogicalExpression::Variable(name) = &item.expression {
                     let col_idx = *variable_columns.get(name).ok_or_else(|| {
                         Error::Internal(format!("Variable '{}' not found in input", name))

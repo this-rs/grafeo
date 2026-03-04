@@ -15,6 +15,7 @@ mod logical_type;
 mod property_map;
 mod time;
 mod timestamp;
+mod validity;
 mod value;
 
 pub use date::Date;
@@ -24,4 +25,5 @@ pub use logical_type::LogicalType;
 pub use property_map::PropertyMap;
 pub use time::Time;
 pub use timestamp::Timestamp;
+pub use validity::ValidityTs;
 pub use value::{HashableValue, OrderableValue, OrderedFloat64, PropertyKey, Value};

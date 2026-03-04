@@ -4,7 +4,7 @@ use super::{Operator, OperatorResult};
 use crate::execution::{ChunkZoneHints, DataChunk, SelectionVector};
 use crate::graph::Direction;
 use crate::graph::GraphStore;
-use grafeo_common::types::{PropertyKey, Value};
+use grafeo_common::types::{HashableValue, PropertyKey, Value};
 use regex::Regex;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -328,6 +328,10 @@ pub enum BinaryFilterOp {
     Regex,
     /// Power/exponentiation (^).
     Pow,
+    /// SQL LIKE pattern matching (% = any chars, _ = single char).
+    Like,
+    /// String concatenation (||).
+    Concat,
 }
 
 /// Unary operators for filter expressions.
@@ -987,6 +991,65 @@ impl ExpressionPredicate {
                     _ => None, // Type mismatch
                 }
             }
+            // SQL LIKE pattern matching
+            BinaryFilterOp::Like => {
+                match (left, right) {
+                    (Value::String(s), Value::String(pattern)) => {
+                        // Convert SQL LIKE pattern to regex:
+                        // % -> .* (any sequence of characters)
+                        // _ -> .  (any single character)
+                        // Escape other regex metacharacters
+                        let mut regex_pattern = String::with_capacity(pattern.len() + 4);
+                        regex_pattern.push('^');
+                        let mut chars = pattern.chars().peekable();
+                        while let Some(ch) = chars.next() {
+                            match ch {
+                                '%' => regex_pattern.push_str(".*"),
+                                '_' => regex_pattern.push('.'),
+                                '\\' => {
+                                    // Escape sequence: next char is literal
+                                    if let Some(next) = chars.next() {
+                                        regex_escape_char(next, &mut regex_pattern);
+                                    }
+                                }
+                                _ => regex_escape_char(ch, &mut regex_pattern),
+                            }
+                        }
+                        regex_pattern.push('$');
+                        match Regex::new(&regex_pattern) {
+                            Ok(re) => Some(Value::Bool(re.is_match(s))),
+                            Err(_) => None,
+                        }
+                    }
+                    (Value::Null, _) | (_, Value::Null) => Some(Value::Null),
+                    _ => None,
+                }
+            }
+            // String concatenation (||)
+            BinaryFilterOp::Concat => match (left, right) {
+                (Value::String(a), Value::String(b)) => {
+                    let mut s = String::with_capacity(a.len() + b.len());
+                    s.push_str(a);
+                    s.push_str(b);
+                    Some(Value::String(s.into()))
+                }
+                (Value::String(a), other) => {
+                    let b = value_to_string(other)?;
+                    let mut s = String::with_capacity(a.len() + b.len());
+                    s.push_str(a);
+                    s.push_str(&b);
+                    Some(Value::String(s.into()))
+                }
+                (other, Value::String(b)) => {
+                    let a = value_to_string(other)?;
+                    let mut s = String::with_capacity(a.len() + b.len());
+                    s.push_str(&a);
+                    s.push_str(b);
+                    Some(Value::String(s.into()))
+                }
+                (Value::Null, _) | (_, Value::Null) => Some(Value::Null),
+                _ => None,
+            },
         }
     }
 
@@ -1117,6 +1180,7 @@ impl ExpressionPredicate {
                 match val {
                     Value::List(items) => Some(Value::Int64(items.len() as i64)),
                     Value::String(s) => Some(Value::Int64(s.len() as i64)),
+                    Value::Path { edges, .. } => Some(Value::Int64(edges.len() as i64)),
                     _ => None,
                 }
             }
@@ -2119,15 +2183,15 @@ impl ExpressionPredicate {
             }
             // --- Path decomposition functions ---
             "nodes" => {
-                // nodes(path) - extracts node IDs from a path value (list of alternating node/edge IDs)
+                // nodes(path) - extracts nodes from a path value
                 if args.len() != 1 {
                     return None;
                 }
                 let val = self.eval_expr(&args[0], chunk, row)?;
                 match val {
+                    Value::Path { nodes, .. } => Some(Value::List(nodes)),
                     Value::List(items) => {
-                        // Path values alternate: node, edge, node, edge, ...
-                        // Extract even-indexed elements (nodes)
+                        // Legacy: alternating node, edge, node, edge, ...
                         let nodes: Vec<Value> = items.iter().step_by(2).cloned().collect();
                         Some(Value::List(nodes.into()))
                     }
@@ -2135,18 +2199,156 @@ impl ExpressionPredicate {
                 }
             }
             "edges" | "relationships" => {
-                // edges(path) / relationships(path) - extracts edge IDs from a path value
+                // edges(path) / relationships(path) - extracts edges from a path value
                 if args.len() != 1 {
                     return None;
                 }
                 let val = self.eval_expr(&args[0], chunk, row)?;
                 match val {
+                    Value::Path { edges, .. } => Some(Value::List(edges)),
                     Value::List(items) => {
-                        // Path values alternate: node, edge, node, edge, ...
-                        // Extract odd-indexed elements (edges)
+                        // Legacy: alternating node, edge, node, edge, ...
                         let edges: Vec<Value> = items.iter().skip(1).step_by(2).cloned().collect();
                         Some(Value::List(edges.into()))
                     }
+                    _ => None,
+                }
+            }
+            // --- Path predicate functions (ISO GQL) ---
+            "isacyclic" => {
+                // isAcyclic(path) - true if no node appears more than once
+                if args.len() != 1 {
+                    return None;
+                }
+                let val = self.eval_expr(&args[0], chunk, row)?;
+                match val {
+                    Value::Path { nodes, .. } => {
+                        let mut seen = std::collections::HashSet::new();
+                        let acyclic = nodes
+                            .iter()
+                            .all(|n| seen.insert(HashableValue::new(n.clone())));
+                        Some(Value::Bool(acyclic))
+                    }
+                    Value::Null => Some(Value::Null),
+                    _ => None,
+                }
+            }
+            "issimple" => {
+                // isSimple(path) - true if no node repeats except possibly first == last
+                if args.len() != 1 {
+                    return None;
+                }
+                let val = self.eval_expr(&args[0], chunk, row)?;
+                match val {
+                    Value::Path { nodes, .. } => {
+                        if nodes.is_empty() {
+                            return Some(Value::Bool(true));
+                        }
+                        let mut seen = std::collections::HashSet::new();
+                        let simple = nodes.iter().enumerate().all(|(i, n)| {
+                            let hv = HashableValue::new(n.clone());
+                            if !seen.insert(hv) {
+                                // Duplicate allowed only if last node == first node
+                                i == nodes.len() - 1 && n == &nodes[0]
+                            } else {
+                                true
+                            }
+                        });
+                        Some(Value::Bool(simple))
+                    }
+                    Value::Null => Some(Value::Null),
+                    _ => None,
+                }
+            }
+            "istrail" => {
+                // isTrail(path) - true if no edge repeats
+                if args.len() != 1 {
+                    return None;
+                }
+                let val = self.eval_expr(&args[0], chunk, row)?;
+                match val {
+                    Value::Path { edges, .. } => {
+                        let mut seen = std::collections::HashSet::new();
+                        let trail = edges
+                            .iter()
+                            .all(|e| seen.insert(HashableValue::new(e.clone())));
+                        Some(Value::Bool(trail))
+                    }
+                    Value::Null => Some(Value::Null),
+                    _ => None,
+                }
+            }
+            // --- GQL ISO standard functions ---
+            "normalize" => {
+                // normalize(string) - returns the string as-is (NFC normalization).
+                // Rust strings are valid UTF-8; full NFC normalization requires the
+                // unicode-normalization crate, which is deferred to Phase 2.
+                if args.len() != 1 {
+                    return None;
+                }
+                let val = self.eval_expr(&args[0], chunk, row)?;
+                match val {
+                    Value::String(s) => Some(Value::String(s)),
+                    Value::Null => Some(Value::Null),
+                    _ => None,
+                }
+            }
+            "isnormalized" => {
+                // IS NORMALIZED - check if string is in NFC form.
+                // Currently returns true for all valid strings (Rust strings are UTF-8).
+                // Full NFC check requires unicode-normalization crate.
+                if args.len() != 1 {
+                    return None;
+                }
+                let val = self.eval_expr(&args[0], chunk, row)?;
+                match val {
+                    Value::String(_) => Some(Value::Bool(true)),
+                    Value::Null => Some(Value::Null),
+                    _ => None,
+                }
+            }
+            "string_join" => {
+                // string_join(list, separator) - join list elements with separator
+                if args.len() != 2 {
+                    return None;
+                }
+                let list_val = self.eval_expr(&args[0], chunk, row)?;
+                let sep_val = self.eval_expr(&args[1], chunk, row)?;
+                match (list_val, sep_val) {
+                    (Value::List(items), Value::String(sep)) => {
+                        let sep_str: &str = &sep;
+                        let joined: String = items
+                            .iter()
+                            .filter_map(|v| match v {
+                                Value::String(s) => Some(s.to_string()),
+                                Value::Int64(i) => Some(i.to_string()),
+                                Value::Float64(f) => Some(f.to_string()),
+                                Value::Bool(b) => Some(b.to_string()),
+                                Value::Null => None,
+                                other => Some(format!("{other}")),
+                            })
+                            .collect::<Vec<String>>()
+                            .join(sep_str);
+                        Some(Value::String(joined.into()))
+                    }
+                    (Value::Null, _) | (_, Value::Null) => Some(Value::Null),
+                    _ => None,
+                }
+            }
+            "session_user" => {
+                // session_user() - returns the current session user
+                // For embedded databases, returns a default user string
+                Some(Value::String("default".into()))
+            }
+            "octet_length" | "byte_length" => {
+                // octet_length(string) - byte length
+                if args.len() != 1 {
+                    return None;
+                }
+                let val = self.eval_expr(&args[0], chunk, row)?;
+                match val {
+                    Value::String(s) => Some(Value::Int64(s.len() as i64)),
+                    Value::Null => Some(Value::Null),
                     _ => None,
                 }
             }
@@ -2354,6 +2556,26 @@ impl Operator for FilterOperator {
 
     fn name(&self) -> &'static str {
         "Filter"
+    }
+}
+
+/// Escapes a character for use in a regex pattern.
+fn regex_escape_char(ch: char, out: &mut String) {
+    if ".+*?^${}()|[]\\".contains(ch) {
+        out.push('\\');
+    }
+    out.push(ch);
+}
+
+/// Converts a `Value` to its string representation for concatenation.
+fn value_to_string(val: &Value) -> Option<String> {
+    match val {
+        Value::Int64(i) => Some(i.to_string()),
+        Value::Float64(f) => Some(f.to_string()),
+        Value::Bool(b) => Some(b.to_string()),
+        Value::String(s) => Some(s.to_string()),
+        Value::Null => None,
+        _ => Some(format!("{val}")),
     }
 }
 

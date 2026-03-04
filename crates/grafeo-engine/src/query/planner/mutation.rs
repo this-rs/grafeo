@@ -32,18 +32,21 @@ impl super::Planner {
 
         let output_schema = self.derive_schema_from_columns(&columns);
 
-        let operator = Box::new(
-            CreateNodeOperator::new(
-                Arc::clone(&self.store),
-                input_op,
-                create.labels.clone(),
-                properties,
-                output_schema,
-                output_column,
-            )
-            .with_tx_context(self.viewing_epoch, self.tx_id),
-        );
+        let mut op = CreateNodeOperator::new(
+            Arc::clone(&self.store),
+            input_op,
+            create.labels.clone(),
+            properties,
+            output_schema,
+            output_column,
+        )
+        .with_tx_context(self.viewing_epoch, self.tx_id);
 
+        if let Some(ref validator) = self.validator {
+            op = op.with_validator(Arc::clone(validator));
+        }
+
+        let operator = Box::new(op);
         Ok((operator, columns))
     }
 
@@ -107,6 +110,9 @@ impl super::Planner {
 
         if let Some(col) = output_column {
             operator = operator.with_output_column(col);
+        }
+        if let Some(ref validator) = self.validator {
+            operator = operator.with_validator(Arc::clone(validator));
         }
 
         let operator = Box::new(operator);
@@ -851,21 +857,29 @@ impl super::Planner {
         // Determine if this is a node or edge using tracked edge columns
         let is_edge = set_prop.is_edge || self.edge_columns.borrow().contains(&set_prop.variable);
         let operator: Box<dyn Operator> = if is_edge {
-            Box::new(SetPropertyOperator::new_for_edge(
+            let mut op = SetPropertyOperator::new_for_edge(
                 Arc::clone(&self.store),
                 input_op,
                 entity_column,
                 properties,
                 output_schema,
-            ))
+            );
+            if let Some(ref validator) = self.validator {
+                op = op.with_validator(Arc::clone(validator));
+            }
+            Box::new(op)
         } else {
-            Box::new(SetPropertyOperator::new_for_node(
+            let mut op = SetPropertyOperator::new_for_node(
                 Arc::clone(&self.store),
                 input_op,
                 entity_column,
                 properties,
                 output_schema,
-            ))
+            );
+            if let Some(ref validator) = self.validator {
+                op = op.with_validator(Arc::clone(validator));
+            }
+            Box::new(op)
         };
 
         Ok((operator, output_columns))

@@ -83,11 +83,19 @@ impl ScanOperator {
 
         // Filter by visibility if we have tx context
         self.batch = if let Some(epoch) = self.viewing_epoch {
-            let tx = self.tx_id.unwrap_or(TxId::SYSTEM);
-            all_ids
-                .into_iter()
-                .filter(|id| self.store.get_node_versioned(*id, epoch, tx).is_some())
-                .collect()
+            if let Some(tx) = self.tx_id {
+                // Transaction-aware visibility (sees own uncommitted changes)
+                all_ids
+                    .into_iter()
+                    .filter(|id| self.store.get_node_versioned(*id, epoch, tx).is_some())
+                    .collect()
+            } else {
+                // Pure epoch-based visibility (time-travel, no tx)
+                all_ids
+                    .into_iter()
+                    .filter(|id| self.store.get_node_at_epoch(*id, epoch).is_some())
+                    .collect()
+            }
         } else {
             all_ids
         };

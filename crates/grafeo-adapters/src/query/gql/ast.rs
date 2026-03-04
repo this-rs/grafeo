@@ -70,10 +70,14 @@ pub enum CompositeOp {
     Union,
     /// UNION ALL (keep duplicates).
     UnionAll,
-    /// EXCEPT (set difference).
+    /// EXCEPT (set difference, distinct).
     Except,
-    /// INTERSECT (set intersection).
+    /// EXCEPT ALL (set difference, keep duplicates).
+    ExceptAll,
+    /// INTERSECT (set intersection, distinct).
     Intersect,
+    /// INTERSECT ALL (set intersection, keep duplicates).
+    IntersectAll,
     /// OTHERWISE (fallback if left is empty).
     Otherwise,
     /// NEXT (linear composition: output of left feeds into right).
@@ -134,6 +138,15 @@ pub enum QueryClause {
     Merge(MergeClause),
     /// A LET clause (variable bindings).
     Let(Vec<(String, Expression)>),
+    /// An inline CALL { subquery } clause (optional = OPTIONAL CALL { ... }).
+    InlineCall {
+        /// The inner subquery.
+        subquery: QueryStatement,
+        /// Whether this is OPTIONAL CALL (left-join semantics).
+        optional: bool,
+    },
+    /// A CALL procedure clause within a query.
+    CallProcedure(CallStatement),
 }
 
 /// A query statement.
@@ -181,10 +194,23 @@ pub struct HavingClause {
 pub struct SetClause {
     /// Property assignments.
     pub assignments: Vec<PropertyAssignment>,
+    /// Map assignments (SET n = {map} or SET n += {map}).
+    pub map_assignments: Vec<MapAssignment>,
     /// Label operations (add labels to nodes).
     pub label_operations: Vec<LabelOperation>,
     /// Source span.
     pub span: Option<SourceSpan>,
+}
+
+/// A map assignment for SET n = {map} or SET n += {map}.
+#[derive(Debug, Clone)]
+pub struct MapAssignment {
+    /// Variable name.
+    pub variable: String,
+    /// Map expression (typically a map literal or variable).
+    pub map_expr: Expression,
+    /// Whether to replace all properties (true for `=`) or merge (false for `+=`).
+    pub replace: bool,
 }
 
 /// A label operation for adding/removing labels.
@@ -223,6 +249,8 @@ pub enum PathMode {
 /// Path search prefix for ISO GQL shortest path queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PathSearchPrefix {
+    /// `ALL`: enumerate all matching paths.
+    All,
     /// `ANY`: return any single matching path.
     Any,
     /// `ANY k`: return up to k matching paths.
@@ -270,6 +298,8 @@ pub struct AliasedPattern {
     pub alias: Option<String>,
     /// Optional path function wrapping the pattern.
     pub path_function: Option<PathFunction>,
+    /// Per-pattern KEEP clause (ISO GQL sec 16.5).
+    pub keep: Option<MatchMode>,
     /// The underlying pattern.
     pub pattern: Pattern,
 }
@@ -288,8 +318,10 @@ pub enum PathFunction {
 pub struct WithClause {
     /// Whether to use DISTINCT.
     pub distinct: bool,
-    /// Items to pass to the next query part.
+    /// Items to pass to the next query part (empty when `is_wildcard` is true).
     pub items: Vec<ReturnItem>,
+    /// Whether this is `WITH *` (pass all variables through).
+    pub is_wildcard: bool,
     /// Optional WHERE clause after WITH.
     pub where_clause: Option<WhereClause>,
     /// Source span.
@@ -331,6 +363,17 @@ pub enum Pattern {
     Node(NodePattern),
     /// An edge pattern connecting nodes.
     Path(PathPattern),
+    /// A quantified (parenthesized) path pattern: `((a)-[e]->(b)){2,5}`.
+    Quantified {
+        /// The inner subpattern to repeat.
+        pattern: Box<Pattern>,
+        /// Minimum repetitions.
+        min: u32,
+        /// Maximum repetitions (None = unbounded).
+        max: Option<u32>,
+    },
+    /// A union of alternative path patterns: `(a)-[:T1]->(b) | (a)-[:T2]->(c)`.
+    Union(Vec<Pattern>),
 }
 
 /// A label expression for GQL IS syntax (e.g., `IS Person | Employee`, `IS Person & !Employee`).
@@ -426,8 +469,10 @@ pub struct WhereClause {
 pub struct ReturnClause {
     /// Whether to return DISTINCT results.
     pub distinct: bool,
-    /// Items to return.
+    /// Items to return (empty when `is_wildcard` is true).
     pub items: Vec<ReturnItem>,
+    /// Whether this is `RETURN *` (return all bound variables).
+    pub is_wildcard: bool,
     /// Explicit GROUP BY expressions.
     pub group_by: Vec<Expression>,
     /// Optional ORDER BY.
@@ -540,6 +585,61 @@ pub enum SchemaStatement {
     CreateEdgeType(CreateEdgeTypeStatement),
     /// CREATE VECTOR INDEX.
     CreateVectorIndex(CreateVectorIndexStatement),
+    /// DROP NODE TYPE.
+    DropNodeType {
+        /// Type name.
+        name: String,
+        /// IF EXISTS flag.
+        if_exists: bool,
+    },
+    /// DROP EDGE TYPE.
+    DropEdgeType {
+        /// Type name.
+        name: String,
+        /// IF EXISTS flag.
+        if_exists: bool,
+    },
+    /// CREATE INDEX (property, text, btree).
+    CreateIndex(CreateIndexStatement),
+    /// DROP INDEX.
+    DropIndex {
+        /// Index name.
+        name: String,
+        /// IF EXISTS flag.
+        if_exists: bool,
+    },
+    /// CREATE CONSTRAINT.
+    CreateConstraint(CreateConstraintStatement),
+    /// DROP CONSTRAINT.
+    DropConstraint {
+        /// Constraint name.
+        name: String,
+        /// IF EXISTS flag.
+        if_exists: bool,
+    },
+    /// CREATE GRAPH TYPE.
+    CreateGraphType(CreateGraphTypeStatement),
+    /// DROP GRAPH TYPE.
+    DropGraphType {
+        /// Type name.
+        name: String,
+        /// IF EXISTS flag.
+        if_exists: bool,
+    },
+    /// CREATE SCHEMA.
+    CreateSchema {
+        /// Schema name.
+        name: String,
+        /// IF NOT EXISTS flag.
+        if_not_exists: bool,
+    },
+    /// DROP SCHEMA.
+    DropSchema {
+        /// Schema name.
+        name: String,
+        /// IF EXISTS flag.
+        if_exists: bool,
+    },
 }
 
 /// A CREATE NODE TYPE statement.
@@ -549,6 +649,10 @@ pub struct CreateNodeTypeStatement {
     pub name: String,
     /// Property definitions.
     pub properties: Vec<PropertyDefinition>,
+    /// IF NOT EXISTS flag.
+    pub if_not_exists: bool,
+    /// OR REPLACE flag.
+    pub or_replace: bool,
     /// Source span.
     pub span: Option<SourceSpan>,
 }
@@ -560,6 +664,29 @@ pub struct CreateEdgeTypeStatement {
     pub name: String,
     /// Property definitions.
     pub properties: Vec<PropertyDefinition>,
+    /// IF NOT EXISTS flag.
+    pub if_not_exists: bool,
+    /// OR REPLACE flag.
+    pub or_replace: bool,
+    /// Source span.
+    pub span: Option<SourceSpan>,
+}
+
+/// A CREATE GRAPH TYPE statement.
+#[derive(Debug, Clone)]
+pub struct CreateGraphTypeStatement {
+    /// Graph type name.
+    pub name: String,
+    /// Allowed node types (empty = open).
+    pub node_types: Vec<String>,
+    /// Allowed edge types (empty = open).
+    pub edge_types: Vec<String>,
+    /// Whether unlisted types are also allowed.
+    pub open: bool,
+    /// IF NOT EXISTS flag.
+    pub if_not_exists: bool,
+    /// OR REPLACE flag.
+    pub or_replace: bool,
     /// Source span.
     pub span: Option<SourceSpan>,
 }
@@ -597,6 +724,89 @@ pub struct CreateVectorIndexStatement {
     pub metric: Option<String>,
     /// Source span.
     pub span: Option<SourceSpan>,
+}
+
+/// A CREATE INDEX statement.
+///
+/// # Syntax
+///
+/// ```text
+/// CREATE INDEX name FOR (n:Label) ON (n.property) [USING TEXT|VECTOR|BTREE]
+/// ```
+#[derive(Debug, Clone)]
+pub struct CreateIndexStatement {
+    /// Index name.
+    pub name: String,
+    /// Index kind (property, text, vector, btree).
+    pub index_kind: IndexKind,
+    /// Node label to index.
+    pub label: String,
+    /// Properties to index.
+    pub properties: Vec<String>,
+    /// Additional options (dimensions, metric for vector indexes).
+    pub options: IndexOptions,
+    /// IF NOT EXISTS flag.
+    pub if_not_exists: bool,
+    /// Source span.
+    pub span: Option<SourceSpan>,
+}
+
+/// Kind of index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexKind {
+    /// Default property index (hash-based).
+    Property,
+    /// Full-text search index (BM25).
+    Text,
+    /// Vector similarity index (HNSW).
+    Vector,
+    /// B-tree range index.
+    BTree,
+}
+
+/// Additional options for index creation.
+#[derive(Debug, Clone, Default)]
+pub struct IndexOptions {
+    /// Vector dimensions (for vector indexes).
+    pub dimensions: Option<usize>,
+    /// Distance metric (for vector indexes).
+    pub metric: Option<String>,
+}
+
+/// A CREATE CONSTRAINT statement.
+///
+/// # Syntax
+///
+/// ```text
+/// CREATE CONSTRAINT [name] FOR (n:Label) ON (n.property) UNIQUE|NOT NULL
+/// ```
+#[derive(Debug, Clone)]
+pub struct CreateConstraintStatement {
+    /// Constraint name (optional).
+    pub name: Option<String>,
+    /// Constraint kind.
+    pub constraint_kind: ConstraintKind,
+    /// Node label this constraint applies to.
+    pub label: String,
+    /// Properties constrained.
+    pub properties: Vec<String>,
+    /// IF NOT EXISTS flag.
+    pub if_not_exists: bool,
+    /// Source span.
+    pub span: Option<SourceSpan>,
+}
+
+/// Kind of constraint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConstraintKind {
+    /// Unique value constraint.
+    Unique,
+    /// Composite key constraint (unique combination).
+    NodeKey,
+    /// Property must not be null.
+    NotNull,
+    /// Property must exist.
+    Exists,
 }
 
 /// A property definition in a schema.
@@ -693,6 +903,54 @@ pub enum Expression {
         /// The body expression.
         body: Box<Expression>,
     },
+    /// List comprehension: `[x IN list WHERE predicate | expression]`.
+    ListComprehension {
+        /// Iteration variable name.
+        variable: String,
+        /// Source list expression.
+        list_expr: Box<Expression>,
+        /// Optional filter predicate.
+        filter_expr: Option<Box<Expression>>,
+        /// Mapping expression for each element.
+        map_expr: Box<Expression>,
+    },
+    /// List predicate: `all/any/none/single(x IN list WHERE predicate)`.
+    ListPredicate {
+        /// Predicate kind.
+        kind: ListPredicateKind,
+        /// Iteration variable name.
+        variable: String,
+        /// Source list expression.
+        list_expr: Box<Expression>,
+        /// Predicate expression.
+        predicate: Box<Expression>,
+    },
+    /// Reduce accumulator: `reduce(acc = init, x IN list | expression)`.
+    Reduce {
+        /// Accumulator variable name.
+        accumulator: String,
+        /// Initial value for the accumulator.
+        initial: Box<Expression>,
+        /// Iteration variable name.
+        variable: String,
+        /// Source list expression.
+        list: Box<Expression>,
+        /// Body expression (references both accumulator and variable).
+        expression: Box<Expression>,
+    },
+}
+
+/// The kind of list predicate function.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListPredicateKind {
+    /// `all(x IN list WHERE pred)`: true if pred holds for every element.
+    All,
+    /// `any(x IN list WHERE pred)`: true if pred holds for at least one.
+    Any,
+    /// `none(x IN list WHERE pred)`: true if pred holds for none.
+    None,
+    /// `single(x IN list WHERE pred)`: true if pred holds for exactly one.
+    Single,
 }
 
 /// A literal value.

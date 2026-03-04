@@ -14,6 +14,56 @@ use super::{Operator, OperatorError, OperatorResult};
 use crate::execution::chunk::DataChunkBuilder;
 use crate::graph::{GraphStore, GraphStoreMut};
 
+/// Trait for validating schema constraints during mutation operations.
+///
+/// Implementors check type definitions, NOT NULL, and UNIQUE constraints
+/// before data is written to the store.
+pub trait ConstraintValidator: Send + Sync {
+    /// Validates a single property value for a node with the given labels.
+    ///
+    /// Checks type compatibility and NOT NULL constraints.
+    fn validate_node_property(
+        &self,
+        labels: &[String],
+        key: &str,
+        value: &Value,
+    ) -> Result<(), OperatorError>;
+
+    /// Validates that all required properties are present after creating a node.
+    ///
+    /// Checks NOT NULL constraints for properties that were not explicitly set.
+    fn validate_node_complete(
+        &self,
+        labels: &[String],
+        properties: &[(String, Value)],
+    ) -> Result<(), OperatorError>;
+
+    /// Checks UNIQUE constraint for a node property value.
+    ///
+    /// Returns an error if a node with the same label already has this value.
+    fn check_unique_node_property(
+        &self,
+        labels: &[String],
+        key: &str,
+        value: &Value,
+    ) -> Result<(), OperatorError>;
+
+    /// Validates a single property value for an edge of the given type.
+    fn validate_edge_property(
+        &self,
+        edge_type: &str,
+        key: &str,
+        value: &Value,
+    ) -> Result<(), OperatorError>;
+
+    /// Validates that all required properties are present after creating an edge.
+    fn validate_edge_complete(
+        &self,
+        edge_type: &str,
+        properties: &[(String, Value)],
+    ) -> Result<(), OperatorError>;
+}
+
 /// Operator that creates new nodes.
 ///
 /// For each input row, creates a new node with the specified labels
@@ -37,6 +87,8 @@ pub struct CreateNodeOperator {
     viewing_epoch: Option<EpochId>,
     /// Transaction ID for MVCC versioning.
     tx_id: Option<TxId>,
+    /// Optional constraint validator for schema enforcement.
+    validator: Option<Arc<dyn ConstraintValidator>>,
 }
 
 /// Source for a property value.
@@ -123,6 +175,7 @@ impl CreateNodeOperator {
             executed: false,
             viewing_epoch: None,
             tx_id: None,
+            validator: None,
         }
     }
 
@@ -131,6 +184,37 @@ impl CreateNodeOperator {
         self.viewing_epoch = Some(epoch);
         self.tx_id = tx_id;
         self
+    }
+
+    /// Sets the constraint validator for schema enforcement.
+    pub fn with_validator(mut self, validator: Arc<dyn ConstraintValidator>) -> Self {
+        self.validator = Some(validator);
+        self
+    }
+}
+
+impl CreateNodeOperator {
+    /// Validates and sets properties on a newly created node.
+    fn validate_and_set_properties(
+        &self,
+        node_id: NodeId,
+        resolved_props: &[(String, Value)],
+    ) -> Result<(), OperatorError> {
+        // Phase 1: Validate each property value
+        if let Some(ref validator) = self.validator {
+            for (name, value) in resolved_props {
+                validator.validate_node_property(&self.labels, name, value)?;
+                validator.check_unique_node_property(&self.labels, name, value)?;
+            }
+            // Phase 2: Validate completeness (NOT NULL checks for missing required properties)
+            validator.validate_node_complete(&self.labels, resolved_props)?;
+        }
+
+        // Phase 3: Write properties to the store
+        for (name, value) in resolved_props {
+            self.store.set_node_property(node_id, name, value.clone());
+        }
+        Ok(())
     }
 }
 
@@ -149,16 +233,23 @@ impl Operator for CreateNodeOperator {
                     DataChunkBuilder::with_capacity(&self.output_schema, chunk.row_count());
 
                 for row in chunk.selected_indices() {
+                    // Resolve all property values first (before creating node)
+                    let resolved_props: Vec<(String, Value)> = self
+                        .properties
+                        .iter()
+                        .map(|(name, source)| {
+                            let value =
+                                source.resolve(&chunk, row, self.store.as_ref() as &dyn GraphStore);
+                            (name.clone(), value)
+                        })
+                        .collect();
+
                     // Create the node with MVCC versioning
                     let label_refs: Vec<&str> = self.labels.iter().map(String::as_str).collect();
                     let node_id = self.store.create_node_versioned(&label_refs, epoch, tx);
 
-                    // Set properties
-                    for (prop_name, source) in &self.properties {
-                        let value =
-                            source.resolve(&chunk, row, self.store.as_ref() as &dyn GraphStore);
-                        self.store.set_node_property(node_id, prop_name, value);
-                    }
+                    // Validate and set properties
+                    self.validate_and_set_properties(node_id, &resolved_props)?;
 
                     // Copy input columns to output
                     for col_idx in 0..chunk.column_count() {
@@ -192,17 +283,25 @@ impl Operator for CreateNodeOperator {
             }
             self.executed = true;
 
+            // Resolve constant properties
+            let resolved_props: Vec<(String, Value)> = self
+                .properties
+                .iter()
+                .filter_map(|(name, source)| {
+                    if let PropertySource::Constant(value) = source {
+                        Some((name.clone(), value.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
             // Create the node with MVCC versioning
             let label_refs: Vec<&str> = self.labels.iter().map(String::as_str).collect();
             let node_id = self.store.create_node_versioned(&label_refs, epoch, tx);
 
-            // Set properties from constants only
-            for (prop_name, source) in &self.properties {
-                if let PropertySource::Constant(value) = source {
-                    self.store
-                        .set_node_property(node_id, prop_name, value.clone());
-                }
-            }
+            // Validate and set properties
+            self.validate_and_set_properties(node_id, &resolved_props)?;
 
             // Build output chunk with just the node ID
             let mut builder = DataChunkBuilder::with_capacity(&self.output_schema, 1);
@@ -249,6 +348,8 @@ pub struct CreateEdgeOperator {
     viewing_epoch: Option<EpochId>,
     /// Transaction ID for MVCC versioning.
     tx_id: Option<TxId>,
+    /// Optional constraint validator for schema enforcement.
+    validator: Option<Arc<dyn ConstraintValidator>>,
 }
 
 impl CreateEdgeOperator {
@@ -277,6 +378,7 @@ impl CreateEdgeOperator {
             output_column: None,
             viewing_epoch: None,
             tx_id: None,
+            validator: None,
         }
     }
 
@@ -296,6 +398,12 @@ impl CreateEdgeOperator {
     pub fn with_tx_context(mut self, epoch: EpochId, tx_id: Option<TxId>) -> Self {
         self.viewing_epoch = Some(epoch);
         self.tx_id = tx_id;
+        self
+    }
+
+    /// Sets the constraint validator for schema enforcement.
+    pub fn with_validator(mut self, validator: Arc<dyn ConstraintValidator>) -> Self {
+        self.validator = Some(validator);
         self
     }
 }
@@ -349,6 +457,25 @@ impl Operator for CreateEdgeOperator {
                     }
                 };
 
+                // Resolve property values
+                let resolved_props: Vec<(String, Value)> = self
+                    .properties
+                    .iter()
+                    .map(|(name, source)| {
+                        let value =
+                            source.resolve(&chunk, row, self.store.as_ref() as &dyn GraphStore);
+                        (name.clone(), value)
+                    })
+                    .collect();
+
+                // Validate constraints before writing
+                if let Some(ref validator) = self.validator {
+                    for (name, value) in &resolved_props {
+                        validator.validate_edge_property(&self.edge_type, name, value)?;
+                    }
+                    validator.validate_edge_complete(&self.edge_type, &resolved_props)?;
+                }
+
                 // Create the edge with MVCC versioning
                 let edge_id = self.store.create_edge_versioned(
                     from_node_id,
@@ -359,9 +486,8 @@ impl Operator for CreateEdgeOperator {
                 );
 
                 // Set properties
-                for (prop_name, source) in &self.properties {
-                    let value = source.resolve(&chunk, row, self.store.as_ref() as &dyn GraphStore);
-                    self.store.set_edge_property(edge_id, prop_name, value);
+                for (name, value) in resolved_props {
+                    self.store.set_edge_property(edge_id, &name, value);
                 }
 
                 // Copy input columns
@@ -793,6 +919,12 @@ pub struct SetPropertyOperator {
     properties: Vec<(String, PropertySource)>,
     /// Output schema.
     output_schema: Vec<LogicalType>,
+    /// Optional constraint validator for schema enforcement.
+    validator: Option<Arc<dyn ConstraintValidator>>,
+    /// Entity labels (for node constraint validation).
+    labels: Vec<String>,
+    /// Edge type (for edge constraint validation).
+    edge_type_name: Option<String>,
 }
 
 impl SetPropertyOperator {
@@ -811,6 +943,9 @@ impl SetPropertyOperator {
             is_edge: false,
             properties,
             output_schema,
+            validator: None,
+            labels: Vec::new(),
+            edge_type_name: None,
         }
     }
 
@@ -829,7 +964,28 @@ impl SetPropertyOperator {
             is_edge: true,
             properties,
             output_schema,
+            validator: None,
+            labels: Vec::new(),
+            edge_type_name: None,
         }
+    }
+
+    /// Sets the constraint validator for schema enforcement.
+    pub fn with_validator(mut self, validator: Arc<dyn ConstraintValidator>) -> Self {
+        self.validator = Some(validator);
+        self
+    }
+
+    /// Sets the entity labels (for node constraint validation).
+    pub fn with_labels(mut self, labels: Vec<String>) -> Self {
+        self.labels = labels;
+        self
+    }
+
+    /// Sets the edge type name (for edge constraint validation).
+    pub fn with_edge_type(mut self, edge_type: String) -> Self {
+        self.edge_type_name = Some(edge_type);
+        self
     }
 }
 
@@ -860,16 +1016,41 @@ impl Operator for SetPropertyOperator {
                     }
                 };
 
-                // Set all properties
-                for (prop_name, source) in &self.properties {
-                    let value = source.resolve(&chunk, row, self.store.as_ref() as &dyn GraphStore);
+                // Resolve all property values
+                let resolved_props: Vec<(String, Value)> = self
+                    .properties
+                    .iter()
+                    .map(|(name, source)| {
+                        let value =
+                            source.resolve(&chunk, row, self.store.as_ref() as &dyn GraphStore);
+                        (name.clone(), value)
+                    })
+                    .collect();
 
+                // Validate constraints before writing
+                if let Some(ref validator) = self.validator {
+                    if self.is_edge {
+                        if let Some(ref et) = self.edge_type_name {
+                            for (name, value) in &resolved_props {
+                                validator.validate_edge_property(et, name, value)?;
+                            }
+                        }
+                    } else {
+                        for (name, value) in &resolved_props {
+                            validator.validate_node_property(&self.labels, name, value)?;
+                            validator.check_unique_node_property(&self.labels, name, value)?;
+                        }
+                    }
+                }
+
+                // Write all properties
+                for (prop_name, value) in resolved_props {
                     if self.is_edge {
                         self.store
-                            .set_edge_property(EdgeId(entity_id), prop_name, value);
+                            .set_edge_property(EdgeId(entity_id), &prop_name, value);
                     } else {
                         self.store
-                            .set_node_property(NodeId(entity_id), prop_name, value);
+                            .set_node_property(NodeId(entity_id), &prop_name, value);
                     }
                 }
 

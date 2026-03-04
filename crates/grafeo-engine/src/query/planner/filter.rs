@@ -22,6 +22,14 @@ impl super::Planner {
             return self.plan_exists_as_semi_join(&filter.input, subquery, is_negated, remaining);
         }
 
+        // Check for COUNT subquery comparisons and rewrite as Apply + Aggregate + Filter.
+        // Handles patterns like: COUNT { MATCH ... } > 5, COUNT { ... } = 0, etc.
+        if let Some((subquery, op, threshold, remaining)) =
+            Self::extract_count_comparison(&filter.predicate)
+        {
+            return self.plan_count_as_apply(&filter.input, subquery, op, threshold, remaining);
+        }
+
         // Check zone maps for simple property predicates before scanning
         // If zone map says "definitely no matches", we can short-circuit
         if let Some(false) = self.check_zone_map_for_predicate(&filter.predicate) {
@@ -212,6 +220,169 @@ impl super::Planner {
         Ok((join_op, output_columns))
     }
 
+    /// Extracts a COUNT subquery comparison from a filter predicate.
+    ///
+    /// Recognizes patterns like:
+    /// - `COUNT { MATCH ... } > 5`
+    /// - `COUNT { MATCH ... } = 0`
+    /// - `5 < COUNT { MATCH ... }` (reversed operands)
+    ///
+    /// Returns `(subquery, comparison_op, threshold_value, remaining_predicate)`.
+    fn extract_count_comparison(
+        predicate: &LogicalExpression,
+    ) -> Option<(
+        &LogicalOperator,
+        BinaryOp,
+        &LogicalExpression,
+        Option<&LogicalExpression>,
+    )> {
+        match predicate {
+            LogicalExpression::Binary { left, op, right } => {
+                // Check for AND-combined: extract COUNT comparison from either side
+                if *op == BinaryOp::And {
+                    if let Some(result) = Self::extract_count_from_binary(left) {
+                        return Some((result.0, result.1, result.2, Some(right)));
+                    }
+                    if let Some(result) = Self::extract_count_from_binary(right) {
+                        return Some((result.0, result.1, result.2, Some(left)));
+                    }
+                    return None;
+                }
+
+                // Direct comparison: COUNT { ... } op value
+                Self::extract_count_from_binary(predicate)
+                    .map(|(sub, op, threshold)| (sub, op, threshold, None))
+            }
+            _ => None,
+        }
+    }
+
+    /// Helper: extracts COUNT subquery comparison from a binary expression.
+    fn extract_count_from_binary(
+        expr: &LogicalExpression,
+    ) -> Option<(&LogicalOperator, BinaryOp, &LogicalExpression)> {
+        if let LogicalExpression::Binary { left, op, right } = expr {
+            match op {
+                BinaryOp::Eq
+                | BinaryOp::Ne
+                | BinaryOp::Gt
+                | BinaryOp::Ge
+                | BinaryOp::Lt
+                | BinaryOp::Le => {
+                    // COUNT { ... } op literal
+                    if let LogicalExpression::CountSubquery(subplan) = left.as_ref() {
+                        return Some((subplan.as_ref(), *op, right.as_ref()));
+                    }
+                    // literal op COUNT { ... } (flip the operator)
+                    if let LogicalExpression::CountSubquery(subplan) = right.as_ref() {
+                        let flipped = match op {
+                            BinaryOp::Gt => BinaryOp::Lt,
+                            BinaryOp::Ge => BinaryOp::Le,
+                            BinaryOp::Lt => BinaryOp::Gt,
+                            BinaryOp::Le => BinaryOp::Ge,
+                            other => *other, // Eq/Ne are symmetric
+                        };
+                        return Some((subplan.as_ref(), flipped, left.as_ref()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Plans a COUNT subquery comparison as Join + Aggregate + Filter.
+    ///
+    /// Rewrites `WHERE COUNT { MATCH pattern } > N` into:
+    /// 1. Inner join on shared variables to get all matches per outer row
+    /// 2. Aggregate(COUNT) grouped by outer columns
+    /// 3. Filter(count > N) on the aggregated result
+    fn plan_count_as_apply(
+        &self,
+        outer_input: &LogicalOperator,
+        subquery: &LogicalOperator,
+        op: BinaryOp,
+        threshold: &LogicalExpression,
+        remaining_predicate: Option<&LogicalExpression>,
+    ) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        let (left_op, left_columns) = self.plan_operator(outer_input)?;
+        let (right_op, right_columns) = self.plan_operator(subquery)?;
+
+        let output_columns = left_columns.clone();
+
+        // Find shared variables for equi-join keys
+        let mut probe_keys = Vec::new();
+        let mut build_keys = Vec::new();
+        for (right_idx, right_col) in right_columns.iter().enumerate() {
+            if let Some(left_idx) = left_columns.iter().position(|c| c == right_col) {
+                probe_keys.push(left_idx);
+                build_keys.push(right_idx);
+            }
+        }
+
+        // Inner join to get all matches, then group by outer columns and count
+        let output_schema = self.derive_schema_from_columns(&output_columns);
+        let join_op: Box<dyn Operator> = Box::new(HashJoinOperator::new(
+            left_op,
+            right_op,
+            probe_keys,
+            build_keys,
+            PhysicalJoinType::Inner,
+            output_schema,
+        ));
+
+        // Aggregate: COUNT(*) grouped by all outer columns
+        let count_alias = "_count_subquery_".to_string();
+        let mut agg_columns = output_columns.clone();
+        agg_columns.push(count_alias.clone());
+
+        let group_keys: Vec<usize> = (0..output_columns.len()).collect();
+        let agg_exprs = vec![PhysicalAggregateExpr::count_star()];
+        let agg_schema = self.derive_schema_from_columns(&agg_columns);
+
+        let agg_op: Box<dyn Operator> = Box::new(HashAggregateOperator::new(
+            join_op, group_keys, agg_exprs, agg_schema,
+        ));
+
+        // Filter: _count_ op threshold
+        let threshold_expr = convert_filter_expression(threshold)?;
+        let count_var_columns: HashMap<String, usize> = agg_columns
+            .iter()
+            .enumerate()
+            .map(|(i, name)| (name.clone(), i))
+            .collect();
+        let filter_op_code = convert_binary_op(op)?;
+        let count_filter = FilterExpression::Binary {
+            left: Box::new(FilterExpression::Variable(count_alias)),
+            op: filter_op_code,
+            right: Box::new(threshold_expr),
+        };
+
+        let predicate = ExpressionPredicate::new(
+            count_filter,
+            count_var_columns.clone(),
+            Arc::clone(&self.store) as Arc<dyn GraphStore>,
+        );
+        let mut result_op: Box<dyn Operator> =
+            Box::new(FilterOperator::new(agg_op, Box::new(predicate)));
+
+        // If there's a remaining predicate, apply it too
+        if let Some(remaining) = remaining_predicate {
+            let remaining_expr = self.convert_expression(remaining)?;
+            let remaining_predicate = ExpressionPredicate::new(
+                remaining_expr,
+                count_var_columns,
+                Arc::clone(&self.store) as Arc<dyn GraphStore>,
+            );
+            result_op = Box::new(FilterOperator::new(
+                result_op,
+                Box::new(remaining_predicate),
+            ));
+        }
+
+        Ok((result_op, output_columns))
+    }
+
     /// Checks zone maps for a predicate to see if we can skip the scan entirely.
     ///
     /// Returns:
@@ -381,8 +552,11 @@ impl super::Planner {
         // MVCC visibility: filter out nodes not visible at the current epoch/tx.
         // Without this, rolled-back or uncommitted nodes could leak through.
         let epoch = self.viewing_epoch;
-        let tx = self.tx_id.unwrap_or(TxId::SYSTEM);
-        matching_nodes.retain(|id| self.store.get_node_versioned(*id, epoch, tx).is_some());
+        if let Some(tx) = self.tx_id {
+            matching_nodes.retain(|id| self.store.get_node_versioned(*id, epoch, tx).is_some());
+        } else {
+            matching_nodes.retain(|id| self.store.get_node_at_epoch(*id, epoch).is_some());
+        }
 
         let columns = vec![scan_variable.clone()];
         let node_list_op: Box<dyn Operator> = Box::new(NodeListOperator::new(matching_nodes, 2048));

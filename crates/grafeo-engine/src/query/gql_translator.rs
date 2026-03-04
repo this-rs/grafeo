@@ -3,12 +3,13 @@
 //! Translates GQL AST to the common logical plan representation.
 
 use crate::query::plan::{
-    AddLabelOp, AggregateExpr, AggregateFunction, AggregateOp, ApplyOp, BinaryOp, CallProcedureOp,
-    CreateEdgeOp, CreateNodeOp, DeleteNodeOp, DistinctOp, ExceptOp, ExpandDirection, ExpandOp,
-    FilterOp, IntersectOp, JoinOp, JoinType, LeftJoinOp, LimitOp, LogicalExpression,
-    LogicalOperator, LogicalPlan, MergeOp, MergeRelationshipOp, NodeScanOp, OtherwiseOp, PathMode,
-    ProcedureYield, ProjectOp, Projection, RemoveLabelOp, ReturnItem, ReturnOp, SetPropertyOp,
-    ShortestPathOp, SkipOp, SortKey, SortOp, SortOrder, UnaryOp, UnionOp, UnwindOp,
+    self as plan, AddLabelOp, AggregateExpr, AggregateFunction, AggregateOp, ApplyOp, BinaryOp,
+    CallProcedureOp, CreateEdgeOp, CreateNodeOp, DeleteNodeOp, DistinctOp, ExceptOp,
+    ExpandDirection, ExpandOp, FilterOp, IntersectOp, JoinOp, JoinType, LeftJoinOp, LimitOp,
+    LogicalExpression, LogicalOperator, LogicalPlan, MergeOp, MergeRelationshipOp, NodeScanOp,
+    OtherwiseOp, PathMode, ProcedureYield, ProjectOp, Projection, RemoveLabelOp, ReturnItem,
+    ReturnOp, SetPropertyOp, ShortestPathOp, SkipOp, SortKey, SortOp, SortOrder, UnaryOp, UnionOp,
+    UnwindOp,
 };
 use crate::query::translator_common::{
     combine_with_and, is_aggregate_function, to_aggregate_function,
@@ -17,13 +18,15 @@ use grafeo_adapters::query::gql::{self, ast};
 use grafeo_common::types::Value;
 use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
 
-/// Result of translating a GQL query: either a logical plan or a session command.
+/// Result of translating a GQL query: either a logical plan, session command, or schema command.
 #[derive(Debug)]
 pub enum GqlTranslationResult {
     /// A query plan to execute.
     Plan(LogicalPlan),
     /// A session or transaction command (not a query plan).
     SessionCommand(ast::SessionCommand),
+    /// A schema DDL command (CREATE/DROP TYPE, INDEX, CONSTRAINT).
+    SchemaCommand(ast::SchemaStatement),
 }
 
 /// Translates a GQL query string to a logical plan.
@@ -40,6 +43,10 @@ pub fn translate(query: &str) -> Result<LogicalPlan> {
         GqlTranslationResult::SessionCommand(_) => Err(Error::Query(QueryError::new(
             QueryErrorKind::Semantic,
             "Session commands cannot be executed as queries",
+        ))),
+        GqlTranslationResult::SchemaCommand(_) => Err(Error::Query(QueryError::new(
+            QueryErrorKind::Semantic,
+            "Schema DDL commands cannot be executed as queries",
         ))),
     }
 }
@@ -68,6 +75,9 @@ impl GqlTranslator {
             ast::Statement::SessionCommand(cmd) => {
                 Ok(GqlTranslationResult::SessionCommand(cmd.clone()))
             }
+            ast::Statement::Schema(schema) => {
+                Ok(GqlTranslationResult::SchemaCommand(schema.clone()))
+            }
             other => self
                 .translate_statement(other)
                 .map(GqlTranslationResult::Plan),
@@ -78,13 +88,10 @@ impl GqlTranslator {
         match stmt {
             ast::Statement::Query(query) => self.translate_query(query),
             ast::Statement::DataModification(dm) => self.translate_data_modification(dm),
-            ast::Statement::Schema(_) => Err(Error::Query(
-                QueryError::new(
-                    QueryErrorKind::Semantic,
-                    "Schema DDL is not supported via execute()",
-                )
-                .with_hint("Use create_vector_index() for vector indexes"),
-            )),
+            ast::Statement::Schema(_) => Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "Schema DDL commands are handled before query planning",
+            ))),
             ast::Statement::Call(call) => self.translate_call(call),
             ast::Statement::CompositeQuery { left, op, right } => {
                 self.translate_composite_query(left, *op, right)
@@ -120,19 +127,19 @@ impl GqlTranslator {
                 };
                 Ok(LogicalPlan::new(root))
             }
-            ast::CompositeOp::Except => {
+            ast::CompositeOp::Except | ast::CompositeOp::ExceptAll => {
                 let root = LogicalOperator::Except(ExceptOp {
                     left: Box::new(left_plan.root),
                     right: Box::new(right_plan.root),
-                    all: false,
+                    all: matches!(op, ast::CompositeOp::ExceptAll),
                 });
                 Ok(LogicalPlan::new(root))
             }
-            ast::CompositeOp::Intersect => {
+            ast::CompositeOp::Intersect | ast::CompositeOp::IntersectAll => {
                 let root = LogicalOperator::Intersect(IntersectOp {
                     left: Box::new(left_plan.root),
                     right: Box::new(right_plan.root),
-                    all: false,
+                    all: matches!(op, ast::CompositeOp::IntersectAll),
                 });
                 Ok(LogicalPlan::new(root))
             }
@@ -352,6 +359,16 @@ impl GqlTranslator {
                                 input: Box::new(plan),
                             });
                         }
+                        for map_assign in &set_clause.map_assignments {
+                            let value = self.translate_expression(&map_assign.map_expr)?;
+                            plan = LogicalOperator::SetProperty(SetPropertyOp {
+                                variable: map_assign.variable.clone(),
+                                properties: vec![("*".to_string(), value)],
+                                replace: map_assign.replace,
+                                is_edge: false,
+                                input: Box::new(plan),
+                            });
+                        }
                         for label_op in &set_clause.label_operations {
                             plan = LogicalOperator::AddLabel(AddLabelOp {
                                 variable: label_op.variable.clone(),
@@ -378,6 +395,36 @@ impl GqlTranslator {
                             projections,
                             input: Box::new(plan),
                         });
+                    }
+                    ast::QueryClause::InlineCall { subquery, optional } => {
+                        // CALL { subquery } translates to Apply (lateral join):
+                        // for each row from the outer plan, execute the subquery.
+                        let subplan = self.translate_query(subquery)?.root;
+                        if *optional {
+                            // OPTIONAL CALL: use LeftJoin so outer rows survive
+                            plan = LogicalOperator::LeftJoin(LeftJoinOp {
+                                left: Box::new(plan),
+                                right: Box::new(subplan),
+                                condition: None,
+                            });
+                        } else {
+                            plan = LogicalOperator::Apply(ApplyOp {
+                                input: Box::new(plan),
+                                subplan: Box::new(subplan),
+                            });
+                        }
+                    }
+                    ast::QueryClause::CallProcedure(call_stmt) => {
+                        // CALL procedure(...) within a query context
+                        let call_plan = self.translate_call(call_stmt)?.root;
+                        if matches!(plan, LogicalOperator::Empty) {
+                            plan = call_plan;
+                        } else {
+                            plan = LogicalOperator::Apply(ApplyOp {
+                                input: Box::new(plan),
+                                subplan: Box::new(call_plan),
+                            });
+                        }
                     }
                 }
             }
@@ -442,6 +489,16 @@ impl GqlTranslator {
                         input: Box::new(plan),
                     });
                 }
+                for map_assign in &set_clause.map_assignments {
+                    let value = self.translate_expression(&map_assign.map_expr)?;
+                    plan = LogicalOperator::SetProperty(SetPropertyOp {
+                        variable: map_assign.variable.clone(),
+                        properties: vec![("*".to_string(), value)],
+                        replace: map_assign.replace,
+                        is_edge: false,
+                        input: Box::new(plan),
+                    });
+                }
                 for label_op in &set_clause.label_operations {
                     plan = LogicalOperator::AddLabel(AddLabelOp {
                         variable: label_op.variable.clone(),
@@ -488,21 +545,24 @@ impl GqlTranslator {
 
         // Handle WITH clauses (projection for query chaining)
         for with_clause in &query.with_clauses {
-            let projections: Vec<Projection> = with_clause
-                .items
-                .iter()
-                .map(|item| {
-                    Ok(Projection {
-                        expression: self.translate_expression(&item.expression)?,
-                        alias: item.alias.clone(),
+            if !with_clause.is_wildcard {
+                let projections: Vec<Projection> = with_clause
+                    .items
+                    .iter()
+                    .map(|item| {
+                        Ok(Projection {
+                            expression: self.translate_expression(&item.expression)?,
+                            alias: item.alias.clone(),
+                        })
                     })
-                })
-                .collect::<Result<_>>()?;
+                    .collect::<Result<_>>()?;
 
-            plan = LogicalOperator::Project(ProjectOp {
-                projections,
-                input: Box::new(plan),
-            });
+                plan = LogicalOperator::Project(ProjectOp {
+                    projections,
+                    input: Box::new(plan),
+                });
+            }
+            // WITH * skips projection: all variables pass through unchanged
 
             // Apply WHERE filter if present in WITH clause
             if let Some(where_clause) = &with_clause.where_clause {
@@ -553,11 +613,12 @@ impl GqlTranslator {
         }
 
         // Check if RETURN contains aggregate functions
-        let has_aggregates = query
-            .return_clause
-            .items
-            .iter()
-            .any(|item| contains_aggregate(&item.expression));
+        let has_aggregates = !query.return_clause.is_wildcard
+            && query
+                .return_clause
+                .items
+                .iter()
+                .any(|item| contains_aggregate(&item.expression));
 
         if has_aggregates {
             // Extract aggregate and group-by expressions.
@@ -632,17 +693,25 @@ impl GqlTranslator {
         } else {
             // Apply RETURN first (closest to input), then Sort wraps it.
             // This ensures RETURN aliases are visible to ORDER BY in the binder.
-            let return_items = query
-                .return_clause
-                .items
-                .iter()
-                .map(|item| {
-                    Ok(ReturnItem {
-                        expression: self.translate_expression(&item.expression)?,
-                        alias: item.alias.clone(),
+            let return_items = if query.return_clause.is_wildcard {
+                // RETURN *: emit a wildcard marker that the planner expands
+                vec![ReturnItem {
+                    expression: LogicalExpression::Variable("*".into()),
+                    alias: None,
+                }]
+            } else {
+                query
+                    .return_clause
+                    .items
+                    .iter()
+                    .map(|item| {
+                        Ok(ReturnItem {
+                            expression: self.translate_expression(&item.expression)?,
+                            alias: item.alias.clone(),
+                        })
                     })
-                })
-                .collect::<Result<Vec<_>>>()?;
+                    .collect::<Result<Vec<_>>>()?
+            };
 
             plan = LogicalOperator::Return(ReturnOp {
                 items: return_items,
@@ -793,10 +862,10 @@ impl GqlTranslator {
                         });
                 (&path.source, target_node, edge_types, direction)
             }
-            ast::Pattern::Node(_) => {
+            ast::Pattern::Node(_) | ast::Pattern::Quantified { .. } | ast::Pattern::Union(_) => {
                 return Err(Error::Query(QueryError::new(
                     QueryErrorKind::Semantic,
-                    "shortestPath requires a path pattern, not a single node",
+                    "shortestPath requires a simple path pattern",
                 )));
             }
         };
@@ -844,6 +913,41 @@ impl GqlTranslator {
             ast::Pattern::Path(path) => {
                 self.translate_path_pattern_with_alias(path, input, path_alias, path_mode)
             }
+            ast::Pattern::Quantified { pattern, min, max } => {
+                // Quantified path pattern: repeat the inner pattern min..max times.
+                // For now, translate as a variable-length expansion if the inner
+                // pattern is a simple single-edge path.
+                match pattern.as_ref() {
+                    ast::Pattern::Path(path) if path.edges.len() == 1 => {
+                        // Single-edge quantified: equivalent to variable-length edge
+                        let mut modified_path = path.clone();
+                        let edge = &mut modified_path.edges[0];
+                        edge.min_hops = Some(*min);
+                        edge.max_hops = *max;
+                        self.translate_path_pattern_with_alias(
+                            &modified_path,
+                            input,
+                            path_alias,
+                            path_mode,
+                        )
+                    }
+                    _ => {
+                        // Multi-edge or complex quantified patterns: translate the
+                        // inner pattern once (future: iterate with backtracking).
+                        self.translate_pattern_with_alias(pattern, input, path_alias, path_mode)
+                    }
+                }
+            }
+            ast::Pattern::Union(patterns) => {
+                // Union of alternative patterns: UNION ALL of each translated pattern
+                let inputs: Vec<LogicalOperator> = patterns
+                    .iter()
+                    .map(|p| {
+                        self.translate_pattern_with_alias(p, input.clone(), path_alias, path_mode)
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(LogicalOperator::Union(UnionOp { inputs }))
+            }
         }
     }
 
@@ -885,6 +989,12 @@ impl GqlTranslator {
                     .map(|(k, v)| Ok((k.clone(), self.translate_expression(v)?)))
                     .collect::<Result<_>>()?;
                 (var, labels, props)
+            }
+            ast::Pattern::Quantified { .. } | ast::Pattern::Union(_) => {
+                return Err(Error::Query(QueryError::new(
+                    QueryErrorKind::Semantic,
+                    "MERGE does not support quantified or union patterns",
+                )));
             }
         };
 
@@ -1112,6 +1222,12 @@ impl GqlTranslator {
                             input: Box::new(plan),
                         });
                     }
+                }
+                ast::Pattern::Quantified { .. } | ast::Pattern::Union(_) => {
+                    return Err(Error::Query(QueryError::new(
+                        QueryErrorKind::Semantic,
+                        "CREATE does not support quantified or union patterns",
+                    )));
                 }
             }
         }
@@ -1622,6 +1738,12 @@ impl GqlTranslator {
                         current_src = target_var;
                     }
                 }
+                ast::Pattern::Quantified { .. } | ast::Pattern::Union(_) => {
+                    return Err(Error::Query(QueryError::new(
+                        QueryErrorKind::Semantic,
+                        "INSERT does not support quantified or union patterns",
+                    )));
+                }
             }
         }
 
@@ -1791,6 +1913,65 @@ impl GqlTranslator {
                 // We reuse CountSubquery infrastructure for now: the Apply operator
                 // will run the inner plan and extract the first result.
                 Ok(LogicalExpression::CountSubquery(Box::new(inner_plan)))
+            }
+            ast::Expression::ListComprehension {
+                variable,
+                list_expr,
+                filter_expr,
+                map_expr,
+            } => {
+                let list = self.translate_expression(list_expr)?;
+                let filter = filter_expr
+                    .as_ref()
+                    .map(|f| self.translate_expression(f))
+                    .transpose()?
+                    .map(Box::new);
+                let map = self.translate_expression(map_expr)?;
+                Ok(LogicalExpression::ListComprehension {
+                    variable: variable.clone(),
+                    list_expr: Box::new(list),
+                    filter_expr: filter,
+                    map_expr: Box::new(map),
+                })
+            }
+            ast::Expression::ListPredicate {
+                kind,
+                variable,
+                list_expr,
+                predicate,
+            } => {
+                let list = self.translate_expression(list_expr)?;
+                let pred = self.translate_expression(predicate)?;
+                let logical_kind = match kind {
+                    ast::ListPredicateKind::All => plan::ListPredicateKind::All,
+                    ast::ListPredicateKind::Any => plan::ListPredicateKind::Any,
+                    ast::ListPredicateKind::None => plan::ListPredicateKind::None,
+                    ast::ListPredicateKind::Single => plan::ListPredicateKind::Single,
+                };
+                Ok(LogicalExpression::ListPredicate {
+                    kind: logical_kind,
+                    variable: variable.clone(),
+                    list_expr: Box::new(list),
+                    predicate: Box::new(pred),
+                })
+            }
+            ast::Expression::Reduce {
+                accumulator,
+                initial,
+                variable,
+                list,
+                expression,
+            } => {
+                let init = self.translate_expression(initial)?;
+                let list_expr = self.translate_expression(list)?;
+                let body = self.translate_expression(expression)?;
+                Ok(LogicalExpression::Reduce {
+                    accumulator: accumulator.clone(),
+                    initial: Box::new(init),
+                    variable: variable.clone(),
+                    list: Box::new(list_expr),
+                    expression: Box::new(body),
+                })
             }
             ast::Expression::LetIn { bindings, body } => {
                 // LET x = expr1, y = expr2 IN body END

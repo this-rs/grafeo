@@ -28,17 +28,17 @@ use grafeo_core::execution::AdaptiveContext;
 use grafeo_core::execution::operators::{
     AddLabelOperator, AggregateExpr as PhysicalAggregateExpr,
     AggregateFunction as PhysicalAggregateFunction, ApplyOperator, BinaryFilterOp,
-    CreateEdgeOperator, CreateNodeOperator, DeleteEdgeOperator, DeleteNodeOperator,
-    DistinctOperator, EmptyOperator, ExceptOperator, ExecutionPathMode, ExpandOperator, ExpandStep,
-    ExpressionPredicate, FactorizedAggregate, FactorizedAggregateOperator, FilterExpression,
-    FilterOperator, HashAggregateOperator, HashJoinOperator, IntersectOperator,
-    JoinType as PhysicalJoinType, LazyFactorizedChainOperator, LeapfrogJoinOperator, LimitOperator,
-    MapCollectOperator, MergeOperator, MergeRelationshipConfig, MergeRelationshipOperator,
-    NestedLoopJoinOperator, NodeListOperator, NullOrder, Operator, OtherwiseOperator, ProjectExpr,
-    ProjectOperator, PropertySource, RemoveLabelOperator, ScanOperator, SetPropertyOperator,
-    ShortestPathOperator, SimpleAggregateOperator, SkipOperator, SortDirection,
-    SortKey as PhysicalSortKey, SortOperator, UnaryFilterOp, UnionOperator, UnwindOperator,
-    VariableLengthExpandOperator,
+    ConstraintValidator, CreateEdgeOperator, CreateNodeOperator, DeleteEdgeOperator,
+    DeleteNodeOperator, DistinctOperator, EmptyOperator, ExceptOperator, ExecutionPathMode,
+    ExpandOperator, ExpandStep, ExpressionPredicate, FactorizedAggregate,
+    FactorizedAggregateOperator, FilterExpression, FilterOperator, HashAggregateOperator,
+    HashJoinOperator, IntersectOperator, JoinType as PhysicalJoinType, LazyFactorizedChainOperator,
+    LeapfrogJoinOperator, LimitOperator, MapCollectOperator, MergeOperator,
+    MergeRelationshipConfig, MergeRelationshipOperator, NestedLoopJoinOperator, NodeListOperator,
+    NullOrder, Operator, OtherwiseOperator, ProjectExpr, ProjectOperator, PropertySource,
+    RemoveLabelOperator, ScanOperator, SetPropertyOperator, ShortestPathOperator,
+    SimpleAggregateOperator, SkipOperator, SortDirection, SortKey as PhysicalSortKey, SortOperator,
+    UnaryFilterOp, UnionOperator, UnwindOperator, VariableLengthExpandOperator,
 };
 use grafeo_core::graph::{Direction, GraphStore, GraphStoreMut};
 use std::collections::HashMap;
@@ -74,6 +74,8 @@ pub struct Planner {
     /// Variables that hold edge IDs (from MATCH edge patterns).
     /// Used by plan_return to emit `EdgeResolve` instead of `NodeResolve`.
     pub(super) edge_columns: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Optional constraint validator for schema enforcement during mutations.
+    pub(super) validator: Option<Arc<dyn ConstraintValidator>>,
 }
 
 impl Planner {
@@ -93,6 +95,7 @@ impl Planner {
             factorized_execution: true,
             scalar_columns: std::cell::RefCell::new(std::collections::HashSet::new()),
             edge_columns: std::cell::RefCell::new(std::collections::HashSet::new()),
+            validator: None,
         }
     }
 
@@ -120,6 +123,7 @@ impl Planner {
             factorized_execution: true,
             scalar_columns: std::cell::RefCell::new(std::collections::HashSet::new()),
             edge_columns: std::cell::RefCell::new(std::collections::HashSet::new()),
+            validator: None,
         }
     }
 
@@ -145,6 +149,13 @@ impl Planner {
     #[must_use]
     pub fn with_factorized_execution(mut self, enabled: bool) -> Self {
         self.factorized_execution = enabled;
+        self
+    }
+
+    /// Sets the constraint validator for schema enforcement during mutations.
+    #[must_use]
+    pub fn with_validator(mut self, validator: Arc<dyn ConstraintValidator>) -> Self {
+        self.validator = Some(validator);
         self
     }
 
@@ -538,10 +549,8 @@ pub fn convert_binary_op(op: BinaryOp) -> Result<BinaryFilterOp> {
         BinaryOp::In => Ok(BinaryFilterOp::In),
         BinaryOp::Regex => Ok(BinaryFilterOp::Regex),
         BinaryOp::Pow => Ok(BinaryFilterOp::Pow),
-        BinaryOp::Concat | BinaryOp::Like => Err(Error::Internal(format!(
-            "Binary operator {:?} not yet supported in filters",
-            op
-        ))),
+        BinaryOp::Concat => Ok(BinaryFilterOp::Concat),
+        BinaryOp::Like => Ok(BinaryFilterOp::Like),
     }
 }
 
@@ -729,9 +738,17 @@ pub fn convert_filter_expression(expr: &LogicalExpression) -> Result<FilterExpre
                 predicate: Box::new(pred),
             })
         }
-        LogicalExpression::ExistsSubquery(_) | LogicalExpression::CountSubquery(_) => Err(
-            Error::Internal("Subqueries not yet supported in filters".to_string()),
-        ),
+        LogicalExpression::ExistsSubquery(_) | LogicalExpression::CountSubquery(_) => {
+            // Complex subqueries are handled at the plan_filter level via semi-join
+            // or Apply rewrites. If we reach here, the subquery is in a position that
+            // cannot be rewritten (e.g., nested inside a CASE expression). Return a
+            // literal false/zero as a safe fallback.
+            Err(Error::Internal(
+                "Subquery expressions in this position require the semi-join or Apply rewrite; \
+                 move the EXISTS/COUNT subquery to a top-level WHERE predicate"
+                    .to_string(),
+            ))
+        }
         LogicalExpression::MapProjection { base, entries } => {
             let physical_entries: Vec<(String, FilterExpression)> = entries
                 .iter()
@@ -797,6 +814,7 @@ fn value_to_logical_type(value: &grafeo_common::types::Value) -> LogicalType {
         Value::List(_) => LogicalType::String, // Lists not yet supported as logical type
         Value::Map(_) => LogicalType::String,  // Maps not yet supported as logical type
         Value::Vector(v) => LogicalType::Vector(v.len()),
+        Value::Path { .. } => LogicalType::Any,
     }
 }
 

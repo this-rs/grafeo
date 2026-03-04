@@ -318,6 +318,9 @@ fn convert_operator_error(err: OperatorError) -> Error {
             Error::InvalidValue(format!("Column not found: {name}"))
         }
         OperatorError::Execution(msg) => Error::Internal(msg),
+        OperatorError::ConstraintViolation(msg) => {
+            Error::InvalidValue(format!("Constraint violation: {msg}"))
+        }
     }
 }
 

@@ -24,6 +24,23 @@ impl super::GrafeoDB {
         session.execute(query)
     }
 
+    /// Executes a GQL query with visibility at the specified epoch.
+    ///
+    /// This enables time-travel queries: the query sees the database
+    /// as it existed at the given epoch.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if parsing or execution fails.
+    pub fn execute_at_epoch(
+        &self,
+        query: &str,
+        epoch: grafeo_common::types::EpochId,
+    ) -> Result<QueryResult> {
+        let session = self.session();
+        session.execute_at_epoch(query, epoch)
+    }
+
     /// Executes a query with parameters and returns the result.
     ///
     /// # Errors

@@ -204,6 +204,41 @@ pub fn value_to_napi(env: sys::napi_env, value: &Value) -> Result<sys::napi_valu
         Value::Vector(v) => unsafe {
             <Float32Array as ToNapiValue>::to_napi_value(env, Float32Array::new(v.to_vec()))
         },
+        Value::Path { nodes, edges } => {
+            let mut obj = std::ptr::null_mut();
+            check_napi(unsafe { sys::napi_create_object(env, &raw mut obj) })?;
+
+            // Create nodes array
+            let mut nodes_arr = std::ptr::null_mut();
+            check_napi(unsafe {
+                sys::napi_create_array_with_length(env, nodes.len(), &raw mut nodes_arr)
+            })?;
+            for (i, node) in nodes.iter().enumerate() {
+                let val = value_to_napi(env, node)?;
+                check_napi(unsafe { sys::napi_set_element(env, nodes_arr, i as u32, val) })?;
+            }
+
+            // Create edges array
+            let mut edges_arr = std::ptr::null_mut();
+            check_napi(unsafe {
+                sys::napi_create_array_with_length(env, edges.len(), &raw mut edges_arr)
+            })?;
+            for (i, edge) in edges.iter().enumerate() {
+                let val = value_to_napi(env, edge)?;
+                check_napi(unsafe { sys::napi_set_element(env, edges_arr, i as u32, val) })?;
+            }
+
+            let nodes_key = CString::new("nodes").unwrap();
+            let edges_key = CString::new("edges").unwrap();
+            check_napi(unsafe {
+                sys::napi_set_named_property(env, obj, nodes_key.as_ptr(), nodes_arr)
+            })?;
+            check_napi(unsafe {
+                sys::napi_set_named_property(env, obj, edges_key.as_ptr(), edges_arr)
+            })?;
+
+            Ok(obj)
+        }
     }
 }
 

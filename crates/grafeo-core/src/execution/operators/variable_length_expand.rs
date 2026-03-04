@@ -281,7 +281,7 @@ impl VariableLengthExpandOperator {
     /// Gets edges from a node, respecting filters and visibility.
     fn get_edges(&self, node_id: NodeId) -> Vec<(NodeId, EdgeId)> {
         let epoch = self.viewing_epoch;
-        let tx = self.tx_id.unwrap_or(TxId::SYSTEM);
+        let tx_id = self.tx_id;
 
         self.store
             .edges_from(node_id, self.direction)
@@ -302,14 +302,22 @@ impl VariableLengthExpandOperator {
                     return false;
                 }
 
-                // Filter by visibility if we have tx context
+                // Filter by visibility
                 if let Some(epoch) = epoch {
-                    let edge_visible = self.store.get_edge_versioned(*edge_id, epoch, tx).is_some();
-                    let target_visible = self
-                        .store
-                        .get_node_versioned(*target_id, epoch, tx)
-                        .is_some();
-                    edge_visible && target_visible
+                    if let Some(tx) = tx_id {
+                        let edge_visible =
+                            self.store.get_edge_versioned(*edge_id, epoch, tx).is_some();
+                        let target_visible = self
+                            .store
+                            .get_node_versioned(*target_id, epoch, tx)
+                            .is_some();
+                        edge_visible && target_visible
+                    } else {
+                        let edge_visible = self.store.get_edge_at_epoch(*edge_id, epoch).is_some();
+                        let target_visible =
+                            self.store.get_node_at_epoch(*target_id, epoch).is_some();
+                        edge_visible && target_visible
+                    }
                 } else {
                     true
                 }
@@ -475,9 +483,9 @@ impl Operator for VariableLengthExpandOperator {
         // Build output chunk from buffer
         let num_input_cols = input_rows.first().map_or(0, |r| r.columns.len());
 
-        // Schema: [input_columns..., edge, target, (path_length)?, (path_nodes)?, (path_edges)?]
+        // Schema: [input_columns..., edge, target, (path_length)?, (path_nodes)?, (path_edges)?, (path)?]
         let extra_cols =
-            2 + usize::from(self.output_path_length) + usize::from(self.output_path_detail) * 2;
+            2 + usize::from(self.output_path_length) + usize::from(self.output_path_detail) * 3;
         let mut schema: Vec<LogicalType> = Vec::with_capacity(num_input_cols + extra_cols);
         if let Some(first_row) = input_rows.first() {
             for col_val in &first_row.columns {
@@ -497,6 +505,7 @@ impl Operator for VariableLengthExpandOperator {
         if self.output_path_detail {
             schema.push(LogicalType::Any); // path_nodes as Value::List
             schema.push(LogicalType::Any); // path_edges as Value::List
+            schema.push(LogicalType::Any); // Value::Path (first-class path)
         }
 
         let mut chunk = DataChunk::with_capacity(&schema, self.chunk_capacity);
@@ -564,6 +573,28 @@ impl Operator for VariableLengthExpandOperator {
                         .map(|id| grafeo_common::types::Value::Int64(id.0 as i64))
                         .collect();
                     col.push_value(grafeo_common::types::Value::List(edges_list.into()));
+                }
+
+                // Value::Path column (first-class path value)
+                if let Some(col) = chunk.column_mut(base + 2) {
+                    let nodes: Vec<grafeo_common::types::Value> = out_row
+                        .path_nodes
+                        .as_deref()
+                        .unwrap_or(&[])
+                        .iter()
+                        .map(|id| grafeo_common::types::Value::Int64(id.0 as i64))
+                        .collect();
+                    let edges: Vec<grafeo_common::types::Value> = out_row
+                        .path_edges
+                        .as_deref()
+                        .unwrap_or(&[])
+                        .iter()
+                        .map(|id| grafeo_common::types::Value::Int64(id.0 as i64))
+                        .collect();
+                    col.push_value(grafeo_common::types::Value::Path {
+                        nodes: nodes.into(),
+                        edges: edges.into(),
+                    });
                 }
             }
         }

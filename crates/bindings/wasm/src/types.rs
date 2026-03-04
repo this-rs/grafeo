@@ -40,6 +40,25 @@ pub fn value_to_js(value: &Value) -> JsValue {
             arr.copy_from(v);
             arr.into()
         }
+        Value::Path { nodes, edges } => {
+            let obj = Object::new();
+            let nodes_arr = Array::new_with_length(nodes.len() as u32);
+            for (i, node) in nodes.iter().enumerate() {
+                nodes_arr.set(i as u32, value_to_js(node));
+            }
+            let edges_arr = Array::new_with_length(edges.len() as u32);
+            for (i, edge) in edges.iter().enumerate() {
+                edges_arr.set(i as u32, value_to_js(edge));
+            }
+            let _ = Reflect::set(&obj, &JsValue::from_str("nodes"), &nodes_arr.into());
+            let _ = Reflect::set(&obj, &JsValue::from_str("edges"), &edges_arr.into());
+            let _ = Reflect::set(
+                &obj,
+                &JsValue::from_str("_type"),
+                &JsValue::from_str("path"),
+            );
+            obj.into()
+        }
     }
 }
 

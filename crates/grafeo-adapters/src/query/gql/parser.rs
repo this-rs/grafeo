@@ -103,6 +103,13 @@ impl<'a> Parser<'a> {
                 | TokenKind::Starts
                 | TokenKind::Ends
                 | TokenKind::Contains
+                | TokenKind::Nodetach
+                | TokenKind::Fetch
+                | TokenKind::First
+                | TokenKind::Next
+                | TokenKind::Rows
+                | TokenKind::Row
+                | TokenKind::Only
         )
     }
 
@@ -143,6 +150,12 @@ impl<'a> Parser<'a> {
                 | TokenKind::All     // SESSION RESET ALL, UNION ALL
                 | TokenKind::Filter  // FILTER as clause name
                 | TokenKind::Having // HAVING as identifier
+                | TokenKind::Fetch  // FETCH FIRST
+                | TokenKind::First  // FETCH FIRST
+                | TokenKind::Next   // FETCH NEXT
+                | TokenKind::Rows   // ROWS ONLY
+                | TokenKind::Row    // ROW ONLY
+                | TokenKind::Only // ROWS ONLY
         )
     }
 
@@ -187,16 +200,38 @@ impl<'a> Parser<'a> {
                         self.advance();
                         CompositeOp::UnionAll
                     } else {
+                        // UNION DISTINCT is explicit form of the default
+                        if self.current.kind == TokenKind::Distinct {
+                            self.advance();
+                        }
                         CompositeOp::Union
                     }
                 }
                 TokenKind::Except => {
                     self.advance();
-                    CompositeOp::Except
+                    if self.current.kind == TokenKind::All {
+                        self.advance();
+                        CompositeOp::ExceptAll
+                    } else {
+                        // EXCEPT DISTINCT is explicit form of the default
+                        if self.current.kind == TokenKind::Distinct {
+                            self.advance();
+                        }
+                        CompositeOp::Except
+                    }
                 }
                 TokenKind::Intersect => {
                     self.advance();
-                    CompositeOp::Intersect
+                    if self.current.kind == TokenKind::All {
+                        self.advance();
+                        CompositeOp::IntersectAll
+                    } else {
+                        // INTERSECT DISTINCT is explicit form of the default
+                        if self.current.kind == TokenKind::Distinct {
+                            self.advance();
+                        }
+                        CompositeOp::Intersect
+                    }
                 }
                 TokenKind::Otherwise => {
                     self.advance();
@@ -225,7 +260,7 @@ impl<'a> Parser<'a> {
             TokenKind::Insert => self
                 .parse_insert()
                 .map(|s| Statement::DataModification(DataModificationStatement::Insert(s))),
-            TokenKind::Delete => self
+            TokenKind::Delete | TokenKind::Detach | TokenKind::Nodetach => self
                 .parse_delete()
                 .map(|s| Statement::DataModification(DataModificationStatement::Delete(s))),
             TokenKind::Create => {
@@ -235,19 +270,17 @@ impl<'a> Parser<'a> {
                     // Cypher-style: CREATE (n:Label {...}) - treat as INSERT
                     self.parse_create_as_insert()
                         .map(|s| Statement::DataModification(DataModificationStatement::Insert(s)))
-                } else if self.peek_is_graph_keyword() {
-                    // CREATE [PROPERTY] GRAPH <name>
-                    self.parse_create_graph().map(Statement::SessionCommand)
                 } else {
-                    // GQL schema: CREATE NODE TYPE / CREATE EDGE TYPE / CREATE VECTOR INDEX
-                    self.parse_create_schema().map(Statement::Schema)
+                    // GQL schema/session: dispatches between DDL (NODE TYPE, EDGE TYPE,
+                    // GRAPH TYPE, INDEX, CONSTRAINT, SCHEMA) and session (GRAPH instance)
+                    self.parse_create_dispatch()
                 }
             }
             TokenKind::Call => self.parse_call_statement().map(Statement::Call),
             _ if self.is_identifier() => {
                 let name = self.get_identifier_name();
                 match name.to_uppercase().as_str() {
-                    "DROP" => self.parse_drop_graph().map(Statement::SessionCommand),
+                    "DROP" => self.parse_drop(),
                     "USE" => self.parse_use_graph().map(Statement::SessionCommand),
                     "SESSION" => self.parse_session_command().map(Statement::SessionCommand),
                     "START" => self
@@ -342,6 +375,22 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Parses an inline CALL { subquery }.
+    ///
+    /// ```text
+    /// CALL { [WITH var [, var]*] query_body RETURN ... }
+    /// ```
+    fn parse_inline_call(&mut self) -> Result<QueryStatement> {
+        self.expect(TokenKind::Call)?;
+        self.expect(TokenKind::LBrace)?;
+
+        // Parse the inner query body (MATCH ... RETURN ...)
+        let inner = self.parse_query()?;
+
+        self.expect(TokenKind::RBrace)?;
+        Ok(inner)
+    }
+
     /// Parses a YIELD item list: `field [AS alias] { , field [AS alias] }`.
     fn parse_yield_list(&mut self) -> Result<Vec<YieldItem>> {
         let mut items = vec![self.parse_yield_item()?];
@@ -393,10 +442,33 @@ impl<'a> Parser<'a> {
         // in any order before RETURN.
         loop {
             match self.current.kind {
-                TokenKind::Match | TokenKind::Optional => {
+                TokenKind::Match => {
                     let clause = self.parse_match_clause()?;
                     ordered_clauses.push(QueryClause::Match(clause.clone()));
                     match_clauses.push(clause);
+                }
+                TokenKind::Optional => {
+                    // OPTIONAL MATCH or OPTIONAL CALL { subquery }
+                    let pk = self.peek_kind();
+                    if pk == TokenKind::Call {
+                        self.advance(); // consume OPTIONAL
+                        if self.peek_kind() == TokenKind::LBrace {
+                            // OPTIONAL CALL { subquery }
+                            let subquery = self.parse_inline_call()?;
+                            ordered_clauses.push(QueryClause::InlineCall {
+                                subquery,
+                                optional: true,
+                            });
+                        } else {
+                            // OPTIONAL CALL procedure(...)
+                            let call = self.parse_call_statement()?;
+                            ordered_clauses.push(QueryClause::CallProcedure(call));
+                        }
+                    } else {
+                        let clause = self.parse_match_clause()?;
+                        ordered_clauses.push(QueryClause::Match(clause.clone()));
+                        match_clauses.push(clause);
+                    }
                 }
                 TokenKind::Unwind => {
                     let clause = self.parse_unwind_clause()?;
@@ -423,10 +495,23 @@ impl<'a> Parser<'a> {
                     ordered_clauses.push(QueryClause::Create(clause.clone()));
                     create_clauses.push(clause);
                 }
-                TokenKind::Delete | TokenKind::Detach => {
+                TokenKind::Delete | TokenKind::Detach | TokenKind::Nodetach => {
                     let clause = self.parse_delete_clause_in_query()?;
                     ordered_clauses.push(QueryClause::Delete(clause.clone()));
                     delete_clauses.push(clause);
+                }
+                TokenKind::Call => {
+                    // CALL { subquery } (inline) or CALL procedure(...) (within query)
+                    if self.peek_kind() == TokenKind::LBrace {
+                        let subquery = self.parse_inline_call()?;
+                        ordered_clauses.push(QueryClause::InlineCall {
+                            subquery,
+                            optional: false,
+                        });
+                    } else {
+                        let call = self.parse_call_statement()?;
+                        ordered_clauses.push(QueryClause::CallProcedure(call));
+                    }
                 }
                 _ if self.is_identifier()
                     && self.get_identifier_name().eq_ignore_ascii_case("LET") =>
@@ -458,7 +543,7 @@ impl<'a> Parser<'a> {
                     ordered_clauses.push(QueryClause::Create(clause.clone()));
                     create_clauses.push(clause);
                 }
-                TokenKind::Delete | TokenKind::Detach => {
+                TokenKind::Delete | TokenKind::Detach | TokenKind::Nodetach => {
                     let clause = self.parse_delete_clause_in_query()?;
                     ordered_clauses.push(QueryClause::Delete(clause.clone()));
                     delete_clauses.push(clause);
@@ -524,6 +609,7 @@ impl<'a> Parser<'a> {
             ReturnClause {
                 distinct: false,
                 items: Vec::new(),
+                is_wildcard: false,
                 group_by: Vec::new(),
                 order_by: None,
                 skip: None,
@@ -546,6 +632,7 @@ impl<'a> Parser<'a> {
             ReturnClause {
                 distinct: false,
                 items: Vec::new(),
+                is_wildcard: false,
                 group_by: Vec::new(),
                 order_by: None,
                 skip: None,
@@ -640,6 +727,7 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::Set)?;
 
         let mut assignments = Vec::new();
+        let mut map_assignments = Vec::new();
         let mut label_operations = Vec::new();
 
         loop {
@@ -651,6 +739,7 @@ impl<'a> Parser<'a> {
             self.advance();
 
             // Check if this is a label operation (n:Label) or property assignment (n.prop = value)
+            // or map assignment (n = {map} or n += {map})
             if self.current.kind == TokenKind::Colon {
                 // Label operation: SET n:Label1:Label2
                 let mut labels = Vec::new();
@@ -682,8 +771,27 @@ impl<'a> Parser<'a> {
                     property,
                     value,
                 });
+            } else if self.current.kind == TokenKind::Eq {
+                // Map replace: SET n = {key: value, ...}
+                self.advance();
+                let map_expr = self.parse_expression()?;
+                map_assignments.push(MapAssignment {
+                    variable,
+                    map_expr,
+                    replace: true,
+                });
+            } else if self.current.kind == TokenKind::Plus {
+                // Map merge: SET n += {key: value, ...}
+                self.advance();
+                self.expect(TokenKind::Eq)?;
+                let map_expr = self.parse_expression()?;
+                map_assignments.push(MapAssignment {
+                    variable,
+                    map_expr,
+                    replace: false,
+                });
             } else {
-                return Err(self.error("Expected '.' or ':' after variable in SET"));
+                return Err(self.error("Expected '.', ':', '=', or '+=' after variable in SET"));
             }
 
             // Check for more assignments/operations
@@ -695,6 +803,7 @@ impl<'a> Parser<'a> {
 
         Ok(SetClause {
             assignments,
+            map_assignments,
             label_operations,
             span: Some(SourceSpan::new(span_start, self.current.span.end, 1, 1)),
         })
@@ -966,11 +1075,19 @@ impl<'a> Parser<'a> {
     /// SHORTEST k [GROUPS]
     /// ```
     fn parse_path_search_prefix(&mut self) -> Result<Option<PathSearchPrefix>> {
-        if self.current.kind == TokenKind::All && self.peek_kind() == TokenKind::Shortest {
-            // ALL SHORTEST
-            self.advance(); // consume ALL
-            self.advance(); // consume SHORTEST
-            return Ok(Some(PathSearchPrefix::AllShortest));
+        if self.current.kind == TokenKind::All {
+            let next = self.peek_kind();
+            if next == TokenKind::Shortest {
+                // ALL SHORTEST
+                self.advance(); // consume ALL
+                self.advance(); // consume SHORTEST
+                return Ok(Some(PathSearchPrefix::AllShortest));
+            }
+            if next == TokenKind::LParen {
+                // ALL (pattern...) - enumerate all matching paths
+                self.advance(); // consume ALL
+                return Ok(Some(PathSearchPrefix::All));
+            }
         }
         if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("ANY") {
             let next = self.peek_kind();
@@ -1043,9 +1160,46 @@ impl<'a> Parser<'a> {
             self.expect(TokenKind::RParen)?;
         }
 
+        // Parse optional KEEP clause: KEEP DIFFERENT EDGES | KEEP REPEATABLE ELEMENTS
+        let keep =
+            if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("KEEP") {
+                self.advance(); // consume KEEP
+                if self.is_identifier() {
+                    let mode_name = self.get_identifier_name().to_uppercase();
+                    match mode_name.as_str() {
+                        "DIFFERENT" => {
+                            self.advance();
+                            // Optionally consume EDGES
+                            if self.is_identifier()
+                                && self.get_identifier_name().eq_ignore_ascii_case("EDGES")
+                            {
+                                self.advance();
+                            }
+                            Some(MatchMode::DifferentEdges)
+                        }
+                        "REPEATABLE" => {
+                            self.advance();
+                            // Optionally consume ELEMENTS
+                            if self.is_identifier()
+                                && self.get_identifier_name().eq_ignore_ascii_case("ELEMENTS")
+                            {
+                                self.advance();
+                            }
+                            Some(MatchMode::RepeatableElements)
+                        }
+                        _ => return Err(self.error("Expected DIFFERENT or REPEATABLE after KEEP")),
+                    }
+                } else {
+                    return Err(self.error("Expected DIFFERENT or REPEATABLE after KEEP"));
+                }
+            } else {
+                None
+            };
+
         Ok(AliasedPattern {
             alias,
             path_function,
+            keep,
             pattern,
         })
     }
@@ -1061,12 +1215,22 @@ impl<'a> Parser<'a> {
             false
         };
 
-        let mut items = Vec::new();
-        items.push(self.parse_return_item()?);
-
-        while self.current.kind == TokenKind::Comma {
+        // Check for WITH *
+        let is_wildcard = if self.current.kind == TokenKind::Star {
             self.advance();
+            true
+        } else {
+            false
+        };
+
+        let mut items = Vec::new();
+        if !is_wildcard {
             items.push(self.parse_return_item()?);
+
+            while self.current.kind == TokenKind::Comma {
+                self.advance();
+                items.push(self.parse_return_item()?);
+            }
         }
 
         // Optional WHERE after WITH
@@ -1079,12 +1243,19 @@ impl<'a> Parser<'a> {
         Ok(WithClause {
             distinct,
             items,
+            is_wildcard,
             where_clause,
             span: Some(SourceSpan::new(span_start, self.current.span.end, 1, 1)),
         })
     }
 
     fn parse_pattern(&mut self) -> Result<Pattern> {
+        // Check for parenthesized (grouped) pattern: ((a)-[]->(b)){2,5}
+        // Detected by `(` followed by `(` (the inner pattern's first node)
+        if self.current.kind == TokenKind::LParen && self.peek_kind() == TokenKind::LParen {
+            return self.parse_parenthesized_pattern();
+        }
+
         let node = self.parse_node_pattern()?;
 
         // Check for path continuation
@@ -1117,6 +1288,43 @@ impl<'a> Parser<'a> {
             }))
         } else {
             Ok(Pattern::Node(node))
+        }
+    }
+
+    /// Parses a parenthesized path pattern with optional quantifier.
+    ///
+    /// ```text
+    /// ( pattern [| pattern]* ) [ {min,max} ]
+    /// ```
+    fn parse_parenthesized_pattern(&mut self) -> Result<Pattern> {
+        self.expect(TokenKind::LParen)?;
+
+        // Parse the inner pattern(s), potentially with union via |
+        let mut patterns = vec![self.parse_pattern()?];
+        while self.current.kind == TokenKind::Pipe {
+            self.advance();
+            patterns.push(self.parse_pattern()?);
+        }
+
+        self.expect(TokenKind::RParen)?;
+
+        let inner = if patterns.len() == 1 {
+            patterns.remove(0)
+        } else {
+            Pattern::Union(patterns)
+        };
+
+        // Check for quantifier: {min,max} or {n}
+        if self.current.kind == TokenKind::LBrace {
+            let (min, max) = self.parse_path_quantifier()?;
+            Ok(Pattern::Quantified {
+                pattern: Box::new(inner),
+                min: min.unwrap_or(1),
+                max,
+            })
+        } else {
+            // No quantifier: just a grouped pattern (or union)
+            Ok(inner)
         }
     }
 
@@ -1687,12 +1895,22 @@ impl<'a> Parser<'a> {
             false
         };
 
-        let mut items = Vec::new();
-        items.push(self.parse_return_item()?);
-
-        while self.current.kind == TokenKind::Comma {
+        // Check for RETURN *
+        let is_wildcard = if self.current.kind == TokenKind::Star {
             self.advance();
+            true
+        } else {
+            false
+        };
+
+        let mut items = Vec::new();
+        if !is_wildcard {
             items.push(self.parse_return_item()?);
+
+            while self.current.kind == TokenKind::Comma {
+                self.advance();
+                items.push(self.parse_return_item()?);
+            }
         }
 
         // Parse optional GROUP BY
@@ -1725,6 +1943,8 @@ impl<'a> Parser<'a> {
         let limit = if self.current.kind == TokenKind::Limit {
             self.advance();
             Some(self.parse_expression()?)
+        } else if self.current.kind == TokenKind::Fetch {
+            Some(self.parse_fetch_first()?)
         } else {
             None
         };
@@ -1732,6 +1952,7 @@ impl<'a> Parser<'a> {
         Ok(ReturnClause {
             distinct,
             items,
+            is_wildcard,
             group_by,
             order_by,
             skip,
@@ -1788,6 +2009,8 @@ impl<'a> Parser<'a> {
         let limit = if self.current.kind == TokenKind::Limit {
             self.advance();
             Some(self.parse_expression()?)
+        } else if self.current.kind == TokenKind::Fetch {
+            Some(self.parse_fetch_first()?)
         } else {
             None
         };
@@ -1795,6 +2018,7 @@ impl<'a> Parser<'a> {
         Ok(ReturnClause {
             distinct,
             items,
+            is_wildcard: false,
             group_by,
             order_by,
             skip,
@@ -1823,6 +2047,117 @@ impl<'a> Parser<'a> {
             expression,
             alias,
             span: None,
+        })
+    }
+
+    /// Parses `FETCH FIRST|NEXT n ROWS|ROW ONLY` as a LIMIT expression.
+    /// The FETCH token has already been peeked but not consumed.
+    fn parse_fetch_first(&mut self) -> Result<Expression> {
+        self.expect(TokenKind::Fetch)?;
+        // FIRST or NEXT (both accepted)
+        if !matches!(self.current.kind, TokenKind::First | TokenKind::Next) {
+            return Err(self.error("Expected FIRST or NEXT after FETCH"));
+        }
+        self.advance();
+        // Parse the count expression
+        let count = self.parse_expression()?;
+        // ROWS or ROW (both accepted, optional)
+        if matches!(self.current.kind, TokenKind::Rows | TokenKind::Row) {
+            self.advance();
+        }
+        // ONLY (optional)
+        if self.current.kind == TokenKind::Only {
+            self.advance();
+        }
+        Ok(count)
+    }
+
+    /// Parses a list comprehension after `[` and identifier have been peeked.
+    /// Current token is the variable name, next is IN.
+    /// Syntax: `[x IN list WHERE predicate | map_expression]`
+    fn parse_list_comprehension_inner(&mut self) -> Result<Expression> {
+        let variable = self.get_identifier_name();
+        self.advance(); // consume variable
+        self.expect(TokenKind::In)?;
+        let list_expr = self.parse_expression()?;
+
+        // Optional WHERE filter
+        let filter_expr = if self.current.kind == TokenKind::Where {
+            self.advance();
+            Some(Box::new(self.parse_expression()?))
+        } else {
+            None
+        };
+
+        // Required | (pipe) followed by mapping expression
+        let map_expr = if self.current.kind == TokenKind::Pipe {
+            self.advance();
+            Box::new(self.parse_expression()?)
+        } else {
+            // If no pipe, the mapping is just the variable itself
+            Box::new(Expression::Variable(variable.clone()))
+        };
+
+        self.expect(TokenKind::RBracket)?;
+        Ok(Expression::ListComprehension {
+            variable,
+            list_expr: Box::new(list_expr),
+            filter_expr,
+            map_expr,
+        })
+    }
+
+    /// Parses a list predicate: `all/any/none/single(x IN list WHERE predicate)`.
+    /// The function name has already been consumed; current token is `(`.
+    fn parse_list_predicate(&mut self, kind: ListPredicateKind) -> Result<Expression> {
+        self.expect(TokenKind::LParen)?;
+        if !self.is_identifier() {
+            return Err(self.error("Expected variable name in list predicate"));
+        }
+        let variable = self.get_identifier_name();
+        self.advance();
+        self.expect(TokenKind::In)?;
+        let list_expr = self.parse_expression()?;
+        // WHERE is required for list predicates
+        self.expect(TokenKind::Where)?;
+        let predicate = self.parse_expression()?;
+        self.expect(TokenKind::RParen)?;
+        Ok(Expression::ListPredicate {
+            kind,
+            variable,
+            list_expr: Box::new(list_expr),
+            predicate: Box::new(predicate),
+        })
+    }
+
+    /// Parses `reduce(accumulator = init, x IN list | expression)`.
+    /// The function name has already been consumed; current token is `(`.
+    fn parse_reduce(&mut self) -> Result<Expression> {
+        self.expect(TokenKind::LParen)?;
+        if !self.is_identifier() {
+            return Err(self.error("Expected accumulator variable in reduce"));
+        }
+        let accumulator = self.get_identifier_name();
+        self.advance();
+        self.expect(TokenKind::Eq)?;
+        let initial = self.parse_expression()?;
+        self.expect(TokenKind::Comma)?;
+        if !self.is_identifier() {
+            return Err(self.error("Expected iteration variable in reduce"));
+        }
+        let variable = self.get_identifier_name();
+        self.advance();
+        self.expect(TokenKind::In)?;
+        let list = self.parse_expression()?;
+        self.expect(TokenKind::Pipe)?;
+        let expression = self.parse_expression()?;
+        self.expect(TokenKind::RParen)?;
+        Ok(Expression::Reduce {
+            accumulator,
+            initial: Box::new(initial),
+            variable,
+            list: Box::new(list),
+            expression: Box::new(expression),
         })
     }
 
@@ -2129,15 +2464,32 @@ impl<'a> Parser<'a> {
                                 call
                             }
                         }
+                        "NORMALIZED" => {
+                            // IS [NOT] NORMALIZED
+                            self.advance();
+                            let call = Expression::FunctionCall {
+                                name: "isNormalized".to_string(),
+                                args: vec![left],
+                                distinct: false,
+                            };
+                            if negated {
+                                Expression::Unary {
+                                    op: UnaryOp::Not,
+                                    operand: Box::new(call),
+                                }
+                            } else {
+                                call
+                            }
+                        }
                         _ => {
                             return Err(self.error(
-                                "Expected NULL, TYPED, DIRECTED, LABELED, SOURCE, or DESTINATION after IS",
+                                "Expected NULL, TYPED, DIRECTED, LABELED, SOURCE, DESTINATION, or NORMALIZED after IS",
                             ));
                         }
                     }
                 } else {
                     return Err(self.error(
-                        "Expected NULL, TYPED, DIRECTED, LABELED, SOURCE, or DESTINATION after IS",
+                        "Expected NULL, TYPED, DIRECTED, LABELED, SOURCE, DESTINATION, or NORMALIZED after IS",
                     ));
                 };
 
@@ -2321,6 +2673,43 @@ impl<'a> Parser<'a> {
             _ if self.is_identifier() => {
                 let name = self.get_identifier_name();
 
+                // SESSION_USER: ISO GQL system value expression
+                if name.eq_ignore_ascii_case("SESSION_USER") {
+                    self.advance();
+                    return Ok(Expression::FunctionCall {
+                        name: "session_user".to_string(),
+                        args: Vec::new(),
+                        distinct: false,
+                    });
+                }
+
+                // List predicates: all/any/none/single(x IN list WHERE pred)
+                // Disambiguate from regular function calls by checking for x IN pattern
+                if self.peek_kind() == TokenKind::LParen {
+                    let lower = name.to_lowercase();
+                    let predicate_kind = match lower.as_str() {
+                        "all" => Some(ListPredicateKind::All),
+                        "any" => Some(ListPredicateKind::Any),
+                        "none" => Some(ListPredicateKind::None),
+                        "single" => Some(ListPredicateKind::Single),
+                        _ => None,
+                    };
+                    if let Some(kind) = predicate_kind {
+                        // Save position to restore if this is a regular function call
+                        self.advance(); // consume function name
+                        // Now peek inside: if ( identifier IN ... ), it's a list predicate
+                        // We've consumed the name, current is LParen, peek is potentially identifier
+                        // We can't easily look 2 ahead, so try parsing and fall back
+                        return self.parse_list_predicate(kind);
+                    }
+
+                    // reduce(acc = init, x IN list | expr)
+                    if lower == "reduce" {
+                        self.advance(); // consume 'reduce'
+                        return self.parse_reduce();
+                    }
+                }
+
                 // LET ... IN ... END expression
                 if name.eq_ignore_ascii_case("LET") {
                     self.advance(); // consume LET
@@ -2441,7 +2830,12 @@ impl<'a> Parser<'a> {
                 Ok(expr)
             }
             TokenKind::LBracket => {
-                self.advance();
+                self.advance(); // consume [
+                // Disambiguate: [x IN list WHERE ... | expr] vs [elem, ...]
+                // List comprehension if: identifier followed by IN keyword
+                if self.is_identifier() && self.peek_kind() == TokenKind::In {
+                    return self.parse_list_comprehension_inner();
+                }
                 let mut elements = Vec::new();
                 if self.current.kind != TokenKind::RBracket {
                     elements.push(self.parse_expression()?);
@@ -2597,6 +2991,7 @@ impl<'a> Parser<'a> {
             return_clause: ReturnClause {
                 distinct: false,
                 items: vec![],
+                is_wildcard: false,
                 group_by: vec![],
                 order_by: None,
                 skip: None,
@@ -2698,6 +3093,10 @@ impl<'a> Parser<'a> {
             self.advance();
             true
         } else {
+            // NODETACH is explicit non-detach (same as bare DELETE)
+            if self.current.kind == TokenKind::Nodetach {
+                self.advance();
+            }
             false
         };
 
@@ -2731,6 +3130,10 @@ impl<'a> Parser<'a> {
             self.advance();
             true
         } else {
+            // NODETACH is explicit non-detach (same as bare DELETE)
+            if self.current.kind == TokenKind::Nodetach {
+                self.advance();
+            }
             false
         };
 
@@ -2762,10 +3165,16 @@ impl<'a> Parser<'a> {
     fn parse_create_schema(&mut self) -> Result<SchemaStatement> {
         self.expect(TokenKind::Create)?;
 
+        // Optional OR REPLACE
+        let or_replace = self.try_parse_or_replace();
+
         match self.current.kind {
             TokenKind::Node => {
                 self.advance();
                 self.expect(TokenKind::Type)?;
+
+                // Optional IF NOT EXISTS
+                let if_not_exists = self.try_parse_if_not_exists();
 
                 if !self.is_identifier() {
                     return Err(self.error("Expected type name"));
@@ -2783,12 +3192,17 @@ impl<'a> Parser<'a> {
                 Ok(SchemaStatement::CreateNodeType(CreateNodeTypeStatement {
                     name,
                     properties,
+                    if_not_exists,
+                    or_replace,
                     span: None,
                 }))
             }
             TokenKind::Edge => {
                 self.advance();
                 self.expect(TokenKind::Type)?;
+
+                // Optional IF NOT EXISTS
+                let if_not_exists = self.try_parse_if_not_exists();
 
                 if !self.is_identifier() {
                     return Err(self.error("Expected type name"));
@@ -2805,6 +3219,8 @@ impl<'a> Parser<'a> {
                 Ok(SchemaStatement::CreateEdgeType(CreateEdgeTypeStatement {
                     name,
                     properties,
+                    if_not_exists,
+                    or_replace,
                     span: None,
                 }))
             }
@@ -2888,7 +3304,591 @@ impl<'a> Parser<'a> {
                     },
                 ))
             }
-            _ => Err(self.error("Expected NODE, EDGE, or VECTOR")),
+            TokenKind::Index => {
+                // CREATE INDEX name FOR (n:Label) ON (n.property) [USING TEXT|VECTOR|BTREE]
+                self.advance();
+
+                // Optional IF NOT EXISTS
+                let if_not_exists = self.try_parse_if_not_exists();
+
+                if !self.is_identifier() {
+                    return Err(self.error("Expected index name"));
+                }
+                let name = self.get_identifier_name();
+                self.advance();
+
+                self.parse_create_index_body(name, if_not_exists)
+            }
+            _ if self.is_identifier()
+                && self
+                    .get_identifier_name()
+                    .eq_ignore_ascii_case("CONSTRAINT") =>
+            {
+                // CREATE CONSTRAINT [name] FOR (n:Label) ON (n.prop) UNIQUE|NOT NULL
+                self.advance(); // consume CONSTRAINT
+
+                // Optional IF NOT EXISTS
+                let if_not_exists = self.try_parse_if_not_exists();
+
+                // Optional constraint name
+                let name = if self.is_identifier()
+                    && !self.get_identifier_name().eq_ignore_ascii_case("FOR")
+                {
+                    let n = self.get_identifier_name();
+                    self.advance();
+                    Some(n)
+                } else {
+                    None
+                };
+
+                self.parse_create_constraint_body(name, if_not_exists)
+            }
+            _ if self.is_identifier()
+                && self.get_identifier_name().eq_ignore_ascii_case("GRAPH") =>
+            {
+                self.advance(); // consume GRAPH
+                self.expect(TokenKind::Type)?;
+
+                let if_not_exists = self.try_parse_if_not_exists();
+
+                if !self.is_identifier() {
+                    return Err(self.error("Expected graph type name"));
+                }
+                let name = self.get_identifier_name();
+                self.advance();
+
+                // Parse optional body: { node_types: [T1, T2], edge_types: [E1] }
+                let (node_types, edge_types, open) = if self.current.kind == TokenKind::LBrace {
+                    self.parse_graph_type_body()?
+                } else {
+                    (Vec::new(), Vec::new(), true)
+                };
+
+                Ok(SchemaStatement::CreateGraphType(CreateGraphTypeStatement {
+                    name,
+                    node_types,
+                    edge_types,
+                    open,
+                    if_not_exists,
+                    or_replace,
+                    span: None,
+                }))
+            }
+            _ if self.is_identifier()
+                && self.get_identifier_name().eq_ignore_ascii_case("SCHEMA") =>
+            {
+                self.advance(); // consume SCHEMA
+
+                let if_not_exists = self.try_parse_if_not_exists();
+
+                if !self.is_identifier() {
+                    return Err(self.error("Expected schema name"));
+                }
+                let name = self.get_identifier_name();
+                self.advance();
+
+                Ok(SchemaStatement::CreateSchema {
+                    name,
+                    if_not_exists,
+                })
+            }
+            _ => Err(self.error(
+                "Expected NODE, EDGE, VECTOR, INDEX, CONSTRAINT, GRAPH, or SCHEMA after CREATE",
+            )),
+        }
+    }
+
+    /// Parses the body of CREATE INDEX after name: `FOR (n:Label) ON (n.prop) [USING kind] [options]`.
+    fn parse_create_index_body(
+        &mut self,
+        name: String,
+        if_not_exists: bool,
+    ) -> Result<SchemaStatement> {
+        // Expect FOR
+        if !self.is_identifier() || !self.get_identifier_name().eq_ignore_ascii_case("FOR") {
+            return Err(self.error("Expected FOR after index name"));
+        }
+        self.advance();
+
+        // Parse (n:Label)
+        self.expect(TokenKind::LParen)?;
+        if !self.is_identifier() {
+            return Err(self.error("Expected variable in FOR clause"));
+        }
+        let var_name = self.get_identifier_name();
+        self.advance();
+        self.expect(TokenKind::Colon)?;
+        if !self.is_identifier() && !self.is_label_or_type_name() {
+            return Err(self.error("Expected label"));
+        }
+        let label = self.get_identifier_name();
+        self.advance();
+        self.expect(TokenKind::RParen)?;
+
+        // Expect ON
+        self.expect(TokenKind::On)?;
+
+        // Parse (n.property, ...)
+        self.expect(TokenKind::LParen)?;
+        let mut properties = Vec::new();
+        loop {
+            if !self.is_identifier() {
+                return Err(self.error("Expected variable.property"));
+            }
+            let prop_var = self.get_identifier_name();
+            self.advance();
+            self.expect(TokenKind::Dot)?;
+            if !self.is_identifier() {
+                return Err(self.error("Expected property name"));
+            }
+            // Validate variable matches
+            if !prop_var.eq_ignore_ascii_case(&var_name) {
+                return Err(self.error(&format!(
+                    "Variable '{prop_var}' does not match FOR variable '{var_name}'"
+                )));
+            }
+            let prop = self.get_identifier_name();
+            self.advance();
+            properties.push(prop);
+            if self.current.kind != TokenKind::Comma {
+                break;
+            }
+            self.advance();
+        }
+        self.expect(TokenKind::RParen)?;
+
+        // Optional USING TEXT|VECTOR|BTREE
+        let mut index_kind = IndexKind::Property;
+        let mut options = IndexOptions::default();
+
+        if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("USING") {
+            self.advance();
+            if !self.is_identifier() && self.current.kind != TokenKind::Vector {
+                return Err(self.error("Expected TEXT, VECTOR, or BTREE after USING"));
+            }
+            let kind_text = if self.current.kind == TokenKind::Vector {
+                "VECTOR".to_string()
+            } else {
+                self.get_identifier_name()
+            };
+            self.advance();
+            match kind_text.to_uppercase().as_str() {
+                "TEXT" => index_kind = IndexKind::Text,
+                "VECTOR" => {
+                    index_kind = IndexKind::Vector;
+                    // Parse optional {dimensions: N, metric: 'name'}
+                    if self.current.kind == TokenKind::LBrace {
+                        self.advance();
+                        while self.current.kind != TokenKind::RBrace {
+                            if !self.is_identifier() {
+                                return Err(self.error("Expected option name"));
+                            }
+                            let opt_name = self.get_identifier_name();
+                            self.advance();
+                            self.expect(TokenKind::Colon)?;
+                            match opt_name.to_uppercase().as_str() {
+                                "DIMENSIONS" | "DIMENSION" => {
+                                    if self.current.kind != TokenKind::Integer {
+                                        return Err(self.error("Expected integer for dimensions"));
+                                    }
+                                    let dim: usize = self
+                                        .current
+                                        .text
+                                        .parse()
+                                        .map_err(|_| self.error("Invalid dimension value"))?;
+                                    self.advance();
+                                    options.dimensions = Some(dim);
+                                }
+                                "METRIC" => {
+                                    if self.current.kind != TokenKind::String {
+                                        return Err(self.error("Expected string for metric"));
+                                    }
+                                    let metric = self
+                                        .current
+                                        .text
+                                        .trim_matches('\'')
+                                        .trim_matches('"')
+                                        .to_string();
+                                    self.advance();
+                                    options.metric = Some(metric);
+                                }
+                                _ => {
+                                    return Err(
+                                        self.error(&format!("Unknown index option '{opt_name}'"))
+                                    );
+                                }
+                            }
+                            if self.current.kind == TokenKind::Comma {
+                                self.advance();
+                            }
+                        }
+                        self.expect(TokenKind::RBrace)?;
+                    }
+                }
+                "BTREE" => index_kind = IndexKind::BTree,
+                _ => {
+                    return Err(self.error(&format!("Unknown index type '{kind_text}'")));
+                }
+            }
+        }
+
+        Ok(SchemaStatement::CreateIndex(CreateIndexStatement {
+            name,
+            index_kind,
+            label,
+            properties,
+            options,
+            if_not_exists,
+            span: None,
+        }))
+    }
+
+    /// Parses the body of CREATE CONSTRAINT: `FOR (n:Label) ON (n.prop) kind`.
+    fn parse_create_constraint_body(
+        &mut self,
+        name: Option<String>,
+        if_not_exists: bool,
+    ) -> Result<SchemaStatement> {
+        // Expect FOR
+        if !self.is_identifier() || !self.get_identifier_name().eq_ignore_ascii_case("FOR") {
+            return Err(self.error("Expected FOR after constraint name"));
+        }
+        self.advance();
+
+        // Parse (n:Label)
+        self.expect(TokenKind::LParen)?;
+        if !self.is_identifier() {
+            return Err(self.error("Expected variable in FOR clause"));
+        }
+        let var_name = self.get_identifier_name();
+        self.advance();
+        self.expect(TokenKind::Colon)?;
+        if !self.is_identifier() && !self.is_label_or_type_name() {
+            return Err(self.error("Expected label"));
+        }
+        let label = self.get_identifier_name();
+        self.advance();
+        self.expect(TokenKind::RParen)?;
+
+        // Expect ON
+        self.expect(TokenKind::On)?;
+
+        // Parse (n.property, ...)
+        self.expect(TokenKind::LParen)?;
+        let mut properties = Vec::new();
+        loop {
+            if !self.is_identifier() {
+                return Err(self.error("Expected variable.property"));
+            }
+            let prop_var = self.get_identifier_name();
+            self.advance();
+            self.expect(TokenKind::Dot)?;
+            if !self.is_identifier() {
+                return Err(self.error("Expected property name"));
+            }
+            if !prop_var.eq_ignore_ascii_case(&var_name) {
+                return Err(self.error(&format!(
+                    "Variable '{prop_var}' does not match FOR variable '{var_name}'"
+                )));
+            }
+            let prop = self.get_identifier_name();
+            self.advance();
+            properties.push(prop);
+            if self.current.kind != TokenKind::Comma {
+                break;
+            }
+            self.advance();
+        }
+        self.expect(TokenKind::RParen)?;
+
+        // Parse constraint kind: UNIQUE, NOT NULL, NODE KEY
+        let constraint_kind = if self.is_identifier()
+            && self.get_identifier_name().eq_ignore_ascii_case("UNIQUE")
+        {
+            self.advance();
+            ConstraintKind::Unique
+        } else if self.current.kind == TokenKind::Not {
+            self.advance();
+            if self.current.kind != TokenKind::Null {
+                return Err(self.error("Expected NULL after NOT"));
+            }
+            self.advance();
+            ConstraintKind::NotNull
+        } else if self.current.kind == TokenKind::Node {
+            self.advance();
+            if !self.is_identifier() || !self.get_identifier_name().eq_ignore_ascii_case("KEY") {
+                return Err(self.error("Expected KEY after NODE"));
+            }
+            self.advance();
+            ConstraintKind::NodeKey
+        } else if self.current.kind == TokenKind::Exists {
+            self.advance();
+            ConstraintKind::Exists
+        } else {
+            return Err(self.error("Expected UNIQUE, NOT NULL, NODE KEY, or EXISTS"));
+        };
+
+        Ok(SchemaStatement::CreateConstraint(
+            CreateConstraintStatement {
+                name,
+                constraint_kind,
+                label,
+                properties,
+                if_not_exists,
+                span: None,
+            },
+        ))
+    }
+
+    /// Tries to parse `IF NOT EXISTS`, returning true if found.
+    fn try_parse_if_not_exists(&mut self) -> bool {
+        if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("IF") {
+            self.advance();
+            if self.current.kind == TokenKind::Not {
+                self.advance();
+                if self.current.kind == TokenKind::Exists {
+                    self.advance();
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Tries to parse `IF EXISTS`, returning true if found.
+    fn try_parse_if_exists(&mut self) -> bool {
+        if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("IF") {
+            self.advance();
+            if self.current.kind == TokenKind::Exists {
+                self.advance();
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Tries to parse `OR REPLACE`, returning true if found.
+    ///
+    /// Since the parser has no backtrack beyond single lookahead, this peeks
+    /// at the current and next token. If current is "OR" and next is "REPLACE",
+    /// consumes both and returns true.
+    fn try_parse_or_replace(&mut self) -> bool {
+        if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("OR") {
+            let pk = self.peek_kind();
+            if pk == TokenKind::Identifier {
+                let text = self.peek_text_upper();
+                if text == "REPLACE" {
+                    self.advance(); // consume OR
+                    self.advance(); // consume REPLACE
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Dispatches CREATE to either a schema DDL or session (graph instance) command.
+    ///
+    /// Called after detecting CREATE followed by something other than `(`.
+    /// Handles: CREATE [OR REPLACE] NODE TYPE, EDGE TYPE, GRAPH TYPE, VECTOR INDEX,
+    /// INDEX, CONSTRAINT, SCHEMA, and CREATE [PROPERTY] GRAPH.
+    fn parse_create_dispatch(&mut self) -> Result<Statement> {
+        // Check: is this CREATE [PROPERTY] GRAPH <name> (session command)?
+        // We need to distinguish from CREATE GRAPH TYPE (schema DDL).
+        // Peek: if next is GRAPH/PROPERTY and the token after that is NOT TYPE, it's an instance.
+        if self.peek_is_graph_instance_keyword() {
+            return self.parse_create_graph().map(Statement::SessionCommand);
+        }
+        self.parse_create_schema().map(Statement::Schema)
+    }
+
+    /// Parses the body of CREATE GRAPH TYPE: `{ node_types: [A, B], edge_types: [E1] }`.
+    ///
+    /// Returns (node_types, edge_types, open). If no body, returns open=true.
+    fn parse_graph_type_body(&mut self) -> Result<(Vec<String>, Vec<String>, bool)> {
+        self.expect(TokenKind::LBrace)?;
+
+        let mut node_types = Vec::new();
+        let mut edge_types = Vec::new();
+        let mut open = false;
+
+        while self.current.kind != TokenKind::RBrace && self.current.kind != TokenKind::Eof {
+            if self.is_identifier() {
+                let key = self.get_identifier_name();
+                self.advance();
+                self.expect(TokenKind::Colon)?;
+
+                match key.to_uppercase().as_str() {
+                    "NODE_TYPES" | "NODETYPES" => {
+                        node_types = self.parse_identifier_list()?;
+                    }
+                    "EDGE_TYPES" | "EDGETYPES" => {
+                        edge_types = self.parse_identifier_list()?;
+                    }
+                    "OPEN" => {
+                        if self.current.kind == TokenKind::True {
+                            open = true;
+                            self.advance();
+                        } else if self.current.kind == TokenKind::False {
+                            open = false;
+                            self.advance();
+                        } else {
+                            return Err(self.error("Expected true or false for 'open'"));
+                        }
+                    }
+                    _ => return Err(self.error("Expected node_types, edge_types, or open")),
+                }
+
+                // Optional comma separator
+                if self.current.kind == TokenKind::Comma {
+                    self.advance();
+                }
+            } else {
+                return Err(self.error("Expected property name in graph type body"));
+            }
+        }
+
+        self.expect(TokenKind::RBrace)?;
+        Ok((node_types, edge_types, open))
+    }
+
+    /// Parses `[T1, T2, T3]`, returning a list of identifiers.
+    fn parse_identifier_list(&mut self) -> Result<Vec<String>> {
+        self.expect(TokenKind::LBracket)?;
+        let mut items = Vec::new();
+
+        if self.current.kind != TokenKind::RBracket {
+            loop {
+                if !self.is_identifier() && !self.is_label_or_type_name() {
+                    return Err(self.error("Expected identifier in list"));
+                }
+                items.push(self.get_identifier_name());
+                self.advance();
+                if self.current.kind != TokenKind::Comma {
+                    break;
+                }
+                self.advance();
+            }
+        }
+
+        self.expect(TokenKind::RBracket)?;
+        Ok(items)
+    }
+
+    /// Parses a DROP statement, dispatching to schema or session commands.
+    ///
+    /// Handles: DROP NODE TYPE, DROP EDGE TYPE, DROP INDEX, DROP CONSTRAINT,
+    /// DROP GRAPH TYPE, DROP SCHEMA, DROP [PROPERTY] GRAPH.
+    fn parse_drop(&mut self) -> Result<Statement> {
+        self.advance(); // consume DROP
+
+        match self.current.kind {
+            TokenKind::Node => {
+                // DROP NODE TYPE [IF EXISTS] name
+                self.advance();
+                self.expect(TokenKind::Type)?;
+                let if_exists = self.try_parse_if_exists();
+                if !self.is_identifier() {
+                    return Err(self.error("Expected type name"));
+                }
+                let name = self.get_identifier_name();
+                self.advance();
+                Ok(Statement::Schema(SchemaStatement::DropNodeType {
+                    name,
+                    if_exists,
+                }))
+            }
+            TokenKind::Edge => {
+                // DROP EDGE TYPE [IF EXISTS] name
+                self.advance();
+                self.expect(TokenKind::Type)?;
+                let if_exists = self.try_parse_if_exists();
+                if !self.is_identifier() {
+                    return Err(self.error("Expected type name"));
+                }
+                let name = self.get_identifier_name();
+                self.advance();
+                Ok(Statement::Schema(SchemaStatement::DropEdgeType {
+                    name,
+                    if_exists,
+                }))
+            }
+            TokenKind::Index => {
+                // DROP INDEX [IF EXISTS] name
+                self.advance();
+                let if_exists = self.try_parse_if_exists();
+                if !self.is_identifier() {
+                    return Err(self.error("Expected index name"));
+                }
+                let name = self.get_identifier_name();
+                self.advance();
+                Ok(Statement::Schema(SchemaStatement::DropIndex {
+                    name,
+                    if_exists,
+                }))
+            }
+            _ if self.is_identifier()
+                && self
+                    .get_identifier_name()
+                    .eq_ignore_ascii_case("CONSTRAINT") =>
+            {
+                // DROP CONSTRAINT [IF EXISTS] name
+                self.advance(); // consume CONSTRAINT
+                let if_exists = self.try_parse_if_exists();
+                if !self.is_identifier() {
+                    return Err(self.error("Expected constraint name"));
+                }
+                let name = self.get_identifier_name();
+                self.advance();
+                Ok(Statement::Schema(SchemaStatement::DropConstraint {
+                    name,
+                    if_exists,
+                }))
+            }
+            _ if self.is_identifier()
+                && self.get_identifier_name().eq_ignore_ascii_case("SCHEMA") =>
+            {
+                // DROP SCHEMA [IF EXISTS] name
+                self.advance(); // consume SCHEMA
+                let if_exists = self.try_parse_if_exists();
+                if !self.is_identifier() {
+                    return Err(self.error("Expected schema name"));
+                }
+                let name = self.get_identifier_name();
+                self.advance();
+                Ok(Statement::Schema(SchemaStatement::DropSchema {
+                    name,
+                    if_exists,
+                }))
+            }
+            _ if self.is_identifier()
+                && self.get_identifier_name().eq_ignore_ascii_case("GRAPH") =>
+            {
+                // Could be DROP GRAPH TYPE or DROP GRAPH <name>
+                // Peek ahead: if next token is TYPE, it's schema DDL
+                if self.peek_kind() == TokenKind::Type {
+                    // DROP GRAPH TYPE [IF EXISTS] name
+                    self.advance(); // consume GRAPH
+                    self.advance(); // consume TYPE
+                    let if_exists = self.try_parse_if_exists();
+                    if !self.is_identifier() {
+                        return Err(self.error("Expected graph type name"));
+                    }
+                    let name = self.get_identifier_name();
+                    self.advance();
+                    Ok(Statement::Schema(SchemaStatement::DropGraphType {
+                        name,
+                        if_exists,
+                    }))
+                } else {
+                    // DROP [PROPERTY] GRAPH <name>
+                    self.parse_drop_graph_body().map(Statement::SessionCommand)
+                }
+            }
+            _ => {
+                // Fall through to DROP [PROPERTY] GRAPH
+                self.parse_drop_graph_body().map(Statement::SessionCommand)
+            }
         }
     }
 
@@ -2972,15 +3972,30 @@ impl<'a> Parser<'a> {
             .unwrap_or_default()
     }
 
-    /// Checks whether CREATE is followed by [PROPERTY] GRAPH.
-    fn peek_is_graph_keyword(&mut self) -> bool {
+    /// Checks whether CREATE is followed by [PROPERTY] GRAPH (for graph instances, not GRAPH TYPE).
+    ///
+    /// Returns true for `CREATE GRAPH <name>` and `CREATE PROPERTY GRAPH <name>`,
+    /// but false for `CREATE GRAPH TYPE <name>` (which is schema DDL).
+    fn peek_is_graph_instance_keyword(&mut self) -> bool {
         let pk = self.peek_kind();
-        if pk == TokenKind::Identifier {
-            let text = self.peek_text_upper();
-            text == "GRAPH" || text == "PROPERTY"
-        } else {
-            false
+        if pk != TokenKind::Identifier {
+            return false;
         }
+        let text = self.peek_text_upper();
+        if text == "PROPERTY" {
+            return true; // CREATE PROPERTY GRAPH ...
+        }
+        if text == "GRAPH" {
+            // Need to check the token after GRAPH. If it's TYPE, this is GRAPH TYPE (schema).
+            // Use a temporary lexer to peek 2 tokens ahead from the current source position.
+            let peeked_token = self.peeked.as_ref().unwrap();
+            let remaining = &self.source[peeked_token.span.end..];
+            let mut temp_lexer = Lexer::new(remaining);
+            let next_after_graph = temp_lexer.next_token();
+            // If it's TYPE, this is CREATE GRAPH TYPE, not a graph instance
+            return next_after_graph.kind != TokenKind::Type;
+        }
+        false
     }
 
     /// Parses `CREATE [PROPERTY] GRAPH [IF NOT EXISTS] <name>`.
@@ -3035,9 +4050,8 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses `DROP [PROPERTY] GRAPH [IF EXISTS] <name>`.
-    fn parse_drop_graph(&mut self) -> Result<SessionCommand> {
-        self.advance(); // consume DROP
-
+    /// Assumes DROP has already been consumed.
+    fn parse_drop_graph_body(&mut self) -> Result<SessionCommand> {
         // Skip optional PROPERTY keyword
         if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("PROPERTY") {
             self.advance();
@@ -3045,25 +4059,14 @@ impl<'a> Parser<'a> {
 
         // Expect GRAPH
         if !self.is_identifier() || !self.get_identifier_name().eq_ignore_ascii_case("GRAPH") {
-            return Err(self.error("Expected GRAPH after DROP"));
+            return Err(
+                self.error("Expected GRAPH, NODE TYPE, EDGE TYPE, INDEX, or CONSTRAINT after DROP")
+            );
         }
         self.advance();
 
         // Optional IF EXISTS
-        let if_exists =
-            if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("IF") {
-                self.advance();
-                if self.current.kind != TokenKind::Exists
-                    && (!self.is_identifier()
-                        || !self.get_identifier_name().eq_ignore_ascii_case("EXISTS"))
-                {
-                    return Err(self.error("Expected EXISTS after IF"));
-                }
-                self.advance();
-                true
-            } else {
-                false
-            };
+        let if_exists = self.try_parse_if_exists();
 
         // Parse graph name
         if !self.is_identifier() {

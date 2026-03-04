@@ -95,6 +95,14 @@ pub fn value_to_json(v: &Value) -> serde_json::Value {
         Value::Vector(vec) => {
             serde_json::Value::Array(vec.iter().map(|&f| serde_json::json!(f)).collect())
         }
+        Value::Path { nodes, edges } => {
+            serde_json::json!({
+                "$path": {
+                    "nodes": nodes.iter().map(value_to_json).collect::<Vec<_>>(),
+                    "edges": edges.iter().map(value_to_json).collect::<Vec<_>>(),
+                }
+            })
+        }
     }
 }
 

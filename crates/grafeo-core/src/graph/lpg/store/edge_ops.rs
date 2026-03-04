@@ -114,7 +114,7 @@ impl LpgStore {
     /// Gets an edge by ID at a specific epoch.
     #[must_use]
     #[cfg(not(feature = "tiered-storage"))]
-    pub(crate) fn get_edge_at_epoch(&self, id: EdgeId, epoch: EpochId) -> Option<Edge> {
+    pub fn get_edge_at_epoch(&self, id: EdgeId, epoch: EpochId) -> Option<Edge> {
         let edges = self.edges.read();
         let chain = edges.get(&id)?;
         let record = chain.visible_at(epoch)?;
@@ -140,7 +140,7 @@ impl LpgStore {
     /// (Tiered storage version)
     #[must_use]
     #[cfg(feature = "tiered-storage")]
-    pub(crate) fn get_edge_at_epoch(&self, id: EdgeId, epoch: EpochId) -> Option<Edge> {
+    pub fn get_edge_at_epoch(&self, id: EdgeId, epoch: EpochId) -> Option<Edge> {
         let versions = self.edge_versions.read();
         let index = versions.get(&id)?;
         let version_ref = index.visible_at(epoch)?;
@@ -236,6 +236,61 @@ impl LpgStore {
                     .get_edge(cold_ref.epoch, cold_ref.block_offset, cold_ref.length)
             }
         }
+    }
+
+    /// Returns all versions of an edge with their creation/deletion epochs, newest first.
+    ///
+    /// Each entry is `(created_epoch, deleted_epoch, Edge)`. Note that properties
+    /// reflect the current state (they are not versioned per-epoch).
+    #[must_use]
+    #[cfg(not(feature = "tiered-storage"))]
+    pub fn get_edge_history(&self, id: EdgeId) -> Vec<(EpochId, Option<EpochId>, Edge)> {
+        let edges = self.edges.read();
+        let chain = match edges.get(&id) {
+            Some(c) => c,
+            None => return Vec::new(),
+        };
+
+        let id_to_type = self.id_to_edge_type.read();
+        let properties: grafeo_common::types::PropertyMap =
+            self.edge_properties.get_all(id).into_iter().collect();
+
+        chain
+            .history()
+            .filter_map(|(info, record)| {
+                let edge_type = id_to_type.get(record.type_id as usize)?.clone();
+                let mut edge = Edge::new(id, record.src, record.dst, edge_type);
+                edge.properties.clone_from(&properties);
+                Some((info.created_epoch, info.deleted_epoch, edge))
+            })
+            .collect()
+    }
+
+    /// Returns all versions of an edge with their creation/deletion epochs, newest first.
+    /// (Tiered storage version)
+    #[must_use]
+    #[cfg(feature = "tiered-storage")]
+    pub fn get_edge_history(&self, id: EdgeId) -> Vec<(EpochId, Option<EpochId>, Edge)> {
+        let versions = self.edge_versions.read();
+        let Some(index) = versions.get(&id) else {
+            return Vec::new();
+        };
+
+        let id_to_type = self.id_to_edge_type.read();
+        let properties: grafeo_common::types::PropertyMap =
+            self.edge_properties.get_all(id).into_iter().collect();
+
+        index
+            .version_history()
+            .into_iter()
+            .filter_map(|(created, deleted, vref)| {
+                let record = self.read_edge_record(&vref)?;
+                let edge_type = id_to_type.get(record.type_id as usize)?.clone();
+                let mut edge = Edge::new(id, record.src, record.dst, edge_type);
+                edge.properties.clone_from(&properties);
+                Some((created, deleted, edge))
+            })
+            .collect()
     }
 
     /// Deletes an edge (using latest epoch).

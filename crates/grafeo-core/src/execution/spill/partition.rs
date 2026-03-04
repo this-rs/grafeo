@@ -528,6 +528,11 @@ fn hash_key(key: &[Value]) -> u64 {
                     f.to_bits().hash(&mut hasher);
                 }
             }
+            Value::Path { nodes, edges } => {
+                13u8.hash(&mut hasher);
+                nodes.len().hash(&mut hasher);
+                edges.len().hash(&mut hasher);
+            }
         }
     }
 

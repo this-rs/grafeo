@@ -104,7 +104,7 @@ impl super::Planner {
 
         columns.push(expand.to_variable.clone());
 
-        // If a path alias is set, add columns for path length, nodes, and edges
+        // If a path alias is set, add columns for path length, nodes, edges, and the path itself
         if let Some(ref path_alias) = expand.path_alias {
             let length_col = format!("_path_length_{}", path_alias);
             let nodes_col = format!("_path_nodes_{}", path_alias);
@@ -113,9 +113,12 @@ impl super::Planner {
             self.scalar_columns.borrow_mut().insert(length_col.clone());
             self.scalar_columns.borrow_mut().insert(nodes_col.clone());
             self.scalar_columns.borrow_mut().insert(edges_col.clone());
+            // The path alias itself is also a scalar column containing Value::Path
+            self.scalar_columns.borrow_mut().insert(path_alias.clone());
             columns.push(length_col);
             columns.push(nodes_col);
             columns.push(edges_col);
+            columns.push(path_alias.clone());
         }
 
         Ok((operator, columns))

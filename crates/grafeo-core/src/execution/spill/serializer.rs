@@ -26,6 +26,7 @@ const TAG_VECTOR: u8 = 9;
 const TAG_DATE: u8 = 10;
 const TAG_TIME: u8 = 11;
 const TAG_DURATION: u8 = 12;
+const TAG_PATH: u8 = 13;
 
 /// Serializes a Value to bytes.
 ///
@@ -124,6 +125,20 @@ pub fn serialize_value<W: Write + ?Sized>(value: &Value, w: &mut W) -> std::io::
             w.write_all(&d.days().to_le_bytes())?;
             w.write_all(&d.nanos().to_le_bytes())?;
             Ok(25)
+        }
+        Value::Path { nodes, edges } => {
+            w.write_all(&[TAG_PATH])?;
+            w.write_all(&(nodes.len() as u64).to_le_bytes())?;
+            let mut total = 1 + 8;
+            for node in nodes.iter() {
+                total += serialize_value(node, w)?;
+            }
+            w.write_all(&(edges.len() as u64).to_le_bytes())?;
+            total += 8;
+            for edge in edges.iter() {
+                total += serialize_value(edge, w)?;
+            }
+            Ok(total)
         }
     }
 }
@@ -257,6 +272,25 @@ pub fn deserialize_value<R: Read + ?Sized>(r: &mut R) -> std::io::Result<Value> 
             Ok(Value::Duration(grafeo_common::types::Duration::new(
                 months, days, nanos,
             )))
+        }
+        TAG_PATH => {
+            let mut len_buf = [0u8; 8];
+            r.read_exact(&mut len_buf)?;
+            let nodes_len = u64::from_le_bytes(len_buf) as usize;
+            let mut nodes = Vec::with_capacity(nodes_len);
+            for _ in 0..nodes_len {
+                nodes.push(deserialize_value(r)?);
+            }
+            r.read_exact(&mut len_buf)?;
+            let edges_len = u64::from_le_bytes(len_buf) as usize;
+            let mut edges = Vec::with_capacity(edges_len);
+            for _ in 0..edges_len {
+                edges.push(deserialize_value(r)?);
+            }
+            Ok(Value::Path {
+                nodes: Arc::from(nodes),
+                edges: Arc::from(edges),
+            })
         }
         _ => Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,

@@ -2,11 +2,11 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
-## [0.5.13] - 2026-03-03
+## [0.5.13] - Unreleased (dont know when this has been a huge undertaking so far)
 
-### Added
+### Completed
 
-- **GQL**: near-complete compliance with ISO/IEC 39075:2024 (Graph Query Language), covering all features practical for a graph database
+- **GQL**: full compliance with ISO/IEC 39075:2024 (Graph Query Language), covering all features practical for a graph database
 - **Cypher**: full openCypher v9 specification, plus common additions (e.g., pattern comprehension, CALL subqueries, FOREACH)
 - **SPARQL**: full W3C SPARQL 1.1 implementation, no 1.2 features (e.g., SPARQL Star)
 
@@ -20,7 +20,31 @@ All notable changes to Grafeo, for future reference (and enjoyment).
 - **Temporal JSON encoding**: `{"$date": "..."}`, `{"$time": "..."}`, `{"$duration": "..."}` for parameter passing and result serialization
 - **Python temporal bindings**: `datetime.date` and `datetime.time` round-trip; Duration as dict `{"months", "days", "nanos"}`
 
+#### Schema / DDL System
+
+- **Full schema DDL**: `CREATE`/`DROP` for NODE TYPE, EDGE TYPE, GRAPH TYPE, INDEX, CONSTRAINT, and SCHEMA, all executable via GQL queries
+- **Type definitions**: `CREATE NODE TYPE Person (name STRING NOT NULL, age INT64)` with property types and nullability
+- **Index DDL**: `CREATE INDEX ... FOR (n:Label) ON (n.property) [USING TEXT|VECTOR|BTREE]` for property, text, vector, and B-tree indexes
+- **Constraint DDL**: `CREATE CONSTRAINT ... UNIQUE|NOT NULL|NODE KEY|EXISTS` with enforcement on writes
+- **Constraint enforcement**: NOT NULL, type validation, and UNIQUE constraints validated during node/edge creation and property mutation
+- **OR REPLACE**: `CREATE OR REPLACE NODE TYPE|EDGE TYPE|GRAPH TYPE` for atomic drop-and-create
+- **IF NOT EXISTS / IF EXISTS**: conditional creation and dropping for all DDL statement types
+- **Graph types**: `CREATE GRAPH TYPE name { node_types: [...], edge_types: [...] }` for graph type definitions
+- **Schema namespaces**: `CREATE SCHEMA name` / `DROP SCHEMA name` for namespace management
+- **WAL persistence**: all schema DDL changes survive crash recovery via WAL logging and replay
+
+#### Time-Travel
+
+- **Time-travel queries**: `execute_at_epoch(query, epoch)` on both `GrafeoDB` and `Session` runs any query with historical epoch-based visibility, seeing the database as it existed at a past epoch
+- **Session viewing epoch**: `set_viewing_epoch(epoch)` / `clear_viewing_epoch()` on `Session` for persistent time-travel mode across multiple queries
+- **GQL session parameter**: `SESSION SET PARAMETER viewing_epoch = <epoch>` and `SESSION RESET` for time-travel via standard GQL syntax
+- **Point lookups at epoch**: `get_node_at_epoch(id, epoch)` and `get_edge_at_epoch(id, epoch)` on `GrafeoDB` for pure epoch-based visibility without transaction context
+- **Version history**: `get_node_history(id)` and `get_edge_history(id)` return all versions with creation/deletion epochs, newest first
+- **ValidityTs type**: reverse-ordered validity timestamp for future disk-backed key encoding (newest versions sort first in key order)
+
 ### Fixed
+
+- **Epoch-only visibility in scan/expand operators**: time-travel queries now use pure epoch-based visibility (`get_node_at_epoch`) instead of transaction-aware checks that bypassed epoch filtering when both sides used `TxId::SYSTEM`
 
 - **Cypher standalone DELETE/SET/REMOVE errors**: error messages now correctly indicate a preceding MATCH clause is required
 - **Cypher power operator**: `^` no longer returns an error in the translator

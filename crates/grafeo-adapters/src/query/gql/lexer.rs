@@ -153,6 +153,20 @@ pub enum TokenKind {
     Dimension,
     /// METRIC keyword (for distance metric).
     Metric,
+    /// NODETACH keyword (explicit non-detach delete).
+    Nodetach,
+    /// FETCH keyword (for FETCH FIRST n ROWS ONLY).
+    Fetch,
+    /// FIRST keyword (for FETCH FIRST n ROWS ONLY).
+    First,
+    /// ROWS keyword (for FETCH FIRST n ROWS ONLY).
+    Rows,
+    /// ONLY keyword (for FETCH FIRST n ROWS ONLY).
+    Only,
+    /// NEXT keyword (for FETCH NEXT n ROWS ONLY).
+    Next,
+    /// ROW keyword (for FETCH FIRST 1 ROW ONLY).
+    Row,
 
     // Literals
     /// Integer literal.
@@ -671,6 +685,13 @@ impl<'a> Lexer<'a> {
             "INDEX" => TokenKind::Index,
             "DIMENSION" => TokenKind::Dimension,
             "METRIC" => TokenKind::Metric,
+            "NODETACH" => TokenKind::Nodetach,
+            "FETCH" => TokenKind::Fetch,
+            "FIRST" => TokenKind::First,
+            "NEXT" => TokenKind::Next,
+            "ROWS" => TokenKind::Rows,
+            "ROW" => TokenKind::Row,
+            "ONLY" => TokenKind::Only,
             _ => TokenKind::Identifier,
         }
     }

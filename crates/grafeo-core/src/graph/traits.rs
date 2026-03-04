@@ -54,6 +54,16 @@ pub trait GraphStore: Send + Sync {
     /// Returns an edge visible to a specific transaction.
     fn get_edge_versioned(&self, id: EdgeId, epoch: EpochId, tx_id: TxId) -> Option<Edge>;
 
+    /// Returns a node using pure epoch-based visibility (no transaction context).
+    ///
+    /// The node is visible if `created_epoch <= epoch` and not deleted at or
+    /// before `epoch`. Used for time-travel queries where transaction ownership
+    /// must not bypass the epoch check.
+    fn get_node_at_epoch(&self, id: NodeId, epoch: EpochId) -> Option<Node>;
+
+    /// Returns an edge using pure epoch-based visibility (no transaction context).
+    fn get_edge_at_epoch(&self, id: EdgeId, epoch: EpochId) -> Option<Edge>;
+
     // --- Property access (fast path, avoids loading full entity) ---
 
     /// Gets a single property from a node without loading all properties.
@@ -182,6 +192,28 @@ pub trait GraphStore: Send + Sync {
 
     /// Returns the current MVCC epoch.
     fn current_epoch(&self) -> EpochId;
+
+    // --- History ---
+
+    /// Returns all versions of a node with their creation/deletion epochs, newest first.
+    ///
+    /// Each entry is `(created_epoch, deleted_epoch, Node)`. Properties and labels
+    /// reflect the current state (they are not versioned per-epoch).
+    ///
+    /// Default returns empty (not all backends track version history).
+    fn get_node_history(&self, _id: NodeId) -> Vec<(EpochId, Option<EpochId>, Node)> {
+        Vec::new()
+    }
+
+    /// Returns all versions of an edge with their creation/deletion epochs, newest first.
+    ///
+    /// Each entry is `(created_epoch, deleted_epoch, Edge)`. Properties reflect
+    /// the current state (they are not versioned per-epoch).
+    ///
+    /// Default returns empty (not all backends track version history).
+    fn get_edge_history(&self, _id: EdgeId) -> Vec<(EpochId, Option<EpochId>, Edge)> {
+        Vec::new()
+    }
 }
 
 /// Write operations for graph mutation.

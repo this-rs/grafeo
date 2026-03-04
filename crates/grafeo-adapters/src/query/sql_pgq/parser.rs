@@ -247,6 +247,7 @@ impl<'a> Parser<'a> {
             Some(ReturnClause {
                 distinct: false,
                 items: vec![],
+                is_wildcard: false,
                 group_by: vec![],
                 order_by,
                 skip: None,
@@ -394,6 +395,7 @@ impl<'a> Parser<'a> {
         Ok(AliasedPattern {
             alias: None,
             path_function: None,
+            keep: None,
             pattern,
         })
     }

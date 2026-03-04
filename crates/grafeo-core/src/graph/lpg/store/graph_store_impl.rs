@@ -32,6 +32,14 @@ impl GraphStore for LpgStore {
         LpgStore::get_edge_versioned(self, id, epoch, tx_id)
     }
 
+    fn get_node_at_epoch(&self, id: NodeId, epoch: EpochId) -> Option<Node> {
+        LpgStore::get_node_at_epoch(self, id, epoch)
+    }
+
+    fn get_edge_at_epoch(&self, id: EdgeId, epoch: EpochId) -> Option<Edge> {
+        LpgStore::get_edge_at_epoch(self, id, epoch)
+    }
+
     fn get_node_property(&self, id: NodeId, key: &PropertyKey) -> Option<Value> {
         LpgStore::get_node_property(self, id, key)
     }
@@ -159,6 +167,14 @@ impl GraphStore for LpgStore {
 
     fn current_epoch(&self) -> EpochId {
         LpgStore::current_epoch(self)
+    }
+
+    fn get_node_history(&self, id: NodeId) -> Vec<(EpochId, Option<EpochId>, Node)> {
+        LpgStore::get_node_history(self, id)
+    }
+
+    fn get_edge_history(&self, id: EdgeId) -> Vec<(EpochId, Option<EpochId>, Edge)> {
+        LpgStore::get_edge_history(self, id)
     }
 }
 

@@ -126,6 +126,18 @@ pub enum Value {
     /// Uses f32 for 4x compression vs f64. Arc for cheap cloning.
     /// Dimension is implicit from length. Common dimensions: 384, 768, 1536.
     Vector(Arc<[f32]>),
+
+    /// Graph path: alternating sequence of nodes and edges.
+    ///
+    /// Nodes and edges are stored as lists of values (typically node/edge maps
+    /// with `_id`, `_labels`/`_type`, and properties). The invariant is that
+    /// `edges.len() == nodes.len() - 1` for a valid path.
+    Path {
+        /// Nodes along the path, from source to target.
+        nodes: Arc<[Value]>,
+        /// Edges along the path, connecting consecutive nodes.
+        edges: Arc<[Value]>,
+    },
 }
 
 impl Value {
@@ -256,6 +268,16 @@ impl Value {
         }
     }
 
+    /// Returns the path components if this is a Path, otherwise None.
+    #[inline]
+    #[must_use]
+    pub fn as_path(&self) -> Option<(&[Value], &[Value])> {
+        match self {
+            Value::Path { nodes, edges } => Some((nodes, edges)),
+            _ => None,
+        }
+    }
+
     /// Returns true if this is a vector type.
     #[inline]
     #[must_use]
@@ -290,6 +312,7 @@ impl Value {
             Value::List(_) => "LIST",
             Value::Map(_) => "MAP",
             Value::Vector(_) => "VECTOR",
+            Value::Path { .. } => "PATH",
         }
     }
 
@@ -334,6 +357,9 @@ impl fmt::Debug for Value {
                 v.first().unwrap_or(&0.0),
                 v.len()
             ),
+            Value::Path { nodes, edges } => {
+                write!(f, "Path({} nodes, {} edges)", nodes.len(), edges.len())
+            }
         }
     }
 }
@@ -384,6 +410,19 @@ impl fmt::Display for Value {
                     write!(f, ", ... ({} dims)", v.len())?;
                 }
                 write!(f, "])")
+            }
+            Value::Path { nodes, edges } => {
+                // Display path as alternating node-edge-node sequence
+                write!(f, "<")?;
+                for (i, node) in nodes.iter().enumerate() {
+                    if i > 0
+                        && let Some(edge) = edges.get(i - 1)
+                    {
+                        write!(f, "-[{edge}]-")?;
+                    }
+                    write!(f, "({node})")?;
+                }
+                write!(f, ">")
             }
         }
     }
@@ -654,7 +693,8 @@ impl TryFrom<&Value> for OrderableValue {
             | Value::Duration(_)
             | Value::List(_)
             | Value::Map(_)
-            | Value::Vector(_) => Err(()),
+            | Value::Vector(_)
+            | Value::Path { .. } => Err(()),
         }
     }
 }
@@ -832,6 +872,16 @@ fn hash_value<H: Hasher>(value: &Value, state: &mut H) {
                 f.to_bits().hash(state);
             }
         }
+        Value::Path { nodes, edges } => {
+            nodes.len().hash(state);
+            for v in nodes.iter() {
+                hash_value(v, state);
+            }
+            edges.len().hash(state);
+            for v in edges.iter() {
+                hash_value(v, state);
+            }
+        }
     }
 }
 
@@ -858,6 +908,21 @@ fn values_hash_eq(a: &Value, b: &Value) -> bool {
                 && a.iter()
                     .zip(b.iter())
                     .all(|(x, y)| x.to_bits() == y.to_bits())
+        }
+        (
+            Value::Path {
+                nodes: an,
+                edges: ae,
+            },
+            Value::Path {
+                nodes: bn,
+                edges: be,
+            },
+        ) => {
+            an.len() == bn.len()
+                && ae.len() == be.len()
+                && an.iter().zip(bn.iter()).all(|(x, y)| values_hash_eq(x, y))
+                && ae.iter().zip(be.iter()).all(|(x, y)| values_hash_eq(x, y))
         }
         _ => a == b,
     }

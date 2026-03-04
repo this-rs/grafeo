@@ -121,7 +121,7 @@ impl ExpandOperator {
 
         // Get visibility context
         let epoch = self.viewing_epoch;
-        let tx = self.tx_id.unwrap_or(TxId::SYSTEM);
+        let tx_id = self.tx_id;
 
         // Get edges from this node
         let edges: Vec<(NodeId, EdgeId)> = self
@@ -144,15 +144,24 @@ impl ExpandOperator {
                     return false;
                 }
 
-                // Filter by visibility if we have tx context
+                // Filter by visibility if we have epoch context
                 if let Some(epoch) = epoch {
-                    // Check if edge and target node are visible
-                    let edge_visible = self.store.get_edge_versioned(*edge_id, epoch, tx).is_some();
-                    let target_visible = self
-                        .store
-                        .get_node_versioned(*target_id, epoch, tx)
-                        .is_some();
-                    edge_visible && target_visible
+                    if let Some(tx) = tx_id {
+                        // Transaction-aware visibility
+                        let edge_visible =
+                            self.store.get_edge_versioned(*edge_id, epoch, tx).is_some();
+                        let target_visible = self
+                            .store
+                            .get_node_versioned(*target_id, epoch, tx)
+                            .is_some();
+                        edge_visible && target_visible
+                    } else {
+                        // Pure epoch-based visibility (time-travel)
+                        let edge_visible = self.store.get_edge_at_epoch(*edge_id, epoch).is_some();
+                        let target_visible =
+                            self.store.get_node_at_epoch(*target_id, epoch).is_some();
+                        edge_visible && target_visible
+                    }
                 } else {
                     true
                 }

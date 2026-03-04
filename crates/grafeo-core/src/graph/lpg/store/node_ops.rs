@@ -176,7 +176,7 @@ impl LpgStore {
     /// Gets a node by ID at a specific epoch.
     #[must_use]
     #[cfg(not(feature = "tiered-storage"))]
-    pub(crate) fn get_node_at_epoch(&self, id: NodeId, epoch: EpochId) -> Option<Node> {
+    pub fn get_node_at_epoch(&self, id: NodeId, epoch: EpochId) -> Option<Node> {
         let nodes = self.nodes.read();
         let chain = nodes.get(&id)?;
         let record = chain.visible_at(epoch)?;
@@ -208,7 +208,7 @@ impl LpgStore {
     /// (Tiered storage version: reads from arena via VersionIndex)
     #[must_use]
     #[cfg(feature = "tiered-storage")]
-    pub(crate) fn get_node_at_epoch(&self, id: NodeId, epoch: EpochId) -> Option<Node> {
+    pub fn get_node_at_epoch(&self, id: NodeId, epoch: EpochId) -> Option<Node> {
         let versions = self.node_versions.read();
         let index = versions.get(&id)?;
         let version_ref = index.visible_at(epoch)?;
@@ -305,6 +305,84 @@ impl LpgStore {
         node.properties = self.node_properties.get_all(id).into_iter().collect();
 
         Some(node)
+    }
+
+    /// Returns all versions of a node with their creation/deletion epochs, newest first.
+    ///
+    /// Each entry is `(created_epoch, deleted_epoch, Node)`. Note that labels and
+    /// properties reflect the current state (they are not versioned per-epoch).
+    #[must_use]
+    #[cfg(not(feature = "tiered-storage"))]
+    pub fn get_node_history(&self, id: NodeId) -> Vec<(EpochId, Option<EpochId>, Node)> {
+        use grafeo_common::types::PropertyMap;
+        use smallvec::SmallVec;
+
+        let nodes = self.nodes.read();
+        let chain = match nodes.get(&id) {
+            Some(c) => c,
+            None => return Vec::new(),
+        };
+
+        let id_to_label = self.id_to_label.read();
+        let node_labels = self.node_labels.read();
+        let properties: PropertyMap = self.node_properties.get_all(id).into_iter().collect();
+
+        let mut labels: SmallVec<[arcstr::ArcStr; 2]> = SmallVec::new();
+        if let Some(label_ids) = node_labels.get(&id) {
+            for &label_id in label_ids {
+                if let Some(label) = id_to_label.get(label_id as usize) {
+                    labels.push(label.clone());
+                }
+            }
+        }
+
+        chain
+            .history()
+            .map(|(info, _record)| {
+                let mut node = Node::new(id);
+                node.labels.clone_from(&labels);
+                node.properties.clone_from(&properties);
+                (info.created_epoch, info.deleted_epoch, node)
+            })
+            .collect()
+    }
+
+    /// Returns all versions of a node with their creation/deletion epochs, newest first.
+    /// (Tiered storage version)
+    #[must_use]
+    #[cfg(feature = "tiered-storage")]
+    pub fn get_node_history(&self, id: NodeId) -> Vec<(EpochId, Option<EpochId>, Node)> {
+        use grafeo_common::types::PropertyMap;
+        use smallvec::SmallVec;
+
+        let versions = self.node_versions.read();
+        let Some(index) = versions.get(&id) else {
+            return Vec::new();
+        };
+
+        let id_to_label = self.id_to_label.read();
+        let node_labels = self.node_labels.read();
+        let properties: PropertyMap = self.node_properties.get_all(id).into_iter().collect();
+
+        let mut labels: SmallVec<[arcstr::ArcStr; 2]> = SmallVec::new();
+        if let Some(label_ids) = node_labels.get(&id) {
+            for &label_id in label_ids {
+                if let Some(label) = id_to_label.get(label_id as usize) {
+                    labels.push(label.clone());
+                }
+            }
+        }
+
+        index
+            .version_history()
+            .into_iter()
+            .map(|(created, deleted, _vref)| {
+                let mut node = Node::new(id);
+                node.labels.clone_from(&labels);
+                node.properties.clone_from(&properties);
+                (created, deleted, node)
+            })
+            .collect()
     }
 
     /// Reads a NodeRecord from arena (hot) or epoch store (cold) using a VersionRef.
