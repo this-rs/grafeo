@@ -18,7 +18,7 @@ pub struct GrafeoDatabase {
     pub(crate) inner: Arc<RwLock<GrafeoDB>>,
 }
 
-/// Opaque transaction handle. Created by `grafeo_begin_tx*`, freed by `grafeo_free_transaction`.
+/// Opaque transaction handle. Created by `grafeo_begin_transaction*`, freed by `grafeo_free_transaction`.
 pub struct GrafeoTransaction {
     pub(crate) session: parking_lot::Mutex<Option<grafeo_engine::session::Session>>,
     pub(crate) committed: bool,

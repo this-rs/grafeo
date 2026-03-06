@@ -104,7 +104,7 @@ pub fn run(
         // Handle transaction commands as plain text
         let upper = trimmed.to_uppercase();
         if upper == "BEGIN" || upper == "BEGIN TRANSACTION" {
-            match session.begin_tx() {
+            match session.begin_transaction() {
                 Ok(()) => {
                     state = ReplState::InTransaction;
                     if !quiet {
@@ -356,7 +356,7 @@ fn handle_meta_command(
             MetaResult::Continue
         }
         ":begin" => {
-            match session.begin_tx() {
+            match session.begin_transaction() {
                 Ok(()) => {
                     *state = ReplState::InTransaction;
                     if !quiet {

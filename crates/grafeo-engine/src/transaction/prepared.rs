@@ -13,7 +13,7 @@
 //! let db = GrafeoDB::new_in_memory();
 //! let mut session = db.session();
 //!
-//! session.begin_tx()?;
+//! session.begin_transaction()?;
 //! session.execute("INSERT (:Person {name: 'Alix'})")?;
 //!
 //! let mut prepared = session.prepare_commit()?;
@@ -28,7 +28,7 @@
 
 use std::collections::HashMap;
 
-use grafeo_common::types::{EpochId, TxId};
+use grafeo_common::types::{EpochId, TransactionId};
 use grafeo_common::utils::error::{Error, Result, TransactionError};
 
 use crate::Session;
@@ -37,7 +37,7 @@ use crate::Session;
 #[derive(Debug, Clone)]
 pub struct CommitInfo {
     /// Transaction ID.
-    pub txn_id: TxId,
+    pub txn_id: TransactionId,
     /// Snapshot epoch the transaction read from.
     pub start_epoch: EpochId,
     /// Number of node entities in the write set.
@@ -63,25 +63,25 @@ pub struct PreparedCommit<'a> {
 impl<'a> PreparedCommit<'a> {
     /// Creates a new prepared commit from a session with an active transaction.
     pub(crate) fn new(session: &'a mut Session) -> Result<Self> {
-        let tx_id = session.current_tx_id().ok_or_else(|| {
+        let transaction_id = session.current_transaction_id().ok_or_else(|| {
             Error::Transaction(TransactionError::InvalidState(
                 "No active transaction to prepare".to_string(),
             ))
         })?;
 
         let start_epoch = session
-            .tx_manager()
-            .start_epoch(tx_id)
+            .transaction_manager()
+            .start_epoch(transaction_id)
             .unwrap_or(EpochId::new(0));
 
-        // Compute mutation counts from store deltas since begin_tx.
+        // Compute mutation counts from store deltas since begin_transaction.
         let (start_nodes, current_nodes) = session.node_count_delta();
         let (start_edges, current_edges) = session.edge_count_delta();
         let nodes_written = current_nodes.saturating_sub(start_nodes) as u64;
         let edges_written = current_edges.saturating_sub(start_edges) as u64;
 
         let info = CommitInfo {
-            txn_id: tx_id,
+            txn_id: transaction_id,
             start_epoch,
             nodes_written,
             edges_written,
@@ -124,7 +124,7 @@ impl<'a> PreparedCommit<'a> {
     pub fn commit(mut self) -> Result<EpochId> {
         self.finalized = true;
         self.session.commit()?;
-        Ok(self.session.tx_manager().current_epoch())
+        Ok(self.session.transaction_manager().current_epoch())
     }
 
     /// Explicitly aborts the transaction, discarding all changes.
@@ -156,7 +156,7 @@ mod tests {
         let db = GrafeoDB::new_in_memory();
         let mut session = db.session();
 
-        session.begin_tx().unwrap();
+        session.begin_transaction().unwrap();
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
         let prepared = session.prepare_commit().unwrap();
@@ -174,7 +174,7 @@ mod tests {
         let db = GrafeoDB::new_in_memory();
         let mut session = db.session();
 
-        session.begin_tx().unwrap();
+        session.begin_transaction().unwrap();
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
         session.execute("INSERT (:Person {name: 'Gus'})").unwrap();
         session
@@ -197,7 +197,7 @@ mod tests {
         let db = GrafeoDB::new_in_memory();
         let mut session = db.session();
 
-        session.begin_tx().unwrap();
+        session.begin_transaction().unwrap();
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
         let mut prepared = session.prepare_commit().unwrap();
@@ -215,7 +215,7 @@ mod tests {
         let db = GrafeoDB::new_in_memory();
         let mut session = db.session();
 
-        session.begin_tx().unwrap();
+        session.begin_transaction().unwrap();
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
         let prepared = session.prepare_commit().unwrap();
@@ -231,7 +231,7 @@ mod tests {
         let db = GrafeoDB::new_in_memory();
         let mut session = db.session();
 
-        session.begin_tx().unwrap();
+        session.begin_transaction().unwrap();
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
         {

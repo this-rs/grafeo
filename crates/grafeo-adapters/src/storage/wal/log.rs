@@ -1,7 +1,7 @@
 //! WAL log file management.
 
 use super::WalRecord;
-use grafeo_common::types::{EpochId, TxId};
+use grafeo_common::types::{EpochId, TransactionId};
 use grafeo_common::utils::error::{Error, Result};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -24,7 +24,7 @@ pub struct CheckpointMetadata {
     /// Timestamp of the checkpoint (milliseconds since UNIX epoch).
     pub timestamp_ms: u64,
     /// Transaction ID at checkpoint.
-    pub tx_id: TxId,
+    pub transaction_id: TransactionId,
 }
 
 /// Name of the checkpoint metadata file.
@@ -181,7 +181,7 @@ impl WalManager {
     pub fn log(&self, record: &WalRecord) -> Result<()> {
         let data = bincode::serde::encode_to_vec(record, bincode::config::standard())
             .map_err(|e| Error::Serialization(e.to_string()))?;
-        let force_sync = matches!(record, WalRecord::TxCommit { .. });
+        let force_sync = matches!(record, WalRecord::TransactionCommit { .. });
         self.write_frame(&data, force_sync)
     }
 
@@ -280,16 +280,22 @@ impl WalManager {
     /// # Errors
     ///
     /// Returns an error if the checkpoint cannot be written.
-    pub fn checkpoint(&self, current_tx: TxId, epoch: EpochId) -> Result<()> {
-        self.log(&WalRecord::Checkpoint { tx_id: current_tx })?;
-        self.complete_checkpoint(current_tx, epoch)
+    pub fn checkpoint(&self, current_transaction: TransactionId, epoch: EpochId) -> Result<()> {
+        self.log(&WalRecord::Checkpoint {
+            transaction_id: current_transaction,
+        })?;
+        self.complete_checkpoint(current_transaction, epoch)
     }
 
     /// Completes a checkpoint after the checkpoint record has been written.
     ///
     /// Syncs the WAL, writes checkpoint metadata atomically, updates the
     /// in-memory epoch, and truncates old log files.
-    pub(crate) fn complete_checkpoint(&self, tx_id: TxId, epoch: EpochId) -> Result<()> {
+    pub(crate) fn complete_checkpoint(
+        &self,
+        transaction_id: TransactionId,
+        epoch: EpochId,
+    ) -> Result<()> {
         // Force sync on checkpoint
         self.sync()?;
 
@@ -307,7 +313,7 @@ impl WalManager {
             epoch,
             log_sequence,
             timestamp_ms,
-            tx_id,
+            transaction_id,
         };
 
         // Write checkpoint metadata atomically
@@ -655,8 +661,8 @@ mod tests {
             ..Default::default()
         };
         let wal = WalManager::with_config(dir.path().join("sync"), config).unwrap();
-        wal.log(&WalRecord::TxCommit {
-            tx_id: TxId::new(1),
+        wal.log(&WalRecord::TransactionCommit {
+            transaction_id: TransactionId::new(1),
         })
         .unwrap();
 
@@ -721,13 +727,14 @@ mod tests {
         })
         .unwrap();
 
-        wal.log(&WalRecord::TxCommit {
-            tx_id: TxId::new(1),
+        wal.log(&WalRecord::TransactionCommit {
+            transaction_id: TransactionId::new(1),
         })
         .unwrap();
 
         // Create checkpoint
-        wal.checkpoint(TxId::new(1), EpochId::new(10)).unwrap();
+        wal.checkpoint(TransactionId::new(1), EpochId::new(10))
+            .unwrap();
 
         assert_eq!(wal.checkpoint_epoch(), Some(EpochId::new(10)));
     }

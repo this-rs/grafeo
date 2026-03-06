@@ -3,9 +3,11 @@ title: Node.js / TypeScript API
 description: API reference for the @grafeo-db/js package.
 ---
 
-# Node.js / TypeScript API
+# Node.js / TypeScript API Reference
 
-Native bindings for Grafeo via [napi-rs](https://napi.rs). Install from npm:
+Complete reference for the `@grafeo-db/js` package, native bindings for Grafeo via [napi-rs](https://napi.rs).
+
+## Installation
 
 ```bash
 npm install @grafeo-db/js
@@ -28,114 +30,44 @@ console.log(result.toArray());
 db.close();
 ```
 
-## Database
+## Classes
 
-```typescript
-// Create / open
-const db = GrafeoDB.create();           // in-memory
-const db = GrafeoDB.create('./path');    // persistent
-const db = GrafeoDB.open('./path');      // open existing
-
-// Properties
-db.nodeCount;   // number of nodes
-db.edgeCount;   // number of edges
-```
+| Class | Description |
+|-------|-------------|
+| [GrafeoDB](database.md) | Database connection, queries, CRUD, vector/text search |
+| [QueryResult](query.md) | Query result with rows, columns, nodes, edges |
+| [Transaction](transaction.md) | ACID transaction management |
+| [JsNode](node.md) | Graph node with labels and properties |
+| [JsEdge](edge.md) | Graph edge with type, endpoints, and properties |
 
 ## Query Languages
 
-All query methods return `Promise<QueryResult>`:
+All query methods return `Promise<QueryResult>` and accept an optional `params` object:
 
 ```typescript
-await db.execute(gql, params?);         // GQL (ISO standard)
-await db.executeCypher(query, params?);  // Cypher
-await db.executeGremlin(query, params?); // Gremlin
-await db.executeGraphql(query, params?); // GraphQL
-await db.executeSparql(query);           // SPARQL
-await db.executeSql(query);              // SQL/PGQ
-```
-
-## Node & Edge CRUD
-
-```typescript
-const id = db.createNode(['Label'], { key: 'value' });
-const eid = db.createEdge(sourceId, targetId, 'TYPE', { key: 'value' });
-
-const node = db.getNode(id);     // JsNode | null
-const edge = db.getEdge(id);     // JsEdge | null
-
-db.setNodeProperty(id, 'key', 'value');
-db.setEdgeProperty(id, 'key', 'value');
-
-db.deleteNode(id);  // returns boolean
-db.deleteEdge(id);  // returns boolean
-```
-
-## Transactions
-
-```typescript
-const tx = db.beginTransaction();
-try {
-  await tx.execute("INSERT (:Person {name: 'Harm'})");
-  tx.commit();
-} catch (e) {
-  tx.rollback();
-}
-```
-
-## QueryResult
-
-```typescript
-result.columns;          // column names
-result.length;           // row count
-result.executionTimeMs;  // execution time (ms)
-result.get(0);           // single row as object
-result.toArray();        // all rows as objects
-result.scalar();         // first column of first row
-```
-
-## Vector Search
-
-```typescript
-// Create HNSW index (all params after property are optional)
-await db.createVectorIndex(
-  'Document',     // label
-  'embedding',    // property
-  384,            // dimensions (optional)
-  'cosine',       // metric (optional, default: 'cosine')
-  16,             // m - connections per node (optional, default: 16)
-  128             // ef_construction (optional, default: 128)
-);
-
-// Bulk insert
-const ids = await db.batchCreateNodes('Document', 'embedding', vectors);
-
-// k-NN search
-const results = await db.vectorSearch('Document', 'embedding', queryVec, 10);
-
-// Filtered search
-const results = await db.vectorSearch(
-  'Document', 'embedding', queryVec, 10, undefined, { user_id: 1 }
-);
-
-// MMR search (diverse results)
-const results = await db.mmrSearch(
-  'Document', 'embedding', queryVec, 5, undefined, 0.5
-);
+await db.execute(gql, params?);          // GQL (ISO standard)
+await db.executeCypher(query, params?);   // Cypher
+await db.executeGremlin(query, params?);  // Gremlin
+await db.executeGraphql(query, params?);  // GraphQL
+await db.executeSparql(query, params?);   // SPARQL
+await db.executeSql(query, params?);      // SQL/PGQ
 ```
 
 ## Type Mapping
 
-| JavaScript | Grafeo |
-|-----------|--------|
-| `number` (integer) | Int64 |
-| `number` (float) | Float64 |
-| `string` | String |
-| `boolean` | Boolean |
-| `BigInt` | Int64 |
-| `null` | Null |
-| `Array<number>` | Vector |
-| `Date` | String (ISO 8601) |
-| `Buffer` | Bytes |
+| JavaScript | Grafeo | Notes |
+|-----------|--------|-------|
+| `null` / `undefined` | Null | |
+| `boolean` | Bool | |
+| `number` (integer) | Int64 | No fractional part and within safe integer range |
+| `number` (float) | Float64 | |
+| `string` | String | |
+| `BigInt` | Int64 | |
+| `Array` | List | Elements converted recursively |
+| `Object` | Map | Keys must be strings |
+| `Buffer` | Bytes | |
+| `Date` | Timestamp | Millisecond precision |
+| `Float32Array` | Vector | For embeddings and similarity search |
 
 ## Links
 

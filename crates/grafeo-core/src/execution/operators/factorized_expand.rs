@@ -20,7 +20,7 @@ use crate::execution::factorized_chunk::FactorizedChunk;
 use crate::execution::vector::ValueVector;
 use crate::graph::Direction;
 use crate::graph::GraphStore;
-use grafeo_common::types::{EdgeId, EpochId, LogicalType, NodeId, TxId};
+use grafeo_common::types::{EdgeId, EpochId, LogicalType, NodeId, TransactionId};
 
 /// Result type for factorized operations.
 pub type FactorizedResult = Result<Option<FactorizedChunk>, OperatorError>;
@@ -59,7 +59,7 @@ pub struct FactorizedExpandOperator {
     /// Edge type filter (empty = match all types, multiple = match any).
     edge_types: Vec<String>,
     /// Transaction ID for MVCC visibility (None = use current epoch).
-    tx_id: Option<TxId>,
+    transaction_id: Option<TransactionId>,
     /// Epoch for version visibility.
     viewing_epoch: Option<EpochId>,
     /// Whether the operator is exhausted.
@@ -83,7 +83,7 @@ impl FactorizedExpandOperator {
             source_column,
             direction,
             edge_types,
-            tx_id: None,
+            transaction_id: None,
             viewing_epoch: None,
             exhausted: false,
             input_column_names: Vec::new(),
@@ -91,9 +91,13 @@ impl FactorizedExpandOperator {
     }
 
     /// Sets the transaction context for MVCC visibility.
-    pub fn with_tx_context(mut self, epoch: EpochId, tx_id: Option<TxId>) -> Self {
+    pub fn with_transaction_context(
+        mut self,
+        epoch: EpochId,
+        transaction_id: Option<TransactionId>,
+    ) -> Self {
         self.viewing_epoch = Some(epoch);
-        self.tx_id = tx_id;
+        self.transaction_id = transaction_id;
         self
     }
 
@@ -106,7 +110,7 @@ impl FactorizedExpandOperator {
     /// Gets neighbors for a source node with type and visibility filtering.
     fn get_neighbors(&self, source_id: NodeId) -> Vec<(NodeId, EdgeId)> {
         let epoch = self.viewing_epoch;
-        let tx_id = self.tx_id;
+        let transaction_id = self.transaction_id;
 
         self.store
             .edges_from(source_id, self.direction)
@@ -129,7 +133,7 @@ impl FactorizedExpandOperator {
 
                 // Filter by visibility
                 if let Some(epoch) = epoch {
-                    if let Some(tx) = tx_id {
+                    if let Some(tx) = transaction_id {
                         let edge_visible =
                             self.store.get_edge_versioned(*edge_id, epoch, tx).is_some();
                         let target_visible = self
@@ -267,7 +271,7 @@ pub struct FactorizedExpandChain {
     /// Accumulated factorized result.
     current_result: Option<FactorizedChunk>,
     /// Transaction context.
-    tx_id: Option<TxId>,
+    transaction_id: Option<TransactionId>,
     viewing_epoch: Option<EpochId>,
 }
 
@@ -278,15 +282,19 @@ impl FactorizedExpandChain {
             store,
             source: Some(source),
             current_result: None,
-            tx_id: None,
+            transaction_id: None,
             viewing_epoch: None,
         }
     }
 
     /// Sets the transaction context.
-    pub fn with_tx_context(mut self, epoch: EpochId, tx_id: Option<TxId>) -> Self {
+    pub fn with_transaction_context(
+        mut self,
+        epoch: EpochId,
+        transaction_id: Option<TransactionId>,
+    ) -> Self {
         self.viewing_epoch = Some(epoch);
-        self.tx_id = tx_id;
+        self.transaction_id = transaction_id;
         self
     }
 
@@ -316,7 +324,7 @@ impl FactorizedExpandChain {
                     );
 
                     if let Some(epoch) = self.viewing_epoch {
-                        expand = expand.with_tx_context(epoch, self.tx_id);
+                        expand = expand.with_transaction_context(epoch, self.transaction_id);
                     }
 
                     if let Some(result) = expand.next_factorized()? {
@@ -409,7 +417,7 @@ impl FactorizedExpandChain {
         edge_types: Vec<String>,
     ) -> Result<(), OperatorError> {
         let epoch = self.viewing_epoch;
-        let tx_id = self.tx_id;
+        let transaction_id = self.transaction_id;
 
         // Get the deepest level to find source nodes
         let deepest_level = chunk.level_count() - 1;
@@ -462,7 +470,7 @@ impl FactorizedExpandChain {
 
                     // Filter by visibility
                     if let Some(e) = epoch {
-                        if let Some(tx) = tx_id {
+                        if let Some(tx) = transaction_id {
                             let edge_visible =
                                 self.store.get_edge_versioned(*edge_id, e, tx).is_some();
                             let target_visible =
@@ -566,7 +574,7 @@ pub struct LazyFactorizedChainOperator {
     /// The expand steps to execute.
     steps: Vec<ExpandStep>,
     /// Transaction ID for MVCC visibility.
-    tx_id: Option<TxId>,
+    transaction_id: Option<TransactionId>,
     /// Epoch for version visibility.
     viewing_epoch: Option<EpochId>,
     /// Cached flat result after execution.
@@ -588,7 +596,7 @@ impl LazyFactorizedChainOperator {
             store,
             source: Some(source),
             steps,
-            tx_id: None,
+            transaction_id: None,
             viewing_epoch: None,
             result: None,
             factorized_result: None,
@@ -597,9 +605,13 @@ impl LazyFactorizedChainOperator {
     }
 
     /// Sets the transaction context for MVCC visibility.
-    pub fn with_tx_context(mut self, epoch: EpochId, tx_id: Option<TxId>) -> Self {
+    pub fn with_transaction_context(
+        mut self,
+        epoch: EpochId,
+        transaction_id: Option<TransactionId>,
+    ) -> Self {
         self.viewing_epoch = Some(epoch);
-        self.tx_id = tx_id;
+        self.transaction_id = transaction_id;
         self
     }
 
@@ -617,7 +629,7 @@ impl LazyFactorizedChainOperator {
         let mut chain = FactorizedExpandChain::new(Arc::clone(&self.store), source);
 
         if let Some(epoch) = self.viewing_epoch {
-            chain = chain.with_tx_context(epoch, self.tx_id);
+            chain = chain.with_transaction_context(epoch, self.transaction_id);
         }
 
         // Execute each expand step

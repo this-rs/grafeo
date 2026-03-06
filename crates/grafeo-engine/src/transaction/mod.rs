@@ -70,7 +70,7 @@
 //! let db = GrafeoDB::new_in_memory();
 //! let mut session = db.session();
 //!
-//! session.begin_tx()?;
+//! session.begin_transaction()?;
 //!
 //! // All reads see a consistent snapshot
 //! let result = session.execute("MATCH (n:Person) RETURN n")?;
@@ -90,7 +90,9 @@ mod mvcc;
 pub mod parallel;
 mod prepared;
 
-pub use manager::{EntityId, IsolationLevel, TransactionManager, TxInfo, TxState};
+pub use manager::{
+    EntityId, IsolationLevel, TransactionInfo, TransactionManager, TransactionState,
+};
 pub use mvcc::{VersionChain, VersionInfo};
 pub use prepared::{CommitInfo, PreparedCommit};
 

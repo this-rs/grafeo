@@ -294,7 +294,7 @@ impl WalRecovery {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grafeo_common::types::{NodeId, TxId};
+    use grafeo_common::types::{NodeId, TransactionId};
     use tempfile::tempdir;
 
     #[test]
@@ -311,8 +311,8 @@ mod tests {
             })
             .unwrap();
 
-            wal.log(&WalRecord::TxCommit {
-                tx_id: TxId::new(1),
+            wal.log(&WalRecord::TransactionCommit {
+                transaction_id: TransactionId::new(1),
             })
             .unwrap();
 
@@ -372,8 +372,8 @@ mod tests {
                 })
                 .unwrap();
             }
-            wal.log(&WalRecord::TxCommit {
-                tx_id: TxId::new(1),
+            wal.log(&WalRecord::TransactionCommit {
+                transaction_id: TransactionId::new(1),
             })
             .unwrap();
 
@@ -385,8 +385,8 @@ mod tests {
                 })
                 .unwrap();
             }
-            wal.log(&WalRecord::TxCommit {
-                tx_id: TxId::new(2),
+            wal.log(&WalRecord::TransactionCommit {
+                transaction_id: TransactionId::new(2),
             })
             .unwrap();
 
@@ -397,7 +397,7 @@ mod tests {
         let recovery = WalRecovery::new(dir.path());
         let records = recovery.recover().unwrap();
 
-        // Should have 10 CreateNode + 2 TxCommit
+        // Should have 10 CreateNode + 2 TransactionCommit
         assert_eq!(records.len(), 12);
     }
 
@@ -417,13 +417,14 @@ mod tests {
                 labels: vec!["Test".to_string()],
             })
             .unwrap();
-            wal.log(&WalRecord::TxCommit {
-                tx_id: TxId::new(1),
+            wal.log(&WalRecord::TransactionCommit {
+                transaction_id: TransactionId::new(1),
             })
             .unwrap();
 
             // Create checkpoint
-            wal.checkpoint(TxId::new(1), EpochId::new(10)).unwrap();
+            wal.checkpoint(TransactionId::new(1), EpochId::new(10))
+                .unwrap();
 
             // Second transaction after checkpoint
             wal.log(&WalRecord::CreateNode {
@@ -431,8 +432,8 @@ mod tests {
                 labels: vec!["Test".to_string()],
             })
             .unwrap();
-            wal.log(&WalRecord::TxCommit {
-                tx_id: TxId::new(2),
+            wal.log(&WalRecord::TransactionCommit {
+                transaction_id: TransactionId::new(2),
             })
             .unwrap();
 
@@ -446,7 +447,7 @@ mod tests {
 
         let cp = checkpoint.unwrap();
         assert_eq!(cp.epoch.as_u64(), 10);
-        assert_eq!(cp.tx_id.as_u64(), 1);
+        assert_eq!(cp.transaction_id.as_u64(), 1);
     }
 
     #[test]
@@ -472,13 +473,14 @@ mod tests {
                 })
                 .unwrap();
             }
-            wal.log(&WalRecord::TxCommit {
-                tx_id: TxId::new(1),
+            wal.log(&WalRecord::TransactionCommit {
+                transaction_id: TransactionId::new(1),
             })
             .unwrap();
 
             // Create checkpoint
-            wal.checkpoint(TxId::new(1), EpochId::new(100)).unwrap();
+            wal.checkpoint(TransactionId::new(1), EpochId::new(100))
+                .unwrap();
 
             // Second batch after checkpoint
             for i in 100..103 {
@@ -488,8 +490,8 @@ mod tests {
                 })
                 .unwrap();
             }
-            wal.log(&WalRecord::TxCommit {
-                tx_id: TxId::new(2),
+            wal.log(&WalRecord::TransactionCommit {
+                transaction_id: TransactionId::new(2),
             })
             .unwrap();
 
@@ -519,8 +521,8 @@ mod tests {
             })
             .unwrap();
 
-            wal.log(&WalRecord::TxCommit {
-                tx_id: TxId::new(1),
+            wal.log(&WalRecord::TransactionCommit {
+                transaction_id: TransactionId::new(1),
             })
             .unwrap();
 
@@ -546,7 +548,7 @@ mod tests {
 /// points are:
 /// - `wal_before_write`: before writing length prefix + data + checksum
 /// - `wal_after_write`: after writing data but before durability handling
-/// - `wal_before_flush`: before fsync on TxCommit in Sync mode
+/// - `wal_before_flush`: before fsync on TransactionCommit in Sync mode
 ///
 /// Run with:
 /// ```bash
@@ -555,7 +557,7 @@ mod tests {
 #[cfg(all(test, feature = "testing-crash-injection"))]
 mod crash_tests {
     use super::*;
-    use grafeo_common::types::{EpochId, NodeId, TxId, Value};
+    use grafeo_common::types::{EpochId, NodeId, TransactionId, Value};
     use grafeo_core::testing::crash::{CrashResult, with_crash_at};
     use tempfile::tempdir;
 
@@ -582,8 +584,8 @@ mod crash_tests {
                 labels: vec!["Committed".into()],
             })
             .unwrap();
-            wal.log(&WalRecord::TxCommit {
-                tx_id: TxId::new(1),
+            wal.log(&WalRecord::TransactionCommit {
+                transaction_id: TransactionId::new(1),
             })
             .unwrap();
         }
@@ -603,7 +605,7 @@ mod crash_tests {
         // Only the first committed tx should survive
         let recovery = WalRecovery::new(&path);
         let records = recovery.recover().unwrap();
-        assert_eq!(records.len(), 2, "CreateNode(1) + TxCommit(1)");
+        assert_eq!(records.len(), 2, "CreateNode(1) + TransactionCommit(1)");
     }
 
     /// Crash at `wal_after_write`: data may be in BufWriter but no commit
@@ -647,8 +649,8 @@ mod crash_tests {
                 labels: vec!["T1".into()],
             })
             .unwrap();
-            wal.log(&WalRecord::TxCommit {
-                tx_id: TxId::new(1),
+            wal.log(&WalRecord::TransactionCommit {
+                transaction_id: TransactionId::new(1),
             })
             .unwrap();
             wal.log(&WalRecord::CreateNode {
@@ -656,8 +658,8 @@ mod crash_tests {
                 labels: vec!["T2".into()],
             })
             .unwrap();
-            wal.log(&WalRecord::TxCommit {
-                tx_id: TxId::new(2),
+            wal.log(&WalRecord::TransactionCommit {
+                transaction_id: TransactionId::new(2),
             })
             .unwrap();
         }
@@ -677,7 +679,7 @@ mod crash_tests {
         // Both committed txs intact, third discarded
         let recovery = WalRecovery::new(&path);
         let records = recovery.recover().unwrap();
-        assert_eq!(records.len(), 4, "2 CreateNode + 2 TxCommit");
+        assert_eq!(records.len(), 4, "2 CreateNode + 2 TransactionCommit");
     }
 
     /// Crash during checkpoint: committed data must still be recoverable.
@@ -695,8 +697,8 @@ mod crash_tests {
                     labels: vec!["A".into()],
                 })
                 .unwrap();
-                wal.log(&WalRecord::TxCommit {
-                    tx_id: TxId::new(1),
+                wal.log(&WalRecord::TransactionCommit {
+                    transaction_id: TransactionId::new(1),
                 })
                 .unwrap();
             }
@@ -705,7 +707,8 @@ mod crash_tests {
             let p = path.clone();
             let _result = with_crash_at(crash_at, move || {
                 let wal = WalManager::with_config(&p, sync_config()).unwrap();
-                wal.checkpoint(TxId::new(1), EpochId::new(10)).unwrap();
+                wal.checkpoint(TransactionId::new(1), EpochId::new(10))
+                    .unwrap();
             });
 
             // Committed data must survive regardless of checkpoint outcome
@@ -739,8 +742,8 @@ mod crash_tests {
                 })
                 .unwrap();
             }
-            wal.log(&WalRecord::TxCommit {
-                tx_id: TxId::new(1),
+            wal.log(&WalRecord::TransactionCommit {
+                transaction_id: TransactionId::new(1),
             })
             .unwrap();
         }
@@ -765,7 +768,7 @@ mod crash_tests {
         // All committed data across rotated files should survive
         let recovery = WalRecovery::new(&path);
         let records = recovery.recover().unwrap();
-        assert_eq!(records.len(), 6, "5 CreateNode + 1 TxCommit");
+        assert_eq!(records.len(), 6, "5 CreateNode + 1 TransactionCommit");
     }
 
     /// Exhaustive sweep: crash at every possible point during a multi-record
@@ -788,8 +791,8 @@ mod crash_tests {
                     labels: vec!["Base".into()],
                 })
                 .unwrap();
-                wal.log(&WalRecord::TxCommit {
-                    tx_id: TxId::new(1),
+                wal.log(&WalRecord::TransactionCommit {
+                    transaction_id: TransactionId::new(1),
                 })
                 .unwrap();
             }
@@ -809,8 +812,8 @@ mod crash_tests {
                     value: Value::String("test".into()),
                 })
                 .unwrap();
-                wal.log(&WalRecord::TxCommit {
-                    tx_id: TxId::new(2),
+                wal.log(&WalRecord::TransactionCommit {
+                    transaction_id: TransactionId::new(2),
                 })
                 .unwrap();
             });
@@ -830,8 +833,8 @@ mod crash_tests {
             let mut pending = 0usize;
             for record in &records {
                 match record {
-                    WalRecord::TxCommit { .. }
-                    | WalRecord::TxAbort { .. }
+                    WalRecord::TransactionCommit { .. }
+                    | WalRecord::TransactionAbort { .. }
                     | WalRecord::Checkpoint { .. } => pending = 0,
                     _ => pending += 1,
                 }
@@ -852,7 +855,7 @@ mod crash_tests {
     }
 
     /// Aborted transactions are not recovered even without a crash.
-    /// Verifies that TxAbort correctly discards pending records.
+    /// Verifies that TransactionAbort correctly discards pending records.
     #[test]
     fn test_abort_then_crash_discards_aborted_tx() {
         let dir = tempdir().unwrap();
@@ -866,8 +869,8 @@ mod crash_tests {
                 labels: vec!["Keep".into()],
             })
             .unwrap();
-            wal.log(&WalRecord::TxCommit {
-                tx_id: TxId::new(1),
+            wal.log(&WalRecord::TransactionCommit {
+                transaction_id: TransactionId::new(1),
             })
             .unwrap();
             // Aborted tx
@@ -876,8 +879,8 @@ mod crash_tests {
                 labels: vec!["Discard".into()],
             })
             .unwrap();
-            wal.log(&WalRecord::TxAbort {
-                tx_id: TxId::new(2),
+            wal.log(&WalRecord::TransactionAbort {
+                transaction_id: TransactionId::new(2),
             })
             .unwrap();
         }

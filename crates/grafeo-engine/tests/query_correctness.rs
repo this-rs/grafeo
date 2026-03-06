@@ -554,7 +554,7 @@ mod gql_mutations {
         let db = GrafeoDB::new_in_memory();
         let mut session = db.session();
 
-        session.begin_tx().unwrap();
+        session.begin_transaction().unwrap();
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
         session.commit().unwrap();
 

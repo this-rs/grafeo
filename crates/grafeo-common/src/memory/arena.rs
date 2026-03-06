@@ -735,6 +735,7 @@ mod tiered_storage_tests {
         let (offset, _) = arena.alloc_value_with_offset(12345u64).unwrap();
 
         // Read it back
+        // SAFETY: offset was returned by alloc_value_with_offset for the same type and arena
         let value: &u64 = unsafe { arena.read_at(offset) };
         assert_eq!(*value, 12345);
     }
@@ -746,11 +747,13 @@ mod tiered_storage_tests {
         let (offset, _) = arena.alloc_value_with_offset(42u64).unwrap();
 
         // Read and modify
+        // SAFETY: offset was returned by alloc_value_with_offset for the same type and arena
         let value: &mut u64 = unsafe { arena.read_at_mut(offset) };
         assert_eq!(*value, 42);
         *value = 100;
 
         // Verify modification persisted
+        // SAFETY: offset was returned by alloc_value_with_offset for the same type and arena
         let value: &u64 = unsafe { arena.read_at(offset) };
         assert_eq!(*value, 100);
     }
@@ -777,6 +780,7 @@ mod tiered_storage_tests {
         assert_eq!(stored.value, -999);
 
         // Read it back
+        // SAFETY: offset was returned by alloc_value_with_offset for the same type and arena
         let read: &TestNode = unsafe { arena.read_at(offset) };
         assert_eq!(read.id, node.id);
         assert_eq!(read.name, node.name);
@@ -817,6 +821,7 @@ mod tiered_storage_tests {
 
         // Read all values back
         for (i, offset) in offsets.iter().enumerate() {
+            // SAFETY: offset was returned by alloc_value_with_offset for the same type and arena
             let val: &u64 = unsafe { arena.read_at(*offset) };
             assert_eq!(*val, i as u64);
         }
@@ -832,6 +837,7 @@ mod tiered_storage_tests {
         let (offset, val) = arena.alloc_value_with_offset(42u64).unwrap();
         assert_eq!(*val, 42);
 
+        // SAFETY: offset was returned by alloc_value_with_offset for the same type and arena
         let read: &u64 = unsafe { arena.read_at(offset) };
         assert_eq!(*read, 42);
     }
@@ -844,6 +850,7 @@ mod tiered_storage_tests {
         let (_offset, _) = arena.alloc_value_with_offset(42u64).unwrap();
 
         // Read way past the allocated region: should panic in debug
+        // SAFETY: intentionally invalid offset to test debug assertion
         unsafe {
             let _: &u64 = arena.read_at(4000);
         }
@@ -860,6 +867,7 @@ mod tiered_storage_tests {
         let _ = arena.alloc_value_with_offset(0u64).unwrap();
 
         // Try to read a u64 at offset 1 (misaligned for u64)
+        // SAFETY: intentionally misaligned offset to test debug assertion
         unsafe {
             let _: &u64 = arena.read_at(1);
         }
@@ -893,6 +901,7 @@ mod tiered_storage_tests {
             let base = (t * values_per_thread) as u64;
             handles.push(std::thread::spawn(move || {
                 for (i, offset) in offsets.iter().enumerate() {
+                    // SAFETY: offset was returned by alloc_value_with_offset for the same type and arena
                     let val: &u64 = unsafe { arena.read_at(*offset) };
                     assert_eq!(*val, base + i as u64);
                 }
@@ -942,6 +951,7 @@ mod tiered_storage_tests {
             .unwrap();
 
         // Read them all back
+        // SAFETY: all offsets were returned by alloc_value_with_offset for matching types and arena
         unsafe {
             assert_eq!(*arena.read_at::<u8>(off_u8), 0xAA);
             assert_eq!(*arena.read_at::<u32>(off_u32), 0xBBBB);

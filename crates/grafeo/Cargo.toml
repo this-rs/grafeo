@@ -22,7 +22,7 @@ tikv-jemallocator = { workspace = true, optional = true }
 mimalloc = { workspace = true, optional = true }
 
 [features]
-default = ["full"]
+default = ["embedded"]
 
 # Atomic query language features
 gql = ["grafeo-engine/gql"]
@@ -39,12 +39,22 @@ hybrid-search = ["grafeo-engine/hybrid-search"]
 cdc = ["grafeo-engine/cdc"]
 embed = ["grafeo-engine/embed"]  # Opt-in ONNX embedding generation (~17MB)
 
-# Convenience groups (pick by persona)
+# Convenience groups
 languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]  # All query languages
 ai = ["vector-index", "text-index", "hybrid-search", "cdc"]  # All AI/RAG features
-full = ["languages", "ai"]  # Everything (except embed)
+storage = ["wal", "spill", "mmap"]  # Persistent storage (WAL, disk spill, memory-mapped files)
+algos = ["grafeo-engine/algos"]  # Graph algorithms (SSSP, PageRank, etc.)
+rdf = ["grafeo-engine/rdf"]  # RDF triple store
+regex = ["grafeo-engine/regex"]  # Full regex (default for non-WASM)
+regex-lite = ["grafeo-engine/regex-lite"]  # Lightweight regex (for WASM)
 
-# Platform capabilities (enabled by default via grafeo-engine defaults)
+# Named profiles (ecosystem-aligned)
+embedded = ["gql", "ai", "algos", "parallel", "regex"]  # Python libs, MCP, in-process (default)
+browser = ["gql", "regex-lite"]  # WASM / grafeo-web
+server = ["embedded", "languages", "storage", "rdf", "cdc"]  # grafeo-server
+full = ["server"]  # Everything (except embed)
+
+# Platform capabilities
 parallel = ["grafeo-engine/parallel"]
 wal = ["grafeo-engine/wal"]
 spill = ["grafeo-engine/spill"]

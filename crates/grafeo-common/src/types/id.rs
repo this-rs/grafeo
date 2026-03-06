@@ -146,9 +146,9 @@ impl From<EdgeId> for u64 {
 /// Grafeo knows which versions of data each transaction should see.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default)]
 #[repr(transparent)]
-pub struct TxId(pub u64);
+pub struct TransactionId(pub u64);
 
-impl TxId {
+impl TransactionId {
     /// The invalid/null transaction ID (sentinel value, same as other ID types).
     pub const INVALID: Self = Self(u64::MAX);
 
@@ -156,7 +156,7 @@ impl TxId {
     /// System transactions are always visible and committed.
     pub const SYSTEM: Self = Self(1);
 
-    /// Creates a new TxId from a raw u64 value.
+    /// Creates a new TransactionId from a raw u64 value.
     #[inline]
     #[must_use]
     pub const fn new(id: u64) -> Self {
@@ -185,30 +185,30 @@ impl TxId {
     }
 }
 
-impl fmt::Debug for TxId {
+impl fmt::Debug for TransactionId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_valid() {
-            write!(f, "TxId({})", self.0)
+            write!(f, "TransactionId({})", self.0)
         } else {
-            write!(f, "TxId(INVALID)")
+            write!(f, "TransactionId(INVALID)")
         }
     }
 }
 
-impl fmt::Display for TxId {
+impl fmt::Display for TransactionId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-impl From<u64> for TxId {
+impl From<u64> for TransactionId {
     fn from(id: u64) -> Self {
         Self(id)
     }
 }
 
-impl From<TxId> for u64 {
-    fn from(id: TxId) -> Self {
+impl From<TransactionId> for u64 {
+    fn from(id: TransactionId) -> Self {
         id.0
     }
 }
@@ -555,10 +555,10 @@ mod tests {
 
     #[test]
     fn test_tx_id_basic() {
-        let id = TxId::new(1);
+        let id = TransactionId::new(1);
         assert!(id.is_valid());
-        assert!(!TxId::INVALID.is_valid());
-        assert_eq!(id.next(), TxId::new(2));
+        assert!(!TransactionId::INVALID.is_valid());
+        assert_eq!(id.next(), TransactionId::new(2));
     }
 
     #[test]
@@ -601,8 +601,8 @@ mod tests {
         let raw: u64 = edge_id.into();
         assert_eq!(raw, 100);
 
-        // TxId
-        let tx_id: TxId = 1u64.into();
+        // TransactionId
+        let tx_id: TransactionId = 1u64.into();
         let raw: u64 = tx_id.into();
         assert_eq!(raw, 1);
 

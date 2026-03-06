@@ -921,6 +921,7 @@ pub extern "C" fn grafeo_drop_vector_index(
         set_last_error("Null database pointer");
         return 0;
     }
+    // SAFETY: Caller guarantees valid pointer from grafeo_open*.
     let db = unsafe { &*db };
     let Ok(label_str) = str_from_ptr(label) else {
         return 0;
@@ -1190,7 +1191,7 @@ pub extern "C" fn grafeo_edge_count(db: *mut GrafeoDatabase) -> usize {
 
 /// Begin a transaction with default isolation (snapshot isolation).
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_begin_tx(db: *mut GrafeoDatabase) -> *mut GrafeoTransaction {
+pub extern "C" fn grafeo_begin_transaction(db: *mut GrafeoDatabase) -> *mut GrafeoTransaction {
     if db.is_null() {
         set_last_error("Null database pointer");
         return std::ptr::null_mut();
@@ -1198,7 +1199,7 @@ pub extern "C" fn grafeo_begin_tx(db: *mut GrafeoDatabase) -> *mut GrafeoTransac
     // SAFETY: Caller guarantees valid pointer.
     let db = unsafe { &*db };
     let mut session = db.inner.read().session();
-    match session.begin_tx() {
+    match session.begin_transaction() {
         Ok(()) => Box::into_raw(Box::new(GrafeoTransaction {
             session: parking_lot::Mutex::new(Some(session)),
             committed: false,
@@ -1214,7 +1215,7 @@ pub extern "C" fn grafeo_begin_tx(db: *mut GrafeoDatabase) -> *mut GrafeoTransac
 /// Begin a transaction with a specific isolation level.
 /// Levels: 0 = ReadCommitted, 1 = SnapshotIsolation, 2 = Serializable.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_begin_tx_with_isolation(
+pub extern "C" fn grafeo_begin_transaction_with_isolation(
     db: *mut GrafeoDatabase,
     isolation: i32,
 ) -> *mut GrafeoTransaction {
@@ -1236,7 +1237,7 @@ pub extern "C" fn grafeo_begin_tx_with_isolation(
     };
 
     let mut session = db.inner.read().session();
-    match session.begin_tx_with_isolation(level) {
+    match session.begin_transaction_with_isolation(level) {
         Ok(()) => Box::into_raw(Box::new(GrafeoTransaction {
             session: parking_lot::Mutex::new(Some(session)),
             committed: false,
@@ -1251,7 +1252,7 @@ pub extern "C" fn grafeo_begin_tx_with_isolation(
 
 /// Execute a query within a transaction.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_tx_execute(
+pub extern "C" fn grafeo_transaction_execute(
     tx: *mut GrafeoTransaction,
     query: *const c_char,
 ) -> *mut GrafeoResult {
@@ -1284,7 +1285,7 @@ pub extern "C" fn grafeo_tx_execute(
 
 /// Execute a query with params within a transaction.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_tx_execute_with_params(
+pub extern "C" fn grafeo_transaction_execute_with_params(
     tx: *mut GrafeoTransaction,
     query: *const c_char,
     params_json: *const c_char,
@@ -1574,11 +1575,11 @@ mod tests {
     #[test]
     fn test_transaction_commit() {
         let db = grafeo_open_memory();
-        let tx = grafeo_begin_tx(db);
+        let tx = grafeo_begin_transaction(db);
         assert!(!tx.is_null());
 
         let query = CString::new("CREATE (:Tx {val: 1})").unwrap();
-        let result = grafeo_tx_execute(tx, query.as_ptr());
+        let result = grafeo_transaction_execute(tx, query.as_ptr());
         if !result.is_null() {
             grafeo_free_result(result);
         }
@@ -1603,9 +1604,9 @@ mod tests {
         grafeo_create_node(db, labels.as_ptr(), std::ptr::null());
         assert_eq!(grafeo_node_count(db), 1);
 
-        let tx = grafeo_begin_tx(db);
+        let tx = grafeo_begin_transaction(db);
         let query = CString::new("CREATE (:Rolled {val: 2})").unwrap();
-        let result = grafeo_tx_execute(tx, query.as_ptr());
+        let result = grafeo_transaction_execute(tx, query.as_ptr());
         if !result.is_null() {
             grafeo_free_result(result);
         }
@@ -1726,6 +1727,7 @@ mod tests {
         // Get labels
         let labels_json = grafeo_get_node_labels(db, id);
         assert!(!labels_json.is_null());
+        // SAFETY: We just verified the pointer is not null.
         let labels_str = unsafe { std::ffi::CStr::from_ptr(labels_json) }
             .to_str()
             .unwrap();
@@ -1823,6 +1825,7 @@ mod tests {
 
         let info = grafeo_info(db);
         assert!(!info.is_null());
+        // SAFETY: We just verified the pointer is not null.
         let info_str = unsafe { std::ffi::CStr::from_ptr(info) }.to_str().unwrap();
         assert!(info_str.contains("node_count"));
         grafeo_free_string(info);
@@ -1880,6 +1883,7 @@ mod tests {
 
         let type_ptr = grafeo_edge_type(edge_ptr);
         assert!(!type_ptr.is_null());
+        // SAFETY: We just verified the pointer is not null.
         let type_str = unsafe { std::ffi::CStr::from_ptr(type_ptr) }
             .to_str()
             .unwrap();
@@ -1887,6 +1891,7 @@ mod tests {
 
         let props_ptr = grafeo_edge_properties_json(edge_ptr);
         assert!(!props_ptr.is_null());
+        // SAFETY: We just verified the pointer is not null.
         let props_str = unsafe { std::ffi::CStr::from_ptr(props_ptr) }
             .to_str()
             .unwrap();

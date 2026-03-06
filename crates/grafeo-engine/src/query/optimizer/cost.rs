@@ -327,13 +327,13 @@ impl CostModel {
     /// Estimates the cost of a limit operation.
     fn limit_cost(&self, limit: &LimitOp, _cardinality: f64) -> Cost {
         // Limit is very cheap - just counting
-        Cost::cpu(limit.count as f64 * self.cpu_tuple_cost * 0.1)
+        Cost::cpu(limit.count.estimate() * self.cpu_tuple_cost * 0.1)
     }
 
     /// Estimates the cost of a skip operation.
     fn skip_cost(&self, skip: &SkipOp, _cardinality: f64) -> Cost {
         // Skip requires scanning through skipped rows
-        Cost::cpu(skip.count as f64 * self.cpu_tuple_cost)
+        Cost::cpu(skip.count.estimate() * self.cpu_tuple_cost)
     }
 
     /// Estimates the cost of a return operation.
@@ -842,6 +842,7 @@ mod tests {
                     distinct: false,
                     alias: Some("cnt".to_string()),
                     percentile: None,
+                    separator: None,
                 },
                 AggregateExpr {
                     function: AggregateFunction::Sum,
@@ -850,6 +851,7 @@ mod tests {
                     distinct: false,
                     alias: Some("total".to_string()),
                     percentile: None,
+                    separator: None,
                 },
             ],
             input: Box::new(LogicalOperator::Empty),
@@ -880,7 +882,7 @@ mod tests {
     fn test_cost_model_limit() {
         let model = CostModel::new();
         let limit = LimitOp {
-            count: 10,
+            count: 10.into(),
             input: Box::new(LogicalOperator::Empty),
         };
         let cost = model.limit_cost(&limit, 1000.0);
@@ -894,7 +896,7 @@ mod tests {
     fn test_cost_model_skip() {
         let model = CostModel::new();
         let skip = SkipOp {
-            count: 100,
+            count: 100.into(),
             input: Box::new(LogicalOperator::Empty),
         };
         let cost = model.skip_cost(&skip, 1000.0);

@@ -13,8 +13,8 @@ Grafeo is designed as a high-performance, embeddable graph database.
 
 | Goal | Approach |
 |------|----------|
-| **Performance** | Vectorized execution, SIMD, columnar storage |
-| **Embeddability** | No external dependencies, single library |
+| **Performance** | Batch-at-a-time vectorized execution, columnar storage |
+| **Embeddability** | No required C dependencies, single library |
 | **Safety** | Pure Rust, memory-safe by design |
 | **Flexibility** | Plugin architecture, multiple storage backends |
 
@@ -63,8 +63,8 @@ sequenceDiagram
 
 ### Memory
 
-1. **Buffer Manager** - Memory allocation
-2. **Arena Allocator** - Epoch-based allocation
+1. **Buffer Manager** - Unified memory budget (75% of system RAM by default)
+2. **Arena Allocator** - Epoch-based bulk allocation for query execution
 3. **Spill Manager** - Disk spilling for large operations
 
 ## Threading Model
@@ -72,27 +72,3 @@ sequenceDiagram
 - **Main Thread** - Coordinates query execution
 - **Worker Threads** - Parallel query processing (morsel-driven)
 - **Background Thread** - Checkpointing, compaction
-
-## Implementation Status
-
-All major features are implemented:
-
-| Phase | Features | Status |
-| ----- | -------- | ------ |
-| **Phase 1: Foundation** | Zone Maps, Dictionary Encoding, Cost-Based Join (DPccp), Statistics Collection | ✅ Complete |
-| **Phase 2: Memory & Execution** | Unified Buffer Manager, Push-Based Execution, Adaptive Chunk Sizing, Adjacency Compression | ✅ Complete |
-| **Phase 3: Parallelism** | Morsel Scheduler, Transparent Spilling, Auto Thread Detection | ✅ Complete |
-| **Phase 4: Polish** | Integer Compression, Bloom Filters, Histograms, RLE, Property Compression, Adaptive Execution | ✅ Complete |
-
-## Performance Targets
-
-| Metric | Target |
-| ------ | ------ |
-| Insert throughput | 1M nodes/sec |
-| Edge insert | 500K edges/sec |
-| Point lookup | < 1μs |
-| 1-hop traversal | < 10μs |
-| 2-hop traversal | < 100μs |
-| Triangle query | < 1ms/1K triangles |
-| PageRank (1M nodes) | < 1s |
-| Memory overhead | < 100 bytes/node |

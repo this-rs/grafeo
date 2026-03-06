@@ -1237,7 +1237,7 @@ impl SparqlTranslator {
         alias: &Option<String>,
     ) -> Result<Option<AggregateExpr>> {
         if let ast::Expression::Aggregate(agg) = expr {
-            let (func, expr_inner, distinct) = match agg {
+            let (func, expr_inner, distinct, separator) = match agg {
                 ast::AggregateExpression::Count {
                     distinct,
                     expression,
@@ -1245,32 +1245,53 @@ impl SparqlTranslator {
                     AggregateFunction::Count,
                     expression.as_ref().map(|e| e.as_ref()),
                     *distinct,
+                    None,
                 ),
                 ast::AggregateExpression::Sum {
                     distinct,
                     expression,
-                } => (AggregateFunction::Sum, Some(expression.as_ref()), *distinct),
+                } => (
+                    AggregateFunction::Sum,
+                    Some(expression.as_ref()),
+                    *distinct,
+                    None,
+                ),
                 ast::AggregateExpression::Average {
                     distinct,
                     expression,
-                } => (AggregateFunction::Avg, Some(expression.as_ref()), *distinct),
-                ast::AggregateExpression::Minimum { expression } => {
-                    (AggregateFunction::Min, Some(expression.as_ref()), false)
-                }
-                ast::AggregateExpression::Maximum { expression } => {
-                    (AggregateFunction::Max, Some(expression.as_ref()), false)
-                }
-                ast::AggregateExpression::Sample { expression } => {
-                    (AggregateFunction::Sample, Some(expression.as_ref()), false)
-                }
+                } => (
+                    AggregateFunction::Avg,
+                    Some(expression.as_ref()),
+                    *distinct,
+                    None,
+                ),
+                ast::AggregateExpression::Minimum { expression } => (
+                    AggregateFunction::Min,
+                    Some(expression.as_ref()),
+                    false,
+                    None,
+                ),
+                ast::AggregateExpression::Maximum { expression } => (
+                    AggregateFunction::Max,
+                    Some(expression.as_ref()),
+                    false,
+                    None,
+                ),
+                ast::AggregateExpression::Sample { expression } => (
+                    AggregateFunction::Sample,
+                    Some(expression.as_ref()),
+                    false,
+                    None,
+                ),
                 ast::AggregateExpression::GroupConcat {
                     distinct,
                     expression,
-                    ..
+                    separator,
                 } => (
                     AggregateFunction::GroupConcat,
                     Some(expression.as_ref()),
                     *distinct,
+                    separator.clone(),
                 ),
             };
 
@@ -1287,6 +1308,7 @@ impl SparqlTranslator {
                 distinct,
                 alias: alias.clone(),
                 percentile: None, // SPARQL doesn't support percentile functions
+                separator,
             }))
         } else {
             Ok(None)

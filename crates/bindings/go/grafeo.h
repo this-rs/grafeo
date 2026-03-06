@@ -133,10 +133,10 @@ size_t grafeo_edge_count(GrafeoDatabase* db);
 
 /* ---- Transactions -------------------------------------------------------- */
 
-GrafeoTransaction* grafeo_begin_tx(GrafeoDatabase* db);
-GrafeoTransaction* grafeo_begin_tx_with_isolation(GrafeoDatabase* db, int32_t isolation);
-GrafeoResult*      grafeo_tx_execute(GrafeoTransaction* tx, const char* query);
-GrafeoResult*      grafeo_tx_execute_with_params(GrafeoTransaction* tx, const char* query, const char* params_json);
+GrafeoTransaction* grafeo_begin_transaction(GrafeoDatabase* db);
+GrafeoTransaction* grafeo_begin_transaction_with_isolation(GrafeoDatabase* db, int32_t isolation);
+GrafeoResult*      grafeo_transaction_execute(GrafeoTransaction* tx, const char* query);
+GrafeoResult*      grafeo_transaction_execute_with_params(GrafeoTransaction* tx, const char* query, const char* params_json);
 GrafeoStatus       grafeo_commit(GrafeoTransaction* tx);
 GrafeoStatus       grafeo_rollback(GrafeoTransaction* tx);
 void               grafeo_free_transaction(GrafeoTransaction* tx);

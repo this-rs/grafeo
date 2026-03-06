@@ -143,13 +143,16 @@ fn test_rollback_without_begin() {
 }
 
 #[test]
-fn test_double_begin() {
+fn test_double_begin_creates_nested_transaction() {
     let db = GrafeoDB::new_in_memory();
     let mut session = db.session();
 
-    session.begin_tx().unwrap();
-    let result = session.begin_tx();
-    assert!(result.is_err(), "Double begin should fail");
+    session.begin_transaction().unwrap();
+    let result = session.begin_transaction();
+    assert!(result.is_ok(), "Double begin creates nested transaction");
+    // Clean up: commit inner then outer
+    session.commit().unwrap();
+    session.commit().unwrap();
 }
 
 #[test]
@@ -157,11 +160,11 @@ fn test_begin_after_commit_succeeds() {
     let db = GrafeoDB::new_in_memory();
     let mut session = db.session();
 
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
     session.commit().unwrap();
 
     // Should be able to start new transaction
-    let result = session.begin_tx();
+    let result = session.begin_transaction();
     assert!(result.is_ok(), "Begin after commit should succeed");
     session.commit().unwrap();
 }
@@ -171,11 +174,11 @@ fn test_begin_after_rollback_succeeds() {
     let db = GrafeoDB::new_in_memory();
     let mut session = db.session();
 
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
     session.rollback().unwrap();
 
     // Should be able to start new transaction
-    let result = session.begin_tx();
+    let result = session.begin_transaction();
     assert!(result.is_ok(), "Begin after rollback should succeed");
     session.commit().unwrap();
 }

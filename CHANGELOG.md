@@ -2,7 +2,34 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
-## [0.5.14] - 2025-03-06
+## [0.5.15] - 2026-03-07
+
+Full ecosystem feature profiles reworks and several graph database nice to haves
+
+### Added
+
+- **Ecosystem feature profiles**: `embedded`, `browser`, `server` named profiles across all crates. `storage` convenience group (`wal` + `spill` + `mmap`)
+- **WASM multi-variant builds**: AI variant (531 KB gzip) and lite variant (513 KB gzip) via `build-wasm-all.sh`, with `regex-lite` for smaller binaries
+- **Savepoints and nested transactions**: `SAVEPOINT`/`ROLLBACK TO`/`RELEASE`, inner `START TRANSACTION` auto-creates savepoints
+- **Correlated subqueries**: `EXISTS { ... }`, `COUNT { ... }`, `VALUE { ... }` in WHERE/RETURN
+- **Subpath variable binding**: `(p = (a)-[e]->(b)){2,5}` with `length(p)`, `nodes(p)`, `edges(p)`
+- **Type system extensions**: `LIST<T>` typed lists with coercion, `IS TYPED RECORD/PATH/GRAPH` predicates, `path()` constructor
+- **Graph DDL**: `CREATE GRAPH g2 LIKE g1`, `AS COPY OF`, `CREATE GRAPH g ANY/OPEN`
+- **GQLSTATUS diagnostics**: ISO sec 23 status codes and diagnostic records on all query results
+- **Catalog procedures**: `CALL db.labels()`, `db.relationshipTypes()`, `db.propertyKeys()` with YIELD
+- **Python DataFrame bridge**: `result.to_pandas()`, `result.to_polars()`, `db.nodes_df()`, `db.edges_df()` for zero-friction data science integration
+
+### Fixed
+
+- **Temporal functions**: `local_time()`, `local_datetime()`, `zoned_datetime()` constructors, `date_trunc()` truncation
+- **Aggregate separators**: `LISTAGG` and `GROUP_CONCAT` with custom separators and per-language defaults
+
+### Changed
+
+- **Default profile**: facade crate default changed from `full` to `embedded`. All binding crates follow
+- **WASM**: default changed to `browser` profile, binary size reduced from 1,001 KB to 513 KB gzipped (49%)
+
+## [0.5.14] - 2026-03-06
 
 Moving crates and lots of small improvements & fixes
 

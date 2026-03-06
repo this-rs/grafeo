@@ -44,7 +44,7 @@ pub enum TransactionIsolationLevel {
 pub enum SessionCommand {
     /// `USE GRAPH name`
     UseGraph(String),
-    /// `CREATE [PROPERTY] GRAPH name [IF NOT EXISTS] [TYPED type_name]`
+    /// `CREATE [PROPERTY] GRAPH name [IF NOT EXISTS] [TYPED type_name] [LIKE source | AS COPY OF source] [OPEN | ANY]`
     CreateGraph {
         /// Graph name.
         name: String,
@@ -52,6 +52,12 @@ pub enum SessionCommand {
         if_not_exists: bool,
         /// Optional graph type binding.
         typed: Option<String>,
+        /// LIKE source_graph: clone schema only.
+        like_graph: Option<String>,
+        /// AS COPY OF source_graph: clone schema and data.
+        copy_of: Option<String>,
+        /// ANY GRAPH / OPEN: schema-free graph (no type enforcement).
+        open: bool,
     },
     /// `DROP [PROPERTY] GRAPH [IF EXISTS] name`
     DropGraph {
@@ -81,6 +87,12 @@ pub enum SessionCommand {
     Commit,
     /// `ROLLBACK`
     Rollback,
+    /// `SAVEPOINT name`
+    Savepoint(String),
+    /// `ROLLBACK TO SAVEPOINT name`
+    RollbackToSavepoint(String),
+    /// `RELEASE SAVEPOINT name`
+    ReleaseSavepoint(String),
 }
 
 /// Composite query operation.

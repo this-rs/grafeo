@@ -79,7 +79,7 @@ pub struct GrafeoDB {
     #[cfg(feature = "rdf")]
     pub(super) rdf_store: Arc<RdfStore>,
     /// Transaction manager.
-    pub(super) tx_manager: Arc<TransactionManager>,
+    pub(super) transaction_manager: Arc<TransactionManager>,
     /// Unified buffer manager.
     pub(super) buffer_manager: Arc<BufferManager>,
     /// Write-ahead log manager (if durability is enabled).
@@ -179,7 +179,7 @@ impl GrafeoDB {
         let store = Arc::new(LpgStore::new()?);
         #[cfg(feature = "rdf")]
         let rdf_store = Arc::new(RdfStore::new());
-        let tx_manager = Arc::new(TransactionManager::new());
+        let transaction_manager = Arc::new(TransactionManager::new());
 
         // Create buffer manager with configured limits
         let buffer_config = BufferManagerConfig {
@@ -250,7 +250,7 @@ impl GrafeoDB {
             catalog,
             #[cfg(feature = "rdf")]
             rdf_store,
-            tx_manager,
+            transaction_manager,
             buffer_manager,
             #[cfg(feature = "wal")]
             wal,
@@ -295,7 +295,7 @@ impl GrafeoDB {
             .map_err(|e| grafeo_common::utils::error::Error::Internal(e.to_string()))?;
 
         let dummy_store = Arc::new(LpgStore::new()?);
-        let tx_manager = Arc::new(TransactionManager::new());
+        let transaction_manager = Arc::new(TransactionManager::new());
 
         let buffer_config = BufferManagerConfig {
             budget: config.memory_limit.unwrap_or_else(|| {
@@ -314,7 +314,7 @@ impl GrafeoDB {
             catalog: Arc::new(Catalog::new()),
             #[cfg(feature = "rdf")]
             rdf_store: Arc::new(RdfStore::new()),
-            tx_manager,
+            transaction_manager,
             buffer_manager,
             #[cfg(feature = "wal")]
             wal: None,
@@ -554,8 +554,8 @@ impl GrafeoDB {
                     let _ = catalog.drop_procedure(name);
                 }
 
-                WalRecord::TxCommit { .. }
-                | WalRecord::TxAbort { .. }
+                WalRecord::TransactionCommit { .. }
+                | WalRecord::TransactionAbort { .. }
                 | WalRecord::Checkpoint { .. } => {
                     // Transaction control records don't need replay action
                     // (recovery already filtered to only committed transactions)
@@ -592,7 +592,7 @@ impl GrafeoDB {
         if let Some(ref ext_store) = self.external_store {
             return Session::with_external_store(
                 Arc::clone(ext_store),
-                Arc::clone(&self.tx_manager),
+                Arc::clone(&self.transaction_manager),
                 Arc::clone(&self.query_cache),
                 Arc::clone(&self.catalog),
                 self.config.adaptive.clone(),
@@ -608,7 +608,7 @@ impl GrafeoDB {
         let mut session = Session::with_rdf_store_and_adaptive(
             Arc::clone(&self.store),
             Arc::clone(&self.rdf_store),
-            Arc::clone(&self.tx_manager),
+            Arc::clone(&self.transaction_manager),
             Arc::clone(&self.query_cache),
             Arc::clone(&self.catalog),
             self.config.adaptive.clone(),
@@ -621,7 +621,7 @@ impl GrafeoDB {
         #[cfg(not(feature = "rdf"))]
         let mut session = Session::with_adaptive(
             Arc::clone(&self.store),
-            Arc::clone(&self.tx_manager),
+            Arc::clone(&self.transaction_manager),
             Arc::clone(&self.query_cache),
             Arc::clone(&self.catalog),
             self.config.adaptive.clone(),
@@ -726,9 +726,9 @@ impl GrafeoDB {
     /// version chains older than that threshold. Also cleans up completed
     /// transaction metadata in the transaction manager.
     pub fn gc(&self) {
-        let min_epoch = self.tx_manager.min_active_epoch();
+        let min_epoch = self.transaction_manager.min_active_epoch();
         self.store.gc_versions(min_epoch);
-        self.tx_manager.gc();
+        self.transaction_manager.gc();
     }
 
     /// Returns the buffer manager for memory-aware operations.
@@ -768,14 +768,17 @@ impl GrafeoDB {
             let epoch = self.store.current_epoch();
 
             // Use the last assigned transaction ID, or create a checkpoint-only tx
-            let checkpoint_tx = self.tx_manager.last_assigned_tx_id().unwrap_or_else(|| {
-                // No transactions have been started; begin one for checkpoint
-                self.tx_manager.begin()
-            });
+            let checkpoint_tx = self
+                .transaction_manager
+                .last_assigned_transaction_id()
+                .unwrap_or_else(|| {
+                    // No transactions have been started; begin one for checkpoint
+                    self.transaction_manager.begin()
+                });
 
-            // Log a TxCommit to mark all pending records as committed
-            wal.log(&WalRecord::TxCommit {
-                tx_id: checkpoint_tx,
+            // Log a TransactionCommit to mark all pending records as committed
+            wal.log(&WalRecord::TransactionCommit {
+                transaction_id: checkpoint_tx,
             })?;
 
             // Then checkpoint
@@ -881,6 +884,8 @@ pub struct QueryResult {
     pub rows_scanned: Option<u64>,
     /// Status message for DDL and session commands (e.g., "Created node type 'Person'").
     pub status_message: Option<String>,
+    /// GQLSTATUS code per ISO/IEC 39075:2024, sec 23.
+    pub gql_status: grafeo_common::utils::GqlStatus,
 }
 
 impl QueryResult {
@@ -894,6 +899,7 @@ impl QueryResult {
             execution_time_ms: None,
             rows_scanned: None,
             status_message: None,
+            gql_status: grafeo_common::utils::GqlStatus::SUCCESS,
         }
     }
 
@@ -907,6 +913,7 @@ impl QueryResult {
             execution_time_ms: None,
             rows_scanned: None,
             status_message: Some(msg.into()),
+            gql_status: grafeo_common::utils::GqlStatus::SUCCESS,
         }
     }
 
@@ -921,6 +928,7 @@ impl QueryResult {
             execution_time_ms: None,
             rows_scanned: None,
             status_message: None,
+            gql_status: grafeo_common::utils::GqlStatus::SUCCESS,
         }
     }
 
@@ -937,6 +945,7 @@ impl QueryResult {
             execution_time_ms: None,
             rows_scanned: None,
             status_message: None,
+            gql_status: grafeo_common::utils::GqlStatus::SUCCESS,
         }
     }
 

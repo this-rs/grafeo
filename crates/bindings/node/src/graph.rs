@@ -38,6 +38,7 @@ impl JsNode {
     pub fn get(&self, env: Env, key: String) -> Result<Unknown<'_>> {
         match self.properties.get(&key) {
             Some(v) => types::value_to_js(env.raw(), v),
+            // SAFETY: env is valid and ToNapiValue produces a valid undefined value
             None => Ok(unsafe {
                 Unknown::from_raw_unchecked(
                     env.raw(),
@@ -118,6 +119,7 @@ impl JsEdge {
     pub fn get(&self, env: Env, key: String) -> Result<Unknown<'_>> {
         match self.properties.get(&key) {
             Some(v) => types::value_to_js(env.raw(), v),
+            // SAFETY: env is valid and ToNapiValue produces a valid undefined value
             None => Ok(unsafe {
                 Unknown::from_raw_unchecked(
                     env.raw(),
@@ -164,10 +166,12 @@ pub(crate) fn properties_to_object(
     properties: &HashMap<String, Value>,
 ) -> Result<Object<'_>> {
     let mut raw_obj = std::ptr::null_mut();
+    // SAFETY: env is valid; napi_create_object writes to our out-pointer
     types::check_napi(unsafe { sys::napi_create_object(env, &raw mut raw_obj) })?;
     let mut obj = Object::from_raw(env, raw_obj);
     for (k, v) in properties {
         let val_raw = types::value_to_napi(env, v)?;
+        // SAFETY: env and val_raw are valid napi values produced by value_to_napi
         let val_unknown = unsafe { Unknown::from_raw_unchecked(env, val_raw) };
         obj.set_named_property(k, val_unknown)?;
     }

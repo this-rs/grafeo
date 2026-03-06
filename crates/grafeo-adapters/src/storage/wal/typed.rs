@@ -10,7 +10,7 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
 use grafeo_common::types::EpochId;
-use grafeo_common::types::TxId;
+use grafeo_common::types::TransactionId;
 use grafeo_common::utils::error::{Error, Result};
 
 use super::WalRecord;
@@ -93,10 +93,10 @@ impl<R: WalEntry> TypedWal<R> {
     /// # Errors
     ///
     /// Returns an error if the checkpoint cannot be written.
-    pub fn checkpoint(&self, current_tx: TxId, epoch: EpochId) -> Result<()> {
-        let checkpoint_record = R::make_checkpoint(current_tx);
+    pub fn checkpoint(&self, current_transaction: TransactionId, epoch: EpochId) -> Result<()> {
+        let checkpoint_record = R::make_checkpoint(current_transaction);
         self.log(&checkpoint_record)?;
-        self.manager.complete_checkpoint(current_tx, epoch)
+        self.manager.complete_checkpoint(current_transaction, epoch)
     }
 
     /// Syncs the WAL to disk (fsync).
@@ -223,12 +223,13 @@ mod tests {
         })
         .unwrap();
 
-        wal.log(&WalRecord::TxCommit {
-            tx_id: TxId::new(1),
+        wal.log(&WalRecord::TransactionCommit {
+            transaction_id: TransactionId::new(1),
         })
         .unwrap();
 
-        wal.checkpoint(TxId::new(1), EpochId::new(10)).unwrap();
+        wal.checkpoint(TransactionId::new(1), EpochId::new(10))
+            .unwrap();
         assert_eq!(wal.checkpoint_epoch(), Some(EpochId::new(10)));
     }
 
@@ -244,8 +245,8 @@ mod tests {
                 labels: vec!["Person".to_string()],
             })
             .unwrap();
-            wal.log(&WalRecord::TxCommit {
-                tx_id: TxId::new(1),
+            wal.log(&WalRecord::TransactionCommit {
+                transaction_id: TransactionId::new(1),
             })
             .unwrap();
             wal.sync().unwrap();

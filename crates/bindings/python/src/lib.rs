@@ -29,8 +29,9 @@
 //!
 //! | Library | How to use | Best for |
 //! | ------- | ---------- | -------- |
+//! | pandas | `result.to_pandas()` or `db.nodes_df()` | Tabular operations |
+//! | polars | `result.to_polars()` | Fast columnar analytics |
 //! | NetworkX | `db.as_networkx().to_networkx()` | Graph visualization, analysis |
-//! | pandas | `result.to_list()` then `pd.DataFrame()` | Tabular operations |
 //! | solvOR | `db.as_solvor()` | Operations research algorithms |
 
 #![warn(missing_docs)]

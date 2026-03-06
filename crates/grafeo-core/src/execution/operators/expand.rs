@@ -4,7 +4,7 @@ use super::{Operator, OperatorError, OperatorResult};
 use crate::execution::DataChunk;
 use crate::graph::Direction;
 use crate::graph::GraphStore;
-use grafeo_common::types::{EdgeId, EpochId, LogicalType, NodeId, TxId};
+use grafeo_common::types::{EdgeId, EpochId, LogicalType, NodeId, TransactionId};
 use std::sync::Arc;
 
 /// An expand operator that traverses edges from source nodes.
@@ -35,7 +35,7 @@ pub struct ExpandOperator {
     /// Whether the operator is exhausted.
     exhausted: bool,
     /// Transaction ID for MVCC visibility (None = use current epoch).
-    tx_id: Option<TxId>,
+    transaction_id: Option<TransactionId>,
     /// Epoch for version visibility.
     viewing_epoch: Option<EpochId>,
 }
@@ -61,7 +61,7 @@ impl ExpandOperator {
             current_edges: Vec::with_capacity(16), // typical node degree
             current_edge_idx: 0,
             exhausted: false,
-            tx_id: None,
+            transaction_id: None,
             viewing_epoch: None,
         }
     }
@@ -75,9 +75,13 @@ impl ExpandOperator {
     /// Sets the transaction context for MVCC visibility.
     ///
     /// When set, the expand will only traverse visible edges and nodes.
-    pub fn with_tx_context(mut self, epoch: EpochId, tx_id: Option<TxId>) -> Self {
+    pub fn with_transaction_context(
+        mut self,
+        epoch: EpochId,
+        transaction_id: Option<TransactionId>,
+    ) -> Self {
         self.viewing_epoch = Some(epoch);
-        self.tx_id = tx_id;
+        self.transaction_id = transaction_id;
         self
     }
 
@@ -121,7 +125,7 @@ impl ExpandOperator {
 
         // Get visibility context
         let epoch = self.viewing_epoch;
-        let tx_id = self.tx_id;
+        let transaction_id = self.transaction_id;
 
         // Get edges from this node
         let edges: Vec<(NodeId, EdgeId)> = self
@@ -146,7 +150,7 @@ impl ExpandOperator {
 
                 // Filter by visibility if we have epoch context
                 if let Some(epoch) = epoch {
-                    if let Some(tx) = tx_id {
+                    if let Some(tx) = transaction_id {
                         // Transaction-aware visibility
                         let edge_visible =
                             self.store.get_edge_versioned(*edge_id, epoch, tx).is_some();

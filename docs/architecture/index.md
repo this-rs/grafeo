@@ -71,7 +71,7 @@ graph TB
 
     ---
 
-    High-level architecture and design principles.
+    High-level architecture, design principles and query flow.
 
 -   **[Crate Structure](crates.md)**
 
@@ -83,38 +83,38 @@ graph TB
 
     ---
 
-    How data is stored and organized.
+    Columnar properties, chunked adjacency lists, compression.
 
 -   **[Execution Engine](execution/index.md)**
 
     ---
 
-    Query execution and optimization.
+    Push-based vectorized execution and parallelism.
 
 -   **[Query Optimization](optimization/index.md)**
 
     ---
 
-    Cost-based optimization strategies.
+    Cost-based optimization, join ordering, cardinality estimation.
 
 -   **[Memory Management](memory/index.md)**
 
     ---
 
-    Memory allocation and management.
+    Buffer manager, arena allocators, spill-to-disk.
 
 -   **[Transactions](transactions/index.md)**
 
     ---
 
-    MVCC and isolation levels.
+    MVCC, snapshot isolation, conflict detection.
 
 </div>
 
 ## Design Principles
 
-1. **Performance First** - Optimized for graph workloads
-2. **Embeddable** - Zero external dependencies
-3. **Safe** - Written in safe Rust
-4. **Modular** - Clear crate boundaries
-5. **Extensible** - Plugin architecture
+1. **Performance First** - Batch-at-a-time vectorized execution, columnar storage, morsel-driven parallelism
+2. **Embeddable** - No required C dependencies, single library
+3. **Safe** - Written in safe Rust, memory-safe by design
+4. **Modular** - Clear crate boundaries, strict layering
+5. **Extensible** - Plugin architecture, multiple storage backends

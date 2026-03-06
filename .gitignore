@@ -51,6 +51,7 @@ crates/bindings/node/index.d.ts
 
 # ── WASM ──────────────────────────────────────────────────────────────
 pkg/
+pkg-lite/
 
 # ── Coverage & profiling ─────────────────────────────────────────────
 .coverage

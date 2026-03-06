@@ -1,0 +1,37 @@
+{
+  "name": "@grafeo-db/wasm-lite",
+  "type": "module",
+  "version": "0.5.15",
+  "description": "WebAssembly bindings for Grafeo - GQL-only lightweight variant",
+  "keywords": [
+    "graph",
+    "database",
+    "gql",
+    "knowledge-graph",
+    "wasm",
+    "webassembly"
+  ],
+  "author": "S.T. Grond",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GrafeoDB/grafeo.git",
+    "directory": "crates/bindings/wasm"
+  },
+  "homepage": "https://grafeo.dev",
+  "bugs": {
+    "url": "https://github.com/GrafeoDB/grafeo/issues"
+  },
+  "main": "grafeo_wasm.js",
+  "types": "grafeo_wasm.d.ts",
+  "files": [
+    "grafeo_wasm.js",
+    "grafeo_wasm.d.ts",
+    "grafeo_wasm_bg.wasm",
+    "grafeo_wasm_bg.wasm.d.ts"
+  ],
+  "sideEffects": [
+    "./grafeo_wasm.js",
+    "./snippets/*"
+  ]
+}

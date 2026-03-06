@@ -23,7 +23,9 @@ pub mod utils;
 
 // The types you'll use most often
 pub use mvcc::{Version, VersionChain, VersionInfo};
-pub use types::{EdgeId, EpochId, LogicalType, NodeId, PropertyKey, Timestamp, TxId, Value};
+pub use types::{
+    EdgeId, EpochId, LogicalType, NodeId, PropertyKey, Timestamp, TransactionId, Value,
+};
 pub use utils::error::{Error, Result};
 
 // Tiered storage types (feature-gated)

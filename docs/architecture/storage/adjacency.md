@@ -10,9 +10,15 @@ tags:
 
 Edges are stored in chunked adjacency lists optimized for traversal.
 
+## Why Chunked Lists?
+
+CSR (Compressed Sparse Row) is read-optimized but requires a full rebuild on any insertion. Adjacency matrices waste memory on sparse graphs. Chunked lists allow incremental updates (append to the latest chunk or delta buffer) while still supporting parallel scans across chunks and compression of cold chunks. This fits a database where data changes frequently.
+
 ## Structure
 
-```
+Each node maintains separate outgoing and incoming adjacency lists:
+
+```text
 Node 1 adjacency:
 ┌────────────────────────────────────────┐
 │ Outgoing: [Node2, Node3, Node5, ...]   │
@@ -20,33 +26,29 @@ Node 1 adjacency:
 └────────────────────────────────────────┘
 ```
 
-## Chunked Storage
+## Three-Tier Storage
 
-Large adjacency lists are split into chunks:
+Adjacency data moves through three tiers as it ages:
 
+```text
+Delta buffer (SmallVec, ≤64 entries):
+  Recent insertions, not yet compacted
+
+Hot chunks (uncompressed, 64 edges/chunk):
+  Compacted from delta buffer, mutable
+
+Cold chunks (compressed, immutable):
+  Sorted + delta-encoded + bit-packed
 ```
-High-degree node (1M edges):
-├── Chunk 0: edges 0-1023
-├── Chunk 1: edges 1024-2047
-├── Chunk 2: edges 2048-3071
-└── ... (more chunks)
-```
 
-## Benefits
+When the delta buffer reaches 64 entries, it is compacted into a hot chunk. When hot chunks exceed 4, the oldest are compressed into cold storage.
 
-- **Incremental updates** - Add to latest chunk
-- **Parallel scans** - Process chunks in parallel
-- **Memory efficiency** - Load chunks on demand
-- **Cache friendly** - Sequential access within chunks
+## Cold Chunk Compression
 
-## Delta Buffer
+Cold chunks sort entries by destination node ID, then apply delta encoding and bit-packing. This exploits locality in the destination ID space for high compression ratios.
 
-Recent changes are buffered before merging:
+A skip index stores (min_destination, max_destination) per cold chunk, enabling O(log n) point lookups without decompressing chunks that can't contain the target.
 
-```
-Frozen chunks: [Chunk 0, Chunk 1, Chunk 2]
-Delta buffer:  [new_edge_1, new_edge_2, ...]
+## Soft Deletion
 
-On query: Merge frozen + delta
-On checkpoint: Merge delta into new chunk
-```
+Deletions use tombstones stored in a hash set, avoiding the need to recompact chunks when edges are removed.

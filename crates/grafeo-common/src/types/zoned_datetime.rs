@@ -90,6 +90,24 @@ impl ZonedDatetime {
             .with_offset(self.offset_seconds)
     }
 
+    /// Truncates this zoned datetime to the given unit, preserving the offset.
+    ///
+    /// Truncation is performed on the local (offset-adjusted) time, then
+    /// converted back to UTC. This ensures that truncating to "day" gives
+    /// midnight in the local timezone, not midnight UTC.
+    #[must_use]
+    pub fn truncate(&self, unit: &str) -> Option<Self> {
+        // Convert to local, truncate, convert back
+        let local_micros = self.utc_micros + self.offset_seconds as i64 * 1_000_000;
+        let local_ts = Timestamp::from_micros(local_micros);
+        let truncated_local = local_ts.truncate(unit)?;
+        let utc_micros = truncated_local.as_micros() - self.offset_seconds as i64 * 1_000_000;
+        Some(Self {
+            utc_micros,
+            offset_seconds: self.offset_seconds,
+        })
+    }
+
     /// Parses an ISO 8601 datetime string with a mandatory UTC offset.
     ///
     /// Accepted formats:
@@ -244,6 +262,23 @@ mod tests {
         let earlier = ZonedDatetime::parse("2024-06-15T10:00:00Z").unwrap();
         let later = ZonedDatetime::parse("2024-06-15T12:00:00Z").unwrap();
         assert!(earlier < later);
+    }
+
+    #[test]
+    fn test_truncate() {
+        // 2024-06-15T14:30:45+02:00 (Amsterdam summer time)
+        let zdt = ZonedDatetime::parse("2024-06-15T14:30:45+02:00").unwrap();
+
+        let day = zdt.truncate("day").unwrap();
+        assert_eq!(day.offset_seconds(), 7200);
+        // Truncated to midnight local time
+        assert_eq!(day.to_string(), "2024-06-15T00:00:00+02:00");
+
+        let hour = zdt.truncate("hour").unwrap();
+        assert_eq!(hour.to_string(), "2024-06-15T14:00:00+02:00");
+
+        let minute = zdt.truncate("minute").unwrap();
+        assert_eq!(minute.to_string(), "2024-06-15T14:30:00+02:00");
     }
 
     #[test]

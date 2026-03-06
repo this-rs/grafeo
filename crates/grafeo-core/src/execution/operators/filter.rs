@@ -5,7 +5,10 @@ use crate::execution::{ChunkZoneHints, DataChunk, SelectionVector};
 use crate::graph::Direction;
 use crate::graph::GraphStore;
 use grafeo_common::types::{HashableValue, PropertyKey, Value};
+#[cfg(feature = "regex")]
 use regex::Regex;
+#[cfg(all(feature = "regex-lite", not(feature = "regex")))]
+use regex_lite::Regex;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
@@ -965,15 +968,18 @@ impl ExpressionPredicate {
             BinaryFilterOp::In => None,
             // Regex match (=~)
             BinaryFilterOp::Regex => {
+                #[cfg(any(feature = "regex", feature = "regex-lite"))]
                 match (left, right) {
-                    (Value::String(s), Value::String(pattern)) => {
-                        // Compile the regex pattern and match against the string
-                        match Regex::new(pattern) {
-                            Ok(re) => Some(Value::Bool(re.is_match(s))),
-                            Err(_) => None, // Invalid regex pattern
-                        }
-                    }
-                    _ => None, // Type mismatch - regex requires strings
+                    (Value::String(s), Value::String(pattern)) => match Regex::new(pattern) {
+                        Ok(re) => Some(Value::Bool(re.is_match(s))),
+                        Err(_) => None,
+                    },
+                    _ => None,
+                }
+                #[cfg(not(any(feature = "regex", feature = "regex-lite")))]
+                {
+                    let _ = (left, right);
+                    None
                 }
             }
             // Power/exponentiation (^)
@@ -996,12 +1002,9 @@ impl ExpressionPredicate {
             }
             // SQL LIKE pattern matching
             BinaryFilterOp::Like => {
+                #[cfg(any(feature = "regex", feature = "regex-lite"))]
                 match (left, right) {
                     (Value::String(s), Value::String(pattern)) => {
-                        // Convert SQL LIKE pattern to regex:
-                        // % -> .* (any sequence of characters)
-                        // _ -> .  (any single character)
-                        // Escape other regex metacharacters
                         let mut regex_pattern = String::with_capacity(pattern.len() + 4);
                         regex_pattern.push('^');
                         let mut chars = pattern.chars().peekable();
@@ -1010,7 +1013,6 @@ impl ExpressionPredicate {
                                 '%' => regex_pattern.push_str(".*"),
                                 '_' => regex_pattern.push('.'),
                                 '\\' => {
-                                    // Escape sequence: next char is literal
                                     if let Some(next) = chars.next() {
                                         regex_escape_char(next, &mut regex_pattern);
                                     }
@@ -1026,6 +1028,11 @@ impl ExpressionPredicate {
                     }
                     (Value::Null, _) | (_, Value::Null) => Some(Value::Null),
                     _ => None,
+                }
+                #[cfg(not(any(feature = "regex", feature = "regex-lite")))]
+                {
+                    let _ = (left, right);
+                    None
                 }
             }
             // String concatenation (||)
@@ -1297,12 +1304,23 @@ impl ExpressionPredicate {
                     "FLOAT" | "FLOAT64" | "DOUBLE" => matches!(val, Value::Float64(_)),
                     "STRING" => matches!(val, Value::String(_)),
                     "LIST" => matches!(val, Value::List(_)),
-                    "MAP" => matches!(val, Value::Map(_)),
+                    "MAP" | "RECORD" => matches!(val, Value::Map(_)),
                     "NULL" => matches!(val, Value::Null),
                     "DATE" => matches!(val, Value::Date(_)),
                     "TIME" => matches!(val, Value::Time(_)),
                     "DATETIME" | "TIMESTAMP" => matches!(val, Value::Timestamp(_)),
                     "DURATION" => matches!(val, Value::Duration(_)),
+                    "PATH" => matches!(val, Value::Path { .. }),
+                    "NODE" | "EDGE" | "GRAPH" => false,
+                    s if s.starts_with("LIST<") && s.ends_with('>') => {
+                        let elem_type = &s[5..s.len() - 1];
+                        match &val {
+                            Value::List(items) => {
+                                items.iter().all(|v| Self::value_matches_type(v, elem_type))
+                            }
+                            _ => false,
+                        }
+                    }
                     _ => false,
                 };
                 Some(Value::Bool(matches))
@@ -2181,7 +2199,7 @@ impl ExpressionPredicate {
                     _ => None,
                 }
             }
-            "time" | "totime" => {
+            "time" | "totime" | "local_time" => {
                 if args.is_empty() {
                     return Some(Value::Time(grafeo_common::types::Time::now()));
                 }
@@ -2193,7 +2211,7 @@ impl ExpressionPredicate {
                     _ => None,
                 }
             }
-            "datetime" | "localdatetime" | "todatetime" => {
+            "datetime" | "localdatetime" | "local_datetime" | "todatetime" => {
                 if args.is_empty() {
                     return Some(Value::Timestamp(grafeo_common::types::Timestamp::now()));
                 }
@@ -2236,8 +2254,16 @@ impl ExpressionPredicate {
                     _ => None,
                 }
             }
-            "tozoneddatetime" | "zoneddatetime" => {
-                let val = self.eval_expr(args.first()?, chunk, row)?;
+            "tozoneddatetime" | "zoneddatetime" | "zoned_datetime" => {
+                if args.is_empty() {
+                    return Some(Value::ZonedDatetime(
+                        grafeo_common::types::ZonedDatetime::from_timestamp_offset(
+                            grafeo_common::types::Timestamp::now(),
+                            0,
+                        ),
+                    ));
+                }
+                let val = self.eval_expr(&args[0], chunk, row)?;
                 match val {
                     Value::String(s) => {
                         grafeo_common::types::ZonedDatetime::parse(&s).map(Value::ZonedDatetime)
@@ -2336,6 +2362,64 @@ impl ExpressionPredicate {
                         Some(Value::Int64(i64::from(zdt.to_local_time().second())))
                     }
                     _ => None,
+                }
+            }
+            // --- Temporal truncation ---
+            "date_trunc" | "truncate" => {
+                if args.len() < 2 {
+                    return None;
+                }
+                let unit = match self.eval_expr(&args[0], chunk, row)? {
+                    Value::String(s) => s.to_lowercase(),
+                    _ => return None,
+                };
+                let val = self.eval_expr(&args[1], chunk, row)?;
+                match val {
+                    Value::Date(d) => Some(Value::Date(d.truncate(&unit)?)),
+                    Value::Time(t) => Some(Value::Time(t.truncate(&unit)?)),
+                    Value::Timestamp(ts) => Some(Value::Timestamp(ts.truncate(&unit)?)),
+                    Value::ZonedDatetime(zdt) => Some(Value::ZonedDatetime(zdt.truncate(&unit)?)),
+                    _ => None,
+                }
+            }
+            // --- Path constructor ---
+            "path" => {
+                if args.len() == 2 {
+                    // path(nodes_list, edges_list) - construct from component lists
+                    let nodes_val = self.eval_expr(&args[0], chunk, row)?;
+                    let edges_val = self.eval_expr(&args[1], chunk, row)?;
+                    match (&nodes_val, &edges_val) {
+                        (Value::Null, _) | (_, Value::Null) => Some(Value::Null),
+                        (Value::List(nodes), Value::List(edges)) => {
+                            if nodes.is_empty() || edges.len() != nodes.len() - 1 {
+                                return None;
+                            }
+                            Some(Value::Path {
+                                nodes: Arc::from(nodes.as_ref()),
+                                edges: Arc::from(edges.as_ref()),
+                            })
+                        }
+                        _ => None,
+                    }
+                } else {
+                    // path(node1, edge1, node2, ...) - alternating nodes and edges
+                    if args.is_empty() || args.len().is_multiple_of(2) {
+                        return None;
+                    }
+                    let mut nodes = Vec::with_capacity(args.len() / 2 + 1);
+                    let mut edges = Vec::with_capacity(args.len() / 2);
+                    for (i, arg) in args.iter().enumerate() {
+                        let val = self.eval_expr(arg, chunk, row)?;
+                        if i % 2 == 0 {
+                            nodes.push(val);
+                        } else {
+                            edges.push(val);
+                        }
+                    }
+                    Some(Value::Path {
+                        nodes: nodes.into(),
+                        edges: edges.into(),
+                    })
                 }
             }
             // --- Path decomposition functions ---
@@ -2541,6 +2625,30 @@ impl ExpressionPredicate {
                     other => Some(Value::List(vec![other].into())),
                 }
             }
+            "totypedlist" => {
+                // toTypedList(value, element_type) - coerces value to a list with typed elements
+                if args.len() != 2 {
+                    return None;
+                }
+                let val = self.eval_expr(&args[0], chunk, row)?;
+                let Value::String(elem_type) = self.eval_expr(&args[1], chunk, row)? else {
+                    return None;
+                };
+                if matches!(val, Value::Null) {
+                    return Some(Value::Null);
+                }
+                // Wrap scalar in a list first
+                let items = match val {
+                    Value::List(items) => items.to_vec(),
+                    other => vec![other],
+                };
+                // Coerce each element to the target type
+                let coerced: Option<Vec<Value>> = items
+                    .into_iter()
+                    .map(|v| Self::coerce_to_type(v, &elem_type))
+                    .collect();
+                coerced.map(|v| Value::List(v.into()))
+            }
             "nullif" => {
                 // NULLIF(expr1, expr2) - returns NULL if expr1 = expr2, else expr1
                 if args.len() != 2 {
@@ -2663,6 +2771,66 @@ impl ExpressionPredicate {
                         .all(|(a, b)| Self::values_equal(a, b))
             }
             _ => false,
+        }
+    }
+
+    /// Checks if a value matches a GQL type name (used by IS TYPED).
+    fn value_matches_type(val: &Value, type_name: &str) -> bool {
+        match type_name {
+            "BOOLEAN" | "BOOL" => matches!(val, Value::Bool(_)),
+            "INTEGER" | "INT" | "INT64" => matches!(val, Value::Int64(_)),
+            "FLOAT" | "FLOAT64" | "DOUBLE" => matches!(val, Value::Float64(_)),
+            "STRING" => matches!(val, Value::String(_)),
+            "LIST" => matches!(val, Value::List(_)),
+            "MAP" | "RECORD" => matches!(val, Value::Map(_)),
+            "NULL" => matches!(val, Value::Null),
+            "DATE" => matches!(val, Value::Date(_)),
+            "TIME" => matches!(val, Value::Time(_)),
+            "DATETIME" | "TIMESTAMP" => matches!(val, Value::Timestamp(_)),
+            "DURATION" => matches!(val, Value::Duration(_)),
+            "PATH" => matches!(val, Value::Path { .. }),
+            "NODE" | "EDGE" | "GRAPH" => false, // element refs not stored as values
+            _ => false,
+        }
+    }
+
+    /// Coerces a value to a target GQL type. Returns None if coercion is impossible.
+    fn coerce_to_type(val: Value, type_name: &str) -> Option<Value> {
+        match type_name.to_uppercase().as_str() {
+            "INTEGER" | "INT" | "INT64" => match val {
+                Value::Int64(_) => Some(val),
+                Value::Float64(f) => Some(Value::Int64(f as i64)),
+                Value::String(ref s) => s.parse::<i64>().ok().map(Value::Int64),
+                Value::Bool(b) => Some(Value::Int64(i64::from(b))),
+                _ => None,
+            },
+            "FLOAT" | "FLOAT64" | "DOUBLE" => match val {
+                Value::Float64(_) => Some(val),
+                Value::Int64(i) => Some(Value::Float64(i as f64)),
+                Value::String(ref s) => s.parse::<f64>().ok().map(Value::Float64),
+                _ => None,
+            },
+            "STRING" => match val {
+                Value::String(_) => Some(val),
+                other => Some(Value::String(other.to_string().into())),
+            },
+            "BOOLEAN" | "BOOL" => match val {
+                Value::Bool(_) => Some(val),
+                Value::String(ref s) => match s.to_lowercase().as_str() {
+                    "true" => Some(Value::Bool(true)),
+                    "false" => Some(Value::Bool(false)),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => {
+                // For unknown types, keep value as-is if it already matches
+                if Self::value_matches_type(&val, &type_name.to_uppercase()) {
+                    Some(val)
+                } else {
+                    None
+                }
+            }
         }
     }
 

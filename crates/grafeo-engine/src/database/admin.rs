@@ -297,11 +297,11 @@ impl super::GrafeoDB {
         #[cfg(feature = "wal")]
         if let Some(ref wal) = self.wal {
             let epoch = self.store.current_epoch();
-            let tx_id = self
-                .tx_manager
-                .last_assigned_tx_id()
-                .unwrap_or_else(|| self.tx_manager.begin());
-            wal.checkpoint(tx_id, epoch)?;
+            let transaction_id = self
+                .transaction_manager
+                .last_assigned_transaction_id()
+                .unwrap_or_else(|| self.transaction_manager.begin());
+            wal.checkpoint(transaction_id, epoch)?;
             wal.sync()?;
         }
         Ok(())

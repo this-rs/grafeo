@@ -17,6 +17,7 @@
 //! | `sparql` | SPARQL | For RDF triple stores |
 //! | `gremlin` | Gremlin | Apache TinkerPop traversals |
 //! | `graphql` | GraphQL | Schema-based queries |
+//! | `sql-pgq` | SQL/PGQ | SQL:2023 GRAPH_TABLE |
 //!
 //! Use the `full` feature to enable everything.
 //!

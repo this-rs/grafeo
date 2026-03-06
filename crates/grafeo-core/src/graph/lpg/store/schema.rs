@@ -292,4 +292,16 @@ impl LpgStore {
         }
         keys.into_iter().collect()
     }
+
+    /// Returns the next node ID that will be allocated.
+    #[must_use]
+    pub fn peek_next_node_id(&self) -> u64 {
+        self.next_node_id.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Returns the next edge ID that will be allocated.
+    #[must_use]
+    pub fn peek_next_edge_id(&self) -> u64 {
+        self.next_edge_id.load(std::sync::atomic::Ordering::Relaxed)
+    }
 }

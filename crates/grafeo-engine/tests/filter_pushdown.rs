@@ -400,7 +400,7 @@ fn rollback_hides_nodes_from_equality_pushdown() {
     let mut session = db.session();
 
     // Create a node inside a transaction, then roll back
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
     session
         .execute("CREATE (:Person {name: 'Ghost', city: 'Nowhere'})")
         .unwrap();
@@ -428,7 +428,7 @@ fn rollback_hides_nodes_from_range_pushdown() {
     let mut session = db.session();
 
     // Create a node inside a transaction, then roll back
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
     session
         .execute("CREATE (:Person {name: 'Ghost', city: 'Nowhere', age: 99})")
         .unwrap();
@@ -450,7 +450,7 @@ fn committed_tx_nodes_visible_in_pushdown() {
     let mut session = db.session();
 
     // Create a node inside a transaction and commit
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
     session
         .execute("CREATE (:Person {name: 'Frank', city: 'Berlin', age: 50})")
         .unwrap();

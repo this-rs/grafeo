@@ -10,6 +10,25 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+# Feature profiles tested in this workflow:
+#
+# 1. Full profile (--all-features): exercises every language parser (GQL,
+#    Cypher, SPARQL, Gremlin, GraphQL, SQL/PGQ), AI features (vector-index,
+#    text-index, hybrid-search, cdc), RDF, algorithms, tiered-storage, etc.
+#    Used by: rust-check, rust-test, miri, coverage, benchmark.
+#
+# 2. WASM profile (default-features=false, gql only): minimal feature set
+#    for the wasm32-unknown-unknown target, which has no threads or OS APIs.
+#    Used by: wasm-build (via scripts/build-wasm.sh).
+#
+# 3. Default profile (crate defaults, no explicit --features): whatever each
+#    binding crate enables in its own Cargo.toml. The Python, Node.js, and Go
+#    bindings each pull in "full" through their crate dependencies.
+#    Used by: python-test, node-test, go-test.
+#
+# Note: the "embed" feature (ONNX embeddings, ~17 MB) is never included in
+# "full" and is not tested here. It is opt-in only.
+
 jobs:
   # Rust checks
   rust-check:
@@ -37,9 +56,15 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      # Full profile: --all-features enables all language parsers (GQL, Cypher,
+      # SPARQL, Gremlin, GraphQL, SQL/PGQ), AI features (vector-index, text-index,
+      # hybrid-search, cdc), RDF, algorithms, and other optional features.
+      # This ensures every conditional compilation path compiles without warnings.
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      # Full profile: generates docs for every feature-gated module so no
+      # broken intra-doc links or missing items slip through.
       - name: Check docs
         run: |
           rm -rf target/doc
@@ -72,9 +97,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-test-
 
+      # Full profile: --all-features tests every language parser, AI index,
+      # RDF store, algorithms, CDC, and other optional modules together.
+      # This catches integration issues across feature combinations.
       - name: Run tests
         run: cargo test --all-features --workspace
 
+      # Full profile (release): re-runs with optimizations enabled to catch
+      # issues that only surface under release-mode inlining or overflow checks.
       - name: Run tests (release)
         run: cargo test --all-features --workspace --release
 
@@ -109,6 +139,9 @@ jobs:
       - name: Setup Miri sysroot
         run: cargo +$NIGHTLY miri setup
 
+      # Full profile: tests grafeo-common with all features under Miri to
+      # verify no undefined behavior in the foundation crate (allocators,
+      # hashing, MVCC types) regardless of which features are active.
       - name: Run Miri on grafeo-common
         run: cargo +$NIGHTLY miri test --all-features -p grafeo-common
         env:
@@ -129,6 +162,9 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
+      # Full profile: --all-features ensures coverage includes all language
+      # parsers, AI features, and optional modules. Binding crates, build
+      # scripts, test helpers, and benchmarks are excluded from the report.
       - name: Generate coverage report
         run: |
           cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info \
@@ -143,6 +179,8 @@ jobs:
           verbose: true
 
   # Python tests
+  # Default profile: maturin builds grafeo-python with its crate-level default
+  # features, which pull in "full" (all languages + AI) via grafeo-engine.
   python-test:
     name: Python Test (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
@@ -193,6 +231,8 @@ jobs:
         run: pytest crates/bindings/python/tests/ -v --ignore=crates/bindings/python/tests/benchmark_phases.py
 
   # Node.js tests
+  # Default profile: napi-rs builds grafeo-node with its crate-level default
+  # features, which pull in "full" (all languages + AI) via grafeo-engine.
   node-test:
     name: Node.js Test (${{ matrix.os }}, Node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
@@ -236,6 +276,8 @@ jobs:
         run: npm test
 
   # Go tests
+  # Default profile: grafeo-c is built with --features full explicitly (see
+  # the "Build shared library" step), so the Go FFI tests the full API surface.
   go-test:
     name: Go Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -266,6 +308,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-go-
 
+      # Full profile (via "full" feature group): builds with all language
+      # parsers and AI features so the C FFI exposes the complete API surface.
+      # Go bindings call through this shared library.
       - name: Build shared library
         run: cargo build --release -p grafeo-c --features full
 
@@ -293,6 +338,11 @@ jobs:
           CGO_ENABLED=1 CGO_LDFLAGS="-L. -lgrafeo_c -lws2_32 -lbcrypt -lntdll -luserenv" go test -v ./...
 
   # WASM build
+  # WASM profile: builds with default-features = false and only the "gql"
+  # feature enabled (minimal, no threads). The wasm32-unknown-unknown target
+  # has no std::thread, so threading features, jemalloc/mimalloc allocators,
+  # and other OS-dependent code are excluded. The build script
+  # (scripts/build-wasm.sh) handles the exact cargo flags.
   wasm-build:
     name: WASM Build
     runs-on: ubuntu-latest
@@ -319,6 +369,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-wasm-
 
+      # WASM profile: delegates to build-wasm.sh which compiles grafeo-wasm
+      # with only the gql feature (no threads, no native allocators).
       - name: Build WASM
         run: bash scripts/build-wasm.sh
 
@@ -339,6 +391,8 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # Full profile: --all-features benchmarks include feature-gated indexes
+      # (vector, text, ring) so perf regressions are caught across all modules.
       - name: Run benchmarks
         run: cargo bench --all-features --bench arena_bench --bench index_bench -- --noplot
 

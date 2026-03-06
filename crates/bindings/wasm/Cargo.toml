@@ -12,7 +12,7 @@ description = "WebAssembly bindings for Grafeo graph database"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-grafeo-engine = { workspace = true, features = ["gql"] }
+grafeo-engine = { workspace = true, features = ["gql", "regex-lite"] }
 grafeo-common.workspace = true
 grafeo-bindings-common = { path = "../common", default-features = false }
 
@@ -35,18 +35,21 @@ getrandom = { version = "0.4", features = ["wasm_js"] }
 wasm-bindgen-test = "0.3"
 
 [features]
-default = ["gql"]
+default = ["browser"]
 gql = ["grafeo-engine/gql"]
 cypher = ["grafeo-engine/cypher"]
 sparql = ["grafeo-engine/sparql", "grafeo-engine/rdf"]
 gremlin = ["grafeo-engine/gremlin"]
 graphql = ["grafeo-engine/graphql"]
 sql-pgq = ["grafeo-engine/sql-pgq"]
+vector-index = ["grafeo-engine/vector-index"]
 text-index = ["grafeo-engine/text-index"]
 hybrid-search = ["grafeo-engine/hybrid-search"]
 languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]
-vector-index = ["grafeo-engine/vector-index"]
-full = ["languages", "text-index", "hybrid-search", "vector-index"]
+ai = ["vector-index", "text-index", "hybrid-search"]
+# Named profiles
+browser = ["gql", "grafeo-engine/regex-lite"]  # GQL + regex-lite (~507 KB gzip)
+full = ["languages", "ai"]  # All languages + AI search
 
 [lints]
 workspace = true

@@ -187,6 +187,25 @@ impl Time {
         }
     }
 
+    /// Truncates this time to the given unit, preserving the offset.
+    ///
+    /// - `"hour"`: zeros minutes, seconds, and nanoseconds
+    /// - `"minute"`: zeros seconds and nanoseconds
+    /// - `"second"`: zeros nanoseconds
+    #[must_use]
+    pub fn truncate(&self, unit: &str) -> Option<Self> {
+        let truncated_nanos = match unit {
+            "hour" => (self.nanos / NANOS_PER_HOUR) * NANOS_PER_HOUR,
+            "minute" => (self.nanos / NANOS_PER_MINUTE) * NANOS_PER_MINUTE,
+            "second" => (self.nanos / NANOS_PER_SECOND) * NANOS_PER_SECOND,
+            _ => return None,
+        };
+        Some(Self {
+            nanos: truncated_nanos,
+            offset: self.offset,
+        })
+    }
+
     /// Returns UTC-normalized nanoseconds (for comparison).
     fn utc_nanos(&self) -> u64 {
         match self.offset {
@@ -380,6 +399,41 @@ mod tests {
         let t1 = Time::from_hms(14, 0, 0).unwrap().with_offset(7200);
         let t2 = Time::from_hms(13, 0, 0).unwrap().with_offset(0);
         assert!(t1 < t2);
+    }
+
+    #[test]
+    fn test_truncate() {
+        let t = Time::from_hms_nano(14, 30, 45, 123_456_789).unwrap();
+
+        let hour = t.truncate("hour").unwrap();
+        assert_eq!(hour.hour(), 14);
+        assert_eq!(hour.minute(), 0);
+        assert_eq!(hour.second(), 0);
+        assert_eq!(hour.nanosecond(), 0);
+
+        let minute = t.truncate("minute").unwrap();
+        assert_eq!(minute.hour(), 14);
+        assert_eq!(minute.minute(), 30);
+        assert_eq!(minute.second(), 0);
+
+        let second = t.truncate("second").unwrap();
+        assert_eq!(second.hour(), 14);
+        assert_eq!(second.minute(), 30);
+        assert_eq!(second.second(), 45);
+        assert_eq!(second.nanosecond(), 0);
+
+        assert!(t.truncate("day").is_none());
+    }
+
+    #[test]
+    fn test_truncate_preserves_offset() {
+        let t = Time::from_hms_nano(14, 30, 45, 0)
+            .unwrap()
+            .with_offset(19800); // +05:30
+        let truncated = t.truncate("hour").unwrap();
+        assert_eq!(truncated.offset_seconds(), Some(19800));
+        assert_eq!(truncated.hour(), 14);
+        assert_eq!(truncated.minute(), 0);
     }
 
     #[test]

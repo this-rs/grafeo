@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use grafeo_adapters::storage::wal::{LpgWal, WalRecord};
-use grafeo_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TxId, Value};
+use grafeo_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TransactionId, Value};
 use grafeo_common::utils::hash::FxHashMap;
 use grafeo_core::graph::lpg::{CompareOp, Edge, LpgStore, Node};
 use grafeo_core::graph::{Direction, GraphStore, GraphStoreMut};
@@ -51,12 +51,22 @@ impl GraphStore for WalGraphStore {
         self.inner.get_edge(id)
     }
 
-    fn get_node_versioned(&self, id: NodeId, epoch: EpochId, tx_id: TxId) -> Option<Node> {
-        self.inner.get_node_versioned(id, epoch, tx_id)
+    fn get_node_versioned(
+        &self,
+        id: NodeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Option<Node> {
+        self.inner.get_node_versioned(id, epoch, transaction_id)
     }
 
-    fn get_edge_versioned(&self, id: EdgeId, epoch: EpochId, tx_id: TxId) -> Option<Edge> {
-        self.inner.get_edge_versioned(id, epoch, tx_id)
+    fn get_edge_versioned(
+        &self,
+        id: EdgeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Option<Edge> {
+        self.inner.get_edge_versioned(id, epoch, transaction_id)
     }
 
     fn get_node_at_epoch(&self, id: NodeId, epoch: EpochId) -> Option<Node> {
@@ -197,6 +207,18 @@ impl GraphStore for WalGraphStore {
         self.inner.current_epoch()
     }
 
+    fn all_labels(&self) -> Vec<String> {
+        self.inner.all_labels()
+    }
+
+    fn all_edge_types(&self) -> Vec<String> {
+        self.inner.all_edge_types()
+    }
+
+    fn all_property_keys(&self) -> Vec<String> {
+        self.inner.all_property_keys()
+    }
+
     fn get_node_history(&self, id: NodeId) -> Vec<(EpochId, Option<EpochId>, Node)> {
         self.inner.get_node_history(id)
     }
@@ -220,8 +242,15 @@ impl GraphStoreMut for WalGraphStore {
         id
     }
 
-    fn create_node_versioned(&self, labels: &[&str], epoch: EpochId, tx_id: TxId) -> NodeId {
-        let id = self.inner.create_node_versioned(labels, epoch, tx_id);
+    fn create_node_versioned(
+        &self,
+        labels: &[&str],
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> NodeId {
+        let id = self
+            .inner
+            .create_node_versioned(labels, epoch, transaction_id);
         self.log(&WalRecord::CreateNode {
             id,
             labels: labels.iter().map(|s| (*s).to_string()).collect(),
@@ -246,11 +275,11 @@ impl GraphStoreMut for WalGraphStore {
         dst: NodeId,
         edge_type: &str,
         epoch: EpochId,
-        tx_id: TxId,
+        transaction_id: TransactionId,
     ) -> EdgeId {
         let id = self
             .inner
-            .create_edge_versioned(src, dst, edge_type, epoch, tx_id);
+            .create_edge_versioned(src, dst, edge_type, epoch, transaction_id);
         self.log(&WalRecord::CreateEdge {
             id,
             src,
@@ -281,8 +310,13 @@ impl GraphStoreMut for WalGraphStore {
         deleted
     }
 
-    fn delete_node_versioned(&self, id: NodeId, epoch: EpochId, tx_id: TxId) -> bool {
-        let deleted = self.inner.delete_node_versioned(id, epoch, tx_id);
+    fn delete_node_versioned(
+        &self,
+        id: NodeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool {
+        let deleted = self.inner.delete_node_versioned(id, epoch, transaction_id);
         if deleted {
             self.log(&WalRecord::DeleteNode { id });
         }
@@ -317,8 +351,13 @@ impl GraphStoreMut for WalGraphStore {
         deleted
     }
 
-    fn delete_edge_versioned(&self, id: EdgeId, epoch: EpochId, tx_id: TxId) -> bool {
-        let deleted = self.inner.delete_edge_versioned(id, epoch, tx_id);
+    fn delete_edge_versioned(
+        &self,
+        id: EdgeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool {
+        let deleted = self.inner.delete_edge_versioned(id, epoch, transaction_id);
         if deleted {
             self.log(&WalRecord::DeleteEdge { id });
         }

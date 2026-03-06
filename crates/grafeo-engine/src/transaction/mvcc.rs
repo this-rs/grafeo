@@ -8,11 +8,11 @@ pub use grafeo_common::mvcc::{VersionChain, VersionInfo};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grafeo_common::types::{EpochId, TxId};
+    use grafeo_common::types::{EpochId, TransactionId};
 
     #[test]
     fn test_version_visibility() {
-        let v = VersionInfo::new(EpochId::new(5), TxId::new(1));
+        let v = VersionInfo::new(EpochId::new(5), TransactionId::new(1));
 
         // Not visible before creation
         assert!(!v.is_visible_at(EpochId::new(4)));
@@ -24,7 +24,7 @@ mod tests {
 
     #[test]
     fn test_deleted_version_visibility() {
-        let mut v = VersionInfo::new(EpochId::new(5), TxId::new(1));
+        let mut v = VersionInfo::new(EpochId::new(5), TransactionId::new(1));
         v.mark_deleted(EpochId::new(10));
 
         // Visible between creation and deletion
@@ -38,26 +38,26 @@ mod tests {
 
     #[test]
     fn test_version_visibility_to_transaction() {
-        let v = VersionInfo::new(EpochId::new(5), TxId::new(1));
+        let v = VersionInfo::new(EpochId::new(5), TransactionId::new(1));
 
         // Creator can see it even if viewing at earlier epoch
-        assert!(v.is_visible_to(EpochId::new(3), TxId::new(1)));
+        assert!(v.is_visible_to(EpochId::new(3), TransactionId::new(1)));
 
         // Other transactions can only see it at or after creation epoch
-        assert!(!v.is_visible_to(EpochId::new(3), TxId::new(2)));
-        assert!(v.is_visible_to(EpochId::new(5), TxId::new(2)));
+        assert!(!v.is_visible_to(EpochId::new(3), TransactionId::new(2)));
+        assert!(v.is_visible_to(EpochId::new(5), TransactionId::new(2)));
     }
 
     #[test]
     fn test_version_chain_basic() {
-        let mut chain = VersionChain::with_initial("v1", EpochId::new(1), TxId::new(1));
+        let mut chain = VersionChain::with_initial("v1", EpochId::new(1), TransactionId::new(1));
 
         // Should see v1 at epoch 1+
         assert_eq!(chain.visible_at(EpochId::new(1)), Some(&"v1"));
         assert_eq!(chain.visible_at(EpochId::new(0)), None);
 
         // Add v2
-        chain.add_version("v2", EpochId::new(5), TxId::new(2));
+        chain.add_version("v2", EpochId::new(5), TransactionId::new(2));
 
         // Should see v1 at epoch < 5, v2 at epoch >= 5
         assert_eq!(chain.visible_at(EpochId::new(1)), Some(&"v1"));
@@ -68,19 +68,25 @@ mod tests {
 
     #[test]
     fn test_version_chain_transaction_visibility() {
-        let mut chain = VersionChain::with_initial("v1", EpochId::new(1), TxId::new(1));
-        chain.add_version("v2", EpochId::new(5), TxId::new(2));
+        let mut chain = VersionChain::with_initial("v1", EpochId::new(1), TransactionId::new(1));
+        chain.add_version("v2", EpochId::new(5), TransactionId::new(2));
 
         // Transaction 2 can see its own uncommitted changes
-        assert_eq!(chain.visible_to(EpochId::new(3), TxId::new(2)), Some(&"v2"));
+        assert_eq!(
+            chain.visible_to(EpochId::new(3), TransactionId::new(2)),
+            Some(&"v2")
+        );
 
         // Transaction 3 at epoch 3 cannot see v2 (created at epoch 5)
-        assert_eq!(chain.visible_to(EpochId::new(3), TxId::new(3)), Some(&"v1"));
+        assert_eq!(
+            chain.visible_to(EpochId::new(3), TransactionId::new(3)),
+            Some(&"v1")
+        );
     }
 
     #[test]
     fn test_version_chain_deletion() {
-        let mut chain = VersionChain::with_initial("v1", EpochId::new(1), TxId::new(1));
+        let mut chain = VersionChain::with_initial("v1", EpochId::new(1), TransactionId::new(1));
 
         // Mark as deleted at epoch 5
         assert!(chain.mark_deleted(EpochId::new(5)));
@@ -93,14 +99,14 @@ mod tests {
 
     #[test]
     fn test_version_chain_rollback() {
-        let mut chain = VersionChain::with_initial("v1", EpochId::new(1), TxId::new(1));
-        chain.add_version("v2", EpochId::new(5), TxId::new(2));
-        chain.add_version("v3", EpochId::new(6), TxId::new(2));
+        let mut chain = VersionChain::with_initial("v1", EpochId::new(1), TransactionId::new(1));
+        chain.add_version("v2", EpochId::new(5), TransactionId::new(2));
+        chain.add_version("v3", EpochId::new(6), TransactionId::new(2));
 
         assert_eq!(chain.version_count(), 3);
 
         // Rollback tx 2's changes
-        chain.remove_versions_by(TxId::new(2));
+        chain.remove_versions_by(TransactionId::new(2));
 
         assert_eq!(chain.version_count(), 1);
         assert_eq!(chain.visible_at(EpochId::new(10)), Some(&"v1"));
@@ -108,34 +114,34 @@ mod tests {
 
     #[test]
     fn test_version_chain_conflict_detection() {
-        let mut chain = VersionChain::with_initial("v1", EpochId::new(1), TxId::new(1));
+        let mut chain = VersionChain::with_initial("v1", EpochId::new(1), TransactionId::new(1));
 
         // Transaction starting at epoch 1 sees v1 as the baseline - no conflict
-        assert!(!chain.has_conflict(EpochId::new(1), TxId::new(2)));
+        assert!(!chain.has_conflict(EpochId::new(1), TransactionId::new(2)));
 
         // Transaction starting at epoch 0 sees v1 (created at epoch 1) as concurrent - conflict
-        assert!(chain.has_conflict(EpochId::new(0), TxId::new(2)));
+        assert!(chain.has_conflict(EpochId::new(0), TransactionId::new(2)));
 
-        // Add a version from TxId(2)
-        chain.add_version("v2", EpochId::new(5), TxId::new(2));
+        // Add a version from TransactionId(2)
+        chain.add_version("v2", EpochId::new(5), TransactionId::new(2));
 
         // Transaction 3 starting at epoch 0 would conflict (v1 at epoch 1, v2 at epoch 5)
-        assert!(chain.has_conflict(EpochId::new(0), TxId::new(3)));
+        assert!(chain.has_conflict(EpochId::new(0), TransactionId::new(3)));
 
         // Transaction 3 starting at epoch 5 would not conflict (v2 is at epoch 5, not after)
-        assert!(!chain.has_conflict(EpochId::new(5), TxId::new(3)));
+        assert!(!chain.has_conflict(EpochId::new(5), TransactionId::new(3)));
 
         // Transaction 2's own writes don't count as conflicts
-        assert!(!chain.has_conflict(EpochId::new(4), TxId::new(2)));
+        assert!(!chain.has_conflict(EpochId::new(4), TransactionId::new(2)));
     }
 
     #[test]
     fn test_version_chain_gc() {
         let mut chain = VersionChain::new();
-        chain.add_version("v1", EpochId::new(1), TxId::new(1));
-        chain.add_version("v2", EpochId::new(3), TxId::new(2));
-        chain.add_version("v3", EpochId::new(5), TxId::new(3));
-        chain.add_version("v4", EpochId::new(7), TxId::new(4));
+        chain.add_version("v1", EpochId::new(1), TransactionId::new(1));
+        chain.add_version("v2", EpochId::new(3), TransactionId::new(2));
+        chain.add_version("v3", EpochId::new(5), TransactionId::new(3));
+        chain.add_version("v4", EpochId::new(7), TransactionId::new(4));
 
         assert_eq!(chain.version_count(), 4);
 
@@ -152,12 +158,12 @@ mod tests {
     #[test]
     fn test_version_chain_get_mut() {
         let mut chain =
-            VersionChain::with_initial(String::from("v1"), EpochId::new(1), TxId::new(1));
+            VersionChain::with_initial(String::from("v1"), EpochId::new(1), TransactionId::new(1));
 
         // Transaction 1 modifying its own version
         {
             let data = chain
-                .get_mut(EpochId::new(1), TxId::new(1), EpochId::new(2))
+                .get_mut(EpochId::new(1), TransactionId::new(1), EpochId::new(2))
                 .unwrap();
             data.push_str("_modified");
         }
@@ -167,7 +173,7 @@ mod tests {
         // Transaction 2 modifying creates a new version
         {
             let data = chain
-                .get_mut(EpochId::new(3), TxId::new(2), EpochId::new(3))
+                .get_mut(EpochId::new(3), TransactionId::new(2), EpochId::new(3))
                 .unwrap();
             data.push_str("_by_tx2");
         }

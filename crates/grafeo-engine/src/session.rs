@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use grafeo_common::types::{EdgeId, EpochId, NodeId, TxId, Value};
+use grafeo_common::types::{EdgeId, EpochId, NodeId, TransactionId, Value};
 use grafeo_common::utils::error::Result;
 use grafeo_core::graph::Direction;
 use grafeo_core::graph::GraphStoreMut;
@@ -38,13 +38,13 @@ pub struct Session {
     #[cfg(feature = "rdf")]
     rdf_store: Arc<RdfStore>,
     /// Transaction manager.
-    tx_manager: Arc<TransactionManager>,
+    transaction_manager: Arc<TransactionManager>,
     /// Query cache shared across sessions.
     query_cache: Arc<QueryCache>,
     /// Current transaction ID (if any). Behind a Mutex so that GQL commands
     /// (`START TRANSACTION`, `COMMIT`, `ROLLBACK`) can manage transactions
     /// from within `execute(&self)`.
-    current_tx: parking_lot::Mutex<Option<TxId>>,
+    current_transaction: parking_lot::Mutex<Option<TransactionId>>,
     /// Whether the current transaction is read-only (blocks mutations).
     read_only_tx: parking_lot::Mutex<bool>,
     /// Whether the session is in auto-commit mode.
@@ -63,9 +63,9 @@ pub struct Session {
     /// GC every N commits (0 = disabled).
     gc_interval: usize,
     /// Node count at the start of the current transaction (for PreparedCommit stats).
-    tx_start_node_count: AtomicUsize,
+    transaction_start_node_count: AtomicUsize,
     /// Edge count at the start of the current transaction (for PreparedCommit stats).
-    tx_start_edge_count: AtomicUsize,
+    transaction_start_edge_count: AtomicUsize,
     /// WAL for logging schema changes.
     #[cfg(feature = "wal")]
     wal: Option<Arc<grafeo_adapters::storage::wal::LpgWal>>,
@@ -81,6 +81,12 @@ pub struct Session {
         parking_lot::Mutex<std::collections::HashMap<String, grafeo_common::types::Value>>,
     /// Override epoch for time-travel queries (None = use transaction/current epoch).
     viewing_epoch_override: parking_lot::Mutex<Option<EpochId>>,
+    /// Savepoints within the current transaction: name -> (next_node_id, next_edge_id) snapshot.
+    savepoints: parking_lot::Mutex<Vec<(String, u64, u64)>>,
+    /// Nesting depth for nested transactions (0 = outermost).
+    /// Nested `START TRANSACTION` creates an auto-savepoint; nested `COMMIT`
+    /// releases it, nested `ROLLBACK` rolls back to it.
+    transaction_nesting_depth: parking_lot::Mutex<u32>,
 }
 
 impl Session {
@@ -88,7 +94,7 @@ impl Session {
     #[allow(dead_code, clippy::too_many_arguments)]
     pub(crate) fn with_adaptive(
         store: Arc<LpgStore>,
-        tx_manager: Arc<TransactionManager>,
+        transaction_manager: Arc<TransactionManager>,
         query_cache: Arc<QueryCache>,
         catalog: Arc<Catalog>,
         adaptive_config: AdaptiveConfig,
@@ -105,9 +111,9 @@ impl Session {
             catalog,
             #[cfg(feature = "rdf")]
             rdf_store: Arc::new(RdfStore::new()),
-            tx_manager,
+            transaction_manager,
             query_cache,
-            current_tx: parking_lot::Mutex::new(None),
+            current_transaction: parking_lot::Mutex::new(None),
             read_only_tx: parking_lot::Mutex::new(false),
             auto_commit: true,
             adaptive_config,
@@ -116,8 +122,8 @@ impl Session {
             query_timeout,
             commit_counter,
             gc_interval,
-            tx_start_node_count: AtomicUsize::new(0),
-            tx_start_edge_count: AtomicUsize::new(0),
+            transaction_start_node_count: AtomicUsize::new(0),
+            transaction_start_edge_count: AtomicUsize::new(0),
             #[cfg(feature = "wal")]
             wal: None,
             #[cfg(feature = "cdc")]
@@ -126,6 +132,8 @@ impl Session {
             time_zone: parking_lot::Mutex::new(None),
             session_params: parking_lot::Mutex::new(std::collections::HashMap::new()),
             viewing_epoch_override: parking_lot::Mutex::new(None),
+            savepoints: parking_lot::Mutex::new(Vec::new()),
+            transaction_nesting_depth: parking_lot::Mutex::new(0),
         }
     }
 
@@ -155,7 +163,7 @@ impl Session {
     pub(crate) fn with_rdf_store_and_adaptive(
         store: Arc<LpgStore>,
         rdf_store: Arc<RdfStore>,
-        tx_manager: Arc<TransactionManager>,
+        transaction_manager: Arc<TransactionManager>,
         query_cache: Arc<QueryCache>,
         catalog: Arc<Catalog>,
         adaptive_config: AdaptiveConfig,
@@ -171,9 +179,9 @@ impl Session {
             graph_store,
             catalog,
             rdf_store,
-            tx_manager,
+            transaction_manager,
             query_cache,
-            current_tx: parking_lot::Mutex::new(None),
+            current_transaction: parking_lot::Mutex::new(None),
             read_only_tx: parking_lot::Mutex::new(false),
             auto_commit: true,
             adaptive_config,
@@ -182,8 +190,8 @@ impl Session {
             query_timeout,
             commit_counter,
             gc_interval,
-            tx_start_node_count: AtomicUsize::new(0),
-            tx_start_edge_count: AtomicUsize::new(0),
+            transaction_start_node_count: AtomicUsize::new(0),
+            transaction_start_edge_count: AtomicUsize::new(0),
             #[cfg(feature = "wal")]
             wal: None,
             #[cfg(feature = "cdc")]
@@ -192,6 +200,8 @@ impl Session {
             time_zone: parking_lot::Mutex::new(None),
             session_params: parking_lot::Mutex::new(std::collections::HashMap::new()),
             viewing_epoch_override: parking_lot::Mutex::new(None),
+            savepoints: parking_lot::Mutex::new(Vec::new()),
+            transaction_nesting_depth: parking_lot::Mutex::new(0),
         }
     }
 
@@ -202,7 +212,7 @@ impl Session {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn with_external_store(
         store: Arc<dyn GraphStoreMut>,
-        tx_manager: Arc<TransactionManager>,
+        transaction_manager: Arc<TransactionManager>,
         query_cache: Arc<QueryCache>,
         catalog: Arc<Catalog>,
         adaptive_config: AdaptiveConfig,
@@ -218,9 +228,9 @@ impl Session {
             catalog,
             #[cfg(feature = "rdf")]
             rdf_store: Arc::new(RdfStore::new()),
-            tx_manager,
+            transaction_manager,
             query_cache,
-            current_tx: parking_lot::Mutex::new(None),
+            current_transaction: parking_lot::Mutex::new(None),
             read_only_tx: parking_lot::Mutex::new(false),
             auto_commit: true,
             adaptive_config,
@@ -229,8 +239,8 @@ impl Session {
             query_timeout,
             commit_counter,
             gc_interval,
-            tx_start_node_count: AtomicUsize::new(0),
-            tx_start_edge_count: AtomicUsize::new(0),
+            transaction_start_node_count: AtomicUsize::new(0),
+            transaction_start_edge_count: AtomicUsize::new(0),
             #[cfg(feature = "wal")]
             wal: None,
             #[cfg(feature = "cdc")]
@@ -239,6 +249,8 @@ impl Session {
             time_zone: parking_lot::Mutex::new(None),
             session_params: parking_lot::Mutex::new(std::collections::HashMap::new()),
             viewing_epoch_override: parking_lot::Mutex::new(None),
+            savepoints: parking_lot::Mutex::new(Vec::new()),
+            transaction_nesting_depth: parking_lot::Mutex::new(0),
         }
     }
 
@@ -353,7 +365,28 @@ impl Session {
                 name,
                 if_not_exists,
                 typed,
+                like_graph,
+                copy_of,
+                open: _,
             } => {
+                // Validate source graph exists for LIKE / AS COPY OF
+                if let Some(ref src) = like_graph
+                    && self.store.graph(src).is_none()
+                {
+                    return Err(Error::Query(QueryError::new(
+                        QueryErrorKind::Semantic,
+                        format!("Source graph '{src}' does not exist"),
+                    )));
+                }
+                if let Some(ref src) = copy_of
+                    && self.store.graph(src).is_none()
+                {
+                    return Err(Error::Query(QueryError::new(
+                        QueryErrorKind::Semantic,
+                        format!("Source graph '{src}' does not exist"),
+                    )));
+                }
+
                 let created = self
                     .store
                     .create_graph(&name)
@@ -364,6 +397,14 @@ impl Session {
                         format!("Graph '{name}' already exists"),
                     )));
                 }
+
+                // AS COPY OF: copy data from source graph
+                if let Some(ref src) = copy_of {
+                    self.store
+                        .copy_graph(Some(src), Some(&name))
+                        .map_err(|e| Error::Internal(e.to_string()))?;
+                }
+
                 // Bind to graph type if specified
                 if let Some(type_name) = typed
                     && let Err(e) = self.catalog.bind_graph_type(&name, type_name.clone())
@@ -373,6 +414,14 @@ impl Session {
                         e.to_string(),
                     )));
                 }
+
+                // LIKE: copy graph type binding from source
+                if let Some(ref src) = like_graph
+                    && let Some(src_type) = self.catalog.get_graph_type_binding(src)
+                {
+                    let _ = self.catalog.bind_graph_type(&name, src_type);
+                }
+
                 Ok(QueryResult::empty())
             }
             SessionCommand::DropGraph { name, if_exists } => {
@@ -446,7 +495,7 @@ impl Session {
                         crate::transaction::IsolationLevel::Serializable
                     }
                 });
-                self.begin_tx_inner(read_only, engine_level)?;
+                self.begin_transaction_inner(read_only, engine_level)?;
                 Ok(QueryResult::status("Transaction started"))
             }
             SessionCommand::Commit => {
@@ -456,6 +505,20 @@ impl Session {
             SessionCommand::Rollback => {
                 self.rollback_inner()?;
                 Ok(QueryResult::status("Transaction rolled back"))
+            }
+            SessionCommand::Savepoint(name) => {
+                self.savepoint(&name)?;
+                Ok(QueryResult::status(format!("Savepoint '{name}' created")))
+            }
+            SessionCommand::RollbackToSavepoint(name) => {
+                self.rollback_to_savepoint(&name)?;
+                Ok(QueryResult::status(format!(
+                    "Rolled back to savepoint '{name}'"
+                )))
+            }
+            SessionCommand::ReleaseSavepoint(name) => {
+                self.release_savepoint(&name)?;
+                Ok(QueryResult::status(format!("Savepoint '{name}' released")))
             }
         }
     }
@@ -1389,11 +1452,11 @@ impl Session {
 
         self.with_auto_commit(has_mutations, || {
             // Get transaction context for MVCC visibility
-            let (viewing_epoch, tx_id) = self.get_transaction_context();
+            let (viewing_epoch, transaction_id) = self.get_transaction_context();
 
             // Convert to physical plan with transaction context
             // (Physical planning cannot be cached as it depends on transaction state)
-            let planner = self.create_planner(viewing_epoch, tx_id);
+            let planner = self.create_planner(viewing_epoch, transaction_id);
             let mut physical_plan = planner.plan(&optimized_plan)?;
 
             // Execute the plan
@@ -1449,17 +1512,17 @@ impl Session {
 
         self.with_auto_commit(has_mutations, || {
             // Get transaction context for MVCC visibility
-            let (viewing_epoch, tx_id) = self.get_transaction_context();
+            let (viewing_epoch, transaction_id) = self.get_transaction_context();
 
             // Create processor with transaction context
-            let processor = QueryProcessor::for_graph_store_with_tx(
+            let processor = QueryProcessor::for_graph_store_with_transaction(
                 Arc::clone(&self.graph_store),
-                Arc::clone(&self.tx_manager),
+                Arc::clone(&self.transaction_manager),
             );
 
             // Apply transaction context if in a transaction
-            let processor = if let Some(tx_id) = tx_id {
-                processor.with_tx_context(viewing_epoch, tx_id)
+            let processor = if let Some(transaction_id) = transaction_id {
+                processor.with_transaction_context(viewing_epoch, transaction_id)
             } else {
                 processor
             };
@@ -1536,10 +1599,10 @@ impl Session {
 
         self.with_auto_commit(has_mutations, || {
             // Get transaction context for MVCC visibility
-            let (viewing_epoch, tx_id) = self.get_transaction_context();
+            let (viewing_epoch, transaction_id) = self.get_transaction_context();
 
             // Convert to physical plan with transaction context
-            let planner = self.create_planner(viewing_epoch, tx_id);
+            let planner = self.create_planner(viewing_epoch, transaction_id);
             let mut physical_plan = planner.plan(&optimized_plan)?;
 
             // Execute the plan
@@ -1591,10 +1654,10 @@ impl Session {
 
         self.with_auto_commit(has_mutations, || {
             // Get transaction context for MVCC visibility
-            let (viewing_epoch, tx_id) = self.get_transaction_context();
+            let (viewing_epoch, transaction_id) = self.get_transaction_context();
 
             // Convert to physical plan with transaction context
-            let planner = self.create_planner(viewing_epoch, tx_id);
+            let planner = self.create_planner(viewing_epoch, transaction_id);
             let mut physical_plan = planner.plan(&optimized_plan)?;
 
             // Execute the plan
@@ -1621,17 +1684,17 @@ impl Session {
 
         self.with_auto_commit(has_mutations, || {
             // Get transaction context for MVCC visibility
-            let (viewing_epoch, tx_id) = self.get_transaction_context();
+            let (viewing_epoch, transaction_id) = self.get_transaction_context();
 
             // Create processor with transaction context
-            let processor = QueryProcessor::for_graph_store_with_tx(
+            let processor = QueryProcessor::for_graph_store_with_transaction(
                 Arc::clone(&self.graph_store),
-                Arc::clone(&self.tx_manager),
+                Arc::clone(&self.transaction_manager),
             );
 
             // Apply transaction context if in a transaction
-            let processor = if let Some(tx_id) = tx_id {
-                processor.with_tx_context(viewing_epoch, tx_id)
+            let processor = if let Some(transaction_id) = transaction_id {
+                processor.with_transaction_context(viewing_epoch, transaction_id)
             } else {
                 processor
             };
@@ -1682,10 +1745,10 @@ impl Session {
 
         self.with_auto_commit(has_mutations, || {
             // Get transaction context for MVCC visibility
-            let (viewing_epoch, tx_id) = self.get_transaction_context();
+            let (viewing_epoch, transaction_id) = self.get_transaction_context();
 
             // Convert to physical plan with transaction context
-            let planner = self.create_planner(viewing_epoch, tx_id);
+            let planner = self.create_planner(viewing_epoch, transaction_id);
             let mut physical_plan = planner.plan(&optimized_plan)?;
 
             // Execute the plan
@@ -1712,17 +1775,17 @@ impl Session {
 
         self.with_auto_commit(has_mutations, || {
             // Get transaction context for MVCC visibility
-            let (viewing_epoch, tx_id) = self.get_transaction_context();
+            let (viewing_epoch, transaction_id) = self.get_transaction_context();
 
             // Create processor with transaction context
-            let processor = QueryProcessor::for_graph_store_with_tx(
+            let processor = QueryProcessor::for_graph_store_with_transaction(
                 Arc::clone(&self.graph_store),
-                Arc::clone(&self.tx_manager),
+                Arc::clone(&self.transaction_manager),
             );
 
             // Apply transaction context if in a transaction
-            let processor = if let Some(tx_id) = tx_id {
-                processor.with_tx_context(viewing_epoch, tx_id)
+            let processor = if let Some(transaction_id) = transaction_id {
+                processor.with_transaction_context(viewing_epoch, transaction_id)
             } else {
                 processor
             };
@@ -1779,6 +1842,7 @@ impl Session {
                 execution_time_ms: None,
                 rows_scanned: None,
                 status_message: None,
+                gql_status: grafeo_common::utils::GqlStatus::SUCCESS,
             });
         }
 
@@ -1807,10 +1871,10 @@ impl Session {
 
         self.with_auto_commit(has_mutations, || {
             // Get transaction context for MVCC visibility
-            let (viewing_epoch, tx_id) = self.get_transaction_context();
+            let (viewing_epoch, transaction_id) = self.get_transaction_context();
 
             // Convert to physical plan with transaction context
-            let planner = self.create_planner(viewing_epoch, tx_id);
+            let planner = self.create_planner(viewing_epoch, transaction_id);
             let mut physical_plan = planner.plan(&optimized_plan)?;
 
             // Execute the plan
@@ -1837,17 +1901,17 @@ impl Session {
 
         self.with_auto_commit(has_mutations, || {
             // Get transaction context for MVCC visibility
-            let (viewing_epoch, tx_id) = self.get_transaction_context();
+            let (viewing_epoch, transaction_id) = self.get_transaction_context();
 
             // Create processor with transaction context
-            let processor = QueryProcessor::for_graph_store_with_tx(
+            let processor = QueryProcessor::for_graph_store_with_transaction(
                 Arc::clone(&self.graph_store),
-                Arc::clone(&self.tx_manager),
+                Arc::clone(&self.transaction_manager),
             );
 
             // Apply transaction context if in a transaction
-            let processor = if let Some(tx_id) = tx_id {
-                processor.with_tx_context(viewing_epoch, tx_id)
+            let processor = if let Some(transaction_id) = transaction_id {
+                processor.with_transaction_context(viewing_epoch, transaction_id)
             } else {
                 processor
             };
@@ -1875,8 +1939,8 @@ impl Session {
         let optimized_plan = optimizer.optimize(logical_plan)?;
 
         // Convert to physical plan using RDF planner
-        let planner =
-            RdfPlanner::new(Arc::clone(&self.rdf_store)).with_tx_id(*self.current_tx.lock());
+        let planner = RdfPlanner::new(Arc::clone(&self.rdf_store))
+            .with_transaction_id(*self.current_transaction.lock());
         let mut physical_plan = planner.plan(&optimized_plan)?;
 
         // Execute the plan
@@ -1929,13 +1993,13 @@ impl Session {
                     use crate::query::processor::{QueryLanguage, QueryProcessor};
                     let has_mutations = Self::query_looks_like_mutation(query);
                     self.with_auto_commit(has_mutations, || {
-                        let processor = QueryProcessor::for_graph_store_with_tx(
+                        let processor = QueryProcessor::for_graph_store_with_transaction(
                             Arc::clone(&self.graph_store),
-                            Arc::clone(&self.tx_manager),
+                            Arc::clone(&self.transaction_manager),
                         );
-                        let (viewing_epoch, tx_id) = self.get_transaction_context();
-                        let processor = if let Some(tx_id) = tx_id {
-                            processor.with_tx_context(viewing_epoch, tx_id)
+                        let (viewing_epoch, transaction_id) = self.get_transaction_context();
+                        let processor = if let Some(transaction_id) = transaction_id {
+                            processor.with_transaction_context(viewing_epoch, transaction_id)
                         } else {
                             processor
                         };
@@ -2001,63 +2065,65 @@ impl Session {
     /// let db = GrafeoDB::new_in_memory();
     /// let mut session = db.session();
     ///
-    /// session.begin_tx()?;
+    /// session.begin_transaction()?;
     /// session.execute("INSERT (:Person {name: 'Alix'})")?;
     /// session.execute("INSERT (:Person {name: 'Gus'})")?;
     /// session.commit()?; // Both inserts committed atomically
     /// # Ok(())
     /// # }
     /// ```
-    pub fn begin_tx(&mut self) -> Result<()> {
-        self.begin_tx_inner(false, None)
+    pub fn begin_transaction(&mut self) -> Result<()> {
+        self.begin_transaction_inner(false, None)
     }
 
     /// Begins a transaction with a specific isolation level.
     ///
-    /// See [`begin_tx`](Self::begin_tx) for the default (`SnapshotIsolation`).
+    /// See [`begin_transaction`](Self::begin_transaction) for the default (`SnapshotIsolation`).
     ///
     /// # Errors
     ///
     /// Returns an error if a transaction is already active.
-    pub fn begin_tx_with_isolation(
+    pub fn begin_transaction_with_isolation(
         &mut self,
         isolation_level: crate::transaction::IsolationLevel,
     ) -> Result<()> {
-        self.begin_tx_inner(false, Some(isolation_level))
+        self.begin_transaction_inner(false, Some(isolation_level))
     }
 
     /// Core transaction begin logic, usable from both `&mut self` and `&self` paths.
-    fn begin_tx_inner(
+    fn begin_transaction_inner(
         &self,
         read_only: bool,
         isolation_level: Option<crate::transaction::IsolationLevel>,
     ) -> Result<()> {
-        let mut current = self.current_tx.lock();
+        let mut current = self.current_transaction.lock();
         if current.is_some() {
-            return Err(grafeo_common::utils::error::Error::Transaction(
-                grafeo_common::utils::error::TransactionError::InvalidState(
-                    "Transaction already active".to_string(),
-                ),
-            ));
+            // Nested transaction: create an auto-savepoint instead of a new tx.
+            drop(current);
+            let mut depth = self.transaction_nesting_depth.lock();
+            *depth += 1;
+            let sp_name = format!("_nested_tx_{}", *depth);
+            self.savepoint(&sp_name)?;
+            return Ok(());
         }
 
-        self.tx_start_node_count
+        self.transaction_start_node_count
             .store(self.store.node_count(), Ordering::Relaxed);
-        self.tx_start_edge_count
+        self.transaction_start_edge_count
             .store(self.store.edge_count(), Ordering::Relaxed);
-        let tx_id = if let Some(level) = isolation_level {
-            self.tx_manager.begin_with_isolation(level)
+        let transaction_id = if let Some(level) = isolation_level {
+            self.transaction_manager.begin_with_isolation(level)
         } else {
-            self.tx_manager.begin()
+            self.transaction_manager.begin()
         };
-        *current = Some(tx_id);
+        *current = Some(transaction_id);
         *self.read_only_tx.lock() = read_only;
         Ok(())
     }
 
     /// Commits the current transaction.
     ///
-    /// Makes all changes since [`begin_tx`](Self::begin_tx) permanent.
+    /// Makes all changes since [`begin_transaction`](Self::begin_transaction) permanent.
     ///
     /// # Errors
     ///
@@ -2068,7 +2134,18 @@ impl Session {
 
     /// Core commit logic, usable from both `&mut self` and `&self` paths.
     fn commit_inner(&self) -> Result<()> {
-        let tx_id = self.current_tx.lock().take().ok_or_else(|| {
+        // Nested transaction: release the auto-savepoint (changes are preserved).
+        {
+            let mut depth = self.transaction_nesting_depth.lock();
+            if *depth > 0 {
+                let sp_name = format!("_nested_tx_{depth}");
+                *depth -= 1;
+                drop(depth);
+                return self.release_savepoint(&sp_name);
+            }
+        }
+
+        let transaction_id = self.current_transaction.lock().take().ok_or_else(|| {
             grafeo_common::utils::error::Error::Transaction(
                 grafeo_common::utils::error::TransactionError::InvalidState(
                     "No active transaction".to_string(),
@@ -2078,25 +2155,27 @@ impl Session {
 
         // Commit RDF store pending operations
         #[cfg(feature = "rdf")]
-        self.rdf_store.commit_tx(tx_id);
+        self.rdf_store.commit_transaction(transaction_id);
 
-        self.tx_manager.commit(tx_id)?;
+        self.transaction_manager.commit(transaction_id)?;
 
         // Sync the LpgStore epoch with the TxManager so that
         // convenience lookups (edge_type, get_edge, get_node) that use
         // store.current_epoch() can see versions created at the latest epoch.
-        self.store.sync_epoch(self.tx_manager.current_epoch());
+        self.store
+            .sync_epoch(self.transaction_manager.current_epoch());
 
-        // Reset read-only flag
+        // Reset read-only flag and clear savepoints
         *self.read_only_tx.lock() = false;
+        self.savepoints.lock().clear();
 
         // Auto-GC: periodically prune old MVCC versions
         if self.gc_interval > 0 {
             let count = self.commit_counter.fetch_add(1, Ordering::Relaxed) + 1;
             if count.is_multiple_of(self.gc_interval) {
-                let min_epoch = self.tx_manager.min_active_epoch();
+                let min_epoch = self.transaction_manager.min_active_epoch();
                 self.store.gc_versions(min_epoch);
-                self.tx_manager.gc();
+                self.transaction_manager.gc();
             }
         }
 
@@ -2105,7 +2184,7 @@ impl Session {
 
     /// Aborts the current transaction.
     ///
-    /// Discards all changes since [`begin_tx`](Self::begin_tx).
+    /// Discards all changes since [`begin_transaction`](Self::begin_transaction).
     ///
     /// # Errors
     ///
@@ -2120,7 +2199,7 @@ impl Session {
     /// let db = GrafeoDB::new_in_memory();
     /// let mut session = db.session();
     ///
-    /// session.begin_tx()?;
+    /// session.begin_transaction()?;
     /// session.execute("INSERT (:Person {name: 'Alix'})")?;
     /// session.rollback()?; // Insert is discarded
     /// # Ok(())
@@ -2132,7 +2211,18 @@ impl Session {
 
     /// Core rollback logic, usable from both `&mut self` and `&self` paths.
     fn rollback_inner(&self) -> Result<()> {
-        let tx_id = self.current_tx.lock().take().ok_or_else(|| {
+        // Nested transaction: rollback to the auto-savepoint.
+        {
+            let mut depth = self.transaction_nesting_depth.lock();
+            if *depth > 0 {
+                let sp_name = format!("_nested_tx_{depth}");
+                *depth -= 1;
+                drop(depth);
+                return self.rollback_to_savepoint(&sp_name);
+            }
+        }
+
+        let transaction_id = self.current_transaction.lock().take().ok_or_else(|| {
             grafeo_common::utils::error::Error::Transaction(
                 grafeo_common::utils::error::TransactionError::InvalidState(
                     "No active transaction".to_string(),
@@ -2144,39 +2234,149 @@ impl Session {
         *self.read_only_tx.lock() = false;
 
         // Discard uncommitted versions in the LPG store
-        self.store.discard_uncommitted_versions(tx_id);
+        self.store.discard_uncommitted_versions(transaction_id);
 
         // Discard pending operations in the RDF store
         #[cfg(feature = "rdf")]
-        self.rdf_store.rollback_tx(tx_id);
+        self.rdf_store.rollback_transaction(transaction_id);
+
+        // Clear savepoints
+        self.savepoints.lock().clear();
 
         // Mark transaction as aborted in the manager
-        self.tx_manager.abort(tx_id)
+        self.transaction_manager.abort(transaction_id)
+    }
+
+    /// Creates a named savepoint within the current transaction.
+    ///
+    /// The savepoint captures the current node/edge ID counters so that
+    /// [`rollback_to_savepoint`](Self::rollback_to_savepoint) can discard
+    /// entities created after this point.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no transaction is active.
+    pub fn savepoint(&self, name: &str) -> Result<()> {
+        let _tx_id = self.current_transaction.lock().ok_or_else(|| {
+            grafeo_common::utils::error::Error::Transaction(
+                grafeo_common::utils::error::TransactionError::InvalidState(
+                    "No active transaction".to_string(),
+                ),
+            )
+        })?;
+
+        let next_node = self.store.peek_next_node_id();
+        let next_edge = self.store.peek_next_edge_id();
+        self.savepoints
+            .lock()
+            .push((name.to_string(), next_node, next_edge));
+        Ok(())
+    }
+
+    /// Rolls back to a named savepoint, undoing all writes made after it.
+    ///
+    /// The savepoint and any savepoints created after it are removed.
+    /// Entities with IDs >= the savepoint snapshot are discarded.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no transaction is active or the savepoint does not exist.
+    pub fn rollback_to_savepoint(&self, name: &str) -> Result<()> {
+        let transaction_id = self.current_transaction.lock().ok_or_else(|| {
+            grafeo_common::utils::error::Error::Transaction(
+                grafeo_common::utils::error::TransactionError::InvalidState(
+                    "No active transaction".to_string(),
+                ),
+            )
+        })?;
+
+        let mut savepoints = self.savepoints.lock();
+
+        // Find the savepoint by name (search from the end for nested savepoints)
+        let pos = savepoints
+            .iter()
+            .rposition(|(n, _, _)| n == name)
+            .ok_or_else(|| {
+                grafeo_common::utils::error::Error::Transaction(
+                    grafeo_common::utils::error::TransactionError::InvalidState(format!(
+                        "Savepoint '{name}' not found"
+                    )),
+                )
+            })?;
+
+        let (_, sp_next_node, sp_next_edge) = savepoints[pos].clone();
+
+        // Remove this savepoint and all later ones
+        savepoints.truncate(pos);
+        drop(savepoints);
+
+        // Discard all nodes with ID >= sp_next_node and edges with ID >= sp_next_edge
+        let current_next_node = self.store.peek_next_node_id();
+        let current_next_edge = self.store.peek_next_edge_id();
+
+        let node_ids: Vec<NodeId> = (sp_next_node..current_next_node).map(NodeId::new).collect();
+        let edge_ids: Vec<EdgeId> = (sp_next_edge..current_next_edge).map(EdgeId::new).collect();
+
+        if !node_ids.is_empty() || !edge_ids.is_empty() {
+            self.store
+                .discard_entities_by_id(transaction_id, &node_ids, &edge_ids);
+        }
+
+        Ok(())
+    }
+
+    /// Releases (removes) a named savepoint without rolling back.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no transaction is active or the savepoint does not exist.
+    pub fn release_savepoint(&self, name: &str) -> Result<()> {
+        let _tx_id = self.current_transaction.lock().ok_or_else(|| {
+            grafeo_common::utils::error::Error::Transaction(
+                grafeo_common::utils::error::TransactionError::InvalidState(
+                    "No active transaction".to_string(),
+                ),
+            )
+        })?;
+
+        let mut savepoints = self.savepoints.lock();
+        let pos = savepoints
+            .iter()
+            .rposition(|(n, _, _)| n == name)
+            .ok_or_else(|| {
+                grafeo_common::utils::error::Error::Transaction(
+                    grafeo_common::utils::error::TransactionError::InvalidState(format!(
+                        "Savepoint '{name}' not found"
+                    )),
+                )
+            })?;
+        savepoints.remove(pos);
+        Ok(())
     }
 
     /// Returns whether a transaction is active.
     #[must_use]
     pub fn in_transaction(&self) -> bool {
-        self.current_tx.lock().is_some()
+        self.current_transaction.lock().is_some()
     }
 
     /// Returns the current transaction ID, if any.
     #[must_use]
-    pub(crate) fn current_tx_id(&self) -> Option<TxId> {
-        *self.current_tx.lock()
+    pub(crate) fn current_transaction_id(&self) -> Option<TransactionId> {
+        *self.current_transaction.lock()
     }
 
     /// Returns a reference to the transaction manager.
     #[must_use]
-    pub(crate) fn tx_manager(&self) -> &TransactionManager {
-        &self.tx_manager
+    pub(crate) fn transaction_manager(&self) -> &TransactionManager {
+        &self.transaction_manager
     }
 
     /// Returns the store's current node count and the count at transaction start.
     #[must_use]
     pub(crate) fn node_count_delta(&self) -> (usize, usize) {
         (
-            self.tx_start_node_count.load(Ordering::Relaxed),
+            self.transaction_start_node_count.load(Ordering::Relaxed),
             self.store.node_count(),
         )
     }
@@ -2185,7 +2385,7 @@ impl Session {
     #[must_use]
     pub(crate) fn edge_count_delta(&self) -> (usize, usize) {
         (
-            self.tx_start_edge_count.load(Ordering::Relaxed),
+            self.transaction_start_edge_count.load(Ordering::Relaxed),
             self.store.edge_count(),
         )
     }
@@ -2213,7 +2413,7 @@ impl Session {
     /// let db = GrafeoDB::new_in_memory();
     /// let mut session = db.session();
     ///
-    /// session.begin_tx()?;
+    /// session.begin_transaction()?;
     /// session.execute("INSERT (:Person {name: 'Alix'})")?;
     ///
     /// let mut prepared = session.prepare_commit()?;
@@ -2243,7 +2443,7 @@ impl Session {
     /// Auto-commit kicks in when: the session is in auto-commit mode,
     /// no explicit transaction is active, and the query mutates data.
     fn needs_auto_commit(&self, has_mutations: bool) -> bool {
-        self.auto_commit && has_mutations && self.current_tx.lock().is_none()
+        self.auto_commit && has_mutations && self.current_transaction.lock().is_none()
     }
 
     /// Wraps `body` in an automatic begin/commit when [`needs_auto_commit`]
@@ -2253,7 +2453,7 @@ impl Session {
         F: FnOnce() -> Result<QueryResult>,
     {
         if self.needs_auto_commit(has_mutations) {
-            self.begin_tx_inner(false, None)?;
+            self.begin_transaction_inner(false, None)?;
             match body() {
                 Ok(result) => {
                     self.commit_inner()?;
@@ -2311,37 +2511,41 @@ impl Session {
 
     /// Returns the current transaction context for MVCC visibility.
     ///
-    /// Returns `(viewing_epoch, tx_id)` where:
+    /// Returns `(viewing_epoch, transaction_id)` where:
     /// - `viewing_epoch` is the epoch at which to check version visibility
-    /// - `tx_id` is the current transaction ID (if in a transaction)
+    /// - `transaction_id` is the current transaction ID (if in a transaction)
     #[must_use]
-    fn get_transaction_context(&self) -> (EpochId, Option<TxId>) {
+    fn get_transaction_context(&self) -> (EpochId, Option<TransactionId>) {
         // Time-travel override takes precedence (read-only, no tx context)
         if let Some(epoch) = *self.viewing_epoch_override.lock() {
             return (epoch, None);
         }
 
-        if let Some(tx_id) = *self.current_tx.lock() {
+        if let Some(transaction_id) = *self.current_transaction.lock() {
             // In a transaction: use the transaction's start epoch
             let epoch = self
-                .tx_manager
-                .start_epoch(tx_id)
-                .unwrap_or_else(|| self.tx_manager.current_epoch());
-            (epoch, Some(tx_id))
+                .transaction_manager
+                .start_epoch(transaction_id)
+                .unwrap_or_else(|| self.transaction_manager.current_epoch());
+            (epoch, Some(transaction_id))
         } else {
             // No transaction: use current epoch
-            (self.tx_manager.current_epoch(), None)
+            (self.transaction_manager.current_epoch(), None)
         }
     }
 
     /// Creates a planner with transaction context and constraint validator.
-    fn create_planner(&self, viewing_epoch: EpochId, tx_id: Option<TxId>) -> crate::query::Planner {
+    fn create_planner(
+        &self,
+        viewing_epoch: EpochId,
+        transaction_id: Option<TransactionId>,
+    ) -> crate::query::Planner {
         use crate::query::Planner;
 
         let mut planner = Planner::with_context(
             Arc::clone(&self.graph_store),
-            Arc::clone(&self.tx_manager),
-            tx_id,
+            Arc::clone(&self.transaction_manager),
+            transaction_id,
             viewing_epoch,
         )
         .with_factorized_execution(self.factorized_execution)
@@ -2359,9 +2563,12 @@ impl Session {
     /// This is a low-level API for testing and direct manipulation.
     /// If a transaction is active, the node will be versioned with the transaction ID.
     pub fn create_node(&self, labels: &[&str]) -> NodeId {
-        let (epoch, tx_id) = self.get_transaction_context();
-        self.store
-            .create_node_versioned(labels, epoch, tx_id.unwrap_or(TxId::SYSTEM))
+        let (epoch, transaction_id) = self.get_transaction_context();
+        self.store.create_node_versioned(
+            labels,
+            epoch,
+            transaction_id.unwrap_or(TransactionId::SYSTEM),
+        )
     }
 
     /// Creates a node with properties.
@@ -2372,12 +2579,12 @@ impl Session {
         labels: &[&str],
         properties: impl IntoIterator<Item = (&'a str, Value)>,
     ) -> NodeId {
-        let (epoch, tx_id) = self.get_transaction_context();
+        let (epoch, transaction_id) = self.get_transaction_context();
         self.store.create_node_with_props_versioned(
             labels,
             properties,
             epoch,
-            tx_id.unwrap_or(TxId::SYSTEM),
+            transaction_id.unwrap_or(TransactionId::SYSTEM),
         )
     }
 
@@ -2391,9 +2598,14 @@ impl Session {
         dst: NodeId,
         edge_type: &str,
     ) -> grafeo_common::types::EdgeId {
-        let (epoch, tx_id) = self.get_transaction_context();
-        self.store
-            .create_edge_versioned(src, dst, edge_type, epoch, tx_id.unwrap_or(TxId::SYSTEM))
+        let (epoch, transaction_id) = self.get_transaction_context();
+        self.store.create_edge_versioned(
+            src,
+            dst,
+            edge_type,
+            epoch,
+            transaction_id.unwrap_or(TransactionId::SYSTEM),
+        )
     }
 
     // =========================================================================
@@ -2425,9 +2637,9 @@ impl Session {
     /// ```
     #[must_use]
     pub fn get_node(&self, id: NodeId) -> Option<Node> {
-        let (epoch, tx_id) = self.get_transaction_context();
+        let (epoch, transaction_id) = self.get_transaction_context();
         self.store
-            .get_node_versioned(id, epoch, tx_id.unwrap_or(TxId::SYSTEM))
+            .get_node_versioned(id, epoch, transaction_id.unwrap_or(TransactionId::SYSTEM))
     }
 
     /// Gets a single property from a node by ID, bypassing query planning.
@@ -2467,9 +2679,9 @@ impl Session {
     /// - No lock contention
     #[must_use]
     pub fn get_edge(&self, id: EdgeId) -> Option<Edge> {
-        let (epoch, tx_id) = self.get_transaction_context();
+        let (epoch, transaction_id) = self.get_transaction_context();
         self.store
-            .get_edge_versioned(id, epoch, tx_id.unwrap_or(TxId::SYSTEM))
+            .get_edge_versioned(id, epoch, transaction_id.unwrap_or(TransactionId::SYSTEM))
     }
 
     /// Gets outgoing neighbors of a node directly, bypassing query planning.
@@ -2579,8 +2791,8 @@ impl Session {
     /// - Better cache utilization than individual lookups
     #[must_use]
     pub fn get_nodes_batch(&self, ids: &[NodeId]) -> Vec<Option<Node>> {
-        let (epoch, tx_id) = self.get_transaction_context();
-        let tx = tx_id.unwrap_or(TxId::SYSTEM);
+        let (epoch, transaction_id) = self.get_transaction_context();
+        let tx = transaction_id.unwrap_or(TransactionId::SYSTEM);
         ids.iter()
             .map(|&id| self.store.get_node_versioned(id, epoch, tx))
             .collect()
@@ -2639,7 +2851,7 @@ mod tests {
 
         assert!(!session.in_transaction());
 
-        session.begin_tx().unwrap();
+        session.begin_transaction().unwrap();
         assert!(session.in_transaction());
 
         session.commit().unwrap();
@@ -2651,14 +2863,14 @@ mod tests {
         let db = GrafeoDB::new_in_memory();
         let mut session = db.session();
 
-        // Without transaction - context should have current epoch and no tx_id
-        let (_epoch1, tx_id1) = session.get_transaction_context();
-        assert!(tx_id1.is_none());
+        // Without transaction - context should have current epoch and no transaction_id
+        let (_epoch1, transaction_id1) = session.get_transaction_context();
+        assert!(transaction_id1.is_none());
 
         // Start a transaction
-        session.begin_tx().unwrap();
-        let (epoch2, tx_id2) = session.get_transaction_context();
-        assert!(tx_id2.is_some());
+        session.begin_transaction().unwrap();
+        let (epoch2, transaction_id2) = session.get_transaction_context();
+        assert!(transaction_id2.is_some());
         // Transaction should have a valid epoch
         let _ = epoch2; // Use the variable
 
@@ -2675,14 +2887,14 @@ mod tests {
         let db = GrafeoDB::new_in_memory();
         let mut session = db.session();
 
-        session.begin_tx().unwrap();
+        session.begin_transaction().unwrap();
         session.rollback().unwrap();
         assert!(!session.in_transaction());
     }
 
     #[test]
     fn test_session_rollback_discards_versions() {
-        use grafeo_common::types::TxId;
+        use grafeo_common::types::TransactionId;
 
         let db = GrafeoDB::new_in_memory();
 
@@ -2693,12 +2905,14 @@ mod tests {
 
         // Start a transaction
         let mut session = db.session();
-        session.begin_tx().unwrap();
-        let tx_id = session.current_tx.lock().unwrap();
+        session.begin_transaction().unwrap();
+        let transaction_id = session.current_transaction.lock().unwrap();
 
         // Create a node versioned with the transaction's ID
         let epoch = db.store().current_epoch();
-        let node_in_tx = db.store().create_node_versioned(&["Person"], epoch, tx_id);
+        let node_in_tx = db
+            .store()
+            .create_node_versioned(&["Person"], epoch, transaction_id);
         assert!(node_in_tx.is_valid());
 
         // Should see 2 nodes at this point
@@ -2720,7 +2934,7 @@ mod tests {
         let current_epoch = db.store().current_epoch();
         assert!(
             db.store()
-                .get_node_versioned(node_before, current_epoch, TxId::SYSTEM)
+                .get_node_versioned(node_before, current_epoch, TransactionId::SYSTEM)
                 .is_some(),
             "Original node should still exist"
         );
@@ -2728,7 +2942,7 @@ mod tests {
         // The node created in the transaction should not be accessible
         assert!(
             db.store()
-                .get_node_versioned(node_in_tx, current_epoch, TxId::SYSTEM)
+                .get_node_versioned(node_in_tx, current_epoch, TransactionId::SYSTEM)
                 .is_none(),
             "Transaction node should be gone"
         );
@@ -2746,7 +2960,7 @@ mod tests {
 
         // Start a transaction and create a node through the session
         let mut session = db.session();
-        session.begin_tx().unwrap();
+        session.begin_transaction().unwrap();
 
         // Create a node through session.create_node() - should be versioned with tx
         let node_in_tx = session.create_node(&["Person"]);
@@ -2779,7 +2993,7 @@ mod tests {
 
         // Start a transaction and create a node with properties
         let mut session = db.session();
-        session.begin_tx().unwrap();
+        session.begin_transaction().unwrap();
 
         let node_in_tx =
             session.create_node_with_props(&["Person"], [("name", Value::String("Alix".into()))]);
@@ -3298,16 +3512,18 @@ mod tests {
         }
 
         #[test]
-        fn test_transaction_double_begin_error() {
+        fn test_transaction_double_begin_nests() {
             let db = GrafeoDB::new_in_memory();
             let mut session = db.session();
 
-            session.begin_tx().unwrap();
-            let result = session.begin_tx();
-
-            assert!(result.is_err());
-            // Clean up
-            session.rollback().unwrap();
+            session.begin_transaction().unwrap();
+            // Second begin_transaction creates a nested transaction (auto-savepoint)
+            let result = session.begin_transaction();
+            assert!(result.is_ok());
+            // Commit the inner (releases savepoint)
+            session.commit().unwrap();
+            // Commit the outer
+            session.commit().unwrap();
         }
 
         #[test]
@@ -3338,7 +3554,7 @@ mod tests {
             let gus = session.create_node(&["Person"]);
 
             // Create edge in transaction
-            session.begin_tx().unwrap();
+            session.begin_transaction().unwrap();
             let edge_id = session.create_edge(alix, gus, "KNOWS");
 
             // Edge should be visible in the transaction
@@ -3377,12 +3593,12 @@ mod tests {
         let mut session = db.session();
 
         // First commit: counter = 1, no GC (not a multiple of 2)
-        session.begin_tx().unwrap();
+        session.begin_transaction().unwrap();
         session.create_node(&["A"]);
         session.commit().unwrap();
 
         // Second commit: counter = 2, GC should trigger (multiple of 2)
-        session.begin_tx().unwrap();
+        session.begin_transaction().unwrap();
         session.create_node(&["B"]);
         session.commit().unwrap();
 
@@ -3673,7 +3889,7 @@ mod tests {
         fn test_start_transaction_read_only_allows_reads() {
             let db = GrafeoDB::new_in_memory();
             let mut session = db.session();
-            session.begin_tx().unwrap();
+            session.begin_transaction().unwrap();
             session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
             session.commit().unwrap();
 

@@ -1,7 +1,7 @@
 use super::*;
 use crate::graph::Direction;
 use crate::graph::lpg::property::CompareOp;
-use grafeo_common::types::TxId;
+use grafeo_common::types::TransactionId;
 
 #[test]
 fn test_create_node() {
@@ -753,9 +753,9 @@ fn test_node_versioned_creation() {
     let store = LpgStore::new().unwrap();
 
     let epoch = store.new_epoch();
-    let tx_id = TxId::new(1);
+    let transaction_id = TransactionId::new(1);
 
-    let id = store.create_node_versioned(&["Person"], epoch, tx_id);
+    let id = store.create_node_versioned(&["Person"], epoch, transaction_id);
     assert!(store.get_node(id).is_some());
 }
 
@@ -767,9 +767,9 @@ fn test_edge_versioned_creation() {
     let b = store.create_node(&["B"]);
 
     let epoch = store.new_epoch();
-    let tx_id = TxId::new(1);
+    let transaction_id = TransactionId::new(1);
 
-    let edge_id = store.create_edge_versioned(a, b, "REL", epoch, tx_id);
+    let edge_id = store.create_edge_versioned(a, b, "REL", epoch, transaction_id);
     assert!(store.get_edge(edge_id).is_some());
 }
 
@@ -778,13 +778,13 @@ fn test_node_with_props_versioned() {
     let store = LpgStore::new().unwrap();
 
     let epoch = store.new_epoch();
-    let tx_id = TxId::new(1);
+    let transaction_id = TransactionId::new(1);
 
     let id = store.create_node_with_props_versioned(
         &["Person"],
         [("name", Value::from("Alix"))],
         epoch,
-        tx_id,
+        transaction_id,
     );
 
     let node = store.get_node(id).unwrap();
@@ -799,14 +799,14 @@ fn test_discard_uncommitted_versions() {
     let store = LpgStore::new().unwrap();
 
     let epoch = store.new_epoch();
-    let tx_id = TxId::new(42);
+    let transaction_id = TransactionId::new(42);
 
     // Create node with specific tx
-    let node_id = store.create_node_versioned(&["Person"], epoch, tx_id);
+    let node_id = store.create_node_versioned(&["Person"], epoch, transaction_id);
     assert!(store.get_node(node_id).is_some());
 
     // Discard uncommitted versions for this tx
-    store.discard_uncommitted_versions(tx_id);
+    store.discard_uncommitted_versions(transaction_id);
 
     // Node should be gone (version chain was removed)
     assert!(store.get_node(node_id).is_none());

@@ -1,8 +1,10 @@
 # Build WASM package with size-optimized profile.
 #
 # Usage:
-#   .\scripts\build-wasm.ps1              # default: GQL only, web target
-#   .\scripts\build-wasm.ps1 -Features full
+#   .\scripts\build-wasm.ps1                           # default: GQL only, web target
+#   .\scripts\build-wasm.ps1 -Features ai              # GQL + AI search
+#   .\scripts\build-wasm.ps1 -Features full            # all languages + AI
+#   .\scripts\build-wasm.ps1 -OutDir path\to\output    # custom output directory
 #   .\scripts\build-wasm.ps1 -Target bundler -Scope grafeo-db
 #
 # Requirements: rustup target wasm32-unknown-unknown, wasm-bindgen-cli
@@ -11,13 +13,14 @@ param(
     [string]$Target = "web",
     [string]$Scope = "",
     [string]$Features = "",
+    [string]$OutDir = "",
     [switch]$Release
 )
 
 $ErrorActionPreference = "Stop"
 
 $CrateDir = "crates\bindings\wasm"
-$OutDir = "$CrateDir\pkg"
+if (-not $OutDir) { $OutDir = "$CrateDir\pkg" }
 $Profile = if ($Release) { "release" } else { "minimal-size" }
 
 Write-Host "Building WASM (profile: $Profile, target: $Target)"

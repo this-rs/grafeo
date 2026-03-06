@@ -24,7 +24,7 @@ use crate::graph::lpg::CompareOp;
 use crate::graph::lpg::{Edge, Node};
 use crate::statistics::Statistics;
 use arcstr::ArcStr;
-use grafeo_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TxId, Value};
+use grafeo_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TransactionId, Value};
 use grafeo_common::utils::hash::FxHashMap;
 use std::sync::Arc;
 
@@ -49,10 +49,20 @@ pub trait GraphStore: Send + Sync {
     fn get_edge(&self, id: EdgeId) -> Option<Edge>;
 
     /// Returns a node visible to a specific transaction.
-    fn get_node_versioned(&self, id: NodeId, epoch: EpochId, tx_id: TxId) -> Option<Node>;
+    fn get_node_versioned(
+        &self,
+        id: NodeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Option<Node>;
 
     /// Returns an edge visible to a specific transaction.
-    fn get_edge_versioned(&self, id: EdgeId, epoch: EpochId, tx_id: TxId) -> Option<Edge>;
+    fn get_edge_versioned(
+        &self,
+        id: EdgeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Option<Edge>;
 
     /// Returns a node using pure epoch-based visibility (no transaction context).
     ///
@@ -193,6 +203,23 @@ pub trait GraphStore: Send + Sync {
     /// Returns the current MVCC epoch.
     fn current_epoch(&self) -> EpochId;
 
+    // --- Schema introspection ---
+
+    /// Returns all label names in the database.
+    fn all_labels(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Returns all edge type names in the database.
+    fn all_edge_types(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Returns all property key names used in the database.
+    fn all_property_keys(&self) -> Vec<String> {
+        Vec::new()
+    }
+
     // --- History ---
 
     /// Returns all versions of a node with their creation/deletion epochs, newest first.
@@ -228,7 +255,12 @@ pub trait GraphStoreMut: GraphStore {
     fn create_node(&self, labels: &[&str]) -> NodeId;
 
     /// Creates a new node within a transaction context.
-    fn create_node_versioned(&self, labels: &[&str], epoch: EpochId, tx_id: TxId) -> NodeId;
+    fn create_node_versioned(
+        &self,
+        labels: &[&str],
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> NodeId;
 
     // --- Edge creation ---
 
@@ -242,7 +274,7 @@ pub trait GraphStoreMut: GraphStore {
         dst: NodeId,
         edge_type: &str,
         epoch: EpochId,
-        tx_id: TxId,
+        transaction_id: TransactionId,
     ) -> EdgeId;
 
     /// Creates multiple edges in batch (single lock acquisition).
@@ -254,7 +286,12 @@ pub trait GraphStoreMut: GraphStore {
     fn delete_node(&self, id: NodeId) -> bool;
 
     /// Deletes a node within a transaction context. Returns `true` if the node existed.
-    fn delete_node_versioned(&self, id: NodeId, epoch: EpochId, tx_id: TxId) -> bool;
+    fn delete_node_versioned(
+        &self,
+        id: NodeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool;
 
     /// Deletes all edges connected to a node (DETACH DELETE).
     fn delete_node_edges(&self, node_id: NodeId);
@@ -263,7 +300,12 @@ pub trait GraphStoreMut: GraphStore {
     fn delete_edge(&self, id: EdgeId) -> bool;
 
     /// Deletes an edge within a transaction context. Returns `true` if the edge existed.
-    fn delete_edge_versioned(&self, id: EdgeId, epoch: EpochId, tx_id: TxId) -> bool;
+    fn delete_edge_versioned(
+        &self,
+        id: EdgeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool;
 
     // --- Property mutation ---
 

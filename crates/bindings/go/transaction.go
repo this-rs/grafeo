@@ -19,7 +19,7 @@ type Transaction struct {
 
 // BeginTransaction starts a new transaction with default isolation (snapshot).
 func (db *Database) BeginTransaction() (*Transaction, error) {
-	h := C.grafeo_begin_tx(db.handle)
+	h := C.grafeo_begin_transaction(db.handle)
 	if h == nil {
 		return nil, lastError()
 	}
@@ -30,7 +30,7 @@ func (db *Database) BeginTransaction() (*Transaction, error) {
 
 // BeginTransactionWith starts a transaction with a specific isolation level.
 func (db *Database) BeginTransactionWith(level IsolationLevel) (*Transaction, error) {
-	h := C.grafeo_begin_tx_with_isolation(db.handle, C.int32_t(level))
+	h := C.grafeo_begin_transaction_with_isolation(db.handle, C.int32_t(level))
 	if h == nil {
 		return nil, lastError()
 	}
@@ -43,7 +43,7 @@ func (db *Database) BeginTransactionWith(level IsolationLevel) (*Transaction, er
 func (tx *Transaction) Execute(query string) (*QueryResult, error) {
 	cQuery := C.CString(query)
 	defer C.free(unsafe.Pointer(cQuery))
-	r := C.grafeo_tx_execute(tx.handle, cQuery)
+	r := C.grafeo_transaction_execute(tx.handle, cQuery)
 	if r == nil {
 		return nil, lastError()
 	}
@@ -57,7 +57,7 @@ func (tx *Transaction) ExecuteWithParams(query string, paramsJSON string) (*Quer
 	defer C.free(unsafe.Pointer(cQuery))
 	cParams := C.CString(paramsJSON)
 	defer C.free(unsafe.Pointer(cParams))
-	r := C.grafeo_tx_execute_with_params(tx.handle, cQuery, cParams)
+	r := C.grafeo_transaction_execute_with_params(tx.handle, cQuery, cParams)
 	if r == nil {
 		return nil, lastError()
 	}

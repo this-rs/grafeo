@@ -170,8 +170,12 @@ impl JsGrafeoDB {
     /// Execute a SPARQL query against the RDF triple store.
     #[cfg(feature = "sparql")]
     #[napi(js_name = "executeSparql")]
-    pub async fn execute_sparql(&self, query: String) -> Result<QueryResult> {
-        self.execute_language_impl("sparql", query, None).await
+    pub async fn execute_sparql(
+        &self,
+        query: String,
+        params: Option<serde_json::Value>,
+    ) -> Result<QueryResult> {
+        self.execute_language_impl("sparql", query, params).await
     }
 
     /// Create a node with labels and optional properties.

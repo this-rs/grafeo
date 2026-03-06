@@ -9,7 +9,7 @@ use super::common::{
 };
 use crate::query::plan::{
     AddLabelOp, AggregateExpr, AggregateFunction, AggregateOp, ApplyOp, BinaryOp, CallProcedureOp,
-    CreateEdgeOp, CreateNodeOp, DeleteNodeOp, ExpandDirection, ExpandOp, LeftJoinOp,
+    CountExpr, CreateEdgeOp, CreateNodeOp, DeleteNodeOp, ExpandDirection, ExpandOp, LeftJoinOp,
     ListPredicateKind, LogicalExpression, LogicalOperator, LogicalPlan, MapProjectionEntry,
     MergeOp, MergeRelationshipOp, NodeScanOp, ParameterScanOp, PathMode, ProcedureYield, ProjectOp,
     Projection, RemoveLabelOp, ReturnItem, SetPropertyOp, ShortestPathOp, SortKey, SortOrder,
@@ -1230,6 +1230,7 @@ impl CypherTranslator {
                         distinct: *distinct,
                         alias: alias.clone(),
                         percentile,
+                        separator: None,
                     }))
                 } else {
                     Ok(None)
@@ -1280,7 +1281,7 @@ impl CypherTranslator {
                 "SKIP requires input",
             ))
         })?;
-        let count = self.eval_as_usize(expr)?;
+        let count = self.eval_as_count_expr(expr)?;
 
         Ok(wrap_skip(input, count))
     }
@@ -1296,7 +1297,7 @@ impl CypherTranslator {
                 "LIMIT requires input",
             ))
         })?;
-        let count = self.eval_as_usize(expr)?;
+        let count = self.eval_as_count_expr(expr)?;
 
         Ok(wrap_limit(input, count))
     }
@@ -1899,21 +1900,22 @@ impl CypherTranslator {
         })
     }
 
-    fn eval_as_usize(&self, expr: &ast::Expression) -> Result<usize> {
+    fn eval_as_count_expr(&self, expr: &ast::Expression) -> Result<CountExpr> {
         match expr {
             ast::Expression::Literal(ast::Literal::Integer(i)) => {
                 if *i >= 0 {
-                    Ok(*i as usize)
+                    Ok(CountExpr::Literal(*i as usize))
                 } else {
                     Err(Error::Query(QueryError::new(
                         QueryErrorKind::Semantic,
-                        "Expected non-negative integer",
+                        "Expected non-negative integer for SKIP/LIMIT",
                     )))
                 }
             }
+            ast::Expression::Parameter(name) => Ok(CountExpr::Parameter(name.clone())),
             _ => Err(Error::Query(QueryError::new(
                 QueryErrorKind::Semantic,
-                "Expected integer literal",
+                "Expected integer literal or parameter for SKIP/LIMIT",
             ))),
         }
     }
@@ -2042,6 +2044,7 @@ impl CypherTranslator {
                         distinct: false,
                         alias: Some(alias.clone()),
                         percentile: None,
+                        separator: None,
                     }],
                     input: Box::new(rewritten_subplan),
                     having: None,

@@ -877,7 +877,7 @@ mod tests {
         // Should contain Limit with count 10
         fn find_limit(op: &LogicalOperator) -> Option<usize> {
             match op {
-                LogicalOperator::Limit(l) => Some(l.count),
+                LogicalOperator::Limit(l) => Some(l.count.value()),
                 LogicalOperator::Return(r) => find_limit(&r.input),
                 LogicalOperator::Filter(f) => find_limit(&f.input),
                 LogicalOperator::Sort(s) => find_limit(&s.input),
@@ -898,7 +898,7 @@ mod tests {
         // Should contain Skip with count 5
         fn find_skip(op: &LogicalOperator) -> Option<usize> {
             match op {
-                LogicalOperator::Skip(s) => Some(s.count),
+                LogicalOperator::Skip(s) => Some(s.count.value()),
                 LogicalOperator::Return(r) => find_skip(&r.input),
                 LogicalOperator::Filter(f) => find_skip(&f.input),
                 LogicalOperator::Limit(l) => find_skip(&l.input),

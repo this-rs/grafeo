@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use grafeo_common::types::{LogicalType, TxId, Value};
+use grafeo_common::types::{LogicalType, TransactionId, Value};
 use grafeo_common::utils::error::{Error, Result};
 use grafeo_core::execution::DataChunk;
 use grafeo_core::execution::operators::JoinType;
@@ -28,6 +28,11 @@ use crate::query::plan::{
 };
 use crate::query::planner::{PhysicalPlan, convert_aggregate_function, convert_filter_expression};
 
+#[cfg(feature = "regex")]
+use regex::Regex;
+#[cfg(all(feature = "regex-lite", not(feature = "regex")))]
+use regex_lite::Regex;
+
 /// Default chunk size for morsel-driven execution.
 const DEFAULT_CHUNK_SIZE: usize = 1024;
 
@@ -41,7 +46,7 @@ pub struct RdfPlanner {
     /// Chunk size for vectorized execution.
     chunk_size: usize,
     /// Optional transaction ID for transactional operations.
-    tx_id: Option<TxId>,
+    transaction_id: Option<TransactionId>,
 }
 
 impl RdfPlanner {
@@ -51,7 +56,7 @@ impl RdfPlanner {
         Self {
             store,
             chunk_size: DEFAULT_CHUNK_SIZE,
-            tx_id: None,
+            transaction_id: None,
         }
     }
 
@@ -64,8 +69,8 @@ impl RdfPlanner {
 
     /// Sets the transaction ID for transactional operations.
     #[must_use]
-    pub fn with_tx_id(mut self, tx_id: Option<TxId>) -> Self {
-        self.tx_id = tx_id;
+    pub fn with_transaction_id(mut self, transaction_id: Option<TransactionId>) -> Self {
+        self.transaction_id = transaction_id;
         self
     }
 
@@ -333,7 +338,12 @@ impl RdfPlanner {
         use crate::query::planner::common;
         let (input_op, columns) = self.plan_operator(&limit.input)?;
         let schema = derive_rdf_schema(&columns);
-        Ok(common::build_limit(input_op, columns, limit.count, schema))
+        Ok(common::build_limit(
+            input_op,
+            columns,
+            limit.count.value(),
+            schema,
+        ))
     }
 
     /// Plans a SKIP operator.
@@ -341,7 +351,12 @@ impl RdfPlanner {
         use crate::query::planner::common;
         let (input_op, columns) = self.plan_operator(&skip.input)?;
         let schema = derive_rdf_schema(&columns);
-        Ok(common::build_skip(input_op, columns, skip.count, schema))
+        Ok(common::build_skip(
+            input_op,
+            columns,
+            skip.count.value(),
+            schema,
+        ))
     }
 
     /// Plans a SORT operator.
@@ -506,6 +521,7 @@ impl RdfPlanner {
                     distinct: agg_expr.distinct,
                     alias: agg_expr.alias.clone(),
                     percentile: agg_expr.percentile,
+                    separator: agg_expr.separator.clone(),
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -795,7 +811,7 @@ impl RdfPlanner {
             Arc::clone(&self.store),
             triple,
             insert.graph.clone(),
-            self.tx_id,
+            self.transaction_id,
         ));
 
         // Insert operations don't output columns
@@ -875,7 +891,7 @@ impl RdfPlanner {
             Arc::clone(&self.store),
             triple,
             delete.graph.clone(),
-            self.tx_id,
+            self.transaction_id,
         ));
 
         Ok((operator, Vec::new()))
@@ -985,7 +1001,7 @@ struct RdfInsertTripleOperator {
     store: Arc<RdfStore>,
     triple: Triple,
     graph_name: Option<String>,
-    tx_id: Option<TxId>,
+    transaction_id: Option<TransactionId>,
     inserted: bool,
 }
 
@@ -994,13 +1010,13 @@ impl RdfInsertTripleOperator {
         store: Arc<RdfStore>,
         triple: Triple,
         graph_name: Option<String>,
-        tx_id: Option<TxId>,
+        transaction_id: Option<TransactionId>,
     ) -> Self {
         Self {
             store,
             triple,
             graph_name,
-            tx_id,
+            transaction_id,
             inserted: false,
         }
     }
@@ -1019,8 +1035,8 @@ impl Operator for RdfInsertTripleOperator {
         };
 
         // Insert the triple (buffered if in a transaction)
-        if let Some(tx_id) = self.tx_id {
-            target.insert_in_tx(tx_id, self.triple.clone());
+        if let Some(transaction_id) = self.transaction_id {
+            target.insert_in_transaction(transaction_id, self.triple.clone());
         } else {
             target.insert(self.triple.clone());
         }
@@ -1193,7 +1209,7 @@ struct RdfDeleteTripleOperator {
     store: Arc<RdfStore>,
     triple: Triple,
     graph_name: Option<String>,
-    tx_id: Option<TxId>,
+    transaction_id: Option<TransactionId>,
     deleted: bool,
 }
 
@@ -1202,13 +1218,13 @@ impl RdfDeleteTripleOperator {
         store: Arc<RdfStore>,
         triple: Triple,
         graph_name: Option<String>,
-        tx_id: Option<TxId>,
+        transaction_id: Option<TransactionId>,
     ) -> Self {
         Self {
             store,
             triple,
             graph_name,
-            tx_id,
+            transaction_id,
             deleted: false,
         }
     }
@@ -1227,8 +1243,8 @@ impl Operator for RdfDeleteTripleOperator {
         };
 
         // Delete the triple (buffered if in a transaction)
-        if let Some(tx_id) = self.tx_id {
-            target.remove_in_tx(tx_id, self.triple.clone());
+        if let Some(transaction_id) = self.transaction_id {
+            target.remove_in_transaction(transaction_id, self.triple.clone());
         } else {
             target.remove(&self.triple);
         }
@@ -2364,7 +2380,7 @@ impl RdfExpressionPredicate {
                 match (left, right) {
                     (Value::String(text), Value::String(pattern)) => {
                         // Compile the regex pattern
-                        match regex::Regex::new(pattern) {
+                        match Regex::new(pattern) {
                             Ok(re) => Some(Value::Bool(re.is_match(text))),
                             Err(_) => None, // Invalid regex pattern
                         }
@@ -2418,7 +2434,7 @@ impl RdfExpressionPredicate {
                             }
                         }
                         re_pat.push('$');
-                        match regex::Regex::new(&re_pat) {
+                        match Regex::new(&re_pat) {
                             Ok(re) => Some(Value::Bool(re.is_match(s))),
                             Err(_) => None,
                         }
@@ -2530,7 +2546,7 @@ impl RdfExpressionPredicate {
                     } else {
                         pattern.clone()
                     };
-                    if let Ok(re) = regex::Regex::new(&regex_pattern) {
+                    if let Ok(re) = Regex::new(&regex_pattern) {
                         return Some(Value::String(re.replace_all(&text, &replacement).into()));
                     }
                 }
@@ -2883,7 +2899,7 @@ impl RdfExpressionPredicate {
                 } else {
                     pattern
                 };
-                match regex::Regex::new(&regex_pattern) {
+                match Regex::new(&regex_pattern) {
                     Ok(re) => Some(Value::Bool(re.is_match(&text))),
                     Err(_) => None,
                 }

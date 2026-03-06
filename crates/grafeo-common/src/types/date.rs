@@ -143,6 +143,22 @@ impl Date {
     pub fn sub_duration(self, dur: &super::Duration) -> Self {
         self.add_duration(&dur.neg())
     }
+
+    /// Truncates this date to the given unit.
+    ///
+    /// - `"year"`: sets month and day to 1 (first day of year)
+    /// - `"month"`: sets day to 1 (first day of month)
+    /// - `"day"`: no-op (already at day precision)
+    #[must_use]
+    pub fn truncate(self, unit: &str) -> Option<Self> {
+        let (y, m, _d) = self.to_ymd();
+        match unit {
+            "year" => Self::from_ymd(y, 1, 1),
+            "month" => Self::from_ymd(y, m, 1),
+            "day" => Some(self),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Debug for Date {
@@ -294,6 +310,22 @@ mod tests {
     fn test_to_timestamp() {
         let d = Date::from_ymd(1970, 1, 2).unwrap();
         assert_eq!(d.to_timestamp().as_micros(), 86_400_000_000);
+    }
+
+    #[test]
+    fn test_truncate() {
+        let d = Date::from_ymd(2024, 6, 15).unwrap();
+
+        let year = d.truncate("year").unwrap();
+        assert_eq!(year.to_string(), "2024-01-01");
+
+        let month = d.truncate("month").unwrap();
+        assert_eq!(month.to_string(), "2024-06-01");
+
+        let day = d.truncate("day").unwrap();
+        assert_eq!(day, d);
+
+        assert!(d.truncate("hour").is_none());
     }
 
     #[test]

@@ -13,7 +13,7 @@ Grafeo uses type-specific compression for efficient storage.
 ## Compression Strategies
 
 | Type | Strategy | Description |
-|------|----------|-------------|
+| ---- | -------- | ----------- |
 | Bool | Bit-packing | 8 bools per byte |
 | Int64 | Delta + BitPack | Store differences, pack bits |
 | Float64 | None / Gorilla | Raw or XOR-based |
@@ -21,9 +21,9 @@ Grafeo uses type-specific compression for efficient storage.
 
 ## Dictionary Encoding
 
-For string columns with repeated values:
+Graph properties like labels, types and categorical values repeat heavily. Dictionary encoding stores each unique string once and replaces occurrences with small integer codes, reducing memory use and enabling fast equality comparisons (integer compare instead of string compare).
 
-```
+```text
 Original:  ["apple", "banana", "apple", "apple", "banana"]
 
 Dictionary: {0: "apple", 1: "banana"}
@@ -34,7 +34,7 @@ Encoded:    [0, 1, 0, 0, 1]
 
 For sorted or sequential integers:
 
-```
+```text
 Original: [100, 102, 105, 107, 112]
 
 Base: 100
@@ -45,7 +45,7 @@ Deltas: [0, 2, 3, 2, 5]
 
 Pack small integers into minimal bits:
 
-```
+```text
 Values: [3, 1, 4, 1, 5, 9] (max = 9, needs 4 bits)
 
 Packed: 4 bits per value instead of 64

@@ -2,8 +2,10 @@
 # Build WASM package with size-optimized profile.
 #
 # Usage:
-#   ./scripts/build-wasm.sh              # default: GQL only, web target
-#   ./scripts/build-wasm.sh --features full
+#   ./scripts/build-wasm.sh                           # default: GQL only, web target
+#   ./scripts/build-wasm.sh --features ai              # GQL + AI search
+#   ./scripts/build-wasm.sh --features full            # all languages + AI
+#   ./scripts/build-wasm.sh --out-dir path/to/output   # custom output directory
 #   ./scripts/build-wasm.sh --target bundler --scope grafeo-db
 #
 # Requirements: rustup target wasm32-unknown-unknown, wasm-bindgen-cli
@@ -11,7 +13,7 @@
 set -euo pipefail
 
 CRATE_DIR="crates/bindings/wasm"
-OUT_DIR="${CRATE_DIR}/pkg"
+OUT_DIR=""
 PROFILE="minimal-size"
 TARGET="web"
 SCOPE=""
@@ -22,10 +24,16 @@ while [[ $# -gt 0 ]]; do
         --target)   TARGET="$2"; shift 2 ;;
         --scope)    SCOPE="--scope $2"; shift 2 ;;
         --features) FEATURES="--features $2"; shift 2 ;;
+        --out-dir)  OUT_DIR="$2"; shift 2 ;;
         --release)  PROFILE="release"; shift ;;
         *)          echo "Unknown option: $1"; exit 1 ;;
     esac
 done
+
+# Default output directory
+if [[ -z "$OUT_DIR" ]]; then
+    OUT_DIR="${CRATE_DIR}/pkg"
+fi
 
 echo "Building WASM (profile: ${PROFILE}, target: ${TARGET})"
 

@@ -13,7 +13,7 @@ name = "grafeo"
 path = "src/main.rs"
 
 [dependencies]
-grafeo-engine = { workspace = true, features = ["wal", "parallel", "spill", "mmap"] }
+grafeo-engine = { workspace = true, features = ["storage", "parallel", "regex"] }
 grafeo-common = { workspace = true }
 
 # CLI
@@ -49,13 +49,17 @@ gremlin = ["grafeo-engine/gremlin"]
 graphql = ["grafeo-engine/graphql"]
 sql-pgq = ["grafeo-engine/sql-pgq"]
 rdf = ["grafeo-engine/rdf"]
+algos = ["grafeo-engine/algos"]
 vector-index = ["grafeo-engine/vector-index"]
 text-index = ["grafeo-engine/text-index"]
 hybrid-search = ["grafeo-engine/hybrid-search"]
 cdc = ["grafeo-engine/cdc"]
 languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]
 ai = ["vector-index", "text-index", "hybrid-search", "cdc"]
-full = ["languages", "ai", "rdf"]
+storage = ["grafeo-engine/storage"]
+# Named profiles
+embedded = ["gql", "ai", "algos", "grafeo-engine/parallel", "grafeo-engine/regex"]
+full = ["languages", "ai", "algos", "rdf"]
 
 [dev-dependencies]
 tempfile = "3.26"

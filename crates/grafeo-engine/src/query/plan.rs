@@ -4,7 +4,67 @@
 //! and physical execution. Both GQL and Cypher queries are translated to this
 //! common representation.
 
+use std::fmt;
+
 use grafeo_common::types::Value;
+
+/// A count expression for SKIP/LIMIT: either a resolved literal or an unresolved parameter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CountExpr {
+    /// A resolved integer count.
+    Literal(usize),
+    /// An unresolved parameter reference (e.g., `$limit`).
+    Parameter(String),
+}
+
+impl CountExpr {
+    /// Returns the resolved count, or panics if still a parameter reference.
+    ///
+    /// Call this only after parameter substitution has run.
+    pub fn value(&self) -> usize {
+        match self {
+            Self::Literal(n) => *n,
+            Self::Parameter(name) => panic!("Unresolved parameter: ${name}"),
+        }
+    }
+
+    /// Returns the resolved count, or an error if still a parameter reference.
+    pub fn try_value(&self) -> Result<usize, String> {
+        match self {
+            Self::Literal(n) => Ok(*n),
+            Self::Parameter(name) => Err(format!("Unresolved SKIP/LIMIT parameter: ${name}")),
+        }
+    }
+
+    /// Returns the count as f64 for cardinality estimation (defaults to 10 for unresolved params).
+    pub fn estimate(&self) -> f64 {
+        match self {
+            Self::Literal(n) => *n as f64,
+            Self::Parameter(_) => 10.0, // reasonable default for unresolved params
+        }
+    }
+}
+
+impl fmt::Display for CountExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Literal(n) => write!(f, "{n}"),
+            Self::Parameter(name) => write!(f, "${name}"),
+        }
+    }
+}
+
+impl From<usize> for CountExpr {
+    fn from(n: usize) -> Self {
+        Self::Literal(n)
+    }
+}
+
+impl PartialEq<usize> for CountExpr {
+    fn eq(&self, other: &usize) -> bool {
+        matches!(self, Self::Literal(n) if n == other)
+    }
+}
 
 /// A logical query plan.
 #[derive(Debug, Clone)]
@@ -387,11 +447,11 @@ impl LogicalOperator {
                 op.input.fmt_tree(out, depth + 1);
             }
             Self::Limit(op) => {
-                let _ = writeln!(out, "{indent}Limit ({count})", count = op.count);
+                let _ = writeln!(out, "{indent}Limit ({})", op.count);
                 op.input.fmt_tree(out, depth + 1);
             }
             Self::Skip(op) => {
-                let _ = writeln!(out, "{indent}Skip ({count})", count = op.count);
+                let _ = writeln!(out, "{indent}Skip ({})", op.count);
                 op.input.fmt_tree(out, depth + 1);
             }
             Self::Sort(op) => {
@@ -819,6 +879,8 @@ pub struct AggregateExpr {
     pub alias: Option<String>,
     /// Percentile parameter for PERCENTILE_DISC/PERCENTILE_CONT (0.0 to 1.0).
     pub percentile: Option<f64>,
+    /// Separator string for GROUP_CONCAT / LISTAGG (defaults to space for GROUP_CONCAT, comma for LISTAGG).
+    pub separator: Option<String>,
 }
 
 /// Aggregate function.
@@ -931,8 +993,8 @@ pub struct Projection {
 /// Limit the number of results.
 #[derive(Debug, Clone)]
 pub struct LimitOp {
-    /// Maximum number of rows to return.
-    pub count: usize,
+    /// Maximum number of rows to return (literal or parameter reference).
+    pub count: CountExpr,
     /// Input operator.
     pub input: Box<LogicalOperator>,
 }
@@ -940,8 +1002,8 @@ pub struct LimitOp {
 /// Skip a number of results.
 #[derive(Debug, Clone)]
 pub struct SkipOp {
-    /// Number of rows to skip.
-    pub count: usize,
+    /// Number of rows to skip (literal or parameter reference).
+    pub count: CountExpr,
     /// Input operator.
     pub input: Box<LogicalOperator>,
 }

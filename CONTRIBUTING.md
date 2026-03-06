@@ -33,7 +33,7 @@ You can also run checks individually:
 
 ```bash
 cargo fmt --all              # Format
-cargo clippy --workspace --all-features -- -D warnings  # Lint
+cargo clippy --all-targets --all-features -- -D warnings  # Lint
 cargo test --all-features --workspace     # Test
 ```
 

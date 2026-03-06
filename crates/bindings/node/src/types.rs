@@ -46,6 +46,7 @@ pub fn js_to_value(env: &Env, val: Unknown<'_>) -> Result<Value> {
             Ok(Value::String(s.into()))
         }
         ValueType::BigInt => {
+            // SAFETY: type was checked as BigInt by the match arm, so cast is valid
             let bigint: BigInt = unsafe { val.cast()? };
             let word = if bigint.words.is_empty() {
                 0u64
@@ -60,6 +61,7 @@ pub fn js_to_value(env: &Env, val: Unknown<'_>) -> Result<Value> {
             Ok(Value::Int64(signed))
         }
         ValueType::Object => {
+            // SAFETY: type was checked as Object by the match arm, so cast is valid
             let obj: Object<'_> = unsafe { val.cast()? };
             js_object_to_value(env, &obj)
         }
@@ -83,12 +85,15 @@ fn js_object_to_value(env: &Env, obj: &Object<'_>) -> Result<Value> {
     }
 
     if obj.is_buffer()? {
+        // SAFETY: env and obj are valid napi values within this callback scope
         let unknown = unsafe { Unknown::from_raw_unchecked(env.raw(), obj.raw()) };
+        // SAFETY: obj.is_buffer() returned true, so casting to Buffer is valid
         let buf: Buffer = unsafe { unknown.cast()? };
         return Ok(Value::Bytes(buf.to_vec().into()));
     }
 
     if obj.is_date()? {
+        // SAFETY: obj.is_date() returned true, and env/obj are valid in this scope
         let date: JsDate = unsafe { Unknown::from_raw_unchecked(env.raw(), obj.raw()).cast()? };
         let ms = date.value_of()?;
         let micros = (ms * 1000.0) as i64;
@@ -97,9 +102,11 @@ fn js_object_to_value(env: &Env, obj: &Object<'_>) -> Result<Value> {
 
     // Check for TypedArray (Float32Array for vectors)
     if obj.is_typedarray()? {
+        // SAFETY: obj.is_typedarray() returned true, and env/obj are valid in this scope
         let ta: TypedArray<'_> =
             unsafe { Unknown::from_raw_unchecked(env.raw(), obj.raw()).cast()? };
         if ta.typed_array_type == TypedArrayType::Float32 {
+            // SAFETY: typed array type was verified as Float32, and env/obj are valid
             let f32arr: Float32Array =
                 unsafe { Unknown::from_raw_unchecked(env.raw(), obj.raw()).cast()? };
             return Ok(Value::Vector(f32arr.to_vec().into()));
@@ -137,13 +144,17 @@ pub(crate) fn check_napi(status: sys::napi_status) -> Result<()> {
 /// JS values from `#[napi]` methods where `env` is taken by value.
 pub fn value_to_napi(env: sys::napi_env, value: &Value) -> Result<sys::napi_value> {
     match value {
+        // SAFETY: env is a valid napi_env passed by the caller
         Value::Null => unsafe { <Null as ToNapiValue>::to_napi_value(env, Null) },
+        // SAFETY: env is a valid napi_env passed by the caller
         Value::Bool(b) => unsafe { <bool as ToNapiValue>::to_napi_value(env, *b) },
         Value::Int64(i) => {
             // Use number for safe integer range, BigInt for larger values
             if *i > -(1i64 << 53) && *i < (1i64 << 53) {
+                // SAFETY: env is a valid napi_env passed by the caller
                 unsafe { <i64 as ToNapiValue>::to_napi_value(env, *i) }
             } else {
+                // SAFETY: env is a valid napi_env passed by the caller
                 unsafe {
                     <BigInt as ToNapiValue>::to_napi_value(
                         env,
@@ -155,32 +166,39 @@ pub fn value_to_napi(env: sys::napi_env, value: &Value) -> Result<sys::napi_valu
                 }
             }
         }
+        // SAFETY: env is a valid napi_env passed by the caller
         Value::Float64(f) => unsafe { <f64 as ToNapiValue>::to_napi_value(env, *f) },
+        // SAFETY: env is a valid napi_env passed by the caller
         Value::String(s) => unsafe { <&str as ToNapiValue>::to_napi_value(env, s.as_ref()) },
         Value::List(items) => {
             let mut arr = std::ptr::null_mut();
+            // SAFETY: env is valid; napi_create_array_with_length writes to our out-pointer
             check_napi(unsafe {
                 sys::napi_create_array_with_length(env, items.len(), &raw mut arr)
             })?;
             for (i, item) in items.iter().enumerate() {
                 let val = value_to_napi(env, item)?;
+                // SAFETY: env, arr, and val are valid napi values
                 check_napi(unsafe { sys::napi_set_element(env, arr, i as u32, val) })?;
             }
             Ok(arr)
         }
         Value::Map(map) => {
             let mut obj = std::ptr::null_mut();
+            // SAFETY: env is valid; napi_create_object writes to our out-pointer
             check_napi(unsafe { sys::napi_create_object(env, &raw mut obj) })?;
             for (key, val) in map.as_ref() {
                 let key_cstr = CString::new(key.as_str())
                     .map_err(|e| napi::Error::from_reason(e.to_string()))?;
                 let napi_val = value_to_napi(env, val)?;
+                // SAFETY: env, obj, key_cstr, and napi_val are all valid
                 check_napi(unsafe {
                     sys::napi_set_named_property(env, obj, key_cstr.as_ptr(), napi_val)
                 })?;
             }
             Ok(obj)
         }
+        // SAFETY: env is a valid napi_env passed by the caller
         Value::Bytes(bytes) => unsafe {
             <Buffer as ToNapiValue>::to_napi_value(env, Buffer::from(bytes.to_vec()))
         },
@@ -191,52 +209,64 @@ pub fn value_to_napi(env: sys::napi_env, value: &Value) -> Result<sys::napi_valu
         }
         Value::Date(d) => {
             let s = d.to_string();
+            // SAFETY: env is a valid napi_env passed by the caller
             unsafe { <&str as ToNapiValue>::to_napi_value(env, &s) }
         }
         Value::Time(t) => {
             let s = t.to_string();
+            // SAFETY: env is a valid napi_env passed by the caller
             unsafe { <&str as ToNapiValue>::to_napi_value(env, &s) }
         }
         Value::Duration(d) => {
             let s = d.to_string();
+            // SAFETY: env is a valid napi_env passed by the caller
             unsafe { <&str as ToNapiValue>::to_napi_value(env, &s) }
         }
         Value::ZonedDatetime(zdt) => {
             let s = zdt.to_string();
+            // SAFETY: env is a valid napi_env passed by the caller
             unsafe { <&str as ToNapiValue>::to_napi_value(env, &s) }
         }
+        // SAFETY: env is a valid napi_env passed by the caller
         Value::Vector(v) => unsafe {
             <Float32Array as ToNapiValue>::to_napi_value(env, Float32Array::new(v.to_vec()))
         },
         Value::Path { nodes, edges } => {
             let mut obj = std::ptr::null_mut();
+            // SAFETY: env is valid; napi_create_object writes to our out-pointer
             check_napi(unsafe { sys::napi_create_object(env, &raw mut obj) })?;
 
             // Create nodes array
             let mut nodes_arr = std::ptr::null_mut();
+            // SAFETY: env is valid; napi_create_array_with_length writes to our out-pointer
             check_napi(unsafe {
                 sys::napi_create_array_with_length(env, nodes.len(), &raw mut nodes_arr)
             })?;
             for (i, node) in nodes.iter().enumerate() {
                 let val = value_to_napi(env, node)?;
+                // SAFETY: env, nodes_arr, and val are valid napi values
                 check_napi(unsafe { sys::napi_set_element(env, nodes_arr, i as u32, val) })?;
             }
 
             // Create edges array
             let mut edges_arr = std::ptr::null_mut();
+            // SAFETY: env is valid; napi_create_array_with_length writes to our out-pointer
             check_napi(unsafe {
                 sys::napi_create_array_with_length(env, edges.len(), &raw mut edges_arr)
             })?;
             for (i, edge) in edges.iter().enumerate() {
                 let val = value_to_napi(env, edge)?;
+                // SAFETY: env, edges_arr, and val are valid napi values
                 check_napi(unsafe { sys::napi_set_element(env, edges_arr, i as u32, val) })?;
             }
 
             let nodes_key = CString::new("nodes").expect("static string has no null bytes");
             let edges_key = CString::new("edges").expect("static string has no null bytes");
+            // SAFETY: env, obj, and the key/value pointers are all valid
             check_napi(unsafe {
                 sys::napi_set_named_property(env, obj, nodes_key.as_ptr(), nodes_arr)
             })?;
+            // SAFETY: env, obj, and the key/value pointers are all valid
             check_napi(unsafe {
                 sys::napi_set_named_property(env, obj, edges_key.as_ptr(), edges_arr)
             })?;
@@ -253,5 +283,6 @@ pub fn value_to_napi(env: sys::napi_env, value: &Value) -> Result<sys::napi_valu
 /// safe to call from `#[napi]` methods where `env` is taken by value.
 pub fn value_to_js(env: sys::napi_env, value: &Value) -> Result<Unknown<'_>> {
     let raw = value_to_napi(env, value)?;
+    // SAFETY: env and raw are valid napi values produced by value_to_napi
     Ok(unsafe { Unknown::from_raw_unchecked(env, raw) })
 }

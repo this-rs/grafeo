@@ -249,8 +249,8 @@ jobs:
       - name: Install wasm-bindgen-cli
         run: cargo install wasm-bindgen-cli
 
-      - name: Build WASM package
-        run: bash scripts/build-wasm.sh --target bundler
+      - name: Build WASM package (all languages + AI)
+        run: bash scripts/build-wasm.sh --target bundler --features full
 
       - name: Fix WASM package metadata
         run: |
@@ -260,6 +260,41 @@ jobs:
 
       - name: Publish @grafeo-db/wasm
         working-directory: crates/bindings/wasm/pkg
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        continue-on-error: true
+
+  # Publish WASM lite package to npm
+  publish-wasm-lite:
+    name: Publish WASM Lite to npm
+    runs-on: ubuntu-latest
+    needs: create-release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-bindgen-cli
+        run: cargo install wasm-bindgen-cli
+
+      - name: Build WASM lite package (GQL only)
+        run: bash scripts/build-wasm.sh --target bundler --out-dir crates/bindings/wasm/pkg-lite
+
+      - name: Fix WASM lite package metadata
+        run: cp crates/bindings/wasm/package-lite.json crates/bindings/wasm/pkg-lite/package.json
+
+      - name: Publish @grafeo-db/wasm-lite
+        working-directory: crates/bindings/wasm/pkg-lite
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

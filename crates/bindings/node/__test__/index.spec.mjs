@@ -981,6 +981,134 @@ describe('CDC operations', () => {
   })
 })
 
+// ── Label management ────────────────────────────────────────────────
+
+describe('label management', () => {
+  let db
+
+  beforeEach(() => {
+    db = GrafeoDB.create()
+  })
+
+  it('should add a label to an existing node', () => {
+    const node = db.createNode(['Person'])
+    const added = db.addNodeLabel(node.id, 'Employee')
+    expect(added).toBe(true)
+    const labels = db.getNodeLabels(node.id)
+    expect(labels).toContain('Person')
+    expect(labels).toContain('Employee')
+  })
+
+  it('should return false when adding duplicate label', () => {
+    const node = db.createNode(['Person'])
+    const added = db.addNodeLabel(node.id, 'Person')
+    expect(added).toBe(false)
+  })
+
+  it('should remove a label from a node', () => {
+    const node = db.createNode(['Person', 'Employee'])
+    const removed = db.removeNodeLabel(node.id, 'Employee')
+    expect(removed).toBe(true)
+    const labels = db.getNodeLabels(node.id)
+    expect(labels).toContain('Person')
+    expect(labels).not.toContain('Employee')
+  })
+
+  it('should return false when removing nonexistent label', () => {
+    const node = db.createNode(['Person'])
+    const removed = db.removeNodeLabel(node.id, 'NoSuchLabel')
+    expect(removed).toBe(false)
+  })
+
+  it('should return null for labels of nonexistent node', () => {
+    const labels = db.getNodeLabels(99999)
+    expect(labels).toBeNull()
+  })
+})
+
+// ── Property removal ────────────────────────────────────────────────
+
+describe('property removal', () => {
+  let db
+
+  beforeEach(() => {
+    db = GrafeoDB.create()
+  })
+
+  it('should remove a node property', () => {
+    const node = db.createNode(['Person'], { name: 'Alix', age: 30 })
+    const removed = db.removeNodeProperty(node.id, 'age')
+    expect(removed).toBe(true)
+    const fetched = db.getNode(node.id)
+    expect(fetched.get('name')).toBe('Alix')
+    expect(fetched.get('age')).toBeUndefined()
+  })
+
+  it('should return false when removing nonexistent property', () => {
+    const node = db.createNode(['Person'])
+    const removed = db.removeNodeProperty(node.id, 'noSuchProp')
+    expect(removed).toBe(false)
+  })
+
+  it('should remove an edge property', () => {
+    const a = db.createNode(['A'])
+    const b = db.createNode(['B'])
+    const edge = db.createEdge(a.id, b.id, 'REL', { weight: 1.5, tag: 'x' })
+    const removed = db.removeEdgeProperty(edge.id, 'weight')
+    expect(removed).toBe(true)
+    const fetched = db.getEdge(edge.id)
+    expect(fetched.get('tag')).toBe('x')
+    expect(fetched.get('weight')).toBeUndefined()
+  })
+})
+
+// ── SPARQL with parameters ──────────────────────────────────────────
+
+describe('SPARQL with parameters', () => {
+  it('should execute SPARQL with params argument', async () => {
+    const db = GrafeoDB.create()
+    // Even if params aren't used in this query, the API should accept them
+    const result = await db.executeSparql(
+      'SELECT ?x WHERE { ?x ?y ?z }',
+      { limit: 10 }
+    )
+    expect(result.length).toBe(0) // empty triple store
+  })
+
+  it('should execute SPARQL without params (backward compat)', async () => {
+    const db = GrafeoDB.create()
+    const result = await db.executeSparql('SELECT ?x WHERE { ?x ?y ?z }')
+    expect(result.length).toBe(0)
+  })
+})
+
+// ── SQL/PGQ queries ─────────────────────────────────────────────────
+
+describe('SQL/PGQ queries', () => {
+  it('should execute basic SQL/PGQ query', async () => {
+    const db = GrafeoDB.create()
+    await db.execute("INSERT (:Person {name: 'Alix', age: 30})")
+    const result = await db.executeSql(
+      "SELECT * FROM GRAPH_TABLE (MATCH (p:Person) COLUMNS (p.name AS name))"
+    )
+    expect(result.length).toBe(1)
+    expect(result.scalar()).toBe('Alix')
+  })
+
+  it('should execute SQL/PGQ relationship query', async () => {
+    const db = GrafeoDB.create()
+    await db.execute("INSERT (:Person {name: 'Alix', age: 30})")
+    await db.execute("INSERT (:Person {name: 'Gus', age: 25})")
+    await db.execute(
+      "MATCH (a:Person), (b:Person) WHERE a.name = 'Alix' AND b.name = 'Gus' INSERT (a)-[:KNOWS]->(b)"
+    )
+    const result = await db.executeSql(
+      "SELECT * FROM GRAPH_TABLE (MATCH (a:Person)-[:KNOWS]->(b:Person) COLUMNS (a.name AS person, b.name AS friend))"
+    )
+    expect(result.length).toBe(1)
+  })
+})
+
 // ── Admin operations ─────────────────────────────────────────────────
 
 describe('admin operations', () => {
@@ -994,5 +1122,108 @@ describe('admin operations', () => {
     const db = GrafeoDB.create()
     db.createNode(['Person'], { name: 'Test' })
     expect(() => db.close()).not.toThrow()
+  })
+
+  it('should return info as JSON', () => {
+    const { db } = seedDb()
+    const info = db.info()
+    expect(info).toBeDefined()
+    expect(typeof info).toBe('object')
+    expect(info.node_count).toBe(4)
+    expect(info.edge_count).toBe(3)
+  })
+
+  it('should return schema as JSON', () => {
+    const { db } = seedDb()
+    const schema = db.schema()
+    expect(schema).toBeDefined()
+    expect(typeof schema).toBe('object')
+  })
+
+  it('should return version string', () => {
+    const db = GrafeoDB.create()
+    const ver = db.version()
+    expect(ver).toMatch(/^\d+\.\d+\.\d+$/)
+  })
+})
+
+// ── ID validation ───────────────────────────────────────────────────
+
+describe('ID validation', () => {
+  let db
+
+  beforeEach(() => {
+    db = GrafeoDB.create()
+  })
+
+  it('should reject negative node ID', () => {
+    expect(() => db.getNode(-1)).toThrow(/Invalid node ID/)
+  })
+
+  it('should reject NaN node ID', () => {
+    expect(() => db.getNode(NaN)).toThrow(/Invalid node ID/)
+  })
+
+  it('should reject Infinity node ID', () => {
+    expect(() => db.getNode(Infinity)).toThrow(/Invalid node ID/)
+  })
+
+  it('should reject negative edge ID', () => {
+    expect(() => db.getEdge(-1)).toThrow(/Invalid edge ID/)
+  })
+})
+
+// ── Concurrent database instances ───────────────────────────────────
+
+describe('concurrent instances', () => {
+  it('should support multiple independent databases', async () => {
+    const db1 = GrafeoDB.create()
+    const db2 = GrafeoDB.create()
+
+    db1.createNode(['A'], { val: 1 })
+    db2.createNode(['B'], { val: 2 })
+
+    expect(db1.nodeCount()).toBe(1)
+    expect(db2.nodeCount()).toBe(1)
+
+    const r1 = await db1.execute('MATCH (n:A) RETURN n.val')
+    const r2 = await db2.execute('MATCH (n:B) RETURN n.val')
+    expect(r1.scalar()).toBe(1)
+    expect(r2.scalar()).toBe(2)
+  })
+})
+
+// ── Mutation via queries ─────────────────────────────────────────────
+
+describe('mutation via queries', () => {
+  it('should DELETE nodes via query', async () => {
+    const db = GrafeoDB.create()
+    await db.execute("INSERT (:Person {name: 'Alix'})")
+    await db.execute("INSERT (:Person {name: 'Gus'})")
+    expect(db.nodeCount()).toBe(2)
+
+    await db.execute("MATCH (p:Person) WHERE p.name = 'Alix' DELETE p")
+    expect(db.nodeCount()).toBe(1)
+  })
+
+  it('should SET properties via query', async () => {
+    const db = GrafeoDB.create()
+    await db.execute("INSERT (:Person {name: 'Alix', age: 30})")
+    await db.execute("MATCH (p:Person) WHERE p.name = 'Alix' SET p.age = 31")
+
+    const result = await db.execute(
+      "MATCH (p:Person) WHERE p.name = 'Alix' RETURN p.age"
+    )
+    expect(result.scalar()).toBe(31)
+  })
+
+  it('should INSERT edges via query', async () => {
+    const db = GrafeoDB.create()
+    await db.execute("INSERT (:Person {name: 'Alix'})")
+    await db.execute("INSERT (:Person {name: 'Gus'})")
+    await db.execute(
+      "MATCH (a:Person), (b:Person) WHERE a.name = 'Alix' AND b.name = 'Gus' INSERT (a)-[:KNOWS]->(b)"
+    )
+    expect(db.edgeCount()).toBe(1)
   })
 })

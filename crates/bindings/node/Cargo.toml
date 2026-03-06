@@ -28,7 +28,7 @@ serde_json = "1.0"
 napi-build = "2"
 
 [features]
-default = ["full"]
+default = ["embedded"]
 gql = ["grafeo-engine/gql"]
 cypher = ["grafeo-engine/cypher"]
 sparql = ["grafeo-engine/sparql", "grafeo-engine/rdf"]
@@ -40,9 +40,14 @@ text-index = ["grafeo-engine/text-index"]
 hybrid-search = ["grafeo-engine/hybrid-search"]
 cdc = ["grafeo-engine/cdc"]
 embed = ["grafeo-engine/embed"]
+algos = ["grafeo-engine/algos"]
+rdf = ["grafeo-engine/rdf"]
 languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]
 ai = ["vector-index", "text-index", "hybrid-search", "cdc"]
-full = ["languages", "ai"]
+storage = ["grafeo-engine/storage"]
+# Named profiles
+embedded = ["gql", "ai", "algos", "grafeo-engine/parallel", "grafeo-engine/regex"]
+full = ["languages", "ai", "algos", "rdf"]
 
 [lints]
 workspace = true

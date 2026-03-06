@@ -10,10 +10,14 @@ tags:
 
 Zone maps store statistics about data chunks to enable data skipping.
 
+## Why Zone Maps in a Graph Database?
+
+Graph databases still need property filtering (`WHERE n.age > 30`). When properties are stored in columnar chunks, zone maps let the engine skip entire chunks whose min/max range doesn't overlap the filter predicate. This is especially effective for sorted or clustered properties.
+
 ## What Zone Maps Store
 
 | Statistic | Purpose |
-|-----------|---------|
+| --------- | ------- |
 | Min value | Skip chunks where max < filter value |
 | Max value | Skip chunks where min > filter value |
 | Null count | Skip chunks with no nulls for IS NULL |
@@ -22,7 +26,7 @@ Zone maps store statistics about data chunks to enable data skipping.
 
 ## Example
 
-```
+```text
 Query: WHERE age > 50
 
 Chunk 0: min=20, max=45  -> SKIP (max < 50)
@@ -34,7 +38,7 @@ Chunk 3: min=18, max=35  -> SKIP (max < 50)
 ## Predicate Support
 
 | Predicate | Zone Map Check |
-|-----------|----------------|
+| --------- | -------------- |
 | `x = v` | min <= v <= max |
 | `x > v` | max > v |
 | `x < v` | min < v |

@@ -3,14 +3,14 @@
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use grafeo_common::types::{EdgeId, EpochId, NodeId, TxId};
+use grafeo_common::types::{EdgeId, EpochId, NodeId, TransactionId};
 use grafeo_common::utils::error::{Error, Result, TransactionError};
 use grafeo_common::utils::hash::FxHashMap;
 use parking_lot::RwLock;
 
 /// State of a transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TxState {
+pub enum TransactionState {
     /// Transaction is active.
     Active,
     /// Transaction is committed.
@@ -83,9 +83,9 @@ impl From<EdgeId> for EntityId {
 }
 
 /// Information about an active transaction.
-pub struct TxInfo {
+pub struct TransactionInfo {
     /// Transaction state.
-    pub state: TxState,
+    pub state: TransactionState,
     /// Isolation level for this transaction.
     pub isolation_level: IsolationLevel,
     /// Start epoch (snapshot epoch for reads).
@@ -96,11 +96,11 @@ pub struct TxInfo {
     pub read_set: HashSet<EntityId>,
 }
 
-impl TxInfo {
+impl TransactionInfo {
     /// Creates a new transaction info with the given isolation level.
     fn new(start_epoch: EpochId, isolation_level: IsolationLevel) -> Self {
         Self {
-            state: TxState::Active,
+            state: TransactionState::Active,
             isolation_level,
             start_epoch,
             write_set: HashSet::new(),
@@ -112,14 +112,14 @@ impl TxInfo {
 /// Manages transactions and MVCC versioning.
 pub struct TransactionManager {
     /// Next transaction ID.
-    next_tx_id: AtomicU64,
+    next_transaction_id: AtomicU64,
     /// Current epoch.
     current_epoch: AtomicU64,
     /// Active transactions.
-    transactions: RwLock<FxHashMap<TxId, TxInfo>>,
+    transactions: RwLock<FxHashMap<TransactionId, TransactionInfo>>,
     /// Committed transaction epochs (for conflict detection).
-    /// Maps TxId -> commit epoch.
-    committed_epochs: RwLock<FxHashMap<TxId, EpochId>>,
+    /// Maps TransactionId -> commit epoch.
+    committed_epochs: RwLock<FxHashMap<TransactionId, EpochId>>,
 }
 
 impl TransactionManager {
@@ -127,9 +127,9 @@ impl TransactionManager {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            // Start at 2 to avoid collision with TxId::SYSTEM (which is 1)
-            // TxId::INVALID = u64::MAX, TxId::SYSTEM = 1, user transactions start at 2
-            next_tx_id: AtomicU64::new(2),
+            // Start at 2 to avoid collision with TransactionId::SYSTEM (which is 1)
+            // TransactionId::INVALID = u64::MAX, TransactionId::SYSTEM = 1, user transactions start at 2
+            next_transaction_id: AtomicU64::new(2),
             current_epoch: AtomicU64::new(0),
             transactions: RwLock::new(FxHashMap::default()),
             committed_epochs: RwLock::new(FxHashMap::default()),
@@ -137,25 +137,26 @@ impl TransactionManager {
     }
 
     /// Begins a new transaction with the default isolation level (Snapshot Isolation).
-    pub fn begin(&self) -> TxId {
+    pub fn begin(&self) -> TransactionId {
         self.begin_with_isolation(IsolationLevel::default())
     }
 
     /// Begins a new transaction with the specified isolation level.
-    pub fn begin_with_isolation(&self, isolation_level: IsolationLevel) -> TxId {
-        let tx_id = TxId::new(self.next_tx_id.fetch_add(1, Ordering::Relaxed));
+    pub fn begin_with_isolation(&self, isolation_level: IsolationLevel) -> TransactionId {
+        let transaction_id =
+            TransactionId::new(self.next_transaction_id.fetch_add(1, Ordering::Relaxed));
         let epoch = EpochId::new(self.current_epoch.load(Ordering::Acquire));
 
-        let info = TxInfo::new(epoch, isolation_level);
-        self.transactions.write().insert(tx_id, info);
-        tx_id
+        let info = TransactionInfo::new(epoch, isolation_level);
+        self.transactions.write().insert(transaction_id, info);
+        transaction_id
     }
 
     /// Returns the isolation level of a transaction.
-    pub fn isolation_level(&self, tx_id: TxId) -> Option<IsolationLevel> {
+    pub fn isolation_level(&self, transaction_id: TransactionId) -> Option<IsolationLevel> {
         self.transactions
             .read()
-            .get(&tx_id)
+            .get(&transaction_id)
             .map(|info| info.isolation_level)
     }
 
@@ -164,15 +165,19 @@ impl TransactionManager {
     /// # Errors
     ///
     /// Returns an error if the transaction is not active.
-    pub fn record_write(&self, tx_id: TxId, entity: impl Into<EntityId>) -> Result<()> {
+    pub fn record_write(
+        &self,
+        transaction_id: TransactionId,
+        entity: impl Into<EntityId>,
+    ) -> Result<()> {
         let mut txns = self.transactions.write();
-        let info = txns.get_mut(&tx_id).ok_or_else(|| {
+        let info = txns.get_mut(&transaction_id).ok_or_else(|| {
             Error::Transaction(TransactionError::InvalidState(
                 "Transaction not found".to_string(),
             ))
         })?;
 
-        if info.state != TxState::Active {
+        if info.state != TransactionState::Active {
             return Err(Error::Transaction(TransactionError::InvalidState(
                 "Transaction is not active".to_string(),
             )));
@@ -187,15 +192,19 @@ impl TransactionManager {
     /// # Errors
     ///
     /// Returns an error if the transaction is not active.
-    pub fn record_read(&self, tx_id: TxId, entity: impl Into<EntityId>) -> Result<()> {
+    pub fn record_read(
+        &self,
+        transaction_id: TransactionId,
+        entity: impl Into<EntityId>,
+    ) -> Result<()> {
         let mut txns = self.transactions.write();
-        let info = txns.get_mut(&tx_id).ok_or_else(|| {
+        let info = txns.get_mut(&transaction_id).ok_or_else(|| {
             Error::Transaction(TransactionError::InvalidState(
                 "Transaction not found".to_string(),
             ))
         })?;
 
-        if info.state != TxState::Active {
+        if info.state != TransactionState::Active {
             return Err(Error::Transaction(TransactionError::InvalidState(
                 "Transaction is not active".to_string(),
             )));
@@ -222,19 +231,19 @@ impl TransactionManager {
     /// - The transaction is not active
     /// - There's a write-write conflict with another committed transaction
     /// - (Serializable only) There's a read-write conflict (SSI violation)
-    pub fn commit(&self, tx_id: TxId) -> Result<EpochId> {
+    pub fn commit(&self, transaction_id: TransactionId) -> Result<EpochId> {
         let mut txns = self.transactions.write();
         let committed = self.committed_epochs.read();
 
         // First, validate the transaction exists and is active
         let (our_isolation, our_start_epoch, our_write_set, our_read_set) = {
-            let info = txns.get(&tx_id).ok_or_else(|| {
+            let info = txns.get(&transaction_id).ok_or_else(|| {
                 Error::Transaction(TransactionError::InvalidState(
                     "Transaction not found".to_string(),
                 ))
             })?;
 
-            if info.state != TxState::Active {
+            if info.state != TransactionState::Active {
                 return Err(Error::Transaction(TransactionError::InvalidState(
                     "Transaction is not active".to_string(),
                 )));
@@ -250,10 +259,10 @@ impl TransactionManager {
 
         // Check for write-write conflicts with other committed transactions
         for (other_tx, other_info) in txns.iter() {
-            if *other_tx == tx_id {
+            if *other_tx == transaction_id {
                 continue;
             }
-            if other_info.state == TxState::Committed {
+            if other_info.state == TransactionState::Committed {
                 // Check if any of our writes conflict with their writes
                 for entity in &our_write_set {
                     if other_info.write_set.contains(entity) {
@@ -267,7 +276,7 @@ impl TransactionManager {
 
         // Also check against recently committed transactions
         for (other_tx, commit_epoch) in committed.iter() {
-            if *other_tx != tx_id && commit_epoch.as_u64() > our_start_epoch.as_u64() {
+            if *other_tx != transaction_id && commit_epoch.as_u64() > our_start_epoch.as_u64() {
                 // Check if that transaction wrote to any of our entities
                 if let Some(other_info) = txns.get(other_tx) {
                     for entity in &our_write_set {
@@ -287,7 +296,7 @@ impl TransactionManager {
         // "rw-antidependency" which can cause write skew.
         if our_isolation == IsolationLevel::Serializable && !our_read_set.is_empty() {
             for (other_tx, commit_epoch) in committed.iter() {
-                if *other_tx != tx_id && commit_epoch.as_u64() > our_start_epoch.as_u64() {
+                if *other_tx != transaction_id && commit_epoch.as_u64() > our_start_epoch.as_u64() {
                     // Check if that transaction wrote to any entity we read
                     if let Some(other_info) = txns.get(other_tx) {
                         for entity in &our_read_set {
@@ -308,10 +317,10 @@ impl TransactionManager {
             // Also check against transactions that are already marked committed
             // but not yet in committed_epochs map
             for (other_tx, other_info) in txns.iter() {
-                if *other_tx == tx_id {
+                if *other_tx == transaction_id {
                     continue;
                 }
-                if other_info.state == TxState::Committed {
+                if other_info.state == TransactionState::Committed {
                     // If we can see their write set and we read something they wrote
                     for entity in &our_read_set {
                         if other_info.write_set.contains(entity) {
@@ -338,13 +347,15 @@ impl TransactionManager {
         let commit_epoch = EpochId::new(self.current_epoch.fetch_add(1, Ordering::SeqCst) + 1);
 
         // Now update state
-        if let Some(info) = txns.get_mut(&tx_id) {
-            info.state = TxState::Committed;
+        if let Some(info) = txns.get_mut(&transaction_id) {
+            info.state = TransactionState::Committed;
         }
 
         // Record commit epoch (need to drop read lock first)
         drop(committed);
-        self.committed_epochs.write().insert(tx_id, commit_epoch);
+        self.committed_epochs
+            .write()
+            .insert(transaction_id, commit_epoch);
 
         Ok(commit_epoch)
     }
@@ -354,22 +365,22 @@ impl TransactionManager {
     /// # Errors
     ///
     /// Returns an error if the transaction is not active.
-    pub fn abort(&self, tx_id: TxId) -> Result<()> {
+    pub fn abort(&self, transaction_id: TransactionId) -> Result<()> {
         let mut txns = self.transactions.write();
 
-        let info = txns.get_mut(&tx_id).ok_or_else(|| {
+        let info = txns.get_mut(&transaction_id).ok_or_else(|| {
             Error::Transaction(TransactionError::InvalidState(
                 "Transaction not found".to_string(),
             ))
         })?;
 
-        if info.state != TxState::Active {
+        if info.state != TransactionState::Active {
             return Err(Error::Transaction(TransactionError::InvalidState(
                 "Transaction is not active".to_string(),
             )));
         }
 
-        info.state = TxState::Aborted;
+        info.state = TransactionState::Aborted;
         Ok(())
     }
 
@@ -377,14 +388,34 @@ impl TransactionManager {
     ///
     /// This returns a copy of the entities written by this transaction,
     /// used for rollback to discard uncommitted versions.
-    pub fn get_write_set(&self, tx_id: TxId) -> Result<HashSet<EntityId>> {
+    pub fn get_write_set(&self, transaction_id: TransactionId) -> Result<HashSet<EntityId>> {
         let txns = self.transactions.read();
-        let info = txns.get(&tx_id).ok_or_else(|| {
+        let info = txns.get(&transaction_id).ok_or_else(|| {
             Error::Transaction(TransactionError::InvalidState(
                 "Transaction not found".to_string(),
             ))
         })?;
         Ok(info.write_set.clone())
+    }
+
+    /// Replaces the write set of a transaction (used for savepoint rollback).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the transaction is not found.
+    pub fn reset_write_set(
+        &self,
+        transaction_id: TransactionId,
+        write_set: HashSet<EntityId>,
+    ) -> Result<()> {
+        let mut txns = self.transactions.write();
+        let info = txns.get_mut(&transaction_id).ok_or_else(|| {
+            Error::Transaction(TransactionError::InvalidState(
+                "Transaction not found".to_string(),
+            ))
+        })?;
+        info.write_set = write_set;
+        Ok(())
     }
 
     /// Aborts all active transactions.
@@ -393,22 +424,25 @@ impl TransactionManager {
     pub fn abort_all_active(&self) {
         let mut txns = self.transactions.write();
         for info in txns.values_mut() {
-            if info.state == TxState::Active {
-                info.state = TxState::Aborted;
+            if info.state == TransactionState::Active {
+                info.state = TransactionState::Aborted;
             }
         }
     }
 
     /// Returns the state of a transaction.
-    pub fn state(&self, tx_id: TxId) -> Option<TxState> {
-        self.transactions.read().get(&tx_id).map(|info| info.state)
+    pub fn state(&self, transaction_id: TransactionId) -> Option<TransactionState> {
+        self.transactions
+            .read()
+            .get(&transaction_id)
+            .map(|info| info.state)
     }
 
     /// Returns the start epoch of a transaction.
-    pub fn start_epoch(&self, tx_id: TxId) -> Option<EpochId> {
+    pub fn start_epoch(&self, transaction_id: TransactionId) -> Option<EpochId> {
         self.transactions
             .read()
-            .get(&tx_id)
+            .get(&transaction_id)
             .map(|info| info.start_epoch)
     }
 
@@ -426,7 +460,7 @@ impl TransactionManager {
     pub fn min_active_epoch(&self) -> EpochId {
         let txns = self.transactions.read();
         txns.values()
-            .filter(|info| info.state == TxState::Active)
+            .filter(|info| info.state == TransactionState::Active)
             .map(|info| info.start_epoch)
             .min()
             .unwrap_or_else(|| self.current_epoch())
@@ -438,7 +472,7 @@ impl TransactionManager {
         self.transactions
             .read()
             .values()
-            .filter(|info| info.state == TxState::Active)
+            .filter(|info| info.state == TransactionState::Active)
             .count()
     }
 
@@ -456,24 +490,24 @@ impl TransactionManager {
         // Find the minimum start epoch among active transactions
         let min_active_start = txns
             .values()
-            .filter(|info| info.state == TxState::Active)
+            .filter(|info| info.state == TransactionState::Active)
             .map(|info| info.start_epoch)
             .min();
 
         let initial_count = txns.len();
 
         // Collect transactions safe to remove
-        let to_remove: Vec<TxId> = txns
+        let to_remove: Vec<TransactionId> = txns
             .iter()
-            .filter(|(tx_id, info)| {
+            .filter(|(transaction_id, info)| {
                 match info.state {
-                    TxState::Active => false, // Never remove active transactions
-                    TxState::Aborted => true, // Always safe to remove aborted transactions
-                    TxState::Committed => {
+                    TransactionState::Active => false, // Never remove active transactions
+                    TransactionState::Aborted => true, // Always safe to remove aborted transactions
+                    TransactionState::Committed => {
                         // Only remove committed transactions if their commit epoch
                         // is older than all active transactions' start epochs
                         if let Some(min_start) = min_active_start {
-                            if let Some(commit_epoch) = committed.get(*tx_id) {
+                            if let Some(commit_epoch) = committed.get(*transaction_id) {
                                 // Safe to remove if committed before all active txns started
                                 commit_epoch.as_u64() < min_start.as_u64()
                             } else {
@@ -501,18 +535,18 @@ impl TransactionManager {
     /// Marks a transaction as committed at a specific epoch.
     ///
     /// Used during recovery to restore transaction state.
-    pub fn mark_committed(&self, tx_id: TxId, epoch: EpochId) {
-        self.committed_epochs.write().insert(tx_id, epoch);
+    pub fn mark_committed(&self, transaction_id: TransactionId, epoch: EpochId) {
+        self.committed_epochs.write().insert(transaction_id, epoch);
     }
 
     /// Returns the last assigned transaction ID.
     ///
     /// Returns `None` if no transactions have been started yet.
     #[must_use]
-    pub fn last_assigned_tx_id(&self) -> Option<TxId> {
-        let next = self.next_tx_id.load(Ordering::Relaxed);
+    pub fn last_assigned_transaction_id(&self) -> Option<TransactionId> {
+        let next = self.next_transaction_id.load(Ordering::Relaxed);
         if next > 1 {
-            Some(TxId::new(next - 1))
+            Some(TransactionId::new(next - 1))
         } else {
             None
         }
@@ -534,10 +568,10 @@ mod tests {
         let mgr = TransactionManager::new();
 
         let tx = mgr.begin();
-        assert_eq!(mgr.state(tx), Some(TxState::Active));
+        assert_eq!(mgr.state(tx), Some(TransactionState::Active));
 
         let commit_epoch = mgr.commit(tx).unwrap();
-        assert_eq!(mgr.state(tx), Some(TxState::Committed));
+        assert_eq!(mgr.state(tx), Some(TransactionState::Committed));
         assert!(commit_epoch.as_u64() > 0);
     }
 
@@ -547,7 +581,7 @@ mod tests {
 
         let tx = mgr.begin();
         mgr.abort(tx).unwrap();
-        assert_eq!(mgr.state(tx), Some(TxState::Aborted));
+        assert_eq!(mgr.state(tx), Some(TransactionState::Aborted));
     }
 
     #[test]
@@ -580,8 +614,8 @@ mod tests {
         assert_eq!(cleaned, 0);
 
         // Both transactions should remain
-        assert_eq!(mgr.state(tx1), Some(TxState::Committed));
-        assert_eq!(mgr.state(tx2), Some(TxState::Active));
+        assert_eq!(mgr.state(tx1), Some(TransactionState::Committed));
+        assert_eq!(mgr.state(tx2), Some(TransactionState::Active));
     }
 
     #[test]
@@ -606,8 +640,8 @@ mod tests {
         assert_eq!(cleaned, 1); // Only tx1 removed
 
         assert_eq!(mgr.state(tx1), None);
-        assert_eq!(mgr.state(tx2), Some(TxState::Committed)); // Preserved for conflict detection
-        assert_eq!(mgr.state(tx3), Some(TxState::Active));
+        assert_eq!(mgr.state(tx2), Some(TransactionState::Committed)); // Preserved for conflict detection
+        assert_eq!(mgr.state(tx3), Some(TransactionState::Active));
 
         // After tx3 commits, tx2 can be GC'd
         mgr.commit(tx3).unwrap();
@@ -630,7 +664,7 @@ mod tests {
         assert_eq!(cleaned, 1);
 
         assert_eq!(mgr.state(tx1), None);
-        assert_eq!(mgr.state(tx2), Some(TxState::Active));
+        assert_eq!(mgr.state(tx2), Some(TransactionState::Active));
     }
 
     #[test]
@@ -682,9 +716,9 @@ mod tests {
 
         mgr.abort_all_active();
 
-        assert_eq!(mgr.state(tx1), Some(TxState::Committed)); // Already committed
-        assert_eq!(mgr.state(tx2), Some(TxState::Aborted));
-        assert_eq!(mgr.state(tx3), Some(TxState::Aborted));
+        assert_eq!(mgr.state(tx1), Some(TransactionState::Committed)); // Already committed
+        assert_eq!(mgr.state(tx2), Some(TransactionState::Aborted));
+        assert_eq!(mgr.state(tx3), Some(TransactionState::Aborted));
     }
 
     #[test]
@@ -823,20 +857,20 @@ mod tests {
     fn test_isolation_level_explicit() {
         let mgr = TransactionManager::new();
 
-        let tx_rc = mgr.begin_with_isolation(IsolationLevel::ReadCommitted);
-        let tx_si = mgr.begin_with_isolation(IsolationLevel::SnapshotIsolation);
-        let tx_ser = mgr.begin_with_isolation(IsolationLevel::Serializable);
+        let transaction_rc = mgr.begin_with_isolation(IsolationLevel::ReadCommitted);
+        let transaction_si = mgr.begin_with_isolation(IsolationLevel::SnapshotIsolation);
+        let transaction_ser = mgr.begin_with_isolation(IsolationLevel::Serializable);
 
         assert_eq!(
-            mgr.isolation_level(tx_rc),
+            mgr.isolation_level(transaction_rc),
             Some(IsolationLevel::ReadCommitted)
         );
         assert_eq!(
-            mgr.isolation_level(tx_si),
+            mgr.isolation_level(transaction_si),
             Some(IsolationLevel::SnapshotIsolation)
         );
         assert_eq!(
-            mgr.isolation_level(tx_ser),
+            mgr.isolation_level(transaction_ser),
             Some(IsolationLevel::Serializable)
         );
     }

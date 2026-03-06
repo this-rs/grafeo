@@ -32,8 +32,9 @@ rayon = { workspace = true, optional = true }
 serde.workspace = true
 bincode.workspace = true
 
-# Regex for SPARQL FILTER
-regex = "1"
+# Regex for SPARQL FILTER (use regex-lite for smaller WASM builds)
+regex = { workspace = true, optional = true }
+regex-lite = { workspace = true, optional = true }
 
 # Cryptographic hashes for SPARQL hash functions (optional, RDF only)
 md5 = { workspace = true, optional = true }
@@ -55,7 +56,9 @@ serde_json = "1"
 tokio.workspace = true
 
 [features]
-default = ["gql", "parallel", "wal", "spill", "mmap"]
+default = ["gql", "parallel", "wal", "spill", "mmap", "regex"]
+regex = ["dep:regex", "grafeo-core/regex"]
+regex-lite = ["dep:regex-lite", "grafeo-core/regex-lite"]
 gql = ["grafeo-adapters/gql"]
 cypher = ["grafeo-adapters/cypher"]
 sparql = ["grafeo-adapters/sparql"]
@@ -71,7 +74,13 @@ mmap = ["grafeo-core/mmap"]  # File-backed vector storage
 # Convenience groups
 languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]  # All query language parsers
 ai = ["vector-index", "text-index", "hybrid-search", "cdc"]  # All AI/RAG features
-full = ["languages", "ai", "rdf", "parallel", "algos", "wal", "spill", "mmap"]
+storage = ["wal", "spill", "mmap"]  # Persistent storage (WAL, disk spill, memory-mapped files)
+
+# Named profiles (ecosystem-aligned)
+embedded = ["gql", "ai", "algos", "parallel", "regex"]  # Python libs, MCP, in-process
+browser = ["gql", "regex-lite"]  # WASM / grafeo-web
+server = ["full"]  # grafeo-server
+full = ["languages", "ai", "rdf", "parallel", "algos", "storage"]
 
 # Search & AI features
 vector-index = ["grafeo-core/vector-index"]  # HNSW vector index for k-NN search
@@ -79,7 +88,6 @@ text-index = ["grafeo-core/text-index"]  # BM25 inverted index for full-text sea
 hybrid-search = ["grafeo-core/hybrid-search", "text-index", "vector-index"]  # Combined text + vector search
 cdc = []  # Change data capture with history API
 embed = ["ort", "tokenizers", "hf-hub"]  # ONNX embedding generation (opt-in, adds ~17MB)
-block-stm = []  # Block-STM parallel transaction execution
 
 # Testing utilities (zero overhead when disabled)
 testing-crash-injection = ["grafeo-core/testing-crash-injection"]  # Crash injection for recovery testing

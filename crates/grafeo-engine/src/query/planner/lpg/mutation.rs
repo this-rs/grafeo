@@ -40,7 +40,7 @@ impl super::Planner {
             output_schema,
             output_column,
         )
-        .with_tx_context(self.viewing_epoch, self.tx_id);
+        .with_transaction_context(self.viewing_epoch, self.transaction_id);
 
         if let Some(ref validator) = self.validator {
             op = op.with_validator(Arc::clone(validator));
@@ -106,7 +106,7 @@ impl super::Planner {
             output_schema,
         )
         .with_properties(properties)
-        .with_tx_context(self.viewing_epoch, self.tx_id);
+        .with_transaction_context(self.viewing_epoch, self.transaction_id);
 
         if let Some(col) = output_column {
             operator = operator.with_output_column(col);
@@ -150,7 +150,7 @@ impl super::Planner {
         if is_edge {
             let operator = Box::new(
                 DeleteEdgeOperator::new(Arc::clone(&self.store), input_op, col_idx, output_schema)
-                    .with_tx_context(self.viewing_epoch, self.tx_id),
+                    .with_transaction_context(self.viewing_epoch, self.transaction_id),
             );
             Ok((operator, output_columns))
         } else {
@@ -162,7 +162,7 @@ impl super::Planner {
                     output_schema,
                     delete.detach,
                 )
-                .with_tx_context(self.viewing_epoch, self.tx_id),
+                .with_transaction_context(self.viewing_epoch, self.transaction_id),
             );
             Ok((operator, output_columns))
         }
@@ -196,7 +196,7 @@ impl super::Planner {
                 edge_column,
                 output_schema,
             )
-            .with_tx_context(self.viewing_epoch, self.tx_id),
+            .with_transaction_context(self.viewing_epoch, self.transaction_id),
         );
 
         Ok((operator, output_columns))
@@ -602,6 +602,11 @@ impl super::Planner {
             return self.plan_static_result(result, &call.yield_items);
         }
 
+        // Catalog introspection procedures
+        if let Some(result) = self.plan_catalog_procedure(&resolved_name) {
+            return self.plan_static_result(result, &call.yield_items);
+        }
+
         // Check user-defined procedures first
         if let Some(catalog) = &self.catalog {
             let proc_name = if call.name.len() == 1 {
@@ -765,13 +770,54 @@ impl super::Planner {
             return_columns,
             yield_columns,
             Arc::clone(&self.store) as Arc<dyn GraphStoreMut>,
-            self.tx_manager.clone(),
-            self.tx_id,
+            self.transaction_manager.clone(),
+            self.transaction_id,
             self.viewing_epoch,
             self.catalog.clone(),
         ));
 
         Ok((operator, output_columns))
+    }
+
+    /// Resolves a catalog introspection procedure by name.
+    ///
+    /// Supports `db.labels`, `db.relationshipTypes`, `db.propertyKeys`,
+    /// `db.schema`, and `db.indexes` (also with `grafeo.` prefix).
+    #[cfg(feature = "algos")]
+    fn plan_catalog_procedure(
+        &self,
+        name: &str,
+    ) -> Option<grafeo_adapters::plugins::AlgorithmResult> {
+        use grafeo_adapters::plugins::AlgorithmResult;
+        use grafeo_common::types::Value;
+
+        match name {
+            "db.labels" | "grafeo.labels" => {
+                let labels = self.store.all_labels();
+                let mut result = AlgorithmResult::new(vec!["label".to_string()]);
+                for label in labels {
+                    result.rows.push(vec![Value::String(label.into())]);
+                }
+                Some(result)
+            }
+            "db.relationshipTypes" | "grafeo.relationshipTypes" => {
+                let types = self.store.all_edge_types();
+                let mut result = AlgorithmResult::new(vec!["relationshipType".to_string()]);
+                for t in types {
+                    result.rows.push(vec![Value::String(t.into())]);
+                }
+                Some(result)
+            }
+            "db.propertyKeys" | "grafeo.propertyKeys" => {
+                let keys = self.store.all_property_keys();
+                let mut result = AlgorithmResult::new(vec!["propertyKey".to_string()]);
+                for key in keys {
+                    result.rows.push(vec![Value::String(key.into())]);
+                }
+                Some(result)
+            }
+            _ => None,
+        }
     }
 
     /// Plans an ADD LABEL operator.

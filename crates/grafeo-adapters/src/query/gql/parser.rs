@@ -35,6 +35,7 @@ pub struct Parser<'a> {
     lexer: Lexer<'a>,
     current: Token,
     peeked: Option<Token>,
+    peeked_second: Option<Token>,
     source: &'a str,
 }
 
@@ -47,6 +48,7 @@ impl<'a> Parser<'a> {
             lexer,
             current,
             peeked: None,
+            peeked_second: None,
             source: input,
         }
     }
@@ -299,12 +301,50 @@ impl<'a> Parser<'a> {
                     }
                     "ROLLBACK" => {
                         self.advance();
-                        Ok(Statement::SessionCommand(SessionCommand::Rollback))
+                        // Check for ROLLBACK TO SAVEPOINT name
+                        if self.is_identifier()
+                            && self.get_identifier_name().eq_ignore_ascii_case("TO")
+                        {
+                            self.advance(); // consume TO
+                            if !(self.is_identifier()
+                                && self.get_identifier_name().eq_ignore_ascii_case("SAVEPOINT"))
+                            {
+                                return Err(self.error("Expected SAVEPOINT after ROLLBACK TO"));
+                            }
+                            self.advance(); // consume SAVEPOINT
+                            let name = self.get_identifier_name();
+                            self.advance(); // consume name
+                            Ok(Statement::SessionCommand(
+                                SessionCommand::RollbackToSavepoint(name),
+                            ))
+                        } else {
+                            Ok(Statement::SessionCommand(SessionCommand::Rollback))
+                        }
+                    }
+                    "SAVEPOINT" => {
+                        self.advance();
+                        let name = self.get_identifier_name();
+                        self.advance();
+                        Ok(Statement::SessionCommand(SessionCommand::Savepoint(name)))
+                    }
+                    "RELEASE" => {
+                        self.advance();
+                        if !(self.is_identifier()
+                            && self.get_identifier_name().eq_ignore_ascii_case("SAVEPOINT"))
+                        {
+                            return Err(self.error("Expected SAVEPOINT after RELEASE"));
+                        }
+                        self.advance(); // consume SAVEPOINT
+                        let name = self.get_identifier_name();
+                        self.advance();
+                        Ok(Statement::SessionCommand(SessionCommand::ReleaseSavepoint(
+                            name,
+                        )))
                     }
                     "ALTER" => self.parse_alter(),
                     _ => Err(self.error(
                         "Expected MATCH, INSERT, DELETE, MERGE, UNWIND, FOR, CREATE, CALL, \
-                         DROP, ALTER, USE, SESSION, START, COMMIT, or ROLLBACK",
+                         DROP, ALTER, USE, SESSION, START, COMMIT, ROLLBACK, or SAVEPOINT",
                     )),
                 }
             }
@@ -1272,6 +1312,12 @@ impl<'a> Parser<'a> {
                     | TokenKind::Simple
                     | TokenKind::Acyclic
             ) {
+                return self.parse_parenthesized_pattern();
+            }
+            // G048: `(identifier = ...)` is a subpath variable declaration
+            if matches!(peek, TokenKind::Identifier | TokenKind::QuotedIdentifier)
+                && self.peek_second_kind() == TokenKind::Eq
+            {
                 return self.parse_parenthesized_pattern();
             }
         }
@@ -2595,13 +2641,28 @@ impl<'a> Parser<'a> {
                     match kw.as_str() {
                         "TYPED" => {
                             // IS [NOT] TYPED <type_name>
+                            // Supports LIST<element_type> parameterized form
                             self.advance();
                             let type_name = if self.is_identifier() {
-                                self.get_identifier_name().to_uppercase()
+                                let base = self.get_identifier_name().to_uppercase();
+                                self.advance();
+                                // Handle LIST<type> parameterized syntax
+                                if base == "LIST" && self.current.kind == TokenKind::Lt {
+                                    self.advance(); // consume <
+                                    if self.is_identifier() {
+                                        let elem = self.get_identifier_name().to_uppercase();
+                                        self.advance();
+                                        self.expect(TokenKind::Gt)?;
+                                        format!("LIST<{elem}>")
+                                    } else {
+                                        return Err(self.error("Expected element type after LIST<"));
+                                    }
+                                } else {
+                                    base
+                                }
                             } else {
                                 return Err(self.error("Expected type name after IS TYPED"));
                             };
-                            self.advance();
                             let call = Expression::FunctionCall {
                                 name: "isTyped".to_string(),
                                 args: vec![left, Expression::Literal(Literal::String(type_name))],
@@ -3226,7 +3287,7 @@ impl<'a> Parser<'a> {
                 {
                     // VALUE { subquery } expression
                     self.advance(); // consume {
-                    let inner_query = self.parse_exists_inner_query()?;
+                    let inner_query = self.parse_value_subquery_inner()?;
                     self.expect(TokenKind::RBrace)?;
                     Ok(Expression::ValueSubquery {
                         query: Box::new(inner_query),
@@ -3334,28 +3395,48 @@ impl<'a> Parser<'a> {
                             self.advance();
                         }
                     }
+                    // Handle LIST<type> parameterized type
+                    if name == "LIST" && self.current.kind == TokenKind::Lt {
+                        self.advance(); // consume <
+                        if self.is_identifier() {
+                            let elem = self.get_identifier_name().to_uppercase();
+                            self.advance();
+                            self.expect(TokenKind::Gt)?;
+                            name = format!("LIST<{elem}>");
+                        } else {
+                            return Err(self.error("Expected element type after LIST<"));
+                        }
+                    }
                     name
                 } else {
                     return Err(self.error("Expected type name after AS"));
                 };
                 self.expect(TokenKind::RParen)?;
-                let func_name = match type_name.as_str() {
-                    "INTEGER" | "INT" | "INT64" | "BIGINT" => "toInteger",
-                    "FLOAT" | "DOUBLE" | "FLOAT64" | "REAL" => "toFloat",
-                    "STRING" | "VARCHAR" | "TEXT" => "toString",
-                    "BOOLEAN" | "BOOL" => "toBoolean",
-                    "DATE" => "toDate",
-                    "TIME" | "LOCALTIME" => "toTime",
-                    "DATETIME" | "TIMESTAMP" | "LOCALDATETIME" => "toDatetime",
-                    "DURATION" => "toDuration",
-                    "ZONED DATETIME" => "toZonedDatetime",
-                    "ZONED TIME" => "toZonedTime",
-                    "LIST" => "toList",
+                let (func_name, extra_arg) = match type_name.as_str() {
+                    "INTEGER" | "INT" | "INT64" | "BIGINT" => ("toInteger", None),
+                    "FLOAT" | "DOUBLE" | "FLOAT64" | "REAL" => ("toFloat", None),
+                    "STRING" | "VARCHAR" | "TEXT" => ("toString", None),
+                    "BOOLEAN" | "BOOL" => ("toBoolean", None),
+                    "DATE" => ("toDate", None),
+                    "TIME" | "LOCALTIME" => ("toTime", None),
+                    "DATETIME" | "TIMESTAMP" | "LOCALDATETIME" => ("toDatetime", None),
+                    "DURATION" => ("toDuration", None),
+                    "ZONED DATETIME" => ("toZonedDatetime", None),
+                    "ZONED TIME" => ("toZonedTime", None),
+                    "LIST" => ("toList", None),
+                    s if s.starts_with("LIST<") => {
+                        let elem_type = &s[5..s.len() - 1]; // extract type between < and >
+                        ("toTypedList", Some(elem_type.to_string()))
+                    }
                     _ => return Err(self.error(&format!("Unsupported CAST type: {type_name}"))),
                 };
+                let mut args = vec![expr];
+                if let Some(elem) = extra_arg {
+                    args.push(Expression::Literal(Literal::String(elem)));
+                }
                 Ok(Expression::FunctionCall {
                     name: func_name.to_string(),
-                    args: vec![expr],
+                    args,
                     distinct: false,
                 })
             }
@@ -3450,6 +3531,51 @@ impl<'a> Parser<'a> {
                 is_finish: false,
                 span: None,
             },
+            having_clause: None,
+            ordered_clauses: vec![],
+            span: None,
+        })
+    }
+
+    /// Parses the inner query of a VALUE subquery.
+    /// Handles: VALUE { MATCH ... [WHERE ...] RETURN expr }
+    fn parse_value_subquery_inner(&mut self) -> Result<QueryStatement> {
+        let mut match_clauses = Vec::new();
+
+        // Parse MATCH clauses
+        while self.current.kind == TokenKind::Match || self.current.kind == TokenKind::Optional {
+            match_clauses.push(self.parse_match_clause()?);
+        }
+
+        if match_clauses.is_empty() {
+            return Err(self.error("VALUE subquery requires at least one MATCH clause"));
+        }
+
+        // Parse optional WHERE
+        let where_clause = if self.current.kind == TokenKind::Where {
+            Some(self.parse_where_clause()?)
+        } else {
+            None
+        };
+
+        // Parse required RETURN
+        let return_clause = if self.current.kind == TokenKind::Return {
+            self.parse_return_clause()?
+        } else {
+            return Err(self.error("VALUE subquery requires a RETURN clause"));
+        };
+
+        Ok(QueryStatement {
+            match_clauses,
+            where_clause,
+            set_clauses: vec![],
+            remove_clauses: vec![],
+            with_clauses: vec![],
+            unwind_clauses: vec![],
+            merge_clauses: vec![],
+            create_clauses: vec![],
+            delete_clauses: vec![],
+            return_clause,
             having_clause: None,
             ordered_clauses: vec![],
             span: None,
@@ -4714,6 +4840,8 @@ impl<'a> Parser<'a> {
     fn advance(&mut self) {
         if let Some(peeked) = self.peeked.take() {
             self.current = peeked;
+            // Shift peeked_second into peeked
+            self.peeked = self.peeked_second.take();
         } else {
             self.current = self.lexer.next_token();
         }
@@ -4735,6 +4863,19 @@ impl<'a> Parser<'a> {
         self.peeked
             .as_ref()
             .expect("peeked token was just populated")
+            .kind
+    }
+
+    /// Peeks at the token after the next token (two-token lookahead).
+    fn peek_second_kind(&mut self) -> TokenKind {
+        // Ensure first peeked is populated
+        let _ = self.peek_kind();
+        if self.peeked_second.is_none() {
+            self.peeked_second = Some(self.lexer.next_token());
+        }
+        self.peeked_second
+            .as_ref()
+            .expect("peeked_second token was just populated")
             .kind
     }
 
@@ -4930,24 +5071,91 @@ impl<'a> Parser<'a> {
         let name = self.get_identifier_name();
         self.advance();
 
-        // Optional TYPED type_name
-        let typed =
-            if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("TYPED") {
+        // Optional TYPED type_name or [TYPED] ANY [[PROPERTY] GRAPH] (open graph type)
+        let mut open = false;
+        let typed = if self.is_identifier()
+            && self.get_identifier_name().eq_ignore_ascii_case("TYPED")
+        {
+            self.advance();
+            // Check for ANY (open graph type): TYPED ANY [[PROPERTY] GRAPH]
+            if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("ANY") {
                 self.advance();
-                if !self.is_identifier() {
-                    return Err(self.error("Expected graph type name after TYPED"));
+                // Consume optional PROPERTY
+                if self.is_identifier()
+                    && self.get_identifier_name().eq_ignore_ascii_case("PROPERTY")
+                {
+                    self.advance();
                 }
+                // Consume optional GRAPH
+                if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("GRAPH")
+                {
+                    self.advance();
+                }
+                open = true;
+                None // ANY GRAPH = open/schema-free (no type binding)
+            } else if self.is_identifier() {
                 let type_name = self.get_identifier_name();
                 self.advance();
                 Some(type_name)
             } else {
-                None
-            };
+                return Err(self.error("Expected graph type name or ANY after TYPED"));
+            }
+        } else if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("ANY") {
+            // ANY [[PROPERTY] GRAPH] without TYPED prefix
+            self.advance();
+            if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("PROPERTY") {
+                self.advance();
+            }
+            if self.is_identifier() && self.get_identifier_name().eq_ignore_ascii_case("GRAPH") {
+                self.advance();
+            }
+            open = true;
+            None // open graph
+        } else {
+            None
+        };
+
+        // Optional LIKE source_graph (LIKE is a keyword token, not an identifier)
+        let like_graph = if self.current.kind == TokenKind::Like {
+            self.advance();
+            if !self.is_identifier() {
+                return Err(self.error("Expected graph name after LIKE"));
+            }
+            let source = self.get_identifier_name();
+            self.advance();
+            Some(source)
+        } else {
+            None
+        };
+
+        // Optional AS COPY OF source_graph
+        let copy_of = if self.current.kind == TokenKind::As {
+            self.advance();
+            if !self.is_identifier() || !self.get_identifier_name().eq_ignore_ascii_case("COPY") {
+                return Err(self.error("Expected COPY after AS"));
+            }
+            self.advance();
+            if !self.is_identifier() || !self.get_identifier_name().eq_ignore_ascii_case("OF") {
+                return Err(self.error("Expected OF after COPY"));
+            }
+            self.advance();
+            if !self.is_identifier() {
+                return Err(self.error("Expected graph name after AS COPY OF"));
+            }
+            let source = self.get_identifier_name();
+            self.advance();
+            Some(source)
+        } else {
+            None
+        };
 
         Ok(SessionCommand::CreateGraph {
             name,
             if_not_exists,
             typed,
+            like_graph,
+            copy_of,
+            open,
         })
     }
 

@@ -11,7 +11,7 @@ use crate::graph::lpg::{Edge, Node};
 use crate::graph::traits::{GraphStore, GraphStoreMut};
 use crate::statistics::Statistics;
 use arcstr::ArcStr;
-use grafeo_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TxId, Value};
+use grafeo_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TransactionId, Value};
 use grafeo_common::utils::hash::FxHashMap;
 use std::sync::Arc;
 
@@ -24,12 +24,22 @@ impl GraphStore for LpgStore {
         LpgStore::get_edge(self, id)
     }
 
-    fn get_node_versioned(&self, id: NodeId, epoch: EpochId, tx_id: TxId) -> Option<Node> {
-        LpgStore::get_node_versioned(self, id, epoch, tx_id)
+    fn get_node_versioned(
+        &self,
+        id: NodeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Option<Node> {
+        LpgStore::get_node_versioned(self, id, epoch, transaction_id)
     }
 
-    fn get_edge_versioned(&self, id: EdgeId, epoch: EpochId, tx_id: TxId) -> Option<Edge> {
-        LpgStore::get_edge_versioned(self, id, epoch, tx_id)
+    fn get_edge_versioned(
+        &self,
+        id: EdgeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Option<Edge> {
+        LpgStore::get_edge_versioned(self, id, epoch, transaction_id)
     }
 
     fn get_node_at_epoch(&self, id: NodeId, epoch: EpochId) -> Option<Node> {
@@ -169,6 +179,18 @@ impl GraphStore for LpgStore {
         LpgStore::current_epoch(self)
     }
 
+    fn all_labels(&self) -> Vec<String> {
+        LpgStore::all_labels(self)
+    }
+
+    fn all_edge_types(&self) -> Vec<String> {
+        LpgStore::all_edge_types(self)
+    }
+
+    fn all_property_keys(&self) -> Vec<String> {
+        LpgStore::all_property_keys(self)
+    }
+
     fn get_node_history(&self, id: NodeId) -> Vec<(EpochId, Option<EpochId>, Node)> {
         LpgStore::get_node_history(self, id)
     }
@@ -183,8 +205,13 @@ impl GraphStoreMut for LpgStore {
         LpgStore::create_node(self, labels)
     }
 
-    fn create_node_versioned(&self, labels: &[&str], epoch: EpochId, tx_id: TxId) -> NodeId {
-        LpgStore::create_node_versioned(self, labels, epoch, tx_id)
+    fn create_node_versioned(
+        &self,
+        labels: &[&str],
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> NodeId {
+        LpgStore::create_node_versioned(self, labels, epoch, transaction_id)
     }
 
     fn create_edge(&self, src: NodeId, dst: NodeId, edge_type: &str) -> EdgeId {
@@ -197,9 +224,9 @@ impl GraphStoreMut for LpgStore {
         dst: NodeId,
         edge_type: &str,
         epoch: EpochId,
-        tx_id: TxId,
+        transaction_id: TransactionId,
     ) -> EdgeId {
-        LpgStore::create_edge_versioned(self, src, dst, edge_type, epoch, tx_id)
+        LpgStore::create_edge_versioned(self, src, dst, edge_type, epoch, transaction_id)
     }
 
     fn batch_create_edges(&self, edges: &[(NodeId, NodeId, &str)]) -> Vec<EdgeId> {
@@ -210,7 +237,12 @@ impl GraphStoreMut for LpgStore {
         LpgStore::delete_node(self, id)
     }
 
-    fn delete_node_versioned(&self, id: NodeId, epoch: EpochId, _tx_id: TxId) -> bool {
+    fn delete_node_versioned(
+        &self,
+        id: NodeId,
+        epoch: EpochId,
+        _transaction_id: TransactionId,
+    ) -> bool {
         LpgStore::delete_node_at_epoch(self, id, epoch)
     }
 
@@ -222,7 +254,12 @@ impl GraphStoreMut for LpgStore {
         LpgStore::delete_edge(self, id)
     }
 
-    fn delete_edge_versioned(&self, id: EdgeId, epoch: EpochId, _tx_id: TxId) -> bool {
+    fn delete_edge_versioned(
+        &self,
+        id: EdgeId,
+        epoch: EpochId,
+        _transaction_id: TransactionId,
+    ) -> bool {
         LpgStore::delete_edge_at_epoch(self, id, epoch)
     }
 

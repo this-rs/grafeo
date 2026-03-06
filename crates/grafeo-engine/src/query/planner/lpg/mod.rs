@@ -23,7 +23,7 @@ use crate::query::plan::{
     NodeScanOp, OtherwiseOp, PathMode, RemoveLabelOp, ReturnOp, SetPropertyOp, ShortestPathOp,
     SkipOp, SortOp, SortOrder, UnaryOp, UnionOp, UnwindOp,
 };
-use grafeo_common::types::{EpochId, TxId};
+use grafeo_common::types::{EpochId, TransactionId};
 use grafeo_common::types::{LogicalType, Value};
 use grafeo_common::utils::error::{Error, Result};
 use grafeo_core::execution::AdaptiveContext;
@@ -65,9 +65,9 @@ pub struct Planner {
     /// The graph store (supports both read and write operations).
     pub(super) store: Arc<dyn GraphStoreMut>,
     /// Transaction manager for MVCC operations.
-    pub(super) tx_manager: Option<Arc<TransactionManager>>,
+    pub(super) transaction_manager: Option<Arc<TransactionManager>>,
     /// Current transaction ID (if in a transaction).
-    pub(super) tx_id: Option<TxId>,
+    pub(super) transaction_id: Option<TransactionId>,
     /// Epoch to use for visibility checks.
     pub(super) viewing_epoch: EpochId,
     /// Counter for generating unique anonymous edge column names.
@@ -104,8 +104,8 @@ impl Planner {
         let epoch = store.current_epoch();
         Self {
             store,
-            tx_manager: None,
-            tx_id: None,
+            transaction_manager: None,
+            transaction_id: None,
             viewing_epoch: epoch,
             anon_edge_counter: std::cell::Cell::new(0),
             factorized_execution: true,
@@ -122,14 +122,14 @@ impl Planner {
     #[must_use]
     pub fn with_context(
         store: Arc<dyn GraphStoreMut>,
-        tx_manager: Arc<TransactionManager>,
-        tx_id: Option<TxId>,
+        transaction_manager: Arc<TransactionManager>,
+        transaction_id: Option<TransactionId>,
         viewing_epoch: EpochId,
     ) -> Self {
         Self {
             store,
-            tx_manager: Some(tx_manager),
-            tx_id,
+            transaction_manager: Some(transaction_manager),
+            transaction_id,
             viewing_epoch,
             anon_edge_counter: std::cell::Cell::new(0),
             factorized_execution: true,
@@ -150,14 +150,14 @@ impl Planner {
 
     /// Returns the transaction ID for this planner, if any.
     #[must_use]
-    pub fn tx_id(&self) -> Option<TxId> {
-        self.tx_id
+    pub fn transaction_id(&self) -> Option<TransactionId> {
+        self.transaction_id
     }
 
     /// Returns a reference to the transaction manager, if available.
     #[must_use]
-    pub fn tx_manager(&self) -> Option<&Arc<TransactionManager>> {
-        self.tx_manager.as_ref()
+    pub fn transaction_manager(&self) -> Option<&Arc<TransactionManager>> {
+        self.transaction_manager.as_ref()
     }
 
     /// Enables or disables factorized execution for multi-hop queries.
@@ -318,7 +318,7 @@ impl Planner {
             }
             LogicalOperator::Limit(limit) => {
                 let input_estimate = self.estimate_cardinality(&limit.input);
-                let estimate = (input_estimate).min(limit.count as f64);
+                let estimate = (input_estimate).min(limit.count.estimate());
                 let id = format!("limit_{depth}");
                 ctx.set_estimate(&id, estimate);
 
@@ -326,7 +326,7 @@ impl Planner {
             }
             LogicalOperator::Skip(skip) => {
                 let input_estimate = self.estimate_cardinality(&skip.input);
-                let estimate = (input_estimate - skip.count as f64).max(0.0);
+                let estimate = (input_estimate - skip.count.estimate()).max(0.0);
                 let id = format!("skip_{depth}");
                 ctx.set_estimate(&id, estimate);
 
@@ -388,9 +388,9 @@ impl Planner {
             LogicalOperator::Return(ret) => self.estimate_cardinality(&ret.input),
             LogicalOperator::Limit(limit) => self
                 .estimate_cardinality(&limit.input)
-                .min(limit.count as f64),
+                .min(limit.count.estimate()),
             LogicalOperator::Skip(skip) => {
-                (self.estimate_cardinality(&skip.input) - skip.count as f64).max(0.0)
+                (self.estimate_cardinality(&skip.input) - skip.count.estimate()).max(0.0)
             }
             LogicalOperator::Sort(sort) => self.estimate_cardinality(&sort.input),
             LogicalOperator::Union(union) => union
@@ -1060,7 +1060,7 @@ mod tests {
             }],
             distinct: false,
             input: Box::new(LogicalOperator::Limit(LogicalLimitOp {
-                count: 10,
+                count: 10.into(),
                 input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
                     variable: "n".to_string(),
                     label: None,
@@ -1086,7 +1086,7 @@ mod tests {
             }],
             distinct: false,
             input: Box::new(LogicalOperator::Skip(LogicalSkipOp {
-                count: 5,
+                count: 5.into(),
                 input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
                     variable: "n".to_string(),
                     label: None,
@@ -1261,6 +1261,7 @@ mod tests {
                     distinct: false,
                     alias: Some("cnt".to_string()),
                     percentile: None,
+                    separator: None,
                 }],
                 input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
                     variable: "n".to_string(),
@@ -1293,6 +1294,7 @@ mod tests {
                 distinct: false,
                 alias: Some("cnt".to_string()),
                 percentile: None,
+                separator: None,
             }],
             input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
                 variable: "n".to_string(),
@@ -1324,6 +1326,7 @@ mod tests {
                 distinct: false,
                 alias: Some("total".to_string()),
                 percentile: None,
+                separator: None,
             }],
             input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
                 variable: "n".to_string(),
@@ -1355,6 +1358,7 @@ mod tests {
                 distinct: false,
                 alias: Some("average".to_string()),
                 percentile: None,
+                separator: None,
             }],
             input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
                 variable: "n".to_string(),
@@ -1387,6 +1391,7 @@ mod tests {
                     distinct: false,
                     alias: Some("youngest".to_string()),
                     percentile: None,
+                    separator: None,
                 },
                 LogicalAggregateExpr {
                     function: LogicalAggregateFunction::Max,
@@ -1398,6 +1403,7 @@ mod tests {
                     distinct: false,
                     alias: Some("oldest".to_string()),
                     percentile: None,
+                    separator: None,
                 },
             ],
             input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
@@ -1670,8 +1676,8 @@ mod tests {
         let store = create_test_store();
         let planner = Planner::new(Arc::clone(&store));
 
-        assert!(planner.tx_id().is_none());
-        assert!(planner.tx_manager().is_none());
+        assert!(planner.transaction_id().is_none());
+        assert!(planner.transaction_manager().is_none());
         let _ = planner.viewing_epoch(); // Just ensure it's accessible
     }
 
@@ -1845,6 +1851,7 @@ mod tests {
                 distinct: false,
                 alias: Some("cnt".to_string()),
                 percentile: None,
+                separator: None,
             }],
             input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
                 variable: "n".to_string(),
@@ -1895,7 +1902,7 @@ mod tests {
             }],
             distinct: false,
             input: Box::new(LogicalOperator::Limit(LogicalLimitOp {
-                count: 10,
+                count: 10.into(),
                 input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
                     variable: "n".to_string(),
                     label: None,
@@ -1920,7 +1927,7 @@ mod tests {
             }],
             distinct: false,
             input: Box::new(LogicalOperator::Skip(LogicalSkipOp {
-                count: 5,
+                count: 5.into(),
                 input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
                     variable: "n".to_string(),
                     label: None,
@@ -2167,19 +2174,19 @@ mod tests {
         use crate::transaction::TransactionManager;
 
         let store = create_test_store();
-        let tx_manager = Arc::new(TransactionManager::new());
-        let tx_id = tx_manager.begin();
-        let epoch = tx_manager.current_epoch();
+        let transaction_manager = Arc::new(TransactionManager::new());
+        let transaction_id = transaction_manager.begin();
+        let epoch = transaction_manager.current_epoch();
 
         let planner = Planner::with_context(
             Arc::clone(&store),
-            Arc::clone(&tx_manager),
-            Some(tx_id),
+            Arc::clone(&transaction_manager),
+            Some(transaction_id),
             epoch,
         );
 
-        assert_eq!(planner.tx_id(), Some(tx_id));
-        assert!(planner.tx_manager().is_some());
+        assert_eq!(planner.transaction_id(), Some(transaction_id));
+        assert!(planner.transaction_manager().is_some());
         assert_eq!(planner.viewing_epoch(), epoch);
     }
 

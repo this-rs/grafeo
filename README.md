@@ -110,11 +110,14 @@ Grafeo uses a modular translator architecture where query languages are parsed i
 cargo add grafeo
 ```
 
-By default, all query languages, AI features and graph algorithms are enabled via the `full` feature. Use feature groups to customize:
+By default, the `embedded` profile is enabled: GQL, AI features (vector/text/hybrid search, CDC), graph algorithms and parallel execution. Use feature groups to customize:
 
 ```bash
-# Default: everything (languages + ai + algos)
+# Default (embedded profile): GQL + AI + algorithms + parallel
 cargo add grafeo
+
+# All query languages + AI + algorithms + storage
+cargo add grafeo --no-default-features --features full
 
 # Only query languages, no AI features or algorithms
 cargo add grafeo --no-default-features --features languages

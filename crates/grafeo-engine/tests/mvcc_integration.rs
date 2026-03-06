@@ -10,7 +10,7 @@ use grafeo_common::types::{EpochId, Value};
 use grafeo_core::graph::lpg::LpgStore;
 use grafeo_engine::{
     GrafeoDB,
-    transaction::{TransactionManager, TxState},
+    transaction::{TransactionManager, TransactionState},
 };
 
 /// Helper to create a test store with some initial data.
@@ -285,7 +285,7 @@ fn test_session_transaction_isolation() {
     let mut session = db.session();
 
     // Begin transaction
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
 
     // Create a node within transaction (using GQL INSERT syntax)
     session
@@ -314,7 +314,7 @@ fn test_session_rollback_state() {
     let mut session = db.session();
 
     // Begin transaction
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
     assert!(
         session.in_transaction(),
         "Should be in transaction after begin"
@@ -328,7 +328,7 @@ fn test_session_rollback_state() {
     );
 
     // Should be able to begin a new transaction
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
     assert!(
         session.in_transaction(),
         "Should be able to begin new transaction"
@@ -360,14 +360,14 @@ fn test_transaction_state_transitions() {
     let tx_manager = Arc::new(TransactionManager::new());
 
     let tx = tx_manager.begin();
-    assert_eq!(tx_manager.state(tx), Some(TxState::Active));
+    assert_eq!(tx_manager.state(tx), Some(TransactionState::Active));
 
     tx_manager.commit(tx).unwrap();
-    assert_eq!(tx_manager.state(tx), Some(TxState::Committed));
+    assert_eq!(tx_manager.state(tx), Some(TransactionState::Committed));
 
     let tx2 = tx_manager.begin();
     tx_manager.abort(tx2).unwrap();
-    assert_eq!(tx_manager.state(tx2), Some(TxState::Aborted));
+    assert_eq!(tx_manager.state(tx2), Some(TransactionState::Aborted));
 }
 
 #[test]
@@ -503,7 +503,7 @@ fn edge_type_visible_after_tx_commit_autocommit_edge() {
     let mut session = db.session();
 
     // Create nodes inside a transaction
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
     session.execute("INSERT (:Person {id: 'tx_a'})").unwrap();
     session.execute("INSERT (:Person {id: 'tx_b'})").unwrap();
     session.commit().unwrap();
@@ -528,18 +528,18 @@ fn edge_type_visible_after_tx_commit_autocommit_edge() {
 
 /// Same scenario but the edge is also created inside a new transaction.
 #[test]
-fn edge_type_visible_after_tx_commit_tx_edge() {
+fn edge_type_visible_after_tx_commit_transaction_edge() {
     let db = GrafeoDB::new_in_memory();
     let mut session = db.session();
 
     // Create nodes in first transaction
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
     session.execute("INSERT (:Person {id: 'tx2_a'})").unwrap();
     session.execute("INSERT (:Person {id: 'tx2_b'})").unwrap();
     session.commit().unwrap();
 
     // Create edge in a second transaction
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
     session
         .execute("MATCH (a {id: 'tx2_a'}), (b {id: 'tx2_b'}) CREATE (a)-[:FRIENDS]->(b)")
         .unwrap();
@@ -562,7 +562,7 @@ fn edge_type_visible_same_tx() {
     let db = GrafeoDB::new_in_memory();
     let mut session = db.session();
 
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
     session.execute("INSERT (:Person {id: 'same_a'})").unwrap();
     session.execute("INSERT (:Person {id: 'same_b'})").unwrap();
     session
@@ -584,7 +584,7 @@ fn edge_types_preserved_bulk_after_tx() {
     let mut session = db.session();
 
     // Bulk-create nodes in a transaction
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
     for i in 0..20 {
         session
             .execute(&format!("INSERT (:Node {{idx: {i}}})"))
@@ -623,7 +623,7 @@ fn edge_types_interleaved_autocommit_and_tx() {
     session.execute("INSERT (:Person {id: 'auto_x'})").unwrap();
 
     // Transaction node
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
     session.execute("INSERT (:Person {id: 'tx_y'})").unwrap();
     session.commit().unwrap();
 

@@ -5,7 +5,7 @@
 
 use super::term::Term;
 use super::triple::{Triple, TriplePattern};
-use grafeo_common::types::TxId;
+use grafeo_common::types::TransactionId;
 use grafeo_common::utils::hash::FxHashSet;
 use hashbrown::HashMap;
 use parking_lot::RwLock;
@@ -24,7 +24,7 @@ enum PendingOp {
 #[derive(Debug, Default)]
 struct TransactionBuffer {
     /// Pending operations for each transaction.
-    buffers: HashMap<TxId, Vec<PendingOp>>,
+    buffers: HashMap<TransactionId, Vec<PendingOp>>,
 }
 
 /// Configuration for the RDF store.
@@ -623,11 +623,11 @@ impl RdfStore {
     ///
     /// The insert is buffered until the transaction is committed.
     /// If the transaction is rolled back, the insert is discarded.
-    pub fn insert_in_tx(&self, tx_id: TxId, triple: Triple) {
+    pub fn insert_in_transaction(&self, transaction_id: TransactionId, triple: Triple) {
         let mut buffer = self.tx_buffer.write();
         buffer
             .buffers
-            .entry(tx_id)
+            .entry(transaction_id)
             .or_default()
             .push(PendingOp::Insert(triple));
     }
@@ -636,11 +636,11 @@ impl RdfStore {
     ///
     /// The removal is buffered until the transaction is committed.
     /// If the transaction is rolled back, the removal is discarded.
-    pub fn remove_in_tx(&self, tx_id: TxId, triple: Triple) {
+    pub fn remove_in_transaction(&self, transaction_id: TransactionId, triple: Triple) {
         let mut buffer = self.tx_buffer.write();
         buffer
             .buffers
-            .entry(tx_id)
+            .entry(transaction_id)
             .or_default()
             .push(PendingOp::Delete(triple));
     }
@@ -648,10 +648,10 @@ impl RdfStore {
     /// Commits a transaction, applying all buffered operations.
     ///
     /// Returns the number of operations applied.
-    pub fn commit_tx(&self, tx_id: TxId) -> usize {
+    pub fn commit_transaction(&self, transaction_id: TransactionId) -> usize {
         let ops = {
             let mut buffer = self.tx_buffer.write();
-            buffer.buffers.remove(&tx_id).unwrap_or_default()
+            buffer.buffers.remove(&transaction_id).unwrap_or_default()
         };
 
         let count = ops.len();
@@ -671,18 +671,21 @@ impl RdfStore {
     /// Rolls back a transaction, discarding all buffered operations.
     ///
     /// Returns the number of operations discarded.
-    pub fn rollback_tx(&self, tx_id: TxId) -> usize {
+    pub fn rollback_transaction(&self, transaction_id: TransactionId) -> usize {
         let mut buffer = self.tx_buffer.write();
-        buffer.buffers.remove(&tx_id).map_or(0, |ops| ops.len())
+        buffer
+            .buffers
+            .remove(&transaction_id)
+            .map_or(0, |ops| ops.len())
     }
 
     /// Checks if a transaction has pending operations.
     #[must_use]
-    pub fn has_pending_ops(&self, tx_id: TxId) -> bool {
+    pub fn has_pending_ops(&self, transaction_id: TransactionId) -> bool {
         let buffer = self.tx_buffer.read();
         buffer
             .buffers
-            .get(&tx_id)
+            .get(&transaction_id)
             .is_some_and(|ops| !ops.is_empty())
     }
 
@@ -695,11 +698,11 @@ impl RdfStore {
     pub fn find_with_pending(
         &self,
         pattern: &TriplePattern,
-        tx_id: Option<TxId>,
+        transaction_id: Option<TransactionId>,
     ) -> Vec<Arc<Triple>> {
         let mut results = self.find(pattern);
 
-        if let Some(tx) = tx_id {
+        if let Some(tx) = transaction_id {
             let buffer = self.tx_buffer.read();
             if let Some(ops) = buffer.buffers.get(&tx) {
                 // Collect pending deletes
@@ -920,8 +923,8 @@ mod tests {
         }
 
         // Create a transaction and add a pending delete
-        let tx_id = TxId::new(1);
-        store.remove_in_tx(tx_id, triples[0].clone()); // Delete Alix's name triple
+        let transaction_id = TransactionId::new(1);
+        store.remove_in_transaction(transaction_id, triples[0].clone()); // Delete Alix's name triple
 
         // Query with transaction context - should NOT see the deleted triple
         let pattern = TriplePattern {
@@ -930,7 +933,7 @@ mod tests {
             object: None,
         };
 
-        let results = store.find_with_pending(&pattern, Some(tx_id));
+        let results = store.find_with_pending(&pattern, Some(transaction_id));
         assert_eq!(results.len(), 2); // Should be 2, not 3 (one deleted)
 
         // Verify the deleted triple is not in results
@@ -949,9 +952,9 @@ mod tests {
             Term::iri("http://xmlns.com/foaf/0.1/email"),
             Term::literal("alix@example.org"),
         );
-        store.insert_in_tx(tx_id, new_triple.clone());
+        store.insert_in_transaction(transaction_id, new_triple.clone());
 
-        let results_with_insert = store.find_with_pending(&pattern, Some(tx_id));
+        let results_with_insert = store.find_with_pending(&pattern, Some(transaction_id));
         assert_eq!(results_with_insert.len(), 3); // 2 committed - 1 deleted + 1 inserted
 
         // Verify the new triple is in results
@@ -1109,20 +1112,20 @@ mod tests {
         assert_eq!(store.len(), 4);
 
         // Test rollback
-        let tx1 = TxId::new(1);
-        store.remove_in_tx(tx1, triples[0].clone());
+        let tx1 = TransactionId::new(1);
+        store.remove_in_transaction(tx1, triples[0].clone());
         assert!(store.has_pending_ops(tx1));
 
-        let discarded = store.rollback_tx(tx1);
+        let discarded = store.rollback_transaction(tx1);
         assert_eq!(discarded, 1);
         assert!(!store.has_pending_ops(tx1));
         assert_eq!(store.len(), 4); // No change
 
         // Test commit
-        let tx2 = TxId::new(2);
-        store.remove_in_tx(tx2, triples[0].clone());
+        let tx2 = TransactionId::new(2);
+        store.remove_in_transaction(tx2, triples[0].clone());
 
-        let applied = store.commit_tx(tx2);
+        let applied = store.commit_transaction(tx2);
         assert_eq!(applied, 1);
         assert_eq!(store.len(), 3); // Triple removed
         assert!(!store.contains(&triples[0]));

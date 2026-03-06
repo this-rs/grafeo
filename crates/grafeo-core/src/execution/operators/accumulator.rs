@@ -83,6 +83,8 @@ pub struct AggregateExpr {
     pub alias: Option<String>,
     /// Percentile parameter for PERCENTILE_DISC/PERCENTILE_CONT (0.0 to 1.0).
     pub percentile: Option<f64>,
+    /// Separator string for GROUP_CONCAT / LISTAGG.
+    pub separator: Option<String>,
 }
 
 impl AggregateExpr {
@@ -95,6 +97,7 @@ impl AggregateExpr {
             distinct: false,
             alias: None,
             percentile: None,
+            separator: None,
         }
     }
 
@@ -107,6 +110,7 @@ impl AggregateExpr {
             distinct: false,
             alias: None,
             percentile: None,
+            separator: None,
         }
     }
 
@@ -119,6 +123,7 @@ impl AggregateExpr {
             distinct: false,
             alias: None,
             percentile: None,
+            separator: None,
         }
     }
 
@@ -131,6 +136,7 @@ impl AggregateExpr {
             distinct: false,
             alias: None,
             percentile: None,
+            separator: None,
         }
     }
 
@@ -143,6 +149,7 @@ impl AggregateExpr {
             distinct: false,
             alias: None,
             percentile: None,
+            separator: None,
         }
     }
 
@@ -155,6 +162,7 @@ impl AggregateExpr {
             distinct: false,
             alias: None,
             percentile: None,
+            separator: None,
         }
     }
 
@@ -167,6 +175,7 @@ impl AggregateExpr {
             distinct: false,
             alias: None,
             percentile: None,
+            separator: None,
         }
     }
 
@@ -179,6 +188,7 @@ impl AggregateExpr {
             distinct: false,
             alias: None,
             percentile: None,
+            separator: None,
         }
     }
 
@@ -191,6 +201,7 @@ impl AggregateExpr {
             distinct: false,
             alias: None,
             percentile: None,
+            separator: None,
         }
     }
 
@@ -203,6 +214,7 @@ impl AggregateExpr {
             distinct: false,
             alias: None,
             percentile: None,
+            separator: None,
         }
     }
 
@@ -215,6 +227,7 @@ impl AggregateExpr {
             distinct: false,
             alias: None,
             percentile: None,
+            separator: None,
         }
     }
 
@@ -231,6 +244,7 @@ impl AggregateExpr {
             distinct: false,
             alias: None,
             percentile: Some(percentile.clamp(0.0, 1.0)),
+            separator: None,
         }
     }
 
@@ -247,6 +261,7 @@ impl AggregateExpr {
             distinct: false,
             alias: None,
             percentile: Some(percentile.clamp(0.0, 1.0)),
+            separator: None,
         }
     }
 

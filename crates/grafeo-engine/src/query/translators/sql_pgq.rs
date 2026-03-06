@@ -147,6 +147,7 @@ impl SqlPgqTranslator {
                                 distinct: *distinct,
                                 alias,
                                 percentile: None,
+                                separator: None,
                             });
                         }
                         _ => {

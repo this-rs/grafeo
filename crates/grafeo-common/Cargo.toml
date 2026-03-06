@@ -38,7 +38,6 @@ default = []
 tiered-storage = []
 
 [dev-dependencies]
-proptest.workspace = true
 criterion.workspace = true
 
 [lints]

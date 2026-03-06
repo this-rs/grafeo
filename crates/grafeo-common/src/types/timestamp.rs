@@ -131,6 +131,53 @@ impl Timestamp {
         super::Time::from_nanos(day_nanos).unwrap_or_default()
     }
 
+    /// Truncates this timestamp to the given unit.
+    ///
+    /// - `"year"`: truncates to midnight on January 1st
+    /// - `"month"`: truncates to midnight on the 1st of the month
+    /// - `"day"`: truncates to midnight (zeroes time component)
+    /// - `"hour"`: zeroes minutes, seconds, microseconds
+    /// - `"minute"`: zeroes seconds, microseconds
+    /// - `"second"`: zeroes microseconds
+    #[must_use]
+    pub fn truncate(self, unit: &str) -> Option<Self> {
+        match unit {
+            "year" => {
+                let date = self.to_date();
+                let jan1 = super::Date::from_ymd(date.year(), 1, 1)?;
+                Some(jan1.to_timestamp())
+            }
+            "month" => {
+                let date = self.to_date();
+                let first = super::Date::from_ymd(date.year(), date.month(), 1)?;
+                Some(first.to_timestamp())
+            }
+            "day" => {
+                let days = self.0.div_euclid(86_400_000_000);
+                Some(Self(days * 86_400_000_000))
+            }
+            "hour" => {
+                let days = self.0.div_euclid(86_400_000_000);
+                let day_micros = self.0.rem_euclid(86_400_000_000);
+                let hours = day_micros / 3_600_000_000;
+                Some(Self(days * 86_400_000_000 + hours * 3_600_000_000))
+            }
+            "minute" => {
+                let days = self.0.div_euclid(86_400_000_000);
+                let day_micros = self.0.rem_euclid(86_400_000_000);
+                let minutes = day_micros / 60_000_000;
+                Some(Self(days * 86_400_000_000 + minutes * 60_000_000))
+            }
+            "second" => {
+                let days = self.0.div_euclid(86_400_000_000);
+                let day_micros = self.0.rem_euclid(86_400_000_000);
+                let seconds = day_micros / 1_000_000;
+                Some(Self(days * 86_400_000_000 + seconds * 1_000_000))
+            }
+            _ => None,
+        }
+    }
+
     /// Adds a temporal duration to this timestamp.
     #[must_use]
     pub fn add_duration(self, dur: &super::Duration) -> Self {
@@ -262,6 +309,41 @@ mod tests {
             .or_else(|e| Ok::<_, ()>(e.duration()))
             .unwrap();
         assert!(diff.as_micros() < 2);
+    }
+
+    #[test]
+    fn test_truncate() {
+        // 2024-06-15T14:30:45.123456Z
+        let date = crate::types::Date::from_ymd(2024, 6, 15).unwrap();
+        let time = crate::types::Time::from_hms_nano(14, 30, 45, 123_456_000).unwrap();
+        let ts = Timestamp::from_date_time(date, time);
+
+        let year = ts.truncate("year").unwrap();
+        assert_eq!(year.to_date().to_string(), "2024-01-01");
+        assert_eq!(year.to_time().hour(), 0);
+
+        let month = ts.truncate("month").unwrap();
+        assert_eq!(month.to_date().to_string(), "2024-06-01");
+        assert_eq!(month.to_time().hour(), 0);
+
+        let day = ts.truncate("day").unwrap();
+        assert_eq!(day.to_date().to_string(), "2024-06-15");
+        assert_eq!(day.to_time().hour(), 0);
+
+        let hour = ts.truncate("hour").unwrap();
+        assert_eq!(hour.to_time().hour(), 14);
+        assert_eq!(hour.to_time().minute(), 0);
+
+        let minute = ts.truncate("minute").unwrap();
+        assert_eq!(minute.to_time().hour(), 14);
+        assert_eq!(minute.to_time().minute(), 30);
+        assert_eq!(minute.to_time().second(), 0);
+
+        let second = ts.truncate("second").unwrap();
+        assert_eq!(second.to_time().second(), 45);
+        assert_eq!(second.to_time().nanosecond(), 0);
+
+        assert!(ts.truncate("invalid").is_none());
     }
 
     #[test]

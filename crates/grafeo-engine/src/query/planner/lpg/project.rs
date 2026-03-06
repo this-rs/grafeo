@@ -402,7 +402,7 @@ impl super::Planner {
         Ok(crate::query::planner::common::build_limit(
             input_op,
             columns,
-            limit.count,
+            limit.count.value(),
             schema,
         ))
     }
@@ -412,7 +412,10 @@ impl super::Planner {
         let (input_op, columns) = self.plan_operator(&skip.input)?;
         let schema = self.derive_schema_from_columns(&columns);
         Ok(crate::query::planner::common::build_skip(
-            input_op, columns, skip.count, schema,
+            input_op,
+            columns,
+            skip.count.value(),
+            schema,
         ))
     }
 

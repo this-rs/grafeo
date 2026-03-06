@@ -137,10 +137,10 @@ impl Transaction {
         // Begin the transaction with the specified isolation level
         if let Some(level) = level {
             session
-                .begin_tx_with_isolation(level)
+                .begin_transaction_with_isolation(level)
                 .map_err(NodeGrafeoError::from)?;
         } else {
-            session.begin_tx().map_err(NodeGrafeoError::from)?;
+            session.begin_transaction().map_err(NodeGrafeoError::from)?;
         }
 
         Ok(Self {

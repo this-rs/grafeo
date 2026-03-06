@@ -320,24 +320,30 @@ impl super::Planner {
             }
         }
 
-        // Inner join to get all matches, then group by outer columns and count
-        let output_schema = self.derive_schema_from_columns(&output_columns);
+        // Left join to preserve outer rows with no matches (needed for COUNT = 0).
+        // The join physically outputs both left and right columns.
+        let mut join_columns = left_columns.clone();
+        join_columns.extend(right_columns.iter().cloned());
+        let join_schema = self.derive_schema_from_columns(&join_columns);
         let join_op: Box<dyn Operator> = Box::new(HashJoinOperator::new(
             left_op,
             right_op,
             probe_keys,
             build_keys,
-            PhysicalJoinType::Inner,
-            output_schema,
+            PhysicalJoinType::Left,
+            join_schema,
         ));
 
-        // Aggregate: COUNT(*) grouped by all outer columns
+        // Aggregate: COUNT(right_col) grouped by all outer columns.
+        // Using COUNT on a right-side column so nulls (no match) produce 0 instead of 1.
         let count_alias = "_count_subquery_".to_string();
         let mut agg_columns = output_columns.clone();
         agg_columns.push(count_alias.clone());
 
         let group_keys: Vec<usize> = (0..output_columns.len()).collect();
-        let agg_exprs = vec![PhysicalAggregateExpr::count_star()];
+        // Pick the first right-side column for COUNT (index = left_columns.len())
+        let right_col_idx = left_columns.len();
+        let agg_exprs = vec![PhysicalAggregateExpr::count(right_col_idx)];
         let agg_schema = self.derive_schema_from_columns(&agg_columns);
 
         let agg_op: Box<dyn Operator> = Box::new(HashAggregateOperator::new(
@@ -552,7 +558,7 @@ impl super::Planner {
         // MVCC visibility: filter out nodes not visible at the current epoch/tx.
         // Without this, rolled-back or uncommitted nodes could leak through.
         let epoch = self.viewing_epoch;
-        if let Some(tx) = self.tx_id {
+        if let Some(tx) = self.transaction_id {
             matching_nodes.retain(|id| self.store.get_node_versioned(*id, epoch, tx).is_some());
         } else {
             matching_nodes.retain(|id| self.store.get_node_at_epoch(*id, epoch).is_some());
@@ -802,7 +808,7 @@ impl super::Planner {
 
         // MVCC visibility: filter out nodes not visible at the current epoch/tx.
         let epoch = self.viewing_epoch;
-        let tx = self.tx_id.unwrap_or(TxId::SYSTEM);
+        let tx = self.transaction_id.unwrap_or(TransactionId::SYSTEM);
         matching_nodes.retain(|id| self.store.get_node_versioned(*id, epoch, tx).is_some());
 
         // Create a NodeListOperator with the matching nodes

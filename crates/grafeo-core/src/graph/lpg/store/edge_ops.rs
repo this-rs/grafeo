@@ -1,7 +1,7 @@
 use super::LpgStore;
 use crate::graph::lpg::{Edge, EdgeRecord};
 use arcstr::ArcStr;
-use grafeo_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TxId, Value};
+use grafeo_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TransactionId, Value};
 use std::sync::atomic::Ordering;
 
 #[cfg(not(feature = "tiered-storage"))]
@@ -13,7 +13,13 @@ use grafeo_common::mvcc::{HotVersionRef, VersionIndex, VersionRef};
 impl LpgStore {
     /// Creates a new edge.
     pub fn create_edge(&self, src: NodeId, dst: NodeId, edge_type: &str) -> EdgeId {
-        self.create_edge_versioned(src, dst, edge_type, self.current_epoch(), TxId::SYSTEM)
+        self.create_edge_versioned(
+            src,
+            dst,
+            edge_type,
+            self.current_epoch(),
+            TransactionId::SYSTEM,
+        )
     }
 
     /// Creates a new edge within a transaction context.
@@ -25,13 +31,13 @@ impl LpgStore {
         dst: NodeId,
         edge_type: &str,
         epoch: EpochId,
-        tx_id: TxId,
+        transaction_id: TransactionId,
     ) -> EdgeId {
         let id = EdgeId::new(self.next_edge_id.fetch_add(1, Ordering::Relaxed));
         let type_id = self.get_or_create_edge_type_id(edge_type);
 
         let record = EdgeRecord::new(id, src, dst, type_id, epoch);
-        let chain = VersionChain::with_initial(record, epoch, tx_id);
+        let chain = VersionChain::with_initial(record, epoch, transaction_id);
         self.edges.write().insert(id, chain);
 
         // Update adjacency
@@ -55,7 +61,7 @@ impl LpgStore {
         dst: NodeId,
         edge_type: &str,
         epoch: EpochId,
-        tx_id: TxId,
+        transaction_id: TransactionId,
     ) -> EdgeId {
         let id = EdgeId::new(self.next_edge_id.fetch_add(1, Ordering::Relaxed));
         let type_id = self.get_or_create_edge_type_id(edge_type);
@@ -72,7 +78,7 @@ impl LpgStore {
             .expect("arena allocation failed for edge record");
 
         // Create HotVersionRef pointing to arena data
-        let hot_ref = HotVersionRef::new(epoch, offset, tx_id);
+        let hot_ref = HotVersionRef::new(epoch, offset, transaction_id);
 
         // Create or update version index
         let mut versions = self.edge_versions.write();
@@ -173,10 +179,15 @@ impl LpgStore {
     #[must_use]
     #[cfg(not(feature = "tiered-storage"))]
     #[doc(hidden)]
-    pub fn get_edge_versioned(&self, id: EdgeId, epoch: EpochId, tx_id: TxId) -> Option<Edge> {
+    pub fn get_edge_versioned(
+        &self,
+        id: EdgeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Option<Edge> {
         let edges = self.edges.read();
         let chain = edges.get(&id)?;
-        let record = chain.visible_to(epoch, tx_id)?;
+        let record = chain.visible_to(epoch, transaction_id)?;
 
         if record.is_deleted() {
             return None;
@@ -200,10 +211,15 @@ impl LpgStore {
     #[must_use]
     #[cfg(feature = "tiered-storage")]
     #[doc(hidden)]
-    pub fn get_edge_versioned(&self, id: EdgeId, epoch: EpochId, tx_id: TxId) -> Option<Edge> {
+    pub fn get_edge_versioned(
+        &self,
+        id: EdgeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Option<Edge> {
         let versions = self.edge_versions.read();
         let index = versions.get(&id)?;
-        let version_ref = index.visible_to(epoch, tx_id)?;
+        let version_ref = index.visible_to(epoch, transaction_id)?;
 
         let record = self.read_edge_record(&version_ref)?;
 
@@ -454,7 +470,7 @@ impl LpgStore {
                 let type_id = self.get_or_create_edge_type_id(edge_type);
 
                 let record = EdgeRecord::new(id, src, dst, type_id, epoch);
-                let chain = VersionChain::with_initial(record, epoch, TxId::SYSTEM);
+                let chain = VersionChain::with_initial(record, epoch, TransactionId::SYSTEM);
                 edge_map.insert(id, chain);
 
                 forward_batch.push((src, dst, id));
@@ -525,7 +541,7 @@ impl LpgStore {
                 let (offset, _stored) = arena
                     .alloc_value_with_offset(record)
                     .expect("arena allocation failed for edge record");
-                let hot_ref = HotVersionRef::new(epoch, offset, TxId::SYSTEM);
+                let hot_ref = HotVersionRef::new(epoch, offset, TransactionId::SYSTEM);
                 versions.insert(id, VersionIndex::with_initial(hot_ref));
 
                 forward_batch.push((src, dst, id));

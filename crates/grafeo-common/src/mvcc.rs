@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 #[cfg(feature = "tiered-storage")]
 use smallvec::SmallVec;
 
-use crate::types::{EpochId, TxId};
+use crate::types::{EpochId, TransactionId};
 
 /// Tracks when a version was created and deleted for visibility checks.
 #[derive(Debug, Clone, Copy)]
@@ -20,13 +20,13 @@ pub struct VersionInfo {
     /// The epoch this version was deleted in (if any).
     pub deleted_epoch: Option<EpochId>,
     /// The transaction that created this version.
-    pub created_by: TxId,
+    pub created_by: TransactionId,
 }
 
 impl VersionInfo {
     /// Creates a new version info.
     #[must_use]
-    pub fn new(created_epoch: EpochId, created_by: TxId) -> Self {
+    pub fn new(created_epoch: EpochId, created_by: TransactionId) -> Self {
         Self {
             created_epoch,
             deleted_epoch: None,
@@ -65,7 +65,7 @@ impl VersionInfo {
     ///    and not deleted before that epoch
     #[inline]
     #[must_use]
-    pub fn is_visible_to(&self, viewing_epoch: EpochId, viewing_tx: TxId) -> bool {
+    pub fn is_visible_to(&self, viewing_epoch: EpochId, viewing_tx: TransactionId) -> bool {
         // Own modifications are always visible
         if self.created_by == viewing_tx {
             return self.deleted_epoch.is_none();
@@ -88,7 +88,7 @@ pub struct Version<T> {
 impl<T> Version<T> {
     /// Creates a new version.
     #[must_use]
-    pub fn new(data: T, created_epoch: EpochId, created_by: TxId) -> Self {
+    pub fn new(data: T, created_epoch: EpochId, created_by: TransactionId) -> Self {
         Self {
             info: VersionInfo::new(created_epoch, created_by),
             data,
@@ -118,7 +118,7 @@ impl<T> VersionChain<T> {
 
     /// Creates a version chain with an initial version.
     #[must_use]
-    pub fn with_initial(data: T, created_epoch: EpochId, created_by: TxId) -> Self {
+    pub fn with_initial(data: T, created_epoch: EpochId, created_by: TransactionId) -> Self {
         let mut chain = Self::new();
         chain.add_version(data, created_epoch, created_by);
         chain
@@ -127,7 +127,7 @@ impl<T> VersionChain<T> {
     /// Adds a new version to the chain.
     ///
     /// The new version becomes the head of the chain.
-    pub fn add_version(&mut self, data: T, created_epoch: EpochId, created_by: TxId) {
+    pub fn add_version(&mut self, data: T, created_epoch: EpochId, created_by: TransactionId) {
         let version = Version::new(data, created_epoch, created_by);
         self.versions.push_front(version);
     }
@@ -150,7 +150,7 @@ impl<T> VersionChain<T> {
     /// This considers both the transaction's epoch and its own uncommitted changes.
     #[inline]
     #[must_use]
-    pub fn visible_to(&self, epoch: EpochId, tx: TxId) -> Option<&T> {
+    pub fn visible_to(&self, epoch: EpochId, tx: TransactionId) -> Option<&T> {
         self.versions
             .iter()
             .find(|v| v.info.is_visible_to(epoch, tx))
@@ -172,14 +172,14 @@ impl<T> VersionChain<T> {
 
     /// Checks if any version was modified by the given transaction.
     #[must_use]
-    pub fn modified_by(&self, tx: TxId) -> bool {
+    pub fn modified_by(&self, tx: TransactionId) -> bool {
         self.versions.iter().any(|v| v.info.created_by == tx)
     }
 
     /// Removes all versions created by the given transaction.
     ///
     /// Used for rollback to discard uncommitted changes.
-    pub fn remove_versions_by(&mut self, tx: TxId) {
+    pub fn remove_versions_by(&mut self, tx: TransactionId) {
         self.versions.retain(|v| v.info.created_by != tx);
     }
 
@@ -188,7 +188,7 @@ impl<T> VersionChain<T> {
     /// A conflict exists if another transaction modified this entity
     /// after our start epoch.
     #[must_use]
-    pub fn has_conflict(&self, start_epoch: EpochId, our_tx: TxId) -> bool {
+    pub fn has_conflict(&self, start_epoch: EpochId, our_tx: TransactionId) -> bool {
         self.versions.iter().any(|v| {
             v.info.created_by != our_tx && v.info.created_epoch.as_u64() > start_epoch.as_u64()
         })
@@ -262,7 +262,12 @@ impl<T: Clone> VersionChain<T> {
     ///
     /// If the version is not owned by this transaction, creates a new version
     /// with a copy of the data.
-    pub fn get_mut(&mut self, epoch: EpochId, tx: TxId, modify_epoch: EpochId) -> Option<&mut T> {
+    pub fn get_mut(
+        &mut self,
+        epoch: EpochId,
+        tx: TransactionId,
+        modify_epoch: EpochId,
+    ) -> Option<&mut T> {
         // Find the visible version
         let visible_idx = self
             .versions
@@ -364,7 +369,7 @@ pub struct HotVersionRef {
     /// Offset within the epoch's arena where the data is stored.
     pub arena_offset: u32,
     /// Transaction that created this version.
-    pub created_by: TxId,
+    pub created_by: TransactionId,
     /// Epoch when this version was deleted (NONE if still alive).
     pub deleted_epoch: OptionalEpochId,
 }
@@ -373,7 +378,7 @@ pub struct HotVersionRef {
 impl HotVersionRef {
     /// Creates a new hot version reference.
     #[must_use]
-    pub fn new(epoch: EpochId, arena_offset: u32, created_by: TxId) -> Self {
+    pub fn new(epoch: EpochId, arena_offset: u32, created_by: TransactionId) -> Self {
         Self {
             epoch,
             arena_offset,
@@ -400,7 +405,7 @@ impl HotVersionRef {
     /// Checks if this version is visible to a specific transaction.
     #[inline]
     #[must_use]
-    pub fn is_visible_to(&self, viewing_epoch: EpochId, viewing_tx: TxId) -> bool {
+    pub fn is_visible_to(&self, viewing_epoch: EpochId, viewing_tx: TransactionId) -> bool {
         // Own modifications are always visible (if not deleted by self)
         if self.created_by == viewing_tx {
             return self.deleted_epoch.is_none();
@@ -432,7 +437,7 @@ pub struct ColdVersionRef {
     /// Compressed length in bytes.
     pub length: u16,
     /// Transaction that created this version.
-    pub created_by: TxId,
+    pub created_by: TransactionId,
     /// Epoch when this version was deleted.
     pub deleted_epoch: OptionalEpochId,
 }
@@ -455,7 +460,7 @@ impl ColdVersionRef {
     /// Checks if this version is visible to a specific transaction.
     #[inline]
     #[must_use]
-    pub fn is_visible_to(&self, viewing_epoch: EpochId, viewing_tx: TxId) -> bool {
+    pub fn is_visible_to(&self, viewing_epoch: EpochId, viewing_tx: TransactionId) -> bool {
         if self.created_by == viewing_tx {
             return self.deleted_epoch.is_none();
         }
@@ -486,7 +491,7 @@ impl VersionRef {
 
     /// Returns the transaction that created this version.
     #[must_use]
-    pub fn created_by(&self) -> TxId {
+    pub fn created_by(&self) -> TransactionId {
         match self {
             Self::Hot(h) => h.created_by,
             Self::Cold(c) => c.created_by,
@@ -620,7 +625,7 @@ impl VersionIndex {
     /// Finds the version visible to a specific transaction.
     #[inline]
     #[must_use]
-    pub fn visible_to(&self, epoch: EpochId, tx: TxId) -> Option<VersionRef> {
+    pub fn visible_to(&self, epoch: EpochId, tx: TransactionId) -> Option<VersionRef> {
         // Check hot versions first
         for v in &self.hot {
             if v.is_visible_to(epoch, tx) {
@@ -659,12 +664,12 @@ impl VersionIndex {
 
     /// Checks if any version was created by the given transaction.
     #[must_use]
-    pub fn modified_by(&self, tx: TxId) -> bool {
+    pub fn modified_by(&self, tx: TransactionId) -> bool {
         self.hot.iter().any(|v| v.created_by == tx) || self.cold.iter().any(|v| v.created_by == tx)
     }
 
     /// Removes all versions created by the given transaction (for rollback).
-    pub fn remove_versions_by(&mut self, tx: TxId) {
+    pub fn remove_versions_by(&mut self, tx: TransactionId) {
         self.hot.retain(|v| v.created_by != tx);
         self.cold.retain(|v| v.created_by != tx);
         self.recalculate_latest_epoch();
@@ -675,7 +680,7 @@ impl VersionIndex {
     /// A conflict exists if another transaction modified this entity
     /// after our start epoch.
     #[must_use]
-    pub fn has_conflict(&self, start_epoch: EpochId, our_tx: TxId) -> bool {
+    pub fn has_conflict(&self, start_epoch: EpochId, our_tx: TransactionId) -> bool {
         self.hot
             .iter()
             .any(|v| v.created_by != our_tx && v.epoch.as_u64() > start_epoch.as_u64())
@@ -833,7 +838,7 @@ mod tests {
 
     #[test]
     fn test_version_visibility() {
-        let v = VersionInfo::new(EpochId::new(5), TxId::new(1));
+        let v = VersionInfo::new(EpochId::new(5), TransactionId::new(1));
 
         // Not visible before creation
         assert!(!v.is_visible_at(EpochId::new(4)));
@@ -845,7 +850,7 @@ mod tests {
 
     #[test]
     fn test_deleted_version_visibility() {
-        let mut v = VersionInfo::new(EpochId::new(5), TxId::new(1));
+        let mut v = VersionInfo::new(EpochId::new(5), TransactionId::new(1));
         v.mark_deleted(EpochId::new(10));
 
         // Visible between creation and deletion
@@ -859,26 +864,26 @@ mod tests {
 
     #[test]
     fn test_version_visibility_to_transaction() {
-        let v = VersionInfo::new(EpochId::new(5), TxId::new(1));
+        let v = VersionInfo::new(EpochId::new(5), TransactionId::new(1));
 
         // Creator can see it even if viewing at earlier epoch
-        assert!(v.is_visible_to(EpochId::new(3), TxId::new(1)));
+        assert!(v.is_visible_to(EpochId::new(3), TransactionId::new(1)));
 
         // Other transactions can only see it at or after creation epoch
-        assert!(!v.is_visible_to(EpochId::new(3), TxId::new(2)));
-        assert!(v.is_visible_to(EpochId::new(5), TxId::new(2)));
+        assert!(!v.is_visible_to(EpochId::new(3), TransactionId::new(2)));
+        assert!(v.is_visible_to(EpochId::new(5), TransactionId::new(2)));
     }
 
     #[test]
     fn test_version_chain_basic() {
-        let mut chain = VersionChain::with_initial("v1", EpochId::new(1), TxId::new(1));
+        let mut chain = VersionChain::with_initial("v1", EpochId::new(1), TransactionId::new(1));
 
         // Should see v1 at epoch 1+
         assert_eq!(chain.visible_at(EpochId::new(1)), Some(&"v1"));
         assert_eq!(chain.visible_at(EpochId::new(0)), None);
 
         // Add v2
-        chain.add_version("v2", EpochId::new(5), TxId::new(2));
+        chain.add_version("v2", EpochId::new(5), TransactionId::new(2));
 
         // Should see v1 at epoch < 5, v2 at epoch >= 5
         assert_eq!(chain.visible_at(EpochId::new(1)), Some(&"v1"));
@@ -889,14 +894,14 @@ mod tests {
 
     #[test]
     fn test_version_chain_rollback() {
-        let mut chain = VersionChain::with_initial("v1", EpochId::new(1), TxId::new(1));
-        chain.add_version("v2", EpochId::new(5), TxId::new(2));
-        chain.add_version("v3", EpochId::new(6), TxId::new(2));
+        let mut chain = VersionChain::with_initial("v1", EpochId::new(1), TransactionId::new(1));
+        chain.add_version("v2", EpochId::new(5), TransactionId::new(2));
+        chain.add_version("v3", EpochId::new(6), TransactionId::new(2));
 
         assert_eq!(chain.version_count(), 3);
 
         // Rollback tx 2's changes
-        chain.remove_versions_by(TxId::new(2));
+        chain.remove_versions_by(TransactionId::new(2));
 
         assert_eq!(chain.version_count(), 1);
         assert_eq!(chain.visible_at(EpochId::new(10)), Some(&"v1"));
@@ -904,7 +909,7 @@ mod tests {
 
     #[test]
     fn test_version_chain_deletion() {
-        let mut chain = VersionChain::with_initial("v1", EpochId::new(1), TxId::new(1));
+        let mut chain = VersionChain::with_initial("v1", EpochId::new(1), TransactionId::new(1));
 
         // Mark as deleted at epoch 5
         assert!(chain.mark_deleted(EpochId::new(5)));
@@ -946,7 +951,7 @@ mod tiered_storage_tests {
 
     #[test]
     fn test_hot_version_ref_visibility() {
-        let hot = HotVersionRef::new(EpochId::new(5), 100, TxId::new(1));
+        let hot = HotVersionRef::new(EpochId::new(5), 100, TransactionId::new(1));
 
         // Not visible before creation
         assert!(!hot.is_visible_at(EpochId::new(4)));
@@ -958,7 +963,7 @@ mod tiered_storage_tests {
 
     #[test]
     fn test_hot_version_ref_deleted_visibility() {
-        let mut hot = HotVersionRef::new(EpochId::new(5), 100, TxId::new(1));
+        let mut hot = HotVersionRef::new(EpochId::new(5), 100, TransactionId::new(1));
         hot.deleted_epoch = OptionalEpochId::some(EpochId::new(10));
 
         // Visible between creation and deletion
@@ -972,19 +977,19 @@ mod tiered_storage_tests {
 
     #[test]
     fn test_hot_version_ref_transaction_visibility() {
-        let hot = HotVersionRef::new(EpochId::new(5), 100, TxId::new(1));
+        let hot = HotVersionRef::new(EpochId::new(5), 100, TransactionId::new(1));
 
         // Creator can see it even at earlier epoch
-        assert!(hot.is_visible_to(EpochId::new(3), TxId::new(1)));
+        assert!(hot.is_visible_to(EpochId::new(3), TransactionId::new(1)));
 
         // Other transactions can only see it at or after creation
-        assert!(!hot.is_visible_to(EpochId::new(3), TxId::new(2)));
-        assert!(hot.is_visible_to(EpochId::new(5), TxId::new(2)));
+        assert!(!hot.is_visible_to(EpochId::new(3), TransactionId::new(2)));
+        assert!(hot.is_visible_to(EpochId::new(5), TransactionId::new(2)));
     }
 
     #[test]
     fn test_version_index_basic() {
-        let hot = HotVersionRef::new(EpochId::new(1), 0, TxId::new(1));
+        let hot = HotVersionRef::new(EpochId::new(1), 0, TransactionId::new(1));
         let mut index = VersionIndex::with_initial(hot);
 
         // Should see version at epoch 1+
@@ -992,7 +997,7 @@ mod tiered_storage_tests {
         assert!(index.visible_at(EpochId::new(0)).is_none());
 
         // Add another version
-        let hot2 = HotVersionRef::new(EpochId::new(5), 100, TxId::new(2));
+        let hot2 = HotVersionRef::new(EpochId::new(5), 100, TransactionId::new(2));
         index.add_hot(hot2);
 
         // Should see v1 at epoch < 5, v2 at epoch >= 5
@@ -1005,7 +1010,7 @@ mod tiered_storage_tests {
 
     #[test]
     fn test_version_index_deletion() {
-        let hot = HotVersionRef::new(EpochId::new(1), 0, TxId::new(1));
+        let hot = HotVersionRef::new(EpochId::new(1), 0, TransactionId::new(1));
         let mut index = VersionIndex::with_initial(hot);
 
         // Mark as deleted at epoch 5
@@ -1019,7 +1024,7 @@ mod tiered_storage_tests {
 
     #[test]
     fn test_version_index_transaction_visibility() {
-        let tx = TxId::new(10);
+        let tx = TransactionId::new(10);
         let hot = HotVersionRef::new(EpochId::new(5), 0, tx);
         let index = VersionIndex::with_initial(hot);
 
@@ -1027,14 +1032,22 @@ mod tiered_storage_tests {
         assert!(index.visible_to(EpochId::new(3), tx).is_some());
 
         // Other transactions cannot see it before creation
-        assert!(index.visible_to(EpochId::new(3), TxId::new(20)).is_none());
-        assert!(index.visible_to(EpochId::new(5), TxId::new(20)).is_some());
+        assert!(
+            index
+                .visible_to(EpochId::new(3), TransactionId::new(20))
+                .is_none()
+        );
+        assert!(
+            index
+                .visible_to(EpochId::new(5), TransactionId::new(20))
+                .is_some()
+        );
     }
 
     #[test]
     fn test_version_index_rollback() {
-        let tx1 = TxId::new(10);
-        let tx2 = TxId::new(20);
+        let tx1 = TransactionId::new(10);
+        let tx2 = TransactionId::new(20);
 
         let mut index = VersionIndex::new();
         index.add_hot(HotVersionRef::new(EpochId::new(1), 0, tx1));
@@ -1066,7 +1079,7 @@ mod tiered_storage_tests {
             index.add_hot(HotVersionRef::new(
                 EpochId::new(epoch),
                 epoch as u32 * 100,
-                TxId::new(epoch),
+                TransactionId::new(epoch),
             ));
         }
 
@@ -1085,8 +1098,8 @@ mod tiered_storage_tests {
 
     #[test]
     fn test_version_index_conflict_detection() {
-        let tx1 = TxId::new(10);
-        let tx2 = TxId::new(20);
+        let tx1 = TransactionId::new(10);
+        let tx2 = TransactionId::new(20);
 
         let mut index = VersionIndex::new();
         index.add_hot(HotVersionRef::new(EpochId::new(1), 0, tx1));
@@ -1116,7 +1129,11 @@ mod tiered_storage_tests {
 
         // Add 2 hot versions (within inline capacity)
         for i in 0..2 {
-            index.add_hot(HotVersionRef::new(EpochId::new(i), i as u32, TxId::new(i)));
+            index.add_hot(HotVersionRef::new(
+                EpochId::new(i),
+                i as u32,
+                TransactionId::new(i),
+            ));
         }
 
         // SmallVec should not have spilled to heap
@@ -1127,8 +1144,16 @@ mod tiered_storage_tests {
     #[test]
     fn test_version_index_freeze_epoch() {
         let mut index = VersionIndex::new();
-        index.add_hot(HotVersionRef::new(EpochId::new(1), 0, TxId::new(1)));
-        index.add_hot(HotVersionRef::new(EpochId::new(2), 100, TxId::new(2)));
+        index.add_hot(HotVersionRef::new(
+            EpochId::new(1),
+            0,
+            TransactionId::new(1),
+        ));
+        index.add_hot(HotVersionRef::new(
+            EpochId::new(2),
+            100,
+            TransactionId::new(2),
+        ));
 
         assert_eq!(index.hot_count(), 2);
         assert_eq!(index.cold_count(), 0);
@@ -1138,7 +1163,7 @@ mod tiered_storage_tests {
             epoch: EpochId::new(1),
             block_offset: 0,
             length: 32,
-            created_by: TxId::new(1),
+            created_by: TransactionId::new(1),
             deleted_epoch: OptionalEpochId::NONE,
         };
         index.freeze_epoch(EpochId::new(1), std::iter::once(cold_ref));
@@ -1161,11 +1186,11 @@ mod tiered_storage_tests {
 
     #[test]
     fn test_version_ref_accessors() {
-        let hot = HotVersionRef::new(EpochId::new(5), 100, TxId::new(10));
+        let hot = HotVersionRef::new(EpochId::new(5), 100, TransactionId::new(10));
         let vr = VersionRef::Hot(hot);
 
         assert_eq!(vr.epoch(), EpochId::new(5));
-        assert_eq!(vr.created_by(), TxId::new(10));
+        assert_eq!(vr.created_by(), TransactionId::new(10));
         assert!(vr.is_hot());
         assert!(!vr.is_cold());
     }
@@ -1175,14 +1200,22 @@ mod tiered_storage_tests {
         let mut index = VersionIndex::new();
         assert_eq!(index.latest_epoch(), EpochId::INITIAL);
 
-        index.add_hot(HotVersionRef::new(EpochId::new(5), 0, TxId::new(1)));
+        index.add_hot(HotVersionRef::new(
+            EpochId::new(5),
+            0,
+            TransactionId::new(1),
+        ));
         assert_eq!(index.latest_epoch(), EpochId::new(5));
 
-        index.add_hot(HotVersionRef::new(EpochId::new(10), 100, TxId::new(2)));
+        index.add_hot(HotVersionRef::new(
+            EpochId::new(10),
+            100,
+            TransactionId::new(2),
+        ));
         assert_eq!(index.latest_epoch(), EpochId::new(10));
 
         // After rollback, should recalculate
-        index.remove_versions_by(TxId::new(2));
+        index.remove_versions_by(TransactionId::new(2));
         assert_eq!(index.latest_epoch(), EpochId::new(5));
     }
 
@@ -1198,11 +1231,19 @@ mod tiered_storage_tests {
         let mut index = VersionIndex::new();
         assert!(index.latest().is_none());
 
-        index.add_hot(HotVersionRef::new(EpochId::new(1), 0, TxId::new(1)));
+        index.add_hot(HotVersionRef::new(
+            EpochId::new(1),
+            0,
+            TransactionId::new(1),
+        ));
         let latest = index.latest().unwrap();
         assert!(matches!(latest, VersionRef::Hot(h) if h.epoch == EpochId::new(1)));
 
-        index.add_hot(HotVersionRef::new(EpochId::new(5), 100, TxId::new(2)));
+        index.add_hot(HotVersionRef::new(
+            EpochId::new(5),
+            100,
+            TransactionId::new(2),
+        ));
         let latest = index.latest().unwrap();
         assert!(matches!(latest, VersionRef::Hot(h) if h.epoch == EpochId::new(5)));
     }

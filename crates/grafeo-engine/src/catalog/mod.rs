@@ -860,12 +860,18 @@ pub enum PropertyDataType {
     Timestamp,
     /// Duration / interval.
     Duration,
-    /// Ordered list of values.
+    /// Ordered list of values (untyped).
     List,
+    /// Typed list: `LIST<element_type>` (ISO sec 4.16.9).
+    ListTyped(Box<PropertyDataType>),
     /// Key-value map.
     Map,
     /// Raw bytes.
     Bytes,
+    /// Node reference type (ISO sec 4.15.1).
+    Node,
+    /// Edge reference type (ISO sec 4.15.1).
+    Edge,
     /// Any type (no enforcement).
     Any,
 }
@@ -874,7 +880,15 @@ impl PropertyDataType {
     /// Parses a type name string (case-insensitive) into a `PropertyDataType`.
     #[must_use]
     pub fn from_type_name(name: &str) -> Self {
-        match name.to_uppercase().as_str() {
+        let upper = name.to_uppercase();
+        // Handle parameterized LIST<element_type>
+        if let Some(inner) = upper
+            .strip_prefix("LIST<")
+            .and_then(|s| s.strip_suffix('>'))
+        {
+            return Self::ListTyped(Box::new(Self::from_type_name(inner)));
+        }
+        match upper.as_str() {
             "STRING" | "VARCHAR" | "TEXT" => Self::String,
             "INT" | "INT64" | "INTEGER" | "BIGINT" => Self::Int64,
             "FLOAT" | "FLOAT64" | "DOUBLE" | "REAL" => Self::Float64,
@@ -886,6 +900,8 @@ impl PropertyDataType {
             "LIST" | "ARRAY" => Self::List,
             "MAP" | "RECORD" => Self::Map,
             "BYTES" | "BINARY" | "BLOB" => Self::Bytes,
+            "NODE" => Self::Node,
+            "EDGE" | "RELATIONSHIP" => Self::Edge,
             _ => Self::Any,
         }
     }
@@ -893,21 +909,26 @@ impl PropertyDataType {
     /// Checks whether a value conforms to this type.
     #[must_use]
     pub fn matches(&self, value: &Value) -> bool {
-        matches!(
-            (self, value),
-            (Self::Any, _)
-                | (_, Value::Null)
-                | (Self::String, Value::String(_))
-                | (Self::Int64, Value::Int64(_))
-                | (Self::Float64, Value::Float64(_))
-                | (Self::Bool, Value::Bool(_))
-                | (Self::Date, Value::Date(_))
-                | (Self::Time, Value::Time(_))
-                | (Self::Timestamp, Value::Timestamp(_))
-                | (Self::Duration, Value::Duration(_))
-                | (Self::List, Value::List(_))
-                | (Self::Bytes, Value::Bytes(_))
-        )
+        match (self, value) {
+            (Self::Any, _) | (_, Value::Null) => true,
+            (Self::String, Value::String(_)) => true,
+            (Self::Int64, Value::Int64(_)) => true,
+            (Self::Float64, Value::Float64(_)) => true,
+            (Self::Bool, Value::Bool(_)) => true,
+            (Self::Date, Value::Date(_)) => true,
+            (Self::Time, Value::Time(_)) => true,
+            (Self::Timestamp, Value::Timestamp(_)) => true,
+            (Self::Duration, Value::Duration(_)) => true,
+            (Self::List, Value::List(_)) => true,
+            (Self::ListTyped(elem_type), Value::List(items)) => {
+                items.iter().all(|item| elem_type.matches(item))
+            }
+            (Self::Bytes, Value::Bytes(_)) => true,
+            // Node/Edge reference types match Map values (graph elements are
+            // represented as maps with _id, _labels/_type, and properties)
+            (Self::Node | Self::Edge, Value::Map(_)) => true,
+            _ => false,
+        }
     }
 }
 
@@ -923,8 +944,11 @@ impl std::fmt::Display for PropertyDataType {
             Self::Timestamp => write!(f, "TIMESTAMP"),
             Self::Duration => write!(f, "DURATION"),
             Self::List => write!(f, "LIST"),
+            Self::ListTyped(elem) => write!(f, "LIST<{elem}>"),
             Self::Map => write!(f, "MAP"),
             Self::Bytes => write!(f, "BYTES"),
+            Self::Node => write!(f, "NODE"),
+            Self::Edge => write!(f, "EDGE"),
             Self::Any => write!(f, "ANY"),
         }
     }

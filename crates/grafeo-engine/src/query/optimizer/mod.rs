@@ -1496,7 +1496,7 @@ mod tests {
             predicate: LogicalExpression::Literal(Value::Bool(true)),
             pushdown_hint: None,
             input: Box::new(LogicalOperator::Limit(LimitOp {
-                count: 10,
+                count: 10.into(),
                 input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
                     variable: "n".to_string(),
                     label: None,
@@ -1596,6 +1596,7 @@ mod tests {
                     distinct: false,
                     alias: Some("cnt".to_string()),
                     percentile: None,
+                    separator: None,
                 }],
                 input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
                     variable: "n".to_string(),
@@ -1934,7 +1935,7 @@ mod tests {
                 predicate: LogicalExpression::Literal(Value::Bool(true)),
                 pushdown_hint: None,
                 input: Box::new(LogicalOperator::Skip(SkipOp {
-                    count: 5,
+                    count: 5.into(),
                     input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
                         variable: "n".to_string(),
                         label: None,

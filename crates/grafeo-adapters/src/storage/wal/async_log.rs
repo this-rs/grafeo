@@ -1,7 +1,7 @@
 //! Async WAL implementation using tokio for non-blocking I/O.
 
 use super::{DurabilityMode, WalConfig, WalRecord};
-use grafeo_common::types::{EpochId, TxId};
+use grafeo_common::types::{EpochId, TransactionId};
 use grafeo_common::utils::error::{Error, Result};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -140,7 +140,7 @@ impl AsyncWalManager {
         match &self.config.durability {
             DurabilityMode::Sync => {
                 // Sync on every commit record
-                if matches!(record, WalRecord::TxCommit { .. }) {
+                if matches!(record, WalRecord::TransactionCommit { .. }) {
                     log_file.writer.flush().await?;
                     log_file.writer.get_ref().sync_all().await?;
                     self.records_since_sync.store(0, Ordering::Relaxed);
@@ -187,10 +187,16 @@ impl AsyncWalManager {
     /// # Errors
     ///
     /// Returns an error if the checkpoint cannot be written.
-    pub async fn checkpoint(&self, current_tx: TxId, epoch: EpochId) -> Result<()> {
+    pub async fn checkpoint(
+        &self,
+        current_transaction: TransactionId,
+        epoch: EpochId,
+    ) -> Result<()> {
         // Write checkpoint record
-        self.log(&WalRecord::Checkpoint { tx_id: current_tx })
-            .await?;
+        self.log(&WalRecord::Checkpoint {
+            transaction_id: current_transaction,
+        })
+        .await?;
 
         // Force sync on checkpoint
         self.sync().await?;
@@ -503,8 +509,8 @@ mod tests {
         let wal = AsyncWalManager::with_config(dir.path().join("sync"), config)
             .await
             .unwrap();
-        wal.log(&WalRecord::TxCommit {
-            tx_id: TxId::new(1),
+        wal.log(&WalRecord::TransactionCommit {
+            transaction_id: TransactionId::new(1),
         })
         .await
         .unwrap();
@@ -559,14 +565,14 @@ mod tests {
         .await
         .unwrap();
 
-        wal.log(&WalRecord::TxCommit {
-            tx_id: TxId::new(1),
+        wal.log(&WalRecord::TransactionCommit {
+            transaction_id: TransactionId::new(1),
         })
         .await
         .unwrap();
 
         // Create checkpoint
-        wal.checkpoint(TxId::new(1), EpochId::new(10))
+        wal.checkpoint(TransactionId::new(1), EpochId::new(10))
             .await
             .unwrap();
 

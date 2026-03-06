@@ -1,6 +1,6 @@
 use super::LpgStore;
 use crate::graph::lpg::{Node, NodeRecord};
-use grafeo_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TxId, Value};
+use grafeo_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TransactionId, Value};
 use grafeo_common::utils::hash::{FxHashMap, FxHashSet};
 use std::sync::atomic::Ordering;
 
@@ -15,13 +15,18 @@ impl LpgStore {
     ///
     /// Uses the system transaction for non-transactional operations.
     pub fn create_node(&self, labels: &[&str]) -> NodeId {
-        self.create_node_versioned(labels, self.current_epoch(), TxId::SYSTEM)
+        self.create_node_versioned(labels, self.current_epoch(), TransactionId::SYSTEM)
     }
 
     /// Creates a new node with the given labels within a transaction context.
     #[cfg(not(feature = "tiered-storage"))]
     #[doc(hidden)]
-    pub fn create_node_versioned(&self, labels: &[&str], epoch: EpochId, tx_id: TxId) -> NodeId {
+    pub fn create_node_versioned(
+        &self,
+        labels: &[&str],
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> NodeId {
         let id = NodeId::new(self.next_node_id.fetch_add(1, Ordering::Relaxed));
 
         let mut record = NodeRecord::new(id, epoch);
@@ -45,7 +50,7 @@ impl LpgStore {
         self.node_labels.write().insert(id, node_label_set);
 
         // Create version chain with initial version
-        let chain = VersionChain::with_initial(record, epoch, tx_id);
+        let chain = VersionChain::with_initial(record, epoch, transaction_id);
         self.nodes.write().insert(id, chain);
         self.live_node_count.fetch_add(1, Ordering::Relaxed);
         id
@@ -55,7 +60,12 @@ impl LpgStore {
     /// (Tiered storage version: stores data in arena, metadata in VersionIndex)
     #[cfg(feature = "tiered-storage")]
     #[doc(hidden)]
-    pub fn create_node_versioned(&self, labels: &[&str], epoch: EpochId, tx_id: TxId) -> NodeId {
+    pub fn create_node_versioned(
+        &self,
+        labels: &[&str],
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> NodeId {
         let id = NodeId::new(self.next_node_id.fetch_add(1, Ordering::Relaxed));
 
         let mut record = NodeRecord::new(id, epoch);
@@ -88,7 +98,7 @@ impl LpgStore {
             .expect("arena allocation failed for node record");
 
         // Create HotVersionRef pointing to arena data
-        let hot_ref = HotVersionRef::new(epoch, offset, tx_id);
+        let hot_ref = HotVersionRef::new(epoch, offset, transaction_id);
 
         // Create or update version index
         let mut versions = self.node_versions.write();
@@ -112,7 +122,7 @@ impl LpgStore {
             labels,
             properties,
             self.current_epoch(),
-            TxId::SYSTEM,
+            TransactionId::SYSTEM,
         )
     }
 
@@ -123,9 +133,9 @@ impl LpgStore {
         labels: &[&str],
         properties: impl IntoIterator<Item = (impl Into<PropertyKey>, impl Into<Value>)>,
         epoch: EpochId,
-        tx_id: TxId,
+        transaction_id: TransactionId,
     ) -> NodeId {
-        let id = self.create_node_versioned(labels, epoch, tx_id);
+        let id = self.create_node_versioned(labels, epoch, transaction_id);
 
         for (key, value) in properties {
             let prop_key: PropertyKey = key.into();
@@ -154,9 +164,9 @@ impl LpgStore {
         labels: &[&str],
         properties: impl IntoIterator<Item = (impl Into<PropertyKey>, impl Into<Value>)>,
         epoch: EpochId,
-        tx_id: TxId,
+        transaction_id: TransactionId,
     ) -> NodeId {
-        let id = self.create_node_versioned(labels, epoch, tx_id);
+        let id = self.create_node_versioned(labels, epoch, transaction_id);
 
         for (key, value) in properties {
             let prop_key: PropertyKey = key.into();
@@ -248,10 +258,15 @@ impl LpgStore {
     #[must_use]
     #[cfg(not(feature = "tiered-storage"))]
     #[doc(hidden)]
-    pub fn get_node_versioned(&self, id: NodeId, epoch: EpochId, tx_id: TxId) -> Option<Node> {
+    pub fn get_node_versioned(
+        &self,
+        id: NodeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Option<Node> {
         let nodes = self.nodes.read();
         let chain = nodes.get(&id)?;
-        let record = chain.visible_to(epoch, tx_id)?;
+        let record = chain.visible_to(epoch, transaction_id)?;
 
         if record.is_deleted() {
             return None;
@@ -281,10 +296,15 @@ impl LpgStore {
     #[must_use]
     #[cfg(feature = "tiered-storage")]
     #[doc(hidden)]
-    pub fn get_node_versioned(&self, id: NodeId, epoch: EpochId, tx_id: TxId) -> Option<Node> {
+    pub fn get_node_versioned(
+        &self,
+        id: NodeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Option<Node> {
         let versions = self.node_versions.read();
         let index = versions.get(&id)?;
-        let version_ref = index.visible_to(epoch, tx_id)?;
+        let version_ref = index.visible_to(epoch, transaction_id)?;
 
         // Read the record from arena
         let record = self.read_node_record(&version_ref)?;

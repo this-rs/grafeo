@@ -21,7 +21,7 @@ fn setup_db() -> GrafeoDB {
 
 /// Advances the epoch by committing an empty transaction.
 fn bump_epoch(session: &mut grafeo_engine::Session) {
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
     session.commit().unwrap();
 }
 
@@ -35,7 +35,7 @@ fn test_execute_at_epoch_sees_old_state() {
     let mut session = db.session();
 
     // Create a person inside a transaction
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
     session
         .execute("INSERT (:Person {name: 'Alix', age: 30})")
         .unwrap();
@@ -43,7 +43,7 @@ fn test_execute_at_epoch_sees_old_state() {
     let epoch_after_insert = db.current_epoch();
 
     // Update the person in a new transaction
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
     session
         .execute("MATCH (p:Person {name: 'Alix'}) SET p.age = 31")
         .unwrap();
@@ -80,7 +80,7 @@ fn test_execute_at_epoch_before_creation_returns_empty() {
     bump_epoch(&mut session);
 
     // Insert inside a transaction (node created at epoch 1)
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
     session.execute("INSERT (:Person {name: 'Gus'})").unwrap();
     session.commit().unwrap();
 
@@ -104,7 +104,7 @@ fn test_deleted_node_history_preserves_epoch() {
     let mut session = db.session();
 
     // Insert in a transaction (Vincent created at epoch 0)
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
     session
         .execute("INSERT (:Person {name: 'Vincent'})")
         .unwrap();
@@ -114,7 +114,7 @@ fn test_deleted_node_history_preserves_epoch() {
     bump_epoch(&mut session);
 
     // Delete in a separate transaction
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
     session
         .execute("MATCH (p:Person {name: 'Vincent'}) DELETE p")
         .unwrap();
@@ -171,7 +171,7 @@ fn test_session_set_viewing_epoch() {
     let mut session = db.session();
 
     // Insert Eve in a transaction (Eve created at epoch 0)
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
     session.execute("INSERT (:Person {name: 'Eve'})").unwrap();
     session.commit().unwrap();
     let epoch_after_eve = db.current_epoch();
@@ -180,7 +180,7 @@ fn test_session_set_viewing_epoch() {
     bump_epoch(&mut session);
 
     // Insert Frank in a separate transaction (Frank created at epoch 2)
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
     session.execute("INSERT (:Person {name: 'Frank'})").unwrap();
     session.commit().unwrap();
 
@@ -227,7 +227,7 @@ fn test_gql_session_set_viewing_epoch() {
     let mut session = db.session();
 
     // Insert Grace in a transaction (Grace created at epoch 0)
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
     session.execute("INSERT (:Person {name: 'Grace'})").unwrap();
     session.commit().unwrap();
     let epoch = db.current_epoch();
@@ -236,7 +236,7 @@ fn test_gql_session_set_viewing_epoch() {
     bump_epoch(&mut session);
 
     // Insert Hank in a separate transaction (Hank created at epoch 2)
-    session.begin_tx().unwrap();
+    session.begin_transaction().unwrap();
     session.execute("INSERT (:Person {name: 'Hank'})").unwrap();
     session.commit().unwrap();
 

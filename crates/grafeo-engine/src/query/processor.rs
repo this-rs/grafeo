@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use grafeo_common::types::{EpochId, TxId, Value};
+use grafeo_common::types::{EpochId, TransactionId, Value};
 use grafeo_common::utils::error::{Error, Result};
 use grafeo_core::graph::GraphStoreMut;
 use grafeo_core::graph::lpg::LpgStore;
@@ -100,13 +100,13 @@ pub struct QueryProcessor {
     /// Graph store trait object for pluggable storage backends.
     graph_store: Arc<dyn GraphStoreMut>,
     /// Transaction manager for MVCC operations.
-    tx_manager: Arc<TransactionManager>,
+    transaction_manager: Arc<TransactionManager>,
     /// Catalog for schema and index metadata.
     catalog: Arc<Catalog>,
     /// Query optimizer.
     optimizer: Optimizer,
     /// Current transaction context (if any).
-    tx_context: Option<(EpochId, TxId)>,
+    transaction_context: Option<(EpochId, TransactionId)>,
     /// RDF store for triple pattern queries (optional).
     #[cfg(feature = "rdf")]
     rdf_store: Option<Arc<grafeo_core::graph::rdf::RdfStore>>,
@@ -121,10 +121,10 @@ impl QueryProcessor {
         Self {
             lpg_store: store,
             graph_store,
-            tx_manager: Arc::new(TransactionManager::new()),
+            transaction_manager: Arc::new(TransactionManager::new()),
             catalog: Arc::new(Catalog::new()),
             optimizer,
-            tx_context: None,
+            transaction_context: None,
             #[cfg(feature = "rdf")]
             rdf_store: None,
         }
@@ -132,16 +132,19 @@ impl QueryProcessor {
 
     /// Creates a new query processor with a transaction manager.
     #[must_use]
-    pub fn for_lpg_with_tx(store: Arc<LpgStore>, tx_manager: Arc<TransactionManager>) -> Self {
+    pub fn for_lpg_with_transaction(
+        store: Arc<LpgStore>,
+        transaction_manager: Arc<TransactionManager>,
+    ) -> Self {
         let optimizer = Optimizer::from_store(&store);
         let graph_store = Arc::clone(&store) as Arc<dyn GraphStoreMut>;
         Self {
             lpg_store: store,
             graph_store,
-            tx_manager,
+            transaction_manager,
             catalog: Arc::new(Catalog::new()),
             optimizer,
-            tx_context: None,
+            transaction_context: None,
             #[cfg(feature = "rdf")]
             rdf_store: None,
         }
@@ -149,18 +152,18 @@ impl QueryProcessor {
 
     /// Creates a query processor backed by any GraphStoreMut implementation.
     #[must_use]
-    pub fn for_graph_store_with_tx(
+    pub fn for_graph_store_with_transaction(
         store: Arc<dyn GraphStoreMut>,
-        tx_manager: Arc<TransactionManager>,
+        transaction_manager: Arc<TransactionManager>,
     ) -> Self {
         let optimizer = Optimizer::from_graph_store(&*store);
         Self {
             lpg_store: Arc::new(LpgStore::new().expect("arena allocation for dummy LpgStore")), // dummy, not used
             graph_store: store,
-            tx_manager,
+            transaction_manager,
             catalog: Arc::new(Catalog::new()),
             optimizer,
-            tx_context: None,
+            transaction_context: None,
             #[cfg(feature = "rdf")]
             rdf_store: None,
         }
@@ -178,10 +181,10 @@ impl QueryProcessor {
         Self {
             lpg_store,
             graph_store,
-            tx_manager: Arc::new(TransactionManager::new()),
+            transaction_manager: Arc::new(TransactionManager::new()),
             catalog: Arc::new(Catalog::new()),
             optimizer,
-            tx_context: None,
+            transaction_context: None,
             rdf_store: Some(rdf_store),
         }
     }
@@ -190,8 +193,12 @@ impl QueryProcessor {
     ///
     /// This should be called when the processor is used within a transaction.
     #[must_use]
-    pub fn with_tx_context(mut self, viewing_epoch: EpochId, tx_id: TxId) -> Self {
-        self.tx_context = Some((viewing_epoch, tx_id));
+    pub fn with_transaction_context(
+        mut self,
+        viewing_epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Self {
+        self.transaction_context = Some((viewing_epoch, transaction_id));
         self
     }
 
@@ -283,19 +290,19 @@ impl QueryProcessor {
         }
 
         // 5. Convert to physical plan with transaction context
-        let planner = if let Some((epoch, tx_id)) = self.tx_context {
+        let planner = if let Some((epoch, transaction_id)) = self.transaction_context {
             Planner::with_context(
                 Arc::clone(&self.graph_store),
-                Arc::clone(&self.tx_manager),
-                Some(tx_id),
+                Arc::clone(&self.transaction_manager),
+                Some(transaction_id),
                 epoch,
             )
         } else {
             Planner::with_context(
                 Arc::clone(&self.graph_store),
-                Arc::clone(&self.tx_manager),
+                Arc::clone(&self.transaction_manager),
                 None,
-                self.tx_manager.current_epoch(),
+                self.transaction_manager.current_epoch(),
             )
         };
         let mut physical_plan = planner.plan(&optimized_plan)?;
@@ -441,8 +448,8 @@ impl QueryProcessor {
 impl QueryProcessor {
     /// Returns a reference to the transaction manager.
     #[must_use]
-    pub fn tx_manager(&self) -> &Arc<TransactionManager> {
-        &self.tx_manager
+    pub fn transaction_manager(&self) -> &Arc<TransactionManager> {
+        &self.transaction_manager
     }
 }
 
@@ -585,6 +592,7 @@ pub(crate) fn explain_result(plan: &LogicalPlan) -> QueryResult {
         execution_time_ms: None,
         rows_scanned: None,
         status_message: None,
+        gql_status: grafeo_common::utils::GqlStatus::SUCCESS,
     }
 }
 
@@ -660,9 +668,11 @@ fn substitute_in_operator(op: &mut LogicalOperator, params: &QueryParams) -> Res
             substitute_in_operator(&mut sort.input, params)?;
         }
         LogicalOperator::Limit(limit) => {
+            resolve_count_param(&mut limit.count, params)?;
             substitute_in_operator(&mut limit.input, params)?;
         }
         LogicalOperator::Skip(skip) => {
+            resolve_count_param(&mut skip.count, params)?;
             substitute_in_operator(&mut skip.input, params)?;
         }
         LogicalOperator::Distinct(distinct) => {
@@ -818,6 +828,41 @@ fn substitute_in_operator(op: &mut LogicalOperator, params: &QueryParams) -> Res
         LogicalOperator::CreatePropertyGraph(_) => {}
         // Procedure calls: arguments could contain parameters but we handle at execution time
         LogicalOperator::CallProcedure(_) => {}
+    }
+    Ok(())
+}
+
+/// Resolves a `CountExpr::Parameter` by looking up the parameter value.
+fn resolve_count_param(
+    count: &mut crate::query::plan::CountExpr,
+    params: &QueryParams,
+) -> Result<()> {
+    use crate::query::plan::CountExpr;
+    use grafeo_common::utils::error::{QueryError, QueryErrorKind};
+
+    if let CountExpr::Parameter(name) = count {
+        let value = params.get(name.as_str()).ok_or_else(|| {
+            Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                format!("Missing parameter for SKIP/LIMIT: ${name}"),
+            ))
+        })?;
+        let n = match value {
+            Value::Int64(i) if *i >= 0 => *i as usize,
+            Value::Int64(i) => {
+                return Err(Error::Query(QueryError::new(
+                    QueryErrorKind::Semantic,
+                    format!("SKIP/LIMIT parameter ${name} must be non-negative, got {i}"),
+                )));
+            }
+            other => {
+                return Err(Error::Query(QueryError::new(
+                    QueryErrorKind::Semantic,
+                    format!("SKIP/LIMIT parameter ${name} must be an integer, got {other:?}"),
+                )));
+            }
+        };
+        *count = CountExpr::Literal(n);
     }
     Ok(())
 }

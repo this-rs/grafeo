@@ -22,9 +22,12 @@ The Python API provides a Pythonic interface to Grafeo.
 
 Native bindings via napi-rs with full TypeScript definitions.
 
-- **Package**: [`@grafeo-db/js`](https://www.npmjs.com/package/@grafeo-db/js)
-- Async API with `GrafeoDB.create()`, `db.execute()`, transactions
-- Full type definitions included
+- [Node.js Overview](node/index.md)
+- [GrafeoDB](node/database.md)
+- [QueryResult](node/query.md)
+- [Transaction](node/transaction.md)
+- [JsNode](node/node.md)
+- [JsEdge](node/edge.md)
 
 ## Go API
 

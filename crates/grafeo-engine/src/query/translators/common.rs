@@ -6,8 +6,8 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::query::plan::{
-    AggregateFunction, BinaryOp, DistinctOp, FilterOp, LimitOp, LogicalExpression, LogicalOperator,
-    ReturnItem, ReturnOp, SkipOp, SortKey, SortOp,
+    AggregateFunction, BinaryOp, CountExpr, DistinctOp, FilterOp, LimitOp, LogicalExpression,
+    LogicalOperator, ReturnItem, ReturnOp, SkipOp, SortKey, SortOp,
 };
 use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
 
@@ -36,6 +36,7 @@ pub(crate) fn is_aggregate_function(name: &str) -> bool {
             | "PERCENTILECONT"
             | "GROUP_CONCAT"
             | "GROUPCONCAT"
+            | "LISTAGG"
             | "SAMPLE"
             | "COVAR_SAMP"
             | "COVAR_POP"
@@ -67,7 +68,7 @@ pub(crate) fn to_aggregate_function(name: &str) -> Option<AggregateFunction> {
         "VAR_POP" => Some(AggregateFunction::VariancePop),
         "PERCENTILE_DISC" | "PERCENTILEDISC" => Some(AggregateFunction::PercentileDisc),
         "PERCENTILE_CONT" | "PERCENTILECONT" => Some(AggregateFunction::PercentileCont),
-        "GROUP_CONCAT" | "GROUPCONCAT" => Some(AggregateFunction::GroupConcat),
+        "GROUP_CONCAT" | "GROUPCONCAT" | "LISTAGG" => Some(AggregateFunction::GroupConcat),
         "SAMPLE" => Some(AggregateFunction::Sample),
         "COVAR_SAMP" => Some(AggregateFunction::CovarSamp),
         "COVAR_POP" => Some(AggregateFunction::CovarPop),
@@ -185,17 +186,17 @@ pub(crate) fn wrap_sort(input: LogicalOperator, keys: Vec<SortKey>) -> LogicalOp
 }
 
 /// Wraps an operator with SKIP.
-pub(crate) fn wrap_skip(input: LogicalOperator, count: usize) -> LogicalOperator {
+pub(crate) fn wrap_skip(input: LogicalOperator, count: impl Into<CountExpr>) -> LogicalOperator {
     LogicalOperator::Skip(SkipOp {
-        count,
+        count: count.into(),
         input: Box::new(input),
     })
 }
 
 /// Wraps an operator with LIMIT.
-pub(crate) fn wrap_limit(input: LogicalOperator, count: usize) -> LogicalOperator {
+pub(crate) fn wrap_limit(input: LogicalOperator, count: impl Into<CountExpr>) -> LogicalOperator {
     LogicalOperator::Limit(LimitOp {
-        count,
+        count: count.into(),
         input: Box::new(input),
     })
 }

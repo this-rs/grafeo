@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use grafeo_common::types::{EpochId, TxId, Value};
+use grafeo_common::types::{EpochId, TransactionId, Value};
 use grafeo_core::execution::DataChunk;
 use grafeo_core::execution::operators::{Operator, OperatorError, OperatorResult};
 use grafeo_core::graph::GraphStoreMut;
@@ -36,9 +36,9 @@ pub struct UserProcedureOperator {
     /// Store for sub-query execution.
     store: Arc<dyn GraphStoreMut>,
     /// Transaction manager for sub-query.
-    tx_manager: Option<Arc<TransactionManager>>,
+    transaction_manager: Option<Arc<TransactionManager>>,
     /// Current transaction ID.
-    tx_id: Option<TxId>,
+    transaction_id: Option<TransactionId>,
     /// Viewing epoch.
     viewing_epoch: EpochId,
     /// Catalog for sub-planner.
@@ -60,8 +60,8 @@ impl UserProcedureOperator {
         return_columns: Vec<String>,
         yield_columns: Option<Vec<String>>,
         store: Arc<dyn GraphStoreMut>,
-        tx_manager: Option<Arc<TransactionManager>>,
-        tx_id: Option<TxId>,
+        transaction_manager: Option<Arc<TransactionManager>>,
+        transaction_id: Option<TransactionId>,
         viewing_epoch: EpochId,
         catalog: Option<Arc<Catalog>>,
     ) -> Self {
@@ -76,8 +76,8 @@ impl UserProcedureOperator {
             return_columns,
             yield_columns,
             store,
-            tx_manager,
-            tx_id,
+            transaction_manager,
+            transaction_id,
             viewing_epoch,
             catalog,
             result_rows: None,
@@ -102,11 +102,11 @@ impl UserProcedureOperator {
         })?;
 
         // Plan physical operators
-        let planner = if let Some(ref tx_mgr) = self.tx_manager {
+        let planner = if let Some(ref tx_mgr) = self.transaction_manager {
             let mut p = Planner::with_context(
                 Arc::clone(&self.store),
                 Arc::clone(tx_mgr),
-                self.tx_id,
+                self.transaction_id,
                 self.viewing_epoch,
             );
             if let Some(ref cat) = self.catalog {

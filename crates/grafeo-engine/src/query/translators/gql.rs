@@ -924,7 +924,7 @@ impl GqlTranslator {
                 pattern,
                 min,
                 max,
-                subpath_var: _,
+                subpath_var,
                 path_mode: inner_path_mode,
                 where_clause,
             } => {
@@ -935,6 +935,10 @@ impl GqlTranslator {
                     ast::PathMode::Simple => PathMode::Simple,
                     ast::PathMode::Acyclic => PathMode::Acyclic,
                 });
+
+                // G048: subpath_var takes precedence as path alias for the
+                // quantified pattern. Fall back to outer path_alias if not set.
+                let effective_alias = subpath_var.as_deref().or(path_alias);
 
                 // Quantified path pattern: repeat the inner pattern min..max times.
                 // For now, translate as a variable-length expansion if the inner
@@ -949,7 +953,7 @@ impl GqlTranslator {
                         self.translate_path_pattern_with_alias(
                             &modified_path,
                             input,
-                            path_alias,
+                            effective_alias,
                             effective_mode,
                         )
                     }
@@ -959,7 +963,7 @@ impl GqlTranslator {
                         self.translate_pattern_with_alias(
                             pattern,
                             input,
-                            path_alias,
+                            effective_alias,
                             effective_mode,
                         )
                     }
@@ -970,10 +974,6 @@ impl GqlTranslator {
                     let filter_expr = self.translate_expression(where_expr)?;
                     result = wrap_filter(result, filter_expr);
                 }
-
-                // G048: subpath_var is stored in AST for downstream use (e.g., path
-                // value construction). Currently the translator does not bind path
-                // values, so it is acknowledged but not yet wired into the plan.
 
                 Ok(result)
             }
@@ -2338,6 +2338,7 @@ impl GqlTranslator {
                             distinct: *distinct,
                             alias: alias.clone(),
                             percentile: None,
+                            separator: None,
                         }
                     } else {
                         // COUNT(x), SUM(x), etc.
@@ -2373,6 +2374,27 @@ impl GqlTranslator {
                         } else {
                             None
                         };
+                        // Extract separator for LISTAGG / GROUP_CONCAT
+                        let upper_name = name.to_uppercase();
+                        let separator = if actual_func == AggregateFunction::GroupConcat {
+                            if args.len() >= 2 {
+                                // Second argument is the separator string
+                                if let ast::Expression::Literal(ast::Literal::String(s)) = &args[1]
+                                {
+                                    Some(s.clone())
+                                } else if upper_name == "LISTAGG" {
+                                    Some(",".to_string())
+                                } else {
+                                    None // GROUP_CONCAT default (space) handled in AggregateState
+                                }
+                            } else if upper_name == "LISTAGG" {
+                                Some(",".to_string()) // ISO GQL default for LISTAGG
+                            } else {
+                                None // GROUP_CONCAT default (space) handled in AggregateState
+                            }
+                        } else {
+                            None
+                        };
                         AggregateExpr {
                             function: actual_func,
                             expression: Some(self.translate_expression(&args[0])?),
@@ -2380,6 +2402,7 @@ impl GqlTranslator {
                             distinct: *distinct,
                             alias: alias.clone(),
                             percentile,
+                            separator,
                         }
                     };
                     Ok(Some(agg_expr))

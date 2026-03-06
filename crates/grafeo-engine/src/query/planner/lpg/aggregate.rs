@@ -141,6 +141,7 @@ impl super::Planner {
                     distinct: agg_expr.distinct,
                     alias: agg_expr.alias.clone(),
                     percentile: agg_expr.percentile,
+                    separator: agg_expr.separator.clone(),
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -341,10 +342,10 @@ impl super::Planner {
             steps,
         );
 
-        if let Some(tx_id) = self.tx_id {
-            lazy_op = lazy_op.with_tx_context(self.viewing_epoch, Some(tx_id));
+        if let Some(transaction_id) = self.transaction_id {
+            lazy_op = lazy_op.with_transaction_context(self.viewing_epoch, Some(transaction_id));
         } else {
-            lazy_op = lazy_op.with_tx_context(self.viewing_epoch, None);
+            lazy_op = lazy_op.with_transaction_context(self.viewing_epoch, None);
         }
 
         // Convert logical aggregates to factorized aggregates

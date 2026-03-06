@@ -157,6 +157,79 @@ impl PyQueryResult {
         self.rows_scanned
     }
 
+    /// Convert to a pandas DataFrame.
+    ///
+    /// Requires pandas to be installed (`uv add pandas`). Each column in the
+    /// query result becomes a DataFrame column, preserving types where possible.
+    ///
+    /// Example:
+    /// ```python
+    /// result = db.execute("MATCH (n:Person) RETURN n.name, n.age")
+    /// df = result.to_pandas()
+    /// print(df.head())
+    /// ```
+    #[pyo3(signature = ())]
+    fn to_pandas(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let pd = py.import("pandas").map_err(|_| {
+            pyo3::exceptions::PyModuleNotFoundError::new_err(
+                "pandas is required for to_pandas(). Install it with: uv add pandas",
+            )
+        })?;
+
+        // Build column-oriented data: dict of {col_name: [values...]}
+        let data = pyo3::types::PyDict::new(py);
+        for (col_idx, col_name) in self.columns.iter().enumerate() {
+            let values = pyo3::types::PyList::empty(py);
+            for row in &self.rows {
+                let val = row
+                    .get(col_idx)
+                    .map_or_else(|| py.None(), |v| PyValue::to_py(v, py));
+                values.append(val)?;
+            }
+            data.set_item(col_name, values)?;
+        }
+
+        let df = pd.call_method1("DataFrame", (data,))?;
+        Ok(df.unbind())
+    }
+
+    /// Convert to a polars DataFrame.
+    ///
+    /// Requires polars to be installed (`uv add polars`). Each column in the
+    /// query result becomes a DataFrame column. Values are converted to native
+    /// Python types first, then polars infers the best dtype.
+    ///
+    /// Example:
+    /// ```python
+    /// result = db.execute("MATCH (n:Person) RETURN n.name, n.age")
+    /// df = result.to_polars()
+    /// print(df.head())
+    /// ```
+    #[pyo3(signature = ())]
+    fn to_polars(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let pl = py.import("polars").map_err(|_| {
+            pyo3::exceptions::PyModuleNotFoundError::new_err(
+                "polars is required for to_polars(). Install it with: uv add polars",
+            )
+        })?;
+
+        // Build column-oriented data: dict of {col_name: [values...]}
+        let data = pyo3::types::PyDict::new(py);
+        for (col_idx, col_name) in self.columns.iter().enumerate() {
+            let values = pyo3::types::PyList::empty(py);
+            for row in &self.rows {
+                let val = row
+                    .get(col_idx)
+                    .map_or_else(|| py.None(), |v| PyValue::to_py(v, py));
+                values.append(val)?;
+            }
+            data.set_item(col_name, values)?;
+        }
+
+        let df = pl.call_method1("DataFrame", (data,))?;
+        Ok(df.unbind())
+    }
+
     fn __repr__(&self) -> String {
         let time_str = self
             .execution_time_ms

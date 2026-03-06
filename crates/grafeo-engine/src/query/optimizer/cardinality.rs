@@ -809,13 +809,13 @@ impl CardinalityEstimator {
     /// Estimates limit cardinality.
     fn estimate_limit(&self, limit: &LimitOp) -> f64 {
         let input_cardinality = self.estimate(&limit.input);
-        (limit.count as f64).min(input_cardinality)
+        limit.count.estimate().min(input_cardinality)
     }
 
     /// Estimates skip cardinality.
     fn estimate_skip(&self, skip: &SkipOp) -> f64 {
         let input_cardinality = self.estimate(&skip.input);
-        (input_cardinality - skip.count as f64).max(0.0)
+        (input_cardinality - skip.count.estimate()).max(0.0)
     }
 
     /// Estimates vector scan cardinality.
@@ -1179,7 +1179,7 @@ mod tests {
         estimator.add_table_stats("Person", TableStats::new(1000));
 
         let limit = LogicalOperator::Limit(LimitOp {
-            count: 10,
+            count: 10.into(),
             input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
                 variable: "n".to_string(),
                 label: Some("Person".to_string()),
@@ -1743,7 +1743,7 @@ mod tests {
         estimator.add_table_stats("Person", TableStats::new(1000));
 
         let skip = LogicalOperator::Skip(SkipOp {
-            count: 100,
+            count: 100.into(),
             input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
                 variable: "n".to_string(),
                 label: Some("Person".to_string()),

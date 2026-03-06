@@ -56,10 +56,10 @@ pub(crate) enum AggregateState {
     PercentileDisc { values: Vec<f64>, percentile: f64 },
     /// Continuous percentile state (values, percentile).
     PercentileCont { values: Vec<f64>, percentile: f64 },
-    /// GROUP_CONCAT state (collected string values, separator defaults to space).
-    GroupConcat(Vec<String>),
-    /// GROUP_CONCAT distinct state (collected string values, seen).
-    GroupConcatDistinct(Vec<String>, HashSet<HashableValue>),
+    /// GROUP_CONCAT / LISTAGG state (collected string values, separator).
+    GroupConcat(Vec<String>, String),
+    /// GROUP_CONCAT / LISTAGG distinct state (collected string values, separator, seen).
+    GroupConcatDistinct(Vec<String>, String, HashSet<HashableValue>),
     /// SAMPLE state (first non-null value encountered).
     Sample(Option<Value>),
     /// Sample variance state using Welford's algorithm (count, mean, M2).
@@ -85,6 +85,7 @@ impl AggregateState {
         function: AggregateFunction,
         distinct: bool,
         percentile: Option<f64>,
+        separator: Option<&str>,
     ) -> Self {
         match (function, distinct) {
             (AggregateFunction::Count | AggregateFunction::CountNonNull, false) => {
@@ -124,10 +125,14 @@ impl AggregateState {
                 values: Vec::new(),
                 percentile: percentile.unwrap_or(0.5),
             },
-            (AggregateFunction::GroupConcat, false) => AggregateState::GroupConcat(Vec::new()),
-            (AggregateFunction::GroupConcat, true) => {
-                AggregateState::GroupConcatDistinct(Vec::new(), HashSet::new())
+            (AggregateFunction::GroupConcat, false) => {
+                AggregateState::GroupConcat(Vec::new(), separator.unwrap_or(" ").to_string())
             }
+            (AggregateFunction::GroupConcat, true) => AggregateState::GroupConcatDistinct(
+                Vec::new(),
+                separator.unwrap_or(" ").to_string(),
+                HashSet::new(),
+            ),
             (AggregateFunction::Sample, _) => AggregateState::Sample(None),
             // Binary set functions (all share the same Bivariate state)
             (
@@ -318,12 +323,12 @@ impl AggregateState {
                     values.push(x);
                 }
             }
-            AggregateState::GroupConcat(list) => {
+            AggregateState::GroupConcat(list, _sep) => {
                 if let Some(v) = value {
                     list.push(agg_value_to_string(&v));
                 }
             }
-            AggregateState::GroupConcatDistinct(list, seen) => {
+            AggregateState::GroupConcatDistinct(list, _sep, seen) => {
                 if let Some(v) = value {
                     let hashable = HashableValue::from(&v);
                     if seen.insert(hashable) {
@@ -469,8 +474,9 @@ impl AggregateState {
                 }
             }
             // GROUP_CONCAT: join strings with space separator (SPARQL default)
-            AggregateState::GroupConcat(list) | AggregateState::GroupConcatDistinct(list, _) => {
-                Value::String(list.join(" ").into())
+            AggregateState::GroupConcat(list, sep)
+            | AggregateState::GroupConcatDistinct(list, sep, _) => {
+                Value::String(list.join(sep).into())
             }
             // SAMPLE: return the first non-null value seen
             AggregateState::Sample(sample) => sample.clone().unwrap_or(Value::Null),
@@ -689,7 +695,14 @@ impl HashAggregateOperator {
                 let states = self.groups.entry(key).or_insert_with(|| {
                     self.aggregates
                         .iter()
-                        .map(|agg| AggregateState::new(agg.function, agg.distinct, agg.percentile))
+                        .map(|agg| {
+                            AggregateState::new(
+                                agg.function,
+                                agg.distinct,
+                                agg.percentile,
+                                agg.separator.as_deref(),
+                            )
+                        })
                         .collect()
                 });
 
@@ -766,7 +779,12 @@ impl Operator for HashAggregateOperator {
             let mut builder = DataChunkBuilder::with_capacity(&self.output_schema, 1);
 
             for agg in &self.aggregates {
-                let state = AggregateState::new(agg.function, agg.distinct, agg.percentile);
+                let state = AggregateState::new(
+                    agg.function,
+                    agg.distinct,
+                    agg.percentile,
+                    agg.separator.as_deref(),
+                );
                 let value = state.finalize();
                 if let Some(col) = builder.column_mut(self.group_columns.len()) {
                     col.push_value(value);
@@ -852,7 +870,14 @@ impl SimpleAggregateOperator {
     ) -> Self {
         let states = aggregates
             .iter()
-            .map(|agg| AggregateState::new(agg.function, agg.distinct, agg.percentile))
+            .map(|agg| {
+                AggregateState::new(
+                    agg.function,
+                    agg.distinct,
+                    agg.percentile,
+                    agg.separator.as_deref(),
+                )
+            })
             .collect();
 
         Self {
@@ -941,7 +966,14 @@ impl Operator for SimpleAggregateOperator {
         self.states = self
             .aggregates
             .iter()
-            .map(|agg| AggregateState::new(agg.function, agg.distinct, agg.percentile))
+            .map(|agg| {
+                AggregateState::new(
+                    agg.function,
+                    agg.distinct,
+                    agg.percentile,
+                    agg.separator.as_deref(),
+                )
+            })
             .collect();
         self.done = false;
     }
@@ -1507,6 +1539,7 @@ mod tests {
             distinct: false,
             alias: None,
             percentile: None,
+            separator: None,
         };
 
         let mut agg =
@@ -1528,6 +1561,7 @@ mod tests {
             distinct: false,
             alias: None,
             percentile: None,
+            separator: None,
         };
 
         let mut agg =
@@ -1549,6 +1583,7 @@ mod tests {
             distinct: false,
             alias: None,
             percentile: None,
+            separator: None,
         };
 
         let mut agg = SimpleAggregateOperator::new(
@@ -1574,6 +1609,7 @@ mod tests {
             distinct: false,
             alias: None,
             percentile: None,
+            separator: None,
         };
 
         let mut agg = SimpleAggregateOperator::new(
@@ -1603,6 +1639,7 @@ mod tests {
             distinct: false,
             alias: None,
             percentile: None,
+            separator: None,
         };
 
         let mut agg = SimpleAggregateOperator::new(

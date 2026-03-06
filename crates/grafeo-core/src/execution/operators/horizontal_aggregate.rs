@@ -123,7 +123,7 @@ impl Operator for HorizontalAggregateOperator {
                 .column(self.list_column_idx)
                 .and_then(|c| c.get_value(row))
             {
-                let mut state = AggregateState::new(self.function, false, None);
+                let mut state = AggregateState::new(self.function, false, None, None);
                 for entity_val in list.iter() {
                     let prop_val = self.get_property_value(entity_val);
                     if prop_val.is_some() && !matches!(prop_val, Some(Value::Null)) {

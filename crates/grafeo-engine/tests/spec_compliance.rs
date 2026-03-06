@@ -1019,6 +1019,83 @@ mod cypher_features {
             other => panic!("Expected list of friends, got {other:?}"),
         }
     }
+
+    #[test]
+    fn cypher_skip_with_parameter() {
+        let db = social_network();
+        let mut params = std::collections::HashMap::new();
+        params.insert("offset".to_string(), Value::Int64(2));
+        let result = db
+            .execute_cypher_with_params(
+                "MATCH (p:Person) RETURN p.name ORDER BY p.name SKIP $offset",
+                params,
+            )
+            .unwrap();
+        // 4 people total, skip 2 = 2 results
+        assert_eq!(result.row_count(), 2);
+    }
+
+    #[test]
+    fn cypher_limit_with_parameter() {
+        let db = social_network();
+        let mut params = std::collections::HashMap::new();
+        params.insert("count".to_string(), Value::Int64(2));
+        let result = db
+            .execute_cypher_with_params(
+                "MATCH (p:Person) RETURN p.name ORDER BY p.name LIMIT $count",
+                params,
+            )
+            .unwrap();
+        assert_eq!(result.row_count(), 2);
+    }
+
+    #[test]
+    fn cypher_skip_and_limit_with_parameters() {
+        let db = social_network();
+        let mut params = std::collections::HashMap::new();
+        params.insert("offset".to_string(), Value::Int64(1));
+        params.insert("page_size".to_string(), Value::Int64(2));
+        let result = db
+            .execute_cypher_with_params(
+                "MATCH (p:Person) RETURN p.name ORDER BY p.name SKIP $offset LIMIT $page_size",
+                params,
+            )
+            .unwrap();
+        assert_eq!(result.row_count(), 2);
+        // Ordered by name: Alix(0), Dave(1), Gus(2), Harm(3). Skip 1 = Dave first.
+        assert_eq!(result.rows[0][0], Value::String("Dave".into()));
+    }
+
+    #[test]
+    fn cypher_limit_parameter_zero() {
+        let db = social_network();
+        let mut params = std::collections::HashMap::new();
+        params.insert("n".to_string(), Value::Int64(0));
+        let result = db
+            .execute_cypher_with_params("MATCH (p:Person) RETURN p.name LIMIT $n", params)
+            .unwrap();
+        assert_eq!(result.row_count(), 0);
+    }
+
+    #[test]
+    fn cypher_skip_parameter_negative_is_error() {
+        let db = social_network();
+        let mut params = std::collections::HashMap::new();
+        params.insert("n".to_string(), Value::Int64(-1));
+        let result =
+            db.execute_cypher_with_params("MATCH (p:Person) RETURN p.name SKIP $n", params);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cypher_limit_parameter_non_integer_is_error() {
+        let db = social_network();
+        let mut params = std::collections::HashMap::new();
+        params.insert("n".to_string(), Value::String("ten".into()));
+        let result =
+            db.execute_cypher_with_params("MATCH (p:Person) RETURN p.name LIMIT $n", params);
+        assert!(result.is_err());
+    }
 }
 
 // ============================================================================

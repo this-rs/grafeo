@@ -8,7 +8,9 @@
 
 use std::sync::Arc;
 
-use grafeo_common::types::{EdgeId, EpochId, LogicalType, NodeId, PropertyKey, TxId, Value};
+use grafeo_common::types::{
+    EdgeId, EpochId, LogicalType, NodeId, PropertyKey, TransactionId, Value,
+};
 
 use super::{Operator, OperatorError, OperatorResult};
 use crate::execution::chunk::DataChunkBuilder;
@@ -86,7 +88,7 @@ pub struct CreateNodeOperator {
     /// Epoch for MVCC versioning.
     viewing_epoch: Option<EpochId>,
     /// Transaction ID for MVCC versioning.
-    tx_id: Option<TxId>,
+    transaction_id: Option<TransactionId>,
     /// Optional constraint validator for schema enforcement.
     validator: Option<Arc<dyn ConstraintValidator>>,
 }
@@ -174,15 +176,19 @@ impl CreateNodeOperator {
             output_column,
             executed: false,
             viewing_epoch: None,
-            tx_id: None,
+            transaction_id: None,
             validator: None,
         }
     }
 
     /// Sets the transaction context for MVCC versioning.
-    pub fn with_tx_context(mut self, epoch: EpochId, tx_id: Option<TxId>) -> Self {
+    pub fn with_transaction_context(
+        mut self,
+        epoch: EpochId,
+        transaction_id: Option<TransactionId>,
+    ) -> Self {
         self.viewing_epoch = Some(epoch);
-        self.tx_id = tx_id;
+        self.transaction_id = transaction_id;
         self
     }
 
@@ -224,7 +230,7 @@ impl Operator for CreateNodeOperator {
         let epoch = self
             .viewing_epoch
             .unwrap_or_else(|| self.store.current_epoch());
-        let tx = self.tx_id.unwrap_or(TxId::SYSTEM);
+        let tx = self.transaction_id.unwrap_or(TransactionId::SYSTEM);
 
         if let Some(ref mut input) = self.input {
             // For each input row, create a node
@@ -347,7 +353,7 @@ pub struct CreateEdgeOperator {
     /// Epoch for MVCC versioning.
     viewing_epoch: Option<EpochId>,
     /// Transaction ID for MVCC versioning.
-    tx_id: Option<TxId>,
+    transaction_id: Option<TransactionId>,
     /// Optional constraint validator for schema enforcement.
     validator: Option<Arc<dyn ConstraintValidator>>,
 }
@@ -358,7 +364,7 @@ impl CreateEdgeOperator {
     /// Use builder methods to set additional options:
     /// - [`with_properties`](Self::with_properties) - set edge properties
     /// - [`with_output_column`](Self::with_output_column) - output the created edge ID
-    /// - [`with_tx_context`](Self::with_tx_context) - set transaction context
+    /// - [`with_transaction_context`](Self::with_transaction_context) - set transaction context
     pub fn new(
         store: Arc<dyn GraphStoreMut>,
         input: Box<dyn Operator>,
@@ -377,7 +383,7 @@ impl CreateEdgeOperator {
             output_schema,
             output_column: None,
             viewing_epoch: None,
-            tx_id: None,
+            transaction_id: None,
             validator: None,
         }
     }
@@ -395,9 +401,13 @@ impl CreateEdgeOperator {
     }
 
     /// Sets the transaction context for MVCC versioning.
-    pub fn with_tx_context(mut self, epoch: EpochId, tx_id: Option<TxId>) -> Self {
+    pub fn with_transaction_context(
+        mut self,
+        epoch: EpochId,
+        transaction_id: Option<TransactionId>,
+    ) -> Self {
         self.viewing_epoch = Some(epoch);
-        self.tx_id = tx_id;
+        self.transaction_id = transaction_id;
         self
     }
 
@@ -414,7 +424,7 @@ impl Operator for CreateEdgeOperator {
         let epoch = self
             .viewing_epoch
             .unwrap_or_else(|| self.store.current_epoch());
-        let tx = self.tx_id.unwrap_or(TxId::SYSTEM);
+        let tx = self.transaction_id.unwrap_or(TransactionId::SYSTEM);
 
         if let Some(chunk) = self.input.next()? {
             let mut builder =
@@ -542,7 +552,7 @@ pub struct DeleteNodeOperator {
     /// Epoch for MVCC versioning.
     viewing_epoch: Option<EpochId>,
     /// Transaction ID for MVCC versioning.
-    tx_id: Option<TxId>,
+    transaction_id: Option<TransactionId>,
 }
 
 impl DeleteNodeOperator {
@@ -561,14 +571,18 @@ impl DeleteNodeOperator {
             output_schema,
             detach,
             viewing_epoch: None,
-            tx_id: None,
+            transaction_id: None,
         }
     }
 
     /// Sets the transaction context for MVCC versioning.
-    pub fn with_tx_context(mut self, epoch: EpochId, tx_id: Option<TxId>) -> Self {
+    pub fn with_transaction_context(
+        mut self,
+        epoch: EpochId,
+        transaction_id: Option<TransactionId>,
+    ) -> Self {
         self.viewing_epoch = Some(epoch);
-        self.tx_id = tx_id;
+        self.transaction_id = transaction_id;
         self
     }
 }
@@ -579,7 +593,7 @@ impl Operator for DeleteNodeOperator {
         let epoch = self
             .viewing_epoch
             .unwrap_or_else(|| self.store.current_epoch());
-        let tx = self.tx_id.unwrap_or(TxId::SYSTEM);
+        let tx = self.transaction_id.unwrap_or(TransactionId::SYSTEM);
 
         if let Some(chunk) = self.input.next()? {
             let mut deleted_count = 0;
@@ -656,7 +670,7 @@ pub struct DeleteEdgeOperator {
     /// Epoch for MVCC versioning.
     viewing_epoch: Option<EpochId>,
     /// Transaction ID for MVCC versioning.
-    tx_id: Option<TxId>,
+    transaction_id: Option<TransactionId>,
 }
 
 impl DeleteEdgeOperator {
@@ -673,14 +687,18 @@ impl DeleteEdgeOperator {
             edge_column,
             output_schema,
             viewing_epoch: None,
-            tx_id: None,
+            transaction_id: None,
         }
     }
 
     /// Sets the transaction context for MVCC versioning.
-    pub fn with_tx_context(mut self, epoch: EpochId, tx_id: Option<TxId>) -> Self {
+    pub fn with_transaction_context(
+        mut self,
+        epoch: EpochId,
+        transaction_id: Option<TransactionId>,
+    ) -> Self {
         self.viewing_epoch = Some(epoch);
-        self.tx_id = tx_id;
+        self.transaction_id = transaction_id;
         self
     }
 }
@@ -691,7 +709,7 @@ impl Operator for DeleteEdgeOperator {
         let epoch = self
             .viewing_epoch
             .unwrap_or_else(|| self.store.current_epoch());
-        let tx = self.tx_id.unwrap_or(TxId::SYSTEM);
+        let tx = self.transaction_id.unwrap_or(TransactionId::SYSTEM);
 
         if let Some(chunk) = self.input.next()? {
             let mut deleted_count = 0;

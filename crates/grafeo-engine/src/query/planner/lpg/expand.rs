@@ -66,7 +66,7 @@ impl super::Planner {
                 max_hops,
             )
             .with_path_mode(exec_path_mode)
-            .with_tx_context(self.viewing_epoch, self.tx_id);
+            .with_transaction_context(self.viewing_epoch, self.transaction_id);
 
             // If a path alias is set, enable path length and detail output
             if needs_path_details {
@@ -85,7 +85,7 @@ impl super::Planner {
                 direction,
                 expand.edge_types.clone(),
             )
-            .with_tx_context(self.viewing_epoch, self.tx_id);
+            .with_transaction_context(self.viewing_epoch, self.transaction_id);
             Box::new(expand_op)
         };
 
@@ -210,10 +210,10 @@ impl super::Planner {
             steps,
         );
 
-        if let Some(tx_id) = self.tx_id {
-            lazy_op = lazy_op.with_tx_context(self.viewing_epoch, Some(tx_id));
+        if let Some(transaction_id) = self.transaction_id {
+            lazy_op = lazy_op.with_transaction_context(self.viewing_epoch, Some(transaction_id));
         } else {
-            lazy_op = lazy_op.with_tx_context(self.viewing_epoch, None);
+            lazy_op = lazy_op.with_transaction_context(self.viewing_epoch, None);
         }
 
         Ok((Box::new(lazy_op), columns))

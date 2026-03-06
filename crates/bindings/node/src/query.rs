@@ -104,20 +104,24 @@ impl QueryResult {
     pub fn rows(&self, env: Env) -> Result<Object<'_>> {
         let env_raw = env.raw();
         let mut arr = std::ptr::null_mut();
+        // SAFETY: env_raw is valid; napi_create_array_with_length writes to our out-pointer
         types::check_napi(unsafe {
             sys::napi_create_array_with_length(env_raw, self.rows.len(), &raw mut arr)
         })?;
         for (i, row) in self.rows.iter().enumerate() {
             let mut row_arr = std::ptr::null_mut();
+            // SAFETY: env_raw is valid; napi_create_array_with_length writes to our out-pointer
             types::check_napi(unsafe {
                 sys::napi_create_array_with_length(env_raw, row.len(), &raw mut row_arr)
             })?;
             for (j, val) in row.iter().enumerate() {
                 let napi_val = types::value_to_napi(env_raw, val)?;
+                // SAFETY: env_raw, row_arr, and napi_val are valid napi values
                 types::check_napi(unsafe {
                     sys::napi_set_element(env_raw, row_arr, j as u32, napi_val)
                 })?;
             }
+            // SAFETY: env_raw, arr, and row_arr are valid napi values
             types::check_napi(unsafe { sys::napi_set_element(env_raw, arr, i as u32, row_arr) })?;
         }
         Ok(Object::from_raw(env_raw, arr))
@@ -129,10 +133,12 @@ impl QueryResult {
     fn row_to_object(&self, env: sys::napi_env, idx: usize) -> Result<Object<'_>> {
         let row = &self.rows[idx];
         let mut raw_obj = std::ptr::null_mut();
+        // SAFETY: env is valid; napi_create_object writes to our out-pointer
         types::check_napi(unsafe { sys::napi_create_object(env, &raw mut raw_obj) })?;
         let mut obj = Object::from_raw(env, raw_obj);
         for (col, val) in self.columns.iter().zip(row.iter()) {
             let val_raw = types::value_to_napi(env, val)?;
+            // SAFETY: env and val_raw are valid napi values produced by value_to_napi
             let val_unknown = unsafe { Unknown::from_raw_unchecked(env, val_raw) };
             obj.set_named_property(col, val_unknown)?;
         }

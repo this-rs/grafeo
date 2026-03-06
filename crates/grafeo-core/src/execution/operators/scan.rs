@@ -3,7 +3,7 @@
 use super::{Operator, OperatorResult};
 use crate::execution::DataChunk;
 use crate::graph::GraphStore;
-use grafeo_common::types::{EpochId, LogicalType, NodeId, TxId};
+use grafeo_common::types::{EpochId, LogicalType, NodeId, TransactionId};
 use std::sync::Arc;
 
 /// A scan operator that reads nodes from storage.
@@ -21,7 +21,7 @@ pub struct ScanOperator {
     /// Chunk capacity.
     chunk_capacity: usize,
     /// Transaction ID for MVCC visibility (None = use current epoch).
-    tx_id: Option<TxId>,
+    transaction_id: Option<TransactionId>,
     /// Epoch for version visibility.
     viewing_epoch: Option<EpochId>,
 }
@@ -36,7 +36,7 @@ impl ScanOperator {
             batch: Vec::new(),
             exhausted: false,
             chunk_capacity: 2048,
-            tx_id: None,
+            transaction_id: None,
             viewing_epoch: None,
         }
     }
@@ -50,7 +50,7 @@ impl ScanOperator {
             batch: Vec::new(),
             exhausted: false,
             chunk_capacity: 2048,
-            tx_id: None,
+            transaction_id: None,
             viewing_epoch: None,
         }
     }
@@ -64,9 +64,13 @@ impl ScanOperator {
     /// Sets the transaction context for MVCC visibility.
     ///
     /// When set, the scan will only return nodes visible to this transaction.
-    pub fn with_tx_context(mut self, epoch: EpochId, tx_id: Option<TxId>) -> Self {
+    pub fn with_transaction_context(
+        mut self,
+        epoch: EpochId,
+        transaction_id: Option<TransactionId>,
+    ) -> Self {
         self.viewing_epoch = Some(epoch);
-        self.tx_id = tx_id;
+        self.transaction_id = transaction_id;
         self
     }
 
@@ -83,7 +87,7 @@ impl ScanOperator {
 
         // Filter by visibility if we have tx context
         self.batch = if let Some(epoch) = self.viewing_epoch {
-            if let Some(tx) = self.tx_id {
+            if let Some(tx) = self.transaction_id {
                 // Transaction-aware visibility (sees own uncommitted changes)
                 all_ids
                     .into_iter()
@@ -218,25 +222,25 @@ mod tests {
 
         // Create nodes at epoch 1
         let epoch1 = EpochId::new(1);
-        let tx1 = TxId::new(1);
+        let tx1 = TransactionId::new(1);
         store.create_node_versioned(&["Person"], epoch1, tx1);
         store.create_node_versioned(&["Person"], epoch1, tx1);
 
         // Create a node at epoch 5
         let epoch5 = EpochId::new(5);
-        let tx2 = TxId::new(2);
+        let tx2 = TransactionId::new(2);
         store.create_node_versioned(&["Person"], epoch5, tx2);
 
         // Scan at epoch 3 should see only the first 2 nodes (created at epoch 1)
         let mut scan = ScanOperator::with_label(store.clone() as Arc<dyn GraphStore>, "Person")
-            .with_tx_context(EpochId::new(3), None);
+            .with_transaction_context(EpochId::new(3), None);
 
         let chunk = scan.next().unwrap().unwrap();
         assert_eq!(chunk.row_count(), 2, "Should see 2 nodes at epoch 3");
 
         // Scan at epoch 5 should see all 3 nodes
         let mut scan_all = ScanOperator::with_label(store.clone() as Arc<dyn GraphStore>, "Person")
-            .with_tx_context(EpochId::new(5), None);
+            .with_transaction_context(EpochId::new(5), None);
 
         let chunk_all = scan_all.next().unwrap().unwrap();
         assert_eq!(chunk_all.row_count(), 3, "Should see 3 nodes at epoch 5");
