@@ -180,3 +180,202 @@ pub fn run(cmd: DataCommands, _format: OutputFormat, quiet: bool) -> Result<()> 
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn create_test_db(dir: &std::path::Path) -> grafeo_engine::GrafeoDB {
+        let db = grafeo_engine::GrafeoDB::open(dir).expect("create db");
+        let n1 = db.create_node(&["Person"]);
+        let n2 = db.create_node(&["Company"]);
+        db.set_node_property(n1, "name", Value::from("Alix"));
+        db.set_node_property(n1, "age", Value::Int64(30));
+        db.set_node_property(n2, "name", Value::from("Acme"));
+        let e = db.create_edge(n1, n2, "WORKS_AT");
+        db.set_edge_property(e, "since", Value::Int64(2020));
+        db
+    }
+
+    #[test]
+    fn test_dump_and_load_roundtrip() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("source.grafeo");
+        let dump_path = temp.path().join("dump.jsonl");
+        let target_path = temp.path().join("target.grafeo");
+
+        let db = create_test_db(&db_path);
+        drop(db);
+
+        // Dump
+        run(
+            DataCommands::Dump {
+                path: db_path,
+                output: dump_path.clone(),
+                export_format: None,
+            },
+            OutputFormat::Json,
+            true, // quiet
+        )
+        .expect("dump should succeed");
+
+        // Verify dump file exists and has content
+        let content = std::fs::read_to_string(&dump_path).unwrap();
+        let lines: Vec<&str> = content.trim().lines().collect();
+        assert_eq!(lines.len(), 3); // 2 nodes + 1 edge
+
+        // Load into new database
+        run(
+            DataCommands::Load {
+                input: dump_path,
+                path: target_path.clone(),
+            },
+            OutputFormat::Json,
+            true,
+        )
+        .expect("load should succeed");
+
+        // Verify loaded data
+        let loaded = grafeo_engine::GrafeoDB::open(&target_path).unwrap();
+        let info = loaded.info();
+        assert_eq!(info.node_count, 2);
+        assert_eq!(info.edge_count, 1);
+    }
+
+    #[test]
+    fn test_dump_explicit_json_format() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.grafeo");
+        let dump_path = temp.path().join("dump.json");
+
+        // Create and drop the database so the CLI can reopen it
+        drop(create_test_db(&db_path));
+
+        run(
+            DataCommands::Dump {
+                path: db_path,
+                output: dump_path.clone(),
+                export_format: Some("json".to_string()),
+            },
+            OutputFormat::Json,
+            true,
+        )
+        .expect("dump with explicit json format should succeed");
+
+        let content = std::fs::read_to_string(&dump_path).unwrap();
+        assert!(!content.is_empty());
+    }
+
+    #[test]
+    fn test_dump_invalid_format_rejected() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.grafeo");
+        let dump_path = temp.path().join("dump.parquet");
+
+        let _db = create_test_db(&db_path);
+
+        let result = run(
+            DataCommands::Dump {
+                path: db_path,
+                output: dump_path,
+                export_format: Some("parquet".to_string()),
+            },
+            OutputFormat::Json,
+            true,
+        );
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("JSON Lines"));
+    }
+
+    #[test]
+    fn test_load_invalid_json_fails() {
+        let temp = TempDir::new().unwrap();
+        let input_path = temp.path().join("bad.jsonl");
+        let db_path = temp.path().join("target.grafeo");
+
+        std::fs::write(&input_path, "not valid json\n").unwrap();
+
+        let result = run(
+            DataCommands::Load {
+                input: input_path,
+                path: db_path,
+            },
+            OutputFormat::Json,
+            true,
+        );
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("line 1"));
+    }
+
+    #[test]
+    fn test_load_unknown_type_fails() {
+        let temp = TempDir::new().unwrap();
+        let input_path = temp.path().join("unknown.jsonl");
+        let db_path = temp.path().join("target.grafeo");
+
+        std::fs::write(&input_path, "{\"type\": \"widget\"}\n").unwrap();
+
+        let result = run(
+            DataCommands::Load {
+                input: input_path,
+                path: db_path,
+            },
+            OutputFormat::Json,
+            true,
+        );
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Unknown record type"));
+    }
+
+    #[test]
+    fn test_load_skips_empty_lines() {
+        let temp = TempDir::new().unwrap();
+        let input_path = temp.path().join("sparse.jsonl");
+        let db_path = temp.path().join("target.grafeo");
+
+        let content = "\n{\"type\":\"node\",\"labels\":[\"A\"],\"properties\":{}}\n\n";
+        std::fs::write(&input_path, content).unwrap();
+
+        run(
+            DataCommands::Load {
+                input: input_path,
+                path: db_path.clone(),
+            },
+            OutputFormat::Json,
+            true,
+        )
+        .expect("should handle empty lines");
+
+        let db = grafeo_engine::GrafeoDB::open(&db_path).unwrap();
+        assert_eq!(db.info().node_count, 1);
+    }
+
+    #[test]
+    fn test_load_edge_missing_source_fails() {
+        let temp = TempDir::new().unwrap();
+        let input_path = temp.path().join("bad_edge.jsonl");
+        let db_path = temp.path().join("target.grafeo");
+
+        let content = "{\"type\":\"edge\",\"target\":1,\"edge_type\":\"KNOWS\"}\n";
+        std::fs::write(&input_path, content).unwrap();
+
+        let result = run(
+            DataCommands::Load {
+                input: input_path,
+                path: db_path,
+            },
+            OutputFormat::Json,
+            true,
+        );
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("source"));
+    }
+}

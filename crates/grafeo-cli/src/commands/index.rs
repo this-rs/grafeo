@@ -89,3 +89,80 @@ pub fn run(cmd: IndexCommands, format: OutputFormat, quiet: bool) -> Result<()> 
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn create_test_db(dir: &std::path::Path) -> grafeo_engine::GrafeoDB {
+        let db = grafeo_engine::GrafeoDB::open(dir).expect("create db");
+        let n1 = db.create_node(&["Person"]);
+        let n2 = db.create_node(&["Company"]);
+        db.set_node_property(n1, "name", grafeo_common::types::Value::from("Alix"));
+        db.set_node_property(n2, "name", grafeo_common::types::Value::from("Acme"));
+        db.create_edge(n1, n2, "WORKS_AT");
+        db
+    }
+
+    #[test]
+    fn test_index_list_empty() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.grafeo");
+        let _db = create_test_db(&db_path);
+
+        // List should succeed even with no explicit indexes
+        run(
+            IndexCommands::List {
+                path: db_path.clone(),
+            },
+            OutputFormat::Table,
+            true,
+        )
+        .expect("list should succeed");
+
+        // Also test JSON format
+        run(
+            IndexCommands::List { path: db_path },
+            OutputFormat::Json,
+            true,
+        )
+        .expect("list json should succeed");
+    }
+
+    #[test]
+    fn test_index_stats() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("test.grafeo");
+        let _db = create_test_db(&db_path);
+
+        run(
+            IndexCommands::Stats {
+                path: db_path.clone(),
+            },
+            OutputFormat::Table,
+            true,
+        )
+        .expect("stats table should succeed");
+
+        run(
+            IndexCommands::Stats { path: db_path },
+            OutputFormat::Json,
+            true,
+        )
+        .expect("stats json should succeed");
+    }
+
+    #[test]
+    fn test_index_list_nonexistent_database() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("nonexistent.grafeo");
+
+        let result = run(
+            IndexCommands::List { path: db_path },
+            OutputFormat::Table,
+            true,
+        );
+        assert!(result.is_err());
+    }
+}

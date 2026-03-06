@@ -829,8 +829,8 @@ class TestGremlinPredicates:
         """containing('sub') matches strings containing a substring."""
         db, _ = social_graph
         rows = _rows(db, "g.V().has('name', containing('li'))")
-        # Alix and Vincent both contain 'li'
-        assert len(rows) == 2
+        # Only Alix contains 'li'
+        assert len(rows) == 1
 
     def test_starting_with(self, social_graph):
         """startingWith('prefix') matches strings beginning with prefix."""

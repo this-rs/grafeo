@@ -7,7 +7,7 @@
 //! This module contains shared infrastructure used by both the LPG and RDF planners:
 //! - [`PhysicalPlan`] - the output of planning
 //! - Expression and operator conversion functions
-//! - The [`common`] submodule with reusable operator builders
+//! - Reusable operator builders (in the common submodule)
 //!
 //! Model-specific planning lives in [`lpg`] and [`rdf`].
 

@@ -1435,6 +1435,231 @@ mod tests {
     }
 
     #[test]
+    fn test_first_and_last() {
+        let mock = MockOperator::new(vec![create_test_chunk()]);
+
+        let mut agg = SimpleAggregateOperator::new(
+            Box::new(mock),
+            vec![AggregateExpr::first(1), AggregateExpr::last(1)],
+            vec![LogicalType::Int64, LogicalType::Int64],
+        );
+
+        let result = agg.next().unwrap().unwrap();
+        assert_eq!(result.row_count(), 1);
+        // First: 10, Last: 50
+        assert_eq!(result.column(0).unwrap().get_int64(0), Some(10));
+        assert_eq!(result.column(1).unwrap().get_int64(0), Some(50));
+    }
+
+    #[test]
+    fn test_collect() {
+        let mock = MockOperator::new(vec![create_test_chunk()]);
+
+        let mut agg = SimpleAggregateOperator::new(
+            Box::new(mock),
+            vec![AggregateExpr::collect(1)],
+            vec![LogicalType::Any],
+        );
+
+        let result = agg.next().unwrap().unwrap();
+        let val = result.column(0).unwrap().get_value(0).unwrap();
+        if let Value::List(items) = val {
+            assert_eq!(items.len(), 5);
+        } else {
+            panic!("Expected List value");
+        }
+    }
+
+    #[test]
+    fn test_collect_distinct() {
+        let mock = MockOperator::new(vec![create_test_chunk_with_duplicates()]);
+
+        let mut agg = SimpleAggregateOperator::new(
+            Box::new(mock),
+            vec![AggregateExpr::collect(1).with_distinct()],
+            vec![LogicalType::Any],
+        );
+
+        let result = agg.next().unwrap().unwrap();
+        let val = result.column(0).unwrap().get_value(0).unwrap();
+        if let Value::List(items) = val {
+            // [10, 10, 20, 30, 30, 30] -> distinct: [10, 20, 30]
+            assert_eq!(items.len(), 3);
+        } else {
+            panic!("Expected List value");
+        }
+    }
+
+    #[test]
+    fn test_group_concat() {
+        let mut builder = DataChunkBuilder::new(&[LogicalType::String]);
+        for s in ["hello", "world", "foo"] {
+            builder.column_mut(0).unwrap().push_string(s);
+            builder.advance_row();
+        }
+        let chunk = builder.finish();
+        let mock = MockOperator::new(vec![chunk]);
+
+        let agg_expr = AggregateExpr {
+            function: AggregateFunction::GroupConcat,
+            column: Some(0),
+            column2: None,
+            distinct: false,
+            alias: None,
+            percentile: None,
+        };
+
+        let mut agg =
+            SimpleAggregateOperator::new(Box::new(mock), vec![agg_expr], vec![LogicalType::String]);
+
+        let result = agg.next().unwrap().unwrap();
+        let val = result.column(0).unwrap().get_value(0).unwrap();
+        assert_eq!(val, Value::String("hello world foo".into()));
+    }
+
+    #[test]
+    fn test_sample() {
+        let mock = MockOperator::new(vec![create_test_chunk()]);
+
+        let agg_expr = AggregateExpr {
+            function: AggregateFunction::Sample,
+            column: Some(1),
+            column2: None,
+            distinct: false,
+            alias: None,
+            percentile: None,
+        };
+
+        let mut agg =
+            SimpleAggregateOperator::new(Box::new(mock), vec![agg_expr], vec![LogicalType::Int64]);
+
+        let result = agg.next().unwrap().unwrap();
+        // Sample should return the first non-null value (10)
+        assert_eq!(result.column(0).unwrap().get_int64(0), Some(10));
+    }
+
+    #[test]
+    fn test_variance_sample() {
+        let mock = MockOperator::new(vec![create_statistical_test_chunk()]);
+
+        let agg_expr = AggregateExpr {
+            function: AggregateFunction::Variance,
+            column: Some(0),
+            column2: None,
+            distinct: false,
+            alias: None,
+            percentile: None,
+        };
+
+        let mut agg = SimpleAggregateOperator::new(
+            Box::new(mock),
+            vec![agg_expr],
+            vec![LogicalType::Float64],
+        );
+
+        let result = agg.next().unwrap().unwrap();
+        // Sample variance of [2, 4, 4, 4, 5, 5, 7, 9]: M2/(n-1) = 32/7 = 4.571
+        let variance = result.column(0).unwrap().get_float64(0).unwrap();
+        assert!((variance - 32.0 / 7.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_variance_population() {
+        let mock = MockOperator::new(vec![create_statistical_test_chunk()]);
+
+        let agg_expr = AggregateExpr {
+            function: AggregateFunction::VariancePop,
+            column: Some(0),
+            column2: None,
+            distinct: false,
+            alias: None,
+            percentile: None,
+        };
+
+        let mut agg = SimpleAggregateOperator::new(
+            Box::new(mock),
+            vec![agg_expr],
+            vec![LogicalType::Float64],
+        );
+
+        let result = agg.next().unwrap().unwrap();
+        // Population variance: M2/n = 32/8 = 4.0
+        let variance = result.column(0).unwrap().get_float64(0).unwrap();
+        assert!((variance - 4.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_variance_single_value() {
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        builder.column_mut(0).unwrap().push_int64(42);
+        builder.advance_row();
+        let chunk = builder.finish();
+        let mock = MockOperator::new(vec![chunk]);
+
+        let agg_expr = AggregateExpr {
+            function: AggregateFunction::Variance,
+            column: Some(0),
+            column2: None,
+            distinct: false,
+            alias: None,
+            percentile: None,
+        };
+
+        let mut agg = SimpleAggregateOperator::new(
+            Box::new(mock),
+            vec![agg_expr],
+            vec![LogicalType::Float64],
+        );
+
+        let result = agg.next().unwrap().unwrap();
+        // Sample variance of single value is undefined (null)
+        assert!(matches!(
+            result.column(0).unwrap().get_value(0),
+            Some(Value::Null)
+        ));
+    }
+
+    #[test]
+    fn test_empty_aggregation() {
+        // No input rows: COUNT should be 0, SUM 0, AVG null, MIN/MAX null
+        let mock = MockOperator::new(vec![]);
+
+        let mut agg = SimpleAggregateOperator::new(
+            Box::new(mock),
+            vec![
+                AggregateExpr::count_star(),
+                AggregateExpr::sum(0),
+                AggregateExpr::avg(0),
+                AggregateExpr::min(0),
+                AggregateExpr::max(0),
+            ],
+            vec![
+                LogicalType::Int64,
+                LogicalType::Int64,
+                LogicalType::Float64,
+                LogicalType::Int64,
+                LogicalType::Int64,
+            ],
+        );
+
+        let result = agg.next().unwrap().unwrap();
+        assert_eq!(result.column(0).unwrap().get_int64(0), Some(0)); // COUNT
+        assert_eq!(result.column(1).unwrap().get_int64(0), Some(0)); // SUM
+        assert!(matches!(
+            result.column(2).unwrap().get_value(0),
+            Some(Value::Null)
+        )); // AVG
+        assert!(matches!(
+            result.column(3).unwrap().get_value(0),
+            Some(Value::Null)
+        )); // MIN
+        assert!(matches!(
+            result.column(4).unwrap().get_value(0),
+            Some(Value::Null)
+        )); // MAX
+    }
+
+    #[test]
     fn test_stdev_pop_single_value() {
         // Single value should return 0 for population stdev
         let mut builder = DataChunkBuilder::new(&[LogicalType::Int64]);

@@ -386,7 +386,7 @@ fn test_node_count_consistency() {
 // Async Session Tests (using tokio)
 // ============================================================================
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_async_concurrent_sessions() {
     use tokio::task;
 
@@ -415,7 +415,7 @@ async fn test_async_concurrent_sessions() {
     assert_eq!(result.row_count(), 8, "All async nodes should exist");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_async_transaction_isolation() {
     use std::sync::atomic::AtomicBool;
     use tokio::task;

@@ -24,7 +24,7 @@ use crate::execution::vector::ValueVector;
 ///
 /// When `param_state` is set, outer row values for the specified column indices
 /// are injected into the shared [`ParameterState`] before each inner execution,
-/// allowing the inner plan's [`ParameterScanOperator`] to read them.
+/// allowing the inner plan's [`ParameterScanOperator`](super::ParameterScanOperator) to read them.
 pub struct ApplyOperator {
     outer: Box<dyn Operator>,
     inner: Box<dyn Operator>,
@@ -65,7 +65,7 @@ impl ApplyOperator {
 
     /// Creates a correlated Apply operator that injects outer row values.
     ///
-    /// `param_state` is shared with a [`ParameterScanOperator`] in the inner plan.
+    /// `param_state` is shared with a [`ParameterScanOperator`](super::ParameterScanOperator) in the inner plan.
     /// `param_col_indices` specifies which outer columns to inject (by index).
     pub fn new_correlated(
         outer: Box<dyn Operator>,

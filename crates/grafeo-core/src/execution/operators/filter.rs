@@ -4987,4 +4987,412 @@ mod tests {
         });
         assert_eq!(result, Some(Value::String("Alix".into())));
     }
+
+    // === LIKE operator tests ===
+
+    #[test]
+    fn test_eval_like_wildcard() {
+        // 'hello world' LIKE 'hello%'
+        let result = eval_literal_expr(binary(
+            Value::String("hello world".into()),
+            BinaryFilterOp::Like,
+            Value::String("hello%".into()),
+        ));
+        assert_eq!(result, Some(Value::Bool(true)));
+
+        // 'hello world' LIKE '%world'
+        let result = eval_literal_expr(binary(
+            Value::String("hello world".into()),
+            BinaryFilterOp::Like,
+            Value::String("%world".into()),
+        ));
+        assert_eq!(result, Some(Value::Bool(true)));
+
+        // 'hello world' LIKE '%llo%'
+        let result = eval_literal_expr(binary(
+            Value::String("hello world".into()),
+            BinaryFilterOp::Like,
+            Value::String("%llo%".into()),
+        ));
+        assert_eq!(result, Some(Value::Bool(true)));
+
+        // 'hello' LIKE 'world%'
+        let result = eval_literal_expr(binary(
+            Value::String("hello".into()),
+            BinaryFilterOp::Like,
+            Value::String("world%".into()),
+        ));
+        assert_eq!(result, Some(Value::Bool(false)));
+    }
+
+    #[test]
+    fn test_eval_like_single_char() {
+        // 'cat' LIKE 'c_t'
+        let result = eval_literal_expr(binary(
+            Value::String("cat".into()),
+            BinaryFilterOp::Like,
+            Value::String("c_t".into()),
+        ));
+        assert_eq!(result, Some(Value::Bool(true)));
+
+        // 'cart' LIKE 'c_t'
+        let result = eval_literal_expr(binary(
+            Value::String("cart".into()),
+            BinaryFilterOp::Like,
+            Value::String("c_t".into()),
+        ));
+        assert_eq!(result, Some(Value::Bool(false)));
+    }
+
+    #[test]
+    fn test_eval_like_null() {
+        // NULL LIKE '%' -> NULL
+        let result = eval_literal_expr(binary(
+            Value::Null,
+            BinaryFilterOp::Like,
+            Value::String("%".into()),
+        ));
+        assert_eq!(result, Some(Value::Null));
+    }
+
+    // === Concat operator (||) tests ===
+
+    #[test]
+    fn test_eval_concat_strings() {
+        let result = eval_literal_expr(binary(
+            Value::String("hello".into()),
+            BinaryFilterOp::Concat,
+            Value::String(" world".into()),
+        ));
+        assert_eq!(result, Some(Value::String("hello world".into())));
+    }
+
+    #[test]
+    fn test_eval_concat_string_with_int() {
+        let result = eval_literal_expr(binary(
+            Value::String("count: ".into()),
+            BinaryFilterOp::Concat,
+            Value::Int64(42),
+        ));
+        assert_eq!(result, Some(Value::String("count: 42".into())));
+    }
+
+    #[test]
+    fn test_eval_concat_int_with_string() {
+        let result = eval_literal_expr(binary(
+            Value::Int64(42),
+            BinaryFilterOp::Concat,
+            Value::String(" items".into()),
+        ));
+        assert_eq!(result, Some(Value::String("42 items".into())));
+    }
+
+    #[test]
+    fn test_eval_concat_null() {
+        // Null || Null -> Null (hits the null arm)
+        let result = eval_literal_expr(binary(Value::Null, BinaryFilterOp::Concat, Value::Null));
+        assert_eq!(result, Some(Value::Null));
+    }
+
+    // === Modulo operator tests ===
+
+    #[test]
+    fn test_eval_modulo_float() {
+        let result = eval_literal_expr(binary(
+            Value::Float64(10.5),
+            BinaryFilterOp::Mod,
+            Value::Float64(3.0),
+        ));
+        if let Some(Value::Float64(v)) = result {
+            assert!((v - 1.5).abs() < 0.001);
+        } else {
+            panic!("Expected Float64");
+        }
+    }
+
+    #[test]
+    fn test_eval_modulo_mixed() {
+        // int % float
+        let result = eval_literal_expr(binary(
+            Value::Int64(10),
+            BinaryFilterOp::Mod,
+            Value::Float64(3.0),
+        ));
+        if let Some(Value::Float64(v)) = result {
+            assert!((v - 1.0).abs() < 0.001);
+        } else {
+            panic!("Expected Float64");
+        }
+
+        // float % int
+        let result = eval_literal_expr(binary(
+            Value::Float64(10.0),
+            BinaryFilterOp::Mod,
+            Value::Int64(3),
+        ));
+        if let Some(Value::Float64(v)) = result {
+            assert!((v - 1.0).abs() < 0.001);
+        } else {
+            panic!("Expected Float64");
+        }
+    }
+
+    #[test]
+    fn test_eval_modulo_by_zero() {
+        let result = eval_literal_expr(binary(
+            Value::Int64(10),
+            BinaryFilterOp::Mod,
+            Value::Int64(0),
+        ));
+        assert_eq!(result, None);
+
+        let result = eval_literal_expr(binary(
+            Value::Float64(10.0),
+            BinaryFilterOp::Mod,
+            Value::Float64(0.0),
+        ));
+        assert_eq!(result, None);
+    }
+
+    // === String addition with type coercion ===
+
+    #[test]
+    fn test_eval_string_add_int() {
+        let result = eval_literal_expr(binary(
+            Value::String("val:".into()),
+            BinaryFilterOp::Add,
+            Value::Int64(42),
+        ));
+        assert_eq!(result, Some(Value::String("val:42".into())));
+    }
+
+    #[test]
+    fn test_eval_string_add_bool() {
+        let result = eval_literal_expr(binary(
+            Value::String("is:".into()),
+            BinaryFilterOp::Add,
+            Value::Bool(true),
+        ));
+        assert_eq!(result, Some(Value::String("is:true".into())));
+    }
+
+    #[test]
+    fn test_eval_string_add_null() {
+        let result = eval_literal_expr(binary(
+            Value::String("val:".into()),
+            BinaryFilterOp::Add,
+            Value::Null,
+        ));
+        assert_eq!(result, Some(Value::Null));
+    }
+
+    // === Slice access tests ===
+
+    #[test]
+    fn test_eval_string_slice() {
+        // "hello"[1..3] = "el"
+        let result = eval_literal_expr(FilterExpression::SliceAccess {
+            base: Box::new(FilterExpression::Literal(Value::String("hello".into()))),
+            start: Some(Box::new(FilterExpression::Literal(Value::Int64(1)))),
+            end: Some(Box::new(FilterExpression::Literal(Value::Int64(3)))),
+        });
+        assert_eq!(result, Some(Value::String("el".into())));
+    }
+
+    #[test]
+    fn test_eval_string_index_access() {
+        // "hello"[1] = "e"
+        let result = eval_literal_expr(FilterExpression::IndexAccess {
+            base: Box::new(FilterExpression::Literal(Value::String("hello".into()))),
+            index: Box::new(FilterExpression::Literal(Value::Int64(1))),
+        });
+        assert_eq!(result, Some(Value::String("e".into())));
+    }
+
+    #[test]
+    fn test_eval_string_negative_index() {
+        // "hello"[-1] = "o"
+        let result = eval_literal_expr(FilterExpression::IndexAccess {
+            base: Box::new(FilterExpression::Literal(Value::String("hello".into()))),
+            index: Box::new(FilterExpression::Literal(Value::Int64(-1))),
+        });
+        assert_eq!(result, Some(Value::String("o".into())));
+    }
+
+    // === Function tests for uncovered branches ===
+
+    #[test]
+    fn test_eval_tostring_types() {
+        use crate::graph::lpg::LpgStore;
+        let store: Arc<dyn GraphStore> = Arc::new(LpgStore::new().unwrap());
+        let vc = HashMap::new();
+        let builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        let chunk = builder.finish();
+
+        // Bool -> String
+        let pred = ExpressionPredicate::new(
+            FilterExpression::FunctionCall {
+                name: "toString".to_string(),
+                args: vec![FilterExpression::Literal(Value::Bool(true))],
+            },
+            vc.clone(),
+            Arc::clone(&store),
+        );
+        assert_eq!(pred.eval_at(&chunk, 0), Some(Value::String("true".into())));
+
+        // Float -> String
+        let pred = ExpressionPredicate::new(
+            FilterExpression::FunctionCall {
+                name: "toString".to_string(),
+                args: vec![FilterExpression::Literal(Value::Float64(2.72))],
+            },
+            vc.clone(),
+            Arc::clone(&store),
+        );
+        assert_eq!(pred.eval_at(&chunk, 0), Some(Value::String("2.72".into())));
+
+        // Null -> Null
+        let pred = ExpressionPredicate::new(
+            FilterExpression::FunctionCall {
+                name: "toString".to_string(),
+                args: vec![FilterExpression::Literal(Value::Null)],
+            },
+            vc,
+            store,
+        );
+        assert_eq!(pred.eval_at(&chunk, 0), Some(Value::Null));
+    }
+
+    #[test]
+    fn test_eval_toboolean() {
+        use crate::graph::lpg::LpgStore;
+        let store: Arc<dyn GraphStore> = Arc::new(LpgStore::new().unwrap());
+        let vc = HashMap::new();
+        let builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        let chunk = builder.finish();
+
+        let pred = ExpressionPredicate::new(
+            FilterExpression::FunctionCall {
+                name: "toBoolean".to_string(),
+                args: vec![FilterExpression::Literal(Value::String("true".into()))],
+            },
+            vc.clone(),
+            Arc::clone(&store),
+        );
+        assert_eq!(pred.eval_at(&chunk, 0), Some(Value::Bool(true)));
+
+        let pred = ExpressionPredicate::new(
+            FilterExpression::FunctionCall {
+                name: "toBoolean".to_string(),
+                args: vec![FilterExpression::Literal(Value::String("false".into()))],
+            },
+            vc.clone(),
+            Arc::clone(&store),
+        );
+        assert_eq!(pred.eval_at(&chunk, 0), Some(Value::Bool(false)));
+
+        let pred = ExpressionPredicate::new(
+            FilterExpression::FunctionCall {
+                name: "toBoolean".to_string(),
+                args: vec![FilterExpression::Literal(Value::Bool(true))],
+            },
+            vc,
+            store,
+        );
+        assert_eq!(pred.eval_at(&chunk, 0), Some(Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_eval_tofloat() {
+        use crate::graph::lpg::LpgStore;
+        let store: Arc<dyn GraphStore> = Arc::new(LpgStore::new().unwrap());
+        let vc = HashMap::new();
+        let builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        let chunk = builder.finish();
+
+        let pred = ExpressionPredicate::new(
+            FilterExpression::FunctionCall {
+                name: "toFloat".to_string(),
+                args: vec![FilterExpression::Literal(Value::String("2.72".into()))],
+            },
+            vc.clone(),
+            Arc::clone(&store),
+        );
+        if let Some(Value::Float64(v)) = pred.eval_at(&chunk, 0) {
+            assert!((v - 2.72).abs() < 0.001);
+        } else {
+            panic!("Expected Float64");
+        }
+
+        let pred = ExpressionPredicate::new(
+            FilterExpression::FunctionCall {
+                name: "toFloat".to_string(),
+                args: vec![FilterExpression::Literal(Value::Int64(42))],
+            },
+            vc,
+            store,
+        );
+        assert_eq!(pred.eval_at(&chunk, 0), Some(Value::Float64(42.0)));
+    }
+
+    #[test]
+    fn test_eval_tointeger_from_float() {
+        use crate::graph::lpg::LpgStore;
+        let store: Arc<dyn GraphStore> = Arc::new(LpgStore::new().unwrap());
+        let vc = HashMap::new();
+        let builder = DataChunkBuilder::new(&[LogicalType::Int64]);
+        let chunk = builder.finish();
+
+        let pred = ExpressionPredicate::new(
+            FilterExpression::FunctionCall {
+                name: "toInteger".to_string(),
+                args: vec![FilterExpression::Literal(Value::Float64(3.7))],
+            },
+            vc,
+            store,
+        );
+        assert_eq!(pred.eval_at(&chunk, 0), Some(Value::Int64(3)));
+    }
+
+    #[test]
+    fn test_eval_reverse_list() {
+        let result = eval_literal_expr(FilterExpression::FunctionCall {
+            name: "reverse".to_string(),
+            args: vec![FilterExpression::List(vec![
+                FilterExpression::Literal(Value::Int64(1)),
+                FilterExpression::Literal(Value::Int64(2)),
+                FilterExpression::Literal(Value::Int64(3)),
+            ])],
+        });
+        assert_eq!(
+            result,
+            Some(Value::List(
+                vec![Value::Int64(3), Value::Int64(2), Value::Int64(1)].into()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_eval_reverse_string() {
+        let result = eval_literal_expr(FilterExpression::FunctionCall {
+            name: "reverse".to_string(),
+            args: vec![FilterExpression::Literal(Value::String("abc".into()))],
+        });
+        assert_eq!(result, Some(Value::String("cba".into())));
+    }
+
+    #[test]
+    fn test_eval_exists_function() {
+        let result = eval_literal_expr(FilterExpression::FunctionCall {
+            name: "exists".to_string(),
+            args: vec![FilterExpression::Literal(Value::Int64(42))],
+        });
+        assert_eq!(result, Some(Value::Bool(true)));
+
+        let result = eval_literal_expr(FilterExpression::FunctionCall {
+            name: "exists".to_string(),
+            args: vec![FilterExpression::Literal(Value::Null)],
+        });
+        assert_eq!(result, Some(Value::Bool(false)));
+    }
 }

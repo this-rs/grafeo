@@ -48,8 +48,5 @@ languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]
 vector-index = ["grafeo-engine/vector-index"]
 full = ["languages", "text-index", "hybrid-search", "vector-index"]
 
-[package.metadata.wasm-pack.profile.release]
-wasm-opt = ["-Oz"]
-
 [lints]
 workspace = true

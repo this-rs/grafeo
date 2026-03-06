@@ -2,7 +2,7 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
-## [0.5.14] - 2025-03-05
+## [0.5.14] - 2025-03-06
 
 Moving crates and lots of small improvements & fixes
 

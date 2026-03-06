@@ -13,7 +13,7 @@ use super::{DataChunk, Operator, OperatorResult};
 use crate::execution::vector::ValueVector;
 use grafeo_common::types::Value;
 
-/// Shared state between [`ApplyOperator`] and [`ParameterScanOperator`].
+/// Shared state between [`ApplyOperator`](super::ApplyOperator) and [`ParameterScanOperator`].
 ///
 /// The Apply operator writes the current outer row values here before
 /// executing the inner plan. The ParameterScan reads them as its output.
@@ -54,7 +54,7 @@ impl ParameterState {
 /// Operator that emits a single row from externally injected parameter values.
 ///
 /// This is the leaf operator for inner plans in correlated subqueries.
-/// The [`ApplyOperator`] sets parameter values via the shared [`ParameterState`]
+/// The [`ApplyOperator`](super::ApplyOperator) sets parameter values via the shared [`ParameterState`]
 /// before each inner plan execution.
 pub struct ParameterScanOperator {
     state: Arc<ParameterState>,
