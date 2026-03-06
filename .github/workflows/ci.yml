@@ -304,9 +304,9 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Install wasm-pack
+      - name: Install wasm-bindgen-cli
         uses: cargo-bins/cargo-binstall@main
-      - run: cargo binstall wasm-pack --no-confirm
+      - run: cargo binstall wasm-bindgen-cli --no-confirm
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -320,14 +320,13 @@ jobs:
             ${{ runner.os }}-cargo-wasm-
 
       - name: Build WASM
-        run: wasm-pack build crates/bindings/wasm --target web --release
+        run: bash scripts/build-wasm.sh
 
       - name: Check gzip size
         run: |
-          gzip -k crates/bindings/wasm/pkg/grafeo_wasm_bg.wasm
-          SIZE=$(stat --printf="%s" crates/bindings/wasm/pkg/grafeo_wasm_bg.wasm.gz)
-          echo "WASM gzip size: $SIZE bytes"
-          if [ "$SIZE" -gt 819200 ]; then echo "::warning::WASM exceeds 800KB target"; fi
+          SIZE=$(gzip -c crates/bindings/wasm/pkg/grafeo_wasm_bg.wasm | wc -c)
+          echo "WASM gzip size: $SIZE bytes ($(( SIZE / 1024 )) KB)"
+          if [ "$SIZE" -gt 409600 ]; then echo "::warning::WASM exceeds 400KB gzip target"; fi
 
   # Benchmark (only on main)
   benchmark:

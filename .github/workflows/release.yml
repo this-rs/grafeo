@@ -246,17 +246,16 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Install wasm-bindgen-cli
+        run: cargo install wasm-bindgen-cli
 
       - name: Build WASM package
-        run: wasm-pack build --release --target bundler --scope grafeo-db crates/bindings/wasm
+        run: bash scripts/build-wasm.sh --target bundler
 
       - name: Fix WASM package metadata
         run: |
-          # wasm-pack generates name from Cargo crate name (@grafeo-db/grafeo-wasm)
-          # but the correct npm package name is @grafeo-db/wasm
-          # Copy our maintained package.json over the generated one
+          # The build script generates the pkg/ directory via wasm-bindgen.
+          # Copy our maintained package.json over the generated one.
           cp crates/bindings/wasm/package.json crates/bindings/wasm/pkg/package.json
 
       - name: Publish @grafeo-db/wasm
