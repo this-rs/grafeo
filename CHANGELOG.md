@@ -2,6 +2,12 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
+## [0.5.16] - 2026-03-07
+
+### Improved
+
+- **Cost model calibration**: recursive plan costing, statistics-aware IO estimation, actual child cardinalities for joins, multi-edge-type expand costing
+
 ## [0.5.15] - 2026-03-07
 
 Full ecosystem feature profiles reworks and several graph database nice to haves
