@@ -53,26 +53,44 @@ impl super::Planner {
             }
         }
 
-        // Check aggregate expressions for properties (both first and second arguments)
+        // Check aggregate expressions for properties and complex expressions
+        // (both first and second arguments)
+        let mut expression_projections: Vec<(FilterExpression, String)> = Vec::new();
         for agg_expr in &agg.aggregates {
             for expr_opt in [&agg_expr.expression, &agg_expr.expression2] {
-                if let Some(LogicalExpression::Property { variable, property }) = expr_opt {
-                    let col_name = format!("{}_{}", variable, property);
-                    if !variable_columns.contains_key(&col_name) {
-                        property_projections.push((
-                            variable.clone(),
-                            property.clone(),
-                            col_name.clone(),
-                        ));
-                        variable_columns.insert(col_name, next_col_idx);
-                        next_col_idx += 1;
+                let Some(expr) = expr_opt else { continue };
+                match expr {
+                    LogicalExpression::Property { variable, property } => {
+                        let col_name = format!("{}_{}", variable, property);
+                        if !variable_columns.contains_key(&col_name) {
+                            property_projections.push((
+                                variable.clone(),
+                                property.clone(),
+                                col_name.clone(),
+                            ));
+                            variable_columns.insert(col_name, next_col_idx);
+                            next_col_idx += 1;
+                        }
+                    }
+                    LogicalExpression::Variable(_) => {
+                        // Already in variable_columns, nothing to project
+                    }
+                    _ => {
+                        // Complex expression (CASE, Binary, etc.): project as computed column
+                        let col_name = format!("__expr_{:?}", expr);
+                        if !variable_columns.contains_key(&col_name) {
+                            let filter_expr = self.convert_expression(expr)?;
+                            expression_projections.push((filter_expr, col_name.clone()));
+                            variable_columns.insert(col_name, next_col_idx);
+                            next_col_idx += 1;
+                        }
                     }
                 }
             }
         }
 
-        // If we have property expressions, add a projection to materialize them
-        if !property_projections.is_empty() {
+        // If we have property or expression projections, add a projection to materialize them
+        if !property_projections.is_empty() || !expression_projections.is_empty() {
             let mut projections = Vec::new();
             let mut output_types = Vec::new();
 
@@ -95,7 +113,16 @@ impl super::Planner {
                     column: source_col,
                     property: property.clone(),
                 });
-                output_types.push(LogicalType::Any); // Properties can be any type (string, int, etc.)
+                output_types.push(LogicalType::Any);
+            }
+
+            // Then add complex expression projections (CASE, etc.)
+            for (filter_expr, _col_name) in &expression_projections {
+                projections.push(ProjectExpr::Expression {
+                    expr: filter_expr.clone(),
+                    variable_columns: variable_columns.clone(),
+                });
+                output_types.push(LogicalType::Any);
             }
 
             input_op = Box::new(ProjectOperator::with_store(
@@ -420,10 +447,13 @@ impl super::Planner {
                     ))
                 })
             }
-            _ => Err(Error::Internal(format!(
-                "Cannot resolve expression to column: {:?}",
-                expr
-            ))),
+            _ => {
+                // Complex expression (CASE, Binary, etc.): look up synthetic column
+                let col_name = format!("__expr_{:?}", expr);
+                variable_columns.get(&col_name).copied().ok_or_else(|| {
+                    Error::Internal(format!("Cannot resolve expression to column: {:?}", expr))
+                })
+            }
         }
     }
 }

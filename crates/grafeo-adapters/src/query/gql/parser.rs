@@ -3511,6 +3511,26 @@ impl<'a> Parser<'a> {
             match_clauses.push(self.parse_match_clause()?);
         }
 
+        // Bare pattern form: EXISTS { (a)-[r]->(b) WHERE ... }
+        // Treat as implicit MATCH when no MATCH keyword but a pattern starts with (
+        if match_clauses.is_empty() && self.current.kind == TokenKind::LParen {
+            let span_start = self.current.span.start;
+            let mut patterns = Vec::new();
+            patterns.push(self.parse_aliased_pattern()?);
+            while self.current.kind == TokenKind::Comma {
+                self.advance();
+                patterns.push(self.parse_aliased_pattern()?);
+            }
+            match_clauses.push(MatchClause {
+                optional: false,
+                path_mode: None,
+                search_prefix: None,
+                match_mode: None,
+                patterns,
+                span: Some(SourceSpan::new(span_start, self.current.span.end, 1, 1)),
+            });
+        }
+
         if match_clauses.is_empty() {
             return Err(self.error("EXISTS subquery requires at least one MATCH clause"));
         }
@@ -8067,5 +8087,39 @@ mod tests {
         } else {
             panic!("Expected CreateGraphType");
         }
+    }
+
+    // ==================== EXISTS bare pattern ====================
+
+    #[test]
+    fn test_parse_exists_with_match() {
+        // EXISTS with explicit MATCH (should already work)
+        let mut parser = Parser::new("MATCH (n) WHERE EXISTS { MATCH (n)-[:KNOWS]->() } RETURN n");
+        let result = parser.parse();
+        assert!(result.is_ok(), "EXISTS with MATCH should parse: {result:?}");
+    }
+
+    #[test]
+    fn test_parse_exists_bare_pattern() {
+        // Bare pattern without MATCH keyword
+        let mut parser = Parser::new("MATCH (n) WHERE EXISTS { (n)-[:KNOWS]->() } RETURN n");
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "EXISTS bare pattern should parse: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_exists_bare_pattern_with_where() {
+        // Bare pattern with WHERE inside EXISTS
+        let mut parser = Parser::new(
+            "MATCH (a), (b) WHERE NOT EXISTS { (a)-[r]->(b) WHERE type(r) = 'KNOWS' } RETURN a",
+        );
+        let result = parser.parse();
+        assert!(
+            result.is_ok(),
+            "EXISTS bare pattern with WHERE should parse: {result:?}"
+        );
     }
 }

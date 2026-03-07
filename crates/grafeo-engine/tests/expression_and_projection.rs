@@ -524,6 +524,59 @@ fn test_aggregate_order_by() {
 }
 
 // ============================================================================
+// CASE WHEN inside aggregates: covers aggregate.rs complex expression projection
+// ============================================================================
+
+#[test]
+fn test_sum_case_when_in_aggregate() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    session.execute("INSERT (:Dir {name: 'src'})").unwrap();
+    session
+        .execute("INSERT (:File {name: 'a.py', file_type: 'source'})")
+        .unwrap();
+    session
+        .execute("INSERT (:File {name: 'b.md', file_type: 'docs'})")
+        .unwrap();
+    session
+        .execute("INSERT (:File {name: 'c.py', file_type: 'source'})")
+        .unwrap();
+    session
+        .execute(
+            "MATCH (d:Dir {name: 'src'}), (f:File {name: 'a.py'}) \
+             CREATE (d)-[:CONTAINS]->(f)",
+        )
+        .unwrap();
+    session
+        .execute(
+            "MATCH (d:Dir {name: 'src'}), (f:File {name: 'b.md'}) \
+             CREATE (d)-[:CONTAINS]->(f)",
+        )
+        .unwrap();
+    session
+        .execute(
+            "MATCH (d:Dir {name: 'src'}), (f:File {name: 'c.py'}) \
+             CREATE (d)-[:CONTAINS]->(f)",
+        )
+        .unwrap();
+
+    let result = session
+        .execute(
+            "MATCH (d:Dir)-[:CONTAINS]->(f:File) \
+             RETURN d.name AS name, \
+                    count(f) AS total, \
+                    sum(CASE WHEN f.file_type = 'source' THEN 1 ELSE 0 END) AS source_count",
+        )
+        .unwrap();
+
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], Value::String("src".into()));
+    assert_eq!(result.rows[0][1], Value::Int64(3));
+    assert_eq!(result.rows[0][2], Value::Int64(2));
+}
+
+// ============================================================================
 // SKIP and LIMIT: covers plan_skip, plan_limit
 // ============================================================================
 

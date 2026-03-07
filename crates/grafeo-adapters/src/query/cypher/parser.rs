@@ -371,6 +371,12 @@ impl<'a> Parser<'a> {
             clauses.push(Clause::Match(self.parse_match_clause()?));
         }
 
+        // Bare pattern form: EXISTS { (a)-[r]->(b) WHERE ... }
+        // Treat as implicit MATCH when no MATCH keyword but a pattern starts with (
+        if clauses.is_empty() && self.current.kind == TokenKind::LParen {
+            clauses.push(Clause::Match(self.parse_match_clause_body()?));
+        }
+
         if clauses.is_empty() {
             return Err(self.error("EXISTS subquery requires at least one MATCH clause"));
         }
@@ -2764,6 +2770,33 @@ mod tests {
                 panic!("expected WHERE clause");
             }
         }
+    }
+
+    #[test]
+    fn test_parse_exists_bare_pattern() {
+        // Bare pattern without MATCH keyword
+        let stmt = parse_ok("MATCH (n) WHERE EXISTS { (n)-[:KNOWS]->() } RETURN n");
+        if let Statement::Query(Query { clauses, .. }) = stmt {
+            if let Clause::Where(w) = &clauses[1] {
+                assert!(matches!(&w.predicate, Expression::Exists(_)));
+            } else {
+                panic!("expected WHERE clause");
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_exists_bare_pattern_with_where() {
+        // Bare pattern with WHERE inside EXISTS
+        parse_ok(
+            "MATCH (a), (b) WHERE NOT EXISTS { (a)-[r]->(b) WHERE type(r) = 'KNOWS' } RETURN a",
+        );
+    }
+
+    #[test]
+    fn test_parse_count_bare_pattern() {
+        // COUNT { bare pattern } should also work
+        parse_ok("MATCH (n) RETURN COUNT { (n)-[:KNOWS]->() } AS friend_count");
     }
 
     #[test]

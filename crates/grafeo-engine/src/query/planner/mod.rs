@@ -386,6 +386,7 @@ pub(crate) fn value_to_logical_type(value: &grafeo_common::types::Value) -> Logi
 ///
 /// Only handles literals, unary minus on numeric literals, and simple expressions.
 /// Returns an error for runtime-dependent expressions (variables, property accesses, etc.).
+#[cfg(feature = "algos")]
 pub(crate) fn eval_constant_expression(
     expr: &crate::query::plan::LogicalExpression,
 ) -> Result<grafeo_common::types::Value> {
