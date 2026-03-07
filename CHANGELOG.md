@@ -4,7 +4,11 @@ All notable changes to Grafeo, for future reference (and enjoyment).
 
 ## [0.5.16] - Unreleased
 
-Performance enhancements, bug fixes and rust examples
+Performance enhancements, bug fixes and Rust examples
+
+### Added
+
+- **Rust examples**: 7 runnable examples in `examples/rust/` covering the core API (basic queries, transactions, parameterized queries, vector search, graph algorithms, WAL persistence, multi-language dispatch)
 
 ### Improved
 
