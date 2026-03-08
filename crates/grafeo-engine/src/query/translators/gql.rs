@@ -2313,6 +2313,47 @@ impl GqlTranslator {
                     },
                 ))
             }
+            ast::Expression::Case {
+                input,
+                whens,
+                else_clause,
+            } => {
+                // Find the first aggregate inside the CASE branches and extract it.
+                for (cond, then) in whens {
+                    if contains_aggregate(cond) {
+                        let (agg, _) =
+                            self.extract_wrapped_aggregate(cond, synthetic_alias)?;
+                        let full_case = self.translate_expression(expr)?;
+                        return Ok((agg, full_case));
+                    }
+                    if contains_aggregate(then) {
+                        let (agg, _) =
+                            self.extract_wrapped_aggregate(then, synthetic_alias)?;
+                        let full_case = self.translate_expression(expr)?;
+                        return Ok((agg, full_case));
+                    }
+                }
+                if let Some(el) = else_clause
+                    && contains_aggregate(el)
+                {
+                    let (agg, _) =
+                        self.extract_wrapped_aggregate(el, synthetic_alias)?;
+                    let full_case = self.translate_expression(expr)?;
+                    return Ok((agg, full_case));
+                }
+                if let Some(inp) = input
+                    && contains_aggregate(inp)
+                {
+                    let (agg, _) =
+                        self.extract_wrapped_aggregate(inp, synthetic_alias)?;
+                    let full_case = self.translate_expression(expr)?;
+                    return Ok((agg, full_case));
+                }
+                Err(Error::Query(QueryError::new(
+                    QueryErrorKind::Semantic,
+                    "Unsupported expression wrapping an aggregate",
+                )))
+            }
             _ => Err(Error::Query(QueryError::new(
                 QueryErrorKind::Semantic,
                 "Unsupported expression wrapping an aggregate",
@@ -2432,11 +2473,33 @@ fn rand_id() -> u32 {
 /// Checks if an AST expression contains an aggregate function call.
 fn contains_aggregate(expr: &ast::Expression) -> bool {
     match expr {
-        ast::Expression::FunctionCall { name, .. } => is_aggregate_function(name),
+        ast::Expression::FunctionCall { name, args, .. } => {
+            is_aggregate_function(name) || args.iter().any(contains_aggregate)
+        }
         ast::Expression::Binary { left, right, .. } => {
             contains_aggregate(left) || contains_aggregate(right)
         }
         ast::Expression::Unary { operand, .. } => contains_aggregate(operand),
+        ast::Expression::Case {
+            input,
+            whens,
+            else_clause,
+        } => {
+            input.as_deref().is_some_and(contains_aggregate)
+                || whens
+                    .iter()
+                    .any(|(w, t)| contains_aggregate(w) || contains_aggregate(t))
+                || else_clause.as_deref().is_some_and(contains_aggregate)
+        }
+        ast::Expression::List(items) => items.iter().any(contains_aggregate),
+        ast::Expression::ListComprehension {
+            filter_expr,
+            map_expr,
+            ..
+        } => {
+            filter_expr.as_deref().is_some_and(contains_aggregate)
+                || contains_aggregate(map_expr)
+        }
         _ => false,
     }
 }

@@ -2010,13 +2010,14 @@ mod profile_tests {
             other => panic!("Expected String, got {other:?}"),
         };
 
-        // Verify the profile output contains expected operator names
+        // Verify the profile output contains expected operator names.
+        // The optimizer may replace Return with Project, so accept either.
         assert!(
-            profile_text.contains("Return"),
-            "Profile should contain Return operator, got: {profile_text}"
+            profile_text.contains("Return") || profile_text.contains("Project"),
+            "Profile should contain Return or Project operator, got: {profile_text}"
         );
         assert!(
-            profile_text.contains("NodeScan") || profile_text.contains("Scan"),
+            profile_text.contains("Scan"),
             "Profile should contain a scan operator, got: {profile_text}"
         );
         assert!(

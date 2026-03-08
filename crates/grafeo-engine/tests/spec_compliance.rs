@@ -869,6 +869,26 @@ mod cypher_features {
     }
 
     #[test]
+    fn cypher_case_inside_aggregate() {
+        let db = social_network();
+        let session = db.session();
+        // sum(CASE WHEN ... THEN 1 ELSE 0 END) is a common conditional-count pattern
+        let result = session
+            .execute_cypher(
+                "MATCH (p:Person) \
+                 RETURN sum(CASE WHEN p.age >= 30 THEN 1 ELSE 0 END) AS over_30, \
+                        sum(CASE WHEN p.age < 30 THEN 1 ELSE 0 END) AS under_30",
+            )
+            .unwrap();
+        assert_eq!(result.row_count(), 1);
+        // Alix=30, Gus=25, Harm=35, Dave=28 => over_30=2 (Alix, Harm), under_30=2 (Gus, Dave)
+        let over_30 = &result.rows[0][0];
+        let under_30 = &result.rows[0][1];
+        assert_eq!(*over_30, Value::Int64(2), "Expected 2 people aged >= 30");
+        assert_eq!(*under_30, Value::Int64(2), "Expected 2 people aged < 30");
+    }
+
+    #[test]
     fn cypher_math_functions() {
         let db = social_network();
         let session = db.session();

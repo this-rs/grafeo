@@ -101,25 +101,19 @@ pub fn profile_result(root: &ProfileNode, total_time_ms: f64) -> QueryResult {
 /// Recursively formats a profile node with indentation.
 fn format_node(out: &mut String, node: &ProfileNode, depth: usize) {
     let indent = "  ".repeat(depth);
-    let stats = node.stats.lock();
 
+    // Compute self-time before locking stats (self_time_ns also locks).
     let self_time_ns = self_time_ns(node);
     let self_time_ms = self_time_ns as f64 / 1_000_000.0;
 
-    let rows_str = if node.children.is_empty() {
-        // Leaf operator: just rows produced
-        format!("rows={}", stats.rows_out)
-    } else {
-        // Non-leaf: show rows out (which is what this operator produced)
-        format!("rows={}", stats.rows_out)
-    };
+    let rows_out = node.stats.lock().rows_out;
 
     let _ = writeln!(
         out,
-        "{indent}{name} ({label})  {rows}  time={time:.2}ms",
+        "{indent}{name} ({label})  rows={rows}  time={time:.2}ms",
         name = node.name,
         label = node.label,
-        rows = rows_str,
+        rows = rows_out,
         time = self_time_ms,
     );
 
