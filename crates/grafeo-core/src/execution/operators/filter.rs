@@ -774,6 +774,18 @@ impl ExpressionPredicate {
             FilterExpression::Variable(name) if name == item_name => Some(item_val.clone()),
             FilterExpression::Literal(v) => Some(v.clone()),
             FilterExpression::Binary { left, op, right } => {
+                // IN operator needs special handling: right side is a list
+                if *op == BinaryFilterOp::In {
+                    let l = self.eval_reduce_expr(left, acc_val, acc_name, item_val, item_name)?;
+                    let r = self.eval_reduce_expr(right, acc_val, acc_name, item_val, item_name)?;
+                    return match r {
+                        Value::List(items) => {
+                            let found = items.iter().any(|v| Self::values_equal(&l, v));
+                            Some(Value::Bool(found))
+                        }
+                        _ => None,
+                    };
+                }
                 let l = self.eval_reduce_expr(left, acc_val, acc_name, item_val, item_name)?;
                 let r = self.eval_reduce_expr(right, acc_val, acc_name, item_val, item_name)?;
                 self.eval_binary_op(&l, *op, &r)
@@ -810,6 +822,43 @@ impl ExpressionPredicate {
                     None
                 }
             }
+            FilterExpression::List(items) => {
+                let values: Vec<Value> = items
+                    .iter()
+                    .filter_map(|i| {
+                        self.eval_reduce_expr(i, acc_val, acc_name, item_val, item_name)
+                    })
+                    .collect();
+                Some(Value::List(values.into()))
+            }
+            FilterExpression::Case {
+                operand,
+                when_clauses,
+                else_clause,
+            } => {
+                let eval = |e| self.eval_reduce_expr(e, acc_val, acc_name, item_val, item_name);
+                if let Some(test_expr) = operand.as_deref() {
+                    let test_val = eval(test_expr)?;
+                    for (when_expr, then_expr) in when_clauses {
+                        let when_val = eval(when_expr)?;
+                        if Self::values_equal(&test_val, &when_val) {
+                            return eval(then_expr);
+                        }
+                    }
+                } else {
+                    for (when_expr, then_expr) in when_clauses {
+                        let when_val = eval(when_expr)?;
+                        if when_val.as_bool() == Some(true) {
+                            return eval(then_expr);
+                        }
+                    }
+                }
+                if let Some(else_expr) = else_clause.as_deref() {
+                    eval(else_expr)
+                } else {
+                    Some(Value::Null)
+                }
+            }
             // For expressions not referencing the local variables, delegate to
             // the comprehension evaluator with the item binding
             _ => self.eval_comprehension_expr(expr, item_val, item_name),
@@ -828,6 +877,18 @@ impl ExpressionPredicate {
             FilterExpression::Variable(name) if name == variable => Some(item.clone()),
             FilterExpression::Literal(v) => Some(v.clone()),
             FilterExpression::Binary { left, op, right } => {
+                // IN operator needs special handling: right side is a list
+                if *op == BinaryFilterOp::In {
+                    let left_val = self.eval_comprehension_expr(left, item, variable)?;
+                    let right_val = self.eval_comprehension_expr(right, item, variable)?;
+                    return match right_val {
+                        Value::List(items) => {
+                            let found = items.iter().any(|v| Self::values_equal(&left_val, v));
+                            Some(Value::Bool(found))
+                        }
+                        _ => None,
+                    };
+                }
                 let left_val = self.eval_comprehension_expr(left, item, variable)?;
                 let right_val = self.eval_comprehension_expr(right, item, variable)?;
                 self.eval_binary_op(&left_val, *op, &right_val)
@@ -848,8 +909,58 @@ impl ExpressionPredicate {
                     None
                 }
             }
+            FilterExpression::List(items) => {
+                let values: Vec<Value> = items
+                    .iter()
+                    .filter_map(|i| self.eval_comprehension_expr(i, item, variable))
+                    .collect();
+                Some(Value::List(values.into()))
+            }
+            FilterExpression::Case {
+                operand,
+                when_clauses,
+                else_clause,
+            } => self.eval_case_in_comprehension(
+                operand.as_deref(),
+                when_clauses,
+                else_clause.as_deref(),
+                item,
+                variable,
+            ),
             // For other expression types, return None (unsupported in comprehension)
             _ => None,
+        }
+    }
+
+    /// Evaluates a CASE expression inside a list comprehension or predicate context.
+    fn eval_case_in_comprehension(
+        &self,
+        operand: Option<&FilterExpression>,
+        when_clauses: &[(FilterExpression, FilterExpression)],
+        else_clause: Option<&FilterExpression>,
+        item: &Value,
+        variable: &str,
+    ) -> Option<Value> {
+        if let Some(test_expr) = operand {
+            let test_val = self.eval_comprehension_expr(test_expr, item, variable)?;
+            for (when_expr, then_expr) in when_clauses {
+                let when_val = self.eval_comprehension_expr(when_expr, item, variable)?;
+                if Self::values_equal(&test_val, &when_val) {
+                    return self.eval_comprehension_expr(then_expr, item, variable);
+                }
+            }
+        } else {
+            for (when_expr, then_expr) in when_clauses {
+                let when_val = self.eval_comprehension_expr(when_expr, item, variable)?;
+                if when_val.as_bool() == Some(true) {
+                    return self.eval_comprehension_expr(then_expr, item, variable);
+                }
+            }
+        }
+        if let Some(else_expr) = else_clause {
+            self.eval_comprehension_expr(else_expr, item, variable)
+        } else {
+            Some(Value::Null)
         }
     }
 
