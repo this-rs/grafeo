@@ -987,6 +987,35 @@ mod cypher_features {
     }
 
     #[test]
+    fn cypher_exists_bare_pattern() {
+        let db = social_network();
+        let session = db.session();
+        // Bare pattern form: no explicit MATCH keyword inside EXISTS
+        let result = session
+            .execute_cypher(
+                "MATCH (p:Person) WHERE EXISTS { (p)-[:WORKS_AT]->(:Company) } \
+                 RETURN p.name ORDER BY p.name",
+            )
+            .unwrap();
+        assert!(result.row_count() >= 3); // same as the explicit MATCH version
+    }
+
+    #[test]
+    fn cypher_exists_bare_pattern_with_where() {
+        let db = social_network();
+        let session = db.session();
+        // Bare pattern with WHERE inside EXISTS
+        let result = session
+            .execute_cypher(
+                "MATCH (p:Person) WHERE EXISTS { (p)-[r:KNOWS]->() WHERE r.since IS NOT NULL } \
+                 RETURN p.name ORDER BY p.name",
+            );
+        // This may or may not return results depending on test data,
+        // but it should parse and execute without errors
+        assert!(result.is_ok(), "Bare pattern EXISTS with WHERE should parse: {:?}", result.err());
+    }
+
+    #[test]
     fn cypher_foreach_set() {
         let db = GrafeoDB::new_in_memory();
         let session = db.session();

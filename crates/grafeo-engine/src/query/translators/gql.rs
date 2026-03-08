@@ -2321,14 +2321,12 @@ impl GqlTranslator {
                 // Find the first aggregate inside the CASE branches and extract it.
                 for (cond, then) in whens {
                     if contains_aggregate(cond) {
-                        let (agg, _) =
-                            self.extract_wrapped_aggregate(cond, synthetic_alias)?;
+                        let (agg, _) = self.extract_wrapped_aggregate(cond, synthetic_alias)?;
                         let full_case = self.translate_expression(expr)?;
                         return Ok((agg, full_case));
                     }
                     if contains_aggregate(then) {
-                        let (agg, _) =
-                            self.extract_wrapped_aggregate(then, synthetic_alias)?;
+                        let (agg, _) = self.extract_wrapped_aggregate(then, synthetic_alias)?;
                         let full_case = self.translate_expression(expr)?;
                         return Ok((agg, full_case));
                     }
@@ -2336,16 +2334,14 @@ impl GqlTranslator {
                 if let Some(el) = else_clause
                     && contains_aggregate(el)
                 {
-                    let (agg, _) =
-                        self.extract_wrapped_aggregate(el, synthetic_alias)?;
+                    let (agg, _) = self.extract_wrapped_aggregate(el, synthetic_alias)?;
                     let full_case = self.translate_expression(expr)?;
                     return Ok((agg, full_case));
                 }
                 if let Some(inp) = input
                     && contains_aggregate(inp)
                 {
-                    let (agg, _) =
-                        self.extract_wrapped_aggregate(inp, synthetic_alias)?;
+                    let (agg, _) = self.extract_wrapped_aggregate(inp, synthetic_alias)?;
                     let full_case = self.translate_expression(expr)?;
                     return Ok((agg, full_case));
                 }
@@ -2496,10 +2492,7 @@ fn contains_aggregate(expr: &ast::Expression) -> bool {
             filter_expr,
             map_expr,
             ..
-        } => {
-            filter_expr.as_deref().is_some_and(contains_aggregate)
-                || contains_aggregate(map_expr)
-        }
+        } => filter_expr.as_deref().is_some_and(contains_aggregate) || contains_aggregate(map_expr),
         _ => false,
     }
 }

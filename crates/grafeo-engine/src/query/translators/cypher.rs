@@ -1190,14 +1190,12 @@ impl CypherTranslator {
                 // the CASE is translated normally.
                 for (cond, then) in whens {
                     if contains_aggregate(cond) {
-                        let (agg, _) =
-                            self.extract_wrapped_aggregate(cond, synthetic_alias)?;
+                        let (agg, _) = self.extract_wrapped_aggregate(cond, synthetic_alias)?;
                         let full_case = self.translate_expression(expr)?;
                         return Ok((agg, full_case));
                     }
                     if contains_aggregate(then) {
-                        let (agg, _) =
-                            self.extract_wrapped_aggregate(then, synthetic_alias)?;
+                        let (agg, _) = self.extract_wrapped_aggregate(then, synthetic_alias)?;
                         let full_case = self.translate_expression(expr)?;
                         return Ok((agg, full_case));
                     }
@@ -1205,16 +1203,14 @@ impl CypherTranslator {
                 if let Some(el) = else_clause
                     && contains_aggregate(el)
                 {
-                    let (agg, _) =
-                        self.extract_wrapped_aggregate(el, synthetic_alias)?;
+                    let (agg, _) = self.extract_wrapped_aggregate(el, synthetic_alias)?;
                     let full_case = self.translate_expression(expr)?;
                     return Ok((agg, full_case));
                 }
                 if let Some(inp) = input
                     && contains_aggregate(inp)
                 {
-                    let (agg, _) =
-                        self.extract_wrapped_aggregate(inp, synthetic_alias)?;
+                    let (agg, _) = self.extract_wrapped_aggregate(inp, synthetic_alias)?;
                     let full_case = self.translate_expression(expr)?;
                     return Ok((agg, full_case));
                 }
@@ -2142,9 +2138,7 @@ fn contains_aggregate(expr: &ast::Expression) -> bool {
         }
         ast::Expression::List(items) => items.iter().any(contains_aggregate),
         ast::Expression::ListComprehension {
-            filter,
-            projection,
-            ..
+            filter, projection, ..
         } => {
             filter.as_deref().is_some_and(contains_aggregate)
                 || projection.as_deref().is_some_and(contains_aggregate)
