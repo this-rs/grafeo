@@ -2,6 +2,17 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
+## [0.5.17] - 2026-03-08
+
+Cypher query execution bug fixes for Deriva compatibility.
+
+### Fixed
+
+- **Correlated EXISTS subqueries**: `NOT EXISTS { MATCH (a)-[r]->(b) WHERE type(r) = 'X' }` now correctly plans via semi-join instead of failing with "Unsupported EXISTS subquery pattern"
+- **CASE WHEN in aggregates**: `sum(CASE WHEN ... THEN 1 ELSE 0 END)` resolves correctly inside aggregate functions
+- **any()/all()/none()/single() with IN list**: `any(lbl IN labels(n) WHERE lbl IN ['A', 'B'])` now evaluates the IN operator correctly in list predicate contexts
+- **CASE WHEN in reduce()**: `reduce(acc = 0, x IN vals | CASE WHEN x > acc THEN x ELSE acc END)` evaluates CASE expressions with both accumulator and item variable bindings
+
 ## [0.5.16] - 2026-03-08
 
 Performance enhancements, bug fixes and Rust examples
