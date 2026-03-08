@@ -964,6 +964,121 @@ mod cypher_features {
     }
 
     #[test]
+    fn cypher_create_index() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        // Set up data so there's a label in the catalog
+        session
+            .execute("INSERT (:Person {name: 'Alix', age: 30})")
+            .unwrap();
+        let result =
+            session.execute_cypher("CREATE INDEX idx_person_name FOR (n:Person) ON (n.name)");
+        assert!(
+            result.is_ok(),
+            "CREATE INDEX should succeed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn cypher_create_index_if_not_exists() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
+        session
+            .execute_cypher("CREATE INDEX idx_test IF NOT EXISTS FOR (n:Person) ON (n.name)")
+            .unwrap();
+        // Running again should not error with IF NOT EXISTS
+        let result = session
+            .execute_cypher("CREATE INDEX idx_test IF NOT EXISTS FOR (n:Person) ON (n.name)");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cypher_drop_index() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
+        session
+            .execute_cypher("CREATE INDEX idx_drop FOR (n:Person) ON (n.name)")
+            .unwrap();
+        let result = session.execute_cypher("DROP INDEX idx_drop");
+        assert!(
+            result.is_ok(),
+            "DROP INDEX should succeed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn cypher_drop_index_if_exists() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        // Dropping non-existent index with IF EXISTS should not error
+        let result = session.execute_cypher("DROP INDEX nonexistent IF EXISTS");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cypher_create_constraint() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
+        let result = session.execute_cypher(
+            "CREATE CONSTRAINT unique_name FOR (n:Person) REQUIRE n.name IS UNIQUE",
+        );
+        assert!(
+            result.is_ok(),
+            "CREATE CONSTRAINT should succeed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn cypher_show_indexes() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session.execute_cypher("SHOW INDEXES");
+        assert!(
+            result.is_ok(),
+            "SHOW INDEXES should succeed: {:?}",
+            result.err()
+        );
+        let qr = result.unwrap();
+        assert_eq!(qr.columns.len(), 4);
+        assert_eq!(qr.columns[0], "name");
+    }
+
+    #[test]
+    fn cypher_show_constraints() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session.execute_cypher("SHOW CONSTRAINTS");
+        assert!(
+            result.is_ok(),
+            "SHOW CONSTRAINTS should succeed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn cypher_relationship_where_clause() {
+        let db = social_network();
+        let session = db.session();
+        // Inline WHERE on relationship pattern (Neo4j 5.x syntax)
+        let result = session.execute_cypher(
+            "MATCH (p:Person)-[r:KNOWS WHERE r.since IS NOT NULL]->(f:Person) \
+                 RETURN p.name, f.name ORDER BY p.name",
+        );
+        // Should parse and execute without errors regardless of data
+        assert!(
+            result.is_ok(),
+            "Relationship WHERE should work: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
     fn cypher_label_check_in_where() {
         let db = social_network();
         let session = db.session();
@@ -1005,14 +1120,17 @@ mod cypher_features {
         let db = social_network();
         let session = db.session();
         // Bare pattern with WHERE inside EXISTS
-        let result = session
-            .execute_cypher(
-                "MATCH (p:Person) WHERE EXISTS { (p)-[r:KNOWS]->() WHERE r.since IS NOT NULL } \
+        let result = session.execute_cypher(
+            "MATCH (p:Person) WHERE EXISTS { (p)-[r:KNOWS]->() WHERE r.since IS NOT NULL } \
                  RETURN p.name ORDER BY p.name",
-            );
+        );
         // This may or may not return results depending on test data,
         // but it should parse and execute without errors
-        assert!(result.is_ok(), "Bare pattern EXISTS with WHERE should parse: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Bare pattern EXISTS with WHERE should parse: {:?}",
+            result.err()
+        );
     }
 
     #[test]

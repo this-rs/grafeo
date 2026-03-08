@@ -21,11 +21,34 @@ use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 
+/// Result of translating a Cypher query: either a plan or a schema DDL command.
+pub enum CypherTranslationResult {
+    /// Regular query or mutation, produces a logical plan.
+    Plan(LogicalPlan),
+    /// Schema DDL (CREATE/DROP INDEX, CREATE/DROP CONSTRAINT).
+    SchemaCommand(grafeo_adapters::query::gql::ast::SchemaStatement),
+    /// SHOW INDEXES introspection.
+    ShowIndexes,
+    /// SHOW CONSTRAINTS introspection.
+    ShowConstraints,
+}
+
 /// Translates a Cypher query string to a logical plan.
 pub fn translate(query: &str) -> Result<LogicalPlan> {
+    match translate_full(query)? {
+        CypherTranslationResult::Plan(plan) => Ok(plan),
+        _ => Err(Error::Query(QueryError::new(
+            QueryErrorKind::Semantic,
+            "Schema commands cannot be translated to a logical plan",
+        ))),
+    }
+}
+
+/// Translates a Cypher query, returning either a plan or a schema command.
+pub fn translate_full(query: &str) -> Result<CypherTranslationResult> {
     let statement = cypher::parse(query)?;
     let translator = CypherTranslator::new();
-    translator.translate_statement(&statement)
+    translator.translate_statement_full(&statement)
 }
 
 /// Cypher AST to logical plan translator.
@@ -110,6 +133,26 @@ impl CypherTranslator {
                 let mut plan = self.translate_statement(inner)?;
                 plan.profile = true;
                 Ok(plan)
+            }
+            ast::Statement::Schema(_)
+            | ast::Statement::ShowIndexes
+            | ast::Statement::ShowConstraints => Err(Error::Query(QueryError::new(
+                QueryErrorKind::Semantic,
+                "Schema commands should be routed through translate_statement_full",
+            ))),
+        }
+    }
+
+    fn translate_statement_full(&self, stmt: &ast::Statement) -> Result<CypherTranslationResult> {
+        match stmt {
+            ast::Statement::Schema(schema) => {
+                Ok(CypherTranslationResult::SchemaCommand(schema.clone()))
+            }
+            ast::Statement::ShowIndexes => Ok(CypherTranslationResult::ShowIndexes),
+            ast::Statement::ShowConstraints => Ok(CypherTranslationResult::ShowConstraints),
+            other => {
+                let plan = self.translate_statement(other)?;
+                Ok(CypherTranslationResult::Plan(plan))
             }
         }
     }
@@ -608,8 +651,8 @@ impl CypherTranslator {
             path_mode: PathMode::Walk,
         });
 
-        if let Some(label) = target_label {
-            Ok(wrap_filter(
+        let mut result = if let Some(label) = target_label {
+            wrap_filter(
                 expand,
                 LogicalExpression::FunctionCall {
                     name: "hasLabel".into(),
@@ -619,10 +662,18 @@ impl CypherTranslator {
                     ],
                     distinct: false,
                 },
-            ))
+            )
         } else {
-            Ok(expand)
+            expand
+        };
+
+        // Apply inline WHERE clause from relationship pattern: -[r WHERE expr]->
+        if let Some(where_expr) = &rel.where_clause {
+            let predicate = self.translate_expression(where_expr)?;
+            result = wrap_filter(result, predicate);
         }
+
+        Ok(result)
     }
 
     fn translate_where(

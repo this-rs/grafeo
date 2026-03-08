@@ -1363,6 +1363,59 @@ impl Session {
         ))
     }
 
+    /// Returns a table of all indexes from the catalog.
+    fn execute_show_indexes(&self) -> Result<QueryResult> {
+        let indexes = self.catalog.all_indexes();
+        let columns = vec![
+            "name".to_string(),
+            "type".to_string(),
+            "label".to_string(),
+            "property".to_string(),
+        ];
+        let rows: Vec<Vec<Value>> = indexes
+            .into_iter()
+            .map(|def| {
+                let label_name = self
+                    .catalog
+                    .get_label_name(def.label)
+                    .unwrap_or_else(|| "?".into());
+                let prop_name = self
+                    .catalog
+                    .get_property_key_name(def.property_key)
+                    .unwrap_or_else(|| "?".into());
+                vec![
+                    Value::from(format!("idx_{}_{}", label_name, prop_name)),
+                    Value::from(format!("{:?}", def.index_type)),
+                    Value::from(&*label_name),
+                    Value::from(&*prop_name),
+                ]
+            })
+            .collect();
+        Ok(QueryResult {
+            columns,
+            column_types: Vec::new(),
+            rows,
+            ..QueryResult::empty()
+        })
+    }
+
+    /// Returns a table of all constraints (currently metadata-only).
+    fn execute_show_constraints(&self) -> Result<QueryResult> {
+        // Constraints are tracked in WAL but not yet in a queryable catalog.
+        // Return an empty table with the expected schema.
+        Ok(QueryResult {
+            columns: vec![
+                "name".to_string(),
+                "type".to_string(),
+                "label".to_string(),
+                "properties".to_string(),
+            ],
+            column_types: Vec::new(),
+            rows: Vec::new(),
+            ..QueryResult::empty()
+        })
+    }
+
     /// Executes a GQL query.
     ///
     /// # Errors
@@ -1611,6 +1664,30 @@ impl Session {
             Executor, binder::Binder, cache::CacheKey, optimizer::Optimizer,
             processor::QueryLanguage, translators::cypher,
         };
+        use grafeo_common::utils::error::{Error as GrafeoError, QueryError, QueryErrorKind};
+
+        // Handle schema DDL and SHOW commands before the normal query path
+        let translation = cypher::translate_full(query)?;
+        match translation {
+            cypher::CypherTranslationResult::SchemaCommand(cmd) => {
+                if *self.read_only_tx.lock() {
+                    return Err(GrafeoError::Query(QueryError::new(
+                        QueryErrorKind::Semantic,
+                        "Cannot execute schema DDL in a read-only transaction",
+                    )));
+                }
+                return self.execute_schema_command(cmd);
+            }
+            cypher::CypherTranslationResult::ShowIndexes => {
+                return self.execute_show_indexes();
+            }
+            cypher::CypherTranslationResult::ShowConstraints => {
+                return self.execute_show_constraints();
+            }
+            cypher::CypherTranslationResult::Plan(_) => {
+                // Fall through to normal execution below
+            }
+        }
 
         #[cfg(not(target_arch = "wasm32"))]
         let start_time = std::time::Instant::now();

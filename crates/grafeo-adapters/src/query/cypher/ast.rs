@@ -2,6 +2,7 @@
 //!
 //! This AST represents the openCypher 9.0 query language.
 
+use crate::query::gql::ast as gql_ast;
 use grafeo_common::utils::error::SourceSpan;
 
 /// A Cypher statement.
@@ -30,6 +31,12 @@ pub enum Statement {
     Explain(Box<Statement>),
     /// PROFILE: executes the query and returns per-operator metrics.
     Profile(Box<Statement>),
+    /// Schema DDL (CREATE/DROP INDEX, CREATE/DROP CONSTRAINT, SHOW).
+    Schema(gql_ast::SchemaStatement),
+    /// SHOW INDEXES: lists all indexes.
+    ShowIndexes,
+    /// SHOW CONSTRAINTS: lists all constraints.
+    ShowConstraints,
 }
 
 /// A complete Cypher query.
@@ -194,6 +201,8 @@ pub struct RelationshipPattern {
     pub length: Option<LengthRange>,
     /// Property map.
     pub properties: Vec<(String, Expression)>,
+    /// Inline WHERE clause (Neo4j 5.x): `-[r WHERE r.since > 2020]->`.
+    pub where_clause: Option<Expression>,
     /// Target node pattern.
     pub target: NodePattern,
     /// Source span.

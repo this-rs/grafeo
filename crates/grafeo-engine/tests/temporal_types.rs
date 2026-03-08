@@ -358,3 +358,95 @@ fn sparql_xsd_duration_literal() {
         .expect("expected Duration value");
     assert_eq!(d.months(), 18);
 }
+
+// ============================================================================
+// Temporal map constructors: date({year:...}), time({hour:...}), etc.
+// ============================================================================
+
+#[test]
+#[cfg(feature = "cypher")]
+fn cypher_date_map_constructor() {
+    let db = GrafeoDB::new_in_memory();
+    let result = db
+        .execute_cypher("RETURN date({year: 2024, month: 3, day: 15}) AS d")
+        .unwrap();
+    let d = result.rows[0][0].as_date().expect("expected Date value");
+    assert_eq!(d.year(), 2024);
+    assert_eq!(d.month(), 3);
+    assert_eq!(d.day(), 15);
+}
+
+#[test]
+#[cfg(feature = "cypher")]
+fn cypher_date_map_defaults() {
+    let db = GrafeoDB::new_in_memory();
+    // month and day should default to 1 when omitted
+    let result = db.execute_cypher("RETURN date({year: 2024}) AS d").unwrap();
+    let d = result.rows[0][0].as_date().expect("expected Date value");
+    assert_eq!(d.year(), 2024);
+    assert_eq!(d.month(), 1);
+    assert_eq!(d.day(), 1);
+}
+
+#[test]
+#[cfg(feature = "cypher")]
+fn cypher_time_map_constructor() {
+    let db = GrafeoDB::new_in_memory();
+    let result = db
+        .execute_cypher("RETURN time({hour: 14, minute: 30, second: 45}) AS t")
+        .unwrap();
+    let t = result.rows[0][0].as_time().expect("expected Time value");
+    assert_eq!(t.hour(), 14);
+    assert_eq!(t.minute(), 30);
+    assert_eq!(t.second(), 45);
+}
+
+#[test]
+#[cfg(feature = "cypher")]
+fn cypher_datetime_map_constructor() {
+    let db = GrafeoDB::new_in_memory();
+    let result = db
+        .execute_cypher(
+            "RETURN datetime({year: 2024, month: 3, day: 15, hour: 14, minute: 30}) AS dt",
+        )
+        .unwrap();
+    let ts = result.rows[0][0]
+        .as_timestamp()
+        .expect("expected Timestamp value");
+    let d = ts.to_date();
+    assert_eq!(d.year(), 2024);
+    assert_eq!(d.month(), 3);
+    assert_eq!(d.day(), 15);
+    let t = ts.to_time();
+    assert_eq!(t.hour(), 14);
+    assert_eq!(t.minute(), 30);
+}
+
+#[test]
+#[cfg(feature = "cypher")]
+fn cypher_duration_map_constructor() {
+    let db = GrafeoDB::new_in_memory();
+    let result = db
+        .execute_cypher("RETURN duration({years: 1, months: 2, days: 3, hours: 4}) AS dur")
+        .unwrap();
+    let d = result.rows[0][0]
+        .as_duration()
+        .expect("expected Duration value");
+    assert_eq!(d.months(), 14); // 1 year + 2 months
+    assert_eq!(d.days(), 3);
+    // 4 hours in nanoseconds = 4 * 3_600_000_000_000
+    assert_eq!(d.nanos(), 4 * 3_600_000_000_000);
+}
+
+#[test]
+#[cfg(feature = "cypher")]
+fn cypher_duration_map_with_weeks() {
+    let db = GrafeoDB::new_in_memory();
+    let result = db
+        .execute_cypher("RETURN duration({weeks: 2, days: 3}) AS dur")
+        .unwrap();
+    let d = result.rows[0][0]
+        .as_duration()
+        .expect("expected Duration value");
+    assert_eq!(d.days(), 17); // 2 weeks + 3 days
+}

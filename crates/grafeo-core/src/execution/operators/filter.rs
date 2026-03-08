@@ -12,6 +12,21 @@ use regex_lite::Regex;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
+/// Extracts a required integer field from a temporal constructor map.
+fn map_int(m: &BTreeMap<PropertyKey, Value>, key: &str) -> Option<i64> {
+    match m.get(&PropertyKey::from(key))? {
+        Value::Int64(v) => Some(*v),
+        Value::Float64(f) => Some(*f as i64),
+        _ => None,
+    }
+}
+
+/// Extracts an optional integer field from a temporal constructor map,
+/// returning a default value when the key is absent.
+fn map_int_or(m: &BTreeMap<PropertyKey, Value>, key: &str, default: i64) -> i64 {
+    map_int(m, key).unwrap_or(default)
+}
+
 /// A predicate for filtering rows.
 pub trait Predicate: Send + Sync {
     /// Evaluates the predicate for a single row.
@@ -2196,6 +2211,12 @@ impl ExpressionPredicate {
                     Value::String(s) => grafeo_common::types::Date::parse(&s).map(Value::Date),
                     Value::Timestamp(ts) => Some(Value::Date(ts.to_date())),
                     Value::Date(_) => Some(val),
+                    Value::Map(m) => {
+                        let year = map_int(&m, "year")? as i32;
+                        let month = map_int_or(&m, "month", 1) as u32;
+                        let day = map_int_or(&m, "day", 1) as u32;
+                        grafeo_common::types::Date::from_ymd(year, month, day).map(Value::Date)
+                    }
                     _ => None,
                 }
             }
@@ -2208,6 +2229,14 @@ impl ExpressionPredicate {
                     Value::String(s) => grafeo_common::types::Time::parse(&s).map(Value::Time),
                     Value::Timestamp(ts) => Some(Value::Time(ts.to_time())),
                     Value::Time(_) => Some(val),
+                    Value::Map(m) => {
+                        let hour = map_int_or(&m, "hour", 0) as u32;
+                        let minute = map_int_or(&m, "minute", 0) as u32;
+                        let second = map_int_or(&m, "second", 0) as u32;
+                        let nanosecond = map_int_or(&m, "nanosecond", 0) as u32;
+                        grafeo_common::types::Time::from_hms_nano(hour, minute, second, nanosecond)
+                            .map(Value::Time)
+                    }
                     _ => None,
                 }
             }
@@ -2238,6 +2267,22 @@ impl ExpressionPredicate {
                         None
                     }
                     Value::Timestamp(_) => Some(val),
+                    Value::Map(m) => {
+                        let year = map_int(&m, "year")? as i32;
+                        let month = map_int_or(&m, "month", 1) as u32;
+                        let day = map_int_or(&m, "day", 1) as u32;
+                        let hour = map_int_or(&m, "hour", 0) as u32;
+                        let minute = map_int_or(&m, "minute", 0) as u32;
+                        let second = map_int_or(&m, "second", 0) as u32;
+                        let nanosecond = map_int_or(&m, "nanosecond", 0) as u32;
+                        let date = grafeo_common::types::Date::from_ymd(year, month, day)?;
+                        let time = grafeo_common::types::Time::from_hms_nano(
+                            hour, minute, second, nanosecond,
+                        )?;
+                        Some(Value::Timestamp(
+                            grafeo_common::types::Timestamp::from_date_time(date, time),
+                        ))
+                    }
                     _ => None,
                 }
             }
@@ -2251,6 +2296,27 @@ impl ExpressionPredicate {
                         grafeo_common::types::Duration::parse(&s).map(Value::Duration)
                     }
                     Value::Duration(_) => Some(val),
+                    Value::Map(m) => {
+                        let years = map_int_or(&m, "years", 0);
+                        let months = map_int_or(&m, "months", 0);
+                        let weeks = map_int_or(&m, "weeks", 0);
+                        let days = map_int_or(&m, "days", 0);
+                        let hours = map_int_or(&m, "hours", 0);
+                        let minutes = map_int_or(&m, "minutes", 0);
+                        let seconds = map_int_or(&m, "seconds", 0);
+                        let nanoseconds = map_int_or(&m, "nanoseconds", 0);
+                        let total_months = years * 12 + months;
+                        let total_days = weeks * 7 + days;
+                        let total_nanos = hours * 3_600_000_000_000
+                            + minutes * 60_000_000_000
+                            + seconds * 1_000_000_000
+                            + nanoseconds;
+                        Some(Value::Duration(grafeo_common::types::Duration::new(
+                            total_months,
+                            total_days,
+                            total_nanos,
+                        )))
+                    }
                     _ => None,
                 }
             }
