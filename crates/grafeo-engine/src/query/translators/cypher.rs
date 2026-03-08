@@ -10,10 +10,10 @@ use super::common::{
 use crate::query::plan::{
     AddLabelOp, AggregateExpr, AggregateFunction, AggregateOp, ApplyOp, BinaryOp, CallProcedureOp,
     CountExpr, CreateEdgeOp, CreateNodeOp, DeleteNodeOp, ExpandDirection, ExpandOp, LeftJoinOp,
-    ListPredicateKind, LogicalExpression, LogicalOperator, LogicalPlan, MapProjectionEntry,
-    MergeOp, MergeRelationshipOp, NodeScanOp, ParameterScanOp, PathMode, ProcedureYield, ProjectOp,
-    Projection, RemoveLabelOp, ReturnItem, SetPropertyOp, ShortestPathOp, SortKey, SortOrder,
-    UnaryOp, UnionOp, UnwindOp,
+    ListPredicateKind, LoadCsvOp, LogicalExpression, LogicalOperator, LogicalPlan,
+    MapProjectionEntry, MergeOp, MergeRelationshipOp, NodeScanOp, ParameterScanOp, PathMode,
+    ProcedureYield, ProjectOp, Projection, RemoveLabelOp, ReturnItem, SetPropertyOp,
+    ShortestPathOp, SortKey, SortOrder, UnaryOp, UnionOp, UnwindOp,
 };
 use grafeo_adapters::query::cypher::{self, ast};
 use grafeo_common::types::Value;
@@ -199,7 +199,17 @@ impl CypherTranslator {
                 self.translate_call_subquery(inner_query, input)
             }
             ast::Clause::ForEach(foreach) => self.translate_foreach(foreach, input),
+            ast::Clause::LoadCsv(load_csv) => self.translate_load_csv(load_csv),
         }
+    }
+
+    fn translate_load_csv(&self, load_csv: &ast::LoadCsvClause) -> Result<LogicalOperator> {
+        Ok(LogicalOperator::LoadCsv(LoadCsvOp {
+            with_headers: load_csv.with_headers,
+            path: load_csv.path.clone(),
+            variable: load_csv.variable.clone(),
+            field_terminator: load_csv.field_terminator,
+        }))
     }
 
     fn translate_call_clause(

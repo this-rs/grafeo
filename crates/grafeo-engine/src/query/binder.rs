@@ -658,6 +658,19 @@ impl Binder {
                 }
                 Ok(())
             }
+            LogicalOperator::LoadCsv(load) => {
+                // The row variable is bound as Any (Map or List depending on WITH HEADERS)
+                self.context.add_variable(
+                    load.variable.clone(),
+                    VariableInfo {
+                        name: load.variable.clone(),
+                        data_type: LogicalType::Any,
+                        is_node: false,
+                        is_edge: false,
+                    },
+                );
+                Ok(())
+            }
         }
     }
 

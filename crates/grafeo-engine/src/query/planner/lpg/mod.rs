@@ -34,11 +34,12 @@ use grafeo_core::execution::operators::{
     FactorizedAggregate, FactorizedAggregateOperator, FilterExpression, FilterOperator,
     HashAggregateOperator, HashJoinOperator, HorizontalAggregateOperator,
     JoinType as PhysicalJoinType, LazyFactorizedChainOperator, LeapfrogJoinOperator,
-    MapCollectOperator, MergeOperator, MergeRelationshipConfig, MergeRelationshipOperator,
-    NestedLoopJoinOperator, NodeListOperator, NullOrder, Operator, ParameterScanOperator,
-    ProjectExpr, ProjectOperator, PropertySource, RemoveLabelOperator, ScanOperator,
-    SetPropertyOperator, ShortestPathOperator, SimpleAggregateOperator, SortDirection,
-    SortKey as PhysicalSortKey, SortOperator, UnwindOperator, VariableLengthExpandOperator,
+    LoadCsvOperator, MapCollectOperator, MergeOperator, MergeRelationshipConfig,
+    MergeRelationshipOperator, NestedLoopJoinOperator, NodeListOperator, NullOrder, Operator,
+    ParameterScanOperator, ProjectExpr, ProjectOperator, PropertySource, RemoveLabelOperator,
+    ScanOperator, SetPropertyOperator, ShortestPathOperator, SimpleAggregateOperator,
+    SortDirection, SortKey as PhysicalSortKey, SortOperator, UnwindOperator,
+    VariableLengthExpandOperator,
 };
 use grafeo_core::graph::{Direction, GraphStore, GraphStoreMut};
 use std::collections::HashMap;
@@ -551,6 +552,15 @@ impl Planner {
             }
             LogicalOperator::MultiWayJoin(mwj) => self.plan_multi_way_join(mwj),
             LogicalOperator::HorizontalAggregate(ha) => self.plan_horizontal_aggregate(ha),
+            LogicalOperator::LoadCsv(load) => {
+                let operator: Box<dyn Operator> = Box::new(LoadCsvOperator::new(
+                    load.path.clone(),
+                    load.with_headers,
+                    load.field_terminator,
+                    load.variable.clone(),
+                ));
+                Ok((operator, vec![load.variable.clone()]))
+            }
             LogicalOperator::Empty => Err(Error::Internal("Empty plan".to_string())),
             LogicalOperator::VectorScan(_) => Err(Error::Internal(
                 "VectorScan requires vector-index feature".to_string(),

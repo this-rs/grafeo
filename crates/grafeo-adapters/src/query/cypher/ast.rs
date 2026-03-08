@@ -85,6 +85,8 @@ pub enum Clause {
     CallSubquery(Query),
     /// FOREACH (variable IN list | update_clauses).
     ForEach(ForEachClause),
+    /// LOAD CSV clause.
+    LoadCsv(LoadCsvClause),
 }
 
 /// A FOREACH clause for iterating and applying updates.
@@ -100,6 +102,25 @@ pub struct ForEachClause {
     pub list: Expression,
     /// The update clauses to apply for each element.
     pub clauses: Vec<Clause>,
+}
+
+/// A LOAD CSV clause.
+///
+/// ```text
+/// LOAD CSV [WITH HEADERS] FROM 'file.csv' AS row [FIELDTERMINATOR ',']
+/// ```
+#[derive(Debug, Clone)]
+pub struct LoadCsvClause {
+    /// Whether the CSV has a header row (WITH HEADERS).
+    pub with_headers: bool,
+    /// File path (local filesystem).
+    pub path: String,
+    /// Row variable name (the AS alias).
+    pub variable: String,
+    /// Optional field terminator override (default: comma).
+    pub field_terminator: Option<char>,
+    /// Source span.
+    pub span: Option<SourceSpan>,
 }
 
 /// A CALL clause for invoking procedures.

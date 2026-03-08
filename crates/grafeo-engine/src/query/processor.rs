@@ -833,6 +833,8 @@ fn substitute_in_operator(op: &mut LogicalOperator, params: &QueryParams) -> Res
         LogicalOperator::CreatePropertyGraph(_) => {}
         // Procedure calls: arguments could contain parameters but we handle at execution time
         LogicalOperator::CallProcedure(_) => {}
+        // LoadCsv: file path is a literal, no parameter substitution needed
+        LogicalOperator::LoadCsv(_) => {}
     }
     Ok(())
 }

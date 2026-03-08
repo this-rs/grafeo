@@ -1264,6 +1264,164 @@ mod cypher_features {
             db.execute_cypher_with_params("MATCH (p:Person) RETURN p.name LIMIT $n", params);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn cypher_load_csv_with_headers() {
+        use std::io::Write;
+        // Create a temp CSV file
+        let dir = std::env::temp_dir();
+        let csv_path = dir.join("grafeo_test_load_csv_headers.csv");
+        {
+            let mut f = std::fs::File::create(&csv_path).unwrap();
+            writeln!(f, "name,age,city").unwrap();
+            writeln!(f, "Alix,30,Amsterdam").unwrap();
+            writeln!(f, "Gus,25,Berlin").unwrap();
+            writeln!(f, "Mia,28,Paris").unwrap();
+        }
+
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let query = format!(
+            "LOAD CSV WITH HEADERS FROM '{}' AS row RETURN row.name AS name, row.age AS age ORDER BY row.name",
+            csv_path.display()
+        );
+        let result = session.execute_cypher(&query);
+        assert!(
+            result.is_ok(),
+            "LOAD CSV WITH HEADERS failed: {:?}",
+            result.err()
+        );
+        let result = result.unwrap();
+        assert_eq!(result.row_count(), 3, "Should have 3 rows");
+        assert_eq!(result.rows[0][0], Value::String("Alix".into()));
+        assert_eq!(result.rows[0][1], Value::String("30".into())); // CSV values are strings
+        assert_eq!(result.rows[1][0], Value::String("Gus".into()));
+        assert_eq!(result.rows[2][0], Value::String("Mia".into()));
+
+        std::fs::remove_file(&csv_path).ok();
+    }
+
+    #[test]
+    fn cypher_load_csv_without_headers() {
+        use std::io::Write;
+        let dir = std::env::temp_dir();
+        let csv_path = dir.join("grafeo_test_load_csv_no_headers.csv");
+        {
+            let mut f = std::fs::File::create(&csv_path).unwrap();
+            writeln!(f, "Alix,30,Amsterdam").unwrap();
+            writeln!(f, "Gus,25,Berlin").unwrap();
+        }
+
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let query = format!(
+            "LOAD CSV FROM '{}' AS row RETURN row[0] AS name, row[1] AS age",
+            csv_path.display()
+        );
+        let result = session.execute_cypher(&query);
+        assert!(
+            result.is_ok(),
+            "LOAD CSV without headers failed: {:?}",
+            result.err()
+        );
+        let result = result.unwrap();
+        assert_eq!(result.row_count(), 2);
+        assert_eq!(result.rows[0][0], Value::String("Alix".into()));
+        assert_eq!(result.rows[0][1], Value::String("30".into()));
+
+        std::fs::remove_file(&csv_path).ok();
+    }
+
+    #[test]
+    fn cypher_load_csv_create_nodes() {
+        use std::io::Write;
+        let dir = std::env::temp_dir();
+        let csv_path = dir.join("grafeo_test_load_csv_create.csv");
+        {
+            let mut f = std::fs::File::create(&csv_path).unwrap();
+            writeln!(f, "name,city").unwrap();
+            writeln!(f, "Vincent,Amsterdam").unwrap();
+            writeln!(f, "Jules,Paris").unwrap();
+        }
+
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let query = format!(
+            "LOAD CSV WITH HEADERS FROM '{}' AS row CREATE (p:Person {{name: row.name, city: row.city}})",
+            csv_path.display()
+        );
+        let result = session.execute_cypher(&query);
+        assert!(
+            result.is_ok(),
+            "LOAD CSV + CREATE failed: {:?}",
+            result.err()
+        );
+
+        // Verify nodes were created
+        let check = session
+            .execute_cypher("MATCH (p:Person) RETURN p.name ORDER BY p.name")
+            .unwrap();
+        assert_eq!(check.row_count(), 2);
+        assert_eq!(check.rows[0][0], Value::String("Jules".into()));
+        assert_eq!(check.rows[1][0], Value::String("Vincent".into()));
+
+        std::fs::remove_file(&csv_path).ok();
+    }
+
+    #[test]
+    fn cypher_load_csv_with_fieldterminator() {
+        use std::io::Write;
+        let dir = std::env::temp_dir();
+        let csv_path = dir.join("grafeo_test_load_csv_tab.tsv");
+        {
+            let mut f = std::fs::File::create(&csv_path).unwrap();
+            writeln!(f, "name\tage").unwrap();
+            writeln!(f, "Alix\t30").unwrap();
+            writeln!(f, "Gus\t25").unwrap();
+        }
+
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let query = format!(
+            "LOAD CSV WITH HEADERS FROM '{}' AS row FIELDTERMINATOR '\\t' RETURN row.name, row.age",
+            csv_path.display()
+        );
+        let result = session.execute_cypher(&query);
+        assert!(
+            result.is_ok(),
+            "LOAD CSV with FIELDTERMINATOR failed: {:?}",
+            result.err()
+        );
+        let result = result.unwrap();
+        assert_eq!(result.row_count(), 2);
+        assert_eq!(result.rows[0][0], Value::String("Alix".into()));
+
+        std::fs::remove_file(&csv_path).ok();
+    }
+
+    #[test]
+    fn cypher_load_csv_file_not_found() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session.execute_cypher(
+            "LOAD CSV WITH HEADERS FROM '/nonexistent/path/file.csv' AS row RETURN row.name",
+        );
+        assert!(result.is_err(), "Should fail for missing file");
+    }
+
+    #[test]
+    fn cypher_load_csv_parse_only() {
+        // Verify LOAD CSV parses without executing (EXPLAIN)
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session
+            .execute_cypher("EXPLAIN LOAD CSV WITH HEADERS FROM 'test.csv' AS row RETURN row.name");
+        assert!(
+            result.is_ok(),
+            "EXPLAIN LOAD CSV should parse: {:?}",
+            result.err()
+        );
+    }
 }
 
 // ============================================================================

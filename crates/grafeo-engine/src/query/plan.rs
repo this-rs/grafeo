@@ -279,6 +279,10 @@ pub enum LogicalOperator {
     // ==================== Procedure Call Operators ====================
     /// Invoke a stored procedure (CALL ... YIELD).
     CallProcedure(CallProcedureOp),
+
+    // ==================== Data Import Operators ====================
+    /// Load data from a CSV file, producing one row per CSV record.
+    LoadCsv(LoadCsvOp),
 }
 
 impl LogicalOperator {
@@ -342,7 +346,8 @@ impl LogicalOperator {
             | Self::ShortestPath(_)
             | Self::Empty
             | Self::ParameterScan(_)
-            | Self::CallProcedure(_) => false,
+            | Self::CallProcedure(_)
+            | Self::LoadCsv(_) => false,
         }
     }
 
@@ -414,7 +419,8 @@ impl LogicalOperator {
             | Self::CopyGraph(_)
             | Self::MoveGraph(_)
             | Self::AddGraph(_)
-            | Self::CreatePropertyGraph(_) => vec![],
+            | Self::CreatePropertyGraph(_)
+            | Self::LoadCsv(_) => vec![],
         }
     }
 
@@ -545,6 +551,7 @@ impl LogicalOperator {
                 format!("{}:{labels}", op.variable)
             }
             Self::CallProcedure(op) => op.name.join("."),
+            Self::LoadCsv(op) => format!("{} AS {}", op.path, op.variable),
             Self::Apply(_) => String::new(),
             Self::VectorScan(op) => op.variable.clone(),
             Self::VectorJoin(op) => op.right_variable.clone(),
@@ -858,6 +865,15 @@ impl LogicalOperator {
                     out,
                     "{indent}CallProcedure ({name})",
                     name = op.name.join(".")
+                );
+            }
+            Self::LoadCsv(op) => {
+                let headers = if op.with_headers { " WITH HEADERS" } else { "" };
+                let _ = writeln!(
+                    out,
+                    "{indent}LoadCsv{headers} ('{path}' AS {var})",
+                    path = op.path,
+                    var = op.variable,
                 );
             }
             Self::TripleScan(op) => {
@@ -1902,6 +1918,22 @@ pub struct ProcedureYield {
     pub field_name: String,
     /// Optional alias (YIELD score AS rank).
     pub alias: Option<String>,
+}
+
+/// LOAD CSV operator: reads a CSV file and produces rows.
+///
+/// With headers, each row is bound as a `Value::Map` with column names as keys.
+/// Without headers, each row is bound as a `Value::List` of string values.
+#[derive(Debug, Clone)]
+pub struct LoadCsvOp {
+    /// Whether the CSV file has a header row.
+    pub with_headers: bool,
+    /// File path (local filesystem).
+    pub path: String,
+    /// Variable name to bind each row to.
+    pub variable: String,
+    /// Field separator character (default: comma).
+    pub field_terminator: Option<char>,
 }
 
 /// A logical expression.

@@ -214,11 +214,13 @@ impl<'a> Parser<'a> {
                     }
                 }
                 _ => {
-                    // FOREACH is a contextual keyword (not reserved)
+                    // FOREACH and LOAD are contextual keywords (not reserved)
                     if self.can_be_identifier()
                         && self.get_identifier_text().to_uppercase() == "FOREACH"
                     {
                         clauses.push(Clause::ForEach(self.parse_foreach_clause()?));
+                    } else if self.is_contextual("LOAD") {
+                        clauses.push(Clause::LoadCsv(self.parse_load_csv_clause()?));
                     } else {
                         break;
                     }
@@ -287,6 +289,65 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses a FOREACH clause: `FOREACH (var IN expr | clauses)`.
+    /// Parses a LOAD CSV clause:
+    /// `LOAD CSV [WITH HEADERS] FROM 'path' AS variable [FIELDTERMINATOR 'sep']`
+    fn parse_load_csv_clause(&mut self) -> Result<LoadCsvClause> {
+        self.advance(); // consume LOAD
+
+        self.expect_contextual("CSV")?;
+
+        // Optional WITH HEADERS
+        let with_headers = if self.current.kind == TokenKind::With {
+            self.advance(); // consume WITH
+            self.expect_contextual("HEADERS")?;
+            true
+        } else {
+            false
+        };
+
+        // FROM 'path'
+        self.expect_contextual("FROM")?;
+        let path = if self.current.kind == TokenKind::String {
+            let raw = self.current.text.clone();
+            self.advance();
+            // Strip quotes and unescape
+            unescape_string(&raw[1..raw.len() - 1])
+        } else {
+            return Err(self.error("Expected string literal for file path"));
+        };
+
+        // AS variable
+        self.expect(TokenKind::As)?;
+        let variable = self.expect_identifier()?;
+
+        // Optional FIELDTERMINATOR 'char'
+        let field_terminator = if self.is_contextual("FIELDTERMINATOR") {
+            self.advance();
+            if self.current.kind == TokenKind::String {
+                let raw = self.current.text.clone();
+                self.advance();
+                let unescaped = unescape_string(&raw[1..raw.len() - 1]);
+                let ch = unescaped
+                    .chars()
+                    .next()
+                    .ok_or_else(|| self.error("FIELDTERMINATOR must be a single character"))?;
+                Some(ch)
+            } else {
+                return Err(self.error("Expected string literal for FIELDTERMINATOR"));
+            }
+        } else {
+            None
+        };
+
+        Ok(LoadCsvClause {
+            with_headers,
+            path,
+            variable,
+            field_terminator,
+            span: None,
+        })
+    }
+
     fn parse_foreach_clause(&mut self) -> Result<ForEachClause> {
         self.advance(); // consume FOREACH identifier
         self.expect(TokenKind::LParen)?;
@@ -3240,5 +3301,69 @@ mod tests {
     fn test_parse_show_constraints() {
         let stmt = parse_ok("SHOW CONSTRAINTS");
         assert!(matches!(stmt, Statement::ShowConstraints));
+    }
+
+    #[test]
+    fn test_parse_load_csv_with_headers() {
+        let stmt = parse_ok("LOAD CSV WITH HEADERS FROM 'data.csv' AS row RETURN row.name");
+        if let Statement::Query(q) = stmt {
+            assert!(
+                matches!(&q.clauses[0], Clause::LoadCsv(lc) if lc.with_headers && lc.path == "data.csv" && lc.variable == "row")
+            );
+        } else {
+            panic!("Expected Query");
+        }
+    }
+
+    #[test]
+    fn test_parse_load_csv_without_headers() {
+        let stmt = parse_ok("LOAD CSV FROM 'data.csv' AS line RETURN line[0]");
+        if let Statement::Query(q) = stmt {
+            assert!(
+                matches!(&q.clauses[0], Clause::LoadCsv(lc) if !lc.with_headers && lc.variable == "line")
+            );
+        } else {
+            panic!("Expected Query");
+        }
+    }
+
+    #[test]
+    fn test_parse_load_csv_fieldterminator() {
+        let stmt = parse_ok(
+            "LOAD CSV WITH HEADERS FROM 'data.tsv' AS row FIELDTERMINATOR '\\t' RETURN row.name",
+        );
+        if let Statement::Query(q) = stmt {
+            assert!(
+                matches!(&q.clauses[0], Clause::LoadCsv(lc) if lc.field_terminator == Some('\t'))
+            );
+        } else {
+            panic!("Expected Query");
+        }
+    }
+
+    #[test]
+    fn test_parse_load_csv_with_create() {
+        let stmt = parse_ok(
+            "LOAD CSV WITH HEADERS FROM 'people.csv' AS row CREATE (p:Person {name: row.name})",
+        );
+        if let Statement::Query(q) = stmt {
+            assert!(matches!(&q.clauses[0], Clause::LoadCsv(_)));
+            assert!(matches!(&q.clauses[1], Clause::Create(_)));
+        } else {
+            panic!("Expected Query");
+        }
+    }
+
+    #[test]
+    fn test_parse_load_csv_file_uri() {
+        let stmt =
+            parse_ok("LOAD CSV WITH HEADERS FROM 'file:///data/people.csv' AS row RETURN row.name");
+        if let Statement::Query(q) = stmt {
+            assert!(
+                matches!(&q.clauses[0], Clause::LoadCsv(lc) if lc.path == "file:///data/people.csv")
+            );
+        } else {
+            panic!("Expected Query");
+        }
     }
 }
