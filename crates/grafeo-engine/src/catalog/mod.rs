@@ -17,8 +17,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 
+use grafeo_common::collections::{GrafeoConcurrentMap, grafeo_concurrent_map};
 use grafeo_common::types::{EdgeTypeId, IndexId, LabelId, PropertyKeyId, Value};
 
 /// The database's schema dictionary - maps names to compact internal IDs.
@@ -576,48 +577,48 @@ impl Default for Catalog {
 // === Label Catalog ===
 
 /// Bidirectional mapping between label names and IDs.
+///
+/// Uses `DashMap` (shard-level locking) for `name_to_id` so concurrent
+/// readers never block each other. A separate `Mutex` serializes the rare
+/// create path to keep `id_to_name` consistent.
 struct LabelCatalog {
-    name_to_id: RwLock<HashMap<Arc<str>, LabelId>>,
+    name_to_id: GrafeoConcurrentMap<Arc<str>, LabelId>,
     id_to_name: RwLock<Vec<Arc<str>>>,
     next_id: AtomicU32,
+    create_lock: Mutex<()>,
 }
 
 impl LabelCatalog {
     fn new() -> Self {
         Self {
-            name_to_id: RwLock::new(HashMap::new()),
+            name_to_id: grafeo_concurrent_map(),
             id_to_name: RwLock::new(Vec::new()),
             next_id: AtomicU32::new(0),
+            create_lock: Mutex::new(()),
         }
     }
 
     fn get_or_create(&self, name: &str) -> LabelId {
-        // Fast path: check if already exists
-        {
-            let name_to_id = self.name_to_id.read();
-            if let Some(&id) = name_to_id.get(name) {
-                return id;
-            }
+        // Fast path: shard-level read (no global lock)
+        if let Some(id) = self.name_to_id.get(name) {
+            return *id;
         }
 
-        // Slow path: create new entry
-        let mut name_to_id = self.name_to_id.write();
-        let mut id_to_name = self.id_to_name.write();
-
-        // Double-check after acquiring write lock
-        if let Some(&id) = name_to_id.get(name) {
-            return id;
+        // Slow path: serialize creates to keep id_to_name consistent
+        let _guard = self.create_lock.lock();
+        if let Some(id) = self.name_to_id.get(name) {
+            return *id;
         }
 
         let id = LabelId::new(self.next_id.fetch_add(1, Ordering::Relaxed));
         let name: Arc<str> = name.into();
-        name_to_id.insert(Arc::clone(&name), id);
-        id_to_name.push(name);
+        self.id_to_name.write().push(Arc::clone(&name));
+        self.name_to_id.insert(name, id);
         id
     }
 
     fn get_id(&self, name: &str) -> Option<LabelId> {
-        self.name_to_id.read().get(name).copied()
+        self.name_to_id.get(name).map(|r| *r)
     }
 
     fn get_name(&self, id: LabelId) -> Option<Arc<str>> {
@@ -637,47 +638,43 @@ impl LabelCatalog {
 
 /// Bidirectional mapping between property key names and IDs.
 struct PropertyCatalog {
-    name_to_id: RwLock<HashMap<Arc<str>, PropertyKeyId>>,
+    name_to_id: GrafeoConcurrentMap<Arc<str>, PropertyKeyId>,
     id_to_name: RwLock<Vec<Arc<str>>>,
     next_id: AtomicU32,
+    create_lock: Mutex<()>,
 }
 
 impl PropertyCatalog {
     fn new() -> Self {
         Self {
-            name_to_id: RwLock::new(HashMap::new()),
+            name_to_id: grafeo_concurrent_map(),
             id_to_name: RwLock::new(Vec::new()),
             next_id: AtomicU32::new(0),
+            create_lock: Mutex::new(()),
         }
     }
 
     fn get_or_create(&self, name: &str) -> PropertyKeyId {
-        // Fast path: check if already exists
-        {
-            let name_to_id = self.name_to_id.read();
-            if let Some(&id) = name_to_id.get(name) {
-                return id;
-            }
+        // Fast path: shard-level read (no global lock)
+        if let Some(id) = self.name_to_id.get(name) {
+            return *id;
         }
 
-        // Slow path: create new entry
-        let mut name_to_id = self.name_to_id.write();
-        let mut id_to_name = self.id_to_name.write();
-
-        // Double-check after acquiring write lock
-        if let Some(&id) = name_to_id.get(name) {
-            return id;
+        // Slow path: serialize creates to keep id_to_name consistent
+        let _guard = self.create_lock.lock();
+        if let Some(id) = self.name_to_id.get(name) {
+            return *id;
         }
 
         let id = PropertyKeyId::new(self.next_id.fetch_add(1, Ordering::Relaxed));
         let name: Arc<str> = name.into();
-        name_to_id.insert(Arc::clone(&name), id);
-        id_to_name.push(name);
+        self.id_to_name.write().push(Arc::clone(&name));
+        self.name_to_id.insert(name, id);
         id
     }
 
     fn get_id(&self, name: &str) -> Option<PropertyKeyId> {
-        self.name_to_id.read().get(name).copied()
+        self.name_to_id.get(name).map(|r| *r)
     }
 
     fn get_name(&self, id: PropertyKeyId) -> Option<Arc<str>> {
@@ -697,47 +694,43 @@ impl PropertyCatalog {
 
 /// Bidirectional mapping between edge type names and IDs.
 struct EdgeTypeCatalog {
-    name_to_id: RwLock<HashMap<Arc<str>, EdgeTypeId>>,
+    name_to_id: GrafeoConcurrentMap<Arc<str>, EdgeTypeId>,
     id_to_name: RwLock<Vec<Arc<str>>>,
     next_id: AtomicU32,
+    create_lock: Mutex<()>,
 }
 
 impl EdgeTypeCatalog {
     fn new() -> Self {
         Self {
-            name_to_id: RwLock::new(HashMap::new()),
+            name_to_id: grafeo_concurrent_map(),
             id_to_name: RwLock::new(Vec::new()),
             next_id: AtomicU32::new(0),
+            create_lock: Mutex::new(()),
         }
     }
 
     fn get_or_create(&self, name: &str) -> EdgeTypeId {
-        // Fast path: check if already exists
-        {
-            let name_to_id = self.name_to_id.read();
-            if let Some(&id) = name_to_id.get(name) {
-                return id;
-            }
+        // Fast path: shard-level read (no global lock)
+        if let Some(id) = self.name_to_id.get(name) {
+            return *id;
         }
 
-        // Slow path: create new entry
-        let mut name_to_id = self.name_to_id.write();
-        let mut id_to_name = self.id_to_name.write();
-
-        // Double-check after acquiring write lock
-        if let Some(&id) = name_to_id.get(name) {
-            return id;
+        // Slow path: serialize creates to keep id_to_name consistent
+        let _guard = self.create_lock.lock();
+        if let Some(id) = self.name_to_id.get(name) {
+            return *id;
         }
 
         let id = EdgeTypeId::new(self.next_id.fetch_add(1, Ordering::Relaxed));
         let name: Arc<str> = name.into();
-        name_to_id.insert(Arc::clone(&name), id);
-        id_to_name.push(name);
+        self.id_to_name.write().push(Arc::clone(&name));
+        self.name_to_id.insert(name, id);
         id
     }
 
     fn get_id(&self, name: &str) -> Option<EdgeTypeId> {
-        self.name_to_id.read().get(name).copied()
+        self.name_to_id.get(name).map(|r| *r)
     }
 
     fn get_name(&self, id: EdgeTypeId) -> Option<Arc<str>> {

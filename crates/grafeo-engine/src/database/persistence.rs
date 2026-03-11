@@ -64,7 +64,7 @@ impl super::GrafeoDB {
         // Copy all nodes using WAL-enabled methods
         for node in self.store.all_nodes() {
             let label_refs: Vec<&str> = node.labels.iter().map(|s| &**s).collect();
-            target.store.create_node_with_id(node.id, &label_refs);
+            target.store.create_node_with_id(node.id, &label_refs)?;
 
             // Log to WAL
             target.log_wal(&WalRecord::CreateNode {
@@ -89,7 +89,7 @@ impl super::GrafeoDB {
         for edge in self.store.all_edges() {
             target
                 .store
-                .create_edge_with_id(edge.id, edge.src, edge.dst, &edge.edge_type);
+                .create_edge_with_id(edge.id, edge.src, edge.dst, &edge.edge_type)?;
 
             // Log to WAL
             target.log_wal(&WalRecord::CreateEdge {
@@ -135,7 +135,7 @@ impl super::GrafeoDB {
         // Copy all nodes
         for node in self.store.all_nodes() {
             let label_refs: Vec<&str> = node.labels.iter().map(|s| &**s).collect();
-            target.store.create_node_with_id(node.id, &label_refs);
+            target.store.create_node_with_id(node.id, &label_refs)?;
 
             // Copy properties
             for (key, value) in node.properties {
@@ -147,7 +147,7 @@ impl super::GrafeoDB {
         for edge in self.store.all_edges() {
             target
                 .store
-                .create_edge_with_id(edge.id, edge.src, edge.dst, &edge.edge_type);
+                .create_edge_with_id(edge.id, edge.src, edge.dst, &edge.edge_type)?;
 
             // Copy properties
             for (key, value) in edge.properties {
@@ -298,7 +298,7 @@ impl super::GrafeoDB {
 
         for node in snapshot.nodes {
             let label_refs: Vec<&str> = node.labels.iter().map(|s| s.as_str()).collect();
-            db.store.create_node_with_id(node.id, &label_refs);
+            db.store.create_node_with_id(node.id, &label_refs)?;
             for (key, value) in node.properties {
                 db.store.set_node_property(node.id, &key, value);
             }
@@ -306,7 +306,7 @@ impl super::GrafeoDB {
 
         for edge in snapshot.edges {
             db.store
-                .create_edge_with_id(edge.id, edge.src, edge.dst, &edge.edge_type);
+                .create_edge_with_id(edge.id, edge.src, edge.dst, &edge.edge_type)?;
             for (key, value) in edge.properties {
                 db.store.set_edge_property(edge.id, &key, value);
             }
@@ -380,7 +380,7 @@ impl super::GrafeoDB {
 
         for node in snapshot.nodes {
             let label_refs: Vec<&str> = node.labels.iter().map(|s| s.as_str()).collect();
-            self.store.create_node_with_id(node.id, &label_refs);
+            self.store.create_node_with_id(node.id, &label_refs)?;
             for (key, value) in node.properties {
                 self.store.set_node_property(node.id, &key, value);
             }
@@ -388,7 +388,7 @@ impl super::GrafeoDB {
 
         for edge in snapshot.edges {
             self.store
-                .create_edge_with_id(edge.id, edge.src, edge.dst, &edge.edge_type);
+                .create_edge_with_id(edge.id, edge.src, edge.dst, &edge.edge_type)?;
             for (key, value) in edge.properties {
                 self.store.set_edge_property(edge.id, &key, value);
             }

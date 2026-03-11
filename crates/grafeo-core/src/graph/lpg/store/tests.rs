@@ -618,7 +618,9 @@ fn test_create_node_with_id() {
     let store = LpgStore::new().unwrap();
 
     let specific_id = NodeId::new(100);
-    store.create_node_with_id(specific_id, &["Person", "Employee"]);
+    store
+        .create_node_with_id(specific_id, &["Person", "Employee"])
+        .unwrap();
 
     let node = store.get_node(specific_id).unwrap();
     assert!(node.has_label("Person"));
@@ -637,7 +639,7 @@ fn test_create_edge_with_id() {
     let b = store.create_node(&["B"]);
 
     let specific_id = EdgeId::new(500);
-    store.create_edge_with_id(specific_id, a, b, "REL");
+    store.create_edge_with_id(specific_id, a, b, "REL").unwrap();
 
     let edge = store.get_edge(specific_id).unwrap();
     assert_eq!(edge.src, a);

@@ -4,15 +4,25 @@ All notable changes to Grafeo, for future reference (and enjoyment).
 
 ## [0.5.19] - Unreleased
 
+### Added
+
 - **Graph type enforcement**: full write-path schema enforcement with node type inheritance, edge endpoint validation, UNIQUE/NOT NULL/CHECK constraints, default value injection, closed graph type guards, MERGE validator support, pattern-form syntax, SHOW commands, and Cypher `ALTER CURRENT GRAPH TYPE`
-- **OPTIONAL MATCH WHERE pushdown**: right-side predicates are now correctly pushed into the join instead of filtering out NULL rows, with dedicated cost/cardinality estimation for LeftJoin
 - **LOAD DATA (multi-format import)**: generalized `LOAD DATA FROM 'path' FORMAT CSV|JSONL|PARQUET [WITH HEADERS] AS variable` in GQL, with Cypher-compatible `LOAD CSV` syntax preserved; JSONL behind `jsonl-import` feature, Parquet behind `parquet-import` feature
-- **Cypher COUNT(expr) NULL skipping**: `COUNT(expr)` now correctly skips NULLs (using `CountNonNull`), matching `COUNT(*)` which counts all rows
-- **Vector validity bitmap fix**: consecutive NULL pushes to the same column no longer silently drop null bits, fixing incorrect empty-string results in SPARQL OPTIONAL and RDF left joins
-- **GQL translator submodules**: split `gql.rs` into `gql/mod.rs`, `expression.rs`, `pattern.rs`, `aggregate.rs` for maintainability
-- **Wildcard imports lint**: re-enabled `clippy::wildcard_imports` as warning; replaced `use super::*` in LPG planner submodules with explicit imports
 - **Python `import_df()`**: bulk-import nodes or edges from a pandas or polars DataFrame via `db.import_df(df, 'nodes', label='Person')` or `db.import_df(df, 'edges', edge_type='KNOWS')`
 - **Memory introspection**: `db.memory_usage()` returns a hierarchical breakdown of heap usage across store, indexes, MVCC chains, query caches, string pools, and buffer manager regions
+
+### Fixed
+
+- **Named graph data isolation** ([#133](https://github.com/GrafeoDB/grafeo/issues/133)): `USE GRAPH`, `SESSION SET SCHEMA`, and `SESSION SET GRAPH` now correctly route all queries and mutations to the selected named graph instead of always using the default store; query cache keys include the active graph name to prevent cross-graph cache hits; dropping the active graph resets the session to default; graph switching is blocked during active transactions
+- **OPTIONAL MATCH WHERE pushdown**: right-side predicates are now correctly pushed into the join instead of filtering out NULL rows, with dedicated cost/cardinality estimation for LeftJoin
+- **Cypher COUNT(expr) NULL skipping**: `COUNT(expr)` now correctly skips NULLs (using `CountNonNull`), matching `COUNT(*)` which counts all rows
+- **Vector validity bitmap fix**: consecutive NULL pushes to the same column no longer silently drop null bits, fixing incorrect empty-string results in SPARQL OPTIONAL and RDF left joins
+
+### Improved
+
+- **GQL translator submodules**: split `gql.rs` into `gql/mod.rs`, `expression.rs`, `pattern.rs`, `aggregate.rs` for maintainability
+- **Wildcard imports lint**: re-enabled `clippy::wildcard_imports` as warning; replaced `use super::*` in LPG planner submodules with explicit imports
+- **Unwrap reduction**: replaced production `.expect()` calls with `Result`/`?` propagation in session initialization, persistence, and WAL recovery paths
 
 ## [0.5.18] - 2026-03-09
 

@@ -240,3 +240,89 @@ class TestConstraint:
     def test_drop_constraint_if_exists(self, db):
         """DROP CONSTRAINT IF EXISTS."""
         db.execute("DROP CONSTRAINT IF EXISTS nonexistent_constraint")
+
+
+# =============================================================================
+# Graph Data Isolation (issue #133)
+# =============================================================================
+
+
+class TestGraphDataIsolation:
+    """Verify that USE GRAPH / SESSION SET SCHEMA / SESSION SET GRAPH
+    correctly isolate data between named graphs."""
+
+    def test_use_graph_isolates_data(self, db):
+        """Data inserted into default is not visible in named graph."""
+        db.execute("CREATE GRAPH analytics")
+        db.execute("INSERT (:Person {name: 'Alix'})")  # default graph
+        db.execute("USE GRAPH analytics")
+        db.execute("INSERT (:Event {type: 'click'})")  # analytics graph
+        result = list(db.execute("MATCH (n) RETURN n"))
+        assert len(result) == 1, "Named graph should only have 1 node (Event)"
+
+    def test_default_graph_unchanged(self, db):
+        """Inserting into named graph does not affect default."""
+        db.execute("CREATE GRAPH analytics")
+        db.execute("USE GRAPH analytics")
+        db.execute("INSERT (:Event {type: 'click'})")
+        db.execute("USE GRAPH default")
+        result = list(db.execute("MATCH (n) RETURN n"))
+        assert len(result) == 0, "Default graph should be empty"
+
+    def test_session_set_schema_isolates(self, db):
+        """SESSION SET SCHEMA routes queries to named graph."""
+        db.execute("CREATE GRAPH reports")
+        db.execute("SESSION SET SCHEMA reports")
+        db.execute("INSERT (:Report {title: 'Q1'})")
+        result = list(db.execute("MATCH (n:Report) RETURN n"))
+        assert len(result) == 1
+
+    def test_session_set_graph_isolates(self, db):
+        """SESSION SET GRAPH routes queries to named graph."""
+        db.execute("CREATE GRAPH mydb")
+        db.execute("SESSION SET GRAPH mydb")
+        db.execute("INSERT (:Person {name: 'Gus'})")
+        result = list(db.execute("MATCH (n) RETURN n"))
+        assert len(result) == 1
+        db.execute("SESSION SET GRAPH default")
+        result = list(db.execute("MATCH (n) RETURN n"))
+        assert len(result) == 0, "Default graph should be empty"
+
+    def test_two_named_graphs_independent(self, db):
+        """Two named graphs do not share data."""
+        db.execute("CREATE GRAPH alpha")
+        db.execute("CREATE GRAPH beta")
+
+        db.execute("USE GRAPH alpha")
+        db.execute("INSERT (:Person {name: 'Alix'})")
+        db.execute("INSERT (:Person {name: 'Gus'})")
+
+        db.execute("USE GRAPH beta")
+        db.execute("INSERT (:Animal {species: 'Cat'})")
+
+        result = list(db.execute("MATCH (n) RETURN n"))
+        assert len(result) == 1, "beta should have 1 node"
+
+        db.execute("USE GRAPH alpha")
+        result = list(db.execute("MATCH (n) RETURN n"))
+        assert len(result) == 2, "alpha should have 2 nodes"
+
+    def test_session_reset_returns_to_default(self, db):
+        """SESSION RESET switches back to default graph."""
+        db.execute("INSERT (:Person {name: 'Alix'})")
+        db.execute("CREATE GRAPH other")
+        db.execute("USE GRAPH other")
+        db.execute("SESSION RESET")
+        result = list(db.execute("MATCH (n) RETURN n"))
+        assert len(result) == 1, "Should see default graph data after SESSION RESET"
+
+    def test_same_query_different_graph(self, db):
+        """Same query on different graphs returns different results (cache isolation)."""
+        db.execute("INSERT (:Person {name: 'Alix'})")
+        result1 = list(db.execute("MATCH (n) RETURN n"))
+        assert len(result1) == 1
+
+        db.execute("CREATE GRAPH empty")
+        db.execute("USE GRAPH empty")
+        result2 = list(db.execute("MATCH (n) RETURN n"))
+        assert len(result2) == 0, "Empty graph should return 0 rows"

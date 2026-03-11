@@ -85,20 +85,15 @@ impl ScanOperator {
             None => self.store.node_ids(),
         };
 
-        // Filter by visibility if we have tx context
+        // Filter by visibility if we have tx context.
+        // Uses batch methods that hold a single lock for all IDs instead of
+        // acquiring/releasing per node (avoids N+1 lock pattern).
         self.batch = if let Some(epoch) = self.viewing_epoch {
             if let Some(tx) = self.transaction_id {
-                // Transaction-aware visibility (sees own uncommitted changes)
-                all_ids
-                    .into_iter()
-                    .filter(|id| self.store.get_node_versioned(*id, epoch, tx).is_some())
-                    .collect()
+                self.store
+                    .filter_visible_node_ids_versioned(&all_ids, epoch, tx)
             } else {
-                // Pure epoch-based visibility (time-travel, no tx)
-                all_ids
-                    .into_iter()
-                    .filter(|id| self.store.get_node_at_epoch(*id, epoch).is_some())
-                    .collect()
+                self.store.filter_visible_node_ids(&all_ids, epoch)
             }
         } else {
             all_ids

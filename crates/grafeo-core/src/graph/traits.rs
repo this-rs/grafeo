@@ -220,6 +220,52 @@ pub trait GraphStore: Send + Sync {
         Vec::new()
     }
 
+    // --- Visibility checks (fast path, avoids building full entities) ---
+
+    /// Checks if a node is visible at the given epoch without building the full Node.
+    ///
+    /// More efficient than `get_node_at_epoch(...).is_some()` because it skips
+    /// label and property loading. Override in concrete stores for optimal
+    /// performance.
+    fn is_node_visible_at_epoch(&self, id: NodeId, epoch: EpochId) -> bool {
+        self.get_node_at_epoch(id, epoch).is_some()
+    }
+
+    /// Checks if a node is visible to a specific transaction without building
+    /// the full Node.
+    fn is_node_visible_versioned(
+        &self,
+        id: NodeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool {
+        self.get_node_versioned(id, epoch, transaction_id).is_some()
+    }
+
+    /// Filters node IDs to only those visible at the given epoch (batch).
+    ///
+    /// More efficient than per-node calls because implementations can hold
+    /// a single lock for the entire batch.
+    fn filter_visible_node_ids(&self, ids: &[NodeId], epoch: EpochId) -> Vec<NodeId> {
+        ids.iter()
+            .copied()
+            .filter(|id| self.is_node_visible_at_epoch(*id, epoch))
+            .collect()
+    }
+
+    /// Filters node IDs to only those visible to a transaction (batch).
+    fn filter_visible_node_ids_versioned(
+        &self,
+        ids: &[NodeId],
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Vec<NodeId> {
+        ids.iter()
+            .copied()
+            .filter(|id| self.is_node_visible_versioned(*id, epoch, transaction_id))
+            .collect()
+    }
+
     // --- History ---
 
     /// Returns all versions of a node with their creation/deletion epochs, newest first.

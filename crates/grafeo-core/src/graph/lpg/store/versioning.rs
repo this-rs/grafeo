@@ -1,5 +1,6 @@
 use super::LpgStore;
 use crate::graph::lpg::{EdgeRecord, NodeRecord};
+use grafeo_common::memory::AllocError;
 use grafeo_common::types::{EdgeId, EpochId, NodeId, TransactionId};
 #[cfg(feature = "tiered-storage")]
 use grafeo_common::utils::hash::FxHashMap;
@@ -334,9 +335,14 @@ impl LpgStore {
     ///
     /// This is used for WAL recovery to restore nodes with their original IDs.
     /// The caller must ensure IDs don't conflict with existing nodes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AllocError`] if the arena allocator cannot allocate space
+    /// (only possible with the `tiered-storage` feature).
     #[cfg(not(feature = "tiered-storage"))]
     #[doc(hidden)]
-    pub fn create_node_with_id(&self, id: NodeId, labels: &[&str]) {
+    pub fn create_node_with_id(&self, id: NodeId, labels: &[&str]) -> Result<(), AllocError> {
         let epoch = self.current_epoch();
         let mut record = NodeRecord::new(id, epoch);
         record.set_label_count(labels.len() as u16);
@@ -359,13 +365,19 @@ impl LpgStore {
                     None
                 }
             });
+        Ok(())
     }
 
     /// Creates a node with a specific ID during recovery.
     /// (Tiered storage version)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AllocError`] if the arena allocator cannot create an epoch
+    /// or allocate space for the node record.
     #[cfg(feature = "tiered-storage")]
     #[doc(hidden)]
-    pub fn create_node_with_id(&self, id: NodeId, labels: &[&str]) {
+    pub fn create_node_with_id(&self, id: NodeId, labels: &[&str]) -> Result<(), AllocError> {
         let epoch = self.current_epoch();
         let mut record = NodeRecord::new(id, epoch);
         record.set_label_count(labels.len() as u16);
@@ -373,13 +385,8 @@ impl LpgStore {
         self.register_node_labels(id, labels);
 
         // Allocate record in arena and get offset (create epoch if needed)
-        let arena = self
-            .arena_allocator
-            .arena_or_create(epoch)
-            .expect("failed to create arena for epoch");
-        let (offset, _stored) = arena
-            .alloc_value_with_offset(record)
-            .expect("arena allocation failed for node record");
+        let arena = self.arena_allocator.arena_or_create(epoch)?;
+        let (offset, _stored) = arena.alloc_value_with_offset(record)?;
 
         // Create HotVersionRef (using SYSTEM tx for recovery)
         let hot_ref = HotVersionRef::new(epoch, offset, TransactionId::SYSTEM);
@@ -398,14 +405,26 @@ impl LpgStore {
                     None
                 }
             });
+        Ok(())
     }
 
     /// Creates an edge with a specific ID during recovery.
     ///
     /// This is used for WAL recovery to restore edges with their original IDs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AllocError`] if the arena allocator cannot allocate space
+    /// (only possible with the `tiered-storage` feature).
     #[cfg(not(feature = "tiered-storage"))]
     #[doc(hidden)]
-    pub fn create_edge_with_id(&self, id: EdgeId, src: NodeId, dst: NodeId, edge_type: &str) {
+    pub fn create_edge_with_id(
+        &self,
+        id: EdgeId,
+        src: NodeId,
+        dst: NodeId,
+        edge_type: &str,
+    ) -> Result<(), AllocError> {
         let epoch = self.current_epoch();
         let type_id = self.get_or_create_edge_type_id(edge_type);
 
@@ -433,26 +452,33 @@ impl LpgStore {
                     None
                 }
             });
+        Ok(())
     }
 
     /// Creates an edge with a specific ID during recovery.
     /// (Tiered storage version)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AllocError`] if the arena allocator cannot create an epoch
+    /// or allocate space for the edge record.
     #[cfg(feature = "tiered-storage")]
     #[doc(hidden)]
-    pub fn create_edge_with_id(&self, id: EdgeId, src: NodeId, dst: NodeId, edge_type: &str) {
+    pub fn create_edge_with_id(
+        &self,
+        id: EdgeId,
+        src: NodeId,
+        dst: NodeId,
+        edge_type: &str,
+    ) -> Result<(), AllocError> {
         let epoch = self.current_epoch();
         let type_id = self.get_or_create_edge_type_id(edge_type);
 
         let record = EdgeRecord::new(id, src, dst, type_id, epoch);
 
         // Allocate record in arena and get offset (create epoch if needed)
-        let arena = self
-            .arena_allocator
-            .arena_or_create(epoch)
-            .expect("failed to create arena for epoch");
-        let (offset, _stored) = arena
-            .alloc_value_with_offset(record)
-            .expect("arena allocation failed for edge record");
+        let arena = self.arena_allocator.arena_or_create(epoch)?;
+        let (offset, _stored) = arena.alloc_value_with_offset(record)?;
 
         // Create HotVersionRef (using SYSTEM tx for recovery)
         let hot_ref = HotVersionRef::new(epoch, offset, TransactionId::SYSTEM);
@@ -479,6 +505,7 @@ impl LpgStore {
                     None
                 }
             });
+        Ok(())
     }
 
     /// Sets the current epoch during recovery.

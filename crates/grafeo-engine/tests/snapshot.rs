@@ -401,12 +401,14 @@ fn import_rejects_dangling_edge_source() {
     let n = db2.create_node(&["Person"]);
     // Create an edge referencing a non-existent source node
     // We need to use the direct store API since create_edge validates at a higher level
-    db2.store().create_edge_with_id(
-        grafeo_common::types::EdgeId::new(0),
-        grafeo_common::types::NodeId::new(999), // doesn't exist
-        n,
-        "KNOWS",
-    );
+    db2.store()
+        .create_edge_with_id(
+            grafeo_common::types::EdgeId::new(0),
+            grafeo_common::types::NodeId::new(999), // doesn't exist
+            n,
+            "KNOWS",
+        )
+        .unwrap();
 
     let bytes = db2.export_snapshot().unwrap();
     let result = GrafeoDB::import_snapshot(&bytes);
@@ -426,12 +428,14 @@ fn import_rejects_dangling_edge_source() {
 fn import_rejects_dangling_edge_destination() {
     let db = GrafeoDB::new_in_memory();
     let n = db.create_node(&["Person"]);
-    db.store().create_edge_with_id(
-        grafeo_common::types::EdgeId::new(0),
-        n,
-        grafeo_common::types::NodeId::new(999), // doesn't exist
-        "KNOWS",
-    );
+    db.store()
+        .create_edge_with_id(
+            grafeo_common::types::EdgeId::new(0),
+            n,
+            grafeo_common::types::NodeId::new(999), // doesn't exist
+            "KNOWS",
+        )
+        .unwrap();
 
     let bytes = db.export_snapshot().unwrap();
     let result = GrafeoDB::import_snapshot(&bytes);

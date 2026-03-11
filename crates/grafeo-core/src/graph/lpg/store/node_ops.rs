@@ -528,6 +528,154 @@ impl LpgStore {
         }
     }
 
+    // --- Visibility checks (no label/property loading) ---
+
+    /// Checks if a node is visible at the given epoch.
+    ///
+    /// Only checks the version chain, skips label and property loading.
+    #[must_use]
+    #[cfg(not(feature = "tiered-storage"))]
+    pub fn is_node_visible_at_epoch(&self, id: NodeId, epoch: EpochId) -> bool {
+        let nodes = self.nodes.read();
+        nodes
+            .get(&id)
+            .is_some_and(|chain| chain.visible_at(epoch).is_some_and(|r| !r.is_deleted()))
+    }
+
+    /// Checks if a node is visible at the given epoch.
+    /// (Tiered storage version)
+    #[must_use]
+    #[cfg(feature = "tiered-storage")]
+    pub fn is_node_visible_at_epoch(&self, id: NodeId, epoch: EpochId) -> bool {
+        let versions = self.node_versions.read();
+        versions.get(&id).is_some_and(|index| {
+            index.visible_at(epoch).is_some_and(|vref| {
+                self.read_node_record(&vref)
+                    .is_some_and(|r| !r.is_deleted())
+            })
+        })
+    }
+
+    /// Checks if a node is visible to a specific transaction.
+    #[must_use]
+    #[cfg(not(feature = "tiered-storage"))]
+    pub fn is_node_visible_versioned(
+        &self,
+        id: NodeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool {
+        let nodes = self.nodes.read();
+        nodes.get(&id).is_some_and(|chain| {
+            chain
+                .visible_to(epoch, transaction_id)
+                .is_some_and(|r| !r.is_deleted())
+        })
+    }
+
+    /// Checks if a node is visible to a specific transaction.
+    /// (Tiered storage version)
+    #[must_use]
+    #[cfg(feature = "tiered-storage")]
+    pub fn is_node_visible_versioned(
+        &self,
+        id: NodeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool {
+        let versions = self.node_versions.read();
+        versions.get(&id).is_some_and(|index| {
+            index.visible_to(epoch, transaction_id).is_some_and(|vref| {
+                self.read_node_record(&vref)
+                    .is_some_and(|r| !r.is_deleted())
+            })
+        })
+    }
+
+    /// Filters node IDs to only those visible at the given epoch.
+    ///
+    /// Holds a single lock for the entire batch instead of per-node locking.
+    #[must_use]
+    #[cfg(not(feature = "tiered-storage"))]
+    pub fn filter_visible_node_ids(&self, ids: &[NodeId], epoch: EpochId) -> Vec<NodeId> {
+        let nodes = self.nodes.read();
+        ids.iter()
+            .copied()
+            .filter(|id| {
+                nodes
+                    .get(id)
+                    .is_some_and(|chain| chain.visible_at(epoch).is_some_and(|r| !r.is_deleted()))
+            })
+            .collect()
+    }
+
+    /// Filters node IDs to only those visible at the given epoch.
+    /// (Tiered storage version)
+    #[must_use]
+    #[cfg(feature = "tiered-storage")]
+    pub fn filter_visible_node_ids(&self, ids: &[NodeId], epoch: EpochId) -> Vec<NodeId> {
+        let versions = self.node_versions.read();
+        ids.iter()
+            .copied()
+            .filter(|id| {
+                versions.get(id).is_some_and(|index| {
+                    index.visible_at(epoch).is_some_and(|vref| {
+                        self.read_node_record(&vref)
+                            .is_some_and(|r| !r.is_deleted())
+                    })
+                })
+            })
+            .collect()
+    }
+
+    /// Filters node IDs to only those visible to a specific transaction.
+    ///
+    /// Holds a single lock for the entire batch instead of per-node locking.
+    #[must_use]
+    #[cfg(not(feature = "tiered-storage"))]
+    pub fn filter_visible_node_ids_versioned(
+        &self,
+        ids: &[NodeId],
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Vec<NodeId> {
+        let nodes = self.nodes.read();
+        ids.iter()
+            .copied()
+            .filter(|id| {
+                nodes.get(id).is_some_and(|chain| {
+                    chain
+                        .visible_to(epoch, transaction_id)
+                        .is_some_and(|r| !r.is_deleted())
+                })
+            })
+            .collect()
+    }
+
+    /// Filters node IDs to only those visible to a specific transaction.
+    /// (Tiered storage version)
+    #[must_use]
+    #[cfg(feature = "tiered-storage")]
+    pub fn filter_visible_node_ids_versioned(
+        &self,
+        ids: &[NodeId],
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Vec<NodeId> {
+        let versions = self.node_versions.read();
+        ids.iter()
+            .copied()
+            .filter(|id| {
+                versions.get(id).is_some_and(|index| {
+                    index.visible_to(epoch, transaction_id).is_some_and(|vref| {
+                        self.read_node_record(&vref)
+                            .is_some_and(|r| !r.is_deleted())
+                    })
+                })
+            })
+            .collect()
+    }
+
     /// Returns the number of nodes (non-deleted at current epoch).
     #[must_use]
     #[cfg(not(feature = "tiered-storage"))]

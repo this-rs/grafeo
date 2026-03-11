@@ -219,6 +219,34 @@ impl GraphStore for WalGraphStore {
         self.inner.all_property_keys()
     }
 
+    fn is_node_visible_at_epoch(&self, id: NodeId, epoch: EpochId) -> bool {
+        self.inner.is_node_visible_at_epoch(id, epoch)
+    }
+
+    fn is_node_visible_versioned(
+        &self,
+        id: NodeId,
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> bool {
+        self.inner
+            .is_node_visible_versioned(id, epoch, transaction_id)
+    }
+
+    fn filter_visible_node_ids(&self, ids: &[NodeId], epoch: EpochId) -> Vec<NodeId> {
+        self.inner.filter_visible_node_ids(ids, epoch)
+    }
+
+    fn filter_visible_node_ids_versioned(
+        &self,
+        ids: &[NodeId],
+        epoch: EpochId,
+        transaction_id: TransactionId,
+    ) -> Vec<NodeId> {
+        self.inner
+            .filter_visible_node_ids_versioned(ids, epoch, transaction_id)
+    }
+
     fn get_node_history(&self, id: NodeId) -> Vec<(EpochId, Option<EpochId>, Node)> {
         self.inner.get_node_history(id)
     }

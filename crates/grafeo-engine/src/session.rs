@@ -295,6 +295,39 @@ impl Session {
         self.current_graph.lock().clone()
     }
 
+    /// Returns the graph store for the currently active graph.
+    ///
+    /// If `current_graph` is `None` or `"default"`, returns the session's
+    /// default `graph_store`. Otherwise looks up the named graph in the
+    /// root store and returns it as a trait object.
+    fn active_store(&self) -> Arc<dyn GraphStoreMut> {
+        let graph_name = self.current_graph.lock().clone();
+        match graph_name {
+            None => Arc::clone(&self.graph_store),
+            Some(ref name) if name.eq_ignore_ascii_case("default") => Arc::clone(&self.graph_store),
+            Some(ref name) => self.store.graph(name).map_or_else(
+                || Arc::clone(&self.graph_store),
+                |g| g as Arc<dyn GraphStoreMut>,
+            ),
+        }
+    }
+
+    /// Returns the concrete `LpgStore` for the currently active graph.
+    ///
+    /// Used by direct CRUD methods that need the concrete store type
+    /// for versioned operations.
+    fn active_lpg_store(&self) -> Arc<LpgStore> {
+        let graph_name = self.current_graph.lock().clone();
+        match graph_name {
+            None => Arc::clone(&self.store),
+            Some(ref name) if name.eq_ignore_ascii_case("default") => Arc::clone(&self.store),
+            Some(ref name) => self
+                .store
+                .graph(name)
+                .unwrap_or_else(|| Arc::clone(&self.store)),
+        }
+    }
+
     /// Sets the session time zone.
     pub fn set_time_zone(&self, tz: &str) {
         *self.time_zone.lock() = Some(tz.to_string());
@@ -352,7 +385,7 @@ impl Session {
     /// Properties and labels reflect the current state (not versioned per-epoch).
     #[must_use]
     pub fn get_node_history(&self, id: NodeId) -> Vec<(EpochId, Option<EpochId>, Node)> {
-        self.store.get_node_history(id)
+        self.active_lpg_store().get_node_history(id)
     }
 
     /// Returns all versions of an edge with their creation/deletion epochs.
@@ -360,7 +393,7 @@ impl Session {
     /// Properties reflect the current state (not versioned per-epoch).
     #[must_use]
     pub fn get_edge_history(&self, id: EdgeId) -> Vec<(EpochId, Option<EpochId>, Edge)> {
-        self.store.get_edge_history(id)
+        self.active_lpg_store().get_edge_history(id)
     }
 
     /// Checks that the session's graph model supports LPG operations.
@@ -454,9 +487,27 @@ impl Session {
                         format!("Graph '{name}' does not exist"),
                     )));
                 }
+                // If this session was using the dropped graph, reset to default
+                if dropped {
+                    let mut current = self.current_graph.lock();
+                    if current
+                        .as_deref()
+                        .is_some_and(|g| g.eq_ignore_ascii_case(&name))
+                    {
+                        *current = None;
+                    }
+                }
                 Ok(QueryResult::empty())
             }
             SessionCommand::UseGraph(name) => {
+                // Cannot switch graphs within an active transaction
+                if self.current_transaction.lock().is_some() {
+                    return Err(Error::Transaction(
+                        grafeo_common::utils::error::TransactionError::InvalidState(
+                            "Cannot switch graphs within an active transaction".to_string(),
+                        ),
+                    ));
+                }
                 // Verify graph exists (default graph is always valid)
                 if !name.eq_ignore_ascii_case("default") && self.store.graph(&name).is_none() {
                     return Err(Error::Query(QueryError::new(
@@ -468,6 +519,14 @@ impl Session {
                 Ok(QueryResult::empty())
             }
             SessionCommand::SessionSetGraph(name) => {
+                // Cannot switch graphs within an active transaction
+                if self.current_transaction.lock().is_some() {
+                    return Err(Error::Transaction(
+                        grafeo_common::utils::error::TransactionError::InvalidState(
+                            "Cannot switch graphs within an active transaction".to_string(),
+                        ),
+                    ));
+                }
                 self.use_graph(&name);
                 Ok(QueryResult::empty())
             }
@@ -693,7 +752,7 @@ impl Session {
             }
             SchemaStatement::CreateVectorIndex(stmt) => {
                 Self::create_vector_index_on_store(
-                    &self.store,
+                    &self.active_lpg_store(),
                     &stmt.node_label,
                     &stmt.property,
                     stmt.dimensions,
@@ -747,6 +806,7 @@ impl Session {
             }
             SchemaStatement::CreateIndex(stmt) => {
                 use grafeo_adapters::query::gql::ast::IndexKind;
+                let active = self.active_lpg_store();
                 let index_type_str = match stmt.index_kind {
                     IndexKind::Property => "property",
                     IndexKind::BTree => "btree",
@@ -756,18 +816,18 @@ impl Session {
                 match stmt.index_kind {
                     IndexKind::Property | IndexKind::BTree => {
                         for prop in &stmt.properties {
-                            self.store.create_property_index(prop);
+                            active.create_property_index(prop);
                         }
                     }
                     IndexKind::Text => {
                         for prop in &stmt.properties {
-                            Self::create_text_index_on_store(&self.store, &stmt.label, prop)?;
+                            Self::create_text_index_on_store(&active, &stmt.label, prop)?;
                         }
                     }
                     IndexKind::Vector => {
                         for prop in &stmt.properties {
                             Self::create_vector_index_on_store(
-                                &self.store,
+                                &active,
                                 &stmt.label,
                                 prop,
                                 stmt.options.dimensions,
@@ -795,7 +855,7 @@ impl Session {
             }
             SchemaStatement::DropIndex { name, if_exists } => {
                 // Try to drop property index by name
-                let dropped = self.store.drop_property_index(&name);
+                let dropped = self.active_lpg_store().drop_property_index(&name);
                 if dropped || if_exists {
                     if dropped {
                         wal_log!(self, WalRecord::DropIndex { name: name.clone() });
@@ -1774,7 +1834,7 @@ impl Session {
         };
 
         // Create cache key for this query
-        let cache_key = CacheKey::new(query, QueryLanguage::Gql);
+        let cache_key = CacheKey::with_graph(query, QueryLanguage::Gql, self.current_graph());
 
         // Try to get cached optimized plan, or use the plan we just translated
         let optimized_plan = if let Some(cached_plan) = self.query_cache.get_optimized(&cache_key) {
@@ -1785,7 +1845,8 @@ impl Session {
             let _binding_context = binder.bind(&logical_plan)?;
 
             // Optimize the plan
-            let optimizer = Optimizer::from_graph_store(&*self.graph_store);
+            let active = self.active_store();
+            let optimizer = Optimizer::from_graph_store(&*active);
             let plan = optimizer.optimize(logical_plan)?;
 
             // Cache the optimized plan for future use
@@ -1794,11 +1855,14 @@ impl Session {
             plan
         };
 
+        // Resolve the active store for query execution
+        let active = self.active_store();
+
         // EXPLAIN: annotate pushdown hints and return the plan tree
         if optimized_plan.explain {
             use crate::query::processor::{annotate_pushdown_hints, explain_result};
             let mut plan = optimized_plan;
-            annotate_pushdown_hints(&mut plan.root, self.graph_store.as_ref());
+            annotate_pushdown_hints(&mut plan.root, active.as_ref());
             return Ok(explain_result(&plan));
         }
 
@@ -1807,7 +1871,11 @@ impl Session {
             let has_mutations = optimized_plan.root.has_mutations();
             return self.with_auto_commit(has_mutations, || {
                 let (viewing_epoch, transaction_id) = self.get_transaction_context();
-                let planner = self.create_planner(viewing_epoch, transaction_id);
+                let planner = self.create_planner_for_store(
+                    Arc::clone(&active),
+                    viewing_epoch,
+                    transaction_id,
+                );
                 let (mut physical_plan, entries) = planner.plan_profiled(&optimized_plan)?;
 
                 let executor = Executor::with_columns(physical_plan.columns.clone())
@@ -1843,7 +1911,8 @@ impl Session {
 
             // Convert to physical plan with transaction context
             // (Physical planning cannot be cached as it depends on transaction state)
-            let planner = self.create_planner(viewing_epoch, transaction_id);
+            let planner =
+                self.create_planner_for_store(Arc::clone(&active), viewing_epoch, transaction_id);
             let mut physical_plan = planner.plan(&optimized_plan)?;
 
             // Execute the plan
@@ -1896,6 +1965,7 @@ impl Session {
         use crate::query::processor::{QueryLanguage, QueryProcessor};
 
         let has_mutations = Self::query_looks_like_mutation(query);
+        let active = self.active_store();
 
         self.with_auto_commit(has_mutations, || {
             // Get transaction context for MVCC visibility
@@ -1903,7 +1973,7 @@ impl Session {
 
             // Create processor with transaction context
             let processor = QueryProcessor::for_graph_store_with_transaction(
-                Arc::clone(&self.graph_store),
+                Arc::clone(&active),
                 Arc::clone(&self.transaction_manager),
             )?;
 
@@ -1989,7 +2059,7 @@ impl Session {
         let start_time = std::time::Instant::now();
 
         // Create cache key for this query
-        let cache_key = CacheKey::new(query, QueryLanguage::Cypher);
+        let cache_key = CacheKey::with_graph(query, QueryLanguage::Cypher, self.current_graph());
 
         // Try to get cached optimized plan
         let optimized_plan = if let Some(cached_plan) = self.query_cache.get_optimized(&cache_key) {
@@ -2003,7 +2073,8 @@ impl Session {
             let _binding_context = binder.bind(&logical_plan)?;
 
             // Optimize the plan
-            let optimizer = Optimizer::from_graph_store(&*self.graph_store);
+            let active = self.active_store();
+            let optimizer = Optimizer::from_graph_store(&*active);
             let plan = optimizer.optimize(logical_plan)?;
 
             // Cache the optimized plan
@@ -2012,11 +2083,14 @@ impl Session {
             plan
         };
 
+        // Resolve the active store for query execution
+        let active = self.active_store();
+
         // EXPLAIN
         if optimized_plan.explain {
             use crate::query::processor::{annotate_pushdown_hints, explain_result};
             let mut plan = optimized_plan;
-            annotate_pushdown_hints(&mut plan.root, self.graph_store.as_ref());
+            annotate_pushdown_hints(&mut plan.root, active.as_ref());
             return Ok(explain_result(&plan));
         }
 
@@ -2025,7 +2099,11 @@ impl Session {
             let has_mutations = optimized_plan.root.has_mutations();
             return self.with_auto_commit(has_mutations, || {
                 let (viewing_epoch, transaction_id) = self.get_transaction_context();
-                let planner = self.create_planner(viewing_epoch, transaction_id);
+                let planner = self.create_planner_for_store(
+                    Arc::clone(&active),
+                    viewing_epoch,
+                    transaction_id,
+                );
                 let (mut physical_plan, entries) = planner.plan_profiled(&optimized_plan)?;
 
                 let executor = Executor::with_columns(physical_plan.columns.clone())
@@ -2060,7 +2138,8 @@ impl Session {
             let (viewing_epoch, transaction_id) = self.get_transaction_context();
 
             // Convert to physical plan with transaction context
-            let planner = self.create_planner(viewing_epoch, transaction_id);
+            let planner =
+                self.create_planner_for_store(Arc::clone(&active), viewing_epoch, transaction_id);
             let mut physical_plan = planner.plan(&optimized_plan)?;
 
             // Execute the plan
@@ -2105,7 +2184,8 @@ impl Session {
         let _binding_context = binder.bind(&logical_plan)?;
 
         // Optimize the plan
-        let optimizer = Optimizer::from_graph_store(&*self.graph_store);
+        let active = self.active_store();
+        let optimizer = Optimizer::from_graph_store(&*active);
         let optimized_plan = optimizer.optimize(logical_plan)?;
 
         let has_mutations = optimized_plan.root.has_mutations();
@@ -2115,7 +2195,8 @@ impl Session {
             let (viewing_epoch, transaction_id) = self.get_transaction_context();
 
             // Convert to physical plan with transaction context
-            let planner = self.create_planner(viewing_epoch, transaction_id);
+            let planner =
+                self.create_planner_for_store(Arc::clone(&active), viewing_epoch, transaction_id);
             let mut physical_plan = planner.plan(&optimized_plan)?;
 
             // Execute the plan
@@ -2139,6 +2220,7 @@ impl Session {
         use crate::query::processor::{QueryLanguage, QueryProcessor};
 
         let has_mutations = Self::query_looks_like_mutation(query);
+        let active = self.active_store();
 
         self.with_auto_commit(has_mutations, || {
             // Get transaction context for MVCC visibility
@@ -2146,7 +2228,7 @@ impl Session {
 
             // Create processor with transaction context
             let processor = QueryProcessor::for_graph_store_with_transaction(
-                Arc::clone(&self.graph_store),
+                Arc::clone(&active),
                 Arc::clone(&self.transaction_manager),
             )?;
 
@@ -2196,7 +2278,8 @@ impl Session {
         let _binding_context = binder.bind(&logical_plan)?;
 
         // Optimize the plan
-        let optimizer = Optimizer::from_graph_store(&*self.graph_store);
+        let active = self.active_store();
+        let optimizer = Optimizer::from_graph_store(&*active);
         let optimized_plan = optimizer.optimize(logical_plan)?;
 
         let has_mutations = optimized_plan.root.has_mutations();
@@ -2206,7 +2289,8 @@ impl Session {
             let (viewing_epoch, transaction_id) = self.get_transaction_context();
 
             // Convert to physical plan with transaction context
-            let planner = self.create_planner(viewing_epoch, transaction_id);
+            let planner =
+                self.create_planner_for_store(Arc::clone(&active), viewing_epoch, transaction_id);
             let mut physical_plan = planner.plan(&optimized_plan)?;
 
             // Execute the plan
@@ -2230,6 +2314,7 @@ impl Session {
         use crate::query::processor::{QueryLanguage, QueryProcessor};
 
         let has_mutations = Self::query_looks_like_mutation(query);
+        let active = self.active_store();
 
         self.with_auto_commit(has_mutations, || {
             // Get transaction context for MVCC visibility
@@ -2237,7 +2322,7 @@ impl Session {
 
             // Create processor with transaction context
             let processor = QueryProcessor::for_graph_store_with_transaction(
-                Arc::clone(&self.graph_store),
+                Arc::clone(&active),
                 Arc::clone(&self.transaction_manager),
             )?;
 
@@ -2265,7 +2350,8 @@ impl Session {
 
         let logical_plan = graphql_rdf::translate(query, "http://example.org/")?;
 
-        let optimizer = Optimizer::from_graph_store(&*self.graph_store);
+        let active = self.active_store();
+        let optimizer = Optimizer::from_graph_store(&*active);
         let optimized_plan = optimizer.optimize(logical_plan)?;
 
         let planner = RdfPlanner::new(Arc::clone(&self.rdf_store))
@@ -2291,12 +2377,13 @@ impl Session {
         use crate::query::processor::{QueryLanguage, QueryProcessor};
 
         let has_mutations = Self::query_looks_like_mutation(query);
+        let active = self.active_store();
 
         self.with_auto_commit(has_mutations, || {
             let (viewing_epoch, transaction_id) = self.get_transaction_context();
 
             let processor = QueryProcessor::for_graph_store_with_transaction(
-                Arc::clone(&self.graph_store),
+                Arc::clone(&active),
                 Arc::clone(&self.transaction_manager),
             )?;
 
@@ -2363,7 +2450,7 @@ impl Session {
         }
 
         // Create cache key for query plans
-        let cache_key = CacheKey::new(query, QueryLanguage::SqlPgq);
+        let cache_key = CacheKey::with_graph(query, QueryLanguage::SqlPgq, self.current_graph());
 
         // Try to get cached optimized plan
         let optimized_plan = if let Some(cached_plan) = self.query_cache.get_optimized(&cache_key) {
@@ -2374,7 +2461,8 @@ impl Session {
             let _binding_context = binder.bind(&logical_plan)?;
 
             // Optimize the plan
-            let optimizer = Optimizer::from_graph_store(&*self.graph_store);
+            let active = self.active_store();
+            let optimizer = Optimizer::from_graph_store(&*active);
             let plan = optimizer.optimize(logical_plan)?;
 
             // Cache the optimized plan
@@ -2383,6 +2471,7 @@ impl Session {
             plan
         };
 
+        let active = self.active_store();
         let has_mutations = optimized_plan.root.has_mutations();
 
         self.with_auto_commit(has_mutations, || {
@@ -2390,7 +2479,8 @@ impl Session {
             let (viewing_epoch, transaction_id) = self.get_transaction_context();
 
             // Convert to physical plan with transaction context
-            let planner = self.create_planner(viewing_epoch, transaction_id);
+            let planner =
+                self.create_planner_for_store(Arc::clone(&active), viewing_epoch, transaction_id);
             let mut physical_plan = planner.plan(&optimized_plan)?;
 
             // Execute the plan
@@ -2414,6 +2504,7 @@ impl Session {
         use crate::query::processor::{QueryLanguage, QueryProcessor};
 
         let has_mutations = Self::query_looks_like_mutation(query);
+        let active = self.active_store();
 
         self.with_auto_commit(has_mutations, || {
             // Get transaction context for MVCC visibility
@@ -2421,7 +2512,7 @@ impl Session {
 
             // Create processor with transaction context
             let processor = QueryProcessor::for_graph_store_with_transaction(
-                Arc::clone(&self.graph_store),
+                Arc::clone(&active),
                 Arc::clone(&self.transaction_manager),
             )?;
 
@@ -2451,7 +2542,8 @@ impl Session {
         let logical_plan = sparql::translate(query)?;
 
         // Optimize the plan
-        let optimizer = Optimizer::from_graph_store(&*self.graph_store);
+        let active = self.active_store();
+        let optimizer = Optimizer::from_graph_store(&*active);
         let optimized_plan = optimizer.optimize(logical_plan)?;
 
         // Convert to physical plan using RDF planner
@@ -2485,7 +2577,8 @@ impl Session {
 
         substitute_params(&mut logical_plan, &params)?;
 
-        let optimizer = Optimizer::from_graph_store(&*self.graph_store);
+        let active = self.active_store();
+        let optimizer = Optimizer::from_graph_store(&*active);
         let optimized_plan = optimizer.optimize(logical_plan)?;
 
         let planner = RdfPlanner::new(Arc::clone(&self.rdf_store))
@@ -2524,9 +2617,10 @@ impl Session {
                 if let Some(p) = params {
                     use crate::query::processor::{QueryLanguage, QueryProcessor};
                     let has_mutations = Self::query_looks_like_mutation(query);
+                    let active = self.active_store();
                     self.with_auto_commit(has_mutations, || {
                         let processor = QueryProcessor::for_graph_store_with_transaction(
-                            Arc::clone(&self.graph_store),
+                            Arc::clone(&active),
                             Arc::clone(&self.transaction_manager),
                         )?;
                         let (viewing_epoch, transaction_id) = self.get_transaction_context();
@@ -2662,10 +2756,11 @@ impl Session {
             return Ok(());
         }
 
+        let active = self.active_lpg_store();
         self.transaction_start_node_count
-            .store(self.store.node_count(), Ordering::Relaxed);
+            .store(active.node_count(), Ordering::Relaxed);
         self.transaction_start_edge_count
-            .store(self.store.edge_count(), Ordering::Relaxed);
+            .store(active.edge_count(), Ordering::Relaxed);
         let transaction_id = if let Some(level) = isolation_level {
             self.transaction_manager.begin_with_isolation(level)
         } else {
@@ -2713,15 +2808,15 @@ impl Session {
         self.rdf_store.commit_transaction(transaction_id);
 
         // Discard property undo log: changes are committed, no rollback possible
-        self.store.commit_transaction_properties(transaction_id);
+        let active = self.active_lpg_store();
+        active.commit_transaction_properties(transaction_id);
 
         self.transaction_manager.commit(transaction_id)?;
 
         // Sync the LpgStore epoch with the TxManager so that
         // convenience lookups (edge_type, get_edge, get_node) that use
         // store.current_epoch() can see versions created at the latest epoch.
-        self.store
-            .sync_epoch(self.transaction_manager.current_epoch());
+        active.sync_epoch(self.transaction_manager.current_epoch());
 
         // Reset read-only flag and clear savepoints
         *self.read_only_tx.lock() = false;
@@ -2732,7 +2827,7 @@ impl Session {
             let count = self.commit_counter.fetch_add(1, Ordering::Relaxed) + 1;
             if count.is_multiple_of(self.gc_interval) {
                 let min_epoch = self.transaction_manager.min_active_epoch();
-                self.store.gc_versions(min_epoch);
+                active.gc_versions(min_epoch);
                 self.transaction_manager.gc();
             }
         }
@@ -2792,7 +2887,8 @@ impl Session {
         *self.read_only_tx.lock() = false;
 
         // Discard uncommitted versions in the LPG store
-        self.store.discard_uncommitted_versions(transaction_id);
+        self.active_lpg_store()
+            .discard_uncommitted_versions(transaction_id);
 
         // Discard pending operations in the RDF store
         #[cfg(feature = "rdf")]
@@ -2823,9 +2919,10 @@ impl Session {
             )
         })?;
 
-        let next_node = self.store.peek_next_node_id();
-        let next_edge = self.store.peek_next_edge_id();
-        let undo_position = self.store.property_undo_log_position(tx_id);
+        let active = self.active_lpg_store();
+        let next_node = active.peek_next_node_id();
+        let next_edge = active.peek_next_edge_id();
+        let undo_position = active.property_undo_log_position(tx_id);
         self.savepoints
             .lock()
             .push((name.to_string(), next_node, next_edge, undo_position));
@@ -2870,19 +2967,18 @@ impl Session {
         drop(savepoints);
 
         // Replay property/label undo entries recorded after the savepoint
-        self.store
-            .rollback_transaction_properties_to(transaction_id, sp_undo_position);
+        let active = self.active_lpg_store();
+        active.rollback_transaction_properties_to(transaction_id, sp_undo_position);
 
         // Discard all nodes with ID >= sp_next_node and edges with ID >= sp_next_edge
-        let current_next_node = self.store.peek_next_node_id();
-        let current_next_edge = self.store.peek_next_edge_id();
+        let current_next_node = active.peek_next_node_id();
+        let current_next_edge = active.peek_next_edge_id();
 
         let node_ids: Vec<NodeId> = (sp_next_node..current_next_node).map(NodeId::new).collect();
         let edge_ids: Vec<EdgeId> = (sp_next_edge..current_next_edge).map(EdgeId::new).collect();
 
         if !node_ids.is_empty() || !edge_ids.is_empty() {
-            self.store
-                .discard_entities_by_id(transaction_id, &node_ids, &edge_ids);
+            active.discard_entities_by_id(transaction_id, &node_ids, &edge_ids);
         }
 
         Ok(())
@@ -2940,7 +3036,7 @@ impl Session {
     pub(crate) fn node_count_delta(&self) -> (usize, usize) {
         (
             self.transaction_start_node_count.load(Ordering::Relaxed),
-            self.store.node_count(),
+            self.active_lpg_store().node_count(),
         )
     }
 
@@ -2949,7 +3045,7 @@ impl Session {
     pub(crate) fn edge_count_delta(&self) -> (usize, usize) {
         (
             self.transaction_start_edge_count.load(Ordering::Relaxed),
-            self.store.edge_count(),
+            self.active_lpg_store().edge_count(),
         )
     }
 
@@ -3098,15 +3194,19 @@ impl Session {
     }
 
     /// Creates a planner with transaction context and constraint validator.
-    fn create_planner(
+    ///
+    /// The `store` parameter is the graph store to plan against (use
+    /// `self.active_store()` for graph-aware execution).
+    fn create_planner_for_store(
         &self,
+        store: Arc<dyn GraphStoreMut>,
         viewing_epoch: EpochId,
         transaction_id: Option<TransactionId>,
     ) -> crate::query::Planner {
         use crate::query::Planner;
 
         let mut planner = Planner::with_context(
-            Arc::clone(&self.graph_store),
+            Arc::clone(&store),
             Arc::clone(&self.transaction_manager),
             transaction_id,
             viewing_epoch,
@@ -3115,8 +3215,8 @@ impl Session {
         .with_catalog(Arc::clone(&self.catalog));
 
         // Attach the constraint validator for schema enforcement
-        let validator = CatalogConstraintValidator::new(Arc::clone(&self.catalog))
-            .with_store(Arc::clone(&self.graph_store));
+        let validator =
+            CatalogConstraintValidator::new(Arc::clone(&self.catalog)).with_store(store);
         planner = planner.with_validator(Arc::new(validator));
 
         planner
@@ -3128,7 +3228,7 @@ impl Session {
     /// If a transaction is active, the node will be versioned with the transaction ID.
     pub fn create_node(&self, labels: &[&str]) -> NodeId {
         let (epoch, transaction_id) = self.get_transaction_context();
-        self.store.create_node_versioned(
+        self.active_lpg_store().create_node_versioned(
             labels,
             epoch,
             transaction_id.unwrap_or(TransactionId::SYSTEM),
@@ -3144,7 +3244,7 @@ impl Session {
         properties: impl IntoIterator<Item = (&'a str, Value)>,
     ) -> NodeId {
         let (epoch, transaction_id) = self.get_transaction_context();
-        self.store.create_node_with_props_versioned(
+        self.active_lpg_store().create_node_with_props_versioned(
             labels,
             properties,
             epoch,
@@ -3163,7 +3263,7 @@ impl Session {
         edge_type: &str,
     ) -> grafeo_common::types::EdgeId {
         let (epoch, transaction_id) = self.get_transaction_context();
-        self.store.create_edge_versioned(
+        self.active_lpg_store().create_edge_versioned(
             src,
             dst,
             edge_type,
@@ -3202,8 +3302,11 @@ impl Session {
     #[must_use]
     pub fn get_node(&self, id: NodeId) -> Option<Node> {
         let (epoch, transaction_id) = self.get_transaction_context();
-        self.store
-            .get_node_versioned(id, epoch, transaction_id.unwrap_or(TransactionId::SYSTEM))
+        self.active_lpg_store().get_node_versioned(
+            id,
+            epoch,
+            transaction_id.unwrap_or(TransactionId::SYSTEM),
+        )
     }
 
     /// Gets a single property from a node by ID, bypassing query planning.
@@ -3244,8 +3347,11 @@ impl Session {
     #[must_use]
     pub fn get_edge(&self, id: EdgeId) -> Option<Edge> {
         let (epoch, transaction_id) = self.get_transaction_context();
-        self.store
-            .get_edge_versioned(id, epoch, transaction_id.unwrap_or(TransactionId::SYSTEM))
+        self.active_lpg_store().get_edge_versioned(
+            id,
+            epoch,
+            transaction_id.unwrap_or(TransactionId::SYSTEM),
+        )
     }
 
     /// Gets outgoing neighbors of a node directly, bypassing query planning.
@@ -3275,7 +3381,9 @@ impl Session {
     /// ```
     #[must_use]
     pub fn get_neighbors_outgoing(&self, node: NodeId) -> Vec<(NodeId, EdgeId)> {
-        self.store.edges_from(node, Direction::Outgoing).collect()
+        self.active_lpg_store()
+            .edges_from(node, Direction::Outgoing)
+            .collect()
     }
 
     /// Gets incoming neighbors of a node directly, bypassing query planning.
@@ -3288,7 +3396,9 @@ impl Session {
     /// - Uses backward adjacency index for direct access
     #[must_use]
     pub fn get_neighbors_incoming(&self, node: NodeId) -> Vec<(NodeId, EdgeId)> {
-        self.store.edges_from(node, Direction::Incoming).collect()
+        self.active_lpg_store()
+            .edges_from(node, Direction::Incoming)
+            .collect()
     }
 
     /// Gets outgoing neighbors filtered by edge type, bypassing query planning.
@@ -3308,7 +3418,7 @@ impl Session {
         node: NodeId,
         edge_type: &str,
     ) -> Vec<(NodeId, EdgeId)> {
-        self.store
+        self.active_lpg_store()
             .edges_from(node, Direction::Outgoing)
             .filter(|(_, edge_id)| {
                 self.get_edge(*edge_id)
@@ -3339,8 +3449,9 @@ impl Session {
     /// Returns (outgoing_degree, incoming_degree).
     #[must_use]
     pub fn get_degree(&self, node: NodeId) -> (usize, usize) {
-        let out = self.store.out_degree(node);
-        let in_degree = self.store.in_degree(node);
+        let active = self.active_lpg_store();
+        let out = active.out_degree(node);
+        let in_degree = active.in_degree(node);
         (out, in_degree)
     }
 
@@ -3357,8 +3468,9 @@ impl Session {
     pub fn get_nodes_batch(&self, ids: &[NodeId]) -> Vec<Option<Node>> {
         let (epoch, transaction_id) = self.get_transaction_context();
         let tx = transaction_id.unwrap_or(TransactionId::SYSTEM);
+        let active = self.active_lpg_store();
         ids.iter()
-            .map(|&id| self.store.get_node_versioned(id, epoch, tx))
+            .map(|&id| active.get_node_versioned(id, epoch, tx))
             .collect()
     }
 

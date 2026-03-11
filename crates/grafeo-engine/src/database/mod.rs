@@ -345,7 +345,7 @@ impl GrafeoDB {
             match record {
                 WalRecord::CreateNode { id, labels } => {
                     let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
-                    store.create_node_with_id(*id, &label_refs);
+                    store.create_node_with_id(*id, &label_refs)?;
                 }
                 WalRecord::DeleteNode { id } => {
                     store.delete_node(*id);
@@ -356,7 +356,7 @@ impl GrafeoDB {
                     dst,
                     edge_type,
                 } => {
-                    store.create_edge_with_id(*id, *src, *dst, edge_type);
+                    store.create_edge_with_id(*id, *src, *dst, edge_type)?;
                 }
                 WalRecord::DeleteEdge { id } => {
                     store.delete_edge(*id);

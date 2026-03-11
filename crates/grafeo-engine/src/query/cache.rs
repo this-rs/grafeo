@@ -37,22 +37,39 @@ use std::time::Instant;
 use crate::query::plan::LogicalPlan;
 use crate::query::processor::QueryLanguage;
 
-/// Cache key combining query text and language.
+/// Cache key combining query text, language, and active graph.
 #[derive(Clone, Eq, PartialEq, Hash)]
 pub struct CacheKey {
     /// The query string (normalized).
     query: String,
     /// The query language.
     language: QueryLanguage,
+    /// Active graph name (`None` = default graph).
+    graph: Option<String>,
 }
 
 impl CacheKey {
-    /// Creates a new cache key.
+    /// Creates a new cache key for the default graph.
     #[must_use]
     pub fn new(query: impl Into<String>, language: QueryLanguage) -> Self {
         Self {
             query: normalize_query(&query.into()),
             language,
+            graph: None,
+        }
+    }
+
+    /// Creates a cache key scoped to a specific graph.
+    #[must_use]
+    pub fn with_graph(
+        query: impl Into<String>,
+        language: QueryLanguage,
+        graph: Option<String>,
+    ) -> Self {
+        Self {
+            query: normalize_query(&query.into()),
+            language,
+            graph,
         }
     }
 
