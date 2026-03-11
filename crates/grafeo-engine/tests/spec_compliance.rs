@@ -647,10 +647,20 @@ mod gql_session_commands {
     fn session_set_schema() {
         let db = GrafeoDB::new_in_memory();
         let session = db.session();
-        // SESSION SET SCHEMA maps to graph
+        // SESSION SET SCHEMA maps to graph, graph must exist
+        session.execute("CREATE GRAPH myschema").unwrap();
         let result = session.execute("SESSION SET SCHEMA myschema");
         assert!(result.is_ok());
         assert_eq!(session.current_graph(), Some("myschema".to_string()));
+    }
+
+    #[test]
+    fn session_set_schema_nonexistent_errors() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        // SESSION SET SCHEMA should error if graph does not exist
+        let result = session.execute("SESSION SET SCHEMA nosuchgraph");
+        assert!(result.is_err());
     }
 
     #[test]

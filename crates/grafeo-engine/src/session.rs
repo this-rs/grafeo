@@ -611,6 +611,13 @@ impl Session {
                 Ok(QueryResult::empty())
             }
             SessionCommand::SessionSetGraph(name) => {
+                // Validate graph exists (same check as USE GRAPH)
+                if !name.eq_ignore_ascii_case("default") && self.store.graph(&name).is_none() {
+                    return Err(Error::Query(QueryError::new(
+                        QueryErrorKind::Semantic,
+                        format!("Graph '{name}' does not exist"),
+                    )));
+                }
                 self.use_graph(&name);
                 // Track the new graph if in a transaction
                 self.track_graph_touch();
@@ -4636,9 +4643,18 @@ mod tests {
             let db = GrafeoDB::new_in_memory();
             let session = db.session();
 
-            // SESSION SET GRAPH does not verify existence
+            session.execute("CREATE GRAPH analytics").unwrap();
             session.execute("SESSION SET GRAPH analytics").unwrap();
             assert_eq!(session.current_graph(), Some("analytics".to_string()));
+        }
+
+        #[test]
+        fn test_session_set_graph_nonexistent_errors() {
+            let db = GrafeoDB::new_in_memory();
+            let session = db.session();
+
+            let result = session.execute("SESSION SET GRAPH nosuchgraph");
+            assert!(result.is_err());
         }
 
         #[test]
@@ -4677,6 +4693,7 @@ mod tests {
             let session = db.session();
 
             // Set various session state
+            session.execute("CREATE GRAPH analytics").unwrap();
             session.execute("SESSION SET GRAPH analytics").unwrap();
             session.execute("SESSION SET TIME ZONE 'UTC'").unwrap();
             session
@@ -4701,6 +4718,7 @@ mod tests {
             let db = GrafeoDB::new_in_memory();
             let session = db.session();
 
+            session.execute("CREATE GRAPH analytics").unwrap();
             session.execute("SESSION SET GRAPH analytics").unwrap();
             session.execute("SESSION SET TIME ZONE 'UTC'").unwrap();
 
@@ -4859,6 +4877,7 @@ mod tests {
             let db = GrafeoDB::new_in_memory();
             let session = db.session();
 
+            session.execute("CREATE GRAPH test").unwrap();
             let result = session.execute("SESSION SET GRAPH test").unwrap();
             assert_eq!(result.row_count(), 0);
             assert_eq!(result.column_count(), 0);
@@ -4886,6 +4905,8 @@ mod tests {
             let session1 = db.session();
             let session2 = db.session();
 
+            session1.execute("CREATE GRAPH first").unwrap();
+            session1.execute("CREATE GRAPH second").unwrap();
             session1.execute("SESSION SET GRAPH first").unwrap();
             session2.execute("SESSION SET GRAPH second").unwrap();
 

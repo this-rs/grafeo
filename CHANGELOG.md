@@ -2,6 +2,16 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
+## [0.5.20] - 2026-03-11
+
+### Added
+
+- **WASM `memoryUsage()` and `importRows()`**: memory introspection and bulk row import (the DataFrame equivalent) now available in WebAssembly bindings
+
+### Fixed
+
+- **`SESSION SET GRAPH` / `SESSION SET SCHEMA` validation**: now errors when the target graph does not exist, matching the behavior of `USE GRAPH`; previously it silently accepted any name and fell back to the default store
+
 ## [0.5.19] - 2026-03-11
 
 ### Added

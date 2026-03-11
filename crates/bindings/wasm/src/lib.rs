@@ -616,6 +616,125 @@ impl Database {
         Ok(result.into())
     }
 
+    /// Returns a hierarchical memory usage breakdown.
+    ///
+    /// The returned object mirrors the engine's `MemoryUsage` struct with
+    /// `totalBytes`, `store`, `indexes`, `mvcc`, `caches`, `stringPool`,
+    /// and `bufferManager` sections.
+    ///
+    /// ```js
+    /// const usage = db.memoryUsage();
+    /// console.log(`Total: ${usage.total_bytes} bytes`);
+    /// console.log(`Store: ${usage.store.total_bytes} bytes`);
+    /// console.log(`Indexes: ${usage.indexes.total_bytes} bytes`);
+    /// ```
+    #[wasm_bindgen(js_name = "memoryUsage")]
+    pub fn memory_usage(&self) -> Result<JsValue, JsError> {
+        let usage = self.inner.memory_usage();
+        serde_wasm_bindgen::to_value(&usage).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Bulk-imports rows (array of objects) as nodes or edges.
+    ///
+    /// This is the WASM equivalent of Python's `import_df()`: each object
+    /// in the array becomes a node or edge, with object keys as property names.
+    ///
+    /// **Node import** (`mode: "nodes"`): requires `label` (string or string[]).
+    /// All object keys become node properties.
+    ///
+    /// **Edge import** (`mode: "edges"`): requires `edgeType`. The `source`
+    /// and `target` keys in each object must contain integer node IDs.
+    /// Remaining keys become edge properties. Override column names with
+    /// the `source` and `target` options (default `"source"` / `"target"`).
+    ///
+    /// Returns the number of created entities.
+    ///
+    /// ```js
+    /// // Import nodes
+    /// const count = db.importRows(
+    ///   [{ name: "Alix", age: 30 }, { name: "Gus", age: 25 }],
+    ///   { mode: "nodes", label: "Person" }
+    /// );
+    ///
+    /// // Import edges
+    /// const edgeCount = db.importRows(
+    ///   [{ source: 0, target: 1, since: 2020 }],
+    ///   { mode: "edges", edgeType: "KNOWS" }
+    /// );
+    ///
+    /// // Custom source/target column names
+    /// const edgeCount2 = db.importRows(
+    ///   [{ from: 0, to: 1 }],
+    ///   { mode: "edges", edgeType: "KNOWS", source: "from", target: "to" }
+    /// );
+    /// ```
+    #[wasm_bindgen(js_name = "importRows")]
+    pub fn import_rows(&self, rows: JsValue, options: JsValue) -> Result<u32, JsError> {
+        let opts: ImportRowsOptions = serde_wasm_bindgen::from_value(options)
+            .map_err(|e| JsError::new(&format!("Invalid options: {e}")))?;
+        let data: Vec<serde_json::Map<String, serde_json::Value>> =
+            serde_wasm_bindgen::from_value(rows)
+                .map_err(|e| JsError::new(&format!("rows must be an array of objects: {e}")))?;
+
+        let mut count: u32 = 0;
+
+        match opts.mode.as_str() {
+            "nodes" => {
+                let labels = opts.labels()?;
+                let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+
+                for row in &data {
+                    let props: Vec<(PropertyKey, Value)> = row
+                        .iter()
+                        .filter(|(_, v)| !v.is_null())
+                        .map(|(k, v)| (PropertyKey::new(k.as_str()), json_to_value(v)))
+                        .collect();
+                    self.inner.create_node_with_props(&label_refs, props);
+                    count += 1;
+                }
+            }
+            "edges" => {
+                let edge_type = opts
+                    .edge_type
+                    .as_deref()
+                    .ok_or_else(|| JsError::new("edgeType is required for mode 'edges'"))?;
+                let source_col = opts.source.as_deref().unwrap_or("source");
+                let target_col = opts.target.as_deref().unwrap_or("target");
+
+                for (i, row) in data.iter().enumerate() {
+                    let src_val = row.get(source_col).ok_or_else(|| {
+                        JsError::new(&format!("rows[{i}]: missing '{source_col}' column"))
+                    })?;
+                    let dst_val = row.get(target_col).ok_or_else(|| {
+                        JsError::new(&format!("rows[{i}]: missing '{target_col}' column"))
+                    })?;
+
+                    let src_id = json_to_node_id(src_val, source_col, i)?;
+                    let dst_id = json_to_node_id(dst_val, target_col, i)?;
+
+                    let props: Vec<(PropertyKey, Value)> = row
+                        .iter()
+                        .filter(|(k, v)| {
+                            k.as_str() != source_col && k.as_str() != target_col && !v.is_null()
+                        })
+                        .map(|(k, v)| (PropertyKey::new(k.as_str()), json_to_value(v)))
+                        .collect();
+
+                    self.inner
+                        .create_edge_with_props(src_id, dst_id, edge_type, props);
+                    count += 1;
+                }
+            }
+            other => {
+                return Err(JsError::new(&format!(
+                    "mode must be 'nodes' or 'edges', got '{other}'"
+                )));
+            }
+        }
+
+        Ok(count)
+    }
+
     /// Returns the Grafeo version.
     pub fn version() -> String {
         env!("CARGO_PKG_VERSION").to_string()
@@ -670,6 +789,59 @@ impl Database {
 // ---------------------------------------------------------------------------
 // Batch import data types (serde, not exported to JS)
 // ---------------------------------------------------------------------------
+
+/// Options for `importRows()`.
+#[derive(serde::Deserialize)]
+struct ImportRowsOptions {
+    mode: String,
+    /// Node label(s): a single string or an array of strings.
+    #[serde(default)]
+    label: Option<ImportLabel>,
+    /// Edge type (required for mode "edges").
+    #[serde(default, rename = "edgeType")]
+    edge_type: Option<String>,
+    /// Source column name (default "source").
+    #[serde(default)]
+    source: Option<String>,
+    /// Target column name (default "target").
+    #[serde(default)]
+    target: Option<String>,
+}
+
+/// A label can be a single string or an array of strings.
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum ImportLabel {
+    Single(String),
+    Multiple(Vec<String>),
+}
+
+impl ImportRowsOptions {
+    fn labels(&self) -> Result<Vec<String>, JsError> {
+        match &self.label {
+            Some(ImportLabel::Single(s)) => Ok(vec![s.clone()]),
+            Some(ImportLabel::Multiple(v)) => Ok(v.clone()),
+            None => Err(JsError::new("label is required for mode 'nodes'")),
+        }
+    }
+}
+
+/// Extracts a `NodeId` from a JSON number value.
+fn json_to_node_id(
+    val: &serde_json::Value,
+    col_name: &str,
+    row_idx: usize,
+) -> Result<grafeo_common::types::NodeId, JsError> {
+    let n = val
+        .as_u64()
+        .or_else(|| val.as_f64().map(|f| f as u64))
+        .ok_or_else(|| {
+            JsError::new(&format!(
+                "rows[{row_idx}].{col_name}: expected a non-negative integer, got {val}"
+            ))
+        })?;
+    Ok(grafeo_common::types::NodeId::new(n))
+}
 
 /// LPG batch import payload.
 #[derive(serde::Deserialize)]
@@ -879,6 +1051,224 @@ mod tests {
         });
         let result: Result<LpgImport, _> = serde_json::from_value(input);
         assert!(result.is_err(), "edge without 'type' should fail");
+    }
+
+    // === memoryUsage tests ===
+
+    #[test]
+    fn memory_usage_returns_hierarchical_breakdown() {
+        let db = GrafeoDB::new_in_memory();
+        db.create_node_with_props(
+            &["Person"],
+            vec![
+                (PropertyKey::new("name"), Value::from("Alix")),
+                (PropertyKey::new("age"), Value::Int64(30)),
+            ],
+        );
+
+        let usage = db.memory_usage();
+        assert!(usage.total_bytes > 0, "should report non-zero memory");
+        assert!(usage.store.total_bytes > 0, "store should use memory");
+        assert!(usage.store.nodes_bytes > 0, "should have node storage");
+    }
+
+    #[test]
+    fn memory_usage_empty_db() {
+        let db = GrafeoDB::new_in_memory();
+        let usage = db.memory_usage();
+        // Even an empty DB has some baseline allocation
+        assert_eq!(usage.store.nodes_bytes, 0);
+        assert_eq!(usage.store.edges_bytes, 0);
+    }
+
+    #[test]
+    fn memory_usage_serializes_to_json() {
+        let db = GrafeoDB::new_in_memory();
+        let usage = db.memory_usage();
+        let json = serde_json::to_value(&usage).unwrap();
+        assert!(json.get("total_bytes").is_some());
+        assert!(json.get("store").is_some());
+        assert!(json.get("indexes").is_some());
+        assert!(json.get("mvcc").is_some());
+        assert!(json.get("caches").is_some());
+        assert!(json.get("string_pool").is_some());
+        assert!(json.get("buffer_manager").is_some());
+    }
+
+    // === importRows options deserialization tests ===
+
+    #[test]
+    fn import_rows_options_single_label() {
+        let input = json!({ "mode": "nodes", "label": "Person" });
+        let opts: ImportRowsOptions = serde_json::from_value(input).unwrap();
+        assert_eq!(opts.mode, "nodes");
+        let labels = opts.labels().unwrap();
+        assert_eq!(labels, vec!["Person"]);
+    }
+
+    #[test]
+    fn import_rows_options_multiple_labels() {
+        let input = json!({ "mode": "nodes", "label": ["Person", "Employee"] });
+        let opts: ImportRowsOptions = serde_json::from_value(input).unwrap();
+        let labels = opts.labels().unwrap();
+        assert_eq!(labels, vec!["Person", "Employee"]);
+    }
+
+    #[test]
+    fn import_rows_options_edge_mode() {
+        let input = json!({ "mode": "edges", "edgeType": "KNOWS" });
+        let opts: ImportRowsOptions = serde_json::from_value(input).unwrap();
+        assert_eq!(opts.mode, "edges");
+        assert_eq!(opts.edge_type.as_deref(), Some("KNOWS"));
+    }
+
+    #[test]
+    fn import_rows_options_custom_columns() {
+        let input = json!({
+            "mode": "edges",
+            "edgeType": "LINKED",
+            "source": "from",
+            "target": "to"
+        });
+        let opts: ImportRowsOptions = serde_json::from_value(input).unwrap();
+        assert_eq!(opts.source.as_deref(), Some("from"));
+        assert_eq!(opts.target.as_deref(), Some("to"));
+    }
+
+    #[test]
+    fn import_rows_options_missing_label_is_none() {
+        let input = json!({ "mode": "nodes" });
+        let opts: ImportRowsOptions = serde_json::from_value(input).unwrap();
+        assert!(opts.label.is_none(), "label should be None when omitted");
+    }
+
+    #[test]
+    fn json_to_node_id_integer() {
+        let val = json!(42);
+        let id = json_to_node_id(&val, "source", 0).unwrap();
+        assert_eq!(id, grafeo_common::types::NodeId::new(42));
+    }
+
+    #[test]
+    fn json_to_node_id_float_truncates() {
+        let val = json!(7.0);
+        let id = json_to_node_id(&val, "target", 0).unwrap();
+        assert_eq!(id, grafeo_common::types::NodeId::new(7));
+    }
+
+    #[test]
+    fn json_to_node_id_string_is_not_u64() {
+        let val = json!("not_a_number");
+        // as_u64 and as_f64 both return None for strings
+        assert!(val.as_u64().is_none());
+        assert!(val.as_f64().is_none());
+    }
+
+    // === Engine-level importRows tests ===
+
+    #[test]
+    fn import_rows_nodes_basic() {
+        let db = GrafeoDB::new_in_memory();
+        let rows: Vec<serde_json::Map<String, serde_json::Value>> = serde_json::from_value(json!([
+            { "name": "Alix", "age": 30 },
+            { "name": "Gus", "age": 25 }
+        ]))
+        .unwrap();
+
+        let label_refs = vec!["Person"];
+        for row in &rows {
+            let props: Vec<(PropertyKey, Value)> = row
+                .iter()
+                .filter(|(_, v)| !v.is_null())
+                .map(|(k, v)| (PropertyKey::new(k.as_str()), json_to_value(v)))
+                .collect();
+            db.create_node_with_props(&label_refs, props);
+        }
+
+        assert_eq!(db.node_count(), 2);
+        let session = db.session();
+        let result = session
+            .execute("MATCH (p:Person) RETURN p.name ORDER BY p.name")
+            .unwrap();
+        assert_eq!(result.rows.len(), 2);
+    }
+
+    #[test]
+    fn import_rows_edges_basic() {
+        let db = GrafeoDB::new_in_memory();
+        let alix = db.create_node_with_props(
+            &["Person"],
+            vec![(PropertyKey::new("name"), Value::from("Alix"))],
+        );
+        let gus = db.create_node_with_props(
+            &["Person"],
+            vec![(PropertyKey::new("name"), Value::from("Gus"))],
+        );
+
+        let rows: Vec<serde_json::Map<String, serde_json::Value>> = serde_json::from_value(json!([
+            { "source": alix.0, "target": gus.0, "since": 2020 }
+        ]))
+        .unwrap();
+
+        for row in &rows {
+            let src = json_to_node_id(&row["source"], "source", 0).unwrap();
+            let dst = json_to_node_id(&row["target"], "target", 0).unwrap();
+            let props: Vec<(PropertyKey, Value)> = row
+                .iter()
+                .filter(|(k, v)| k.as_str() != "source" && k.as_str() != "target" && !v.is_null())
+                .map(|(k, v)| (PropertyKey::new(k.as_str()), json_to_value(v)))
+                .collect();
+            db.create_edge_with_props(src, dst, "KNOWS", props);
+        }
+
+        assert_eq!(db.edge_count(), 1);
+    }
+
+    #[test]
+    fn import_rows_null_values_filtered() {
+        let db = GrafeoDB::new_in_memory();
+        let rows: Vec<serde_json::Map<String, serde_json::Value>> = serde_json::from_value(json!([
+            { "name": "Alix", "nickname": null, "age": 30 }
+        ]))
+        .unwrap();
+
+        for row in &rows {
+            let props: Vec<(PropertyKey, Value)> = row
+                .iter()
+                .filter(|(_, v)| !v.is_null())
+                .map(|(k, v)| (PropertyKey::new(k.as_str()), json_to_value(v)))
+                .collect();
+            db.create_node_with_props(&["Person"], props);
+        }
+
+        assert_eq!(db.node_count(), 1);
+        let session = db.session();
+        let result = session
+            .execute("MATCH (p:Person) RETURN p.nickname")
+            .unwrap();
+        assert_eq!(result.rows[0][0], Value::Null);
+    }
+
+    #[test]
+    fn import_rows_large_batch() {
+        let db = GrafeoDB::new_in_memory();
+        let rows: Vec<serde_json::Map<String, serde_json::Value>> = (0..500)
+            .map(|i| {
+                let mut map = serde_json::Map::new();
+                map.insert("index".to_string(), json!(i));
+                map
+            })
+            .collect();
+
+        for row in &rows {
+            let props: Vec<(PropertyKey, Value)> = row
+                .iter()
+                .map(|(k, v)| (PropertyKey::new(k.as_str()), json_to_value(v)))
+                .collect();
+            db.create_node_with_props(&["Item"], props);
+        }
+
+        assert_eq!(db.node_count(), 500);
     }
 
     // === Engine-level LPG batch tests ===
