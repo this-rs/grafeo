@@ -210,6 +210,7 @@ fn populate_rdf_store(store: &grafeo_core::graph::rdf::RdfStore, triples: &[Snap
 pub(super) fn load_snapshot_into_store(
     store: &std::sync::Arc<grafeo_core::graph::lpg::LpgStore>,
     catalog: &std::sync::Arc<crate::catalog::Catalog>,
+    #[cfg(feature = "rdf")] rdf_store: &std::sync::Arc<grafeo_core::graph::rdf::RdfStore>,
     data: &[u8],
 ) -> grafeo_common::utils::error::Result<()> {
     use grafeo_common::utils::error::Error;
@@ -230,6 +231,19 @@ pub(super) fn load_snapshot_into_store(
         }
     }
     restore_schema_from_snapshot(catalog, &snapshot.schema);
+
+    // Restore RDF triples
+    #[cfg(feature = "rdf")]
+    {
+        populate_rdf_store(rdf_store, &snapshot.rdf_triples);
+        for rdf_graph in &snapshot.rdf_named_graphs {
+            rdf_store.create_graph(&rdf_graph.name);
+            if let Some(graph_store) = rdf_store.graph(&rdf_graph.name) {
+                populate_rdf_store(&graph_store, &rdf_graph.triples);
+            }
+        }
+    }
+
     Ok(())
 }
 

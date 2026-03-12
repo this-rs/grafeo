@@ -821,10 +821,16 @@ impl GrafeoDB {
     fn apply_snapshot_data(
         store: &Arc<LpgStore>,
         catalog: &Arc<crate::catalog::Catalog>,
-        #[cfg(feature = "rdf")] _rdf_store: &Arc<RdfStore>,
+        #[cfg(feature = "rdf")] rdf_store: &Arc<RdfStore>,
         data: &[u8],
     ) -> Result<()> {
-        persistence::load_snapshot_into_store(store, catalog, data)
+        persistence::load_snapshot_into_store(
+            store,
+            catalog,
+            #[cfg(feature = "rdf")]
+            rdf_store,
+            data,
+        )
     }
 
     // =========================================================================

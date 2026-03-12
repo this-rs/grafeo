@@ -9,6 +9,34 @@ struct TestSnapshot {
     version: u8,
     nodes: Vec<TestNode>,
     edges: Vec<TestEdge>,
+    named_graphs: Vec<()>,
+    rdf_triples: Vec<()>,
+    rdf_named_graphs: Vec<()>,
+    schema: TestSnapshotSchema,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct TestSnapshotSchema {
+    node_types: Vec<()>,
+    edge_types: Vec<()>,
+    graph_types: Vec<()>,
+    procedures: Vec<()>,
+    schemas: Vec<()>,
+    graph_type_bindings: Vec<()>,
+}
+
+impl TestSnapshot {
+    fn new(version: u8, nodes: Vec<TestNode>, edges: Vec<TestEdge>) -> Self {
+        Self {
+            version,
+            nodes,
+            edges,
+            named_graphs: vec![],
+            rdf_triples: vec![],
+            rdf_named_graphs: vec![],
+            schema: TestSnapshotSchema::default(),
+        }
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -489,9 +517,9 @@ fn import_rejects_dangling_edge_destination() {
 
 #[test]
 fn import_rejects_duplicate_node_ids() {
-    let snap = TestSnapshot {
-        version: 1,
-        nodes: vec![
+    let snap = TestSnapshot::new(
+        3,
+        vec![
             TestNode {
                 id: NodeId::new(0),
                 labels: vec!["A".into()],
@@ -503,8 +531,8 @@ fn import_rejects_duplicate_node_ids() {
                 properties: vec![],
             },
         ],
-        edges: vec![],
-    };
+        vec![],
+    );
     let bytes = encode_snapshot(&snap);
     let result = GrafeoDB::import_snapshot(&bytes);
     match result {
@@ -521,9 +549,9 @@ fn import_rejects_duplicate_node_ids() {
 
 #[test]
 fn import_rejects_duplicate_edge_ids() {
-    let snap = TestSnapshot {
-        version: 1,
-        nodes: vec![
+    let snap = TestSnapshot::new(
+        3,
+        vec![
             TestNode {
                 id: NodeId::new(0),
                 labels: vec![],
@@ -535,7 +563,7 @@ fn import_rejects_duplicate_edge_ids() {
                 properties: vec![],
             },
         ],
-        edges: vec![
+        vec![
             TestEdge {
                 id: EdgeId::new(0),
                 src: NodeId::new(0),
@@ -551,7 +579,7 @@ fn import_rejects_duplicate_edge_ids() {
                 properties: vec![],
             },
         ],
-    };
+    );
     let bytes = encode_snapshot(&snap);
     let result = GrafeoDB::import_snapshot(&bytes);
     match result {
@@ -667,26 +695,26 @@ fn restore_snapshot_includes_named_graphs() {
 }
 
 #[test]
-fn import_v1_snapshot_still_works() {
-    // Construct a v1 snapshot manually (no named_graphs field)
-    let snap = TestSnapshot {
-        version: 1,
-        nodes: vec![TestNode {
+fn import_v1_snapshot_is_rejected() {
+    // V1 snapshots are no longer supported after consolidation to V3.
+    let snap = TestSnapshot::new(
+        1,
+        vec![TestNode {
             id: NodeId::new(0),
             labels: vec!["Person".into()],
             properties: vec![("name".into(), Value::String("Alix".into()))],
         }],
-        edges: vec![],
-    };
+        vec![],
+    );
     let bytes = encode_snapshot(&snap);
 
-    let db = GrafeoDB::import_snapshot(&bytes).unwrap();
-    assert_eq!(db.node_count(), 1);
-
-    let session = db.session();
-    let result = session.execute("MATCH (p:Person) RETURN p.name").unwrap();
-    assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0], Value::String("Alix".into()));
+    let result = GrafeoDB::import_snapshot(&bytes);
+    assert!(result.is_err(), "V1 snapshots should be rejected");
+    let err = result.err().unwrap().to_string();
+    assert!(
+        err.contains("unsupported snapshot version"),
+        "Expected version error, got: {err}"
+    );
 }
 
 #[test]
@@ -915,11 +943,7 @@ mod rdf_snapshots {
 #[test]
 fn import_unknown_snapshot_version_returns_clear_error() {
     // Craft a snapshot with version 99 (unknown future version)
-    let snap = TestSnapshot {
-        version: 99,
-        nodes: vec![],
-        edges: vec![],
-    };
+    let snap = TestSnapshot::new(99, vec![], vec![]);
     let bytes = encode_snapshot(&snap);
     let result = GrafeoDB::import_snapshot(&bytes);
     match result {
