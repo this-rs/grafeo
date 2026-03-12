@@ -2,6 +2,7 @@
 ///
 /// Wraps the grafeo-c shared library via FFI. Uses [NativeFinalizer] to
 /// prevent leaks if [close] is not called explicitly.
+library;
 
 import 'dart:convert';
 import 'dart:ffi';
@@ -249,7 +250,7 @@ class GrafeoDB implements Finalizable {
     final propsPtr = propsJson.toNativeUtf8(allocator: malloc);
     try {
       final id = _bindings.grafeoCreateNode(_handle, labelsPtr, propsPtr);
-      if (id == 0) throwLastError(_bindings);
+      if (id == -1) throwLastError(_bindings); // C returns u64::MAX on error
       return id;
     } finally {
       malloc.free(labelsPtr);
@@ -289,7 +290,7 @@ class GrafeoDB implements Finalizable {
     _checkOpen();
     final result = _bindings.grafeoDeleteNode(_handle, id);
     if (result < 0) throwLastError(_bindings);
-    return result == 0;
+    return result == 1;
   }
 
   /// Set a property on node [id].
@@ -374,7 +375,7 @@ class GrafeoDB implements Finalizable {
         typePtr,
         propsPtr,
       );
-      if (id == 0) throwLastError(_bindings);
+      if (id == -1) throwLastError(_bindings); // C returns u64::MAX on error
       return id;
     } finally {
       malloc.free(typePtr);
@@ -417,7 +418,7 @@ class GrafeoDB implements Finalizable {
     _checkOpen();
     final result = _bindings.grafeoDeleteEdge(_handle, id);
     if (result < 0) throwLastError(_bindings);
-    return result == 0;
+    return result == 1;
   }
 
   /// Set a property on edge [id].

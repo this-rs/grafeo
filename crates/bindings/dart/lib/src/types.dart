@@ -1,4 +1,5 @@
 /// Data types for the Grafeo Dart binding.
+library;
 
 import 'dart:ffi';
 

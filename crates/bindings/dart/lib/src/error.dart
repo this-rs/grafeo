@@ -1,6 +1,7 @@
 /// Error handling for the Grafeo Dart binding.
 ///
 /// Status codes match the C enum in `grafeo-c/src/error.rs` exactly.
+library;
 
 import 'dart:ffi';
 
@@ -40,7 +41,7 @@ sealed class GrafeoException implements Exception {
   const GrafeoException(this.message, this.status);
 
   @override
-  String toString() => '${runtimeType}(${status.name}): $message';
+  String toString() => '$runtimeType(${status.name}): $message';
 }
 
 /// A query parsing or execution error (status 2).

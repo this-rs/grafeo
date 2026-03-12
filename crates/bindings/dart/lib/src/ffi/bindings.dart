@@ -2,6 +2,7 @@
 ///
 /// All lookups use `late final` so the symbol resolution happens once per
 /// binding instance, not on every call.
+library;
 
 import 'dart:ffi';
 

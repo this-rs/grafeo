@@ -2,6 +2,7 @@
 ///
 /// Follows the `grafeo-bindings-common` temporal markers:
 /// `$timestamp_us`, `$date`, `$time`, `$duration`.
+library;
 
 import 'dart:convert';
 import 'dart:typed_data';

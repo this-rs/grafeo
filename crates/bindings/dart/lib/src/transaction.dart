@@ -2,6 +2,7 @@
 ///
 /// Uses [NativeFinalizer] to auto-rollback (via Rust Drop) if neither
 /// [commit] nor [rollback] is called.
+library;
 
 import 'dart:ffi';
 

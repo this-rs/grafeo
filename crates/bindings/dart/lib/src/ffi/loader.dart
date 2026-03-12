@@ -1,10 +1,11 @@
 /// Platform-specific native library loading for grafeo-c.
+library;
 
 import 'dart:ffi';
 import 'dart:io';
 
 /// Cached native library instance, loaded once per process.
-late final DynamicLibrary nativeLibrary = _load(null);
+final DynamicLibrary nativeLibrary = _load(null);
 
 /// Load the native library, optionally from a specific path.
 ///

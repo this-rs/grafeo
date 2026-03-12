@@ -15,7 +15,7 @@ void main() {
   group('node CRUD', () {
     test('create and get node', () {
       final id = db.createNode(['Person'], {'name': 'Alix', 'age': 30});
-      expect(id, greaterThan(0));
+      expect(id, greaterThanOrEqualTo(0));
 
       final node = db.getNode(id);
       expect(node.id, equals(id));
@@ -65,7 +65,7 @@ void main() {
       final gusId = db.createNode(['Person'], {'name': 'Gus'});
 
       final edgeId = db.createEdge(alixId, gusId, 'KNOWS', {'since': 2020});
-      expect(edgeId, greaterThan(0));
+      expect(edgeId, greaterThanOrEqualTo(0));
       expect(db.edgeCount, equals(1));
 
       final edge = db.getEdge(edgeId);

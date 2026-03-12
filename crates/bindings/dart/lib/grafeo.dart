@@ -19,7 +19,7 @@
 ///   db.close();
 /// }
 /// ```
-library grafeo;
+library;
 
 export 'src/database.dart';
 export 'src/error.dart';
