@@ -1,14 +1,33 @@
 """End-to-end tests for the single-file .grafeo database format.
 
 Tests persistence, checkpoint, and reopen through the Python binding layer.
+Requires the 'storage' feature to be enabled during build.
 """
 
 import tempfile
 from pathlib import Path
 
+import pytest
 from grafeo import GrafeoDB
 
 
+def _has_grafeo_file_support():
+    """Check if the grafeo-file format is supported by trying to create one."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "probe.grafeo")
+        db = GrafeoDB(path=db_path)
+        db.execute("INSERT (:Probe {x: 1})")
+        db.close()
+        return Path(db_path).is_file()
+
+
+_skip_no_grafeo_file = pytest.mark.skipif(
+    not _has_grafeo_file_support(),
+    reason="grafeo-file feature not enabled (need storage feature)",
+)
+
+
+@_skip_no_grafeo_file
 class TestGrafeoFilePersistence:
     """Tests for .grafeo single-file format via Python bindings."""
 
@@ -19,10 +38,9 @@ class TestGrafeoFilePersistence:
 
             # Create and populate
             db = GrafeoDB(path=db_path)
-            session = db.session()
-            session.execute("INSERT (:Person {name: 'Alix', age: 30})")
-            session.execute("INSERT (:Person {name: 'Gus', age: 25})")
-            session.execute(
+            db.execute("INSERT (:Person {name: 'Alix', age: 30})")
+            db.execute("INSERT (:Person {name: 'Gus', age: 25})")
+            db.execute(
                 "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) INSERT (a)-[:KNOWS]->(b)"
             )
             info = db.info()
@@ -41,9 +59,8 @@ class TestGrafeoFilePersistence:
             assert info2["edge_count"] == 1
 
             # Query the data
-            session2 = db2.session()
-            result = session2.execute("MATCH (p:Person) RETURN p.name ORDER BY p.name")
-            names = sorted(row[0] for row in result)
+            result = db2.execute("MATCH (p:Person) RETURN p.name ORDER BY p.name")
+            names = sorted(row["p.name"] for row in result)
             assert names == ["Alix", "Gus"]
 
             db2.close()
@@ -54,18 +71,16 @@ class TestGrafeoFilePersistence:
             db_path = str(Path(tmpdir) / "saved.grafeo")
 
             db = GrafeoDB()
-            session = db.session()
-            session.execute("INSERT (:City {name: 'Amsterdam'})")
-            session.execute("INSERT (:City {name: 'Berlin'})")
+            db.execute("INSERT (:City {name: 'Amsterdam'})")
+            db.execute("INSERT (:City {name: 'Berlin'})")
             db.save(db_path)
 
             db2 = GrafeoDB.open(db_path)
             info = db2.info()
             assert info["node_count"] == 2
 
-            session2 = db2.session()
-            result = session2.execute("MATCH (c:City) RETURN c.name ORDER BY c.name")
-            names = sorted(row[0] for row in result)
+            result = db2.execute("MATCH (c:City) RETURN c.name ORDER BY c.name")
+            names = sorted(row["c.name"] for row in result)
             assert names == ["Amsterdam", "Berlin"]
             db2.close()
 
@@ -76,26 +91,26 @@ class TestGrafeoFilePersistence:
 
             # Cycle 1
             db = GrafeoDB(path=db_path)
-            db.session().execute("INSERT (:Person {name: 'Alix'})")
+            db.execute("INSERT (:Person {name: 'Alix'})")
             db.close()
 
             # Cycle 2
             db = GrafeoDB.open(db_path)
             assert db.info()["node_count"] == 1
-            db.session().execute("INSERT (:Person {name: 'Gus'})")
+            db.execute("INSERT (:Person {name: 'Gus'})")
             db.close()
 
             # Cycle 3
             db = GrafeoDB.open(db_path)
             assert db.info()["node_count"] == 2
-            db.session().execute("INSERT (:Person {name: 'Vincent'})")
+            db.execute("INSERT (:Person {name: 'Vincent'})")
             db.close()
 
             # Final check
             db = GrafeoDB.open(db_path)
             assert db.info()["node_count"] == 3
-            result = db.session().execute("MATCH (p:Person) RETURN p.name")
-            names = sorted(row[0] for row in result)
+            result = db.execute("MATCH (p:Person) RETURN p.name")
+            names = sorted(row["p.name"] for row in result)
             assert names == ["Alix", "Gus", "Vincent"]
             db.close()
 
@@ -105,12 +120,11 @@ class TestGrafeoFilePersistence:
             db_path = str(Path(tmpdir) / "checkpoint.grafeo")
 
             db = GrafeoDB(path=db_path)
-            session = db.session()
 
-            session.execute("INSERT (:Person {name: 'Alix'})")
+            db.execute("INSERT (:Person {name: 'Alix'})")
             db.wal_checkpoint()
 
-            session.execute("INSERT (:Person {name: 'Gus'})")
+            db.execute("INSERT (:Person {name: 'Gus'})")
             db.close()
 
             db2 = GrafeoDB.open(db_path)
@@ -123,20 +137,18 @@ class TestGrafeoFilePersistence:
             db_path = str(Path(tmpdir) / "edge_props.grafeo")
 
             db = GrafeoDB(path=db_path)
-            session = db.session()
-            session.execute("INSERT (:Person {name: 'Alix'})")
-            session.execute("INSERT (:Person {name: 'Gus'})")
-            session.execute(
+            db.execute("INSERT (:Person {name: 'Alix'})")
+            db.execute("INSERT (:Person {name: 'Gus'})")
+            db.execute(
                 "MATCH (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'}) "
                 "INSERT (a)-[:KNOWS {since: 2020}]->(b)"
             )
             db.close()
 
             db2 = GrafeoDB.open(db_path)
-            session2 = db2.session()
-            result = session2.execute("MATCH ()-[e:KNOWS]->() RETURN e.since")
+            result = db2.execute("MATCH ()-[e:KNOWS]->() RETURN e.since")
             assert len(result) == 1
-            assert result[0][0] == 2020
+            assert list(result)[0]["e.since"] == 2020
             db2.close()
 
     def test_named_graphs_persist(self):
@@ -145,25 +157,23 @@ class TestGrafeoFilePersistence:
             db_path = str(Path(tmpdir) / "named.grafeo")
 
             db = GrafeoDB(path=db_path)
-            session = db.session()
-            session.execute("CREATE GRAPH social")
-            session.execute("USE GRAPH social")
-            session.execute("INSERT (:Person {name: 'Alix'})")
-            session.execute("USE GRAPH DEFAULT")
-            session.execute("INSERT (:Person {name: 'Gus'})")
+            db.execute("CREATE GRAPH social")
+            db.execute("USE GRAPH social")
+            db.execute("INSERT (:Person {name: 'Alix'})")
+            db.execute("USE GRAPH DEFAULT")
+            db.execute("INSERT (:Person {name: 'Gus'})")
             db.close()
 
             db2 = GrafeoDB.open(db_path)
-            session2 = db2.session()
 
             # Default graph has Gus
-            result = session2.execute("MATCH (p:Person) RETURN p.name")
-            assert sorted(row[0] for row in result) == ["Gus"]
+            result = db2.execute("MATCH (p:Person) RETURN p.name")
+            assert sorted(row["p.name"] for row in result) == ["Gus"]
 
             # Social graph has Alix
-            session2.execute("USE GRAPH social")
-            result = session2.execute("MATCH (p:Person) RETURN p.name")
-            assert sorted(row[0] for row in result) == ["Alix"]
+            db2.execute("USE GRAPH social")
+            result = db2.execute("MATCH (p:Person) RETURN p.name")
+            assert sorted(row["p.name"] for row in result) == ["Alix"]
             db2.close()
 
     def test_file_is_single_file(self):
@@ -172,7 +182,7 @@ class TestGrafeoFilePersistence:
             db_path = Path(tmpdir) / "single.grafeo"
 
             db = GrafeoDB(path=str(db_path))
-            db.session().execute("INSERT (:Node {x: 1})")
+            db.execute("INSERT (:Node {x: 1})")
             db.close()
 
             assert db_path.is_file(), "should be a file, not a directory"
