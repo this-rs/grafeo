@@ -666,6 +666,15 @@ mod gql_session_commands {
     }
 
     #[test]
+    fn session_set_schema_nonexistent_errors() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        // SESSION SET SCHEMA should error if graph does not exist
+        let result = session.execute("SESSION SET SCHEMA nosuchgraph");
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn session_reset() {
         let db = GrafeoDB::new_in_memory();
         let session = db.session();
