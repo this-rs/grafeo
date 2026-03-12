@@ -12,6 +12,9 @@ import 'types.dart';
 /// Native types for FFI.
 typedef Size = IntPtr;
 
+/// Define a generic method for calling native code
+typedef NoParamMethod = Pointer<Utf8> Function(Pointer<Void>);
+
 /// Grafeo database handle.
 class GrafeoDatabase {
   /// The underlying database pointer.
@@ -48,6 +51,46 @@ class GrafeoDatabase {
     }
   }
 
+  /// Check the database startup status, and throw an error if it is shut down.
+  void checkStatus() {
+    if (_closed) {
+      throw GrafeoError('Database is closed', GrafeoStatus.error);
+    }
+  }
+
+  /// Check the validity of the pointer, and throw an error when the pointer is null.
+  static void checkNpe(Pointer<Utf8> ptr) {
+    if (ptr == nullptr) {
+      final error = getLastError();
+      throw GrafeoError(error, GrafeoStatus.error);
+    }
+  }
+
+  /// When the native method has no parameters and returns JSON,<br/>
+  /// it can be quickly invoked through the current method.
+  ///
+  /// Example:
+  /// ```dart
+  ///   callNative(bindings.grafeo_info);
+  /// ```
+  Future<dynamic> callNative(NoParamMethod native) async {
+    checkStatus();
+
+    final jsonPtr = native.call(_ptr);
+    checkNpe(jsonPtr);
+    // Get the JSON string
+    final jsonString = jsonPtr.cast<Utf8>().toDartString();
+    // Free the string
+    bindings.grafeo_free_string(jsonPtr.cast<Void>());
+    // Parse the JSON result
+    final result = _parseQueryResult(jsonString);
+
+    return result;
+  }
+
+  /// Obtain the status of the database, including the version number and data volume.
+  Future<dynamic> info() => callNative(bindings.grafeo_info);
+
   /// Close the database and free its resources.
   Future<void> close() async {
     if (_closed) {
@@ -67,9 +110,7 @@ class GrafeoDatabase {
 
   /// Execute a GQL query.
   Future<dynamic> execute(String query) async {
-    if (_closed) {
-      throw GrafeoError('Database is closed', GrafeoStatus.error);
-    }
+    checkStatus();
 
     final queryPtr = query.toNativeUtf8();
     try {
@@ -96,9 +137,7 @@ class GrafeoDatabase {
   /// Execute a GQL query with parameters.
   Future<dynamic> executeWithParams(
       String query, Map<String, dynamic> params) async {
-    if (_closed) {
-      throw GrafeoError('Database is closed', GrafeoStatus.error);
-    }
+    checkStatus();
 
     final queryPtr = query.toNativeUtf8();
     final paramsJson = _encodeParams(params);
@@ -129,27 +168,21 @@ class GrafeoDatabase {
 
   /// Get the number of nodes in the database.
   Future<int> nodeCount() async {
-    if (_closed) {
-      throw GrafeoError('Database is closed', GrafeoStatus.error);
-    }
+    checkStatus();
 
     return bindings.grafeo_node_count(_ptr);
   }
 
   /// Get the number of edges in the database.
   Future<int> edgeCount() async {
-    if (_closed) {
-      throw GrafeoError('Database is closed', GrafeoStatus.error);
-    }
+    checkStatus();
 
     return bindings.grafeo_edge_count(_ptr);
   }
 
   /// Drop a vector index.
   Future<bool> dropVectorIndex(String label, String property) async {
-    if (_closed) {
-      throw GrafeoError('Database is closed', GrafeoStatus.error);
-    }
+    checkStatus();
 
     final labelPtr = label.toNativeUtf8();
     final propertyPtr = property.toNativeUtf8();
@@ -166,9 +199,7 @@ class GrafeoDatabase {
 
   /// Rebuild a vector index.
   Future<void> rebuildVectorIndex(String label, String property) async {
-    if (_closed) {
-      throw GrafeoError('Database is closed', GrafeoStatus.error);
-    }
+    checkStatus();
 
     final labelPtr = label.toNativeUtf8();
     final propertyPtr = property.toNativeUtf8();
@@ -197,9 +228,7 @@ class GrafeoDatabase {
     double lambda,
     int ef,
   ) async {
-    if (_closed) {
-      throw GrafeoError('Database is closed', GrafeoStatus.error);
-    }
+    checkStatus();
 
     final labelPtr = label.toNativeUtf8();
     final propertyPtr = property.toNativeUtf8();

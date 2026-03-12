@@ -45,6 +45,12 @@ class GrafeoBindings {
           'grafeo_open')
       .asFunction();
 
+  /// Get database info
+  Pointer<Utf8> Function(GrafeoDatabasePtr) get grafeo_info => library
+      .lookup<NativeFunction<Pointer<Utf8> Function(GrafeoDatabasePtr)>>(
+          'grafeo_info')
+      .asFunction();
+
   /// Close a database and free its resources.
   int Function(GrafeoDatabasePtr) get grafeo_close => library
       .lookup<NativeFunction<Int32 Function(GrafeoDatabasePtr)>>('grafeo_close')
