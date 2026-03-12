@@ -2,14 +2,22 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
-## [0.5.21] - 2026-03-12
+## [0.5.21] - Unreleased
 
-C# and Dart bindings, single file database implementation completed and test hardening
+First implementation of C# and Dart bindings, single file database completed, snapshot consolidation and test hardening
 
 ### Added
 
+- **C# / .NET bindings** (`crates/bindings/csharp`): full-featured .NET 8 binding wrapping the C FFI layer via source-generated P/Invoke (`LibraryImport`). Includes `GrafeoDB` lifecycle (memory/persistent), GQL + multi-language query execution (sync and async), ACID transactions with auto-rollback, typed node/edge CRUD, vector search (k-NN + MMR), parameterized queries with temporal type support, and a `SafeHandle`-based resource management pattern. 40 xUnit tests across database, query, transaction, and CRUD categories. CI matrix covers Ubuntu, Windows, and macOS.
 - **Single-file `.grafeo` database format**: new persistence format stores the entire database in a single file with a sidecar WAL directory during operation (DuckDB-style). Features dual-header crash safety with CRC32 checksums, automatic format detection by file extension, and seamless WAL checkpoint merging. Enable with the `grafeo-file` feature flag (included in `storage` and `full` profiles). Use `GrafeoDB::open("mydb.grafeo")` or `db.save("mydb.grafeo")` to create single-file databases.
+- **Exclusive file locking** for `.grafeo` files: prevents multiple processes from opening the same database file simultaneously. Lock is acquired on open and released on close/drop (uses `fs2` for cross-platform advisory locking).
+- **DDL schema persistence in snapshots**: `CREATE NODE TYPE`, `CREATE EDGE TYPE`, `CREATE GRAPH TYPE`, `CREATE PROCEDURE`, and `CREATE SCHEMA` definitions now survive close/reopen cycles and export/import roundtrips. Snapshot format consolidated from v1/v2 to a single v3 format that includes full schema metadata alongside graph data.
+- **Crash injection testing** (`testing-crash-injection` feature): `maybe_crash()` instrumentation points in `write_snapshot` and `checkpoint_to_file` enable deterministic crash simulation for verifying sidecar WAL recovery
 - **Introspection functions**: `RETURN CURRENT_SCHEMA`, `RETURN CURRENT_GRAPH`, `RETURN info()`, `RETURN schema()` for querying session state and database metadata from within GQL
+
+### Breaking
+
+- **Snapshot format v3**: `export_snapshot()`/`import_snapshot()` now produce/consume v3 format (includes schema metadata). Snapshots from previous versions are no longer readable. Re-export from a running database to migrate.
 
 ### Testing
 

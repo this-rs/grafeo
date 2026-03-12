@@ -67,6 +67,25 @@ public sealed class Transaction : IDisposable, IAsyncDisposable
         return BuildResult(resultPtr);
     }
 
+    /// <summary>Execute a GQL query with parameters within this transaction on the thread pool.</summary>
+    public Task<QueryResult> ExecuteWithParamsAsync(
+        string query,
+        Dictionary<string, object?> parameters,
+        CancellationToken ct = default)
+    {
+        ThrowIfFinished();
+        var paramsJson = ValueConverter.EncodeParams(parameters);
+        var h = Handle;
+        return Task.Run(() =>
+        {
+            ct.ThrowIfCancellationRequested();
+            var resultPtr = NativeMethods.grafeo_transaction_execute_with_params(h, query, paramsJson);
+            if (resultPtr == nint.Zero)
+                throw GrafeoException.FromLastError(GrafeoStatus.Query);
+            return BuildResult(resultPtr);
+        }, ct);
+    }
+
     // =========================================================================
     // Commit / Rollback
     // =========================================================================
@@ -75,8 +94,9 @@ public sealed class Transaction : IDisposable, IAsyncDisposable
     public void Commit()
     {
         ThrowIfFinished();
+        var h = Handle;
         _finished = true;
-        var status = NativeMethods.grafeo_commit(Handle);
+        var status = NativeMethods.grafeo_commit(h);
         if (status != (int)GrafeoStatus.Ok)
             throw GrafeoException.FromLastError(GrafeoStatus.Transaction);
     }
@@ -85,8 +105,9 @@ public sealed class Transaction : IDisposable, IAsyncDisposable
     public void Rollback()
     {
         if (_finished) return;
+        var h = Handle;
         _finished = true;
-        var status = NativeMethods.grafeo_rollback(Handle);
+        var status = NativeMethods.grafeo_rollback(h);
         if (status != (int)GrafeoStatus.Ok)
             throw GrafeoException.FromLastError(GrafeoStatus.Transaction);
     }

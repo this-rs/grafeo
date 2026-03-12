@@ -740,3 +740,280 @@ fn detailed_stats_with_grafeo_file() {
 
     db.close().unwrap();
 }
+
+// =========================================================================
+// File locking
+// =========================================================================
+
+#[test]
+fn second_open_of_same_file_is_rejected() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("locked.grafeo");
+
+    let db1 = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+    let session = db1.session();
+    session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
+
+    // Second open should fail because the file is locked
+    let result = GrafeoDB::open(&path);
+    assert!(result.is_err(), "second open should fail due to file lock");
+    let err = result.err().unwrap().to_string();
+    assert!(
+        err.contains("locked") || err.contains("lock"),
+        "error should mention locking, got: {err}"
+    );
+
+    db1.close().unwrap();
+
+    // After close, open should succeed
+    let db2 = GrafeoDB::open(&path).unwrap();
+    assert_eq!(db2.node_count(), 1);
+    db2.close().unwrap();
+}
+
+#[test]
+fn lock_released_on_drop() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("drop_lock.grafeo");
+
+    {
+        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        db.session().execute("INSERT (:X {v: 1})").unwrap();
+        // Drop without explicit close: lock should still be released
+    }
+
+    // Should be able to open after drop
+    let db2 = GrafeoDB::open(&path).unwrap();
+    // Data may or may not persist (no explicit close/checkpoint), but open should succeed
+    db2.close().unwrap();
+}
+
+// =========================================================================
+// Schema (DDL) persistence
+// =========================================================================
+
+#[test]
+fn node_type_definitions_persist() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("schema.grafeo");
+
+    // Create DB and define node types
+    {
+        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let session = db.session();
+        session
+            .execute("CREATE NODE TYPE Person (name STRING NOT NULL, age INT64)")
+            .unwrap();
+        session
+            .execute("CREATE NODE TYPE Company (name STRING NOT NULL)")
+            .unwrap();
+        session
+            .execute("INSERT (:Person {name: 'Alix', age: 30})")
+            .unwrap();
+        db.close().unwrap();
+    }
+
+    // Reopen and verify types survived
+    {
+        let db = GrafeoDB::open(&path).unwrap();
+        let session = db.session();
+
+        // Verify data
+        let result = session.execute("MATCH (p:Person) RETURN p.name").unwrap();
+        assert_eq!(extract_strings(&result.rows), vec!["Alix"]);
+
+        // Verify node type definitions survived via SHOW NODE TYPES
+        let result = session.execute("SHOW NODE TYPES").unwrap();
+        let type_names = extract_strings(&result.rows);
+        assert!(
+            type_names.contains(&"Person".to_string()),
+            "Person type missing: {type_names:?}"
+        );
+        assert!(
+            type_names.contains(&"Company".to_string()),
+            "Company type missing: {type_names:?}"
+        );
+
+        db.close().unwrap();
+    }
+}
+
+#[test]
+fn edge_type_definitions_persist() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("edge_types.grafeo");
+
+    {
+        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let session = db.session();
+        session
+            .execute("CREATE EDGE TYPE KNOWS (since INT64)")
+            .unwrap();
+        session
+            .execute("CREATE EDGE TYPE WORKS_AT (role STRING)")
+            .unwrap();
+        db.close().unwrap();
+    }
+
+    {
+        let db = GrafeoDB::open(&path).unwrap();
+        let session = db.session();
+
+        let result = session.execute("SHOW EDGE TYPES").unwrap();
+        let type_names = extract_strings(&result.rows);
+        assert!(
+            type_names.contains(&"KNOWS".to_string()),
+            "KNOWS type missing: {type_names:?}"
+        );
+        assert!(
+            type_names.contains(&"WORKS_AT".to_string()),
+            "WORKS_AT type missing: {type_names:?}"
+        );
+
+        db.close().unwrap();
+    }
+}
+
+#[test]
+fn graph_type_definitions_persist() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("graph_types.grafeo");
+
+    {
+        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let session = db.session();
+        session
+            .execute("CREATE NODE TYPE Person (name STRING)")
+            .unwrap();
+        session
+            .execute("CREATE EDGE TYPE KNOWS (since INT64)")
+            .unwrap();
+        session
+            .execute("CREATE GRAPH TYPE SocialGraph (Person, KNOWS)")
+            .unwrap();
+        db.close().unwrap();
+    }
+
+    {
+        let db = GrafeoDB::open(&path).unwrap();
+        let session = db.session();
+
+        let result = session.execute("SHOW GRAPH TYPES").unwrap();
+        let type_names = extract_strings(&result.rows);
+        assert!(
+            type_names.contains(&"SocialGraph".to_string()),
+            "SocialGraph type missing: {type_names:?}"
+        );
+
+        db.close().unwrap();
+    }
+}
+
+#[test]
+fn schema_survives_export_import_roundtrip() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    session
+        .execute("CREATE NODE TYPE Person (name STRING NOT NULL, age INT64)")
+        .unwrap();
+    session
+        .execute("INSERT (:Person {name: 'Alix', age: 30})")
+        .unwrap();
+
+    // Export and import
+    let snapshot = db.export_snapshot().unwrap();
+    let db2 = GrafeoDB::import_snapshot(&snapshot).unwrap();
+    let session2 = db2.session();
+
+    // Verify data
+    let result = session2.execute("MATCH (p:Person) RETURN p.name").unwrap();
+    assert_eq!(extract_strings(&result.rows), vec!["Alix"]);
+
+    // Verify schema
+    let result = session2.execute("SHOW NODE TYPES").unwrap();
+    let type_names = extract_strings(&result.rows);
+    assert!(
+        type_names.contains(&"Person".to_string()),
+        "Person type missing after import: {type_names:?}"
+    );
+}
+
+#[test]
+fn stored_procedures_persist() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("procedures.grafeo");
+
+    {
+        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let session = db.session();
+        session
+            .execute(
+                "CREATE PROCEDURE get_people() RETURNS (name STRING) \
+                 BEGIN MATCH (p:Person) RETURN p.name AS name; END",
+            )
+            .unwrap();
+        db.close().unwrap();
+    }
+
+    {
+        let db = GrafeoDB::open(&path).unwrap();
+        let session = db.session();
+        // Insert data so the procedure has something to return
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
+        // CALL the procedure to verify it survived the roundtrip
+        let result = session.execute("CALL get_people()").unwrap();
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(extract_strings(&result.rows), vec!["Alix"]);
+        db.close().unwrap();
+    }
+}
+
+#[test]
+fn schema_with_data_across_multiple_cycles() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("schema_cycles.grafeo");
+
+    // Cycle 1: Create type + insert
+    {
+        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let session = db.session();
+        session
+            .execute("CREATE NODE TYPE Person (name STRING NOT NULL)")
+            .unwrap();
+        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
+        db.close().unwrap();
+    }
+
+    // Cycle 2: Add another type + more data
+    {
+        let db = GrafeoDB::open(&path).unwrap();
+        let session = db.session();
+
+        // Verify first type survived
+        let result = session.execute("SHOW NODE TYPES").unwrap();
+        assert!(extract_strings(&result.rows).contains(&"Person".to_string()));
+
+        session
+            .execute("CREATE NODE TYPE City (name STRING NOT NULL)")
+            .unwrap();
+        session
+            .execute("INSERT (:City {name: 'Amsterdam'})")
+            .unwrap();
+        db.close().unwrap();
+    }
+
+    // Cycle 3: Verify everything
+    {
+        let db = GrafeoDB::open(&path).unwrap();
+        let session = db.session();
+
+        let result = session.execute("SHOW NODE TYPES").unwrap();
+        let types = extract_strings(&result.rows);
+        assert!(types.contains(&"Person".to_string()), "Person missing");
+        assert!(types.contains(&"City".to_string()), "City missing");
+
+        assert_eq!(db.node_count(), 2);
+        db.close().unwrap();
+    }
+}

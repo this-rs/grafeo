@@ -27,6 +27,9 @@ byteorder.workspace = true
 # Checksums (optional - used by WAL)
 crc32fast = { workspace = true, optional = true }
 
+# File locking (optional - used by .grafeo single-file format)
+fs2 = { workspace = true, optional = true }
+
 # Serialization
 serde.workspace = true
 bincode.workspace = true
@@ -56,7 +59,7 @@ graphql = []                  # GraphQL parser (spec-compliant)
 sql-pgq = ["gql"]             # SQL/PGQ parser (SQL:2023 GRAPH_TABLE)
 rdf = ["grafeo-core/rdf"]    # RDF graph model support
 wal = ["memmap2", "crc32fast", "tokio", "crossbeam"]  # Write-ahead log storage (requires filesystem)
-grafeo-file = ["wal"]  # Single-file .grafeo format with sidecar WAL
+grafeo-file = ["wal", "fs2"]  # Single-file .grafeo format with sidecar WAL
 parallel = ["rayon", "grafeo-core/parallel"]  # Parallel algorithms (rayon)
 algos = []  # Graph algorithm plugin (SSSP, PageRank, centrality, community detection, etc.)
 # Convenience groups

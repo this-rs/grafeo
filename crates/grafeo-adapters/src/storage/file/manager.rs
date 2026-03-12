@@ -8,6 +8,7 @@ use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use fs2::FileExt;
 use grafeo_common::utils::error::{Error, Result};
 use parking_lot::Mutex;
 
@@ -68,6 +69,14 @@ impl GrafeoFileManager {
             .create_new(true)
             .open(&path)?;
 
+        // Acquire an exclusive lock: prevents other processes from opening the same file
+        file.try_lock_exclusive().map_err(|_| {
+            Error::Internal(format!(
+                "database file is locked by another process: {}",
+                path.display()
+            ))
+        })?;
+
         let file_header = FileHeader::new();
         header::write_file_header(&mut file, &file_header)?;
         header::write_db_header(&mut file, 0, &DbHeader::EMPTY)?;
@@ -96,6 +105,14 @@ impl GrafeoFileManager {
         let path = path.as_ref().to_path_buf();
 
         let mut file = OpenOptions::new().read(true).write(true).open(&path)?;
+
+        // Acquire an exclusive lock: prevents other processes from opening the same file
+        file.try_lock_exclusive().map_err(|_| {
+            Error::Internal(format!(
+                "database file is locked by another process: {}",
+                path.display()
+            ))
+        })?;
 
         let file_header = header::read_file_header(&mut file)?;
         header::validate_file_header(&file_header)?;
@@ -132,6 +149,8 @@ impl GrafeoFileManager {
         node_count: u64,
         edge_count: u64,
     ) -> Result<()> {
+        use grafeo_core::testing::crash::maybe_crash;
+
         let checksum = crc32fast::hash(data);
         let timestamp_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -145,13 +164,19 @@ impl GrafeoFileManager {
         let new_iteration = active_header.iteration + 1;
         let target_slot = u8::from(*active_slot == 0);
 
+        maybe_crash("write_snapshot:before_data_write");
+
         // Write snapshot data
         file.seek(SeekFrom::Start(DATA_OFFSET))?;
         file.write_all(data)?;
 
+        maybe_crash("write_snapshot:after_data_write");
+
         // Truncate file to exact size (remove stale trailing data)
         let file_end = DATA_OFFSET + data.len() as u64;
         file.set_len(file_end)?;
+
+        maybe_crash("write_snapshot:after_truncate");
 
         // Build and write new header to inactive slot
         let new_header = DbHeader {
@@ -166,8 +191,12 @@ impl GrafeoFileManager {
         };
         header::write_db_header(&mut file, target_slot, &new_header)?;
 
+        maybe_crash("write_snapshot:after_header_write");
+
         // Ensure everything is on disk before we consider this committed
         file.sync_all()?;
+
+        maybe_crash("write_snapshot:after_fsync");
 
         // Update internal state: drop the old lock, reacquire to update
         drop(active_header);
@@ -280,6 +309,26 @@ impl GrafeoFileManager {
         let file = self.file.lock();
         file.sync_all()?;
         Ok(())
+    }
+
+    /// Releases the file lock and syncs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if sync or unlock fails.
+    pub fn close(&self) -> Result<()> {
+        let file = self.file.lock();
+        file.sync_all()?;
+        file.unlock()
+            .map_err(|e| Error::Internal(format!("failed to unlock database file: {e}")))?;
+        Ok(())
+    }
+}
+
+impl Drop for GrafeoFileManager {
+    fn drop(&mut self) {
+        let file = self.file.lock();
+        let _ = file.unlock();
     }
 }
 
@@ -457,6 +506,48 @@ mod tests {
         let full_size = manager.file_size().unwrap();
         assert!(full_size > empty_size);
         assert_eq!(full_size, DATA_OFFSET + big_data.len() as u64);
+    }
+
+    #[test]
+    fn exclusive_lock_prevents_second_open() {
+        let dir = test_dir();
+        let path = dir.path().join("locked.grafeo");
+
+        let _manager1 = GrafeoFileManager::create(&path).unwrap();
+
+        // Second open should fail
+        let result = GrafeoFileManager::open(&path);
+        assert!(result.is_err());
+        assert!(result.err().unwrap().to_string().contains("locked"));
+    }
+
+    #[test]
+    fn lock_released_after_close() {
+        let dir = test_dir();
+        let path = dir.path().join("lockclose.grafeo");
+
+        let manager = GrafeoFileManager::create(&path).unwrap();
+        manager.write_snapshot(b"data", 1, 1, 0, 0).unwrap();
+        manager.close().unwrap();
+
+        // Should succeed after close
+        let manager2 = GrafeoFileManager::open(&path).unwrap();
+        let data = manager2.read_snapshot().unwrap();
+        assert_eq!(data, b"data");
+    }
+
+    #[test]
+    fn lock_released_on_drop() {
+        let dir = test_dir();
+        let path = dir.path().join("lockdrop.grafeo");
+
+        {
+            let _manager = GrafeoFileManager::create(&path).unwrap();
+            // Drop without explicit close
+        }
+
+        // Should succeed after drop
+        let _manager2 = GrafeoFileManager::open(&path).unwrap();
     }
 
     #[test]

@@ -816,15 +816,15 @@ impl GrafeoDB {
         }
     }
 
-    /// Applies snapshot data (from a `.grafeo` file) to restore the store.
+    /// Applies snapshot data (from a `.grafeo` file) to restore the store and catalog.
     #[cfg(feature = "grafeo-file")]
     fn apply_snapshot_data(
         store: &Arc<LpgStore>,
-        _catalog: &crate::catalog::Catalog,
+        catalog: &Arc<crate::catalog::Catalog>,
         #[cfg(feature = "rdf")] _rdf_store: &Arc<RdfStore>,
         data: &[u8],
     ) -> Result<()> {
-        persistence::load_snapshot_into_store(store, data)
+        persistence::load_snapshot_into_store(store, catalog, data)
     }
 
     // =========================================================================
@@ -1132,7 +1132,12 @@ impl GrafeoDB {
     /// separately after this returns.
     #[cfg(feature = "grafeo-file")]
     fn checkpoint_to_file(&self, fm: &GrafeoFileManager) -> Result<()> {
+        use grafeo_core::testing::crash::maybe_crash;
+
+        maybe_crash("checkpoint_to_file:before_export");
         let snapshot_data = self.export_snapshot()?;
+        maybe_crash("checkpoint_to_file:after_export");
+
         let epoch = self.store.current_epoch();
         let transaction_id = self
             .transaction_manager
@@ -1148,6 +1153,8 @@ impl GrafeoDB {
             node_count,
             edge_count,
         )?;
+
+        maybe_crash("checkpoint_to_file:after_write_snapshot");
         Ok(())
     }
 

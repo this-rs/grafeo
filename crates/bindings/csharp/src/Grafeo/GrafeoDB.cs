@@ -133,6 +133,10 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
         return BuildResult(resultPtr);
     }
 
+    /// <summary>Execute a Cypher query on the thread pool.</summary>
+    public Task<QueryResult> ExecuteCypherAsync(string query, CancellationToken ct = default)
+        => ExecuteLanguageAsync(NativeMethods.grafeo_execute_cypher, query, ct);
+
     /// <summary>Execute a SPARQL query.</summary>
     public QueryResult ExecuteSparql(string query)
     {
@@ -142,6 +146,10 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
             throw GrafeoException.FromLastError(GrafeoStatus.Query);
         return BuildResult(resultPtr);
     }
+
+    /// <summary>Execute a SPARQL query on the thread pool.</summary>
+    public Task<QueryResult> ExecuteSparqlAsync(string query, CancellationToken ct = default)
+        => ExecuteLanguageAsync(NativeMethods.grafeo_execute_sparql, query, ct);
 
     /// <summary>Execute a Gremlin query.</summary>
     public QueryResult ExecuteGremlin(string query)
@@ -153,6 +161,10 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
         return BuildResult(resultPtr);
     }
 
+    /// <summary>Execute a Gremlin query on the thread pool.</summary>
+    public Task<QueryResult> ExecuteGremlinAsync(string query, CancellationToken ct = default)
+        => ExecuteLanguageAsync(NativeMethods.grafeo_execute_gremlin, query, ct);
+
     /// <summary>Execute a GraphQL query.</summary>
     public QueryResult ExecuteGraphql(string query)
     {
@@ -163,6 +175,10 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
         return BuildResult(resultPtr);
     }
 
+    /// <summary>Execute a GraphQL query on the thread pool.</summary>
+    public Task<QueryResult> ExecuteGraphqlAsync(string query, CancellationToken ct = default)
+        => ExecuteLanguageAsync(NativeMethods.grafeo_execute_graphql, query, ct);
+
     /// <summary>Execute a SQL/PGQ query.</summary>
     public QueryResult ExecuteSql(string query)
     {
@@ -172,6 +188,10 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
             throw GrafeoException.FromLastError(GrafeoStatus.Query);
         return BuildResult(resultPtr);
     }
+
+    /// <summary>Execute a SQL/PGQ query on the thread pool.</summary>
+    public Task<QueryResult> ExecuteSqlAsync(string query, CancellationToken ct = default)
+        => ExecuteLanguageAsync(NativeMethods.grafeo_execute_sql, query, ct);
 
     // =========================================================================
     // Transactions
@@ -453,6 +473,23 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
     // =========================================================================
     // Internals
     // =========================================================================
+
+    private Task<QueryResult> ExecuteLanguageAsync(
+        Func<nint, string, nint> nativeMethod,
+        string query,
+        CancellationToken ct)
+    {
+        ThrowIfDisposed();
+        var h = Handle;
+        return Task.Run(() =>
+        {
+            ct.ThrowIfCancellationRequested();
+            var resultPtr = nativeMethod(h, query);
+            if (resultPtr == nint.Zero)
+                throw GrafeoException.FromLastError(GrafeoStatus.Query);
+            return BuildResult(resultPtr);
+        }, ct);
+    }
 
     /// <summary>Get the raw handle, checking for disposal first.</summary>
     private nint Handle
