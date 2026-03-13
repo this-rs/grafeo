@@ -6,7 +6,7 @@
 
     <!-- NuGet metadata -->
     <PackageId>Grafeo</PackageId>
-    <Version>0.5.20</Version>
+    <Version>0.5.21</Version>
     <Description>C# bindings for the Grafeo graph database. Supports GQL queries, ACID transactions, and vector search.</Description>
     <Authors>GrafeoDB</Authors>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
@@ -18,5 +18,24 @@
 
   <ItemGroup>
     <None Include="../../README.md" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+  <!-- Native libraries bundled per platform -->
+  <ItemGroup>
+    <Content Include="runtimes\win-x64\native\grafeo_c.dll" Condition="Exists('runtimes\win-x64\native\grafeo_c.dll')" Pack="true" PackagePath="runtimes\win-x64\native">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="runtimes\linux-x64\native\libgrafeo_c.so" Condition="Exists('runtimes\linux-x64\native\libgrafeo_c.so')" Pack="true" PackagePath="runtimes\linux-x64\native">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="runtimes\linux-arm64\native\libgrafeo_c.so" Condition="Exists('runtimes\linux-arm64\native\libgrafeo_c.so')" Pack="true" PackagePath="runtimes\linux-arm64\native">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="runtimes\osx-x64\native\libgrafeo_c.dylib" Condition="Exists('runtimes\osx-x64\native\libgrafeo_c.dylib')" Pack="true" PackagePath="runtimes\osx-x64\native">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="runtimes\osx-arm64\native\libgrafeo_c.dylib" Condition="Exists('runtimes\osx-arm64\native\libgrafeo_c.dylib')" Pack="true" PackagePath="runtimes\osx-arm64\native">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 </Project>

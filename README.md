@@ -4,7 +4,12 @@
 [![Crates.io](https://img.shields.io/crates/v/grafeo.svg)](https://crates.io/crates/grafeo)
 [![PyPI](https://img.shields.io/pypi/v/grafeo.svg)](https://pypi.org/project/grafeo/)
 [![npm](https://img.shields.io/npm/v/@grafeo-db/js.svg)](https://www.npmjs.com/package/@grafeo-db/js)
+[![wasm](https://img.shields.io/npm/v/@grafeo-db/wasm.svg?label=wasm)](https://www.npmjs.com/package/@grafeo-db/wasm)
+[![NuGet](https://img.shields.io/nuget/v/Grafeo.svg)](https://www.nuget.org/packages/Grafeo)
+[![pub.dev](https://img.shields.io/pub/v/grafeo.svg)](https://pub.dev/packages/grafeo)
+[![Web](https://img.shields.io/npm/v/@grafeo-db/web.svg?label=web)](https://www.npmjs.com/package/@grafeo-db/web)
 [![Go](https://img.shields.io/badge/go-1.22%2B-00ADD8)](https://pkg.go.dev/github.com/GrafeoDB/grafeo/crates/bindings/go)
+[![Docker](https://img.shields.io/docker/v/grafeo/grafeo-server?label=server)](https://hub.docker.com/r/grafeo/grafeo-server)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![MSRV](https://img.shields.io/badge/MSRV-1.91.1-blue)](https://www.rust-lang.org)
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org)
@@ -156,7 +161,7 @@ npm install @grafeo-db/wasm
 ### C# / .NET
 
 ```bash
-dotnet add package GrafeoDB
+dotnet add package Grafeo
 ```
 
 ### Dart
