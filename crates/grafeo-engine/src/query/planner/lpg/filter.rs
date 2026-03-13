@@ -954,6 +954,9 @@ impl super::Planner {
     }
 
     /// Extracts (variable, property, value) from a property equality expression.
+    ///
+    /// Returns `None` for NULL literals: `property = NULL` is UNKNOWN in
+    /// three-valued logic and must never be optimized into an index lookup.
     pub(super) fn extract_property_equality(
         &self,
         left: &LogicalExpression,
@@ -963,11 +966,11 @@ impl super::Planner {
             (
                 LogicalExpression::Property { variable, property },
                 LogicalExpression::Literal(val),
-            ) => Some((variable.clone(), property.clone(), val.clone())),
+            ) if !val.is_null() => Some((variable.clone(), property.clone(), val.clone())),
             (
                 LogicalExpression::Literal(val),
                 LogicalExpression::Property { variable, property },
-            ) => Some((variable.clone(), property.clone(), val.clone())),
+            ) if !val.is_null() => Some((variable.clone(), property.clone(), val.clone())),
             _ => None,
         }
     }

@@ -698,21 +698,54 @@ impl GqlTranslator {
                 })
             };
 
+            // Collect aggregate output column names before post_return is consumed.
+            // These are used to rewrite ORDER BY property references (e.g. `a.species`)
+            // into flat variable references (e.g. Variable("a.species")) since after
+            // aggregation the original entity variable no longer exists.
+            let agg_output_columns: std::collections::HashSet<String> = post_return
+                .as_ref()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|ri| {
+                            ri.alias.clone().or_else(|| {
+                                if let LogicalExpression::Variable(v) = &ri.expression {
+                                    Some(v.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
             if let Some(return_items) = post_return {
                 plan = wrap_return(agg_op, return_items, query.return_clause.distinct);
             } else {
                 plan = agg_op;
             }
 
-            // Apply ORDER BY for aggregate queries
-            // Note: ORDER BY sort keys reference aggregate output columns (aliases).
+            // Apply ORDER BY for aggregate queries.
+            // Sort keys that reference a property on a match variable (e.g. a.species)
+            // are rewritten to a flat variable reference when that property matches
+            // an aggregate output column, since the entity variable no longer exists
+            // after aggregation.
             if let Some(order_by) = &query.return_clause.order_by {
                 let keys = order_by
                     .items
                     .iter()
                     .map(|item| {
+                        let mut expression = self.translate_expression(&item.expression)?;
+                        if let LogicalExpression::Property { .. } = &expression {
+                            let col_name =
+                                crate::query::planner::common::expression_to_string(&expression);
+                            if agg_output_columns.contains(&col_name) {
+                                expression = LogicalExpression::Variable(col_name);
+                            }
+                        }
                         Ok(SortKey {
-                            expression: self.translate_expression(&item.expression)?,
+                            expression,
                             order: match item.order {
                                 ast::SortOrder::Asc => SortOrder::Ascending,
                                 ast::SortOrder::Desc => SortOrder::Descending,

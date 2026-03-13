@@ -719,14 +719,14 @@ mod gql_session_commands {
     // ========================================================================
 
     #[test]
-    fn return_current_schema_null_by_default() {
+    fn return_current_schema_default_when_unset() {
         let db = GrafeoDB::new_in_memory();
         let session = db.session();
         let result = session.execute("RETURN CURRENT_SCHEMA AS s").unwrap();
         assert_eq!(result.columns, vec!["s"]);
         assert_eq!(result.rows.len(), 1);
         assert_eq!(result.rows[0].len(), 1);
-        assert_eq!(result.rows[0][0], Value::Null);
+        assert_eq!(result.rows[0][0], Value::String("default".into()));
     }
 
     #[test]
@@ -740,13 +740,13 @@ mod gql_session_commands {
     }
 
     #[test]
-    fn return_current_graph_null_by_default() {
+    fn return_current_graph_default_when_unset() {
         let db = GrafeoDB::new_in_memory();
         let session = db.session();
         let result = session.execute("RETURN CURRENT_GRAPH AS g").unwrap();
         assert_eq!(result.columns, vec!["g"]);
         assert_eq!(result.rows.len(), 1);
-        assert_eq!(result.rows[0][0], Value::Null);
+        assert_eq!(result.rows[0][0], Value::String("default".into()));
     }
 
     #[test]

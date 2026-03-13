@@ -947,8 +947,22 @@ impl ExpressionPredicate {
                     let r = recurse(right)?;
                     return match r {
                         Value::List(items) => {
-                            let found = items.iter().any(|v| Self::values_equal(&l, v));
-                            Some(Value::Bool(found))
+                            if l.is_null() {
+                                return Some(Value::Null);
+                            }
+                            let mut has_null = false;
+                            for v in items.iter() {
+                                if v.is_null() {
+                                    has_null = true;
+                                } else if Self::values_equal(&l, v) {
+                                    return Some(Value::Bool(true));
+                                }
+                            }
+                            if has_null {
+                                Some(Value::Null)
+                            } else {
+                                Some(Value::Bool(false))
+                            }
                         }
                         _ => None,
                     };
@@ -1075,8 +1089,22 @@ impl ExpressionPredicate {
                     let right_val = self.eval_comprehension_expr(right, item, variable)?;
                     return match right_val {
                         Value::List(items) => {
-                            let found = items.iter().any(|v| Self::values_equal(&left_val, v));
-                            Some(Value::Bool(found))
+                            if left_val.is_null() {
+                                return Some(Value::Null);
+                            }
+                            let mut has_null = false;
+                            for v in items.iter() {
+                                if v.is_null() {
+                                    has_null = true;
+                                } else if Self::values_equal(&left_val, v) {
+                                    return Some(Value::Bool(true));
+                                }
+                            }
+                            if has_null {
+                                Some(Value::Null)
+                            } else {
+                                Some(Value::Bool(false))
+                            }
                         }
                         _ => None,
                     };
@@ -1134,10 +1162,17 @@ impl ExpressionPredicate {
         variable: &str,
     ) -> Option<Value> {
         if let Some(test_expr) = operand {
-            let test_val = self.eval_comprehension_expr(test_expr, item, variable)?;
+            let test_val = self
+                .eval_comprehension_expr(test_expr, item, variable)
+                .unwrap_or(Value::Null);
             for (when_expr, then_expr) in when_clauses {
-                let when_val = self.eval_comprehension_expr(when_expr, item, variable)?;
-                if Self::values_equal(&test_val, &when_val) {
+                let when_val = self
+                    .eval_comprehension_expr(when_expr, item, variable)
+                    .unwrap_or(Value::Null);
+                if !test_val.is_null()
+                    && !when_val.is_null()
+                    && Self::values_equal(&test_val, &when_val)
+                {
                     return self.eval_comprehension_expr(then_expr, item, variable);
                 }
             }
@@ -1158,23 +1193,37 @@ impl ExpressionPredicate {
 
     fn eval_binary_op(&self, left: &Value, op: BinaryFilterOp, right: &Value) -> Option<Value> {
         match op {
-            BinaryFilterOp::And => {
-                let l = left.as_bool()?;
-                let r = right.as_bool()?;
-                Some(Value::Bool(l && r))
+            // Three-valued logic for AND/OR/XOR (ISO/IEC 39075 Section 21)
+            BinaryFilterOp::And => match (left.as_bool(), right.as_bool()) {
+                (Some(false), _) | (_, Some(false)) => Some(Value::Bool(false)),
+                (Some(true), Some(true)) => Some(Value::Bool(true)),
+                _ => Some(Value::Null), // UNKNOWN
+            },
+            BinaryFilterOp::Or => match (left.as_bool(), right.as_bool()) {
+                (Some(true), _) | (_, Some(true)) => Some(Value::Bool(true)),
+                (Some(false), Some(false)) => Some(Value::Bool(false)),
+                _ => Some(Value::Null), // UNKNOWN
+            },
+            BinaryFilterOp::Xor => match (left.as_bool(), right.as_bool()) {
+                (Some(l), Some(r)) => Some(Value::Bool(l ^ r)),
+                _ => Some(Value::Null), // UNKNOWN
+            },
+            // NULL = anything or anything = NULL is UNKNOWN (three-valued logic).
+            // values_equal is preserved for structural equality (DISTINCT, GROUP BY).
+            BinaryFilterOp::Eq => {
+                if left.is_null() || right.is_null() {
+                    Some(Value::Null)
+                } else {
+                    Some(Value::Bool(Self::values_equal(left, right)))
+                }
             }
-            BinaryFilterOp::Or => {
-                let l = left.as_bool()?;
-                let r = right.as_bool()?;
-                Some(Value::Bool(l || r))
+            BinaryFilterOp::Ne => {
+                if left.is_null() || right.is_null() {
+                    Some(Value::Null)
+                } else {
+                    Some(Value::Bool(!Self::values_equal(left, right)))
+                }
             }
-            BinaryFilterOp::Xor => {
-                let l = left.as_bool()?;
-                let r = right.as_bool()?;
-                Some(Value::Bool(l ^ r))
-            }
-            BinaryFilterOp::Eq => Some(Value::Bool(Self::values_equal(left, right))),
-            BinaryFilterOp::Ne => Some(Value::Bool(!Self::values_equal(left, right))),
             BinaryFilterOp::Lt => self.compare_values(left, right).map(|c| Value::Bool(c < 0)),
             BinaryFilterOp::Le => self
                 .compare_values(left, right)
@@ -1424,8 +1473,23 @@ impl ExpressionPredicate {
         let right_val = self.eval_expr(right, chunk, row)?;
         match right_val {
             Value::List(items) => {
-                let found = items.iter().any(|item| Self::values_equal(left, item));
-                Some(Value::Bool(found))
+                // Three-valued IN: NULL IN (...) is UNKNOWN
+                if left.is_null() {
+                    return Some(Value::Null);
+                }
+                let mut has_null = false;
+                for item in items.iter() {
+                    if item.is_null() {
+                        has_null = true;
+                    } else if Self::values_equal(left, item) {
+                        return Some(Value::Bool(true));
+                    }
+                }
+                if has_null {
+                    Some(Value::Null) // no match but NULLs present: UNKNOWN
+                } else {
+                    Some(Value::Bool(false))
+                }
             }
             _ => None,
         }
@@ -2980,18 +3044,14 @@ impl ExpressionPredicate {
                 Some(Value::String("default".into()))
             }
             // ISO/IEC 39075 Section 17.1 / Section 21: session schema/graph references
-            "current_schema" => Some(
-                self.session_context
-                    .current_schema
-                    .as_ref()
-                    .map_or(Value::Null, |s| Value::String(s.clone().into())),
-            ),
-            "current_graph" => Some(
-                self.session_context
-                    .current_graph
-                    .as_ref()
-                    .map_or(Value::Null, |g| Value::String(g.clone().into())),
-            ),
+            "current_schema" => Some(self.session_context.current_schema.as_ref().map_or_else(
+                || Value::String("default".into()),
+                |s| Value::String(s.clone().into()),
+            )),
+            "current_graph" => Some(self.session_context.current_graph.as_ref().map_or_else(
+                || Value::String("default".into()),
+                |g| Value::String(g.clone().into()),
+            )),
             "home_schema" | "home_graph" => {
                 // Home schema/graph: not configurable yet, returns null
                 Some(Value::Null)
@@ -3055,7 +3115,10 @@ impl ExpressionPredicate {
                 }
                 let val1 = self.eval_expr(&args[0], chunk, row)?;
                 let val2 = self.eval_expr(&args[1], chunk, row)?;
-                if Self::values_equal(&val1, &val2) {
+                // Three-valued: NULLIF(NULL, x) = NULL; NULLIF(x, NULL) = x
+                if val1.is_null() || val2.is_null() {
+                    Some(val1)
+                } else if Self::values_equal(&val1, &val2) {
                     Some(Value::Null)
                 } else {
                     Some(val1)
@@ -3080,7 +3143,11 @@ impl ExpressionPredicate {
             let test_val = self.eval_expr(test_expr, chunk, row).unwrap_or(Value::Null);
             for (when_expr, then_expr) in when_clauses {
                 let when_val = self.eval_expr(when_expr, chunk, row).unwrap_or(Value::Null);
-                if Self::values_equal(&test_val, &when_val) {
+                // Three-valued logic: NULL never matches anything in simple CASE
+                if !test_val.is_null()
+                    && !when_val.is_null()
+                    && Self::values_equal(&test_val, &when_val)
+                {
                     return self.eval_expr(then_expr, chunk, row);
                 }
             }

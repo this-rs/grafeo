@@ -67,7 +67,20 @@ impl GrafeoFileManager {
             .read(true)
             .write(true)
             .create_new(true)
-            .open(&path)?;
+            .open(&path)
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::AlreadyExists || e.raw_os_error() == Some(183) {
+                    Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::AlreadyExists,
+                        format!(
+                            "database file already exists (may be open by another process): {}",
+                            path.display()
+                        ),
+                    ))
+                } else {
+                    Error::Io(e)
+                }
+            })?;
 
         // Acquire an exclusive lock: prevents other processes from opening the same file
         file.try_lock_exclusive().map_err(|_| {

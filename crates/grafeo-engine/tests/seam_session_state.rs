@@ -536,19 +536,19 @@ mod introspection {
     use super::*;
 
     #[test]
-    fn current_schema_null_by_default() {
+    fn current_schema_default_when_unset() {
         let db = db();
         let session = db.session();
         let result = session.execute("RETURN CURRENT_SCHEMA AS s").unwrap();
-        assert_eq!(result.rows[0][0], Value::Null);
+        assert_eq!(result.rows[0][0], Value::String("default".into()));
     }
 
     #[test]
-    fn current_graph_null_by_default() {
+    fn current_graph_default_when_unset() {
         let db = db();
         let session = db.session();
         let result = session.execute("RETURN CURRENT_GRAPH AS g").unwrap();
-        assert_eq!(result.rows[0][0], Value::Null);
+        assert_eq!(result.rows[0][0], Value::String("default".into()));
     }
 
     #[test]
@@ -572,25 +572,25 @@ mod introspection {
     }
 
     #[test]
-    fn current_schema_null_after_reset() {
+    fn current_schema_default_when_reset() {
         let db = db();
         let session = db.session();
         session.execute("CREATE SCHEMA analytics").unwrap();
         session.execute("SESSION SET SCHEMA analytics").unwrap();
         session.execute("SESSION RESET SCHEMA").unwrap();
         let result = session.execute("RETURN CURRENT_SCHEMA AS s").unwrap();
-        assert_eq!(result.rows[0][0], Value::Null);
+        assert_eq!(result.rows[0][0], Value::String("default".into()));
     }
 
     #[test]
-    fn current_graph_null_after_reset() {
+    fn current_graph_default_when_reset() {
         let db = db();
         let session = db.session();
         session.execute("CREATE GRAPH mydb").unwrap();
         session.execute("SESSION SET GRAPH mydb").unwrap();
         session.execute("SESSION RESET GRAPH").unwrap();
         let result = session.execute("RETURN CURRENT_GRAPH AS g").unwrap();
-        assert_eq!(result.rows[0][0], Value::Null);
+        assert_eq!(result.rows[0][0], Value::String("default".into()));
     }
 
     #[test]

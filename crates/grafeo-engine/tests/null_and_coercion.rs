@@ -48,18 +48,126 @@ fn setup_with_nulls() -> GrafeoDB {
 fn test_null_equality_filters_out() {
     let db = setup_with_nulls();
     let session = db.session();
-    // WHERE val = NULL should not match anything (three-valued logic)
-    // or match the NULL row depending on implementation
+    // WHERE val = NULL: three-valued logic says NULL = NULL is UNKNOWN, so no rows match
     let r = session
         .execute("MATCH (i:Item) WHERE i.val = NULL RETURN i.name AS name ORDER BY name")
         .unwrap();
-    // Under SQL/GQL semantics, NULL = NULL is unknown, so no rows should match.
-    // If implementation treats it differently, this test documents actual behavior.
-    // The key assertion: we get a definite result (no crash/panic)
-    assert!(
-        r.rows.len() <= 1,
-        "NULL equality should match at most the NULL-valued row, got {} rows",
+    assert_eq!(
+        r.rows.len(),
+        0,
+        "NULL = NULL is UNKNOWN: no rows should match, got {} rows",
         r.rows.len()
+    );
+}
+
+#[test]
+fn test_null_ne_null_is_unknown() {
+    let db = setup_with_nulls();
+    let session = db.session();
+    // WHERE val <> NULL: also UNKNOWN, no rows match
+    let r = session
+        .execute("MATCH (i:Item) WHERE i.val <> NULL RETURN i.name AS name ORDER BY name")
+        .unwrap();
+    assert_eq!(
+        r.rows.len(),
+        0,
+        "NULL <> NULL is UNKNOWN: no rows should match"
+    );
+}
+
+#[test]
+fn test_case_when_null_eq_null_is_unknown() {
+    let db = setup_with_nulls();
+    let session = db.session();
+    let r = session
+        .execute(
+            "MATCH (i:Item) WHERE i.name = 'beta' \
+             RETURN CASE WHEN i.val = NULL THEN 'hit' ELSE 'miss' END AS result",
+        )
+        .unwrap();
+    assert_eq!(r.rows.len(), 1);
+    assert_eq!(
+        r.rows[0][0].as_str(),
+        Some("miss"),
+        "CASE WHEN val = NULL should be UNKNOWN, falling through to ELSE"
+    );
+}
+
+#[test]
+fn test_simple_case_null_when_null() {
+    let db = setup_with_nulls();
+    let session = db.session();
+    let r = session
+        .execute(
+            "MATCH (i:Item) WHERE i.name = 'beta' \
+             RETURN CASE i.val WHEN NULL THEN 'hit' ELSE 'miss' END AS result",
+        )
+        .unwrap();
+    assert_eq!(r.rows.len(), 1);
+    assert_eq!(
+        r.rows[0][0].as_str(),
+        Some("miss"),
+        "Simple CASE: NULL WHEN NULL should not match"
+    );
+}
+
+#[test]
+fn test_or_with_null_unknown() {
+    let db = setup_with_nulls();
+    let session = db.session();
+    // (val = NULL) is UNKNOWN; OR with a TRUE condition should still return the TRUE row
+    let r = session
+        .execute(
+            "MATCH (i:Item) WHERE i.val = NULL OR i.name = 'alpha' \
+             RETURN i.name AS name ORDER BY name",
+        )
+        .unwrap();
+    assert_eq!(r.rows.len(), 1);
+    assert_eq!(r.rows[0][0].as_str(), Some("alpha"));
+}
+
+#[test]
+fn test_and_with_null_unknown() {
+    let db = setup_with_nulls();
+    let session = db.session();
+    // (val = NULL) is UNKNOWN; AND with anything is at most UNKNOWN, never TRUE
+    let r = session
+        .execute(
+            "MATCH (i:Item) WHERE i.val = NULL AND i.name = 'beta' \
+             RETURN i.name AS name",
+        )
+        .unwrap();
+    assert_eq!(
+        r.rows.len(),
+        0,
+        "UNKNOWN AND TRUE = UNKNOWN, should match nothing"
+    );
+}
+
+#[test]
+fn test_nullif_both_null() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    let r = session
+        .execute("RETURN NULLIF(NULL, NULL) AS result")
+        .unwrap();
+    assert!(
+        r.rows[0][0].is_null(),
+        "NULLIF(NULL, NULL) should return NULL"
+    );
+}
+
+#[test]
+fn test_nullif_value_null() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    let r = session
+        .execute("RETURN NULLIF(42, NULL) AS result")
+        .unwrap();
+    assert_eq!(
+        r.rows[0][0].as_int64(),
+        Some(42),
+        "NULLIF(42, NULL) should return 42"
     );
 }
 

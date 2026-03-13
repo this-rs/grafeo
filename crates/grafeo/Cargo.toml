@@ -42,7 +42,7 @@ embed = ["grafeo-engine/embed"]  # Opt-in ONNX embedding generation (~17MB)
 # Convenience groups
 languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]  # All query languages
 ai = ["vector-index", "text-index", "hybrid-search", "cdc"]  # All AI/RAG features
-storage = ["wal", "spill", "mmap"]  # Persistent storage (WAL, disk spill, memory-mapped files)
+storage = ["wal", "grafeo-file", "spill", "mmap"]  # Persistent storage (WAL, single-file, disk spill, mmap)
 algos = ["grafeo-engine/algos"]  # Graph algorithms (SSSP, PageRank, etc.)
 rdf = ["grafeo-engine/rdf"]  # RDF triple store
 regex = ["grafeo-engine/regex"]  # Full regex (default for non-WASM)
@@ -59,6 +59,7 @@ parallel = ["grafeo-engine/parallel"]
 wal = ["grafeo-engine/wal"]
 spill = ["grafeo-engine/spill"]
 mmap = ["grafeo-engine/mmap"]
+grafeo-file = ["grafeo-engine/grafeo-file"]  # Single-file .grafeo database format
 
 # Enable platform-optimized memory allocator (10-20% faster allocations)
 jemalloc = ["tikv-jemallocator"]
