@@ -242,6 +242,15 @@ impl PyQueryResult {
             time_str
         )
     }
+
+    fn __str__(&self) -> String {
+        grafeo_common::fmt::format_result_table(
+            &self.columns,
+            &self.rows,
+            self.execution_time_ms,
+            None,
+        )
+    }
 }
 
 impl PyQueryResult {

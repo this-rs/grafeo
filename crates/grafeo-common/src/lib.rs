@@ -16,6 +16,7 @@
 //! - [`utils`] - Hashing, error types, and other helpers
 
 pub mod collections;
+pub mod fmt;
 pub mod memory;
 pub mod mvcc;
 pub mod types;

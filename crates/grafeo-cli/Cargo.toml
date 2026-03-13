@@ -11,6 +11,7 @@ description = "Command-line interface for Grafeo graph database"
 [[bin]]
 name = "grafeo"
 path = "src/main.rs"
+doc = false
 
 [dependencies]
 grafeo-engine = { workspace = true, features = ["storage", "parallel", "regex"] }

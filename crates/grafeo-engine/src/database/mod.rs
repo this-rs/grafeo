@@ -1383,6 +1383,18 @@ impl QueryResult {
     }
 }
 
+impl std::fmt::Display for QueryResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let table = grafeo_common::fmt::format_result_table(
+            &self.columns,
+            &self.rows,
+            self.execution_time_ms,
+            self.status_message.as_deref(),
+        );
+        f.write_str(&table)
+    }
+}
+
 /// Converts a [`grafeo_common::types::Value`] to a concrete Rust type.
 ///
 /// Implemented for common types like `i64`, `f64`, `String`, and `bool`.

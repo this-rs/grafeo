@@ -2,6 +2,12 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
+## [0.5.22] - Unreleased
+
+### Added
+
+- **Pretty Print query results**: added a `Display` implementation for `QueryResult` records that now renders as an ASCII table. Replacing the old simple raw `Vec<Vec<Value>>` implementation.
+
 ## [0.5.21] - 2026-03-13
 
 First implementation of C# and Dart bindings, single file database completed, snapshot consolidation and test hardening

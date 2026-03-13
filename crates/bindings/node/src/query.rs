@@ -99,6 +99,17 @@ impl QueryResult {
         self.edges.clone()
     }
 
+    /// Returns the result formatted as a Unicode table.
+    #[napi(js_name = "toString")]
+    pub fn to_string_js(&self) -> String {
+        grafeo_common::fmt::format_result_table(
+            &self.columns,
+            &self.rows,
+            self.execution_time_ms,
+            None,
+        )
+    }
+
     /// Get all rows as an array of arrays (no column names).
     #[napi]
     pub fn rows(&self, env: Env) -> Result<Object<'_>> {
