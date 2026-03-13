@@ -161,7 +161,7 @@ npm install @grafeo-db/wasm
 ### C# / .NET
 
 ```bash
-dotnet add package GrafeoDB
+dotnet add package Grafeo
 ```
 
 ### Dart
