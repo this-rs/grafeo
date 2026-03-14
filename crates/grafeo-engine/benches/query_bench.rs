@@ -381,6 +381,183 @@ fn bench_rdf_insert_single(c: &mut Criterion) {
     });
 }
 
+// ============================================================================
+// RDF Join-Specific Benchmarks (larger dataset for join performance)
+// ============================================================================
+
+/// Sets up a 10K triple dataset with diverse predicates for join benchmarks.
+#[cfg(all(feature = "sparql", feature = "rdf"))]
+fn setup_rdf_join_dataset(person_count: usize) -> GrafeoDB {
+    let db = GrafeoDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
+    let session = db.session();
+
+    let mut triples = String::from("INSERT DATA {\n");
+    for i in 0..person_count {
+        let age = 20 + (i % 50);
+        let city_idx = i % 5;
+        let city = ["Amsterdam", "Berlin", "Paris", "Prague", "Barcelona"][city_idx];
+        let _ = write!(
+            triples,
+            "  <http://ex.org/p{i}> <http://ex.org/name> \"User{i}\" .\n\
+             <http://ex.org/p{i}> <http://ex.org/age> \"{age}\" .\n\
+             <http://ex.org/p{i}> <http://ex.org/city> \"{city}\" .\n\
+             <http://ex.org/p{i}> <http://ex.org/type> \"Person\" .\n"
+        );
+        // Half have email
+        if i % 2 == 0 {
+            let _ = writeln!(
+                triples,
+                "  <http://ex.org/p{i}> <http://ex.org/email> \"user{i}@example.org\" ."
+            );
+        }
+    }
+    // Add knows edges (5x multiplier)
+    let edge_count = person_count * 5;
+    for i in 0..edge_count {
+        let src = i % person_count;
+        let dst = (i * 7 + 13) % person_count;
+        if src != dst {
+            let _ = writeln!(
+                triples,
+                "  <http://ex.org/p{src}> <http://ex.org/knows> <http://ex.org/p{dst}> ."
+            );
+        }
+    }
+    triples.push('}');
+    session.execute_sparql(&triples).unwrap();
+    db
+}
+
+/// 2-pattern star join on 10K persons.
+#[cfg(all(feature = "sparql", feature = "rdf"))]
+fn bench_rdf_join_star_2_10k(c: &mut Criterion) {
+    let db = setup_rdf_join_dataset(10_000);
+    let session = db.session();
+
+    c.bench_function("rdf_join_star_2_10k", |b| {
+        b.iter(|| {
+            let result = session
+                .execute_sparql(
+                    r#"SELECT ?name ?age WHERE {
+                        ?s <http://ex.org/name> ?name .
+                        ?s <http://ex.org/age> ?age
+                    }"#,
+                )
+                .unwrap();
+            black_box(result)
+        });
+    });
+}
+
+/// 3-pattern star join on 10K persons.
+#[cfg(all(feature = "sparql", feature = "rdf"))]
+fn bench_rdf_join_star_3_10k(c: &mut Criterion) {
+    let db = setup_rdf_join_dataset(10_000);
+    let session = db.session();
+
+    c.bench_function("rdf_join_star_3_10k", |b| {
+        b.iter(|| {
+            let result = session
+                .execute_sparql(
+                    r#"SELECT ?name ?age ?city WHERE {
+                        ?s <http://ex.org/name> ?name .
+                        ?s <http://ex.org/age> ?age .
+                        ?s <http://ex.org/city> ?city
+                    }"#,
+                )
+                .unwrap();
+            black_box(result)
+        });
+    });
+}
+
+/// 4-pattern star join (one pattern has ~50% selectivity via OPTIONAL-like density).
+#[cfg(all(feature = "sparql", feature = "rdf"))]
+fn bench_rdf_join_star_4_10k(c: &mut Criterion) {
+    let db = setup_rdf_join_dataset(10_000);
+    let session = db.session();
+
+    c.bench_function("rdf_join_star_4_10k", |b| {
+        b.iter(|| {
+            let result = session
+                .execute_sparql(
+                    r#"SELECT ?name ?age ?city ?email WHERE {
+                        ?s <http://ex.org/name> ?name .
+                        ?s <http://ex.org/age> ?age .
+                        ?s <http://ex.org/city> ?city .
+                        ?s <http://ex.org/email> ?email
+                    }"#,
+                )
+                .unwrap();
+            black_box(result)
+        });
+    });
+}
+
+/// Chain join: ?a knows ?b, ?b has name (traversal pattern).
+#[cfg(all(feature = "sparql", feature = "rdf"))]
+fn bench_rdf_join_chain_10k(c: &mut Criterion) {
+    let db = setup_rdf_join_dataset(10_000);
+    let session = db.session();
+
+    c.bench_function("rdf_join_chain_10k", |b| {
+        b.iter(|| {
+            let result = session
+                .execute_sparql(
+                    r#"SELECT ?name WHERE {
+                        <http://ex.org/p0> <http://ex.org/knows> ?friend .
+                        ?friend <http://ex.org/name> ?name
+                    }"#,
+                )
+                .unwrap();
+            black_box(result)
+        });
+    });
+}
+
+/// 2-hop chain join: ?a knows ?b, ?b knows ?c, ?c has name.
+#[cfg(all(feature = "sparql", feature = "rdf"))]
+fn bench_rdf_join_chain_2hop_10k(c: &mut Criterion) {
+    let db = setup_rdf_join_dataset(10_000);
+    let session = db.session();
+
+    c.bench_function("rdf_join_chain_2hop_10k", |b| {
+        b.iter(|| {
+            let result = session
+                .execute_sparql(
+                    r#"SELECT ?name WHERE {
+                        <http://ex.org/p0> <http://ex.org/knows> ?f1 .
+                        ?f1 <http://ex.org/knows> ?f2 .
+                        ?f2 <http://ex.org/name> ?name
+                    }"#,
+                )
+                .unwrap();
+            black_box(result)
+        });
+    });
+}
+
+/// OPTIONAL join on 10K persons (left join performance).
+#[cfg(all(feature = "sparql", feature = "rdf"))]
+fn bench_rdf_join_optional_10k(c: &mut Criterion) {
+    let db = setup_rdf_join_dataset(10_000);
+    let session = db.session();
+
+    c.bench_function("rdf_join_optional_10k", |b| {
+        b.iter(|| {
+            let result = session
+                .execute_sparql(
+                    r#"SELECT ?name ?email WHERE {
+                        ?s <http://ex.org/name> ?name .
+                        OPTIONAL { ?s <http://ex.org/email> ?email }
+                    }"#,
+                )
+                .unwrap();
+            black_box(result)
+        });
+    });
+}
+
 #[cfg(all(feature = "sparql", feature = "rdf"))]
 criterion_group!(
     rdf_benches,
@@ -395,7 +572,18 @@ criterion_group!(
 );
 
 #[cfg(all(feature = "sparql", feature = "rdf"))]
-criterion_main!(lpg_benches, rdf_benches);
+criterion_group!(
+    rdf_join_benches,
+    bench_rdf_join_star_2_10k,
+    bench_rdf_join_star_3_10k,
+    bench_rdf_join_star_4_10k,
+    bench_rdf_join_chain_10k,
+    bench_rdf_join_chain_2hop_10k,
+    bench_rdf_join_optional_10k,
+);
+
+#[cfg(all(feature = "sparql", feature = "rdf"))]
+criterion_main!(lpg_benches, rdf_benches, rdf_join_benches);
 
 #[cfg(not(all(feature = "sparql", feature = "rdf")))]
 criterion_main!(lpg_benches);
