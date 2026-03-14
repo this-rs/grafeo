@@ -112,8 +112,7 @@ impl Optimizer {
             enable_filter_pushdown: true,
             enable_join_reorder: true,
             enable_projection_pushdown: true,
-            cost_model: CostModel::new()
-                .with_graph_totals(total, total),
+            cost_model: CostModel::new().with_graph_totals(total, total),
             card_estimator: estimator,
         }
     }
