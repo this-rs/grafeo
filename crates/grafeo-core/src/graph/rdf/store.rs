@@ -537,6 +537,9 @@ impl RdfStore {
         if let Some(ref mut idx) = *self.object_index.write() {
             idx.clear();
         }
+        self.sp_index.write().clear();
+        self.po_index.write().clear();
+        self.os_index.write().clear();
     }
 
     /// Returns store statistics.
@@ -1306,5 +1309,143 @@ mod tests {
         let inserted = store.batch_insert(Vec::<Triple>::new());
         assert_eq!(inserted, 0);
         assert_eq!(store.len(), 0);
+    }
+
+    #[test]
+    fn test_composite_index_sp_lookup() {
+        let store = RdfStore::new();
+        for triple in sample_triples() {
+            store.insert(triple);
+        }
+
+        // S+P bound: should use SP composite index (no filtering)
+        let pattern = TriplePattern {
+            subject: Some(Term::iri("http://example.org/alix")),
+            predicate: Some(Term::iri("http://xmlns.com/foaf/0.1/name")),
+            object: None,
+        };
+        let results = store.find(&pattern);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].object(), &Term::literal("Alix"));
+    }
+
+    #[test]
+    fn test_composite_index_po_lookup() {
+        let store = RdfStore::new();
+        for triple in sample_triples() {
+            store.insert(triple);
+        }
+
+        // P+O bound: should use PO composite index
+        let pattern = TriplePattern {
+            subject: None,
+            predicate: Some(Term::iri("http://xmlns.com/foaf/0.1/name")),
+            object: Some(Term::literal("Alix")),
+        };
+        let results = store.find(&pattern);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].subject(), &Term::iri("http://example.org/alix"));
+    }
+
+    #[test]
+    fn test_composite_index_os_lookup() {
+        let store = RdfStore::new();
+        for triple in sample_triples() {
+            store.insert(triple);
+        }
+
+        // S+O bound: should use OS composite index
+        let pattern = TriplePattern {
+            subject: Some(Term::iri("http://example.org/alix")),
+            predicate: None,
+            object: Some(Term::iri("http://example.org/gus")),
+        };
+        let results = store.find(&pattern);
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].predicate(),
+            &Term::iri("http://xmlns.com/foaf/0.1/knows")
+        );
+    }
+
+    #[test]
+    fn test_composite_index_spo_lookup() {
+        let store = RdfStore::new();
+        for triple in sample_triples() {
+            store.insert(triple);
+        }
+
+        // S+P+O fully bound: existence check via SP composite
+        let pattern = TriplePattern {
+            subject: Some(Term::iri("http://example.org/alix")),
+            predicate: Some(Term::iri("http://xmlns.com/foaf/0.1/name")),
+            object: Some(Term::literal("Alix")),
+        };
+        let results = store.find(&pattern);
+        assert_eq!(results.len(), 1);
+
+        // Non-existent triple
+        let pattern = TriplePattern {
+            subject: Some(Term::iri("http://example.org/alix")),
+            predicate: Some(Term::iri("http://xmlns.com/foaf/0.1/name")),
+            object: Some(Term::literal("NotAlix")),
+        };
+        let results = store.find(&pattern);
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_composite_index_removal() {
+        let store = RdfStore::new();
+        let triples = sample_triples();
+        for triple in &triples {
+            store.insert(triple.clone());
+        }
+
+        // Remove alix's name triple
+        store.remove(&triples[0]);
+
+        // SP lookup should no longer find it
+        let pattern = TriplePattern {
+            subject: Some(Term::iri("http://example.org/alix")),
+            predicate: Some(Term::iri("http://xmlns.com/foaf/0.1/name")),
+            object: None,
+        };
+        let results = store.find(&pattern);
+        assert_eq!(results.len(), 0);
+
+        // PO lookup should only find gus's name
+        let pattern = TriplePattern {
+            subject: None,
+            predicate: Some(Term::iri("http://xmlns.com/foaf/0.1/name")),
+            object: Some(Term::literal("Alix")),
+        };
+        let results = store.find(&pattern);
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_composite_index_batch_insert() {
+        let store = RdfStore::new();
+        let triples = sample_triples();
+        store.batch_insert(triples);
+
+        // Verify composite indexes are populated by batch_insert
+        let pattern = TriplePattern {
+            subject: Some(Term::iri("http://example.org/alix")),
+            predicate: Some(Term::iri("http://xmlns.com/foaf/0.1/knows")),
+            object: None,
+        };
+        let results = store.find(&pattern);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].object(), &Term::iri("http://example.org/gus"));
+
+        let pattern = TriplePattern {
+            subject: None,
+            predicate: Some(Term::iri("http://xmlns.com/foaf/0.1/name")),
+            object: Some(Term::literal("Gus")),
+        };
+        let results = store.find(&pattern);
+        assert_eq!(results.len(), 1);
     }
 }

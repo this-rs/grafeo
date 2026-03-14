@@ -309,21 +309,25 @@ impl IndexStatistics {
     }
 
     /// Estimates the cost of executing a triple pattern.
+    ///
+    /// With composite indexes (SP, PO, OS), any 2-bound or 3-bound query is a
+    /// direct hash lookup (cost 1.0). Single-bound queries use single-term
+    /// indexes (cost 1.5). Unbound patterns require a full scan (cost 10.0).
     pub fn estimate_pattern_cost(
         &self,
         subject_bound: bool,
         predicate_bound: bool,
         object_bound: bool,
     ) -> f64 {
-        match (subject_bound, predicate_bound, object_bound) {
-            // Use SPO index
-            (true, _, _) => self.spo_lookup_cost,
-            // Use POS index
-            (false, true, _) => self.pos_lookup_cost,
-            // Use OSP index if available
-            (false, false, true) if self.has_osp_index => self.osp_lookup_cost,
-            // Full scan
-            _ => 10.0, // High cost for full scan
+        let bound_count =
+            u8::from(subject_bound) + u8::from(predicate_bound) + u8::from(object_bound);
+        match bound_count {
+            // 3-bound or 2-bound: composite index lookup
+            2..=3 => self.spo_lookup_cost,
+            // 1-bound: single-term index
+            1 => self.pos_lookup_cost,
+            // 0-bound: full scan
+            _ => 10.0,
         }
     }
 }
@@ -463,15 +467,22 @@ mod tests {
     fn test_pattern_cost_estimation() {
         let index_stats = IndexStatistics::new();
 
-        // Subject bound - cheapest
-        let cost = index_stats.estimate_pattern_cost(true, false, false);
+        // 2-bound: composite index lookup (cheapest)
+        let cost = index_stats.estimate_pattern_cost(true, true, false);
         assert_eq!(cost, 1.0);
 
-        // Predicate bound
+        // 3-bound: also composite index
+        let cost = index_stats.estimate_pattern_cost(true, true, true);
+        assert_eq!(cost, 1.0);
+
+        // 1-bound: single-term index
+        let cost = index_stats.estimate_pattern_cost(true, false, false);
+        assert_eq!(cost, 1.5);
+
         let cost = index_stats.estimate_pattern_cost(false, true, false);
         assert_eq!(cost, 1.5);
 
-        // Full scan - most expensive
+        // Full scan: most expensive
         let cost = index_stats.estimate_pattern_cost(false, false, false);
         assert_eq!(cost, 10.0);
     }
