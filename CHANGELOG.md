@@ -13,6 +13,7 @@ All notable changes to Grafeo, for future reference (and enjoyment).
 
 ### Changed
 
+- **RDF query performance**: replaced O(N*M) nested loop joins with O(N+M) hash joins for all RDF join types (inner, left/OPTIONAL, semi/EXISTS, anti/NOT EXISTS); SPARQL optimizer now uses RDF-specific statistics (`RdfStore::collect_statistics()`) with triple pattern cardinality estimation instead of LPG statistics
 - **Unsafe code enforcement**: `#![forbid(unsafe_code)]` on pure-safe crates (grafeo, grafeo-adapters, bindings-common, python, wasm), `#![deny(unsafe_code)]` on crates with targeted unsafe (grafeo-common, grafeo-core, grafeo-engine, grafeo-cli)
 - **GroupKeyPart zero-alloc**: `GroupKeyPart::String` now uses `ArcStr` instead of `String`, eliminating allocations during aggregation group key construction
 
