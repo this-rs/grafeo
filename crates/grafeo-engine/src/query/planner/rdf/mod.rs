@@ -12,11 +12,10 @@ use std::sync::Arc;
 use grafeo_common::types::{LogicalType, TransactionId, Value};
 use grafeo_common::utils::error::{Error, Result};
 use grafeo_core::execution::DataChunk;
-use grafeo_core::execution::operators::JoinType;
 use grafeo_core::execution::operators::{
-    BinaryFilterOp, FilterExpression, FilterOperator, HashAggregateOperator, JoinCondition,
-    NestedLoopJoinOperator, Operator, OperatorError, Predicate, ProjectExpr, ProjectOperator,
-    SimpleAggregateOperator, SingleRowOperator, SortOperator, UnaryFilterOp,
+    BinaryFilterOp, FilterExpression, FilterOperator, HashAggregateOperator, Operator,
+    OperatorError, Predicate, ProjectExpr, ProjectOperator, SimpleAggregateOperator,
+    SingleRowOperator, SortOperator, UnaryFilterOp,
 };
 use grafeo_core::graph::rdf::{Literal, RdfStore, Term, Triple, TriplePattern};
 
@@ -355,61 +354,21 @@ impl RdfPlanner {
         subquery: &LogicalOperator,
         is_negated: bool,
     ) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        use crate::query::planner::common;
+
         let (left_op, left_columns) = self.plan_operator(input)?;
         let (right_op, right_columns) = self.plan_operator(subquery)?;
 
-        let left_col_count = left_columns.len();
+        let schema = derive_rdf_schema(&left_columns);
 
-        // Find shared variables for equi-join (correlation between outer and inner query)
-        let mut shared_vars: Vec<(usize, usize)> = Vec::new();
-        for (left_idx, left_col) in left_columns.iter().enumerate() {
-            for (right_idx, right_col) in right_columns.iter().enumerate() {
-                if left_col == right_col {
-                    shared_vars.push((left_idx, right_idx));
-                }
-            }
-        }
-
-        // Build full schema for the join (left + right columns)
-        let mut full_columns: Vec<String> = left_columns.clone();
-        full_columns.extend(right_columns.clone());
-        let full_schema = derive_rdf_schema(&full_columns);
-
-        // For semi/anti joins, we only output the left columns
-        let output_schema = derive_rdf_schema(&left_columns);
-
-        // Create join condition if there are shared variables
-        let join_condition: Option<Box<dyn JoinCondition>> = if shared_vars.is_empty() {
-            None
+        // Use Anti for NOT EXISTS, Semi for EXISTS
+        let result = if is_negated {
+            common::build_anti_join(left_op, right_op, left_columns, &right_columns, schema)
         } else {
-            Some(Box::new(RdfJoinCondition::new(shared_vars.clone())))
+            common::build_semi_join(left_op, right_op, left_columns, &right_columns, schema)
         };
 
-        // Use Semi for EXISTS, Anti for NOT EXISTS
-        let join_type = if is_negated {
-            JoinType::Anti
-        } else {
-            JoinType::Semi
-        };
-
-        let join_op = Box::new(NestedLoopJoinOperator::new(
-            left_op,
-            right_op,
-            join_condition,
-            join_type,
-            full_schema,
-        ));
-
-        // Project to only output left columns (the original input columns)
-        let projection_exprs: Vec<ProjectExpr> =
-            (0..left_col_count).map(ProjectExpr::Column).collect();
-        let project_op = Box::new(ProjectOperator::new(
-            join_op,
-            projection_exprs,
-            output_schema,
-        ));
-
-        Ok((project_op, left_columns))
+        Ok(result)
     }
 
     /// Plans a DISTINCT operator.
@@ -715,136 +674,38 @@ impl RdfPlanner {
         Ok((operator, output_columns))
     }
 
-    /// Plans a JOIN operator.
+    /// Plans a JOIN operator using HashJoin.
     ///
-    /// For SPARQL, we need to join on shared variables (equi-join).
-    /// Variables that appear in both left and right should be matched.
+    /// For SPARQL, we join on shared variables (equi-join). When no shared
+    /// variables exist, falls back to cross join.
     fn plan_join(
         &self,
         join: &crate::query::plan::JoinOp,
     ) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        use crate::query::planner::common;
         let (left_op, left_columns) = self.plan_operator(&join.left)?;
         let (right_op, right_columns) = self.plan_operator(&join.right)?;
-
-        let left_col_count = left_columns.len();
-
-        // Find shared variables for equi-join
-        let mut shared_vars: Vec<(usize, usize)> = Vec::new(); // (left_idx, right_idx)
-        for (left_idx, left_col) in left_columns.iter().enumerate() {
-            for (right_idx, right_col) in right_columns.iter().enumerate() {
-                if left_col == right_col {
-                    shared_vars.push((left_idx, right_idx));
-                }
-            }
-        }
-
-        // Build the full join output (all left + all right columns)
-        let mut full_columns: Vec<String> = left_columns.clone();
-        full_columns.extend(right_columns.clone());
-        let full_schema = derive_rdf_schema(&full_columns);
-
-        // Determine which columns to project (all left + non-duplicate right)
-        let mut projection_indices: Vec<usize> = (0..left_col_count).collect();
-        let mut output_columns = left_columns.clone();
-        for (right_idx, right_col) in right_columns.iter().enumerate() {
-            if !left_columns.contains(right_col) {
-                projection_indices.push(left_col_count + right_idx);
-                output_columns.push(right_col.clone());
-            }
-        }
-
-        let join_type = if shared_vars.is_empty() {
-            JoinType::Cross
-        } else {
-            JoinType::Inner
-        };
-
-        let join_condition: Option<Box<dyn JoinCondition>> = if shared_vars.is_empty() {
-            None
-        } else {
-            Some(Box::new(RdfJoinCondition::new(shared_vars)))
-        };
-
-        let join_op = Box::new(NestedLoopJoinOperator::new(
+        Ok(common::build_inner_join(
             left_op,
             right_op,
-            join_condition,
-            join_type,
-            full_schema,
-        ));
-
-        // If we have duplicate columns to remove, wrap with projection
-        if projection_indices.len() < full_columns.len() {
-            let output_schema = derive_rdf_schema(&output_columns);
-            let project_op = Box::new(ProjectOperator::select_columns(
-                join_op,
-                projection_indices,
-                output_schema,
-            ));
-            Ok((project_op, output_columns))
-        } else {
-            Ok((join_op, output_columns))
-        }
+            &left_columns,
+            &right_columns,
+            derive_rdf_schema,
+        ))
     }
 
-    /// Plans a LEFT JOIN operator (for SPARQL OPTIONAL).
+    /// Plans a LEFT JOIN operator (for SPARQL OPTIONAL) using HashJoin.
     fn plan_left_join(&self, join: &LeftJoinOp) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        use crate::query::planner::common;
         let (left_op, left_columns) = self.plan_operator(&join.left)?;
         let (right_op, right_columns) = self.plan_operator(&join.right)?;
-
-        let left_col_count = left_columns.len();
-
-        // Find shared variables for equi-join
-        let mut shared_vars: Vec<(usize, usize)> = Vec::new();
-        for (left_idx, left_col) in left_columns.iter().enumerate() {
-            for (right_idx, right_col) in right_columns.iter().enumerate() {
-                if left_col == right_col {
-                    shared_vars.push((left_idx, right_idx));
-                }
-            }
-        }
-
-        // Build the full join output (all left + all right columns)
-        let mut full_columns: Vec<String> = left_columns.clone();
-        full_columns.extend(right_columns.clone());
-        let full_schema = derive_rdf_schema(&full_columns);
-
-        // Determine which columns to project (all left + non-duplicate right)
-        let mut projection_indices: Vec<usize> = (0..left_col_count).collect();
-        let mut output_columns = left_columns.clone();
-        for (right_idx, right_col) in right_columns.iter().enumerate() {
-            if !left_columns.contains(right_col) {
-                projection_indices.push(left_col_count + right_idx);
-                output_columns.push(right_col.clone());
-            }
-        }
-
-        let join_condition: Option<Box<dyn JoinCondition>> = if shared_vars.is_empty() {
-            None
-        } else {
-            Some(Box::new(RdfJoinCondition::new(shared_vars)))
-        };
-
-        let join_op = Box::new(NestedLoopJoinOperator::new(
+        Ok(common::build_left_join(
             left_op,
             right_op,
-            join_condition,
-            JoinType::Left,
-            full_schema,
-        ));
-
-        // If we have duplicate columns to remove, wrap with projection
-        if projection_indices.len() < full_columns.len() {
-            let output_schema = derive_rdf_schema(&output_columns);
-            let project_op = Box::new(ProjectOperator::select_columns(
-                join_op,
-                projection_indices,
-                output_schema,
-            ));
-            Ok((project_op, output_columns))
-        } else {
-            Ok((join_op, output_columns))
-        }
+            &left_columns,
+            &right_columns,
+            derive_rdf_schema,
+        ))
     }
 
     /// Plans an ANTI JOIN operator (for SPARQL MINUS).
@@ -3486,56 +3347,6 @@ fn format_tz_offset(offset_secs: i32) -> String {
 impl Predicate for RdfExpressionPredicate {
     fn evaluate(&self, chunk: &DataChunk, row: usize) -> bool {
         matches!(self.eval(chunk, row), Some(Value::Bool(true)))
-    }
-}
-
-// ============================================================================
-// RDF Join Condition
-// ============================================================================
-
-/// Join condition for joining on shared variables in SPARQL.
-///
-/// This condition checks that shared variables have equal values between
-/// left and right sides of a join.
-struct RdfJoinCondition {
-    /// Pairs of (left_col_idx, right_col_idx) for shared variables
-    shared_vars: Vec<(usize, usize)>,
-}
-
-impl RdfJoinCondition {
-    fn new(shared_vars: Vec<(usize, usize)>) -> Self {
-        Self { shared_vars }
-    }
-}
-
-impl JoinCondition for RdfJoinCondition {
-    fn evaluate(
-        &self,
-        left_chunk: &DataChunk,
-        left_row: usize,
-        right_chunk: &DataChunk,
-        right_row: usize,
-    ) -> bool {
-        // Check that all shared variables have equal values
-        for (left_idx, right_idx) in &self.shared_vars {
-            let left_val = left_chunk
-                .column(*left_idx)
-                .and_then(|c| c.get_value(left_row));
-            let right_val = right_chunk
-                .column(*right_idx)
-                .and_then(|c| c.get_value(right_row));
-
-            match (left_val, right_val) {
-                (Some(l), Some(r)) => {
-                    if l != r {
-                        return false;
-                    }
-                }
-                // If either is null/missing, they don't match
-                _ => return false,
-            }
-        }
-        true
     }
 }
 

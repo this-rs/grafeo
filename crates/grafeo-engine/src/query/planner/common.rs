@@ -110,6 +110,67 @@ pub(crate) fn build_otherwise(
     (operator, columns)
 }
 
+/// Builds an INNER JOIN physical operator.
+///
+/// Finds shared variables between left and right column lists for join keys,
+/// then creates a hash join with inner semantics. Deduplicates shared columns
+/// by projecting away right-side columns that already appear on the left.
+/// Falls back to cross join when no shared variables exist.
+pub(crate) fn build_inner_join(
+    left: Box<dyn Operator>,
+    right: Box<dyn Operator>,
+    left_columns: &[String],
+    right_columns: &[String],
+    schema_fn: impl Fn(&[String]) -> Vec<LogicalType>,
+) -> (Box<dyn Operator>, Vec<String>) {
+    let (probe_keys, build_keys) = find_shared_join_keys(left_columns, right_columns);
+
+    let join_type = if probe_keys.is_empty() {
+        PhysicalJoinType::Cross
+    } else {
+        PhysicalJoinType::Inner
+    };
+
+    // Full join outputs all left + all right columns
+    let mut join_columns: Vec<String> = left_columns.to_vec();
+    join_columns.extend(right_columns.iter().cloned());
+    let join_schema = schema_fn(&join_columns);
+
+    let join_op: Box<dyn Operator> = Box::new(HashJoinOperator::new(
+        left,
+        right,
+        probe_keys,
+        build_keys,
+        join_type,
+        join_schema,
+    ));
+
+    // Deduplicate: keep left columns, then only right columns not already on the left
+    let left_set: std::collections::HashSet<&str> =
+        left_columns.iter().map(String::as_str).collect();
+    let mut keep_indices: Vec<usize> = (0..left_columns.len()).collect();
+    let mut output_columns: Vec<String> = left_columns.to_vec();
+    for (right_idx, right_col) in right_columns.iter().enumerate() {
+        if !left_set.contains(right_col.as_str()) {
+            keep_indices.push(left_columns.len() + right_idx);
+            output_columns.push(right_col.clone());
+        }
+    }
+
+    // If there are duplicates, add a ProjectOperator to strip them
+    if keep_indices.len() < join_columns.len() {
+        let proj_exprs: Vec<ProjectExpr> = keep_indices
+            .iter()
+            .map(|&i| ProjectExpr::Column(i))
+            .collect();
+        let proj_types: Vec<LogicalType> = keep_indices.iter().map(|_| LogicalType::Any).collect();
+        let operator = Box::new(ProjectOperator::new(join_op, proj_exprs, proj_types));
+        (operator, output_columns)
+    } else {
+        (join_op, output_columns)
+    }
+}
+
 /// Builds an ANTI JOIN physical operator.
 ///
 /// Finds shared variables between left and right column lists for join keys,
@@ -129,6 +190,30 @@ pub(crate) fn build_anti_join(
         probe_keys,
         build_keys,
         PhysicalJoinType::Anti,
+        schema,
+    ));
+    (operator, left_columns)
+}
+
+/// Builds a SEMI JOIN physical operator.
+///
+/// Finds shared variables between left and right column lists for join keys,
+/// then creates a hash join with semi semantics (only left rows with a match).
+pub(crate) fn build_semi_join(
+    left: Box<dyn Operator>,
+    right: Box<dyn Operator>,
+    left_columns: Vec<String>,
+    right_columns: &[String],
+    schema: Vec<LogicalType>,
+) -> (Box<dyn Operator>, Vec<String>) {
+    let (probe_keys, build_keys) = find_shared_join_keys(&left_columns, right_columns);
+
+    let operator: Box<dyn Operator> = Box::new(HashJoinOperator::new(
+        left,
+        right,
+        probe_keys,
+        build_keys,
+        PhysicalJoinType::Semi,
         schema,
     ));
     (operator, left_columns)
