@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.23
+
+- Version bump to match workspace release
+
+## 0.5.22
+
+- Version bump to match workspace release
+
 ## 0.5.21
 
 - Initial release of Dart FFI bindings for Grafeo
