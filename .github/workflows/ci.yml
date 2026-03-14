@@ -67,6 +67,11 @@ jobs:
       - name: Build examples
         run: cargo build -p grafeo-examples --bins --features full
 
+      # Validate that all // ISO: annotations in tests reference valid
+      # feature IDs from docs/user-guide/gql/conformance.md.
+      - name: Validate GQL conformance annotations
+        run: python scripts/gql-conformance.py validate
+
       # Full profile: generates docs for every feature-gated module so no
       # broken intra-doc links or missing items slip through.
       - name: Check docs
