@@ -3170,6 +3170,7 @@ impl Session {
 
     /// Core rollback logic, usable from both `&mut self` and `&self` paths.
     fn rollback_inner(&self) -> Result<()> {
+        let _span = tracing::debug_span!("grafeo::tx::rollback").entered();
         // Nested transaction: rollback to the auto-savepoint.
         {
             let mut depth = self.transaction_nesting_depth.lock();

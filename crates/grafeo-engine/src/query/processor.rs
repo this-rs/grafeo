@@ -313,6 +313,7 @@ impl QueryProcessor {
 
     /// Translates an LPG query to a logical plan.
     fn translate_lpg(&self, query: &str, language: QueryLanguage) -> Result<LogicalPlan> {
+        let _span = tracing::debug_span!("grafeo::query::parse", ?language).entered();
         match language {
             #[cfg(feature = "gql")]
             QueryLanguage::Gql => {
