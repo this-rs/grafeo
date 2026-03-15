@@ -2166,11 +2166,15 @@ impl Session {
 
             // Convert to physical plan with transaction context
             // (Physical planning cannot be cached as it depends on transaction state)
+            // Safe to use read-only fast path when: this query has no mutations AND
+            // there is no active transaction that may have prior uncommitted writes.
+            let has_active_tx = self.current_transaction.lock().is_some();
+            let read_only = !has_mutations && !has_active_tx;
             let planner = self.create_planner_for_store_with_read_only(
                 Arc::clone(&active),
                 viewing_epoch,
                 transaction_id,
-                !has_mutations,
+                read_only,
             );
             let mut physical_plan = planner.plan(&optimized_plan)?;
 

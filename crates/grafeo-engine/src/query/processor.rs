@@ -273,7 +273,10 @@ impl QueryProcessor {
         }
 
         // 5. Convert to physical plan with transaction context
-        let is_read_only = !optimized_plan.root.has_mutations();
+        // Read-only fast path: safe when no mutations AND no active transaction
+        // (an active transaction may have prior uncommitted writes from earlier statements)
+        let is_read_only =
+            !optimized_plan.root.has_mutations() && self.transaction_context.is_none();
         let planner = if let Some((epoch, transaction_id)) = self.transaction_context {
             Planner::with_context(
                 Arc::clone(&self.graph_store),
