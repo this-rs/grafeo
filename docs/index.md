@@ -23,6 +23,8 @@ hide:
 
 </div>
 
+[![Grafeo Playground](assets/playground.png)](https://grafeo.ai)
+
 ---
 
 ## Why Grafeo?

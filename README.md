@@ -20,6 +20,8 @@ Grafeo is a graph database built in Rust from the ground up for speed and low me
 
 On the [LDBC Social Network Benchmark](https://github.com/GrafeoDB/graph-bench), Grafeo is the fastest tested graph database in both embedded and server configurations, while using a fraction of the memory of some of the alternatives.
 
+[![Grafeo Playground](docs/assets/playground.png)](https://grafeo.ai)
+
 Grafeo supports both **Labeled Property Graph (LPG)** and **Resource Description Framework (RDF)** data models and all major query languages.
 
 ## Features
