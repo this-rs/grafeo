@@ -2,6 +2,22 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
+## [0.5.23] - Unreleased
+
+### Added
+
+- **Prometheus metrics export** (`metrics` feature): `MetricsRegistry::to_prometheus()` renders all counters, gauges, and histograms in Prometheus text exposition format, ready for `/metrics` HTTP endpoints; `GrafeoDB::metrics_prometheus()` provides one-call access; `snapshot_with_cache()` merges plan cache hit/miss/size stats into the snapshot
+- **Tracing spans**: structured `tracing` spans on query and transaction lifecycle boundaries (`grafeo::session::execute`, `grafeo::query::parse`, `grafeo::query::optimize`, `grafeo::query::plan`, `grafeo::query::execute`, `grafeo::tx::begin`, `grafeo::tx::commit`, `grafeo::tx::rollback`); zero-cost when no subscriber is registered
+- **SQL/PGQ LEFT OUTER JOIN**: `LEFT [OUTER] JOIN MATCH` and `OPTIONAL MATCH` syntax inside `GRAPH_TABLE(...)` expressions, producing `LeftJoinOp` with NULL-padded rows for unmatched patterns
+
+### Changed
+
+- **Read-only expand fast path**: expand operators (`ExpandOperator`, `FactorizedExpandOperator`, `VariableLengthExpandOperator`, `LazyFactorizedChainOperator`) skip versioned MVCC lookups (`edge_type_versioned`, `is_edge_visible_versioned`) for read-only queries without active transactions, using cheaper epoch-only visibility checks instead
+
+### Fixed
+
+- **Questioned edge (`->?`) row preservation**: `pre_expand_plan` was saved after the expand instead of before, causing the LeftJoin to collapse source rows instead of preserving them with NULLs; all unmatched source rows now correctly appear with NULL target columns
+
 ## [0.5.22] - 2026-03-14
 
 ### Added

@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload native library for NuGet
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: native-${{ matrix.rid }}
           path: target/${{ matrix.target }}/release/${{ matrix.native_lib }}
@@ -275,7 +275,7 @@ jobs:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: node-bindings-${{ matrix.target }}
           path: crates/bindings/node/grafeo.*.node
@@ -300,7 +300,7 @@ jobs:
         run: npm install
 
       - name: Download all Node.js artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: crates/bindings/node/artifacts
           pattern: node-bindings-*
@@ -518,12 +518,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '8.0.x'
 
       - name: Download native libraries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: native-libs
           pattern: native-*

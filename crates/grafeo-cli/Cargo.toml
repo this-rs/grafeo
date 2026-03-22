@@ -63,7 +63,7 @@ embedded = ["gql", "ai", "algos", "grafeo-engine/parallel", "grafeo-engine/regex
 full = ["languages", "ai", "algos", "rdf"]
 
 [dev-dependencies]
-tempfile = "3.26"
+tempfile = "3.27"
 
 [lints]
 workspace = true
