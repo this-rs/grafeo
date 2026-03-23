@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use grafeo_common::types::{EdgeId, NodeId, TransactionId};
-use grafeo_core::execution::operators::WriteTracker;
+use grafeo_core::execution::operators::{OperatorError, WriteTracker};
 
 use super::TransactionManager;
 
@@ -23,13 +23,23 @@ impl TransactionWriteTracker {
 }
 
 impl WriteTracker for TransactionWriteTracker {
-    fn record_node_write(&self, transaction_id: TransactionId, node_id: NodeId) {
-        // Silently ignore errors: the transaction may have been aborted concurrently,
-        // and the mutation will fail at commit time anyway.
-        let _ = self.manager.record_write(transaction_id, node_id);
+    fn record_node_write(
+        &self,
+        transaction_id: TransactionId,
+        node_id: NodeId,
+    ) -> Result<(), OperatorError> {
+        self.manager
+            .record_write(transaction_id, node_id)
+            .map_err(|e| OperatorError::WriteConflict(e.to_string()))
     }
 
-    fn record_edge_write(&self, transaction_id: TransactionId, edge_id: EdgeId) {
-        let _ = self.manager.record_write(transaction_id, edge_id);
+    fn record_edge_write(
+        &self,
+        transaction_id: TransactionId,
+        edge_id: EdgeId,
+    ) -> Result<(), OperatorError> {
+        self.manager
+            .record_write(transaction_id, edge_id)
+            .map_err(|e| OperatorError::WriteConflict(e.to_string()))
     }
 }

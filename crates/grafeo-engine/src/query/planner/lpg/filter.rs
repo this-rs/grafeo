@@ -797,11 +797,11 @@ impl super::Planner {
             label_nodes
                 .into_iter()
                 .filter(|&node_id| {
-                    // Use versioned node access when in a transaction
+                    // Use versioned/epoch-aware node access for correct properties
                     let node = if let Some(tx) = tx_id {
                         self.store.get_node_versioned(node_id, epoch, tx)
                     } else {
-                        self.store.get_node(node_id)
+                        self.store.get_node_at_epoch(node_id, epoch)
                     };
                     node.is_some_and(|n| {
                         conditions.iter().all(|(prop, val)| {

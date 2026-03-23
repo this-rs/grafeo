@@ -3,7 +3,7 @@
 #[cfg(feature = "wal")]
 use std::path::Path;
 
-use grafeo_common::types::{EdgeId, NodeId, Value};
+use grafeo_common::types::{EdgeId, EpochId, NodeId, Value};
 use grafeo_common::utils::error::{Error, Result};
 use hashbrown::HashSet;
 
@@ -19,7 +19,8 @@ use crate::catalog::{
 /// Current snapshot version.
 const SNAPSHOT_VERSION: u8 = 4;
 
-/// Binary snapshot format (v4: graph data, named graphs, RDF, schema, and index metadata).
+/// Binary snapshot format (v4: graph data, named graphs, RDF, schema, index metadata,
+/// and property version history for temporal support).
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Snapshot {
     version: u8,
@@ -30,6 +31,8 @@ struct Snapshot {
     rdf_named_graphs: Vec<RdfNamedGraphSnapshot>,
     schema: SnapshotSchema,
     indexes: SnapshotIndexes,
+    /// Current store epoch at snapshot time (0 when temporal is disabled).
+    epoch: u64,
 }
 
 /// Schema metadata within a snapshot.
@@ -96,7 +99,8 @@ struct RdfNamedGraphSnapshot {
 struct SnapshotNode {
     id: NodeId,
     labels: Vec<String>,
-    properties: Vec<(String, Value)>,
+    /// Each property has a list of `(epoch, value)` entries (ascending epoch order).
+    properties: Vec<(String, Vec<(EpochId, Value)>)>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -105,44 +109,78 @@ struct SnapshotEdge {
     src: NodeId,
     dst: NodeId,
     edge_type: String,
-    properties: Vec<(String, Value)>,
+    /// Each property has a list of `(epoch, value)` entries (ascending epoch order).
+    properties: Vec<(String, Vec<(EpochId, Value)>)>,
 }
 
 /// Collects all nodes from a store into snapshot format.
+///
+/// With `temporal`: stores full property version history.
+/// Without: wraps each current value as a single-entry version list at epoch 0.
 fn collect_snapshot_nodes(store: &grafeo_core::graph::lpg::LpgStore) -> Vec<SnapshotNode> {
     store
         .all_nodes()
-        .map(|n| SnapshotNode {
-            id: n.id,
-            labels: n.labels.iter().map(|l| l.to_string()).collect(),
-            properties: n
+        .map(|n| {
+            #[cfg(feature = "temporal")]
+            let properties = store
+                .node_property_history(n.id)
+                .into_iter()
+                .map(|(k, entries)| (k.to_string(), entries))
+                .collect();
+
+            #[cfg(not(feature = "temporal"))]
+            let properties = n
                 .properties
                 .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect(),
+                .map(|(k, v)| (k.to_string(), vec![(EpochId::new(0), v)]))
+                .collect();
+
+            SnapshotNode {
+                id: n.id,
+                labels: n.labels.iter().map(|l| l.to_string()).collect(),
+                properties,
+            }
         })
         .collect()
 }
 
 /// Collects all edges from a store into snapshot format.
+///
+/// With `temporal`: stores full property version history.
+/// Without: wraps each current value as a single-entry version list at epoch 0.
 fn collect_snapshot_edges(store: &grafeo_core::graph::lpg::LpgStore) -> Vec<SnapshotEdge> {
     store
         .all_edges()
-        .map(|e| SnapshotEdge {
-            id: e.id,
-            src: e.src,
-            dst: e.dst,
-            edge_type: e.edge_type.to_string(),
-            properties: e
+        .map(|e| {
+            #[cfg(feature = "temporal")]
+            let properties = store
+                .edge_property_history(e.id)
+                .into_iter()
+                .map(|(k, entries)| (k.to_string(), entries))
+                .collect();
+
+            #[cfg(not(feature = "temporal"))]
+            let properties = e
                 .properties
                 .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect(),
+                .map(|(k, v)| (k.to_string(), vec![(EpochId::new(0), v)]))
+                .collect();
+
+            SnapshotEdge {
+                id: e.id,
+                src: e.src,
+                dst: e.dst,
+                edge_type: e.edge_type.to_string(),
+                properties,
+            }
         })
         .collect()
 }
 
 /// Populates a store from snapshot node/edge data.
+///
+/// With `temporal`: replays all `(epoch, value)` entries into version logs.
+/// Without: reads the latest value from each property's version list.
 fn populate_store_from_snapshot(
     store: &grafeo_core::graph::lpg::LpgStore,
     nodes: Vec<SnapshotNode>,
@@ -151,14 +189,28 @@ fn populate_store_from_snapshot(
     for node in nodes {
         let label_refs: Vec<&str> = node.labels.iter().map(|s| s.as_str()).collect();
         store.create_node_with_id(node.id, &label_refs)?;
-        for (key, value) in node.properties {
-            store.set_node_property(node.id, &key, value);
+        for (key, entries) in node.properties {
+            #[cfg(feature = "temporal")]
+            for (epoch, value) in entries {
+                store.set_node_property_at_epoch(node.id, &key, value, epoch);
+            }
+            #[cfg(not(feature = "temporal"))]
+            if let Some((_, value)) = entries.into_iter().last() {
+                store.set_node_property(node.id, &key, value);
+            }
         }
     }
     for edge in edges {
         store.create_edge_with_id(edge.id, edge.src, edge.dst, &edge.edge_type)?;
-        for (key, value) in edge.properties {
-            store.set_edge_property(edge.id, &key, value);
+        for (key, entries) in edge.properties {
+            #[cfg(feature = "temporal")]
+            for (epoch, value) in entries {
+                store.set_edge_property_at_epoch(edge.id, &key, value, epoch);
+            }
+            #[cfg(not(feature = "temporal"))]
+            if let Some((_, value)) = entries.into_iter().last() {
+                store.set_edge_property(edge.id, &key, value);
+            }
         }
     }
     Ok(())
@@ -249,6 +301,12 @@ pub(super) fn load_snapshot_into_store(
         })?;
 
     populate_store_from_snapshot_ref(store, &snapshot.nodes, &snapshot.edges)?;
+
+    // Restore epoch from snapshot (store-level only; TransactionManager
+    // sync is handled in with_config() after all recovery completes).
+    #[cfg(feature = "temporal")]
+    store.sync_epoch(EpochId::new(snapshot.epoch));
+
     for graph in &snapshot.named_graphs {
         store
             .create_graph(&graph.name)
@@ -284,14 +342,28 @@ fn populate_store_from_snapshot_ref(
     for node in nodes {
         let label_refs: Vec<&str> = node.labels.iter().map(|s| s.as_str()).collect();
         store.create_node_with_id(node.id, &label_refs)?;
-        for (key, value) in &node.properties {
-            store.set_node_property(node.id, key, value.clone());
+        for (key, entries) in &node.properties {
+            #[cfg(feature = "temporal")]
+            for (epoch, value) in entries {
+                store.set_node_property_at_epoch(node.id, key, value.clone(), *epoch);
+            }
+            #[cfg(not(feature = "temporal"))]
+            if let Some((_, value)) = entries.last() {
+                store.set_node_property(node.id, key, value.clone());
+            }
         }
     }
     for edge in edges {
         store.create_edge_with_id(edge.id, edge.src, edge.dst, &edge.edge_type)?;
-        for (key, value) in &edge.properties {
-            store.set_edge_property(edge.id, key, value.clone());
+        for (key, entries) in &edge.properties {
+            #[cfg(feature = "temporal")]
+            for (epoch, value) in entries {
+                store.set_edge_property_at_epoch(edge.id, key, value.clone(), *epoch);
+            }
+            #[cfg(not(feature = "temporal"))]
+            if let Some((_, value)) = entries.last() {
+                store.set_edge_property(edge.id, key, value.clone());
+            }
         }
     }
     Ok(())
@@ -738,11 +810,15 @@ impl super::GrafeoDB {
     // ADMIN API: Snapshot Export/Import
     // =========================================================================
 
-    /// Exports the entire database to a binary snapshot (v4 format).
+    /// Exports the entire database to a binary snapshot.
     ///
     /// The returned bytes can be stored (e.g. in IndexedDB) and later
     /// restored with [`import_snapshot()`](Self::import_snapshot).
     /// Includes all named graph data.
+    ///
+    /// Properties are stored as version-history lists. When `temporal` is
+    /// enabled, the full history is captured. Otherwise, each property is
+    /// wrapped as a single-entry list at epoch 0.
     ///
     /// # Errors
     ///
@@ -802,6 +878,10 @@ impl super::GrafeoDB {
             rdf_named_graphs,
             schema,
             indexes,
+            #[cfg(feature = "temporal")]
+            epoch: self.store.current_epoch().as_u64(),
+            #[cfg(not(feature = "temporal"))]
+            epoch: 0,
         };
 
         let config = bincode::config::standard();
@@ -827,11 +907,10 @@ impl super::GrafeoDB {
             return Err(Error::Internal("empty snapshot data".to_string()));
         }
 
-        // Peek at version byte (bincode standard encodes u8 as raw byte)
-        if data[0] != SNAPSHOT_VERSION {
+        let version = data[0];
+        if version != 4 {
             return Err(Error::Internal(format!(
-                "unsupported snapshot version: {} (expected {SNAPSHOT_VERSION})",
-                data[0]
+                "unsupported snapshot version: {version} (expected 4)"
             )));
         }
 
@@ -849,6 +928,14 @@ impl super::GrafeoDB {
 
         let db = Self::new_in_memory();
         populate_store_from_snapshot(&db.store, snapshot.nodes, snapshot.edges)?;
+
+        // Restore epoch from snapshot
+        #[cfg(feature = "temporal")]
+        {
+            let epoch = EpochId::new(snapshot.epoch);
+            db.store.sync_epoch(epoch);
+            db.transaction_manager.sync_epoch(epoch);
+        }
 
         // Restore named graphs
         for ng in snapshot.named_graphs {
@@ -899,10 +986,10 @@ impl super::GrafeoDB {
             return Err(Error::Internal("empty snapshot data".to_string()));
         }
 
-        if data[0] != SNAPSHOT_VERSION {
+        let version = data[0];
+        if version != 4 {
             return Err(Error::Internal(format!(
-                "unsupported snapshot version: {} (expected {SNAPSHOT_VERSION})",
-                data[0]
+                "unsupported snapshot version: {version} (expected 4)"
             )));
         }
 
@@ -923,6 +1010,14 @@ impl super::GrafeoDB {
         self.store.clear();
 
         populate_store_from_snapshot(&self.store, snapshot.nodes, snapshot.edges)?;
+
+        // Restore epoch from temporal snapshot
+        #[cfg(feature = "temporal")]
+        {
+            let epoch = EpochId::new(snapshot.epoch);
+            self.store.sync_epoch(epoch);
+            self.transaction_manager.sync_epoch(epoch);
+        }
 
         // Restore named graphs
         for ng in snapshot.named_graphs {
@@ -1233,6 +1328,7 @@ mod tests {
             rdf_named_graphs: vec![],
             schema: SnapshotSchema::default(),
             indexes: SnapshotIndexes::default(),
+            epoch: 0,
         };
         bincode::serde::encode_to_vec(&snap, bincode::config::standard()).unwrap()
     }

@@ -176,6 +176,18 @@ impl LpgStore {
                 chain.finalize_epochs(transaction_id, commit_epoch);
             }
         }
+
+        // Finalize PENDING epochs in property and label version logs
+        #[cfg(feature = "temporal")]
+        {
+            self.node_properties.finalize_pending(commit_epoch);
+            self.edge_properties.finalize_pending(commit_epoch);
+            let mut labels = self.node_labels.write();
+            for log in labels.values_mut() {
+                log.finalize_pending(commit_epoch);
+            }
+        }
+
         self.sync_epoch(commit_epoch);
     }
 
@@ -196,6 +208,18 @@ impl LpgStore {
                 index.finalize_epochs(transaction_id, commit_epoch);
             }
         }
+
+        // Finalize PENDING epochs in property and label version logs
+        #[cfg(feature = "temporal")]
+        {
+            self.node_properties.finalize_pending(commit_epoch);
+            self.edge_properties.finalize_pending(commit_epoch);
+            let mut labels = self.node_labels.write();
+            for log in labels.values_mut() {
+                log.finalize_pending(commit_epoch);
+            }
+        }
+
         self.sync_epoch(commit_epoch);
     }
 
@@ -220,6 +244,18 @@ impl LpgStore {
             }
             edges.retain(|_, chain| !chain.is_empty());
         }
+
+        // GC old property and label versions
+        #[cfg(feature = "temporal")]
+        {
+            self.node_properties.gc(min_epoch);
+            self.edge_properties.gc(min_epoch);
+            let mut labels = self.node_labels.write();
+            for log in labels.values_mut() {
+                log.gc(min_epoch);
+            }
+            labels.retain(|_, log| !log.is_empty());
+        }
     }
 
     /// Garbage collects old versions (tiered storage variant).
@@ -239,6 +275,18 @@ impl LpgStore {
                 index.gc(min_epoch);
             }
             versions.retain(|_, index| !index.is_empty());
+        }
+
+        // GC old property and label versions
+        #[cfg(feature = "temporal")]
+        {
+            self.node_properties.gc(min_epoch);
+            self.edge_properties.gc(min_epoch);
+            let mut labels = self.node_labels.write();
+            for log in labels.values_mut() {
+                log.gc(min_epoch);
+            }
+            labels.retain(|_, log| !log.is_empty());
         }
     }
 
@@ -393,7 +441,10 @@ impl LpgStore {
         let mut record = NodeRecord::new(id, epoch);
         record.set_label_count(labels.len() as u16);
 
+        #[cfg(not(feature = "temporal"))]
         self.register_node_labels(id, labels);
+        #[cfg(feature = "temporal")]
+        self.register_node_labels(id, labels, epoch);
 
         // Create version chain with initial version (using SYSTEM tx for recovery)
         let chain = VersionChain::with_initial(record, epoch, TransactionId::SYSTEM);
@@ -428,7 +479,10 @@ impl LpgStore {
         let mut record = NodeRecord::new(id, epoch);
         record.set_label_count(labels.len() as u16);
 
+        #[cfg(not(feature = "temporal"))]
         self.register_node_labels(id, labels);
+        #[cfg(feature = "temporal")]
+        self.register_node_labels(id, labels, epoch);
 
         // Allocate record in arena and get offset (create epoch if needed)
         let arena = self.arena_allocator.arena_or_create(epoch)?;

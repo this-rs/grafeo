@@ -60,6 +60,7 @@ parallel = ["grafeo-engine/parallel"]
 wal = ["grafeo-engine/wal"]
 spill = ["grafeo-engine/spill"]
 mmap = ["grafeo-engine/mmap"]
+temporal = ["grafeo-engine/temporal"]  # Append-only versioned properties
 grafeo-file = ["grafeo-engine/grafeo-file"]  # Single-file .grafeo database format
 
 # Enable platform-optimized memory allocator (10-20% faster allocations)

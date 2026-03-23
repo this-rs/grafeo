@@ -196,6 +196,8 @@ impl Operator for ProjectOperator {
                         let value = if let Some(node_id) = input_col.get_node_id(row) {
                             let node = if let (Some(ep), Some(tx)) = (epoch, tx_id) {
                                 store.get_node_versioned(node_id, ep, tx)
+                            } else if let Some(ep) = epoch {
+                                store.get_node_at_epoch(node_id, ep)
                             } else {
                                 store.get_node(node_id)
                             };
@@ -207,6 +209,8 @@ impl Operator for ProjectOperator {
                                 // edge (common with Generic columns after joins).
                                 let edge = if let (Some(ep), Some(tx)) = (epoch, tx_id) {
                                     store.get_edge_versioned(edge_id, ep, tx)
+                                } else if let Some(ep) = epoch {
+                                    store.get_edge_at_epoch(edge_id, ep)
                                 } else {
                                     store.get_edge(edge_id)
                                 };
@@ -218,6 +222,8 @@ impl Operator for ProjectOperator {
                         } else if let Some(edge_id) = input_col.get_edge_id(row) {
                             let edge = if let (Some(ep), Some(tx)) = (epoch, tx_id) {
                                 store.get_edge_versioned(edge_id, ep, tx)
+                            } else if let Some(ep) = epoch {
+                                store.get_edge_at_epoch(edge_id, ep)
                             } else {
                                 store.get_edge(edge_id)
                             };
@@ -310,6 +316,8 @@ impl Operator for ProjectOperator {
                         let value = if let Some(node_id) = input_col.get_node_id(row) {
                             let node = if let (Some(ep), Some(tx)) = (epoch, tx_id) {
                                 store.get_node_versioned(node_id, ep, tx)
+                            } else if let Some(ep) = epoch {
+                                store.get_node_at_epoch(node_id, ep)
                             } else {
                                 store.get_node(node_id)
                             };
@@ -339,6 +347,8 @@ impl Operator for ProjectOperator {
                         let value = if let Some(edge_id) = input_col.get_edge_id(row) {
                             let edge = if let (Some(ep), Some(tx)) = (epoch, tx_id) {
                                 store.get_edge_versioned(edge_id, ep, tx)
+                            } else if let Some(ep) = epoch {
+                                store.get_edge_at_epoch(edge_id, ep)
                             } else {
                                 store.get_edge(edge_id)
                             };

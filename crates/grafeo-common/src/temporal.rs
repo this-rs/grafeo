@@ -120,6 +120,25 @@ impl<T> VersionLog<T> {
         }
     }
 
+    /// Removes up to `n` PENDING entries from the back of the log.
+    ///
+    /// Used by savepoint rollback to pop only the entries added after the
+    /// savepoint, leaving earlier PENDING entries (from before the savepoint)
+    /// intact.
+    pub fn pop_n_pending(&mut self, n: usize) {
+        for _ in 0..n {
+            if self
+                .entries
+                .last()
+                .is_some_and(|(e, _)| *e == EpochId::PENDING)
+            {
+                self.entries.pop();
+            } else {
+                break;
+            }
+        }
+    }
+
     /// Replaces `EpochId::PENDING` entries with the real commit epoch.
     ///
     /// Iterates backwards from the end, replacing PENDING epochs with
@@ -490,6 +509,43 @@ mod tests {
         let entry = log.latest_entry().unwrap();
         assert_eq!(entry.0, epoch(7));
         assert_eq!(entry.1, 70);
+    }
+
+    #[test]
+    fn test_pop_n_pending_partial() {
+        let mut log = VersionLog::new();
+        log.append(epoch(1), 10);
+        log.append(EpochId::PENDING, 20);
+        log.append(EpochId::PENDING, 30);
+        log.append(EpochId::PENDING, 40);
+
+        // Pop 2 of 3 PENDING entries
+        log.pop_n_pending(2);
+        assert_eq!(log.len(), 2);
+        assert_eq!(log.latest(), Some(&20));
+        // The remaining PENDING entry is still there
+        assert_eq!(log.latest_epoch(), Some(EpochId::PENDING));
+    }
+
+    #[test]
+    fn test_pop_n_pending_stops_at_committed() {
+        let mut log = VersionLog::new();
+        log.append(epoch(1), 10);
+        log.append(EpochId::PENDING, 20);
+
+        // Request more pops than PENDING entries: stops at committed
+        log.pop_n_pending(5);
+        assert_eq!(log.len(), 1);
+        assert_eq!(log.latest(), Some(&10));
+    }
+
+    #[test]
+    fn test_pop_n_pending_zero() {
+        let mut log = VersionLog::new();
+        log.append(EpochId::PENDING, 10);
+
+        log.pop_n_pending(0);
+        assert_eq!(log.len(), 1);
     }
 
     #[test]

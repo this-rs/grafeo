@@ -18,7 +18,7 @@ use super::{FactorizedOperator, FactorizedResult, LazyFactorizedChainOperator, O
 use crate::execution::chunk_state::{FactorizedSelection, LevelSelection};
 use crate::execution::factorized_chunk::FactorizedChunk;
 use crate::graph::GraphStore;
-use grafeo_common::types::{PropertyKey, Value};
+use grafeo_common::types::{EpochId, PropertyKey, Value};
 
 /// A predicate that can be evaluated on factorized data at a specific level.
 ///
@@ -244,6 +244,8 @@ pub struct PropertyPredicate {
     value: Value,
     /// The graph store for property lookups.
     store: Arc<dyn GraphStore>,
+    /// Optional epoch for time-travel property reads.
+    viewing_epoch: Option<EpochId>,
 }
 
 impl PropertyPredicate {
@@ -263,6 +265,7 @@ impl PropertyPredicate {
             op,
             value,
             store,
+            viewing_epoch: None,
         }
     }
 
@@ -352,17 +355,31 @@ impl FactorizedPredicate for PropertyPredicate {
         };
 
         // Try as node first - use direct property lookup (O(1) vs O(properties))
-        if let Some(node_id) = column.get_node_id_physical(physical_idx)
-            && let Some(prop_val) = self.store.get_node_property(node_id, &self.property)
-        {
-            return self.compare_values(&prop_val);
+        if let Some(node_id) = column.get_node_id_physical(physical_idx) {
+            let prop_val = if let Some(epoch) = self.viewing_epoch {
+                self.store
+                    .get_node_at_epoch(node_id, epoch)
+                    .and_then(|n| n.get_property(self.property.as_str()).cloned())
+            } else {
+                self.store.get_node_property(node_id, &self.property)
+            };
+            if let Some(val) = prop_val {
+                return self.compare_values(&val);
+            }
         }
 
         // Try as edge - use direct property lookup
-        if let Some(edge_id) = column.get_edge_id_physical(physical_idx)
-            && let Some(prop_val) = self.store.get_edge_property(edge_id, &self.property)
-        {
-            return self.compare_values(&prop_val);
+        if let Some(edge_id) = column.get_edge_id_physical(physical_idx) {
+            let prop_val = if let Some(epoch) = self.viewing_epoch {
+                self.store
+                    .get_edge_at_epoch(edge_id, epoch)
+                    .and_then(|e| e.get_property(self.property.as_str()).cloned())
+            } else {
+                self.store.get_edge_property(edge_id, &self.property)
+            };
+            if let Some(val) = prop_val {
+                return self.compare_values(&val);
+            }
         }
 
         false
@@ -392,16 +409,30 @@ impl FactorizedPredicate for PropertyPredicate {
         // Evaluate all at once using direct property lookups
         LevelSelection::from_predicate(count, |idx| {
             // Try as node first
-            if let Some(node_id) = column.get_node_id_physical(idx)
-                && let Some(val) = self.store.get_node_property(node_id, &self.property)
-            {
-                return self.compare_values(&val);
+            if let Some(node_id) = column.get_node_id_physical(idx) {
+                let val = if let Some(epoch) = self.viewing_epoch {
+                    self.store
+                        .get_node_at_epoch(node_id, epoch)
+                        .and_then(|n| n.get_property(self.property.as_str()).cloned())
+                } else {
+                    self.store.get_node_property(node_id, &self.property)
+                };
+                if let Some(v) = val {
+                    return self.compare_values(&v);
+                }
             }
             // Try as edge
-            if let Some(edge_id) = column.get_edge_id_physical(idx)
-                && let Some(val) = self.store.get_edge_property(edge_id, &self.property)
-            {
-                return self.compare_values(&val);
+            if let Some(edge_id) = column.get_edge_id_physical(idx) {
+                let val = if let Some(epoch) = self.viewing_epoch {
+                    self.store
+                        .get_edge_at_epoch(edge_id, epoch)
+                        .and_then(|e| e.get_property(self.property.as_str()).cloned())
+                } else {
+                    self.store.get_edge_property(edge_id, &self.property)
+                };
+                if let Some(v) = val {
+                    return self.compare_values(&v);
+                }
             }
             false
         })

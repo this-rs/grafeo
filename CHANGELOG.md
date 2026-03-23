@@ -9,10 +9,11 @@ All notable changes to Grafeo, for future reference (and enjoyment).
 - **Index metadata in snapshots**: property, vector, and text index definitions are now persisted in snapshots (v4 format) and automatically rebuilt on import/restore
 - **Read-only open mode**: `GrafeoDB::open_read_only()` uses a shared file lock so multiple processes can read the same `.grafeo` file concurrently; mutations are rejected at the session level
 - **Agent memory migration tests**: Rust and Python integration tests verifying HNSW at scale, BYOV 384-dim vectors, persistence, concurrent reads, bulk import, and storage size (Discussion #155)
+- **Temporal properties** (`temporal` feature): opt-in append-only property and label versioning with `execute_at_epoch()` for point-in-time queries, `get_node_at_epoch()`/`get_node_history()` APIs, snapshot roundtrip of full version history, and transaction-safe rollback (Discussion #163)
 
 ### Breaking
 
-- **Snapshot format v4**: snapshots created by 0.5.25+ cannot be loaded by older versions, and v3 snapshots are rejected; re-export from a 0.5.24 database to migrate
+- **Snapshot format v4**: properties now stored as version-history lists; snapshots from this release are not compatible with older versions
 
 ### Fixed
 

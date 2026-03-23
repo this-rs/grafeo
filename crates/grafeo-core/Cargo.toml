@@ -64,6 +64,7 @@ spill = ["tokio"]                  # Disk spilling for out-of-core execution
 mmap = []                          # File-backed vector storage (MmapStorage)
 rdf = []  # Enable RDF graph model
 tiered-storage = ["grafeo-common/tiered-storage", "bincode"]  # Enable tiered hot/cold storage
+temporal = ["grafeo-common/temporal"]  # Enable append-only versioned properties
 succinct-indexes = []  # Enable succinct data structures (rank/select bitvectors, Elias-Fano, wavelet trees)
 ring-index = ["succinct-indexes", "rdf"]  # Ring Index for RDF (3x space reduction, requires succinct-indexes and rdf)
 vector-index = ["ordered-float", "rand"]  # HNSW vector index for approximate nearest neighbor search

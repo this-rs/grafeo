@@ -325,6 +325,9 @@ fn convert_operator_error(err: OperatorError) -> Error {
         OperatorError::ConstraintViolation(msg) => {
             Error::InvalidValue(format!("Constraint violation: {msg}"))
         }
+        OperatorError::WriteConflict(msg) => {
+            Error::Transaction(grafeo_common::utils::error::TransactionError::WriteConflict(msg))
+        }
     }
 }
 

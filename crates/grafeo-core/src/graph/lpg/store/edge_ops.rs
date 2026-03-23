@@ -22,6 +22,22 @@ impl LpgStore {
         Some(edge)
     }
 
+    /// Builds an `Edge` with properties as they were at a specific epoch.
+    #[cfg(feature = "temporal")]
+    fn build_edge_at(&self, id: EdgeId, record: &EdgeRecord, epoch: EpochId) -> Option<Edge> {
+        let edge_type = {
+            let id_to_type = self.id_to_edge_type.read();
+            id_to_type.get(record.type_id as usize)?.clone()
+        };
+        let mut edge = Edge::new(id, record.src, record.dst, edge_type);
+        edge.properties = self
+            .edge_properties
+            .get_all_at(id, epoch)
+            .into_iter()
+            .collect();
+        Some(edge)
+    }
+
     /// Creates a new edge.
     pub fn create_edge(&self, src: NodeId, dst: NodeId, edge_type: &str) -> EdgeId {
         self.create_edge_versioned(
@@ -137,7 +153,11 @@ impl LpgStore {
         let id = self.create_edge(src, dst, edge_type);
 
         for (key, value) in properties {
+            #[cfg(not(feature = "temporal"))]
             self.edge_properties.set(id, key.into(), value.into());
+            #[cfg(feature = "temporal")]
+            self.edge_properties
+                .set(id, key.into(), value.into(), self.current_epoch());
         }
 
         id
@@ -161,7 +181,15 @@ impl LpgStore {
         }
         let record = *record;
         drop(edges);
-        self.build_edge(id, &record)
+
+        #[cfg(not(feature = "temporal"))]
+        {
+            self.build_edge(id, &record)
+        }
+        #[cfg(feature = "temporal")]
+        {
+            self.build_edge_at(id, &record, epoch)
+        }
     }
 
     /// Gets an edge by ID at a specific epoch.
@@ -177,7 +205,15 @@ impl LpgStore {
             return None;
         }
         drop(versions);
-        self.build_edge(id, &record)
+
+        #[cfg(not(feature = "temporal"))]
+        {
+            self.build_edge(id, &record)
+        }
+        #[cfg(feature = "temporal")]
+        {
+            self.build_edge_at(id, &record, epoch)
+        }
     }
 
     /// Gets an edge visible to a specific transaction.
@@ -247,8 +283,9 @@ impl LpgStore {
 
     /// Returns all versions of an edge with their creation/deletion epochs, newest first.
     ///
-    /// Each entry is `(created_epoch, deleted_epoch, Edge)`. Note that properties
-    /// reflect the current state (they are not versioned per-epoch).
+    /// Each entry is `(created_epoch, deleted_epoch, Edge)`.
+    /// Without `temporal`: properties reflect the current state.
+    /// With `temporal`: each version has correct historical properties.
     #[must_use]
     #[cfg(not(feature = "tiered-storage"))]
     pub fn get_edge_history(&self, id: EdgeId) -> Vec<(EpochId, Option<EpochId>, Edge)> {
@@ -258,18 +295,38 @@ impl LpgStore {
         };
 
         let id_to_type = self.id_to_edge_type.read();
-        let properties: grafeo_common::types::PropertyMap =
-            self.edge_properties.get_all(id).into_iter().collect();
 
-        chain
-            .history()
-            .filter_map(|(info, record)| {
-                let edge_type = id_to_type.get(record.type_id as usize)?.clone();
-                let mut edge = Edge::new(id, record.src, record.dst, edge_type);
-                edge.properties.clone_from(&properties);
-                Some((info.created_epoch, info.deleted_epoch, edge))
-            })
-            .collect()
+        #[cfg(not(feature = "temporal"))]
+        {
+            let properties: grafeo_common::types::PropertyMap =
+                self.edge_properties.get_all(id).into_iter().collect();
+            chain
+                .history()
+                .filter_map(|(info, record)| {
+                    let edge_type = id_to_type.get(record.type_id as usize)?.clone();
+                    let mut edge = Edge::new(id, record.src, record.dst, edge_type);
+                    edge.properties.clone_from(&properties);
+                    Some((info.created_epoch, info.deleted_epoch, edge))
+                })
+                .collect()
+        }
+
+        #[cfg(feature = "temporal")]
+        {
+            chain
+                .history()
+                .filter_map(|(info, record)| {
+                    let edge_type = id_to_type.get(record.type_id as usize)?.clone();
+                    let mut edge = Edge::new(id, record.src, record.dst, edge_type);
+                    edge.properties = self
+                        .edge_properties
+                        .get_all_at(id, info.created_epoch)
+                        .into_iter()
+                        .collect();
+                    Some((info.created_epoch, info.deleted_epoch, edge))
+                })
+                .collect()
+        }
     }
 
     /// Returns all versions of an edge with their creation/deletion epochs, newest first.
@@ -334,7 +391,10 @@ impl LpgStore {
             }
 
             // Remove properties
+            #[cfg(not(feature = "temporal"))]
             self.edge_properties.remove_all(id);
+            #[cfg(feature = "temporal")]
+            self.edge_properties.remove_all(id, self.current_epoch());
 
             self.live_edge_count.fetch_sub(1, Ordering::Relaxed);
             self.decrement_edge_type_count(type_id);
@@ -380,7 +440,10 @@ impl LpgStore {
             }
 
             // Remove properties
+            #[cfg(not(feature = "temporal"))]
             self.edge_properties.remove_all(id);
+            #[cfg(feature = "temporal")]
+            self.edge_properties.remove_all(id, self.current_epoch());
 
             self.live_edge_count.fetch_sub(1, Ordering::Relaxed);
             self.decrement_edge_type_count(type_id);
@@ -437,7 +500,10 @@ impl LpgStore {
             }
 
             // Remove properties
+            #[cfg(not(feature = "temporal"))]
             self.edge_properties.remove_all(id);
+            #[cfg(feature = "temporal")]
+            self.edge_properties.remove_all(id, self.current_epoch());
 
             self.live_edge_count.fetch_sub(1, Ordering::Relaxed);
             self.decrement_edge_type_count(type_id);
@@ -512,7 +578,10 @@ impl LpgStore {
             }
 
             // Remove properties
+            #[cfg(not(feature = "temporal"))]
             self.edge_properties.remove_all(id);
+            #[cfg(feature = "temporal")]
+            self.edge_properties.remove_all(id, self.current_epoch());
 
             self.live_edge_count.fetch_sub(1, Ordering::Relaxed);
             self.decrement_edge_type_count(type_id);

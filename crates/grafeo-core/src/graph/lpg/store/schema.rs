@@ -1,6 +1,8 @@
 //! Schema, label, edge-type, and property-key methods for [`LpgStore`].
 
 use super::{LpgStore, PropertyUndoEntry};
+#[cfg(feature = "temporal")]
+use grafeo_common::types::EpochId;
 use grafeo_common::types::{NodeId, TransactionId};
 use grafeo_common::utils::hash::FxHashMap;
 
@@ -29,13 +31,34 @@ impl LpgStore {
 
         // Add to node_labels map
         let mut node_labels = self.node_labels.write();
-        let label_set = node_labels.entry(node_id).or_default();
 
-        if label_set.contains(&label_id) {
-            return false; // Already has this label
+        #[cfg(not(feature = "temporal"))]
+        {
+            let label_set = node_labels.entry(node_id).or_default();
+            if label_set.contains(&label_id) {
+                return false;
+            }
+            label_set.insert(label_id);
         }
 
-        label_set.insert(label_id);
+        #[cfg(feature = "temporal")]
+        {
+            let current = node_labels
+                .get(&node_id)
+                .and_then(|log| log.latest())
+                .cloned()
+                .unwrap_or_default();
+            if current.contains(&label_id) {
+                return false;
+            }
+            let mut new_set = current;
+            new_set.insert(label_id);
+            node_labels
+                .entry(node_id)
+                .or_default()
+                .append(self.current_epoch(), new_set);
+        }
+
         drop(node_labels);
 
         // Add to label_index
@@ -46,6 +69,7 @@ impl LpgStore {
         index[label_id as usize].insert(node_id, ());
 
         // Update label count in node record
+        #[cfg(not(feature = "temporal"))]
         if let Some(chain) = self.nodes.write().get_mut(&node_id)
             && let Some(record) = chain.latest_mut()
         {
@@ -86,13 +110,34 @@ impl LpgStore {
 
         // Add to node_labels map
         let mut node_labels = self.node_labels.write();
-        let label_set = node_labels.entry(node_id).or_default();
 
-        if label_set.contains(&label_id) {
-            return false; // Already has this label
+        #[cfg(not(feature = "temporal"))]
+        {
+            let label_set = node_labels.entry(node_id).or_default();
+            if label_set.contains(&label_id) {
+                return false;
+            }
+            label_set.insert(label_id);
         }
 
-        label_set.insert(label_id);
+        #[cfg(feature = "temporal")]
+        {
+            let current = node_labels
+                .get(&node_id)
+                .and_then(|log| log.latest())
+                .cloned()
+                .unwrap_or_default();
+            if current.contains(&label_id) {
+                return false;
+            }
+            let mut new_set = current;
+            new_set.insert(label_id);
+            node_labels
+                .entry(node_id)
+                .or_default()
+                .append(self.current_epoch(), new_set);
+        }
+
         drop(node_labels);
 
         // Add to label_index
@@ -101,9 +146,6 @@ impl LpgStore {
             index.resize(label_id as usize + 1, FxHashMap::default());
         }
         index[label_id as usize].insert(node_id, ());
-
-        // Note: label_count in record is not updated for tiered storage.
-        // The record is immutable once allocated in the arena.
 
         true
     }
@@ -138,13 +180,36 @@ impl LpgStore {
 
         // Remove from node_labels map
         let mut node_labels = self.node_labels.write();
-        if let Some(label_set) = node_labels.get_mut(&node_id) {
-            if !label_set.remove(&label_id) {
-                return false; // Node doesn't have this label
+
+        #[cfg(not(feature = "temporal"))]
+        {
+            if let Some(label_set) = node_labels.get_mut(&node_id) {
+                if !label_set.remove(&label_id) {
+                    return false;
+                }
+            } else {
+                return false;
             }
-        } else {
-            return false;
         }
+
+        #[cfg(feature = "temporal")]
+        {
+            let current = node_labels
+                .get(&node_id)
+                .and_then(|log| log.latest())
+                .cloned()
+                .unwrap_or_default();
+            if !current.contains(&label_id) {
+                return false;
+            }
+            let mut new_set = current;
+            new_set.remove(&label_id);
+            node_labels
+                .entry(node_id)
+                .or_default()
+                .append(self.current_epoch(), new_set);
+        }
+
         drop(node_labels);
 
         // Remove from label_index
@@ -154,6 +219,7 @@ impl LpgStore {
         }
 
         // Update label count in node record
+        #[cfg(not(feature = "temporal"))]
         if let Some(chain) = self.nodes.write().get_mut(&node_id)
             && let Some(record) = chain.latest_mut()
         {
@@ -194,19 +260,42 @@ impl LpgStore {
             let label_ids = self.label_to_id.read();
             match label_ids.get(label) {
                 Some(&id) => id,
-                None => return false, // Label doesn't exist
+                None => return false,
             }
         };
 
         // Remove from node_labels map
         let mut node_labels = self.node_labels.write();
-        if let Some(label_set) = node_labels.get_mut(&node_id) {
-            if !label_set.remove(&label_id) {
-                return false; // Node doesn't have this label
+
+        #[cfg(not(feature = "temporal"))]
+        {
+            if let Some(label_set) = node_labels.get_mut(&node_id) {
+                if !label_set.remove(&label_id) {
+                    return false;
+                }
+            } else {
+                return false;
             }
-        } else {
-            return false;
         }
+
+        #[cfg(feature = "temporal")]
+        {
+            let current = node_labels
+                .get(&node_id)
+                .and_then(|log| log.latest())
+                .cloned()
+                .unwrap_or_default();
+            if !current.contains(&label_id) {
+                return false;
+            }
+            let mut new_set = current;
+            new_set.remove(&label_id);
+            node_labels
+                .entry(node_id)
+                .or_default()
+                .append(self.current_epoch(), new_set);
+        }
+
         drop(node_labels);
 
         // Remove from label_index
@@ -214,8 +303,6 @@ impl LpgStore {
         if (label_id as usize) < index.len() {
             index[label_id as usize].remove(&node_id);
         }
-
-        // Note: label_count in record is not updated for tiered storage.
 
         true
     }
@@ -307,6 +394,7 @@ impl LpgStore {
 
     /// Adds a label to a node within a transaction, recording the change
     /// in the undo log so it can be reversed on rollback.
+    #[cfg(not(feature = "temporal"))]
     pub fn add_label_versioned(
         &self,
         node_id: NodeId,
@@ -327,8 +415,58 @@ impl LpgStore {
         added
     }
 
+    /// Adds a label to a node within a transaction (temporal version).
+    ///
+    /// Uses `EpochId::PENDING` for the version log entry, finalized on commit.
+    #[cfg(feature = "temporal")]
+    pub fn add_label_versioned(
+        &self,
+        node_id: NodeId,
+        label: &str,
+        transaction_id: TransactionId,
+    ) -> bool {
+        let label_id = self.get_or_create_label_id(label);
+
+        let mut node_labels = self.node_labels.write();
+        let current = node_labels
+            .get(&node_id)
+            .and_then(|log| log.latest())
+            .cloned()
+            .unwrap_or_default();
+        if current.contains(&label_id) {
+            return false;
+        }
+        let mut new_set = current;
+        new_set.insert(label_id);
+        node_labels
+            .entry(node_id)
+            .or_default()
+            .append(EpochId::PENDING, new_set);
+        drop(node_labels);
+
+        // Update label_index
+        let mut index = self.label_index.write();
+        if (label_id as usize) >= index.len() {
+            index.resize(label_id as usize + 1, FxHashMap::default());
+        }
+        index[label_id as usize].insert(node_id, ());
+
+        // Record in undo log
+        self.property_undo_log
+            .write()
+            .entry(transaction_id)
+            .or_default()
+            .push(PropertyUndoEntry::LabelAdded {
+                node_id,
+                label: label.to_string(),
+            });
+
+        true
+    }
+
     /// Removes a label from a node within a transaction, recording the change
     /// in the undo log so it can be restored on rollback.
+    #[cfg(not(feature = "temporal"))]
     pub fn remove_label_versioned(
         &self,
         node_id: NodeId,
@@ -347,5 +485,57 @@ impl LpgStore {
                 });
         }
         removed
+    }
+
+    /// Removes a label from a node within a transaction (temporal version).
+    #[cfg(feature = "temporal")]
+    pub fn remove_label_versioned(
+        &self,
+        node_id: NodeId,
+        label: &str,
+        transaction_id: TransactionId,
+    ) -> bool {
+        let label_id = {
+            let label_ids = self.label_to_id.read();
+            match label_ids.get(label) {
+                Some(&id) => id,
+                None => return false,
+            }
+        };
+
+        let mut node_labels = self.node_labels.write();
+        let current = node_labels
+            .get(&node_id)
+            .and_then(|log| log.latest())
+            .cloned()
+            .unwrap_or_default();
+        if !current.contains(&label_id) {
+            return false;
+        }
+        let mut new_set = current;
+        new_set.remove(&label_id);
+        node_labels
+            .entry(node_id)
+            .or_default()
+            .append(EpochId::PENDING, new_set);
+        drop(node_labels);
+
+        // Update label_index
+        let mut index = self.label_index.write();
+        if (label_id as usize) < index.len() {
+            index[label_id as usize].remove(&node_id);
+        }
+
+        // Record in undo log
+        self.property_undo_log
+            .write()
+            .entry(transaction_id)
+            .or_default()
+            .push(PropertyUndoEntry::LabelRemoved {
+                node_id,
+                label: label.to_string(),
+            });
+
+        true
     }
 }

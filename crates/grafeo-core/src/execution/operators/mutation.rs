@@ -265,8 +265,15 @@ impl CreateNodeOperator {
         }
 
         // Phase 3: Write properties to the store
-        for (name, value) in resolved_props.iter() {
-            self.store.set_node_property(node_id, name, value.clone());
+        if let Some(tid) = self.transaction_id {
+            for (name, value) in resolved_props.iter() {
+                self.store
+                    .set_node_property_versioned(node_id, name, value.clone(), tid);
+            }
+        } else {
+            for (name, value) in resolved_props.iter() {
+                self.store.set_node_property(node_id, name, value.clone());
+            }
         }
         Ok(())
     }
@@ -304,7 +311,7 @@ impl Operator for CreateNodeOperator {
 
                     // Record write for conflict detection
                     if let (Some(tracker), Some(tid)) = (&self.write_tracker, self.transaction_id) {
-                        tracker.record_node_write(tid, node_id);
+                        tracker.record_node_write(tid, node_id)?;
                     }
 
                     // Validate and set properties
@@ -361,7 +368,7 @@ impl Operator for CreateNodeOperator {
 
             // Record write for conflict detection
             if let (Some(tracker), Some(tid)) = (&self.write_tracker, self.transaction_id) {
-                tracker.record_node_write(tid, node_id);
+                tracker.record_node_write(tid, node_id)?;
             }
 
             // Validate and set properties
@@ -586,12 +593,19 @@ impl Operator for CreateEdgeOperator {
 
                 // Record write for conflict detection
                 if let (Some(tracker), Some(tid)) = (&self.write_tracker, self.transaction_id) {
-                    tracker.record_edge_write(tid, edge_id);
+                    tracker.record_edge_write(tid, edge_id)?;
                 }
 
                 // Set properties
-                for (name, value) in resolved_props {
-                    self.store.set_edge_property(edge_id, &name, value);
+                if let Some(tid) = self.transaction_id {
+                    for (name, value) in resolved_props {
+                        self.store
+                            .set_edge_property_versioned(edge_id, &name, value, tid);
+                    }
+                } else {
+                    for (name, value) in resolved_props {
+                        self.store.set_edge_property(edge_id, &name, value);
+                    }
                 }
 
                 // Copy input columns
@@ -734,7 +748,7 @@ impl Operator for DeleteNodeOperator {
                         if let (Some(tracker), Some(tid)) =
                             (&self.write_tracker, self.transaction_id)
                         {
-                            tracker.record_edge_write(tid, edge_id);
+                            tracker.record_edge_write(tid, edge_id)?;
                         }
                     }
                 } else {
@@ -753,7 +767,7 @@ impl Operator for DeleteNodeOperator {
 
                 // Record write for conflict detection
                 if let (Some(tracker), Some(tid)) = (&self.write_tracker, self.transaction_id) {
-                    tracker.record_node_write(tid, node_id);
+                    tracker.record_node_write(tid, node_id)?;
                 }
 
                 // Pass through all input columns so downstream RETURN can
@@ -876,7 +890,7 @@ impl Operator for DeleteEdgeOperator {
 
                 // Record write for conflict detection
                 if let (Some(tracker), Some(tid)) = (&self.write_tracker, self.transaction_id) {
-                    tracker.record_edge_write(tid, edge_id);
+                    tracker.record_edge_write(tid, edge_id)?;
                 }
 
                 // Pass through all input columns
@@ -992,7 +1006,7 @@ impl Operator for AddLabelOperator {
 
                 // Record write for conflict detection
                 if let (Some(tracker), Some(tid)) = (&self.write_tracker, self.transaction_id) {
-                    tracker.record_node_write(tid, node_id);
+                    tracker.record_node_write(tid, node_id)?;
                 }
 
                 // Add all labels
@@ -1113,7 +1127,7 @@ impl Operator for RemoveLabelOperator {
 
                 // Record write for conflict detection
                 if let (Some(tracker), Some(tid)) = (&self.write_tracker, self.transaction_id) {
-                    tracker.record_node_write(tid, node_id);
+                    tracker.record_node_write(tid, node_id)?;
                 }
 
                 // Remove all labels
@@ -1309,9 +1323,9 @@ impl Operator for SetPropertyOperator {
                 // Record write for conflict detection
                 if let (Some(tracker), Some(tid)) = (&self.write_tracker, self.transaction_id) {
                     if self.is_edge {
-                        tracker.record_edge_write(tid, EdgeId(entity_id));
+                        tracker.record_edge_write(tid, EdgeId(entity_id))?;
                     } else {
-                        tracker.record_node_write(tid, NodeId(entity_id));
+                        tracker.record_node_write(tid, NodeId(entity_id))?;
                     }
                 }
 

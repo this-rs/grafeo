@@ -52,6 +52,8 @@ use grafeo_common::memory::arena::AllocError;
 use grafeo_common::memory::arena::ArenaAllocator;
 #[cfg(feature = "tiered-storage")]
 use grafeo_common::mvcc::VersionIndex;
+#[cfg(feature = "temporal")]
+use grafeo_common::temporal::VersionLog;
 
 /// Undo entry for a property mutation within a transaction.
 ///
@@ -327,7 +329,12 @@ pub struct LpgStore {
     /// Node labels: node_id -> set of label IDs.
     /// Reverse mapping to efficiently get labels for a node.
     /// Lock order: 6
+    #[cfg(not(feature = "temporal"))]
     pub(super) node_labels: RwLock<FxHashMap<NodeId, FxHashSet<u32>>>,
+    /// Versioned node labels: node_id -> version log of label sets.
+    /// Lock order: 6
+    #[cfg(feature = "temporal")]
+    pub(super) node_labels: RwLock<FxHashMap<NodeId, VersionLog<FxHashSet<u32>>>>,
 
     /// Property indexes: property_key -> (value -> set of node IDs).
     ///

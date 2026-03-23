@@ -409,6 +409,11 @@ impl GrafeoDB {
         // Create query cache with default capacity (1000 queries)
         let query_cache = Arc::new(QueryCache::default());
 
+        // After all snapshot/WAL recovery, sync TransactionManager epoch
+        // with the store so queries use the correct viewing epoch.
+        #[cfg(feature = "temporal")]
+        transaction_manager.sync_epoch(store.current_epoch());
+
         Ok(Self {
             config,
             store,
@@ -792,9 +797,16 @@ impl GrafeoDB {
                 | WalRecord::CreateRdfGraph { .. }
                 | WalRecord::DropRdfGraph { .. } => {}
 
-                WalRecord::TransactionCommit { .. }
-                | WalRecord::TransactionAbort { .. }
-                | WalRecord::Checkpoint { .. } => {
+                WalRecord::TransactionCommit { .. } => {
+                    // In temporal mode, advance the store epoch on each committed
+                    // transaction so that subsequent property/label operations
+                    // are recorded at the correct epoch in their VersionLogs.
+                    #[cfg(feature = "temporal")]
+                    {
+                        target_store.new_epoch();
+                    }
+                }
+                WalRecord::TransactionAbort { .. } | WalRecord::Checkpoint { .. } => {
                     // Transaction control records don't need replay action
                     // (recovery already filtered to only committed transactions)
                 }

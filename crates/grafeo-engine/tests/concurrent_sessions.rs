@@ -984,13 +984,11 @@ fn test_drop_session_mid_transaction() {
 // Write-Write Conflict Tests (T1-07)
 // ============================================================================
 
-/// Tests that two concurrent sessions modifying the same node property through
-/// `Session.execute()` both succeed (no conflict detection at query level).
+/// Tests first-writer-wins conflict detection: two concurrent sessions
+/// modifying the same node property through `Session.execute()`.
 ///
-/// The `TransactionManager` has write-write conflict detection (unit-tested in
-/// `transaction/manager.rs`), but the query execution path does not wire through
-/// `record_write()`. This test documents the current behavior and will serve as
-/// a regression test when conflict detection is wired end-to-end.
+/// The second session's SET fails immediately (not at commit time) because
+/// the first session already recorded a write to the same entity.
 #[test]
 fn test_write_write_conflict_through_execute() {
     let db = GrafeoDB::new_in_memory();
@@ -1005,21 +1003,21 @@ fn test_write_write_conflict_through_execute() {
     s1.execute("MATCH (a:Account {name: 'shared'}) SET a.balance = 200")
         .unwrap();
 
-    // Session 2: begin tx, read and update the same node
+    // Session 2: begin tx, attempt to update the same node
     let mut s2 = db.session();
     s2.begin_transaction().unwrap();
-    s2.execute("MATCH (a:Account {name: 'shared'}) SET a.balance = 300")
-        .unwrap();
-
-    // First commit succeeds, second detects write-write conflict
-    let commit1 = s1.commit();
-    let commit2 = s2.commit();
-
-    assert!(commit1.is_ok(), "First commit should succeed: {commit1:?}");
+    let set_result = s2.execute("MATCH (a:Account {name: 'shared'}) SET a.balance = 300");
     assert!(
-        commit2.is_err(),
-        "Second commit should fail with write-write conflict: {commit2:?}"
+        set_result.is_err(),
+        "Second SET should fail with write-write conflict: {set_result:?}"
     );
+
+    // First commit succeeds
+    let commit1 = s1.commit();
+    assert!(commit1.is_ok(), "First commit should succeed: {commit1:?}");
+
+    // s2 rollback (transaction is still active even though SET failed)
+    let _ = s2.rollback();
 
     // Verify final state: first writer's value persists
     let result = session

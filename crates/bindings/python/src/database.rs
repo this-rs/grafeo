@@ -299,6 +299,52 @@ impl PyGrafeoDB {
         self.execute_language_impl("gql", query, params)
     }
 
+    /// Execute a GQL query at a specific historical epoch.
+    ///
+    /// Returns results as they would have appeared at the given epoch.
+    /// This is a point-in-time query: all nodes, edges, and properties
+    /// reflect the state at that epoch.
+    ///
+    /// Example:
+    ///     result = db.execute_at_epoch("MATCH (n:Server) RETURN n.status", epoch=5)
+    #[pyo3(signature = (query, epoch, params=None))]
+    fn execute_at_epoch(
+        &self,
+        query: &str,
+        epoch: u64,
+        params: Option<&Bound<'_, pyo3::types::PyDict>>,
+    ) -> PyResult<PyQueryResult> {
+        let db = self.inner.read();
+        let session = db.session();
+        let param_map = if let Some(p) = params {
+            let mut map = HashMap::new();
+            for (key, value) in p.iter() {
+                let key_str: String = key.extract()?;
+                let val = PyValue::from_py(&value)?;
+                map.insert(key_str, val);
+            }
+            Some(map)
+        } else {
+            None
+        };
+        let result = session
+            .execute_at_epoch_with_params(
+                query,
+                grafeo_common::types::EpochId::new(epoch),
+                param_map,
+            )
+            .map_err(PyGrafeoError::from)?;
+        let (nodes, edges) = extract_entities(&result, &db);
+        Ok(PyQueryResult::with_metrics(
+            result.columns,
+            result.rows,
+            nodes,
+            edges,
+            result.execution_time_ms,
+            result.rows_scanned,
+        ))
+    }
+
     /// Execute a query and return a query builder.
     fn query(&self, query: String) -> PyQueryBuilder {
         PyQueryBuilder::create(query)
@@ -562,6 +608,123 @@ impl PyGrafeoDB {
         } else {
             Ok(None)
         }
+    }
+
+    /// Get a node at a specific historical epoch.
+    ///
+    /// Returns the node as it existed at the given epoch, including
+    /// properties and labels at that point in time.
+    ///
+    /// Returns None if the node didn't exist at that epoch.
+    fn get_node_at_epoch(&self, id: u64, epoch: u64) -> PyResult<Option<PyNode>> {
+        let db = self.inner.read();
+        let node_id = NodeId(id);
+        let epoch_id = grafeo_common::types::EpochId::new(epoch);
+
+        if let Some(node) = db.get_node_at_epoch(node_id, epoch_id) {
+            let labels: Vec<String> = node.labels.iter().map(|s| s.to_string()).collect();
+            let properties: HashMap<String, grafeo_common::types::Value> = node
+                .properties
+                .into_iter()
+                .map(|(k, v)| (k.as_str().to_string(), v))
+                .collect();
+            Ok(Some(PyNode::new(node_id, labels, properties)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get an edge at a specific historical epoch.
+    ///
+    /// Returns the edge as it existed at the given epoch, including
+    /// properties at that point in time.
+    ///
+    /// Returns None if the edge didn't exist at that epoch.
+    fn get_edge_at_epoch(&self, id: u64, epoch: u64) -> PyResult<Option<PyEdge>> {
+        let db = self.inner.read();
+        let edge_id = EdgeId(id);
+        let epoch_id = grafeo_common::types::EpochId::new(epoch);
+
+        if let Some(edge) = db.get_edge_at_epoch(edge_id, epoch_id) {
+            let properties: HashMap<String, grafeo_common::types::Value> = edge
+                .properties
+                .into_iter()
+                .map(|(k, v)| (k.as_str().to_string(), v))
+                .collect();
+            Ok(Some(PyEdge::new(
+                edge_id,
+                edge.edge_type.to_string(),
+                edge.src,
+                edge.dst,
+                properties,
+            )))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get the version history of a node.
+    ///
+    /// Returns a list of (created_epoch, deleted_epoch, node) tuples
+    /// representing each version of the node. When the `temporal` feature
+    /// is enabled, each version includes the correct properties at that epoch.
+    fn get_node_history(&self, id: u64) -> PyResult<Vec<(u64, Option<u64>, PyNode)>> {
+        let db = self.inner.read();
+        let node_id = NodeId(id);
+
+        let history = db.get_node_history(node_id);
+        let mut result = Vec::with_capacity(history.len());
+        for (created, deleted, node) in history {
+            let labels: Vec<String> = node.labels.iter().map(|s| s.to_string()).collect();
+            let properties: HashMap<String, grafeo_common::types::Value> = node
+                .properties
+                .into_iter()
+                .map(|(k, v)| (k.as_str().to_string(), v))
+                .collect();
+            result.push((
+                created.as_u64(),
+                deleted.map(|d| d.as_u64()),
+                PyNode::new(node_id, labels, properties),
+            ));
+        }
+        Ok(result)
+    }
+
+    /// Get the version history of an edge.
+    ///
+    /// Returns a list of (created_epoch, deleted_epoch, edge) tuples.
+    fn get_edge_history(&self, id: u64) -> PyResult<Vec<(u64, Option<u64>, PyEdge)>> {
+        let db = self.inner.read();
+        let edge_id = EdgeId(id);
+
+        let history = db.get_edge_history(edge_id);
+        let mut result = Vec::with_capacity(history.len());
+        for (created, deleted, edge) in history {
+            let properties: HashMap<String, grafeo_common::types::Value> = edge
+                .properties
+                .into_iter()
+                .map(|(k, v)| (k.as_str().to_string(), v))
+                .collect();
+            result.push((
+                created.as_u64(),
+                deleted.map(|d| d.as_u64()),
+                PyEdge::new(
+                    edge_id,
+                    edge.edge_type.to_string(),
+                    edge.src,
+                    edge.dst,
+                    properties,
+                ),
+            ));
+        }
+        Ok(result)
+    }
+
+    /// Returns the current epoch of the database.
+    ///
+    /// The epoch increments with each committed transaction.
+    fn current_epoch(&self) -> u64 {
+        self.inner.read().current_epoch().as_u64()
     }
 
     /// Get all nodes with a specific label and their properties.

@@ -21,6 +21,7 @@ impl LpgStore {
     /// Registers labels for a node: builds the label ID set, updates the
     /// label index (single lock acquisition), and stores the node-to-labels
     /// mapping.
+    #[cfg(not(feature = "temporal"))]
     pub(super) fn register_node_labels(&self, id: NodeId, labels: &[&str]) {
         let mut node_label_set = FxHashSet::default();
         let mut label_ids = Vec::with_capacity(labels.len());
@@ -43,12 +44,43 @@ impl LpgStore {
         self.node_labels.write().insert(id, node_label_set);
     }
 
+    #[cfg(feature = "temporal")]
+    pub(super) fn register_node_labels(&self, id: NodeId, labels: &[&str], epoch: EpochId) {
+        use grafeo_common::temporal::VersionLog;
+
+        let mut node_label_set = FxHashSet::default();
+        let mut label_ids = Vec::with_capacity(labels.len());
+        for label in labels {
+            let label_id = self.get_or_create_label_id(label);
+            node_label_set.insert(label_id);
+            label_ids.push(label_id);
+        }
+
+        // Update label index with a single lock acquisition
+        let mut index = self.label_index.write();
+        for label_id in label_ids {
+            if index.len() <= label_id as usize {
+                index.resize_with(label_id as usize + 1, FxHashMap::default);
+            }
+            index[label_id as usize].insert(id, ());
+        }
+        drop(index);
+
+        self.node_labels
+            .write()
+            .insert(id, VersionLog::with_value(epoch, node_label_set));
+    }
+
     /// Builds a `Node` populated with labels and properties for the given ID.
+    ///
+    /// Returns the current (latest) state of the node.
     fn build_node(&self, id: NodeId) -> Node {
         let mut node = Node::new(id);
 
         let id_to_label = self.id_to_label.read();
         let node_labels = self.node_labels.read();
+
+        #[cfg(not(feature = "temporal"))]
         if let Some(label_ids) = node_labels.get(&id) {
             for &label_id in label_ids {
                 if let Some(label) = id_to_label.get(label_id as usize) {
@@ -57,7 +89,46 @@ impl LpgStore {
             }
         }
 
+        #[cfg(feature = "temporal")]
+        if let Some(log) = node_labels.get(&id)
+            && let Some(label_ids) = log.latest()
+        {
+            for &label_id in label_ids {
+                if let Some(label) = id_to_label.get(label_id as usize) {
+                    node.labels.push(label.clone());
+                }
+            }
+        }
+
         node.properties = self.node_properties.get_all(id).into_iter().collect();
+        node
+    }
+
+    /// Builds a `Node` with labels and properties as they were at a specific epoch.
+    ///
+    /// This is the critical method that makes `get_node_at_epoch()` return
+    /// correct historical property values instead of current ones.
+    #[cfg(feature = "temporal")]
+    fn build_node_at(&self, id: NodeId, epoch: EpochId) -> Node {
+        let mut node = Node::new(id);
+
+        let id_to_label = self.id_to_label.read();
+        let node_labels = self.node_labels.read();
+        if let Some(log) = node_labels.get(&id)
+            && let Some(label_ids) = log.at(epoch)
+        {
+            for &label_id in label_ids {
+                if let Some(label) = id_to_label.get(label_id as usize) {
+                    node.labels.push(label.clone());
+                }
+            }
+        }
+
+        node.properties = self
+            .node_properties
+            .get_all_at(id, epoch)
+            .into_iter()
+            .collect();
         node
     }
 
@@ -75,8 +146,6 @@ impl LpgStore {
         let mut record = NodeRecord::new(id, epoch);
         record.set_label_count(labels.len() as u16);
 
-        self.register_node_labels(id, labels);
-
         // Uncommitted transactional versions use PENDING epoch so they are
         // invisible to other sessions until the transaction commits.
         let version_epoch = if transaction_id == TransactionId::SYSTEM {
@@ -84,6 +153,12 @@ impl LpgStore {
         } else {
             EpochId::PENDING
         };
+
+        #[cfg(not(feature = "temporal"))]
+        self.register_node_labels(id, labels);
+        #[cfg(feature = "temporal")]
+        self.register_node_labels(id, labels, version_epoch);
+
         let chain = VersionChain::with_initial(record, version_epoch, transaction_id);
         self.nodes.write().insert(id, chain);
         self.live_node_count.fetch_add(1, Ordering::Relaxed);
@@ -105,7 +180,18 @@ impl LpgStore {
         let mut record = NodeRecord::new(id, epoch);
         record.set_label_count(labels.len() as u16);
 
+        // Uncommitted transactional versions use PENDING epoch so they are
+        // invisible to other sessions until the transaction commits.
+        let version_epoch = if transaction_id == TransactionId::SYSTEM {
+            epoch
+        } else {
+            EpochId::PENDING
+        };
+
+        #[cfg(not(feature = "temporal"))]
         self.register_node_labels(id, labels);
+        #[cfg(feature = "temporal")]
+        self.register_node_labels(id, labels, version_epoch);
 
         // Allocate record in arena and get offset (create epoch if needed)
         let arena = self
@@ -115,14 +201,6 @@ impl LpgStore {
         let (offset, _stored) = arena
             .alloc_value_with_offset(record)
             .expect("arena allocation failed for node record");
-
-        // Uncommitted transactional versions use PENDING epoch so they are
-        // invisible to other sessions until the transaction commits.
-        let version_epoch = if transaction_id == TransactionId::SYSTEM {
-            epoch
-        } else {
-            EpochId::PENDING
-        };
 
         // Create HotVersionRef pointing to arena data
         let hot_ref = HotVersionRef::new(version_epoch, epoch, offset, transaction_id);
@@ -169,7 +247,10 @@ impl LpgStore {
             let prop_value: Value = value.into();
             // Update property index before setting the property
             self.update_property_index_on_set(id, &prop_key, &prop_value);
+            #[cfg(not(feature = "temporal"))]
             self.node_properties.set(id, prop_key, prop_value);
+            #[cfg(feature = "temporal")]
+            self.node_properties.set(id, prop_key, prop_value, epoch);
         }
 
         // Update props_count in record
@@ -200,7 +281,10 @@ impl LpgStore {
             let prop_value: Value = value.into();
             // Update property index before setting the property
             self.update_property_index_on_set(id, &prop_key, &prop_value);
+            #[cfg(not(feature = "temporal"))]
             self.node_properties.set(id, prop_key, prop_value);
+            #[cfg(feature = "temporal")]
+            self.node_properties.set(id, prop_key, prop_value, epoch);
         }
 
         // Note: props_count in record is not updated for tiered storage.
@@ -226,7 +310,15 @@ impl LpgStore {
             return None;
         }
         drop(nodes);
-        Some(self.build_node(id))
+
+        #[cfg(not(feature = "temporal"))]
+        {
+            Some(self.build_node(id))
+        }
+        #[cfg(feature = "temporal")]
+        {
+            Some(self.build_node_at(id, epoch))
+        }
     }
 
     /// Gets a node by ID at a specific epoch.
@@ -242,7 +334,15 @@ impl LpgStore {
             return None;
         }
         drop(versions);
-        Some(self.build_node(id))
+
+        #[cfg(not(feature = "temporal"))]
+        {
+            Some(self.build_node(id))
+        }
+        #[cfg(feature = "temporal")]
+        {
+            Some(self.build_node_at(id, epoch))
+        }
     }
 
     /// Gets a node visible to a specific transaction.
@@ -289,8 +389,9 @@ impl LpgStore {
 
     /// Returns all versions of a node with their creation/deletion epochs, newest first.
     ///
-    /// Each entry is `(created_epoch, deleted_epoch, Node)`. Note that labels and
-    /// properties reflect the current state (they are not versioned per-epoch).
+    /// Each entry is `(created_epoch, deleted_epoch, Node)`.
+    /// Without `temporal`: labels and properties reflect the current state.
+    /// With `temporal`: each version has correct historical properties and labels.
     #[must_use]
     #[cfg(not(feature = "tiered-storage"))]
     pub fn get_node_history(&self, id: NodeId) -> Vec<(EpochId, Option<EpochId>, Node)> {
@@ -299,13 +400,25 @@ impl LpgStore {
             return Vec::new();
         };
 
-        // Cache labels and properties once, clone per version entry
-        let template = self.build_node(id);
+        #[cfg(not(feature = "temporal"))]
+        {
+            let template = self.build_node(id);
+            chain
+                .history()
+                .map(|(info, _record)| (info.created_epoch, info.deleted_epoch, template.clone()))
+                .collect()
+        }
 
-        chain
-            .history()
-            .map(|(info, _record)| (info.created_epoch, info.deleted_epoch, template.clone()))
-            .collect()
+        #[cfg(feature = "temporal")]
+        {
+            chain
+                .history()
+                .map(|(info, _record)| {
+                    let node = self.build_node_at(id, info.created_epoch);
+                    (info.created_epoch, info.deleted_epoch, node)
+                })
+                .collect()
+        }
     }
 
     /// Returns all versions of a node with their creation/deletion epochs, newest first.
@@ -318,14 +431,27 @@ impl LpgStore {
             return Vec::new();
         };
 
-        // Cache labels and properties once, clone per version entry
-        let template = self.build_node(id);
+        #[cfg(not(feature = "temporal"))]
+        {
+            let template = self.build_node(id);
+            index
+                .version_history()
+                .into_iter()
+                .map(|(created, deleted, _vref)| (created, deleted, template.clone()))
+                .collect()
+        }
 
-        index
-            .version_history()
-            .into_iter()
-            .map(|(created, deleted, _vref)| (created, deleted, template.clone()))
-            .collect()
+        #[cfg(feature = "temporal")]
+        {
+            index
+                .version_history()
+                .into_iter()
+                .map(|(created, deleted, _vref)| {
+                    let node = self.build_node_at(id, created);
+                    (created, deleted, node)
+                })
+                .collect()
+        }
     }
 
     /// Reads a NodeRecord from arena (hot) or epoch store (cold) using a VersionRef.
@@ -376,7 +502,11 @@ impl LpgStore {
             // Remove from label index using node_labels map
             let mut index = self.label_index.write();
             let mut node_labels = self.node_labels.write();
-            if let Some(label_ids) = node_labels.remove(&id) {
+            if let Some(removed) = node_labels.remove(&id) {
+                #[cfg(not(feature = "temporal"))]
+                let label_ids = removed;
+                #[cfg(feature = "temporal")]
+                let label_ids = removed.latest().cloned().unwrap_or_default();
                 for label_id in label_ids {
                     if let Some(set) = index.get_mut(label_id as usize) {
                         set.remove(&id);
@@ -392,7 +522,10 @@ impl LpgStore {
             drop(nodes); // Release lock before removing properties
             drop(index);
             drop(node_labels);
+            #[cfg(not(feature = "temporal"))]
             self.node_properties.remove_all(id);
+            #[cfg(feature = "temporal")]
+            self.node_properties.remove_all(id, self.current_epoch());
 
             self.live_node_count.fetch_sub(1, Ordering::Relaxed);
 
@@ -427,7 +560,11 @@ impl LpgStore {
             // Remove from label index using node_labels map
             let mut label_index = self.label_index.write();
             let mut node_labels = self.node_labels.write();
-            if let Some(label_ids) = node_labels.remove(&id) {
+            if let Some(removed) = node_labels.remove(&id) {
+                #[cfg(not(feature = "temporal"))]
+                let label_ids = removed;
+                #[cfg(feature = "temporal")]
+                let label_ids = removed.latest().cloned().unwrap_or_default();
                 for label_id in label_ids {
                     if let Some(set) = label_index.get_mut(label_id as usize) {
                         set.remove(&id);
@@ -443,7 +580,10 @@ impl LpgStore {
             drop(versions);
             drop(label_index);
             drop(node_labels);
+            #[cfg(not(feature = "temporal"))]
             self.node_properties.remove_all(id);
+            #[cfg(feature = "temporal")]
+            self.node_properties.remove_all(id, self.current_epoch());
 
             self.live_node_count.fetch_sub(1, Ordering::Relaxed);
 
@@ -482,6 +622,8 @@ impl LpgStore {
             // Capture labels for undo log
             let id_to_label = self.id_to_label.read();
             let node_labels_map = self.node_labels.read();
+
+            #[cfg(not(feature = "temporal"))]
             let label_names: Vec<String> = node_labels_map
                 .get(&id)
                 .map(|label_ids| {
@@ -491,6 +633,19 @@ impl LpgStore {
                         .collect()
                 })
                 .unwrap_or_default();
+
+            #[cfg(feature = "temporal")]
+            let label_names: Vec<String> = node_labels_map
+                .get(&id)
+                .and_then(|log| log.latest())
+                .map(|label_ids| {
+                    label_ids
+                        .iter()
+                        .filter_map(|&lid| id_to_label.get(lid as usize).map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+
             drop(id_to_label);
             drop(node_labels_map);
 
@@ -502,7 +657,11 @@ impl LpgStore {
             // Remove from label index (will be restored on rollback)
             let mut index = self.label_index.write();
             let mut node_labels_w = self.node_labels.write();
-            if let Some(label_ids) = node_labels_w.remove(&id) {
+            if let Some(removed) = node_labels_w.remove(&id) {
+                #[cfg(not(feature = "temporal"))]
+                let label_ids = removed;
+                #[cfg(feature = "temporal")]
+                let label_ids = removed.latest().cloned().unwrap_or_default();
                 for label_id in label_ids {
                     if let Some(set) = index.get_mut(label_id as usize) {
                         set.remove(&id);
@@ -517,7 +676,10 @@ impl LpgStore {
             self.remove_from_all_text_indexes(id);
 
             // Remove properties (will be restored on rollback)
+            #[cfg(not(feature = "temporal"))]
             self.node_properties.remove_all(id);
+            #[cfg(feature = "temporal")]
+            self.node_properties.remove_all(id, self.current_epoch());
             self.live_node_count.fetch_sub(1, Ordering::Relaxed);
 
             // Record undo entry for rollback
@@ -566,6 +728,8 @@ impl LpgStore {
             // Capture labels for undo log
             let id_to_label = self.id_to_label.read();
             let node_labels_map = self.node_labels.read();
+
+            #[cfg(not(feature = "temporal"))]
             let label_names: Vec<String> = node_labels_map
                 .get(&id)
                 .map(|label_ids| {
@@ -575,6 +739,19 @@ impl LpgStore {
                         .collect()
                 })
                 .unwrap_or_default();
+
+            #[cfg(feature = "temporal")]
+            let label_names: Vec<String> = node_labels_map
+                .get(&id)
+                .and_then(|log| log.latest())
+                .map(|label_ids| {
+                    label_ids
+                        .iter()
+                        .filter_map(|&lid| id_to_label.get(lid as usize).map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+
             drop(id_to_label);
             drop(node_labels_map);
 
@@ -586,7 +763,11 @@ impl LpgStore {
             // Remove from label index
             let mut label_index = self.label_index.write();
             let mut node_labels_w = self.node_labels.write();
-            if let Some(label_ids) = node_labels_w.remove(&id) {
+            if let Some(removed) = node_labels_w.remove(&id) {
+                #[cfg(not(feature = "temporal"))]
+                let label_ids = removed;
+                #[cfg(feature = "temporal")]
+                let label_ids = removed.latest().cloned().unwrap_or_default();
                 for label_id in label_ids {
                     if let Some(set) = label_index.get_mut(label_id as usize) {
                         set.remove(&id);
@@ -601,7 +782,10 @@ impl LpgStore {
             self.remove_from_all_text_indexes(id);
 
             // Remove properties
+            #[cfg(not(feature = "temporal"))]
             self.node_properties.remove_all(id);
+            #[cfg(feature = "temporal")]
+            self.node_properties.remove_all(id, self.current_epoch());
             self.live_node_count.fetch_sub(1, Ordering::Relaxed);
 
             // Record undo entry for rollback

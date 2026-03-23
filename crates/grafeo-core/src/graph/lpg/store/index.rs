@@ -229,7 +229,11 @@ impl LpgStore {
         }
         let id_to_label = self.id_to_label.read();
         let node_labels = self.node_labels.read();
-        if let Some(label_ids) = node_labels.get(&id) {
+        #[cfg(not(feature = "temporal"))]
+        let label_set = node_labels.get(&id);
+        #[cfg(feature = "temporal")]
+        let label_set = node_labels.get(&id).and_then(|log| log.latest());
+        if let Some(label_ids) = label_set {
             for &label_id in label_ids {
                 if let Some(label_name) = id_to_label.get(label_id as usize) {
                     let index_key = format!("{label_name}:{key}");
@@ -255,7 +259,11 @@ impl LpgStore {
         }
         let id_to_label = self.id_to_label.read();
         let node_labels = self.node_labels.read();
-        if let Some(label_ids) = node_labels.get(&id) {
+        #[cfg(not(feature = "temporal"))]
+        let label_set = node_labels.get(&id);
+        #[cfg(feature = "temporal")]
+        let label_set = node_labels.get(&id).and_then(|log| log.latest());
+        if let Some(label_ids) = label_set {
             for &label_id in label_ids {
                 if let Some(label_name) = id_to_label.get(label_id as usize) {
                     let index_key = format!("{label_name}:{key}");

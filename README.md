@@ -395,7 +395,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 Grafeo's execution engine draws inspiration from:
 
 - [DuckDB](https://duckdb.org/), vectorized push-based execution, morsel-driven parallelism
-- [LadybugDB](https://github.com/LadybugDB/ladybug), CSR-based adjacency indexing, factorized query processing
+- [Kuzu](https://github.com/kuzudb/kuzu), CSR-based adjacency indexing, factorized query processing
 
 ## License
 

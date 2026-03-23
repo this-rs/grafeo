@@ -2238,6 +2238,30 @@ impl Session {
         result
     }
 
+    /// Executes a GQL query at a specific epoch with optional parameters.
+    ///
+    /// Combines epoch-based time travel with parameterized queries.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if parsing or execution fails.
+    #[cfg(feature = "gql")]
+    pub fn execute_at_epoch_with_params(
+        &self,
+        query: &str,
+        epoch: EpochId,
+        params: Option<std::collections::HashMap<String, Value>>,
+    ) -> Result<QueryResult> {
+        let previous = self.viewing_epoch_override.lock().replace(epoch);
+        let result = if let Some(p) = params {
+            self.execute_with_params(query, p)
+        } else {
+            self.execute(query)
+        };
+        *self.viewing_epoch_override.lock() = previous;
+        result
+    }
+
     /// Executes a GQL query with parameters.
     ///
     /// # Errors

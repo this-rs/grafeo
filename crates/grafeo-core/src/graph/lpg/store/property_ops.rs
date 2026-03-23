@@ -2,6 +2,8 @@
 
 use super::LpgStore;
 use super::PropertyUndoEntry;
+#[cfg(feature = "temporal")]
+use grafeo_common::types::EpochId;
 use grafeo_common::types::{EdgeId, NodeId, PropertyKey, TransactionId, Value};
 use grafeo_common::utils::hash::FxHashMap;
 use std::sync::atomic::Ordering;
@@ -19,14 +21,21 @@ impl LpgStore {
         #[cfg(feature = "text-index")]
         self.update_text_index_on_set(id, key, &value);
 
+        #[cfg(not(feature = "temporal"))]
         self.node_properties.set(id, prop_key, value);
+        #[cfg(feature = "temporal")]
+        self.node_properties
+            .set(id, prop_key, value, self.current_epoch());
 
         // Update props_count in record
-        let count = self.node_properties.get_all(id).len() as u16;
-        if let Some(chain) = self.nodes.write().get_mut(&id)
-            && let Some(record) = chain.latest_mut()
+        #[cfg(not(feature = "temporal"))]
         {
-            record.props_count = count;
+            let count = self.node_properties.get_all(id).len() as u16;
+            if let Some(chain) = self.nodes.write().get_mut(&id)
+                && let Some(record) = chain.latest_mut()
+            {
+                record.props_count = count;
+            }
         }
     }
 
@@ -43,15 +52,52 @@ impl LpgStore {
         #[cfg(feature = "text-index")]
         self.update_text_index_on_set(id, key, &value);
 
+        #[cfg(not(feature = "temporal"))]
         self.node_properties.set(id, prop_key, value);
-        // Note: props_count in record is not updated for tiered storage.
-        // The record is immutable once allocated in the arena.
-        // Property count can be derived from PropertyStorage if needed.
+        #[cfg(feature = "temporal")]
+        self.node_properties
+            .set(id, prop_key, value, self.current_epoch());
     }
 
     /// Sets a property on an edge.
     pub fn set_edge_property(&self, id: EdgeId, key: &str, value: Value) {
+        #[cfg(not(feature = "temporal"))]
         self.edge_properties.set(id, key.into(), value);
+        #[cfg(feature = "temporal")]
+        self.edge_properties
+            .set(id, key.into(), value, self.current_epoch());
+    }
+
+    /// Sets a node property at a specific epoch (for snapshot/WAL recovery).
+    ///
+    /// Unlike [`set_node_property`], this does not update property indexes
+    /// or text indexes, and uses the provided epoch instead of `current_epoch()`.
+    #[cfg(feature = "temporal")]
+    pub fn set_node_property_at_epoch(&self, id: NodeId, key: &str, value: Value, epoch: EpochId) {
+        self.node_properties.set(id, key.into(), value, epoch);
+    }
+
+    /// Sets an edge property at a specific epoch (for snapshot/WAL recovery).
+    #[cfg(feature = "temporal")]
+    pub fn set_edge_property_at_epoch(&self, id: EdgeId, key: &str, value: Value, epoch: EpochId) {
+        self.edge_properties.set(id, key.into(), value, epoch);
+    }
+
+    /// Returns the full version history for all properties of a node.
+    ///
+    /// Each entry is `(key, Vec<(epoch, value)>)`. Used for temporal
+    /// snapshot export.
+    #[cfg(feature = "temporal")]
+    #[must_use]
+    pub fn node_property_history(&self, id: NodeId) -> Vec<(PropertyKey, Vec<(EpochId, Value)>)> {
+        self.node_properties.get_all_history(id)
+    }
+
+    /// Returns the full version history for all properties of an edge.
+    #[cfg(feature = "temporal")]
+    #[must_use]
+    pub fn edge_property_history(&self, id: EdgeId) -> Vec<(PropertyKey, Vec<(EpochId, Value)>)> {
+        self.edge_properties.get_all_history(id)
     }
 
     /// Removes a property from a node.
@@ -68,14 +114,22 @@ impl LpgStore {
         #[cfg(feature = "text-index")]
         self.update_text_index_on_remove(id, key);
 
+        #[cfg(not(feature = "temporal"))]
         let result = self.node_properties.remove(id, &prop_key);
+        #[cfg(feature = "temporal")]
+        let result = self
+            .node_properties
+            .remove(id, &prop_key, self.current_epoch());
 
         // Update props_count in record
-        let count = self.node_properties.get_all(id).len() as u16;
-        if let Some(chain) = self.nodes.write().get_mut(&id)
-            && let Some(record) = chain.latest_mut()
+        #[cfg(not(feature = "temporal"))]
         {
-            record.props_count = count;
+            let count = self.node_properties.get_all(id).len() as u16;
+            if let Some(chain) = self.nodes.write().get_mut(&id)
+                && let Some(record) = chain.latest_mut()
+            {
+                record.props_count = count;
+            }
         }
 
         result
@@ -94,15 +148,30 @@ impl LpgStore {
         #[cfg(feature = "text-index")]
         self.update_text_index_on_remove(id, key);
 
-        self.node_properties.remove(id, &prop_key)
-        // Note: props_count in record is not updated for tiered storage.
+        #[cfg(not(feature = "temporal"))]
+        {
+            self.node_properties.remove(id, &prop_key)
+        }
+        #[cfg(feature = "temporal")]
+        {
+            self.node_properties
+                .remove(id, &prop_key, self.current_epoch())
+        }
     }
 
     /// Removes a property from an edge.
     ///
     /// Returns the previous value if it existed, or None if the property didn't exist.
     pub fn remove_edge_property(&self, id: EdgeId, key: &str) -> Option<Value> {
-        self.edge_properties.remove(id, &key.into())
+        #[cfg(not(feature = "temporal"))]
+        {
+            self.edge_properties.remove(id, &key.into())
+        }
+        #[cfg(feature = "temporal")]
+        {
+            self.edge_properties
+                .remove(id, &key.into(), self.current_epoch())
+        }
     }
 
     /// Gets a single property from a node without loading all properties.
@@ -250,7 +319,18 @@ impl LpgStore {
             });
 
         // Delegate to the normal (unversioned) set
+        #[cfg(not(feature = "temporal"))]
         self.set_node_property(id, key, value);
+        // For temporal: use PENDING epoch directly (finalized on commit)
+        #[cfg(feature = "temporal")]
+        {
+            let prop_key2: PropertyKey = key.into();
+            self.update_property_index_on_set(id, &prop_key2, &value);
+            #[cfg(feature = "text-index")]
+            self.update_text_index_on_set(id, key, &value);
+            self.node_properties
+                .set(id, prop_key2, value, grafeo_common::types::EpochId::PENDING);
+        }
     }
 
     /// Sets an edge property within a transaction, recording the previous value
@@ -279,7 +359,15 @@ impl LpgStore {
             });
 
         // Delegate to the normal (unversioned) set
+        #[cfg(not(feature = "temporal"))]
         self.set_edge_property(id, key, value);
+        #[cfg(feature = "temporal")]
+        self.edge_properties.set(
+            id,
+            key.into(),
+            value,
+            grafeo_common::types::EpochId::PENDING,
+        );
     }
 
     /// Removes a node property within a transaction, recording the previous value
@@ -346,6 +434,7 @@ impl LpgStore {
     /// all property values to their pre-transaction state.
     ///
     /// Called during rollback.
+    #[cfg(not(feature = "temporal"))]
     pub fn rollback_transaction_properties(&self, transaction_id: TransactionId) {
         let entries = self.property_undo_log.write().remove(&transaction_id);
         if let Some(entries) = entries {
@@ -377,11 +466,9 @@ impl LpgStore {
                         }
                     }
                     PropertyUndoEntry::LabelAdded { node_id, label } => {
-                        // Label was added during the transaction: remove it
                         self.remove_label(node_id, &label);
                     }
                     PropertyUndoEntry::LabelRemoved { node_id, label } => {
-                        // Label was removed during the transaction: add it back
                         self.add_label(node_id, &label);
                     }
                     PropertyUndoEntry::NodeDeleted {
@@ -412,6 +499,95 @@ impl LpgStore {
         }
     }
 
+    /// Rolls back property/label changes by removing PENDING entries from
+    /// version logs, and replays entity deletions from the undo log.
+    ///
+    /// With temporal properties, there is no need to replay old property
+    /// values: `remove_pending()` pops the uncommitted PENDING entries
+    /// from the back of each VersionLog, restoring the previous state.
+    #[cfg(feature = "temporal")]
+    pub fn rollback_transaction_properties(&self, transaction_id: TransactionId) {
+        let entries = self.property_undo_log.write().remove(&transaction_id);
+        if let Some(entries) = entries {
+            // Collect which node/edge properties and labels were touched
+            let mut node_props: grafeo_common::utils::hash::FxHashSet<(NodeId, PropertyKey)> =
+                grafeo_common::utils::hash::FxHashSet::default();
+            let mut edge_props: grafeo_common::utils::hash::FxHashSet<(EdgeId, PropertyKey)> =
+                grafeo_common::utils::hash::FxHashSet::default();
+            let mut label_nodes: grafeo_common::utils::hash::FxHashSet<NodeId> =
+                grafeo_common::utils::hash::FxHashSet::default();
+
+            // First pass: collect touched entries and handle entity deletions
+            for entry in entries.into_iter().rev() {
+                match entry {
+                    PropertyUndoEntry::NodeProperty { node_id, key, .. } => {
+                        node_props.insert((node_id, key));
+                    }
+                    PropertyUndoEntry::EdgeProperty { edge_id, key, .. } => {
+                        edge_props.insert((edge_id, key));
+                    }
+                    PropertyUndoEntry::LabelAdded { node_id, .. }
+                    | PropertyUndoEntry::LabelRemoved { node_id, .. } => {
+                        label_nodes.insert(node_id);
+                    }
+                    PropertyUndoEntry::NodeDeleted {
+                        node_id,
+                        labels,
+                        properties,
+                    } => {
+                        self.restore_deleted_node(node_id, transaction_id, &labels, properties);
+                    }
+                    PropertyUndoEntry::EdgeDeleted {
+                        edge_id,
+                        src,
+                        dst,
+                        edge_type,
+                        properties,
+                    } => {
+                        self.restore_deleted_edge(
+                            edge_id,
+                            src,
+                            dst,
+                            transaction_id,
+                            &edge_type,
+                            properties,
+                        );
+                    }
+                }
+            }
+
+            // Remove PENDING entries from affected property version logs
+            if !node_props.is_empty() {
+                let mut columns = self.node_properties.columns_write();
+                for (node_id, key) in &node_props {
+                    if let Some(col) = columns.get_mut(key) {
+                        col.remove_pending_for(*node_id);
+                    }
+                }
+            }
+
+            if !edge_props.is_empty() {
+                let mut columns = self.edge_properties.columns_write();
+                for (edge_id, key) in &edge_props {
+                    if let Some(col) = columns.get_mut(key) {
+                        col.remove_pending_for(*edge_id);
+                    }
+                }
+            }
+
+            // Remove PENDING entries from affected label version logs
+            if !label_nodes.is_empty() {
+                let mut labels = self.node_labels.write();
+                for node_id in &label_nodes {
+                    if let Some(log) = labels.get_mut(node_id) {
+                        log.remove_pending();
+                        // Don't remove empty logs here: the node might still exist
+                    }
+                }
+            }
+        }
+    }
+
     /// Discards the undo log entries for a committed transaction.
     ///
     /// Called during commit: properties are already written, so just
@@ -436,6 +612,7 @@ impl LpgStore {
     ///
     /// Replays entries from `since..end` in reverse order, then truncates the
     /// log to `since`. Used by savepoint rollback.
+    #[cfg(not(feature = "temporal"))]
     pub fn rollback_transaction_properties_to(&self, transaction_id: TransactionId, since: usize) {
         let mut log = self.property_undo_log.write();
         if let Some(entries) = log.get_mut(&transaction_id)
@@ -499,6 +676,103 @@ impl LpgStore {
                             &edge_type,
                             properties,
                         );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Rolls back property mutations recorded after position `since` in the undo log.
+    ///
+    /// Temporal version: instead of replaying old values (which would create
+    /// new VersionLog entries), this pops the PENDING entries that were appended
+    /// after the savepoint. Entity deletions are still restored via the normal
+    /// `restore_deleted_node`/`restore_deleted_edge` helpers.
+    #[cfg(feature = "temporal")]
+    pub fn rollback_transaction_properties_to(&self, transaction_id: TransactionId, since: usize) {
+        let mut log = self.property_undo_log.write();
+        if let Some(entries) = log.get_mut(&transaction_id)
+            && since < entries.len()
+        {
+            let to_undo: Vec<PropertyUndoEntry> = entries.drain(since..).collect();
+            drop(log);
+
+            // Count how many PENDING entries to pop per (entity, key) and per label node.
+            let mut node_prop_counts: grafeo_common::utils::hash::FxHashMap<
+                (NodeId, PropertyKey),
+                usize,
+            > = grafeo_common::utils::hash::FxHashMap::default();
+            let mut edge_prop_counts: grafeo_common::utils::hash::FxHashMap<
+                (EdgeId, PropertyKey),
+                usize,
+            > = grafeo_common::utils::hash::FxHashMap::default();
+            let mut label_counts: grafeo_common::utils::hash::FxHashMap<NodeId, usize> =
+                grafeo_common::utils::hash::FxHashMap::default();
+
+            for entry in to_undo.into_iter().rev() {
+                match entry {
+                    PropertyUndoEntry::NodeProperty { node_id, key, .. } => {
+                        *node_prop_counts.entry((node_id, key)).or_default() += 1;
+                    }
+                    PropertyUndoEntry::EdgeProperty { edge_id, key, .. } => {
+                        *edge_prop_counts.entry((edge_id, key)).or_default() += 1;
+                    }
+                    PropertyUndoEntry::LabelAdded { node_id, .. }
+                    | PropertyUndoEntry::LabelRemoved { node_id, .. } => {
+                        *label_counts.entry(node_id).or_default() += 1;
+                    }
+                    PropertyUndoEntry::NodeDeleted {
+                        node_id,
+                        labels,
+                        properties,
+                    } => {
+                        self.restore_deleted_node(node_id, transaction_id, &labels, properties);
+                    }
+                    PropertyUndoEntry::EdgeDeleted {
+                        edge_id,
+                        src,
+                        dst,
+                        edge_type,
+                        properties,
+                    } => {
+                        self.restore_deleted_edge(
+                            edge_id,
+                            src,
+                            dst,
+                            transaction_id,
+                            &edge_type,
+                            properties,
+                        );
+                    }
+                }
+            }
+
+            // Pop PENDING entries from node property version logs
+            if !node_prop_counts.is_empty() {
+                let mut columns = self.node_properties.columns_write();
+                for ((node_id, key), count) in &node_prop_counts {
+                    if let Some(col) = columns.get_mut(key) {
+                        col.pop_n_pending_for(*node_id, *count);
+                    }
+                }
+            }
+
+            // Pop PENDING entries from edge property version logs
+            if !edge_prop_counts.is_empty() {
+                let mut columns = self.edge_properties.columns_write();
+                for ((edge_id, key), count) in &edge_prop_counts {
+                    if let Some(col) = columns.get_mut(key) {
+                        col.pop_n_pending_for(*edge_id, *count);
+                    }
+                }
+            }
+
+            // Pop PENDING entries from label version logs
+            if !label_counts.is_empty() {
+                let mut labels = self.node_labels.write();
+                for (node_id, count) in &label_counts {
+                    if let Some(version_log) = labels.get_mut(node_id) {
+                        version_log.pop_n_pending(*count);
                     }
                 }
             }

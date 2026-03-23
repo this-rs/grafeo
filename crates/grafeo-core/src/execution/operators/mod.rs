@@ -121,10 +121,22 @@ use super::factorized_chunk::FactorizedChunk;
 /// detection). The trait lives in `grafeo-core` to avoid circular dependencies.
 pub trait WriteTracker: Send + Sync {
     /// Records that a node was written (created, deleted, or modified).
-    fn record_node_write(&self, transaction_id: TransactionId, node_id: NodeId);
+    ///
+    /// Returns an error if a write-write conflict is detected (first-writer-wins).
+    fn record_node_write(
+        &self,
+        transaction_id: TransactionId,
+        node_id: NodeId,
+    ) -> Result<(), OperatorError>;
 
     /// Records that an edge was written (created, deleted, or modified).
-    fn record_edge_write(&self, transaction_id: TransactionId, edge_id: EdgeId);
+    ///
+    /// Returns an error if a write-write conflict is detected (first-writer-wins).
+    fn record_edge_write(
+        &self,
+        transaction_id: TransactionId,
+        edge_id: EdgeId,
+    ) -> Result<(), OperatorError>;
 }
 
 /// Type alias for a shared write tracker.
@@ -256,6 +268,9 @@ pub enum OperatorError {
     /// Schema constraint violation during a write operation.
     #[error("constraint violation: {0}")]
     ConstraintViolation(String),
+    /// Write-write conflict detected (first-writer-wins).
+    #[error("write conflict: {0}")]
+    WriteConflict(String),
 }
 
 /// The core trait for pull-based operators.

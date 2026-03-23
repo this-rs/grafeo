@@ -252,7 +252,16 @@ fn test_property_with_null_value() {
     let n = db.create_node(&["Test"]);
     db.set_node_property(n, "key", Value::Null);
 
+    // In temporal mode, Null acts as a tombstone and is filtered out.
+    // In non-temporal mode, Null is stored and returned.
     let node = db.get_node(n).unwrap();
+    #[cfg(feature = "temporal")]
+    assert_eq!(
+        node.get_property("key"),
+        None,
+        "Temporal: Null acts as tombstone"
+    );
+    #[cfg(not(feature = "temporal"))]
     assert_eq!(
         node.get_property("key"),
         Some(&Value::Null),

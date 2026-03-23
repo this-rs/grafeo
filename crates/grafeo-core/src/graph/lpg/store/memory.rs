@@ -153,8 +153,9 @@ impl LpgStore {
                 );
         drop(label_idx);
 
-        // Node labels: FxHashMap<NodeId, FxHashSet<u32>>
+        // Node labels
         let node_labels = self.node_labels.read();
+        #[cfg(not(feature = "temporal"))]
         let node_labels_bytes = node_labels.capacity()
             * (size_of::<grafeo_common::types::NodeId>()
                 + size_of::<grafeo_common::utils::hash::FxHashSet<u32>>()
@@ -162,6 +163,17 @@ impl LpgStore {
             + node_labels
                 .values()
                 .map(|set| set.capacity() * (size_of::<u32>() + 1))
+                .sum::<usize>();
+        #[cfg(feature = "temporal")]
+        let node_labels_bytes = node_labels.capacity()
+            * (size_of::<grafeo_common::types::NodeId>()
+                + size_of::<
+                    grafeo_common::temporal::VersionLog<grafeo_common::utils::hash::FxHashSet<u32>>,
+                >()
+                + 1)
+            + node_labels
+                .values()
+                .map(|log| log.len() * size_of::<grafeo_common::utils::hash::FxHashSet<u32>>())
                 .sum::<usize>();
         drop(node_labels);
 

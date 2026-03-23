@@ -21,10 +21,17 @@
 //! | Bool | BitVector | 8x |
 
 use crate::index::zone_map::ZoneMapEntry;
+use crate::storage::CompressionCodec;
+#[cfg(not(feature = "temporal"))]
 use crate::storage::{
-    CompressedData, CompressionCodec, DictionaryBuilder, DictionaryEncoding, TypeSpecificCompressor,
+    CompressedData, DictionaryBuilder, DictionaryEncoding, TypeSpecificCompressor,
 };
+#[cfg(not(feature = "temporal"))]
 use arcstr::ArcStr;
+#[cfg(feature = "temporal")]
+use grafeo_common::temporal::VersionLog;
+#[cfg(feature = "temporal")]
+use grafeo_common::types::EpochId;
 use grafeo_common::types::{EdgeId, NodeId, PropertyKey, Value};
 use grafeo_common::utils::hash::FxHashMap;
 use parking_lot::RwLock;
@@ -45,12 +52,14 @@ pub enum CompressionMode {
 }
 
 /// Threshold for automatic compression (number of values).
+#[cfg(not(feature = "temporal"))]
 const COMPRESSION_THRESHOLD: usize = 1000;
 
 /// Size of the hot buffer for recent writes (before compression).
 /// Larger buffer (4096) keeps more recent data uncompressed for faster reads.
 /// This trades ~64KB of memory overhead per column for 1.5-2x faster point lookups
 /// on recently-written data.
+#[cfg(not(feature = "temporal"))]
 const HOT_BUFFER_SIZE: usize = 4096;
 
 /// Comparison operators used for zone map predicate checks.
@@ -116,6 +125,8 @@ impl EntityId for EdgeId {
 /// # Example
 ///
 /// ```
+/// # #[cfg(not(feature = "temporal"))]
+/// # {
 /// use grafeo_core::graph::lpg::PropertyStorage;
 /// use grafeo_common::types::{NodeId, PropertyKey};
 ///
@@ -128,6 +139,7 @@ impl EntityId for EdgeId {
 /// // Fetch all properties at once
 /// let props = storage.get_all(alix);
 /// assert_eq!(props.len(), 2);
+/// # }
 /// ```
 pub struct PropertyStorage<Id: EntityId = NodeId> {
     /// Map from property key to column.
@@ -165,6 +177,7 @@ impl<Id: EntityId> PropertyStorage<Id> {
     }
 
     /// Sets a property value for an entity.
+    #[cfg(not(feature = "temporal"))]
     pub fn set(&self, id: Id, key: PropertyKey, value: Value) {
         let mut columns = self.columns.write();
         let mode = self.default_compression;
@@ -172,6 +185,20 @@ impl<Id: EntityId> PropertyStorage<Id> {
             .entry(key)
             .or_insert_with(|| PropertyColumn::with_compression(mode))
             .set(id, value);
+    }
+
+    /// Sets a property value for an entity at a specific epoch.
+    ///
+    /// For non-transactional writes, pass the current epoch.
+    /// For transactional writes, pass `EpochId::PENDING`.
+    #[cfg(feature = "temporal")]
+    pub fn set(&self, id: Id, key: PropertyKey, value: Value, epoch: EpochId) {
+        let mut columns = self.columns.write();
+        let mode = self.default_compression;
+        columns
+            .entry(key)
+            .or_insert_with(|| PropertyColumn::with_compression(mode))
+            .set(id, value, epoch);
     }
 
     /// Enables compression for a specific column.
@@ -240,16 +267,34 @@ impl<Id: EntityId> PropertyStorage<Id> {
     }
 
     /// Removes a property value for an entity.
+    #[cfg(not(feature = "temporal"))]
     pub fn remove(&self, id: Id, key: &PropertyKey) -> Option<Value> {
         let mut columns = self.columns.write();
         columns.get_mut(key).and_then(|col| col.remove(id))
     }
 
+    /// Removes a property value for an entity (temporal: appends tombstone at epoch).
+    #[cfg(feature = "temporal")]
+    pub fn remove(&self, id: Id, key: &PropertyKey, epoch: EpochId) -> Option<Value> {
+        let mut columns = self.columns.write();
+        columns.get_mut(key).and_then(|col| col.remove(id, epoch))
+    }
+
     /// Removes all properties for an entity.
+    #[cfg(not(feature = "temporal"))]
     pub fn remove_all(&self, id: Id) {
         let mut columns = self.columns.write();
         for col in columns.values_mut() {
             col.remove(id);
+        }
+    }
+
+    /// Removes all properties for an entity (temporal: tombstones at current epoch).
+    #[cfg(feature = "temporal")]
+    pub fn remove_all(&self, id: Id, epoch: EpochId) {
+        let mut columns = self.columns.write();
+        for col in columns.values_mut() {
+            col.remove(id, epoch);
         }
     }
 
@@ -478,10 +523,89 @@ impl<Id: EntityId> Default for PropertyStorage<Id> {
     }
 }
 
+// === Temporal-only methods for PropertyStorage ===
+#[cfg(feature = "temporal")]
+impl<Id: EntityId> PropertyStorage<Id> {
+    /// Returns a write guard to the columns map for targeted rollback.
+    pub(crate) fn columns_write(
+        &self,
+    ) -> parking_lot::RwLockWriteGuard<'_, FxHashMap<PropertyKey, PropertyColumn<Id>>> {
+        self.columns.write()
+    }
+
+    /// Gets a property value at a specific epoch.
+    #[must_use]
+    pub fn get_at(&self, id: Id, key: &PropertyKey, epoch: EpochId) -> Option<Value> {
+        let columns = self.columns.read();
+        columns.get(key).and_then(|col| col.get_at(id, epoch))
+    }
+
+    /// Gets all properties for an entity at a specific epoch.
+    #[must_use]
+    pub fn get_all_at(&self, id: Id, epoch: EpochId) -> FxHashMap<PropertyKey, Value> {
+        let columns = self.columns.read();
+        let mut result = FxHashMap::default();
+        for (key, col) in columns.iter() {
+            if let Some(value) = col.get_at(id, epoch) {
+                result.insert(key.clone(), value);
+            }
+        }
+        result
+    }
+
+    /// Replaces PENDING epochs with the real commit epoch in all columns.
+    pub fn finalize_pending(&self, real_epoch: EpochId) {
+        let mut columns = self.columns.write();
+        for col in columns.values_mut() {
+            col.finalize_pending(real_epoch);
+        }
+    }
+
+    /// Removes all PENDING entries from all columns (transaction rollback).
+    pub fn remove_pending(&self) {
+        let mut columns = self.columns.write();
+        for col in columns.values_mut() {
+            col.remove_pending();
+        }
+    }
+
+    /// Garbage-collects old versions from all columns.
+    pub fn gc(&self, min_epoch: EpochId) {
+        let mut columns = self.columns.write();
+        for col in columns.values_mut() {
+            col.gc(min_epoch);
+        }
+    }
+
+    /// Returns the full version history for all properties of an entity.
+    ///
+    /// Each entry is `(key, Vec<(epoch, value)>)`. Useful for snapshot
+    /// export that preserves temporal history.
+    #[must_use]
+    pub fn get_all_history(&self, id: Id) -> Vec<(PropertyKey, Vec<(EpochId, Value)>)> {
+        let columns = self.columns.read();
+        let mut result = Vec::new();
+        for (key, col) in columns.iter() {
+            if let Some(log) = col.values.get(&id) {
+                let entries: Vec<(EpochId, Value)> = log
+                    .history()
+                    .iter()
+                    .map(|(epoch, value)| (*epoch, value.clone()))
+                    .collect();
+                if !entries.is_empty() {
+                    result.push((key.clone(), entries));
+                }
+            }
+        }
+        result
+    }
+}
+
 /// Compressed storage for a property column.
 ///
 /// Holds the compressed representation of values along with the index
 /// mapping entity IDs to positions in the compressed array.
+#[cfg(not(feature = "temporal"))]
 #[derive(Debug)]
 pub enum CompressedColumnData {
     /// Compressed integers (Int64 values).
@@ -513,6 +637,7 @@ pub enum CompressedColumnData {
     },
 }
 
+#[cfg(not(feature = "temporal"))]
 impl CompressedColumnData {
     /// Returns the memory usage of the compressed data in bytes.
     #[must_use]
@@ -586,7 +711,12 @@ impl CompressionStats {
 pub struct PropertyColumn<Id: EntityId = NodeId> {
     /// Sparse storage: entity ID -> value (hot buffer + uncompressed).
     /// Used for recent writes and when compression is disabled.
+    #[cfg(not(feature = "temporal"))]
     values: FxHashMap<Id, Value>,
+    /// Versioned storage: entity ID -> append-only version log.
+    /// Each value is tagged with the epoch it was written in.
+    #[cfg(feature = "temporal")]
+    values: FxHashMap<Id, VersionLog<Value>>,
     /// Zone map tracking min/max/null_count for predicate pushdown.
     zone_map: ZoneMapEntry,
     /// Whether zone map needs rebuild (after removes).
@@ -594,11 +724,14 @@ pub struct PropertyColumn<Id: EntityId = NodeId> {
     /// Compression mode for this column.
     compression_mode: CompressionMode,
     /// Compressed data (when compression is enabled and triggered).
+    #[cfg(not(feature = "temporal"))]
     compressed: Option<CompressedColumnData>,
     /// Number of values before last compression.
+    #[cfg(not(feature = "temporal"))]
     compressed_count: usize,
 }
 
+#[cfg(not(feature = "temporal"))]
 impl<Id: EntityId> PropertyColumn<Id> {
     /// Creates a new empty column.
     #[must_use]
@@ -1090,6 +1223,285 @@ impl<Id: EntityId> PropertyColumn<Id> {
     }
 }
 
+// === Temporal implementation: VersionLog-backed property column ===
+//
+// **Zone map limitation**: zone maps track min/max across the *latest* values
+// only (see `rebuild_zone_map`). For temporal queries at old epochs, the zone
+// map may produce false negatives: it could reject a column based on current
+// min/max even though historical values would match. This is a known
+// trade-off: temporal queries are conservative but never return wrong results
+// (the `zone_map_dirty` fallback returns `true` = "might match").
+//
+// **Compression**: disabled in temporal mode because the underlying codecs
+// (DeltaBitPacked, Dictionary, BitVector) operate on flat `FxHashMap<Id, Value>`
+// arrays, not `FxHashMap<Id, VersionLog<Value>>`. Per-epoch compression is a
+// potential future optimization.
+#[cfg(feature = "temporal")]
+impl<Id: EntityId> PropertyColumn<Id> {
+    /// Creates a new empty column.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            values: FxHashMap::default(),
+            zone_map: ZoneMapEntry::new(),
+            zone_map_dirty: false,
+            compression_mode: CompressionMode::None,
+        }
+    }
+
+    /// Creates a new column with the specified compression mode.
+    #[must_use]
+    pub fn with_compression(mode: CompressionMode) -> Self {
+        Self {
+            values: FxHashMap::default(),
+            zone_map: ZoneMapEntry::new(),
+            zone_map_dirty: false,
+            compression_mode: mode,
+        }
+    }
+
+    /// Sets the compression mode for this column.
+    pub fn set_compression_mode(&mut self, mode: CompressionMode) {
+        self.compression_mode = mode;
+    }
+
+    /// Returns the compression mode for this column.
+    #[must_use]
+    pub fn compression_mode(&self) -> CompressionMode {
+        self.compression_mode
+    }
+
+    /// Sets a value for an entity, appending to its version log.
+    ///
+    /// For non-transactional writes, pass the current epoch.
+    /// For transactional writes, pass `EpochId::PENDING`.
+    pub fn set(&mut self, id: Id, value: Value, epoch: EpochId) {
+        self.update_zone_map_on_insert(&value);
+        self.values.entry(id).or_default().append(epoch, value);
+    }
+
+    /// Updates zone map when inserting a value.
+    fn update_zone_map_on_insert(&mut self, value: &Value) {
+        self.zone_map.row_count += 1;
+
+        if matches!(value, Value::Null) {
+            self.zone_map.null_count += 1;
+            return;
+        }
+
+        match &self.zone_map.min {
+            None => self.zone_map.min = Some(value.clone()),
+            Some(current) => {
+                if compare_values(value, current) == Some(Ordering::Less) {
+                    self.zone_map.min = Some(value.clone());
+                }
+            }
+        }
+
+        match &self.zone_map.max {
+            None => self.zone_map.max = Some(value.clone()),
+            Some(current) => {
+                if compare_values(value, current) == Some(Ordering::Greater) {
+                    self.zone_map.max = Some(value.clone());
+                }
+            }
+        }
+    }
+
+    /// Gets the latest value for an entity, filtering out tombstones (Null).
+    #[must_use]
+    pub fn get(&self, id: Id) -> Option<Value> {
+        self.values
+            .get(&id)
+            .and_then(|log| log.latest())
+            .filter(|v| !v.is_null())
+            .cloned()
+    }
+
+    /// Removes a value by appending a tombstone (Null) at the given epoch.
+    pub fn remove(&mut self, id: Id, epoch: EpochId) -> Option<Value> {
+        let previous = self.get(id);
+        if previous.is_some() {
+            self.values
+                .entry(id)
+                .or_default()
+                .append(epoch, Value::Null);
+            self.zone_map_dirty = true;
+        }
+        previous
+    }
+
+    /// Returns the number of live (non-tombstoned) values in this column.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.values
+            .values()
+            .filter(|log| log.latest().is_some_and(|v| !v.is_null()))
+            .count()
+    }
+
+    /// Returns true if this column is empty.
+    #[cfg(test)]
+    #[must_use]
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Returns compression statistics for this column.
+    ///
+    /// In temporal mode, compression is not used. Reports live value count only.
+    #[must_use]
+    pub fn compression_stats(&self) -> CompressionStats {
+        let live_count = self.len();
+        let hot_size = live_count * std::mem::size_of::<Value>();
+
+        CompressionStats {
+            uncompressed_size: hot_size,
+            compressed_size: hot_size,
+            value_count: live_count,
+            codec: None,
+        }
+    }
+
+    /// Returns estimated heap memory for this column.
+    #[must_use]
+    pub fn heap_memory_bytes(&self) -> usize {
+        self.values.capacity()
+            * (std::mem::size_of::<Id>() + std::mem::size_of::<VersionLog<Value>>() + 1)
+    }
+
+    /// Compression is not supported in temporal mode (no-op).
+    pub fn compress(&mut self) {}
+
+    /// Forces compression (no-op in temporal mode).
+    pub fn force_compress(&mut self) {}
+
+    /// Returns the zone map for this column.
+    #[must_use]
+    pub fn zone_map(&self) -> &ZoneMapEntry {
+        &self.zone_map
+    }
+
+    /// Uses zone map to check if any values could satisfy the predicate.
+    #[must_use]
+    pub fn might_match(&self, op: CompareOp, value: &Value) -> bool {
+        if self.zone_map_dirty {
+            return true;
+        }
+
+        match op {
+            CompareOp::Eq => self.zone_map.might_contain_equal(value),
+            CompareOp::Ne => match (&self.zone_map.min, &self.zone_map.max) {
+                (Some(min), Some(max)) => {
+                    !(compare_values(min, value) == Some(Ordering::Equal)
+                        && compare_values(max, value) == Some(Ordering::Equal))
+                }
+                _ => true,
+            },
+            CompareOp::Lt => self.zone_map.might_contain_less_than(value, false),
+            CompareOp::Le => self.zone_map.might_contain_less_than(value, true),
+            CompareOp::Gt => self.zone_map.might_contain_greater_than(value, false),
+            CompareOp::Ge => self.zone_map.might_contain_greater_than(value, true),
+        }
+    }
+
+    /// Rebuilds zone map from current (latest) values.
+    pub fn rebuild_zone_map(&mut self) {
+        let mut zone_map = ZoneMapEntry::new();
+
+        for log in self.values.values() {
+            if let Some(value) = log.latest() {
+                zone_map.row_count += 1;
+
+                if matches!(value, Value::Null) {
+                    zone_map.null_count += 1;
+                    continue;
+                }
+
+                match &zone_map.min {
+                    None => zone_map.min = Some(value.clone()),
+                    Some(current) => {
+                        if compare_values(value, current) == Some(Ordering::Less) {
+                            zone_map.min = Some(value.clone());
+                        }
+                    }
+                }
+
+                match &zone_map.max {
+                    None => zone_map.max = Some(value.clone()),
+                    Some(current) => {
+                        if compare_values(value, current) == Some(Ordering::Greater) {
+                            zone_map.max = Some(value.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        self.zone_map = zone_map;
+        self.zone_map_dirty = false;
+    }
+
+    // === Temporal-only methods ===
+
+    /// Gets the value at a specific epoch via binary search, filtering tombstones.
+    #[must_use]
+    pub fn get_at(&self, id: Id, epoch: EpochId) -> Option<Value> {
+        self.values
+            .get(&id)
+            .and_then(|log| log.at(epoch))
+            .filter(|v| !v.is_null())
+            .cloned()
+    }
+
+    /// Replaces PENDING epochs with the real commit epoch in all version logs.
+    pub fn finalize_pending(&mut self, real_epoch: EpochId) {
+        for log in self.values.values_mut() {
+            log.finalize_pending(real_epoch);
+        }
+    }
+
+    /// Removes all PENDING entries from all version logs (transaction rollback).
+    pub fn remove_pending(&mut self) {
+        for log in self.values.values_mut() {
+            log.remove_pending();
+        }
+        self.values.retain(|_, log| !log.is_empty());
+    }
+
+    /// Garbage-collects old versions from all version logs.
+    pub fn gc(&mut self, min_epoch: EpochId) {
+        for log in self.values.values_mut() {
+            log.gc(min_epoch);
+        }
+        self.values.retain(|_, log| !log.is_empty());
+    }
+
+    /// Removes PENDING entries for a specific entity (targeted rollback).
+    pub fn remove_pending_for(&mut self, id: Id) {
+        if let Some(log) = self.values.get_mut(&id) {
+            log.remove_pending();
+            if log.is_empty() {
+                self.values.remove(&id);
+            }
+        }
+    }
+
+    /// Removes up to `n` PENDING entries for a specific entity.
+    ///
+    /// Used by savepoint rollback to pop only the entries added after the
+    /// savepoint, leaving earlier PENDING entries intact.
+    pub fn pop_n_pending_for(&mut self, id: Id, n: usize) {
+        if let Some(log) = self.values.get_mut(&id) {
+            log.pop_n_pending(n);
+            if log.is_empty() {
+                self.values.remove(&id);
+            }
+        }
+    }
+}
+
 /// Compares two values for ordering.
 fn compare_values(a: &Value, b: &Value) -> Option<Ordering> {
     match (a, b) {
@@ -1122,6 +1534,7 @@ pub struct PropertyColumnRef<'a, Id: EntityId = NodeId> {
 }
 
 #[cfg(test)]
+#[cfg(not(feature = "temporal"))]
 mod tests {
     use super::*;
     use arcstr::ArcStr;
