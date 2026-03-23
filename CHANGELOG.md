@@ -2,6 +2,23 @@
 
 All notable changes to Grafeo, for future reference (and enjoyment).
 
+## [0.5.24] - 2026-03-23
+
+### Added
+
+- **Index metadata in snapshots**: property, vector, and text index definitions are now persisted in snapshots (v4 format) and automatically rebuilt on import/restore
+- **Read-only open mode**: `GrafeoDB::open_read_only()` uses a shared file lock so multiple processes can read the same `.grafeo` file concurrently; mutations are rejected at the session level
+- **Agent memory migration tests**: Rust and Python integration tests verifying HNSW at scale, BYOV 384-dim vectors, persistence, concurrent reads, bulk import, and storage size (Discussion #155)
+
+### Breaking
+
+- **Snapshot format v4**: snapshots created by 0.5.25+ cannot be loaded by older versions, and v3 snapshots are rejected; re-export from a 0.5.24 database to migrate
+
+### Fixed
+
+- **MERGE + UNWIND creates only one node**: `UNWIND [1, 2, 3] AS i MERGE (:Item {val: i})` created a single node instead of three because the planner evaluated MERGE property expressions as constants at plan time, silently dropping variable references from UNWIND. MERGE now uses per-row `PropertySource` resolution (matching CREATE behavior), correctly creating/matching nodes for each input row.
+- **MERGE with NULL node reference silently succeeds**: `OPTIONAL MATCH (n:NonExistent) MERGE (n)-[:R]->(m:Target)` silently succeeded as a no-op instead of raising an error. MERGE now detects NULL-bound variables from unmatched OPTIONAL MATCH and returns a clear type mismatch error.
+
 ## [0.5.23] - 2026-03-23
 
 ### Added

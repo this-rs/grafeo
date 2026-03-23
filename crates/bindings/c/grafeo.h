@@ -55,6 +55,7 @@ void        grafeo_clear_error(void);
 
 GrafeoDatabase* grafeo_open_memory(void);
 GrafeoDatabase* grafeo_open(const char* path);
+GrafeoDatabase* grafeo_open_read_only(const char* path);
 GrafeoStatus    grafeo_close(GrafeoDatabase* db);
 void            grafeo_free_database(GrafeoDatabase* db);
 const char*     grafeo_version(void);

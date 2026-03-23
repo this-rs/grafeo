@@ -1,246 +1,95 @@
 # Roadmap
 
-This roadmap outlines the planned development of Grafeo. Priorities may shift based on community feedback and real-world usage.
+Grafeo is a high-performance, embeddable graph database written in Rust. This roadmap shows where the project has been, where it is now and where it's going. Priorities may shift based on community feedback and real-world usage.
+
+For detailed release notes, see the [CHANGELOG](../CHANGELOG.md).
 
 ---
 
-## 0.1.x - Foundation
+## Completed Releases
 
-*Building a fully functional graph database*
+### 0.1: Foundation
 
-### Core Database
-- Labeled Property Graph (LPG) storage model
-- MVCC transactions with snapshot isolation
-- Multiple index types (hash, B-tree, trie, adjacency)
-- Write-ahead logging (WAL) for durability
-- In-memory and persistent storage modes
+Established the core graph engine: labeled property graph (LPG) storage with MVCC transactions, WAL persistence and multiple index types (hash, B-tree, trie, adjacency). Shipped the GQL (ISO standard) parser as the primary query language, with experimental support for Cypher, SPARQL, Gremlin and GraphQL. Python bindings via PyO3 from day one.
 
-### Query Languages
-- **GQL** (ISO standard) - full support
-- **Cypher** - experimental
-- **Gremlin** - experimental
-- **GraphQL** - experimental
-- **SPARQL** - experimental
+### 0.2: Performance
 
-### Data Models
-- **LPG** - full support
-- **RDF** - experimental
+Made the engine competitive on query throughput. Factorized query processing eliminates Cartesian products in multi-hop traversals. Worst-case optimal joins (Leapfrog TrieJoin) handle cyclic patterns efficiently. Lock-free concurrent reads, query plan caching and direct lookup APIs brought large speedups on common access patterns. First graph algorithms (community detection, clustering coefficient, BFS shortest path). Added RDF Ring Index, Block-STM parallel transactions, tiered storage and succinct data structures as opt-in features.
 
-### Bindings
-- **Python** - full support via PyO3
-- NetworkX integration - experimental
-- solvOR graph algorithms - experimental
+### 0.3: AI Compatibility
+
+Added first-class vector support: `Value::Vector` type, HNSW approximate nearest neighbor index, four distance metrics (cosine, euclidean, dot product, manhattan) with SIMD acceleration (AVX2, SSE, NEON). Vector quantization (scalar, binary, product) for memory-constrained deployments. Hybrid graph + vector queries across all supported query languages. Serializable snapshot isolation for write-heavy workloads.
+
+### 0.4: Developer Accessibility
+
+Expanded the binding surface: Node.js/TypeScript (napi-rs), Go (C FFI), WebAssembly (wasm-bindgen, 660 KB gzipped), SQL/PGQ (SQL:2023 GRAPH_TABLE). Shipped grafeo-cli with interactive shell, filtered/MMR vector search with incremental indexing. All public API items documented.
 
 ---
 
-## 0.2.x - Performance
+## Current: 0.5, Beta
 
-*Competitive with the fastest graph databases*
+*Preparing for production readiness.*
 
-### Performance Improvements 
+The beta series focuses on correctness, completeness and real-world durability. Key areas:
 
-- **Factorized query processing** for multi-hop traversals (avoid Cartesian products)
-- **Worst-case optimal joins** via Leapfrog TrieJoin for cyclic patterns (O(N^1.5) triangles)
-- **Lock-free concurrent reads** using DashMap-backed hash indexes (4-6x improvement)
-- **Direct lookup APIs** bypassing query planning for O(1) point reads (10-20x faster)
-- **Query plan caching** with LRU cache for repeated queries (5-10x speedup)
-- **NUMA-aware scheduling** with same-node work-stealing preference
+**Search and retrieval**: BM25 text search, hybrid search (BM25 + vector via RRF/weighted fusion), optional in-process ONNX embeddings, MMR for diverse RAG results.
 
-### New Features 
+**Graph algorithms**: CALL procedure interface exposing all 22 algorithms (PageRank, Dijkstra, Louvain, SSSP, etc.) from GQL, Cypher and SQL/PGQ. Algorithms themselves were introduced in 0.2, the query-callable interface is new in 0.5.
 
-- **Ring Index for RDF** (`ring-index` feature) - 3x space reduction using wavelet trees
-- **Block-STM parallel execution** (`block-stm` feature) - optimistic parallel transactions
-- **Tiered hot/cold storage** (`tiered-storage` feature) - compressed epoch archival
-- **Succinct data structures** (`succinct-indexes` feature) - rank/select bitvectors, Elias-Fano
+**Data management**: Temporal types (Date, Time, Duration, DateTime), graph type enforcement with schema validation and constraints, LOAD DATA for CSV/JSONL/Parquet, named graph persistence, cross-graph transactions.
 
-### Expanded Support
+**Transaction correctness**: MVCC dirty-read prevention, DELETE rollback with full undo log, write-write conflict detection, session auto-rollback, savepoints.
 
-- **RDF** - full support with Ring Index and SPARQL optimization
-- All query languages promoted to full support
-- NetworkX and solvOR integrations promoted to full support
+**Persistence**: Single-file `.grafeo` format with dual-header crash safety, index metadata persistence (snapshot v4), read-only open mode with shared file lock for concurrent reader processes.
 
----
+**Bindings**: C#/.NET 8, Dart/Flutter (community contribution), C FFI layer shared by Go, and C#.
 
-## 0.3.x - AI Compatibility 
+**Ecosystem**: [grafeo-server](https://github.com/GrafeoDB/grafeo-server), [grafeo-web](https://github.com/GrafeoDB/grafeo-web), [grafeo-mcp](https://github.com/GrafeoDB/grafeo-mcp), [grafeo-memory](https://github.com/GrafeoDB/grafeo-memory), [grafeo-langchain](https://github.com/GrafeoDB/grafeo-langchain), [grafeo-llamaindex](https://github.com/GrafeoDB/grafeo-llamaindex).
 
-*Ready for modern AI/ML workloads*
+### What's left in 0.5
 
-### Vector Features
-
-- **Vector Type** - First-class `Vector` type with f32 storage (4x compression vs f64)
-- **Distance Functions** - Cosine, Euclidean, Dot Product, Manhattan metrics
-- **HNSW Index** - O(log n) approximate nearest neighbor search with batch insert/search
-- **Hybrid Queries** - Combine graph traversal with vector similarity in GQL/Cypher/SPARQL
-- **Serializable Isolation** - SSI for write skew prevention and strong consistency
-
-### Vector Quantization
-
-- **Scalar Quantization** - f32 → u8, 4x compression with ~97% recall
-- **Binary Quantization** - f32 → 1 bit, 32x compression with SIMD-accelerated hamming distance
-- **Product Quantization** - Codebook-based 8-32x compression with asymmetric distance computation
-- **QuantizedHnswIndex** - Two-phase search with rescoring support
-- **SIMD Acceleration** - AVX2+FMA, SSE and NEON support for 4-8x faster distance computations
-
-### Vector Storage & Search
-
-- **Memory-Mapped Vector Storage** - Disk-backed storage with LRU cache for large datasets
-- **VectorScan Operators** - HNSW and brute-force search in query execution plans
-- **VectorJoin Operator** - Hybrid graph pattern + vector similarity search
-- **Vector Zone Maps** - Centroid and bounding box pruning for block skipping
-- **Vector Cost Estimation** - HNSW O(ef * log N) and brute-force O(N) cost models
-- **Python Quantization API** - Full quantization support from Python
-
-### Execution & Quality
-
-- **Selective Property Loading** - Projection pushdown for O(N*K) vs O(N*C) reads
-- **Parallel Node Scan** - Morsel-driven parallel execution for 3-8x speedup on large scans
-- **Query Performance Metrics** - Execution timing and row counts on query results
-- **Error Message Suggestions** - Fuzzy "Did you mean X?" hints for undefined variables and labels
-- **Adaptive WAL Flusher** - Self-tuning background flush with consistent cadence
-
-### Syntax Support
-
-```gql
--- Vector literals and similarity functions
-MATCH (m:Movie)
-WHERE cosine_similarity(m.embedding, $query) > 0.8
-RETURN m.title
-
--- Create vector index
-CREATE VECTOR INDEX movie_embeddings ON :Movie(embedding)
-  DIMENSION 384 METRIC 'cosine'
-```
+- Query language spec compliance (GQL ~95%, Cypher ~90%, SPARQL ~98%, SQL/PGQ ~75%)
+- C FFI parity with Python/Node.js surface (so C#, Go and Dart get full coverage)
+- API stability review before freezing for 1.0
 
 ---
 
-## 0.4.x - Developer Accessibility
+## Next: 0.6, Release Candidate
 
-*Reach more developers*
+*Stability and production hardening. No new major features.*
 
-### New Bindings
+The scope is intentionally narrow:
 
-- **Node.js / TypeScript** (`@grafeo-db/js`) - native bindings via napi-rs with full type definitions (0.4.0)
-- **Go** (`github.com/GrafeoDB/grafeo/crates/bindings/go`) - CGO bindings with C FFI layer for cloud-native applications (0.4.1)
-- **WebAssembly** (`@grafeo-db/wasm`) - feature-gated platform code, wasm-bindgen bindings, 660 KB gzipped (0.4.2)
+- **Bug fixes** from real-world 0.5 usage
+- **Performance tuning** informed by actual workloads, not synthetic benchmarks
+- **API ergonomics** and documentation polish
+- **Binary size and compile time** optimization
+- **C FFI parity refactor**: expand grafeo-c to match Python/Node.js API surface, update downstream bindings
 
-### Ecosystem
-
-- **[grafeo-server](https://github.com/GrafeoDB/grafeo-server)** - standalone HTTP server with web UI, Docker image
-- **[grafeo-web](https://github.com/GrafeoDB/grafeo-web)** - Grafeo in the browser via IndexedDB, Web Workers, React/Vue/Svelte
-- **[grafeo-langchain](https://github.com/GrafeoDB/grafeo-langchain)** - LangChain integration: graph memory store, vector retriever, chat history
-- **[grafeo-llamaindex](https://github.com/GrafeoDB/grafeo-llamaindex)** - LlamaIndex integration: graph store, vector store, property graph index
-- **[grafeo-mcp](https://github.com/GrafeoDB/grafeo-mcp)** - Model Context Protocol server for LLM agent access
-
-### Query Languages
-
-- **SQL/PGQ** (SQL:2023) - `GRAPH_TABLE` function for SQL-native graph queries (0.4.4)
-
-### Vector Search (0.4.4)
-
-- **Filtered vector search** - `vector_search()`, `batch_vector_search()` and `mmr_search()` accept property equality filters via pre-computed allowlists
-- **MMR search** - Maximal Marginal Relevance for diverse, relevant results in RAG pipelines
-- **Incremental vector indexing** - vector indexes stay in sync automatically as nodes change
-
-### CLI (0.4.4)
-
-- **grafeo-cli** - `query`, `init`, `shell`, `version`, `completions` commands
-- **Interactive shell** - transactions, meta-commands, persistent history, CSV output
-- **Cross-platform distribution** - install via `cargo install`, `pip install` or `npm install -g`
-
-### Quality
-
-- All public API items documented (`missing_docs` lint workspace-wide)
-- AdminService trait for unified database introspection
-- Configurable cardinality estimation with `SelectivityConfig`
-- Continued bug fixes and stricter linting
+The goal is confidence: if something works in 0.6, it works in 1.0.
 
 ---
 
-## 0.5.x - Beta
+## 1.0: Stable
 
-*Preparing for production readiness*
-
-### Search & Retrieval (0.5.1)
-
-- **BM25 text search** (`text-index` feature): inverted index with Okapi BM25 scoring, Unicode tokenizer, stop word removal
-- **Hybrid search** (`hybrid-search` feature): combine BM25 + vector similarity via Reciprocal Rank Fusion (RRF) or weighted fusion
-- **Built-in embeddings** (`embed` feature, opt-in): in-process ONNX Runtime embedding generation, load any `.onnx` model
-
-### Change Tracking (0.5.1)
-
-- **Change data capture** (`cdc` feature): before/after property snapshots for all mutations, `history()` and `changes_between()` APIs
-
-### Procedure Calls (0.5.2)
-
-- **CALL statement**: `CALL grafeo.<algorithm>() [YIELD columns]` in GQL, Cypher and SQL/PGQ
-- **22 built-in algorithms**: all graph algorithms accessible via query strings (PageRank, Dijkstra, BFS, Louvain, etc.)
-- **Procedure registry**: `CALL grafeo.procedures()` lists all available procedures
-
-### Engine Improvements (0.5.0)
-
-- **Topology-only HNSW**: ~50% memory reduction for vector workloads
-- **Standardized error codes**: machine-readable `GRAFEO-XXXX` codes
-- **Query timeout**: configurable `query_timeout` with clean abort
-- **MVCC auto-GC**: automatic version chain garbage collection
-- **Dead code removal**: ~1,500 lines of confirmed dead code removed
-
-### Temporal Types (0.5.13)
-
-- **Date, Time, Duration** value types with ISO 8601 parsing and arithmetic
-- **GQL typed literals**: `DATE '...'`, `TIME '...'`, `DURATION '...'`, `DATETIME '...'`
-- **Cypher temporal functions**: `date()`, `time()`, `duration()`, `datetime()`, extraction functions
-- **SPARQL XSD typed literals**: `xsd:date`, `xsd:time`, `xsd:duration` translation
-
-### Data Management (0.5.16-0.5.19)
-
-- **Graph type enforcement**: full write-path schema validation with node type inheritance, edge endpoint validation, UNIQUE/NOT NULL/CHECK constraints, default values, closed graph type guards
-- **LOAD DATA**: multi-format import (CSV, JSONL, Parquet) via `LOAD DATA FROM 'path' FORMAT CSV|JSONL|PARQUET` in GQL, with Cypher-compatible `LOAD CSV` syntax
-- **Memory introspection**: `db.memory_usage()` for hierarchical heap usage breakdown
-- **Named graph persistence**: WAL-logged `CREATE GRAPH`/`DROP GRAPH`, snapshot v2 format, `SHOW GRAPHS`
-- **RDF persistence**: SPARQL INSERT/DELETE/CLEAR/CREATE/DROP now WAL-logged and recovered on restart
-- **Cross-graph transactions**: `USE GRAPH` within active transactions, atomic commit/rollback across graphs
-- **WASM batch import**: `importLpg()` and `importRdf()` for bulk-loading in browser environments
-
-### Transaction Correctness (0.5.19)
-
-- **MVCC dirty read prevention**: uncommitted versions use `EpochId::PENDING`, invisible to other sessions
-- **DELETE rollback restoration**: full undo log for node/edge deletions with label, property and adjacency recovery
-- **Write-write conflict detection**: end-to-end via `WriteTracker` trait, conflict check at commit time
-- **Session Drop auto-rollback**: active transactions automatically rolled back when sessions go out of scope
-- **Int64/Float64 type coercion**: cross-type comparisons in WHERE clauses
-
-### Ecosystem (0.5.1)
-
-- **[grafeo-memory](https://github.com/GrafeoDB/grafeo-memory)**: AI memory layer, LLM-driven fact extraction, knowledge graph storage
-
-### Persistence & Bindings (0.5.21)
-
-- **C# / .NET bindings**: full-featured .NET 8 binding via source-generated P/Invoke, wrapping the C FFI layer
-- **Dart bindings**: Dart FFI binding with NativeFinalizer resource management (community contribution by [@CorvusYe](https://github.com/CorvusYe))
-- **Single-file `.grafeo` database format**: DuckDB-style persistence with dual-header crash safety, CRC32 checksums, exclusive file locking
-- **DDL schema persistence**: CREATE NODE TYPE, CREATE EDGE TYPE, CREATE SCHEMA definitions survive close/reopen cycles (snapshot v3 format)
-- **Introspection functions**: CURRENT_SCHEMA, CURRENT_GRAPH, info(), schema() available from within GQL
-
-### Goal
-- Ready for production evaluation
-- Clear path to 1.0
+Semantic versioning commitment. Public API frozen. No breaking changes without a major version bump.
 
 ---
 
 ## Future Considerations
 
-These features are under consideration for future releases:
+Not scheduled, but on the radar:
 
-- Additional language bindings (Java/Kotlin, Swift)
 - Distributed/clustered deployment
+- Additional language bindings (Java/Kotlin, Swift)
 - Cloud-native integrations
 
 ---
 
 ## Contributing
 
-Interested in contributing to a specific feature? Check the [GitHub Issues](https://github.com/GrafeoDB/grafeo/issues) or join the discussion.
+Interested in contributing? Check the [GitHub Issues](https://github.com/GrafeoDB/grafeo/issues) or join the [Discussions](https://github.com/orgs/GrafeoDB/discussions).
 
 ---
 
-*Last updated: March 2026*
+Last updated: March 2026
