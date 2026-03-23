@@ -550,3 +550,46 @@ mod insert_edge_cases {
         assert_eq!(result.rows[0][3], Value::Bool(true));
     }
 }
+
+// ============================================================================
+// 6. Negative numeric literals in property maps (issue #160)
+// ============================================================================
+
+mod negative_literal_properties {
+    use super::*;
+
+    #[test]
+    fn insert_negative_float() {
+        let db = db();
+        let session = db.session();
+        session.execute("INSERT (:Point {lat: -6.248})").unwrap();
+
+        let result = session.execute("MATCH (n:Point) RETURN n.lat").unwrap();
+        assert_eq!(result.rows[0][0], Value::Float64(-6.248));
+    }
+
+    #[test]
+    fn insert_negative_integer() {
+        let db = db();
+        let session = db.session();
+        session.execute("INSERT (:Floor {level: -3})").unwrap();
+
+        let result = session.execute("MATCH (n:Floor) RETURN n.level").unwrap();
+        assert_eq!(result.rows[0][0], Value::Int64(-3));
+    }
+
+    #[test]
+    fn insert_mixed_positive_and_negative() {
+        let db = db();
+        let session = db.session();
+        session
+            .execute("INSERT (:Point {lat: -6.248, lon: 106.845})")
+            .unwrap();
+
+        let result = session
+            .execute("MATCH (n:Point) RETURN n.lat, n.lon")
+            .unwrap();
+        assert_eq!(result.rows[0][0], Value::Float64(-6.248));
+        assert_eq!(result.rows[0][1], Value::Float64(106.845));
+    }
+}

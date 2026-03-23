@@ -7,7 +7,7 @@ use super::{
     LogicalOperator, LogicalType, MergeConfig, MergeOp, MergeOperator, MergeRelationshipConfig,
     MergeRelationshipOp, MergeRelationshipOperator, Operator, ProjectExpr, ProjectOperator,
     PropertySource, RemoveLabelOp, RemoveLabelOperator, Result, SetPropertyOp, SetPropertyOperator,
-    ShortestPathOp, ShortestPathOperator, UnwindOp, UnwindOperator, Value,
+    ShortestPathOp, ShortestPathOperator, UnaryOp, UnwindOp, UnwindOperator, Value,
 };
 #[cfg(feature = "algos")]
 use super::{CallProcedureOp, GraphStoreMut, StaticResultOperator};
@@ -1086,9 +1086,9 @@ impl super::Planner {
 
     /// Tries to evaluate a constant expression at plan time.
     ///
-    /// Recursively folds literals, lists, and known function calls (like `vector()`)
-    /// into concrete values. Returns `None` if the expression contains non-constant
-    /// parts (variables, property accesses, etc.).
+    /// Recursively folds literals, unary operators, lists, and known function calls
+    /// (like `vector()`) into concrete values. Returns `None` if the expression
+    /// contains non-constant parts (variables, property accesses, etc.).
     pub(super) fn try_fold_expression(expr: &LogicalExpression) -> Option<Value> {
         match expr {
             LogicalExpression::Literal(v) => Some(v.clone()),
@@ -1190,6 +1190,21 @@ impl super::Planner {
                         .map(|(k, v)| (grafeo_common::types::PropertyKey::from(k), v))
                         .collect();
                 Some(Value::Map(std::sync::Arc::new(map)))
+            }
+            LogicalExpression::Unary { op, operand } => {
+                let value = Self::try_fold_expression(operand)?;
+                match op {
+                    UnaryOp::Neg => match value {
+                        Value::Int64(n) => Some(Value::Int64(-n)),
+                        Value::Float64(f) => Some(Value::Float64(-f)),
+                        _ => None,
+                    },
+                    UnaryOp::Not => match value {
+                        Value::Bool(b) => Some(Value::Bool(!b)),
+                        _ => None,
+                    },
+                    UnaryOp::IsNull | UnaryOp::IsNotNull => None,
+                }
             }
             _ => None,
         }
