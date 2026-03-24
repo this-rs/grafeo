@@ -73,6 +73,9 @@ pub mod distillation;
 #[cfg(feature = "episodic")]
 pub mod episodic;
 
+// Search pipeline (requires at least cognitive features for full functionality)
+pub mod search;
+
 // Always-available modules
 pub mod config;
 pub mod engine;
@@ -139,4 +142,8 @@ pub use distillation::{
 pub use episodic::{
     ActivationStep, Episode, EpisodeConfig, EpisodeHorizon, EpisodeMemoryManager, EpisodeRecorder,
     EpisodeStore, EpisodeSweepResult, Outcome, Stimulus, ValidationResult,
+};
+
+pub use search::{
+    NoopReranker, Reranker, SearchConfig, SearchPipeline, SearchResult, SearchWeights,
 };

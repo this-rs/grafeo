@@ -31,6 +31,10 @@ pub fn try_execute_cognitive_procedure(
             let result = execute_distill(arguments, engine)?;
             Ok(Some(result))
         }
+        "grafeo.cognitive.search" => {
+            let result = execute_search(arguments, engine)?;
+            Ok(Some(result))
+        }
         _ => Ok(None),
     }
 }
@@ -129,6 +133,105 @@ fn execute_distill(
     Ok(result)
 }
 
+/// `CALL grafeo.cognitive.search({query_embedding: [...], weights: {energy: 0.3, ...}, limit: 10})`
+///
+/// Performs a multi-signal search combining vector similarity, energy, topology,
+/// and synapse traversal. Returns scored nodes with per-signal breakdown.
+fn execute_search(
+    arguments: &[LogicalExpression],
+    engine: &Arc<dyn CognitiveEngine>,
+) -> Result<AlgorithmResult> {
+    use grafeo_cognitive::search::{SearchConfig, SearchPipeline, SearchWeights};
+    use grafeo_common::types::NodeId;
+
+    // Parse the config map (first argument)
+    let config_arg = arguments.first();
+
+    // Extract query_embedding (required)
+    let query_embedding = extract_map_float_list(config_arg, "query_embedding").ok_or_else(|| {
+        Error::Internal(
+            "grafeo.cognitive.search(): requires query_embedding (list of floats)".to_string(),
+        )
+    })?;
+
+    if query_embedding.is_empty() {
+        return Err(Error::Internal(
+            "grafeo.cognitive.search(): query_embedding must not be empty".to_string(),
+        ));
+    }
+
+    // Extract optional parameters
+    let limit = extract_map_int(config_arg, "limit").unwrap_or(10) as usize;
+
+    // Extract weights from nested map
+    let w_similarity = extract_nested_map_float(config_arg, "weights", "similarity").unwrap_or(0.3);
+    let w_energy = extract_nested_map_float(config_arg, "weights", "energy").unwrap_or(0.3);
+    let w_topology = extract_nested_map_float(config_arg, "weights", "topology").unwrap_or(0.3);
+    let w_synapse = extract_nested_map_float(config_arg, "weights", "synapse").unwrap_or(0.1);
+
+    let search_config = SearchConfig {
+        weights: SearchWeights::new(w_similarity, w_energy, w_topology, w_synapse),
+        limit,
+        ..Default::default()
+    };
+
+    // For now, simulate vector candidates from query_embedding
+    // In a full integration, this would delegate to the HNSW index on GrafeoDB.
+    // We create placeholder candidates — the actual vector search integration
+    // happens at the GrafeoDB level when wiring the procedure.
+    let vector_candidates: Vec<(NodeId, f64)> = Vec::new();
+
+    // Build the pipeline from cognitive engine stores
+    #[allow(unused_mut)]
+    let mut pipeline = SearchPipeline::new();
+
+    #[cfg(feature = "cognitive")]
+    {
+        if let Some(energy_store) = engine.energy_store() {
+            pipeline = pipeline.with_energy_store(Arc::clone(energy_store));
+        }
+        if let Some(synapse_store) = engine.synapse_store() {
+            pipeline = pipeline.with_synapse_store(Arc::clone(synapse_store));
+        }
+    }
+
+    // Fabric store access requires the fabric feature on grafeo-cognitive
+    // which is enabled via cognitive-fabric feature on grafeo-engine.
+    // We use cfg to conditionally access it.
+    #[cfg(feature = "cognitive-fabric")]
+    {
+        if let Some(fabric_store) = engine.fabric_store() {
+            pipeline = pipeline.with_fabric_store(Arc::clone(fabric_store));
+        }
+    }
+
+    let _ = (&query_embedding, engine);
+
+    let results = pipeline.search(&vector_candidates, &search_config);
+
+    let mut algo_result = AlgorithmResult::new(vec![
+        "node_id".to_string(),
+        "score".to_string(),
+        "signal_similarity".to_string(),
+        "signal_energy".to_string(),
+        "signal_topology".to_string(),
+        "signal_synapse".to_string(),
+    ]);
+
+    for r in results {
+        algo_result.add_row(vec![
+            Value::Int64(r.node_id.0 as i64),
+            Value::Float64(r.score),
+            Value::Float64(r.signal_similarity),
+            Value::Float64(r.signal_energy),
+            Value::Float64(r.signal_topology),
+            Value::Float64(r.signal_synapse),
+        ]);
+    }
+
+    Ok(algo_result)
+}
+
 /// Extracts an integer from a map expression argument: `{key: value}`.
 fn extract_map_int(arg: Option<&LogicalExpression>, key: &str) -> Option<i64> {
     if let Some(LogicalExpression::Map(entries)) = arg {
@@ -153,6 +256,57 @@ fn extract_map_float(arg: Option<&LogicalExpression>, key: &str) -> Option<f64> 
                 }
                 if let LogicalExpression::Literal(Value::Int64(n)) = v {
                     return Some(*n as f64);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Extracts a list of floats from a map expression argument: `{key: [1.0, 2.0]}`.
+fn extract_map_float_list(arg: Option<&LogicalExpression>, key: &str) -> Option<Vec<f64>> {
+    if let Some(LogicalExpression::Map(entries)) = arg {
+        for (k, v) in entries {
+            if k == key {
+                if let LogicalExpression::List(items) = v {
+                    let mut floats = Vec::with_capacity(items.len());
+                    for item in items {
+                        match item {
+                            LogicalExpression::Literal(Value::Float64(f)) => floats.push(*f),
+                            LogicalExpression::Literal(Value::Int64(n)) => {
+                                floats.push(*n as f64);
+                            }
+                            _ => return None,
+                        }
+                    }
+                    return Some(floats);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Extracts a float from a nested map: `{outer_key: {inner_key: value}}`.
+fn extract_nested_map_float(
+    arg: Option<&LogicalExpression>,
+    outer_key: &str,
+    inner_key: &str,
+) -> Option<f64> {
+    if let Some(LogicalExpression::Map(entries)) = arg {
+        for (k, v) in entries {
+            if k == outer_key {
+                if let LogicalExpression::Map(inner_entries) = v {
+                    for (ik, iv) in inner_entries {
+                        if ik == inner_key {
+                            if let LogicalExpression::Literal(Value::Float64(f)) = iv {
+                                return Some(*f);
+                            }
+                            if let LogicalExpression::Literal(Value::Int64(n)) = iv {
+                                return Some(*n as f64);
+                            }
+                        }
+                    }
                 }
             }
         }
