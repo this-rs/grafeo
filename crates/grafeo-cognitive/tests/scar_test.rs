@@ -295,12 +295,14 @@ fn store_is_thread_safe() {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[cfg(feature = "fabric")]
 fn fabric_scar_intensity_field_default() {
     let score = FabricScore::new();
     assert!((score.scar_intensity - 0.0).abs() < f64::EPSILON);
 }
 
 #[test]
+#[cfg(feature = "fabric")]
 fn fabric_set_scar_intensity() {
     let store = FabricStore::new();
     let node = NodeId(1);
@@ -311,6 +313,7 @@ fn fabric_set_scar_intensity() {
 }
 
 #[test]
+#[cfg(feature = "fabric")]
 fn fabric_risk_score_increases_with_scar() {
     let store = FabricStore::new();
     let node_clean = NodeId(1);
@@ -342,6 +345,7 @@ fn fabric_risk_score_increases_with_scar() {
 }
 
 #[test]
+#[cfg(feature = "fabric")]
 fn fabric_risk_score_proportional_to_scar_intensity() {
     let store = FabricStore::new();
     let low_scar = NodeId(1);
@@ -368,6 +372,7 @@ fn fabric_risk_score_proportional_to_scar_intensity() {
 }
 
 #[test]
+#[cfg(feature = "fabric")]
 fn fabric_risk_score_clamped_to_one() {
     let store = FabricStore::new();
     let node = NodeId(1);

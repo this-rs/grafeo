@@ -1,10 +1,29 @@
 //! Plugin registry.
 
 use super::{Algorithm, Plugin};
+use grafeo_common::types::Value;
 use grafeo_common::utils::error::Result;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+/// A user-defined function (UDF) that can be called from query expressions.
+///
+/// UDFs take a node ID (as `Value::Int64`) and return a scalar `Value`.
+/// They are registered by name (e.g., `"grafeo.energy"`) and resolved at
+/// query planning time.
+pub trait UserDefinedFunction: Send + Sync {
+    /// Returns the dotted name of this UDF (e.g., `"grafeo.energy"`).
+    fn name(&self) -> &str;
+
+    /// Returns a short description.
+    fn description(&self) -> &str;
+
+    /// Evaluates the UDF for the given argument values.
+    ///
+    /// For cognitive UDFs the first argument is typically a node-ID (`Value::Int64`).
+    fn evaluate(&self, args: &[Value]) -> Result<Value>;
+}
 
 /// Registry for managing plugins and algorithms.
 pub struct PluginRegistry {
@@ -12,6 +31,8 @@ pub struct PluginRegistry {
     plugins: RwLock<HashMap<String, Arc<dyn Plugin>>>,
     /// Registered algorithms.
     algorithms: RwLock<HashMap<String, Arc<dyn Algorithm>>>,
+    /// Registered user-defined functions.
+    udfs: RwLock<HashMap<String, Arc<dyn UserDefinedFunction>>>,
 }
 
 impl PluginRegistry {
@@ -20,6 +41,7 @@ impl PluginRegistry {
         Self {
             plugins: RwLock::new(HashMap::new()),
             algorithms: RwLock::new(HashMap::new()),
+            udfs: RwLock::new(HashMap::new()),
         }
     }
 
@@ -65,6 +87,21 @@ impl PluginRegistry {
     /// Lists all registered algorithms.
     pub fn list_algorithms(&self) -> Vec<String> {
         self.algorithms.read().keys().cloned().collect()
+    }
+
+    /// Registers a user-defined function (UDF).
+    pub fn register_udf(&self, udf: Arc<dyn UserDefinedFunction>) {
+        self.udfs.write().insert(udf.name().to_string(), udf);
+    }
+
+    /// Gets a UDF by name.
+    pub fn get_udf(&self, name: &str) -> Option<Arc<dyn UserDefinedFunction>> {
+        self.udfs.read().get(name).cloned()
+    }
+
+    /// Lists all registered UDF names.
+    pub fn list_udfs(&self) -> Vec<String> {
+        self.udfs.read().keys().cloned().collect()
     }
 }
 

@@ -8,7 +8,9 @@
 mod cognitive_integration {
     use grafeo_cognitive::{CognitiveConfig, CognitiveEngine, CognitiveEngineBuilder};
     use grafeo_common::types::NodeId;
-    use grafeo_reactive::{BatchConfig, MutationBatch, MutationBus, MutationEvent, NodeSnapshot, Scheduler};
+    use grafeo_reactive::{
+        BatchConfig, MutationBatch, MutationBus, MutationEvent, NodeSnapshot, Scheduler,
+    };
     use smallvec::smallvec;
     use std::time::Duration;
 

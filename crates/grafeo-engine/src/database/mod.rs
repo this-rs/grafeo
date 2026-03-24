@@ -358,13 +358,11 @@ impl GrafeoDB {
         #[cfg(feature = "cognitive")]
         let (cognitive_engine, _cognitive_scheduler) = {
             let bus = grafeo_reactive::MutationBus::new();
-            let scheduler = grafeo_reactive::Scheduler::new(
-                &bus,
-                grafeo_reactive::BatchConfig::default(),
-            );
+            let scheduler =
+                grafeo_reactive::Scheduler::new(&bus, grafeo_reactive::BatchConfig::default());
             let config = grafeo_cognitive::CognitiveConfig::default();
-            let engine = grafeo_cognitive::CognitiveEngineBuilder::from_config(&config)
-                .build(&scheduler);
+            let engine =
+                grafeo_cognitive::CognitiveEngineBuilder::from_config(&config).build(&scheduler);
             (
                 Some(Arc::new(engine) as Arc<dyn grafeo_cognitive::CognitiveEngine>),
                 Some(scheduler),

@@ -25,6 +25,8 @@ pub mod admin;
 pub mod catalog;
 #[cfg(feature = "cdc")]
 pub mod cdc;
+#[cfg(feature = "cognitive")]
+pub mod cognitive_udfs;
 pub mod config;
 pub mod database;
 #[cfg(feature = "embed")]
