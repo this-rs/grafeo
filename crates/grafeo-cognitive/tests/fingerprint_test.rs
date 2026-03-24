@@ -309,3 +309,91 @@ fn compare_empty_graphs_is_one() {
     let sim = compare(&fp, &fp);
     assert!((sim - 1.0).abs() < 1e-10);
 }
+
+// ---------------------------------------------------------------------------
+// P2P use case: before/after injection diff
+// ---------------------------------------------------------------------------
+
+#[test]
+fn p2p_injection_quality_evaluation() {
+    // Simulate P2P distillation: source graph is K5, target starts as star-5
+    let source_fp = fingerprint(&complete_graph(5));
+    let target_before_fp = fingerprint(&star_graph(4));
+
+    // After injection, target becomes more like K5 (add cross-edges between leaves)
+    let mut target_after = star_graph(4);
+    // Add edges 1-2, 2-3, 3-4, 1-3, 1-4, 2-4 (making it a complete graph K5)
+    for i in 1..=4u64 {
+        for j in (i + 1)..=4u64 {
+            target_after.get_mut(&i).unwrap().push(j);
+            target_after.get_mut(&j).unwrap().push(i);
+        }
+    }
+    let target_after_fp = fingerprint(&target_after);
+
+    let sim_before = compare(&source_fp, &target_before_fp);
+    let sim_after = compare(&source_fp, &target_after_fp);
+
+    assert!(
+        sim_after > sim_before,
+        "After injection, target should be more similar to source: before={sim_before}, after={sim_after}"
+    );
+    assert!(
+        (sim_after - 1.0).abs() < 1e-10,
+        "After full injection (both K5), similarity should be 1.0, got {sim_after}"
+    );
+}
+
+#[test]
+fn p2p_partial_injection_improvement() {
+    // Source: K6 (complete graph with 6 nodes)
+    let source_fp = fingerprint(&complete_graph(6));
+
+    // Target before: path graph (very different topology)
+    let target_before_fp = fingerprint(&path_graph(6));
+
+    // Target after partial injection: add some triangles to path graph
+    let mut partial = path_graph(6);
+    // Add edges 0-2 and 3-5 to create two triangles
+    partial.get_mut(&0).unwrap().push(2);
+    partial.get_mut(&2).unwrap().push(0);
+    partial.get_mut(&3).unwrap().push(5);
+    partial.get_mut(&5).unwrap().push(3);
+    let target_after_fp = fingerprint(&partial);
+
+    let sim_before = compare(&source_fp, &target_before_fp);
+    let sim_after = compare(&source_fp, &target_after_fp);
+
+    // Adding structure should move us closer to the fully-connected source
+    assert!(
+        sim_after > sim_before,
+        "Partial injection should improve similarity: before={sim_before}, after={sim_after}"
+    );
+    // But still far from perfect
+    assert!(
+        sim_after < 0.8,
+        "Partial injection should not make it fully similar: got {sim_after}"
+    );
+}
+
+#[test]
+fn detect_twins_with_relabeled_graphs() {
+    // Two K4 graphs with different node IDs should be twins
+    let k4_a = complete_graph(4); // nodes 0,1,2,3
+    let mut k4_b = HashMap::new(); // nodes 100,101,102,103
+    for i in 100..104u64 {
+        let neighbors: Vec<u64> = (100..104).filter(|&j| j != i).collect();
+        k4_b.insert(i, neighbors);
+    }
+
+    let fp_a = fingerprint(&k4_a);
+    let fp_b = fingerprint(&k4_b);
+    let fp_star = fingerprint(&star_graph(10));
+
+    let all = vec![(1u64, fp_a), (2u64, fp_b), (3u64, fp_star)];
+    let twins = detect_twins(&all, 0.95);
+
+    assert_eq!(twins.len(), 1, "Only the two K4 should be twins");
+    assert_eq!(twins[0].0, 1);
+    assert_eq!(twins[0].1, 2);
+}

@@ -114,3 +114,6 @@ pub use memory::{
 pub use stagnation::{
     StagnationConfig, StagnationDetector, StagnationScore, StagnationStore, Trend,
 };
+
+#[cfg(feature = "fingerprint")]
+pub use fingerprint::{MotifType, StructuralFingerprint, compare, detect_twins, fingerprint};
