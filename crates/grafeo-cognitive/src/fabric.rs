@@ -230,8 +230,7 @@ impl FabricStore {
         max_betweenness: f64,
     ) {
         if let Some(mut entry) = self.scores.get_mut(&node_id) {
-            entry.risk_score =
-                compute_risk_score(&entry, max_pagerank, max_churn, max_betweenness);
+            entry.risk_score = compute_risk_score(&entry, max_pagerank, max_churn, max_betweenness);
         }
     }
 
@@ -240,8 +239,7 @@ impl FabricStore {
         let (max_pagerank, max_churn, max_betweenness) = self.global_maxima();
 
         for mut entry in self.scores.iter_mut() {
-            entry.risk_score =
-                compute_risk_score(&entry, max_pagerank, max_churn, max_betweenness);
+            entry.risk_score = compute_risk_score(&entry, max_pagerank, max_churn, max_betweenness);
         }
     }
 

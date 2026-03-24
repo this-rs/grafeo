@@ -1,5 +1,7 @@
 //! Integration tests for the energy subsystem.
 
+#![cfg(feature = "energy")]
+
 use grafeo_cognitive::{EnergyConfig, EnergyListener, EnergyStore, NodeEnergy};
 use grafeo_common::types::NodeId;
 use grafeo_reactive::{MutationBus, MutationEvent, MutationListener, NodeSnapshot};

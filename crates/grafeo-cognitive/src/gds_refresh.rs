@@ -8,8 +8,8 @@
 //! The scheduler runs on a configurable interval or mutation-count threshold,
 //! computing these metrics and injecting results into the [`FabricStore`].
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 #[cfg(feature = "gds-refresh")]
@@ -116,9 +116,7 @@ impl GdsRefreshScheduler {
     /// Results are injected into the [`FabricStore`] and risk scores are recalculated.
     #[cfg(feature = "gds-refresh")]
     pub fn refresh(&self, store: &dyn GraphStore) {
-        use grafeo_adapters::plugins::algorithms::{
-            betweenness_centrality, louvain, pagerank,
-        };
+        use grafeo_adapters::plugins::algorithms::{betweenness_centrality, louvain, pagerank};
 
         tracing::info!("GDS refresh starting");
 

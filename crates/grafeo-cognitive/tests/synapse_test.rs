@@ -1,5 +1,7 @@
 //! Integration tests for the synapse subsystem.
 
+#![cfg(feature = "synapse")]
+
 use grafeo_cognitive::{Synapse, SynapseConfig, SynapseListener, SynapseStore};
 use grafeo_common::types::NodeId;
 use grafeo_reactive::{MutationEvent, MutationListener, NodeSnapshot};

@@ -1,8 +1,11 @@
 //! Integration tests for the knowledge fabric subsystem.
 
-use grafeo_cognitive::fabric::{FabricScore, FabricStore};
-use grafeo_cognitive::gds_refresh::{GdsRefreshConfig, GdsRefreshScheduler};
+#![cfg(feature = "fabric")]
+
 use grafeo_cognitive::FabricListener;
+use grafeo_cognitive::fabric::{FabricScore, FabricStore};
+#[cfg(feature = "gds-refresh")]
+use grafeo_cognitive::gds_refresh::{GdsRefreshConfig, GdsRefreshScheduler};
 use grafeo_common::types::NodeId;
 use grafeo_reactive::{MutationEvent, MutationListener, NodeSnapshot};
 use smallvec::smallvec;
@@ -81,7 +84,11 @@ fn update_churn_resets_staleness() {
     store.update_churn(nid);
     let score = store.get_fabric_score(nid);
     // Staleness should be very close to 0 (just mutated)
-    assert!(score.staleness < 1.0, "staleness should be ~0, got {}", score.staleness);
+    assert!(
+        score.staleness < 1.0,
+        "staleness should be ~0, got {}",
+        score.staleness
+    );
 }
 
 #[test]
@@ -172,16 +179,32 @@ fn get_risk_zones_filters_by_min_risk() {
 
     // Node 1 should have the highest risk
     let s1 = store.get_fabric_score(n1);
-    assert!(s1.risk_score > 0.0, "node 1 risk should be > 0, got {}", s1.risk_score);
+    assert!(
+        s1.risk_score > 0.0,
+        "node 1 risk should be > 0, got {}",
+        s1.risk_score
+    );
 
     // Node 2 should have very low risk (high density = low knowledge gap)
     let s2 = store.get_fabric_score(n2);
-    assert!(s2.risk_score < s1.risk_score, "node 2 risk ({}) should be < node 1 risk ({})", s2.risk_score, s1.risk_score);
+    assert!(
+        s2.risk_score < s1.risk_score,
+        "node 2 risk ({}) should be < node 1 risk ({})",
+        s2.risk_score,
+        s1.risk_score
+    );
 
     // Risk zones with high threshold should only include high-risk nodes
     let zones_high = store.get_risk_zones(s1.risk_score);
-    assert!(zones_high.len() >= 1, "should have at least 1 high-risk node");
-    assert!(zones_high.iter().all(|(_, s)| s.risk_score >= s1.risk_score));
+    assert!(
+        zones_high.len() >= 1,
+        "should have at least 1 high-risk node"
+    );
+    assert!(
+        zones_high
+            .iter()
+            .all(|(_, s)| s.risk_score >= s1.risk_score)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -299,7 +322,11 @@ async fn listener_on_batch_resets_staleness() {
     listener.on_batch(&[node_created(42)]).await;
 
     let score = store.get_fabric_score(NodeId(42));
-    assert!(score.staleness < 1.0, "staleness should be ~0, got {}", score.staleness);
+    assert!(
+        score.staleness < 1.0,
+        "staleness should be ~0, got {}",
+        score.staleness
+    );
     assert!(score.last_mutated().is_some());
 }
 
@@ -307,6 +334,7 @@ async fn listener_on_batch_resets_staleness() {
 // GdsRefreshScheduler — configuration and mutation tracking
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "gds-refresh")]
 #[test]
 fn gds_refresh_config_defaults() {
     let config = GdsRefreshConfig::default();
@@ -314,6 +342,7 @@ fn gds_refresh_config_defaults() {
     assert_eq!(config.mutation_threshold, 1000);
 }
 
+#[cfg(feature = "gds-refresh")]
 #[test]
 fn gds_refresh_mutation_threshold() {
     let store = Arc::new(FabricStore::new());
@@ -331,6 +360,7 @@ fn gds_refresh_mutation_threshold() {
     assert_eq!(scheduler.mutations_since_refresh(), 1000);
 }
 
+#[cfg(feature = "gds-refresh")]
 #[test]
 fn gds_refresh_custom_threshold() {
     let store = Arc::new(FabricStore::new());

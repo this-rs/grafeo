@@ -92,12 +92,8 @@ impl Scheduler {
         let task_listeners = Arc::clone(&listeners);
         let task_config = config.clone();
 
-        let task_handle = tokio::spawn(scheduler_loop(
-            rx,
-            task_listeners,
-            task_config,
-            shutdown_rx,
-        ));
+        let task_handle =
+            tokio::spawn(scheduler_loop(rx, task_listeners, task_config, shutdown_rx));
 
         Self {
             listeners,
@@ -276,10 +272,7 @@ async fn dispatch_batch(events: &[MutationEvent], listeners: &ListenerList) {
 
     for listener in &listener_snapshot {
         // Filter events this listener accepts
-        let accepted: Vec<&MutationEvent> = events
-            .iter()
-            .filter(|e| listener.accepts(e))
-            .collect();
+        let accepted: Vec<&MutationEvent> = events.iter().filter(|e| listener.accepts(e)).collect();
 
         if accepted.is_empty() {
             continue;

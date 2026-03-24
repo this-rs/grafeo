@@ -72,7 +72,10 @@ async fn listener_receives_batch_after_flush() {
     tokio::time::sleep(Duration::from_millis(150)).await;
 
     let received = batches.lock().clone();
-    assert!(!received.is_empty(), "listener should have received at least one batch");
+    assert!(
+        !received.is_empty(),
+        "listener should have received at least one batch"
+    );
     let total_events: usize = received.iter().map(|b| b.len()).sum();
     assert_eq!(total_events, 3, "should have received all 3 events");
 
@@ -139,7 +142,10 @@ async fn timeout_flushes_incomplete_batch() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let received = batches.lock().clone();
-    assert!(!received.is_empty(), "timeout should have flushed the batch");
+    assert!(
+        !received.is_empty(),
+        "timeout should have flushed the batch"
+    );
     let total: usize = received.iter().map(|b| b.len()).sum();
     assert_eq!(total, 5);
 
@@ -166,7 +172,10 @@ async fn multiple_listeners_all_receive() {
 
     for (name, batches) in [("l1", &batches1), ("l2", &batches2), ("l3", &batches3)] {
         let total: usize = batches.lock().iter().map(|b| b.len()).sum();
-        assert_eq!(total, 2, "{name} should have received 2 events, got {total}");
+        assert_eq!(
+            total, 2,
+            "{name} should have received 2 events, got {total}"
+        );
     }
 
     scheduler.shutdown().await;

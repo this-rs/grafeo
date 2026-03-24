@@ -10,7 +10,29 @@ description = "Cognitive features for Grafeo — energy, synapses, activation, f
 
 [features]
 default = []
-gds-refresh = ["dep:grafeo-adapters"]
+
+# Individual subsystem features
+energy = []
+synapse = []
+fabric = []
+co-change = []
+gds-refresh = ["fabric", "dep:grafeo-adapters"]
+
+# Future subsystems (stubs — reserved for cognitive-full)
+scar = []
+memory = []
+stagnation = []
+fingerprint = []
+distillation = []
+episodic = []
+
+# Convenience feature groups (3 progressive levels)
+# Level 1: minimum viable cognitive — energy + synapses
+cognitive = ["energy", "synapse"]
+# Level 2: + fabric scoring, co-change detection, GDS refresh
+cognitive-fabric = ["cognitive", "fabric", "co-change", "gds-refresh"]
+# Level 3: all cognitive subsystems
+cognitive-full = ["cognitive-fabric", "scar", "memory", "stagnation", "fingerprint", "distillation", "episodic"]
 
 [dependencies]
 grafeo-common.workspace = true
@@ -34,6 +56,10 @@ tracing.workspace = true
 
 # Data structures
 smallvec.workspace = true
+
+# Serialization (for CognitiveConfig TOML support)
+serde.workspace = true
+toml = "0.8"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

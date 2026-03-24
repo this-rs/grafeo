@@ -1,5 +1,7 @@
 //! Integration tests for the co-change detection subsystem.
 
+#![cfg(feature = "co-change")]
+
 use grafeo_cognitive::{CoChangeConfig, CoChangeDetector, CoChangeRelation, CoChangeStore};
 use grafeo_common::types::NodeId;
 use grafeo_reactive::{MutationEvent, MutationListener, NodeSnapshot};
