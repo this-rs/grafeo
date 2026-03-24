@@ -181,9 +181,11 @@ async fn scheduler_loop(
         tokio::select! {
             biased;
 
-            // Check for shutdown signal
-            _ = shutdown_rx.changed() => {
-                if *shutdown_rx.borrow() {
+            // Check for shutdown signal.
+            // `changed()` returns Err when the Sender is dropped (Scheduler dropped
+            // without explicit shutdown). In both cases we drain and exit.
+            result = shutdown_rx.changed() => {
+                if result.is_err() || *shutdown_rx.borrow() {
                     // Drain remaining events from the channel
                     while let Ok(batch) = rx.try_recv() {
                         for event in batch.events {
