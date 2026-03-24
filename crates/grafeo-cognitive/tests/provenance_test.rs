@@ -7,8 +7,8 @@
 //! 4. DERIVED_FROM edges link consolidated nodes to sources
 
 use grafeo_cognitive::provenance::{
-    CognitiveEvent, CognitiveEventType, ProvenanceRecorder, EDGE_DERIVED_FROM,
-    EDGE_HAS_COGNITIVE_EVENT,
+    CognitiveEvent, CognitiveEventType, EDGE_DERIVED_FROM, EDGE_HAS_COGNITIVE_EVENT,
+    ProvenanceRecorder,
 };
 use grafeo_common::types::NodeId;
 

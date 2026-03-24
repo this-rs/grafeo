@@ -155,8 +155,8 @@ pub use search::{
 };
 
 pub use provenance::{
-    CognitiveEvent, CognitiveEventId, CognitiveEventType, DerivedFromRecord,
-    ProvenanceRecorder, EDGE_DERIVED_FROM, EDGE_HAS_COGNITIVE_EVENT,
+    CognitiveEvent, CognitiveEventId, CognitiveEventType, DerivedFromRecord, EDGE_DERIVED_FROM,
+    EDGE_HAS_COGNITIVE_EVENT, ProvenanceRecorder,
 };
 
 pub use tenant::{TenantError, TenantGraph, TenantInfo, TenantManager};
