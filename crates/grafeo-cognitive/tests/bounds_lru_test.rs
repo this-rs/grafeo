@@ -252,6 +252,7 @@ fn synapse_lru_eviction_caps_cache_size() {
 
 #[test]
 fn energy_lru_evicted_entry_reloaded_from_graph() {
+    use grafeo_core::graph::GraphStoreMut;
     use grafeo_core::LpgStore;
 
     let graph = Arc::new(LpgStore::new().unwrap());
@@ -260,24 +261,30 @@ fn energy_lru_evicted_entry_reloaded_from_graph() {
         max_energy: 10.0,
         ..EnergyConfig::default()
     };
-    let store = EnergyStore::with_graph_store(config, graph.clone())
-        .with_max_cache_entries(max_entries);
+    let store = EnergyStore::with_graph_store(
+        config,
+        Arc::clone(&graph) as Arc<dyn GraphStoreMut>,
+    )
+    .with_max_cache_entries(max_entries);
 
-    // Insert 20 entries — first 10 will be evicted from cache
-    for i in 0..20u64 {
-        // Create a node in the graph first so write-through can work
-        graph.create_node(&["TestNode"]);
-        store.boost(NodeId(i), 1.0);
+    // Create real nodes in the graph and boost them
+    let mut node_ids = Vec::new();
+    for _ in 0..20 {
+        let nid = graph.create_node(&["TestNode"]);
+        node_ids.push(nid);
+    }
+    for &nid in &node_ids {
+        store.boost(nid, 1.0);
     }
 
     assert!(
         store.len() <= max_entries,
-        "Cache should have at most {max_entries} entries"
+        "Cache should have at most {max_entries} entries, got {}",
+        store.len()
     );
 
-    // Access an evicted entry — should be reloaded from graph
-    let energy = store.get_energy(NodeId(0));
-    // It should have been persisted and reloaded
+    // Access the first entry (likely evicted) — should be reloaded from graph
+    let energy = store.get_energy(node_ids[0]);
     assert!(
         energy > 0.0,
         "Evicted entry should be reloadable from graph, got {energy}"
