@@ -27,6 +27,11 @@ smallvec.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+criterion.workspace = true
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "bus_bench"
+harness = false
