@@ -2482,4 +2482,563 @@ mod tests {
             assert_eq!(direct_n, proj_n);
         }
     }
+
+    #[test]
+    fn test_projection_get_node_property() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["Note"]);
+        store.set_node_property(n0, "path", Value::from("main.rs"));
+        store.set_node_property(n1, "content", Value::from("hello"));
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .build();
+
+        // File node should have property accessible
+        let prop = projection.get_node_property(n0, &"path".into());
+        assert!(prop.is_some());
+
+        // Note node should be filtered out
+        let prop = projection.get_node_property(n1, &"content".into());
+        assert!(prop.is_none());
+    }
+
+    #[test]
+    fn test_projection_get_node_and_edge() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["Function"]);
+        let n2 = store.create_node(&["Note"]);
+        let e0 = store.create_edge(n0, n1, "IMPORTS");
+        let e1 = store.create_edge(n0, n2, "SYNAPSE");
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File", "Function"])
+            .with_edge_types(&["IMPORTS"])
+            .build();
+
+        // get_node: File passes, Note doesn't
+        assert!(projection.get_node(n0).is_some());
+        assert!(projection.get_node(n1).is_some());
+        assert!(projection.get_node(n2).is_none());
+
+        // get_edge: IMPORTS passes, SYNAPSE doesn't
+        assert!(projection.get_edge(e0).is_some());
+        assert!(projection.get_edge(e1).is_none());
+    }
+
+    #[test]
+    fn test_projection_node_count_edge_count() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["File"]);
+        let n2 = store.create_node(&["Note"]);
+        store.create_edge(n0, n1, "IMPORTS");
+        store.create_edge(n0, n2, "SYNAPSE");
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .with_edge_types(&["IMPORTS"])
+            .build();
+
+        assert_eq!(projection.node_count(), 2);
+        assert_eq!(projection.edge_count(), 1);
+    }
+
+    #[test]
+    fn test_projection_edges_from_filtered_node() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["Note"]);
+        let n1 = store.create_node(&["File"]);
+        store.create_edge(n0, n1, "IMPORTS");
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .build();
+
+        // n0 is filtered out — edges_from should return empty
+        let edges = projection.edges_from(n0, Direction::Outgoing);
+        assert!(edges.is_empty());
+
+        // neighbors from filtered node should be empty
+        let neighbors = projection.neighbors(n0, Direction::Both);
+        assert!(neighbors.is_empty());
+    }
+
+    #[test]
+    fn test_projection_out_degree_in_degree() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["File"]);
+        let n2 = store.create_node(&["File"]);
+        store.create_edge(n0, n1, "IMPORTS");
+        store.create_edge(n0, n2, "IMPORTS");
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .with_edge_types(&["IMPORTS"])
+            .build();
+
+        assert_eq!(projection.out_degree(n0), 2);
+        assert_eq!(projection.in_degree(n1), 1);
+    }
+
+    #[test]
+    fn test_projection_all_labels_and_edge_types() {
+        let store = LpgStore::new().unwrap();
+        store.create_node(&["File"]);
+        store.create_node(&["Note"]);
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .with_edge_types(&["IMPORTS"])
+            .build();
+
+        let labels = projection.all_labels();
+        assert!(labels.contains(&"File".to_string()));
+        assert!(!labels.contains(&"Note".to_string()));
+
+        let edge_types = projection.all_edge_types();
+        assert!(edge_types.contains(&"IMPORTS".to_string()));
+    }
+
+    #[test]
+    fn test_projection_nodes_by_label() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let _n1 = store.create_node(&["Note"]);
+        let n2 = store.create_node(&["File"]);
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .build();
+
+        let files = projection.nodes_by_label("File");
+        assert_eq!(files.len(), 2);
+        assert!(files.contains(&n0));
+        assert!(files.contains(&n2));
+
+        // Label not in filter should return empty
+        let notes = projection.nodes_by_label("Note");
+        assert!(notes.is_empty());
+    }
+
+    #[test]
+    fn test_projection_all_node_ids() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let _n1 = store.create_node(&["Note"]);
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .build();
+
+        let all_ids = projection.all_node_ids();
+        assert_eq!(all_ids.len(), 1);
+        assert!(all_ids.contains(&n0));
+    }
+
+    #[test]
+    fn test_projection_edge_type() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["File"]);
+        let e0 = store.create_edge(n0, n1, "IMPORTS");
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_edge_types(&["IMPORTS"])
+            .build();
+
+        let et = projection.edge_type(e0);
+        assert_eq!(et.as_deref(), Some("IMPORTS"));
+    }
+
+    #[test]
+    fn test_projection_get_node_property_batch() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["Note"]);
+        store.set_node_property(n0, "path", Value::from("a.rs"));
+        store.set_node_property(n1, "path", Value::from("b.rs"));
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .build();
+
+        let batch = projection.get_node_property_batch(&[n0, n1], &"path".into());
+        assert!(batch[0].is_some());
+        assert!(batch[1].is_none()); // Note filtered out
+    }
+
+    #[test]
+    fn test_projection_get_nodes_properties_batch() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["Note"]);
+        store.set_node_property(n0, "path", Value::from("a.rs"));
+        store.set_node_property(n1, "content", Value::from("note"));
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .build();
+
+        let batch = projection.get_nodes_properties_batch(&[n0, n1]);
+        assert!(!batch[0].is_empty());
+        assert!(batch[1].is_empty()); // Note filtered out
+    }
+
+    #[test]
+    fn test_projection_find_nodes_by_property() {
+        let store = LpgStore::new().unwrap();
+        let _n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["File"]);
+        store.set_node_property(n1, "path", Value::from("main.rs"));
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .build();
+
+        let found = projection.find_nodes_by_property("path", &Value::from("main.rs"));
+        assert!(found.contains(&n1));
+    }
+
+    #[test]
+    fn test_projection_statistics_and_schema() {
+        let store = LpgStore::new().unwrap();
+        store.create_node(&["File"]);
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .build();
+
+        // These delegate to underlying store
+        let _stats = projection.statistics();
+        let _card = projection.estimate_label_cardinality("File");
+        let _keys = projection.all_property_keys();
+        let _has_idx = projection.has_property_index("path");
+        let _has_back = projection.has_backward_adjacency();
+        let _epoch = projection.current_epoch();
+    }
+
+    #[test]
+    fn test_projection_visibility_checks() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["Note"]);
+        let e0 = store.create_edge(n0, n1, "SYNAPSE");
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .build();
+
+        let epoch = projection.current_epoch();
+        assert!(projection.is_node_visible_at_epoch(n0, epoch));
+        // Note is filtered out
+        assert!(!projection.is_node_visible_at_epoch(n1, epoch));
+        // Edge to Note is filtered out
+        assert!(!projection.is_edge_visible_at_epoch(e0, epoch));
+    }
+
+    #[test]
+    fn test_projection_filter_visible_node_ids() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["Note"]);
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .build();
+
+        let epoch = projection.current_epoch();
+        let visible = projection.filter_visible_node_ids(&[n0, n1], epoch);
+        assert!(visible.contains(&n0));
+        assert!(!visible.contains(&n1));
+    }
+
+    #[test]
+    fn test_projection_get_node_history() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["Note"]);
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .build();
+
+        let history = projection.get_node_history(n0);
+        assert!(!history.is_empty());
+
+        let history = projection.get_node_history(n1);
+        assert!(history.is_empty()); // Note filtered out
+    }
+
+    #[test]
+    fn test_projection_get_edge_history() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["File"]);
+        let n2 = store.create_node(&["Note"]);
+        let e0 = store.create_edge(n0, n1, "IMPORTS");
+        let e1 = store.create_edge(n0, n2, "SYNAPSE");
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .with_edge_types(&["IMPORTS"])
+            .build();
+
+        let history = projection.get_edge_history(e0);
+        assert!(!history.is_empty());
+
+        // Edge to Note with SYNAPSE type should be filtered
+        let history = projection.get_edge_history(e1);
+        assert!(history.is_empty());
+    }
+
+    #[test]
+    fn test_projection_get_edge_property() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["File"]);
+        let e0 = store.create_edge(n0, n1, "IMPORTS");
+        store.set_edge_property(e0, "weight", Value::Float64(1.5));
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_edge_types(&["IMPORTS"])
+            .build();
+
+        let prop = projection.get_edge_property(e0, &"weight".into());
+        assert_eq!(prop, Some(Value::Float64(1.5)));
+    }
+
+    #[test]
+    fn test_projection_node_property_predicates() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["File"]);
+        store.set_node_property(n0, "active", Value::Bool(true));
+        store.set_node_property(n1, "active", Value::Bool(false));
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .with_node_property("active", |v: &Value| matches!(v, Value::Bool(true)))
+            .build();
+
+        let ids = projection.node_ids();
+        assert_eq!(ids.len(), 1);
+        assert!(ids.contains(&n0));
+    }
+
+    #[test]
+    fn test_projection_nodes_by_label_with_property_predicates() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["File"]);
+        store.set_node_property(n0, "size", Value::Int64(100));
+        store.set_node_property(n1, "size", Value::Int64(5));
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .with_node_property("size", |v: &Value| matches!(v, Value::Int64(x) if *x > 50))
+            .build();
+
+        let files = projection.nodes_by_label("File");
+        assert_eq!(files.len(), 1);
+        assert!(files.contains(&n0));
+    }
+
+    #[test]
+    fn test_projection_get_nodes_properties_selective_batch() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["Note"]);
+        store.set_node_property(n0, "path", Value::from("a.rs"));
+        store.set_node_property(n0, "size", Value::Int64(42));
+        store.set_node_property(n1, "content", Value::from("note"));
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .build();
+
+        let keys = vec!["path".into(), "size".into()];
+        let batch = projection.get_nodes_properties_selective_batch(&[n0, n1], &keys);
+        assert!(!batch[0].is_empty());
+        assert!(batch[1].is_empty()); // Note filtered
+    }
+
+    #[test]
+    fn test_projection_get_edges_properties_selective_batch() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["File"]);
+        let e0 = store.create_edge(n0, n1, "IMPORTS");
+        let e1 = store.create_edge(n0, n1, "SYNAPSE");
+        store.set_edge_property(e0, "weight", Value::Float64(1.0));
+        store.set_edge_property(e1, "weight", Value::Float64(2.0));
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_edge_types(&["IMPORTS"])
+            .build();
+
+        let keys = vec!["weight".into()];
+        let batch = projection.get_edges_properties_selective_batch(&[e0, e1], &keys);
+        assert!(!batch[0].is_empty());
+        assert!(batch[1].is_empty()); // SYNAPSE filtered
+    }
+
+    #[test]
+    fn test_projection_find_nodes_by_properties() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let _n1 = store.create_node(&["Note"]);
+        store.set_node_property(n0, "lang", Value::from("rust"));
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .build();
+
+        let found = projection.find_nodes_by_properties(&[("lang", Value::from("rust"))]);
+        assert!(found.contains(&n0));
+    }
+
+    #[test]
+    fn test_projection_find_nodes_in_range() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["Note"]);
+        store.set_node_property(n0, "size", Value::Int64(50));
+        store.set_node_property(n1, "size", Value::Int64(100));
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .build();
+
+        let min_val = Value::Int64(10);
+        let max_val = Value::Int64(200);
+        let found =
+            projection.find_nodes_in_range("size", Some(&min_val), Some(&max_val), true, true);
+        assert!(found.contains(&n0));
+        assert!(!found.contains(&n1)); // Note filtered
+    }
+
+    #[test]
+    fn test_projection_zone_map_delegates() {
+        use grafeo_core::graph::lpg::CompareOp;
+
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        store.set_node_property(n0, "size", Value::Int64(42));
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .build();
+
+        let _might_match_node =
+            projection.node_property_might_match(&"size".into(), CompareOp::Eq, &Value::Int64(42));
+        let _might_match_edge = projection.edge_property_might_match(
+            &"weight".into(),
+            CompareOp::Gt,
+            &Value::Float64(0.0),
+        );
+    }
+
+    #[test]
+    fn test_projection_estimate_avg_degree() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["File"]);
+        store.create_edge(n0, n1, "IMPORTS");
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_edge_types(&["IMPORTS"])
+            .build();
+
+        let _avg = projection.estimate_avg_degree("IMPORTS", true);
+    }
+
+    #[test]
+    fn test_projection_edge_only_filter() {
+        // Node filter empty, edge filter set
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["File"]);
+        store.create_edge(n0, n1, "IMPORTS");
+        store.create_edge(n0, n1, "CALLS");
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_edge_types(&["IMPORTS"])
+            .build();
+
+        let neighbors = projection.neighbors(n0, Direction::Outgoing);
+        assert_eq!(neighbors.len(), 1);
+    }
+
+    #[test]
+    fn test_projection_node_only_filter() {
+        // Node filter set, edge filter empty
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["Note"]);
+        store.create_edge(n0, n1, "IMPORTS");
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .build();
+
+        // n1 is filtered — neighbor should be empty
+        let neighbors = projection.neighbors(n0, Direction::Outgoing);
+        assert!(neighbors.is_empty());
+    }
+
+    #[test]
+    fn test_projection_versioned_methods() {
+        use grafeo_common::types::{EpochId, TransactionId};
+
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["Note"]);
+        let e0 = store.create_edge(n0, n1, "SYNAPSE");
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .build();
+
+        let epoch = EpochId(0);
+        let txn = TransactionId(0);
+
+        // Versioned get_node
+        let node = projection.get_node_versioned(n0, epoch, txn);
+        assert!(node.is_some());
+        let node = projection.get_node_versioned(n1, epoch, txn);
+        assert!(node.is_none()); // Note filtered
+
+        // Versioned get_edge
+        let edge = projection.get_edge_versioned(e0, epoch, txn);
+        assert!(edge.is_none()); // dst is Note, filtered
+
+        // get_node_at_epoch
+        let node = projection.get_node_at_epoch(n0, epoch);
+        assert!(node.is_some());
+        let node = projection.get_node_at_epoch(n1, epoch);
+        assert!(node.is_none());
+
+        // get_edge_at_epoch
+        let edge = projection.get_edge_at_epoch(e0, epoch);
+        assert!(edge.is_none()); // dst is Note
+
+        // edge_type_versioned
+        let _et = projection.edge_type_versioned(e0, epoch, txn);
+
+        // is_node_visible_versioned
+        assert!(projection.is_node_visible_versioned(n0, epoch, txn));
+        assert!(!projection.is_node_visible_versioned(n1, epoch, txn));
+
+        // is_edge_visible_versioned
+        assert!(!projection.is_edge_visible_versioned(e0, epoch, txn));
+
+        // filter_visible_node_ids_versioned
+        let visible = projection.filter_visible_node_ids_versioned(&[n0, n1], epoch, txn);
+        assert!(visible.contains(&n0));
+        assert!(!visible.contains(&n1));
+    }
 }

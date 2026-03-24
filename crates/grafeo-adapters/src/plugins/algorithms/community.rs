@@ -570,8 +570,7 @@ fn leiden_local_move(
                 let delta = resolution
                     * (k_i_to_comm
                         - ki_in
-                        - ki * (sigma_tot
-                            - community_total.get(&current_comm).unwrap_or(&0.0)
+                        - ki * (sigma_tot - community_total.get(&current_comm).unwrap_or(&0.0)
                             + ki)
                             / (2.0 * total_weight));
 
@@ -766,7 +765,8 @@ fn leiden_constrained_move(
                     .sum();
 
                 let delta = gamma
-                    * (k_i_to_sub - ki_in
+                    * (k_i_to_sub
+                        - ki_in
                         - ki * (sigma_tot - sigma_tot_current + ki) / (2.0 * total_weight));
 
                 if delta > best_delta {
@@ -1320,32 +1320,83 @@ mod tests {
 
         // Karate club edges (0-indexed)
         let edges: Vec<(usize, usize)> = vec![
-            (0, 1), (0, 2), (0, 3), (0, 4), (0, 5), (0, 6), (0, 7), (0, 8),
-            (0, 10), (0, 11), (0, 12), (0, 13), (0, 17), (0, 19), (0, 21), (0, 31),
-            (1, 2), (1, 3), (1, 7), (1, 13), (1, 17), (1, 19), (1, 21), (1, 30),
-            (2, 3), (2, 7), (2, 8), (2, 9), (2, 13), (2, 27), (2, 28), (2, 32),
-            (3, 7), (3, 12), (3, 13),
-            (4, 6), (4, 10),
-            (5, 6), (5, 10), (5, 16),
+            (0, 1),
+            (0, 2),
+            (0, 3),
+            (0, 4),
+            (0, 5),
+            (0, 6),
+            (0, 7),
+            (0, 8),
+            (0, 10),
+            (0, 11),
+            (0, 12),
+            (0, 13),
+            (0, 17),
+            (0, 19),
+            (0, 21),
+            (0, 31),
+            (1, 2),
+            (1, 3),
+            (1, 7),
+            (1, 13),
+            (1, 17),
+            (1, 19),
+            (1, 21),
+            (1, 30),
+            (2, 3),
+            (2, 7),
+            (2, 8),
+            (2, 9),
+            (2, 13),
+            (2, 27),
+            (2, 28),
+            (2, 32),
+            (3, 7),
+            (3, 12),
+            (3, 13),
+            (4, 6),
+            (4, 10),
+            (5, 6),
+            (5, 10),
+            (5, 16),
             (6, 16),
-            (8, 30), (8, 32), (8, 33),
+            (8, 30),
+            (8, 32),
+            (8, 33),
             (9, 33),
             (13, 33),
-            (14, 32), (14, 33),
-            (15, 32), (15, 33),
-            (18, 32), (18, 33),
+            (14, 32),
+            (14, 33),
+            (15, 32),
+            (15, 33),
+            (18, 32),
+            (18, 33),
             (19, 33),
-            (20, 32), (20, 33),
-            (22, 32), (22, 33),
-            (23, 25), (23, 27), (23, 29), (23, 32), (23, 33),
-            (24, 25), (24, 27), (24, 31),
+            (20, 32),
+            (20, 33),
+            (22, 32),
+            (22, 33),
+            (23, 25),
+            (23, 27),
+            (23, 29),
+            (23, 32),
+            (23, 33),
+            (24, 25),
+            (24, 27),
+            (24, 31),
             (25, 31),
-            (26, 29), (26, 33),
+            (26, 29),
+            (26, 33),
             (27, 33),
-            (28, 31), (28, 33),
-            (29, 32), (29, 33),
-            (30, 32), (30, 33),
-            (31, 32), (31, 33),
+            (28, 31),
+            (28, 33),
+            (29, 32),
+            (29, 33),
+            (30, 32),
+            (30, 33),
+            (31, 32),
+            (31, 33),
             (32, 33),
         ];
 
@@ -1460,5 +1511,270 @@ mod tests {
         let params = Parameters::new();
         let result = algo.execute(&store, &params).unwrap();
         assert_eq!(result.rows.len(), 8);
+    }
+
+    #[test]
+    fn test_leiden_empty_graph() {
+        let store = LpgStore::new().unwrap();
+        let result = leiden(&store, 1.0, 0.01);
+        assert!(result.communities.is_empty());
+        assert_eq!(result.num_communities, 0);
+        assert_eq!(result.modularity, 0.0);
+    }
+
+    #[test]
+    fn test_leiden_isolated_nodes_all_separate() {
+        let store = LpgStore::new().unwrap();
+        // Create nodes with no edges — total_weight == 0
+        for _ in 0..5 {
+            store.create_node(&["Node"]);
+        }
+        let result = leiden(&store, 1.0, 0.01);
+        assert_eq!(result.communities.len(), 5);
+        // Each node should be its own community
+        assert_eq!(result.num_communities, 5);
+    }
+
+    #[test]
+    fn test_leiden_disconnected_communities() {
+        // Two separate cliques with no bridge — tests disconnected split in refinement
+        let store = LpgStore::new().unwrap();
+        let nodes: Vec<NodeId> = (0..8).map(|_| store.create_node(&["Node"])).collect();
+
+        // Clique 1: 0-1-2-3
+        for i in 0..4 {
+            for j in (i + 1)..4 {
+                store.create_edge(nodes[i], nodes[j], "E");
+                store.create_edge(nodes[j], nodes[i], "E");
+            }
+        }
+        // Clique 2: 4-5-6-7 (disconnected)
+        for i in 4..8 {
+            for j in (i + 1)..8 {
+                store.create_edge(nodes[i], nodes[j], "E");
+                store.create_edge(nodes[j], nodes[i], "E");
+            }
+        }
+
+        let result = leiden(&store, 1.0, 0.01);
+        assert_eq!(result.communities.len(), 8);
+        assert!(result.num_communities >= 2);
+    }
+
+    #[test]
+    fn test_community_count_with_leiden() {
+        let store = create_two_cliques_graph();
+        let result = leiden(&store, 1.0, 0.01);
+        let count = community_count(&result.communities);
+        assert!(count >= 1 && count <= 8);
+    }
+
+    #[test]
+    fn test_louvain_empty_graph() {
+        let store = LpgStore::new().unwrap();
+        let result = louvain(&store, 1.0);
+        assert!(result.communities.is_empty());
+    }
+
+    #[test]
+    fn test_louvain_algorithm_wrapper() {
+        let store = create_two_cliques_graph();
+        let algo = LouvainAlgorithm;
+
+        assert_eq!(algo.name(), "louvain");
+        assert!(!algo.description().is_empty());
+        assert_eq!(algo.parameters().len(), 1);
+
+        let params = Parameters::new();
+        let result = algo.execute(&store, &params).unwrap();
+        assert_eq!(result.rows.len(), 8);
+    }
+
+    #[test]
+    fn test_label_propagation_algorithm_wrapper() {
+        let store = create_simple_graph();
+        let algo = LabelPropagationAlgorithm;
+
+        assert_eq!(algo.name(), "label_propagation");
+        assert!(!algo.description().is_empty());
+        assert_eq!(algo.parameters().len(), 1);
+
+        let params = Parameters::new();
+        let result = algo.execute(&store, &params).unwrap();
+        assert_eq!(result.rows.len(), 3);
+    }
+
+    #[test]
+    fn test_label_propagation_empty_graph() {
+        let store = LpgStore::new().unwrap();
+        let communities = label_propagation(&store, 100);
+        assert!(communities.is_empty());
+    }
+
+    #[test]
+    fn test_leiden_high_gamma_refinement() {
+        // High gamma should trigger constrained move sub-partitioning
+        let store = create_two_cliques_graph();
+        let result = leiden(&store, 1.0, 10.0);
+        assert_eq!(result.communities.len(), 8);
+        assert!(result.num_communities >= 2);
+    }
+
+    #[test]
+    fn test_louvain_single_node() {
+        let store = LpgStore::new().unwrap();
+        store.create_node(&["Node"]);
+        let result = louvain(&store, 1.0);
+        assert_eq!(result.communities.len(), 1);
+    }
+
+    #[test]
+    fn test_louvain_cliques_modularity() {
+        let store = create_two_cliques_graph();
+        let result = louvain(&store, 1.0);
+        assert_eq!(result.communities.len(), 8);
+        assert!(result.num_communities >= 2);
+        assert!(result.modularity > 0.0);
+    }
+
+    #[test]
+    fn test_compute_modularity_coverage() {
+        // Exercises modularity computation directly via leiden
+        let store = create_two_cliques_graph();
+        let r1 = leiden(&store, 0.1, 0.01);
+        let r2 = leiden(&store, 5.0, 0.01);
+        // Both should produce valid modularity values
+        assert!(r1.modularity.is_finite());
+        assert!(r2.modularity.is_finite());
+    }
+
+    #[test]
+    fn test_louvain_isolated_nodes_all_separate() {
+        let store = LpgStore::new().unwrap();
+        for _ in 0..5 {
+            store.create_node(&["Node"]);
+        }
+        let result = louvain(&store, 1.0);
+        assert_eq!(result.communities.len(), 5);
+        assert_eq!(result.num_communities, 5);
+        assert_eq!(result.modularity, 0.0);
+    }
+
+    #[test]
+    fn test_louvain_different_resolutions() {
+        let store = create_two_cliques_graph();
+        let r_low = louvain(&store, 0.1);
+        let r_high = louvain(&store, 5.0);
+        assert!(!r_low.communities.is_empty());
+        assert!(!r_high.communities.is_empty());
+    }
+
+    #[test]
+    fn test_leiden_chain_graph() {
+        // A long chain exercises the local move heuristic
+        let store = LpgStore::new().unwrap();
+        let mut nodes = Vec::new();
+        for _ in 0..20 {
+            nodes.push(store.create_node(&["Node"]));
+        }
+        for i in 0..19 {
+            store.create_edge(nodes[i], nodes[i + 1], "E");
+            store.create_edge(nodes[i + 1], nodes[i], "E");
+        }
+        let result = leiden(&store, 1.0, 0.01);
+        assert_eq!(result.communities.len(), 20);
+        assert!(result.num_communities >= 1);
+    }
+
+    #[test]
+    fn test_leiden_many_small_cliques() {
+        // Multiple small cliques to exercise refinement with sub-partitioning
+        let store = LpgStore::new().unwrap();
+        let mut all_nodes = Vec::new();
+
+        // 5 cliques of 4 nodes each, connected by single edges
+        for c in 0..5 {
+            let mut clique = Vec::new();
+            for _ in 0..4 {
+                clique.push(store.create_node(&["Node"]));
+            }
+            for i in 0..4 {
+                for j in (i + 1)..4 {
+                    store.create_edge(clique[i], clique[j], "E");
+                    store.create_edge(clique[j], clique[i], "E");
+                }
+            }
+            all_nodes.push(clique);
+        }
+        // Connect cliques with thin bridges
+        for c in 0..4 {
+            store.create_edge(all_nodes[c][3], all_nodes[c + 1][0], "E");
+            store.create_edge(all_nodes[c + 1][0], all_nodes[c][3], "E");
+        }
+
+        let result = leiden(&store, 1.0, 0.5);
+        assert_eq!(result.communities.len(), 20);
+        assert!(result.num_communities >= 2);
+    }
+
+    #[test]
+    fn test_label_propagation_isolated() {
+        let store = LpgStore::new().unwrap();
+        for _ in 0..3 {
+            store.create_node(&["Node"]);
+        }
+        let communities = label_propagation(&store, 100);
+        assert_eq!(communities.len(), 3);
+    }
+
+    #[test]
+    fn test_label_propagation_unlimited_iterations() {
+        let store = create_simple_graph();
+        let communities = label_propagation(&store, 0);
+        assert_eq!(communities.len(), 3);
+    }
+
+    #[test]
+    fn test_leiden_two_nodes_one_edge() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["Node"]);
+        let n1 = store.create_node(&["Node"]);
+        store.create_edge(n0, n1, "E");
+        store.create_edge(n1, n0, "E");
+
+        let result = leiden(&store, 1.0, 0.01);
+        assert_eq!(result.communities.len(), 2);
+    }
+
+    #[test]
+    fn test_louvain_two_nodes_one_edge() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["Node"]);
+        let n1 = store.create_node(&["Node"]);
+        store.create_edge(n0, n1, "E");
+
+        let result = louvain(&store, 1.0);
+        assert_eq!(result.communities.len(), 2);
+    }
+
+    #[test]
+    fn test_leiden_star_graph() {
+        // Star graph: center connected to all others
+        let store = LpgStore::new().unwrap();
+        let center = store.create_node(&["Node"]);
+        let mut leaves = Vec::new();
+        for _ in 0..10 {
+            let leaf = store.create_node(&["Node"]);
+            store.create_edge(center, leaf, "E");
+            store.create_edge(leaf, center, "E");
+            leaves.push(leaf);
+        }
+
+        let result = leiden(&store, 1.0, 0.01);
+        assert_eq!(result.communities.len(), 11);
+
+        // With very high gamma, refinement may split
+        let result_high = leiden(&store, 1.0, 5.0);
+        assert_eq!(result_high.communities.len(), 11);
     }
 }
