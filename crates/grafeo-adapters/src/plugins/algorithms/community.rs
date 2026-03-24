@@ -1566,7 +1566,7 @@ mod tests {
         let store = create_two_cliques_graph();
         let result = leiden(&store, 1.0, 0.01);
         let count = community_count(&result.communities);
-        assert!(count >= 1 && count <= 8);
+        assert!((1..=8).contains(&count));
     }
 
     #[test]
@@ -1693,7 +1693,7 @@ mod tests {
         let mut all_nodes = Vec::new();
 
         // 5 cliques of 4 nodes each, connected by single edges
-        for c in 0..5 {
+        for _c in 0..5 {
             let mut clique = Vec::new();
             for _ in 0..4 {
                 clique.push(store.create_node(&["Node"]));

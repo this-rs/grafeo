@@ -425,7 +425,7 @@ fn execute_projection_create(arguments: &[LogicalExpression]) -> Result<Algorith
     }
 
     let registry = projection_registry();
-    registry.create(config).map_err(|e| Error::Internal(e))?;
+    registry.create(config).map_err(Error::Internal)?;
 
     let mut result = AlgorithmResult::new(vec!["name".to_string(), "status".to_string()]);
     result.add_row(vec![Value::from(name.as_str()), Value::from("created")]);

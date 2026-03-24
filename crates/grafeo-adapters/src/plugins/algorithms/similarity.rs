@@ -403,11 +403,11 @@ pub fn top_k_similar(
         let bits = score.to_bits();
         if heap.len() < k {
             heap.push(std::cmp::Reverse((bits, candidate.0)));
-        } else if let Some(&std::cmp::Reverse((min_bits, _))) = heap.peek() {
-            if bits > min_bits {
-                heap.pop();
-                heap.push(std::cmp::Reverse((bits, candidate.0)));
-            }
+        } else if let Some(&std::cmp::Reverse((min_bits, _))) = heap.peek()
+            && bits > min_bits
+        {
+            heap.pop();
+            heap.push(std::cmp::Reverse((bits, candidate.0)));
         }
     }
 
@@ -641,6 +641,7 @@ mod tests {
     /// ```
     ///
     /// Undirected (edges in both directions).
+    #[allow(clippy::many_single_char_names)]
     fn create_test_graph() -> (LpgStore, NodeId, NodeId, NodeId, NodeId, NodeId) {
         let store = LpgStore::new().unwrap();
 
@@ -841,6 +842,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::many_single_char_names)]
     fn test_cosine_hand_computed() {
         let store = LpgStore::new().unwrap();
         let a = store.create_node(&["N"]);

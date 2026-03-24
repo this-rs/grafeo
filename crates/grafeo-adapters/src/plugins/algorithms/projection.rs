@@ -674,9 +674,8 @@ impl<'a> GraphProjection<'a> {
     ///
     /// O(L + P + E) where L/P are node filter costs and E is edge filter cost.
     fn edge_passes(&self, edge_id: EdgeId) -> bool {
-        let edge = match self.store.get_edge(edge_id) {
-            Some(e) => e,
-            None => return false,
+        let Some(edge) = self.store.get_edge(edge_id) else {
+            return false;
         };
 
         // Check edge filter
@@ -881,10 +880,10 @@ impl GraphStore for GraphProjection<'_> {
                     Some(false) => {}
                     None => {
                         // Need full edge check (property predicates)
-                        if let Some(edge) = self.store.get_edge(edge_id) {
-                            if self.edge_filter.accepts(&edge, self.store) {
-                                result.push(target);
-                            }
+                        if let Some(edge) = self.store.get_edge(edge_id)
+                            && self.edge_filter.accepts(&edge, self.store)
+                        {
+                            result.push(target);
                         }
                     }
                 }
@@ -1917,10 +1916,10 @@ mod tests {
         // Note nodes should not be visible
         let all_ids = store.node_ids();
         for id in &all_ids {
-            if let Some(node) = store.get_node(*id) {
-                if node.labels.iter().any(|l| l.as_str() == "Note") {
-                    assert!(projection.get_node(*id).is_none());
-                }
+            if let Some(node) = store.get_node(*id)
+                && node.labels.iter().any(|l| l.as_str() == "Note")
+            {
+                assert!(projection.get_node(*id).is_none());
             }
         }
     }
@@ -1956,11 +1955,11 @@ mod tests {
         let mut found_synapse = false;
         for &id in &ids {
             for (target, edge_id) in projection.edges_from(id, Direction::Outgoing) {
-                if let Some(et) = store.edge_type(edge_id) {
-                    if et.as_str() == "SYNAPSE" {
-                        found_synapse = true;
-                        assert!(ids.contains(&target));
-                    }
+                if let Some(et) = store.edge_type(edge_id)
+                    && et.as_str() == "SYNAPSE"
+                {
+                    found_synapse = true;
+                    assert!(ids.contains(&target));
                 }
             }
         }
@@ -2005,10 +2004,10 @@ mod tests {
 
         // Function nodes should not be visible
         for id in store.node_ids() {
-            if let Some(node) = store.get_node(id) {
-                if node.labels.iter().any(|l| l.as_str() == "Function") {
-                    assert!(projection.get_node(id).is_none());
-                }
+            if let Some(node) = store.get_node(id)
+                && node.labels.iter().any(|l| l.as_str() == "Function")
+            {
+                assert!(projection.get_node(id).is_none());
             }
         }
     }

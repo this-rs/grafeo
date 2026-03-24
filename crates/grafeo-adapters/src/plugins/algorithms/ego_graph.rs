@@ -294,10 +294,10 @@ pub fn khop_subgraph(store: &dyn GraphStore, config: &KHopConfig) -> EgoGraph {
                 }
 
                 count += 1;
-                if let Some(max) = config.max_neighbors_per_hop {
-                    if count >= max {
-                        break;
-                    }
+                if let Some(max) = config.max_neighbors_per_hop
+                    && count >= max
+                {
+                    break;
                 }
             }
         }
@@ -309,11 +309,7 @@ pub fn khop_subgraph(store: &dyn GraphStore, config: &KHopConfig) -> EgoGraph {
     // Optionally load node properties
     let node_properties = if config.include_properties {
         let props_batch = store.get_nodes_properties_batch(&nodes_ordered);
-        nodes_ordered
-            .iter()
-            .copied()
-            .zip(props_batch.into_iter())
-            .collect()
+        nodes_ordered.iter().copied().zip(props_batch).collect()
     } else {
         FxHashMap::default()
     };
