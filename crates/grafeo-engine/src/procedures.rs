@@ -723,10 +723,7 @@ mod tests {
         params.set_string("metric", "jaccard");
 
         let result = algo.execute(&store, &params).unwrap();
-        assert_eq!(
-            result.columns,
-            vec!["node1", "node2", "metric", "score"]
-        );
+        assert_eq!(result.columns, vec!["node1", "node2", "metric", "score"]);
         assert_eq!(result.rows.len(), 1);
         // N(A) = {C}, N(B) = {C}, intersection={C}, union={C}, jaccard=1.0
         if let Value::Float64(score) = &result.rows[0][3] {

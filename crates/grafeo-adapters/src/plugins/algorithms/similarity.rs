@@ -491,12 +491,12 @@ impl GraphAlgorithm for NodeSimilarityAlgorithm {
     }
 
     fn execute(&self, store: &dyn GraphStore, params: &Parameters) -> Result<AlgorithmResult> {
-        let node1_id = params
-            .get_int("node1")
-            .ok_or_else(|| Error::Internal("similarity: missing required parameter 'node1'".into()))?;
-        let node2_id = params
-            .get_int("node2")
-            .ok_or_else(|| Error::Internal("similarity: missing required parameter 'node2'".into()))?;
+        let node1_id = params.get_int("node1").ok_or_else(|| {
+            Error::Internal("similarity: missing required parameter 'node1'".into())
+        })?;
+        let node2_id = params.get_int("node2").ok_or_else(|| {
+            Error::Internal("similarity: missing required parameter 'node2'".into())
+        })?;
 
         let metric_name = params.get_string("metric").unwrap_or("jaccard");
         let metric = SimilarityMetric::from_str(metric_name).ok_or_else(|| {
@@ -596,9 +596,9 @@ impl GraphAlgorithm for TopKSimilarAlgorithm {
     }
 
     fn execute(&self, store: &dyn GraphStore, params: &Parameters) -> Result<AlgorithmResult> {
-        let node_id = params
-            .get_int("node")
-            .ok_or_else(|| Error::Internal("similarity.topk: missing required parameter 'node'".into()))?;
+        let node_id = params.get_int("node").ok_or_else(|| {
+            Error::Internal("similarity.topk: missing required parameter 'node'".into())
+        })?;
 
         let k = params.get_int("k").unwrap_or(10) as usize;
 
@@ -754,7 +754,10 @@ mod tests {
         // union = {B, D} = 2
         // Jaccard = 2/2 = 1.0
         let score = jaccard(&store, a, e);
-        assert!((score - 1.0).abs() < 1e-10, "A and E have same neighbors: score={score}");
+        assert!(
+            (score - 1.0).abs() < 1e-10,
+            "A and E have same neighbors: score={score}"
+        );
 
         // N(D) = {A, E}
         // N(A) = {B, D}
@@ -1053,12 +1056,30 @@ mod tests {
 
     #[test]
     fn test_metric_from_str() {
-        assert_eq!(SimilarityMetric::from_str("jaccard"), Some(SimilarityMetric::Jaccard));
-        assert_eq!(SimilarityMetric::from_str("JACCARD"), Some(SimilarityMetric::Jaccard));
-        assert_eq!(SimilarityMetric::from_str("overlap"), Some(SimilarityMetric::Overlap));
-        assert_eq!(SimilarityMetric::from_str("cosine"), Some(SimilarityMetric::Cosine));
-        assert_eq!(SimilarityMetric::from_str("adamic_adar"), Some(SimilarityMetric::AdamicAdar));
-        assert_eq!(SimilarityMetric::from_str("adamic-adar"), Some(SimilarityMetric::AdamicAdar));
+        assert_eq!(
+            SimilarityMetric::from_str("jaccard"),
+            Some(SimilarityMetric::Jaccard)
+        );
+        assert_eq!(
+            SimilarityMetric::from_str("JACCARD"),
+            Some(SimilarityMetric::Jaccard)
+        );
+        assert_eq!(
+            SimilarityMetric::from_str("overlap"),
+            Some(SimilarityMetric::Overlap)
+        );
+        assert_eq!(
+            SimilarityMetric::from_str("cosine"),
+            Some(SimilarityMetric::Cosine)
+        );
+        assert_eq!(
+            SimilarityMetric::from_str("adamic_adar"),
+            Some(SimilarityMetric::AdamicAdar)
+        );
+        assert_eq!(
+            SimilarityMetric::from_str("adamic-adar"),
+            Some(SimilarityMetric::AdamicAdar)
+        );
         assert_eq!(
             SimilarityMetric::from_str("resource_allocation"),
             Some(SimilarityMetric::ResourceAllocation)
@@ -1193,7 +1214,13 @@ mod tests {
         store.create_edge(c, b, "E");
 
         let algo = NodeSimilarityAlgorithm;
-        for metric in ["jaccard", "overlap", "cosine", "adamic_adar", "resource_allocation"] {
+        for metric in [
+            "jaccard",
+            "overlap",
+            "cosine",
+            "adamic_adar",
+            "resource_allocation",
+        ] {
             let mut params = Parameters::new();
             params.set_int("node1", a.0 as i64);
             params.set_int("node2", b.0 as i64);
@@ -1215,7 +1242,13 @@ mod tests {
         store.create_edge(c, b, "E");
 
         let algo = TopKSimilarAlgorithm;
-        for metric in ["jaccard", "overlap", "cosine", "adamic_adar", "resource_allocation"] {
+        for metric in [
+            "jaccard",
+            "overlap",
+            "cosine",
+            "adamic_adar",
+            "resource_allocation",
+        ] {
             let mut params = Parameters::new();
             params.set_int("node", a.0 as i64);
             params.set_int("k", 5);
@@ -1240,7 +1273,10 @@ mod tests {
 
     #[test]
     fn test_metric_aliases() {
-        assert_eq!(SimilarityMetric::from_str("adamicadar"), Some(SimilarityMetric::AdamicAdar));
+        assert_eq!(
+            SimilarityMetric::from_str("adamicadar"),
+            Some(SimilarityMetric::AdamicAdar)
+        );
         assert_eq!(
             SimilarityMetric::from_str("resourceallocation"),
             Some(SimilarityMetric::ResourceAllocation)

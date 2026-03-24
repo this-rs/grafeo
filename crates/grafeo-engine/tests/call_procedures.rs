@@ -786,3 +786,72 @@ fn test_cypher_call_yield_where_return() {
 
     assert!(result.row_count() <= 2);
 }
+
+// ==================== HITS Tests ====================
+
+#[test]
+fn test_gql_call_hits() {
+    let db = setup_graph();
+    let session = db.session();
+    let result = session.execute("CALL grafeo.hits()").unwrap();
+
+    assert_eq!(result.columns.len(), 3);
+    assert_eq!(result.columns[0], "node_id");
+    assert_eq!(result.columns[1], "hub_score");
+    assert_eq!(result.columns[2], "authority_score");
+    assert_eq!(result.row_count(), 3); // 3 nodes
+}
+
+#[test]
+fn test_gql_call_hits_with_params() {
+    let db = setup_graph();
+    let session = db.session();
+    let result = session
+        .execute("CALL grafeo.hits({max_iterations: 50, tolerance: 0.001})")
+        .unwrap();
+
+    assert_eq!(result.row_count(), 3);
+
+    // Hub and authority scores should be non-negative
+    for row in &result.rows {
+        if let Value::Float64(hub) = &row[1] {
+            assert!(*hub >= 0.0);
+        }
+        if let Value::Float64(auth) = &row[2] {
+            assert!(*auth >= 0.0);
+        }
+    }
+}
+
+#[test]
+fn test_gql_call_hits_yield() {
+    let db = setup_graph();
+    let session = db.session();
+    let result = session
+        .execute("CALL grafeo.hits() YIELD hub_score")
+        .unwrap();
+
+    assert_eq!(result.columns.len(), 1);
+    assert_eq!(result.columns[0], "hub_score");
+    assert_eq!(result.row_count(), 3);
+}
+
+#[test]
+fn test_cypher_call_hits() {
+    let db = setup_graph();
+    let session = db.session();
+    let result = session.execute("CALL grafeo.hits()").unwrap();
+
+    assert_eq!(result.columns.len(), 3);
+    assert_eq!(result.row_count(), 3);
+}
+
+#[test]
+fn test_sql_call_hits() {
+    let db = setup_graph();
+    let session = db.session();
+    let result = session.execute("CALL grafeo.hits()").unwrap();
+
+    assert_eq!(result.columns.len(), 3);
+    assert_eq!(result.row_count(), 3);
+}

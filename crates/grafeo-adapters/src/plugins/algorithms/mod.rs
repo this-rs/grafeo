@@ -43,9 +43,9 @@ mod flow;
 mod mst;
 pub mod projection;
 mod shortest_path;
+mod similarity;
 mod structure;
 mod traits;
-mod similarity;
 mod traversal;
 
 // Core traits
@@ -115,9 +115,8 @@ pub use traversal::{BfsAlgorithm, DfsAlgorithm};
 
 // Node similarity algorithms
 pub use similarity::{
-    NodeSimilarityAlgorithm, SimilarityMetric, SimilarityScore, TopKSimilarAlgorithm,
-    adamic_adar, cosine_similarity, jaccard, overlap_coefficient, resource_allocation,
-    top_k_similar,
+    NodeSimilarityAlgorithm, SimilarityMetric, SimilarityScore, TopKSimilarAlgorithm, adamic_adar,
+    cosine_similarity, jaccard, overlap_coefficient, resource_allocation, top_k_similar,
 };
 
 // Graph projections (virtual filtered views)
