@@ -275,3 +275,156 @@ async fn listener_with_scheduler_integration() {
 
     scheduler.shutdown().await;
 }
+
+// ---------------------------------------------------------------------------
+// EnergyConfig builder methods
+// ---------------------------------------------------------------------------
+
+#[test]
+fn config_with_half_life() {
+    let config = EnergyConfig::default().with_half_life(Duration::from_secs(7200));
+    assert_eq!(config.default_half_life, Duration::from_secs(7200));
+    // Other fields unchanged
+    assert_eq!(config.boost_on_mutation, 1.0);
+    assert_eq!(config.default_energy, 1.0);
+}
+
+#[test]
+fn config_with_boost() {
+    let config = EnergyConfig::default().with_boost(5.0);
+    assert_eq!(config.boost_on_mutation, 5.0);
+    // Other fields unchanged
+    assert_eq!(config.default_half_life, Duration::from_secs(24 * 3600));
+}
+
+#[test]
+fn config_chained_builders() {
+    let config = EnergyConfig::default()
+        .with_half_life(Duration::from_secs(60))
+        .with_boost(10.0);
+    assert_eq!(config.default_half_life, Duration::from_secs(60));
+    assert_eq!(config.boost_on_mutation, 10.0);
+}
+
+// ---------------------------------------------------------------------------
+// NodeEnergy accessors: raw_energy, half_life
+// ---------------------------------------------------------------------------
+
+#[test]
+fn node_raw_energy_returns_stored_value() {
+    let node = NodeEnergy::new(3.5, Duration::from_secs(3600));
+    assert!((node.raw_energy() - 3.5).abs() < 1e-10);
+}
+
+#[test]
+fn node_half_life_returns_configured_value() {
+    let hl = Duration::from_secs(7200);
+    let node = NodeEnergy::new(1.0, hl);
+    assert_eq!(node.half_life(), hl);
+}
+
+#[test]
+fn raw_energy_does_not_decay() {
+    let start = Instant::now();
+    let node = NodeEnergy::new_at(4.0, Duration::from_secs(1), start);
+    // Even after simulating time, raw_energy stays the same
+    assert!((node.raw_energy() - 4.0).abs() < 1e-10);
+}
+
+// ---------------------------------------------------------------------------
+// EnergyStore: config() accessor
+// ---------------------------------------------------------------------------
+
+#[test]
+fn store_config_accessor() {
+    let config = EnergyConfig {
+        boost_on_mutation: 3.0,
+        min_energy: 0.05,
+        ..EnergyConfig::default()
+    };
+    let store = EnergyStore::new(config);
+    assert_eq!(store.config().boost_on_mutation, 3.0);
+    assert_eq!(store.config().min_energy, 0.05);
+}
+
+// ---------------------------------------------------------------------------
+// Debug impls
+// ---------------------------------------------------------------------------
+
+#[test]
+fn energy_store_debug_formatting() {
+    let store = EnergyStore::new(EnergyConfig::default());
+    store.boost(NodeId::new(1), 1.0);
+    let dbg = format!("{:?}", store);
+    assert!(dbg.contains("EnergyStore"), "got: {dbg}");
+    assert!(dbg.contains("tracked_nodes"), "got: {dbg}");
+}
+
+#[test]
+fn energy_listener_debug_formatting() {
+    let store = Arc::new(EnergyStore::new(EnergyConfig::default()));
+    let listener = EnergyListener::new(Arc::clone(&store));
+    let dbg = format!("{:?}", listener);
+    assert!(dbg.contains("EnergyListener"), "got: {dbg}");
+    assert!(dbg.contains("store"), "got: {dbg}");
+}
+
+// ---------------------------------------------------------------------------
+// EnergyListener: name(), store()
+// ---------------------------------------------------------------------------
+
+#[test]
+fn listener_name() {
+    let store = Arc::new(EnergyStore::new(EnergyConfig::default()));
+    let listener = EnergyListener::new(Arc::clone(&store));
+    assert_eq!(listener.name(), "cognitive:energy");
+}
+
+#[test]
+fn listener_store_accessor() {
+    let store = Arc::new(EnergyStore::new(EnergyConfig::default()));
+    let listener = EnergyListener::new(Arc::clone(&store));
+    // Should return a reference to the same store
+    assert!(listener.store().is_empty());
+    store.boost(NodeId::new(1), 1.0);
+    assert_eq!(listener.store().len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// EnergyListener: edge update and edge delete events
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn listener_boosts_on_edge_updated() {
+    let store = Arc::new(EnergyStore::new(EnergyConfig {
+        boost_on_mutation: 1.0,
+        ..EnergyConfig::default()
+    }));
+    let listener = EnergyListener::new(Arc::clone(&store));
+
+    let event = MutationEvent::EdgeUpdated {
+        before: make_edge_snapshot(1, 10, 20),
+        after: make_edge_snapshot(1, 10, 20),
+    };
+    listener.on_event(&event).await;
+
+    assert!(store.get_energy(NodeId::new(10)) > 0.99);
+    assert!(store.get_energy(NodeId::new(20)) > 0.99);
+}
+
+#[tokio::test]
+async fn listener_boosts_on_edge_deleted() {
+    let store = Arc::new(EnergyStore::new(EnergyConfig {
+        boost_on_mutation: 1.0,
+        ..EnergyConfig::default()
+    }));
+    let listener = EnergyListener::new(Arc::clone(&store));
+
+    let event = MutationEvent::EdgeDeleted {
+        edge: make_edge_snapshot(1, 30, 40),
+    };
+    listener.on_event(&event).await;
+
+    assert!(store.get_energy(NodeId::new(30)) > 0.99);
+    assert!(store.get_energy(NodeId::new(40)) > 0.99);
+}

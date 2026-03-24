@@ -542,3 +542,114 @@ fn filter_nodes_by_horizon_for_queries() {
     let archived = store.list_by_horizon(MemoryHorizon::Archived);
     assert_eq!(archived.len(), 3); // 8, 9, 10
 }
+
+// ---------------------------------------------------------------------------
+// NodeMemoryState — time_in_current_horizon
+// ---------------------------------------------------------------------------
+
+#[test]
+fn node_memory_state_time_in_current_horizon() {
+    let past = Instant::now() - Duration::from_secs(50);
+    let state = NodeMemoryState::new_at(past);
+    let time = state.time_in_current_horizon();
+    assert!(time >= Duration::from_secs(49));
+}
+
+// ---------------------------------------------------------------------------
+// MemoryHorizon Display (already tested, but ensure all three)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn horizon_display_all_variants() {
+    assert_eq!(MemoryHorizon::Operational.to_string(), "operational");
+    assert_eq!(MemoryHorizon::Consolidated.to_string(), "consolidated");
+    assert_eq!(MemoryHorizon::Archived.to_string(), "archived");
+}
+
+// ---------------------------------------------------------------------------
+// MemoryStore Debug impl
+// ---------------------------------------------------------------------------
+
+#[test]
+fn memory_store_debug_impl() {
+    let store = MemoryStore::new();
+    store.track(NodeId(1));
+    let s = format!("{:?}", store);
+    assert!(s.contains("MemoryStore"));
+    assert!(s.contains("tracked_nodes"));
+}
+
+// ---------------------------------------------------------------------------
+// MemoryManager Debug impl
+// ---------------------------------------------------------------------------
+
+#[test]
+fn memory_manager_debug_impl() {
+    let energy_store = Arc::new(EnergyStore::new(EnergyConfig::default()));
+    let memory_store = Arc::new(MemoryStore::new());
+    let config = MemoryConfig::default();
+    let manager = MemoryManager::new(memory_store, config, energy_store);
+    let s = format!("{:?}", manager);
+    assert!(s.contains("MemoryManager"));
+    assert!(s.contains("has_archive"));
+}
+
+// ---------------------------------------------------------------------------
+// MemoryManager::with_archive
+// ---------------------------------------------------------------------------
+
+#[test]
+fn memory_manager_with_archive() {
+    let energy_store = Arc::new(EnergyStore::new(EnergyConfig::default()));
+    let memory_store = Arc::new(MemoryStore::new());
+    let config = MemoryConfig::default();
+    let archive = Arc::new(InMemoryArchiveBackend::new());
+    let manager = MemoryManager::new(memory_store, config, energy_store)
+        .with_archive(archive as Arc<dyn ArchiveBackend>);
+    let s = format!("{:?}", manager);
+    assert!(s.contains("has_archive: true"));
+}
+
+// ---------------------------------------------------------------------------
+// MemoryManager::shutdown (sync path)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn memory_manager_shutdown_does_not_panic() {
+    let energy_store = Arc::new(EnergyStore::new(EnergyConfig::default()));
+    let memory_store = Arc::new(MemoryStore::new());
+    let config = MemoryConfig::default();
+    let manager = MemoryManager::new(memory_store, config, energy_store);
+    // Calling shutdown without a periodic task should not panic
+    manager.shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// SweepResult::total_transitions with all fields
+// ---------------------------------------------------------------------------
+
+#[test]
+fn sweep_result_total_transitions_all_fields() {
+    let result = SweepResult {
+        promoted: vec![NodeId(1), NodeId(2)],
+        demoted: vec![NodeId(3)],
+        reactivated: vec![NodeId(4), NodeId(5), NodeId(6)],
+    };
+    assert_eq!(result.total_transitions(), 6);
+}
+
+#[test]
+fn sweep_result_total_transitions_empty() {
+    let result = SweepResult::default();
+    assert_eq!(result.total_transitions(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// MemoryStore::Default impl
+// ---------------------------------------------------------------------------
+
+#[test]
+fn memory_store_default_impl() {
+    let store = MemoryStore::default();
+    assert!(store.is_empty());
+}

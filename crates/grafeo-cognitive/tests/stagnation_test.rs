@@ -356,3 +356,160 @@ fn analyze_and_record_round_trip() {
     assert_eq!(v.community_id, 10);
     assert!(v.stagnation_score >= 0.0 && v.stagnation_score <= 1.0);
 }
+
+// ---------------------------------------------------------------------------
+// StagnationDetector — store() accessor
+// ---------------------------------------------------------------------------
+
+#[test]
+fn detector_store_accessor() {
+    let config = default_config();
+    let stag_store = Arc::new(StagnationStore::new(config.clone()));
+    let energy_store = make_energy_store(&[]);
+
+    #[cfg(feature = "synapse")]
+    let synapse_store = make_synapse_store(&[]);
+
+    let detector = StagnationDetector::new(
+        energy_store,
+        #[cfg(feature = "synapse")]
+        synapse_store,
+        Arc::clone(&stag_store),
+        config,
+    );
+
+    assert!(Arc::ptr_eq(detector.store(), &stag_store));
+}
+
+// ---------------------------------------------------------------------------
+// StagnationStore — len, is_empty, config
+// ---------------------------------------------------------------------------
+
+#[test]
+fn stagnation_store_len_and_is_empty() {
+    let store = StagnationStore::new(default_config());
+    assert!(store.is_empty());
+    assert_eq!(store.len(), 0);
+
+    store.update(
+        1,
+        StagnationScore {
+            community_id: 1,
+            avg_energy: 0.5,
+            last_mutation_age: Duration::from_secs(100),
+            synapse_activity: 0.3,
+            stagnation_score: 0.4,
+            trend: Trend::Stable,
+        },
+    );
+
+    assert!(!store.is_empty());
+    assert_eq!(store.len(), 1);
+}
+
+#[test]
+fn stagnation_store_config_accessor() {
+    let config = StagnationConfig {
+        stagnation_threshold: 0.42,
+        ..default_config()
+    };
+    let store = StagnationStore::new(config);
+    assert!((store.config().stagnation_threshold - 0.42).abs() < 1e-10);
+}
+
+// ---------------------------------------------------------------------------
+// Debug impls
+// ---------------------------------------------------------------------------
+
+#[test]
+fn stagnation_store_debug_impl() {
+    let store = StagnationStore::new(default_config());
+    let s = format!("{:?}", store);
+    assert!(s.contains("StagnationStore"));
+    assert!(s.contains("tracked_communities"));
+    assert!(s.contains("config"));
+}
+
+#[test]
+fn stagnation_detector_debug_impl() {
+    let config = default_config();
+    let stag_store = Arc::new(StagnationStore::new(config.clone()));
+    let energy_store = make_energy_store(&[]);
+
+    #[cfg(feature = "synapse")]
+    let synapse_store = make_synapse_store(&[]);
+
+    let detector = StagnationDetector::new(
+        energy_store,
+        #[cfg(feature = "synapse")]
+        synapse_store,
+        stag_store,
+        config,
+    );
+
+    let s = format!("{:?}", detector);
+    assert!(s.contains("StagnationDetector"));
+    assert!(s.contains("config"));
+}
+
+// ---------------------------------------------------------------------------
+// StagnationDetector — record_snapshot stores into backing store
+// ---------------------------------------------------------------------------
+
+#[test]
+fn record_snapshot_persists_score() {
+    let config = default_config();
+    let stag_store = Arc::new(StagnationStore::new(config.clone()));
+    let energy_store = make_energy_store(&[]);
+
+    #[cfg(feature = "synapse")]
+    let synapse_store = make_synapse_store(&[]);
+
+    let detector = StagnationDetector::new(
+        energy_store,
+        #[cfg(feature = "synapse")]
+        synapse_store,
+        Arc::clone(&stag_store),
+        config,
+    );
+
+    let score = StagnationScore {
+        community_id: 77,
+        avg_energy: 0.3,
+        last_mutation_age: Duration::from_secs(500),
+        synapse_activity: 0.1,
+        stagnation_score: 0.65,
+        trend: Trend::Stable,
+    };
+    detector.record_snapshot(77, score);
+
+    let vitality = stag_store.get_community_vitality(77).unwrap();
+    assert_eq!(vitality.community_id, 77);
+    assert!((vitality.stagnation_score - 0.65).abs() < 1e-10);
+}
+
+// ---------------------------------------------------------------------------
+// StagnationDetector — analyze_community with empty nodes
+// ---------------------------------------------------------------------------
+
+#[test]
+fn analyze_community_empty_nodes() {
+    let config = default_config();
+    let stag_store = Arc::new(StagnationStore::new(config.clone()));
+    let energy_store = make_energy_store(&[]);
+
+    #[cfg(feature = "synapse")]
+    let synapse_store = make_synapse_store(&[]);
+
+    let detector = StagnationDetector::new(
+        energy_store,
+        #[cfg(feature = "synapse")]
+        synapse_store,
+        stag_store,
+        config,
+    );
+
+    let score = detector.analyze_community(99, &[], Duration::ZERO);
+    assert!(score.stagnation_score >= 0.0);
+    assert!(score.stagnation_score <= 1.0);
+}

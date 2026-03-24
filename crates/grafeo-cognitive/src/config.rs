@@ -485,4 +485,65 @@ max_batch_nodes = 50
         let runtime = toml_config.to_runtime();
         assert_eq!(runtime.reinforce_amount, 0.5);
     }
+
+    #[test]
+    #[cfg(feature = "co-change")]
+    fn co_change_config_to_runtime() {
+        let toml_config = CoChangeConfigToml {
+            enabled: true,
+            window_duration_secs: 10,
+            strength_half_life_secs: 7200,
+            max_batch_nodes: 50,
+        };
+        let runtime = toml_config.to_runtime();
+        assert_eq!(runtime.window_duration, Duration::from_secs(10));
+        assert_eq!(runtime.strength_half_life, Duration::from_secs(7200));
+        assert_eq!(runtime.max_batch_nodes, 50);
+    }
+
+    #[test]
+    #[cfg(feature = "memory")]
+    fn memory_config_to_runtime() {
+        let toml_config = MemoryConfigToml {
+            enabled: true,
+            promotion_energy_threshold: 3.0,
+            promotion_min_age_secs: 1800,
+            demotion_energy_threshold: 0.05,
+            demotion_max_idle_secs: 86400,
+            sweep_interval_secs: 600,
+        };
+        let runtime = toml_config.to_runtime();
+        assert_eq!(runtime.promotion_energy_threshold, 3.0);
+        assert_eq!(runtime.promotion_min_age, Duration::from_secs(1800));
+        assert_eq!(runtime.demotion_energy_threshold, 0.05);
+        assert_eq!(runtime.demotion_max_idle, Duration::from_secs(86400));
+        assert_eq!(runtime.sweep_interval, Duration::from_secs(600));
+    }
+
+    #[test]
+    #[cfg(feature = "stagnation")]
+    fn stagnation_config_to_runtime() {
+        let toml_config = StagnationConfigToml {
+            enabled: true,
+            weight_energy: 0.5,
+            weight_mutation_age: 0.3,
+            weight_synapse_activity: 0.2,
+            max_mutation_age_secs: 86400,
+            stagnation_threshold: 0.8,
+            synapse_recent_window_secs: 3600,
+            trend_window_size: 10,
+            trend_tolerance: 0.1,
+            scan_interval_secs: 1800,
+        };
+        let runtime = toml_config.to_runtime();
+        assert_eq!(runtime.weight_energy, 0.5);
+        assert_eq!(runtime.weight_mutation_age, 0.3);
+        assert_eq!(runtime.weight_synapse_activity, 0.2);
+        assert_eq!(runtime.max_mutation_age, Duration::from_secs(86400));
+        assert_eq!(runtime.stagnation_threshold, 0.8);
+        assert_eq!(runtime.synapse_recent_window, Duration::from_secs(3600));
+        assert_eq!(runtime.trend_window_size, 10);
+        assert_eq!(runtime.trend_tolerance, 0.1);
+        assert_eq!(runtime.scan_interval, Duration::from_secs(1800));
+    }
 }

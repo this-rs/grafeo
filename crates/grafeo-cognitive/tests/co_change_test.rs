@@ -313,3 +313,110 @@ async fn detector_mixed_node_and_edge_events() {
     // Nodes touched: {1, 2, 3} → 3 pairs
     assert_eq!(store.len(), 3);
 }
+
+// ---------------------------------------------------------------------------
+// Debug impls
+// ---------------------------------------------------------------------------
+
+#[test]
+fn store_debug_formatting() {
+    let store = CoChangeStore::new(CoChangeConfig::default());
+    store.record_co_change(NodeId::new(1), NodeId::new(2));
+    let dbg = format!("{:?}", store);
+    assert!(dbg.contains("CoChangeStore"), "got: {dbg}");
+    assert!(dbg.contains("relation_count"), "got: {dbg}");
+    assert!(dbg.contains("config"), "got: {dbg}");
+}
+
+#[test]
+fn detector_debug_formatting() {
+    let store = Arc::new(CoChangeStore::new(CoChangeConfig::default()));
+    let detector = CoChangeDetector::new(Arc::clone(&store));
+    let dbg = format!("{:?}", detector);
+    assert!(dbg.contains("CoChangeDetector"), "got: {dbg}");
+    assert!(dbg.contains("store"), "got: {dbg}");
+}
+
+// ---------------------------------------------------------------------------
+// CoChangeDetector: store(), name()
+// ---------------------------------------------------------------------------
+
+#[test]
+fn detector_store_accessor() {
+    let store = Arc::new(CoChangeStore::new(CoChangeConfig::default()));
+    let detector = CoChangeDetector::new(Arc::clone(&store));
+    // store accessor returns a reference to the underlying store
+    assert!(detector.store().is_empty());
+    store.record_co_change(NodeId::new(1), NodeId::new(2));
+    assert_eq!(detector.store().len(), 1);
+}
+
+#[test]
+fn detector_name() {
+    let store = Arc::new(CoChangeStore::new(CoChangeConfig::default()));
+    let detector = CoChangeDetector::new(Arc::clone(&store));
+    assert_eq!(detector.name(), "cognitive:co_change");
+}
+
+// ---------------------------------------------------------------------------
+// CoChangeDetector: on_event is a no-op for single events
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn detector_on_event_is_noop() {
+    let store = Arc::new(CoChangeStore::new(CoChangeConfig::default()));
+    let detector = CoChangeDetector::new(Arc::clone(&store));
+
+    let event = MutationEvent::NodeCreated { node: make_node(1) };
+    detector.on_event(&event).await;
+    assert!(store.is_empty(), "single event should not produce co-changes");
+}
+
+// ---------------------------------------------------------------------------
+// Edge event variants in node_ids()
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn detector_edge_updated_co_changes_endpoints() {
+    let store = Arc::new(CoChangeStore::new(CoChangeConfig::default()));
+    let detector = CoChangeDetector::new(Arc::clone(&store));
+
+    let events = vec![
+        MutationEvent::EdgeUpdated {
+            before: make_edge_snapshot(1, 10, 20),
+            after: make_edge_snapshot(1, 10, 20),
+        },
+    ];
+    detector.on_batch(&events).await;
+
+    assert!(store.get_relation(NodeId::new(10), NodeId::new(20)).is_some());
+}
+
+#[tokio::test]
+async fn detector_edge_deleted_co_changes_endpoints() {
+    let store = Arc::new(CoChangeStore::new(CoChangeConfig::default()));
+    let detector = CoChangeDetector::new(Arc::clone(&store));
+
+    let events = vec![
+        MutationEvent::EdgeDeleted {
+            edge: make_edge_snapshot(1, 30, 40),
+        },
+    ];
+    detector.on_batch(&events).await;
+
+    assert!(store.get_relation(NodeId::new(30), NodeId::new(40)).is_some());
+}
+
+#[tokio::test]
+async fn detector_node_deleted_extracts_id() {
+    let store = Arc::new(CoChangeStore::new(CoChangeConfig::default()));
+    let detector = CoChangeDetector::new(Arc::clone(&store));
+
+    let events = vec![
+        MutationEvent::NodeDeleted { node: make_node(5) },
+        MutationEvent::NodeDeleted { node: make_node(6) },
+    ];
+    detector.on_batch(&events).await;
+
+    assert!(store.get_relation(NodeId::new(5), NodeId::new(6)).is_some());
+}

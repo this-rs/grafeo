@@ -402,3 +402,265 @@ fn store_len_and_is_empty() {
     store.update_churn(NodeId(2));
     assert_eq!(store.len(), 2);
 }
+
+// ---------------------------------------------------------------------------
+// FabricStore — set_knowledge_density (line 154)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn set_knowledge_density_creates_entry_if_absent() {
+    let store = FabricStore::new();
+    let nid = NodeId(50);
+    store.set_knowledge_density(nid, 0.75);
+    let score = store.get_fabric_score(nid);
+    assert!((score.knowledge_density - 0.75).abs() < 1e-10);
+    // Other fields should be default
+    assert_eq!(score.churn_score, 0.0);
+}
+
+#[test]
+fn set_knowledge_density_updates_existing_entry() {
+    let store = FabricStore::new();
+    let nid = NodeId(51);
+    store.update_churn(nid);
+    store.set_knowledge_density(nid, 0.8);
+    let score = store.get_fabric_score(nid);
+    assert!((score.knowledge_density - 0.8).abs() < 1e-10);
+    assert_eq!(score.churn_score, 1.0); // churn preserved
+}
+
+// ---------------------------------------------------------------------------
+// FabricStore — set_scar_intensity (line 167)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn set_scar_intensity_creates_entry_if_absent() {
+    let store = FabricStore::new();
+    let nid = NodeId(60);
+    store.set_scar_intensity(nid, 3.5);
+    let score = store.get_fabric_score(nid);
+    assert!((score.scar_intensity - 3.5).abs() < 1e-10);
+    assert_eq!(score.churn_score, 0.0);
+}
+
+#[test]
+fn set_scar_intensity_updates_existing_entry() {
+    let store = FabricStore::new();
+    let nid = NodeId(61);
+    store.update_churn(nid);
+    store.set_scar_intensity(nid, 1.2);
+    let score = store.get_fabric_score(nid);
+    assert!((score.scar_intensity - 1.2).abs() < 1e-10);
+    assert_eq!(score.churn_score, 1.0);
+}
+
+// ---------------------------------------------------------------------------
+// FabricStore — set_gds_metrics (line 178)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn set_gds_metrics_creates_entry_if_absent() {
+    let store = FabricStore::new();
+    let nid = NodeId(70);
+    store.set_gds_metrics(nid, 0.5, 0.3, Some(7));
+    let score = store.get_fabric_score(nid);
+    assert!((score.pagerank - 0.5).abs() < 1e-10);
+    assert!((score.betweenness - 0.3).abs() < 1e-10);
+    assert_eq!(score.community_id, Some(7));
+}
+
+#[test]
+fn set_gds_metrics_updates_existing_entry() {
+    let store = FabricStore::new();
+    let nid = NodeId(71);
+    store.update_churn(nid);
+    store.set_gds_metrics(nid, 0.9, 0.7, None);
+    let score = store.get_fabric_score(nid);
+    assert!((score.pagerank - 0.9).abs() < 1e-10);
+    assert!((score.betweenness - 0.7).abs() < 1e-10);
+    assert_eq!(score.community_id, None);
+    assert_eq!(score.churn_score, 1.0);
+}
+
+// ---------------------------------------------------------------------------
+// FabricStore — recalculate_all_risks (line 255)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn recalculate_all_risks_updates_every_node() {
+    let store = FabricStore::new();
+
+    for _ in 0..5 {
+        store.update_churn(NodeId(1));
+    }
+    store.set_gds_metrics(NodeId(1), 0.8, 0.6, Some(1));
+
+    for _ in 0..3 {
+        store.update_churn(NodeId(2));
+    }
+    store.set_gds_metrics(NodeId(2), 0.4, 0.2, Some(1));
+    store.set_knowledge_density(NodeId(2), 1.0); // fully documented
+
+    store.recalculate_all_risks();
+
+    let s1 = store.get_fabric_score(NodeId(1));
+    let s2 = store.get_fabric_score(NodeId(2));
+
+    // Node 1 has density 0 → knowledge_gap = 1 → non-zero risk
+    assert!(s1.risk_score > 0.0, "expected risk > 0 for node 1");
+    // Node 2 has density 1.0 → knowledge_gap = 0 → base risk = 0
+    assert!(
+        s2.risk_score < s1.risk_score,
+        "node 2 should have less risk than node 1"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// FabricStore — community_ids (line 297)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn community_ids_returns_distinct_sorted() {
+    let store = FabricStore::new();
+    store.set_gds_metrics(NodeId(1), 0.1, 0.1, Some(3));
+    store.set_gds_metrics(NodeId(2), 0.1, 0.1, Some(1));
+    store.set_gds_metrics(NodeId(3), 0.1, 0.1, Some(3)); // duplicate
+    store.set_gds_metrics(NodeId(4), 0.1, 0.1, Some(2));
+    store.set_gds_metrics(NodeId(5), 0.1, 0.1, None); // no community
+
+    let ids = store.community_ids();
+    assert_eq!(ids, vec![1, 2, 3]);
+}
+
+#[test]
+fn community_ids_empty_store() {
+    let store = FabricStore::new();
+    assert!(store.community_ids().is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// FabricStore — get_community_nodes (line 309)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn get_community_nodes_returns_matching() {
+    let store = FabricStore::new();
+    store.set_gds_metrics(NodeId(1), 0.1, 0.1, Some(5));
+    store.set_gds_metrics(NodeId(2), 0.1, 0.1, Some(5));
+    store.set_gds_metrics(NodeId(3), 0.1, 0.1, Some(6));
+    store.set_gds_metrics(NodeId(4), 0.1, 0.1, None);
+
+    let mut nodes = store.get_community_nodes(5);
+    nodes.sort_by_key(|n| n.0);
+    assert_eq!(nodes, vec![NodeId(1), NodeId(2)]);
+}
+
+#[test]
+fn get_community_nodes_empty_for_unknown_community() {
+    let store = FabricStore::new();
+    store.set_gds_metrics(NodeId(1), 0.1, 0.1, Some(1));
+    assert!(store.get_community_nodes(999).is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// FabricListener::on_event with edge events (line 431)
+// ---------------------------------------------------------------------------
+
+fn make_edge(id: u64, src: u64, dst: u64) -> grafeo_reactive::EdgeSnapshot {
+    grafeo_reactive::EdgeSnapshot {
+        id: grafeo_common::types::EdgeId::new(id),
+        src: NodeId(src),
+        dst: NodeId(dst),
+        edge_type: arcstr::literal!("KNOWS"),
+        properties: vec![],
+    }
+}
+
+#[tokio::test]
+async fn listener_on_event_edge_created() {
+    let store = Arc::new(FabricStore::new());
+    let listener = FabricListener::new(Arc::clone(&store));
+
+    let event = MutationEvent::EdgeCreated {
+        edge: make_edge(1, 10, 20),
+    };
+    listener.on_event(&event).await;
+
+    assert_eq!(store.get_fabric_score(NodeId(10)).churn_score, 1.0);
+    assert_eq!(store.get_fabric_score(NodeId(20)).churn_score, 1.0);
+}
+
+#[tokio::test]
+async fn listener_on_event_edge_updated() {
+    let store = Arc::new(FabricStore::new());
+    let listener = FabricListener::new(Arc::clone(&store));
+
+    let event = MutationEvent::EdgeUpdated {
+        before: make_edge(1, 10, 20),
+        after: make_edge(1, 10, 20),
+    };
+    listener.on_event(&event).await;
+
+    assert_eq!(store.get_fabric_score(NodeId(10)).churn_score, 1.0);
+    assert_eq!(store.get_fabric_score(NodeId(20)).churn_score, 1.0);
+}
+
+#[tokio::test]
+async fn listener_on_event_edge_deleted() {
+    let store = Arc::new(FabricStore::new());
+    let listener = FabricListener::new(Arc::clone(&store));
+
+    let event = MutationEvent::EdgeDeleted {
+        edge: make_edge(1, 30, 40),
+    };
+    listener.on_event(&event).await;
+
+    assert_eq!(store.get_fabric_score(NodeId(30)).churn_score, 1.0);
+    assert_eq!(store.get_fabric_score(NodeId(40)).churn_score, 1.0);
+}
+
+#[tokio::test]
+async fn listener_on_event_node_deleted() {
+    let store = Arc::new(FabricStore::new());
+    let listener = FabricListener::new(Arc::clone(&store));
+
+    let event = MutationEvent::NodeDeleted {
+        node: node_snapshot(99),
+    };
+    listener.on_event(&event).await;
+
+    assert_eq!(store.get_fabric_score(NodeId(99)).churn_score, 1.0);
+}
+
+// ---------------------------------------------------------------------------
+// FabricStore::Default impl
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fabric_store_default_impl() {
+    let store = FabricStore::default();
+    assert!(store.is_empty());
+    assert_eq!(store.len(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Debug impls for FabricStore and FabricListener
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fabric_store_debug_impl() {
+    let store = FabricStore::new();
+    store.update_churn(NodeId(1));
+    let s = format!("{:?}", store);
+    assert!(s.contains("FabricStore"));
+    assert!(s.contains("tracked_nodes"));
+}
+
+#[test]
+fn fabric_listener_debug_impl() {
+    let store = Arc::new(FabricStore::new());
+    let listener = FabricListener::new(store);
+    let s = format!("{:?}", listener);
+    assert!(s.contains("FabricListener"));
+    assert!(s.contains("store"));
+}

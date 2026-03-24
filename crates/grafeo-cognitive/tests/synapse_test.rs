@@ -263,3 +263,177 @@ async fn listener_single_node_batch_no_synapse() {
     // Only one node — no pairs to co-activate
     assert!(store.is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// SynapseListener — store() and name() accessors
+// ---------------------------------------------------------------------------
+
+#[test]
+fn listener_store_accessor() {
+    let store = Arc::new(SynapseStore::new(SynapseConfig::default()));
+    let listener = SynapseListener::new(Arc::clone(&store));
+    // store() should return a ref to the same Arc
+    assert!(Arc::ptr_eq(listener.store(), &store));
+}
+
+#[tokio::test]
+async fn listener_name_returns_cognitive_synapse() {
+    let store = Arc::new(SynapseStore::new(SynapseConfig::default()));
+    let listener = SynapseListener::new(store);
+    assert_eq!(listener.name(), "cognitive:synapse");
+}
+
+// ---------------------------------------------------------------------------
+// SynapseListener Debug impl
+// ---------------------------------------------------------------------------
+
+#[test]
+fn synapse_listener_debug_impl() {
+    let store = Arc::new(SynapseStore::new(SynapseConfig::default()));
+    let listener = SynapseListener::new(store);
+    let s = format!("{:?}", listener);
+    assert!(s.contains("SynapseListener"));
+    assert!(s.contains("store"));
+}
+
+// ---------------------------------------------------------------------------
+// Edge event variants in node_ids: EdgeUpdated, EdgeDeleted, NodeDeleted
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn listener_edge_updated_coactivates_endpoints() {
+    let store = Arc::new(SynapseStore::new(SynapseConfig::default()));
+    let listener = SynapseListener::new(Arc::clone(&store));
+
+    let events = vec![MutationEvent::EdgeUpdated {
+        before: make_edge_snapshot(1, 10, 20),
+        after: make_edge_snapshot(1, 10, 20),
+    }];
+    listener.on_batch(&events).await;
+
+    assert!(
+        store
+            .get_synapse(NodeId::new(10), NodeId::new(20))
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn listener_edge_deleted_coactivates_endpoints() {
+    let store = Arc::new(SynapseStore::new(SynapseConfig::default()));
+    let listener = SynapseListener::new(Arc::clone(&store));
+
+    let events = vec![MutationEvent::EdgeDeleted {
+        edge: make_edge_snapshot(1, 30, 40),
+    }];
+    listener.on_batch(&events).await;
+
+    assert!(
+        store
+            .get_synapse(NodeId::new(30), NodeId::new(40))
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn listener_node_deleted_event_extracts_id() {
+    let store = Arc::new(SynapseStore::new(SynapseConfig::default()));
+    let listener = SynapseListener::new(Arc::clone(&store));
+
+    // NodeDeleted + NodeCreated in same batch → co-activation
+    let events = vec![
+        MutationEvent::NodeDeleted {
+            node: make_node(50),
+        },
+        MutationEvent::NodeCreated {
+            node: make_node(51),
+        },
+    ];
+    listener.on_batch(&events).await;
+
+    assert!(
+        store
+            .get_synapse(NodeId::new(50), NodeId::new(51))
+            .is_some()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// SynapseStore — snapshot
+// ---------------------------------------------------------------------------
+
+#[test]
+fn store_snapshot_returns_all_synapses() {
+    let store = SynapseStore::new(SynapseConfig::default());
+    store.reinforce(NodeId::new(1), NodeId::new(2), 0.5);
+    store.reinforce(NodeId::new(3), NodeId::new(4), 0.3);
+
+    let snap = store.snapshot();
+    assert_eq!(snap.len(), 2);
+}
+
+#[test]
+fn store_snapshot_empty() {
+    let store = SynapseStore::new(SynapseConfig::default());
+    assert!(store.snapshot().is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// SynapseStore — is_empty
+// ---------------------------------------------------------------------------
+
+#[test]
+fn store_is_empty_initially() {
+    let store = SynapseStore::new(SynapseConfig::default());
+    assert!(store.is_empty());
+    store.reinforce(NodeId::new(1), NodeId::new(2), 0.1);
+    assert!(!store.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// SynapseStore Debug impl
+// ---------------------------------------------------------------------------
+
+#[test]
+fn synapse_store_debug_impl() {
+    let store = SynapseStore::new(SynapseConfig::default());
+    store.reinforce(NodeId::new(1), NodeId::new(2), 0.1);
+    let s = format!("{:?}", store);
+    assert!(s.contains("SynapseStore"));
+    assert!(s.contains("synapse_count"));
+    assert!(s.contains("config"));
+}
+
+// ---------------------------------------------------------------------------
+// Synapse — raw_weight and last_reinforced
+// ---------------------------------------------------------------------------
+
+#[test]
+fn synapse_raw_weight() {
+    let start = Instant::now();
+    let syn = Synapse::new_at(
+        NodeId::new(1),
+        NodeId::new(2),
+        1.5,
+        Duration::from_secs(3600),
+        start,
+    );
+    assert!((syn.raw_weight() - 1.5).abs() < 1e-10);
+}
+
+#[test]
+fn synapse_last_reinforced() {
+    let start = Instant::now();
+    let mut syn = Synapse::new_at(
+        NodeId::new(1),
+        NodeId::new(2),
+        1.0,
+        Duration::from_secs(3600),
+        start,
+    );
+    assert_eq!(syn.last_reinforced(), start);
+
+    let later = start + Duration::from_secs(100);
+    syn.reinforce_at(0.5, later);
+    assert_eq!(syn.last_reinforced(), later);
+}

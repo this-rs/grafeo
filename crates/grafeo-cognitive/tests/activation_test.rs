@@ -232,3 +232,56 @@ fn spread_benchmark_10k_nodes() {
         per_spread
     );
 }
+
+// ---------------------------------------------------------------------------
+// SpreadConfig builder methods
+// ---------------------------------------------------------------------------
+
+#[test]
+fn config_with_max_hops() {
+    let config = SpreadConfig::default().with_max_hops(5);
+    assert_eq!(config.max_hops, 5);
+    // Other fields unchanged
+    assert!((config.decay_factor - 0.5).abs() < 1e-10);
+}
+
+#[test]
+fn config_with_decay_factor() {
+    let config = SpreadConfig::default().with_decay_factor(0.8);
+    assert!((config.decay_factor - 0.8).abs() < 1e-10);
+    assert_eq!(config.max_hops, 3); // default unchanged
+}
+
+#[test]
+fn config_with_min_energy() {
+    let config = SpreadConfig::default().with_min_energy(0.1);
+    assert!((config.min_propagated_energy - 0.1).abs() < 1e-10);
+}
+
+#[test]
+fn config_with_activation_threshold() {
+    let config = SpreadConfig::default().with_activation_threshold(0.5);
+    assert!((config.activation_threshold - 0.5).abs() < 1e-10);
+}
+
+#[test]
+fn config_chained_builders() {
+    let config = SpreadConfig::default()
+        .with_max_hops(10)
+        .with_decay_factor(0.9)
+        .with_min_energy(0.05)
+        .with_activation_threshold(0.2);
+    assert_eq!(config.max_hops, 10);
+    assert!((config.decay_factor - 0.9).abs() < 1e-10);
+    assert!((config.min_propagated_energy - 0.05).abs() < 1e-10);
+    assert!((config.activation_threshold - 0.2).abs() < 1e-10);
+}
+
+#[test]
+fn config_debug_formatting() {
+    let config = SpreadConfig::default();
+    let dbg = format!("{:?}", config);
+    assert!(dbg.contains("SpreadConfig"), "got: {dbg}");
+    assert!(dbg.contains("max_hops"), "got: {dbg}");
+    assert!(dbg.contains("decay_factor"), "got: {dbg}");
+}
