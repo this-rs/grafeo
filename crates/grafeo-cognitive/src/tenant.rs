@@ -103,6 +103,7 @@ impl TenantGraph {
 
     /// Creates a new tenant graph with custom energy/synapse configs.
     #[cfg(all(feature = "energy", feature = "synapse"))]
+    #[allow(dead_code)]
     fn with_configs(
         name: String,
         energy_config: EnergyConfig,

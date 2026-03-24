@@ -32,6 +32,8 @@
 
 use grafeo_common::types::NodeId;
 use std::collections::HashMap;
+#[allow(unused_imports)]
+use std::sync::Arc;
 
 #[cfg(feature = "energy")]
 use crate::energy::{EnergyStore, energy_score};
@@ -318,7 +320,7 @@ impl SearchPipeline {
     /// Computes energy signal for all candidates.
     fn compute_energy_signal(
         &self,
-        _candidates: &mut HashMap<NodeId, (f64, f64, f64, f64)>,
+        #[allow(unused_variables)] candidates: &mut HashMap<NodeId, (f64, f64, f64, f64)>,
         #[allow(unused_variables)] ref_energy: f64,
     ) {
         #[cfg(feature = "energy")]
@@ -331,7 +333,10 @@ impl SearchPipeline {
     }
 
     /// Computes topology signal (PageRank + betweenness) for all candidates.
-    fn compute_topology_signal(&self, _candidates: &mut HashMap<NodeId, (f64, f64, f64, f64)>) {
+    fn compute_topology_signal(
+        &self,
+        #[allow(unused_variables)] candidates: &mut HashMap<NodeId, (f64, f64, f64, f64)>,
+    ) {
         #[cfg(feature = "fabric")]
         if let Some(store) = &self.fabric_store {
             // First pass: find max values for normalization
@@ -365,7 +370,7 @@ impl SearchPipeline {
     /// Computes synapse signal via spreading activation from top candidates.
     fn compute_synapse_signal(
         &self,
-        _candidates: &mut HashMap<NodeId, (f64, f64, f64, f64)>,
+        #[allow(unused_variables)] candidates: &mut HashMap<NodeId, (f64, f64, f64, f64)>,
         #[allow(unused_variables)] vector_candidates: &[(NodeId, f64)],
         #[allow(unused_variables)] config: &SearchConfig,
     ) {

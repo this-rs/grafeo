@@ -438,12 +438,10 @@ impl PyGDS {
         // Jaccard similarity based on outgoing neighbor sets
         let neighbors_a: std::collections::HashSet<u64> = store
             .neighbors(NodeId::new(node_a), Direction::Outgoing)
-            .into_iter()
             .map(|n| n.0)
             .collect();
         let neighbors_b: std::collections::HashSet<u64> = store
             .neighbors(NodeId::new(node_b), Direction::Outgoing)
-            .into_iter()
             .map(|n| n.0)
             .collect();
 
@@ -509,10 +507,10 @@ impl PyGDS {
             for (target, eid) in edges {
                 if node_set.contains(&target.0) {
                     if let Some(ref types) = rel_types {
-                        if let Some(etype) = store.edge_type(eid) {
-                            if types.contains(&etype.to_string()) {
-                                edge_count += 1;
-                            }
+                        if let Some(etype) = store.edge_type(eid)
+                            && types.contains(&etype.to_string())
+                        {
+                            edge_count += 1;
                         }
                     } else {
                         edge_count += 1;

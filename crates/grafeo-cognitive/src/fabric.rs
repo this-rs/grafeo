@@ -139,22 +139,22 @@ impl FabricStore {
 
     /// Persists the key fabric metrics for a node to the graph store.
     fn persist_fabric(&self, node_id: NodeId) {
-        if let Some(gs) = &self.graph_store {
-            if let Some(entry) = self.scores.get(&node_id) {
-                persist_node_f64(gs.as_ref(), node_id, PROP_FABRIC_RISK, entry.risk_score);
-                persist_node_f64(
-                    gs.as_ref(),
-                    node_id,
-                    PROP_FABRIC_MUTATION_FREQ,
-                    entry.mutation_frequency,
-                );
-                persist_node_f64(
-                    gs.as_ref(),
-                    node_id,
-                    PROP_FABRIC_ANNOTATION_DENSITY,
-                    entry.annotation_density,
-                );
-            }
+        if let Some(gs) = &self.graph_store
+            && let Some(entry) = self.scores.get(&node_id)
+        {
+            persist_node_f64(gs.as_ref(), node_id, PROP_FABRIC_RISK, entry.risk_score);
+            persist_node_f64(
+                gs.as_ref(),
+                node_id,
+                PROP_FABRIC_MUTATION_FREQ,
+                entry.mutation_frequency,
+            );
+            persist_node_f64(
+                gs.as_ref(),
+                node_id,
+                PROP_FABRIC_ANNOTATION_DENSITY,
+                entry.annotation_density,
+            );
         }
     }
 

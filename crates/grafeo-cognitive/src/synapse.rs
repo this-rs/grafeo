@@ -308,17 +308,16 @@ impl SynapseStore {
         self.maybe_evict();
 
         // Write-through
-        if let Some(eid) = self.ensure_edge(key) {
-            if let Some(gs) = &self.graph_store {
-                if let Some(entry) = self.synapses.get(&key) {
-                    persist_edge_f64(
-                        gs.as_ref(),
-                        eid,
-                        PROP_SYNAPSE_WEIGHT,
-                        entry.current_weight(),
-                    );
-                }
-            }
+        if let Some(eid) = self.ensure_edge(key)
+            && let Some(gs) = &self.graph_store
+            && let Some(entry) = self.synapses.get(&key)
+        {
+            persist_edge_f64(
+                gs.as_ref(),
+                eid,
+                PROP_SYNAPSE_WEIGHT,
+                entry.current_weight(),
+            );
         }
     }
 
@@ -361,16 +360,15 @@ impl SynapseStore {
             return Some(s.clone());
         }
         // Lazy load from graph: look for an edge with the synapse weight
-        if let Some(gs) = &self.graph_store {
-            if let Some(eid) = self.edge_ids.get(&key) {
-                if let Some(weight) = load_edge_f64(gs.as_ref(), *eid, PROP_SYNAPSE_WEIGHT) {
-                    let syn = Synapse::new(key.0, key.1, weight, self.config.default_half_life);
-                    self.synapses.insert(key, syn.clone());
-                    self.touch(key);
-                    self.maybe_evict();
-                    return Some(syn);
-                }
-            }
+        if let Some(gs) = &self.graph_store
+            && let Some(eid) = self.edge_ids.get(&key)
+            && let Some(weight) = load_edge_f64(gs.as_ref(), *eid, PROP_SYNAPSE_WEIGHT)
+        {
+            let syn = Synapse::new(key.0, key.1, weight, self.config.default_half_life);
+            self.synapses.insert(key, syn.clone());
+            self.touch(key);
+            self.maybe_evict();
+            return Some(syn);
         }
         None
     }

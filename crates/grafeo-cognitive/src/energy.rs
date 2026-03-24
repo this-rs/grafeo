@@ -265,14 +265,14 @@ impl EnergyStore {
             return entry.current_energy();
         }
         // Lazy load from graph store
-        if let Some(gs) = &self.graph_store {
-            if let Some(val) = load_node_f64(gs.as_ref(), node_id, PROP_ENERGY) {
-                let ne = NodeEnergy::new(val, self.config.default_half_life);
-                self.nodes.insert(node_id, ne);
-                self.touch(node_id);
-                self.maybe_evict();
-                return val;
-            }
+        if let Some(gs) = &self.graph_store
+            && let Some(val) = load_node_f64(gs.as_ref(), node_id, PROP_ENERGY)
+        {
+            let ne = NodeEnergy::new(val, self.config.default_half_life);
+            self.nodes.insert(node_id, ne);
+            self.touch(node_id);
+            self.maybe_evict();
+            return val;
         }
         0.0
     }
@@ -297,10 +297,10 @@ impl EnergyStore {
         self.touch(node_id);
         self.maybe_evict();
         // Write-through
-        if let Some(gs) = &self.graph_store {
-            if let Some(entry) = self.nodes.get(&node_id) {
-                persist_node_f64(gs.as_ref(), node_id, PROP_ENERGY, entry.current_energy());
-            }
+        if let Some(gs) = &self.graph_store
+            && let Some(entry) = self.nodes.get(&node_id)
+        {
+            persist_node_f64(gs.as_ref(), node_id, PROP_ENERGY, entry.current_energy());
         }
     }
 

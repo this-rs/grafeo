@@ -167,7 +167,7 @@ impl ConsolidationEngine {
         };
 
         // 3. For each community, identify merge candidates
-        for (_community_id, members) in &communities {
+        for members in communities.values() {
             let mut candidates = Vec::new();
 
             for &node_id in members {

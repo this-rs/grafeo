@@ -268,20 +268,20 @@ fn extract_map_float(arg: Option<&LogicalExpression>, key: &str) -> Option<f64> 
 fn extract_map_float_list(arg: Option<&LogicalExpression>, key: &str) -> Option<Vec<f64>> {
     if let Some(LogicalExpression::Map(entries)) = arg {
         for (k, v) in entries {
-            if k == key {
-                if let LogicalExpression::List(items) = v {
-                    let mut floats = Vec::with_capacity(items.len());
-                    for item in items {
-                        match item {
-                            LogicalExpression::Literal(Value::Float64(f)) => floats.push(*f),
-                            LogicalExpression::Literal(Value::Int64(n)) => {
-                                floats.push(*n as f64);
-                            }
-                            _ => return None,
+            if k == key
+                && let LogicalExpression::List(items) = v
+            {
+                let mut floats = Vec::with_capacity(items.len());
+                for item in items {
+                    match item {
+                        LogicalExpression::Literal(Value::Float64(f)) => floats.push(*f),
+                        LogicalExpression::Literal(Value::Int64(n)) => {
+                            floats.push(*n as f64);
                         }
+                        _ => return None,
                     }
-                    return Some(floats);
                 }
+                return Some(floats);
             }
         }
     }
@@ -296,16 +296,16 @@ fn extract_nested_map_float(
 ) -> Option<f64> {
     if let Some(LogicalExpression::Map(entries)) = arg {
         for (k, v) in entries {
-            if k == outer_key {
-                if let LogicalExpression::Map(inner_entries) = v {
-                    for (ik, iv) in inner_entries {
-                        if ik == inner_key {
-                            if let LogicalExpression::Literal(Value::Float64(f)) = iv {
-                                return Some(*f);
-                            }
-                            if let LogicalExpression::Literal(Value::Int64(n)) = iv {
-                                return Some(*n as f64);
-                            }
+            if k == outer_key
+                && let LogicalExpression::Map(inner_entries) = v
+            {
+                for (ik, iv) in inner_entries {
+                    if ik == inner_key {
+                        if let LogicalExpression::Literal(Value::Float64(f)) = iv {
+                            return Some(*f);
+                        }
+                        if let LogicalExpression::Literal(Value::Int64(n)) = iv {
+                            return Some(*n as f64);
                         }
                     }
                 }

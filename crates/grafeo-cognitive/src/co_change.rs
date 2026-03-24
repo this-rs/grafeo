@@ -213,12 +213,11 @@ impl CoChangeStore {
             .and_modify(|rel| rel.record())
             .or_insert_with(|| CoChangeRelation::new(key.0, key.1, self.config.strength_half_life));
         // Write-through
-        if let Some(eid) = self.ensure_edge(key) {
-            if let Some(gs) = &self.graph_store {
-                if let Some(rel) = self.relations.get(&key) {
-                    persist_edge_f64(gs.as_ref(), eid, PROP_CO_CHANGE_COUNT, f64::from(rel.count));
-                }
-            }
+        if let Some(eid) = self.ensure_edge(key)
+            && let Some(gs) = &self.graph_store
+            && let Some(rel) = self.relations.get(&key)
+        {
+            persist_edge_f64(gs.as_ref(), eid, PROP_CO_CHANGE_COUNT, f64::from(rel.count));
         }
     }
 
