@@ -22,6 +22,7 @@
 pub mod accumulator;
 mod aggregate;
 mod apply;
+pub mod cognitive_boost;
 mod distinct;
 mod expand;
 mod factorized_aggregate;
@@ -104,6 +105,8 @@ pub use union::UnionOperator;
 pub use unwind::UnwindOperator;
 pub use variable_length_expand::{PathMode as ExecutionPathMode, VariableLengthExpandOperator};
 pub use vector_join::VectorJoinOperator;
+
+pub use cognitive_boost::{ActivationMap, BoostMode, CognitiveBoostOperator};
 
 use std::sync::Arc;
 
