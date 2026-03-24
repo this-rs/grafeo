@@ -5,7 +5,12 @@
 //! Supports TOML deserialization via `serde`.
 
 use serde::Deserialize;
-#[cfg(any(feature = "energy", feature = "synapse", feature = "co-change", feature = "memory"))]
+#[cfg(any(
+    feature = "energy",
+    feature = "synapse",
+    feature = "co-change",
+    feature = "memory"
+))]
 use std::time::Duration;
 
 // ---------------------------------------------------------------------------

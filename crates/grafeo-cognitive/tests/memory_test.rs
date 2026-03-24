@@ -191,10 +191,7 @@ fn sweep_promotes_high_energy_old_node() {
     let result = manager.sweep_at(future);
 
     assert!(result.promoted.contains(&node), "node should be promoted");
-    assert_eq!(
-        memory_store.get_horizon(node),
-        MemoryHorizon::Consolidated
-    );
+    assert_eq!(memory_store.get_horizon(node), MemoryHorizon::Consolidated);
 }
 
 #[test]
@@ -218,7 +215,10 @@ fn sweep_does_not_promote_young_node() {
 
     // Sweep at ~now — node was just created, age < promotion_min_age
     let result = manager.sweep_at(Instant::now());
-    assert!(result.promoted.is_empty(), "young node should not be promoted");
+    assert!(
+        result.promoted.is_empty(),
+        "young node should not be promoted"
+    );
     assert_eq!(memory_store.get_horizon(node), MemoryHorizon::Operational);
 }
 
@@ -253,7 +253,10 @@ fn sweep_demotes_low_energy_idle_node_from_consolidated() {
     let future = Instant::now() + Duration::from_secs(600);
     let result = manager.sweep_at(future);
 
-    assert!(result.demoted.contains(&node), "idle consolidated node should be demoted");
+    assert!(
+        result.demoted.contains(&node),
+        "idle consolidated node should be demoted"
+    );
     assert_eq!(memory_store.get_horizon(node), MemoryHorizon::Archived);
 }
 
@@ -281,7 +284,10 @@ fn sweep_emergency_demotes_operational_node() {
     let future = Instant::now() + Duration::from_secs(600);
     let result = manager.sweep_at(future);
 
-    assert!(result.demoted.contains(&node), "old low-energy operational node should be demoted");
+    assert!(
+        result.demoted.contains(&node),
+        "old low-energy operational node should be demoted"
+    );
     assert_eq!(memory_store.get_horizon(node), MemoryHorizon::Archived);
 }
 
@@ -312,7 +318,10 @@ fn sweep_reactivates_archived_node_with_high_energy() {
     let manager = MemoryManager::new(memory_store.clone(), config, energy_store);
     let result = manager.sweep();
 
-    assert!(result.reactivated.contains(&node), "archived node with high energy should be reactivated");
+    assert!(
+        result.reactivated.contains(&node),
+        "archived node with high energy should be reactivated"
+    );
     assert_eq!(memory_store.get_horizon(node), MemoryHorizon::Operational);
 }
 
@@ -465,7 +474,10 @@ fn full_lifecycle_operational_to_consolidated_to_archived_to_reactivated() {
     // Sweep at future time so node age > promotion_min_age
     let t1 = Instant::now() + Duration::from_secs(120);
     let result = manager.sweep_at(t1);
-    assert!(result.promoted.contains(&node), "should promote high-energy old node");
+    assert!(
+        result.promoted.contains(&node),
+        "should promote high-energy old node"
+    );
     assert_eq!(memory_store.get_horizon(node), MemoryHorizon::Consolidated);
 
     // Phase 2: Consolidated → Archived
@@ -480,7 +492,10 @@ fn full_lifecycle_operational_to_consolidated_to_archived_to_reactivated() {
     // Sweep far enough that time_in_horizon > demotion_max_idle
     let t2 = t1 + Duration::from_secs(600);
     let result = manager2.sweep_at(t2);
-    assert!(result.demoted.contains(&node), "should demote low-energy idle node");
+    assert!(
+        result.demoted.contains(&node),
+        "should demote low-energy idle node"
+    );
     assert_eq!(memory_store.get_horizon(node), MemoryHorizon::Archived);
 
     // Phase 3: Archived → Operational (reactivation via energy boost)
@@ -490,7 +505,10 @@ fn full_lifecycle_operational_to_consolidated_to_archived_to_reactivated() {
     let manager3 = MemoryManager::new(memory_store.clone(), config, energy_store3);
 
     let result = manager3.sweep();
-    assert!(result.reactivated.contains(&node), "should reactivate boosted archived node");
+    assert!(
+        result.reactivated.contains(&node),
+        "should reactivate boosted archived node"
+    );
     assert_eq!(memory_store.get_horizon(node), MemoryHorizon::Operational);
 }
 

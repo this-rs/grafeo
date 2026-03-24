@@ -79,10 +79,10 @@ impl Default for MemoryConfig {
     fn default() -> Self {
         Self {
             promotion_energy_threshold: 2.0,
-            promotion_min_age: Duration::from_secs(3600),           // 1 hour
+            promotion_min_age: Duration::from_secs(3600), // 1 hour
             demotion_energy_threshold: 0.1,
-            demotion_max_idle: Duration::from_secs(7 * 24 * 3600),  // 7 days
-            sweep_interval: Duration::from_secs(3600),              // 1 hour
+            demotion_max_idle: Duration::from_secs(7 * 24 * 3600), // 7 days
+            sweep_interval: Duration::from_secs(3600),             // 1 hour
         }
     }
 }
