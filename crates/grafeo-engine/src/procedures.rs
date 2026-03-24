@@ -12,9 +12,9 @@ use grafeo_adapters::plugins::algorithms::{
     ConnectedComponentsAlgorithm, DegreeCentralityAlgorithm, DfsAlgorithm, DijkstraAlgorithm,
     FloydWarshallAlgorithm, GraphAlgorithm, HitsAlgorithm, KCoreAlgorithm, KHopAlgorithm,
     KruskalAlgorithm, LabelPropagationAlgorithm, LeidenAlgorithm, LouvainAlgorithm,
-    MaxFlowAlgorithm, MinCostFlowAlgorithm, PageRankAlgorithm, PrimAlgorithm,
-    ProjectionConfig, ProjectionRegistry, SsspAlgorithm,
-    StronglyConnectedComponentsAlgorithm, TopologicalSortAlgorithm,
+    MaxFlowAlgorithm, MinCostFlowAlgorithm, PageRankAlgorithm, PrimAlgorithm, ProjectionConfig,
+    ProjectionRegistry, SsspAlgorithm, StronglyConnectedComponentsAlgorithm,
+    TopologicalSortAlgorithm,
 };
 use grafeo_adapters::plugins::{AlgorithmResult, ParameterDef, Parameters};
 use grafeo_common::types::Value;
@@ -316,8 +316,7 @@ pub fn procedures_result(registry: &BuiltinProcedures) -> AlgorithmResult {
 // ============================================================================
 
 /// Global projection registry, shared across all sessions.
-static PROJECTION_REGISTRY: std::sync::OnceLock<ProjectionRegistry> =
-    std::sync::OnceLock::new();
+static PROJECTION_REGISTRY: std::sync::OnceLock<ProjectionRegistry> = std::sync::OnceLock::new();
 
 /// Returns the global projection registry.
 pub fn projection_registry() -> &'static ProjectionRegistry {
@@ -418,10 +417,7 @@ fn execute_projection_create(arguments: &[LogicalExpression]) -> Result<Algorith
     registry.create(config).map_err(|e| Error::Internal(e))?;
 
     let mut result = AlgorithmResult::new(vec!["name".to_string(), "status".to_string()]);
-    result.add_row(vec![
-        Value::from(name.as_str()),
-        Value::from("created"),
-    ]);
+    result.add_row(vec![Value::from(name.as_str()), Value::from("created")]);
     Ok(result)
 }
 
@@ -735,8 +731,7 @@ mod tests {
 
     #[test]
     fn test_projection_procedure_no_match() {
-        let result =
-            try_execute_projection_procedure("grafeo.something_else", &[]).unwrap();
+        let result = try_execute_projection_procedure("grafeo.something_else", &[]).unwrap();
         assert!(result.is_none());
     }
 

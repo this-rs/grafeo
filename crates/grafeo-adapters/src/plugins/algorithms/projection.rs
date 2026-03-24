@@ -1165,7 +1165,10 @@ impl GraphStore for GraphProjection<'_> {
         epoch: EpochId,
         transaction_id: TransactionId,
     ) -> bool {
-        if !self.store.is_node_visible_versioned(id, epoch, transaction_id) {
+        if !self
+            .store
+            .is_node_visible_versioned(id, epoch, transaction_id)
+        {
             return false;
         }
         self.node_passes(id)
@@ -1184,7 +1187,10 @@ impl GraphStore for GraphProjection<'_> {
         epoch: EpochId,
         transaction_id: TransactionId,
     ) -> bool {
-        if !self.store.is_edge_visible_versioned(id, epoch, transaction_id) {
+        if !self
+            .store
+            .is_edge_visible_versioned(id, epoch, transaction_id)
+        {
             return false;
         }
         self.edge_passes(id)
@@ -1900,7 +1906,9 @@ mod tests {
         for id in &ids {
             let node = projection.get_node(*id).unwrap();
             assert!(
-                node.labels.iter().any(|l| l.as_str() == "File" || l.as_str() == "Function"),
+                node.labels
+                    .iter()
+                    .any(|l| l.as_str() == "File" || l.as_str() == "Function"),
                 "Node {:?} should have File or Function label",
                 id
             );
@@ -2095,7 +2103,11 @@ mod tests {
 
         let file_id = store.node_ids()[0]; // File node
         // File node property should not be accessible through projection
-        assert!(projection.get_node_property(file_id, &PropertyKey::from("name")).is_none());
+        assert!(
+            projection
+                .get_node_property(file_id, &PropertyKey::from("name"))
+                .is_none()
+        );
     }
 
     #[test]
@@ -2174,9 +2186,10 @@ mod tests {
 
     #[test]
     fn test_property_predicate() {
-        let pred = PropertyPredicate::new("weight", |v: &Value| {
-            matches!(v, Value::Float64(w) if *w > 0.5)
-        });
+        let pred = PropertyPredicate::new(
+            "weight",
+            |v: &Value| matches!(v, Value::Float64(w) if *w > 0.5),
+        );
         assert!(pred.test(&Value::Float64(0.8)));
         assert!(!pred.test(&Value::Float64(0.2)));
         assert!(!pred.test(&Value::Int64(1)));
@@ -2225,8 +2238,7 @@ mod tests {
     #[test]
     fn test_projection_config_to_projection() {
         let store = create_test_graph();
-        let config = ProjectionConfig::new("funcs")
-            .node_labels(vec!["Function".into()]);
+        let config = ProjectionConfig::new("funcs").node_labels(vec!["Function".into()]);
         let projection = config.to_projection(&store);
         assert_eq!(projection.node_count(), 2);
     }
@@ -2238,8 +2250,7 @@ mod tests {
     #[test]
     fn test_registry_create_and_get() {
         let registry = ProjectionRegistry::new();
-        let config = ProjectionConfig::new("view1")
-            .node_labels(vec!["File".into()]);
+        let config = ProjectionConfig::new("view1").node_labels(vec!["File".into()]);
         registry.create(config).unwrap();
 
         let retrieved = registry.get("view1").unwrap();
@@ -2365,7 +2376,10 @@ mod tests {
 
         // Verify projected scores sum ≈ 1.0
         let sum: f64 = projected_scores.values().sum();
-        assert!((sum - 1.0).abs() < 0.01, "PageRank scores should sum to ~1.0, got {sum}");
+        assert!(
+            (sum - 1.0).abs() < 0.01,
+            "PageRank scores should sum to ~1.0, got {sum}"
+        );
     }
 
     #[test]
@@ -2385,7 +2399,11 @@ mod tests {
 
         // All Notes should be in the same community (strongly connected triangle)
         let communities: HashSet<u64> = result.communities.values().copied().collect();
-        assert_eq!(communities.len(), 1, "Triangle of Notes should form one community");
+        assert_eq!(
+            communities.len(),
+            1,
+            "Triangle of Notes should form one community"
+        );
     }
 
     #[test]

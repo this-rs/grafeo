@@ -662,10 +662,9 @@ impl super::Planner {
         }
 
         // Projection procedures (CALL grafeo.projection.*)
-        if let Some(result) = crate::procedures::try_execute_projection_procedure(
-            &resolved_name,
-            &call.arguments,
-        )? {
+        if let Some(result) =
+            crate::procedures::try_execute_projection_procedure(&resolved_name, &call.arguments)?
+        {
             return self.plan_static_result(result, &call.yield_items);
         }
 
