@@ -565,9 +565,12 @@ jobs:
             --bench index_bench \
             --bench query_bench \
             -- --save-baseline base --noplot
-          cargo bench -p grafeo-cognitive --features cognitive \
-            --bench cognitive_bench \
-            -- --save-baseline base --noplot
+          # Cognitive bench may not exist on the base commit (new crate)
+          if [ -f crates/grafeo-cognitive/benches/cognitive_bench.rs ]; then
+            cargo bench -p grafeo-cognitive --features cognitive \
+              --bench cognitive_bench \
+              -- --save-baseline base --noplot
+          fi
 
       - name: Checkout PR head
         run: git checkout ${{ github.event.pull_request.head.sha }}
@@ -579,9 +582,11 @@ jobs:
             --bench index_bench \
             --bench query_bench \
             -- --save-baseline pr --noplot
-          cargo bench -p grafeo-cognitive --features cognitive \
-            --bench cognitive_bench \
-            -- --save-baseline pr --noplot
+          if [ -f crates/grafeo-cognitive/benches/cognitive_bench.rs ]; then
+            cargo bench -p grafeo-cognitive --features cognitive \
+              --bench cognitive_bench \
+              -- --save-baseline pr --noplot
+          fi
 
       - name: Compare and comment
         env:
