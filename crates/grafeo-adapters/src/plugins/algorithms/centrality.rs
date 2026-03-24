@@ -601,30 +601,34 @@ impl GraphAlgorithm for DegreeCentralityAlgorithm {
 
     fn execute(&self, store: &dyn GraphStore, params: &Parameters) -> Result<AlgorithmResult> {
         let normalized = params.get_bool("normalized").unwrap_or(false);
+        let result = degree_centrality(store);
 
-        if normalized {
-            let scores = degree_centrality_normalized(store);
+        let mut output = AlgorithmResult::new(vec![
+            "node_id".to_string(),
+            "in_degree".to_string(),
+            "out_degree".to_string(),
+            "total_degree".to_string(),
+        ]);
 
-            let mut builder =
-                NodeValueResultBuilder::with_capacity("degree_centrality", scores.len());
-            for (node, score) in scores {
-                builder.push(node, Value::Float64(score));
-            }
-            Ok(builder.build())
+        let n = result.total_degree.len();
+        let norm = if normalized && n > 1 {
+            (n - 1) as f64
         } else {
-            let result = degree_centrality(store);
+            1.0
+        };
 
-            let mut output = AlgorithmResult::new(vec![
-                "node_id".to_string(),
-                "in_degree".to_string(),
-                "out_degree".to_string(),
-                "total_degree".to_string(),
-            ]);
+        for (&node, &total) in &result.total_degree {
+            let in_d = *result.in_degree.get(&node).unwrap_or(&0);
+            let out_d = *result.out_degree.get(&node).unwrap_or(&0);
 
-            for (&node, &total) in &result.total_degree {
-                let in_d = *result.in_degree.get(&node).unwrap_or(&0);
-                let out_d = *result.out_degree.get(&node).unwrap_or(&0);
-
+            if normalized {
+                output.add_row(vec![
+                    Value::Int64(node.0 as i64),
+                    Value::Float64(in_d as f64 / norm),
+                    Value::Float64(out_d as f64 / norm),
+                    Value::Float64(total as f64 / norm),
+                ]);
+            } else {
                 output.add_row(vec![
                     Value::Int64(node.0 as i64),
                     Value::Int64(in_d as i64),
@@ -632,9 +636,9 @@ impl GraphAlgorithm for DegreeCentralityAlgorithm {
                     Value::Int64(total as i64),
                 ]);
             }
-
-            Ok(output)
         }
+
+        Ok(output)
     }
 }
 
@@ -1209,11 +1213,11 @@ mod tests {
         assert_eq!(result.columns.len(), 4); // node_id, in_degree, out_degree, total_degree
         assert_eq!(result.row_count(), 5);
 
-        // Test execute with normalized=true - returns 2 columns
+        // Test execute with normalized=true - still returns 4 columns
         let mut params = Parameters::new();
         params.set_bool("normalized", true);
         let result = algo.execute(&store, &params).unwrap();
-        assert_eq!(result.columns.len(), 2); // node_id, degree_centrality
+        assert_eq!(result.columns.len(), 4); // node_id, in_degree, out_degree, total_degree
         assert_eq!(result.row_count(), 5);
     }
 

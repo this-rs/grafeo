@@ -227,8 +227,13 @@ pub fn louvain(store: &dyn GraphStore, resolution: f64) -> LouvainResult {
 
     // Phase 1: Local optimization
     let mut improved = true;
+    let mut iterations = 0;
     while improved {
         improved = false;
+        iterations += 1;
+        if iterations >= 100 {
+            break;
+        }
 
         for i in 0..n {
             let current_comm = community[i];
@@ -540,9 +545,14 @@ fn leiden_local_move(
 
     let mut any_moved = false;
     let mut improved = true;
+    let mut iterations = 0;
 
     while improved {
         improved = false;
+        iterations += 1;
+        if iterations >= 100 {
+            break;
+        }
 
         for i in 0..n {
             let current_comm = community[i];

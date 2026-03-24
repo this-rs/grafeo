@@ -2989,6 +2989,246 @@ mod tests {
         assert!(neighbors.is_empty());
     }
 
+    // ========================================================================
+    // edge_passes with edge property filter
+    // ========================================================================
+
+    #[test]
+    fn test_edge_passes_with_edge_property_filter() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["File"]);
+        let e_heavy = store.create_edge(n0, n1, "IMPORTS");
+        store.set_edge_property(e_heavy, "weight", Value::Float64(5.0));
+        let e_light = store.create_edge(n0, n1, "IMPORTS");
+        store.set_edge_property(e_light, "weight", Value::Float64(0.1));
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_edge_property(
+                "weight",
+                |v: &Value| matches!(v, Value::Float64(w) if *w > 1.0),
+            )
+            .build();
+
+        // Heavy edge passes, light edge does not
+        assert!(projection.get_edge(e_heavy).is_some());
+        assert!(projection.get_edge(e_light).is_none());
+
+        // Edge count should reflect filtering
+        assert_eq!(projection.edge_count(), 1);
+    }
+
+    // ========================================================================
+    // get_edge_property through projection
+    // ========================================================================
+
+    #[test]
+    fn test_get_edge_property_through_projection() {
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["File"]);
+        let n1 = store.create_node(&["File"]);
+        let n2 = store.create_node(&["Note"]);
+        let e0 = store.create_edge(n0, n1, "IMPORTS");
+        store.set_edge_property(e0, "weight", Value::Float64(std::f64::consts::PI));
+        let e1 = store.create_edge(n0, n2, "SYNAPSE");
+        store.set_edge_property(e1, "weight", Value::Float64(2.71));
+
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File"])
+            .with_edge_types(&["IMPORTS"])
+            .build();
+
+        // Visible edge property accessible
+        let prop = projection.get_edge_property(e0, &"weight".into());
+        assert_eq!(prop, Some(Value::Float64(std::f64::consts::PI)));
+
+        // Filtered edge property not accessible
+        let prop = projection.get_edge_property(e1, &"weight".into());
+        assert!(prop.is_none());
+    }
+
+    // ========================================================================
+    // PropertyPredicate — all variants
+    // ========================================================================
+
+    #[test]
+    fn test_property_predicate_exists() {
+        // "Exists" — returns true if the value is anything (not Null)
+        let pred = PropertyPredicate::new("key", |v: &Value| !matches!(v, Value::Null));
+        assert!(pred.test(&Value::Int64(1)));
+        assert!(pred.test(&Value::from("hello")));
+        assert!(!pred.test(&Value::Null));
+    }
+
+    #[test]
+    fn test_property_predicate_equals() {
+        let pred = PropertyPredicate::new("status", |v: &Value| matches!(v, Value::Int64(42)));
+        assert!(pred.test(&Value::Int64(42)));
+        assert!(!pred.test(&Value::Int64(0)));
+        assert!(!pred.test(&Value::from("42")));
+    }
+
+    #[test]
+    fn test_property_predicate_greater_than() {
+        let pred = PropertyPredicate::new(
+            "score",
+            |v: &Value| matches!(v, Value::Float64(x) if *x > 0.5),
+        );
+        assert!(pred.test(&Value::Float64(0.9)));
+        assert!(!pred.test(&Value::Float64(0.3)));
+        assert!(!pred.test(&Value::Float64(0.5)));
+    }
+
+    #[test]
+    fn test_property_predicate_less_than() {
+        let pred =
+            PropertyPredicate::new("age", |v: &Value| matches!(v, Value::Int64(x) if *x < 18));
+        assert!(pred.test(&Value::Int64(10)));
+        assert!(!pred.test(&Value::Int64(18)));
+        assert!(!pred.test(&Value::Int64(30)));
+    }
+
+    #[test]
+    fn test_property_predicate_contains() {
+        let pred = PropertyPredicate::new(
+            "name",
+            |v: &Value| matches!(v, Value::String(s) if s.as_str().contains("rust")),
+        );
+        assert!(pred.test(&Value::from("rustacean")));
+        assert!(pred.test(&Value::from("hello_rust_world")));
+        assert!(!pred.test(&Value::from("python")));
+    }
+
+    #[test]
+    fn test_property_predicate_in_values() {
+        let allowed = [1i64, 2, 3];
+        let pred = PropertyPredicate::new(
+            "category",
+            move |v: &Value| matches!(v, Value::Int64(x) if allowed.contains(x)),
+        );
+        assert!(pred.test(&Value::Int64(1)));
+        assert!(pred.test(&Value::Int64(3)));
+        assert!(!pred.test(&Value::Int64(4)));
+    }
+
+    #[test]
+    fn test_property_predicate_between() {
+        let pred = PropertyPredicate::new(
+            "temp",
+            |v: &Value| matches!(v, Value::Float64(x) if *x >= 20.0 && *x <= 30.0),
+        );
+        assert!(pred.test(&Value::Float64(25.0)));
+        assert!(pred.test(&Value::Float64(20.0)));
+        assert!(pred.test(&Value::Float64(30.0)));
+        assert!(!pred.test(&Value::Float64(19.9)));
+        assert!(!pred.test(&Value::Float64(30.1)));
+    }
+
+    #[test]
+    fn test_property_predicate_starts_with() {
+        let pred = PropertyPredicate::new(
+            "path",
+            |v: &Value| matches!(v, Value::String(s) if s.as_str().starts_with("/src")),
+        );
+        assert!(pred.test(&Value::from("/src/main.rs")));
+        assert!(!pred.test(&Value::from("/tests/foo.rs")));
+    }
+
+    #[test]
+    fn test_property_predicate_ends_with() {
+        let pred = PropertyPredicate::new(
+            "file",
+            |v: &Value| matches!(v, Value::String(s) if std::path::Path::new(s.as_str()).extension().is_some_and(|e| e.eq_ignore_ascii_case("rs"))),
+        );
+        assert!(pred.test(&Value::from("main.rs")));
+        assert!(!pred.test(&Value::from("main.py")));
+    }
+
+    #[test]
+    fn test_property_predicate_regex_like() {
+        // Simulate a regex-like predicate: matches "v" followed by digits.dot.digits.dot.digits
+        let pred = PropertyPredicate::new("version", |v: &Value| {
+            if let Value::String(s) = v {
+                let s = s.as_str();
+                s.starts_with('v')
+                    && s[1..].split('.').count() == 3
+                    && s[1..]
+                        .split('.')
+                        .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+            } else {
+                false
+            }
+        });
+        assert!(pred.test(&Value::from("v1.2.3")));
+        assert!(pred.test(&Value::from("v0.0.1")));
+        assert!(!pred.test(&Value::from("1.2.3")));
+        assert!(!pred.test(&Value::from("version1")));
+    }
+
+    // ========================================================================
+    // ProjectionBuilder — chaining multiple filters
+    // ========================================================================
+
+    #[test]
+    fn test_projection_builder_chaining_multiple_filters() {
+        let store = LpgStore::new().unwrap();
+
+        // Create nodes with different labels and properties
+        let f1 = store.create_node(&["File"]);
+        store.set_node_property(f1, "lang", Value::from("rust"));
+        store.set_node_property(f1, "size", Value::Int64(100));
+
+        let f2 = store.create_node(&["File"]);
+        store.set_node_property(f2, "lang", Value::from("python"));
+        store.set_node_property(f2, "size", Value::Int64(200));
+
+        let fn1 = store.create_node(&["Function"]);
+        store.set_node_property(fn1, "lang", Value::from("rust"));
+        store.set_node_property(fn1, "size", Value::Int64(50));
+
+        let n1 = store.create_node(&["Note"]);
+
+        // Create edges with properties
+        let e1 = store.create_edge(f1, fn1, "IMPORTS");
+        store.set_edge_property(e1, "weight", Value::Float64(2.0));
+
+        let e2 = store.create_edge(f2, fn1, "IMPORTS");
+        store.set_edge_property(e2, "weight", Value::Float64(0.5));
+
+        let e3 = store.create_edge(f1, n1, "DOCUMENTS");
+        store.set_edge_property(e3, "weight", Value::Float64(1.0));
+
+        store.create_edge(fn1, f1, "CALLS");
+
+        // Chain: node labels + node property (lang=rust) + node property (size>30)
+        //        + edge types + edge property (weight>1.0)
+        let projection = ProjectionBuilder::new(&store)
+            .with_node_labels(&["File", "Function"])
+            .with_node_property(
+                "lang",
+                |v: &Value| matches!(v, Value::String(s) if s.as_str() == "rust"),
+            )
+            .with_node_property("size", |v: &Value| matches!(v, Value::Int64(x) if *x > 30))
+            .with_edge_types(&["IMPORTS"])
+            .with_edge_property(
+                "weight",
+                |v: &Value| matches!(v, Value::Float64(w) if *w > 1.0),
+            )
+            .build();
+
+        // Only f1 and fn1 pass node filters (File/Function, lang=rust, size>30)
+        let ids = projection.node_ids();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&f1));
+        assert!(ids.contains(&fn1));
+
+        // Only e1 passes edge filters (IMPORTS type, weight>1.0, both endpoints pass)
+        assert_eq!(projection.edge_count(), 1);
+        assert!(projection.get_edge(e1).is_some());
+        assert!(projection.get_edge(e2).is_none()); // weight too low
+        assert!(projection.get_edge(e3).is_none()); // wrong type + n1 filtered
+    }
+
     #[test]
     fn test_projection_versioned_methods() {
         use grafeo_common::types::{EpochId, TransactionId};

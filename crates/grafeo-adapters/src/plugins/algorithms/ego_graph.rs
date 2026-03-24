@@ -859,6 +859,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires large arena — run manually with cargo test -- --ignored"]
     fn test_khop_perf_10k_nodes() {
         // Build a graph with ~10K nodes, moderate connectivity
         let store = LpgStore::new().unwrap();
