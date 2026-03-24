@@ -15,6 +15,9 @@ grafeo-core = { workspace = true, default-features = false }
 # Async runtime
 tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
 
+# Error handling
+thiserror.workspace = true
+
 # Tracing
 tracing.workspace = true
 

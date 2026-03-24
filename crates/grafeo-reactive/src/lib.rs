@@ -24,11 +24,13 @@
 #![deny(unsafe_code)]
 
 mod bus;
+pub mod error;
 mod event;
 mod listener;
 mod store;
 
 pub use bus::MutationBus;
+pub use error::ReactiveError;
 pub use event::{MutationEvent, MutationBatch, NodeSnapshot, EdgeSnapshot};
 pub use listener::MutationListener;
 pub use store::InstrumentedStore;

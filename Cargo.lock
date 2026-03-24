@@ -1342,6 +1342,7 @@ dependencies = [
  "grafeo-core",
  "parking_lot",
  "smallvec",
+ "thiserror",
  "tokio",
  "tracing",
 ]
