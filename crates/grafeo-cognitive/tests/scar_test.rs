@@ -1,7 +1,10 @@
 //! Tests for the Scar System — error memory with exponential decay and healing.
 
-use grafeo_cognitive::scar::{Scar, ScarConfig, ScarId, ScarReason, ScarStore};
+#![cfg(feature = "scar")]
+
+#[cfg(feature = "fabric")]
 use grafeo_cognitive::fabric::{FabricScore, FabricStore};
+use grafeo_cognitive::scar::{Scar, ScarConfig, ScarId, ScarReason, ScarStore};
 use grafeo_common::types::NodeId;
 use std::time::{Duration, Instant};
 
@@ -36,7 +39,13 @@ fn scar_negative_intensity_clamped_to_zero() {
 #[test]
 fn scar_current_intensity_at_creation_is_initial() {
     let now = Instant::now();
-    let scar = Scar::new_at(NodeId(1), 1.0, ScarReason::Rollback, Duration::from_secs(3600), now);
+    let scar = Scar::new_at(
+        NodeId(1),
+        1.0,
+        ScarReason::Rollback,
+        Duration::from_secs(3600),
+        now,
+    );
     let intensity = scar.intensity_at(now);
     assert!((intensity - 1.0).abs() < 1e-10);
 }
@@ -75,7 +84,13 @@ fn scar_decay_after_two_half_lives() {
 #[test]
 fn scar_heal_sets_intensity_to_zero() {
     let now = Instant::now();
-    let mut scar = Scar::new_at(NodeId(1), 1.0, ScarReason::Rollback, Duration::from_secs(3600), now);
+    let mut scar = Scar::new_at(
+        NodeId(1),
+        1.0,
+        ScarReason::Rollback,
+        Duration::from_secs(3600),
+        now,
+    );
 
     assert!(!scar.is_healed());
     scar.heal_at(now + Duration::from_secs(10));
