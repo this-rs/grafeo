@@ -34,16 +34,18 @@ pub const PROP_CO_CHANGE_COUNT: &str = "_cog_co_change_count";
 /// Node property key for fabric risk score.
 pub const PROP_FABRIC_RISK: &str = "_cog_risk_score";
 
-/// Node property key for fabric churn score.
+/// Node property key for fabric mutation frequency (formerly "churn score").
+#[deprecated(note = "use PROP_FABRIC_MUTATION_FREQ instead")]
 pub const PROP_FABRIC_CHURN: &str = "_cog_churn_score";
 
-/// Node property key for fabric knowledge density.
+/// Node property key for fabric annotation density (formerly "knowledge density").
+#[deprecated(note = "use PROP_FABRIC_ANNOTATION_DENSITY instead")]
 pub const PROP_FABRIC_DENSITY: &str = "_cog_knowledge_density";
 
-/// Node property key for fabric mutation frequency (alias for churn).
+/// Node property key for fabric mutation frequency.
 pub const PROP_FABRIC_MUTATION_FREQ: &str = "_cog_mutation_frequency";
 
-/// Node property key for fabric annotation density (alias for knowledge density).
+/// Node property key for fabric annotation density.
 pub const PROP_FABRIC_ANNOTATION_DENSITY: &str = "_cog_annotation_density";
 
 // ---------------------------------------------------------------------------

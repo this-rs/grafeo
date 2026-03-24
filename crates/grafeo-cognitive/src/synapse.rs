@@ -441,20 +441,54 @@ impl SynapseStore {
 
 /// Converts a raw synapse weight to a normalized score in `[0.0, 1.0]`.
 ///
-/// Uses the formula: `score = tanh(weight)`.
+/// Uses the formula: `score = tanh(weight / ref_weight)`.
 ///
 /// - `weight = 0` → score = `0.0`
 /// - `weight → ∞` → score → `1.0`
 /// - Negative weight is clamped to `0.0`.
+/// - `ref_weight` controls the curve spread (higher = slower saturation).
+///   If `ref_weight <= 0` or NaN, falls back to `ref_weight = 1.0`.
 ///
 /// This provides a smooth, bounded mapping from the unbounded weight
 /// domain to a [0, 1] range suitable for cross-metric comparison.
 #[inline]
-pub fn synapse_score(weight: f64) -> f64 {
+pub fn synapse_score(weight: f64, ref_weight: f64) -> f64 {
     if weight <= 0.0 || weight.is_nan() {
         return 0.0;
     }
-    weight.tanh().clamp(0.0, 1.0)
+    let r = if ref_weight <= 0.0 || ref_weight.is_nan() || ref_weight.is_infinite() {
+        1.0
+    } else {
+        ref_weight
+    };
+    (weight / r).tanh().clamp(0.0, 1.0)
+}
+
+/// Converts a mutation frequency count to a normalized score in `[0.0, 1.0]`.
+///
+/// Uses the formula: `score = min(1, log(1 + count) / log(1 + ref_count))`.
+///
+/// - `count = 0` → score = `0.0`
+/// - `count = ref_count` → score ≈ `1.0`
+/// - `count > ref_count` → score = `1.0` (clamped)
+/// - `ref_count` is the reference count at which the score saturates.
+///   If `ref_count <= 0` or NaN, falls back to `ref_count = 100.0`.
+#[inline]
+pub fn mutation_frequency_score(count: f64, ref_count: f64) -> f64 {
+    if count <= 0.0 || count.is_nan() {
+        return 0.0;
+    }
+    let r = if ref_count <= 0.0 || ref_count.is_nan() || ref_count.is_infinite() {
+        100.0
+    } else {
+        ref_count
+    };
+    let log_num = (1.0 + count).ln();
+    let log_den = (1.0 + r).ln();
+    if log_den <= 0.0 {
+        return 1.0;
+    }
+    (log_num / log_den).clamp(0.0, 1.0)
 }
 
 impl std::fmt::Debug for SynapseStore {

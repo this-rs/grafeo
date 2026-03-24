@@ -34,6 +34,11 @@ pub struct EnergyConfigToml {
     pub min_energy: f64,
     /// Maximum energy cap — energy is clamped to `[0.0, max_energy]` after every operation.
     pub max_energy: f64,
+    /// Reference energy for score normalization: `energy_score = 1 - exp(-energy / ref_energy)`.
+    pub ref_energy: f64,
+    /// Structural reinforcement coefficient (α).
+    /// Modulates half-life by node degree: `effective_half_life = base * (1 + α * ln(1 + degree))`.
+    pub structural_reinforcement_alpha: f64,
 }
 
 impl Default for EnergyConfigToml {
@@ -45,6 +50,8 @@ impl Default for EnergyConfigToml {
             half_life_secs: 24 * 3600,
             min_energy: 0.01,
             max_energy: 10.0,
+            ref_energy: 1.0,
+            structural_reinforcement_alpha: 0.0,
         }
     }
 }
@@ -59,6 +66,8 @@ impl EnergyConfigToml {
             default_half_life: Duration::from_secs(self.half_life_secs),
             min_energy: self.min_energy,
             max_energy: self.max_energy,
+            ref_energy: self.ref_energy,
+            structural_reinforcement_alpha: self.structural_reinforcement_alpha,
         }
     }
 }
@@ -118,11 +127,34 @@ impl SynapseConfigToml {
 pub struct FabricConfigToml {
     /// Whether the fabric subsystem is enabled.
     pub enabled: bool,
+    /// Reference weight for synapse score normalization: `synapse_score = tanh(weight / ref_weight)`.
+    pub ref_weight: f64,
+    /// Reference mutation count for normalization: `score = min(1, log(1+count)/log(1+ref_count))`.
+    pub ref_mutation_count: f64,
+    /// Weight for pagerank component in risk scoring.
+    pub risk_weight_pagerank: f64,
+    /// Weight for mutation_frequency component in risk scoring.
+    pub risk_weight_mutation_frequency: f64,
+    /// Weight for annotation gap component in risk scoring.
+    pub risk_weight_annotation_gap: f64,
+    /// Weight for betweenness component in risk scoring.
+    pub risk_weight_betweenness: f64,
+    /// Weight for scar component in risk scoring.
+    pub risk_weight_scar: f64,
 }
 
 impl Default for FabricConfigToml {
     fn default() -> Self {
-        Self { enabled: false }
+        Self {
+            enabled: false,
+            ref_weight: 1.0,
+            ref_mutation_count: 100.0,
+            risk_weight_pagerank: 0.25,
+            risk_weight_mutation_frequency: 0.25,
+            risk_weight_annotation_gap: 0.20,
+            risk_weight_betweenness: 0.15,
+            risk_weight_scar: 0.15,
+        }
     }
 }
 
@@ -391,7 +423,10 @@ impl CognitiveConfig {
                 enabled: true,
                 ..Default::default()
             },
-            fabric: FabricConfigToml { enabled: true },
+            fabric: FabricConfigToml {
+                enabled: true,
+                ..Default::default()
+            },
             co_change: CoChangeConfigToml {
                 enabled: true,
                 ..Default::default()

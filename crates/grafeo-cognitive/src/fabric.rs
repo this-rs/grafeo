@@ -1,17 +1,17 @@
 //! Knowledge Fabric — auto-computed metrics for graph nodes.
 //!
 //! Each node in the graph has a [`FabricScore`] that tracks:
-//! - **churn_score**: frequency of mutations (how often the node changes)
-//! - **knowledge_density**: number of notes/decisions linked (richness of context)
+//! - **mutation_frequency**: frequency of mutations (how often the node changes)
+//! - **annotation_density**: richness of linked context (notes, decisions, etc.)
 //! - **staleness**: time since last mutation (freshness)
-//! - **risk_score**: composite metric combining pagerank × churn × knowledge_gap × betweenness
+//! - **risk_score**: composite metric via configurable weighted sum
 //! - **pagerank**: link-structure importance (from GDS refresh)
 //! - **betweenness**: path-involvement centrality (from GDS refresh)
 //! - **community_id**: Louvain community assignment (from GDS refresh)
 //!
 //! The [`FabricListener`] implements [`MutationListener`] and incrementally
-//! updates churn and staleness on each mutation batch. Global graph metrics
-//! (pagerank, betweenness, Louvain) are refreshed in batch by the
+//! updates mutation_frequency and staleness on each mutation batch. Global graph
+//! metrics (pagerank, betweenness, Louvain) are refreshed in batch by the
 //! [`GdsRefreshScheduler`](super::gds_refresh::GdsRefreshScheduler).
 
 use async_trait::async_trait;
@@ -23,7 +23,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::store_trait::{
-    OptionalGraphStore, PROP_FABRIC_CHURN, PROP_FABRIC_DENSITY, PROP_FABRIC_RISK, persist_node_f64,
+    OptionalGraphStore, PROP_FABRIC_ANNOTATION_DENSITY, PROP_FABRIC_MUTATION_FREQ,
+    PROP_FABRIC_RISK, persist_node_f64,
 };
 
 // ---------------------------------------------------------------------------
@@ -36,9 +37,9 @@ use crate::store_trait::{
 #[derive(Debug, Clone, PartialEq)]
 pub struct FabricScore {
     /// Frequency of mutations — incremented each time the node is mutated.
-    pub churn_score: f64,
+    pub mutation_frequency: f64,
     /// Richness of linked context (notes, decisions, etc.). Range [0.0, 1.0].
-    pub knowledge_density: f64,
+    pub annotation_density: f64,
     /// Seconds since last mutation. `0.0` means "just mutated".
     pub staleness: f64,
     /// Composite risk: weighted sum of normalized pagerank, churn, knowledge_gap, betweenness, scar. Range [0.0, 1.0].
@@ -59,8 +60,8 @@ pub struct FabricScore {
 impl Default for FabricScore {
     fn default() -> Self {
         Self {
-            churn_score: 0.0,
-            knowledge_density: 0.0,
+            mutation_frequency: 0.0,
+            annotation_density: 0.0,
             staleness: 0.0,
             risk_score: 0.0,
             pagerank: 0.0,
@@ -92,21 +93,33 @@ impl FabricScore {
 ///
 /// Uses [`DashMap`] for concurrent read/write without global locks.
 /// When a backing [`GraphStoreMut`](grafeo_core::graph::GraphStoreMut) is
-/// provided, risk_score, churn_score, and knowledge_density are persisted
+/// provided, risk_score, mutation_frequency, and annotation_density are persisted
 /// as node properties prefixed with `_cog_` (write-through).
 pub struct FabricStore {
     /// Per-node fabric scores.
     scores: DashMap<NodeId, FabricScore>,
     /// Optional backing graph store for write-through persistence.
     graph_store: OptionalGraphStore,
+    /// Configurable risk weights.
+    risk_weights: RiskWeights,
 }
 
 impl FabricStore {
-    /// Creates a new, empty fabric store (in-memory only).
+    /// Creates a new, empty fabric store (in-memory only) with default risk weights.
     pub fn new() -> Self {
         Self {
             scores: DashMap::new(),
             graph_store: None,
+            risk_weights: RiskWeights::default(),
+        }
+    }
+
+    /// Creates a new fabric store with custom risk weights.
+    pub fn with_risk_weights(risk_weights: RiskWeights) -> Self {
+        Self {
+            scores: DashMap::new(),
+            graph_store: None,
+            risk_weights,
         }
     }
 
@@ -115,7 +128,13 @@ impl FabricStore {
         Self {
             scores: DashMap::new(),
             graph_store: Some(graph_store),
+            risk_weights: RiskWeights::default(),
         }
+    }
+
+    /// Returns a reference to the risk weights.
+    pub fn risk_weights(&self) -> &RiskWeights {
+        &self.risk_weights
     }
 
     /// Persists the key fabric metrics for a node to the graph store.
@@ -123,12 +142,17 @@ impl FabricStore {
         if let Some(gs) = &self.graph_store {
             if let Some(entry) = self.scores.get(&node_id) {
                 persist_node_f64(gs.as_ref(), node_id, PROP_FABRIC_RISK, entry.risk_score);
-                persist_node_f64(gs.as_ref(), node_id, PROP_FABRIC_CHURN, entry.churn_score);
                 persist_node_f64(
                     gs.as_ref(),
                     node_id,
-                    PROP_FABRIC_DENSITY,
-                    entry.knowledge_density,
+                    PROP_FABRIC_MUTATION_FREQ,
+                    entry.mutation_frequency,
+                );
+                persist_node_f64(
+                    gs.as_ref(),
+                    node_id,
+                    PROP_FABRIC_ANNOTATION_DENSITY,
+                    entry.annotation_density,
                 );
             }
         }
@@ -154,21 +178,21 @@ impl FabricStore {
     /// Increments the churn score for a node and resets its staleness.
     ///
     /// If the node is not yet tracked, it is created with churn=1.
-    pub fn update_churn(&self, node_id: NodeId) {
-        self.update_churn_at(node_id, Instant::now());
+    pub fn record_mutation(&self, node_id: NodeId) {
+        self.record_mutation_at(node_id, Instant::now());
     }
 
     /// Increments churn at a specific instant (for testing).
-    pub fn update_churn_at(&self, node_id: NodeId, now: Instant) {
+    pub fn record_mutation_at(&self, node_id: NodeId, now: Instant) {
         self.scores
             .entry(node_id)
             .and_modify(|s| {
-                s.churn_score += 1.0;
+                s.mutation_frequency += 1.0;
                 s.staleness = 0.0;
                 s.last_mutated = Some(now);
             })
             .or_insert_with(|| FabricScore {
-                churn_score: 1.0,
+                mutation_frequency: 1.0,
                 staleness: 0.0,
                 last_mutated: Some(now),
                 ..FabricScore::default()
@@ -186,12 +210,12 @@ impl FabricStore {
     }
 
     /// Sets the knowledge density for a node.
-    pub fn set_knowledge_density(&self, node_id: NodeId, density: f64) {
+    pub fn set_annotation_density(&self, node_id: NodeId, density: f64) {
         self.scores
             .entry(node_id)
-            .and_modify(|s| s.knowledge_density = density)
+            .and_modify(|s| s.annotation_density = density)
             .or_insert_with(|| FabricScore {
-                knowledge_density: density,
+                annotation_density: density,
                 ..FabricScore::default()
             });
         self.persist_fabric(node_id);
@@ -249,8 +273,8 @@ impl FabricStore {
             })
             .collect();
         entries.sort_by(|a, b| {
-            b.1.churn_score
-                .partial_cmp(&a.1.churn_score)
+            b.1.mutation_frequency
+                .partial_cmp(&a.1.mutation_frequency)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         entries.truncate(top_n);
@@ -279,24 +303,36 @@ impl FabricStore {
         &self,
         node_id: NodeId,
         max_pagerank: f64,
-        max_churn: f64,
+        max_mutation_freq: f64,
         max_betweenness: f64,
     ) {
         let max_scar = self.max_scar_intensity();
         if let Some(mut entry) = self.scores.get_mut(&node_id) {
-            entry.risk_score =
-                compute_risk_score(&entry, max_pagerank, max_churn, max_betweenness, max_scar);
+            entry.risk_score = compute_risk_score(
+                &entry,
+                max_pagerank,
+                max_mutation_freq,
+                max_betweenness,
+                max_scar,
+                &self.risk_weights,
+            );
         }
     }
 
     /// Recalculates risk scores for ALL tracked nodes.
     pub fn recalculate_all_risks(&self) {
-        let (max_pagerank, max_churn, max_betweenness) = self.global_maxima();
+        let (max_pagerank, max_mutation_freq, max_betweenness) = self.global_maxima();
         let max_scar = self.max_scar_intensity();
 
         for mut entry in self.scores.iter_mut() {
-            entry.risk_score =
-                compute_risk_score(&entry, max_pagerank, max_churn, max_betweenness, max_scar);
+            entry.risk_score = compute_risk_score(
+                &entry,
+                max_pagerank,
+                max_mutation_freq,
+                max_betweenness,
+                max_scar,
+                &self.risk_weights,
+            );
         }
     }
 
@@ -313,14 +349,14 @@ impl FabricStore {
     /// Computes the global maximum values for normalization.
     fn global_maxima(&self) -> (f64, f64, f64) {
         let mut max_pr = 0.0_f64;
-        let mut max_churn = 0.0_f64;
+        let mut max_mf = 0.0_f64;
         let mut max_btwn = 0.0_f64;
         for entry in &self.scores {
             max_pr = max_pr.max(entry.pagerank);
-            max_churn = max_churn.max(entry.churn_score);
+            max_mf = max_mf.max(entry.mutation_frequency);
             max_btwn = max_btwn.max(entry.betweenness);
         }
-        (max_pr, max_churn, max_btwn)
+        (max_pr, max_mf, max_btwn)
     }
 
     /// Returns the maximum scar intensity across all tracked nodes.
@@ -358,6 +394,7 @@ impl Default for FabricStore {
         Self {
             scores: DashMap::new(),
             graph_store: None,
+            risk_weights: RiskWeights::default(),
         }
     }
 }
@@ -367,6 +404,58 @@ impl std::fmt::Debug for FabricStore {
         f.debug_struct("FabricStore")
             .field("tracked_nodes", &self.scores.len())
             .finish()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Risk weights configuration
+// ---------------------------------------------------------------------------
+
+/// Configurable weights for the composite risk score.
+///
+/// All weights are automatically normalized to sum to 1.0 at construction.
+/// Default: pagerank=0.25, mutation_frequency=0.25, annotation_gap=0.20,
+/// betweenness=0.15, scar=0.15.
+#[derive(Debug, Clone)]
+pub struct RiskWeights {
+    /// Weight for pagerank (importance).
+    pub pagerank: f64,
+    /// Weight for mutation frequency (volatility).
+    pub mutation_frequency: f64,
+    /// Weight for annotation gap (missing context).
+    pub annotation_gap: f64,
+    /// Weight for betweenness centrality.
+    pub betweenness: f64,
+    /// Weight for scar intensity (past failures).
+    pub scar: f64,
+}
+
+impl Default for RiskWeights {
+    fn default() -> Self {
+        Self {
+            pagerank: 0.25,
+            mutation_frequency: 0.25,
+            annotation_gap: 0.20,
+            betweenness: 0.15,
+            scar: 0.15,
+        }
+    }
+}
+
+impl RiskWeights {
+    /// Creates new risk weights. Values are normalized to sum to 1.0.
+    pub fn new(pagerank: f64, mutation_frequency: f64, annotation_gap: f64, betweenness: f64, scar: f64) -> Self {
+        let total = pagerank + mutation_frequency + annotation_gap + betweenness + scar;
+        if total <= 0.0 || total.is_nan() {
+            return Self::default();
+        }
+        Self {
+            pagerank: pagerank / total,
+            mutation_frequency: mutation_frequency / total,
+            annotation_gap: annotation_gap / total,
+            betweenness: betweenness / total,
+            scar: scar / total,
+        }
     }
 }
 
@@ -385,45 +474,39 @@ fn normalize(value: f64, max: f64) -> f64 {
     }
 }
 
-/// Computes the composite risk score for a node.
+/// Computes the composite risk score for a node using configurable weighted sum.
 ///
-/// `risk = base_risk + scar_boost`
+/// `risk = w_pr * norm(pagerank) + w_mf * norm(mutation_freq) + w_ag * (1 - annotation_density)
+///        + w_bt * norm(betweenness) + w_sc * norm(scar_intensity)`
 ///
-/// Where:
-/// - `base_risk = normalize(pagerank) × normalize(churn) × (1 - knowledge_density) × normalize(betweenness)`
-/// - `scar_boost = normalize(scar_intensity)` (additive — scars always increase risk)
-///
-/// The final value is clamped to [0.0, 1.0].
+/// The weighted sum approach avoids the multiplicative collapse to zero
+/// (where a single 0 component zeroes everything).
 ///
 /// A node is high-risk when it is:
 /// - Important (high pagerank)
-/// - Volatile (high churn)
-/// - Poorly documented (low knowledge_density)
+/// - Volatile (high mutation_frequency)
+/// - Poorly annotated (low annotation_density)
 /// - Central in paths (high betweenness)
 /// - Scarred by past errors (high scar_intensity)
 fn compute_risk_score(
     score: &FabricScore,
     max_pagerank: f64,
-    max_churn: f64,
+    max_mutation_freq: f64,
     max_betweenness: f64,
     max_scar_intensity: f64,
+    weights: &RiskWeights,
 ) -> f64 {
     let pr = normalize(score.pagerank, max_pagerank);
-    let churn = normalize(score.churn_score, max_churn);
-    let knowledge_gap = 1.0 - score.knowledge_density.clamp(0.0, 1.0);
+    let mf = normalize(score.mutation_frequency, max_mutation_freq);
+    let annotation_gap = 1.0 - score.annotation_density.clamp(0.0, 1.0);
     let btwn = normalize(score.betweenness, max_betweenness);
     let scar = normalize(score.scar_intensity, max_scar_intensity);
 
-    // Weighted additive formula — avoids the multiplicative collapse to zero
-    // that the old `pr * churn * knowledge_gap * btwn` formula suffered from.
-    //
-    // Weights sum to 1.0 so the result is inherently in [0, 1]:
-    //   pagerank:       25% — importance
-    //   churn:          25% — volatility
-    //   knowledge_gap:  20% — missing documentation
-    //   betweenness:    15% — centrality
-    //   scar:           15% — past failures
-    let risk = pr * 0.25 + churn * 0.25 + knowledge_gap * 0.20 + btwn * 0.15 + scar * 0.15;
+    let risk = pr * weights.pagerank
+        + mf * weights.mutation_frequency
+        + annotation_gap * weights.annotation_gap
+        + btwn * weights.betweenness
+        + scar * weights.scar;
 
     risk.clamp(0.0, 1.0)
 }
@@ -436,7 +519,7 @@ fn compute_risk_score(
 /// on each mutation batch.
 ///
 /// On each batch:
-/// 1. Increments churn_score for all mutated nodes
+/// 1. Increments mutation_frequency for all mutated nodes
 /// 2. Resets staleness to 0 for mutated nodes
 /// 3. Recalculates risk_score for affected nodes
 pub struct FabricListener {
@@ -478,7 +561,7 @@ impl MutationListener for FabricListener {
     async fn on_event(&self, event: &MutationEvent) {
         let now = Instant::now();
         for node_id in Self::affected_nodes(event) {
-            self.store.update_churn_at(node_id, now);
+            self.store.record_mutation_at(node_id, now);
         }
     }
 
@@ -489,16 +572,16 @@ impl MutationListener for FabricListener {
         for event in events {
             for node_id in Self::affected_nodes(event) {
                 if touched.insert(node_id) {
-                    self.store.update_churn_at(node_id, now);
+                    self.store.record_mutation_at(node_id, now);
                 }
             }
         }
 
         // Recalculate risk for all affected nodes
-        let (max_pr, max_churn, max_btwn) = self.store.global_maxima();
+        let (max_pr, max_mf, max_btwn) = self.store.global_maxima();
         for node_id in &touched {
             self.store
-                .recalculate_risk(*node_id, max_pr, max_churn, max_btwn);
+                .recalculate_risk(*node_id, max_pr, max_mf, max_btwn);
         }
     }
 }

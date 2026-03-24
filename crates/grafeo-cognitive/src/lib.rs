@@ -24,7 +24,7 @@
 //!
 //! - `energy` — Energy subsystem (exponential decay + boost)
 //! - `synapse` — Hebbian synapse learning
-//! - `fabric` — Knowledge fabric metrics (churn, density, risk)
+//! - `fabric` — Knowledge fabric metrics (mutation frequency, annotation density, risk)
 //! - `co-change` — Co-change detection (temporal coupling)
 //! - `gds-refresh` — GDS refresh scheduler (PageRank, Louvain, Betweenness)
 //! - `cognitive` — Convenience: energy + synapse
@@ -94,19 +94,23 @@ pub use co_change::{CoChangeConfig, CoChangeDetector, CoChangeRelation, CoChange
 pub use config::CognitiveConfig;
 
 #[cfg(feature = "energy")]
-pub use energy::{EnergyConfig, EnergyListener, EnergyStore, NodeEnergy, energy_score};
+pub use energy::{
+    EnergyConfig, EnergyListener, EnergyStore, NodeEnergy, effective_half_life, energy_score,
+};
 
 pub use engine::{CognitiveEngine, CognitiveEngineBuilder, DefaultCognitiveEngine};
 pub use error::CognitiveError;
 
 #[cfg(feature = "fabric")]
-pub use fabric::{FabricListener, FabricScore, FabricStore};
+pub use fabric::{FabricListener, FabricScore, FabricStore, RiskWeights};
 
 #[cfg(feature = "gds-refresh")]
 pub use gds_refresh::{GdsRefreshConfig, GdsRefreshScheduler};
 
 #[cfg(feature = "synapse")]
-pub use synapse::{Synapse, SynapseConfig, SynapseListener, SynapseStore, synapse_score};
+pub use synapse::{
+    Synapse, SynapseConfig, SynapseListener, SynapseStore, mutation_frequency_score, synapse_score,
+};
 
 #[cfg(feature = "scar")]
 pub use scar::{Scar, ScarConfig, ScarStore};

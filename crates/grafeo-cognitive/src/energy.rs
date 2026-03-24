@@ -34,6 +34,13 @@ pub struct EnergyConfig {
     pub min_energy: f64,
     /// Maximum energy cap — energy is clamped to `[0.0, max_energy]` after every operation.
     pub max_energy: f64,
+    /// Reference energy for normalization: `energy_score = 1 - exp(-energy / ref_energy)`.
+    /// Higher values spread the curve, lower values compress it.
+    pub ref_energy: f64,
+    /// Structural reinforcement coefficient (α).
+    /// Modulates half-life by node degree: `effective_half_life = base * (1 + α * ln(1 + degree))`.
+    /// Set to 0.0 to disable structural reinforcement.
+    pub structural_reinforcement_alpha: f64,
 }
 
 impl Default for EnergyConfig {
@@ -44,6 +51,8 @@ impl Default for EnergyConfig {
             default_half_life: Duration::from_secs(24 * 3600), // 24 hours
             min_energy: 0.01,
             max_energy: 10.0,
+            ref_energy: 1.0,
+            structural_reinforcement_alpha: 0.0,
         }
     }
 }
@@ -334,20 +343,51 @@ impl EnergyStore {
 
 /// Converts a raw energy value to a normalized score in `[0.0, 1.0]`.
 ///
-/// Uses the formula: `score = 1 - exp(-energy)`.
+/// Uses the formula: `score = 1 - exp(-energy / ref_energy)`.
 ///
 /// - `energy = 0` → score = `0.0`
 /// - `energy → ∞` → score → `1.0`
 /// - Negative energy is clamped to `0.0`.
+/// - `ref_energy` controls the curve spread (higher = slower saturation).
+///   If `ref_energy <= 0` or NaN, falls back to `ref_energy = 1.0`.
 ///
 /// This provides a smooth, bounded mapping from the unbounded energy
 /// domain to a [0, 1] range suitable for cross-metric comparison.
 #[inline]
-pub fn energy_score(energy: f64) -> f64 {
+pub fn energy_score(energy: f64, ref_energy: f64) -> f64 {
     if energy <= 0.0 || energy.is_nan() {
         return 0.0;
     }
-    (1.0 - (-energy).exp()).clamp(0.0, 1.0)
+    let r = if ref_energy <= 0.0 || ref_energy.is_nan() || ref_energy.is_infinite() {
+        1.0
+    } else {
+        ref_energy
+    };
+    (1.0 - (-energy / r).exp()).clamp(0.0, 1.0)
+}
+
+/// Computes the effective half-life modulated by structural degree.
+///
+/// `effective_half_life = base_half_life * (1 + α * ln(1 + degree))`
+///
+/// Nodes with higher degree (more connections) retain energy longer,
+/// reflecting their structural importance in the graph.
+///
+/// - `degree = 0` → effective = base (no reinforcement)
+/// - Higher α → stronger reinforcement effect
+/// - α = 0 → no reinforcement (returns base)
+#[inline]
+pub fn effective_half_life(base: Duration, degree: usize, alpha: f64) -> Duration {
+    if alpha <= 0.0 || alpha.is_nan() {
+        return base;
+    }
+    let factor = 1.0 + alpha * (1.0 + degree as f64).ln();
+    let secs = base.as_secs_f64() * factor;
+    if secs.is_finite() && secs > 0.0 {
+        Duration::from_secs_f64(secs)
+    } else {
+        base
+    }
 }
 
 impl std::fmt::Debug for EnergyStore {
