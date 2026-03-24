@@ -43,6 +43,9 @@ pub struct FabricScore {
     pub pagerank: f64,
     /// Path-involvement centrality. Set by GDS refresh.
     pub betweenness: f64,
+    /// Cumulative scar intensity on this node. Set by scar system integration.
+    /// Higher values indicate more past problems (rollbacks, errors, etc.).
+    pub scar_intensity: f64,
     /// Louvain community assignment. Set by GDS refresh.
     pub community_id: Option<u64>,
     /// Timestamp of last mutation for staleness computation.
@@ -58,6 +61,7 @@ impl Default for FabricScore {
             risk_score: 0.0,
             pagerank: 0.0,
             betweenness: 0.0,
+            scar_intensity: 0.0,
             community_id: None,
             last_mutated: None,
         }
@@ -157,6 +161,19 @@ impl FabricStore {
             });
     }
 
+    /// Sets the cumulative scar intensity for a node.
+    ///
+    /// This value is typically provided by [`ScarStore::cumulative_intensity()`].
+    pub fn set_scar_intensity(&self, node_id: NodeId, scar_intensity: f64) {
+        self.scores
+            .entry(node_id)
+            .and_modify(|s| s.scar_intensity = scar_intensity)
+            .or_insert_with(|| FabricScore {
+                scar_intensity,
+                ..FabricScore::default()
+            });
+    }
+
     /// Sets GDS-computed metrics (pagerank, betweenness, community_id) for a node.
     pub fn set_gds_metrics(
         &self,
@@ -219,8 +236,6 @@ impl FabricStore {
 
     /// Recalculates the composite risk score for a specific node.
     ///
-    /// `risk = normalize(pagerank) × normalize(churn) × (1 - knowledge_density) × normalize(betweenness)`
-    ///
     /// The `max_*` parameters are the current global maximums used for normalization.
     pub fn recalculate_risk(
         &self,
@@ -229,17 +244,21 @@ impl FabricStore {
         max_churn: f64,
         max_betweenness: f64,
     ) {
+        let max_scar = self.max_scar_intensity();
         if let Some(mut entry) = self.scores.get_mut(&node_id) {
-            entry.risk_score = compute_risk_score(&entry, max_pagerank, max_churn, max_betweenness);
+            entry.risk_score =
+                compute_risk_score(&entry, max_pagerank, max_churn, max_betweenness, max_scar);
         }
     }
 
     /// Recalculates risk scores for ALL tracked nodes.
     pub fn recalculate_all_risks(&self) {
         let (max_pagerank, max_churn, max_betweenness) = self.global_maxima();
+        let max_scar = self.max_scar_intensity();
 
         for mut entry in self.scores.iter_mut() {
-            entry.risk_score = compute_risk_score(&entry, max_pagerank, max_churn, max_betweenness);
+            entry.risk_score =
+                compute_risk_score(&entry, max_pagerank, max_churn, max_betweenness, max_scar);
         }
     }
 
@@ -264,6 +283,14 @@ impl FabricStore {
             max_btwn = max_btwn.max(entry.betweenness);
         }
         (max_pr, max_churn, max_btwn)
+    }
+
+    /// Returns the maximum scar intensity across all tracked nodes.
+    fn max_scar_intensity(&self) -> f64 {
+        self.scores
+            .iter()
+            .map(|e| e.scar_intensity)
+            .fold(0.0_f64, f64::max)
     }
 }
 
@@ -298,24 +325,39 @@ fn normalize(value: f64, max: f64) -> f64 {
 
 /// Computes the composite risk score for a node.
 ///
-/// `risk = normalize(pagerank) × normalize(churn) × (1 - knowledge_density) × normalize(betweenness)`
+/// `risk = base_risk + scar_boost`
+///
+/// Where:
+/// - `base_risk = normalize(pagerank) × normalize(churn) × (1 - knowledge_density) × normalize(betweenness)`
+/// - `scar_boost = normalize(scar_intensity)` (additive — scars always increase risk)
+///
+/// The final value is clamped to [0.0, 1.0].
 ///
 /// A node is high-risk when it is:
 /// - Important (high pagerank)
 /// - Volatile (high churn)
 /// - Poorly documented (low knowledge_density)
 /// - Central in paths (high betweenness)
+/// - Scarred by past errors (high scar_intensity)
 fn compute_risk_score(
     score: &FabricScore,
     max_pagerank: f64,
     max_churn: f64,
     max_betweenness: f64,
+    max_scar_intensity: f64,
 ) -> f64 {
     let pr = normalize(score.pagerank, max_pagerank);
     let churn = normalize(score.churn_score, max_churn);
     let knowledge_gap = 1.0 - score.knowledge_density.clamp(0.0, 1.0);
     let btwn = normalize(score.betweenness, max_betweenness);
-    pr * churn * knowledge_gap * btwn
+
+    let base_risk = pr * churn * knowledge_gap * btwn;
+
+    // Scar intensity is additive: even a well-documented, low-churn node
+    // should have elevated risk if it has active scars from past failures.
+    let scar_boost = normalize(score.scar_intensity, max_scar_intensity) * 0.5;
+
+    (base_risk + scar_boost).clamp(0.0, 1.0)
 }
 
 // ---------------------------------------------------------------------------
