@@ -22,6 +22,7 @@ use crate::fabric::{FabricListener, FabricStore};
 #[cfg(feature = "co-change")]
 use crate::co_change::{CoChangeConfig, CoChangeDetector, CoChangeStore};
 
+use grafeo_core::graph::GraphStoreMut;
 use grafeo_reactive::Scheduler;
 
 // ---------------------------------------------------------------------------
@@ -158,6 +159,9 @@ pub struct CognitiveEngineBuilder {
 
     #[cfg(feature = "co-change")]
     co_change_config: Option<CoChangeConfig>,
+
+    /// Optional backing graph store for write-through persistence.
+    graph_store: Option<Arc<dyn GraphStoreMut>>,
 }
 
 impl CognitiveEngineBuilder {
@@ -175,6 +179,8 @@ impl CognitiveEngineBuilder {
 
             #[cfg(feature = "co-change")]
             co_change_config: None,
+
+            graph_store: None,
         }
     }
 
@@ -205,6 +211,16 @@ impl CognitiveEngineBuilder {
         }
 
         builder
+    }
+
+    /// Sets the backing graph store for write-through persistence.
+    ///
+    /// When set, all cognitive stores will persist their scores as
+    /// node/edge properties on the graph. This enables lazy reconstruction
+    /// of the hot caches on restart.
+    pub fn with_graph_store(mut self, store: Arc<dyn GraphStoreMut>) -> Self {
+        self.graph_store = Some(store);
+        self
     }
 
     /// Enables the energy subsystem with the given configuration.
@@ -238,7 +254,8 @@ impl CognitiveEngineBuilder {
     /// Builds the cognitive engine and registers listeners with the scheduler.
     ///
     /// Each enabled subsystem:
-    /// 1. Creates a shared store (`Arc<XxxStore>`)
+    /// 1. Creates a shared store (`Arc<XxxStore>`) — with write-through if a
+    ///    graph store was configured via [`with_graph_store`](Self::with_graph_store)
     /// 2. Creates a listener wrapping the store
     /// 3. Registers the listener with the scheduler
     ///
@@ -247,10 +264,16 @@ impl CognitiveEngineBuilder {
         #[allow(unused_mut)]
         let mut active_count = 0;
 
+        #[allow(unused_variables)]
+        let gs = self.graph_store;
+
         // Energy
         #[cfg(feature = "energy")]
         let energy = self.energy_config.map(|config| {
-            let store = Arc::new(EnergyStore::new(config));
+            let store = match &gs {
+                Some(graph_store) => Arc::new(EnergyStore::with_graph_store(config, Arc::clone(graph_store))),
+                None => Arc::new(EnergyStore::new(config)),
+            };
             let listener = Arc::new(EnergyListener::new(Arc::clone(&store)));
             scheduler.register_listener(listener);
             active_count += 1;
@@ -261,7 +284,10 @@ impl CognitiveEngineBuilder {
         // Synapses
         #[cfg(feature = "synapse")]
         let synapse = self.synapse_config.map(|config| {
-            let store = Arc::new(SynapseStore::new(config));
+            let store = match &gs {
+                Some(graph_store) => Arc::new(SynapseStore::with_graph_store(config, Arc::clone(graph_store))),
+                None => Arc::new(SynapseStore::new(config)),
+            };
             let listener = Arc::new(SynapseListener::new(Arc::clone(&store)));
             scheduler.register_listener(listener);
             active_count += 1;
@@ -272,7 +298,10 @@ impl CognitiveEngineBuilder {
         // Fabric
         #[cfg(feature = "fabric")]
         let fabric = if self.fabric_enabled {
-            let store = Arc::new(FabricStore::new());
+            let store = match &gs {
+                Some(graph_store) => Arc::new(FabricStore::with_graph_store(Arc::clone(graph_store))),
+                None => Arc::new(FabricStore::new()),
+            };
             let listener = Arc::new(FabricListener::new(Arc::clone(&store)));
             scheduler.register_listener(listener);
             active_count += 1;
@@ -285,7 +314,10 @@ impl CognitiveEngineBuilder {
         // Co-change
         #[cfg(feature = "co-change")]
         let co_change = self.co_change_config.map(|config| {
-            let store = Arc::new(CoChangeStore::new(config));
+            let store = match &gs {
+                Some(graph_store) => Arc::new(CoChangeStore::with_graph_store(config, Arc::clone(graph_store))),
+                None => Arc::new(CoChangeStore::new(config)),
+            };
             let detector = Arc::new(CoChangeDetector::new(Arc::clone(&store)));
             scheduler.register_listener(detector);
             active_count += 1;
@@ -334,6 +366,8 @@ impl std::fmt::Debug for CognitiveEngineBuilder {
 
         #[cfg(feature = "co-change")]
         d.field("co_change", &self.co_change_config.is_some());
+
+        d.field("graph_store", &self.graph_store.is_some());
 
         d.finish()
     }

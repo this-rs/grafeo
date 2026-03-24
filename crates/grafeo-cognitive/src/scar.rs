@@ -12,8 +12,13 @@
 use dashmap::DashMap;
 use grafeo_common::types::NodeId;
 use std::fmt;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+
+use crate::store_trait::{
+    OptionalGraphStore, PROP_SCAR_COUNT, PROP_SCAR_INTENSITY, persist_node_f64,
+};
 
 // ---------------------------------------------------------------------------
 // ScarConfig
@@ -201,6 +206,12 @@ impl Scar {
 /// Thread-safe store for scars.
 ///
 /// Indexed by target `NodeId` for efficient lookup.
+/// When a backing [`GraphStoreMut`](grafeo_core::graph::GraphStoreMut) is
+/// provided, scar count and cumulative intensity are persisted as node
+/// properties (write-through). On read, if the node is not in the hot cache,
+/// the store does NOT lazy-load individual scars (since scar details like
+/// reason/created_at are not stored in properties), but cumulative metrics
+/// are persisted for the fabric layer.
 pub struct ScarStore {
     /// Scars indexed by node ID → vec of scars.
     scars: DashMap<NodeId, Vec<Scar>>,
@@ -208,15 +219,48 @@ pub struct ScarStore {
     index: DashMap<ScarId, NodeId>,
     /// Configuration.
     config: ScarConfig,
+    /// Optional backing graph store for write-through persistence.
+    graph_store: OptionalGraphStore,
 }
 
 impl ScarStore {
-    /// Creates a new scar store.
+    /// Creates a new scar store (in-memory only).
     pub fn new(config: ScarConfig) -> Self {
         Self {
             scars: DashMap::new(),
             index: DashMap::new(),
             config,
+            graph_store: None,
+        }
+    }
+
+    /// Creates a new scar store with write-through persistence.
+    pub fn with_graph_store(
+        config: ScarConfig,
+        graph_store: Arc<dyn grafeo_core::graph::GraphStoreMut>,
+    ) -> Self {
+        Self {
+            scars: DashMap::new(),
+            index: DashMap::new(),
+            config,
+            graph_store: Some(graph_store),
+        }
+    }
+
+    /// Persists the scar summary (count + cumulative intensity) for a node.
+    fn persist_scar_summary(&self, target: NodeId) {
+        if let Some(gs) = &self.graph_store {
+            let min = self.config.min_intensity;
+            if let Some(scars) = self.scars.get(&target) {
+                let count = scars.iter().filter(|s| s.is_active(min)).count() as f64;
+                let intensity: f64 = scars
+                    .iter()
+                    .filter(|s| s.is_active(min))
+                    .map(|s| s.current_intensity())
+                    .sum();
+                persist_node_f64(gs.as_ref(), target, PROP_SCAR_COUNT, count);
+                persist_node_f64(gs.as_ref(), target, PROP_SCAR_INTENSITY, intensity);
+            }
         }
     }
 
@@ -242,6 +286,8 @@ impl ScarStore {
             .or_insert_with(|| vec![scar]);
 
         self.index.insert(id, target);
+        // Write-through
+        self.persist_scar_summary(target);
         id
     }
 
@@ -252,6 +298,10 @@ impl ScarStore {
             && let Some(scar) = scars.iter_mut().find(|s| s.id == scar_id)
         {
             scar.heal();
+            let target = *node_id;
+            drop(scars);
+            drop(node_id);
+            self.persist_scar_summary(target);
             return true;
         }
         false

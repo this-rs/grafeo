@@ -252,10 +252,10 @@ fn risk_score_scar_only_no_base_risk() {
     store.recalculate_all_risks();
 
     let score = store.get_fabric_score(nid);
-    // base_risk = 0 (no churn/pagerank/betweenness), scar_boost = 0.5 * (1.0/1.0) = 0.5
+    // Weighted additive: pr=0 + churn=0 + gap=1*0.20 + btwn=0 + scar=1*0.15 = 0.35
     assert!(
-        (score.risk_score - 0.5).abs() < 0.01,
-        "expected ~0.5 from scar alone, got {}",
+        (score.risk_score - 0.35).abs() < 0.01,
+        "expected ~0.35 from gap+scar, got {}",
         score.risk_score
     );
 }

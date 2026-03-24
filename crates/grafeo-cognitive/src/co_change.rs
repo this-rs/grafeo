@@ -11,12 +11,14 @@
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use grafeo_common::types::NodeId;
+use grafeo_common::types::{EdgeId, NodeId};
 use grafeo_reactive::{MutationEvent, MutationListener};
 use smallvec::SmallVec;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use crate::store_trait::{OptionalGraphStore, PROP_CO_CHANGE_COUNT, persist_edge_f64};
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -143,21 +145,58 @@ impl CoChangeKey {
 // CoChangeStore
 // ---------------------------------------------------------------------------
 
+/// Edge type used for co-change edges in the graph store.
+const CO_CHANGED_EDGE_TYPE: &str = "CO_CHANGED";
+
 /// Thread-safe store for co-change relations between nodes.
+///
+/// When a backing [`GraphStoreMut`](grafeo_core::graph::GraphStoreMut) is
+/// provided, co-change counts are persisted as edge properties on
+/// `CO_CHANGED`-typed edges (write-through).
 pub struct CoChangeStore {
     /// Co-change relations indexed by canonical key.
     relations: DashMap<CoChangeKey, CoChangeRelation>,
+    /// Mapping from co-change key to graph edge ID (for persistence).
+    edge_ids: DashMap<CoChangeKey, EdgeId>,
     /// Configuration.
     config: CoChangeConfig,
+    /// Optional backing graph store for write-through persistence.
+    graph_store: OptionalGraphStore,
 }
 
 impl CoChangeStore {
-    /// Creates a new, empty co-change store.
+    /// Creates a new, empty co-change store (in-memory only).
     pub fn new(config: CoChangeConfig) -> Self {
         Self {
             relations: DashMap::new(),
+            edge_ids: DashMap::new(),
             config,
+            graph_store: None,
         }
+    }
+
+    /// Creates a new co-change store with write-through persistence.
+    pub fn with_graph_store(
+        config: CoChangeConfig,
+        graph_store: Arc<dyn grafeo_core::graph::GraphStoreMut>,
+    ) -> Self {
+        Self {
+            relations: DashMap::new(),
+            edge_ids: DashMap::new(),
+            config,
+            graph_store: Some(graph_store),
+        }
+    }
+
+    /// Ensures a graph edge exists for the co-change relation and returns its EdgeId.
+    fn ensure_edge(&self, key: CoChangeKey) -> Option<EdgeId> {
+        let gs = self.graph_store.as_ref()?;
+        if let Some(eid) = self.edge_ids.get(&key) {
+            return Some(*eid);
+        }
+        let eid = gs.create_edge(key.0, key.1, CO_CHANGED_EDGE_TYPE);
+        self.edge_ids.insert(key, eid);
+        Some(eid)
     }
 
     /// Records a co-change between two nodes.
@@ -173,6 +212,14 @@ impl CoChangeStore {
             .entry(key)
             .and_modify(|rel| rel.record())
             .or_insert_with(|| CoChangeRelation::new(key.0, key.1, self.config.strength_half_life));
+        // Write-through
+        if let Some(eid) = self.ensure_edge(key) {
+            if let Some(gs) = &self.graph_store {
+                if let Some(rel) = self.relations.get(&key) {
+                    persist_edge_f64(gs.as_ref(), eid, PROP_CO_CHANGE_COUNT, f64::from(rel.count));
+                }
+            }
+        }
     }
 
     /// Returns all co-change relations for a given node, sorted by strength descending.

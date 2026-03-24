@@ -226,10 +226,10 @@ fn risk_score_high_pr_high_churn_low_density() {
     store.recalculate_all_risks();
     let score = store.get_fabric_score(nid);
 
-    // With max values and density=0 → risk = 1.0 × 1.0 × (1-0) × 1.0 = 1.0
+    // Weighted additive: pr=1*0.25 + churn=1*0.25 + gap=1*0.20 + btwn=1*0.15 + scar=0*0.15 = 0.85
     assert!(
-        (score.risk_score - 1.0).abs() < 1e-10,
-        "expected risk ~1.0, got {}",
+        (score.risk_score - 0.85).abs() < 0.01,
+        "expected risk ~0.85, got {}",
         score.risk_score
     );
 }
@@ -248,10 +248,10 @@ fn risk_score_zero_when_high_density() {
     store.recalculate_all_risks();
     let score = store.get_fabric_score(nid);
 
-    // density=1.0 → knowledge_gap = 0 → risk = 0
+    // density=1.0 → gap=0 → pr=1*0.25 + churn=1*0.25 + gap=0 + btwn=1*0.15 + scar=0 = 0.65
     assert!(
-        score.risk_score.abs() < 1e-10,
-        "expected risk ~0.0, got {}",
+        (score.risk_score - 0.65).abs() < 0.01,
+        "expected risk ~0.65, got {}",
         score.risk_score
     );
 }
@@ -264,15 +264,16 @@ fn risk_score_zero_when_no_pagerank() {
     for _ in 0..10 {
         store.update_churn(nid);
     }
-    // pagerank = 0 → normalized = 0 → risk = 0
+    // pagerank=0 → pr=0, but churn=1*0.25 + gap=1*0.20 + btwn=1*0.15 still contribute
     store.set_gds_metrics(nid, 0.0, 1.0, Some(1));
 
     store.recalculate_all_risks();
     let score = store.get_fabric_score(nid);
 
+    // Weighted additive: pr=0 + churn=1*0.25 + gap=1*0.20 + btwn=1*0.15 + scar=0 = 0.60
     assert!(
-        score.risk_score.abs() < 1e-10,
-        "expected risk ~0.0, got {}",
+        (score.risk_score - 0.60).abs() < 0.01,
+        "expected risk ~0.60, got {}",
         score.risk_score
     );
 }

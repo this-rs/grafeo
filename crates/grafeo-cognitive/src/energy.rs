@@ -14,6 +14,8 @@ use grafeo_reactive::{MutationEvent, MutationListener};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::store_trait::{OptionalGraphStore, PROP_ENERGY, load_node_f64, persist_node_f64};
+
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
@@ -151,38 +153,77 @@ impl NodeEnergy {
 /// Thread-safe store for node energy states.
 ///
 /// Uses `DashMap` for concurrent read/write without global locks.
+/// When a backing [`GraphStoreMut`](grafeo_core::graph::GraphStoreMut) is
+/// provided, every write is also persisted as a node property (write-through).
+/// On read, if the node is not in the hot cache, the store attempts to load
+/// the value lazily from the graph property.
 pub struct EnergyStore {
     /// Per-node energy entries.
     nodes: DashMap<NodeId, NodeEnergy>,
     /// Configuration.
     config: EnergyConfig,
+    /// Optional backing graph store for write-through persistence.
+    graph_store: OptionalGraphStore,
 }
 
 impl EnergyStore {
-    /// Creates a new, empty energy store.
+    /// Creates a new, empty energy store (in-memory only, no persistence).
     pub fn new(config: EnergyConfig) -> Self {
         Self {
             nodes: DashMap::new(),
             config,
+            graph_store: None,
+        }
+    }
+
+    /// Creates a new energy store with write-through persistence.
+    pub fn with_graph_store(
+        config: EnergyConfig,
+        graph_store: Arc<dyn grafeo_core::graph::GraphStoreMut>,
+    ) -> Self {
+        Self {
+            nodes: DashMap::new(),
+            config,
+            graph_store: Some(graph_store),
         }
     }
 
     /// Returns the current energy for a node (with decay applied).
     ///
     /// Returns `0.0` if the node has never been tracked.
+    /// If the node is not in the hot cache but exists in the graph store,
+    /// the value is loaded lazily.
     pub fn get_energy(&self, node_id: NodeId) -> f64 {
-        self.nodes.get(&node_id).map_or(0.0, |e| e.current_energy())
+        if let Some(entry) = self.nodes.get(&node_id) {
+            return entry.current_energy();
+        }
+        // Lazy load from graph store
+        if let Some(gs) = &self.graph_store {
+            if let Some(val) = load_node_f64(gs.as_ref(), node_id, PROP_ENERGY) {
+                let ne = NodeEnergy::new(val, self.config.default_half_life);
+                self.nodes.insert(node_id, ne);
+                return val;
+            }
+        }
+        0.0
     }
 
     /// Boosts a node's energy by `amount`.
     ///
     /// If the node is not yet tracked, it is created with the boost as
-    /// initial energy.
+    /// initial energy. The new energy value is written through to the
+    /// backing graph store (if configured).
     pub fn boost(&self, node_id: NodeId, amount: f64) {
         self.nodes
             .entry(node_id)
             .and_modify(|e| e.boost(amount))
             .or_insert_with(|| NodeEnergy::new(amount, self.config.default_half_life));
+        // Write-through
+        if let Some(gs) = &self.graph_store {
+            if let Some(entry) = self.nodes.get(&node_id) {
+                persist_node_f64(gs.as_ref(), node_id, PROP_ENERGY, entry.current_energy());
+            }
+        }
     }
 
     /// Returns all node IDs whose current energy is below `threshold`.

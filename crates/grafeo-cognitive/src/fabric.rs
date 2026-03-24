@@ -22,6 +22,11 @@ use smallvec::SmallVec;
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::store_trait::{
+    OptionalGraphStore, PROP_FABRIC_CHURN, PROP_FABRIC_DENSITY, PROP_FABRIC_RISK,
+    persist_node_f64,
+};
+
 // ---------------------------------------------------------------------------
 // FabricScore
 // ---------------------------------------------------------------------------
@@ -87,16 +92,43 @@ impl FabricScore {
 /// Thread-safe store for per-node [`FabricScore`]s.
 ///
 /// Uses [`DashMap`] for concurrent read/write without global locks.
+/// When a backing [`GraphStoreMut`](grafeo_core::graph::GraphStoreMut) is
+/// provided, risk_score, churn_score, and knowledge_density are persisted
+/// as node properties prefixed with `_cog_` (write-through).
 pub struct FabricStore {
     /// Per-node fabric scores.
     scores: DashMap<NodeId, FabricScore>,
+    /// Optional backing graph store for write-through persistence.
+    graph_store: OptionalGraphStore,
 }
 
 impl FabricStore {
-    /// Creates a new, empty fabric store.
+    /// Creates a new, empty fabric store (in-memory only).
     pub fn new() -> Self {
         Self {
             scores: DashMap::new(),
+            graph_store: None,
+        }
+    }
+
+    /// Creates a new fabric store with write-through persistence.
+    pub fn with_graph_store(
+        graph_store: Arc<dyn grafeo_core::graph::GraphStoreMut>,
+    ) -> Self {
+        Self {
+            scores: DashMap::new(),
+            graph_store: Some(graph_store),
+        }
+    }
+
+    /// Persists the key fabric metrics for a node to the graph store.
+    fn persist_fabric(&self, node_id: NodeId) {
+        if let Some(gs) = &self.graph_store {
+            if let Some(entry) = self.scores.get(&node_id) {
+                persist_node_f64(gs.as_ref(), node_id, PROP_FABRIC_RISK, entry.risk_score);
+                persist_node_f64(gs.as_ref(), node_id, PROP_FABRIC_CHURN, entry.churn_score);
+                persist_node_f64(gs.as_ref(), node_id, PROP_FABRIC_DENSITY, entry.knowledge_density);
+            }
         }
     }
 
@@ -139,6 +171,7 @@ impl FabricStore {
                 last_mutated: Some(now),
                 ..FabricScore::default()
             });
+        self.persist_fabric(node_id);
     }
 
     /// Updates the staleness for a node based on elapsed time since last mutation.
@@ -159,6 +192,7 @@ impl FabricStore {
                 knowledge_density: density,
                 ..FabricScore::default()
             });
+        self.persist_fabric(node_id);
     }
 
     /// Sets the cumulative scar intensity for a node.
@@ -172,6 +206,7 @@ impl FabricStore {
                 scar_intensity,
                 ..FabricScore::default()
             });
+        self.persist_fabric(node_id);
     }
 
     /// Sets GDS-computed metrics (pagerank, betweenness, community_id) for a node.
@@ -195,6 +230,7 @@ impl FabricStore {
                 community_id,
                 ..FabricScore::default()
             });
+        self.persist_fabric(node_id);
     }
 
     /// Returns the top-N hotspots sorted by churn score descending.
@@ -317,7 +353,10 @@ impl FabricStore {
 
 impl Default for FabricStore {
     fn default() -> Self {
-        Self::new()
+        Self {
+            scores: DashMap::new(),
+            graph_store: None,
+        }
     }
 }
 

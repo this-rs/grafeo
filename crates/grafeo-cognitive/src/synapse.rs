@@ -7,11 +7,15 @@
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use grafeo_common::types::NodeId;
+use grafeo_common::types::{EdgeId, NodeId};
 use grafeo_reactive::{MutationEvent, MutationListener};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use crate::store_trait::{
+    OptionalGraphStore, PROP_SYNAPSE_WEIGHT, load_edge_f64, persist_edge_f64,
+};
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -154,21 +158,59 @@ impl SynapseKey {
 // SynapseStore
 // ---------------------------------------------------------------------------
 
+/// Edge type used for synapse edges in the graph store.
+const SYNAPSE_EDGE_TYPE: &str = "SYNAPSE";
+
 /// Thread-safe store for synapses between nodes.
+///
+/// When a backing [`GraphStoreMut`](grafeo_core::graph::GraphStoreMut) is
+/// provided, synapse weights are persisted as edge properties on
+/// `SYNAPSE`-typed edges. On read, if the synapse is not in the hot cache,
+/// the store attempts to load the weight lazily from the graph property.
 pub struct SynapseStore {
     /// Synapses indexed by canonical (source, target) key.
     synapses: DashMap<SynapseKey, Synapse>,
+    /// Mapping from synapse key to graph edge ID (for persistence).
+    edge_ids: DashMap<SynapseKey, EdgeId>,
     /// Configuration.
     config: SynapseConfig,
+    /// Optional backing graph store for write-through persistence.
+    graph_store: OptionalGraphStore,
 }
 
 impl SynapseStore {
-    /// Creates a new, empty synapse store.
+    /// Creates a new, empty synapse store (in-memory only).
     pub fn new(config: SynapseConfig) -> Self {
         Self {
             synapses: DashMap::new(),
+            edge_ids: DashMap::new(),
             config,
+            graph_store: None,
         }
+    }
+
+    /// Creates a new synapse store with write-through persistence.
+    pub fn with_graph_store(
+        config: SynapseConfig,
+        graph_store: Arc<dyn grafeo_core::graph::GraphStoreMut>,
+    ) -> Self {
+        Self {
+            synapses: DashMap::new(),
+            edge_ids: DashMap::new(),
+            config,
+            graph_store: Some(graph_store),
+        }
+    }
+
+    /// Ensures a graph edge exists for the synapse and returns its EdgeId.
+    fn ensure_edge(&self, key: SynapseKey) -> Option<EdgeId> {
+        let gs = self.graph_store.as_ref()?;
+        if let Some(eid) = self.edge_ids.get(&key) {
+            return Some(*eid);
+        }
+        let eid = gs.create_edge(key.0, key.1, SYNAPSE_EDGE_TYPE);
+        self.edge_ids.insert(key, eid);
+        Some(eid)
     }
 
     /// Reinforces (or creates) a synapse between two nodes.
@@ -188,12 +230,40 @@ impl SynapseStore {
                     self.config.default_half_life,
                 )
             });
+        // Write-through
+        if let Some(eid) = self.ensure_edge(key) {
+            if let Some(gs) = &self.graph_store {
+                if let Some(entry) = self.synapses.get(&key) {
+                    persist_edge_f64(
+                        gs.as_ref(),
+                        eid,
+                        PROP_SYNAPSE_WEIGHT,
+                        entry.current_weight(),
+                    );
+                }
+            }
+        }
     }
 
     /// Returns the synapse between two nodes, if it exists.
+    ///
+    /// If not in the hot cache, attempts lazy load from the graph store.
     pub fn get_synapse(&self, a: NodeId, b: NodeId) -> Option<Synapse> {
         let key = SynapseKey::new(a, b);
-        self.synapses.get(&key).map(|s| s.clone())
+        if let Some(s) = self.synapses.get(&key) {
+            return Some(s.clone());
+        }
+        // Lazy load from graph: look for an edge with the synapse weight
+        if let Some(gs) = &self.graph_store {
+            if let Some(eid) = self.edge_ids.get(&key) {
+                if let Some(weight) = load_edge_f64(gs.as_ref(), *eid, PROP_SYNAPSE_WEIGHT) {
+                    let syn = Synapse::new(key.0, key.1, weight, self.config.default_half_life);
+                    self.synapses.insert(key, syn.clone());
+                    return Some(syn);
+                }
+            }
+        }
+        None
     }
 
     /// Returns all synapses for a given node, sorted by current weight descending.

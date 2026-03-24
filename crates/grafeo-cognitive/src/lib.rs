@@ -77,6 +77,7 @@ pub mod episodic;
 pub mod config;
 pub mod engine;
 pub mod error;
+pub mod store_trait;
 
 // ---------------------------------------------------------------------------
 // Re-exports

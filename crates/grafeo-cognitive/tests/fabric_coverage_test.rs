@@ -64,11 +64,11 @@ fn recalculate_risk_with_custom_maxima() {
     store.recalculate_risk(n, 1.0, 10.0, 1.0);
 
     let score = store.get_fabric_score(n);
-    // pr = 0.6/1.0 = 0.6, churn = 8/10 = 0.8, gap = 1.0, btwn = 0.4/1.0 = 0.4
-    // base_risk = 0.6 * 0.8 * 1.0 * 0.4 = 0.192, scar_boost = 0 → 0.192
+    // Weighted additive: pr=0.6*0.25 + churn=0.8*0.25 + gap=1.0*0.20 + btwn=0.4*0.15 + scar=0*0.15
+    // = 0.15 + 0.20 + 0.20 + 0.06 + 0.0 = 0.61
     assert!(
-        (score.risk_score - 0.192).abs() < 0.01,
-        "expected ~0.192, got {}",
+        (score.risk_score - 0.61).abs() < 0.01,
+        "expected ~0.61, got {}",
         score.risk_score
     );
 }
@@ -129,10 +129,10 @@ fn recalculate_all_risks_uses_global_maxima() {
     let s2 = store.get_fabric_score(NodeId(2));
     let s3 = store.get_fabric_score(NodeId(3));
 
-    // Node 1 should have maximum base risk (all normalized to 1.0)
+    // Node 1: all normalized to 1.0, scar=0 → 0.25+0.25+0.20+0.15+0 = 0.85
     assert!(
-        (s1.risk_score - 1.0).abs() < 0.01,
-        "node 1 should have ~1.0 risk, got {}",
+        (s1.risk_score - 0.85).abs() < 0.01,
+        "node 1 should have ~0.85 risk, got {}",
         s1.risk_score
     );
 
@@ -213,13 +213,13 @@ fn set_scar_intensity_cumulative_and_risk_impact() {
     store.set_scar_intensity(n, 3.0);
     assert!((store.get_fabric_score(n).scar_intensity - 3.0).abs() < 1e-10);
 
-    // With scar alone (no churn/pagerank/betweenness), risk = scar_boost only
+    // With scar alone (no churn/pagerank/betweenness), gap=1 (density=0)
     store.recalculate_all_risks();
     let score = store.get_fabric_score(n);
-    // scar_boost = normalize(3.0, 3.0) * 0.5 = 0.5
+    // pr=0*0.25 + churn=0*0.25 + gap=1*0.20 + btwn=0*0.15 + scar=1*0.15 = 0.35
     assert!(
-        (score.risk_score - 0.5).abs() < 0.01,
-        "expected ~0.5 from scar alone, got {}",
+        (score.risk_score - 0.35).abs() < 0.01,
+        "expected ~0.35 from gap+scar, got {}",
         score.risk_score
     );
 }
@@ -310,10 +310,10 @@ fn risk_edge_case_all_metrics_zero() {
 
     store.recalculate_all_risks();
     let score = store.get_fabric_score(n);
-    // All zero → normalize returns 0 for each → base_risk = 0, scar_boost = 0
+    // All zero except knowledge_gap=1.0 (density=0) → 0+0+0.20+0+0 = 0.20
     assert!(
-        score.risk_score.abs() < 1e-10,
-        "all-zero metrics should give risk 0, got {}",
+        (score.risk_score - 0.20).abs() < 0.01,
+        "all-zero metrics (except gap) should give risk ~0.20, got {}",
         score.risk_score
     );
 }
@@ -331,11 +331,10 @@ fn risk_edge_case_max_scar_intensity_zero() {
 
     store.recalculate_all_risks();
     let score = store.get_fabric_score(n);
-    // base_risk = 1.0 * 1.0 * 1.0 * 1.0 = 1.0 (single node → all normalized to 1.0)
-    // scar_boost = 0 (max_scar = 0)
+    // Weighted additive: pr=1*0.25 + churn=1*0.25 + gap=1*0.20 + btwn=1*0.15 + scar=0*0.15 = 0.85
     assert!(
-        (score.risk_score - 1.0).abs() < 0.01,
-        "expected ~1.0 with zero scar, got {}",
+        (score.risk_score - 0.85).abs() < 0.01,
+        "expected ~0.85 with zero scar, got {}",
         score.risk_score
     );
 }
@@ -353,10 +352,10 @@ fn risk_edge_case_knowledge_density_one() {
 
     store.recalculate_all_risks();
     let score = store.get_fabric_score(n);
-    // knowledge_density = 1.0 → knowledge_gap = 0 → base_risk = 0
+    // knowledge_density=1.0 → gap=0 → pr=1*0.25 + churn=1*0.25 + gap=0*0.20 + btwn=1*0.15 + scar=0*0.15 = 0.65
     assert!(
-        score.risk_score.abs() < 1e-10,
-        "density=1.0 should zero base risk, got {}",
+        (score.risk_score - 0.65).abs() < 0.01,
+        "density=1.0 should give risk ~0.65, got {}",
         score.risk_score
     );
 }
@@ -378,7 +377,7 @@ fn risk_clamp_to_one_when_scar_pushes_above() {
 
     store.recalculate_all_risks();
     let score = store.get_fabric_score(n1);
-    // base_risk = 1.0, scar_boost = 0.5 * (10/10) = 0.5 → 1.5 clamped to 1.0
+    // Weighted additive: pr=1*0.25 + churn=1*0.25 + gap=1*0.20 + btwn=1*0.15 + scar=1*0.15 = 1.0
     assert!(
         (score.risk_score - 1.0).abs() < 1e-10,
         "risk should be clamped to 1.0, got {}",
