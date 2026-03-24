@@ -1,10 +1,6 @@
 //! Integration tests for the distillation P2P module.
 
-#![cfg(all(
-    feature = "distillation",
-    feature = "energy",
-    feature = "synapse"
-))]
+#![cfg(all(feature = "distillation", feature = "energy", feature = "synapse"))]
 
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -133,10 +129,7 @@ async fn inject_applies_trust_discounted_weights() {
     let syn = store.get_synapse(NodeId(1), NodeId(2)).unwrap();
     // reinforce creates with initial_weight(0.1) + amount(0.8 * 0.5 = 0.4) = 0.5
     let w = syn.current_weight();
-    assert!(
-        (w - 0.5).abs() < 0.05,
-        "expected weight ~0.5, got {w}"
-    );
+    assert!((w - 0.5).abs() < 0.05, "expected weight ~0.5, got {w}");
 }
 
 #[tokio::test]
@@ -149,10 +142,7 @@ async fn inject_applies_trust_discounted_energy() {
     let estore = engine.energy_store().unwrap();
     let e = estore.get_energy(NodeId(42));
     // boost(10.0 * 0.3 = 3.0)
-    assert!(
-        (e - 3.0).abs() < 0.1,
-        "expected energy ~3.0, got {e}"
-    );
+    assert!((e - 3.0).abs() < 0.1, "expected energy ~3.0, got {e}");
 }
 
 #[tokio::test]
@@ -188,10 +178,7 @@ async fn evaluate_identical_artifacts_score_near_one() {
 #[tokio::test]
 async fn evaluate_different_artifacts_lower_score() {
     let a = make_artifact(vec![(1, 2, 0.5)], vec![(1, 1.0), (2, 2.0)]);
-    let b = make_artifact(
-        vec![(3, 4, 0.8), (5, 6, 0.3)],
-        vec![(3, 5.0), (4, 10.0)],
-    );
+    let b = make_artifact(vec![(3, 4, 0.8), (5, 6, 0.3)], vec![(3, 5.0), (4, 10.0)]);
     let report = evaluate(&a, &b);
 
     assert!(

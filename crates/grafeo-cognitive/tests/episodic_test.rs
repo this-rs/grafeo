@@ -446,7 +446,7 @@ fn memory_manager_consolidates_old_accessed_episodes() {
 fn memory_manager_archives_idle_consolidated_episodes() {
     let config = EpisodeConfig {
         consolidation_age_secs: 0,
-        archive_age_secs: 0, // Immediately eligible.
+        archive_age_secs: 0,        // Immediately eligible.
         min_access_for_retain: 100, // High threshold.
         ..Default::default()
     };
@@ -529,8 +529,16 @@ fn memory_manager_evicts_when_over_capacity() {
     let result = manager.sweep();
 
     // Should have evicted enough archived episodes to get to max_episodes.
-    assert!(result.evicted >= 2, "expected >= 2 evictions, got {}", result.evicted);
-    assert!(store.len() <= 3, "expected <= 3 episodes, got {}", store.len());
+    assert!(
+        result.evicted >= 2,
+        "expected >= 2 evictions, got {}",
+        result.evicted
+    );
+    assert!(
+        store.len() <= 3,
+        "expected <= 3 episodes, got {}",
+        store.len()
+    );
 }
 
 // ---------------------------------------------------------------------------

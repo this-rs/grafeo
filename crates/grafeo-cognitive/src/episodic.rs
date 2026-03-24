@@ -220,8 +220,8 @@ impl Default for EpisodeConfig {
             max_episodes: 10_000,
             max_process_trace: 100,
             auto_lesson: true,
-            consolidation_age_secs: 3600,      // 1 hour
-            archive_age_secs: 7 * 24 * 3600,   // 7 days
+            consolidation_age_secs: 3600,    // 1 hour
+            archive_age_secs: 7 * 24 * 3600, // 7 days
             min_access_for_retain: 3,
         }
     }
@@ -362,9 +362,7 @@ impl EpisodeStore {
 
     /// Extracts a lesson from an episode based on patterns.
     pub fn extract_lesson_for(&self, episode_id: u64) -> Option<String> {
-        self.episodes
-            .get(&episode_id)
-            .map(|e| extract_lesson(&e))
+        self.episodes.get(&episode_id).map(|e| extract_lesson(&e))
     }
 
     /// Returns episodes matching any of the given tags.
@@ -625,12 +623,7 @@ impl EpisodeRecorder {
             description: format!("Mutation: {mutation_type}"),
         }];
 
-        let outcome = Outcome::with_counts(
-            node_ids.len(),
-            0,
-            if success { 0 } else { 1 },
-            details,
-        );
+        let outcome = Outcome::with_counts(node_ids.len(), 0, if success { 0 } else { 1 }, details);
 
         let validation = if success {
             ValidationResult::ok()

@@ -315,11 +315,7 @@ fn inject_synapses(artifact: &DistillArtifact, trust_factor: f64, engine: &dyn C
 }
 
 #[cfg(not(feature = "synapse"))]
-fn inject_synapses(
-    _artifact: &DistillArtifact,
-    _trust_factor: f64,
-    _engine: &dyn CognitiveEngine,
-) {
+fn inject_synapses(_artifact: &DistillArtifact, _trust_factor: f64, _engine: &dyn CognitiveEngine) {
 }
 
 #[cfg(feature = "energy")]
@@ -336,11 +332,7 @@ fn inject_energies(artifact: &DistillArtifact, trust_factor: f64, engine: &dyn C
 }
 
 #[cfg(not(feature = "energy"))]
-fn inject_energies(
-    _artifact: &DistillArtifact,
-    _trust_factor: f64,
-    _engine: &dyn CognitiveEngine,
-) {
+fn inject_energies(_artifact: &DistillArtifact, _trust_factor: f64, _engine: &dyn CognitiveEngine) {
 }
 
 // ---------------------------------------------------------------------------
@@ -404,7 +396,11 @@ fn synapse_jaccard(a: &DistillArtifact, b: &DistillArtifact) -> f64 {
     let set_b: HashSet<(u64, u64)> = b.synapses.iter().map(|s| (s.source, s.target)).collect();
     let intersection = set_a.intersection(&set_b).count() as f64;
     let union = set_a.union(&set_b).count() as f64;
-    if union == 0.0 { 1.0 } else { intersection / union }
+    if union == 0.0 {
+        1.0
+    } else {
+        intersection / union
+    }
 }
 
 /// Pearson correlation of energies for nodes present in both artifacts.
@@ -448,7 +444,11 @@ fn energy_pearson(a: &DistillArtifact, b: &DistillArtifact) -> f64 {
 
     let denom = (var_a * var_b).sqrt();
     if denom < f64::EPSILON {
-        if var_a < f64::EPSILON && var_b < f64::EPSILON { 1.0 } else { 0.0 }
+        if var_a < f64::EPSILON && var_b < f64::EPSILON {
+            1.0
+        } else {
+            0.0
+        }
     } else {
         cov / denom
     }
@@ -536,7 +536,13 @@ fn compute_cross_community(before: &DistillArtifact, after: &DistillArtifact) ->
     }
 
     let classify = |d: usize| -> u8 {
-        if d <= 2 { 0 } else if d <= 5 { 1 } else { 2 }
+        if d <= 2 {
+            0
+        } else if d <= 5 {
+            1
+        } else {
+            2
+        }
     };
 
     let cross = all
@@ -647,10 +653,7 @@ mod tests {
 
     #[test]
     fn artifact_json_roundtrip() {
-        let artifact = make_artifact(
-            vec![(1, 2, 0.75), (3, 4, 0.5)],
-            vec![(1, 0.9), (3, 1.5)],
-        );
+        let artifact = make_artifact(vec![(1, 2, 0.75), (3, 4, 0.5)], vec![(1, 0.9), (3, 1.5)]);
         let json = serde_json::to_string(&artifact).expect("serialize");
         let restored: DistillArtifact = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(artifact.synapses.len(), restored.synapses.len());
@@ -658,10 +661,7 @@ mod tests {
         assert_eq!(artifact.metadata, restored.metadata);
     }
 
-    fn make_artifact(
-        synapses: Vec<(u64, u64, f64)>,
-        energies: Vec<(u64, f64)>,
-    ) -> DistillArtifact {
+    fn make_artifact(synapses: Vec<(u64, u64, f64)>, energies: Vec<(u64, f64)>) -> DistillArtifact {
         DistillArtifact {
             version: String::from("1.0"),
             created_at: SystemTime::now(),
