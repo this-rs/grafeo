@@ -271,7 +271,10 @@ impl CognitiveEngineBuilder {
         #[cfg(feature = "energy")]
         let energy = self.energy_config.map(|config| {
             let store = match &gs {
-                Some(graph_store) => Arc::new(EnergyStore::with_graph_store(config, Arc::clone(graph_store))),
+                Some(graph_store) => Arc::new(EnergyStore::with_graph_store(
+                    config,
+                    Arc::clone(graph_store),
+                )),
                 None => Arc::new(EnergyStore::new(config)),
             };
             let listener = Arc::new(EnergyListener::new(Arc::clone(&store)));
@@ -285,7 +288,10 @@ impl CognitiveEngineBuilder {
         #[cfg(feature = "synapse")]
         let synapse = self.synapse_config.map(|config| {
             let store = match &gs {
-                Some(graph_store) => Arc::new(SynapseStore::with_graph_store(config, Arc::clone(graph_store))),
+                Some(graph_store) => Arc::new(SynapseStore::with_graph_store(
+                    config,
+                    Arc::clone(graph_store),
+                )),
                 None => Arc::new(SynapseStore::new(config)),
             };
             let listener = Arc::new(SynapseListener::new(Arc::clone(&store)));
@@ -299,7 +305,9 @@ impl CognitiveEngineBuilder {
         #[cfg(feature = "fabric")]
         let fabric = if self.fabric_enabled {
             let store = match &gs {
-                Some(graph_store) => Arc::new(FabricStore::with_graph_store(Arc::clone(graph_store))),
+                Some(graph_store) => {
+                    Arc::new(FabricStore::with_graph_store(Arc::clone(graph_store)))
+                }
                 None => Arc::new(FabricStore::new()),
             };
             let listener = Arc::new(FabricListener::new(Arc::clone(&store)));
@@ -315,7 +323,10 @@ impl CognitiveEngineBuilder {
         #[cfg(feature = "co-change")]
         let co_change = self.co_change_config.map(|config| {
             let store = match &gs {
-                Some(graph_store) => Arc::new(CoChangeStore::with_graph_store(config, Arc::clone(graph_store))),
+                Some(graph_store) => Arc::new(CoChangeStore::with_graph_store(
+                    config,
+                    Arc::clone(graph_store),
+                )),
                 None => Arc::new(CoChangeStore::new(config)),
             };
             let detector = Arc::new(CoChangeDetector::new(Arc::clone(&store)));

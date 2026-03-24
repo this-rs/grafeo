@@ -32,6 +32,8 @@ pub struct EnergyConfigToml {
     pub half_life_secs: u64,
     /// Minimum energy threshold.
     pub min_energy: f64,
+    /// Maximum energy cap — energy is clamped to `[0.0, max_energy]` after every operation.
+    pub max_energy: f64,
 }
 
 impl Default for EnergyConfigToml {
@@ -42,6 +44,7 @@ impl Default for EnergyConfigToml {
             default_energy: 1.0,
             half_life_secs: 24 * 3600,
             min_energy: 0.01,
+            max_energy: 10.0,
         }
     }
 }
@@ -55,6 +58,7 @@ impl EnergyConfigToml {
             default_energy: self.default_energy,
             default_half_life: Duration::from_secs(self.half_life_secs),
             min_energy: self.min_energy,
+            max_energy: self.max_energy,
         }
     }
 }
@@ -73,6 +77,10 @@ pub struct SynapseConfigToml {
     pub half_life_secs: u64,
     /// Minimum weight threshold for pruning.
     pub min_weight: f64,
+    /// Maximum individual synapse weight cap.
+    pub max_synapse_weight: f64,
+    /// Maximum total outgoing weight from a single node before competitive normalization.
+    pub max_total_outgoing_weight: f64,
 }
 
 impl Default for SynapseConfigToml {
@@ -83,6 +91,8 @@ impl Default for SynapseConfigToml {
             reinforce_amount: 0.2,
             half_life_secs: 7 * 24 * 3600,
             min_weight: 0.01,
+            max_synapse_weight: 10.0,
+            max_total_outgoing_weight: 100.0,
         }
     }
 }
@@ -96,6 +106,8 @@ impl SynapseConfigToml {
             reinforce_amount: self.reinforce_amount,
             default_half_life: Duration::from_secs(self.half_life_secs),
             min_weight: self.min_weight,
+            max_synapse_weight: self.max_synapse_weight,
+            max_total_outgoing_weight: self.max_total_outgoing_weight,
         }
     }
 }

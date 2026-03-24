@@ -23,8 +23,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::store_trait::{
-    OptionalGraphStore, PROP_FABRIC_CHURN, PROP_FABRIC_DENSITY, PROP_FABRIC_RISK,
-    persist_node_f64,
+    OptionalGraphStore, PROP_FABRIC_CHURN, PROP_FABRIC_DENSITY, PROP_FABRIC_RISK, persist_node_f64,
 };
 
 // ---------------------------------------------------------------------------
@@ -112,9 +111,7 @@ impl FabricStore {
     }
 
     /// Creates a new fabric store with write-through persistence.
-    pub fn with_graph_store(
-        graph_store: Arc<dyn grafeo_core::graph::GraphStoreMut>,
-    ) -> Self {
+    pub fn with_graph_store(graph_store: Arc<dyn grafeo_core::graph::GraphStoreMut>) -> Self {
         Self {
             scores: DashMap::new(),
             graph_store: Some(graph_store),
@@ -127,7 +124,12 @@ impl FabricStore {
             if let Some(entry) = self.scores.get(&node_id) {
                 persist_node_f64(gs.as_ref(), node_id, PROP_FABRIC_RISK, entry.risk_score);
                 persist_node_f64(gs.as_ref(), node_id, PROP_FABRIC_CHURN, entry.churn_score);
-                persist_node_f64(gs.as_ref(), node_id, PROP_FABRIC_DENSITY, entry.knowledge_density);
+                persist_node_f64(
+                    gs.as_ref(),
+                    node_id,
+                    PROP_FABRIC_DENSITY,
+                    entry.knowledge_density,
+                );
             }
         }
     }

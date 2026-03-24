@@ -191,8 +191,8 @@ enabled = false
 
     #[tokio::test]
     async fn write_through_energy_persists_and_reloads() {
-        use grafeo_core::LpgStore;
         use grafeo_cognitive::energy::{EnergyConfig, EnergyStore};
+        use grafeo_core::LpgStore;
 
         let lpg = std::sync::Arc::new(LpgStore::new().unwrap());
 
@@ -222,14 +222,20 @@ enabled = false
         let e2_after = store2.get_energy(n2);
 
         // The persisted value is the current_energy at time of boost (may have tiny decay)
-        assert!(e1_after > 2.5, "e1 after reload should be > 2.5, got {e1_after}");
-        assert!(e2_after > 4.5, "e2 after reload should be > 4.5, got {e2_after}");
+        assert!(
+            e1_after > 2.5,
+            "e1 after reload should be > 2.5, got {e1_after}"
+        );
+        assert!(
+            e2_after > 4.5,
+            "e2 after reload should be > 4.5, got {e2_after}"
+        );
     }
 
     #[tokio::test]
     async fn write_through_synapse_persists_and_reloads() {
-        use grafeo_core::LpgStore;
         use grafeo_cognitive::synapse::{SynapseConfig, SynapseStore};
+        use grafeo_core::LpgStore;
 
         let lpg = std::sync::Arc::new(LpgStore::new().unwrap());
 
@@ -264,17 +270,23 @@ enabled = false
         let pk = PropertyKey::from("_cog_synapse_weight");
         let edge_id = grafeo_common::types::EdgeId::new(0);
         let val = lpg.get_edge_property(edge_id, &pk);
-        assert!(val.is_some(), "synapse weight should be persisted as edge property");
+        assert!(
+            val.is_some(),
+            "synapse weight should be persisted as edge property"
+        );
         let weight = val.unwrap().as_float64().unwrap();
-        assert!(weight > 0.5, "persisted weight should be > 0.5, got {weight}");
+        assert!(
+            weight > 0.5,
+            "persisted weight should be > 0.5, got {weight}"
+        );
 
         drop(store2);
     }
 
     #[tokio::test]
     async fn write_through_engine_end_to_end() {
-        use grafeo_core::LpgStore;
         use grafeo_common::types::PropertyKey;
+        use grafeo_core::LpgStore;
 
         let lpg = std::sync::Arc::new(LpgStore::new().unwrap());
 
