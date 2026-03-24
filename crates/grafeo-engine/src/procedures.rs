@@ -391,7 +391,10 @@ mod tests {
         let registry = BuiltinProcedures::new();
         let name = vec!["subgraph".to_string(), "khop".to_string()];
         let algo = registry.get(&name);
-        assert!(algo.is_some(), "subgraph.khop should resolve without grafeo prefix");
+        assert!(
+            algo.is_some(),
+            "subgraph.khop should resolve without grafeo prefix"
+        );
     }
 
     #[test]

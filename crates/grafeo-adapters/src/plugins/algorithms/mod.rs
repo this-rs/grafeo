@@ -102,11 +102,11 @@ pub use community::{LabelPropagationAlgorithm, LouvainAlgorithm};
 pub use components::{
     ConnectedComponentsAlgorithm, StronglyConnectedComponentsAlgorithm, TopologicalSortAlgorithm,
 };
+pub use ego_graph::{EgoEdge, EgoGraph, KHopAlgorithm, KHopConfig, khop_subgraph};
 pub use flow::{MaxFlowAlgorithm, MinCostFlowAlgorithm};
 pub use mst::{KruskalAlgorithm, PrimAlgorithm};
 pub use shortest_path::{
     BellmanFordAlgorithm, DijkstraAlgorithm, FloydWarshallAlgorithm, SsspAlgorithm,
 };
 pub use structure::{ArticulationPointsAlgorithm, BridgesAlgorithm, KCoreAlgorithm};
-pub use ego_graph::{EgoEdge, EgoGraph, KHopAlgorithm, KHopConfig, khop_subgraph};
 pub use traversal::{BfsAlgorithm, DfsAlgorithm};

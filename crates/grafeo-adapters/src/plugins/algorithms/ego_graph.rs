@@ -209,9 +209,10 @@ pub fn khop_subgraph(store: &dyn GraphStore, config: &KHopConfig) -> EgoGraph {
     let mut nodes_ordered: Vec<NodeId> = Vec::new();
 
     // Build a HashSet of allowed relation types for O(1) lookup
-    let rel_filter: Option<FxHashSet<&str>> = config.rel_types.as_ref().map(|types| {
-        types.iter().map(|s| s.as_str()).collect()
-    });
+    let rel_filter: Option<FxHashSet<&str>> = config
+        .rel_types
+        .as_ref()
+        .map(|types| types.iter().map(|s| s.as_str()).collect());
 
     // Check if center exists
     if store.get_node(config.center).is_none() {
@@ -413,14 +414,18 @@ impl GraphAlgorithm for KHopAlgorithm {
             if s.is_empty() {
                 None
             } else {
-                Some(s.split(',').map(|t| t.trim().to_string()).collect::<Vec<_>>())
+                Some(
+                    s.split(',')
+                        .map(|t| t.trim().to_string())
+                        .collect::<Vec<_>>(),
+                )
             }
         });
 
         // Parse max_neighbors_per_hop
-        let max_neighbors = params.get_int("max_neighbors_per_hop").and_then(|v| {
-            if v <= 0 { None } else { Some(v as usize) }
-        });
+        let max_neighbors = params
+            .get_int("max_neighbors_per_hop")
+            .and_then(|v| if v <= 0 { None } else { Some(v as usize) });
 
         let config = KHopConfig {
             center: NodeId::new(center_id as u64),
