@@ -171,6 +171,8 @@ fn sweep_promotes_high_energy_old_node() {
         default_half_life: Duration::from_secs(3600 * 24),
         min_energy: 0.01,
         max_energy: 10.0,
+        ref_energy: 1.0,
+        structural_reinforcement_alpha: 0.0,
     };
     let energy_store = Arc::new(EnergyStore::new(energy_config));
     let memory_store = Arc::new(MemoryStore::new());

@@ -3,7 +3,7 @@
 
 #![cfg(all(feature = "energy", feature = "synapse", feature = "fabric"))]
 
-use grafeo_cognitive::{energy_score, synapse_score};
+use grafeo_cognitive::{energy_score, effective_half_life, mutation_frequency_score, synapse_score};
 use proptest::prelude::*;
 
 // ---------------------------------------------------------------------------
@@ -13,15 +13,15 @@ use proptest::prelude::*;
 proptest! {
     #[test]
     fn energy_score_always_in_unit_range(energy in -1e10_f64..1e10) {
-        let s = energy_score(energy);
+        let s = energy_score(energy, 1.0);
         prop_assert!(s >= 0.0, "energy_score({energy}) = {s} < 0.0");
         prop_assert!(s <= 1.0, "energy_score({energy}) = {s} > 1.0");
     }
 
     #[test]
     fn energy_score_monotonically_increasing(a in 0.0_f64..100.0, b in 0.0_f64..100.0) {
-        let sa = energy_score(a);
-        let sb = energy_score(b);
+        let sa = energy_score(a, 1.0);
+        let sb = energy_score(b, 1.0);
         if a <= b {
             prop_assert!(sa <= sb + 1e-12, "energy_score not monotonic: f({a})={sa} > f({b})={sb}");
         } else {
@@ -31,7 +31,7 @@ proptest! {
 
     #[test]
     fn energy_score_zero_at_zero_or_negative(energy in -1e10_f64..=0.0) {
-        let s = energy_score(energy);
+        let s = energy_score(energy, 1.0);
         prop_assert_eq!(s, 0.0);
     }
 }
@@ -43,15 +43,15 @@ proptest! {
 proptest! {
     #[test]
     fn synapse_score_always_in_unit_range(weight in -1e10_f64..1e10) {
-        let s = synapse_score(weight);
+        let s = synapse_score(weight, 1.0);
         prop_assert!(s >= 0.0, "synapse_score({weight}) = {s} < 0.0");
         prop_assert!(s <= 1.0, "synapse_score({weight}) = {s} > 1.0");
     }
 
     #[test]
     fn synapse_score_monotonically_increasing(a in 0.0_f64..100.0, b in 0.0_f64..100.0) {
-        let sa = synapse_score(a);
-        let sb = synapse_score(b);
+        let sa = synapse_score(a, 1.0);
+        let sb = synapse_score(b, 1.0);
         if a <= b {
             prop_assert!(sa <= sb + 1e-12, "synapse_score not monotonic: f({a})={sa} > f({b})={sb}");
         } else {
@@ -61,7 +61,7 @@ proptest! {
 
     #[test]
     fn synapse_score_zero_at_zero_or_negative(weight in -1e10_f64..=0.0) {
-        let s = synapse_score(weight);
+        let s = synapse_score(weight, 1.0);
         prop_assert_eq!(s, 0.0);
     }
 }
@@ -72,34 +72,34 @@ proptest! {
 
 #[test]
 fn energy_score_nan_returns_zero() {
-    assert_eq!(energy_score(f64::NAN), 0.0);
+    assert_eq!(energy_score(f64::NAN, 1.0), 0.0);
 }
 
 #[test]
 fn energy_score_positive_infinity_returns_bounded() {
-    let s = energy_score(f64::INFINITY);
+    let s = energy_score(f64::INFINITY, 1.0);
     assert!(s >= 0.0 && s <= 1.0, "got {s}");
 }
 
 #[test]
 fn energy_score_negative_infinity_returns_zero() {
-    assert_eq!(energy_score(f64::NEG_INFINITY), 0.0);
+    assert_eq!(energy_score(f64::NEG_INFINITY, 1.0), 0.0);
 }
 
 #[test]
 fn synapse_score_nan_returns_zero() {
-    assert_eq!(synapse_score(f64::NAN), 0.0);
+    assert_eq!(synapse_score(f64::NAN, 1.0), 0.0);
 }
 
 #[test]
 fn synapse_score_positive_infinity_returns_bounded() {
-    let s = synapse_score(f64::INFINITY);
+    let s = synapse_score(f64::INFINITY, 1.0);
     assert!(s >= 0.0 && s <= 1.0, "got {s}");
 }
 
 #[test]
 fn synapse_score_negative_infinity_returns_zero() {
-    assert_eq!(synapse_score(f64::NEG_INFINITY), 0.0);
+    assert_eq!(synapse_score(f64::NEG_INFINITY, 1.0), 0.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -109,21 +109,72 @@ fn synapse_score_negative_infinity_returns_zero() {
 #[test]
 fn energy_score_at_known_values() {
     // energy=0 → 0.0
-    assert!((energy_score(0.0)).abs() < 1e-12);
+    assert!((energy_score(0.0, 1.0)).abs() < 1e-12);
     // energy=1 → 1 - e^(-1) ≈ 0.6321
-    assert!((energy_score(1.0) - 0.6321205588285577).abs() < 1e-10);
+    assert!((energy_score(1.0, 1.0) - 0.6321205588285577).abs() < 1e-10);
     // energy=10 → very close to 1.0
-    assert!(energy_score(10.0) > 0.9999);
+    assert!(energy_score(10.0, 1.0) > 0.9999);
 }
 
 #[test]
 fn synapse_score_at_known_values() {
     // weight=0 → 0.0
-    assert!((synapse_score(0.0)).abs() < 1e-12);
+    assert!((synapse_score(0.0, 1.0)).abs() < 1e-12);
     // weight=1 → tanh(1) ≈ 0.7616
-    assert!((synapse_score(1.0) - 0.7615941559557649).abs() < 1e-10);
+    assert!((synapse_score(1.0, 1.0) - 0.7615941559557649).abs() < 1e-10);
     // weight=10 → very close to 1.0
-    assert!(synapse_score(10.0) > 0.9999);
+    assert!(synapse_score(10.0, 1.0) > 0.9999);
+}
+
+// ---------------------------------------------------------------------------
+// energy_score with varying ref_energy
+// ---------------------------------------------------------------------------
+
+proptest! {
+    #[test]
+    fn energy_score_with_ref_energy_in_unit_range(
+        energy in -1e10_f64..1e10,
+        ref_energy in 0.01_f64..100.0,
+    ) {
+        let s = energy_score(energy, ref_energy);
+        prop_assert!(s >= 0.0, "energy_score({energy}, {ref_energy}) = {s} < 0.0");
+        prop_assert!(s <= 1.0, "energy_score({energy}, {ref_energy}) = {s} > 1.0");
+    }
+}
+
+#[test]
+fn energy_score_ref_energy_zero_falls_back() {
+    // ref_energy=0 should fall back to 1.0
+    let s = energy_score(1.0, 0.0);
+    assert!(s >= 0.0 && s <= 1.0, "got {s}");
+}
+
+#[test]
+fn energy_score_ref_energy_nan_falls_back() {
+    let s = energy_score(1.0, f64::NAN);
+    assert!(s >= 0.0 && s <= 1.0, "got {s}");
+}
+
+// ---------------------------------------------------------------------------
+// effective_half_life: structural reinforcement
+// ---------------------------------------------------------------------------
+
+#[test]
+fn effective_half_life_zero_alpha_returns_base() {
+    use std::time::Duration;
+    let base = Duration::from_secs(3600);
+    assert_eq!(effective_half_life(base, 100, 0.0), base);
+}
+
+#[test]
+fn effective_half_life_increases_with_degree() {
+    use std::time::Duration;
+    let base = Duration::from_secs(3600);
+    let hl_0 = effective_half_life(base, 0, 0.5);
+    let hl_10 = effective_half_life(base, 10, 0.5);
+    let hl_100 = effective_half_life(base, 100, 0.5);
+    assert!(hl_10 > hl_0, "degree 10 should have longer half-life than degree 0");
+    assert!(hl_100 > hl_10, "degree 100 should have longer half-life than degree 10");
 }
 
 // ---------------------------------------------------------------------------
@@ -135,7 +186,7 @@ proptest! {
     fn fabric_risk_score_in_unit_range(
         pagerank in 0.0_f64..100.0,
         churn_count in 0u32..1000,
-        knowledge_density in 0.0_f64..1.0,
+        annotation_density in 0.0_f64..1.0,
         betweenness in 0.0_f64..100.0,
         scar_intensity in 0.0_f64..50.0,
     ) {
@@ -145,12 +196,12 @@ proptest! {
         let store = FabricStore::new();
         let nid = NodeId::new(1);
 
-        // Build up churn by calling update_churn multiple times
+        // Build up churn by calling record_mutation multiple times
         for _ in 0..churn_count {
-            store.update_churn(nid);
+            store.record_mutation(nid);
         }
         store.set_gds_metrics(nid, pagerank, betweenness, None);
-        store.set_knowledge_density(nid, knowledge_density);
+        store.set_annotation_density(nid, annotation_density);
         store.set_scar_intensity(nid, scar_intensity);
 
         store.recalculate_risk(nid, pagerank.max(1.0), (churn_count as f64).max(1.0), betweenness.max(1.0));

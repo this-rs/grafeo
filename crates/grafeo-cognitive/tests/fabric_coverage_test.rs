@@ -55,16 +55,16 @@ fn recalculate_risk_with_custom_maxima() {
     let n = NodeId(1);
 
     for _ in 0..8 {
-        store.update_churn(n);
+        store.record_mutation(n);
     }
     store.set_gds_metrics(n, 0.6, 0.4, Some(1));
-    // knowledge_density = 0.0 (default) → knowledge_gap = 1.0
+    // annotation_density = 0.0 (default) → knowledge_gap = 1.0
 
     // Provide custom global maxima for normalization
     store.recalculate_risk(n, 1.0, 10.0, 1.0);
 
     let score = store.get_fabric_score(n);
-    // Weighted additive: pr=0.6*0.25 + churn=0.8*0.25 + gap=1.0*0.20 + btwn=0.4*0.15 + scar=0*0.15
+    // Weighted additive: pr=0.6*0.25 + mutation_frequency=0.8*0.25 + gap=1.0*0.20 + btwn=0.4*0.15 + scar=0*0.15
     // = 0.15 + 0.20 + 0.20 + 0.06 + 0.0 = 0.61
     assert!(
         (score.risk_score - 0.61).abs() < 0.01,
@@ -79,7 +79,7 @@ fn recalculate_risk_with_different_maxima_changes_result() {
     let n = NodeId(1);
 
     for _ in 0..4 {
-        store.update_churn(n);
+        store.record_mutation(n);
     }
     store.set_gds_metrics(n, 0.5, 0.5, None);
 
@@ -107,20 +107,20 @@ fn recalculate_risk_with_different_maxima_changes_result() {
 fn recalculate_all_risks_uses_global_maxima() {
     let store = FabricStore::new();
 
-    // Node 1: highest churn and metrics
+    // Node 1: highest mutation_frequency and metrics
     for _ in 0..10 {
-        store.update_churn(NodeId(1));
+        store.record_mutation(NodeId(1));
     }
     store.set_gds_metrics(NodeId(1), 1.0, 1.0, Some(1));
 
     // Node 2: half the metrics
     for _ in 0..5 {
-        store.update_churn(NodeId(2));
+        store.record_mutation(NodeId(2));
     }
     store.set_gds_metrics(NodeId(2), 0.5, 0.5, Some(1));
 
     // Node 3: minimal metrics
-    store.update_churn(NodeId(3));
+    store.record_mutation(NodeId(3));
     store.set_gds_metrics(NodeId(3), 0.1, 0.1, Some(2));
 
     store.recalculate_all_risks();
@@ -162,11 +162,11 @@ fn update_staleness_reflects_elapsed_time() {
     let store = FabricStore::new();
     let n = NodeId(1);
 
-    // Set churn with a past instant
+    // Set mutation_frequency with a past instant
     let past = Instant::now()
         .checked_sub(std::time::Duration::from_millis(200))
         .unwrap();
-    store.update_churn_at(n, past);
+    store.record_mutation_at(n, past);
 
     store.update_staleness(n);
     let score = store.get_fabric_score(n);
@@ -190,8 +190,8 @@ fn update_staleness_none_case_for_untracked() {
 fn update_staleness_none_case_for_node_without_timestamp() {
     let store = FabricStore::new();
     let n = NodeId(1);
-    // Create entry via set_knowledge_density — no last_mutated
-    store.set_knowledge_density(n, 0.5);
+    // Create entry via set_annotation_density — no last_mutated
+    store.set_annotation_density(n, 0.5);
     store.update_staleness(n);
     let score = store.get_fabric_score(n);
     assert_eq!(score.staleness, 0.0, "no last_mutated → staleness stays 0");
@@ -213,10 +213,10 @@ fn set_scar_intensity_cumulative_and_risk_impact() {
     store.set_scar_intensity(n, 3.0);
     assert!((store.get_fabric_score(n).scar_intensity - 3.0).abs() < 1e-10);
 
-    // With scar alone (no churn/pagerank/betweenness), gap=1 (density=0)
+    // With scar alone (no mutation_frequency/pagerank/betweenness), gap=1 (density=0)
     store.recalculate_all_risks();
     let score = store.get_fabric_score(n);
-    // pr=0*0.25 + churn=0*0.25 + gap=1*0.20 + btwn=0*0.15 + scar=1*0.15 = 0.35
+    // pr=0*0.25 + mutation_frequency=0*0.25 + gap=1*0.20 + btwn=0*0.15 + scar=1*0.15 = 0.35
     assert!(
         (score.risk_score - 0.35).abs() < 0.01,
         "expected ~0.35 from gap+scar, got {}",
@@ -231,10 +231,10 @@ fn scar_intensity_adds_to_base_risk() {
 
     // Set up non-zero base risk
     for _ in 0..10 {
-        store.update_churn(n);
+        store.record_mutation(n);
     }
     store.set_gds_metrics(n, 1.0, 1.0, Some(1));
-    // knowledge_density = 0 → knowledge_gap = 1.0
+    // annotation_density = 0 → knowledge_gap = 1.0
 
     // Without scar
     store.recalculate_all_risks();
@@ -291,8 +291,8 @@ fn community_ids_and_get_community_nodes_roundtrip() {
 #[test]
 fn community_ids_with_no_communities_assigned() {
     let store = FabricStore::new();
-    store.update_churn(NodeId(1));
-    store.set_knowledge_density(NodeId(2), 0.5);
+    store.record_mutation(NodeId(1));
+    store.set_annotation_density(NodeId(2), 0.5);
     // No community_id set on any node
     assert!(store.community_ids().is_empty());
 }
@@ -305,8 +305,8 @@ fn community_ids_with_no_communities_assigned() {
 fn risk_edge_case_all_metrics_zero() {
     let store = FabricStore::new();
     let n = NodeId(1);
-    // Create a node with all-zero metrics (via set_knowledge_density to create entry)
-    store.set_knowledge_density(n, 0.0);
+    // Create a node with all-zero metrics (via set_annotation_density to create entry)
+    store.set_annotation_density(n, 0.0);
 
     store.recalculate_all_risks();
     let score = store.get_fabric_score(n);
@@ -324,14 +324,14 @@ fn risk_edge_case_max_scar_intensity_zero() {
     let n = NodeId(1);
 
     for _ in 0..5 {
-        store.update_churn(n);
+        store.record_mutation(n);
     }
     store.set_gds_metrics(n, 1.0, 1.0, None);
     // scar_intensity = 0 (default), so max_scar = 0 → normalize(0, 0) = 0
 
     store.recalculate_all_risks();
     let score = store.get_fabric_score(n);
-    // Weighted additive: pr=1*0.25 + churn=1*0.25 + gap=1*0.20 + btwn=1*0.15 + scar=0*0.15 = 0.85
+    // Weighted additive: pr=1*0.25 + mutation_frequency=1*0.25 + gap=1*0.20 + btwn=1*0.15 + scar=0*0.15 = 0.85
     assert!(
         (score.risk_score - 0.85).abs() < 0.01,
         "expected ~0.85 with zero scar, got {}",
@@ -340,19 +340,19 @@ fn risk_edge_case_max_scar_intensity_zero() {
 }
 
 #[test]
-fn risk_edge_case_knowledge_density_one() {
+fn risk_edge_case_annotation_density_one() {
     let store = FabricStore::new();
     let n = NodeId(1);
 
     for _ in 0..10 {
-        store.update_churn(n);
+        store.record_mutation(n);
     }
     store.set_gds_metrics(n, 1.0, 1.0, None);
-    store.set_knowledge_density(n, 1.0);
+    store.set_annotation_density(n, 1.0);
 
     store.recalculate_all_risks();
     let score = store.get_fabric_score(n);
-    // knowledge_density=1.0 → gap=0 → pr=1*0.25 + churn=1*0.25 + gap=0*0.20 + btwn=1*0.15 + scar=0*0.15 = 0.65
+    // annotation_density=1.0 → gap=0 → pr=1*0.25 + mutation_frequency=1*0.25 + gap=0*0.20 + btwn=1*0.15 + scar=0*0.15 = 0.65
     assert!(
         (score.risk_score - 0.65).abs() < 0.01,
         "density=1.0 should give risk ~0.65, got {}",
@@ -367,7 +367,7 @@ fn risk_clamp_to_one_when_scar_pushes_above() {
     // Node with max base risk
     let n1 = NodeId(1);
     for _ in 0..10 {
-        store.update_churn(n1);
+        store.record_mutation(n1);
     }
     store.set_gds_metrics(n1, 1.0, 1.0, None);
     // density = 0 → base_risk = 1.0
@@ -377,7 +377,7 @@ fn risk_clamp_to_one_when_scar_pushes_above() {
 
     store.recalculate_all_risks();
     let score = store.get_fabric_score(n1);
-    // Weighted additive: pr=1*0.25 + churn=1*0.25 + gap=1*0.20 + btwn=1*0.15 + scar=1*0.15 = 1.0
+    // Weighted additive: pr=1*0.25 + mutation_frequency=1*0.25 + gap=1*0.20 + btwn=1*0.15 + scar=1*0.15 = 1.0
     assert!(
         (score.risk_score - 1.0).abs() < 1e-10,
         "risk should be clamped to 1.0, got {}",
@@ -405,11 +405,11 @@ async fn on_batch_deduplication_same_node_multiple_events() {
 
     listener.on_batch(&events).await;
 
-    // HashSet deduplication → churn incremented only once
+    // HashSet deduplication → mutation_frequency incremented only once
     assert_eq!(
-        store.get_fabric_score(NodeId(1)).churn_score,
+        store.get_fabric_score(NodeId(1)).mutation_frequency,
         1.0,
-        "dedup should increment churn only once per batch"
+        "dedup should increment mutation_frequency only once per batch"
     );
 }
 
@@ -432,13 +432,13 @@ async fn on_batch_dedup_edge_events_share_nodes() {
 
     // Node 10 appears in both edges but should be deduped
     assert_eq!(
-        store.get_fabric_score(NodeId(10)).churn_score,
+        store.get_fabric_score(NodeId(10)).mutation_frequency,
         1.0,
         "shared node 10 should be deduped"
     );
     // Nodes 20 and 30 each appear once
-    assert_eq!(store.get_fabric_score(NodeId(20)).churn_score, 1.0);
-    assert_eq!(store.get_fabric_score(NodeId(30)).churn_score, 1.0);
+    assert_eq!(store.get_fabric_score(NodeId(20)).mutation_frequency, 1.0);
+    assert_eq!(store.get_fabric_score(NodeId(30)).mutation_frequency, 1.0);
 }
 
 #[tokio::test]
@@ -447,9 +447,9 @@ async fn on_batch_recalculates_risk_for_affected_nodes() {
 
     // Pre-populate with GDS metrics so risk can be computed
     store.set_gds_metrics(NodeId(1), 0.8, 0.6, Some(1));
-    // Give some initial churn
+    // Give some initial mutation_frequency
     for _ in 0..5 {
-        store.update_churn(NodeId(1));
+        store.record_mutation(NodeId(1));
     }
 
     let listener = FabricListener::new(Arc::clone(&store));
@@ -457,8 +457,8 @@ async fn on_batch_recalculates_risk_for_affected_nodes() {
     listener.on_batch(&events).await;
 
     let score = store.get_fabric_score(NodeId(1));
-    // After batch, risk should be recalculated (churn is now 6)
-    // With non-zero pagerank, churn, betweenness, and density=0, risk > 0
+    // After batch, risk should be recalculated (mutation_frequency is now 6)
+    // With non-zero pagerank, mutation_frequency, betweenness, and density=0, risk > 0
     assert!(
         score.risk_score > 0.0,
         "on_batch should recalculate risk, got {}",
@@ -487,11 +487,11 @@ async fn on_batch_mixed_node_and_edge_events() {
     listener.on_batch(&events).await;
 
     // Node 1: from NodeCreated + EdgeCreated(src) → deduped to 1
-    assert_eq!(store.get_fabric_score(NodeId(1)).churn_score, 1.0);
+    assert_eq!(store.get_fabric_score(NodeId(1)).mutation_frequency, 1.0);
     // Node 2: from EdgeCreated(dst) + EdgeDeleted(src) → deduped to 1
-    assert_eq!(store.get_fabric_score(NodeId(2)).churn_score, 1.0);
+    assert_eq!(store.get_fabric_score(NodeId(2)).mutation_frequency, 1.0);
     // Node 3: from EdgeDeleted(dst) + NodeDeleted → deduped to 1
-    assert_eq!(store.get_fabric_score(NodeId(3)).churn_score, 1.0);
+    assert_eq!(store.get_fabric_score(NodeId(3)).mutation_frequency, 1.0);
 
     // Verify total tracked nodes
     assert_eq!(store.len(), 3);

@@ -121,18 +121,18 @@ fn fabric_write_through_persists_risk() {
 
     let store = FabricStore::with_graph_store(Arc::clone(&gs) as Arc<dyn GraphStoreMut>);
 
-    store.update_churn(node_id);
-    store.update_churn(node_id);
-    store.update_churn(node_id);
+    store.record_mutation(node_id);
+    store.record_mutation(node_id);
+    store.record_mutation(node_id);
 
-    // Verify churn was persisted
-    let pk = PropertyKey::from("_cog_churn_score");
+    // Verify mutation_frequency was persisted
+    let pk = PropertyKey::from("_cog_mutation_frequency");
     let prop = gs.get_node_property(node_id, &pk);
-    assert!(prop.is_some(), "churn should be persisted");
+    assert!(prop.is_some(), "mutation_frequency should be persisted");
     let val = prop.unwrap().as_float64().unwrap();
     assert!(
         (val - 3.0).abs() < 0.01,
-        "persisted churn should be 3.0, got {val}"
+        "persisted mutation_frequency should be 3.0, got {val}"
     );
 }
 

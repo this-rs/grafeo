@@ -320,13 +320,13 @@ fn fabric_risk_score_increases_with_scar() {
     let node_scarred = NodeId(2);
 
     // Set modest metrics so base risk is well below 1.0
-    store.update_churn(node_clean);
-    store.update_churn(node_scarred);
+    store.record_mutation(node_clean);
+    store.record_mutation(node_scarred);
     store.set_gds_metrics(node_clean, 0.3, 0.3, None);
     store.set_gds_metrics(node_scarred, 0.3, 0.3, None);
-    // Set knowledge_density to 0.5 to reduce base risk further
-    store.set_knowledge_density(node_clean, 0.5);
-    store.set_knowledge_density(node_scarred, 0.5);
+    // Set annotation_density to 0.5 to reduce base risk further
+    store.set_annotation_density(node_clean, 0.5);
+    store.set_annotation_density(node_scarred, 0.5);
 
     // Add scar intensity only to node_scarred
     store.set_scar_intensity(node_scarred, 1.0);
@@ -378,7 +378,7 @@ fn fabric_risk_score_clamped_to_one() {
     let node = NodeId(1);
 
     // Max out everything
-    store.update_churn(node);
+    store.record_mutation(node);
     store.set_gds_metrics(node, 100.0, 100.0, None);
     store.set_scar_intensity(node, 100.0);
 
