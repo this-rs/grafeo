@@ -85,7 +85,7 @@ jobs:
   rust-test:
     name: Rust Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 90 || 45 }}
     strategy:
       fail-fast: false
       matrix:
@@ -552,14 +552,21 @@ jobs:
       - name: Checkout base
         run: git checkout ${{ github.event.pull_request.base.sha }}
 
-      # Full profile: --all-features benchmarks include feature-gated indexes
-      # (vector, text, ring) so perf regressions are caught across all modules.
+      # Engine benchmarks: --features full includes all language parsers,
+      # AI indexes, and RDF but excludes cognitive features (reactive scheduler,
+      # energy, synapses) which add per-commit overhead not relevant to core
+      # engine performance measurement.
+      # Cognitive benchmarks: run separately with --features cognitive to measure
+      # the reactive pipeline overhead in isolation.
       - name: Bench base
         run: |
-          cargo bench --all-features \
+          cargo bench --features full \
             --bench arena_bench \
             --bench index_bench \
             --bench query_bench \
+            -- --save-baseline base --noplot
+          cargo bench -p grafeo-cognitive --features cognitive \
+            --bench cognitive_bench \
             -- --save-baseline base --noplot
 
       - name: Checkout PR head
@@ -567,10 +574,13 @@ jobs:
 
       - name: Bench PR
         run: |
-          cargo bench --all-features \
+          cargo bench --features full \
             --bench arena_bench \
             --bench index_bench \
             --bench query_bench \
+            -- --save-baseline pr --noplot
+          cargo bench -p grafeo-cognitive --features cognitive \
+            --bench cognitive_bench \
             -- --save-baseline pr --noplot
 
       - name: Compare and comment

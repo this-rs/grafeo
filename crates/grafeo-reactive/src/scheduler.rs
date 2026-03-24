@@ -4,11 +4,16 @@
 //! The scheduler runs in a dedicated `tokio::task` and accumulates events into batches
 //! based on [`BatchConfig`]. This prevents overwhelming listeners during bulk imports
 //! while still providing low-latency delivery for single mutations.
+//!
+//! The background task is **lazily spawned** — it only starts when the first listener
+//! is registered via [`Scheduler::register_listener`]. This makes the scheduler
+//! zero-cost when no listeners are present (e.g. in benchmarks or tests that don't
+//! need reactive features).
 
 use crate::bus::MutationBus;
 use crate::event::{MutationBatch, MutationEvent};
 use crate::listener::MutationListener;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -64,57 +69,80 @@ type ListenerList = Arc<RwLock<Vec<Arc<dyn MutationListener>>>>;
 ///
 /// # Lifecycle
 ///
-/// 1. Create with [`Scheduler::new`] — this spawns the background task.
-/// 2. Register listeners with [`register_listener`](Scheduler::register_listener).
+/// 1. Create with [`Scheduler::new`] — lightweight, no background task yet.
+/// 2. Register listeners with [`register_listener`](Scheduler::register_listener)
+///    — the background task is lazily spawned on the first registration.
 /// 3. Events flow automatically: `MutationBus` → `Scheduler` → `MutationListener`s.
 /// 4. Call [`shutdown`](Scheduler::shutdown) to gracefully stop (drains pending events).
+///
+/// If no listener is ever registered, the scheduler is truly zero-cost: no tokio task
+/// is spawned, no bus subscription is created, and no events are buffered.
 pub struct Scheduler {
     /// Registered listeners (shared with the background task).
     listeners: ListenerList,
-    /// Handle to the background dispatch task.
-    task_handle: Option<JoinHandle<()>>,
+    /// Handle to the background dispatch task (lazily spawned).
+    task_handle: Mutex<Option<JoinHandle<()>>>,
     /// Shutdown signal sender.
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     /// Batch configuration (for introspection).
     config: BatchConfig,
+    /// Reference to the bus for deferred subscription.
+    bus: MutationBus,
 }
 
 impl Scheduler {
-    /// Creates a new scheduler that subscribes to the given bus.
+    /// Creates a new scheduler associated with the given bus.
     ///
-    /// This immediately spawns a background `tokio::task` that begins
-    /// receiving events from the bus.
+    /// This is lightweight — no background task is spawned until the first
+    /// listener is registered via [`register_listener`](Self::register_listener).
     pub fn new(bus: &MutationBus, config: BatchConfig) -> Self {
         let listeners: ListenerList = Arc::new(RwLock::new(Vec::new()));
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-        let rx = bus.subscribe();
+        let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
 
-        let task_listeners = Arc::clone(&listeners);
-        let task_config = config.clone();
+        Self {
+            listeners,
+            task_handle: Mutex::new(None),
+            shutdown_tx,
+            config,
+            bus: bus.clone(),
+        }
+    }
+
+    /// Ensures the background task is running. Called on first listener registration.
+    ///
+    /// Subscribes to the bus and spawns the scheduler loop. If no tokio runtime
+    /// is available (e.g. sync-only tests), the task is not spawned and listeners
+    /// will not receive events.
+    fn ensure_running(&self) {
+        let mut handle = self.task_handle.lock();
+        if handle.is_some() {
+            return; // Already running
+        }
+
+        let rx = self.bus.subscribe();
+        let shutdown_rx = self.shutdown_tx.subscribe();
+        let task_listeners = Arc::clone(&self.listeners);
+        let task_config = self.config.clone();
 
         // Only spawn the background task if a tokio runtime is available.
         // When running inside sync-only tests (e.g. grafeo-c), there is no
         // reactor and tokio::spawn would panic.
-        let task_handle = tokio::runtime::Handle::try_current().ok().map(|handle| {
-            handle.spawn(scheduler_loop(rx, task_listeners, task_config, shutdown_rx))
-        });
-
-        Self {
-            listeners,
-            task_handle,
-            shutdown_tx,
-            config,
+        if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {
+            *handle =
+                Some(rt_handle.spawn(scheduler_loop(rx, task_listeners, task_config, shutdown_rx)));
         }
     }
 
     /// Registers a new listener that will receive future event batches.
     ///
     /// Listeners are called in registration order. This can be called at any
-    /// time, even while the scheduler is running — the new listener will
-    /// receive events starting from the next batch.
+    /// time — the new listener will receive events starting from the next batch.
+    ///
+    /// On the first call, this lazily spawns the background dispatch task.
     pub fn register_listener(&self, listener: Arc<dyn MutationListener>) {
         tracing::info!(listener = listener.name(), "registering mutation listener");
         self.listeners.write().push(listener);
+        self.ensure_running();
     }
 
     /// Returns the current number of registered listeners.
@@ -127,17 +155,26 @@ impl Scheduler {
         &self.config
     }
 
+    /// Returns `true` if the background task has been spawned.
+    pub fn is_running(&self) -> bool {
+        self.task_handle.lock().is_some()
+    }
+
     /// Gracefully shuts down the scheduler.
     ///
     /// Signals the background task to stop, waits for it to drain any
     /// pending events, and then returns. After shutdown, the scheduler
     /// will no longer dispatch events.
-    pub async fn shutdown(mut self) {
-        tracing::info!("shutting down reactive scheduler");
+    ///
+    /// If the background task was never started (no listeners registered),
+    /// this is a no-op.
+    pub async fn shutdown(self) {
         // Signal the task to stop
         let _ = self.shutdown_tx.send(true);
+        // Take the handle out of the mutex
+        let handle = self.task_handle.lock().take();
         // Wait for the task to finish draining
-        if let Some(handle) = self.task_handle.take() {
+        if let Some(handle) = handle {
             let _ = handle.await;
         }
     }
@@ -148,7 +185,7 @@ impl std::fmt::Debug for Scheduler {
         f.debug_struct("Scheduler")
             .field("config", &self.config)
             .field("listener_count", &self.listener_count())
-            .field("running", &self.task_handle.is_some())
+            .field("running", &self.is_running())
             .finish()
     }
 }

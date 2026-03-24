@@ -1213,6 +1213,7 @@ version = "0.5.23"
 dependencies = [
  "arcstr",
  "async-trait",
+ "criterion",
  "dashmap",
  "grafeo-adapters",
  "grafeo-common",
