@@ -12,9 +12,9 @@ use grafeo_adapters::plugins::algorithms::{
     ConnectedComponentsAlgorithm, DegreeCentralityAlgorithm, DfsAlgorithm, DijkstraAlgorithm,
     FloydWarshallAlgorithm, GraphAlgorithm, HitsAlgorithm, KCoreAlgorithm, KHopAlgorithm,
     KruskalAlgorithm, LabelPropagationAlgorithm, LeidenAlgorithm, LouvainAlgorithm,
-    MaxFlowAlgorithm, MinCostFlowAlgorithm, PageRankAlgorithm, PrimAlgorithm, ProjectionConfig,
-    ProjectionRegistry, SsspAlgorithm, StronglyConnectedComponentsAlgorithm,
-    TopologicalSortAlgorithm,
+    MaxFlowAlgorithm, MinCostFlowAlgorithm, NodeSimilarityAlgorithm, PageRankAlgorithm,
+    PrimAlgorithm, ProjectionConfig, ProjectionRegistry, SsspAlgorithm,
+    StronglyConnectedComponentsAlgorithm, TopKSimilarAlgorithm, TopologicalSortAlgorithm,
 };
 use grafeo_adapters::plugins::{AlgorithmResult, ParameterDef, Parameters};
 use grafeo_common::types::Value;
@@ -85,6 +85,10 @@ impl BuiltinProcedures {
 
         // Subgraph extraction
         register(&mut algorithms, Arc::new(KHopAlgorithm));
+
+        // Node similarity
+        register(&mut algorithms, Arc::new(NodeSimilarityAlgorithm));
+        register(&mut algorithms, Arc::new(TopKSimilarAlgorithm));
 
         Self { algorithms }
     }
@@ -221,6 +225,13 @@ fn output_columns_for(algo: &dyn GraphAlgorithm) -> Vec<String> {
         "articulation_points" => vec!["node_id".into()],
         "bridges" => vec!["source".into(), "target".into()],
         "k_core" => vec!["node_id".into(), "core_number".into(), "max_core".into()],
+        "similarity" => vec![
+            "node1".into(),
+            "node2".into(),
+            "metric".into(),
+            "score".into(),
+        ],
+        "similarity.topk" => vec!["neighbor".into(), "score".into()],
         "subgraph.khop" => vec![
             "node_id".into(),
             "hop".into(),
@@ -484,8 +495,8 @@ mod tests {
         let registry = BuiltinProcedures::new();
         let list = registry.list();
         assert!(
-            list.len() >= 23,
-            "Expected at least 23 algorithms, got {}",
+            list.len() >= 25,
+            "Expected at least 25 algorithms, got {}",
             list.len()
         );
     }
@@ -542,7 +553,7 @@ mod tests {
             result.columns,
             vec!["name", "description", "parameters", "output_columns"]
         );
-        assert!(result.rows.len() >= 23);
+        assert!(result.rows.len() >= 25);
     }
 
     #[test]
@@ -601,8 +612,8 @@ mod tests {
         let registry = BuiltinProcedures::new();
         let list = registry.list();
         assert!(
-            list.len() >= 24,
-            "Expected at least 24 algorithms (22 + khop + leiden), got {}",
+            list.len() >= 26,
+            "Expected at least 26 algorithms (22 + khop + leiden + similarity + similarity.topk), got {}",
             list.len()
         );
         assert!(
@@ -656,6 +667,124 @@ mod tests {
         let algo = registry.get(&name).unwrap();
         let cols = output_columns_for(algo.as_ref());
         assert_eq!(cols, vec!["node_id", "community_id", "modularity"]);
+    }
+
+    // ========================================================================
+    // Projection procedure tests
+    // ========================================================================
+
+    // ========================================================================
+    // Similarity procedure tests
+    // ========================================================================
+
+    #[test]
+    fn test_similarity_registered() {
+        let registry = BuiltinProcedures::new();
+        let name = vec!["grafeo".to_string(), "similarity".to_string()];
+        let algo = registry.get(&name);
+        assert!(algo.is_some(), "similarity should be registered");
+        assert_eq!(algo.unwrap().name(), "similarity");
+    }
+
+    #[test]
+    fn test_similarity_topk_registered() {
+        let registry = BuiltinProcedures::new();
+        let name = vec![
+            "grafeo".to_string(),
+            "similarity".to_string(),
+            "topk".to_string(),
+        ];
+        let algo = registry.get(&name);
+        assert!(algo.is_some(), "similarity.topk should be registered");
+        assert_eq!(algo.unwrap().name(), "similarity.topk");
+    }
+
+    #[test]
+    fn test_similarity_execute_via_registry() {
+        use grafeo_core::graph::lpg::LpgStore;
+
+        let registry = BuiltinProcedures::new();
+        let name = vec!["grafeo".to_string(), "similarity".to_string()];
+        let algo = registry.get(&name).unwrap();
+
+        let store = LpgStore::new().unwrap();
+        let a = store.create_node(&["Person"]);
+        let b = store.create_node(&["Person"]);
+        let c = store.create_node(&["Person"]);
+        // A-C and B-C (common neighbor C)
+        store.create_edge(a, c, "KNOWS");
+        store.create_edge(c, a, "KNOWS");
+        store.create_edge(b, c, "KNOWS");
+        store.create_edge(c, b, "KNOWS");
+
+        let mut params = Parameters::new();
+        params.set_int("node1", a.0 as i64);
+        params.set_int("node2", b.0 as i64);
+        params.set_string("metric", "jaccard");
+
+        let result = algo.execute(&store, &params).unwrap();
+        assert_eq!(
+            result.columns,
+            vec!["node1", "node2", "metric", "score"]
+        );
+        assert_eq!(result.rows.len(), 1);
+        // N(A) = {C}, N(B) = {C}, intersection={C}, union={C}, jaccard=1.0
+        if let Value::Float64(score) = &result.rows[0][3] {
+            assert!((*score - 1.0).abs() < 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_similarity_topk_execute_via_registry() {
+        use grafeo_core::graph::lpg::LpgStore;
+
+        let registry = BuiltinProcedures::new();
+        let name = vec![
+            "grafeo".to_string(),
+            "similarity".to_string(),
+            "topk".to_string(),
+        ];
+        let algo = registry.get(&name).unwrap();
+
+        let store = LpgStore::new().unwrap();
+        let a = store.create_node(&["Person"]);
+        let b = store.create_node(&["Person"]);
+        let c = store.create_node(&["Person"]);
+        store.create_edge(a, c, "KNOWS");
+        store.create_edge(c, a, "KNOWS");
+        store.create_edge(b, c, "KNOWS");
+        store.create_edge(c, b, "KNOWS");
+
+        let mut params = Parameters::new();
+        params.set_int("node", a.0 as i64);
+        params.set_int("k", 5);
+        params.set_string("metric", "jaccard");
+
+        let result = algo.execute(&store, &params).unwrap();
+        assert_eq!(result.columns, vec!["neighbor", "score"]);
+        assert!(!result.rows.is_empty());
+    }
+
+    #[test]
+    fn test_similarity_output_columns() {
+        let registry = BuiltinProcedures::new();
+        let name = vec!["grafeo".to_string(), "similarity".to_string()];
+        let algo = registry.get(&name).unwrap();
+        let cols = output_columns_for(algo.as_ref());
+        assert_eq!(cols, vec!["node1", "node2", "metric", "score"]);
+    }
+
+    #[test]
+    fn test_similarity_topk_output_columns() {
+        let registry = BuiltinProcedures::new();
+        let name = vec![
+            "grafeo".to_string(),
+            "similarity".to_string(),
+            "topk".to_string(),
+        ];
+        let algo = registry.get(&name).unwrap();
+        let cols = output_columns_for(algo.as_ref());
+        assert_eq!(cols, vec!["neighbor", "score"]);
     }
 
     // ========================================================================

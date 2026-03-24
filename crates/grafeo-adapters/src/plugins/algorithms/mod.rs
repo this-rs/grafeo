@@ -45,6 +45,7 @@ pub mod projection;
 mod shortest_path;
 mod structure;
 mod traits;
+mod similarity;
 mod traversal;
 
 // Core traits
@@ -111,6 +112,13 @@ pub use shortest_path::{
 };
 pub use structure::{ArticulationPointsAlgorithm, BridgesAlgorithm, KCoreAlgorithm};
 pub use traversal::{BfsAlgorithm, DfsAlgorithm};
+
+// Node similarity algorithms
+pub use similarity::{
+    NodeSimilarityAlgorithm, SimilarityMetric, SimilarityScore, TopKSimilarAlgorithm,
+    adamic_adar, cosine_similarity, jaccard, overlap_coefficient, resource_allocation,
+    top_k_similar,
+};
 
 // Graph projections (virtual filtered views)
 pub use projection::{
