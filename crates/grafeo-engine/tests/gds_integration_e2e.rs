@@ -14,7 +14,7 @@ use grafeo_common::types::{NodeId, Value};
 use grafeo_engine::GrafeoDB;
 
 use grafeo_adapters::plugins::algorithms::{
-    adamic_adar, hits, jaccard, khop_subgraph, leiden, KHopConfig, ProjectionBuilder,
+    KHopConfig, ProjectionBuilder, adamic_adar, hits, jaccard, khop_subgraph, leiden,
 };
 use grafeo_core::graph::GraphStore;
 
@@ -119,10 +119,7 @@ fn test_full_pipeline_projection_hits_leiden_khop_similarity() {
 
     // ---- Step 2: HITS on the projection ----
     let hits_result = hits(&projection, 100, 1e-6);
-    assert!(
-        hits_result.converged,
-        "HITS should converge on projection"
-    );
+    assert!(hits_result.converged, "HITS should converge on projection");
 
     // Every projected node should have a hub score
     for &node in &proj_nodes {
