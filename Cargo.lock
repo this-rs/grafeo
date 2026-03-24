@@ -1208,6 +1208,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "grafeo-cognitive"
+version = "0.5.23"
+dependencies = [
+ "arcstr",
+ "async-trait",
+ "dashmap",
+ "grafeo-common",
+ "grafeo-core",
+ "grafeo-reactive",
+ "parking_lot",
+ "smallvec",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "grafeo-common"
 version = "0.5.23"
 dependencies = [

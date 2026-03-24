@@ -7,6 +7,7 @@ members = [
     "crates/grafeo-adapters",
     "crates/grafeo-engine",
     "crates/grafeo-reactive",
+    "crates/grafeo-cognitive",
     "crates/grafeo-cli",
     "crates/bindings/python",
     "crates/bindings/node",
@@ -33,6 +34,7 @@ grafeo-adapters = { path = "crates/grafeo-adapters", version = "0.5.23", default
 grafeo-engine = { path = "crates/grafeo-engine", version = "0.5.23", default-features = false }
 grafeo = { path = "crates/grafeo", version = "0.5.23" }
 grafeo-reactive = { path = "crates/grafeo-reactive", version = "0.5.23" }
+grafeo-cognitive = { path = "crates/grafeo-cognitive", version = "0.5.23" }
 grafeo-bindings-common = { path = "crates/bindings/common", version = "0.5.23", default-features = false }
 
 # Error handling

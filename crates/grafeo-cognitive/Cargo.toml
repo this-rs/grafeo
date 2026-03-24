@@ -1,0 +1,38 @@
+[package]
+name = "grafeo-cognitive"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Cognitive features for Grafeo — energy, synapses, activation, fabric, memory"
+
+[dependencies]
+grafeo-common.workspace = true
+grafeo-core = { workspace = true, default-features = false }
+grafeo-reactive.workspace = true
+
+# Async runtime & traits
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
+async-trait.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# Concurrency
+parking_lot.workspace = true
+dashmap.workspace = true
+
+# Tracing
+tracing.workspace = true
+
+# Data structures
+smallvec.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+arcstr.workspace = true
+
+[lints]
+workspace = true
