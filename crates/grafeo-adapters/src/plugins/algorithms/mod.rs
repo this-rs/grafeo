@@ -9,7 +9,7 @@
 //! | Components | Connected, strongly connected, topological sort |
 //! | Shortest paths | Dijkstra, A*, Bellman-Ford, Floyd-Warshall |
 //! | Centrality | PageRank, betweenness, closeness, degree |
-//! | Community | Louvain, label propagation |
+//! | Community | Louvain, Leiden, label propagation |
 //! | Structure | K-core, bridges, articulation points |
 //!
 //! ## Usage
@@ -68,8 +68,8 @@ pub use shortest_path::{
 
 // Centrality algorithms
 pub use centrality::{
-    DegreeCentralityResult, betweenness_centrality, closeness_centrality, degree_centrality,
-    degree_centrality_normalized, pagerank,
+    DegreeCentralityResult, HitsResult, betweenness_centrality, closeness_centrality,
+    degree_centrality, degree_centrality_normalized, hits, pagerank,
 };
 
 // Clustering algorithms
@@ -81,7 +81,7 @@ pub use clustering::{
 };
 
 // Community detection algorithms
-pub use community::{LouvainResult, community_count, label_propagation, louvain};
+pub use community::{LouvainResult, community_count, label_propagation, leiden, louvain};
 
 // Minimum Spanning Tree algorithms
 pub use mst::{MstResult, kruskal, prim};
@@ -95,10 +95,10 @@ pub use structure::{KCoreResult, articulation_points, bridges, k_core, kcore_dec
 // Algorithm wrappers (for future registry integration)
 pub use centrality::{
     BetweennessCentralityAlgorithm, ClosenessCentralityAlgorithm, DegreeCentralityAlgorithm,
-    PageRankAlgorithm,
+    HitsAlgorithm, PageRankAlgorithm,
 };
 pub use clustering::ClusteringCoefficientAlgorithm;
-pub use community::{LabelPropagationAlgorithm, LouvainAlgorithm};
+pub use community::{LabelPropagationAlgorithm, LeidenAlgorithm, LouvainAlgorithm};
 pub use components::{
     ConnectedComponentsAlgorithm, StronglyConnectedComponentsAlgorithm, TopologicalSortAlgorithm,
 };

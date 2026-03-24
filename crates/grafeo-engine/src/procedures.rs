@@ -10,10 +10,10 @@ use grafeo_adapters::plugins::algorithms::{
     ArticulationPointsAlgorithm, BellmanFordAlgorithm, BetweennessCentralityAlgorithm,
     BfsAlgorithm, BridgesAlgorithm, ClosenessCentralityAlgorithm, ClusteringCoefficientAlgorithm,
     ConnectedComponentsAlgorithm, DegreeCentralityAlgorithm, DfsAlgorithm, DijkstraAlgorithm,
-    FloydWarshallAlgorithm, GraphAlgorithm, KCoreAlgorithm, KHopAlgorithm, KruskalAlgorithm,
-    LabelPropagationAlgorithm, LouvainAlgorithm, MaxFlowAlgorithm, MinCostFlowAlgorithm,
-    PageRankAlgorithm, PrimAlgorithm, SsspAlgorithm, StronglyConnectedComponentsAlgorithm,
-    TopologicalSortAlgorithm,
+    FloydWarshallAlgorithm, GraphAlgorithm, HitsAlgorithm, KCoreAlgorithm, KHopAlgorithm,
+    KruskalAlgorithm, LabelPropagationAlgorithm, LeidenAlgorithm, LouvainAlgorithm, MaxFlowAlgorithm,
+    MinCostFlowAlgorithm, PageRankAlgorithm, PrimAlgorithm, SsspAlgorithm,
+    StronglyConnectedComponentsAlgorithm, TopologicalSortAlgorithm,
 };
 use grafeo_adapters::plugins::{AlgorithmResult, ParameterDef, Parameters};
 use grafeo_common::types::Value;
@@ -40,6 +40,7 @@ impl BuiltinProcedures {
         register(&mut algorithms, Arc::new(BetweennessCentralityAlgorithm));
         register(&mut algorithms, Arc::new(ClosenessCentralityAlgorithm));
         register(&mut algorithms, Arc::new(DegreeCentralityAlgorithm));
+        register(&mut algorithms, Arc::new(HitsAlgorithm));
 
         // Traversal
         register(&mut algorithms, Arc::new(BfsAlgorithm));
@@ -65,6 +66,7 @@ impl BuiltinProcedures {
         // Community
         register(&mut algorithms, Arc::new(LabelPropagationAlgorithm));
         register(&mut algorithms, Arc::new(LouvainAlgorithm));
+        register(&mut algorithms, Arc::new(LeidenAlgorithm));
 
         // MST
         register(&mut algorithms, Arc::new(KruskalAlgorithm));
@@ -159,6 +161,11 @@ pub fn output_columns_for_name(algo: &dyn GraphAlgorithm) -> Vec<String> {
 fn output_columns_for(algo: &dyn GraphAlgorithm) -> Vec<String> {
     match algo.name() {
         "pagerank" => vec!["node_id".into(), "score".into()],
+        "hits" => vec![
+            "node_id".into(),
+            "hub_score".into(),
+            "authority_score".into(),
+        ],
         "betweenness_centrality" => vec!["node_id".into(), "centrality".into()],
         "closeness_centrality" => vec!["node_id".into(), "centrality".into()],
         "degree_centrality" => {
@@ -190,7 +197,7 @@ fn output_columns_for(algo: &dyn GraphAlgorithm) -> Vec<String> {
             ]
         }
         "label_propagation" => vec!["node_id".into(), "community_id".into()],
-        "louvain" => vec!["node_id".into(), "community_id".into(), "modularity".into()],
+        "louvain" | "leiden" => vec!["node_id".into(), "community_id".into(), "modularity".into()],
         "kruskal" | "prim" => vec!["source".into(), "target".into(), "weight".into()],
         "max_flow" => {
             vec![
@@ -311,8 +318,8 @@ mod tests {
         let registry = BuiltinProcedures::new();
         let list = registry.list();
         assert!(
-            list.len() >= 22,
-            "Expected at least 22 algorithms, got {}",
+            list.len() >= 23,
+            "Expected at least 23 algorithms, got {}",
             list.len()
         );
     }
@@ -369,7 +376,7 @@ mod tests {
             result.columns,
             vec!["name", "description", "parameters", "output_columns"]
         );
-        assert!(result.rows.len() >= 22);
+        assert!(result.rows.len() >= 23);
     }
 
     #[test]
@@ -428,13 +435,60 @@ mod tests {
         let registry = BuiltinProcedures::new();
         let list = registry.list();
         assert!(
-            list.len() >= 23,
-            "Expected at least 23 algorithms (22 + khop), got {}",
+            list.len() >= 24,
+            "Expected at least 24 algorithms (22 + khop + leiden), got {}",
             list.len()
         );
         assert!(
             list.iter().any(|p| p.name == "grafeo.subgraph.khop"),
             "grafeo.subgraph.khop should be in the procedure list"
         );
+    }
+
+    #[test]
+    fn test_leiden_registered() {
+        let registry = BuiltinProcedures::new();
+        let name = vec!["grafeo".to_string(), "leiden".to_string()];
+        let algo = registry.get(&name);
+        assert!(algo.is_some(), "leiden should be registered");
+        assert_eq!(algo.unwrap().name(), "leiden");
+    }
+
+    #[test]
+    fn test_leiden_execute_via_registry() {
+        use grafeo_core::graph::lpg::LpgStore;
+
+        let registry = BuiltinProcedures::new();
+        let name = vec!["grafeo".to_string(), "leiden".to_string()];
+        let algo = registry.get(&name).unwrap();
+
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["Person"]);
+        let n1 = store.create_node(&["Person"]);
+        let n2 = store.create_node(&["Person"]);
+        store.create_edge(n0, n1, "KNOWS");
+        store.create_edge(n1, n0, "KNOWS");
+        store.create_edge(n1, n2, "KNOWS");
+        store.create_edge(n2, n1, "KNOWS");
+
+        let mut params = Parameters::new();
+        params.set_float("resolution", 1.0);
+        params.set_float("gamma", 0.01);
+
+        let result = algo.execute(&store, &params).unwrap();
+        assert_eq!(result.rows.len(), 3);
+        assert_eq!(
+            result.columns,
+            vec!["node_id", "community_id", "modularity"]
+        );
+    }
+
+    #[test]
+    fn test_leiden_output_columns() {
+        let registry = BuiltinProcedures::new();
+        let name = vec!["grafeo".to_string(), "leiden".to_string()];
+        let algo = registry.get(&name).unwrap();
+        let cols = output_columns_for(algo.as_ref());
+        assert_eq!(cols, vec!["node_id", "community_id", "modularity"]);
     }
 }
