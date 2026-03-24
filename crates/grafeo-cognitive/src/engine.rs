@@ -3,7 +3,7 @@
 //! The [`CognitiveEngine`] trait provides unified access to all cognitive
 //! subsystems. [`CognitiveEngineBuilder`] constructs a [`DefaultCognitiveEngine`]
 //! with selected subsystems and registers their listeners with the reactive
-//! [`Scheduler`](grafeo_reactive::Scheduler).
+//! [`Scheduler`].
 
 use crate::config::CognitiveConfig;
 #[allow(unused_imports)]

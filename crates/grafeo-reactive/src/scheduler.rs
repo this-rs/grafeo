@@ -92,12 +92,16 @@ impl Scheduler {
         let task_listeners = Arc::clone(&listeners);
         let task_config = config.clone();
 
-        let task_handle =
-            tokio::spawn(scheduler_loop(rx, task_listeners, task_config, shutdown_rx));
+        // Only spawn the background task if a tokio runtime is available.
+        // When running inside sync-only tests (e.g. grafeo-c), there is no
+        // reactor and tokio::spawn would panic.
+        let task_handle = tokio::runtime::Handle::try_current().ok().map(|handle| {
+            handle.spawn(scheduler_loop(rx, task_listeners, task_config, shutdown_rx))
+        });
 
         Self {
             listeners,
-            task_handle: Some(task_handle),
+            task_handle,
             shutdown_tx,
             config,
         }

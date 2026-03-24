@@ -13,7 +13,7 @@
 //! - **Archived**: cold, rarely accessed, candidates for eviction
 //!
 //! The [`MemoryManager`] runs a periodic sweep to promote/demote nodes
-//! based on rules tied to the [`EnergyStore`](crate::energy::EnergyStore).
+//! based on rules tied to the [`EnergyStore`].
 
 use async_trait::async_trait;
 use dashmap::DashMap;

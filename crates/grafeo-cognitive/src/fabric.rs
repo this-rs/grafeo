@@ -163,7 +163,7 @@ impl FabricStore {
 
     /// Sets the cumulative scar intensity for a node.
     ///
-    /// This value is typically provided by [`ScarStore::cumulative_intensity()`].
+    /// This value is typically provided by the scar store's cumulative intensity method.
     pub fn set_scar_intensity(&self, node_id: NodeId, scar_intensity: f64) {
         self.scores
             .entry(node_id)

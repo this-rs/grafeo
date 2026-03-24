@@ -197,7 +197,7 @@ impl Default for MemoryConfigToml {
 }
 
 impl MemoryConfigToml {
-    /// Converts to the runtime [`MemoryConfig`] used by the memory subsystem.
+    /// Converts to the runtime [`crate::memory::MemoryConfig`] used by the memory subsystem.
     #[cfg(feature = "memory")]
     pub fn to_runtime(&self) -> crate::memory::MemoryConfig {
         crate::memory::MemoryConfig {
