@@ -143,10 +143,10 @@ impl FabricStore {
 
     /// Updates the staleness for a node based on elapsed time since last mutation.
     pub fn update_staleness(&self, node_id: NodeId) {
-        if let Some(mut entry) = self.scores.get_mut(&node_id) {
-            if let Some(last) = entry.last_mutated {
-                entry.staleness = last.elapsed().as_secs_f64();
-            }
+        if let Some(mut entry) = self.scores.get_mut(&node_id)
+            && let Some(last) = entry.last_mutated
+        {
+            entry.staleness = last.elapsed().as_secs_f64();
         }
     }
 
@@ -277,7 +277,7 @@ impl FabricStore {
         let mut max_pr = 0.0_f64;
         let mut max_churn = 0.0_f64;
         let mut max_btwn = 0.0_f64;
-        for entry in self.scores.iter() {
+        for entry in &self.scores {
             max_pr = max_pr.max(entry.pagerank);
             max_churn = max_churn.max(entry.churn_score);
             max_btwn = max_btwn.max(entry.betweenness);

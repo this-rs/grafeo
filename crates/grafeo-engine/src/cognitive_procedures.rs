@@ -133,10 +133,10 @@ fn execute_distill(
 fn extract_map_int(arg: Option<&LogicalExpression>, key: &str) -> Option<i64> {
     if let Some(LogicalExpression::Map(entries)) = arg {
         for (k, v) in entries {
-            if k == key {
-                if let LogicalExpression::Literal(Value::Int64(n)) = v {
-                    return Some(*n);
-                }
+            if k == key
+                && let LogicalExpression::Literal(Value::Int64(n)) = v
+            {
+                return Some(*n);
             }
         }
     }

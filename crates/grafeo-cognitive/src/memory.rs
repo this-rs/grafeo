@@ -183,8 +183,7 @@ impl MemoryStore {
     pub fn get_horizon(&self, node_id: NodeId) -> MemoryHorizon {
         self.nodes
             .get(&node_id)
-            .map(|s| s.horizon)
-            .unwrap_or(MemoryHorizon::Operational)
+            .map_or(MemoryHorizon::Operational, |s| s.horizon)
     }
 
     /// Returns the full memory state for a node, if tracked.
@@ -206,9 +205,7 @@ impl MemoryStore {
 
     /// Ensures a node is tracked (creates at Operational if absent).
     pub fn track(&self, node_id: NodeId) {
-        self.nodes
-            .entry(node_id)
-            .or_insert_with(NodeMemoryState::new);
+        self.nodes.entry(node_id).or_default();
     }
 
     /// Returns all node IDs in a given horizon.
@@ -241,7 +238,7 @@ impl MemoryStore {
     /// Returns counts per horizon.
     pub fn horizon_counts(&self) -> HashMap<MemoryHorizon, usize> {
         let mut counts = HashMap::new();
-        for entry in self.nodes.iter() {
+        for entry in &self.nodes {
             *counts.entry(entry.value().horizon).or_insert(0) += 1;
         }
         counts

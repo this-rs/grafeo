@@ -247,13 +247,12 @@ impl ScarStore {
 
     /// Heals a scar by ID.
     pub fn heal(&self, scar_id: ScarId) -> bool {
-        if let Some(node_id) = self.index.get(&scar_id) {
-            if let Some(mut scars) = self.scars.get_mut(&*node_id) {
-                if let Some(scar) = scars.iter_mut().find(|s| s.id == scar_id) {
-                    scar.heal();
-                    return true;
-                }
-            }
+        if let Some(node_id) = self.index.get(&scar_id)
+            && let Some(mut scars) = self.scars.get_mut(&*node_id)
+            && let Some(scar) = scars.iter_mut().find(|s| s.id == scar_id)
+        {
+            scar.heal();
+            return true;
         }
         false
     }
@@ -280,16 +279,13 @@ impl ScarStore {
     /// This can be used to influence the risk_score in the Knowledge Fabric.
     pub fn cumulative_intensity(&self, node_id: NodeId) -> f64 {
         let min = self.config.min_intensity;
-        self.scars
-            .get(&node_id)
-            .map(|scars| {
-                scars
-                    .iter()
-                    .filter(|s| s.is_active(min))
-                    .map(|s| s.current_intensity())
-                    .sum()
-            })
-            .unwrap_or(0.0)
+        self.scars.get(&node_id).map_or(0.0, |scars| {
+            scars
+                .iter()
+                .filter(|s| s.is_active(min))
+                .map(|s| s.current_intensity())
+                .sum()
+        })
     }
 
     /// Returns all nodes that have active scars above `min_intensity`.

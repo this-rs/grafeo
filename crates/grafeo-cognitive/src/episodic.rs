@@ -384,7 +384,7 @@ impl EpisodeStore {
     /// Returns episodes grouped by horizon.
     pub fn count_by_horizon(&self) -> HashMap<EpisodeHorizon, usize> {
         let mut counts = HashMap::new();
-        for entry in self.episodes.iter() {
+        for entry in &self.episodes {
             *counts.entry(entry.value().horizon).or_insert(0) += 1;
         }
         counts
@@ -623,7 +623,7 @@ impl EpisodeRecorder {
             description: format!("Mutation: {mutation_type}"),
         }];
 
-        let outcome = Outcome::with_counts(node_ids.len(), 0, if success { 0 } else { 1 }, details);
+        let outcome = Outcome::with_counts(node_ids.len(), 0, usize::from(!success), details);
 
         let validation = if success {
             ValidationResult::ok()

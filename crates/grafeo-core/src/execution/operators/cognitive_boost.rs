@@ -103,9 +103,8 @@ impl CognitiveBoostOperator {
 
 impl Operator for CognitiveBoostOperator {
     fn next(&mut self) -> OperatorResult {
-        let chunk = match self.child.next()? {
-            Some(c) => c,
-            None => return Ok(None),
+        let Some(chunk) = self.child.next()? else {
+            return Ok(None);
         };
 
         let row_count = chunk.row_count();
@@ -176,8 +175,6 @@ impl Operator for CognitiveBoostOperator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::execution::operators::single_row::SingleRowOperator;
-
     /// Helper: creates a simple operator producing one chunk with node IDs.
     fn make_test_input(node_ids: &[i64]) -> Box<dyn Operator> {
         let mut col = ValueVector::with_type(LogicalType::Int64);

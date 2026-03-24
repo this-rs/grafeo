@@ -60,7 +60,7 @@ mod tests {
 
         let err = ReactiveError::ListenerError {
             listener: "energy".to_string(),
-            source: Box::new(std::io::Error::new(std::io::ErrorKind::Other, "boom")),
+            source: Box::new(std::io::Error::other("boom")),
         };
         assert!(err.to_string().contains("energy"));
     }

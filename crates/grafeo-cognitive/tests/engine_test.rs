@@ -2,11 +2,11 @@
 
 #![cfg(feature = "cognitive-full")]
 
-use grafeo_cognitive::config::CognitiveConfig;
-use grafeo_cognitive::engine::{CognitiveEngine, CognitiveEngineBuilder};
-use grafeo_cognitive::energy::EnergyConfig;
-use grafeo_cognitive::synapse::SynapseConfig;
 use grafeo_cognitive::co_change::CoChangeConfig;
+use grafeo_cognitive::config::CognitiveConfig;
+use grafeo_cognitive::energy::EnergyConfig;
+use grafeo_cognitive::engine::{CognitiveEngine, CognitiveEngineBuilder};
+use grafeo_cognitive::synapse::SynapseConfig;
 use grafeo_reactive::{BatchConfig, MutationBus, Scheduler};
 use std::time::Duration;
 

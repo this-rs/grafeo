@@ -412,10 +412,8 @@ impl<S: GraphStoreMut> GraphStoreMut for InstrumentedStore<S> {
     fn delete_node(&self, id: NodeId) -> bool {
         let before = self.inner.get_node(id).map(|n| Self::snapshot_node(&n));
         let deleted = self.inner.delete_node(id);
-        if deleted {
-            if let Some(node) = before {
-                self.push_event(MutationEvent::NodeDeleted { node });
-            }
+        if deleted && let Some(node) = before {
+            self.push_event(MutationEvent::NodeDeleted { node });
         }
         deleted
     }
@@ -431,10 +429,8 @@ impl<S: GraphStoreMut> GraphStoreMut for InstrumentedStore<S> {
             .get_node_versioned(id, epoch, transaction_id)
             .map(|n| Self::snapshot_node(&n));
         let deleted = self.inner.delete_node_versioned(id, epoch, transaction_id);
-        if deleted {
-            if let Some(node) = before {
-                self.push_event(MutationEvent::NodeDeleted { node });
-            }
+        if deleted && let Some(node) = before {
+            self.push_event(MutationEvent::NodeDeleted { node });
         }
         deleted
     }
@@ -458,10 +454,8 @@ impl<S: GraphStoreMut> GraphStoreMut for InstrumentedStore<S> {
     fn delete_edge(&self, id: EdgeId) -> bool {
         let before = self.inner.get_edge(id).map(|e| Self::snapshot_edge(&e));
         let deleted = self.inner.delete_edge(id);
-        if deleted {
-            if let Some(edge) = before {
-                self.push_event(MutationEvent::EdgeDeleted { edge });
-            }
+        if deleted && let Some(edge) = before {
+            self.push_event(MutationEvent::EdgeDeleted { edge });
         }
         deleted
     }
@@ -477,10 +471,8 @@ impl<S: GraphStoreMut> GraphStoreMut for InstrumentedStore<S> {
             .get_edge_versioned(id, epoch, transaction_id)
             .map(|e| Self::snapshot_edge(&e));
         let deleted = self.inner.delete_edge_versioned(id, epoch, transaction_id);
-        if deleted {
-            if let Some(edge) = before {
-                self.push_event(MutationEvent::EdgeDeleted { edge });
-            }
+        if deleted && let Some(edge) = before {
+            self.push_event(MutationEvent::EdgeDeleted { edge });
         }
         deleted
     }

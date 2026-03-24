@@ -131,7 +131,7 @@ fn get_hotspots_sorted_by_churn_desc() {
 fn get_hotspots_truncates_to_top_n() {
     let store = FabricStore::new();
     for i in 0..10 {
-        for _ in 0..(i + 1) {
+        for _ in 0..=i {
             store.update_churn(NodeId(i));
         }
     }
@@ -197,7 +197,7 @@ fn get_risk_zones_filters_by_min_risk() {
     // Risk zones with high threshold should only include high-risk nodes
     let zones_high = store.get_risk_zones(s1.risk_score);
     assert!(
-        zones_high.len() >= 1,
+        !zones_high.is_empty(),
         "should have at least 1 high-risk node"
     );
     assert!(

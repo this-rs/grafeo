@@ -369,7 +369,10 @@ async fn detector_on_event_is_noop() {
 
     let event = MutationEvent::NodeCreated { node: make_node(1) };
     detector.on_event(&event).await;
-    assert!(store.is_empty(), "single event should not produce co-changes");
+    assert!(
+        store.is_empty(),
+        "single event should not produce co-changes"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -381,15 +384,17 @@ async fn detector_edge_updated_co_changes_endpoints() {
     let store = Arc::new(CoChangeStore::new(CoChangeConfig::default()));
     let detector = CoChangeDetector::new(Arc::clone(&store));
 
-    let events = vec![
-        MutationEvent::EdgeUpdated {
-            before: make_edge_snapshot(1, 10, 20),
-            after: make_edge_snapshot(1, 10, 20),
-        },
-    ];
+    let events = vec![MutationEvent::EdgeUpdated {
+        before: make_edge_snapshot(1, 10, 20),
+        after: make_edge_snapshot(1, 10, 20),
+    }];
     detector.on_batch(&events).await;
 
-    assert!(store.get_relation(NodeId::new(10), NodeId::new(20)).is_some());
+    assert!(
+        store
+            .get_relation(NodeId::new(10), NodeId::new(20))
+            .is_some()
+    );
 }
 
 #[tokio::test]
@@ -397,14 +402,16 @@ async fn detector_edge_deleted_co_changes_endpoints() {
     let store = Arc::new(CoChangeStore::new(CoChangeConfig::default()));
     let detector = CoChangeDetector::new(Arc::clone(&store));
 
-    let events = vec![
-        MutationEvent::EdgeDeleted {
-            edge: make_edge_snapshot(1, 30, 40),
-        },
-    ];
+    let events = vec![MutationEvent::EdgeDeleted {
+        edge: make_edge_snapshot(1, 30, 40),
+    }];
     detector.on_batch(&events).await;
 
-    assert!(store.get_relation(NodeId::new(30), NodeId::new(40)).is_some());
+    assert!(
+        store
+            .get_relation(NodeId::new(30), NodeId::new(40))
+            .is_some()
+    );
 }
 
 #[tokio::test]

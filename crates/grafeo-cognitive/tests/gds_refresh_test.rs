@@ -2,8 +2,8 @@
 
 #![cfg(feature = "gds-refresh")]
 
-use grafeo_cognitive::gds_refresh::{GdsRefreshConfig, GdsRefreshScheduler};
 use grafeo_cognitive::fabric::FabricStore;
+use grafeo_cognitive::gds_refresh::{GdsRefreshConfig, GdsRefreshScheduler};
 use std::sync::Arc;
 use std::time::Duration;
 

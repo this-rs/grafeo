@@ -1,7 +1,7 @@
 //! Tests for grafeo-reactive crate.
 
 #[cfg(test)]
-mod tests {
+mod reactive_tests {
     use crate::bus::MutationBus;
     use crate::event::{EdgeSnapshot, MutationBatch, MutationEvent, NodeSnapshot};
     use grafeo_common::types::{EdgeId, NodeId};

@@ -170,9 +170,9 @@ async fn scheduler_loop(
     );
 
     loop {
-        let timeout = flush_deadline
-            .map(|d| d.saturating_duration_since(tokio::time::Instant::now()))
-            .unwrap_or(Duration::from_secs(3600)); // effectively infinite when no pending events
+        let timeout = flush_deadline.map_or(Duration::from_secs(3600), |d| {
+            d.saturating_duration_since(tokio::time::Instant::now())
+        }); // effectively infinite when no pending events
 
         tokio::select! {
             biased;
@@ -240,7 +240,7 @@ async fn scheduler_loop(
             }
 
             // Timeout: flush incomplete batch
-            _ = tokio::time::sleep(timeout), if flush_deadline.is_some() => {
+            () = tokio::time::sleep(timeout), if flush_deadline.is_some() => {
                 if !buffer.is_empty() {
                     dispatch_batch(&buffer, &listeners).await;
                     buffer.clear();

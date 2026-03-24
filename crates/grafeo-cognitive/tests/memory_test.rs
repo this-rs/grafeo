@@ -71,7 +71,9 @@ fn node_memory_state_transition() {
 
 #[test]
 fn node_memory_state_age() {
-    let past = Instant::now() - Duration::from_secs(100);
+    let past = Instant::now()
+        .checked_sub(Duration::from_secs(100))
+        .unwrap();
     let state = NodeMemoryState::new_at(past);
     assert!(state.age() >= Duration::from_secs(99));
 }
@@ -549,7 +551,7 @@ fn filter_nodes_by_horizon_for_queries() {
 
 #[test]
 fn node_memory_state_time_in_current_horizon() {
-    let past = Instant::now() - Duration::from_secs(50);
+    let past = Instant::now().checked_sub(Duration::from_secs(50)).unwrap();
     let state = NodeMemoryState::new_at(past);
     let time = state.time_in_current_horizon();
     assert!(time >= Duration::from_secs(49));

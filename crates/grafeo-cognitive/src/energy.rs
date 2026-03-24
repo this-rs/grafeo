@@ -171,10 +171,7 @@ impl EnergyStore {
     ///
     /// Returns `0.0` if the node has never been tracked.
     pub fn get_energy(&self, node_id: NodeId) -> f64 {
-        self.nodes
-            .get(&node_id)
-            .map(|e| e.current_energy())
-            .unwrap_or(0.0)
+        self.nodes.get(&node_id).map_or(0.0, |e| e.current_energy())
     }
 
     /// Boosts a node's energy by `amount`.
