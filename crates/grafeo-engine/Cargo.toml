@@ -44,6 +44,10 @@ sha2 = { workspace = true, optional = true }
 # Tracing
 tracing.workspace = true
 
+# Cognitive subsystems (optional)
+grafeo-reactive = { workspace = true, optional = true }
+grafeo-cognitive = { workspace = true, optional = true, default-features = false }
+
 # Embedding (optional, for ONNX embedding generation)
 ort = { version = "2.0.0-rc.12", optional = true, default-features = false, features = ["std", "ndarray", "load-dynamic", "api-24"] }
 tokenizers = { version = "0.22", optional = true, default-features = false, features = ["onig"] }
@@ -92,6 +96,10 @@ vector-index = ["grafeo-core/vector-index"]  # HNSW vector index for k-NN search
 text-index = ["grafeo-core/text-index"]  # BM25 inverted index for full-text search
 hybrid-search = ["grafeo-core/hybrid-search", "text-index", "vector-index"]  # Combined text + vector search
 cdc = []  # Change data capture with history API
+reactive = []  # Reactive mutation event bus (post-commit hook for grafeo-reactive)
+cognitive = ["reactive", "dep:grafeo-reactive", "dep:grafeo-cognitive", "grafeo-cognitive/cognitive"]  # Cognitive engine (energy + synapses)
+cognitive-fabric = ["cognitive", "grafeo-cognitive/cognitive-fabric"]  # + fabric, co-change, GDS
+cognitive-full = ["cognitive", "grafeo-cognitive/cognitive-full"]  # All cognitive subsystems
 metrics = []  # Lock-free query, transaction, and session metrics
 embed = ["ort", "tokenizers", "hf-hub"]  # ONNX embedding generation (opt-in, adds ~17MB)
 

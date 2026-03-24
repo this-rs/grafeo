@@ -57,6 +57,8 @@ impl Session {
             savepoints: parking_lot::Mutex::new(Vec::new()),
             transaction_nesting_depth: parking_lot::Mutex::new(0),
             touched_graphs: parking_lot::Mutex::new(Vec::new()),
+            #[cfg(feature = "reactive")]
+            post_commit_hook: None,
             #[cfg(feature = "metrics")]
             metrics: None,
             #[cfg(feature = "metrics")]

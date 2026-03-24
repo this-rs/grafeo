@@ -11,5 +11,5 @@ pub mod algorithms;
 mod registry;
 mod traits;
 
-pub use registry::PluginRegistry;
+pub use registry::{PluginRegistry, UserDefinedFunction};
 pub use traits::{Algorithm, AlgorithmResult, ParameterDef, ParameterType, Parameters, Plugin};

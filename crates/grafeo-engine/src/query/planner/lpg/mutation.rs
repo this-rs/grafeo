@@ -661,6 +661,18 @@ impl super::Planner {
             return self.plan_static_result(result, &call.yield_items);
         }
 
+        // Cognitive procedures (CALL grafeo.cognitive.*)
+        #[cfg(feature = "cognitive")]
+        if let Some(engine) = &self.cognitive_engine
+            && let Some(result) = crate::cognitive_procedures::try_execute_cognitive_procedure(
+                &resolved_name,
+                &call.arguments,
+                engine,
+            )?
+        {
+            return self.plan_static_result(result, &call.yield_items);
+        }
+
         // Check user-defined procedures first
         if let Some(catalog) = &self.catalog {
             let proc_name = if call.name.len() == 1 {
