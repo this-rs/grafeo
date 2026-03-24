@@ -26,6 +26,8 @@ pub mod catalog;
 #[cfg(feature = "cdc")]
 pub mod cdc;
 #[cfg(feature = "cognitive")]
+pub mod cognitive_procedures;
+#[cfg(feature = "cognitive")]
 pub mod cognitive_udfs;
 pub mod config;
 pub mod database;

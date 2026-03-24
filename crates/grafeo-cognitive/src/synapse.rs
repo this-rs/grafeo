@@ -246,6 +246,11 @@ impl SynapseStore {
     pub fn config(&self) -> &SynapseConfig {
         &self.config
     }
+
+    /// Returns a snapshot of all synapses.
+    pub fn snapshot(&self) -> Vec<Synapse> {
+        self.synapses.iter().map(|entry| entry.value().clone()).collect()
+    }
 }
 
 impl std::fmt::Debug for SynapseStore {
