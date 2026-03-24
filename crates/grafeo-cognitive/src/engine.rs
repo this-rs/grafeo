@@ -22,6 +22,7 @@ use crate::fabric::{FabricListener, FabricStore};
 #[cfg(feature = "co-change")]
 use crate::co_change::{CoChangeConfig, CoChangeDetector, CoChangeStore};
 
+use crate::tenant::TenantManager;
 use grafeo_core::graph::GraphStoreMut;
 use grafeo_reactive::Scheduler;
 
@@ -55,6 +56,9 @@ pub trait CognitiveEngine: Send + Sync + std::fmt::Debug {
 
     /// Returns the number of active subsystems.
     fn active_subsystem_count(&self) -> usize;
+
+    /// Returns the tenant manager for per-tenant graph isolation.
+    fn tenant_manager(&self) -> &TenantManager;
 }
 
 // ---------------------------------------------------------------------------
@@ -80,6 +84,9 @@ pub struct DefaultCognitiveEngine {
 
     /// Count of active subsystems.
     active_count: usize,
+
+    /// Per-tenant named graph isolation manager.
+    tenant_manager: TenantManager,
 }
 
 impl CognitiveEngine for DefaultCognitiveEngine {
@@ -106,6 +113,21 @@ impl CognitiveEngine for DefaultCognitiveEngine {
     fn active_subsystem_count(&self) -> usize {
         self.active_count
     }
+
+    fn tenant_manager(&self) -> &TenantManager {
+        &self.tenant_manager
+    }
+}
+
+impl DefaultCognitiveEngine {
+    /// Returns the tenant manager for per-tenant named graph isolation.
+    ///
+    /// Use this to create, delete, list, and switch tenants.
+    /// When a tenant is active, cognitive operations should use the
+    /// tenant-scoped stores via `tenant_manager().energy_store()` etc.
+    pub fn tenants(&self) -> &TenantManager {
+        &self.tenant_manager
+    }
 }
 
 impl std::fmt::Debug for DefaultCognitiveEngine {
@@ -124,6 +146,8 @@ impl std::fmt::Debug for DefaultCognitiveEngine {
 
         #[cfg(feature = "co-change")]
         d.field("co_change", &self.co_change.is_some());
+
+        d.field("tenant_count", &self.tenant_manager.tenant_count());
 
         d.finish()
     }
@@ -352,6 +376,7 @@ impl CognitiveEngineBuilder {
             #[cfg(feature = "co-change")]
             co_change,
             active_count,
+            tenant_manager: TenantManager::new(),
         }
     }
 }

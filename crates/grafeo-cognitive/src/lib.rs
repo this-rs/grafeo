@@ -73,6 +73,9 @@ pub mod distillation;
 #[cfg(feature = "episodic")]
 pub mod episodic;
 
+// Per-tenant isolation via named graphs
+pub mod tenant;
+
 // Search pipeline (requires at least cognitive features for full functionality)
 pub mod search;
 
@@ -147,3 +150,5 @@ pub use episodic::{
 pub use search::{
     NoopReranker, Reranker, SearchConfig, SearchPipeline, SearchResult, SearchWeights,
 };
+
+pub use tenant::{TenantError, TenantGraph, TenantInfo, TenantManager};
