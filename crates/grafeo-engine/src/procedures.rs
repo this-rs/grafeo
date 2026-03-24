@@ -10,7 +10,7 @@ use grafeo_adapters::plugins::algorithms::{
     ArticulationPointsAlgorithm, BellmanFordAlgorithm, BetweennessCentralityAlgorithm,
     BfsAlgorithm, BridgesAlgorithm, ClosenessCentralityAlgorithm, ClusteringCoefficientAlgorithm,
     ConnectedComponentsAlgorithm, DegreeCentralityAlgorithm, DfsAlgorithm, DijkstraAlgorithm,
-    FloydWarshallAlgorithm, GraphAlgorithm, KCoreAlgorithm, KruskalAlgorithm,
+    FloydWarshallAlgorithm, GraphAlgorithm, KCoreAlgorithm, KHopAlgorithm, KruskalAlgorithm,
     LabelPropagationAlgorithm, LouvainAlgorithm, MaxFlowAlgorithm, MinCostFlowAlgorithm,
     PageRankAlgorithm, PrimAlgorithm, SsspAlgorithm, StronglyConnectedComponentsAlgorithm,
     TopologicalSortAlgorithm,
@@ -79,6 +79,9 @@ impl BuiltinProcedures {
         register(&mut algorithms, Arc::new(BridgesAlgorithm));
         register(&mut algorithms, Arc::new(KCoreAlgorithm));
 
+        // Subgraph extraction
+        register(&mut algorithms, Arc::new(KHopAlgorithm));
+
         Self { algorithms }
     }
 
@@ -89,7 +92,7 @@ impl BuiltinProcedures {
     /// - `["pagerank"]` → looks up `"pagerank"`
     pub fn get(&self, name: &[String]) -> Option<Arc<dyn GraphAlgorithm>> {
         let key = resolve_name(name);
-        self.algorithms.get(key).cloned()
+        self.algorithms.get(&key).cloned()
     }
 
     /// Returns info for all registered procedures.
@@ -130,11 +133,15 @@ pub struct ProcedureInfo {
 /// Resolves a dotted procedure name to its lookup key.
 ///
 /// Strips the `"grafeo"` namespace prefix if present.
-fn resolve_name(parts: &[String]) -> &str {
-    match parts {
-        [_, name] if parts[0].eq_ignore_ascii_case("grafeo") => name.as_str(),
-        [name] => name.as_str(),
-        _ => parts.last().map_or("", String::as_str),
+/// Supports multi-level names like `["grafeo", "subgraph", "khop"]` → `"subgraph.khop"`.
+fn resolve_name(parts: &[String]) -> String {
+    if parts.is_empty() {
+        return String::new();
+    }
+    if parts[0].eq_ignore_ascii_case("grafeo") && parts.len() > 1 {
+        parts[1..].join(".")
+    } else {
+        parts.join(".")
     }
 }
 
@@ -205,6 +212,14 @@ fn output_columns_for(algo: &dyn GraphAlgorithm) -> Vec<String> {
         "articulation_points" => vec!["node_id".into()],
         "bridges" => vec!["source".into(), "target".into()],
         "k_core" => vec!["node_id".into(), "core_number".into(), "max_core".into()],
+        "subgraph.khop" => vec![
+            "node_id".into(),
+            "hop".into(),
+            "source".into(),
+            "target".into(),
+            "edge_type".into(),
+            "weight".into(),
+        ],
         _ => vec!["node_id".into(), "value".into()],
     }
 }
@@ -355,5 +370,68 @@ mod tests {
             vec!["name", "description", "parameters", "output_columns"]
         );
         assert!(result.rows.len() >= 22);
+    }
+
+    #[test]
+    fn test_khop_registered() {
+        let registry = BuiltinProcedures::new();
+        // Resolve via dotted namespace: grafeo.subgraph.khop
+        let name = vec![
+            "grafeo".to_string(),
+            "subgraph".to_string(),
+            "khop".to_string(),
+        ];
+        let algo = registry.get(&name);
+        assert!(algo.is_some(), "subgraph.khop should be registered");
+        assert_eq!(algo.unwrap().name(), "subgraph.khop");
+    }
+
+    #[test]
+    fn test_khop_resolve_without_namespace() {
+        let registry = BuiltinProcedures::new();
+        let name = vec!["subgraph".to_string(), "khop".to_string()];
+        let algo = registry.get(&name);
+        assert!(algo.is_some(), "subgraph.khop should resolve without grafeo prefix");
+    }
+
+    #[test]
+    fn test_khop_execute_via_registry() {
+        use grafeo_core::graph::lpg::LpgStore;
+
+        let registry = BuiltinProcedures::new();
+        let name = vec![
+            "grafeo".to_string(),
+            "subgraph".to_string(),
+            "khop".to_string(),
+        ];
+        let algo = registry.get(&name).unwrap();
+
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["Person"]);
+        let n1 = store.create_node(&["Person"]);
+        store.create_edge(n0, n1, "KNOWS");
+
+        let mut params = Parameters::new();
+        params.set_int("center", n0.0 as i64);
+        params.set_int("k", 1);
+
+        let result = algo.execute(&store, &params).unwrap();
+        // Should have node rows (2 nodes) + edge rows (1 edge)
+        assert_eq!(result.rows.len(), 3);
+    }
+
+    #[test]
+    fn test_registry_count_includes_khop() {
+        let registry = BuiltinProcedures::new();
+        let list = registry.list();
+        assert!(
+            list.len() >= 23,
+            "Expected at least 23 algorithms (22 + khop), got {}",
+            list.len()
+        );
+        assert!(
+            list.iter().any(|p| p.name == "grafeo.subgraph.khop"),
+            "grafeo.subgraph.khop should be in the procedure list"
+        );
     }
 }

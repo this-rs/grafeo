@@ -38,6 +38,7 @@ mod centrality;
 mod clustering;
 mod community;
 mod components;
+mod ego_graph;
 mod flow;
 mod mst;
 mod shortest_path;
@@ -107,4 +108,5 @@ pub use shortest_path::{
     BellmanFordAlgorithm, DijkstraAlgorithm, FloydWarshallAlgorithm, SsspAlgorithm,
 };
 pub use structure::{ArticulationPointsAlgorithm, BridgesAlgorithm, KCoreAlgorithm};
+pub use ego_graph::{EgoEdge, EgoGraph, KHopAlgorithm, KHopConfig, khop_subgraph};
 pub use traversal::{BfsAlgorithm, DfsAlgorithm};
