@@ -47,6 +47,8 @@ fn make_synapse_store(pairs: &[(u64, u64, f64)]) -> Arc<grafeo_cognitive::synaps
             reinforce_amount: 0.0,
             default_half_life: Duration::from_secs(7 * 24 * 3600),
             min_weight: 0.001,
+            max_synapse_weight: 10.0,
+            max_total_outgoing_weight: 100.0,
         },
     ));
     for &(a, b, weight) in pairs {

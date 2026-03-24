@@ -12,6 +12,7 @@ use dashmap::DashMap;
 use grafeo_common::types::NodeId;
 use grafeo_reactive::{MutationEvent, MutationListener};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::store_trait::{OptionalGraphStore, PROP_ENERGY, load_node_f64, persist_node_f64};
@@ -31,6 +32,8 @@ pub struct EnergyConfig {
     pub default_half_life: Duration,
     /// Minimum energy threshold — nodes below this are "low energy".
     pub min_energy: f64,
+    /// Maximum energy cap — energy is clamped to `[0.0, max_energy]` after every operation.
+    pub max_energy: f64,
 }
 
 impl Default for EnergyConfig {
@@ -40,6 +43,7 @@ impl Default for EnergyConfig {
             default_energy: 1.0,
             default_half_life: Duration::from_secs(24 * 3600), // 24 hours
             min_energy: 0.01,
+            max_energy: 10.0,
         }
     }
 }
@@ -144,6 +148,11 @@ impl NodeEnergy {
     pub fn half_life(&self) -> Duration {
         self.half_life
     }
+
+    /// Clamps the stored energy to `[min, max]`.
+    pub fn clamp(&mut self, min: f64, max: f64) {
+        self.energy = self.energy.clamp(min, max);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -160,6 +169,12 @@ impl NodeEnergy {
 pub struct EnergyStore {
     /// Per-node energy entries.
     nodes: DashMap<NodeId, NodeEnergy>,
+    /// LRU access order — maps NodeId to a monotonic access counter.
+    access_order: DashMap<NodeId, u64>,
+    /// Monotonic counter for LRU tracking.
+    access_counter: AtomicU64,
+    /// Maximum cache entries (0 = unlimited).
+    max_cache_entries: usize,
     /// Configuration.
     config: EnergyConfig,
     /// Optional backing graph store for write-through persistence.
@@ -171,6 +186,9 @@ impl EnergyStore {
     pub fn new(config: EnergyConfig) -> Self {
         Self {
             nodes: DashMap::new(),
+            access_order: DashMap::new(),
+            access_counter: AtomicU64::new(0),
+            max_cache_entries: 0,
             config,
             graph_store: None,
         }
@@ -183,8 +201,47 @@ impl EnergyStore {
     ) -> Self {
         Self {
             nodes: DashMap::new(),
+            access_order: DashMap::new(),
+            access_counter: AtomicU64::new(0),
+            max_cache_entries: 0,
             config,
             graph_store: Some(graph_store),
+        }
+    }
+
+    /// Sets the maximum number of cache entries. When exceeded, LRU eviction kicks in.
+    /// Evicted entries remain in the graph store and are reloaded on-demand.
+    pub fn with_max_cache_entries(mut self, max: usize) -> Self {
+        self.max_cache_entries = max;
+        self
+    }
+
+    /// Records an access for LRU tracking.
+    fn touch(&self, node_id: NodeId) {
+        let order = self.access_counter.fetch_add(1, Ordering::Relaxed);
+        self.access_order.insert(node_id, order);
+    }
+
+    /// Evicts least-recently-used entries if cache exceeds max_cache_entries.
+    fn maybe_evict(&self) {
+        if self.max_cache_entries == 0 {
+            return;
+        }
+        let current_len = self.nodes.len();
+        if current_len <= self.max_cache_entries {
+            return;
+        }
+        let to_evict = current_len - self.max_cache_entries;
+        // Collect entries sorted by access order (ascending = oldest first)
+        let mut entries: Vec<(NodeId, u64)> = self
+            .access_order
+            .iter()
+            .map(|e| (*e.key(), *e.value()))
+            .collect();
+        entries.sort_by_key(|(_, order)| *order);
+        for (node_id, _) in entries.into_iter().take(to_evict) {
+            self.nodes.remove(&node_id);
+            self.access_order.remove(&node_id);
         }
     }
 
@@ -195,6 +252,7 @@ impl EnergyStore {
     /// the value is loaded lazily.
     pub fn get_energy(&self, node_id: NodeId) -> f64 {
         if let Some(entry) = self.nodes.get(&node_id) {
+            self.touch(node_id);
             return entry.current_energy();
         }
         // Lazy load from graph store
@@ -202,6 +260,8 @@ impl EnergyStore {
             if let Some(val) = load_node_f64(gs.as_ref(), node_id, PROP_ENERGY) {
                 let ne = NodeEnergy::new(val, self.config.default_half_life);
                 self.nodes.insert(node_id, ne);
+                self.touch(node_id);
+                self.maybe_evict();
                 return val;
             }
         }
@@ -214,10 +274,19 @@ impl EnergyStore {
     /// initial energy. The new energy value is written through to the
     /// backing graph store (if configured).
     pub fn boost(&self, node_id: NodeId, amount: f64) {
+        let max_energy = self.config.max_energy;
         self.nodes
             .entry(node_id)
-            .and_modify(|e| e.boost(amount))
-            .or_insert_with(|| NodeEnergy::new(amount, self.config.default_half_life));
+            .and_modify(|e| {
+                e.boost(amount);
+                e.clamp(0.0, max_energy);
+            })
+            .or_insert_with(|| {
+                let clamped = amount.clamp(0.0, max_energy);
+                NodeEnergy::new(clamped, self.config.default_half_life)
+            });
+        self.touch(node_id);
+        self.maybe_evict();
         // Write-through
         if let Some(gs) = &self.graph_store {
             if let Some(entry) = self.nodes.get(&node_id) {

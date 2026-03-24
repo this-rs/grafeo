@@ -352,6 +352,10 @@ pub struct CognitiveConfig {
     pub memory: MemoryConfigToml,
     /// Stagnation detection configuration.
     pub stagnation: StagnationConfigToml,
+    /// Maximum number of entries in each cognitive store's DashMap cache.
+    /// When exceeded, LRU eviction removes the least-recently-accessed entries.
+    /// Evicted entries are reloaded on-demand from the graph store.
+    pub max_cache_entries: usize,
 }
 
 impl Default for CognitiveConfig {
@@ -365,6 +369,7 @@ impl Default for CognitiveConfig {
             scar: ScarConfigToml::default(),
             memory: MemoryConfigToml::default(),
             stagnation: StagnationConfigToml::default(),
+            max_cache_entries: 100_000,
         }
     }
 }
@@ -404,6 +409,7 @@ impl CognitiveConfig {
                 enabled: true,
                 ..Default::default()
             },
+            max_cache_entries: 100_000,
         }
     }
 

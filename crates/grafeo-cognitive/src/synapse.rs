@@ -11,6 +11,7 @@ use grafeo_common::types::{EdgeId, NodeId};
 use grafeo_reactive::{MutationEvent, MutationListener};
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::store_trait::{
@@ -32,6 +33,11 @@ pub struct SynapseConfig {
     pub default_half_life: Duration,
     /// Minimum weight threshold for pruning.
     pub min_weight: f64,
+    /// Maximum individual synapse weight cap.
+    pub max_synapse_weight: f64,
+    /// Maximum total outgoing weight from a single node.
+    /// When exceeded, all outgoing weights are normalized proportionally (competitive Hebbian).
+    pub max_total_outgoing_weight: f64,
 }
 
 impl Default for SynapseConfig {
@@ -41,6 +47,8 @@ impl Default for SynapseConfig {
             reinforce_amount: 0.2,
             default_half_life: Duration::from_secs(7 * 24 * 3600), // 7 days
             min_weight: 0.01,
+            max_synapse_weight: 10.0,
+            max_total_outgoing_weight: 100.0,
         }
     }
 }
@@ -138,6 +146,16 @@ impl Synapse {
     pub fn last_reinforced(&self) -> Instant {
         self.last_reinforced
     }
+
+    /// Clamps the stored weight to `[0.0, max]`.
+    pub fn clamp_weight(&mut self, max: f64) {
+        self.weight = self.weight.clamp(0.0, max);
+    }
+
+    /// Scales the stored weight by `factor` (for competitive normalization).
+    pub fn scale_weight(&mut self, factor: f64) {
+        self.weight *= factor;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -172,6 +190,12 @@ pub struct SynapseStore {
     synapses: DashMap<SynapseKey, Synapse>,
     /// Mapping from synapse key to graph edge ID (for persistence).
     edge_ids: DashMap<SynapseKey, EdgeId>,
+    /// LRU access order — maps SynapseKey to monotonic access counter.
+    access_order: DashMap<SynapseKey, u64>,
+    /// Monotonic counter for LRU tracking.
+    access_counter: AtomicU64,
+    /// Maximum cache entries (0 = unlimited).
+    max_cache_entries: usize,
     /// Configuration.
     config: SynapseConfig,
     /// Optional backing graph store for write-through persistence.
@@ -184,6 +208,9 @@ impl SynapseStore {
         Self {
             synapses: DashMap::new(),
             edge_ids: DashMap::new(),
+            access_order: DashMap::new(),
+            access_counter: AtomicU64::new(0),
+            max_cache_entries: 0,
             config,
             graph_store: None,
         }
@@ -197,8 +224,45 @@ impl SynapseStore {
         Self {
             synapses: DashMap::new(),
             edge_ids: DashMap::new(),
+            access_order: DashMap::new(),
+            access_counter: AtomicU64::new(0),
+            max_cache_entries: 0,
             config,
             graph_store: Some(graph_store),
+        }
+    }
+
+    /// Sets the maximum number of cache entries. When exceeded, LRU eviction kicks in.
+    pub fn with_max_cache_entries(mut self, max: usize) -> Self {
+        self.max_cache_entries = max;
+        self
+    }
+
+    /// Records an access for LRU tracking.
+    fn touch(&self, key: SynapseKey) {
+        let order = self.access_counter.fetch_add(1, Ordering::Relaxed);
+        self.access_order.insert(key, order);
+    }
+
+    /// Evicts least-recently-used entries if cache exceeds max_cache_entries.
+    fn maybe_evict(&self) {
+        if self.max_cache_entries == 0 {
+            return;
+        }
+        let current_len = self.synapses.len();
+        if current_len <= self.max_cache_entries {
+            return;
+        }
+        let to_evict = current_len - self.max_cache_entries;
+        let mut entries: Vec<(SynapseKey, u64)> = self
+            .access_order
+            .iter()
+            .map(|e| (*e.key(), *e.value()))
+            .collect();
+        entries.sort_by_key(|(_, order)| *order);
+        for (key, _) in entries.into_iter().take(to_evict) {
+            self.synapses.remove(&key);
+            self.access_order.remove(&key);
         }
     }
 
@@ -214,22 +278,35 @@ impl SynapseStore {
     }
 
     /// Reinforces (or creates) a synapse between two nodes.
+    ///
+    /// After reinforcement, the individual weight is clamped to `max_synapse_weight`.
+    /// Then, if the total outgoing weight from `source` (or `target`) exceeds
+    /// `max_total_outgoing_weight`, all outgoing weights from that node are
+    /// normalized proportionally (competitive Hebbian normalization).
     pub fn reinforce(&self, source: NodeId, target: NodeId, amount: f64) {
         if source == target {
             return; // No self-synapses
         }
         let key = SynapseKey::new(source, target);
+        let max_w = self.config.max_synapse_weight;
         self.synapses
             .entry(key)
-            .and_modify(|s| s.reinforce(amount))
+            .and_modify(|s| {
+                s.reinforce(amount);
+                s.clamp_weight(max_w);
+            })
             .or_insert_with(|| {
-                Synapse::new(
-                    key.0,
-                    key.1,
-                    self.config.initial_weight + amount,
-                    self.config.default_half_life,
-                )
+                let w = (self.config.initial_weight + amount).min(max_w);
+                Synapse::new(key.0, key.1, w, self.config.default_half_life)
             });
+
+        // Competitive normalization for both endpoints
+        self.normalize_outgoing(source);
+        self.normalize_outgoing(target);
+
+        self.touch(key);
+        self.maybe_evict();
+
         // Write-through
         if let Some(eid) = self.ensure_edge(key) {
             if let Some(gs) = &self.graph_store {
@@ -245,12 +322,42 @@ impl SynapseStore {
         }
     }
 
+    /// Normalizes all outgoing synapse weights from `node_id` if their sum
+    /// exceeds `max_total_outgoing_weight`. Uses proportional scaling so
+    /// relative weights are preserved (competitive Hebbian normalization).
+    fn normalize_outgoing(&self, node_id: NodeId) {
+        let max_total = self.config.max_total_outgoing_weight;
+        // Collect all synapse keys involving this node and their current weights
+        let entries: Vec<(SynapseKey, f64)> = self
+            .synapses
+            .iter()
+            .filter(|entry| {
+                let k = entry.key();
+                k.0 == node_id || k.1 == node_id
+            })
+            .map(|entry| (*entry.key(), entry.value().current_weight()))
+            .collect();
+
+        let total: f64 = entries.iter().map(|(_, w)| *w).sum();
+        if total <= max_total {
+            return;
+        }
+
+        let scale = max_total / total;
+        for (key, _) in &entries {
+            if let Some(mut syn) = self.synapses.get_mut(key) {
+                syn.scale_weight(scale);
+            }
+        }
+    }
+
     /// Returns the synapse between two nodes, if it exists.
     ///
     /// If not in the hot cache, attempts lazy load from the graph store.
     pub fn get_synapse(&self, a: NodeId, b: NodeId) -> Option<Synapse> {
         let key = SynapseKey::new(a, b);
         if let Some(s) = self.synapses.get(&key) {
+            self.touch(key);
             return Some(s.clone());
         }
         // Lazy load from graph: look for an edge with the synapse weight
@@ -259,6 +366,8 @@ impl SynapseStore {
                 if let Some(weight) = load_edge_f64(gs.as_ref(), *eid, PROP_SYNAPSE_WEIGHT) {
                     let syn = Synapse::new(key.0, key.1, weight, self.config.default_half_life);
                     self.synapses.insert(key, syn.clone());
+                    self.touch(key);
+                    self.maybe_evict();
                     return Some(syn);
                 }
             }

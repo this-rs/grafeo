@@ -110,20 +110,20 @@ fn store_list_low_energy_empty_store() {
 fn store_tracks_multiple_nodes_independently() {
     let store = EnergyStore::new(EnergyConfig::default());
 
-    store.boost(NodeId::new(1), 10.0);
+    store.boost(NodeId::new(1), 5.0);
     store.boost(NodeId::new(2), 0.5);
-    store.boost(NodeId::new(3), 100.0);
+    store.boost(NodeId::new(3), 9.0);
 
     assert_eq!(store.len(), 3);
 
-    // Each node has its own energy
+    // Each node has its own energy (capped at max_energy=10.0 by default)
     let e1 = store.get_energy(NodeId::new(1));
     let e2 = store.get_energy(NodeId::new(2));
     let e3 = store.get_energy(NodeId::new(3));
 
-    assert!(e1 > 9.9);
-    assert!(e2 > 0.4 && e2 < 1.0);
-    assert!(e3 > 99.0);
+    assert!(e1 > 4.9, "e1={e1}");
+    assert!(e2 > 0.4 && e2 < 1.0, "e2={e2}");
+    assert!(e3 > 8.9, "e3={e3}");
 }
 
 // ---------------------------------------------------------------------------
