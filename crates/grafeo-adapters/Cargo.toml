@@ -12,6 +12,9 @@ description = "Storage, query language, and plugin adapters for Grafeo"
 grafeo-common.workspace = true
 grafeo-core.workspace = true
 
+# String types
+arcstr.workspace = true
+
 # Error handling
 thiserror.workspace = true
 

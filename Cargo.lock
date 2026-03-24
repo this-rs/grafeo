@@ -1144,6 +1144,7 @@ dependencies = [
 name = "grafeo-adapters"
 version = "0.5.23"
 dependencies = [
+ "arcstr",
  "bincode",
  "byteorder",
  "bytes",

@@ -11,12 +11,14 @@ use grafeo_adapters::plugins::algorithms::{
     BfsAlgorithm, BridgesAlgorithm, ClosenessCentralityAlgorithm, ClusteringCoefficientAlgorithm,
     ConnectedComponentsAlgorithm, DegreeCentralityAlgorithm, DfsAlgorithm, DijkstraAlgorithm,
     FloydWarshallAlgorithm, GraphAlgorithm, HitsAlgorithm, KCoreAlgorithm, KHopAlgorithm,
-    KruskalAlgorithm, LabelPropagationAlgorithm, LeidenAlgorithm, LouvainAlgorithm, MaxFlowAlgorithm,
-    MinCostFlowAlgorithm, PageRankAlgorithm, PrimAlgorithm, SsspAlgorithm,
+    KruskalAlgorithm, LabelPropagationAlgorithm, LeidenAlgorithm, LouvainAlgorithm,
+    MaxFlowAlgorithm, MinCostFlowAlgorithm, PageRankAlgorithm, PrimAlgorithm,
+    ProjectionConfig, ProjectionRegistry, SsspAlgorithm,
     StronglyConnectedComponentsAlgorithm, TopologicalSortAlgorithm,
 };
 use grafeo_adapters::plugins::{AlgorithmResult, ParameterDef, Parameters};
 use grafeo_common::types::Value;
+use grafeo_common::utils::error::{Error, Result};
 use hashbrown::HashMap;
 
 use crate::query::plan::LogicalExpression;
@@ -309,6 +311,174 @@ pub fn procedures_result(registry: &BuiltinProcedures) -> AlgorithmResult {
     result
 }
 
+// ============================================================================
+// Projection Procedures
+// ============================================================================
+
+/// Global projection registry, shared across all sessions.
+static PROJECTION_REGISTRY: std::sync::OnceLock<ProjectionRegistry> =
+    std::sync::OnceLock::new();
+
+/// Returns the global projection registry.
+pub fn projection_registry() -> &'static ProjectionRegistry {
+    PROJECTION_REGISTRY.get_or_init(ProjectionRegistry::new)
+}
+
+/// Checks if a procedure name matches a projection procedure and executes it.
+///
+/// Handles:
+/// - `grafeo.projection.create(name, {node_labels: [...], edge_types: [...]})`
+/// - `grafeo.projection.drop(name)`
+/// - `grafeo.projection.list()`
+///
+/// Returns `Some(AlgorithmResult)` if the name matched, `None` otherwise.
+pub fn try_execute_projection_procedure(
+    resolved_name: &str,
+    arguments: &[LogicalExpression],
+) -> Result<Option<AlgorithmResult>> {
+    match resolved_name {
+        "grafeo.projection.create" | "projection.create" => {
+            let result = execute_projection_create(arguments)?;
+            Ok(Some(result))
+        }
+        "grafeo.projection.drop" | "projection.drop" => {
+            let result = execute_projection_drop(arguments)?;
+            Ok(Some(result))
+        }
+        "grafeo.projection.list" | "projection.list" => {
+            let result = execute_projection_list();
+            Ok(Some(result))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// `CALL grafeo.projection.create(name, {node_labels: [...], edge_types: [...]})`.
+///
+/// Creates a named projection in the global registry.
+fn execute_projection_create(arguments: &[LogicalExpression]) -> Result<AlgorithmResult> {
+    // First argument: projection name (string)
+    let name = match arguments.first() {
+        Some(LogicalExpression::Literal(Value::String(s))) => s.to_string(),
+        Some(_) => {
+            return Err(Error::Internal(
+                "grafeo.projection.create(): first argument must be a projection name (string)"
+                    .to_string(),
+            ));
+        }
+        None => {
+            return Err(Error::Internal(
+                "grafeo.projection.create(): requires at least 1 argument (name)".to_string(),
+            ));
+        }
+    };
+
+    // Second argument: optional config map
+    let mut config = ProjectionConfig::new(&name);
+
+    if let Some(LogicalExpression::Map(entries)) = arguments.get(1) {
+        for (key, value_expr) in entries {
+            match key.as_str() {
+                "node_labels" => {
+                    if let LogicalExpression::List(items) = value_expr {
+                        let labels: Vec<String> = items
+                            .iter()
+                            .filter_map(|item| {
+                                if let LogicalExpression::Literal(Value::String(s)) = item {
+                                    Some(s.to_string())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        config = config.node_labels(labels);
+                    }
+                }
+                "edge_types" => {
+                    if let LogicalExpression::List(items) = value_expr {
+                        let types: Vec<String> = items
+                            .iter()
+                            .filter_map(|item| {
+                                if let LogicalExpression::Literal(Value::String(s)) = item {
+                                    Some(s.to_string())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        config = config.edge_types(types);
+                    }
+                }
+                _ => {} // Ignore unknown keys
+            }
+        }
+    }
+
+    let registry = projection_registry();
+    registry.create(config).map_err(|e| Error::Internal(e))?;
+
+    let mut result = AlgorithmResult::new(vec!["name".to_string(), "status".to_string()]);
+    result.add_row(vec![
+        Value::from(name.as_str()),
+        Value::from("created"),
+    ]);
+    Ok(result)
+}
+
+/// `CALL grafeo.projection.drop(name)`.
+///
+/// Removes a named projection from the global registry.
+fn execute_projection_drop(arguments: &[LogicalExpression]) -> Result<AlgorithmResult> {
+    let name = match arguments.first() {
+        Some(LogicalExpression::Literal(Value::String(s))) => s.to_string(),
+        Some(_) => {
+            return Err(Error::Internal(
+                "grafeo.projection.drop(): first argument must be a projection name (string)"
+                    .to_string(),
+            ));
+        }
+        None => {
+            return Err(Error::Internal(
+                "grafeo.projection.drop(): requires 1 argument (name)".to_string(),
+            ));
+        }
+    };
+
+    let registry = projection_registry();
+    let dropped = registry.drop_projection(&name);
+
+    let mut result = AlgorithmResult::new(vec!["name".to_string(), "status".to_string()]);
+    result.add_row(vec![
+        Value::from(name.as_str()),
+        Value::from(if dropped { "dropped" } else { "not_found" }),
+    ]);
+    Ok(result)
+}
+
+/// `CALL grafeo.projection.list()`.
+///
+/// Lists all named projections in the global registry.
+fn execute_projection_list() -> AlgorithmResult {
+    let registry = projection_registry();
+    let projections = registry.list();
+
+    let mut result = AlgorithmResult::new(vec![
+        "name".to_string(),
+        "node_labels".to_string(),
+        "edge_types".to_string(),
+    ]);
+
+    for config in projections {
+        result.add_row(vec![
+            Value::from(config.name()),
+            Value::from(config.node_labels_ref().join(", ").as_str()),
+            Value::from(config.edge_types_ref().join(", ").as_str()),
+        ]);
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -490,5 +660,103 @@ mod tests {
         let algo = registry.get(&name).unwrap();
         let cols = output_columns_for(algo.as_ref());
         assert_eq!(cols, vec!["node_id", "community_id", "modularity"]);
+    }
+
+    // ========================================================================
+    // Projection procedure tests
+    // ========================================================================
+
+    #[test]
+    fn test_projection_create_procedure() {
+        let args = vec![
+            LogicalExpression::Literal(Value::from("test_proj")),
+            LogicalExpression::Map(vec![
+                (
+                    "node_labels".to_string(),
+                    LogicalExpression::List(vec![
+                        LogicalExpression::Literal(Value::from("File")),
+                        LogicalExpression::Literal(Value::from("Function")),
+                    ]),
+                ),
+                (
+                    "edge_types".to_string(),
+                    LogicalExpression::List(vec![LogicalExpression::Literal(Value::from(
+                        "IMPORTS",
+                    ))]),
+                ),
+            ]),
+        ];
+
+        let result = try_execute_projection_procedure("grafeo.projection.create", &args).unwrap();
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_eq!(result.columns, vec!["name", "status"]);
+        assert_eq!(result.rows.len(), 1);
+
+        // Verify it's in the registry
+        let config = projection_registry().get("test_proj").unwrap();
+        assert_eq!(config.node_labels_ref(), &["File", "Function"]);
+        assert_eq!(config.edge_types_ref(), &["IMPORTS"]);
+
+        // Cleanup
+        projection_registry().drop_projection("test_proj");
+    }
+
+    #[test]
+    fn test_projection_drop_procedure() {
+        // Create first
+        let registry = projection_registry();
+        let _ = registry.create(ProjectionConfig::new("drop_test"));
+
+        let args = vec![LogicalExpression::Literal(Value::from("drop_test"))];
+        let result = try_execute_projection_procedure("grafeo.projection.drop", &args).unwrap();
+        assert!(result.is_some());
+
+        // Should be gone
+        assert!(registry.get("drop_test").is_none());
+    }
+
+    #[test]
+    fn test_projection_list_procedure() {
+        let registry = projection_registry();
+        let _ = registry.create(ProjectionConfig::new("list_test_a"));
+        let _ = registry.create(ProjectionConfig::new("list_test_b"));
+
+        let result = try_execute_projection_procedure("grafeo.projection.list", &[]).unwrap();
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_eq!(result.columns, vec!["name", "node_labels", "edge_types"]);
+        assert!(result.rows.len() >= 2);
+
+        // Cleanup
+        registry.drop_projection("list_test_a");
+        registry.drop_projection("list_test_b");
+    }
+
+    #[test]
+    fn test_projection_procedure_no_match() {
+        let result =
+            try_execute_projection_procedure("grafeo.something_else", &[]).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_projection_create_missing_name() {
+        let result = try_execute_projection_procedure("grafeo.projection.create", &[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_projection_drop_missing_name() {
+        let result = try_execute_projection_procedure("grafeo.projection.drop", &[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_projection_create_short_name() {
+        let args = vec![LogicalExpression::Literal(Value::from("short_proj"))];
+        let result = try_execute_projection_procedure("projection.create", &args).unwrap();
+        assert!(result.is_some());
+        projection_registry().drop_projection("short_proj");
     }
 }

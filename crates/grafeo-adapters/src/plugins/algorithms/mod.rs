@@ -41,6 +41,7 @@ mod components;
 mod ego_graph;
 mod flow;
 mod mst;
+pub mod projection;
 mod shortest_path;
 mod structure;
 mod traits;
@@ -110,3 +111,9 @@ pub use shortest_path::{
 };
 pub use structure::{ArticulationPointsAlgorithm, BridgesAlgorithm, KCoreAlgorithm};
 pub use traversal::{BfsAlgorithm, DfsAlgorithm};
+
+// Graph projections (virtual filtered views)
+pub use projection::{
+    EdgeFilter, GraphProjection, NodeFilter, ProjectionBuilder, ProjectionConfig,
+    ProjectionRegistry, PropertyPredicate,
+};
