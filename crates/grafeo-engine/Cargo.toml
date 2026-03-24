@@ -92,6 +92,7 @@ vector-index = ["grafeo-core/vector-index"]  # HNSW vector index for k-NN search
 text-index = ["grafeo-core/text-index"]  # BM25 inverted index for full-text search
 hybrid-search = ["grafeo-core/hybrid-search", "text-index", "vector-index"]  # Combined text + vector search
 cdc = []  # Change data capture with history API
+reactive = []  # Reactive mutation event bus (post-commit hook for grafeo-reactive)
 metrics = []  # Lock-free query, transaction, and session metrics
 embed = ["ort", "tokenizers", "hf-hub"]  # ONNX embedding generation (opt-in, adds ~17MB)
 
