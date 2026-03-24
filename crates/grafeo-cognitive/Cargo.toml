@@ -25,6 +25,7 @@ stagnation = []
 fingerprint = []
 distillation = ["energy", "synapse", "fingerprint", "dep:serde_json"]
 episodic = []
+consolidation = ["energy", "fabric", "gds-refresh"]
 
 # Convenience feature groups (3 progressive levels)
 # Level 1: minimum viable cognitive — energy + synapses
@@ -32,7 +33,7 @@ cognitive = ["energy", "synapse"]
 # Level 2: + fabric scoring, co-change detection, GDS refresh
 cognitive-fabric = ["cognitive", "fabric", "co-change", "gds-refresh"]
 # Level 3: all cognitive subsystems
-cognitive-full = ["cognitive-fabric", "scar", "memory", "stagnation", "fingerprint", "distillation", "episodic"]
+cognitive-full = ["cognitive-fabric", "scar", "memory", "stagnation", "fingerprint", "distillation", "episodic", "consolidation"]
 
 [dependencies]
 grafeo-common.workspace = true

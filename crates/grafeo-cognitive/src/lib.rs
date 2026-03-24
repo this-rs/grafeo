@@ -73,6 +73,9 @@ pub mod distillation;
 #[cfg(feature = "episodic")]
 pub mod episodic;
 
+#[cfg(feature = "consolidation")]
+pub mod consolidation;
+
 // Provenance — automatic cognitive event tracking
 pub mod provenance;
 
@@ -148,6 +151,11 @@ pub use distillation::{
 pub use episodic::{
     ActivationStep, Episode, EpisodeConfig, EpisodeHorizon, EpisodeMemoryManager, EpisodeRecorder,
     EpisodeStore, EpisodeSweepResult, Outcome, Stimulus, ValidationResult,
+};
+
+#[cfg(feature = "consolidation")]
+pub use consolidation::{
+    ConsolidationConfig, ConsolidationEngine, ConsolidationResult, EDGE_DERIVED_FROM as EDGE_CONSOLIDATION_DERIVED_FROM,
 };
 
 pub use search::{
