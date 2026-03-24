@@ -40,9 +40,7 @@ fn make_energy_store(ids_and_energy: &[(u64, f64)]) -> Arc<EnergyStore> {
 }
 
 #[cfg(feature = "synapse")]
-fn make_synapse_store(
-    pairs: &[(u64, u64, f64)],
-) -> Arc<grafeo_cognitive::synapse::SynapseStore> {
+fn make_synapse_store(pairs: &[(u64, u64, f64)]) -> Arc<grafeo_cognitive::synapse::SynapseStore> {
     let store = Arc::new(grafeo_cognitive::synapse::SynapseStore::new(
         grafeo_cognitive::synapse::SynapseConfig {
             initial_weight: 0.0,

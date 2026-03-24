@@ -150,8 +150,7 @@ impl StagnationStore {
         score.trend = trend;
 
         // Rotate: current becomes previous.
-        self.previous
-            .insert(community_id, score.stagnation_score);
+        self.previous.insert(community_id, score.stagnation_score);
         self.scores.insert(community_id, score);
     }
 

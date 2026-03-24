@@ -5,7 +5,7 @@
 use grafeo_cognitive::{CognitiveConfig, CognitiveEngine, CognitiveEngineBuilder};
 use grafeo_common::types::{NodeId, Value};
 use grafeo_engine::cognitive_procedures::try_execute_cognitive_procedure;
-use grafeo_engine::cognitive_udfs::{register_cognitive_udfs, EnergyUdf, RiskUdf, SynapsesUdf};
+use grafeo_engine::cognitive_udfs::{EnergyUdf, RiskUdf, SynapsesUdf, register_cognitive_udfs};
 use grafeo_engine::query::plan::LogicalExpression;
 
 use grafeo_adapters::plugins::{PluginRegistry, UserDefinedFunction};
@@ -15,8 +15,7 @@ use std::sync::Arc;
 /// Must be called within a tokio runtime (Scheduler requires it).
 fn make_engine() -> Arc<dyn CognitiveEngine> {
     let bus = grafeo_reactive::MutationBus::new();
-    let scheduler =
-        grafeo_reactive::Scheduler::new(&bus, grafeo_reactive::BatchConfig::default());
+    let scheduler = grafeo_reactive::Scheduler::new(&bus, grafeo_reactive::BatchConfig::default());
     let mut config = CognitiveConfig::new();
     config.energy.enabled = true;
     let engine = CognitiveEngineBuilder::from_config(&config).build(&scheduler);
@@ -161,7 +160,6 @@ async fn distill_procedure_returns_result() {
 #[tokio::test]
 async fn unknown_procedure_returns_none() {
     let engine = make_engine();
-    let result =
-        try_execute_cognitive_procedure("grafeo.cognitive.unknown", &[], &engine).unwrap();
+    let result = try_execute_cognitive_procedure("grafeo.cognitive.unknown", &[], &engine).unwrap();
     assert!(result.is_none());
 }

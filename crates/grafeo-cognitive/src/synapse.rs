@@ -249,7 +249,10 @@ impl SynapseStore {
 
     /// Returns a snapshot of all synapses.
     pub fn snapshot(&self) -> Vec<Synapse> {
-        self.synapses.iter().map(|entry| entry.value().clone()).collect()
+        self.synapses
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect()
     }
 }
 

@@ -185,9 +185,7 @@ mod tests {
             col.push_int64(id);
         }
         let chunk = DataChunk::new(vec![col]);
-        Box::new(SingleChunkOperator {
-            chunk: Some(chunk),
-        })
+        Box::new(SingleChunkOperator { chunk: Some(chunk) })
     }
 
     struct SingleChunkOperator {
@@ -268,9 +266,9 @@ mod tests {
         assert_eq!(result.column_count(), 3);
 
         let boosted = result.column(2).unwrap();
-        assert_eq!(boosted.get_float64(0), Some(8.0));  // 10 * 0.8
-        assert_eq!(boosted.get_float64(1), Some(2.0));  // 10 * 0.2
-        assert_eq!(boosted.get_float64(2), Some(0.0));  // 10 * 0.0
+        assert_eq!(boosted.get_float64(0), Some(8.0)); // 10 * 0.8
+        assert_eq!(boosted.get_float64(1), Some(2.0)); // 10 * 0.2
+        assert_eq!(boosted.get_float64(2), Some(0.0)); // 10 * 0.0
     }
 
     #[test]
@@ -279,13 +277,7 @@ mod tests {
         activations.insert(1, 5.5);
 
         let input = make_test_input(&[1]);
-        let mut op = CognitiveBoostOperator::new(
-            input,
-            activations,
-            0,
-            None,
-            BoostMode::Replace,
-        );
+        let mut op = CognitiveBoostOperator::new(input, activations, 0, None, BoostMode::Replace);
 
         let chunk = op.next().unwrap().unwrap();
         let score = chunk.column(1).unwrap();
@@ -296,13 +288,7 @@ mod tests {
     fn test_empty_input() {
         let activations = ActivationMap::new();
         let input = Box::new(SingleChunkOperator { chunk: None });
-        let mut op = CognitiveBoostOperator::new(
-            input,
-            activations,
-            0,
-            None,
-            BoostMode::Additive,
-        );
+        let mut op = CognitiveBoostOperator::new(input, activations, 0, None, BoostMode::Additive);
 
         assert!(op.next().unwrap().is_none());
     }
@@ -311,14 +297,8 @@ mod tests {
     fn test_default_activation() {
         let activations = ActivationMap::new(); // empty
         let input = make_test_input(&[99]);
-        let mut op = CognitiveBoostOperator::new(
-            input,
-            activations,
-            0,
-            None,
-            BoostMode::Replace,
-        )
-        .with_default_activation(0.42);
+        let mut op = CognitiveBoostOperator::new(input, activations, 0, None, BoostMode::Replace)
+            .with_default_activation(0.42);
 
         let chunk = op.next().unwrap().unwrap();
         let score = chunk.column(1).unwrap();

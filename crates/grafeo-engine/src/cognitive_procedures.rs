@@ -49,21 +49,18 @@ fn execute_spread(
         Some(_) => {
             return Err(Error::Internal(
                 "grafeo.cognitive.spread(): first argument must be a node ID (integer)".to_string(),
-            ))
+            ));
         }
         None => {
             return Err(Error::Internal(
                 "grafeo.cognitive.spread(): requires at least 1 argument (node ID)".to_string(),
-            ))
+            ));
         }
     };
 
     let max_hops = extract_map_int(arguments.get(1), "hops").unwrap_or(3) as u32;
 
-    let mut result = AlgorithmResult::new(vec![
-        "activated".to_string(),
-        "energy".to_string(),
-    ]);
+    let mut result = AlgorithmResult::new(vec!["activated".to_string(), "energy".to_string()]);
 
     // Perform spreading activation if synapse subsystem is available
     #[cfg(feature = "cognitive")]
@@ -74,14 +71,10 @@ fn execute_spread(
         if let Some(synapse_store) = engine.synapse_store() {
             let config = SpreadConfig::default().with_max_hops(max_hops);
             let source = SynapseActivationSource::new(Arc::clone(synapse_store));
-            let activation_map =
-                spread_single(NodeId(source_node_id), 1.0, &source, &config);
+            let activation_map = spread_single(NodeId(source_node_id), 1.0, &source, &config);
 
             for (node_id, energy) in activation_map {
-                result.add_row(vec![
-                    Value::Int64(node_id.0 as i64),
-                    Value::Float64(energy),
-                ]);
+                result.add_row(vec![Value::Int64(node_id.0 as i64), Value::Float64(energy)]);
             }
         }
     }
