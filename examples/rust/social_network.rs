@@ -20,14 +20,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Here we simulate snapshots at different activity levels.
 
     let users = [
-        ("Alix", 0.95),    // Very active — just interacted
-        ("Gus", 0.80),     // Active recently
-        ("Mia", 0.60),     // Moderate activity
-        ("Jules", 0.30),   // Starting to go stale
-        ("Vincent", 0.15), // Low energy — hasn't interacted in a while
-        ("Butch", 0.05),   // Nearly dormant
-        ("Esme", 0.70),    // Active in a different community
-        ("Zed", 0.55),     // Moderate, same community as Esme
+        ("Alix", 0.95),      // Very active — just interacted
+        ("Gus", 0.80),       // Active recently
+        ("Mia", 0.60),       // Moderate activity
+        ("Jules", 0.30),     // Starting to go stale
+        ("Vincent", 0.15),   // Low energy — hasn't interacted in a while
+        ("Butch", 0.05),     // Nearly dormant
+        ("Esme", 0.70),      // Active in a different community
+        ("Zed", 0.55),       // Moderate, same community as Esme
         ("Marsellus", 0.40), // Bridge between communities
     ];
 
@@ -118,7 +118,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .execute("MATCH (u:User {name: 'Vincent'}) RETURN u.energy")?
         .scalar()?;
 
-    println!("  Vincent: {:.2} → {:.2} (boosted by {:.2})", before, after, boost);
+    println!(
+        "  Vincent: {:.2} → {:.2} (boosted by {:.2})",
+        before, after, boost
+    );
 
     // ── Community Detection (Louvain) ─────────────────────────────
     // Louvain optimizes modularity to discover communities.

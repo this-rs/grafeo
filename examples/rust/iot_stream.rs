@@ -27,10 +27,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("motion_floor1", "Floor1", "motion", 0.60, 60),
         ("co2_floor1", "Floor1", "co2", 0.50, 40),
         ("co2_floor2", "Floor2", "co2", 0.45, 35),
-        ("smoke_floor1", "Floor1", "smoke", 0.10, 5),   // Almost dormant
-        ("smoke_floor2", "Floor2", "smoke", 0.08, 3),   // Almost dormant
+        ("smoke_floor1", "Floor1", "smoke", 0.10, 5), // Almost dormant
+        ("smoke_floor2", "Floor2", "smoke", 0.08, 3), // Almost dormant
         ("power_main", "Utility", "power", 0.92, 200),
-        ("water_main", "Utility", "water", 0.05, 1),    // Stagnant
+        ("water_main", "Utility", "water", 0.05, 1), // Stagnant
     ];
 
     for (id, zone, sensor_type, energy, readings) in &sensors {
@@ -68,7 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("temp_floor1", 22.5),
         ("humid_floor1", 45.0),
         ("co2_floor1", 800.0),
-        ("temp_floor1", 22.7),  // temp and humid co-change
+        ("temp_floor1", 22.7), // temp and humid co-change
         ("humid_floor1", 46.0),
         ("temp_floor2", 21.0),
         ("humid_floor2", 43.0),
@@ -103,10 +103,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Build co-change edges based on same-zone, same-batch patterns
     let co_change_pairs = [
-        ("temp_floor1", "humid_floor1", 15),  // Temperature and humidity correlate
+        ("temp_floor1", "humid_floor1", 15), // Temperature and humidity correlate
         ("temp_floor2", "humid_floor2", 12),
-        ("temp_floor1", "co2_floor1", 8),     // Temperature and CO2 in same zone
-        ("motion_lobby", "power_main", 5),    // Motion triggers power usage
+        ("temp_floor1", "co2_floor1", 8), // Temperature and CO2 in same zone
+        ("motion_lobby", "power_main", 5), // Motion triggers power usage
     ];
 
     for (a, b, frequency) in &co_change_pairs {
@@ -150,11 +150,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let stype = row[2].as_str().unwrap_or("?");
             let energy = row[3].as_float64().unwrap_or(0.0);
             let readings = row[4].as_int64().unwrap_or(0);
-            let status = if energy < 0.05 {
-                "CRITICAL"
-            } else {
-                "WARNING"
-            };
+            let status = if energy < 0.05 { "CRITICAL" } else { "WARNING" };
             println!(
                 "  {:<18} {:<10} {:<12} {:<8.2} {:<8} {}",
                 id, zone, stype, energy, readings, status
@@ -218,10 +214,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for (node_id, score) in centrality.iter().take(5) {
             let name = get_sensor_id(&db, *node_id);
             let criticality = if *score > 0.2 { "HIGH" } else { "MODERATE" };
-            println!(
-                "  {:<18} betweenness={:.4}  [{}]",
-                name, score, criticality
-            );
+            println!("  {:<18} betweenness={:.4}  [{}]", name, score, criticality);
         }
     }
 
@@ -240,7 +233,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let community = row[1].as_int64().unwrap_or(0);
         let name = get_sensor_id(&db, node_id);
         // Only include sensor nodes (skip zone nodes)
-        if !name.starts_with('?') && !["Floor1", "Floor2", "Lobby", "Utility"].contains(&name.as_str()) {
+        if !name.starts_with('?')
+            && !["Floor1", "Floor2", "Lobby", "Utility"].contains(&name.as_str())
+        {
             communities.entry(community).or_default().push(name);
         }
     }

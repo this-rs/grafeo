@@ -40,6 +40,8 @@
 use pyo3::prelude::*;
 
 mod bridges;
+#[cfg(feature = "cognitive")]
+mod cognitive;
 mod database;
 mod error;
 mod graph;
@@ -49,6 +51,8 @@ mod types;
 
 #[cfg(feature = "algos")]
 use bridges::{PyAlgorithms, PyNetworkXAdapter, PySolvORAdapter};
+#[cfg(feature = "cognitive")]
+use cognitive::{PyCognitiveEngine, PyCognitiveSearch, PyGDS};
 use database::{AsyncQueryResult, AsyncQueryResultIter, PyGrafeoDB};
 use graph::{PyEdge, PyNode};
 use query::PyQueryResult;
@@ -83,6 +87,13 @@ fn grafeo(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_class::<PyAlgorithms>()?;
         m.add_class::<PyNetworkXAdapter>()?;
         m.add_class::<PySolvORAdapter>()?;
+    }
+
+    #[cfg(feature = "cognitive")]
+    {
+        m.add_class::<PyCognitiveEngine>()?;
+        m.add_class::<PyCognitiveSearch>()?;
+        m.add_class::<PyGDS>()?;
     }
 
     // Register quantization types

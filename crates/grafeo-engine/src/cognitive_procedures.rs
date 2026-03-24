@@ -148,11 +148,12 @@ fn execute_search(
     let config_arg = arguments.first();
 
     // Extract query_embedding (required)
-    let query_embedding = extract_map_float_list(config_arg, "query_embedding").ok_or_else(|| {
-        Error::Internal(
-            "grafeo.cognitive.search(): requires query_embedding (list of floats)".to_string(),
-        )
-    })?;
+    let query_embedding =
+        extract_map_float_list(config_arg, "query_embedding").ok_or_else(|| {
+            Error::Internal(
+                "grafeo.cognitive.search(): requires query_embedding (list of floats)".to_string(),
+            )
+        })?;
 
     if query_embedding.is_empty() {
         return Err(Error::Internal(

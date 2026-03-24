@@ -256,13 +256,19 @@ fn tenant_switch_changes_active_scope() {
     tm.switch_tenant("scope_a").unwrap();
     let active = tm.active_graph().unwrap();
     let energy = active.energy_store.get_energy(NodeId(1));
-    assert!(energy > 5.0, "active scope_a should have high energy for node 1");
+    assert!(
+        energy > 5.0,
+        "active scope_a should have high energy for node 1"
+    );
 
     // Switch to scope_b
     tm.switch_tenant("scope_b").unwrap();
     let active = tm.active_graph().unwrap();
     let energy = active.energy_store.get_energy(NodeId(1));
-    assert!(energy < 1.0, "active scope_b should have low energy for node 1");
+    assert!(
+        energy < 1.0,
+        "active scope_b should have low energy for node 1"
+    );
 }
 
 // ---------------------------------------------------------------------------

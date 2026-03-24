@@ -17,6 +17,7 @@ grafeo-core = { path = "../../grafeo-core" }
 grafeo-common = { path = "../../grafeo-common" }
 grafeo-adapters = { path = "../../grafeo-adapters" }
 grafeo-bindings-common = { path = "../common" }
+grafeo-cognitive = { path = "../../grafeo-cognitive", optional = true, default-features = false }
 
 pyo3 = { workspace = true, features = ["extension-module"] }
 pyo3-async-runtimes = { workspace = true }
@@ -42,6 +43,9 @@ rdf = ["grafeo-engine/rdf"]
 languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]
 ai = ["vector-index", "text-index", "hybrid-search", "cdc"]
 storage = ["grafeo-engine/storage"]
+cognitive = ["dep:grafeo-cognitive", "grafeo-cognitive/cognitive", "grafeo-cognitive/scar", "grafeo-cognitive/fabric", "algos"]
+cognitive-fabric = ["cognitive", "grafeo-cognitive/cognitive-fabric"]
+cognitive-full = ["cognitive", "grafeo-cognitive/cognitive-full"]
 # Named profiles
 embedded = ["gql", "ai", "algos", "grafeo-engine/parallel", "grafeo-engine/regex"]
 full = ["languages", "ai", "algos", "rdf"]

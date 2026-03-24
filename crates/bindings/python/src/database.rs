@@ -1974,6 +1974,33 @@ impl PyGrafeoDB {
         PySolvORAdapter::new(self.inner.clone())
     }
 
+    /// Get the cognitive engine interface.
+    ///
+    /// Provides access to energy, synapse, scar, and fabric subsystems.
+    ///
+    /// Example:
+    ///     cog = db.cognitive
+    ///     cog.energy_boost(node_id, 2.0)
+    ///     print(cog.energy_get(node_id))
+    #[cfg(feature = "cognitive")]
+    #[getter]
+    fn cognitive(&self) -> crate::cognitive::PyCognitiveEngine {
+        crate::cognitive::PyCognitiveEngine::new(self.inner.clone())
+    }
+
+    /// Get the GDS (Graph Data Science) interface.
+    ///
+    /// Provides Neo4j GDS-style API: pagerank, louvain, leiden, similarity.
+    ///
+    /// Example:
+    ///     scores = db.gds.pagerank()
+    ///     communities = db.gds.louvain()
+    #[cfg(feature = "cognitive")]
+    #[getter]
+    fn gds(&self) -> crate::cognitive::PyGDS {
+        crate::cognitive::PyGDS::new(self.inner.clone())
+    }
+
     /// Get number of nodes.
     #[getter]
     fn node_count(&self) -> usize {

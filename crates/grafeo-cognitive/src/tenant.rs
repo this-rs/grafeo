@@ -103,7 +103,11 @@ impl TenantGraph {
 
     /// Creates a new tenant graph with custom energy/synapse configs.
     #[cfg(all(feature = "energy", feature = "synapse"))]
-    fn with_configs(name: String, energy_config: EnergyConfig, synapse_config: SynapseConfig) -> Self {
+    fn with_configs(
+        name: String,
+        energy_config: EnergyConfig,
+        synapse_config: SynapseConfig,
+    ) -> Self {
         Self {
             name,
             created_at: Instant::now(),
@@ -287,29 +291,25 @@ impl TenantManager {
     /// Returns the active tenant's energy store.
     #[cfg(feature = "energy")]
     pub fn energy_store(&self) -> Option<Arc<EnergyStore>> {
-        self.active_graph()
-            .map(|g| Arc::clone(&g.energy_store))
+        self.active_graph().map(|g| Arc::clone(&g.energy_store))
     }
 
     /// Returns the active tenant's synapse store.
     #[cfg(feature = "synapse")]
     pub fn synapse_store(&self) -> Option<Arc<SynapseStore>> {
-        self.active_graph()
-            .map(|g| Arc::clone(&g.synapse_store))
+        self.active_graph().map(|g| Arc::clone(&g.synapse_store))
     }
 
     /// Returns the active tenant's fabric store.
     #[cfg(feature = "fabric")]
     pub fn fabric_store(&self) -> Option<Arc<FabricStore>> {
-        self.active_graph()
-            .map(|g| Arc::clone(&g.fabric_store))
+        self.active_graph().map(|g| Arc::clone(&g.fabric_store))
     }
 
     /// Returns the active tenant's scar store.
     #[cfg(feature = "scar")]
     pub fn scar_store(&self) -> Option<Arc<ScarStore>> {
-        self.active_graph()
-            .map(|g| Arc::clone(&g.scar_store))
+        self.active_graph().map(|g| Arc::clone(&g.scar_store))
     }
 
     // -- Validation --
@@ -476,11 +476,25 @@ mod tests {
         }
 
         // Verify isolation: same node, different energies
-        let e1 = tm.get_tenant("tenant_1").unwrap().energy_store.get_energy(node);
-        let e2 = tm.get_tenant("tenant_2").unwrap().energy_store.get_energy(node);
+        let e1 = tm
+            .get_tenant("tenant_1")
+            .unwrap()
+            .energy_store
+            .get_energy(node);
+        let e2 = tm
+            .get_tenant("tenant_2")
+            .unwrap()
+            .energy_store
+            .get_energy(node);
 
-        assert!((e1 - 5.0).abs() < 0.1, "tenant_1 energy should be ~5.0, got {e1}");
-        assert!((e2 - 10.0).abs() < 0.1, "tenant_2 energy should be ~10.0, got {e2}");
+        assert!(
+            (e1 - 5.0).abs() < 0.1,
+            "tenant_1 energy should be ~5.0, got {e1}"
+        );
+        assert!(
+            (e2 - 10.0).abs() < 0.1,
+            "tenant_2 energy should be ~10.0, got {e2}"
+        );
     }
 
     #[cfg(feature = "synapse")]

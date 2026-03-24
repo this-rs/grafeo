@@ -208,7 +208,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ))?;
 
     println!("  Nodes below energy threshold ({stale_threshold}):");
-    println!("  {:<20} {:<8} {:<8} Action", "Concept", "Energy", "Accesses");
+    println!(
+        "  {:<20} {:<8} {:<8} Action",
+        "Concept", "Energy", "Accesses"
+    );
     println!("  {}", "-".repeat(50));
 
     for row in stale.iter() {

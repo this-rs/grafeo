@@ -1363,6 +1363,7 @@ version = "0.5.24"
 dependencies = [
  "grafeo-adapters",
  "grafeo-bindings-common",
+ "grafeo-cognitive",
  "grafeo-common",
  "grafeo-core",
  "grafeo-engine",
