@@ -67,3 +67,11 @@ component_management:
       name: Engine (database, sessions, transactions)
       paths:
         - crates/engine/src/**
+    - component_id: grafeo-reactive
+      name: Reactive (event bus, scheduler, instrumented store)
+      paths:
+        - crates/grafeo-reactive/src/**
+    - component_id: grafeo-cognitive
+      name: Cognitive (energy, synapses, fabric, memory, episodic)
+      paths:
+        - crates/grafeo-cognitive/src/**

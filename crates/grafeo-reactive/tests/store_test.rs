@@ -1,7 +1,7 @@
 //! Comprehensive tests for InstrumentedStore — mutation tracking, event capture,
 //! drain/clear, and delegation of read operations.
 
-use grafeo_common::types::{NodeId, PropertyKey, Value};
+use grafeo_common::types::{EdgeId, NodeId, PropertyKey, TransactionId, Value};
 use grafeo_core::LpgStore;
 use grafeo_core::graph::traits::{GraphStore, GraphStoreMut};
 use grafeo_reactive::{InstrumentedStore, MutationEvent};
@@ -804,3 +804,744 @@ fn edge_deleted_captures_last_state() {
         panic!("expected EdgeDeleted");
     }
 }
+
+// ========================================================================
+// Read delegation — versioned / epoch methods
+// ========================================================================
+
+#[test]
+fn get_node_versioned_delegates_to_inner() {
+    let store = new_store();
+    let id = store.create_node(&["Person"]);
+    store.drain_pending();
+
+    let epoch = store.current_epoch();
+    let txn = TransactionId::SYSTEM;
+    let node = store.get_node_versioned(id, epoch, txn);
+    assert!(node.is_some());
+    assert_eq!(node.unwrap().id, id);
+
+    // Non-existent node returns None
+    assert!(
+        store
+            .get_node_versioned(NodeId::new(999), epoch, txn)
+            .is_none()
+    );
+}
+
+#[test]
+fn get_edge_versioned_delegates_to_inner() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    let eid = store.create_edge(n1, n2, "KNOWS");
+    store.drain_pending();
+
+    let epoch = store.current_epoch();
+    let txn = TransactionId::SYSTEM;
+    let edge = store.get_edge_versioned(eid, epoch, txn);
+    assert!(edge.is_some());
+    assert_eq!(edge.unwrap().id, eid);
+
+    assert!(
+        store
+            .get_edge_versioned(EdgeId::new(999), epoch, txn)
+            .is_none()
+    );
+}
+
+#[test]
+fn get_node_at_epoch_delegates_to_inner() {
+    let store = new_store();
+    let id = store.create_node(&["Person"]);
+    store.drain_pending();
+
+    let epoch = store.current_epoch();
+    let node = store.get_node_at_epoch(id, epoch);
+    assert!(node.is_some());
+    assert_eq!(node.unwrap().id, id);
+
+    // Non-existent node
+    assert!(store.get_node_at_epoch(NodeId::new(999), epoch).is_none());
+}
+
+#[test]
+fn get_edge_at_epoch_delegates_to_inner() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    let eid = store.create_edge(n1, n2, "KNOWS");
+    store.drain_pending();
+
+    let epoch = store.current_epoch();
+    let edge = store.get_edge_at_epoch(eid, epoch);
+    assert!(edge.is_some());
+    assert_eq!(edge.unwrap().id, eid);
+
+    assert!(store.get_edge_at_epoch(EdgeId::new(999), epoch).is_none());
+}
+
+// ========================================================================
+// Read delegation — batch property methods
+// ========================================================================
+
+#[test]
+fn get_node_property_batch_delegates_to_inner() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    store.set_node_property(n1, "name", Value::String(arcstr::literal!("Alice")));
+    store.drain_pending();
+
+    let key = PropertyKey::from("name");
+    let results = store.get_node_property_batch(&[n1, n2], &key);
+    assert_eq!(results.len(), 2);
+    assert!(results[0].is_some());
+    assert!(results[1].is_none());
+}
+
+#[test]
+fn get_nodes_properties_batch_delegates_to_inner() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    store.set_node_property(n1, "name", Value::String(arcstr::literal!("Alice")));
+    store.set_node_property(n2, "age", Value::Int64(30));
+    store.drain_pending();
+
+    let results = store.get_nodes_properties_batch(&[n1, n2]);
+    assert_eq!(results.len(), 2);
+    assert!(results[0].contains_key(&PropertyKey::from("name")));
+    assert!(results[1].contains_key(&PropertyKey::from("age")));
+}
+
+#[test]
+fn get_nodes_properties_selective_batch_delegates_to_inner() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    store.set_node_property(n1, "name", Value::String(arcstr::literal!("Alice")));
+    store.set_node_property(n1, "age", Value::Int64(30));
+    store.drain_pending();
+
+    let keys = vec![PropertyKey::from("name")];
+    let results = store.get_nodes_properties_selective_batch(&[n1], &keys);
+    assert_eq!(results.len(), 1);
+    assert!(results[0].contains_key(&PropertyKey::from("name")));
+    // "age" was not requested
+    assert!(!results[0].contains_key(&PropertyKey::from("age")));
+}
+
+#[test]
+fn get_edges_properties_selective_batch_delegates_to_inner() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    let eid = store.create_edge(n1, n2, "KNOWS");
+    store.set_edge_property(eid, "weight", Value::Float64(0.5));
+    store.set_edge_property(eid, "since", Value::Int64(2024));
+    store.drain_pending();
+
+    let keys = vec![PropertyKey::from("weight")];
+    let results = store.get_edges_properties_selective_batch(&[eid], &keys);
+    assert_eq!(results.len(), 1);
+    assert!(results[0].contains_key(&PropertyKey::from("weight")));
+    assert!(!results[0].contains_key(&PropertyKey::from("since")));
+}
+
+// ========================================================================
+// Read delegation — adjacency, degree, backward adjacency
+// ========================================================================
+
+#[test]
+fn edges_from_delegates_to_inner() {
+    use grafeo_core::graph::Direction;
+
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    let eid = store.create_edge(n1, n2, "KNOWS");
+    store.drain_pending();
+
+    let edges = store.edges_from(n1, Direction::Outgoing);
+    assert_eq!(edges.len(), 1);
+    assert_eq!(edges[0], (n2, eid));
+}
+
+#[test]
+fn in_degree_delegates_to_inner() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    store.create_edge(n1, n2, "KNOWS");
+    store.drain_pending();
+
+    assert_eq!(store.in_degree(n2), 1);
+    assert_eq!(store.in_degree(n1), 0);
+}
+
+#[test]
+fn has_backward_adjacency_delegates_to_inner() {
+    let store = new_store();
+    // LpgStore supports backward adjacency
+    let result = store.has_backward_adjacency();
+    // Just verify it returns a bool (delegation works)
+    let _ = result;
+}
+
+#[test]
+fn all_node_ids_delegates_to_inner() {
+    let store = new_store();
+    let id1 = store.create_node(&["A"]);
+    let id2 = store.create_node(&["B"]);
+    store.drain_pending();
+
+    let mut ids = store.all_node_ids();
+    ids.sort();
+    let mut expected = vec![id1, id2];
+    expected.sort();
+    assert_eq!(ids, expected);
+}
+
+// ========================================================================
+// Read delegation — edge type versioned, property index, find methods
+// ========================================================================
+
+#[test]
+fn edge_type_versioned_delegates_to_inner() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    let eid = store.create_edge(n1, n2, "FOLLOWS");
+    store.drain_pending();
+
+    let epoch = store.current_epoch();
+    let txn = TransactionId::SYSTEM;
+    let etype = store.edge_type_versioned(eid, epoch, txn);
+    assert!(etype.is_some());
+    assert_eq!(etype.unwrap().as_str(), "FOLLOWS");
+
+    assert!(
+        store
+            .edge_type_versioned(EdgeId::new(999), epoch, txn)
+            .is_none()
+    );
+}
+
+#[test]
+fn has_property_index_delegates_to_inner() {
+    let store = new_store();
+    // LpgStore typically returns false for unindexed properties
+    let result = store.has_property_index("nonexistent");
+    assert!(!result);
+}
+
+#[test]
+fn find_nodes_by_property_delegates_to_inner() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    store.set_node_property(n1, "color", Value::String(arcstr::literal!("red")));
+    let _n2 = store.create_node(&["B"]);
+    store.drain_pending();
+
+    let results = store.find_nodes_by_property("color", &Value::String(arcstr::literal!("red")));
+    assert!(results.contains(&n1));
+}
+
+#[test]
+fn find_nodes_by_properties_delegates_to_inner() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    store.set_node_property(n1, "color", Value::String(arcstr::literal!("red")));
+    store.set_node_property(n1, "size", Value::Int64(10));
+    store.drain_pending();
+
+    let conditions: Vec<(&str, Value)> = vec![
+        ("color", Value::String(arcstr::literal!("red"))),
+        ("size", Value::Int64(10)),
+    ];
+    let results = store.find_nodes_by_properties(&conditions);
+    assert!(results.contains(&n1));
+}
+
+#[test]
+fn find_nodes_in_range_delegates_to_inner() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    store.set_node_property(n1, "score", Value::Int64(50));
+    let n2 = store.create_node(&["B"]);
+    store.set_node_property(n2, "score", Value::Int64(150));
+    store.drain_pending();
+
+    let min = Value::Int64(0);
+    let max = Value::Int64(100);
+    let results = store.find_nodes_in_range("score", Some(&min), Some(&max), true, true);
+    // n1 should be in range, n2 should not
+    assert!(results.contains(&n1));
+    assert!(!results.contains(&n2));
+}
+
+// ========================================================================
+// Read delegation — bloom filter / might-match methods
+// ========================================================================
+
+#[test]
+fn node_property_might_match_delegates_to_inner() {
+    use grafeo_core::graph::lpg::CompareOp;
+
+    let store = new_store();
+    let _n1 = store.create_node(&["A"]);
+    store.drain_pending();
+
+    let key = PropertyKey::from("name");
+    let val = Value::String(arcstr::literal!("test"));
+    // Just verifying it delegates without panic; result depends on implementation
+    let _result = store.node_property_might_match(&key, CompareOp::Eq, &val);
+}
+
+#[test]
+fn edge_property_might_match_delegates_to_inner() {
+    use grafeo_core::graph::lpg::CompareOp;
+
+    let store = new_store();
+    let key = PropertyKey::from("weight");
+    let val = Value::Float64(1.0);
+    let _result = store.edge_property_might_match(&key, CompareOp::Eq, &val);
+}
+
+// ========================================================================
+// Read delegation — statistics, cardinality, degree estimates
+// ========================================================================
+
+#[test]
+fn statistics_delegates_to_inner() {
+    let store = new_store();
+    store.create_node(&["Person"]);
+    store.drain_pending();
+
+    let stats = store.statistics();
+    // statistics() returns Arc<Statistics>, just verify it does not panic
+    let _ = stats;
+}
+
+#[test]
+fn estimate_label_cardinality_delegates_to_inner() {
+    let store = new_store();
+    store.create_node(&["Person"]);
+    store.drain_pending();
+
+    let cardinality = store.estimate_label_cardinality("Person");
+    // Should be >= 0
+    assert!(cardinality >= 0.0);
+}
+
+#[test]
+fn estimate_avg_degree_delegates_to_inner() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    store.create_edge(n1, n2, "KNOWS");
+    store.drain_pending();
+
+    let avg_out = store.estimate_avg_degree("KNOWS", true);
+    let avg_in = store.estimate_avg_degree("KNOWS", false);
+    assert!(avg_out >= 0.0);
+    assert!(avg_in >= 0.0);
+}
+
+#[test]
+fn current_epoch_delegates_to_inner() {
+    let store = new_store();
+    let epoch = store.current_epoch();
+    // Should return a valid epoch (>= INITIAL)
+    // Should return a valid epoch
+    let _ = epoch;
+}
+
+// ========================================================================
+// Read delegation — schema introspection
+// ========================================================================
+
+#[test]
+fn all_labels_delegates_to_inner() {
+    let store = new_store();
+    store.create_node(&["Person"]);
+    store.create_node(&["Document"]);
+    store.drain_pending();
+
+    let labels = store.all_labels();
+    assert!(labels.contains(&"Person".to_string()));
+    assert!(labels.contains(&"Document".to_string()));
+}
+
+#[test]
+fn all_edge_types_delegates_to_inner() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    store.create_edge(n1, n2, "KNOWS");
+    store.create_edge(n1, n2, "LIKES");
+    store.drain_pending();
+
+    let types = store.all_edge_types();
+    assert!(types.contains(&"KNOWS".to_string()));
+    assert!(types.contains(&"LIKES".to_string()));
+}
+
+#[test]
+fn all_property_keys_delegates_to_inner() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    store.set_node_property(n1, "name", Value::String(arcstr::literal!("Alice")));
+    store.drain_pending();
+
+    let keys = store.all_property_keys();
+    assert!(keys.contains(&"name".to_string()));
+}
+
+// ========================================================================
+// Read delegation — visibility methods
+// ========================================================================
+
+#[test]
+fn is_node_visible_at_epoch_delegates_to_inner() {
+    let store = new_store();
+    let id = store.create_node(&["A"]);
+    store.drain_pending();
+
+    let epoch = store.current_epoch();
+    assert!(store.is_node_visible_at_epoch(id, epoch));
+    assert!(!store.is_node_visible_at_epoch(NodeId::new(999), epoch));
+}
+
+#[test]
+fn is_node_visible_versioned_delegates_to_inner() {
+    let store = new_store();
+    let id = store.create_node(&["A"]);
+    store.drain_pending();
+
+    let epoch = store.current_epoch();
+    let txn = TransactionId::SYSTEM;
+    assert!(store.is_node_visible_versioned(id, epoch, txn));
+    assert!(!store.is_node_visible_versioned(NodeId::new(999), epoch, txn));
+}
+
+#[test]
+fn is_edge_visible_at_epoch_delegates_to_inner() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    let eid = store.create_edge(n1, n2, "KNOWS");
+    store.drain_pending();
+
+    let epoch = store.current_epoch();
+    assert!(store.is_edge_visible_at_epoch(eid, epoch));
+    assert!(!store.is_edge_visible_at_epoch(EdgeId::new(999), epoch));
+}
+
+#[test]
+fn is_edge_visible_versioned_delegates_to_inner() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    let eid = store.create_edge(n1, n2, "KNOWS");
+    store.drain_pending();
+
+    let epoch = store.current_epoch();
+    let txn = TransactionId::SYSTEM;
+    assert!(store.is_edge_visible_versioned(eid, epoch, txn));
+    assert!(!store.is_edge_visible_versioned(EdgeId::new(999), epoch, txn));
+}
+
+#[test]
+fn filter_visible_node_ids_delegates_to_inner() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    store.drain_pending();
+
+    let epoch = store.current_epoch();
+    let visible = store.filter_visible_node_ids(&[n1, n2, NodeId::new(999)], epoch);
+    assert!(visible.contains(&n1));
+    assert!(visible.contains(&n2));
+    assert!(!visible.contains(&NodeId::new(999)));
+}
+
+#[test]
+fn filter_visible_node_ids_versioned_delegates_to_inner() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    store.drain_pending();
+
+    let epoch = store.current_epoch();
+    let txn = TransactionId::SYSTEM;
+    let visible = store.filter_visible_node_ids_versioned(&[n1, n2, NodeId::new(999)], epoch, txn);
+    assert!(visible.contains(&n1));
+    assert!(visible.contains(&n2));
+    assert!(!visible.contains(&NodeId::new(999)));
+}
+
+// ========================================================================
+// Read delegation — history methods
+// ========================================================================
+
+#[test]
+fn get_node_history_delegates_to_inner() {
+    let store = new_store();
+    let id = store.create_node(&["A"]);
+    store.drain_pending();
+
+    let history = store.get_node_history(id);
+    // At least one version should exist
+    assert!(!history.is_empty());
+    assert_eq!(history[0].2.id, id);
+}
+
+#[test]
+fn get_edge_history_delegates_to_inner() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    let eid = store.create_edge(n1, n2, "KNOWS");
+    store.drain_pending();
+
+    let history = store.get_edge_history(eid);
+    assert!(!history.is_empty());
+    assert_eq!(history[0].2.id, eid);
+}
+
+// ========================================================================
+// GraphStoreMut — versioned write delegation
+// ========================================================================
+
+#[test]
+fn create_node_versioned_delegates_and_emits_event() {
+    let store = new_store();
+    let epoch = store.current_epoch();
+    let txn = TransactionId::SYSTEM;
+
+    let id = store.create_node_versioned(&["Person"], epoch, txn);
+    assert!(store.get_node(id).is_some());
+
+    let events = store.drain_pending();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].kind(), "node_created");
+}
+
+#[test]
+fn create_edge_versioned_delegates_and_emits_event() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    store.drain_pending();
+
+    let epoch = store.current_epoch();
+    let txn = TransactionId::SYSTEM;
+
+    let eid = store.create_edge_versioned(n1, n2, "KNOWS", epoch, txn);
+    assert!(store.get_edge(eid).is_some());
+
+    let events = store.drain_pending();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].kind(), "edge_created");
+}
+
+#[test]
+fn delete_node_versioned_delegates_and_emits_event() {
+    let store = new_store();
+    let id = store.create_node(&["Temp"]);
+    store.drain_pending();
+
+    let epoch = store.current_epoch();
+    let txn = TransactionId::SYSTEM;
+
+    let deleted = store.delete_node_versioned(id, epoch, txn);
+    assert!(deleted);
+
+    let events = store.drain_pending();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].kind(), "node_deleted");
+}
+
+#[test]
+fn delete_node_versioned_nonexistent_no_event() {
+    let store = new_store();
+    let epoch = store.current_epoch();
+    let txn = TransactionId::SYSTEM;
+
+    let deleted = store.delete_node_versioned(NodeId::new(999), epoch, txn);
+    assert!(!deleted);
+    assert_eq!(store.pending_count(), 0);
+}
+
+#[test]
+fn delete_edge_versioned_delegates_and_emits_event() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    let eid = store.create_edge(n1, n2, "KNOWS");
+    store.drain_pending();
+
+    let epoch = store.current_epoch();
+    let txn = TransactionId::SYSTEM;
+
+    let deleted = store.delete_edge_versioned(eid, epoch, txn);
+    assert!(deleted);
+
+    let events = store.drain_pending();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].kind(), "edge_deleted");
+}
+
+#[test]
+fn delete_edge_versioned_nonexistent_no_event() {
+    let store = new_store();
+    let epoch = store.current_epoch();
+    let txn = TransactionId::SYSTEM;
+
+    let deleted = store.delete_edge_versioned(EdgeId::new(999), epoch, txn);
+    assert!(!deleted);
+    assert_eq!(store.pending_count(), 0);
+}
+
+#[test]
+fn set_node_property_versioned_delegates_to_inner() {
+    let store = new_store();
+    let id = store.create_node(&["Person"]);
+    store.drain_pending();
+
+    let txn = TransactionId::SYSTEM;
+    store.set_node_property_versioned(id, "name", Value::String(arcstr::literal!("Alice")), txn);
+
+    // Verify the property was set
+    let val = store.get_node_property(id, &PropertyKey::from("name"));
+    assert!(val.is_some());
+}
+
+#[test]
+fn set_edge_property_versioned_delegates_to_inner() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    let eid = store.create_edge(n1, n2, "KNOWS");
+    store.drain_pending();
+
+    let txn = TransactionId::SYSTEM;
+    store.set_edge_property_versioned(eid, "weight", Value::Float64(0.8), txn);
+
+    let val = store.get_edge_property(eid, &PropertyKey::from("weight"));
+    assert!(val.is_some());
+}
+
+#[test]
+fn remove_node_property_versioned_delegates_to_inner() {
+    let store = new_store();
+    let id = store.create_node(&["Person"]);
+    store.set_node_property(id, "name", Value::String(arcstr::literal!("Alice")));
+    store.drain_pending();
+
+    let txn = TransactionId::SYSTEM;
+    let removed = store.remove_node_property_versioned(id, "name", txn);
+    assert!(removed.is_some());
+
+    // Property should be gone
+    let val = store.get_node_property(id, &PropertyKey::from("name"));
+    assert!(val.is_none());
+}
+
+#[test]
+fn remove_node_property_versioned_nonexistent_returns_none() {
+    let store = new_store();
+    let id = store.create_node(&["Person"]);
+    store.drain_pending();
+
+    let txn = TransactionId::SYSTEM;
+    let removed = store.remove_node_property_versioned(id, "nonexistent", txn);
+    assert!(removed.is_none());
+}
+
+#[test]
+fn remove_edge_property_versioned_delegates_to_inner() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    let eid = store.create_edge(n1, n2, "KNOWS");
+    store.set_edge_property(eid, "weight", Value::Float64(0.5));
+    store.drain_pending();
+
+    let txn = TransactionId::SYSTEM;
+    let removed = store.remove_edge_property_versioned(eid, "weight", txn);
+    assert!(removed.is_some());
+
+    let val = store.get_edge_property(eid, &PropertyKey::from("weight"));
+    assert!(val.is_none());
+}
+
+#[test]
+fn remove_edge_property_versioned_nonexistent_returns_none() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    let eid = store.create_edge(n1, n2, "KNOWS");
+    store.drain_pending();
+
+    let txn = TransactionId::SYSTEM;
+    let removed = store.remove_edge_property_versioned(eid, "nonexistent", txn);
+    assert!(removed.is_none());
+}
+
+#[test]
+fn add_label_versioned_delegates_to_inner() {
+    let store = new_store();
+    let id = store.create_node(&["Person"]);
+    store.drain_pending();
+
+    let txn = TransactionId::SYSTEM;
+    let added = store.add_label_versioned(id, "Employee", txn);
+    assert!(added);
+
+    // Verify label was added
+    let node = store.get_node(id).unwrap();
+    assert!(node.labels.iter().any(|l| l.as_str() == "Employee"));
+}
+
+#[test]
+fn add_label_versioned_duplicate_returns_false() {
+    let store = new_store();
+    let id = store.create_node(&["Person"]);
+    store.drain_pending();
+
+    let txn = TransactionId::SYSTEM;
+    let added = store.add_label_versioned(id, "Person", txn);
+    assert!(!added);
+}
+
+#[test]
+fn remove_label_versioned_delegates_to_inner() {
+    let store = new_store();
+    let id = store.create_node(&["Person", "Employee"]);
+    store.drain_pending();
+
+    let txn = TransactionId::SYSTEM;
+    let removed = store.remove_label_versioned(id, "Employee", txn);
+    assert!(removed);
+
+    let node = store.get_node(id).unwrap();
+    assert!(!node.labels.iter().any(|l| l.as_str() == "Employee"));
+}
+
+#[test]
+fn remove_label_versioned_nonexistent_returns_false() {
+    let store = new_store();
+    let id = store.create_node(&["Person"]);
+    store.drain_pending();
+
+    let txn = TransactionId::SYSTEM;
+    let removed = store.remove_label_versioned(id, "NonExistent", txn);
+    assert!(!removed);
+}
+
+// Note: Debug impl for InstrumentedStore<S> requires S: Debug.
+// LpgStore does not implement Debug, so we cannot test the Debug impl
+// with the standard test store. The Debug impl is a trivial delegation
+// (lines 654-659 of store.rs).

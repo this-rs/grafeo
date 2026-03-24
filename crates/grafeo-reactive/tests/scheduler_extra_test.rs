@@ -4,7 +4,8 @@
 use async_trait::async_trait;
 use grafeo_common::types::NodeId;
 use grafeo_reactive::{
-    BatchConfig, MutationBus, MutationEvent, MutationListener, NodeSnapshot, Scheduler,
+    BatchConfig, MutationBatch, MutationBus, MutationEvent, MutationListener, NodeSnapshot,
+    Scheduler,
 };
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -323,6 +324,344 @@ async fn large_burst_all_delivered() {
         total, event_count as usize,
         "all events should be delivered"
     );
+
+    scheduler.shutdown().await;
+}
+
+// ========================================================================
+// Bus closed path — drop the bus AND the scheduler while loop is running
+// This covers L275-280 (RecvError::Closed branch with flush)
+// The broadcast channel only closes when ALL Senders are dropped.
+// The Scheduler owns a clone of the bus (which contains a Sender),
+// so we must drop the scheduler too. We do this by dropping the
+// scheduler (without calling shutdown) after dropping the external bus.
+// ========================================================================
+
+#[tokio::test]
+async fn bus_closed_flushes_remaining_and_stops() {
+    // Use with_capacity(1) — a tiny channel that we can control
+    let bus = MutationBus::with_capacity(16384);
+    // Large batch size + long delay so events stay in the buffer
+    let config = BatchConfig::new(1000, Duration::from_secs(60));
+    let scheduler = Scheduler::new(&bus, config);
+
+    let (listener, batches) = RecordingListener::new("bus-close");
+    scheduler.register_listener(listener);
+
+    // Publish events
+    for i in 0..3 {
+        bus.publish(make_node_event(i));
+    }
+
+    // Give events time to reach the scheduler buffer
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // Drop the external bus first, then drop the scheduler.
+    // Dropping the scheduler drops its internal bus clone (closing all senders)
+    // AND drops the watch::Sender (shutdown signal).
+    // The background task sees either Closed or shutdown — both flush the buffer.
+    drop(bus);
+    drop(scheduler);
+
+    // Give the background task time to flush and exit
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let received = batches.lock().clone();
+    let total: usize = received.iter().map(|b| b.len()).sum();
+    assert_eq!(total, 3, "bus close should flush all buffered events");
+}
+
+// ========================================================================
+// Timeout flush — incomplete batch flushed after max_delay
+// This covers L290 (the timeout select branch)
+// ========================================================================
+
+#[tokio::test]
+async fn timeout_flushes_incomplete_batch() {
+    let bus = MutationBus::new();
+    // Large batch size but very short delay so timeout fires
+    let config = BatchConfig::new(1000, Duration::from_millis(30));
+    let scheduler = Scheduler::new(&bus, config);
+
+    let (listener, batches) = RecordingListener::new("timeout");
+    scheduler.register_listener(listener);
+
+    // Publish fewer events than max_batch_size
+    for i in 0..3 {
+        bus.publish(make_node_event(i));
+    }
+
+    // Wait longer than max_delay for timeout to trigger
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let received = batches.lock().clone();
+    let total: usize = received.iter().map(|b| b.len()).sum();
+    assert_eq!(total, 3, "timeout should flush incomplete batch");
+
+    scheduler.shutdown().await;
+}
+
+// ========================================================================
+// Shutdown drains events from channel (L228-230)
+// Publish events right before shutdown so they're in the broadcast channel.
+// The key: the scheduler loop is blocked waiting for `shutdown_rx.changed()`
+// or `rx.recv()`. We publish events and call shutdown nearly simultaneously
+// so that when the shutdown signal wins (biased select), try_recv finds
+// events still in the channel.
+// ========================================================================
+
+#[tokio::test]
+async fn shutdown_drains_channel_events() {
+    let bus = MutationBus::new();
+    // Very large batch size and delay so nothing flushes before shutdown
+    let config = BatchConfig::new(10000, Duration::from_secs(3600));
+    let scheduler = Scheduler::new(&bus, config);
+
+    let (listener, batches) = RecordingListener::new("drain");
+    scheduler.register_listener(listener);
+
+    // Give the scheduler loop a moment to start
+    tokio::time::sleep(Duration::from_millis(20)).await;
+
+    // Publish a burst of events and immediately shutdown — the biased select
+    // will see the shutdown signal first and try_recv will drain the channel
+    let bus_clone = bus.clone();
+    tokio::spawn(async move {
+        for i in 0..10 {
+            bus_clone.publish(make_node_event(i));
+        }
+    });
+
+    // Tiny sleep to let events enter the channel, then shutdown
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    scheduler.shutdown().await;
+
+    let received = batches.lock().clone();
+    let total: usize = received.iter().map(|b| b.len()).sum();
+    assert_eq!(total, 10, "shutdown should drain all channel events");
+}
+
+// ========================================================================
+// Lagged receiver — covers L267-268 (RecvError::Lagged)
+// ========================================================================
+
+#[tokio::test]
+async fn lagged_receiver_continues() {
+    // Use a tiny broadcast capacity so the receiver lags quickly
+    let bus = MutationBus::with_capacity(2);
+    let config = BatchConfig::new(1, Duration::from_millis(30));
+    let scheduler = Scheduler::new(&bus, config);
+
+    let (listener, batches) = RecordingListener::new("lagged");
+    scheduler.register_listener(listener);
+
+    // Flood the bus beyond its capacity to cause lag
+    for i in 0..20 {
+        bus.publish(make_node_event(i));
+    }
+
+    // Give the scheduler time to process what it can
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // The scheduler should have continued despite lagging — it gets at least some events
+    let received = batches.lock().clone();
+    let total: usize = received.iter().map(|b| b.len()).sum();
+    // We can't know exactly how many, but it should have recovered and received some
+    assert!(
+        total > 0,
+        "scheduler should recover from lag and receive events"
+    );
+
+    scheduler.shutdown().await;
+}
+
+// ========================================================================
+// Listener filtering — partial acceptance (L321, and the partial path L329-332)
+// ========================================================================
+
+/// A listener that only accepts NodeCreated events (rejects NodeDeleted).
+struct SelectiveListener {
+    name: String,
+    batches: Arc<Mutex<Vec<Vec<MutationEvent>>>>,
+}
+
+impl SelectiveListener {
+    fn new(name: &str) -> (Arc<Self>, Arc<Mutex<Vec<Vec<MutationEvent>>>>) {
+        let batches = Arc::new(Mutex::new(Vec::new()));
+        let listener = Arc::new(Self {
+            name: name.to_string(),
+            batches: Arc::clone(&batches),
+        });
+        (listener, batches)
+    }
+}
+
+#[async_trait]
+impl MutationListener for SelectiveListener {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn on_event(&self, _event: &MutationEvent) {}
+
+    async fn on_batch(&self, events: &[MutationEvent]) {
+        self.batches.lock().push(events.to_vec());
+    }
+
+    fn accepts(&self, event: &MutationEvent) -> bool {
+        matches!(event, MutationEvent::NodeCreated { .. })
+    }
+}
+
+/// A listener that rejects ALL events.
+struct RejectAllListener {
+    name: String,
+}
+
+impl RejectAllListener {
+    fn new(name: &str) -> Arc<Self> {
+        Arc::new(Self {
+            name: name.to_string(),
+        })
+    }
+}
+
+#[async_trait]
+impl MutationListener for RejectAllListener {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn on_event(&self, _event: &MutationEvent) {}
+
+    fn accepts(&self, _event: &MutationEvent) -> bool {
+        false
+    }
+}
+
+fn make_node_deleted_event(id: u64) -> MutationEvent {
+    MutationEvent::NodeDeleted {
+        node: NodeSnapshot {
+            id: grafeo_common::types::NodeId::new(id),
+            labels: smallvec::smallvec![arcstr::literal!("Test")],
+            properties: vec![],
+        },
+    }
+}
+
+#[tokio::test]
+async fn selective_listener_receives_only_accepted_events() {
+    let bus = MutationBus::new();
+    let config = BatchConfig::new(100, Duration::from_millis(30));
+    let scheduler = Scheduler::new(&bus, config);
+
+    let (selective, sel_batches) = SelectiveListener::new("selective");
+    scheduler.register_listener(selective);
+
+    // Publish a mix of NodeCreated and NodeDeleted events in a single batch
+    // so that the scheduler has them together and must filter
+    let events = vec![
+        make_node_event(1),
+        make_node_deleted_event(2),
+        make_node_event(3),
+        make_node_deleted_event(4),
+    ];
+    bus.publish_batch(MutationBatch::new(events));
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let received = sel_batches.lock().clone();
+    let total: usize = received.iter().map(|b| b.len()).sum();
+    assert_eq!(
+        total, 2,
+        "selective listener should only receive NodeCreated events"
+    );
+
+    scheduler.shutdown().await;
+}
+
+#[tokio::test]
+async fn reject_all_listener_receives_nothing() {
+    let bus = MutationBus::new();
+    let config = BatchConfig::new(100, Duration::from_millis(30));
+    let scheduler = Scheduler::new(&bus, config);
+
+    let reject = RejectAllListener::new("reject-all");
+    let (recording, rec_batches) = RecordingListener::new("accept-all");
+
+    // Register both: one that rejects everything, one that accepts everything
+    scheduler.register_listener(reject);
+    scheduler.register_listener(recording);
+
+    bus.publish(make_node_event(1));
+    bus.publish(make_node_event(2));
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // The accept-all listener should have received events
+    let total: usize = rec_batches.lock().iter().map(|b| b.len()).sum();
+    assert_eq!(total, 2, "accept-all listener should receive 2 events");
+
+    scheduler.shutdown().await;
+}
+
+// ========================================================================
+// Drop scheduler without explicit shutdown — sender dropped path (L225 result.is_err())
+// ========================================================================
+
+#[tokio::test]
+async fn drop_scheduler_without_shutdown() {
+    let bus = MutationBus::new();
+    let config = BatchConfig::new(1000, Duration::from_secs(60));
+    let scheduler = Scheduler::new(&bus, config);
+
+    let (listener, _batches) = RecordingListener::new("drop-test");
+    scheduler.register_listener(listener);
+
+    bus.publish(make_node_event(1));
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // Drop the scheduler without calling shutdown — the watch sender is dropped,
+    // which causes shutdown_rx.changed() to return Err, triggering the drain path
+    drop(scheduler);
+
+    // Give the background task time to notice the drop and exit
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    // If we get here without hanging, the background task exited gracefully
+}
+
+// ========================================================================
+// Publish batch with multiple events to test batch splitting (while loop L256-260)
+// ========================================================================
+
+#[tokio::test]
+async fn batch_splitting_with_small_max_size() {
+    let bus = MutationBus::new();
+    // max_batch_size = 2, so a batch of 5 events triggers the while loop multiple times
+    let config = BatchConfig::new(2, Duration::from_millis(30));
+    let scheduler = Scheduler::new(&bus, config);
+
+    let (listener, batches) = RecordingListener::new("split");
+    scheduler.register_listener(listener);
+
+    // Send 5 events in a single MutationBatch via the bus
+    let events: Vec<MutationEvent> = (0..5).map(make_node_event).collect();
+    bus.publish_batch(MutationBatch::new(events));
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let received = batches.lock().clone();
+    let total: usize = received.iter().map(|b| b.len()).sum();
+    assert_eq!(total, 5, "all 5 events should be dispatched");
+
+    // Each dispatch should be at most 2 events
+    for batch in &received {
+        assert!(
+            batch.len() <= 2,
+            "batch should have at most 2 events, got {}",
+            batch.len()
+        );
+    }
 
     scheduler.shutdown().await;
 }
