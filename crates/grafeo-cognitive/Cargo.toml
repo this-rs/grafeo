@@ -8,10 +8,15 @@ repository.workspace = true
 authors.workspace = true
 description = "Cognitive features for Grafeo — energy, synapses, activation, fabric, memory"
 
+[features]
+default = []
+gds-refresh = ["dep:grafeo-adapters"]
+
 [dependencies]
 grafeo-common.workspace = true
 grafeo-core = { workspace = true, default-features = false }
 grafeo-reactive.workspace = true
+grafeo-adapters = { workspace = true, optional = true, default-features = false, features = ["algos"] }
 
 # Async runtime & traits
 tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }

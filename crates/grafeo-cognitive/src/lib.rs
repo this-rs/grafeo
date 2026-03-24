@@ -25,6 +25,8 @@ pub mod activation;
 pub mod co_change;
 pub mod energy;
 pub mod error;
+pub mod fabric;
+pub mod gds_refresh;
 pub mod synapse;
 
 pub use activation::{
@@ -33,4 +35,6 @@ pub use activation::{
 pub use co_change::{CoChangeConfig, CoChangeDetector, CoChangeRelation, CoChangeStore};
 pub use energy::{EnergyConfig, EnergyListener, EnergyStore, NodeEnergy};
 pub use error::CognitiveError;
+pub use fabric::{FabricListener, FabricScore, FabricStore};
+pub use gds_refresh::{GdsRefreshConfig, GdsRefreshScheduler};
 pub use synapse::{Synapse, SynapseConfig, SynapseListener, SynapseStore};

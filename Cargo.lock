@@ -1214,6 +1214,7 @@ dependencies = [
  "arcstr",
  "async-trait",
  "dashmap",
+ "grafeo-adapters",
  "grafeo-common",
  "grafeo-core",
  "grafeo-reactive",
