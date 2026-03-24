@@ -155,10 +155,7 @@ impl ConsolidationEngine {
         // 2. Group nodes by community
         let mut communities: HashMap<u64, Vec<NodeId>> = HashMap::new();
         for (&node_id, &community_id) in &louvain_result.communities {
-            communities
-                .entry(community_id)
-                .or_default()
-                .push(node_id);
+            communities.entry(community_id).or_default().push(node_id);
         }
 
         let mut result = ConsolidationResult {
@@ -204,9 +201,7 @@ impl ConsolidationEngine {
             // 4. Merge candidates into a condensed node
             let (condensed_id, edges) = self.merge_nodes(store, &candidates, energy_map);
             result.nodes_removed += candidates.len();
-            result
-                .condensed_nodes
-                .insert(condensed_id, candidates);
+            result.condensed_nodes.insert(condensed_id, candidates);
             result.derived_from_edges.extend(edges);
         }
 
@@ -276,11 +271,7 @@ impl ConsolidationEngine {
         }
 
         // Store the max energy
-        store.set_node_property(
-            condensed_id,
-            "_cog_energy",
-            Value::Float64(max_energy),
-        );
+        store.set_node_property(condensed_id, "_cog_energy", Value::Float64(max_energy));
 
         // Store count of merged nodes
         store.set_node_property(

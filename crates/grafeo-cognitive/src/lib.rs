@@ -155,7 +155,8 @@ pub use episodic::{
 
 #[cfg(feature = "consolidation")]
 pub use consolidation::{
-    ConsolidationConfig, ConsolidationEngine, ConsolidationResult, EDGE_DERIVED_FROM as EDGE_CONSOLIDATION_DERIVED_FROM,
+    ConsolidationConfig, ConsolidationEngine, ConsolidationResult,
+    EDGE_DERIVED_FROM as EDGE_CONSOLIDATION_DERIVED_FROM,
 };
 
 pub use search::{

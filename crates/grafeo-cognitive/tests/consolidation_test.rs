@@ -7,8 +7,8 @@ use grafeo_cognitive::consolidation::{
 };
 use grafeo_common::types::NodeId;
 use grafeo_common::utils::hash::FxHashMap;
-use grafeo_core::graph::Direction;
 use grafeo_core::LpgStore;
+use grafeo_core::graph::Direction;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -16,12 +16,7 @@ use grafeo_core::LpgStore;
 
 /// Creates a densely connected cluster of `n` nodes with the given label.
 /// Each node connects to every other node in the cluster → strong community.
-fn create_cluster(
-    store: &LpgStore,
-    label: &str,
-    n: usize,
-    edge_type: &str,
-) -> Vec<NodeId> {
+fn create_cluster(store: &LpgStore, label: &str, n: usize, edge_type: &str) -> Vec<NodeId> {
     let mut nodes = Vec::with_capacity(n);
     for _ in 0..n {
         nodes.push(store.create_node(&[label]));
@@ -302,9 +297,8 @@ fn consolidation_synapse_rewire() {
     let condensed_id = *result.condensed_nodes.keys().next().unwrap();
 
     // Check that external → condensed SYNAPSE edge exists (rewired from external → cluster[0])
-    let outgoing_from_external: Vec<(NodeId, _)> = store
-        .edges_from(external, Direction::Outgoing)
-        .collect();
+    let outgoing_from_external: Vec<(NodeId, _)> =
+        store.edges_from(external, Direction::Outgoing).collect();
     let has_synapse_to_condensed = outgoing_from_external.iter().any(|(target, eid)| {
         *target == condensed_id
             && store
