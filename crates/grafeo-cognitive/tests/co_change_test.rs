@@ -34,11 +34,7 @@ fn make_edge_snapshot(id: u64, src: u64, dst: u64) -> grafeo_reactive::EdgeSnaps
 
 #[test]
 fn relation_new_initializes_count_1() {
-    let rel = CoChangeRelation::new(
-        NodeId::new(1),
-        NodeId::new(2),
-        Duration::from_secs(3600),
-    );
+    let rel = CoChangeRelation::new(NodeId::new(1), NodeId::new(2), Duration::from_secs(3600));
     assert_eq!(rel.count, 1);
     assert!(rel.strength() > 0.0);
 }
@@ -202,15 +198,24 @@ async fn detector_repeated_batches_increment_count() {
     ];
 
     detector.on_batch(&events).await;
-    let c1 = store.get_relation(NodeId::new(1), NodeId::new(2)).unwrap().count;
+    let c1 = store
+        .get_relation(NodeId::new(1), NodeId::new(2))
+        .unwrap()
+        .count;
     assert_eq!(c1, 1);
 
     detector.on_batch(&events).await;
-    let c2 = store.get_relation(NodeId::new(1), NodeId::new(2)).unwrap().count;
+    let c2 = store
+        .get_relation(NodeId::new(1), NodeId::new(2))
+        .unwrap()
+        .count;
     assert_eq!(c2, 2);
 
     detector.on_batch(&events).await;
-    let c3 = store.get_relation(NodeId::new(1), NodeId::new(2)).unwrap().count;
+    let c3 = store
+        .get_relation(NodeId::new(1), NodeId::new(2))
+        .unwrap()
+        .count;
     assert_eq!(c3, 3);
 }
 
@@ -224,7 +229,11 @@ async fn detector_edge_events_co_change_endpoints() {
     }];
     detector.on_batch(&events).await;
 
-    assert!(store.get_relation(NodeId::new(10), NodeId::new(20)).is_some());
+    assert!(
+        store
+            .get_relation(NodeId::new(10), NodeId::new(20))
+            .is_some()
+    );
 }
 
 #[tokio::test]
@@ -234,7 +243,9 @@ async fn detector_large_batch_combinatorial() {
 
     // 10 nodes → n(n-1)/2 = 45 co-change pairs
     let events: Vec<MutationEvent> = (1..=10)
-        .map(|id| MutationEvent::NodeCreated { node: make_node(id) })
+        .map(|id| MutationEvent::NodeCreated {
+            node: make_node(id),
+        })
         .collect();
     detector.on_batch(&events).await;
 
@@ -252,7 +263,9 @@ async fn detector_large_batch_skipped_when_over_max() {
 
     // 10 nodes > max_batch_nodes=5 → should skip
     let events: Vec<MutationEvent> = (1..=10)
-        .map(|id| MutationEvent::NodeCreated { node: make_node(id) })
+        .map(|id| MutationEvent::NodeCreated {
+            node: make_node(id),
+        })
         .collect();
     detector.on_batch(&events).await;
 

@@ -135,11 +135,7 @@ struct CoChangeKey(NodeId, NodeId);
 
 impl CoChangeKey {
     fn new(a: NodeId, b: NodeId) -> Self {
-        if a.0 <= b.0 {
-            Self(a, b)
-        } else {
-            Self(b, a)
-        }
+        if a.0 <= b.0 { Self(a, b) } else { Self(b, a) }
     }
 }
 
@@ -176,9 +172,7 @@ impl CoChangeStore {
         self.relations
             .entry(key)
             .and_modify(|rel| rel.record())
-            .or_insert_with(|| {
-                CoChangeRelation::new(key.0, key.1, self.config.strength_half_life)
-            });
+            .or_insert_with(|| CoChangeRelation::new(key.0, key.1, self.config.strength_half_life));
     }
 
     /// Returns all co-change relations for a given node, sorted by strength descending.
