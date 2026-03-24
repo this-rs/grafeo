@@ -292,6 +292,27 @@ impl FabricStore {
             .map(|e| e.scar_intensity)
             .fold(0.0_f64, f64::max)
     }
+
+    /// Returns all distinct community IDs assigned to tracked nodes.
+    pub fn community_ids(&self) -> Vec<u64> {
+        let mut ids: Vec<u64> = self
+            .scores
+            .iter()
+            .filter_map(|entry| entry.community_id)
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    }
+
+    /// Returns all node IDs assigned to a specific community.
+    pub fn get_community_nodes(&self, community_id: u64) -> Vec<NodeId> {
+        self.scores
+            .iter()
+            .filter(|entry| entry.community_id == Some(community_id))
+            .map(|entry| *entry.key())
+            .collect()
+    }
 }
 
 impl Default for FabricStore {

@@ -109,3 +109,8 @@ pub use memory::{
     ArchiveBackend, FileArchiveBackend, InMemoryArchiveBackend, MemoryConfig, MemoryHorizon,
     MemoryManager, MemoryStore, NodeMemoryState, SweepResult,
 };
+
+#[cfg(feature = "stagnation")]
+pub use stagnation::{
+    StagnationConfig, StagnationDetector, StagnationScore, StagnationStore, Trend,
+};

@@ -9,7 +9,8 @@ use serde::Deserialize;
     feature = "energy",
     feature = "synapse",
     feature = "co-change",
-    feature = "memory"
+    feature = "memory",
+    feature = "stagnation"
 ))]
 use std::time::Duration;
 
@@ -215,11 +216,58 @@ impl MemoryConfigToml {
 pub struct StagnationConfigToml {
     /// Whether the stagnation detection subsystem is enabled.
     pub enabled: bool,
+    /// Weight for the energy component in the stagnation formula.
+    pub weight_energy: f64,
+    /// Weight for the mutation age component.
+    pub weight_mutation_age: f64,
+    /// Weight for the synapse activity component.
+    pub weight_synapse_activity: f64,
+    /// Duration (seconds) used to normalize `last_mutation_age` to `[0, 1]`.
+    pub max_mutation_age_secs: u64,
+    /// Threshold above which a community is considered stagnant.
+    pub stagnation_threshold: f64,
+    /// Duration (seconds) for "recently reinforced" synapse window.
+    pub synapse_recent_window_secs: u64,
+    /// Number of historical snapshots for trend detection.
+    pub trend_window_size: usize,
+    /// Minimum delta to classify as improving/degrading.
+    pub trend_tolerance: f64,
+    /// Scan interval in seconds.
+    pub scan_interval_secs: u64,
 }
 
 impl Default for StagnationConfigToml {
     fn default() -> Self {
-        Self { enabled: false }
+        Self {
+            enabled: false,
+            weight_energy: 0.4,
+            weight_mutation_age: 0.35,
+            weight_synapse_activity: 0.25,
+            max_mutation_age_secs: 30 * 24 * 3600,
+            stagnation_threshold: 0.7,
+            synapse_recent_window_secs: 7 * 24 * 3600,
+            trend_window_size: 5,
+            trend_tolerance: 0.05,
+            scan_interval_secs: 3600,
+        }
+    }
+}
+
+impl StagnationConfigToml {
+    /// Converts to the runtime `StagnationConfig` used by the stagnation subsystem.
+    #[cfg(feature = "stagnation")]
+    pub fn to_runtime(&self) -> crate::stagnation::StagnationConfig {
+        crate::stagnation::StagnationConfig {
+            weight_energy: self.weight_energy,
+            weight_mutation_age: self.weight_mutation_age,
+            weight_synapse_activity: self.weight_synapse_activity,
+            max_mutation_age: Duration::from_secs(self.max_mutation_age_secs),
+            stagnation_threshold: self.stagnation_threshold,
+            synapse_recent_window: Duration::from_secs(self.synapse_recent_window_secs),
+            trend_window_size: self.trend_window_size,
+            trend_tolerance: self.trend_tolerance,
+            scan_interval: Duration::from_secs(self.scan_interval_secs),
+        }
     }
 }
 
@@ -340,7 +388,10 @@ impl CognitiveConfig {
                 enabled: true,
                 ..Default::default()
             },
-            stagnation: StagnationConfigToml { enabled: true },
+            stagnation: StagnationConfigToml {
+                enabled: true,
+                ..Default::default()
+            },
         }
     }
 
