@@ -578,6 +578,10 @@ impl super::Planner {
         let mut property_projections: Vec<(String, String, String)> = Vec::new();
         let mut next_col_idx = input_columns.len();
 
+        // Collect cognitive UDF expressions that need projection
+        #[cfg(feature = "cognitive")]
+        let mut cognitive_projections: Vec<(String, LogicalExpression)> = Vec::new();
+
         for key in &sort.keys {
             if let LogicalExpression::Property { variable, property } = &key.expression {
                 let col_name = format!("{}_{}", variable, property);
@@ -587,6 +591,17 @@ impl super::Planner {
                         property.clone(),
                         col_name.clone(),
                     ));
+                    variable_columns.insert(col_name, next_col_idx);
+                    next_col_idx += 1;
+                }
+            }
+
+            // Detect cognitive UDF calls (e.g., grafeo.energy(n)) and project them
+            #[cfg(feature = "cognitive")]
+            if let LogicalExpression::FunctionCall { name, .. } = &key.expression {
+                let col_name = name.replace('.', "_");
+                if !variable_columns.contains_key(&col_name) {
+                    cognitive_projections.push((col_name.clone(), key.expression.clone()));
                     variable_columns.insert(col_name, next_col_idx);
                     next_col_idx += 1;
                 }
@@ -629,6 +644,41 @@ impl super::Planner {
                     input_op,
                     projections,
                     output_types,
+                    Arc::clone(&self.store) as Arc<dyn GraphStore>,
+                )
+                .with_transaction_context(self.viewing_epoch, self.transaction_id)
+                .with_session_context(self.session_context.clone()),
+            );
+        }
+
+        // Project cognitive UDF expressions (e.g., grafeo.energy(n)) as extra columns
+        #[cfg(feature = "cognitive")]
+        if !cognitive_projections.is_empty() {
+            let mut projections = Vec::new();
+            let mut proj_types = Vec::new();
+
+            // Pass through all existing columns
+            for i in 0..output_columns.len() {
+                projections.push(ProjectExpr::Column(i));
+                proj_types.push(LogicalType::Any);
+            }
+
+            // Add cognitive expression columns
+            for (col_name, expr) in &cognitive_projections {
+                let filter_expr = self.convert_expression(expr)?;
+                projections.push(ProjectExpr::Expression {
+                    expr: filter_expr,
+                    variable_columns: variable_columns.clone(),
+                });
+                proj_types.push(LogicalType::Float64);
+                output_columns.push(col_name.clone());
+            }
+
+            input_op = Box::new(
+                ProjectOperator::with_store(
+                    input_op,
+                    projections,
+                    proj_types,
                     Arc::clone(&self.store) as Arc<dyn GraphStore>,
                 )
                 .with_transaction_context(self.viewing_epoch, self.transaction_id)
@@ -698,6 +748,17 @@ impl super::Planner {
                     Error::Internal(format!(
                         "Property column '{}' not found for ORDER BY (from {}.{})",
                         col_name, variable, property
+                    ))
+                })
+            }
+            LogicalExpression::FunctionCall { name, .. } => {
+                // Look for a projected cognitive/function column
+                let col_name = name.replace('.', "_");
+                variable_columns.get(&col_name).copied().ok_or_else(|| {
+                    Error::Internal(format!(
+                        "Function column '{}' not found for ORDER BY (from {}()). \
+                         Cognitive UDF columns are auto-projected when the cognitive feature is enabled.",
+                        col_name, name
                     ))
                 })
             }

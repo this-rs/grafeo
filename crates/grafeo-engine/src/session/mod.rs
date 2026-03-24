@@ -158,6 +158,17 @@ pub struct Session {
     /// Transaction start time for duration tracking.
     #[cfg(feature = "metrics")]
     tx_start_time: parking_lot::Mutex<Option<Instant>>,
+    /// Optional post-commit hook for reactive event publishing.
+    ///
+    /// When set, called after every successful commit with the graph store
+    /// reference. Used by `grafeo-reactive` to drain pending mutation events
+    /// from an `InstrumentedStore` and publish them to the `MutationBus`.
+    ///
+    /// This is the single injection point for the reactive substrate — it
+    /// compiles to zero cost when unused (Option::None, no branch taken
+    /// after optimization).
+    #[cfg(feature = "reactive")]
+    post_commit_hook: Option<Arc<dyn Fn(&dyn GraphStoreMut) + Send + Sync>>,
 }
 
 /// Per-graph savepoint snapshot, capturing the store state at the time of the savepoint.
@@ -223,6 +234,8 @@ impl Session {
             metrics: None,
             #[cfg(feature = "metrics")]
             tx_start_time: parking_lot::Mutex::new(None),
+            #[cfg(feature = "reactive")]
+            post_commit_hook: None,
         }
     }
 
@@ -256,6 +269,16 @@ impl Session {
     #[cfg(feature = "metrics")]
     pub(crate) fn set_metrics(&mut self, metrics: Arc<crate::metrics::MetricsRegistry>) {
         self.metrics = Some(metrics);
+    }
+
+    /// Sets a post-commit hook for reactive event publishing.
+    ///
+    /// The hook receives a reference to the graph store after each successful
+    /// commit. Used by `grafeo-reactive` to drain mutation events from an
+    /// `InstrumentedStore` and publish them to the `MutationBus`.
+    #[cfg(feature = "reactive")]
+    pub fn set_post_commit_hook(&mut self, hook: Arc<dyn Fn(&dyn GraphStoreMut) + Send + Sync>) {
+        self.post_commit_hook = Some(hook);
     }
 
     /// Creates a session backed by an external graph store.
@@ -308,6 +331,8 @@ impl Session {
             metrics: None,
             #[cfg(feature = "metrics")]
             tx_start_time: parking_lot::Mutex::new(None),
+            #[cfg(feature = "reactive")]
+            post_commit_hook: None,
         })
     }
 
@@ -3173,6 +3198,13 @@ impl Session {
                 let duration_ms = start.elapsed().as_secs_f64() * 1000.0;
                 crate::metrics::record_metric!(self.metrics, tx_duration, observe duration_ms);
             }
+        }
+
+        // Reactive substrate: notify post-commit hook so it can drain pending
+        // mutation events from the InstrumentedStore and publish them.
+        #[cfg(feature = "reactive")]
+        if let Some(ref hook) = self.post_commit_hook {
+            hook(self.graph_store.as_ref());
         }
 
         Ok(())

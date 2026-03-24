@@ -105,6 +105,9 @@ pub struct Planner {
     /// chain walks).  Set when the plan contains no mutations, so PENDING
     /// writes are impossible to observe.
     pub(super) read_only: bool,
+    /// Optional cognitive engine for cognitive UDFs and procedures.
+    #[cfg(feature = "cognitive")]
+    pub(super) cognitive_engine: Option<Arc<dyn grafeo_cognitive::CognitiveEngine>>,
 }
 
 impl Planner {
@@ -133,6 +136,8 @@ impl Planner {
             write_tracker: None,
             session_context: grafeo_core::execution::operators::SessionContext::default(),
             read_only: false,
+            #[cfg(feature = "cognitive")]
+            cognitive_engine: None,
         }
     }
 
@@ -174,6 +179,8 @@ impl Planner {
             write_tracker,
             session_context: grafeo_core::execution::operators::SessionContext::default(),
             read_only: false,
+            #[cfg(feature = "cognitive")]
+            cognitive_engine: None,
         }
     }
 
@@ -182,6 +189,17 @@ impl Planner {
     #[must_use]
     pub fn with_read_only(mut self, read_only: bool) -> Self {
         self.read_only = read_only;
+        self
+    }
+
+    /// Sets the cognitive engine for cognitive UDFs and procedures.
+    #[cfg(feature = "cognitive")]
+    #[must_use]
+    pub fn with_cognitive_engine(
+        mut self,
+        engine: Arc<dyn grafeo_cognitive::CognitiveEngine>,
+    ) -> Self {
+        self.cognitive_engine = Some(engine);
         self
     }
 

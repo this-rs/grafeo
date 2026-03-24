@@ -601,30 +601,34 @@ impl GraphAlgorithm for DegreeCentralityAlgorithm {
 
     fn execute(&self, store: &dyn GraphStore, params: &Parameters) -> Result<AlgorithmResult> {
         let normalized = params.get_bool("normalized").unwrap_or(false);
+        let result = degree_centrality(store);
 
-        if normalized {
-            let scores = degree_centrality_normalized(store);
+        let mut output = AlgorithmResult::new(vec![
+            "node_id".to_string(),
+            "in_degree".to_string(),
+            "out_degree".to_string(),
+            "total_degree".to_string(),
+        ]);
 
-            let mut builder =
-                NodeValueResultBuilder::with_capacity("degree_centrality", scores.len());
-            for (node, score) in scores {
-                builder.push(node, Value::Float64(score));
-            }
-            Ok(builder.build())
+        let n = result.total_degree.len();
+        let norm = if normalized && n > 1 {
+            (n - 1) as f64
         } else {
-            let result = degree_centrality(store);
+            1.0
+        };
 
-            let mut output = AlgorithmResult::new(vec![
-                "node_id".to_string(),
-                "in_degree".to_string(),
-                "out_degree".to_string(),
-                "total_degree".to_string(),
-            ]);
+        for (&node, &total) in &result.total_degree {
+            let in_d = *result.in_degree.get(&node).unwrap_or(&0);
+            let out_d = *result.out_degree.get(&node).unwrap_or(&0);
 
-            for (&node, &total) in &result.total_degree {
-                let in_d = *result.in_degree.get(&node).unwrap_or(&0);
-                let out_d = *result.out_degree.get(&node).unwrap_or(&0);
-
+            if normalized {
+                output.add_row(vec![
+                    Value::Int64(node.0 as i64),
+                    Value::Float64(in_d as f64 / norm),
+                    Value::Float64(out_d as f64 / norm),
+                    Value::Float64(total as f64 / norm),
+                ]);
+            } else {
                 output.add_row(vec![
                     Value::Int64(node.0 as i64),
                     Value::Int64(in_d as i64),
@@ -632,9 +636,292 @@ impl GraphAlgorithm for DegreeCentralityAlgorithm {
                     Value::Int64(total as i64),
                 ]);
             }
-
-            Ok(output)
         }
+
+        Ok(output)
+    }
+}
+
+// ============================================================================
+// HITS (Hub/Authority Scores)
+// ============================================================================
+
+/// Result of the HITS (Hyperlink-Induced Topic Search) algorithm.
+///
+/// Contains hub and authority scores for each node in the graph.
+/// In Kleinberg's model, good *authorities* are pointed to by good *hubs*,
+/// and good *hubs* point to good *authorities*.
+///
+/// # Fields
+///
+/// * `hub_scores` - Hub score for each node (how well it points to authorities)
+/// * `authority_scores` - Authority score for each node (how well it is pointed to by hubs)
+/// * `converged` - Whether the algorithm converged within the iteration limit
+/// * `iterations` - Number of iterations performed
+#[derive(Debug, Clone)]
+pub struct HitsResult {
+    /// Hub score for each node.
+    pub hub_scores: FxHashMap<NodeId, f64>,
+    /// Authority score for each node.
+    pub authority_scores: FxHashMap<NodeId, f64>,
+    /// Whether the algorithm converged within the tolerance.
+    pub converged: bool,
+    /// Number of iterations actually performed.
+    pub iterations: usize,
+}
+
+/// Computes HITS (Hyperlink-Induced Topic Search) hub and authority scores.
+///
+/// Implements Kleinberg's HITS algorithm using iterative power method with
+/// L2 normalization. Hub scores measure how well a node points to authoritative
+/// nodes; authority scores measure how well a node is referenced by good hubs.
+///
+/// # Arguments
+///
+/// * `store` - The graph store to compute scores on
+/// * `max_iterations` - Maximum number of iterations before stopping
+/// * `tolerance` - Convergence tolerance: stops when L2 norm of score change < tolerance
+///
+/// # Returns
+///
+/// A [`HitsResult`] containing hub and authority scores for every node,
+/// plus convergence metadata.
+///
+/// # Complexity
+///
+/// O(k × (V + E)) where k is the number of iterations until convergence,
+/// V is the number of vertices and E is the number of edges.
+///
+/// # Example
+///
+/// ```no_run
+/// use grafeo_adapters::plugins::algorithms::hits;
+/// use grafeo_core::graph::lpg::LpgStore;
+///
+/// let store = LpgStore::new().unwrap();
+/// let a = store.create_node(&["Page"]);
+/// let b = store.create_node(&["Page"]);
+/// store.create_edge(a, b, "LINKS_TO");
+///
+/// let result = hits(&store, 100, 1e-6);
+/// assert!(result.converged);
+/// ```
+pub fn hits(store: &dyn GraphStore, max_iterations: usize, tolerance: f64) -> HitsResult {
+    let nodes = store.node_ids();
+    let n = nodes.len();
+
+    if n == 0 {
+        return HitsResult {
+            hub_scores: FxHashMap::default(),
+            authority_scores: FxHashMap::default(),
+            converged: true,
+            iterations: 0,
+        };
+    }
+
+    // Build node index mapping
+    let mut node_to_idx: FxHashMap<NodeId, usize> = FxHashMap::default();
+    for (idx, &node) in nodes.iter().enumerate() {
+        node_to_idx.insert(node, idx);
+    }
+
+    // Build adjacency: out_edges[u] = list of v where u→v
+    let mut out_edges: Vec<Vec<usize>> = vec![Vec::new(); n];
+    // Build reverse adjacency: in_edges[v] = list of u where u→v
+    let mut in_edges: Vec<Vec<usize>> = vec![Vec::new(); n];
+
+    for (idx, &node) in nodes.iter().enumerate() {
+        for (neighbor, _) in store.edges_from(node, Direction::Outgoing) {
+            if let Some(&target_idx) = node_to_idx.get(&neighbor) {
+                out_edges[idx].push(target_idx);
+                in_edges[target_idx].push(idx);
+            }
+        }
+    }
+
+    // Initialize: hub(v) = authority(v) = 1/√N
+    let init_val = 1.0 / (n as f64).sqrt();
+    let mut hub = vec![init_val; n];
+    let mut authority = vec![init_val; n];
+
+    let mut converged = false;
+    let mut iterations = 0;
+
+    for _ in 0..max_iterations {
+        iterations += 1;
+
+        // Step 1: authority(v) = Σ hub(u) for each u→v
+        let mut new_authority = vec![0.0; n];
+        for v in 0..n {
+            for &u in &in_edges[v] {
+                new_authority[v] += hub[u];
+            }
+        }
+
+        // Normalize authority scores (L2)
+        let auth_norm: f64 = new_authority.iter().map(|x| x * x).sum::<f64>().sqrt();
+        if auth_norm > 0.0 {
+            for val in &mut new_authority {
+                *val /= auth_norm;
+            }
+        }
+
+        // Step 2: hub(v) = Σ authority(u) for each v→u
+        let mut new_hub = vec![0.0; n];
+        for v in 0..n {
+            for &u in &out_edges[v] {
+                new_hub[v] += new_authority[u];
+            }
+        }
+
+        // Normalize hub scores (L2)
+        let hub_norm: f64 = new_hub.iter().map(|x| x * x).sum::<f64>().sqrt();
+        if hub_norm > 0.0 {
+            for val in &mut new_hub {
+                *val /= hub_norm;
+            }
+        }
+
+        // Check convergence: ||new_auth - auth||₂ + ||new_hub - hub||₂ < tolerance
+        let auth_diff: f64 = authority
+            .iter()
+            .zip(new_authority.iter())
+            .map(|(a, b)| (a - b) * (a - b))
+            .sum::<f64>()
+            .sqrt();
+        let hub_diff: f64 = hub
+            .iter()
+            .zip(new_hub.iter())
+            .map(|(a, b)| (a - b) * (a - b))
+            .sum::<f64>()
+            .sqrt();
+
+        authority = new_authority;
+        hub = new_hub;
+
+        if auth_diff + hub_diff < tolerance {
+            converged = true;
+            break;
+        }
+    }
+
+    // Convert to NodeId maps
+    let hub_scores: FxHashMap<NodeId, f64> = nodes
+        .iter()
+        .enumerate()
+        .map(|(idx, &node)| (node, hub[idx]))
+        .collect();
+
+    let authority_scores: FxHashMap<NodeId, f64> = nodes
+        .iter()
+        .enumerate()
+        .map(|(idx, &node)| (node, authority[idx]))
+        .collect();
+
+    HitsResult {
+        hub_scores,
+        authority_scores,
+        converged,
+        iterations,
+    }
+}
+
+// ============================================================================
+// HITS Algorithm Wrapper
+// ============================================================================
+
+/// Static parameter definitions for the HITS algorithm.
+static HITS_PARAMS: OnceLock<Vec<ParameterDef>> = OnceLock::new();
+
+fn hits_params() -> &'static [ParameterDef] {
+    HITS_PARAMS.get_or_init(|| {
+        vec![
+            ParameterDef {
+                name: "max_iterations".to_string(),
+                description: "Maximum iterations (default: 100)".to_string(),
+                param_type: ParameterType::Integer,
+                required: false,
+                default: Some("100".to_string()),
+            },
+            ParameterDef {
+                name: "tolerance".to_string(),
+                description: "Convergence tolerance (default: 1e-6)".to_string(),
+                param_type: ParameterType::Float,
+                required: false,
+                default: Some("1e-6".to_string()),
+            },
+        ]
+    })
+}
+
+/// HITS (Hyperlink-Induced Topic Search) algorithm wrapper for the plugin registry.
+///
+/// Implements Kleinberg's HITS algorithm computing hub and authority scores
+/// for every node in the graph. Callable via `CALL grafeo.hits()`.
+///
+/// # Parameters
+///
+/// * `max_iterations` (Integer, default 100) - Maximum iterations before stopping
+/// * `tolerance` (Float, default 1e-6) - Convergence tolerance (L2 norm of score diff)
+///
+/// # Output Columns
+///
+/// * `node_id` - The node identifier
+/// * `hub_score` - Hub score (how well the node points to authorities)
+/// * `authority_score` - Authority score (how well the node is pointed to by hubs)
+///
+/// # Complexity
+///
+/// O(k × (V + E)) where k is the number of iterations.
+///
+/// # Example
+///
+/// ```no_run
+/// use grafeo_adapters::plugins::algorithms::{HitsAlgorithm, GraphAlgorithm};
+/// use grafeo_adapters::plugins::Parameters;
+/// use grafeo_core::graph::lpg::LpgStore;
+///
+/// let store = LpgStore::new().unwrap();
+/// let algo = HitsAlgorithm;
+/// let result = algo.execute(&store, &Parameters::new()).unwrap();
+/// ```
+pub struct HitsAlgorithm;
+
+impl GraphAlgorithm for HitsAlgorithm {
+    fn name(&self) -> &str {
+        "hits"
+    }
+
+    fn description(&self) -> &str {
+        "HITS (Hyperlink-Induced Topic Search) — hub and authority scores"
+    }
+
+    fn parameters(&self) -> &[ParameterDef] {
+        hits_params()
+    }
+
+    fn execute(&self, store: &dyn GraphStore, params: &Parameters) -> Result<AlgorithmResult> {
+        let max_iter = params.get_int("max_iterations").unwrap_or(100) as usize;
+        let tolerance = params.get_float("tolerance").unwrap_or(1e-6);
+
+        let result = hits(store, max_iter, tolerance);
+
+        let mut output = AlgorithmResult::new(vec![
+            "node_id".to_string(),
+            "hub_score".to_string(),
+            "authority_score".to_string(),
+        ]);
+
+        for (&node, &hub_score) in &result.hub_scores {
+            let auth_score = result.authority_scores.get(&node).copied().unwrap_or(0.0);
+            output.add_row(vec![
+                Value::Int64(node.0 as i64),
+                Value::Float64(hub_score),
+                Value::Float64(auth_score),
+            ]);
+        }
+
+        Ok(output)
     }
 }
 
@@ -926,11 +1213,11 @@ mod tests {
         assert_eq!(result.columns.len(), 4); // node_id, in_degree, out_degree, total_degree
         assert_eq!(result.row_count(), 5);
 
-        // Test execute with normalized=true - returns 2 columns
+        // Test execute with normalized=true - still returns 4 columns
         let mut params = Parameters::new();
         params.set_bool("normalized", true);
         let result = algo.execute(&store, &params).unwrap();
-        assert_eq!(result.columns.len(), 2); // node_id, degree_centrality
+        assert_eq!(result.columns.len(), 4); // node_id, in_degree, out_degree, total_degree
         assert_eq!(result.row_count(), 5);
     }
 
@@ -1073,5 +1360,260 @@ mod tests {
         assert_eq!(*result.out_degree.get(&n0).unwrap(), 2); // self + n1
         assert_eq!(*result.in_degree.get(&n0).unwrap(), 1); // self
         assert_eq!(*result.in_degree.get(&n1).unwrap(), 1); // from n0
+    }
+
+    // ========================================================================
+    // HITS Tests
+    // ========================================================================
+
+    /// Creates a star graph: center → spoke1, center → spoke2, center → spoke3
+    /// Center should have high hub score, spokes should have high authority score.
+    fn create_star_graph() -> LpgStore {
+        let store = LpgStore::new().unwrap();
+        let center = store.create_node(&["Hub"]);
+        let s1 = store.create_node(&["Auth"]);
+        let s2 = store.create_node(&["Auth"]);
+        let s3 = store.create_node(&["Auth"]);
+        store.create_edge(center, s1, "LINKS");
+        store.create_edge(center, s2, "LINKS");
+        store.create_edge(center, s3, "LINKS");
+        store
+    }
+
+    /// Creates a bipartite graph: h1→a1, h1→a2, h2→a1, h2→a2
+    /// Both hubs should have equal hub scores, both authorities equal authority scores.
+    fn create_bipartite_graph() -> LpgStore {
+        let store = LpgStore::new().unwrap();
+        let h1 = store.create_node(&["Hub"]);
+        let h2 = store.create_node(&["Hub"]);
+        let a1 = store.create_node(&["Auth"]);
+        let a2 = store.create_node(&["Auth"]);
+        store.create_edge(h1, a1, "LINKS");
+        store.create_edge(h1, a2, "LINKS");
+        store.create_edge(h2, a1, "LINKS");
+        store.create_edge(h2, a2, "LINKS");
+        store
+    }
+
+    #[test]
+    fn test_hits_empty_graph() {
+        let store = LpgStore::new().unwrap();
+        let result = hits(&store, 100, 1e-6);
+        assert!(result.hub_scores.is_empty());
+        assert!(result.authority_scores.is_empty());
+        assert!(result.converged);
+        assert_eq!(result.iterations, 0);
+    }
+
+    #[test]
+    fn test_hits_single_node() {
+        let store = LpgStore::new().unwrap();
+        let _n = store.create_node(&["Node"]);
+        let result = hits(&store, 100, 1e-6);
+        assert_eq!(result.hub_scores.len(), 1);
+        assert_eq!(result.authority_scores.len(), 1);
+    }
+
+    #[test]
+    fn test_hits_star_graph() {
+        let store = create_star_graph();
+        let result = hits(&store, 100, 1e-6);
+
+        assert!(result.converged);
+        assert_eq!(result.hub_scores.len(), 4);
+
+        // Center (node 0) is the only hub → should have hub_score = 1.0
+        let center = NodeId::new(0);
+        let center_hub = *result.hub_scores.get(&center).unwrap();
+        assert!(
+            center_hub > 0.99,
+            "center hub score should be ~1.0, got {center_hub}"
+        );
+
+        // Spokes have no outgoing edges → hub score should be 0
+        for id in 1..=3 {
+            let spoke = NodeId::new(id);
+            let spoke_hub = *result.hub_scores.get(&spoke).unwrap();
+            assert!(
+                spoke_hub.abs() < 1e-10,
+                "spoke hub should be ~0, got {spoke_hub}"
+            );
+        }
+
+        // All spokes should have equal authority scores
+        let a1 = *result.authority_scores.get(&NodeId::new(1)).unwrap();
+        let a2 = *result.authority_scores.get(&NodeId::new(2)).unwrap();
+        let a3 = *result.authority_scores.get(&NodeId::new(3)).unwrap();
+        assert!(
+            (a1 - a2).abs() < 1e-10,
+            "spokes should have equal auth scores"
+        );
+        assert!(
+            (a2 - a3).abs() < 1e-10,
+            "spokes should have equal auth scores"
+        );
+        assert!(a1 > 0.0, "spoke authority should be positive");
+
+        // L2 norm of authority scores should be ~1.0
+        let auth_l2: f64 = result
+            .authority_scores
+            .values()
+            .map(|x| x * x)
+            .sum::<f64>()
+            .sqrt();
+        assert!(
+            (auth_l2 - 1.0).abs() < 1e-6,
+            "authority L2 norm should be 1.0, got {auth_l2}"
+        );
+    }
+
+    #[test]
+    fn test_hits_bipartite_graph() {
+        let store = create_bipartite_graph();
+        let result = hits(&store, 100, 1e-6);
+
+        assert!(result.converged);
+
+        // Symmetric bipartite: h1 and h2 should have equal hub scores
+        let h1_hub = *result.hub_scores.get(&NodeId::new(0)).unwrap();
+        let h2_hub = *result.hub_scores.get(&NodeId::new(1)).unwrap();
+        assert!(
+            (h1_hub - h2_hub).abs() < 1e-10,
+            "symmetric hubs should be equal: {h1_hub} vs {h2_hub}"
+        );
+
+        // a1 and a2 should have equal authority scores
+        let a1_auth = *result.authority_scores.get(&NodeId::new(2)).unwrap();
+        let a2_auth = *result.authority_scores.get(&NodeId::new(3)).unwrap();
+        assert!(
+            (a1_auth - a2_auth).abs() < 1e-10,
+            "symmetric authorities should be equal: {a1_auth} vs {a2_auth}"
+        );
+
+        // Hub scores for hubs should be positive, for authorities should be 0
+        assert!(h1_hub > 0.0);
+        let a1_hub = *result.hub_scores.get(&NodeId::new(2)).unwrap();
+        assert!(a1_hub.abs() < 1e-10, "authorities should have 0 hub score");
+
+        // Authority scores for authorities should be positive, for hubs should be 0
+        assert!(a1_auth > 0.0);
+        let h1_auth = *result.authority_scores.get(&NodeId::new(0)).unwrap();
+        assert!(h1_auth.abs() < 1e-10, "hubs should have 0 authority score");
+
+        // L2 norms should be 1.0
+        let hub_l2: f64 = result
+            .hub_scores
+            .values()
+            .map(|x| x * x)
+            .sum::<f64>()
+            .sqrt();
+        let auth_l2: f64 = result
+            .authority_scores
+            .values()
+            .map(|x| x * x)
+            .sum::<f64>()
+            .sqrt();
+        assert!((hub_l2 - 1.0).abs() < 1e-6, "hub L2 norm should be 1.0");
+        assert!((auth_l2 - 1.0).abs() < 1e-6, "auth L2 norm should be 1.0");
+    }
+
+    #[test]
+    fn test_hits_convergence() {
+        let store = create_bipartite_graph();
+        // Tight tolerance should converge
+        let result_tight = hits(&store, 1000, 1e-10);
+        assert!(result_tight.converged);
+
+        // Very loose tolerance should converge in 1 iteration
+        let result_loose = hits(&store, 1000, 1.0);
+        assert!(result_loose.converged);
+        assert!(result_loose.iterations <= 2);
+    }
+
+    #[test]
+    fn test_hits_max_iterations_limit() {
+        let store = create_bipartite_graph();
+        // With max_iterations=1 and very tight tolerance, should not converge
+        let result = hits(&store, 1, 1e-20);
+        assert_eq!(result.iterations, 1);
+        // Still produces valid scores
+        assert_eq!(result.hub_scores.len(), 4);
+    }
+
+    #[test]
+    fn test_hits_algorithm_wrapper() {
+        let store = create_star_graph();
+        let algo = HitsAlgorithm;
+
+        assert_eq!(algo.name(), "hits");
+        assert!(!algo.description().is_empty());
+        assert_eq!(algo.parameters().len(), 2);
+
+        let params = Parameters::new();
+        let result = algo.execute(&store, &params).unwrap();
+
+        // Should have 3 columns: node_id, hub_score, authority_score
+        assert_eq!(result.columns.len(), 3);
+        assert_eq!(result.columns[0], "node_id");
+        assert_eq!(result.columns[1], "hub_score");
+        assert_eq!(result.columns[2], "authority_score");
+
+        // Should have one row per node
+        assert_eq!(result.rows.len(), 4);
+    }
+
+    #[test]
+    fn test_hits_chain_graph() {
+        // a → b → c : b is both hub and authority
+        let store = LpgStore::new().unwrap();
+        let a = store.create_node(&["Node"]);
+        let b = store.create_node(&["Node"]);
+        let c = store.create_node(&["Node"]);
+        store.create_edge(a, b, "LINK");
+        store.create_edge(b, c, "LINK");
+
+        let result = hits(&store, 100, 1e-6);
+        assert!(result.converged);
+
+        // a is a hub (points to b), c is an authority (pointed to by b)
+        let a_hub = *result.hub_scores.get(&a).unwrap();
+        let c_auth = *result.authority_scores.get(&c).unwrap();
+        assert!(a_hub > 0.0);
+        assert!(c_auth > 0.0);
+
+        // c has no outgoing edges → hub score 0
+        let c_hub = *result.hub_scores.get(&c).unwrap();
+        assert!(c_hub.abs() < 1e-10);
+
+        // a has no incoming edges → authority score 0
+        let a_auth = *result.authority_scores.get(&a).unwrap();
+        assert!(a_auth.abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_hits_cycle_graph() {
+        // a → b → c → a : all nodes should have equal scores
+        let store = LpgStore::new().unwrap();
+        let a = store.create_node(&["Node"]);
+        let b = store.create_node(&["Node"]);
+        let c = store.create_node(&["Node"]);
+        store.create_edge(a, b, "LINK");
+        store.create_edge(b, c, "LINK");
+        store.create_edge(c, a, "LINK");
+
+        let result = hits(&store, 100, 1e-6);
+        assert!(result.converged);
+
+        let ha = *result.hub_scores.get(&a).unwrap();
+        let hb = *result.hub_scores.get(&b).unwrap();
+        let hc = *result.hub_scores.get(&c).unwrap();
+        assert!((ha - hb).abs() < 1e-10);
+        assert!((hb - hc).abs() < 1e-10);
+
+        let aa = *result.authority_scores.get(&a).unwrap();
+        let ab = *result.authority_scores.get(&b).unwrap();
+        let ac = *result.authority_scores.get(&c).unwrap();
+        assert!((aa - ab).abs() < 1e-10);
+        assert!((ab - ac).abs() < 1e-10);
     }
 }

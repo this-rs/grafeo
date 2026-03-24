@@ -10,13 +10,15 @@ use grafeo_adapters::plugins::algorithms::{
     ArticulationPointsAlgorithm, BellmanFordAlgorithm, BetweennessCentralityAlgorithm,
     BfsAlgorithm, BridgesAlgorithm, ClosenessCentralityAlgorithm, ClusteringCoefficientAlgorithm,
     ConnectedComponentsAlgorithm, DegreeCentralityAlgorithm, DfsAlgorithm, DijkstraAlgorithm,
-    FloydWarshallAlgorithm, GraphAlgorithm, KCoreAlgorithm, KruskalAlgorithm,
-    LabelPropagationAlgorithm, LouvainAlgorithm, MaxFlowAlgorithm, MinCostFlowAlgorithm,
-    PageRankAlgorithm, PrimAlgorithm, SsspAlgorithm, StronglyConnectedComponentsAlgorithm,
-    TopologicalSortAlgorithm,
+    FloydWarshallAlgorithm, GraphAlgorithm, HitsAlgorithm, KCoreAlgorithm, KHopAlgorithm,
+    KruskalAlgorithm, LabelPropagationAlgorithm, LeidenAlgorithm, LouvainAlgorithm,
+    MaxFlowAlgorithm, MinCostFlowAlgorithm, NodeSimilarityAlgorithm, PageRankAlgorithm,
+    PrimAlgorithm, ProjectionConfig, ProjectionRegistry, SsspAlgorithm,
+    StronglyConnectedComponentsAlgorithm, TopKSimilarAlgorithm, TopologicalSortAlgorithm,
 };
 use grafeo_adapters::plugins::{AlgorithmResult, ParameterDef, Parameters};
 use grafeo_common::types::Value;
+use grafeo_common::utils::error::{Error, Result};
 use hashbrown::HashMap;
 
 use crate::query::plan::LogicalExpression;
@@ -40,6 +42,7 @@ impl BuiltinProcedures {
         register(&mut algorithms, Arc::new(BetweennessCentralityAlgorithm));
         register(&mut algorithms, Arc::new(ClosenessCentralityAlgorithm));
         register(&mut algorithms, Arc::new(DegreeCentralityAlgorithm));
+        register(&mut algorithms, Arc::new(HitsAlgorithm));
 
         // Traversal
         register(&mut algorithms, Arc::new(BfsAlgorithm));
@@ -65,6 +68,7 @@ impl BuiltinProcedures {
         // Community
         register(&mut algorithms, Arc::new(LabelPropagationAlgorithm));
         register(&mut algorithms, Arc::new(LouvainAlgorithm));
+        register(&mut algorithms, Arc::new(LeidenAlgorithm));
 
         // MST
         register(&mut algorithms, Arc::new(KruskalAlgorithm));
@@ -79,6 +83,13 @@ impl BuiltinProcedures {
         register(&mut algorithms, Arc::new(BridgesAlgorithm));
         register(&mut algorithms, Arc::new(KCoreAlgorithm));
 
+        // Subgraph extraction
+        register(&mut algorithms, Arc::new(KHopAlgorithm));
+
+        // Node similarity
+        register(&mut algorithms, Arc::new(NodeSimilarityAlgorithm));
+        register(&mut algorithms, Arc::new(TopKSimilarAlgorithm));
+
         Self { algorithms }
     }
 
@@ -89,7 +100,7 @@ impl BuiltinProcedures {
     /// - `["pagerank"]` → looks up `"pagerank"`
     pub fn get(&self, name: &[String]) -> Option<Arc<dyn GraphAlgorithm>> {
         let key = resolve_name(name);
-        self.algorithms.get(key).cloned()
+        self.algorithms.get(&key).cloned()
     }
 
     /// Returns info for all registered procedures.
@@ -130,11 +141,15 @@ pub struct ProcedureInfo {
 /// Resolves a dotted procedure name to its lookup key.
 ///
 /// Strips the `"grafeo"` namespace prefix if present.
-fn resolve_name(parts: &[String]) -> &str {
-    match parts {
-        [_, name] if parts[0].eq_ignore_ascii_case("grafeo") => name.as_str(),
-        [name] => name.as_str(),
-        _ => parts.last().map_or("", String::as_str),
+/// Supports multi-level names like `["grafeo", "subgraph", "khop"]` → `"subgraph.khop"`.
+fn resolve_name(parts: &[String]) -> String {
+    if parts.is_empty() {
+        return String::new();
+    }
+    if parts[0].eq_ignore_ascii_case("grafeo") && parts.len() > 1 {
+        parts[1..].join(".")
+    } else {
+        parts.join(".")
     }
 }
 
@@ -152,6 +167,11 @@ pub fn output_columns_for_name(algo: &dyn GraphAlgorithm) -> Vec<String> {
 fn output_columns_for(algo: &dyn GraphAlgorithm) -> Vec<String> {
     match algo.name() {
         "pagerank" => vec!["node_id".into(), "score".into()],
+        "hits" => vec![
+            "node_id".into(),
+            "hub_score".into(),
+            "authority_score".into(),
+        ],
         "betweenness_centrality" => vec!["node_id".into(), "centrality".into()],
         "closeness_centrality" => vec!["node_id".into(), "centrality".into()],
         "degree_centrality" => {
@@ -183,7 +203,7 @@ fn output_columns_for(algo: &dyn GraphAlgorithm) -> Vec<String> {
             ]
         }
         "label_propagation" => vec!["node_id".into(), "community_id".into()],
-        "louvain" => vec!["node_id".into(), "community_id".into(), "modularity".into()],
+        "louvain" | "leiden" => vec!["node_id".into(), "community_id".into(), "modularity".into()],
         "kruskal" | "prim" => vec!["source".into(), "target".into(), "weight".into()],
         "max_flow" => {
             vec![
@@ -205,6 +225,21 @@ fn output_columns_for(algo: &dyn GraphAlgorithm) -> Vec<String> {
         "articulation_points" => vec!["node_id".into()],
         "bridges" => vec!["source".into(), "target".into()],
         "k_core" => vec!["node_id".into(), "core_number".into(), "max_core".into()],
+        "similarity" => vec![
+            "node1".into(),
+            "node2".into(),
+            "metric".into(),
+            "score".into(),
+        ],
+        "similarity.topk" => vec!["neighbor".into(), "score".into()],
+        "subgraph.khop" => vec![
+            "node_id".into(),
+            "hop".into(),
+            "source".into(),
+            "target".into(),
+            "edge_type".into(),
+            "weight".into(),
+        ],
         _ => vec!["node_id".into(), "value".into()],
     }
 }
@@ -287,6 +322,170 @@ pub fn procedures_result(registry: &BuiltinProcedures) -> AlgorithmResult {
     result
 }
 
+// ============================================================================
+// Projection Procedures
+// ============================================================================
+
+/// Global projection registry, shared across all sessions.
+static PROJECTION_REGISTRY: std::sync::OnceLock<ProjectionRegistry> = std::sync::OnceLock::new();
+
+/// Returns the global projection registry.
+pub fn projection_registry() -> &'static ProjectionRegistry {
+    PROJECTION_REGISTRY.get_or_init(ProjectionRegistry::new)
+}
+
+/// Checks if a procedure name matches a projection procedure and executes it.
+///
+/// Handles:
+/// - `grafeo.projection.create(name, {node_labels: [...], edge_types: [...]})`
+/// - `grafeo.projection.drop(name)`
+/// - `grafeo.projection.list()`
+///
+/// Returns `Some(AlgorithmResult)` if the name matched, `None` otherwise.
+pub fn try_execute_projection_procedure(
+    resolved_name: &str,
+    arguments: &[LogicalExpression],
+) -> Result<Option<AlgorithmResult>> {
+    match resolved_name {
+        "grafeo.projection.create" | "projection.create" => {
+            let result = execute_projection_create(arguments)?;
+            Ok(Some(result))
+        }
+        "grafeo.projection.drop" | "projection.drop" => {
+            let result = execute_projection_drop(arguments)?;
+            Ok(Some(result))
+        }
+        "grafeo.projection.list" | "projection.list" => {
+            let result = execute_projection_list();
+            Ok(Some(result))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// `CALL grafeo.projection.create(name, {node_labels: [...], edge_types: [...]})`.
+///
+/// Creates a named projection in the global registry.
+fn execute_projection_create(arguments: &[LogicalExpression]) -> Result<AlgorithmResult> {
+    // First argument: projection name (string)
+    let name = match arguments.first() {
+        Some(LogicalExpression::Literal(Value::String(s))) => s.to_string(),
+        Some(_) => {
+            return Err(Error::Internal(
+                "grafeo.projection.create(): first argument must be a projection name (string)"
+                    .to_string(),
+            ));
+        }
+        None => {
+            return Err(Error::Internal(
+                "grafeo.projection.create(): requires at least 1 argument (name)".to_string(),
+            ));
+        }
+    };
+
+    // Second argument: optional config map
+    let mut config = ProjectionConfig::new(&name);
+
+    if let Some(LogicalExpression::Map(entries)) = arguments.get(1) {
+        for (key, value_expr) in entries {
+            match key.as_str() {
+                "node_labels" => {
+                    if let LogicalExpression::List(items) = value_expr {
+                        let labels: Vec<String> = items
+                            .iter()
+                            .filter_map(|item| {
+                                if let LogicalExpression::Literal(Value::String(s)) = item {
+                                    Some(s.to_string())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        config = config.node_labels(labels);
+                    }
+                }
+                "edge_types" => {
+                    if let LogicalExpression::List(items) = value_expr {
+                        let types: Vec<String> = items
+                            .iter()
+                            .filter_map(|item| {
+                                if let LogicalExpression::Literal(Value::String(s)) = item {
+                                    Some(s.to_string())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        config = config.edge_types(types);
+                    }
+                }
+                _ => {} // Ignore unknown keys
+            }
+        }
+    }
+
+    let registry = projection_registry();
+    registry.create(config).map_err(Error::Internal)?;
+
+    let mut result = AlgorithmResult::new(vec!["name".to_string(), "status".to_string()]);
+    result.add_row(vec![Value::from(name.as_str()), Value::from("created")]);
+    Ok(result)
+}
+
+/// `CALL grafeo.projection.drop(name)`.
+///
+/// Removes a named projection from the global registry.
+fn execute_projection_drop(arguments: &[LogicalExpression]) -> Result<AlgorithmResult> {
+    let name = match arguments.first() {
+        Some(LogicalExpression::Literal(Value::String(s))) => s.to_string(),
+        Some(_) => {
+            return Err(Error::Internal(
+                "grafeo.projection.drop(): first argument must be a projection name (string)"
+                    .to_string(),
+            ));
+        }
+        None => {
+            return Err(Error::Internal(
+                "grafeo.projection.drop(): requires 1 argument (name)".to_string(),
+            ));
+        }
+    };
+
+    let registry = projection_registry();
+    let dropped = registry.drop_projection(&name);
+
+    let mut result = AlgorithmResult::new(vec!["name".to_string(), "status".to_string()]);
+    result.add_row(vec![
+        Value::from(name.as_str()),
+        Value::from(if dropped { "dropped" } else { "not_found" }),
+    ]);
+    Ok(result)
+}
+
+/// `CALL grafeo.projection.list()`.
+///
+/// Lists all named projections in the global registry.
+fn execute_projection_list() -> AlgorithmResult {
+    let registry = projection_registry();
+    let projections = registry.list();
+
+    let mut result = AlgorithmResult::new(vec![
+        "name".to_string(),
+        "node_labels".to_string(),
+        "edge_types".to_string(),
+    ]);
+
+    for config in projections {
+        result.add_row(vec![
+            Value::from(config.name()),
+            Value::from(config.node_labels_ref().join(", ").as_str()),
+            Value::from(config.edge_types_ref().join(", ").as_str()),
+        ]);
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,8 +495,8 @@ mod tests {
         let registry = BuiltinProcedures::new();
         let list = registry.list();
         assert!(
-            list.len() >= 22,
-            "Expected at least 22 algorithms, got {}",
+            list.len() >= 25,
+            "Expected at least 25 algorithms, got {}",
             list.len()
         );
     }
@@ -354,6 +553,331 @@ mod tests {
             result.columns,
             vec!["name", "description", "parameters", "output_columns"]
         );
-        assert!(result.rows.len() >= 22);
+        assert!(result.rows.len() >= 25);
+    }
+
+    #[test]
+    fn test_khop_registered() {
+        let registry = BuiltinProcedures::new();
+        // Resolve via dotted namespace: grafeo.subgraph.khop
+        let name = vec![
+            "grafeo".to_string(),
+            "subgraph".to_string(),
+            "khop".to_string(),
+        ];
+        let algo = registry.get(&name);
+        assert!(algo.is_some(), "subgraph.khop should be registered");
+        assert_eq!(algo.unwrap().name(), "subgraph.khop");
+    }
+
+    #[test]
+    fn test_khop_resolve_without_namespace() {
+        let registry = BuiltinProcedures::new();
+        let name = vec!["subgraph".to_string(), "khop".to_string()];
+        let algo = registry.get(&name);
+        assert!(
+            algo.is_some(),
+            "subgraph.khop should resolve without grafeo prefix"
+        );
+    }
+
+    #[test]
+    fn test_khop_execute_via_registry() {
+        use grafeo_core::graph::lpg::LpgStore;
+
+        let registry = BuiltinProcedures::new();
+        let name = vec![
+            "grafeo".to_string(),
+            "subgraph".to_string(),
+            "khop".to_string(),
+        ];
+        let algo = registry.get(&name).unwrap();
+
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["Person"]);
+        let n1 = store.create_node(&["Person"]);
+        store.create_edge(n0, n1, "KNOWS");
+
+        let mut params = Parameters::new();
+        params.set_int("center", n0.0 as i64);
+        params.set_int("k", 1);
+
+        let result = algo.execute(&store, &params).unwrap();
+        // Should have node rows (2 nodes) + edge rows (1 edge)
+        assert_eq!(result.rows.len(), 3);
+    }
+
+    #[test]
+    fn test_registry_count_includes_khop() {
+        let registry = BuiltinProcedures::new();
+        let list = registry.list();
+        assert!(
+            list.len() >= 26,
+            "Expected at least 26 algorithms (22 + khop + leiden + similarity + similarity.topk), got {}",
+            list.len()
+        );
+        assert!(
+            list.iter().any(|p| p.name == "grafeo.subgraph.khop"),
+            "grafeo.subgraph.khop should be in the procedure list"
+        );
+    }
+
+    #[test]
+    fn test_leiden_registered() {
+        let registry = BuiltinProcedures::new();
+        let name = vec!["grafeo".to_string(), "leiden".to_string()];
+        let algo = registry.get(&name);
+        assert!(algo.is_some(), "leiden should be registered");
+        assert_eq!(algo.unwrap().name(), "leiden");
+    }
+
+    #[test]
+    fn test_leiden_execute_via_registry() {
+        use grafeo_core::graph::lpg::LpgStore;
+
+        let registry = BuiltinProcedures::new();
+        let name = vec!["grafeo".to_string(), "leiden".to_string()];
+        let algo = registry.get(&name).unwrap();
+
+        let store = LpgStore::new().unwrap();
+        let n0 = store.create_node(&["Person"]);
+        let n1 = store.create_node(&["Person"]);
+        let n2 = store.create_node(&["Person"]);
+        store.create_edge(n0, n1, "KNOWS");
+        store.create_edge(n1, n0, "KNOWS");
+        store.create_edge(n1, n2, "KNOWS");
+        store.create_edge(n2, n1, "KNOWS");
+
+        let mut params = Parameters::new();
+        params.set_float("resolution", 1.0);
+        params.set_float("gamma", 0.01);
+
+        let result = algo.execute(&store, &params).unwrap();
+        assert_eq!(result.rows.len(), 3);
+        assert_eq!(
+            result.columns,
+            vec!["node_id", "community_id", "modularity"]
+        );
+    }
+
+    #[test]
+    fn test_leiden_output_columns() {
+        let registry = BuiltinProcedures::new();
+        let name = vec!["grafeo".to_string(), "leiden".to_string()];
+        let algo = registry.get(&name).unwrap();
+        let cols = output_columns_for(algo.as_ref());
+        assert_eq!(cols, vec!["node_id", "community_id", "modularity"]);
+    }
+
+    // ========================================================================
+    // Projection procedure tests
+    // ========================================================================
+
+    // ========================================================================
+    // Similarity procedure tests
+    // ========================================================================
+
+    #[test]
+    fn test_similarity_registered() {
+        let registry = BuiltinProcedures::new();
+        let name = vec!["grafeo".to_string(), "similarity".to_string()];
+        let algo = registry.get(&name);
+        assert!(algo.is_some(), "similarity should be registered");
+        assert_eq!(algo.unwrap().name(), "similarity");
+    }
+
+    #[test]
+    fn test_similarity_topk_registered() {
+        let registry = BuiltinProcedures::new();
+        let name = vec![
+            "grafeo".to_string(),
+            "similarity".to_string(),
+            "topk".to_string(),
+        ];
+        let algo = registry.get(&name);
+        assert!(algo.is_some(), "similarity.topk should be registered");
+        assert_eq!(algo.unwrap().name(), "similarity.topk");
+    }
+
+    #[test]
+    fn test_similarity_execute_via_registry() {
+        use grafeo_core::graph::lpg::LpgStore;
+
+        let registry = BuiltinProcedures::new();
+        let name = vec!["grafeo".to_string(), "similarity".to_string()];
+        let algo = registry.get(&name).unwrap();
+
+        let store = LpgStore::new().unwrap();
+        let a = store.create_node(&["Person"]);
+        let b = store.create_node(&["Person"]);
+        let c = store.create_node(&["Person"]);
+        // A-C and B-C (common neighbor C)
+        store.create_edge(a, c, "KNOWS");
+        store.create_edge(c, a, "KNOWS");
+        store.create_edge(b, c, "KNOWS");
+        store.create_edge(c, b, "KNOWS");
+
+        let mut params = Parameters::new();
+        params.set_int("node1", a.0 as i64);
+        params.set_int("node2", b.0 as i64);
+        params.set_string("metric", "jaccard");
+
+        let result = algo.execute(&store, &params).unwrap();
+        assert_eq!(result.columns, vec!["node1", "node2", "metric", "score"]);
+        assert_eq!(result.rows.len(), 1);
+        // N(A) = {C}, N(B) = {C}, intersection={C}, union={C}, jaccard=1.0
+        if let Value::Float64(score) = &result.rows[0][3] {
+            assert!((*score - 1.0).abs() < 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_similarity_topk_execute_via_registry() {
+        use grafeo_core::graph::lpg::LpgStore;
+
+        let registry = BuiltinProcedures::new();
+        let name = vec![
+            "grafeo".to_string(),
+            "similarity".to_string(),
+            "topk".to_string(),
+        ];
+        let algo = registry.get(&name).unwrap();
+
+        let store = LpgStore::new().unwrap();
+        let a = store.create_node(&["Person"]);
+        let b = store.create_node(&["Person"]);
+        let c = store.create_node(&["Person"]);
+        store.create_edge(a, c, "KNOWS");
+        store.create_edge(c, a, "KNOWS");
+        store.create_edge(b, c, "KNOWS");
+        store.create_edge(c, b, "KNOWS");
+
+        let mut params = Parameters::new();
+        params.set_int("node", a.0 as i64);
+        params.set_int("k", 5);
+        params.set_string("metric", "jaccard");
+
+        let result = algo.execute(&store, &params).unwrap();
+        assert_eq!(result.columns, vec!["neighbor", "score"]);
+        assert!(!result.rows.is_empty());
+    }
+
+    #[test]
+    fn test_similarity_output_columns() {
+        let registry = BuiltinProcedures::new();
+        let name = vec!["grafeo".to_string(), "similarity".to_string()];
+        let algo = registry.get(&name).unwrap();
+        let cols = output_columns_for(algo.as_ref());
+        assert_eq!(cols, vec!["node1", "node2", "metric", "score"]);
+    }
+
+    #[test]
+    fn test_similarity_topk_output_columns() {
+        let registry = BuiltinProcedures::new();
+        let name = vec![
+            "grafeo".to_string(),
+            "similarity".to_string(),
+            "topk".to_string(),
+        ];
+        let algo = registry.get(&name).unwrap();
+        let cols = output_columns_for(algo.as_ref());
+        assert_eq!(cols, vec!["neighbor", "score"]);
+    }
+
+    // ========================================================================
+    // Projection procedure tests
+    // ========================================================================
+
+    #[test]
+    fn test_projection_create_procedure() {
+        let args = vec![
+            LogicalExpression::Literal(Value::from("test_proj")),
+            LogicalExpression::Map(vec![
+                (
+                    "node_labels".to_string(),
+                    LogicalExpression::List(vec![
+                        LogicalExpression::Literal(Value::from("File")),
+                        LogicalExpression::Literal(Value::from("Function")),
+                    ]),
+                ),
+                (
+                    "edge_types".to_string(),
+                    LogicalExpression::List(vec![LogicalExpression::Literal(Value::from(
+                        "IMPORTS",
+                    ))]),
+                ),
+            ]),
+        ];
+
+        let result = try_execute_projection_procedure("grafeo.projection.create", &args).unwrap();
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_eq!(result.columns, vec!["name", "status"]);
+        assert_eq!(result.rows.len(), 1);
+
+        // Verify it's in the registry
+        let config = projection_registry().get("test_proj").unwrap();
+        assert_eq!(config.node_labels_ref(), &["File", "Function"]);
+        assert_eq!(config.edge_types_ref(), &["IMPORTS"]);
+
+        // Cleanup
+        projection_registry().drop_projection("test_proj");
+    }
+
+    #[test]
+    fn test_projection_drop_procedure() {
+        // Create first
+        let registry = projection_registry();
+        let _ = registry.create(ProjectionConfig::new("drop_test"));
+
+        let args = vec![LogicalExpression::Literal(Value::from("drop_test"))];
+        let result = try_execute_projection_procedure("grafeo.projection.drop", &args).unwrap();
+        assert!(result.is_some());
+
+        // Should be gone
+        assert!(registry.get("drop_test").is_none());
+    }
+
+    #[test]
+    fn test_projection_list_procedure() {
+        let registry = projection_registry();
+        let _ = registry.create(ProjectionConfig::new("list_test_a"));
+        let _ = registry.create(ProjectionConfig::new("list_test_b"));
+
+        let result = try_execute_projection_procedure("grafeo.projection.list", &[]).unwrap();
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_eq!(result.columns, vec!["name", "node_labels", "edge_types"]);
+        assert!(result.rows.len() >= 2);
+
+        // Cleanup
+        registry.drop_projection("list_test_a");
+        registry.drop_projection("list_test_b");
+    }
+
+    #[test]
+    fn test_projection_procedure_no_match() {
+        let result = try_execute_projection_procedure("grafeo.something_else", &[]).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_projection_create_missing_name() {
+        let result = try_execute_projection_procedure("grafeo.projection.create", &[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_projection_drop_missing_name() {
+        let result = try_execute_projection_procedure("grafeo.projection.drop", &[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_projection_create_short_name() {
+        let args = vec![LogicalExpression::Literal(Value::from("short_proj"))];
+        let result = try_execute_projection_procedure("projection.create", &args).unwrap();
+        assert!(result.is_some());
+        projection_registry().drop_projection("short_proj");
     }
 }

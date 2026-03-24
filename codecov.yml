@@ -9,14 +9,12 @@ coverage:
   status:
     project:
       default:
-        target: auto
+        target: 90%
         threshold: 2%
-        informational: true
     patch:
       default:
-        target: 80%
+        target: 90%
         threshold: 5%
-        informational: true
 
 parsers:
   gcov:
@@ -69,3 +67,11 @@ component_management:
       name: Engine (database, sessions, transactions)
       paths:
         - crates/engine/src/**
+    - component_id: grafeo-reactive
+      name: Reactive (event bus, scheduler, instrumented store)
+      paths:
+        - crates/grafeo-reactive/src/**
+    - component_id: grafeo-cognitive
+      name: Cognitive (energy, synapses, fabric, memory, episodic)
+      paths:
+        - crates/grafeo-cognitive/src/**

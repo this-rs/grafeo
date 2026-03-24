@@ -9,7 +9,7 @@
 //! | Components | Connected, strongly connected, topological sort |
 //! | Shortest paths | Dijkstra, A*, Bellman-Ford, Floyd-Warshall |
 //! | Centrality | PageRank, betweenness, closeness, degree |
-//! | Community | Louvain, label propagation |
+//! | Community | Louvain, Leiden, label propagation |
 //! | Structure | K-core, bridges, articulation points |
 //!
 //! ## Usage
@@ -38,9 +38,12 @@ mod centrality;
 mod clustering;
 mod community;
 mod components;
+mod ego_graph;
 mod flow;
 mod mst;
+pub mod projection;
 mod shortest_path;
+mod similarity;
 mod structure;
 mod traits;
 mod traversal;
@@ -67,8 +70,8 @@ pub use shortest_path::{
 
 // Centrality algorithms
 pub use centrality::{
-    DegreeCentralityResult, betweenness_centrality, closeness_centrality, degree_centrality,
-    degree_centrality_normalized, pagerank,
+    DegreeCentralityResult, HitsResult, betweenness_centrality, closeness_centrality,
+    degree_centrality, degree_centrality_normalized, hits, pagerank,
 };
 
 // Clustering algorithms
@@ -80,7 +83,7 @@ pub use clustering::{
 };
 
 // Community detection algorithms
-pub use community::{LouvainResult, community_count, label_propagation, louvain};
+pub use community::{LouvainResult, community_count, label_propagation, leiden, louvain};
 
 // Minimum Spanning Tree algorithms
 pub use mst::{MstResult, kruskal, prim};
@@ -94,13 +97,14 @@ pub use structure::{KCoreResult, articulation_points, bridges, k_core, kcore_dec
 // Algorithm wrappers (for future registry integration)
 pub use centrality::{
     BetweennessCentralityAlgorithm, ClosenessCentralityAlgorithm, DegreeCentralityAlgorithm,
-    PageRankAlgorithm,
+    HitsAlgorithm, PageRankAlgorithm,
 };
 pub use clustering::ClusteringCoefficientAlgorithm;
-pub use community::{LabelPropagationAlgorithm, LouvainAlgorithm};
+pub use community::{LabelPropagationAlgorithm, LeidenAlgorithm, LouvainAlgorithm};
 pub use components::{
     ConnectedComponentsAlgorithm, StronglyConnectedComponentsAlgorithm, TopologicalSortAlgorithm,
 };
+pub use ego_graph::{EgoEdge, EgoGraph, KHopAlgorithm, KHopConfig, khop_subgraph};
 pub use flow::{MaxFlowAlgorithm, MinCostFlowAlgorithm};
 pub use mst::{KruskalAlgorithm, PrimAlgorithm};
 pub use shortest_path::{
@@ -108,3 +112,15 @@ pub use shortest_path::{
 };
 pub use structure::{ArticulationPointsAlgorithm, BridgesAlgorithm, KCoreAlgorithm};
 pub use traversal::{BfsAlgorithm, DfsAlgorithm};
+
+// Node similarity algorithms
+pub use similarity::{
+    NodeSimilarityAlgorithm, SimilarityMetric, SimilarityScore, TopKSimilarAlgorithm, adamic_adar,
+    cosine_similarity, jaccard, overlap_coefficient, resource_allocation, top_k_similar,
+};
+
+// Graph projections (virtual filtered views)
+pub use projection::{
+    EdgeFilter, GraphProjection, NodeFilter, ProjectionBuilder, ProjectionConfig,
+    ProjectionRegistry, PropertyPredicate,
+};

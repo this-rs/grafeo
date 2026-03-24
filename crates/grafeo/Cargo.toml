@@ -37,6 +37,7 @@ vector-index = ["grafeo-engine/vector-index"]
 text-index = ["grafeo-engine/text-index"]
 hybrid-search = ["grafeo-engine/hybrid-search"]
 cdc = ["grafeo-engine/cdc"]
+reactive = ["grafeo-engine/reactive"]  # Reactive mutation event bus for cognitive features
 embed = ["grafeo-engine/embed"]  # Opt-in ONNX embedding generation (~17MB)
 
 # Convenience groups

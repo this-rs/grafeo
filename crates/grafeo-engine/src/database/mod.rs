@@ -123,6 +123,13 @@ pub struct GrafeoDB {
     /// Whether this database is open in read-only mode.
     /// When true, sessions automatically enforce read-only transactions.
     read_only: bool,
+    /// Cognitive engine — unified access to energy, synapses, fabric, etc.
+    /// Only present when the `cognitive` feature flag is enabled at compile time.
+    #[cfg(feature = "cognitive")]
+    cognitive_engine: Option<Arc<dyn grafeo_cognitive::CognitiveEngine>>,
+    /// Reactive scheduler (keeps the background task alive).
+    #[cfg(feature = "cognitive")]
+    _cognitive_scheduler: Option<grafeo_reactive::Scheduler>,
 }
 
 impl GrafeoDB {
@@ -414,6 +421,23 @@ impl GrafeoDB {
         #[cfg(feature = "temporal")]
         transaction_manager.sync_epoch(store.current_epoch());
 
+        // --- Cognitive engine initialization ---
+        // Creates the reactive bus + scheduler + cognitive engine with default config.
+        // Zero-cost: this entire block is compiled out when `cognitive` feature is off.
+        #[cfg(feature = "cognitive")]
+        let (cognitive_engine, _cognitive_scheduler) = {
+            let bus = grafeo_reactive::MutationBus::new();
+            let scheduler =
+                grafeo_reactive::Scheduler::new(&bus, grafeo_reactive::BatchConfig::default());
+            let config = grafeo_cognitive::CognitiveConfig::default();
+            let engine =
+                grafeo_cognitive::CognitiveEngineBuilder::from_config(&config).build(&scheduler);
+            (
+                Some(Arc::new(engine) as Arc<dyn grafeo_cognitive::CognitiveEngine>),
+                Some(scheduler),
+            )
+        };
+
         Ok(Self {
             config,
             store,
@@ -440,6 +464,10 @@ impl GrafeoDB {
             metrics: Some(Arc::new(crate::metrics::MetricsRegistry::new())),
             current_graph: RwLock::new(None),
             read_only: is_read_only,
+            #[cfg(feature = "cognitive")]
+            cognitive_engine,
+            #[cfg(feature = "cognitive")]
+            _cognitive_scheduler,
         })
     }
 
@@ -512,6 +540,10 @@ impl GrafeoDB {
             metrics: Some(Arc::new(crate::metrics::MetricsRegistry::new())),
             current_graph: RwLock::new(None),
             read_only: false,
+            #[cfg(feature = "cognitive")]
+            cognitive_engine: None,
+            #[cfg(feature = "cognitive")]
+            _cognitive_scheduler: None,
         })
     }
 
@@ -990,6 +1022,17 @@ impl GrafeoDB {
     #[must_use]
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    /// Returns the cognitive engine, if the `cognitive` feature is enabled and
+    /// the engine was initialized.
+    ///
+    /// This provides unified access to energy, synapse, fabric, and other
+    /// cognitive subsystems.
+    #[cfg(feature = "cognitive")]
+    #[must_use]
+    pub fn cognitive_engine(&self) -> Option<&Arc<dyn grafeo_cognitive::CognitiveEngine>> {
+        self.cognitive_engine.as_ref()
     }
 
     /// Returns the graph data model of this database.

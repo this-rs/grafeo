@@ -119,6 +119,7 @@ pub(crate) fn build_otherwise(
 ///
 /// When `cardinalities` is provided as `(left_card, right_card)`, the smaller
 /// side is placed as the build side for better memory and cache performance.
+#[allow(dead_code)]
 pub(crate) fn build_inner_join(
     left: Box<dyn Operator>,
     right: Box<dyn Operator>,
@@ -251,6 +252,7 @@ pub(crate) fn build_anti_join(
 ///
 /// Finds shared variables between left and right column lists for join keys,
 /// then creates a hash join with semi semantics (only left rows with a match).
+#[allow(dead_code)]
 pub(crate) fn build_semi_join(
     left: Box<dyn Operator>,
     right: Box<dyn Operator>,
