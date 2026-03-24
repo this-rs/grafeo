@@ -55,6 +55,18 @@ pub mod co_change;
 #[cfg(feature = "gds-refresh")]
 pub mod gds_refresh;
 
+#[cfg(feature = "scar")]
+pub mod scar;
+
+#[cfg(feature = "memory")]
+pub mod memory;
+
+#[cfg(feature = "stagnation")]
+pub mod stagnation;
+
+#[cfg(feature = "fingerprint")]
+pub mod fingerprint;
+
 // Always-available modules
 pub mod config;
 pub mod engine;
@@ -88,3 +100,12 @@ pub use gds_refresh::{GdsRefreshConfig, GdsRefreshScheduler};
 
 #[cfg(feature = "synapse")]
 pub use synapse::{Synapse, SynapseConfig, SynapseListener, SynapseStore};
+
+#[cfg(feature = "scar")]
+pub use scar::{Scar, ScarConfig, ScarStore};
+
+#[cfg(feature = "memory")]
+pub use memory::{
+    ArchiveBackend, FileArchiveBackend, InMemoryArchiveBackend, MemoryConfig, MemoryHorizon,
+    MemoryManager, MemoryStore, NodeMemoryState, SweepResult,
+};

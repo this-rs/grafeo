@@ -5,7 +5,7 @@
 //! Supports TOML deserialization via `serde`.
 
 use serde::Deserialize;
-#[cfg(any(feature = "energy", feature = "synapse", feature = "co-change"))]
+#[cfg(any(feature = "energy", feature = "synapse", feature = "co-change", feature = "memory"))]
 use std::time::Duration;
 
 // ---------------------------------------------------------------------------
@@ -165,11 +165,42 @@ impl Default for ScarConfigToml {
 pub struct MemoryConfigToml {
     /// Whether the memory horizons subsystem is enabled.
     pub enabled: bool,
+    /// Energy threshold for promotion (Operational → Consolidated).
+    pub promotion_energy_threshold: f64,
+    /// Minimum age (seconds) before promotion is allowed.
+    pub promotion_min_age_secs: u64,
+    /// Energy threshold below which demotion occurs.
+    pub demotion_energy_threshold: f64,
+    /// Maximum idle time (seconds) before demotion.
+    pub demotion_max_idle_secs: u64,
+    /// Sweep interval in seconds (how often the manager checks horizons).
+    pub sweep_interval_secs: u64,
 }
 
 impl Default for MemoryConfigToml {
     fn default() -> Self {
-        Self { enabled: false }
+        Self {
+            enabled: false,
+            promotion_energy_threshold: 2.0,
+            promotion_min_age_secs: 3600,
+            demotion_energy_threshold: 0.1,
+            demotion_max_idle_secs: 7 * 24 * 3600,
+            sweep_interval_secs: 3600,
+        }
+    }
+}
+
+impl MemoryConfigToml {
+    /// Converts to the runtime [`MemoryConfig`] used by the memory subsystem.
+    #[cfg(feature = "memory")]
+    pub fn to_runtime(&self) -> crate::memory::MemoryConfig {
+        crate::memory::MemoryConfig {
+            promotion_energy_threshold: self.promotion_energy_threshold,
+            promotion_min_age: Duration::from_secs(self.promotion_min_age_secs),
+            demotion_energy_threshold: self.demotion_energy_threshold,
+            demotion_max_idle: Duration::from_secs(self.demotion_max_idle_secs),
+            sweep_interval: Duration::from_secs(self.sweep_interval_secs),
+        }
     }
 }
 
@@ -300,7 +331,10 @@ impl CognitiveConfig {
                 ..Default::default()
             },
             scar: ScarConfigToml { enabled: true },
-            memory: MemoryConfigToml { enabled: true },
+            memory: MemoryConfigToml {
+                enabled: true,
+                ..Default::default()
+            },
             stagnation: StagnationConfigToml { enabled: true },
         }
     }

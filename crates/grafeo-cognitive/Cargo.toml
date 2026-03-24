@@ -18,9 +18,9 @@ fabric = []
 co-change = []
 gds-refresh = ["fabric", "dep:grafeo-adapters"]
 
-# Future subsystems (stubs — reserved for cognitive-full)
+# Future subsystems
 scar = []
-memory = []
+memory = ["energy"]
 stagnation = []
 fingerprint = []
 distillation = []
