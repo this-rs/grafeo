@@ -4,7 +4,7 @@
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use grafeo_common::types::NodeId;
-use grafeo_reactive::{MutationBus, MutationBatch, MutationEvent, NodeSnapshot};
+use grafeo_reactive::{MutationBatch, MutationBus, MutationEvent, NodeSnapshot};
 use smallvec::smallvec;
 
 fn make_node_event(id: u64) -> MutationEvent {
@@ -49,5 +49,9 @@ fn bench_publish_with_subscriber(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_publish_no_subscribers, bench_publish_with_subscriber);
+criterion_group!(
+    benches,
+    bench_publish_no_subscribers,
+    bench_publish_with_subscriber
+);
 criterion_main!(benches);

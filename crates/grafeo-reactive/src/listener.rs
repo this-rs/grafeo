@@ -1,8 +1,9 @@
-//! The [`MutationListener`] trait for consuming mutation events.
+//! The [`MutationListener`] trait for consuming mutation events asynchronously.
 
-use crate::event::{MutationBatch, MutationEvent};
+use crate::event::MutationEvent;
+use async_trait::async_trait;
 
-/// A listener that reacts to graph mutations.
+/// A listener that reacts to graph mutations asynchronously.
 ///
 /// Implementations should be lightweight — heavy processing should be spawned
 /// into background tasks. The `on_batch` / `on_event` methods are called from
@@ -11,34 +12,37 @@ use crate::event::{MutationBatch, MutationEvent};
 /// # Example
 ///
 /// ```rust,no_run
-/// use grafeo_reactive::{MutationListener, MutationEvent, MutationBatch};
+/// use grafeo_reactive::{MutationListener, MutationEvent};
+/// use async_trait::async_trait;
 ///
 /// struct EnergyListener;
 ///
+/// #[async_trait]
 /// impl MutationListener for EnergyListener {
 ///     fn name(&self) -> &str { "energy" }
 ///
-///     fn on_event(&self, event: &MutationEvent) {
+///     async fn on_event(&self, event: &MutationEvent) {
 ///         // Boost energy for touched nodes/edges
 ///     }
 /// }
 /// ```
+#[async_trait]
 pub trait MutationListener: Send + Sync {
     /// Human-readable name for logging and metrics.
     fn name(&self) -> &str;
 
     /// Called for each individual event.
     ///
-    /// Default implementation is a no-op. Override this for event-level processing.
-    fn on_event(&self, _event: &MutationEvent) {}
+    /// Override this for event-level processing.
+    async fn on_event(&self, event: &MutationEvent);
 
-    /// Called with a full batch from a single commit.
+    /// Called with a batch of events accumulated by the scheduler.
     ///
     /// Default implementation delegates to [`on_event`](Self::on_event) for each
     /// event in the batch. Override for batch-level optimizations (e.g., deduplication).
-    fn on_batch(&self, batch: &MutationBatch) {
-        for event in &batch.events {
-            self.on_event(event);
+    async fn on_batch(&self, events: &[MutationEvent]) {
+        for event in events {
+            self.on_event(event).await;
         }
     }
 

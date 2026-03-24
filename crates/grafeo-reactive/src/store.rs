@@ -10,9 +10,9 @@ use crate::event::{EdgeSnapshot, MutationEvent, NodeSnapshot};
 use arcstr::ArcStr;
 use grafeo_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TransactionId, Value};
 use grafeo_common::utils::hash::FxHashMap;
+use grafeo_core::graph::Direction;
 use grafeo_core::graph::lpg::{CompareOp, Edge, Node};
 use grafeo_core::graph::traits::{GraphStore, GraphStoreMut};
-use grafeo_core::graph::Direction;
 use grafeo_core::statistics::Statistics;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -430,9 +430,7 @@ impl<S: GraphStoreMut> GraphStoreMut for InstrumentedStore<S> {
             .inner
             .get_node_versioned(id, epoch, transaction_id)
             .map(|n| Self::snapshot_node(&n));
-        let deleted = self
-            .inner
-            .delete_node_versioned(id, epoch, transaction_id);
+        let deleted = self.inner.delete_node_versioned(id, epoch, transaction_id);
         if deleted {
             if let Some(node) = before {
                 self.push_event(MutationEvent::NodeDeleted { node });
@@ -447,9 +445,7 @@ impl<S: GraphStoreMut> GraphStoreMut for InstrumentedStore<S> {
             .inner
             .edges_from(node_id, Direction::Both)
             .iter()
-            .filter_map(|(_target, eid)| {
-                self.inner.get_edge(*eid).map(|e| Self::snapshot_edge(&e))
-            })
+            .filter_map(|(_target, eid)| self.inner.get_edge(*eid).map(|e| Self::snapshot_edge(&e)))
             .collect();
 
         self.inner.delete_node_edges(node_id);
@@ -480,9 +476,7 @@ impl<S: GraphStoreMut> GraphStoreMut for InstrumentedStore<S> {
             .inner
             .get_edge_versioned(id, epoch, transaction_id)
             .map(|e| Self::snapshot_edge(&e));
-        let deleted = self
-            .inner
-            .delete_edge_versioned(id, epoch, transaction_id);
+        let deleted = self.inner.delete_edge_versioned(id, epoch, transaction_id);
         if deleted {
             if let Some(edge) = before {
                 self.push_event(MutationEvent::EdgeDeleted { edge });

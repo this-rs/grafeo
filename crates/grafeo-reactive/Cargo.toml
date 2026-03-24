@@ -18,6 +18,9 @@ tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
 # Error handling
 thiserror.workspace = true
 
+# Async traits (for dyn MutationListener)
+async-trait.workspace = true
+
 # Tracing
 tracing.workspace = true
 

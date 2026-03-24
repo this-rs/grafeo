@@ -271,10 +271,7 @@ impl Session {
     /// commit. Used by `grafeo-reactive` to drain mutation events from an
     /// `InstrumentedStore` and publish them to the `MutationBus`.
     #[cfg(feature = "reactive")]
-    pub fn set_post_commit_hook(
-        &mut self,
-        hook: Arc<dyn Fn(&dyn GraphStoreMut) + Send + Sync>,
-    ) {
+    pub fn set_post_commit_hook(&mut self, hook: Arc<dyn Fn(&dyn GraphStoreMut) + Send + Sync>) {
         self.post_commit_hook = Some(hook);
     }
 

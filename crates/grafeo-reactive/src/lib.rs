@@ -13,6 +13,8 @@
 //!        |
 //!   MutationBus           (tokio::broadcast channel)
 //!        |
+//!   Scheduler             (tokio::task, batching, dispatch)
+//!        |
 //!   MutationListener(s)   (async consumers: energy, synapses, fabric, ...)
 //! ```
 //!
@@ -27,12 +29,14 @@ mod bus;
 pub mod error;
 mod event;
 mod listener;
+mod scheduler;
 mod store;
 
 pub use bus::MutationBus;
 pub use error::ReactiveError;
-pub use event::{MutationEvent, MutationBatch, NodeSnapshot, EdgeSnapshot};
+pub use event::{EdgeSnapshot, MutationBatch, MutationEvent, NodeSnapshot};
 pub use listener::MutationListener;
+pub use scheduler::{BatchConfig, Scheduler};
 pub use store::InstrumentedStore;
 
 #[cfg(test)]
