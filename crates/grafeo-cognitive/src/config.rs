@@ -412,6 +412,7 @@ max_batch_nodes = 50
     }
 
     #[test]
+    #[cfg(feature = "energy")]
     fn energy_config_to_runtime() {
         let toml_config = EnergyConfigToml {
             half_life_secs: 7200,
@@ -424,6 +425,7 @@ max_batch_nodes = 50
     }
 
     #[test]
+    #[cfg(feature = "synapse")]
     fn synapse_config_to_runtime() {
         let toml_config = SynapseConfigToml {
             reinforce_amount: 0.5,
