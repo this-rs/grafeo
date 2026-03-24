@@ -1545,3 +1545,367 @@ fn remove_label_versioned_nonexistent_returns_false() {
 // LpgStore does not implement Debug, so we cannot test the Debug impl
 // with the standard test store. The Debug impl is a trivial delegation
 // (lines 654-659 of store.rs).
+
+// ========================================================================
+// Versioned writes emit MutationEvent (regression tests for silent writes)
+// ========================================================================
+
+#[test]
+fn set_node_property_versioned_emits_node_updated() {
+    let store = new_store();
+    let id = store.create_node(&["Person"]);
+    store.drain_pending();
+
+    let txn = TransactionId::SYSTEM;
+    store.set_node_property_versioned(id, "name", Value::String(arcstr::literal!("Alice")), txn);
+
+    let events = store.drain_pending();
+    assert_eq!(events.len(), 1, "set_node_property_versioned must emit a MutationEvent");
+    match &events[0] {
+        MutationEvent::NodeUpdated { before, after } => {
+            assert_eq!(before.id, id);
+            assert_eq!(after.id, id);
+            assert!(before.properties.is_empty());
+            assert_eq!(after.properties.len(), 1);
+        }
+        other => panic!("expected NodeUpdated, got {:?}", other),
+    }
+}
+
+#[test]
+fn set_edge_property_versioned_emits_edge_updated() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    let eid = store.create_edge(n1, n2, "KNOWS");
+    store.drain_pending();
+
+    let txn = TransactionId::SYSTEM;
+    store.set_edge_property_versioned(eid, "weight", Value::Float64(0.5), txn);
+
+    let events = store.drain_pending();
+    assert_eq!(events.len(), 1, "set_edge_property_versioned must emit a MutationEvent");
+    match &events[0] {
+        MutationEvent::EdgeUpdated { before, after } => {
+            assert_eq!(before.id, eid);
+            assert_eq!(after.id, eid);
+            assert!(before.properties.is_empty());
+            assert_eq!(after.properties.len(), 1);
+        }
+        other => panic!("expected EdgeUpdated, got {:?}", other),
+    }
+}
+
+#[test]
+fn add_label_versioned_emits_node_updated() {
+    let store = new_store();
+    let id = store.create_node(&["Person"]);
+    store.drain_pending();
+
+    let txn = TransactionId::SYSTEM;
+    let added = store.add_label_versioned(id, "Employee", txn);
+    assert!(added);
+
+    let events = store.drain_pending();
+    assert_eq!(events.len(), 1, "add_label_versioned must emit a MutationEvent");
+    match &events[0] {
+        MutationEvent::NodeUpdated { before, after } => {
+            assert_eq!(before.labels.len(), 1);
+            assert_eq!(after.labels.len(), 2);
+        }
+        other => panic!("expected NodeUpdated, got {:?}", other),
+    }
+}
+
+#[test]
+fn add_label_versioned_duplicate_emits_no_event() {
+    let store = new_store();
+    let id = store.create_node(&["Person"]);
+    store.drain_pending();
+
+    let txn = TransactionId::SYSTEM;
+    let added = store.add_label_versioned(id, "Person", txn);
+    assert!(!added);
+    assert_eq!(store.pending_count(), 0, "duplicate add_label_versioned must not emit event");
+}
+
+#[test]
+fn remove_label_versioned_emits_node_updated() {
+    let store = new_store();
+    let id = store.create_node(&["Person", "Employee"]);
+    store.drain_pending();
+
+    let txn = TransactionId::SYSTEM;
+    let removed = store.remove_label_versioned(id, "Employee", txn);
+    assert!(removed);
+
+    let events = store.drain_pending();
+    assert_eq!(events.len(), 1, "remove_label_versioned must emit a MutationEvent");
+    match &events[0] {
+        MutationEvent::NodeUpdated { before, after } => {
+            assert_eq!(before.labels.len(), 2);
+            assert_eq!(after.labels.len(), 1);
+        }
+        other => panic!("expected NodeUpdated, got {:?}", other),
+    }
+}
+
+#[test]
+fn remove_label_versioned_nonexistent_emits_no_event() {
+    let store = new_store();
+    let id = store.create_node(&["Person"]);
+    store.drain_pending();
+
+    let txn = TransactionId::SYSTEM;
+    let removed = store.remove_label_versioned(id, "Ghost", txn);
+    assert!(!removed);
+    assert_eq!(store.pending_count(), 0, "nonexistent remove_label_versioned must not emit event");
+}
+
+#[test]
+fn remove_node_property_versioned_emits_node_updated() {
+    let store = new_store();
+    let id = store.create_node(&["Person"]);
+    store.set_node_property(id, "name", Value::String(arcstr::literal!("Alice")));
+    store.drain_pending();
+
+    let txn = TransactionId::SYSTEM;
+    let removed = store.remove_node_property_versioned(id, "name", txn);
+    assert!(removed.is_some());
+
+    let events = store.drain_pending();
+    assert_eq!(events.len(), 1, "remove_node_property_versioned must emit a MutationEvent");
+    match &events[0] {
+        MutationEvent::NodeUpdated { before, after } => {
+            assert_eq!(before.properties.len(), 1);
+            assert!(after.properties.is_empty());
+        }
+        other => panic!("expected NodeUpdated, got {:?}", other),
+    }
+}
+
+#[test]
+fn remove_node_property_versioned_nonexistent_emits_no_event() {
+    let store = new_store();
+    let id = store.create_node(&["Person"]);
+    store.drain_pending();
+
+    let txn = TransactionId::SYSTEM;
+    let removed = store.remove_node_property_versioned(id, "ghost", txn);
+    assert!(removed.is_none());
+    assert_eq!(store.pending_count(), 0);
+}
+
+#[test]
+fn remove_edge_property_versioned_emits_edge_updated() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    let eid = store.create_edge(n1, n2, "KNOWS");
+    store.set_edge_property(eid, "weight", Value::Float64(0.5));
+    store.drain_pending();
+
+    let txn = TransactionId::SYSTEM;
+    let removed = store.remove_edge_property_versioned(eid, "weight", txn);
+    assert!(removed.is_some());
+
+    let events = store.drain_pending();
+    assert_eq!(events.len(), 1, "remove_edge_property_versioned must emit a MutationEvent");
+    match &events[0] {
+        MutationEvent::EdgeUpdated { before, after } => {
+            assert_eq!(before.properties.len(), 1);
+            assert!(after.properties.is_empty());
+        }
+        other => panic!("expected EdgeUpdated, got {:?}", other),
+    }
+}
+
+#[test]
+fn remove_edge_property_versioned_nonexistent_emits_no_event() {
+    let store = new_store();
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    let eid = store.create_edge(n1, n2, "KNOWS");
+    store.drain_pending();
+
+    let txn = TransactionId::SYSTEM;
+    let removed = store.remove_edge_property_versioned(eid, "ghost", txn);
+    assert!(removed.is_none());
+    assert_eq!(store.pending_count(), 0);
+}
+
+// ========================================================================
+// Concurrency tests — DashMap-backed store with tokio::spawn × N tasks
+// ========================================================================
+
+#[tokio::test]
+async fn concurrent_node_creation_no_data_loss() {
+    let store = std::sync::Arc::new(new_store());
+    let n = 100;
+    let mut handles = Vec::with_capacity(n);
+
+    for _ in 0..n {
+        let s = store.clone();
+        handles.push(tokio::spawn(async move {
+            s.create_node(&["Concurrent"]);
+        }));
+    }
+
+    for h in handles {
+        h.await.unwrap();
+    }
+
+    assert_eq!(store.node_count(), n);
+    let events = store.drain_pending();
+    assert_eq!(events.len(), n, "every concurrent create_node must emit exactly one event");
+}
+
+#[tokio::test]
+async fn concurrent_edge_creation_no_data_loss() {
+    let store = std::sync::Arc::new(new_store());
+    // Pre-create nodes
+    let n1 = store.create_node(&["A"]);
+    let n2 = store.create_node(&["B"]);
+    store.drain_pending();
+
+    let n = 50;
+    let mut handles = Vec::with_capacity(n);
+    for i in 0..n {
+        let s = store.clone();
+        handles.push(tokio::spawn(async move {
+            s.create_edge(n1, n2, &format!("REL_{}", i));
+        }));
+    }
+
+    for h in handles {
+        h.await.unwrap();
+    }
+
+    assert_eq!(store.edge_count(), n);
+    let events = store.drain_pending();
+    assert_eq!(events.len(), n, "every concurrent create_edge must emit exactly one event");
+}
+
+#[tokio::test]
+async fn concurrent_property_writes_no_panic() {
+    let store = std::sync::Arc::new(new_store());
+    let id = store.create_node(&["Target"]);
+    store.drain_pending();
+
+    let n = 100;
+    let mut handles = Vec::with_capacity(n);
+    for i in 0..n {
+        let s = store.clone();
+        handles.push(tokio::spawn(async move {
+            s.set_node_property(id, "counter", Value::Int64(i as i64));
+        }));
+    }
+
+    for h in handles {
+        h.await.unwrap();
+    }
+
+    // All writes should have produced events (no lost events)
+    let events = store.drain_pending();
+    assert_eq!(events.len(), n, "every concurrent set_node_property must emit an event");
+    assert!(events.iter().all(|e| e.kind() == "node_updated"));
+}
+
+#[tokio::test]
+async fn concurrent_label_add_remove_no_panic() {
+    let store = std::sync::Arc::new(new_store());
+    let id = store.create_node(&["Base"]);
+    store.drain_pending();
+
+    let n = 50;
+    let mut handles = Vec::with_capacity(n * 2);
+    for i in 0..n {
+        let s = store.clone();
+        let label = format!("Label_{}", i);
+        handles.push(tokio::spawn(async move {
+            s.add_label(id, &label);
+        }));
+    }
+
+    for h in handles {
+        h.await.unwrap();
+    }
+
+    // All unique labels should have been added
+    let node = store.get_node(id).unwrap();
+    // Base + n unique labels
+    assert_eq!(node.labels.len(), n + 1);
+    let events = store.drain_pending();
+    assert_eq!(events.len(), n, "every successful add_label must emit an event");
+}
+
+#[tokio::test]
+async fn concurrent_mixed_operations_no_panic() {
+    use std::sync::Arc;
+
+    let store = Arc::new(new_store());
+    let n = 40;
+    let mut handles = Vec::new();
+
+    // Spawn node creators
+    for _ in 0..n {
+        let s = store.clone();
+        handles.push(tokio::spawn(async move {
+            let id = s.create_node(&["Mixed"]);
+            s.set_node_property(id, "key", Value::Int64(42));
+            id
+        }));
+    }
+
+    let mut node_ids = Vec::new();
+    for h in handles {
+        node_ids.push(h.await.unwrap());
+    }
+
+    // Now spawn edge creators between random pairs
+    let mut edge_handles = Vec::new();
+    for i in 0..n {
+        let s = store.clone();
+        let src = node_ids[i];
+        let dst = node_ids[(i + 1) % n];
+        edge_handles.push(tokio::spawn(async move {
+            s.create_edge(src, dst, "LINKED");
+        }));
+    }
+
+    for h in edge_handles {
+        h.await.unwrap();
+    }
+
+    assert_eq!(store.node_count(), n);
+    assert_eq!(store.edge_count(), n);
+
+    let events = store.drain_pending();
+    // n create_node + n set_property + n create_edge = 3n events
+    assert_eq!(events.len(), 3 * n, "all concurrent operations must emit events");
+}
+
+#[tokio::test]
+async fn concurrent_versioned_property_writes_emit_events() {
+    let store = std::sync::Arc::new(new_store());
+    let id = store.create_node(&["Versioned"]);
+    store.drain_pending();
+
+    let n = 50;
+    let mut handles = Vec::with_capacity(n);
+    for i in 0..n {
+        let s = store.clone();
+        handles.push(tokio::spawn(async move {
+            let txn = TransactionId(i as u64 + 1);
+            s.set_node_property_versioned(id, "val", Value::Int64(i as i64), txn);
+        }));
+    }
+
+    for h in handles {
+        h.await.unwrap();
+    }
+
+    let events = store.drain_pending();
+    assert_eq!(events.len(), n, "every concurrent versioned write must emit an event");
+    assert!(events.iter().all(|e| e.kind() == "node_updated"));
+}

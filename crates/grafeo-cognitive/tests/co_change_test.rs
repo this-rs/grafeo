@@ -427,3 +427,185 @@ async fn detector_node_deleted_extracts_id() {
 
     assert!(store.get_relation(NodeId::new(5), NodeId::new(6)).is_some());
 }
+
+// ---------------------------------------------------------------------------
+// window_duration — cross-batch co-change detection
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn detector_window_duration_pairs_cross_batch_nodes() {
+    let config = CoChangeConfig {
+        window_duration: Duration::from_secs(60), // 1 minute window
+        ..CoChangeConfig::default()
+    };
+    let store = Arc::new(CoChangeStore::new(config));
+    let detector = CoChangeDetector::new(Arc::clone(&store));
+
+    // Batch 1: node 1
+    let events1 = vec![MutationEvent::NodeCreated { node: make_node(1) }];
+    detector.on_batch(&events1).await;
+    // Single node → no co-change yet
+    assert!(store.is_empty());
+
+    // Batch 2: node 2 (within window of batch 1)
+    let events2 = vec![MutationEvent::NodeCreated { node: make_node(2) }];
+    detector.on_batch(&events2).await;
+
+    // Nodes 1 and 2 should now be co-changed (cross-batch pairing via window)
+    assert!(
+        store.get_relation(NodeId::new(1), NodeId::new(2)).is_some(),
+        "window_duration should pair nodes across batches"
+    );
+}
+
+#[tokio::test]
+async fn detector_zero_window_no_cross_batch_pairing() {
+    let config = CoChangeConfig {
+        window_duration: Duration::ZERO,
+        ..CoChangeConfig::default()
+    };
+    let store = Arc::new(CoChangeStore::new(config));
+    let detector = CoChangeDetector::new(Arc::clone(&store));
+
+    // Two separate batches with single nodes
+    let events1 = vec![MutationEvent::NodeCreated { node: make_node(1) }];
+    detector.on_batch(&events1).await;
+
+    let events2 = vec![MutationEvent::NodeCreated { node: make_node(2) }];
+    detector.on_batch(&events2).await;
+
+    // With zero window, no cross-batch pairing should happen
+    assert!(
+        store.is_empty(),
+        "zero window_duration should not pair nodes across batches"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Adversarial tests — NaN energy, zero half_life, overflow values
+// ---------------------------------------------------------------------------
+
+#[test]
+fn adversarial_zero_half_life_strength_is_zero_or_finite() {
+    // Zero half-life: 2^(-t / 0) → division by zero in exponent
+    // Strength should not panic; result can be 0 or NaN-safe
+    let start = Instant::now();
+    let rel = CoChangeRelation::new_at(NodeId::new(1), NodeId::new(2), Duration::ZERO, start);
+
+    // At t=0: elapsed=0, half_lives = 0/0 = NaN, 2^(-NaN) = NaN, count * NaN = NaN
+    // This is a known edge case — the result should not panic
+    let s = rel.strength_at(start);
+    // With zero half-life at t=0: elapsed = 0, half_lives = 0.0/0.0 = NaN
+    // We just verify no panic; NaN is acceptable for degenerate config
+    assert!(s.is_nan() || s.is_finite(), "should not panic with zero half_life");
+
+    // After some time: elapsed > 0, half_lives = t/0 = inf, 2^(-inf) = 0
+    let later = start + Duration::from_secs(1);
+    let s_later = rel.strength_at(later);
+    assert!(
+        s_later == 0.0 || s_later.is_nan(),
+        "zero half_life after elapsed time: got {s_later}"
+    );
+}
+
+#[test]
+fn adversarial_very_large_half_life_no_overflow() {
+    // Very large half-life: strength should remain close to count
+    let half_life = Duration::from_secs(u64::MAX / 2);
+    let start = Instant::now();
+    let rel = CoChangeRelation::new_at(NodeId::new(1), NodeId::new(2), half_life, start);
+
+    let s = rel.strength_at(start + Duration::from_secs(1000));
+    assert!(s.is_finite(), "very large half_life should produce finite strength");
+    assert!(s > 0.99, "huge half_life → negligible decay: {s}");
+}
+
+#[test]
+fn adversarial_max_count_no_overflow() {
+    let start = Instant::now();
+    let mut rel = CoChangeRelation::new_at(
+        NodeId::new(1),
+        NodeId::new(2),
+        Duration::from_secs(3600),
+        start,
+    );
+
+    // Simulate many co-changes
+    for _ in 0..10_000 {
+        rel.record_at(start);
+    }
+
+    assert_eq!(rel.count, 10_001); // initial 1 + 10_000
+    let s = rel.strength_at(start);
+    assert!((s - 10_001.0).abs() < 1e-6, "expected 10001.0, got {s}");
+}
+
+#[test]
+fn adversarial_store_self_co_change_ignored() {
+    let store = CoChangeStore::new(CoChangeConfig::default());
+    // Many self-co-changes should all be ignored
+    for _ in 0..100 {
+        store.record_co_change(NodeId::new(42), NodeId::new(42));
+    }
+    assert!(store.is_empty(), "self-co-changes should always be ignored");
+}
+
+#[test]
+fn adversarial_store_config_accessor() {
+    let config = CoChangeConfig {
+        window_duration: Duration::from_secs(123),
+        strength_half_life: Duration::from_secs(456),
+        max_batch_nodes: 789,
+    };
+    let store = CoChangeStore::new(config);
+    assert_eq!(store.config().window_duration, Duration::from_secs(123));
+    assert_eq!(store.config().strength_half_life, Duration::from_secs(456));
+    assert_eq!(store.config().max_batch_nodes, 789);
+}
+
+#[tokio::test]
+async fn adversarial_empty_batch_no_panic() {
+    let store = Arc::new(CoChangeStore::new(CoChangeConfig::default()));
+    let detector = CoChangeDetector::new(Arc::clone(&store));
+
+    // Empty batch should be a no-op
+    detector.on_batch(&[]).await;
+    assert!(store.is_empty());
+}
+
+#[tokio::test]
+async fn adversarial_max_batch_nodes_boundary() {
+    // Test at exactly max_batch_nodes (should process, not skip)
+    let config = CoChangeConfig {
+        max_batch_nodes: 3,
+        ..CoChangeConfig::default()
+    };
+    let store = Arc::new(CoChangeStore::new(config));
+    let detector = CoChangeDetector::new(Arc::clone(&store));
+
+    // Exactly 3 nodes = max_batch_nodes → should process
+    let events: Vec<MutationEvent> = (1..=3)
+        .map(|id| MutationEvent::NodeCreated { node: make_node(id) })
+        .collect();
+    detector.on_batch(&events).await;
+
+    assert_eq!(store.len(), 3, "exactly max_batch_nodes should be processed");
+}
+
+#[tokio::test]
+async fn adversarial_max_batch_nodes_exceeded() {
+    let config = CoChangeConfig {
+        max_batch_nodes: 3,
+        ..CoChangeConfig::default()
+    };
+    let store = Arc::new(CoChangeStore::new(config));
+    let detector = CoChangeDetector::new(Arc::clone(&store));
+
+    // 4 nodes > max_batch_nodes=3 → should skip
+    let events: Vec<MutationEvent> = (1..=4)
+        .map(|id| MutationEvent::NodeCreated { node: make_node(id) })
+        .collect();
+    detector.on_batch(&events).await;
+
+    assert!(store.is_empty(), "should skip batch exceeding max_batch_nodes");
+}

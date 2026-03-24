@@ -239,14 +239,24 @@ impl std::fmt::Debug for CoChangeStore {
 /// Co-change: when two nodes appear in the same mutation batch (transaction),
 /// they are considered temporally coupled. This is different from synapses
 /// which represent semantic co-activation.
+///
+/// When `window_duration > 0`, nodes from recent batches (within the window)
+/// are also paired with nodes in the current batch, enabling cross-batch
+/// co-change detection for temporally close mutations.
 pub struct CoChangeDetector {
     store: Arc<CoChangeStore>,
+    /// Recent node sets from past batches, with their timestamps.
+    /// Used for time-windowed co-change detection.
+    recent_batches: parking_lot::Mutex<Vec<(Instant, Vec<NodeId>)>>,
 }
 
 impl CoChangeDetector {
     /// Creates a new co-change detector backed by the given store.
     pub fn new(store: Arc<CoChangeStore>) -> Self {
-        Self { store }
+        Self {
+            store,
+            recent_batches: parking_lot::Mutex::new(Vec::new()),
+        }
     }
 
     /// Returns a reference to the underlying store.
@@ -297,8 +307,37 @@ impl MutationListener for CoChangeDetector {
             return;
         }
 
-        // Record co-change for all distinct pairs
-        let nodes: Vec<NodeId> = touched.into_iter().collect();
+        let window = self.store.config().window_duration;
+        let now = Instant::now();
+
+        // Collect nodes within the time window from recent batches
+        let mut windowed_nodes: HashSet<NodeId> = touched.clone();
+        if !window.is_zero() {
+            let mut recent = self.recent_batches.lock();
+            // Evict expired entries
+            recent.retain(|(ts, _)| now.duration_since(*ts) <= window);
+            // Merge recent nodes into the pairing set
+            for (_ts, nodes) in recent.iter() {
+                for &nid in nodes {
+                    windowed_nodes.insert(nid);
+                }
+            }
+            // Store current batch for future window lookups
+            recent.push((now, touched.iter().copied().collect()));
+        }
+
+        // Guard combined set against explosion
+        if windowed_nodes.len() > self.store.config().max_batch_nodes {
+            tracing::warn!(
+                nodes = windowed_nodes.len(),
+                max = self.store.config().max_batch_nodes,
+                "co-change windowed set too large, skipping"
+            );
+            return;
+        }
+
+        // Record co-change for all distinct pairs in the combined set
+        let nodes: Vec<NodeId> = windowed_nodes.into_iter().collect();
         for i in 0..nodes.len() {
             for j in (i + 1)..nodes.len() {
                 self.store.record_co_change(nodes[i], nodes[j]);

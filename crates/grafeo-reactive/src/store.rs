@@ -502,8 +502,13 @@ impl<S: GraphStoreMut> GraphStoreMut for InstrumentedStore<S> {
         value: Value,
         transaction_id: TransactionId,
     ) {
+        let before = self.inner.get_node(id).map(|n| Self::snapshot_node(&n));
         self.inner
             .set_node_property_versioned(id, key, value, transaction_id);
+        let after = self.inner.get_node(id).map(|n| Self::snapshot_node(&n));
+        if let (Some(before), Some(after)) = (before, after) {
+            self.push_event(MutationEvent::NodeUpdated { before, after });
+        }
     }
 
     fn set_edge_property_versioned(
@@ -513,8 +518,13 @@ impl<S: GraphStoreMut> GraphStoreMut for InstrumentedStore<S> {
         value: Value,
         transaction_id: TransactionId,
     ) {
+        let before = self.inner.get_edge(id).map(|e| Self::snapshot_edge(&e));
         self.inner
             .set_edge_property_versioned(id, key, value, transaction_id);
+        let after = self.inner.get_edge(id).map(|e| Self::snapshot_edge(&e));
+        if let (Some(before), Some(after)) = (before, after) {
+            self.push_event(MutationEvent::EdgeUpdated { before, after });
+        }
     }
 
     fn remove_node_property(&self, id: NodeId, key: &str) -> Option<Value> {
@@ -547,8 +557,17 @@ impl<S: GraphStoreMut> GraphStoreMut for InstrumentedStore<S> {
         key: &str,
         transaction_id: TransactionId,
     ) -> Option<Value> {
-        self.inner
-            .remove_node_property_versioned(id, key, transaction_id)
+        let before = self.inner.get_node(id).map(|n| Self::snapshot_node(&n));
+        let result = self
+            .inner
+            .remove_node_property_versioned(id, key, transaction_id);
+        if result.is_some() {
+            let after = self.inner.get_node(id).map(|n| Self::snapshot_node(&n));
+            if let (Some(before), Some(after)) = (before, after) {
+                self.push_event(MutationEvent::NodeUpdated { before, after });
+            }
+        }
+        result
     }
 
     fn remove_edge_property_versioned(
@@ -557,8 +576,17 @@ impl<S: GraphStoreMut> GraphStoreMut for InstrumentedStore<S> {
         key: &str,
         transaction_id: TransactionId,
     ) -> Option<Value> {
-        self.inner
-            .remove_edge_property_versioned(id, key, transaction_id)
+        let before = self.inner.get_edge(id).map(|e| Self::snapshot_edge(&e));
+        let result = self
+            .inner
+            .remove_edge_property_versioned(id, key, transaction_id);
+        if result.is_some() {
+            let after = self.inner.get_edge(id).map(|e| Self::snapshot_edge(&e));
+            if let (Some(before), Some(after)) = (before, after) {
+                self.push_event(MutationEvent::EdgeUpdated { before, after });
+            }
+        }
+        result
     }
 
     fn add_label(&self, node_id: NodeId, label: &str) -> bool {
@@ -603,8 +631,23 @@ impl<S: GraphStoreMut> GraphStoreMut for InstrumentedStore<S> {
         label: &str,
         transaction_id: TransactionId,
     ) -> bool {
-        self.inner
-            .add_label_versioned(node_id, label, transaction_id)
+        let before = self
+            .inner
+            .get_node(node_id)
+            .map(|n| Self::snapshot_node(&n));
+        let result = self
+            .inner
+            .add_label_versioned(node_id, label, transaction_id);
+        if result {
+            let after = self
+                .inner
+                .get_node(node_id)
+                .map(|n| Self::snapshot_node(&n));
+            if let (Some(before), Some(after)) = (before, after) {
+                self.push_event(MutationEvent::NodeUpdated { before, after });
+            }
+        }
+        result
     }
 
     fn remove_label_versioned(
@@ -613,8 +656,23 @@ impl<S: GraphStoreMut> GraphStoreMut for InstrumentedStore<S> {
         label: &str,
         transaction_id: TransactionId,
     ) -> bool {
-        self.inner
-            .remove_label_versioned(node_id, label, transaction_id)
+        let before = self
+            .inner
+            .get_node(node_id)
+            .map(|n| Self::snapshot_node(&n));
+        let result = self
+            .inner
+            .remove_label_versioned(node_id, label, transaction_id);
+        if result {
+            let after = self
+                .inner
+                .get_node(node_id)
+                .map(|n| Self::snapshot_node(&n));
+            if let (Some(before), Some(after)) = (before, after) {
+                self.push_event(MutationEvent::NodeUpdated { before, after });
+            }
+        }
+        result
     }
 
     fn create_node_with_props(
