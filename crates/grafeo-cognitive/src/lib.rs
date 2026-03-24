@@ -127,11 +127,11 @@ pub use fingerprint::{MotifType, StructuralFingerprint, compare, detect_twins, f
 #[cfg(feature = "distillation")]
 pub use distillation::{
     ArtifactMetadata, CommunityFingerprint, DistillArtifact, DistillConfig, EnergySnapshot,
-    EvaluateConfig, ParityReport, SynapseSnapshot, distill, evaluate, evaluate_with_config,
-    inject,
+    EvaluateConfig, ParityReport, SynapseSnapshot, distill, evaluate, evaluate_with_config, inject,
 };
 
 #[cfg(feature = "episodic")]
 pub use episodic::{
-    Episode, EpisodeConfig, EpisodeRecorder, EpisodeStore, Outcome, Stimulus,
+    ActivationStep, Episode, EpisodeConfig, EpisodeHorizon, EpisodeMemoryManager, EpisodeRecorder,
+    EpisodeStore, EpisodeSweepResult, Outcome, Stimulus, ValidationResult,
 };
