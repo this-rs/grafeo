@@ -256,6 +256,28 @@ impl SynapseStore {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Normalized scoring functions
+// ---------------------------------------------------------------------------
+
+/// Converts a raw synapse weight to a normalized score in `[0.0, 1.0]`.
+///
+/// Uses the formula: `score = tanh(weight)`.
+///
+/// - `weight = 0` → score = `0.0`
+/// - `weight → ∞` → score → `1.0`
+/// - Negative weight is clamped to `0.0`.
+///
+/// This provides a smooth, bounded mapping from the unbounded weight
+/// domain to a [0, 1] range suitable for cross-metric comparison.
+#[inline]
+pub fn synapse_score(weight: f64) -> f64 {
+    if weight <= 0.0 || weight.is_nan() {
+        return 0.0;
+    }
+    weight.tanh().clamp(0.0, 1.0)
+}
+
 impl std::fmt::Debug for SynapseStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SynapseStore")

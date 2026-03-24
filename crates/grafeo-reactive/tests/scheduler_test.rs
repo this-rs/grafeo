@@ -68,10 +68,13 @@ fn make_node_event(id: u64) -> MutationEvent {
 
 /// Wait until at least `expected` events have been received, with a safety timeout.
 async fn wait_for_events(rx: &mut tokio::sync::watch::Receiver<usize>, expected: usize) {
-    tokio::time::timeout(Duration::from_secs(5), rx.wait_for(|count| *count >= expected))
-        .await
-        .expect("timed out waiting for events")
-        .expect("watch channel closed");
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        rx.wait_for(|count| *count >= expected),
+    )
+    .await
+    .expect("timed out waiting for events")
+    .expect("watch channel closed");
 }
 
 // --- Tests ---

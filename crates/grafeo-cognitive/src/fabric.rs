@@ -37,7 +37,7 @@ pub struct FabricScore {
     pub knowledge_density: f64,
     /// Seconds since last mutation. `0.0` means "just mutated".
     pub staleness: f64,
-    /// Composite risk: `normalize(pagerank) × normalize(churn) × (1 - knowledge_density) × normalize(betweenness)`.
+    /// Composite risk: weighted sum of normalized pagerank, churn, knowledge_gap, betweenness, scar. Range [0.0, 1.0].
     pub risk_score: f64,
     /// Link-structure importance (PageRank). Set by GDS refresh.
     pub pagerank: f64,
@@ -371,14 +371,20 @@ fn compute_risk_score(
     let churn = normalize(score.churn_score, max_churn);
     let knowledge_gap = 1.0 - score.knowledge_density.clamp(0.0, 1.0);
     let btwn = normalize(score.betweenness, max_betweenness);
+    let scar = normalize(score.scar_intensity, max_scar_intensity);
 
-    let base_risk = pr * churn * knowledge_gap * btwn;
+    // Weighted additive formula — avoids the multiplicative collapse to zero
+    // that the old `pr * churn * knowledge_gap * btwn` formula suffered from.
+    //
+    // Weights sum to 1.0 so the result is inherently in [0, 1]:
+    //   pagerank:       25% — importance
+    //   churn:          25% — volatility
+    //   knowledge_gap:  20% — missing documentation
+    //   betweenness:    15% — centrality
+    //   scar:           15% — past failures
+    let risk = pr * 0.25 + churn * 0.25 + knowledge_gap * 0.20 + btwn * 0.15 + scar * 0.15;
 
-    // Scar intensity is additive: even a well-documented, low-churn node
-    // should have elevated risk if it has active scars from past failures.
-    let scar_boost = normalize(score.scar_intensity, max_scar_intensity) * 0.5;
-
-    (base_risk + scar_boost).clamp(0.0, 1.0)
+    risk.clamp(0.0, 1.0)
 }
 
 // ---------------------------------------------------------------------------

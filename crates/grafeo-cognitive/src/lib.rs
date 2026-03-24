@@ -93,7 +93,7 @@ pub use co_change::{CoChangeConfig, CoChangeDetector, CoChangeRelation, CoChange
 pub use config::CognitiveConfig;
 
 #[cfg(feature = "energy")]
-pub use energy::{EnergyConfig, EnergyListener, EnergyStore, NodeEnergy};
+pub use energy::{EnergyConfig, EnergyListener, EnergyStore, NodeEnergy, energy_score};
 
 pub use engine::{CognitiveEngine, CognitiveEngineBuilder, DefaultCognitiveEngine};
 pub use error::CognitiveError;
@@ -105,7 +105,7 @@ pub use fabric::{FabricListener, FabricScore, FabricStore};
 pub use gds_refresh::{GdsRefreshConfig, GdsRefreshScheduler};
 
 #[cfg(feature = "synapse")]
-pub use synapse::{Synapse, SynapseConfig, SynapseListener, SynapseStore};
+pub use synapse::{Synapse, SynapseConfig, SynapseListener, SynapseStore, synapse_score};
 
 #[cfg(feature = "scar")]
 pub use scar::{Scar, ScarConfig, ScarStore};

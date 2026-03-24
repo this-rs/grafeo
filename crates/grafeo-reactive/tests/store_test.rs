@@ -1560,7 +1560,11 @@ fn set_node_property_versioned_emits_node_updated() {
     store.set_node_property_versioned(id, "name", Value::String(arcstr::literal!("Alice")), txn);
 
     let events = store.drain_pending();
-    assert_eq!(events.len(), 1, "set_node_property_versioned must emit a MutationEvent");
+    assert_eq!(
+        events.len(),
+        1,
+        "set_node_property_versioned must emit a MutationEvent"
+    );
     match &events[0] {
         MutationEvent::NodeUpdated { before, after } => {
             assert_eq!(before.id, id);
@@ -1584,7 +1588,11 @@ fn set_edge_property_versioned_emits_edge_updated() {
     store.set_edge_property_versioned(eid, "weight", Value::Float64(0.5), txn);
 
     let events = store.drain_pending();
-    assert_eq!(events.len(), 1, "set_edge_property_versioned must emit a MutationEvent");
+    assert_eq!(
+        events.len(),
+        1,
+        "set_edge_property_versioned must emit a MutationEvent"
+    );
     match &events[0] {
         MutationEvent::EdgeUpdated { before, after } => {
             assert_eq!(before.id, eid);
@@ -1607,7 +1615,11 @@ fn add_label_versioned_emits_node_updated() {
     assert!(added);
 
     let events = store.drain_pending();
-    assert_eq!(events.len(), 1, "add_label_versioned must emit a MutationEvent");
+    assert_eq!(
+        events.len(),
+        1,
+        "add_label_versioned must emit a MutationEvent"
+    );
     match &events[0] {
         MutationEvent::NodeUpdated { before, after } => {
             assert_eq!(before.labels.len(), 1);
@@ -1626,7 +1638,11 @@ fn add_label_versioned_duplicate_emits_no_event() {
     let txn = TransactionId::SYSTEM;
     let added = store.add_label_versioned(id, "Person", txn);
     assert!(!added);
-    assert_eq!(store.pending_count(), 0, "duplicate add_label_versioned must not emit event");
+    assert_eq!(
+        store.pending_count(),
+        0,
+        "duplicate add_label_versioned must not emit event"
+    );
 }
 
 #[test]
@@ -1640,7 +1656,11 @@ fn remove_label_versioned_emits_node_updated() {
     assert!(removed);
 
     let events = store.drain_pending();
-    assert_eq!(events.len(), 1, "remove_label_versioned must emit a MutationEvent");
+    assert_eq!(
+        events.len(),
+        1,
+        "remove_label_versioned must emit a MutationEvent"
+    );
     match &events[0] {
         MutationEvent::NodeUpdated { before, after } => {
             assert_eq!(before.labels.len(), 2);
@@ -1659,7 +1679,11 @@ fn remove_label_versioned_nonexistent_emits_no_event() {
     let txn = TransactionId::SYSTEM;
     let removed = store.remove_label_versioned(id, "Ghost", txn);
     assert!(!removed);
-    assert_eq!(store.pending_count(), 0, "nonexistent remove_label_versioned must not emit event");
+    assert_eq!(
+        store.pending_count(),
+        0,
+        "nonexistent remove_label_versioned must not emit event"
+    );
 }
 
 #[test]
@@ -1674,7 +1698,11 @@ fn remove_node_property_versioned_emits_node_updated() {
     assert!(removed.is_some());
 
     let events = store.drain_pending();
-    assert_eq!(events.len(), 1, "remove_node_property_versioned must emit a MutationEvent");
+    assert_eq!(
+        events.len(),
+        1,
+        "remove_node_property_versioned must emit a MutationEvent"
+    );
     match &events[0] {
         MutationEvent::NodeUpdated { before, after } => {
             assert_eq!(before.properties.len(), 1);
@@ -1710,7 +1738,11 @@ fn remove_edge_property_versioned_emits_edge_updated() {
     assert!(removed.is_some());
 
     let events = store.drain_pending();
-    assert_eq!(events.len(), 1, "remove_edge_property_versioned must emit a MutationEvent");
+    assert_eq!(
+        events.len(),
+        1,
+        "remove_edge_property_versioned must emit a MutationEvent"
+    );
     match &events[0] {
         MutationEvent::EdgeUpdated { before, after } => {
             assert_eq!(before.properties.len(), 1);
@@ -1757,7 +1789,11 @@ async fn concurrent_node_creation_no_data_loss() {
 
     assert_eq!(store.node_count(), n);
     let events = store.drain_pending();
-    assert_eq!(events.len(), n, "every concurrent create_node must emit exactly one event");
+    assert_eq!(
+        events.len(),
+        n,
+        "every concurrent create_node must emit exactly one event"
+    );
 }
 
 #[tokio::test]
@@ -1783,7 +1819,11 @@ async fn concurrent_edge_creation_no_data_loss() {
 
     assert_eq!(store.edge_count(), n);
     let events = store.drain_pending();
-    assert_eq!(events.len(), n, "every concurrent create_edge must emit exactly one event");
+    assert_eq!(
+        events.len(),
+        n,
+        "every concurrent create_edge must emit exactly one event"
+    );
 }
 
 #[tokio::test]
@@ -1807,7 +1847,11 @@ async fn concurrent_property_writes_no_panic() {
 
     // All writes should have produced events (no lost events)
     let events = store.drain_pending();
-    assert_eq!(events.len(), n, "every concurrent set_node_property must emit an event");
+    assert_eq!(
+        events.len(),
+        n,
+        "every concurrent set_node_property must emit an event"
+    );
     assert!(events.iter().all(|e| e.kind() == "node_updated"));
 }
 
@@ -1836,7 +1880,11 @@ async fn concurrent_label_add_remove_no_panic() {
     // Base + n unique labels
     assert_eq!(node.labels.len(), n + 1);
     let events = store.drain_pending();
-    assert_eq!(events.len(), n, "every successful add_label must emit an event");
+    assert_eq!(
+        events.len(),
+        n,
+        "every successful add_label must emit an event"
+    );
 }
 
 #[tokio::test]
@@ -1882,7 +1930,11 @@ async fn concurrent_mixed_operations_no_panic() {
 
     let events = store.drain_pending();
     // n create_node + n set_property + n create_edge = 3n events
-    assert_eq!(events.len(), 3 * n, "all concurrent operations must emit events");
+    assert_eq!(
+        events.len(),
+        3 * n,
+        "all concurrent operations must emit events"
+    );
 }
 
 #[tokio::test]
@@ -1906,6 +1958,10 @@ async fn concurrent_versioned_property_writes_emit_events() {
     }
 
     let events = store.drain_pending();
-    assert_eq!(events.len(), n, "every concurrent versioned write must emit an event");
+    assert_eq!(
+        events.len(),
+        n,
+        "every concurrent versioned write must emit an event"
+    );
     assert!(events.iter().all(|e| e.kind() == "node_updated"));
 }

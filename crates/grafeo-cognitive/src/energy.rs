@@ -218,6 +218,28 @@ impl EnergyStore {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Normalized scoring functions
+// ---------------------------------------------------------------------------
+
+/// Converts a raw energy value to a normalized score in `[0.0, 1.0]`.
+///
+/// Uses the formula: `score = 1 - exp(-energy)`.
+///
+/// - `energy = 0` → score = `0.0`
+/// - `energy → ∞` → score → `1.0`
+/// - Negative energy is clamped to `0.0`.
+///
+/// This provides a smooth, bounded mapping from the unbounded energy
+/// domain to a [0, 1] range suitable for cross-metric comparison.
+#[inline]
+pub fn energy_score(energy: f64) -> f64 {
+    if energy <= 0.0 || energy.is_nan() {
+        return 0.0;
+    }
+    (1.0 - (-energy).exp()).clamp(0.0, 1.0)
+}
+
 impl std::fmt::Debug for EnergyStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EnergyStore")

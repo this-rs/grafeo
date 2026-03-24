@@ -68,6 +68,7 @@ arcstr.workspace = true
 serde_json.workspace = true
 criterion.workspace = true
 smallvec.workspace = true
+proptest.workspace = true
 
 [lints]
 workspace = true

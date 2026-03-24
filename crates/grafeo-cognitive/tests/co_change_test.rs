@@ -497,7 +497,10 @@ fn adversarial_zero_half_life_strength_is_zero_or_finite() {
     let s = rel.strength_at(start);
     // With zero half-life at t=0: elapsed = 0, half_lives = 0.0/0.0 = NaN
     // We just verify no panic; NaN is acceptable for degenerate config
-    assert!(s.is_nan() || s.is_finite(), "should not panic with zero half_life");
+    assert!(
+        s.is_nan() || s.is_finite(),
+        "should not panic with zero half_life"
+    );
 
     // After some time: elapsed > 0, half_lives = t/0 = inf, 2^(-inf) = 0
     let later = start + Duration::from_secs(1);
@@ -516,7 +519,10 @@ fn adversarial_very_large_half_life_no_overflow() {
     let rel = CoChangeRelation::new_at(NodeId::new(1), NodeId::new(2), half_life, start);
 
     let s = rel.strength_at(start + Duration::from_secs(1000));
-    assert!(s.is_finite(), "very large half_life should produce finite strength");
+    assert!(
+        s.is_finite(),
+        "very large half_life should produce finite strength"
+    );
     assert!(s > 0.99, "huge half_life → negligible decay: {s}");
 }
 
@@ -585,11 +591,17 @@ async fn adversarial_max_batch_nodes_boundary() {
 
     // Exactly 3 nodes = max_batch_nodes → should process
     let events: Vec<MutationEvent> = (1..=3)
-        .map(|id| MutationEvent::NodeCreated { node: make_node(id) })
+        .map(|id| MutationEvent::NodeCreated {
+            node: make_node(id),
+        })
         .collect();
     detector.on_batch(&events).await;
 
-    assert_eq!(store.len(), 3, "exactly max_batch_nodes should be processed");
+    assert_eq!(
+        store.len(),
+        3,
+        "exactly max_batch_nodes should be processed"
+    );
 }
 
 #[tokio::test]
@@ -603,9 +615,14 @@ async fn adversarial_max_batch_nodes_exceeded() {
 
     // 4 nodes > max_batch_nodes=3 → should skip
     let events: Vec<MutationEvent> = (1..=4)
-        .map(|id| MutationEvent::NodeCreated { node: make_node(id) })
+        .map(|id| MutationEvent::NodeCreated {
+            node: make_node(id),
+        })
         .collect();
     detector.on_batch(&events).await;
 
-    assert!(store.is_empty(), "should skip batch exceeding max_batch_nodes");
+    assert!(
+        store.is_empty(),
+        "should skip batch exceeding max_batch_nodes"
+    );
 }
