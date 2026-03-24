@@ -7,14 +7,14 @@
 #![cfg(feature = "cognitive-full")]
 
 use grafeo_cognitive::co_change::CoChangeConfig;
+use grafeo_cognitive::co_change::CoChangeStore;
 use grafeo_cognitive::energy::{EnergyConfig, EnergyStore};
 use grafeo_cognitive::engine::{CognitiveEngine, CognitiveEngineBuilder};
 use grafeo_cognitive::fabric::FabricStore;
 use grafeo_cognitive::synapse::{SynapseConfig, SynapseStore};
-use grafeo_cognitive::co_change::CoChangeStore;
 use grafeo_common::types::PropertyKey;
-use grafeo_core::graph::GraphStoreMut;
 use grafeo_core::LpgStore;
+use grafeo_core::graph::GraphStoreMut;
 use grafeo_reactive::{BatchConfig, MutationBus, Scheduler};
 use std::sync::Arc;
 use std::time::Duration;
@@ -52,7 +52,10 @@ fn energy_write_through_persists_to_graph() {
     // Verify it was persisted to the graph
     let pk = PropertyKey::from("_cog_energy");
     let prop = gs.get_node_property(node_id, &pk);
-    assert!(prop.is_some(), "energy should be persisted as node property");
+    assert!(
+        prop.is_some(),
+        "energy should be persisted as node property"
+    );
     let val = prop.unwrap().as_float64().unwrap();
     assert!(val > 4.99, "persisted energy should be ~5.0, got {val}");
 }
@@ -116,9 +119,7 @@ fn fabric_write_through_persists_risk() {
     let gs = make_graph_store();
     let node_id = gs.create_node(&["TestNode"]);
 
-    let store = FabricStore::with_graph_store(
-        Arc::clone(&gs) as Arc<dyn GraphStoreMut>,
-    );
+    let store = FabricStore::with_graph_store(Arc::clone(&gs) as Arc<dyn GraphStoreMut>);
 
     store.update_churn(node_id);
     store.update_churn(node_id);

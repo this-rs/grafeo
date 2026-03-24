@@ -68,10 +68,7 @@ fn energy_cap_zero_floor() {
     // Boost with negative amount (should floor at 0)
     store.boost(node, -5.0);
     let energy = store.get_energy(node);
-    assert!(
-        energy >= 0.0,
-        "Energy should be >= 0.0, got {energy}"
-    );
+    assert!(energy >= 0.0, "Energy should be >= 0.0, got {energy}");
 }
 
 // ---------------------------------------------------------------------------
@@ -175,7 +172,10 @@ fn synapse_normalization_preserves_relative_weights() {
 
     // Both weights should be positive and w2 > w1 (relative order preserved)
     assert!(w1 > 0.0, "w1 should be positive, got {w1}");
-    assert!(w2 > w1, "w2 ({w2}) should be > w1 ({w1}), preserving relative order");
+    assert!(
+        w2 > w1,
+        "w2 ({w2}) should be > w1 ({w1}), preserving relative order"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -252,8 +252,8 @@ fn synapse_lru_eviction_caps_cache_size() {
 
 #[test]
 fn energy_lru_evicted_entry_reloaded_from_graph() {
-    use grafeo_core::graph::GraphStoreMut;
     use grafeo_core::LpgStore;
+    use grafeo_core::graph::GraphStoreMut;
 
     let graph = Arc::new(LpgStore::new().unwrap());
     let max_entries = 10;
@@ -261,11 +261,8 @@ fn energy_lru_evicted_entry_reloaded_from_graph() {
         max_energy: 10.0,
         ..EnergyConfig::default()
     };
-    let store = EnergyStore::with_graph_store(
-        config,
-        Arc::clone(&graph) as Arc<dyn GraphStoreMut>,
-    )
-    .with_max_cache_entries(max_entries);
+    let store = EnergyStore::with_graph_store(config, Arc::clone(&graph) as Arc<dyn GraphStoreMut>)
+        .with_max_cache_entries(max_entries);
 
     // Create real nodes in the graph and boost them
     let mut node_ids = Vec::new();
