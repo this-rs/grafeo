@@ -73,6 +73,9 @@ pub mod distillation;
 #[cfg(feature = "episodic")]
 pub mod episodic;
 
+// Provenance — automatic cognitive event tracking
+pub mod provenance;
+
 // Per-tenant isolation via named graphs
 pub mod tenant;
 
@@ -149,6 +152,11 @@ pub use episodic::{
 
 pub use search::{
     NoopReranker, Reranker, SearchConfig, SearchPipeline, SearchResult, SearchWeights,
+};
+
+pub use provenance::{
+    CognitiveEvent, CognitiveEventId, CognitiveEventType, DerivedFromRecord,
+    ProvenanceRecorder, EDGE_DERIVED_FROM, EDGE_HAS_COGNITIVE_EVENT,
 };
 
 pub use tenant::{TenantError, TenantGraph, TenantInfo, TenantManager};

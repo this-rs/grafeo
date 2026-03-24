@@ -6,6 +6,7 @@
 //! [`Scheduler`].
 
 use crate::config::CognitiveConfig;
+use crate::provenance::ProvenanceRecorder;
 #[allow(unused_imports)]
 use std::sync::Arc;
 
@@ -59,6 +60,9 @@ pub trait CognitiveEngine: Send + Sync + std::fmt::Debug {
 
     /// Returns the tenant manager for per-tenant graph isolation.
     fn tenant_manager(&self) -> &TenantManager;
+
+    /// Returns the provenance recorder for cognitive event tracking.
+    fn provenance(&self) -> &Arc<ProvenanceRecorder>;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,6 +91,9 @@ pub struct DefaultCognitiveEngine {
 
     /// Per-tenant named graph isolation manager.
     tenant_manager: TenantManager,
+
+    /// Provenance recorder for automatic cognitive event tracking.
+    provenance: Arc<ProvenanceRecorder>,
 }
 
 impl CognitiveEngine for DefaultCognitiveEngine {
@@ -117,6 +124,10 @@ impl CognitiveEngine for DefaultCognitiveEngine {
     fn tenant_manager(&self) -> &TenantManager {
         &self.tenant_manager
     }
+
+    fn provenance(&self) -> &Arc<ProvenanceRecorder> {
+        &self.provenance
+    }
 }
 
 impl DefaultCognitiveEngine {
@@ -127,6 +138,11 @@ impl DefaultCognitiveEngine {
     /// tenant-scoped stores via `tenant_manager().energy_store()` etc.
     pub fn tenants(&self) -> &TenantManager {
         &self.tenant_manager
+    }
+
+    /// Returns the provenance recorder for querying cognitive event history.
+    pub fn provenance_recorder(&self) -> &Arc<ProvenanceRecorder> {
+        &self.provenance
     }
 }
 
@@ -148,6 +164,7 @@ impl std::fmt::Debug for DefaultCognitiveEngine {
         d.field("co_change", &self.co_change.is_some());
 
         d.field("tenant_count", &self.tenant_manager.tenant_count());
+        d.field("provenance_events", &self.provenance.total_events());
 
         d.finish()
     }
@@ -360,6 +377,8 @@ impl CognitiveEngineBuilder {
             store
         });
 
+        let provenance = Arc::new(ProvenanceRecorder::new());
+
         tracing::info!(
             active = active_count,
             "cognitive engine built with {} active subsystem(s)",
@@ -377,6 +396,7 @@ impl CognitiveEngineBuilder {
             co_change,
             active_count,
             tenant_manager: TenantManager::new(),
+            provenance,
         }
     }
 }
