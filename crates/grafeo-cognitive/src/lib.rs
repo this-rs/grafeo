@@ -67,6 +67,12 @@ pub mod stagnation;
 #[cfg(feature = "fingerprint")]
 pub mod fingerprint;
 
+#[cfg(feature = "distillation")]
+pub mod distillation;
+
+#[cfg(feature = "episodic")]
+pub mod episodic;
+
 // Always-available modules
 pub mod config;
 pub mod engine;
@@ -117,3 +123,14 @@ pub use stagnation::{
 
 #[cfg(feature = "fingerprint")]
 pub use fingerprint::{MotifType, StructuralFingerprint, compare, detect_twins, fingerprint};
+
+#[cfg(feature = "distillation")]
+pub use distillation::{
+    ArtifactMetadata, CommunityFingerprint, DistillArtifact, DistillConfig, EnergySnapshot,
+    EvaluateConfig, ParityReport, SynapseSnapshot, distill, evaluate, inject,
+};
+
+#[cfg(feature = "episodic")]
+pub use episodic::{
+    Episode, EpisodeConfig, EpisodeRecorder, EpisodeStore, Outcome, Stimulus,
+};
