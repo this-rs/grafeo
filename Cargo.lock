@@ -1337,6 +1337,7 @@ name = "grafeo-reactive"
 version = "0.5.23"
 dependencies = [
  "arcstr",
+ "criterion",
  "grafeo-common",
  "grafeo-core",
  "parking_lot",
