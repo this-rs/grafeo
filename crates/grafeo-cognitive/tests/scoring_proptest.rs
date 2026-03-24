@@ -3,7 +3,9 @@
 
 #![cfg(all(feature = "energy", feature = "synapse", feature = "fabric"))]
 
-use grafeo_cognitive::{energy_score, effective_half_life, mutation_frequency_score, synapse_score};
+use grafeo_cognitive::{
+    effective_half_life, energy_score, mutation_frequency_score, synapse_score,
+};
 use proptest::prelude::*;
 
 // ---------------------------------------------------------------------------
@@ -173,8 +175,14 @@ fn effective_half_life_increases_with_degree() {
     let hl_0 = effective_half_life(base, 0, 0.5);
     let hl_10 = effective_half_life(base, 10, 0.5);
     let hl_100 = effective_half_life(base, 100, 0.5);
-    assert!(hl_10 > hl_0, "degree 10 should have longer half-life than degree 0");
-    assert!(hl_100 > hl_10, "degree 100 should have longer half-life than degree 10");
+    assert!(
+        hl_10 > hl_0,
+        "degree 10 should have longer half-life than degree 0"
+    );
+    assert!(
+        hl_100 > hl_10,
+        "degree 100 should have longer half-life than degree 10"
+    );
 }
 
 // ---------------------------------------------------------------------------

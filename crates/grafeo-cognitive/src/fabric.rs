@@ -444,7 +444,13 @@ impl Default for RiskWeights {
 
 impl RiskWeights {
     /// Creates new risk weights. Values are normalized to sum to 1.0.
-    pub fn new(pagerank: f64, mutation_frequency: f64, annotation_gap: f64, betweenness: f64, scar: f64) -> Self {
+    pub fn new(
+        pagerank: f64,
+        mutation_frequency: f64,
+        annotation_gap: f64,
+        betweenness: f64,
+        scar: f64,
+    ) -> Self {
         let total = pagerank + mutation_frequency + annotation_gap + betweenness + scar;
         if total <= 0.0 || total.is_nan() {
             return Self::default();
