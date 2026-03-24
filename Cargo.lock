@@ -1333,6 +1333,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "grafeo-reactive"
+version = "0.5.23"
+dependencies = [
+ "arcstr",
+ "grafeo-common",
+ "grafeo-core",
+ "parking_lot",
+ "smallvec",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "grafeo-wasm"
 version = "0.5.23"
 dependencies = [

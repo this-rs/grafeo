@@ -1,0 +1,32 @@
+[package]
+name = "grafeo-reactive"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Reactive event substrate for Grafeo — MutationBus, listeners, and InstrumentedStore"
+
+[dependencies]
+grafeo-common.workspace = true
+grafeo-core = { workspace = true, default-features = false }
+
+# Async runtime
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
+
+# Tracing
+tracing.workspace = true
+
+# Concurrency
+parking_lot.workspace = true
+
+# Data structures
+arcstr.workspace = true
+smallvec.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+
+[lints]
+workspace = true
