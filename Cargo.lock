@@ -1220,6 +1220,7 @@ dependencies = [
  "grafeo-reactive",
  "parking_lot",
  "serde",
+ "serde_json",
  "smallvec",
  "thiserror",
  "tokio",

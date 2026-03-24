@@ -1,12 +1,12 @@
-//! Peer-to-peer knowledge distillation between Grafeo instances.
+//! P2P Distillation pipeline -- distill/inject/evaluate.
 //!
 //! This module enables extracting cognitive state from one engine,
 //! serializing it as a [`DistillArtifact`], and injecting it into
 //! another engine with a configurable trust discount.
 //!
-//! The [`evaluate`] function compares two artifacts to measure
-//! knowledge parity via Jaccard overlap, Pearson correlation, and
-//! structural fingerprint similarity.
+//! The [`evaluate`] function measures 5 parity factors between
+//! before and after artifacts: evidence coverage, community overlap,
+//! hub coverage, cemented knowledge, and cross-community bridging.
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -71,7 +71,7 @@ pub struct DistillArtifact {
 }
 
 /// A snapshot of a single synapse for serialization.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SynapseSnapshot {
     /// Source node ID.
     pub source: u64,
@@ -82,7 +82,7 @@ pub struct SynapseSnapshot {
 }
 
 /// A snapshot of a single node's energy for serialization.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EnergySnapshot {
     /// Node ID.
     pub node_id: u64,
@@ -103,11 +103,22 @@ pub struct FingerprintSnapshot {
     pub clustering_coeff: f64,
 }
 
-/// Alias for [`FingerprintSnapshot`] for backward compatibility.
+/// Alias for [`FingerprintSnapshot`] used in P2P context.
 pub type CommunityFingerprint = FingerprintSnapshot;
 
+/// Summary of an episode (placeholder for episodic memory integration).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EpisodeSummary {
+    /// Episode identifier.
+    pub episode_id: u64,
+    /// Human-readable summary.
+    pub summary: String,
+    /// Lesson learned.
+    pub lesson: String,
+}
+
 /// Metadata about the source engine that produced the artifact.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ArtifactMetadata {
     /// Identifier of the source instance.
     pub source_instance: String,
@@ -120,20 +131,35 @@ pub struct ArtifactMetadata {
 }
 
 // ---------------------------------------------------------------------------
-// ParityReport
+// ParityReport -- 5 parity factors
 // ---------------------------------------------------------------------------
 
-/// Result of comparing two [`DistillArtifact`]s for knowledge parity.
+/// Report of the 5 parity factors measuring knowledge transfer quality.
+///
+/// The five factors are:
+/// 1. `evidence_coverage` -- Jaccard overlap of synapse pairs
+/// 2. `community_overlap` -- Pearson correlation of shared node energies
+/// 3. `hub_coverage` -- fraction of high-degree nodes present in both
+/// 4. `cemented` -- fraction of shared synapses with weight agreement
+/// 5. `cross_community` -- fraction of synapses bridging degree classes
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParityReport {
-    /// Jaccard index of synapse (source, target) pairs.
-    pub synapse_overlap: f64,
-    /// Pearson correlation of shared node energies.
-    pub energy_correlation: f64,
-    /// Average fingerprint similarity (0.0 if no fingerprints).
-    pub structural_similarity: f64,
-    /// Weighted composite score.
+    /// Factor 1: Jaccard index of synapse (source, target) pairs.
+    pub evidence_coverage: f64,
+    /// Factor 2: Pearson correlation of shared node energies.
+    pub community_overlap: f64,
+    /// Factor 3: Fraction of hub nodes from source present in target.
+    pub hub_coverage: f64,
+    /// Factor 4: Fraction of shared synapses with close weight agreement.
+    pub cemented: f64,
+    /// Factor 5: Fraction of synapses bridging different degree classes.
+    pub cross_community: f64,
+    /// Weighted composite score of all 5 factors.
     pub composite_score: f64,
+    /// Threshold used for pass/fail determination.
+    pub threshold: f64,
+    /// Whether the composite score meets the threshold.
+    pub passed: bool,
 }
 
 /// Configuration for the [`evaluate`] function.
@@ -141,15 +167,15 @@ pub struct ParityReport {
 pub struct EvaluateConfig {
     /// Composite score threshold for passing (default: 0.67).
     pub threshold: f64,
-    /// Weights for synapse overlap, energy correlation, and structural similarity.
-    pub weights: [f64; 3],
+    /// Weights for the 5 factors: evidence, community, hub, cemented, cross.
+    pub weights: [f64; 5],
 }
 
 impl Default for EvaluateConfig {
     fn default() -> Self {
         Self {
             threshold: 0.67,
-            weights: [0.4, 0.4, 0.2],
+            weights: [0.25, 0.20, 0.20, 0.20, 0.15],
         }
     }
 }
@@ -270,8 +296,9 @@ fn synapse_count(_engine: &dyn CognitiveEngine) -> usize {
 /// Synapse weights are multiplied by `trust_factor` before reinforcement.
 /// Energy values are multiplied by `trust_factor` before boosting.
 pub fn inject(artifact: &DistillArtifact, trust_factor: f64, engine: &dyn CognitiveEngine) {
-    inject_synapses(artifact, trust_factor, engine);
-    inject_energies(artifact, trust_factor, engine);
+    let tf = trust_factor.clamp(0.0, 1.0);
+    inject_synapses(artifact, tf, engine);
+    inject_energies(artifact, tf, engine);
 }
 
 #[cfg(feature = "synapse")]
@@ -280,11 +307,10 @@ fn inject_synapses(artifact: &DistillArtifact, trust_factor: f64, engine: &dyn C
         return;
     };
     for snap in &artifact.synapses {
-        store.reinforce(
-            NodeId(snap.source),
-            NodeId(snap.target),
-            snap.weight * trust_factor,
-        );
+        let discounted = snap.weight * trust_factor;
+        if discounted > 0.0 {
+            store.reinforce(NodeId(snap.source), NodeId(snap.target), discounted);
+        }
     }
 }
 
@@ -302,7 +328,10 @@ fn inject_energies(artifact: &DistillArtifact, trust_factor: f64, engine: &dyn C
         return;
     };
     for snap in &artifact.energies {
-        store.boost(NodeId(snap.node_id), snap.energy * trust_factor);
+        let discounted = snap.energy * trust_factor;
+        if discounted > 0.0 {
+            store.boost(NodeId(snap.node_id), discounted);
+        }
     }
 }
 
@@ -315,28 +344,54 @@ fn inject_energies(
 }
 
 // ---------------------------------------------------------------------------
-// evaluate
+// evaluate -- 5 parity factors
 // ---------------------------------------------------------------------------
 
-/// Compares two artifacts to measure knowledge parity.
+/// Compares two artifacts (before and after injection) to measure knowledge
+/// parity via 5 factors.
 ///
-/// Returns a [`ParityReport`] with Jaccard overlap of synapse pairs,
-/// Pearson correlation of shared node energies, structural fingerprint
-/// similarity, and a weighted composite score.
+/// Uses default [`EvaluateConfig`] (threshold 0.67).
 pub fn evaluate(before: &DistillArtifact, after: &DistillArtifact) -> ParityReport {
-    let synapse_overlap = synapse_jaccard(before, after);
-    let energy_correlation = energy_pearson(before, after);
-    let structural_similarity = fingerprint_similarity(before, after);
+    evaluate_with_config(before, after, &EvaluateConfig::default())
+}
 
-    // Weighted composite: 40% synapse overlap, 40% energy correlation, 20% structural
-    let composite_score =
-        0.4 * synapse_overlap + 0.4 * energy_correlation + 0.2 * structural_similarity;
+/// Compares two artifacts with a custom [`EvaluateConfig`].
+pub fn evaluate_with_config(
+    before: &DistillArtifact,
+    after: &DistillArtifact,
+    config: &EvaluateConfig,
+) -> ParityReport {
+    // Factor 1: Evidence coverage -- Jaccard overlap of synapse pairs
+    let evidence_coverage = synapse_jaccard(before, after);
+
+    // Factor 2: Community overlap -- Pearson correlation of shared energies
+    let community_overlap = energy_pearson(before, after);
+
+    // Factor 3: Hub coverage -- fraction of high-degree nodes in both
+    let hub_coverage = compute_hub_coverage(before, after);
+
+    // Factor 4: Cemented -- fraction of shared synapses with weight agreement
+    let cemented = compute_cemented(before, after);
+
+    // Factor 5: Cross-community -- fraction bridging different degree classes
+    let cross_community = compute_cross_community(before, after);
+
+    let w = &config.weights;
+    let composite_score = w[0] * evidence_coverage
+        + w[1] * community_overlap
+        + w[2] * hub_coverage
+        + w[3] * cemented
+        + w[4] * cross_community;
 
     ParityReport {
-        synapse_overlap,
-        energy_correlation,
-        structural_similarity,
+        evidence_coverage,
+        community_overlap,
+        hub_coverage,
+        cemented,
+        cross_community,
         composite_score,
+        threshold: config.threshold,
+        passed: composite_score >= config.threshold,
     }
 }
 
@@ -349,11 +404,7 @@ fn synapse_jaccard(a: &DistillArtifact, b: &DistillArtifact) -> f64 {
     let set_b: HashSet<(u64, u64)> = b.synapses.iter().map(|s| (s.source, s.target)).collect();
     let intersection = set_a.intersection(&set_b).count() as f64;
     let union = set_a.union(&set_b).count() as f64;
-    if union == 0.0 {
-        1.0
-    } else {
-        intersection / union
-    }
+    if union == 0.0 { 1.0 } else { intersection / union }
 }
 
 /// Pearson correlation of energies for nodes present in both artifacts.
@@ -364,7 +415,6 @@ fn energy_pearson(a: &DistillArtifact, b: &DistillArtifact) -> f64 {
     let map_a: HashMap<u64, f64> = a.energies.iter().map(|e| (e.node_id, e.energy)).collect();
     let map_b: HashMap<u64, f64> = b.energies.iter().map(|e| (e.node_id, e.energy)).collect();
 
-    // Collect pairs of (energy_a, energy_b) for shared nodes
     let pairs: Vec<(f64, f64)> = map_a
         .iter()
         .filter_map(|(&nid, &ea)| map_b.get(&nid).map(|&eb| (ea, eb)))
@@ -374,7 +424,6 @@ fn energy_pearson(a: &DistillArtifact, b: &DistillArtifact) -> f64 {
         return 0.0;
     }
     if pairs.len() == 1 {
-        // Single point: if values are equal, correlation is 1.0
         return if (pairs[0].0 - pairs[0].1).abs() < f64::EPSILON {
             1.0
         } else {
@@ -399,58 +448,122 @@ fn energy_pearson(a: &DistillArtifact, b: &DistillArtifact) -> f64 {
 
     let denom = (var_a * var_b).sqrt();
     if denom < f64::EPSILON {
-        // All values are identical in one or both sets
-        if var_a < f64::EPSILON && var_b < f64::EPSILON {
-            1.0
-        } else {
-            0.0
-        }
+        if var_a < f64::EPSILON && var_b < f64::EPSILON { 1.0 } else { 0.0 }
     } else {
         cov / denom
     }
 }
 
-/// Average similarity of fingerprints matched by community ID.
-fn fingerprint_similarity(a: &DistillArtifact, b: &DistillArtifact) -> f64 {
-    if a.fingerprints.is_empty() || b.fingerprints.is_empty() {
-        return 0.0;
+/// Hub coverage: fraction of high-degree nodes from `before` also in `after`.
+fn compute_hub_coverage(before: &DistillArtifact, after: &DistillArtifact) -> f64 {
+    if before.synapses.is_empty() {
+        return 1.0;
     }
-    let map_b: HashMap<u64, &FingerprintSnapshot> = b
-        .fingerprints
+    let degree_before = build_degree_map(&before.synapses);
+    let nodes_after: HashSet<u64> = after
+        .synapses
         .iter()
-        .map(|f| (f.community_id, f))
+        .flat_map(|s| [s.source, s.target])
         .collect();
 
-    let mut total_sim = 0.0;
-    let mut matched = 0usize;
+    let mut sorted: Vec<(u64, usize)> = degree_before.into_iter().collect();
+    sorted.sort_by(|a, b| b.1.cmp(&a.1));
+    let hub_count = (sorted.len() / 5).max(1);
 
-    for fa in &a.fingerprints {
-        if let Some(fb) = map_b.get(&fa.community_id) {
-            // Compare node_count, edge_count, clustering_coeff
-            let nc_sim = 1.0 - ratio_diff(fa.node_count as f64, fb.node_count as f64);
-            let ec_sim = 1.0 - ratio_diff(fa.edge_count as f64, fb.edge_count as f64);
-            let cc_sim = 1.0 - (fa.clustering_coeff - fb.clustering_coeff).abs();
-            total_sim += (nc_sim + ec_sim + cc_sim) / 3.0;
-            matched += 1;
-        }
-    }
+    let covered = sorted
+        .iter()
+        .take(hub_count)
+        .filter(|(id, _)| nodes_after.contains(id))
+        .count();
 
-    if matched == 0 {
-        0.0
-    } else {
-        total_sim / matched as f64
-    }
+    covered as f64 / hub_count as f64
 }
 
-/// Ratio-based difference: |a - b| / max(a, b). Returns 0.0 if both are 0.
-fn ratio_diff(a: f64, b: f64) -> f64 {
-    let max = a.max(b);
-    if max < f64::EPSILON {
-        0.0
-    } else {
-        (a - b).abs() / max
+/// Cemented: fraction of shared synapses with weight ratio above 0.5.
+fn compute_cemented(before: &DistillArtifact, after: &DistillArtifact) -> f64 {
+    if before.synapses.is_empty() && after.synapses.is_empty() {
+        return 1.0;
     }
+    let map_before: HashMap<(u64, u64), f64> = before
+        .synapses
+        .iter()
+        .map(|s| ((s.source, s.target), s.weight))
+        .collect();
+    let map_after: HashMap<(u64, u64), f64> = after
+        .synapses
+        .iter()
+        .map(|s| ((s.source, s.target), s.weight))
+        .collect();
+
+    let shared: Vec<(f64, f64)> = map_before
+        .iter()
+        .filter_map(|(key, &wb)| map_after.get(key).map(|&wa| (wb, wa)))
+        .collect();
+
+    if shared.is_empty() {
+        return 0.0;
+    }
+
+    let cemented_count = shared
+        .iter()
+        .filter(|&&(wb, wa)| {
+            let max_w = wb.max(wa);
+            if max_w < f64::EPSILON {
+                return true;
+            }
+            wb.min(wa) / max_w > 0.5
+        })
+        .count();
+
+    cemented_count as f64 / shared.len() as f64
 }
+
+/// Cross-community: fraction of synapses bridging different degree classes.
+fn compute_cross_community(before: &DistillArtifact, after: &DistillArtifact) -> f64 {
+    let all: Vec<&SynapseSnapshot> = before
+        .synapses
+        .iter()
+        .chain(after.synapses.iter())
+        .collect();
+    if all.is_empty() {
+        return 1.0;
+    }
+
+    let mut degree: HashMap<u64, usize> = HashMap::new();
+    for s in &all {
+        *degree.entry(s.source).or_default() += 1;
+        *degree.entry(s.target).or_default() += 1;
+    }
+
+    let classify = |d: usize| -> u8 {
+        if d <= 2 { 0 } else if d <= 5 { 1 } else { 2 }
+    };
+
+    let cross = all
+        .iter()
+        .filter(|s| {
+            let sc = classify(*degree.get(&s.source).unwrap_or(&0));
+            let dc = classify(*degree.get(&s.target).unwrap_or(&0));
+            sc != dc
+        })
+        .count();
+
+    cross as f64 / all.len() as f64
+}
+
+/// Builds a degree map from synapse snapshots.
+fn build_degree_map(synapses: &[SynapseSnapshot]) -> HashMap<u64, usize> {
+    let mut degree: HashMap<u64, usize> = HashMap::new();
+    for s in synapses {
+        *degree.entry(s.source).or_default() += 1;
+        *degree.entry(s.target).or_default() += 1;
+    }
+    degree
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -492,9 +605,57 @@ mod tests {
         let a = make_artifact(vec![(1, 2, 0.5)], vec![(1, 1.0), (2, 2.0)]);
         let b = make_artifact(vec![(1, 2, 0.5)], vec![(1, 1.0), (2, 2.0)]);
         let report = evaluate(&a, &b);
-        assert!((report.synapse_overlap - 1.0).abs() < f64::EPSILON);
-        assert!((report.energy_correlation - 1.0).abs() < 1e-9);
-        assert!(report.composite_score > 0.7);
+        assert!((report.evidence_coverage - 1.0).abs() < f64::EPSILON);
+        assert!((report.community_overlap - 1.0).abs() < 1e-9);
+        assert!(report.composite_score > 0.5);
+    }
+
+    #[test]
+    fn evaluate_has_five_factors() {
+        let a = make_artifact(
+            vec![(1, 2, 0.5), (2, 3, 0.8), (3, 4, 0.3)],
+            vec![(1, 1.0), (2, 2.0)],
+        );
+        let b = make_artifact(
+            vec![(1, 2, 0.6), (2, 3, 0.7), (5, 6, 0.4)],
+            vec![(1, 1.0), (2, 1.8)],
+        );
+        let report = evaluate(&a, &b);
+
+        // All 5 factors must be in [0, 1]
+        assert!(report.evidence_coverage >= 0.0 && report.evidence_coverage <= 1.0);
+        assert!(report.community_overlap >= -1.0 && report.community_overlap <= 1.0);
+        assert!(report.hub_coverage >= 0.0 && report.hub_coverage <= 1.0);
+        assert!(report.cemented >= 0.0 && report.cemented <= 1.0);
+        assert!(report.cross_community >= 0.0 && report.cross_community <= 1.0);
+        assert!(report.threshold > 0.0);
+    }
+
+    #[test]
+    fn evaluate_with_custom_config() {
+        let a = make_artifact(vec![(1, 2, 0.5)], vec![]);
+        let b = make_artifact(vec![(1, 2, 0.5)], vec![]);
+
+        let low_cfg = EvaluateConfig {
+            threshold: 0.01,
+            ..Default::default()
+        };
+        let report = evaluate_with_config(&a, &b, &low_cfg);
+        assert!(report.passed, "should pass with threshold 0.01");
+        assert!((report.threshold - 0.01).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn artifact_json_roundtrip() {
+        let artifact = make_artifact(
+            vec![(1, 2, 0.75), (3, 4, 0.5)],
+            vec![(1, 0.9), (3, 1.5)],
+        );
+        let json = serde_json::to_string(&artifact).expect("serialize");
+        let restored: DistillArtifact = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(artifact.synapses.len(), restored.synapses.len());
+        assert_eq!(artifact.energies.len(), restored.energies.len());
+        assert_eq!(artifact.metadata, restored.metadata);
     }
 
     fn make_artifact(

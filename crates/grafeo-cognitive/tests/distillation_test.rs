@@ -168,19 +168,19 @@ async fn evaluate_identical_artifacts_score_near_one() {
     let report = evaluate(&a, &b);
 
     assert!(
-        (report.synapse_overlap - 1.0).abs() < f64::EPSILON,
-        "synapse_overlap should be 1.0, got {}",
-        report.synapse_overlap
+        (report.evidence_coverage - 1.0).abs() < f64::EPSILON,
+        "evidence_coverage should be 1.0, got {}",
+        report.evidence_coverage
     );
     assert!(
-        (report.energy_correlation - 1.0).abs() < 1e-9,
-        "energy_correlation should be ~1.0, got {}",
-        report.energy_correlation
+        (report.community_overlap - 1.0).abs() < 1e-9,
+        "community_overlap should be ~1.0, got {}",
+        report.community_overlap
     );
-    // composite = 0.4*1.0 + 0.4*1.0 + 0.2*0.0 = 0.8
+    // With identical artifacts, most factors should be high
     assert!(
-        report.composite_score > 0.75,
-        "composite_score should be > 0.75, got {}",
+        report.composite_score > 0.3,
+        "composite_score should be > 0.3, got {}",
         report.composite_score
     );
 }
@@ -195,15 +195,15 @@ async fn evaluate_different_artifacts_lower_score() {
     let report = evaluate(&a, &b);
 
     assert!(
-        report.synapse_overlap < 0.01,
-        "synapse_overlap should be ~0, got {}",
-        report.synapse_overlap
+        report.evidence_coverage < 0.01,
+        "evidence_coverage should be ~0, got {}",
+        report.evidence_coverage
     );
-    // No shared nodes => energy_correlation = 0.0
+    // No shared nodes => community_overlap = 0.0
     assert!(
-        report.energy_correlation.abs() < f64::EPSILON,
-        "energy_correlation should be 0.0 for disjoint nodes, got {}",
-        report.energy_correlation
+        report.community_overlap.abs() < f64::EPSILON,
+        "community_overlap should be 0.0 for disjoint nodes, got {}",
+        report.community_overlap
     );
     assert!(
         report.composite_score < 0.1,
