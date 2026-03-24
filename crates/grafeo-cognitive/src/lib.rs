@@ -22,14 +22,15 @@
 #![deny(unsafe_code)]
 
 pub mod activation;
+pub mod co_change;
 pub mod energy;
 pub mod error;
 pub mod synapse;
 
 pub use activation::{
-    spread, spread_single, ActivationMap, ActivationSource, SpreadConfig,
-    SynapseActivationSource,
+    ActivationMap, ActivationSource, SpreadConfig, SynapseActivationSource, spread, spread_single,
 };
+pub use co_change::{CoChangeConfig, CoChangeDetector, CoChangeRelation, CoChangeStore};
 pub use energy::{EnergyConfig, EnergyListener, EnergyStore, NodeEnergy};
 pub use error::CognitiveError;
 pub use synapse::{Synapse, SynapseConfig, SynapseListener, SynapseStore};

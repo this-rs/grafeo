@@ -171,11 +171,7 @@ fn make_node(id: u64) -> NodeSnapshot {
     }
 }
 
-fn make_edge_snapshot(
-    id: u64,
-    src: u64,
-    dst: u64,
-) -> grafeo_reactive::EdgeSnapshot {
+fn make_edge_snapshot(id: u64, src: u64, dst: u64) -> grafeo_reactive::EdgeSnapshot {
     grafeo_reactive::EdgeSnapshot {
         id: grafeo_common::types::EdgeId::new(id),
         src: NodeId::new(src),
