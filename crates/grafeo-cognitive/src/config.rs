@@ -278,6 +278,10 @@ pub struct StagnationConfigToml {
     pub trend_tolerance: f64,
     /// Scan interval in seconds.
     pub scan_interval_secs: u64,
+    /// Reference energy for smooth normalization in stagnation formula.
+    pub ref_energy: f64,
+    /// Reference synapse weight for smooth normalization in stagnation formula.
+    pub ref_synapse_weight: f64,
 }
 
 impl Default for StagnationConfigToml {
@@ -293,6 +297,8 @@ impl Default for StagnationConfigToml {
             trend_window_size: 5,
             trend_tolerance: 0.05,
             scan_interval_secs: 3600,
+            ref_energy: 1.0,
+            ref_synapse_weight: 1.0,
         }
     }
 }
@@ -311,6 +317,8 @@ impl StagnationConfigToml {
             trend_window_size: self.trend_window_size,
             trend_tolerance: self.trend_tolerance,
             scan_interval: Duration::from_secs(self.scan_interval_secs),
+            ref_energy: self.ref_energy,
+            ref_synapse_weight: self.ref_synapse_weight,
         }
     }
 }
@@ -587,6 +595,8 @@ max_batch_nodes = 50
             trend_window_size: 10,
             trend_tolerance: 0.1,
             scan_interval_secs: 1800,
+            ref_energy: 2.0,
+            ref_synapse_weight: 3.0,
         };
         let runtime = toml_config.to_runtime();
         assert_eq!(runtime.weight_energy, 0.5);
@@ -598,5 +608,7 @@ max_batch_nodes = 50
         assert_eq!(runtime.trend_window_size, 10);
         assert_eq!(runtime.trend_tolerance, 0.1);
         assert_eq!(runtime.scan_interval, Duration::from_secs(1800));
+        assert_eq!(runtime.ref_energy, 2.0);
+        assert_eq!(runtime.ref_synapse_weight, 3.0);
     }
 }

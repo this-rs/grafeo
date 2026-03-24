@@ -25,6 +25,8 @@ fn default_config() -> StagnationConfig {
         trend_window_size: 5,
         trend_tolerance: 0.05,
         scan_interval: Duration::from_secs(60),
+        ref_energy: 1.0,
+        ref_synapse_weight: 1.0,
     }
 }
 

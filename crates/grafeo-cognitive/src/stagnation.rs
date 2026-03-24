@@ -27,6 +27,38 @@ use crate::synapse::SynapseStore;
 use grafeo_common::types::NodeId;
 
 // ---------------------------------------------------------------------------
+// Inline bounded scoring functions (avoid cross-feature deps)
+// ---------------------------------------------------------------------------
+
+/// Normalized energy score: `1 - exp(-energy / ref_energy)`, in `[0, 1]`.
+#[inline]
+fn energy_score_fn(energy: f64, ref_energy: f64) -> f64 {
+    if energy <= 0.0 || energy.is_nan() {
+        return 0.0;
+    }
+    let r = if ref_energy <= 0.0 || ref_energy.is_nan() || ref_energy.is_infinite() {
+        1.0
+    } else {
+        ref_energy
+    };
+    (1.0 - (-energy / r).exp()).clamp(0.0, 1.0)
+}
+
+/// Normalized synapse score: `tanh(weight / ref_weight)`, in `[0, 1]`.
+#[inline]
+fn synapse_score_fn(weight: f64, ref_weight: f64) -> f64 {
+    if weight <= 0.0 || weight.is_nan() {
+        return 0.0;
+    }
+    let r = if ref_weight <= 0.0 || ref_weight.is_nan() || ref_weight.is_infinite() {
+        1.0
+    } else {
+        ref_weight
+    };
+    (weight / r).tanh().clamp(0.0, 1.0)
+}
+
+// ---------------------------------------------------------------------------
 // Trend
 // ---------------------------------------------------------------------------
 
