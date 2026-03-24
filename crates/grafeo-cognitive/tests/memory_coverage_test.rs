@@ -17,10 +17,7 @@ use std::time::{Duration, Instant};
 
 #[tokio::test]
 async fn file_archive_backend_full_lifecycle() {
-    let tmp_dir = std::env::temp_dir().join(format!(
-        "grafeo_fab_coverage_{}",
-        std::process::id()
-    ));
+    let tmp_dir = std::env::temp_dir().join(format!("grafeo_fab_coverage_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp_dir);
 
     let backend = FileArchiveBackend::new(&tmp_dir);
@@ -56,10 +53,7 @@ async fn file_archive_backend_full_lifecycle() {
 
 #[tokio::test]
 async fn file_archive_backend_multiple_nodes() {
-    let tmp_dir = std::env::temp_dir().join(format!(
-        "grafeo_fab_multi_{}",
-        std::process::id()
-    ));
+    let tmp_dir = std::env::temp_dir().join(format!("grafeo_fab_multi_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp_dir);
 
     let backend = FileArchiveBackend::new(&tmp_dir);
@@ -117,10 +111,7 @@ fn make_test_setup(
 
 #[test]
 fn sweep_at_operational_to_consolidated() {
-    let (mem, energy, config) = make_test_setup(
-        Duration::from_secs(60),
-        Duration::from_secs(300),
-    );
+    let (mem, energy, config) = make_test_setup(Duration::from_secs(60), Duration::from_secs(300));
 
     let node = NodeId(10);
     mem.track(node);
@@ -161,10 +152,7 @@ fn sweep_at_operational_not_promoted_if_too_young() {
 
 #[test]
 fn sweep_at_consolidated_to_archived() {
-    let (mem, energy, config) = make_test_setup(
-        Duration::from_secs(60),
-        Duration::from_secs(300),
-    );
+    let (mem, energy, config) = make_test_setup(Duration::from_secs(60), Duration::from_secs(300));
 
     let node = NodeId(20);
     mem.track(node);
@@ -183,10 +171,7 @@ fn sweep_at_consolidated_to_archived() {
 
 #[test]
 fn sweep_at_consolidated_not_demoted_if_recent() {
-    let (mem, energy, config) = make_test_setup(
-        Duration::from_secs(60),
-        Duration::from_secs(300),
-    );
+    let (mem, energy, config) = make_test_setup(Duration::from_secs(60), Duration::from_secs(300));
 
     let node = NodeId(21);
     mem.track(node);
@@ -207,10 +192,7 @@ fn sweep_at_consolidated_not_demoted_if_recent() {
 
 #[test]
 fn sweep_at_emergency_operational_to_archived() {
-    let (mem, energy, config) = make_test_setup(
-        Duration::from_secs(60),
-        Duration::from_secs(300),
-    );
+    let (mem, energy, config) = make_test_setup(Duration::from_secs(60), Duration::from_secs(300));
 
     let node = NodeId(30);
     mem.track(node);
@@ -228,10 +210,7 @@ fn sweep_at_emergency_operational_to_archived() {
 
 #[test]
 fn sweep_at_operational_stays_if_energy_between_thresholds() {
-    let (mem, energy, config) = make_test_setup(
-        Duration::from_secs(60),
-        Duration::from_secs(300),
-    );
+    let (mem, energy, config) = make_test_setup(Duration::from_secs(60), Duration::from_secs(300));
 
     let node = NodeId(31);
     mem.track(node);
@@ -254,10 +233,7 @@ fn sweep_at_operational_stays_if_energy_between_thresholds() {
 
 #[test]
 fn sweep_at_archived_to_operational() {
-    let (mem, energy, config) = make_test_setup(
-        Duration::from_secs(60),
-        Duration::from_secs(300),
-    );
+    let (mem, energy, config) = make_test_setup(Duration::from_secs(60), Duration::from_secs(300));
 
     let node = NodeId(40);
     mem.track(node);
@@ -273,10 +249,7 @@ fn sweep_at_archived_to_operational() {
 
 #[test]
 fn sweep_at_archived_stays_if_low_energy() {
-    let (mem, energy, config) = make_test_setup(
-        Duration::from_secs(60),
-        Duration::from_secs(300),
-    );
+    let (mem, energy, config) = make_test_setup(Duration::from_secs(60), Duration::from_secs(300));
 
     let node = NodeId(41);
     mem.track(node);
@@ -296,10 +269,7 @@ fn sweep_at_archived_stays_if_low_energy() {
 
 #[test]
 fn sweep_at_multiple_transitions_in_one_sweep() {
-    let (mem, energy, config) = make_test_setup(
-        Duration::from_secs(60),
-        Duration::from_secs(300),
-    );
+    let (mem, energy, config) = make_test_setup(Duration::from_secs(60), Duration::from_secs(300));
 
     // Node A: Operational, high energy, old → promote
     let a = NodeId(50);
@@ -338,14 +308,11 @@ fn sweep_at_multiple_transitions_in_one_sweep() {
 
 #[test]
 fn with_archive_fluent_api() {
-    let (mem, energy, config) = make_test_setup(
-        Duration::from_secs(60),
-        Duration::from_secs(300),
-    );
+    let (mem, energy, config) = make_test_setup(Duration::from_secs(60), Duration::from_secs(300));
 
     let archive = Arc::new(InMemoryArchiveBackend::new());
-    let manager = MemoryManager::new(mem, config, energy)
-        .with_archive(archive as Arc<dyn ArchiveBackend>);
+    let manager =
+        MemoryManager::new(mem, config, energy).with_archive(archive as Arc<dyn ArchiveBackend>);
 
     let dbg = format!("{:?}", manager);
     assert!(dbg.contains("has_archive: true"));
@@ -353,10 +320,7 @@ fn with_archive_fluent_api() {
 
 #[test]
 fn without_archive_shows_false() {
-    let (mem, energy, config) = make_test_setup(
-        Duration::from_secs(60),
-        Duration::from_secs(300),
-    );
+    let (mem, energy, config) = make_test_setup(Duration::from_secs(60), Duration::from_secs(300));
 
     let manager = MemoryManager::new(mem, config, energy);
     let dbg = format!("{:?}", manager);
@@ -369,10 +333,7 @@ fn without_archive_shows_false() {
 
 #[tokio::test]
 async fn start_periodic_and_shutdown() {
-    let (mem, energy, config) = make_test_setup(
-        Duration::from_secs(60),
-        Duration::from_secs(300),
-    );
+    let (mem, energy, config) = make_test_setup(Duration::from_secs(60), Duration::from_secs(300));
 
     // Track a node that will be promoted when sweep runs
     let node = NodeId(60);
@@ -397,15 +358,15 @@ async fn start_periodic_and_shutdown() {
 
     // Wait for the task to finish (with timeout so test doesn't hang)
     let join_result = tokio::time::timeout(Duration::from_secs(2), handle).await;
-    assert!(join_result.is_ok(), "periodic task should finish after shutdown");
+    assert!(
+        join_result.is_ok(),
+        "periodic task should finish after shutdown"
+    );
 }
 
 #[tokio::test]
 async fn shutdown_without_start_does_not_panic() {
-    let (mem, energy, config) = make_test_setup(
-        Duration::from_secs(60),
-        Duration::from_secs(300),
-    );
+    let (mem, energy, config) = make_test_setup(Duration::from_secs(60), Duration::from_secs(300));
 
     let manager = MemoryManager::new(mem, config, energy);
     // Calling shutdown without having started the periodic task
@@ -415,7 +376,7 @@ async fn shutdown_without_start_does_not_panic() {
 #[tokio::test]
 async fn start_periodic_performs_sweep() {
     let (mem, energy, config) = make_test_setup(
-        Duration::from_millis(1),  // very short min age
+        Duration::from_millis(1), // very short min age
         Duration::from_secs(300),
     );
 

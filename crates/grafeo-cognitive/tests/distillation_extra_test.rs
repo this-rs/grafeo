@@ -219,7 +219,13 @@ fn hub_coverage_top20_selection() {
     // 6 unique nodes => hub_count = max(6/5, 1) = max(1,1)=1 => top hub is node 1
     // after has node 1 => coverage = 1.0
     let a = make_artifact(
-        vec![(1, 2, 0.5), (1, 3, 0.5), (1, 4, 0.5), (1, 5, 0.5), (1, 6, 0.5)],
+        vec![
+            (1, 2, 0.5),
+            (1, 3, 0.5),
+            (1, 4, 0.5),
+            (1, 5, 0.5),
+            (1, 6, 0.5),
+        ],
         vec![],
     );
     let b = make_artifact(vec![(1, 7, 0.5)], vec![]);
@@ -235,7 +241,13 @@ fn hub_coverage_top20_selection() {
 fn hub_coverage_hub_missing_in_after() {
     // Same as above but after does NOT contain node 1
     let a = make_artifact(
-        vec![(1, 2, 0.5), (1, 3, 0.5), (1, 4, 0.5), (1, 5, 0.5), (1, 6, 0.5)],
+        vec![
+            (1, 2, 0.5),
+            (1, 3, 0.5),
+            (1, 4, 0.5),
+            (1, 5, 0.5),
+            (1, 6, 0.5),
+        ],
         vec![],
     );
     let b = make_artifact(vec![(10, 11, 0.5)], vec![]);
@@ -460,30 +472,24 @@ fn integration_shared_and_divergent_state() {
             (1, 3, 0.4),
             (1, 4, 0.3),
         ],
-        vec![
-            (1, 5.0),
-            (2, 3.0),
-            (3, 2.0),
-            (4, 1.0),
-            (5, 4.0),
-        ],
+        vec![(1, 5.0), (2, 3.0), (3, 2.0), (4, 1.0), (5, 4.0)],
     );
 
     // Epoch "after": some shared synapses, some new, some dropped
     let after = make_artifact(
         vec![
-            (1, 2, 0.7),   // shared, similar weight
-            (2, 3, 0.5),   // shared, similar weight
-            (3, 4, 0.1),   // shared, divergent weight
-            (6, 7, 0.5),   // new
-            (7, 8, 0.3),   // new
+            (1, 2, 0.7), // shared, similar weight
+            (2, 3, 0.5), // shared, similar weight
+            (3, 4, 0.1), // shared, divergent weight
+            (6, 7, 0.5), // new
+            (7, 8, 0.3), // new
         ],
         vec![
-            (1, 4.5),  // shared node, similar
-            (2, 3.5),  // shared node, similar
-            (3, 2.5),  // shared node, similar
-            (6, 1.0),  // new node
-            (7, 2.0),  // new node
+            (1, 4.5), // shared node, similar
+            (2, 3.5), // shared node, similar
+            (3, 2.5), // shared node, similar
+            (6, 1.0), // new node
+            (7, 2.0), // new node
         ],
     );
 
@@ -541,16 +547,8 @@ fn integration_shared_and_divergent_state() {
 #[test]
 fn integration_identical_epochs_pass() {
     let epoch = make_artifact(
-        vec![
-            (1, 2, 0.5),
-            (2, 3, 0.8),
-            (3, 1, 0.6),
-        ],
-        vec![
-            (1, 1.0),
-            (2, 2.0),
-            (3, 3.0),
-        ],
+        vec![(1, 2, 0.5), (2, 3, 0.8), (3, 1, 0.6)],
+        vec![(1, 1.0), (2, 2.0), (3, 3.0)],
     );
 
     let report = evaluate(&epoch, &epoch);

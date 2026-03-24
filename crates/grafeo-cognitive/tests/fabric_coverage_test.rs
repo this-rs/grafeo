@@ -2,8 +2,8 @@
 
 #![cfg(feature = "fabric")]
 
-use grafeo_cognitive::fabric::FabricStore;
 use grafeo_cognitive::FabricListener;
+use grafeo_cognitive::fabric::FabricStore;
 use grafeo_common::types::NodeId;
 use grafeo_reactive::{MutationEvent, MutationListener, NodeSnapshot};
 use smallvec::smallvec;
@@ -163,7 +163,9 @@ fn update_staleness_reflects_elapsed_time() {
     let n = NodeId(1);
 
     // Set churn with a past instant
-    let past = Instant::now() - std::time::Duration::from_millis(200);
+    let past = Instant::now()
+        .checked_sub(std::time::Duration::from_millis(200))
+        .unwrap();
     store.update_churn_at(n, past);
 
     store.update_staleness(n);

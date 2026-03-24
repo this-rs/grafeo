@@ -178,9 +178,7 @@ async fn on_batch_aggregates_multiple_events() {
     let recorder = EpisodeRecorder::new(Arc::clone(&store));
 
     let events = vec![
-        MutationEvent::NodeCreated {
-            node: node_snap(1),
-        },
+        MutationEvent::NodeCreated { node: node_snap(1) },
         MutationEvent::EdgeCreated {
             edge: edge_snap(1, 2, 3),
         },
@@ -221,9 +219,7 @@ async fn on_batch_deduplicates_node_ids() {
 
     // Both events involve node 5.
     let events = vec![
-        MutationEvent::NodeCreated {
-            node: node_snap(5),
-        },
+        MutationEvent::NodeCreated { node: node_snap(5) },
         MutationEvent::NodeUpdated {
             before: node_snap(5),
             after: node_snap(5),
@@ -246,12 +242,8 @@ async fn on_batch_deduplicates_mutation_types() {
     let recorder = EpisodeRecorder::new(Arc::clone(&store));
 
     let events = vec![
-        MutationEvent::NodeCreated {
-            node: node_snap(1),
-        },
-        MutationEvent::NodeCreated {
-            node: node_snap(2),
-        },
+        MutationEvent::NodeCreated { node: node_snap(1) },
+        MutationEvent::NodeCreated { node: node_snap(2) },
     ];
     recorder.on_batch(&events).await;
 
@@ -488,8 +480,16 @@ fn sweep_evicts_excess_archived_episodes() {
     let mgr = EpisodeMemoryManager::new(Arc::clone(&store));
     let result = mgr.sweep();
 
-    assert!(result.evicted >= 2, "expected >= 2 evictions, got {}", result.evicted);
-    assert!(store.len() <= 2, "expected <= 2 episodes, got {}", store.len());
+    assert!(
+        result.evicted >= 2,
+        "expected >= 2 evictions, got {}",
+        result.evicted
+    );
+    assert!(
+        store.len() <= 2,
+        "expected <= 2 episodes, got {}",
+        store.len()
+    );
 }
 
 // ===========================================================================
