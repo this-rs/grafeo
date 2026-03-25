@@ -558,3 +558,79 @@ class TestPatternComprehension:
         assert len(result) == 1
         assert result[0]["p.name"] == "Delta"
         assert result[0]["plans"] == ["Plan X"]
+
+
+# =============================================================================
+# CASE WHEN with Aggregation (sec 20.7 + sec 15)
+# =============================================================================
+
+
+class TestCaseWhenAggregation:
+    """CASE WHEN combined with aggregate functions."""
+
+    def test_case_with_count(self, db):
+        """CASE WHEN ... END AS s, count(t) AS c — group by CASE."""
+        db.create_node(["Task"], {"status": "completed"})
+        db.create_node(["Task"], {"status": "completed"})
+        db.create_node(["Task"], {"status": "open"})
+        result = list(
+            db.execute(
+                "MATCH (t:Task) "
+                "RETURN CASE WHEN t.status = 'completed' THEN 'done' ELSE 'open' END AS s, "
+                "count(t) AS c"
+            )
+        )
+        by_status = {r["s"]: r["c"] for r in result}
+        assert by_status["done"] == 2
+        assert by_status["open"] == 1
+
+    def test_sum_case(self, db):
+        """sum(CASE WHEN ... THEN 1 ELSE 0 END) — CASE inside aggregate."""
+        db.create_node(["Task"], {"status": "completed"})
+        db.create_node(["Task"], {"status": "completed"})
+        db.create_node(["Task"], {"status": "open"})
+        result = list(
+            db.execute(
+                "MATCH (t:Task) "
+                "RETURN sum(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END) AS done_count"
+            )
+        )
+        assert result[0]["done_count"] == 2
+
+    def test_case_no_else_returns_null(self, db):
+        """CASE with no ELSE returns null for unmatched."""
+        db.create_node(["Task"], {"status": "open"})
+        result = list(
+            db.execute(
+                "MATCH (t:Task) "
+                "RETURN CASE WHEN t.status = 'archived' THEN 'old' END AS s"
+            )
+        )
+        assert result[0]["s"] is None
+
+    def test_simple_case_form(self, db):
+        """CASE expr WHEN val THEN result END — simple CASE form."""
+        db.create_node(["Task"], {"status": "completed"})
+        db.create_node(["Task"], {"status": "open"})
+        result = list(
+            db.execute(
+                "MATCH (t:Task) "
+                "RETURN CASE t.status "
+                "WHEN 'completed' THEN 'done' "
+                "WHEN 'open' THEN 'pending' "
+                "END AS s"
+            )
+        )
+        statuses = sorted([r["s"] for r in result])
+        assert statuses == ["done", "pending"]
+
+    def test_case_alone_nonregression(self, db):
+        """CASE without aggregation still works (non-regression)."""
+        db.create_node(["Task"], {"status": "completed"})
+        result = list(
+            db.execute(
+                "MATCH (t:Task) "
+                "RETURN CASE WHEN t.status = 'completed' THEN 'done' ELSE 'open' END AS s"
+            )
+        )
+        assert result[0]["s"] == "done"
