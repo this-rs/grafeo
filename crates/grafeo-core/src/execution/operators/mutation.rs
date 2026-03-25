@@ -1741,8 +1741,10 @@ mod tests {
         );
 
         let chunk = op.next().unwrap().unwrap();
-        let updated = chunk.column(0).unwrap().get_int64(0).unwrap();
-        assert_eq!(updated, 1);
+        // After fix: operator passes through input columns (node ID), not a count
+        assert_eq!(chunk.row_count(), 1);
+        let node_id_val = chunk.column(0).unwrap().get_int64(0).unwrap();
+        assert_eq!(node_id_val, node.0 as i64);
 
         // Verify label was added
         let node_data = store.get_node(node).unwrap();
@@ -1766,8 +1768,10 @@ mod tests {
         );
 
         let chunk = op.next().unwrap().unwrap();
-        let updated = chunk.column(0).unwrap().get_int64(0).unwrap();
-        assert_eq!(updated, 2); // 2 labels added
+        // After fix: operator passes through input rows, not a count
+        assert_eq!(chunk.row_count(), 1);
+        let node_id_val = chunk.column(0).unwrap().get_int64(0).unwrap();
+        assert_eq!(node_id_val, node.0 as i64);
 
         let node_data = store.get_node(node).unwrap();
         let labels: Vec<&str> = node_data.labels.iter().map(|l| l.as_ref()).collect();
@@ -1807,8 +1811,10 @@ mod tests {
         );
 
         let chunk = op.next().unwrap().unwrap();
-        let updated = chunk.column(0).unwrap().get_int64(0).unwrap();
-        assert_eq!(updated, 1);
+        // After fix: operator passes through input rows, not a count
+        assert_eq!(chunk.row_count(), 1);
+        let node_id_val = chunk.column(0).unwrap().get_int64(0).unwrap();
+        assert_eq!(node_id_val, node.0 as i64);
 
         // Verify label was removed
         let node_data = store.get_node(node).unwrap();
@@ -1832,8 +1838,10 @@ mod tests {
         );
 
         let chunk = op.next().unwrap().unwrap();
-        let updated = chunk.column(0).unwrap().get_int64(0).unwrap();
-        assert_eq!(updated, 0); // nothing removed
+        // After fix: operator passes through input rows regardless of whether label existed
+        assert_eq!(chunk.row_count(), 1);
+        let node_id_val = chunk.column(0).unwrap().get_int64(0).unwrap();
+        assert_eq!(node_id_val, node.0 as i64);
     }
 
     // ── SetPropertyOperator ──────────────────────────────────────
