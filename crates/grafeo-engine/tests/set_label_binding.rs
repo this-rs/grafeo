@@ -102,9 +102,7 @@ fn test_set_label_then_set_property() {
     session
         .execute("MATCH (n:Node) SET n:Tagged SET n.flag = true")
         .unwrap();
-    let result = session
-        .execute("MATCH (n:Node) RETURN n.flag")
-        .unwrap();
+    let result = session.execute("MATCH (n:Node) RETURN n.flag").unwrap();
     assert_eq!(result.row_count(), 3);
     for row in &result.rows {
         assert_eq!(row[0], Value::Bool(true), "flag should be true");
@@ -123,9 +121,7 @@ fn test_set_label_then_remove_property() {
     session
         .execute("MATCH (n:Node) SET n:Tagged REMOVE n.age")
         .unwrap();
-    let result = session
-        .execute("MATCH (n:Node) RETURN n.age")
-        .unwrap();
+    let result = session.execute("MATCH (n:Node) RETURN n.age").unwrap();
     assert_eq!(result.row_count(), 3);
     for row in &result.rows {
         assert_eq!(row[0], Value::Null, "age should have been removed");
@@ -144,7 +140,9 @@ fn test_set_label_then_remove_label() {
         .execute("MATCH (n:Node) SET n:Tagged REMOVE n:Node")
         .unwrap();
     // Nodes should now have Tagged but not Node
-    let result = session.execute("MATCH (n:Tagged) RETURN count(*) AS cnt").unwrap();
+    let result = session
+        .execute("MATCH (n:Tagged) RETURN count(*) AS cnt")
+        .unwrap();
     assert_eq!(result.row_count(), 1);
     if let Value::Int64(cnt) = &result.rows[0][0] {
         assert_eq!(*cnt, 2);
@@ -162,12 +160,8 @@ fn test_remove_label_then_set_label() {
     let db = db_with_nodes(2);
     let session = db.session();
     // REMOVE then SET in separate statements to avoid ordering ambiguity
-    session
-        .execute("MATCH (n:Node) REMOVE n:Node")
-        .unwrap();
-    session
-        .execute("MATCH (n) SET n:Replacement")
-        .unwrap();
+    session.execute("MATCH (n:Node) REMOVE n:Node").unwrap();
+    session.execute("MATCH (n) SET n:Replacement").unwrap();
     let result = session
         .execute("MATCH (n:Replacement) RETURN count(*) AS cnt")
         .unwrap();
@@ -251,7 +245,11 @@ fn test_merge_set_label_remove_property() {
         .unwrap();
     let result = session.execute("MATCH (n:X) RETURN n.foreign").unwrap();
     assert_eq!(result.row_count(), 1);
-    assert_eq!(result.rows[0][0], Value::Null, "foreign property should be removed");
+    assert_eq!(
+        result.rows[0][0],
+        Value::Null,
+        "foreign property should be removed"
+    );
 
     // Verify label was added
     let result = session
@@ -330,9 +328,7 @@ fn test_set_label_idempotent() {
     let db = db_with_nodes(2);
     let session = db.session();
     // First SET
-    session
-        .execute("MATCH (n:Node) SET n:Tagged")
-        .unwrap();
+    session.execute("MATCH (n:Node) SET n:Tagged").unwrap();
     // Second SET — same label again
     let result = session
         .execute("MATCH (n:Node) SET n:Tagged RETURN count(*) AS cnt")

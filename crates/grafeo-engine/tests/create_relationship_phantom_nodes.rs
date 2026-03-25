@@ -56,9 +56,7 @@ fn test_match_match_create_rel_no_phantom_nodes() {
     assert_eq!(node_count(&db), 2);
 
     session
-        .execute(
-            "MATCH (a:A {id: '1'}) MATCH (b:A {id: '2'}) CREATE (a)-[:REL]->(b)",
-        )
+        .execute("MATCH (a:A {id: '1'}) MATCH (b:A {id: '2'}) CREATE (a)-[:REL]->(b)")
         .unwrap();
 
     assert_eq!(node_count(&db), 2, "phantom nodes were created");
@@ -79,14 +77,10 @@ fn test_match_match_create_rel_multiple() {
         .unwrap();
 
     session
-        .execute(
-            "MATCH (a:A {id: '1'}) MATCH (b:A {id: '2'}) CREATE (a)-[:REL]->(b)",
-        )
+        .execute("MATCH (a:A {id: '1'}) MATCH (b:A {id: '2'}) CREATE (a)-[:REL]->(b)")
         .unwrap();
     session
-        .execute(
-            "MATCH (a:A {id: '2'}) MATCH (b:A {id: '3'}) CREATE (a)-[:REL]->(b)",
-        )
+        .execute("MATCH (a:A {id: '2'}) MATCH (b:A {id: '3'}) CREATE (a)-[:REL]->(b)")
         .unwrap();
 
     assert_eq!(node_count(&db), 3, "phantom nodes were created");
@@ -120,7 +114,11 @@ fn test_match_match_create_rel_scale_100() {
     }
 
     assert_eq!(node_count(&db), 100, "phantom nodes were created at scale");
-    assert_eq!(edge_count(&db), 99, "wrong number of relationships at scale");
+    assert_eq!(
+        edge_count(&db),
+        99,
+        "wrong number of relationships at scale"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -202,9 +200,7 @@ fn test_match_create_rel_edge_count_correct() {
         .unwrap();
 
     session
-        .execute(
-            "MATCH (a:T {id: '1'}) MATCH (b:T {id: '2'}) CREATE (a)-[:E]->(b)",
-        )
+        .execute("MATCH (a:T {id: '1'}) MATCH (b:T {id: '2'}) CREATE (a)-[:E]->(b)")
         .unwrap();
 
     // There should be exactly 1 relationship, not 2.
@@ -231,9 +227,7 @@ fn test_merge_still_no_phantoms() {
         .unwrap();
 
     session
-        .execute(
-            "MATCH (a:M {id: '1'}) MATCH (b:M {id: '2'}) MERGE (a)-[:LINK]->(b)",
-        )
+        .execute("MATCH (a:M {id: '1'}) MATCH (b:M {id: '2'}) MERGE (a)-[:LINK]->(b)")
         .unwrap();
 
     assert_eq!(node_count(&db), 2, "MERGE should not create phantom nodes");
@@ -253,9 +247,7 @@ fn test_create_rel_mixed_inline_and_reference() {
     assert_eq!(node_count(&db), 1);
 
     session
-        .execute(
-            "MATCH (a:A {id: 'existing'}) CREATE (a)-[:REL]->(b:B {id: 'new'})",
-        )
+        .execute("MATCH (a:A {id: 'existing'}) CREATE (a)-[:REL]->(b:B {id: 'new'})")
         .unwrap();
 
     assert_eq!(
@@ -280,17 +272,17 @@ fn test_match_create_rel_bidirectional() {
         .unwrap();
 
     session
-        .execute(
-            "MATCH (a:D {id: '1'}) MATCH (b:D {id: '2'}) CREATE (a)-[:FWD]->(b)",
-        )
+        .execute("MATCH (a:D {id: '1'}) MATCH (b:D {id: '2'}) CREATE (a)-[:FWD]->(b)")
         .unwrap();
     session
-        .execute(
-            "MATCH (a:D {id: '1'}) MATCH (b:D {id: '2'}) CREATE (b)-[:BWD]->(a)",
-        )
+        .execute("MATCH (a:D {id: '1'}) MATCH (b:D {id: '2'}) CREATE (b)-[:BWD]->(a)")
         .unwrap();
 
-    assert_eq!(node_count(&db), 2, "bidirectional should not create phantoms");
+    assert_eq!(
+        node_count(&db),
+        2,
+        "bidirectional should not create phantoms"
+    );
     assert_eq!(edge_count(&db), 2, "should have 2 directed edges");
 }
 
@@ -309,7 +301,11 @@ fn test_match_create_rel_self_loop() {
         .execute("MATCH (a:S {id: 'loop'}) CREATE (a)-[:SELF]->(a)")
         .unwrap();
 
-    assert_eq!(node_count(&db), 1, "self-loop must not create phantom nodes");
+    assert_eq!(
+        node_count(&db),
+        1,
+        "self-loop must not create phantom nodes"
+    );
     assert_eq!(edge_count(&db), 1, "self-loop should produce 1 edge");
 }
 
@@ -357,22 +353,16 @@ fn test_labels_preserved_after_create_rel() {
         .unwrap();
 
     session
-        .execute(
-            "MATCH (a:Foo {id: '1'}) MATCH (b:Bar {id: '2'}) CREATE (a)-[:LINK]->(b)",
-        )
+        .execute("MATCH (a:Foo {id: '1'}) MATCH (b:Bar {id: '2'}) CREATE (a)-[:LINK]->(b)")
         .unwrap();
 
-    let result = session
-        .execute("MATCH (n:Foo) RETURN count(n)")
-        .unwrap();
+    let result = session.execute("MATCH (n:Foo) RETURN count(n)").unwrap();
     match &result.rows[0][0] {
         Value::Int64(n) => assert_eq!(*n, 1, "Foo label should still have 1 node"),
         other => panic!("expected Int64, got {:?}", other),
     }
 
-    let result = session
-        .execute("MATCH (n:Bar) RETURN count(n)")
-        .unwrap();
+    let result = session.execute("MATCH (n:Bar) RETURN count(n)").unwrap();
     match &result.rows[0][0] {
         Value::Int64(n) => assert_eq!(*n, 1, "Bar label should still have 1 node"),
         other => panic!("expected Int64, got {:?}", other),
@@ -393,9 +383,7 @@ fn test_properties_preserved_after_create_rel() {
         .unwrap();
 
     session
-        .execute(
-            "MATCH (a:W {name: 'alpha'}) MATCH (b:W {name: 'beta'}) CREATE (a)-[:CONN]->(b)",
-        )
+        .execute("MATCH (a:W {name: 'alpha'}) MATCH (b:W {name: 'beta'}) CREATE (a)-[:CONN]->(b)")
         .unwrap();
 
     let result = session

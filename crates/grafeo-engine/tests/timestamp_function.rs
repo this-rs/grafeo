@@ -237,17 +237,17 @@ fn test_timestamp_no_args_only() {
 fn test_timestamp_stored_and_retrieved() {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
-    session
-        .execute("CREATE (:Ev {ts: timestamp()})")
-        .unwrap();
+    session.execute("CREATE (:Ev {ts: timestamp()})").unwrap();
 
-    let result = session
-        .execute("MATCH (e:Ev) RETURN e.ts")
-        .unwrap();
+    let result = session.execute("MATCH (e:Ev) RETURN e.ts").unwrap();
     assert_eq!(result.rows.len(), 1);
     match &result.rows[0][0] {
         Value::Int64(v) => {
-            assert!(*v > 1_000_000_000_000, "stored timestamp should be a realistic epoch-millis value, got {}", v);
+            assert!(
+                *v > 1_000_000_000_000,
+                "stored timestamp should be a realistic epoch-millis value, got {}",
+                v
+            );
         }
         other => panic!("expected Int64, got {:?}", other),
     }

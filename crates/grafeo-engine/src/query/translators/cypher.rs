@@ -1715,22 +1715,20 @@ impl CypherTranslator {
                 // properties), it was already bound by a previous MATCH clause, so
                 // we must NOT emit a CreateNodeOp for it — otherwise we would
                 // create a phantom empty node.
-                let mut current =
-                    if path.start.labels.is_empty() && path.start.properties.is_empty() {
-                        if let Some(inp) = input {
-                            inp
-                        } else {
-                            self.translate_create_pattern(
-                                &ast::Pattern::Node(path.start.clone()),
-                                None,
-                            )?
-                        }
+                let mut current = if path.start.labels.is_empty()
+                    && path.start.properties.is_empty()
+                {
+                    if let Some(inp) = input {
+                        inp
                     } else {
                         self.translate_create_pattern(
                             &ast::Pattern::Node(path.start.clone()),
-                            input,
+                            None,
                         )?
-                    };
+                    }
+                } else {
+                    self.translate_create_pattern(&ast::Pattern::Node(path.start.clone()), input)?
+                };
 
                 // Track the variable name of the "last node" we have seen so
                 // far.  When the source was a bare reference (no CreateNodeOp

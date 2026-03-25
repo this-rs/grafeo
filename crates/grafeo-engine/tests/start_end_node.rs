@@ -118,9 +118,7 @@ fn test_startnode_with_id_function() {
         .execute("CREATE (a:A {name: 'alice'})-[:KNOWS]->(b:B {name: 'bob'})")
         .unwrap();
 
-    let ids = session
-        .execute("MATCH (a:A) RETURN id(a) AS aid")
-        .unwrap();
+    let ids = session.execute("MATCH (a:A) RETURN id(a) AS aid").unwrap();
     let a_id = &ids.rows[0][0];
 
     // startNode(r) directly returns the node id as Int64, same as id() would
@@ -138,9 +136,7 @@ fn test_endnode_with_id_function() {
         .execute("CREATE (a:A {name: 'alice'})-[:KNOWS]->(b:B {name: 'bob'})")
         .unwrap();
 
-    let ids = session
-        .execute("MATCH (b:B) RETURN id(b) AS bid")
-        .unwrap();
+    let ids = session.execute("MATCH (b:B) RETURN id(b) AS bid").unwrap();
     let b_id = &ids.rows[0][0];
 
     let result = session
@@ -173,7 +169,10 @@ fn test_startnode_endnode_multiple_rels() {
     assert_eq!(result.rows.len(), 3);
     // Verify that for each row, startNode(r) matches id(x) and endNode(r) matches id(y)
     for row in &result.rows {
-        assert!(matches!(row[0], Value::Int64(_)), "startNode should be Int64");
+        assert!(
+            matches!(row[0], Value::Int64(_)),
+            "startNode should be Int64"
+        );
         assert!(matches!(row[1], Value::Int64(_)), "endNode should be Int64");
     }
 }
@@ -328,19 +327,14 @@ fn test_startnode_endnode_bidirectional() {
     let bob_id = &ids.rows[1][1];
 
     let result = session
-        .execute(
-            "MATCH ()-[r]->() RETURN startNode(r) AS sn, endNode(r) AS en ORDER BY sn, en",
-        )
+        .execute("MATCH ()-[r]->() RETURN startNode(r) AS sn, endNode(r) AS en ORDER BY sn, en")
         .unwrap();
     assert_eq!(result.rows.len(), 2);
 
     // One edge: alice->bob, other: bob->alice
     // Collect (start, end) pairs
-    let mut pairs: Vec<(&Value, &Value)> = result
-        .rows
-        .iter()
-        .map(|row| (&row[0], &row[1]))
-        .collect();
+    let mut pairs: Vec<(&Value, &Value)> =
+        result.rows.iter().map(|row| (&row[0], &row[1])).collect();
     pairs.sort_by_key(|(s, _)| format!("{:?}", s));
 
     // Verify both directions are present
