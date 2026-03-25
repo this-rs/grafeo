@@ -421,6 +421,7 @@ impl GqlTranslator {
                             | ast::QueryClause::Delete(_)
                             | ast::QueryClause::Set(_)
                             | ast::QueryClause::Merge(_)
+                            | ast::QueryClause::ForEach(_)
                     )
                 {
                     if let Some(where_clause) = &query.where_clause {
@@ -571,6 +572,9 @@ impl GqlTranslator {
                                 conditions: vec![],
                             });
                         }
+                    }
+                    ast::QueryClause::ForEach(foreach_clause) => {
+                        plan = self.translate_foreach_gql(foreach_clause, plan)?;
                     }
                 }
             }
@@ -1204,6 +1208,75 @@ impl GqlTranslator {
             variable: load.variable.clone(),
             field_terminator: load.field_terminator,
         })
+    }
+
+    /// Translates `FOREACH (var IN list | clauses)` to Unwind + mutation pipeline.
+    fn translate_foreach_gql(
+        &self,
+        foreach: &ast::ForEachClause,
+        input: LogicalOperator,
+    ) -> Result<LogicalOperator> {
+        // For standalone FOREACH (no preceding MATCH), use Empty as input
+        // which the engine treats as a single-row source.
+        let input = if matches!(input, LogicalOperator::Empty) {
+            LogicalOperator::Empty
+        } else {
+            input
+        };
+
+        let list_expr = self.translate_expression(&foreach.list)?;
+
+        // Unwind the list into individual rows
+        let unwind = LogicalOperator::Unwind(UnwindOp {
+            input: Box::new(input),
+            expression: list_expr,
+            variable: foreach.variable.clone(),
+            ordinality_var: None,
+            offset_var: None,
+        });
+
+        // Chain the inner mutation clauses (reuse ordered-clause translation)
+        let mut plan = unwind;
+        for clause in &foreach.clauses {
+            match clause {
+                ast::QueryClause::Create(create_clause) => {
+                    plan = self.translate_create_patterns(&create_clause.patterns, plan)?;
+                }
+                ast::QueryClause::Set(set_clause) => {
+                    for assignment in &set_clause.assignments {
+                        let value = self.translate_expression(&assignment.value)?;
+                        plan = LogicalOperator::SetProperty(SetPropertyOp {
+                            variable: assignment.variable.clone(),
+                            properties: vec![(assignment.property.clone(), value)],
+                            replace: false,
+                            is_edge: false,
+                            input: Box::new(plan),
+                        });
+                    }
+                }
+                ast::QueryClause::Delete(delete_clause) => {
+                    plan = self.translate_delete_targets(
+                        &delete_clause.targets,
+                        delete_clause.detach,
+                        plan,
+                    )?;
+                }
+                ast::QueryClause::Merge(merge_clause) => {
+                    plan = self.translate_merge(merge_clause, plan)?;
+                }
+                ast::QueryClause::ForEach(inner_foreach) => {
+                    plan = self.translate_foreach_gql(inner_foreach, plan)?;
+                }
+                _ => {
+                    return Err(Error::Query(QueryError::new(
+                        QueryErrorKind::Semantic,
+                        "Only CREATE, SET, DELETE, MERGE, and nested FOREACH are allowed inside FOREACH",
+                    )));
+                }
+            }
+        }
+
+        Ok(plan)
     }
 
     /// as imports from the outer scope: a `ParameterScan` replaces `Empty` as

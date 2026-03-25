@@ -300,6 +300,11 @@ impl<'a> Parser<'a> {
                     self.parse_call_statement().map(Statement::Call)
                 }
             }
+            _ if self.is_identifier()
+                && self.get_identifier_name().eq_ignore_ascii_case("FOREACH") =>
+            {
+                self.parse_query().map(Statement::Query)
+            }
             _ if self.is_identifier() => {
                 let name = self.get_identifier_name();
                 match name.to_uppercase().as_str() {
@@ -588,6 +593,12 @@ impl<'a> Parser<'a> {
                 {
                     let clause = self.parse_load_data_clause()?;
                     ordered_clauses.push(QueryClause::LoadData(clause));
+                }
+                _ if self.is_identifier()
+                    && self.get_identifier_name().eq_ignore_ascii_case("FOREACH") =>
+                {
+                    let clause = self.parse_foreach_clause()?;
+                    ordered_clauses.push(QueryClause::ForEach(clause));
                 }
                 _ => break,
             }
@@ -988,6 +999,60 @@ impl<'a> Parser<'a> {
             self.advance(); // consume comma
         }
         Ok(bindings)
+    }
+
+    /// Parses a FOREACH clause: `FOREACH (var IN expr | clause+)`.
+    ///
+    /// Inner clauses can be CREATE, SET, DELETE, MERGE, or nested FOREACH.
+    fn parse_foreach_clause(&mut self) -> Result<ForEachClause> {
+        self.advance(); // consume FOREACH identifier
+        self.expect(TokenKind::LParen)?;
+        if !self.is_identifier() {
+            return Err(self.error("Expected variable name in FOREACH"));
+        }
+        let variable = self.get_identifier_name();
+        self.advance();
+        self.expect(TokenKind::In)?;
+        let list = self.parse_expression()?;
+        self.expect(TokenKind::Pipe)?;
+        let mut clauses = Vec::new();
+        // Parse mutation clauses until closing paren
+        while self.current.kind != TokenKind::RParen && self.current.kind != TokenKind::Eof {
+            match self.current.kind {
+                TokenKind::Set => {
+                    let clause = self.parse_set_clause()?;
+                    clauses.push(QueryClause::Set(clause));
+                }
+                TokenKind::Delete | TokenKind::Detach | TokenKind::Nodetach => {
+                    let clause = self.parse_delete_clause_in_query()?;
+                    clauses.push(QueryClause::Delete(clause));
+                }
+                TokenKind::Create => {
+                    let clause = self.parse_create_clause_in_query()?;
+                    clauses.push(QueryClause::Create(clause));
+                }
+                TokenKind::Insert => {
+                    let clause = self.parse_insert()?;
+                    clauses.push(QueryClause::Create(clause));
+                }
+                TokenKind::Merge => {
+                    let clause = self.parse_merge_clause()?;
+                    clauses.push(QueryClause::Merge(clause));
+                }
+                _ if self.is_identifier()
+                    && self.get_identifier_name().eq_ignore_ascii_case("FOREACH") =>
+                {
+                    clauses.push(QueryClause::ForEach(self.parse_foreach_clause()?));
+                }
+                _ => return Err(self.error("Expected mutation clause in FOREACH (CREATE, SET, DELETE, MERGE, or nested FOREACH)")),
+            }
+        }
+        self.expect(TokenKind::RParen)?;
+        Ok(ForEachClause {
+            variable,
+            list,
+            clauses,
+        })
     }
 
     /// Parses `LOAD DATA FROM 'path' FORMAT CSV|JSONL|PARQUET [WITH HEADERS] AS variable [FIELDTERMINATOR 'char']`
