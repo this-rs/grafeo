@@ -397,8 +397,8 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let db_path = dir.path().join("concurrent_db");
 
-        let threads = 4;
-        let per_thread = 100;
+        let threads: i64 = 4;
+        let per_thread: i64 = 100;
 
         {
             let db = Arc::new(open_dir_db(&db_path));
@@ -421,7 +421,7 @@ mod tests {
             }
 
             let total = count_nodes(&db, Some("Concurrent"));
-            assert_eq!(total, (threads * per_thread) as i64);
+            assert_eq!(total, threads * per_thread);
             db.close().expect("close");
         }
 
@@ -430,7 +430,7 @@ mod tests {
             let total = count_nodes(&db, Some("Concurrent"));
             assert_eq!(
                 total,
-                (threads * per_thread) as i64,
+                threads * per_thread,
                 "All concurrent writes should persist"
             );
         }
