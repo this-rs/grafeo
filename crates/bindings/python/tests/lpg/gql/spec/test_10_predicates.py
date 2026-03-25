@@ -274,3 +274,57 @@ class TestNormalized:
         db.create_node(["N"], {"v": "hello"})
         result = list(db.execute("MATCH (n:N) WHERE n.v IS NORMALIZED RETURN n.v"))
         assert len(result) == 1
+
+
+# =============================================================================
+# Bare Pattern Predicates (WHERE (n)-[:REL]->() / WHERE NOT (n)-[:REL]->())
+# =============================================================================
+
+
+class TestBarePatternPredicate:
+    """Bare pattern predicates in WHERE: positive and negated."""
+
+    def test_negated_pattern_predicate(self, db):
+        """WHERE NOT (f)-[:CONTAINS]->() returns isolated nodes."""
+        f1 = db.create_node(["File"], {"name": "main.rs"})
+        f2 = db.create_node(["File"], {"name": "empty.rs"})
+        fn1 = db.create_node(["Function"], {"name": "main"})
+        db.create_edge(f1.id, fn1.id, "CONTAINS")
+        result = list(
+            db.execute(
+                "MATCH (f:File) WHERE NOT (f)-[:CONTAINS]->() RETURN f.name"
+            )
+        )
+        assert len(result) == 1
+        assert result[0]["f.name"] == "empty.rs"
+
+    def test_positive_pattern_predicate(self, db):
+        """WHERE (n)-[:KNOWS]->() returns connected nodes."""
+        a = db.create_node(["Person"], {"name": "Alix"})
+        b = db.create_node(["Person"], {"name": "Gus"})
+        c = db.create_node(["Person"], {"name": "Solo"})
+        db.create_edge(a.id, b.id, "KNOWS")
+        result = list(
+            db.execute(
+                "MATCH (n:Person) WHERE (n)-[:KNOWS]->() RETURN n.name"
+            )
+        )
+        assert len(result) == 1
+        assert result[0]["n.name"] == "Alix"
+
+    def test_not_exists_subquery_nonregression(self, db):
+        """WHERE NOT EXISTS { MATCH ... } continues to work (non-regression)."""
+        a = db.create_node(["Person"], {"name": "Alix"})
+        b = db.create_node(["Person"], {"name": "Gus"})
+        c = db.create_node(["Person"], {"name": "Solo"})
+        db.create_edge(a.id, b.id, "KNOWS")
+        result = list(
+            db.execute(
+                "MATCH (n:Person) "
+                "WHERE NOT EXISTS { MATCH (n)-[:KNOWS]->() } "
+                "RETURN n.name"
+            )
+        )
+        names = {r["n.name"] for r in result}
+        assert "Solo" in names
+        assert "Alix" not in names

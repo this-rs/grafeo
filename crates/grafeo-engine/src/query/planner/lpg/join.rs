@@ -156,6 +156,9 @@ impl super::Planner {
     }
 
     /// Plans a UNION operator.
+    ///
+    /// Validates that all branches produce the same number of columns with
+    /// compatible names. The output schema is derived from the first branch.
     pub(super) fn plan_union(&self, union: &UnionOp) -> Result<(Box<dyn Operator>, Vec<String>)> {
         let mut inputs = Vec::with_capacity(union.inputs.len());
         let mut columns = Vec::new();
@@ -164,6 +167,15 @@ impl super::Planner {
             let (op, cols) = self.plan_operator(input)?;
             if i == 0 {
                 columns = cols;
+            } else if cols.len() != columns.len() {
+                return Err(Error::Query(grafeo_common::utils::error::QueryError::new(
+                    grafeo_common::utils::error::QueryErrorKind::Semantic,
+                    format!(
+                        "UNION branches must return the same number of columns (left: {}, right: {})",
+                        columns.len(),
+                        cols.len()
+                    ),
+                )));
             }
             inputs.push(op);
         }
