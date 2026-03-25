@@ -10,7 +10,6 @@ use grafeo_cognitive::energy::{EnergyConfig, EnergyStore};
 use grafeo_cognitive::search::{SearchConfig, SearchPipeline, SearchWeights};
 use grafeo_cognitive::synapse::{SynapseConfig, SynapseStore};
 use grafeo_common::types::Value;
-use grafeo_core::graph::traits::{GraphStore, GraphStoreMut};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -84,11 +83,12 @@ pub fn cognitive_demo() -> Result<JsValue, JsError> {
     // --- 3. Boost energy on accessed nodes ---
     console_log!("[3/5] Simulating node access (energy boosts)...");
 
-    energy_store.boost(alice);
-    energy_store.boost(rust_lang);
-    energy_store.boost(rust_lang); // double access
-    energy_store.boost(wasm_topic);
-    energy_store.boost(grafeo_topic);
+    // Simulate accessing Alice's topics (boost takes node_id + amount)
+    energy_store.boost(alice, 1.0);
+    energy_store.boost(rust_lang, 1.0);
+    energy_store.boost(rust_lang, 1.0); // double access
+    energy_store.boost(wasm_topic, 1.0);
+    energy_store.boost(grafeo_topic, 1.0);
 
     for (name, nid) in [
         ("Alice", alice),
@@ -97,18 +97,19 @@ pub fn cognitive_demo() -> Result<JsValue, JsError> {
         ("WebAssembly", wasm_topic),
         ("Grafeo", grafeo_topic),
     ] {
-        let energy = energy_store.get(nid).map(|e| e.energy).unwrap_or(0.0);
-        console_log!("  {}: energy = {:.3}", name, energy);
+        let energy = energy_store.get_energy(nid);
+        console_log!("  {name}: energy = {energy:.3}");
     }
 
     // --- 4. Create synapses between co-accessed nodes ---
     console_log!("[4/5] Creating Hebbian synapses (co-activation)...");
 
-    synapse_store.strengthen(alice, rust_lang);
-    synapse_store.strengthen(alice, wasm_topic);
-    synapse_store.strengthen(rust_lang, wasm_topic);
-    synapse_store.strengthen(bob, rust_lang);
-    synapse_store.strengthen(bob, grafeo_topic);
+    // Simulate co-access patterns (reinforce takes source, target, amount)
+    synapse_store.reinforce(alice, rust_lang, 1.0);
+    synapse_store.reinforce(alice, wasm_topic, 1.0);
+    synapse_store.reinforce(rust_lang, wasm_topic, 1.0);
+    synapse_store.reinforce(bob, rust_lang, 1.0);
+    synapse_store.reinforce(bob, grafeo_topic, 1.0);
 
     console_log!("  Created {} synapses", synapse_store.len());
 
@@ -118,8 +119,13 @@ pub fn cognitive_demo() -> Result<JsValue, JsError> {
         ("Rust", rust_lang, "WebAssembly", wasm_topic),
         ("Bob", bob, "Grafeo", grafeo_topic),
     ] {
-        if let Some(syn) = synapse_store.get(a_id, b_id) {
-            console_log!("  {} <-> {}: weight = {:.3}", a_name, b_name, syn.weight);
+        if let Some(syn) = synapse_store.get_synapse(a_id, b_id) {
+            console_log!(
+                "  {} <-> {}: weight = {:.3}",
+                a_name,
+                b_name,
+                syn.current_weight()
+            );
         }
     }
 
@@ -148,14 +154,8 @@ pub fn cognitive_demo() -> Result<JsValue, JsError> {
         let name = db
             .store()
             .get_node_property(result.node_id, &"name".into())
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "?".to_string());
-        console_log!(
-            "    {}. {} (score: {:.3})",
-            i + 1,
-            name,
-            result.combined_score
-        );
+            .map_or_else(|| "?".to_string(), |v| v.to_string());
+        console_log!("    {}. {} (score: {:.3})", i + 1, name, result.score);
     }
 
     console_log!("");
