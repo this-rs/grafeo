@@ -250,8 +250,7 @@ fn search_truncate_respects_limit() {
         ..Default::default()
     };
 
-    let candidates: Vec<(NodeId, f64)> =
-        (0..20).map(|i| (nid(i), (i as f64) / 20.0)).collect();
+    let candidates: Vec<(NodeId, f64)> = (0..20).map(|i| (nid(i), (i as f64) / 20.0)).collect();
 
     let results = pipeline.search(&candidates, &config);
     assert_eq!(results.len(), 3);
