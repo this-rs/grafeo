@@ -1226,6 +1226,15 @@ pub enum Expression {
         /// Body expression (references both accumulator and variable).
         expression: Box<Expression>,
     },
+    /// Pattern comprehension: `[(a)-[:REL]->(b) | b.name]` or `[(a)-[:REL]->(b) WHERE b.active | b.name]`.
+    PatternComprehension {
+        /// The pattern.
+        pattern: Box<Pattern>,
+        /// Optional WHERE clause.
+        where_clause: Option<Box<Expression>>,
+        /// Projection expression.
+        projection: Box<Expression>,
+    },
 }
 
 /// The kind of list predicate function.

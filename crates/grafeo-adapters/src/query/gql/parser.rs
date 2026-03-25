@@ -3615,6 +3615,39 @@ impl<'a> Parser<'a> {
             }
             TokenKind::LBracket => {
                 self.advance(); // consume [
+
+                // Detect pattern comprehension: [(pattern) WHERE pred | expr]
+                // A pattern starts with `(`, while list elements starting with `(`
+                // are parenthesized expressions. We use backtracking to distinguish.
+                if self.current.kind == TokenKind::LParen {
+                    let saved = (
+                        self.lexer.clone(),
+                        self.current.clone(),
+                        self.peeked.clone(),
+                        self.peeked_second.clone(),
+                    );
+                    if let Ok(pattern) = self.parse_pattern() {
+                        let where_clause = if self.current.kind == TokenKind::Where {
+                            self.advance();
+                            Some(Box::new(self.parse_expression()?))
+                        } else {
+                            None
+                        };
+                        if self.current.kind == TokenKind::Pipe {
+                            self.advance();
+                            let projection = self.parse_expression()?;
+                            self.expect(TokenKind::RBracket)?;
+                            return Ok(Expression::PatternComprehension {
+                                pattern: Box::new(pattern),
+                                where_clause,
+                                projection: Box::new(projection),
+                            });
+                        }
+                    }
+                    // Not a pattern comprehension, restore and continue
+                    (self.lexer, self.current, self.peeked, self.peeked_second) = saved;
+                }
+
                 // Disambiguate: [x IN list WHERE ... | expr] vs [elem, ...]
                 // List comprehension if: identifier followed by IN keyword
                 if self.is_identifier() && self.peek_kind() == TokenKind::In {

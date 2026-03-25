@@ -239,6 +239,27 @@ impl GqlTranslator {
                 let body_expr = self.translate_expression(body)?;
                 Ok(Self::substitute_let_bindings(body_expr, &binding_exprs))
             }
+            ast::Expression::PatternComprehension {
+                pattern,
+                where_clause,
+                projection,
+            } => {
+                // Build a subplan from the pattern
+                let pattern_plan =
+                    self.translate_pattern_with_alias(pattern, None, None, PathMode::Walk)?;
+                // Apply optional WHERE filter
+                let subplan = if let Some(where_expr) = where_clause {
+                    let pred = self.translate_expression(where_expr)?;
+                    wrap_filter(pattern_plan, pred)
+                } else {
+                    pattern_plan
+                };
+                let proj = self.translate_expression(projection)?;
+                Ok(LogicalExpression::PatternComprehension {
+                    subplan: Box::new(subplan),
+                    projection: Box::new(proj),
+                })
+            }
         }
     }
 

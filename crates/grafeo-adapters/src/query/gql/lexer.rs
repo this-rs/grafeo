@@ -257,6 +257,7 @@ pub enum TokenKind {
 }
 
 /// GQL Lexer.
+#[derive(Clone)]
 pub struct Lexer<'a> {
     input: &'a str,
     position: usize,

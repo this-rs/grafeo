@@ -488,3 +488,73 @@ class TestReturnExpressions:
         db.create_node(["N"], {"v": 1})
         result = list(db.execute("MATCH (n:N) RETURN count(n) > 0 AS r"))
         assert result[0]["r"] is True
+
+
+# =============================================================================
+# Pattern Comprehension (sec 20)
+# =============================================================================
+
+
+class TestPatternComprehension:
+    """Pattern comprehension: [(start)-[:REL]->(end) | end.prop]."""
+
+    def test_basic_pattern_comprehension(self, db):
+        """[(p)-[:HAS_PLAN]->(pl) | pl.title] basic pattern comprehension."""
+        proj = db.create_node(["Project"], {"name": "Alpha"})
+        p1 = db.create_node(["Plan"], {"title": "Phase 1"})
+        p2 = db.create_node(["Plan"], {"title": "Phase 2"})
+        db.create_edge(proj.id, p1.id, "HAS_PLAN")
+        db.create_edge(proj.id, p2.id, "HAS_PLAN")
+        result = list(
+            db.execute(
+                "MATCH (p:Project) "
+                "RETURN p.name, [(p)-[:HAS_PLAN]->(pl) | pl.title] AS plans"
+            )
+        )
+        assert len(result) == 1
+        assert result[0]["p.name"] == "Alpha"
+        assert sorted(result[0]["plans"]) == ["Phase 1", "Phase 2"]
+
+    def test_pattern_comprehension_with_where(self, db):
+        """[(p)-[:HAS_PLAN]->(pl) WHERE pl.active | pl.title] with WHERE filter."""
+        proj = db.create_node(["Project"], {"name": "Beta"})
+        p1 = db.create_node(["Plan"], {"title": "Active Plan", "active": True})
+        p2 = db.create_node(["Plan"], {"title": "Inactive Plan", "active": False})
+        db.create_edge(proj.id, p1.id, "HAS_PLAN")
+        db.create_edge(proj.id, p2.id, "HAS_PLAN")
+        result = list(
+            db.execute(
+                "MATCH (p:Project) "
+                "RETURN p.name, [(p)-[:HAS_PLAN]->(pl) WHERE pl.active | pl.title] AS plans"
+            )
+        )
+        assert len(result) == 1
+        assert result[0]["plans"] == ["Active Plan"]
+
+    def test_pattern_comprehension_empty_result(self, db):
+        """Pattern comprehension returns [] when no matches."""
+        db.create_node(["Project"], {"name": "Gamma"})
+        result = list(
+            db.execute(
+                "MATCH (p:Project) "
+                "RETURN p.name, [(p)-[:HAS_PLAN]->(pl) | pl.title] AS plans"
+            )
+        )
+        assert len(result) == 1
+        assert result[0]["p.name"] == "Gamma"
+        assert result[0]["plans"] == []
+
+    def test_pattern_comprehension_cypher_nonregression(self, db):
+        """Pattern comprehension via execute_cypher() still works (non-regression)."""
+        proj = db.create_node(["Project"], {"name": "Delta"})
+        p1 = db.create_node(["Plan"], {"title": "Plan X"})
+        db.create_edge(proj.id, p1.id, "HAS_PLAN")
+        result = list(
+            db.execute_cypher(
+                "MATCH (p:Project) "
+                "RETURN p.name, [(p)-[:HAS_PLAN]->(pl) | pl.title] AS plans"
+            )
+        )
+        assert len(result) == 1
+        assert result[0]["p.name"] == "Delta"
+        assert result[0]["plans"] == ["Plan X"]
