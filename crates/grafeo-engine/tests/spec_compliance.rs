@@ -3279,4 +3279,704 @@ mod foreach_tests {
         // Cleanup
         session.execute("MATCH (n:_Test) DELETE n").unwrap();
     }
+
+    #[test]
+    fn gql_foreach_standalone_no_match() {
+        // FOREACH without preceding MATCH — uses implicit SingleRow input
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute("FOREACH (x IN [10, 20, 30] | CREATE (:_FE {v: x}))")
+            .unwrap();
+        let result = session
+            .execute("MATCH (n:_FE) RETURN n.v ORDER BY n.v")
+            .unwrap();
+        assert_eq!(result.rows.len(), 3);
+        assert_eq!(result.rows[0][0], Value::Int64(10));
+        assert_eq!(result.rows[1][0], Value::Int64(20));
+        assert_eq!(result.rows[2][0], Value::Int64(30));
+        session.execute("MATCH (n:_FE) DELETE n").unwrap();
+    }
+
+    #[test]
+    fn gql_foreach_with_delete() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute("INSERT (:_FE {v: 1}), (:_FE {v: 2}), (:_FE {v: 3})")
+            .unwrap();
+        let r = session
+            .execute("MATCH (n:_FE) RETURN count(n) AS c")
+            .unwrap();
+        assert_eq!(r.rows[0][0], Value::Int64(3));
+        // Delete all via FOREACH + collect
+        session
+            .execute_cypher(
+                "MATCH (n:_FE) WITH collect(n) AS nodes \
+                 FOREACH (x IN nodes | DELETE x) \
+                 RETURN 1 AS done",
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn gql_foreach_with_merge() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute("FOREACH (i IN [1, 2, 3] | MERGE (:_FM {id: i}))")
+            .unwrap();
+        let r1 = session
+            .execute("MATCH (n:_FM) RETURN count(n) AS c")
+            .unwrap();
+        assert_eq!(r1.rows[0][0], Value::Int64(3));
+        // MERGE again — should NOT create duplicates
+        session
+            .execute("FOREACH (i IN [1, 2, 3] | MERGE (:_FM {id: i}))")
+            .unwrap();
+        let r2 = session
+            .execute("MATCH (n:_FM) RETURN count(n) AS c")
+            .unwrap();
+        assert_eq!(r2.rows[0][0], Value::Int64(3));
+        session.execute("MATCH (n:_FM) DELETE n").unwrap();
+    }
+
+    #[test]
+    fn gql_foreach_complex_list_expression() {
+        // FOREACH with function call as list expression
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute("FOREACH (i IN range(10, 12) | CREATE (:_FC {v: i}))")
+            .unwrap();
+        let result = session
+            .execute("MATCH (n:_FC) RETURN n.v ORDER BY n.v")
+            .unwrap();
+        assert_eq!(result.rows.len(), 3);
+        assert_eq!(result.rows[0][0], Value::Int64(10));
+        assert_eq!(result.rows[2][0], Value::Int64(12));
+        session.execute("MATCH (n:_FC) DELETE n").unwrap();
+    }
+
+    #[test]
+    #[ignore = "Sequential FOREACH cross-products: 2nd FOREACH sees rows from 1st, producing 6 instead of 4"]
+    fn gql_foreach_multiple_in_query() {
+        // Two FOREACH clauses in sequence — in Neo4j each is independent (4 nodes).
+        // Current implementation cross-products: 1st creates 2 rows, 2nd iterates
+        // 2 list items × 2 input rows = 4, total = 2 + 4 = 6.
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute(
+                "FOREACH (i IN [1, 2] | CREATE (:_FA {t: 'a', v: i})) \
+                 FOREACH (j IN [3, 4] | CREATE (:_FA {t: 'b', v: j}))",
+            )
+            .unwrap();
+        let result = session
+            .execute("MATCH (n:_FA) RETURN count(n) AS c")
+            .unwrap();
+        assert_eq!(result.rows[0][0], Value::Int64(4));
+        session.execute("MATCH (n:_FA) DELETE n").unwrap();
+    }
+}
+
+// ============================================================================
+// Bare Pattern Predicates — Extended Tests
+// ============================================================================
+
+mod bare_pattern_tests {
+    use grafeo_common::types::Value;
+    use grafeo_engine::GrafeoDB;
+
+    fn setup_pattern_db() -> GrafeoDB {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        // A -[:KNOWS]-> B -[:KNOWS]-> C
+        // D (isolated)
+        session
+            .execute(
+                "INSERT (:P {name: 'A'})-[:KNOWS]->(:P {name: 'B'})-[:KNOWS]->(:P {name: 'C'})",
+            )
+            .unwrap();
+        session.execute("INSERT (:P {name: 'D'})").unwrap();
+        db
+    }
+
+    #[test]
+    fn positive_bare_pattern() {
+        // WHERE (n)-[:KNOWS]->() → nodes with outgoing KNOWS
+        let db = setup_pattern_db();
+        let session = db.session();
+        let result = session
+            .execute("MATCH (n:P) WHERE (n)-[:KNOWS]->() RETURN n.name ORDER BY n.name")
+            .unwrap();
+        assert_eq!(result.rows.len(), 2); // A and B
+        assert_eq!(result.rows[0][0], Value::String("A".into()));
+        assert_eq!(result.rows[1][0], Value::String("B".into()));
+    }
+
+    #[test]
+    fn negative_bare_pattern() {
+        // WHERE NOT (n)-[:KNOWS]->() → nodes without outgoing KNOWS
+        let db = setup_pattern_db();
+        let session = db.session();
+        let result = session
+            .execute("MATCH (n:P) WHERE NOT (n)-[:KNOWS]->() RETURN n.name ORDER BY n.name")
+            .unwrap();
+        assert_eq!(result.rows.len(), 2); // C and D
+        assert_eq!(result.rows[0][0], Value::String("C".into()));
+        assert_eq!(result.rows[1][0], Value::String("D".into()));
+    }
+
+    #[test]
+    fn bare_pattern_any_rel_type() {
+        // WHERE (n)-[]->() — any outgoing relationship
+        let db = setup_pattern_db();
+        let session = db.session();
+        let result = session
+            .execute("MATCH (n:P) WHERE (n)-[]->() RETURN count(n) AS c")
+            .unwrap();
+        assert_eq!(result.rows[0][0], Value::Int64(2)); // A and B
+    }
+
+    #[test]
+    fn bare_pattern_in_and_expression() {
+        // WHERE (n)-[:KNOWS]->() AND n.name = 'A'
+        let db = setup_pattern_db();
+        let session = db.session();
+        let result = session
+            .execute("MATCH (n:P) WHERE (n)-[:KNOWS]->() AND n.name = 'A' RETURN n.name")
+            .unwrap();
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][0], Value::String("A".into()));
+    }
+
+    #[test]
+    fn not_bare_pattern_in_and_expression() {
+        // WHERE NOT (n)-[:KNOWS]->() AND n.name <> 'C'
+        let db = setup_pattern_db();
+        let session = db.session();
+        let result = session
+            .execute("MATCH (n:P) WHERE NOT (n)-[:KNOWS]->() AND n.name <> 'C' RETURN n.name")
+            .unwrap();
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][0], Value::String("D".into()));
+    }
+
+    #[test]
+    fn not_exists_still_works_regression() {
+        // Ensure NOT EXISTS { MATCH ... } continues to work
+        let db = setup_pattern_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (n:P) WHERE NOT EXISTS { MATCH (n)-[:KNOWS]->() } \
+                 RETURN n.name ORDER BY n.name",
+            )
+            .unwrap();
+        assert_eq!(result.rows.len(), 2); // C and D
+    }
+
+    #[test]
+    fn bare_pattern_single_node_is_not_pattern() {
+        // WHERE NOT (n) should NOT be interpreted as a pattern — it's NOT expression
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session.execute("INSERT (:X {v: 1})").unwrap();
+        // This should parse as NOT (variable), not as NOT (pattern)
+        // The result depends on truthiness, but it should not crash
+        let result = session.execute("MATCH (n:X) WHERE NOT (n.v = 1) RETURN count(n) AS c");
+        assert!(result.is_ok());
+    }
+}
+
+// ============================================================================
+// CASE WHEN — Extended Edge Cases
+// ============================================================================
+
+mod case_when_extended {
+    use grafeo_common::types::Value;
+    use grafeo_engine::GrafeoDB;
+
+    fn setup_case_db() -> GrafeoDB {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute("INSERT (:T {status: 'active', priority: 1})")
+            .unwrap();
+        session
+            .execute("INSERT (:T {status: 'active', priority: 2})")
+            .unwrap();
+        session
+            .execute("INSERT (:T {status: 'done', priority: 3})")
+            .unwrap();
+        session
+            .execute("INSERT (:T {status: 'done', priority: 4})")
+            .unwrap();
+        session
+            .execute("INSERT (:T {status: 'blocked', priority: 5})")
+            .unwrap();
+        db
+    }
+
+    #[test]
+    fn case_when_group_by_with_count() {
+        let db = setup_case_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (t:T) \
+                 RETURN CASE WHEN t.status = 'active' THEN 'open' ELSE 'closed' END AS s, \
+                        count(t) AS c \
+                 ORDER BY s",
+            )
+            .unwrap();
+        assert_eq!(result.rows.len(), 2);
+        // closed: done(2) + blocked(1) = 3
+        assert_eq!(result.rows[0][0], Value::String("closed".into()));
+        assert_eq!(result.rows[0][1], Value::Int64(3));
+        // open: active(2) = 2
+        assert_eq!(result.rows[1][0], Value::String("open".into()));
+        assert_eq!(result.rows[1][1], Value::Int64(2));
+    }
+
+    #[test]
+    fn case_inside_sum_aggregate() {
+        let db = setup_case_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (t:T) \
+                 RETURN sum(CASE WHEN t.status = 'active' THEN 1 ELSE 0 END) AS active_count",
+            )
+            .unwrap();
+        assert_eq!(result.rows[0][0], Value::Int64(2));
+    }
+
+    #[test]
+    fn simple_case_form() {
+        let db = setup_case_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (t:T) \
+                 RETURN CASE t.status \
+                     WHEN 'active' THEN 'A' \
+                     WHEN 'done' THEN 'D' \
+                     ELSE 'X' \
+                 END AS code \
+                 ORDER BY code LIMIT 3",
+            )
+            .unwrap();
+        assert!(result.rows.len() <= 3);
+        // First result should be one of A, D, X
+        let val = &result.rows[0][0];
+        assert!(matches!(val, Value::String(_)));
+    }
+
+    #[test]
+    fn case_without_else_returns_null() {
+        let db = setup_case_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (t:T) WHERE t.status = 'blocked' \
+                 RETURN CASE WHEN t.status = 'active' THEN 'yes' END AS r",
+            )
+            .unwrap();
+        assert_eq!(result.rows[0][0], Value::Null);
+    }
+
+    #[test]
+    fn case_with_null_check() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session.execute("INSERT (:N {v: 1}), (:N)").unwrap();
+        let result = session
+            .execute(
+                "MATCH (n:N) \
+                 RETURN CASE WHEN n.v IS NULL THEN 'missing' ELSE 'has_value' END AS r \
+                 ORDER BY r",
+            )
+            .unwrap();
+        assert_eq!(result.rows.len(), 2);
+        assert_eq!(result.rows[0][0], Value::String("has_value".into()));
+        assert_eq!(result.rows[1][0], Value::String("missing".into()));
+    }
+
+    #[test]
+    fn multiple_case_in_return() {
+        let db = setup_case_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (t:T) WHERE t.status = 'active' AND t.priority = 1 \
+                 RETURN \
+                     CASE WHEN t.status = 'active' THEN 'A' ELSE 'X' END AS s, \
+                     CASE WHEN t.priority > 2 THEN 'high' ELSE 'low' END AS p",
+            )
+            .unwrap();
+        assert_eq!(result.rows[0][0], Value::String("A".into()));
+        assert_eq!(result.rows[0][1], Value::String("low".into()));
+    }
+
+    #[test]
+    fn nested_case_expression() {
+        let db = setup_case_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (t:T) WHERE t.priority = 5 \
+                 RETURN CASE WHEN t.status = 'blocked' \
+                     THEN CASE WHEN t.priority > 3 THEN 'critical' ELSE 'minor' END \
+                     ELSE 'ok' \
+                 END AS severity",
+            )
+            .unwrap();
+        assert_eq!(result.rows[0][0], Value::String("critical".into()));
+    }
+}
+
+// ============================================================================
+// UNION — Extended Edge Cases
+// ============================================================================
+
+mod union_extended {
+    use grafeo_common::types::Value;
+    use grafeo_engine::GrafeoDB;
+
+    fn setup_union_db() -> GrafeoDB {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute("INSERT (:Cat {name: 'Whiskers'}), (:Cat {name: 'Felix'})")
+            .unwrap();
+        session
+            .execute("INSERT (:Dog {name: 'Rex'}), (:Dog {name: 'Buddy'})")
+            .unwrap();
+        session
+            .execute("INSERT (:Dog {name: 'Felix'})") // same name as cat
+            .unwrap();
+        db
+    }
+
+    #[test]
+    fn union_deduplicates() {
+        let db = setup_union_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (c:Cat) RETURN c.name AS name \
+                 UNION \
+                 MATCH (d:Dog) RETURN d.name AS name",
+            )
+            .unwrap();
+        // Felix appears in both but UNION deduplicates
+        let names: Vec<&Value> = result.rows.iter().map(|r| &r[0]).collect();
+        assert_eq!(names.len(), 4); // Whiskers, Felix, Rex, Buddy (Felix only once)
+    }
+
+    #[test]
+    fn union_all_preserves_duplicates() {
+        let db = setup_union_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (c:Cat) RETURN c.name AS name \
+                 UNION ALL \
+                 MATCH (d:Dog) RETURN d.name AS name",
+            )
+            .unwrap();
+        // Felix appears twice (once from Cat, once from Dog)
+        assert_eq!(result.rows.len(), 5);
+    }
+
+    #[test]
+    fn union_with_literals_and_aggregation() {
+        let db = setup_union_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (c:Cat) RETURN 'cat' AS type, count(c) AS cnt \
+                 UNION \
+                 MATCH (d:Dog) RETURN 'dog' AS type, count(d) AS cnt",
+            )
+            .unwrap();
+        assert_eq!(result.rows.len(), 2);
+    }
+
+    #[test]
+    fn union_column_mismatch_returns_error() {
+        let db = setup_union_db();
+        let session = db.session();
+        let result = session.execute(
+            "MATCH (c:Cat) RETURN c.name \
+             UNION \
+             MATCH (d:Dog) RETURN d.name, 1 AS extra",
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("column") || err.contains("Column"),
+            "Error should mention column mismatch: {err}"
+        );
+    }
+
+    #[test]
+    fn union_three_way() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute("INSERT (:A {v: 1}), (:B {v: 2}), (:C {v: 3})")
+            .unwrap();
+        let result = session
+            .execute(
+                "MATCH (a:A) RETURN a.v AS v \
+                 UNION ALL \
+                 MATCH (b:B) RETURN b.v AS v \
+                 UNION ALL \
+                 MATCH (c:C) RETURN c.v AS v",
+            )
+            .unwrap();
+        assert_eq!(result.rows.len(), 3);
+    }
+
+    #[test]
+    fn union_via_cypher_parser() {
+        let db = setup_union_db();
+        let session = db.session();
+        let result = session
+            .execute_cypher(
+                "MATCH (c:Cat) RETURN c.name AS name \
+                 UNION ALL \
+                 MATCH (d:Dog) RETURN d.name AS name",
+            )
+            .unwrap();
+        assert_eq!(result.rows.len(), 5);
+    }
+}
+
+// ============================================================================
+// Pattern Comprehension — Extended Tests
+// ============================================================================
+
+mod pattern_comprehension_extended {
+    use grafeo_common::types::Value;
+    use grafeo_engine::GrafeoDB;
+
+    fn setup_comp_db() -> GrafeoDB {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        // Alice -KNOWS-> Bob, Charlie
+        // Bob -KNOWS-> Charlie
+        // Dave (no rels)
+        session
+            .execute("INSERT (:Person {name: 'Alice'})-[:KNOWS]->(:Person {name: 'Bob'})")
+            .unwrap();
+        session
+            .execute(
+                "MATCH (a:Person {name: 'Alice'}) \
+                 INSERT (a)-[:KNOWS]->(:Person {name: 'Charlie'})",
+            )
+            .unwrap();
+        session
+            .execute(
+                "MATCH (b:Person {name: 'Bob'}), (c:Person {name: 'Charlie'}) \
+                 INSERT (b)-[:KNOWS]->(c)",
+            )
+            .unwrap();
+        session.execute("INSERT (:Person {name: 'Dave'})").unwrap();
+        db
+    }
+
+    #[test]
+    fn basic_pattern_comprehension_gql() {
+        let db = setup_comp_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (p:Person {name: 'Alice'}) \
+                 RETURN [(p)-[:KNOWS]->(f) | f.name] AS friends",
+            )
+            .unwrap();
+        assert_eq!(result.rows.len(), 1);
+        if let Value::List(friends) = &result.rows[0][0] {
+            assert_eq!(friends.len(), 2);
+        } else {
+            panic!("Expected list, got {:?}", result.rows[0][0]);
+        }
+    }
+
+    #[test]
+    fn pattern_comprehension_empty_result() {
+        let db = setup_comp_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (p:Person {name: 'Dave'}) \
+                 RETURN [(p)-[:KNOWS]->(f) | f.name] AS friends",
+            )
+            .unwrap();
+        assert_eq!(result.rows.len(), 1);
+        if let Value::List(friends) = &result.rows[0][0] {
+            assert_eq!(friends.len(), 0);
+        } else {
+            panic!("Expected empty list, got {:?}", result.rows[0][0]);
+        }
+    }
+
+    #[test]
+    fn pattern_comprehension_cypher() {
+        // Ensure Cypher parser still works (regression)
+        let db = setup_comp_db();
+        let session = db.session();
+        let result = session
+            .execute_cypher(
+                "MATCH (p:Person {name: 'Bob'}) \
+                 RETURN [(p)-[:KNOWS]->(f) | f.name] AS friends",
+            )
+            .unwrap();
+        assert_eq!(result.rows.len(), 1);
+        if let Value::List(friends) = &result.rows[0][0] {
+            assert_eq!(friends.len(), 1); // Bob -> Charlie
+        } else {
+            panic!("Expected list, got {:?}", result.rows[0][0]);
+        }
+    }
+
+    #[test]
+    fn pattern_comprehension_with_other_columns() {
+        let db = setup_comp_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (p:Person) WHERE p.name IN ['Alice', 'Dave'] \
+                 RETURN p.name, [(p)-[:KNOWS]->(f) | f.name] AS friends \
+                 ORDER BY p.name",
+            )
+            .unwrap();
+        assert_eq!(result.rows.len(), 2);
+        // Alice has friends, Dave has none
+        assert_eq!(result.rows[0][0], Value::String("Alice".into()));
+        if let Value::List(af) = &result.rows[0][1] {
+            assert_eq!(af.len(), 2);
+        }
+        assert_eq!(result.rows[1][0], Value::String("Dave".into()));
+        if let Value::List(df) = &result.rows[1][1] {
+            assert_eq!(df.len(), 0);
+        }
+    }
+}
+
+// ============================================================================
+// Parser Unit Tests — FOREACH, Pattern Comp, Bare Pattern
+// ============================================================================
+
+mod parser_unit_tests {
+    use grafeo_engine::GrafeoDB;
+
+    #[test]
+    fn parse_foreach_with_create() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session.execute("FOREACH (i IN [1] | CREATE (:X {v: i}))");
+        assert!(
+            result.is_ok(),
+            "FOREACH+CREATE should parse: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn parse_foreach_with_merge() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session.execute("FOREACH (i IN [1] | MERGE (:X {v: i}))");
+        assert!(
+            result.is_ok(),
+            "FOREACH+MERGE should parse: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn parse_foreach_after_with() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session.execute("INSERT (:W {v: 1})").unwrap();
+        let result = session.execute(
+            "MATCH (n:W) WITH collect(n.v) AS vals \
+             FOREACH (x IN vals | CREATE (:WR {v: x})) \
+             RETURN 1 AS done",
+        );
+        assert!(
+            result.is_ok(),
+            "FOREACH after WITH should parse: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn parse_nested_foreach() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result =
+            session.execute("FOREACH (i IN [1] | FOREACH (j IN [2] | CREATE (:N {i: i, j: j})))");
+        assert!(
+            result.is_ok(),
+            "Nested FOREACH should parse: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn parse_bare_positive_pattern() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session.execute("INSERT (:A)-[:R]->(:B)").unwrap();
+        let result = session.execute("MATCH (n:A) WHERE (n)-[:R]->() RETURN count(n) AS c");
+        assert!(
+            result.is_ok(),
+            "Bare positive pattern should parse: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn parse_pattern_comprehension_gql() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute("INSERT (:P {name: 'x'})-[:R]->(:Q {name: 'y'})")
+            .unwrap();
+        let result = session.execute("MATCH (p:P) RETURN [(p)-[:R]->(q) | q.name] AS names");
+        assert!(
+            result.is_ok(),
+            "Pattern comprehension in GQL should parse: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn foreach_invalid_clause_in_body_is_error() {
+        // FOREACH with MATCH inside should error (only mutations allowed)
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session.execute("FOREACH (i IN [1] | MATCH (n) RETURN n)");
+        assert!(
+            result.is_err(),
+            "FOREACH with MATCH should be a syntax error"
+        );
+    }
+
+    #[test]
+    fn foreach_return_inside_is_error() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session.execute("FOREACH (i IN [1] | RETURN i)");
+        assert!(
+            result.is_err(),
+            "FOREACH with RETURN should be a syntax error"
+        );
+    }
 }
