@@ -349,6 +349,30 @@ fn test_startnode_endnode_bidirectional() {
 // ============================================================================
 
 #[test]
+fn test_startnode_no_args_returns_none() {
+    // Covers the args.len() != 1 guard in startNode/endNode
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    session
+        .execute("CREATE (a:A {name: 'alice'})-[:KNOWS]->(b:B {name: 'bob'})")
+        .unwrap();
+
+    // startNode() with no args → should return Null (no crash)
+    let result = session
+        .execute("MATCH ()-[r]->() RETURN startNode() AS sn")
+        .unwrap();
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], Value::Null);
+
+    // endNode() with no args → should return Null (no crash)
+    let result = session
+        .execute("MATCH ()-[r]->() RETURN endNode() AS en")
+        .unwrap();
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][0], Value::Null);
+}
+
+#[test]
 fn test_startnode_on_multiple_edge_types() {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();

@@ -346,6 +346,77 @@ fn test_set_label_idempotent() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn test_set_label_preserves_null_properties() {
+    // Covers the push_value(Value::Null) branch in column copy when a property is null
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    session
+        .execute("CREATE (:Node {name: 'a'}), (:Node {name: 'b', extra: 'yes'})")
+        .unwrap();
+
+    // extra is null for node 'a', non-null for node 'b'
+    let result = session
+        .execute("MATCH (n:Node) SET n:Tagged RETURN n.name, n.extra ORDER BY n.name")
+        .unwrap();
+    assert_eq!(result.row_count(), 2);
+    // Node 'a' has null extra
+    assert_eq!(result.rows[0][1], Value::Null);
+    // Node 'b' has extra = 'yes'
+    match &result.rows[1][1] {
+        Value::String(s) => assert_eq!(s.as_str(), "yes"),
+        other => panic!("Expected String, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_set_label_in_transaction() {
+    // Covers the versioned label path (add_label_versioned / remove_label_versioned)
+    let db = GrafeoDB::new_in_memory();
+    let mut session = db.session();
+    session.execute("CREATE (:Node {name: 'x'})").unwrap();
+
+    session.begin_transaction().unwrap();
+    let result = session
+        .execute("MATCH (n:Node) SET n:InTx RETURN count(*) AS cnt")
+        .unwrap();
+    assert_eq!(result.row_count(), 1);
+    if let Value::Int64(cnt) = &result.rows[0][0] {
+        assert_eq!(*cnt, 1);
+    }
+    session.commit().unwrap();
+
+    // Verify label persists after commit
+    let result = session
+        .execute("MATCH (n:InTx) RETURN count(n) AS cnt")
+        .unwrap();
+    if let Value::Int64(cnt) = &result.rows[0][0] {
+        assert_eq!(*cnt, 1, "Label should persist after commit");
+    }
+}
+
+#[test]
+fn test_remove_label_in_transaction() {
+    // Covers remove_label_versioned path
+    let db = GrafeoDB::new_in_memory();
+    let mut session = db.session();
+    session.execute("CREATE (:Node:Temp {name: 'y'})").unwrap();
+
+    session.begin_transaction().unwrap();
+    let result = session
+        .execute("MATCH (n:Temp) REMOVE n:Temp RETURN count(*) AS cnt")
+        .unwrap();
+    assert_eq!(result.row_count(), 1);
+    session.commit().unwrap();
+
+    let result = session
+        .execute("MATCH (n:Temp) RETURN count(n) AS cnt")
+        .unwrap();
+    if let Value::Int64(cnt) = &result.rows[0][0] {
+        assert_eq!(*cnt, 0, "Temp label should be removed after commit");
+    }
+}
+
+#[test]
 fn test_remove_label_preserves_variable() {
     let db = db_with_nodes(3);
     let session = db.session();
