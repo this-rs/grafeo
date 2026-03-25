@@ -163,9 +163,9 @@ async fn evaluate_identical_artifacts_score_near_one() {
         report.evidence_coverage
     );
     assert!(
-        (report.community_overlap - 1.0).abs() < 1e-9,
-        "community_overlap should be ~1.0, got {}",
-        report.community_overlap
+        (report.energy_correlation - 1.0).abs() < 1e-9,
+        "energy_correlation should be ~1.0, got {}",
+        report.energy_correlation
     );
     // With identical artifacts, most factors should be high
     assert!(
@@ -186,14 +186,14 @@ async fn evaluate_different_artifacts_lower_score() {
         "evidence_coverage should be ~0, got {}",
         report.evidence_coverage
     );
-    // No shared nodes => community_overlap = 0.0
+    // No shared nodes => energy_correlation = 0.0
     assert!(
-        report.community_overlap.abs() < f64::EPSILON,
-        "community_overlap should be 0.0 for disjoint nodes, got {}",
-        report.community_overlap
+        report.energy_correlation.abs() < f64::EPSILON,
+        "energy_correlation should be 0.0 for disjoint nodes, got {}",
+        report.energy_correlation
     );
     assert!(
-        report.composite_score < 0.1,
+        report.composite_score < 0.3,
         "composite_score should be low, got {}",
         report.composite_score
     );

@@ -23,7 +23,7 @@ scar = []
 memory = ["energy"]
 stagnation = []
 fingerprint = []
-distillation = ["energy", "synapse", "fingerprint", "dep:serde_json"]
+distillation = ["energy", "synapse", "fingerprint", "dep:serde_json", "dep:bincode"]
 episodic = []
 consolidation = ["energy", "fabric", "gds-refresh"]
 
@@ -41,8 +41,10 @@ grafeo-core = { workspace = true, default-features = false }
 grafeo-reactive.workspace = true
 grafeo-adapters = { workspace = true, optional = true, default-features = false, features = ["algos"] }
 
-# Async runtime & traits
-tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
+# Async runtime — only sync feature for all targets (WASM-compatible).
+# NOTE: we don't use `workspace = true` because the workspace tokio
+# includes rt-multi-thread/fs which are unsupported on wasm32.
+tokio = { version = "1", features = ["sync"] }
 async-trait.workspace = true
 
 # Error handling
@@ -61,12 +63,21 @@ smallvec.workspace = true
 # Serialization (for CognitiveConfig TOML support)
 serde.workspace = true
 serde_json = { workspace = true, optional = true }
+bincode = { workspace = true, optional = true }
 toml = "0.8"
+
+# Portable Instant (std::time::Instant panics on wasm32-unknown-unknown)
+web-time = "1"
+
+# Native-only: full tokio runtime for memory manager periodic sweep etc.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 arcstr.workspace = true
 serde_json.workspace = true
+bincode.workspace = true
 criterion.workspace = true
 smallvec.workspace = true
 proptest.workspace = true
