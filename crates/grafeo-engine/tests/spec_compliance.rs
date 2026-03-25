@@ -194,6 +194,75 @@ mod gql_set_ops {
         // Left side empty, falls through to right
         assert_eq!(result.row_count(), 4);
     }
+
+    #[test]
+    fn union_with_literals_and_aggregation() {
+        // Test the exact query from the bug report (using GQL parser)
+        let db = social_network();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (n:Person) RETURN 'person' AS type, count(n) AS c \
+                 UNION \
+                 MATCH (n:Company) RETURN 'company' AS type, count(n) AS c",
+            )
+            .unwrap();
+        // Should return 2 rows: one for Person count, one for Company count
+        assert_eq!(result.row_count(), 2, "UNION should return 2 rows");
+    }
+
+    #[test]
+    fn union_all_preserves_duplicates() {
+        let db = social_network();
+        let session = db.session();
+        // Both branches return overlapping names
+        let result = session
+            .execute(
+                "MATCH (n:Person) WHERE n.age <= 30 RETURN n.name \
+                 UNION ALL \
+                 MATCH (n:Person) WHERE n.age >= 25 RETURN n.name",
+            )
+            .unwrap();
+        // age<=30: Alix(30), Gus(25), Dave(28) = 3
+        // age>=25: Alix(30), Gus(25), Dave(28), Harm(35) = 4
+        // UNION ALL = 7 (no dedup)
+        assert_eq!(result.row_count(), 7, "UNION ALL should keep duplicates");
+    }
+
+    #[test]
+    fn union_column_mismatch_returns_semantic_error() {
+        let db = social_network();
+        let session = db.session();
+        let err = session
+            .execute(
+                "MATCH (n:Person) RETURN n.name, n.age \
+                 UNION \
+                 MATCH (n:Person) RETURN n.name",
+            )
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("same number of columns"),
+            "Expected semantic error about column count mismatch, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "cypher")]
+    fn union_via_cypher_parser() {
+        // Ensure Cypher parser also handles UNION correctly
+        let db = social_network();
+        let session = db.session();
+        let result = session
+            .execute_cypher(
+                "MATCH (n:Person) RETURN 'person' AS type, count(n) AS c \
+                 UNION \
+                 MATCH (n:Company) RETURN 'company' AS type, count(n) AS c",
+            )
+            .unwrap();
+        assert_eq!(result.row_count(), 2, "Cypher UNION should return 2 rows");
+    }
 }
 
 // ============================================================================

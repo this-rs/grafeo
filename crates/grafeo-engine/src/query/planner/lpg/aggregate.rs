@@ -41,27 +41,42 @@ impl super::Planner {
 
         // Collect all property expressions that need to be projected before aggregation
         let mut property_projections: Vec<(String, String, String)> = Vec::new(); // (variable, property, new_column_name)
+        let mut expression_projections: Vec<(FilterExpression, String)> = Vec::new();
         let mut next_col_idx = input_columns.len();
 
-        // Check group-by expressions for properties
+        // Check group-by expressions for properties and complex expressions (literals, CASE, etc.)
         for expr in &agg.group_by {
-            if let LogicalExpression::Property { variable, property } = expr {
-                let col_name = format!("{}_{}", variable, property);
-                if !variable_columns.contains_key(&col_name) {
-                    property_projections.push((
-                        variable.clone(),
-                        property.clone(),
-                        col_name.clone(),
-                    ));
-                    variable_columns.insert(col_name, next_col_idx);
-                    next_col_idx += 1;
+            match expr {
+                LogicalExpression::Property { variable, property } => {
+                    let col_name = format!("{}_{}", variable, property);
+                    if !variable_columns.contains_key(&col_name) {
+                        property_projections.push((
+                            variable.clone(),
+                            property.clone(),
+                            col_name.clone(),
+                        ));
+                        variable_columns.insert(col_name, next_col_idx);
+                        next_col_idx += 1;
+                    }
+                }
+                LogicalExpression::Variable(_) => {
+                    // Already in variable_columns, nothing to project
+                }
+                _ => {
+                    // Complex expression (Literal, CASE, Binary, etc.): project as computed column
+                    let col_name = format!("__expr_{:?}", expr);
+                    if !variable_columns.contains_key(&col_name) {
+                        let filter_expr = self.convert_expression(expr)?;
+                        expression_projections.push((filter_expr, col_name.clone()));
+                        variable_columns.insert(col_name, next_col_idx);
+                        next_col_idx += 1;
+                    }
                 }
             }
         }
 
         // Check aggregate expressions for properties and complex expressions
         // (both first and second arguments)
-        let mut expression_projections: Vec<(FilterExpression, String)> = Vec::new();
         for agg_expr in &agg.aggregates {
             for expr_opt in [&agg_expr.expression, &agg_expr.expression2] {
                 let Some(expr) = expr_opt else { continue };
