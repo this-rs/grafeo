@@ -2732,6 +2732,16 @@ impl<'a> Parser<'a> {
     fn parse_not_expression(&mut self) -> Result<Expression> {
         if self.current.kind == TokenKind::Not {
             self.advance();
+            // Try to detect bare pattern predicate: NOT (n)-[:REL]->()
+            // Desugar to NOT EXISTS { MATCH (n)-[:REL]->() }
+            if self.current.kind == TokenKind::LParen {
+                if let Some(exists_expr) = self.try_parse_bare_pattern_as_exists()? {
+                    return Ok(Expression::Unary {
+                        op: UnaryOp::Not,
+                        operand: Box::new(exists_expr),
+                    });
+                }
+            }
             let operand = self.parse_not_expression()?;
             return Ok(Expression::Unary {
                 op: UnaryOp::Not,
@@ -3608,6 +3618,11 @@ impl<'a> Parser<'a> {
                 }
             }
             TokenKind::LParen => {
+                // Try to detect bare pattern predicate: (n)-[:REL]->()
+                // Desugar to EXISTS { MATCH (n)-[:REL]->() }
+                if let Some(exists_expr) = self.try_parse_bare_pattern_as_exists()? {
+                    return Ok(exists_expr);
+                }
                 self.advance();
                 let expr = self.parse_expression()?;
                 self.expect(TokenKind::RParen)?;
@@ -3875,6 +3890,69 @@ impl<'a> Parser<'a> {
             ordered_clauses: vec![],
             span: None,
         })
+    }
+
+    /// Attempts to parse a bare pattern predicate starting at `(`.
+    /// If the current position looks like a path pattern (e.g., `(n)-[:REL]->()`),
+    /// parses it and returns `Some(Expression::ExistsSubquery { ... })`.
+    /// If not a path pattern, restores state and returns `Ok(None)`.
+    fn try_parse_bare_pattern_as_exists(&mut self) -> Result<Option<Expression>> {
+        let saved = (
+            self.lexer.clone(),
+            self.current.clone(),
+            self.peeked.clone(),
+            self.peeked_second.clone(),
+        );
+        if let Ok(pattern) = self.parse_pattern() {
+            // Only treat as bare pattern predicate if it's a Path (has edges)
+            if matches!(&pattern, Pattern::Path(_)) {
+                let span_start = saved.1.span.start;
+                let match_clause = MatchClause {
+                    optional: false,
+                    path_mode: None,
+                    search_prefix: None,
+                    match_mode: None,
+                    patterns: vec![AliasedPattern {
+                        alias: None,
+                        path_function: None,
+                        keep: None,
+                        pattern,
+                    }],
+                    span: Some(SourceSpan::new(span_start, self.current.span.end, 1, 1)),
+                };
+                let query = QueryStatement {
+                    match_clauses: vec![match_clause],
+                    where_clause: None,
+                    set_clauses: vec![],
+                    remove_clauses: vec![],
+                    with_clauses: vec![],
+                    unwind_clauses: vec![],
+                    merge_clauses: vec![],
+                    create_clauses: vec![],
+                    delete_clauses: vec![],
+                    return_clause: ReturnClause {
+                        distinct: false,
+                        items: vec![],
+                        is_wildcard: false,
+                        group_by: vec![],
+                        order_by: None,
+                        skip: None,
+                        limit: None,
+                        is_finish: false,
+                        span: None,
+                    },
+                    having_clause: None,
+                    ordered_clauses: vec![],
+                    span: None,
+                };
+                return Ok(Some(Expression::ExistsSubquery {
+                    query: Box::new(query),
+                }));
+            }
+        }
+        // Not a path pattern, restore state
+        (self.lexer, self.current, self.peeked, self.peeked_second) = saved;
+        Ok(None)
     }
 
     /// Parses the inner query of a VALUE subquery.
