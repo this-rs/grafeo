@@ -2808,13 +2808,13 @@ impl<'a> Parser<'a> {
             self.advance();
             // Try to detect bare pattern predicate: NOT (n)-[:REL]->()
             // Desugar to NOT EXISTS { MATCH (n)-[:REL]->() }
-            if self.current.kind == TokenKind::LParen {
-                if let Some(exists_expr) = self.try_parse_bare_pattern_as_exists()? {
-                    return Ok(Expression::Unary {
-                        op: UnaryOp::Not,
-                        operand: Box::new(exists_expr),
-                    });
-                }
+            if self.current.kind == TokenKind::LParen
+                && let Some(exists_expr) = self.try_parse_bare_pattern_as_exists()?
+            {
+                return Ok(Expression::Unary {
+                    op: UnaryOp::Not,
+                    operand: Box::new(exists_expr),
+                });
             }
             let operand = self.parse_not_expression()?;
             return Ok(Expression::Unary {
