@@ -85,7 +85,7 @@ jobs:
   rust-test:
     name: Rust Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 90 || 45 }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
