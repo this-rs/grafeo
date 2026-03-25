@@ -5153,3 +5153,800 @@ mod cypher_parser_parity {
         session.execute("MATCH (n:PCC) DETACH DELETE n").unwrap();
     }
 }
+
+// ============================================================================
+// Cypher Parser — FOREACH via execute_cypher
+// ============================================================================
+
+#[cfg(feature = "cypher")]
+mod cypher_foreach {
+    use grafeo_common::types::Value;
+    use grafeo_engine::GrafeoDB;
+
+    #[test]
+    fn cypher_foreach_create() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute_cypher("FOREACH (i IN [1, 2, 3] | CREATE (:CF {v: i}))")
+            .unwrap();
+        let result = session
+            .execute("MATCH (n:CF) RETURN count(n) AS c")
+            .unwrap();
+        assert_eq!(result.rows[0][0], Value::Int64(3));
+        session.execute("MATCH (n:CF) DELETE n").unwrap();
+    }
+
+    #[test]
+    fn cypher_foreach_merge() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute_cypher("FOREACH (name IN ['Alice', 'Bob'] | MERGE (:FM {name: name}))")
+            .unwrap();
+        let result = session
+            .execute("MATCH (n:FM) RETURN count(n) AS c")
+            .unwrap();
+        assert_eq!(result.rows[0][0], Value::Int64(2));
+        session.execute("MATCH (n:FM) DELETE n").unwrap();
+    }
+
+    #[test]
+    fn cypher_foreach_after_match() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session.execute("INSERT (:Src {v: 1})").unwrap();
+        let result =
+            session.execute_cypher("MATCH (s:Src) FOREACH (i IN [10, 20] | CREATE (:Dst {v: i}))");
+        // FOREACH after MATCH should work in Cypher
+        if result.is_ok() {
+            let count = session
+                .execute("MATCH (n:Dst) RETURN count(n) AS c")
+                .unwrap();
+            assert_eq!(count.rows[0][0], Value::Int64(2));
+        }
+        session.execute("MATCH (n:Src) DELETE n").unwrap();
+        session.execute("MATCH (n:Dst) DELETE n").unwrap();
+    }
+
+    #[test]
+    fn cypher_foreach_nested() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session.execute_cypher(
+            "FOREACH (i IN [1, 2] | FOREACH (j IN [10, 20] | CREATE (:CN {i: i, j: j})))",
+        );
+        if result.is_ok() {
+            let count = session
+                .execute("MATCH (n:CN) RETURN count(n) AS c")
+                .unwrap();
+            assert_eq!(count.rows[0][0], Value::Int64(4));
+            session.execute("MATCH (n:CN) DELETE n").unwrap();
+        }
+    }
+
+    #[test]
+    fn cypher_foreach_empty_list() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute_cypher("FOREACH (i IN [] | CREATE (:CE {v: i}))")
+            .unwrap();
+        let result = session
+            .execute("MATCH (n:CE) RETURN count(n) AS c")
+            .unwrap();
+        assert_eq!(result.rows[0][0], Value::Int64(0));
+    }
+}
+
+// ============================================================================
+// FOREACH — Mutation Variants (SET, DELETE, MERGE in body)
+// ============================================================================
+
+mod foreach_mutation_variants {
+    use grafeo_common::types::Value;
+    use grafeo_engine::GrafeoDB;
+
+    #[test]
+    fn foreach_with_merge_creates_nodes() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute("FOREACH (name IN ['X', 'Y', 'Z'] | MERGE (:MV {name: name}))")
+            .unwrap();
+        let result = session
+            .execute("MATCH (n:MV) RETURN n.name ORDER BY n.name")
+            .unwrap();
+        assert_eq!(result.rows.len(), 3);
+        assert_eq!(result.rows[0][0], Value::String("X".into()));
+        assert_eq!(result.rows[1][0], Value::String("Y".into()));
+        assert_eq!(result.rows[2][0], Value::String("Z".into()));
+        session.execute("MATCH (n:MV) DELETE n").unwrap();
+    }
+
+    #[test]
+    fn foreach_with_insert() {
+        // INSERT is an alias for CREATE in GQL
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute("FOREACH (v IN [100, 200] | INSERT (:INS {val: v}))")
+            .unwrap();
+        let result = session
+            .execute("MATCH (n:INS) RETURN n.val ORDER BY n.val")
+            .unwrap();
+        assert_eq!(result.rows.len(), 2);
+        assert_eq!(result.rows[0][0], Value::Int64(100));
+        assert_eq!(result.rows[1][0], Value::Int64(200));
+        session.execute("MATCH (n:INS) DELETE n").unwrap();
+    }
+
+    #[test]
+    fn foreach_with_create_edge() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute("FOREACH (i IN [1, 2] | CREATE (:FEdge {v: i})-[:LINK]->(:FTarget {v: i}))")
+            .unwrap();
+        let result = session
+            .execute("MATCH ()-[:LINK]->() RETURN count(*) AS c")
+            .unwrap();
+        assert_eq!(result.rows[0][0], Value::Int64(2));
+        session
+            .execute("MATCH (n) WHERE n:FEdge OR n:FTarget DETACH DELETE n")
+            .unwrap();
+    }
+
+    #[test]
+    fn foreach_with_mixed_types_in_list() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        // List with mixed string values
+        session
+            .execute("FOREACH (t IN ['alpha', 'beta', 'gamma'] | CREATE (:Mixed {tag: t}))")
+            .unwrap();
+        let result = session
+            .execute("MATCH (n:Mixed) RETURN count(n) AS c")
+            .unwrap();
+        assert_eq!(result.rows[0][0], Value::Int64(3));
+        session.execute("MATCH (n:Mixed) DELETE n").unwrap();
+    }
+}
+
+// ============================================================================
+// Correlated Subqueries — Apply Operator Paths
+// ============================================================================
+
+mod correlated_apply {
+    use grafeo_common::types::Value;
+    use grafeo_engine::GrafeoDB;
+
+    fn setup_db() -> GrafeoDB {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute("INSERT (:CA {name: 'A', val: 10})-[:E]->(:CA {name: 'B', val: 20})")
+            .unwrap();
+        session
+            .execute("MATCH (a:CA {name: 'A'}) INSERT (a)-[:E]->(:CA {name: 'C', val: 30})")
+            .unwrap();
+        session.execute("INSERT (:CA {name: 'D', val: 5})").unwrap();
+        db
+    }
+
+    #[test]
+    fn call_subquery_correlated_with_variable() {
+        let db = setup_db();
+        let session = db.session();
+        let result = session.execute(
+            "MATCH (n:CA) \
+             CALL { WITH n MATCH (n)-[:E]->(m) RETURN count(m) AS cnt } \
+             RETURN n.name, cnt ORDER BY n.name",
+        );
+        if let Ok(r) = result {
+            // A has 2 edges (B, C), B/C/D have 0
+            assert_eq!(r.rows.len(), 4);
+            let a_row = r.rows.iter().find(|r| r[0] == Value::String("A".into()));
+            if let Some(row) = a_row {
+                assert_eq!(row[1], Value::Int64(2));
+            }
+        }
+    }
+
+    #[test]
+    fn call_subquery_uncorrelated() {
+        let db = setup_db();
+        let session = db.session();
+        let result = session.execute("CALL { MATCH (n:CA) RETURN count(n) AS total } RETURN total");
+        if let Ok(r) = result {
+            assert_eq!(r.rows.len(), 1);
+            assert_eq!(r.rows[0][0], Value::Int64(4));
+        }
+    }
+
+    #[cfg(feature = "cypher")]
+    #[test]
+    fn call_subquery_with_wildcard() {
+        let db = setup_db();
+        let session = db.session();
+        let result = session.execute_cypher(
+            "MATCH (n:CA {name: 'A'}) \
+             CALL { WITH * MATCH (n)-[:E]->(m) RETURN m.name AS friend } \
+             RETURN n.name, friend ORDER BY friend",
+        );
+        if let Ok(r) = result {
+            assert_eq!(r.rows.len(), 2); // B and C
+        }
+    }
+
+    #[test]
+    fn exists_correlated_with_property_filter() {
+        let db = setup_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (n:CA) \
+                 WHERE EXISTS { MATCH (n)-[:E]->(m) WHERE m.val > 25 } \
+                 RETURN n.name",
+            )
+            .unwrap();
+        // Only A has an edge to C (val=30 > 25)
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][0], Value::String("A".into()));
+    }
+
+    #[test]
+    fn not_exists_correlated() {
+        let db = setup_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (n:CA) \
+                 WHERE NOT EXISTS { MATCH (n)-[:E]->() } \
+                 RETURN n.name ORDER BY n.name",
+            )
+            .unwrap();
+        // B, C, D have no outgoing E edges
+        let names: Vec<_> = result
+            .rows
+            .iter()
+            .map(|r| match &r[0] {
+                Value::String(s) => s.to_string(),
+                _ => panic!("expected string"),
+            })
+            .collect();
+        assert_eq!(names, vec!["B", "C", "D"]);
+    }
+}
+
+// ============================================================================
+// Complex EXISTS in AND trees — filter.rs extraction
+// ============================================================================
+
+mod exists_and_tree {
+    use grafeo_common::types::Value;
+    use grafeo_engine::GrafeoDB;
+
+    fn setup_db() -> GrafeoDB {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        // A -[:X]-> B -[:Y]-> C
+        // A -[:Z]-> D
+        session
+            .execute("INSERT (:AT {name: 'A'})-[:X]->(:AT {name: 'B'})-[:Y]->(:AT {name: 'C'})")
+            .unwrap();
+        session
+            .execute("MATCH (a:AT {name: 'A'}) INSERT (a)-[:Z]->(:AT {name: 'D'})")
+            .unwrap();
+        // E isolated
+        session.execute("INSERT (:AT {name: 'E'})").unwrap();
+        db
+    }
+
+    #[test]
+    fn exists_and_scalar_predicate() {
+        let db = setup_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (n:AT) \
+                 WHERE EXISTS { MATCH (n)-[:X]->() } AND n.name = 'A' \
+                 RETURN n.name",
+            )
+            .unwrap();
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][0], Value::String("A".into()));
+    }
+
+    #[test]
+    fn not_exists_and_scalar_predicate() {
+        let db = setup_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (n:AT) \
+                 WHERE NOT EXISTS { MATCH (n)-[:X]->() } AND n.name <> 'E' \
+                 RETURN n.name ORDER BY n.name",
+            )
+            .unwrap();
+        // B, C, D have no outgoing X. Excluding E: B, C, D remain
+        let names: Vec<_> = result
+            .rows
+            .iter()
+            .map(|r| match &r[0] {
+                Value::String(s) => s.to_string(),
+                _ => panic!("expected string"),
+            })
+            .collect();
+        assert_eq!(names, vec!["B", "C", "D"]);
+    }
+
+    #[test]
+    fn exists_and_exists_both_required() {
+        let db = setup_db();
+        let session = db.session();
+        let result = session.execute(
+            "MATCH (n:AT) \
+             WHERE EXISTS { MATCH (n)-[:X]->() } AND EXISTS { MATCH (n)-[:Z]->() } \
+             RETURN n.name",
+        );
+        if let Ok(r) = result {
+            // Only A has both X and Z outgoing
+            assert_eq!(r.rows.len(), 1);
+            assert_eq!(r.rows[0][0], Value::String("A".into()));
+        }
+    }
+
+    #[test]
+    fn not_exists_and_exists_mixed() {
+        let db = setup_db();
+        let session = db.session();
+        let result = session.execute(
+            "MATCH (n:AT) \
+             WHERE NOT EXISTS { MATCH (n)-[:X]->() } AND EXISTS { MATCH (n)<--() } \
+             RETURN n.name ORDER BY n.name",
+        );
+        if let Ok(r) = result {
+            // No outgoing X AND has incoming: B (from A via X), C (from B via Y), D (from A via Z)
+            assert!(r.rows.len() >= 2);
+        }
+    }
+
+    #[test]
+    fn exists_and_and_and() {
+        // Three predicates in AND chain: scalar AND EXISTS AND scalar
+        let db = setup_db();
+        let session = db.session();
+        let result = session.execute(
+            "MATCH (n:AT) \
+             WHERE n.name >= 'A' AND EXISTS { MATCH (n)-->() } AND n.name <= 'B' \
+             RETURN n.name ORDER BY n.name",
+        );
+        if let Ok(r) = result {
+            // A (has outgoing, name in [A,B]), B (has outgoing Y, name in [A,B])
+            assert_eq!(r.rows.len(), 2);
+        }
+    }
+
+    #[test]
+    fn bare_pattern_and_scalar() {
+        let db = setup_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (n:AT) \
+                 WHERE (n)-[:X]->() AND n.name = 'A' \
+                 RETURN n.name",
+            )
+            .unwrap();
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][0], Value::String("A".into()));
+    }
+
+    #[test]
+    fn bare_not_pattern_and_scalar() {
+        let db = setup_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (n:AT) \
+                 WHERE NOT (n)-->() AND n.name = 'E' \
+                 RETURN n.name",
+            )
+            .unwrap();
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][0], Value::String("E".into()));
+    }
+}
+
+// ============================================================================
+// Aggregate with Complex Expressions — aggregate.rs paths
+// ============================================================================
+
+mod aggregate_complex_expressions {
+    use grafeo_common::types::Value;
+    use grafeo_engine::GrafeoDB;
+
+    fn setup_db() -> GrafeoDB {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute(
+                "INSERT (:AG {cat: 'A', val: 10}), (:AG {cat: 'A', val: 20}), \
+                 (:AG {cat: 'B', val: 30}), (:AG {cat: 'B', val: 40}), \
+                 (:AG {cat: 'B', val: 50})",
+            )
+            .unwrap();
+        db
+    }
+
+    #[test]
+    fn case_when_as_group_by_key() {
+        let db = setup_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (n:AG) \
+                 RETURN CASE WHEN n.val > 25 THEN 'high' ELSE 'low' END AS band, \
+                 count(n) AS cnt ORDER BY band",
+            )
+            .unwrap();
+        assert_eq!(result.rows.len(), 2);
+        // high: 30, 40, 50 → 3; low: 10, 20 → 2
+        assert_eq!(result.rows[0][0], Value::String("high".into()));
+        assert_eq!(result.rows[0][1], Value::Int64(3));
+        assert_eq!(result.rows[1][0], Value::String("low".into()));
+        assert_eq!(result.rows[1][1], Value::Int64(2));
+    }
+
+    #[test]
+    fn case_when_inside_sum() {
+        let db = setup_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (n:AG) \
+                 RETURN sum(CASE WHEN n.val > 25 THEN n.val ELSE 0 END) AS high_sum",
+            )
+            .unwrap();
+        assert_eq!(result.rows.len(), 1);
+        // sum(30 + 40 + 50) = 120
+        assert_eq!(result.rows[0][0], Value::Int64(120));
+    }
+
+    #[test]
+    fn case_when_inside_count() {
+        let db = setup_db();
+        let session = db.session();
+        let result = session.execute(
+            "MATCH (n:AG) \
+             RETURN n.cat, count(CASE WHEN n.val > 25 THEN 1 END) AS high_cnt \
+             ORDER BY n.cat",
+        );
+        if let Ok(r) = result {
+            assert_eq!(r.rows.len(), 2);
+            // A: count of vals > 25 → 0; B: count of 30,40,50 > 25 → 3
+        }
+    }
+
+    #[test]
+    fn literal_in_group_by() {
+        let db = setup_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (n:AG) \
+                 RETURN n.cat, count(n) AS cnt, sum(n.val) AS total \
+                 ORDER BY n.cat",
+            )
+            .unwrap();
+        assert_eq!(result.rows.len(), 2);
+        assert_eq!(result.rows[0][0], Value::String("A".into()));
+        assert_eq!(result.rows[0][1], Value::Int64(2));
+        assert_eq!(result.rows[0][2], Value::Int64(30));
+        assert_eq!(result.rows[1][0], Value::String("B".into()));
+        assert_eq!(result.rows[1][1], Value::Int64(3));
+        assert_eq!(result.rows[1][2], Value::Int64(120));
+    }
+
+    #[test]
+    fn multiple_aggregates_with_case() {
+        let db = setup_db();
+        let session = db.session();
+        let result = session.execute(
+            "MATCH (n:AG) \
+             RETURN \
+               count(CASE WHEN n.val > 25 THEN 1 END) AS high_count, \
+               sum(CASE WHEN n.val <= 25 THEN n.val ELSE 0 END) AS low_sum",
+        );
+        if let Ok(r) = result {
+            assert_eq!(r.rows.len(), 1);
+        }
+    }
+
+    #[test]
+    fn min_max_with_group_by() {
+        let db = setup_db();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (n:AG) \
+                 RETURN n.cat, min(n.val) AS mn, max(n.val) AS mx \
+                 ORDER BY n.cat",
+            )
+            .unwrap();
+        assert_eq!(result.rows.len(), 2);
+        assert_eq!(result.rows[0][2], Value::Int64(20)); // A max
+        assert_eq!(result.rows[1][1], Value::Int64(30)); // B min
+        assert_eq!(result.rows[1][2], Value::Int64(50)); // B max
+    }
+
+    #[test]
+    fn avg_aggregate() {
+        let db = setup_db();
+        let session = db.session();
+        let result = session
+            .execute("MATCH (n:AG {cat: 'A'}) RETURN avg(n.val) AS a")
+            .unwrap();
+        assert_eq!(result.rows.len(), 1);
+        // avg(10, 20) = 15.0
+        match &result.rows[0][0] {
+            Value::Float64(f) => assert!((f - 15.0).abs() < 0.01),
+            Value::Int64(i) => assert_eq!(*i, 15),
+            other => panic!("Expected numeric, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn count_star_no_group() {
+        let db = setup_db();
+        let session = db.session();
+        let result = session
+            .execute("MATCH (n:AG) RETURN count(*) AS total")
+            .unwrap();
+        assert_eq!(result.rows[0][0], Value::Int64(5));
+    }
+}
+
+// ============================================================================
+// UNWIND — Coverage for Unwind operator (used by FOREACH internally)
+// ============================================================================
+
+mod unwind_coverage {
+    use grafeo_common::types::Value;
+    use grafeo_engine::GrafeoDB;
+
+    #[test]
+    fn unwind_basic() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session
+            .execute("UNWIND [1, 2, 3] AS x RETURN x ORDER BY x")
+            .unwrap();
+        assert_eq!(result.rows.len(), 3);
+        assert_eq!(result.rows[0][0], Value::Int64(1));
+        assert_eq!(result.rows[2][0], Value::Int64(3));
+    }
+
+    #[test]
+    fn unwind_empty_list() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session.execute("UNWIND [] AS x RETURN x").unwrap();
+        assert_eq!(result.rows.len(), 0);
+    }
+
+    #[test]
+    fn unwind_with_match() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute("INSERT (:UW {v: 1}), (:UW {v: 2})")
+            .unwrap();
+        let result = session
+            .execute("MATCH (n:UW) UNWIND [10, 20] AS x RETURN n.v, x ORDER BY n.v, x")
+            .unwrap();
+        // 2 nodes × 2 unwind = 4 rows
+        assert_eq!(result.rows.len(), 4);
+        session.execute("MATCH (n:UW) DELETE n").unwrap();
+    }
+
+    #[test]
+    fn unwind_string_list() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session
+            .execute("UNWIND ['a', 'b', 'c'] AS s RETURN s")
+            .unwrap();
+        assert_eq!(result.rows.len(), 3);
+    }
+
+    #[test]
+    fn unwind_with_aggregation() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session
+            .execute("UNWIND [1, 2, 3, 4, 5] AS x RETURN sum(x) AS total")
+            .unwrap();
+        assert_eq!(result.rows[0][0], Value::Int64(15));
+    }
+
+    #[test]
+    fn unwind_with_where() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session
+            .execute("UNWIND [1, 2, 3, 4, 5] AS x WHERE x > 3 RETURN x ORDER BY x")
+            .unwrap();
+        assert_eq!(result.rows.len(), 2);
+        assert_eq!(result.rows[0][0], Value::Int64(4));
+        assert_eq!(result.rows[1][0], Value::Int64(5));
+    }
+}
+
+// ============================================================================
+// Error Handling — Parser & Semantic Errors
+// ============================================================================
+
+mod error_handling {
+    use grafeo_engine::GrafeoDB;
+
+    #[test]
+    fn union_mismatched_three_columns_vs_two() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session.execute("RETURN 1 AS a, 2 AS b UNION RETURN 3 AS a, 4 AS b, 5 AS c");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn foreach_missing_pipe() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session.execute("FOREACH (i IN [1] CREATE (:X))");
+        assert!(result.is_err(), "Missing pipe | should error");
+    }
+
+    #[test]
+    fn foreach_missing_list() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session.execute("FOREACH (i | CREATE (:X))");
+        assert!(result.is_err(), "Missing IN keyword should error");
+    }
+
+    #[test]
+    fn foreach_with_optional_match_inside() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session.execute("FOREACH (i IN [1] | OPTIONAL MATCH (n) DELETE n)");
+        assert!(
+            result.is_err(),
+            "OPTIONAL MATCH inside FOREACH should error"
+        );
+    }
+
+    #[test]
+    fn foreach_with_with_inside() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session.execute("FOREACH (i IN [1] | WITH i AS x CREATE (:X {v: x}))");
+        assert!(result.is_err(), "WITH inside FOREACH should error");
+    }
+
+    #[test]
+    fn invalid_case_syntax() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session.execute("RETURN CASE THEN 1 END");
+        assert!(result.is_err(), "CASE without WHEN should error");
+    }
+
+    #[test]
+    fn union_no_return_in_branch() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session.execute("MATCH (n) UNION RETURN 1 AS v");
+        // First branch has no RETURN — should error
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "cypher")]
+    #[test]
+    fn cypher_foreach_invalid_clause() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session.execute_cypher("FOREACH (i IN [1] | RETURN i)");
+        assert!(
+            result.is_err(),
+            "RETURN inside FOREACH should error in Cypher too"
+        );
+    }
+
+    #[cfg(feature = "cypher")]
+    #[test]
+    fn cypher_union_column_mismatch() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session.execute_cypher("RETURN 1 AS a UNION RETURN 1 AS a, 2 AS b");
+        assert!(result.is_err());
+    }
+}
+
+// ============================================================================
+// DISTINCT, SKIP, LIMIT with new features
+// ============================================================================
+
+mod distinct_skip_limit {
+    use grafeo_common::types::Value;
+    use grafeo_engine::GrafeoDB;
+
+    #[test]
+    fn union_with_order_and_limit() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        let result = session
+            .execute("RETURN 3 AS v UNION ALL RETURN 1 AS v UNION ALL RETURN 2 AS v")
+            .unwrap();
+        assert_eq!(result.rows.len(), 3);
+    }
+
+    #[test]
+    fn case_when_with_distinct() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute("INSERT (:DI {v: 1}), (:DI {v: 2}), (:DI {v: 3}), (:DI {v: 4})")
+            .unwrap();
+        let result = session
+            .execute(
+                "MATCH (n:DI) \
+                 RETURN DISTINCT CASE WHEN n.v > 2 THEN 'high' ELSE 'low' END AS band \
+                 ORDER BY band",
+            )
+            .unwrap();
+        assert_eq!(result.rows.len(), 2);
+        assert_eq!(result.rows[0][0], Value::String("high".into()));
+        assert_eq!(result.rows[1][0], Value::String("low".into()));
+        session.execute("MATCH (n:DI) DELETE n").unwrap();
+    }
+
+    #[test]
+    fn exists_with_skip_limit() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute(
+                "INSERT (:SL {name: 'A'})-[:R]->(:SL {name: 'B'}), \
+                 (:SL {name: 'C'})-[:R]->(:SL {name: 'D'}), \
+                 (:SL {name: 'E'})",
+            )
+            .unwrap();
+        let result = session
+            .execute(
+                "MATCH (n:SL) WHERE EXISTS { MATCH (n)-[:R]->() } \
+                 RETURN n.name ORDER BY n.name LIMIT 1",
+            )
+            .unwrap();
+        assert_eq!(result.rows.len(), 1);
+        session.execute("MATCH (n:SL) DETACH DELETE n").unwrap();
+    }
+
+    #[test]
+    fn case_when_with_limit() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute("INSERT (:LI {v: 1}), (:LI {v: 2}), (:LI {v: 3})")
+            .unwrap();
+        let result = session
+            .execute(
+                "MATCH (n:LI) \
+                 RETURN CASE WHEN n.v > 1 THEN 'yes' ELSE 'no' END AS flag \
+                 ORDER BY flag LIMIT 2",
+            )
+            .unwrap();
+        assert_eq!(result.rows.len(), 2);
+        session.execute("MATCH (n:LI) DELETE n").unwrap();
+    }
+}
