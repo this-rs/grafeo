@@ -232,6 +232,23 @@ pub enum QueryClause {
     CallProcedure(CallStatement),
     /// A LOAD DATA clause.
     LoadData(LoadDataClause),
+    /// A FOREACH clause for iterative writes.
+    ForEach(ForEachClause),
+}
+
+/// A FOREACH clause for iterating and applying updates.
+///
+/// ```text
+/// FOREACH (x IN list | SET x.visited = true)
+/// ```
+#[derive(Debug, Clone)]
+pub struct ForEachClause {
+    /// The iteration variable name.
+    pub variable: String,
+    /// The list expression to iterate over.
+    pub list: Expression,
+    /// The update clauses to apply for each element (CREATE, SET, DELETE, MERGE, nested FOREACH).
+    pub clauses: Vec<QueryClause>,
 }
 
 /// A query statement.
