@@ -1260,9 +1260,7 @@ impl GrafeoDB {
             let commit_tx = self
                 .transaction_manager
                 .last_assigned_transaction_id()
-                .unwrap_or_else(|| {
-                    self.transaction_manager.begin()
-                });
+                .unwrap_or_else(|| self.transaction_manager.begin());
 
             // Log a TransactionCommit to mark all pending records as committed,
             // so recovery knows to replay them.

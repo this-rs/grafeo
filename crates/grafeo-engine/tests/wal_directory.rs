@@ -12,8 +12,8 @@
 
 #[cfg(feature = "wal")]
 mod tests {
-    use grafeo_engine::GrafeoDB;
     use grafeo_common::types::Value;
+    use grafeo_engine::GrafeoDB;
     use std::sync::Arc;
 
     /// Helper: open a directory-format DB (path must NOT end in .grafeo)
@@ -65,10 +65,7 @@ mod tests {
         {
             let db = open_dir_db(&db_path);
             for i in 0..100 {
-                db.create_node_with_props(
-                    &["Person"],
-                    [("idx", Value::Int64(i))],
-                );
+                db.create_node_with_props(&["Person"], [("idx", Value::Int64(i))]);
             }
             for i in 0..50 {
                 db.create_node_with_props(
@@ -141,9 +138,7 @@ mod tests {
             let db = open_dir_db(&db_path);
             let session = db.session();
             let result = session
-                .execute_cypher(
-                    "MATCH (n:Item) RETURN n.name, n.count, n.price, n.active",
-                )
+                .execute_cypher("MATCH (n:Item) RETURN n.name, n.count, n.price, n.active")
                 .expect("props query");
             assert_eq!(result.rows.len(), 1);
             let row = &result.rows[0];
@@ -231,10 +226,7 @@ mod tests {
             let db = open_dir_db(&db_path);
             let mut node_ids = Vec::with_capacity(node_count);
             for i in 0..node_count {
-                let nid = db.create_node_with_props(
-                    &["Entity"],
-                    [("idx", Value::Int64(i as i64))],
-                );
+                let nid = db.create_node_with_props(&["Entity"], [("idx", Value::Int64(i as i64))]);
                 node_ids.push(nid);
             }
 
@@ -286,7 +278,10 @@ mod tests {
             let db = open_dir_db(&db_path);
             // Session-created nodes should survive if WAL captured them
             let total = count_nodes(&db, None);
-            assert!(total >= 2, "Expected at least 2 nodes from session tx, got {total}");
+            assert!(
+                total >= 2,
+                "Expected at least 2 nodes from session tx, got {total}"
+            );
         }
     }
 
@@ -303,8 +298,12 @@ mod tests {
 
             // Session API (without explicit transaction)
             let session = db.session();
-            session.execute_cypher("CREATE (:Session {src: 'session'})").expect("cypher create");
-            session.execute_cypher("CREATE (:Session {src: 'session'})").expect("cypher create");
+            session
+                .execute_cypher("CREATE (:Session {src: 'session'})")
+                .expect("cypher create");
+            session
+                .execute_cypher("CREATE (:Session {src: 'session'})")
+                .expect("cypher create");
 
             db.close().expect("close");
         }
@@ -316,7 +315,10 @@ mod tests {
             // Session nodes may or may not persist depending on WAL integration;
             // at minimum the direct API nodes must be there
             let total = count_nodes(&db, None);
-            assert!(total >= 2, "At least Direct nodes should persist, got {total}");
+            assert!(
+                total >= 2,
+                "At least Direct nodes should persist, got {total}"
+            );
         }
     }
 
@@ -465,11 +467,7 @@ mod tests {
             let wal_files: Vec<_> = std::fs::read_dir(&wal_dir)
                 .expect("read wal dir")
                 .filter_map(|e| e.ok())
-                .filter(|e| {
-                    e.path()
-                        .extension()
-                        .map_or(false, |ext| ext == "log")
-                })
+                .filter(|e| e.path().extension().map_or(false, |ext| ext == "log"))
                 .collect();
             assert!(
                 wal_files.len() > 1,
