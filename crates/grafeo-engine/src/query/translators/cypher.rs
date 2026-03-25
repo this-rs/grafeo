@@ -321,12 +321,8 @@ impl CypherTranslator {
         foreach: &ast::ForEachClause,
         input: Option<LogicalOperator>,
     ) -> Result<LogicalOperator> {
-        let input = input.ok_or_else(|| {
-            Error::Query(QueryError::new(
-                QueryErrorKind::Semantic,
-                "FOREACH requires preceding input (e.g., a MATCH clause)",
-            ))
-        })?;
+        // For standalone FOREACH (no preceding clause), use Empty as a single-row source.
+        let input = input.unwrap_or(LogicalOperator::Empty);
 
         let list_expr = self.translate_expression(&foreach.list)?;
 

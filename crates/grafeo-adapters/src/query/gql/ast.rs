@@ -232,6 +232,23 @@ pub enum QueryClause {
     CallProcedure(CallStatement),
     /// A LOAD DATA clause.
     LoadData(LoadDataClause),
+    /// A FOREACH clause for iterative writes.
+    ForEach(ForEachClause),
+}
+
+/// A FOREACH clause for iterating and applying updates.
+///
+/// ```text
+/// FOREACH (x IN list | SET x.visited = true)
+/// ```
+#[derive(Debug, Clone)]
+pub struct ForEachClause {
+    /// The iteration variable name.
+    pub variable: String,
+    /// The list expression to iterate over.
+    pub list: Expression,
+    /// The update clauses to apply for each element (CREATE, SET, DELETE, MERGE, nested FOREACH).
+    pub clauses: Vec<QueryClause>,
 }
 
 /// A query statement.
@@ -1225,6 +1242,15 @@ pub enum Expression {
         list: Box<Expression>,
         /// Body expression (references both accumulator and variable).
         expression: Box<Expression>,
+    },
+    /// Pattern comprehension: `[(a)-[:REL]->(b) | b.name]` or `[(a)-[:REL]->(b) WHERE b.active | b.name]`.
+    PatternComprehension {
+        /// The pattern.
+        pattern: Box<Pattern>,
+        /// Optional WHERE clause.
+        where_clause: Option<Box<Expression>>,
+        /// Projection expression.
+        projection: Box<Expression>,
     },
 }
 

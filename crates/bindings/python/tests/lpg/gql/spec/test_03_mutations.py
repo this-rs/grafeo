@@ -250,3 +250,71 @@ class TestMerge:
             )
         )
         assert len(result) == 1
+
+
+# =============================================================================
+# FOREACH (Cypher extension supported in GQL)
+# =============================================================================
+
+
+class TestForEach:
+    """FOREACH (var IN list | mutation_clause)."""
+
+    def test_foreach_create(self, db):
+        """FOREACH with CREATE creates expected nodes."""
+        list(
+            db.execute(
+                "FOREACH (i IN range(1,3) | CREATE (:_FTest {i: i})) RETURN 1 AS ok"
+            )
+        )
+        result = list(db.execute("MATCH (n:_FTest) RETURN n.i ORDER BY n.i"))
+        assert [r["n.i"] for r in result] == [1, 2, 3]
+
+    def test_foreach_set(self, db):
+        """FOREACH with SET updates properties."""
+        db.create_node(["_FSet"], {"v": 1})
+        db.create_node(["_FSet"], {"v": 2})
+        list(
+            db.execute(
+                "MATCH (n:_FSet) "
+                "FOREACH (x IN [n] | SET x.visited = true) "
+                "RETURN 1 AS ok"
+            )
+        )
+        result = list(db.execute("MATCH (n:_FSet) WHERE n.visited = true RETURN count(n) AS c"))
+        assert result[0]["c"] == 2
+
+    def test_foreach_nested(self, db):
+        """Nested FOREACH creates correct cross-product."""
+        list(
+            db.execute(
+                "FOREACH (i IN [1,2] | "
+                "  FOREACH (j IN [10,20] | "
+                "    CREATE (:_FNest {i: i, j: j})"
+                "  )"
+                ") RETURN 1 AS ok"
+            )
+        )
+        result = list(db.execute("MATCH (n:_FNest) RETURN n.i, n.j ORDER BY n.i, n.j"))
+        pairs = [(r["n.i"], r["n.j"]) for r in result]
+        assert pairs == [(1, 10), (1, 20), (2, 10), (2, 20)]
+
+    def test_foreach_with_range(self, db):
+        """FOREACH with range() function."""
+        list(
+            db.execute(
+                "FOREACH (i IN range(1,5) | CREATE (:_FRange {v: i})) RETURN 1 AS ok"
+            )
+        )
+        result = list(db.execute("MATCH (n:_FRange) RETURN count(n) AS c"))
+        assert result[0]["c"] == 5
+
+    def test_foreach_cypher_standalone(self, db):
+        """FOREACH via execute_cypher() works standalone (no preceding MATCH)."""
+        list(
+            db.execute_cypher(
+                "FOREACH (i IN range(1,3) | CREATE (:_FCypher {i: i}))"
+            )
+        )
+        result = list(db.execute_cypher("MATCH (n:_FCypher) RETURN n.i ORDER BY n.i"))
+        assert [r["n.i"] for r in result] == [1, 2, 3]

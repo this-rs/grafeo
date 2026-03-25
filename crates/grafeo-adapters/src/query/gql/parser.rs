@@ -300,6 +300,11 @@ impl<'a> Parser<'a> {
                     self.parse_call_statement().map(Statement::Call)
                 }
             }
+            _ if self.is_identifier()
+                && self.get_identifier_name().eq_ignore_ascii_case("FOREACH") =>
+            {
+                self.parse_query().map(Statement::Query)
+            }
             _ if self.is_identifier() => {
                 let name = self.get_identifier_name();
                 match name.to_uppercase().as_str() {
@@ -589,6 +594,12 @@ impl<'a> Parser<'a> {
                     let clause = self.parse_load_data_clause()?;
                     ordered_clauses.push(QueryClause::LoadData(clause));
                 }
+                _ if self.is_identifier()
+                    && self.get_identifier_name().eq_ignore_ascii_case("FOREACH") =>
+                {
+                    let clause = self.parse_foreach_clause()?;
+                    ordered_clauses.push(QueryClause::ForEach(clause));
+                }
                 _ => break,
             }
         }
@@ -671,6 +682,12 @@ impl<'a> Parser<'a> {
                         ordered_clauses.push(QueryClause::Merge(clause.clone()));
                         merge_clauses.push(clause);
                     }
+                    _ if self.is_identifier()
+                        && self.get_identifier_name().eq_ignore_ascii_case("FOREACH") =>
+                    {
+                        let clause = self.parse_foreach_clause()?;
+                        ordered_clauses.push(QueryClause::ForEach(clause));
+                    }
                     _ => break,
                 }
             }
@@ -704,8 +721,11 @@ impl<'a> Parser<'a> {
             || !merge_clauses.is_empty()
             || !create_clauses.is_empty()
             || !delete_clauses.is_empty()
+            || ordered_clauses
+                .iter()
+                .any(|c| matches!(c, QueryClause::ForEach(_)))
         {
-            // For mutation-only queries, return empty clause
+            // For mutation-only queries (including FOREACH), return empty clause
             ReturnClause {
                 distinct: false,
                 items: Vec::new(),
@@ -988,6 +1008,60 @@ impl<'a> Parser<'a> {
             self.advance(); // consume comma
         }
         Ok(bindings)
+    }
+
+    /// Parses a FOREACH clause: `FOREACH (var IN expr | clause+)`.
+    ///
+    /// Inner clauses can be CREATE, SET, DELETE, MERGE, or nested FOREACH.
+    fn parse_foreach_clause(&mut self) -> Result<ForEachClause> {
+        self.advance(); // consume FOREACH identifier
+        self.expect(TokenKind::LParen)?;
+        if !self.is_identifier() {
+            return Err(self.error("Expected variable name in FOREACH"));
+        }
+        let variable = self.get_identifier_name();
+        self.advance();
+        self.expect(TokenKind::In)?;
+        let list = self.parse_expression()?;
+        self.expect(TokenKind::Pipe)?;
+        let mut clauses = Vec::new();
+        // Parse mutation clauses until closing paren
+        while self.current.kind != TokenKind::RParen && self.current.kind != TokenKind::Eof {
+            match self.current.kind {
+                TokenKind::Set => {
+                    let clause = self.parse_set_clause()?;
+                    clauses.push(QueryClause::Set(clause));
+                }
+                TokenKind::Delete | TokenKind::Detach | TokenKind::Nodetach => {
+                    let clause = self.parse_delete_clause_in_query()?;
+                    clauses.push(QueryClause::Delete(clause));
+                }
+                TokenKind::Create => {
+                    let clause = self.parse_create_clause_in_query()?;
+                    clauses.push(QueryClause::Create(clause));
+                }
+                TokenKind::Insert => {
+                    let clause = self.parse_insert()?;
+                    clauses.push(QueryClause::Create(clause));
+                }
+                TokenKind::Merge => {
+                    let clause = self.parse_merge_clause()?;
+                    clauses.push(QueryClause::Merge(clause));
+                }
+                _ if self.is_identifier()
+                    && self.get_identifier_name().eq_ignore_ascii_case("FOREACH") =>
+                {
+                    clauses.push(QueryClause::ForEach(self.parse_foreach_clause()?));
+                }
+                _ => return Err(self.error("Expected mutation clause in FOREACH (CREATE, SET, DELETE, MERGE, or nested FOREACH)")),
+            }
+        }
+        self.expect(TokenKind::RParen)?;
+        Ok(ForEachClause {
+            variable,
+            list,
+            clauses,
+        })
     }
 
     /// Parses `LOAD DATA FROM 'path' FORMAT CSV|JSONL|PARQUET [WITH HEADERS] AS variable [FIELDTERMINATOR 'char']`
@@ -2732,6 +2806,16 @@ impl<'a> Parser<'a> {
     fn parse_not_expression(&mut self) -> Result<Expression> {
         if self.current.kind == TokenKind::Not {
             self.advance();
+            // Try to detect bare pattern predicate: NOT (n)-[:REL]->()
+            // Desugar to NOT EXISTS { MATCH (n)-[:REL]->() }
+            if self.current.kind == TokenKind::LParen
+                && let Some(exists_expr) = self.try_parse_bare_pattern_as_exists()?
+            {
+                return Ok(Expression::Unary {
+                    op: UnaryOp::Not,
+                    operand: Box::new(exists_expr),
+                });
+            }
             let operand = self.parse_not_expression()?;
             return Ok(Expression::Unary {
                 op: UnaryOp::Not,
@@ -3608,6 +3692,11 @@ impl<'a> Parser<'a> {
                 }
             }
             TokenKind::LParen => {
+                // Try to detect bare pattern predicate: (n)-[:REL]->()
+                // Desugar to EXISTS { MATCH (n)-[:REL]->() }
+                if let Some(exists_expr) = self.try_parse_bare_pattern_as_exists()? {
+                    return Ok(exists_expr);
+                }
                 self.advance();
                 let expr = self.parse_expression()?;
                 self.expect(TokenKind::RParen)?;
@@ -3615,6 +3704,39 @@ impl<'a> Parser<'a> {
             }
             TokenKind::LBracket => {
                 self.advance(); // consume [
+
+                // Detect pattern comprehension: [(pattern) WHERE pred | expr]
+                // A pattern starts with `(`, while list elements starting with `(`
+                // are parenthesized expressions. We use backtracking to distinguish.
+                if self.current.kind == TokenKind::LParen {
+                    let saved = (
+                        self.lexer.clone(),
+                        self.current.clone(),
+                        self.peeked.clone(),
+                        self.peeked_second.clone(),
+                    );
+                    if let Ok(pattern) = self.parse_pattern() {
+                        let where_clause = if self.current.kind == TokenKind::Where {
+                            self.advance();
+                            Some(Box::new(self.parse_expression()?))
+                        } else {
+                            None
+                        };
+                        if self.current.kind == TokenKind::Pipe {
+                            self.advance();
+                            let projection = self.parse_expression()?;
+                            self.expect(TokenKind::RBracket)?;
+                            return Ok(Expression::PatternComprehension {
+                                pattern: Box::new(pattern),
+                                where_clause,
+                                projection: Box::new(projection),
+                            });
+                        }
+                    }
+                    // Not a pattern comprehension, restore and continue
+                    (self.lexer, self.current, self.peeked, self.peeked_second) = saved;
+                }
+
                 // Disambiguate: [x IN list WHERE ... | expr] vs [elem, ...]
                 // List comprehension if: identifier followed by IN keyword
                 if self.is_identifier() && self.peek_kind() == TokenKind::In {
@@ -3842,6 +3964,69 @@ impl<'a> Parser<'a> {
             ordered_clauses: vec![],
             span: None,
         })
+    }
+
+    /// Attempts to parse a bare pattern predicate starting at `(`.
+    /// If the current position looks like a path pattern (e.g., `(n)-[:REL]->()`),
+    /// parses it and returns `Some(Expression::ExistsSubquery { ... })`.
+    /// If not a path pattern, restores state and returns `Ok(None)`.
+    fn try_parse_bare_pattern_as_exists(&mut self) -> Result<Option<Expression>> {
+        let saved = (
+            self.lexer.clone(),
+            self.current.clone(),
+            self.peeked.clone(),
+            self.peeked_second.clone(),
+        );
+        if let Ok(pattern) = self.parse_pattern() {
+            // Only treat as bare pattern predicate if it's a Path (has edges)
+            if matches!(&pattern, Pattern::Path(_)) {
+                let span_start = saved.1.span.start;
+                let match_clause = MatchClause {
+                    optional: false,
+                    path_mode: None,
+                    search_prefix: None,
+                    match_mode: None,
+                    patterns: vec![AliasedPattern {
+                        alias: None,
+                        path_function: None,
+                        keep: None,
+                        pattern,
+                    }],
+                    span: Some(SourceSpan::new(span_start, self.current.span.end, 1, 1)),
+                };
+                let query = QueryStatement {
+                    match_clauses: vec![match_clause],
+                    where_clause: None,
+                    set_clauses: vec![],
+                    remove_clauses: vec![],
+                    with_clauses: vec![],
+                    unwind_clauses: vec![],
+                    merge_clauses: vec![],
+                    create_clauses: vec![],
+                    delete_clauses: vec![],
+                    return_clause: ReturnClause {
+                        distinct: false,
+                        items: vec![],
+                        is_wildcard: false,
+                        group_by: vec![],
+                        order_by: None,
+                        skip: None,
+                        limit: None,
+                        is_finish: false,
+                        span: None,
+                    },
+                    having_clause: None,
+                    ordered_clauses: vec![],
+                    span: None,
+                };
+                return Ok(Some(Expression::ExistsSubquery {
+                    query: Box::new(query),
+                }));
+            }
+        }
+        // Not a path pattern, restore state
+        (self.lexer, self.current, self.peeked, self.peeked_second) = saved;
+        Ok(None)
     }
 
     /// Parses the inner query of a VALUE subquery.

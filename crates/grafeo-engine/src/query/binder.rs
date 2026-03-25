@@ -346,8 +346,21 @@ impl Binder {
             // RDF/SPARQL operators
             LogicalOperator::TripleScan(scan) => self.bind_triple_scan(scan),
             LogicalOperator::Union(union) => {
+                let mut first_col_count: Option<usize> = None;
                 for input in &union.inputs {
                     self.bind_operator(input)?;
+                    if let Some(count) = Self::return_column_count(input) {
+                        if let Some(first) = first_col_count {
+                            if count != first {
+                                return Err(binding_error(format!(
+                                    "UNION branches must return the same number of columns (left: {}, right: {})",
+                                    first, count
+                                )));
+                            }
+                        } else {
+                            first_col_count = Some(count);
+                        }
+                    }
                 }
                 Ok(())
             }
@@ -1245,6 +1258,19 @@ impl Binder {
         }
 
         Ok(())
+    }
+
+    /// Returns the number of RETURN columns from the outermost Return operator
+    /// in a logical operator tree, or `None` if no Return is found.
+    fn return_column_count(op: &LogicalOperator) -> Option<usize> {
+        match op {
+            LogicalOperator::Return(ret) => Some(ret.items.len()),
+            LogicalOperator::Distinct(d) => Self::return_column_count(&d.input),
+            LogicalOperator::Sort(s) => Self::return_column_count(&s.input),
+            LogicalOperator::Limit(l) => Self::return_column_count(&l.input),
+            LogicalOperator::Skip(s) => Self::return_column_count(&s.input),
+            _ => None,
+        }
     }
 }
 

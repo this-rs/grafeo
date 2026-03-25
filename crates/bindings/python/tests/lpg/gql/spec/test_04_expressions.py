@@ -488,3 +488,149 @@ class TestReturnExpressions:
         db.create_node(["N"], {"v": 1})
         result = list(db.execute("MATCH (n:N) RETURN count(n) > 0 AS r"))
         assert result[0]["r"] is True
+
+
+# =============================================================================
+# Pattern Comprehension (sec 20)
+# =============================================================================
+
+
+class TestPatternComprehension:
+    """Pattern comprehension: [(start)-[:REL]->(end) | end.prop]."""
+
+    def test_basic_pattern_comprehension(self, db):
+        """[(p)-[:HAS_PLAN]->(pl) | pl.title] basic pattern comprehension."""
+        proj = db.create_node(["Project"], {"name": "Alpha"})
+        p1 = db.create_node(["Plan"], {"title": "Phase 1"})
+        p2 = db.create_node(["Plan"], {"title": "Phase 2"})
+        db.create_edge(proj.id, p1.id, "HAS_PLAN")
+        db.create_edge(proj.id, p2.id, "HAS_PLAN")
+        result = list(
+            db.execute(
+                "MATCH (p:Project) "
+                "RETURN p.name, [(p)-[:HAS_PLAN]->(pl) | pl.title] AS plans"
+            )
+        )
+        assert len(result) == 1
+        assert result[0]["p.name"] == "Alpha"
+        assert sorted(result[0]["plans"]) == ["Phase 1", "Phase 2"]
+
+    def test_pattern_comprehension_with_where(self, db):
+        """[(p)-[:HAS_PLAN]->(pl) WHERE pl.active | pl.title] with WHERE filter."""
+        proj = db.create_node(["Project"], {"name": "Beta"})
+        p1 = db.create_node(["Plan"], {"title": "Active Plan", "active": True})
+        p2 = db.create_node(["Plan"], {"title": "Inactive Plan", "active": False})
+        db.create_edge(proj.id, p1.id, "HAS_PLAN")
+        db.create_edge(proj.id, p2.id, "HAS_PLAN")
+        result = list(
+            db.execute(
+                "MATCH (p:Project) "
+                "RETURN p.name, [(p)-[:HAS_PLAN]->(pl) WHERE pl.active | pl.title] AS plans"
+            )
+        )
+        assert len(result) == 1
+        assert result[0]["plans"] == ["Active Plan"]
+
+    def test_pattern_comprehension_empty_result(self, db):
+        """Pattern comprehension returns [] when no matches."""
+        db.create_node(["Project"], {"name": "Gamma"})
+        result = list(
+            db.execute(
+                "MATCH (p:Project) "
+                "RETURN p.name, [(p)-[:HAS_PLAN]->(pl) | pl.title] AS plans"
+            )
+        )
+        assert len(result) == 1
+        assert result[0]["p.name"] == "Gamma"
+        assert result[0]["plans"] == []
+
+    def test_pattern_comprehension_cypher_nonregression(self, db):
+        """Pattern comprehension via execute_cypher() still works (non-regression)."""
+        proj = db.create_node(["Project"], {"name": "Delta"})
+        p1 = db.create_node(["Plan"], {"title": "Plan X"})
+        db.create_edge(proj.id, p1.id, "HAS_PLAN")
+        result = list(
+            db.execute_cypher(
+                "MATCH (p:Project) "
+                "RETURN p.name, [(p)-[:HAS_PLAN]->(pl) | pl.title] AS plans"
+            )
+        )
+        assert len(result) == 1
+        assert result[0]["p.name"] == "Delta"
+        assert result[0]["plans"] == ["Plan X"]
+
+
+# =============================================================================
+# CASE WHEN with Aggregation (sec 20.7 + sec 15)
+# =============================================================================
+
+
+class TestCaseWhenAggregation:
+    """CASE WHEN combined with aggregate functions."""
+
+    def test_case_with_count(self, db):
+        """CASE WHEN ... END AS s, count(t) AS c — group by CASE."""
+        db.create_node(["Task"], {"status": "completed"})
+        db.create_node(["Task"], {"status": "completed"})
+        db.create_node(["Task"], {"status": "open"})
+        result = list(
+            db.execute(
+                "MATCH (t:Task) "
+                "RETURN CASE WHEN t.status = 'completed' THEN 'done' ELSE 'open' END AS s, "
+                "count(t) AS c"
+            )
+        )
+        by_status = {r["s"]: r["c"] for r in result}
+        assert by_status["done"] == 2
+        assert by_status["open"] == 1
+
+    def test_sum_case(self, db):
+        """sum(CASE WHEN ... THEN 1 ELSE 0 END) — CASE inside aggregate."""
+        db.create_node(["Task"], {"status": "completed"})
+        db.create_node(["Task"], {"status": "completed"})
+        db.create_node(["Task"], {"status": "open"})
+        result = list(
+            db.execute(
+                "MATCH (t:Task) "
+                "RETURN sum(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END) AS done_count"
+            )
+        )
+        assert result[0]["done_count"] == 2
+
+    def test_case_no_else_returns_null(self, db):
+        """CASE with no ELSE returns null for unmatched."""
+        db.create_node(["Task"], {"status": "open"})
+        result = list(
+            db.execute(
+                "MATCH (t:Task) "
+                "RETURN CASE WHEN t.status = 'archived' THEN 'old' END AS s"
+            )
+        )
+        assert result[0]["s"] is None
+
+    def test_simple_case_form(self, db):
+        """CASE expr WHEN val THEN result END — simple CASE form."""
+        db.create_node(["Task"], {"status": "completed"})
+        db.create_node(["Task"], {"status": "open"})
+        result = list(
+            db.execute(
+                "MATCH (t:Task) "
+                "RETURN CASE t.status "
+                "WHEN 'completed' THEN 'done' "
+                "WHEN 'open' THEN 'pending' "
+                "END AS s"
+            )
+        )
+        statuses = sorted([r["s"] for r in result])
+        assert statuses == ["done", "pending"]
+
+    def test_case_alone_nonregression(self, db):
+        """CASE without aggregation still works (non-regression)."""
+        db.create_node(["Task"], {"status": "completed"})
+        result = list(
+            db.execute(
+                "MATCH (t:Task) "
+                "RETURN CASE WHEN t.status = 'completed' THEN 'done' ELSE 'open' END AS s"
+            )
+        )
+        assert result[0]["s"] == "done"

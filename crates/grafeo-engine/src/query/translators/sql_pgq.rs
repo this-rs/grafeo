@@ -701,6 +701,7 @@ impl SqlPgqTranslator {
             ast::Expression::LetIn { .. }
             | ast::Expression::ListComprehension { .. }
             | ast::Expression::ListPredicate { .. }
+            | ast::Expression::PatternComprehension { .. }
             | ast::Expression::Reduce { .. } => Err(Error::Query(QueryError::new(
                 QueryErrorKind::Semantic,
                 "This expression type is not supported in SQL/PGQ",

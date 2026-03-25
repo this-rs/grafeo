@@ -77,13 +77,124 @@ struct GqlTranslator {
     /// Edge variables from variable-length expand patterns (group-list variables).
     /// Maps edge variable name to the path alias used for `_path_edges_{alias}` lookup.
     group_list_variables: std::cell::RefCell<HashMap<String, String>>,
+    /// Counter for generating unique anonymous variable names.
+    anon_counter: std::cell::Cell<usize>,
 }
 
 impl GqlTranslator {
     fn new() -> Self {
         Self {
             group_list_variables: std::cell::RefCell::new(HashMap::new()),
+            anon_counter: std::cell::Cell::new(0),
         }
+    }
+
+    /// Generates a unique anonymous variable name.
+    fn next_anon_var(&self) -> String {
+        let id = self.anon_counter.get();
+        self.anon_counter.set(id + 1);
+        format!("_anon_{id}")
+    }
+
+    /// Extracts the anchor (start) variable from a pattern subplan.
+    fn extract_anchor_variable(op: &LogicalOperator) -> Option<String> {
+        match op {
+            LogicalOperator::NodeScan(scan) if scan.input.is_none() => Some(scan.variable.clone()),
+            LogicalOperator::NodeScan(scan) => Self::extract_anchor_variable(scan.input.as_ref()?),
+            LogicalOperator::Expand(expand) => Self::extract_anchor_variable(&expand.input),
+            LogicalOperator::Filter(filter) => Self::extract_anchor_variable(&filter.input),
+            _ => None,
+        }
+    }
+
+    /// Replaces the leaf `NodeScan(variable)` in a pattern subplan with
+    /// `ParameterScan(columns: [variable])`, for correlated execution.
+    fn replace_anchor_with_parameter_scan(op: LogicalOperator, anchor: &str) -> LogicalOperator {
+        match op {
+            LogicalOperator::NodeScan(scan) if scan.variable == anchor && scan.input.is_none() => {
+                LogicalOperator::ParameterScan(ParameterScanOp {
+                    columns: vec![anchor.to_string()],
+                })
+            }
+            LogicalOperator::Expand(mut expand) => {
+                let new_input = Self::replace_anchor_with_parameter_scan(*expand.input, anchor);
+                expand.input = Box::new(new_input);
+                LogicalOperator::Expand(expand)
+            }
+            LogicalOperator::Filter(mut filter) => {
+                let new_input = Self::replace_anchor_with_parameter_scan(*filter.input, anchor);
+                filter.input = Box::new(new_input);
+                LogicalOperator::Filter(filter)
+            }
+            other => other,
+        }
+    }
+
+    /// Rewrites pattern comprehensions in return items into Apply + Aggregate.
+    fn rewrite_pattern_comprehensions(
+        &self,
+        input: LogicalOperator,
+        items: Vec<ReturnItem>,
+    ) -> Result<(LogicalOperator, Vec<ReturnItem>)> {
+        let mut current_input = input;
+        let mut rewritten_items = Vec::with_capacity(items.len());
+
+        for item in items {
+            if let LogicalExpression::PatternComprehension {
+                ref subplan,
+                ref projection,
+            } = item.expression
+            {
+                // 1. Extract anchor variable
+                let anchor = Self::extract_anchor_variable(subplan).ok_or_else(|| {
+                    Error::Query(QueryError::new(
+                        QueryErrorKind::Semantic,
+                        "Pattern comprehension must start with a node pattern",
+                    ))
+                })?;
+
+                // 2. Generate alias for the collected list
+                let alias = item.alias.clone().unwrap_or_else(|| self.next_anon_var());
+
+                // 3. Replace anchor NodeScan with ParameterScan
+                let rewritten_subplan =
+                    Self::replace_anchor_with_parameter_scan(*subplan.clone(), &anchor);
+
+                // 4. Wrap in Aggregate(collect(projection) AS alias)
+                let inner_plan = LogicalOperator::Aggregate(AggregateOp {
+                    group_by: vec![],
+                    aggregates: vec![AggregateExpr {
+                        function: AggregateFunction::Collect,
+                        expression: Some(*projection.clone()),
+                        expression2: None,
+                        distinct: false,
+                        alias: Some(alias.clone()),
+                        percentile: None,
+                        separator: None,
+                    }],
+                    input: Box::new(rewritten_subplan),
+                    having: None,
+                });
+
+                // 5. Wrap outer input in Apply
+                current_input = LogicalOperator::Apply(ApplyOp {
+                    input: Box::new(current_input),
+                    subplan: Box::new(inner_plan),
+                    shared_variables: vec![anchor],
+                    optional: false,
+                });
+
+                // 6. Replace expression with Variable reference
+                rewritten_items.push(ReturnItem {
+                    expression: LogicalExpression::Variable(alias.clone()),
+                    alias: Some(alias),
+                });
+            } else {
+                rewritten_items.push(item);
+            }
+        }
+
+        Ok((current_input, rewritten_items))
     }
 
     fn translate_statement_full(&self, stmt: &ast::Statement) -> Result<GqlTranslationResult> {
@@ -236,7 +347,19 @@ impl GqlTranslator {
                     })
                     .collect::<Result<Vec<_>>>()?;
 
-                plan = wrap_return(plan, return_items, return_clause.distinct);
+                // Rewrite pattern comprehensions into Apply + Aggregate(Collect)
+                let has_pattern_comp = return_items.iter().any(|p| {
+                    matches!(
+                        &p.expression,
+                        LogicalExpression::PatternComprehension { .. }
+                    )
+                });
+                let (rewritten_plan, return_items) = if has_pattern_comp {
+                    self.rewrite_pattern_comprehensions(plan, return_items)?
+                } else {
+                    (plan, return_items)
+                };
+                plan = wrap_return(rewritten_plan, return_items, return_clause.distinct);
             }
 
             // Apply ORDER BY (wraps Return so aliases are visible)
@@ -298,6 +421,7 @@ impl GqlTranslator {
                             | ast::QueryClause::Delete(_)
                             | ast::QueryClause::Set(_)
                             | ast::QueryClause::Merge(_)
+                            | ast::QueryClause::ForEach(_)
                     )
                 {
                     if let Some(where_clause) = &query.where_clause {
@@ -447,6 +571,13 @@ impl GqlTranslator {
                                 join_type: JoinType::Cross,
                                 conditions: vec![],
                             });
+                        }
+                    }
+                    ast::QueryClause::ForEach(foreach_clause) => {
+                        // Skip FOREACH here if WITH clauses exist — they'll be
+                        // translated after WITH projection so variables are visible.
+                        if query.with_clauses.is_empty() {
+                            plan = self.translate_foreach_gql(foreach_clause, plan)?;
                         }
                     }
                 }
@@ -616,6 +747,19 @@ impl GqlTranslator {
             // Handle DISTINCT
             if with_clause.distinct {
                 plan = wrap_distinct(plan);
+            }
+        }
+
+        // Handle FOREACH clauses that appear after WITH (they were added to
+        // ordered_clauses during parsing but need to be translated AFTER the
+        // WITH projection so that WITH-introduced variables are visible).
+        // We skip ForEach clauses already translated in the ordered_clauses pass
+        // by only processing them here if with_clauses is non-empty.
+        if !query.with_clauses.is_empty() {
+            for clause in &query.ordered_clauses {
+                if let ast::QueryClause::ForEach(foreach_clause) = clause {
+                    plan = self.translate_foreach_gql(foreach_clause, plan)?;
+                }
             }
         }
 
@@ -823,7 +967,19 @@ impl GqlTranslator {
                 }
             }
 
-            plan = wrap_return(plan, return_items, query.return_clause.distinct);
+            // Rewrite pattern comprehensions into Apply + Aggregate(Collect)
+            let has_pattern_comp = return_items.iter().any(|p| {
+                matches!(
+                    &p.expression,
+                    LogicalExpression::PatternComprehension { .. }
+                )
+            });
+            let (rewritten_plan, return_items) = if has_pattern_comp {
+                self.rewrite_pattern_comprehensions(plan, return_items)?
+            } else {
+                (plan, return_items)
+            };
+            plan = wrap_return(rewritten_plan, return_items, query.return_clause.distinct);
 
             // Apply ORDER BY (wraps Return so aliases are visible)
             if let Some(order_by) = &query.return_clause.order_by {
@@ -1069,6 +1225,75 @@ impl GqlTranslator {
             variable: load.variable.clone(),
             field_terminator: load.field_terminator,
         })
+    }
+
+    /// Translates `FOREACH (var IN list | clauses)` to Unwind + mutation pipeline.
+    fn translate_foreach_gql(
+        &self,
+        foreach: &ast::ForEachClause,
+        input: LogicalOperator,
+    ) -> Result<LogicalOperator> {
+        // For standalone FOREACH (no preceding MATCH), use Empty as input
+        // which the engine treats as a single-row source.
+        let input = if matches!(input, LogicalOperator::Empty) {
+            LogicalOperator::Empty
+        } else {
+            input
+        };
+
+        let list_expr = self.translate_expression(&foreach.list)?;
+
+        // Unwind the list into individual rows
+        let unwind = LogicalOperator::Unwind(UnwindOp {
+            input: Box::new(input),
+            expression: list_expr,
+            variable: foreach.variable.clone(),
+            ordinality_var: None,
+            offset_var: None,
+        });
+
+        // Chain the inner mutation clauses (reuse ordered-clause translation)
+        let mut plan = unwind;
+        for clause in &foreach.clauses {
+            match clause {
+                ast::QueryClause::Create(create_clause) => {
+                    plan = self.translate_create_patterns(&create_clause.patterns, plan)?;
+                }
+                ast::QueryClause::Set(set_clause) => {
+                    for assignment in &set_clause.assignments {
+                        let value = self.translate_expression(&assignment.value)?;
+                        plan = LogicalOperator::SetProperty(SetPropertyOp {
+                            variable: assignment.variable.clone(),
+                            properties: vec![(assignment.property.clone(), value)],
+                            replace: false,
+                            is_edge: false,
+                            input: Box::new(plan),
+                        });
+                    }
+                }
+                ast::QueryClause::Delete(delete_clause) => {
+                    plan = self.translate_delete_targets(
+                        &delete_clause.targets,
+                        delete_clause.detach,
+                        plan,
+                    )?;
+                }
+                ast::QueryClause::Merge(merge_clause) => {
+                    plan = self.translate_merge(merge_clause, plan)?;
+                }
+                ast::QueryClause::ForEach(inner_foreach) => {
+                    plan = self.translate_foreach_gql(inner_foreach, plan)?;
+                }
+                _ => {
+                    return Err(Error::Query(QueryError::new(
+                        QueryErrorKind::Semantic,
+                        "Only CREATE, SET, DELETE, MERGE, and nested FOREACH are allowed inside FOREACH",
+                    )));
+                }
+            }
+        }
+
+        Ok(plan)
     }
 
     /// as imports from the outer scope: a `ParameterScan` replaces `Empty` as

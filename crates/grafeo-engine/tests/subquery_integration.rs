@@ -230,3 +230,77 @@ mod cypher_subqueries {
         assert_eq!(harm_row[1], Value::Null);
     }
 }
+
+// ============================================================================
+// Bare pattern predicates (GQL parser): WHERE (n)-[:REL]->() / WHERE NOT (n)-[:REL]->()
+// ============================================================================
+
+mod bare_pattern_predicate {
+    use super::*;
+
+    /// WHERE NOT (n)-[:WORKS_AT]->() — negated bare pattern → anti-join
+    /// Should return only nodes that do NOT have a WORKS_AT edge (i.e., Harm).
+    #[test]
+    fn test_not_bare_pattern_anti_join() {
+        let db = social_graph();
+        let session = db.session();
+
+        let result = session
+            .execute(
+                "MATCH (n:Person) \
+                 WHERE NOT (n)-[:WORKS_AT]->() \
+                 RETURN n.name",
+            )
+            .unwrap();
+
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][0], Value::String("Harm".into()));
+    }
+
+    /// WHERE (n)-[:KNOWS]->() — positive bare pattern → semi-join
+    /// Should return nodes that have at least one outgoing KNOWS edge.
+    #[test]
+    fn test_positive_bare_pattern_semi_join() {
+        let db = social_graph();
+        let session = db.session();
+
+        let result = session
+            .execute(
+                "MATCH (n:Person) \
+                 WHERE (n)-[:KNOWS]->() \
+                 RETURN n.name \
+                 ORDER BY n.name",
+            )
+            .unwrap();
+
+        // Alix->Gus, Alix->Harm, Gus->Harm — so Alix and Gus have outgoing KNOWS
+        let names: Vec<_> = result
+            .rows
+            .iter()
+            .map(|r| match &r[0] {
+                Value::String(s) => s.to_string(),
+                other => panic!("expected string, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(names, vec!["Alix", "Gus"]);
+    }
+
+    /// WHERE NOT EXISTS { MATCH (n)-[:WORKS_AT]->() } — non-regression
+    /// The explicit EXISTS form should still work via the GQL parser.
+    #[test]
+    fn test_not_exists_subquery_gql_non_regression() {
+        let db = social_graph();
+        let session = db.session();
+
+        let result = session
+            .execute(
+                "MATCH (n:Person) \
+                 WHERE NOT EXISTS { MATCH (n)-[:WORKS_AT]->() } \
+                 RETURN n.name",
+            )
+            .unwrap();
+
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][0], Value::String("Harm".into()));
+    }
+}

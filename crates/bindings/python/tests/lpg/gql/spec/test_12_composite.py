@@ -54,6 +54,47 @@ class TestUnion:
         names = {r["n.name"] for r in result}
         assert names == {"Alix", "Amsterdam"}
 
+    def test_union_with_real_match(self, db):
+        """UNION with MATCH from different labels returns combined results."""
+        db.create_node(["Note"], {"title": "n1"})
+        db.create_node(["Decision"], {"title": "d1"})
+        result = list(
+            db.execute(
+                "MATCH (n:Note) RETURN n.title AS name "
+                "UNION ALL "
+                "MATCH (d:Decision) RETURN d.title AS name"
+            )
+        )
+        names = sorted([r["name"] for r in result])
+        assert names == ["d1", "n1"]
+
+    def test_union_column_mismatch_error(self, db):
+        """UNION with mismatched column count returns semantic error."""
+        import pytest
+        db.create_node(["N"], {"v": 1})
+        with pytest.raises(Exception, match="(?i)column"):
+            list(
+                db.execute(
+                    "MATCH (n:N) RETURN n.v "
+                    "UNION ALL "
+                    "MATCH (n:N) RETURN n.v, 42 AS extra"
+                )
+            )
+
+    def test_union_cypher_nonregression(self, db):
+        """UNION via execute_cypher() also works (non-regression)."""
+        db.create_node(["A"], {"v": 1})
+        db.create_node(["B"], {"v": 2})
+        result = list(
+            db.execute_cypher(
+                "MATCH (a:A) RETURN a.v AS v "
+                "UNION ALL "
+                "MATCH (b:B) RETURN b.v AS v"
+            )
+        )
+        values = sorted([r["v"] for r in result])
+        assert values == [1, 2]
+
 
 # =============================================================================
 # EXCEPT (sec 14.2)
