@@ -682,6 +682,12 @@ impl<'a> Parser<'a> {
                         ordered_clauses.push(QueryClause::Merge(clause.clone()));
                         merge_clauses.push(clause);
                     }
+                    _ if self.is_identifier()
+                        && self.get_identifier_name().eq_ignore_ascii_case("FOREACH") =>
+                    {
+                        let clause = self.parse_foreach_clause()?;
+                        ordered_clauses.push(QueryClause::ForEach(clause));
+                    }
                     _ => break,
                 }
             }
@@ -715,8 +721,11 @@ impl<'a> Parser<'a> {
             || !merge_clauses.is_empty()
             || !create_clauses.is_empty()
             || !delete_clauses.is_empty()
+            || ordered_clauses
+                .iter()
+                .any(|c| matches!(c, QueryClause::ForEach(_)))
         {
-            // For mutation-only queries, return empty clause
+            // For mutation-only queries (including FOREACH), return empty clause
             ReturnClause {
                 distinct: false,
                 items: Vec::new(),

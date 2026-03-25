@@ -574,7 +574,11 @@ impl GqlTranslator {
                         }
                     }
                     ast::QueryClause::ForEach(foreach_clause) => {
-                        plan = self.translate_foreach_gql(foreach_clause, plan)?;
+                        // Skip FOREACH here if WITH clauses exist — they'll be
+                        // translated after WITH projection so variables are visible.
+                        if query.with_clauses.is_empty() {
+                            plan = self.translate_foreach_gql(foreach_clause, plan)?;
+                        }
                     }
                 }
             }
@@ -743,6 +747,19 @@ impl GqlTranslator {
             // Handle DISTINCT
             if with_clause.distinct {
                 plan = wrap_distinct(plan);
+            }
+        }
+
+        // Handle FOREACH clauses that appear after WITH (they were added to
+        // ordered_clauses during parsing but need to be translated AFTER the
+        // WITH projection so that WITH-introduced variables are visible).
+        // We skip ForEach clauses already translated in the ordered_clauses pass
+        // by only processing them here if with_clauses is non-empty.
+        if !query.with_clauses.is_empty() {
+            for clause in &query.ordered_clauses {
+                if let ast::QueryClause::ForEach(foreach_clause) = clause {
+                    plan = self.translate_foreach_gql(foreach_clause, plan)?;
+                }
             }
         }
 
