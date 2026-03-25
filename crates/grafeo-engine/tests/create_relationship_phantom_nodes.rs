@@ -388,6 +388,54 @@ fn test_create_path_bare_variable_no_input() {
         result.is_err(),
         "Bare variables without labels in CREATE path should produce a semantic error"
     );
+
+    // Same test via Cypher translator to cover cypher.rs bare-variable-no-input path
+    let result_cypher = session.execute_cypher("CREATE (x)-[:REL]->(y)");
+    assert!(
+        result_cypher.is_err(),
+        "Cypher: bare variables in CREATE path should produce an error"
+    );
+}
+
+#[test]
+fn test_match_create_rel_via_cypher_translator() {
+    // Ensures the cypher.rs code path for bare-variable-with-input is exercised
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    session
+        .execute_cypher("CREATE (:CY {id: '1'}), (:CY {id: '2'})")
+        .unwrap();
+    assert_eq!(node_count(&db), 2);
+
+    session
+        .execute_cypher("MATCH (a:CY {id: '1'}) MATCH (b:CY {id: '2'}) CREATE (a)-[:CREL]->(b)")
+        .unwrap();
+
+    assert_eq!(node_count(&db), 2, "Cypher: phantom nodes created");
+    assert_eq!(edge_count(&db), 1, "Cypher: relationship not created");
+}
+
+#[test]
+fn test_create_chained_path_via_cypher() {
+    // Covers the last_node_var tracker in cypher.rs translate_create_pattern
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+
+    session
+        .execute_cypher("CREATE (a:CX {id: '1'})-[:R1]->(b:CY {id: '2'})-[:R2]->(c:CZ {id: '3'})")
+        .unwrap();
+
+    assert_eq!(node_count(&db), 3);
+    assert_eq!(edge_count(&db), 2);
+
+    // Now MATCH + CREATE between existing nodes via Cypher
+    session
+        .execute_cypher("MATCH (a:CX {id: '1'}) MATCH (c:CZ {id: '3'}) CREATE (a)-[:DIRECT]->(c)")
+        .unwrap();
+
+    assert_eq!(node_count(&db), 3, "Cypher chained: no phantom nodes");
+    assert_eq!(edge_count(&db), 3);
 }
 
 #[test]

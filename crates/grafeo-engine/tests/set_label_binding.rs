@@ -432,3 +432,37 @@ fn test_remove_label_preserves_variable() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// 20. Cypher translator path — SET/REMOVE label via execute_cypher
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_set_label_via_cypher_translator() {
+    let db = db_with_nodes(2);
+    let session = db.session();
+    let result = session
+        .execute_cypher("MATCH (n:Node) SET n:CypherTagged RETURN count(*) AS cnt")
+        .unwrap();
+    assert_eq!(result.row_count(), 1);
+    if let Value::Int64(cnt) = &result.rows[0][0] {
+        assert_eq!(*cnt, 2);
+    } else {
+        panic!("Expected Int64");
+    }
+}
+
+#[test]
+fn test_remove_label_via_cypher_translator() {
+    let db = db_with_nodes(2);
+    let session = db.session();
+    let result = session
+        .execute_cypher("MATCH (n:Node) REMOVE n:Node RETURN count(*) AS cnt")
+        .unwrap();
+    assert_eq!(result.row_count(), 1);
+    if let Value::Int64(cnt) = &result.rows[0][0] {
+        assert_eq!(*cnt, 2);
+    } else {
+        panic!("Expected Int64");
+    }
+}

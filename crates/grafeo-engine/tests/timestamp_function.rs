@@ -325,3 +325,60 @@ fn test_timestamp_in_list() {
         other => panic!("expected List, got {:?}", other),
     }
 }
+
+// ---------------------------------------------------------------------------
+// 15. timestamp() in Cypher WHERE — forces runtime eval in filter.rs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_timestamp_in_cypher_where_clause() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    session.execute("CREATE (:TW {ts: 0})").unwrap();
+
+    // Use a comparison with a property to prevent constant folding
+    let result = session
+        .execute("MATCH (n:TW) WHERE timestamp() > n.ts RETURN n.ts")
+        .unwrap();
+    assert_eq!(
+        result.rows.len(),
+        1,
+        "timestamp() > 0 should match the node"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 16. timestamp() in Cypher RETURN via execute_cypher
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_timestamp_via_execute_cypher() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    let result = session.execute_cypher("RETURN timestamp() AS ts").unwrap();
+    assert_eq!(result.rows.len(), 1);
+    match &result.rows[0][0] {
+        Value::Int64(v) => assert!(*v > 0, "Cypher timestamp() should be positive"),
+        other => panic!("expected Int64, got {:?}", other),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 17. timestamp() in Cypher SET via execute_cypher
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_timestamp_in_cypher_set() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    session.execute_cypher("CREATE (:CTS {id: 1})").unwrap();
+    session
+        .execute_cypher("MATCH (n:CTS) SET n.ts = timestamp()")
+        .unwrap();
+    let result = session.execute_cypher("MATCH (n:CTS) RETURN n.ts").unwrap();
+    assert_eq!(result.rows.len(), 1);
+    match &result.rows[0][0] {
+        Value::Int64(v) => assert!(*v > 0),
+        other => panic!("expected Int64, got {:?}", other),
+    }
+}

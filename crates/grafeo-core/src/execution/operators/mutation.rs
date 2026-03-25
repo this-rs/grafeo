@@ -1844,6 +1844,97 @@ mod tests {
         assert_eq!(node_id_val, node.0 as i64);
     }
 
+    #[test]
+    fn test_add_label_type_mismatch() {
+        // Covers the TypeMismatch error path when input column is not Int64
+        let store = create_test_store();
+
+        // Create a chunk with a String value instead of Int64
+        let mut builder = DataChunkBuilder::new(&[LogicalType::String]);
+        builder
+            .column_mut(0)
+            .unwrap()
+            .push_value(Value::String("not_a_node_id".into()));
+        builder.advance_row();
+
+        let mut op = AddLabelOperator::new(
+            Arc::clone(&store),
+            MockInput::boxed(builder.finish()),
+            0,
+            vec!["Employee".to_string()],
+            vec![LogicalType::String],
+        );
+
+        let result = op.next();
+        assert!(result.is_err(), "Should fail with TypeMismatch");
+        let err = result.unwrap_err();
+        assert!(
+            format!("{err:?}").contains("TypeMismatch"),
+            "Error should be TypeMismatch, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_remove_label_type_mismatch() {
+        // Covers the TypeMismatch error path when input column is not Int64
+        let store = create_test_store();
+
+        let mut builder = DataChunkBuilder::new(&[LogicalType::String]);
+        builder
+            .column_mut(0)
+            .unwrap()
+            .push_value(Value::String("not_a_node_id".into()));
+        builder.advance_row();
+
+        let mut op = RemoveLabelOperator::new(
+            Arc::clone(&store),
+            MockInput::boxed(builder.finish()),
+            0,
+            vec!["Employee".to_string()],
+            vec![LogicalType::String],
+        );
+
+        let result = op.next();
+        assert!(result.is_err(), "Should fail with TypeMismatch");
+        let err = result.unwrap_err();
+        assert!(
+            format!("{err:?}").contains("TypeMismatch"),
+            "Error should be TypeMismatch, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_add_label_multiple_rows_with_null() {
+        // Covers the push_value(Value::Null) branch during column copy
+        // when a multi-column input has null values
+        let store = create_test_store();
+
+        let node = store.create_node(&["Person"]);
+
+        // Create a 2-column chunk: [node_id, null_property]
+        let mut builder = DataChunkBuilder::new(&[LogicalType::Int64, LogicalType::String]);
+        builder.column_mut(0).unwrap().push_int64(node.0 as i64);
+        builder.column_mut(1).unwrap().push_value(Value::Null);
+        builder.advance_row();
+
+        let mut op = AddLabelOperator::new(
+            Arc::clone(&store),
+            MockInput::boxed(builder.finish()),
+            0,
+            vec!["Tagged".to_string()],
+            vec![LogicalType::Int64, LogicalType::String],
+        );
+
+        let chunk = op.next().unwrap().unwrap();
+        assert_eq!(chunk.row_count(), 1);
+        // Second column should be Null (passed through)
+        let val = chunk.column(1).unwrap().get_value(0);
+        assert!(
+            val.is_none() || val == Some(Value::Null),
+            "Null property should be preserved"
+        );
+    }
+
     // ── SetPropertyOperator ──────────────────────────────────────
 
     #[test]

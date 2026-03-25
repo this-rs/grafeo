@@ -400,3 +400,48 @@ fn test_startnode_on_multiple_edge_types() {
         );
     }
 }
+
+// ============================================================================
+// Cypher translator path coverage
+// ============================================================================
+
+#[test]
+fn test_startnode_via_cypher_translator() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    session
+        .execute_cypher("CREATE (a:A {name: 'alice'})-[:KNOWS]->(b:B {name: 'bob'})")
+        .unwrap();
+
+    let result = session
+        .execute_cypher("MATCH ()-[r]->() RETURN startNode(r) AS sn, endNode(r) AS en")
+        .unwrap();
+    assert_eq!(result.rows.len(), 1);
+    assert!(matches!(result.rows[0][0], Value::Int64(_)));
+    assert!(matches!(result.rows[0][1], Value::Int64(_)));
+    assert_ne!(result.rows[0][0], result.rows[0][1]);
+}
+
+#[test]
+fn test_startnode_endnode_in_cypher_where() {
+    let db = GrafeoDB::new_in_memory();
+    let session = db.session();
+    session
+        .execute_cypher("CREATE (a:P {name: 'alice'})-[:KNOWS]->(b:P {name: 'bob'})")
+        .unwrap();
+
+    let ids = session
+        .execute_cypher("MATCH (a:P {name: 'alice'}) RETURN id(a) AS aid")
+        .unwrap();
+    let Value::Int64(a_id) = ids.rows[0][0] else {
+        panic!("expected Int64");
+    };
+
+    let result = session
+        .execute_cypher(&format!(
+            "MATCH ()-[r]->() WHERE startNode(r) = {} RETURN r",
+            a_id
+        ))
+        .unwrap();
+    assert_eq!(result.rows.len(), 1);
+}
