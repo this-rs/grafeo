@@ -60,7 +60,9 @@ ai = ["vector-index", "text-index", "hybrid-search", "cdc"]
 storage = ["grafeo-engine/storage"]
 # Named profiles
 embedded = ["gql", "ai", "algos", "grafeo-engine/parallel", "grafeo-engine/regex"]
-full = ["languages", "ai", "algos", "rdf"]
+reactive = ["grafeo-engine/reactive"]
+parallel = ["grafeo-engine/parallel"]
+full = ["languages", "ai", "algos", "rdf", "storage", "parallel", "reactive"]
 
 [dev-dependencies]
 tempfile = "3.27"
