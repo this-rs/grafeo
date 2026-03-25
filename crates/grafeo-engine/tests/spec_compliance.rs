@@ -266,6 +266,109 @@ mod gql_set_ops {
 }
 
 // ============================================================================
+// CASE WHEN expressions (covers aggregate.rs group-by + CASE projection)
+// ============================================================================
+
+#[cfg(feature = "gql")]
+mod case_when_expressions {
+    use super::*;
+
+    #[test]
+    fn case_when_with_count_aggregation() {
+        // The original bug: CASE WHEN in group-by with count() failed with
+        // "Cannot resolve expression to column"
+        let db = social_network();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (n:Person) \
+                 RETURN CASE WHEN n.age >= 30 THEN 'senior' ELSE 'junior' END AS category, \
+                 count(n) AS c",
+            )
+            .unwrap();
+        // Should return 2 rows: senior (Alix=30, Harm=35) and junior (Gus=25, Dave=28)
+        assert_eq!(result.row_count(), 2, "CASE+count should return 2 categories");
+    }
+
+    #[test]
+    fn case_when_without_aggregation() {
+        // CASE without aggregation already worked — ensure no regression
+        let db = social_network();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (n:Person) \
+                 RETURN n.name, \
+                 CASE WHEN n.age >= 30 THEN 'senior' ELSE 'junior' END AS category \
+                 ORDER BY n.name",
+            )
+            .unwrap();
+        assert_eq!(result.row_count(), 4);
+        // Alix (30) → senior
+        assert_eq!(result.rows[0][1], Value::String("senior".into()));
+        // Dave (28) → junior
+        assert_eq!(result.rows[1][1], Value::String("junior".into()));
+    }
+
+    #[test]
+    fn case_inside_sum_aggregation() {
+        // CASE as argument to SUM (conditional counting pattern)
+        let db = social_network();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (n:Person) \
+                 RETURN sum(CASE WHEN n.age >= 30 THEN 1 ELSE 0 END) AS seniors",
+            )
+            .unwrap();
+        assert_eq!(result.row_count(), 1);
+        // Alix(30) + Harm(35) = 2 seniors
+        let val = &result.rows[0][0];
+        assert!(
+            *val == Value::Int64(2) || *val == Value::Float64(2.0),
+            "Expected 2 seniors, got {:?}",
+            val
+        );
+    }
+
+    #[test]
+    fn simple_case_form() {
+        // Simple CASE: CASE expr WHEN val THEN result END
+        let db = social_network();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (n:Person) \
+                 RETURN n.name, \
+                 CASE n.age WHEN 25 THEN 'twenty-five' WHEN 30 THEN 'thirty' ELSE 'other' END AS label \
+                 ORDER BY n.name",
+            )
+            .unwrap();
+        assert_eq!(result.row_count(), 4);
+        // Alix=30 → thirty, Dave=28 → other, Gus=25 → twenty-five, Harm=35 → other
+        assert_eq!(result.rows[0][1], Value::String("thirty".into())); // Alix
+        assert_eq!(result.rows[1][1], Value::String("other".into())); // Dave
+        assert_eq!(result.rows[2][1], Value::String("twenty-five".into())); // Gus
+        assert_eq!(result.rows[3][1], Value::String("other".into())); // Harm
+    }
+
+    #[test]
+    fn case_without_else_returns_null() {
+        let db = social_network();
+        let session = db.session();
+        let result = session
+            .execute(
+                "MATCH (n:Person) WHERE n.name = 'Dave' \
+                 RETURN CASE WHEN n.age > 30 THEN 'old' END AS label",
+            )
+            .unwrap();
+        assert_eq!(result.row_count(), 1);
+        // Dave is 28, no ELSE → null
+        assert_eq!(result.rows[0][0], Value::Null);
+    }
+}
+
+// ============================================================================
 // GQL Predicates (covers filter.rs IS TYPED, IS DIRECTED, etc.)
 // ============================================================================
 
@@ -3048,5 +3151,127 @@ mod gql_translator_unit {
     fn translate_schema_errors() {
         let result = gql::translate("CREATE NODE TYPE Foo");
         assert!(result.is_err());
+    }
+}
+
+// ============================================================================
+// FOREACH Integration Tests
+// ============================================================================
+
+mod foreach_tests {
+    use grafeo_common::types::Value;
+    use grafeo_engine::GrafeoDB;
+
+    #[test]
+    fn gql_foreach_create() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute("FOREACH (i IN range(1,3) | CREATE (:_Test {i: i}))")
+            .unwrap();
+        let result = session
+            .execute("MATCH (n:_Test) RETURN n.i ORDER BY n.i")
+            .unwrap();
+        assert_eq!(result.rows.len(), 3);
+        assert_eq!(result.rows[0][0], Value::Int64(1));
+        assert_eq!(result.rows[1][0], Value::Int64(2));
+        assert_eq!(result.rows[2][0], Value::Int64(3));
+        // Cleanup
+        session.execute("MATCH (n:_Test) DELETE n").unwrap();
+    }
+
+    #[test]
+    fn gql_foreach_set() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute("INSERT (:_Test {name: 'A', done: false})")
+            .unwrap();
+        session
+            .execute("INSERT (:_Test {name: 'B', done: false})")
+            .unwrap();
+        session
+            .execute(
+                "MATCH (n:_Test) WITH collect(n) AS nodes \
+                 FOREACH (x IN nodes | SET x.done = true) \
+                 RETURN count(*) AS cnt",
+            )
+            .unwrap();
+        let result = session
+            .execute("MATCH (n:_Test) WHERE n.done = true RETURN count(n) AS cnt")
+            .unwrap();
+        assert_eq!(result.rows[0][0], Value::Int64(2));
+        // Cleanup
+        session.execute("MATCH (n:_Test) DELETE n").unwrap();
+    }
+
+    #[test]
+    fn gql_foreach_variable_scope_isolation() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute("FOREACH (i IN range(1,2) | CREATE (:_Test {i: i}))")
+            .unwrap();
+        let result = session
+            .execute("MATCH (n:_Test) RETURN count(n) AS cnt")
+            .unwrap();
+        assert_eq!(result.rows[0][0], Value::Int64(2));
+        // Cleanup
+        session.execute("MATCH (n:_Test) DELETE n").unwrap();
+    }
+
+    #[test]
+    fn gql_foreach_nested() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute(
+                "FOREACH (i IN [1,2] | \
+                     FOREACH (j IN [10,20] | \
+                         CREATE (:_Test {i: i, j: j})\
+                     )\
+                 )",
+            )
+            .unwrap();
+        let result = session
+            .execute("MATCH (n:_Test) RETURN n.i, n.j ORDER BY n.i, n.j")
+            .unwrap();
+        assert_eq!(result.rows.len(), 4);
+        assert_eq!(result.rows[0][0], Value::Int64(1));
+        assert_eq!(result.rows[0][1], Value::Int64(10));
+        assert_eq!(result.rows[3][0], Value::Int64(2));
+        assert_eq!(result.rows[3][1], Value::Int64(20));
+        // Cleanup
+        session.execute("MATCH (n:_Test) DELETE n").unwrap();
+    }
+
+    #[test]
+    fn gql_foreach_with_range() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute("FOREACH (i IN range(1,3) | CREATE (:_Test {i: i}))")
+            .unwrap();
+        let result = session
+            .execute("MATCH (n:_Test) RETURN count(n) AS cnt")
+            .unwrap();
+        assert_eq!(result.rows[0][0], Value::Int64(3));
+        // Cleanup
+        session.execute("MATCH (n:_Test) DELETE n").unwrap();
+    }
+
+    #[test]
+    fn cypher_foreach_standalone() {
+        let db = GrafeoDB::new_in_memory();
+        let session = db.session();
+        session
+            .execute_cypher("FOREACH (i IN [1,2,3] | CREATE (:_Test {i: i}))")
+            .unwrap();
+        let result = session
+            .execute("MATCH (n:_Test) RETURN count(n) AS cnt")
+            .unwrap();
+        assert_eq!(result.rows[0][0], Value::Int64(3));
+        // Cleanup
+        session.execute("MATCH (n:_Test) DELETE n").unwrap();
     }
 }
