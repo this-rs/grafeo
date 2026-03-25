@@ -2751,6 +2751,13 @@ impl ExpressionPredicate {
             "now" | "current_timestamp" | "currenttimestamp" => {
                 Some(Value::Timestamp(grafeo_common::types::Timestamp::now()))
             }
+            "timestamp" => {
+                // Neo4j-compatible: returns milliseconds since Unix epoch as Int64
+                let duration = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or(std::time::Duration::ZERO);
+                Some(Value::Int64(duration.as_millis() as i64))
+            }
             // Component extraction
             "year" => {
                 let val = self.eval_expr(args.first()?, chunk, row)?;
