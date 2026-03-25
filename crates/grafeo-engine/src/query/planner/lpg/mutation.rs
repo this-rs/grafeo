@@ -970,9 +970,9 @@ impl super::Planner {
                 ))
             })?;
 
-        // Output schema for update count
-        let output_schema = vec![LogicalType::Int64];
-        let output_columns = vec!["labels_added".to_string()];
+        // Output schema preserves input schema (passes through)
+        let output_schema: Vec<LogicalType> = columns.iter().map(|_| LogicalType::Node).collect();
+        let output_columns = columns.clone();
 
         let mut op = AddLabelOperator::new(
             Arc::clone(&self.store),
@@ -1007,9 +1007,9 @@ impl super::Planner {
                 ))
             })?;
 
-        // Output schema for update count
-        let output_schema = vec![LogicalType::Int64];
-        let output_columns = vec!["labels_removed".to_string()];
+        // Output schema preserves input schema (passes through)
+        let output_schema: Vec<LogicalType> = columns.iter().map(|_| LogicalType::Node).collect();
+        let output_columns = columns.clone();
 
         let mut op = RemoveLabelOperator::new(
             Arc::clone(&self.store),

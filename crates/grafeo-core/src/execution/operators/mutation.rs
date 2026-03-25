@@ -984,7 +984,8 @@ impl AddLabelOperator {
 impl Operator for AddLabelOperator {
     fn next(&mut self) -> OperatorResult {
         if let Some(chunk) = self.input.next()? {
-            let mut updated_count = 0;
+            let mut builder =
+                DataChunkBuilder::with_capacity(&self.output_schema, chunk.row_count());
 
             for row in chunk.selected_indices() {
                 let node_val = chunk
@@ -1011,23 +1012,28 @@ impl Operator for AddLabelOperator {
 
                 // Add all labels
                 for label in &self.labels {
-                    let added = if let Some(tid) = self.transaction_id {
-                        self.store.add_label_versioned(node_id, label, tid)
+                    if let Some(tid) = self.transaction_id {
+                        self.store.add_label_versioned(node_id, label, tid);
                     } else {
-                        self.store.add_label(node_id, label)
-                    };
-                    if added {
-                        updated_count += 1;
+                        self.store.add_label(node_id, label);
                     }
                 }
-            }
 
-            // Return a chunk with the update count
-            let mut builder = DataChunkBuilder::with_capacity(&self.output_schema, 1);
-            if let Some(dst) = builder.column_mut(0) {
-                dst.push_value(Value::Int64(updated_count));
+                // Copy input columns to output
+                for col_idx in 0..chunk.column_count() {
+                    if let (Some(src), Some(dst)) =
+                        (chunk.column(col_idx), builder.column_mut(col_idx))
+                    {
+                        if let Some(val) = src.get_value(row) {
+                            dst.push_value(val);
+                        } else {
+                            dst.push_value(Value::Null);
+                        }
+                    }
+                }
+
+                builder.advance_row();
             }
-            builder.advance_row();
 
             return Ok(Some(builder.finish()));
         }
@@ -1105,7 +1111,8 @@ impl RemoveLabelOperator {
 impl Operator for RemoveLabelOperator {
     fn next(&mut self) -> OperatorResult {
         if let Some(chunk) = self.input.next()? {
-            let mut updated_count = 0;
+            let mut builder =
+                DataChunkBuilder::with_capacity(&self.output_schema, chunk.row_count());
 
             for row in chunk.selected_indices() {
                 let node_val = chunk
@@ -1132,23 +1139,28 @@ impl Operator for RemoveLabelOperator {
 
                 // Remove all labels
                 for label in &self.labels {
-                    let removed = if let Some(tid) = self.transaction_id {
-                        self.store.remove_label_versioned(node_id, label, tid)
+                    if let Some(tid) = self.transaction_id {
+                        self.store.remove_label_versioned(node_id, label, tid);
                     } else {
-                        self.store.remove_label(node_id, label)
-                    };
-                    if removed {
-                        updated_count += 1;
+                        self.store.remove_label(node_id, label);
                     }
                 }
-            }
 
-            // Return a chunk with the update count
-            let mut builder = DataChunkBuilder::with_capacity(&self.output_schema, 1);
-            if let Some(dst) = builder.column_mut(0) {
-                dst.push_value(Value::Int64(updated_count));
+                // Copy input columns to output
+                for col_idx in 0..chunk.column_count() {
+                    if let (Some(src), Some(dst)) =
+                        (chunk.column(col_idx), builder.column_mut(col_idx))
+                    {
+                        if let Some(val) = src.get_value(row) {
+                            dst.push_value(val);
+                        } else {
+                            dst.push_value(Value::Null);
+                        }
+                    }
+                }
+
+                builder.advance_row();
             }
-            builder.advance_row();
 
             return Ok(Some(builder.finish()));
         }
