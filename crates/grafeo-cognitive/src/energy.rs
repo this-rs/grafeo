@@ -88,6 +88,8 @@ pub struct NodeEnergy {
     last_activated: Instant,
     /// Half-life for exponential decay.
     half_life: Duration,
+    /// Monotonic access counter for LRU eviction (updated on every read/write).
+    pub(crate) last_access: u64,
 }
 
 impl NodeEnergy {
@@ -97,6 +99,7 @@ impl NodeEnergy {
             energy,
             last_activated: Instant::now(),
             half_life,
+            last_access: 0,
         }
     }
 
@@ -109,6 +112,7 @@ impl NodeEnergy {
             energy,
             last_activated,
             half_life,
+            last_access: 0,
         }
     }
 
@@ -176,10 +180,8 @@ impl NodeEnergy {
 /// On read, if the node is not in the hot cache, the store attempts to load
 /// the value lazily from the graph property.
 pub struct EnergyStore {
-    /// Per-node energy entries.
+    /// Per-node energy entries (includes inline LRU access counter).
     nodes: DashMap<NodeId, NodeEnergy>,
-    /// LRU access order — maps NodeId to a monotonic access counter.
-    access_order: DashMap<NodeId, u64>,
     /// Monotonic counter for LRU tracking.
     access_counter: AtomicU64,
     /// Maximum cache entries (0 = unlimited).
@@ -195,7 +197,6 @@ impl EnergyStore {
     pub fn new(config: EnergyConfig) -> Self {
         Self {
             nodes: DashMap::new(),
-            access_order: DashMap::new(),
             access_counter: AtomicU64::new(0),
             max_cache_entries: 0,
             config,
@@ -210,7 +211,6 @@ impl EnergyStore {
     ) -> Self {
         Self {
             nodes: DashMap::new(),
-            access_order: DashMap::new(),
             access_counter: AtomicU64::new(0),
             max_cache_entries: 0,
             config,
@@ -225,10 +225,13 @@ impl EnergyStore {
         self
     }
 
-    /// Records an access for LRU tracking.
+    /// Records an access for LRU tracking — updates the inline counter
+    /// in the already-locked DashMap entry (no extra DashMap lookup).
     fn touch(&self, node_id: NodeId) {
         let order = self.access_counter.fetch_add(1, Ordering::Relaxed);
-        self.access_order.insert(node_id, order);
+        if let Some(mut entry) = self.nodes.get_mut(&node_id) {
+            entry.last_access = order;
+        }
     }
 
     /// Evicts least-recently-used entries if cache exceeds max_cache_entries.
@@ -243,14 +246,13 @@ impl EnergyStore {
         let to_evict = current_len - self.max_cache_entries;
         // Collect entries sorted by access order (ascending = oldest first)
         let mut entries: Vec<(NodeId, u64)> = self
-            .access_order
+            .nodes
             .iter()
-            .map(|e| (*e.key(), *e.value()))
+            .map(|e| (*e.key(), e.value().last_access))
             .collect();
         entries.sort_by_key(|(_, order)| *order);
         for (node_id, _) in entries.into_iter().take(to_evict) {
             self.nodes.remove(&node_id);
-            self.access_order.remove(&node_id);
         }
     }
 
@@ -261,16 +263,24 @@ impl EnergyStore {
     /// the value is loaded lazily.
     pub fn get_energy(&self, node_id: NodeId) -> f64 {
         if let Some(entry) = self.nodes.get(&node_id) {
-            self.touch(node_id);
-            return entry.current_energy();
+            let energy = entry.current_energy();
+            drop(entry);
+            // Only update LRU access order when eviction is configured —
+            // avoids a DashMap write on every read in the default (no-eviction) path.
+            if self.max_cache_entries > 0 {
+                self.touch(node_id);
+            }
+            return energy;
         }
         // Lazy load from graph store
         if let Some(gs) = &self.graph_store
             && let Some(val) = load_node_f64(gs.as_ref(), node_id, PROP_ENERGY)
         {
-            let ne = NodeEnergy::new(val, self.config.default_half_life);
+            let mut ne = NodeEnergy::new(val, self.config.default_half_life);
+            if self.max_cache_entries > 0 {
+                ne.last_access = self.access_counter.fetch_add(1, Ordering::Relaxed);
+            }
             self.nodes.insert(node_id, ne);
-            self.touch(node_id);
             self.maybe_evict();
             return val;
         }

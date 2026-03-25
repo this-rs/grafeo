@@ -44,6 +44,11 @@ tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 criterion.workspace = true
 
+[features]
+default = []
+# Propagate temporal feature from grafeo-core so cfg(feature = "temporal") works in tests.
+temporal = ["grafeo-core/temporal"]
+
 [lints]
 workspace = true
 

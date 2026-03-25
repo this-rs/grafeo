@@ -7,7 +7,7 @@
 
 use crate::synapse::SynapseStore;
 use grafeo_common::types::NodeId;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 /// Type alias for the activation result: node -> accumulated energy.
@@ -28,6 +28,10 @@ pub struct SpreadConfig {
     pub decay_factor: f64,
     /// Only include nodes with activation above this threshold in the result.
     pub activation_threshold: f64,
+    /// Maximum number of nodes that can be activated (circuit breaker).
+    /// Once this limit is reached, no further nodes are enqueued.
+    /// Default: 1000. Set to 0 for unlimited (not recommended for dense graphs).
+    pub max_activated_nodes: usize,
 }
 
 impl Default for SpreadConfig {
@@ -37,6 +41,7 @@ impl Default for SpreadConfig {
             min_propagated_energy: 0.01,
             decay_factor: 0.5,
             activation_threshold: 0.0,
+            max_activated_nodes: 1000,
         }
     }
 }
@@ -63,6 +68,12 @@ impl SpreadConfig {
     /// Builder: set activation threshold.
     pub fn with_activation_threshold(mut self, threshold: f64) -> Self {
         self.activation_threshold = threshold;
+        self
+    }
+
+    /// Builder: set maximum activated nodes (circuit breaker).
+    pub fn with_max_activated_nodes(mut self, max: usize) -> Self {
+        self.max_activated_nodes = max;
         self
     }
 }
@@ -135,16 +146,28 @@ pub fn spread(
     // BFS queue: (node_id, energy_at_node, current_hop)
     let mut queue: VecDeque<(NodeId, f64, u32)> = VecDeque::new();
 
+    // Track which (node, hop) pairs have been enqueued to prevent re-enqueue
+    // at the same depth (avoids exponential queue growth on dense graphs).
+    let mut visited: HashSet<(NodeId, u32)> = HashSet::new();
+
     // Seed sources
     for &(node_id, energy) in sources {
         *activation.entry(node_id).or_insert(0.0) += energy;
         queue.push_back((node_id, energy, 0));
+        visited.insert((node_id, 0));
     }
 
-    // BFS propagation
+    let max_nodes = config.max_activated_nodes;
+
+    // BFS propagation with circuit breaker
     while let Some((node_id, node_energy, hop)) = queue.pop_front() {
         if hop >= config.max_hops {
             continue;
+        }
+
+        // Circuit breaker: stop enqueuing new nodes once we hit the limit
+        if max_nodes > 0 && activation.len() >= max_nodes {
+            break;
         }
 
         for (neighbor, weight) in graph.neighbors(node_id) {
@@ -155,7 +178,12 @@ pub fn spread(
             }
 
             *activation.entry(neighbor).or_insert(0.0) += propagated;
-            queue.push_back((neighbor, propagated, hop + 1));
+
+            // Only enqueue if not yet visited at this hop depth
+            let next_hop = hop + 1;
+            if next_hop < config.max_hops && visited.insert((neighbor, next_hop)) {
+                queue.push_back((neighbor, propagated, next_hop));
+            }
         }
     }
 

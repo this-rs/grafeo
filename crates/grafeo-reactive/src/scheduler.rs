@@ -311,7 +311,11 @@ mod native {
         }
     }
 
-    /// Dispatches a batch of events to all registered listeners.
+    /// Dispatches a batch of events to all registered listeners **concurrently**.
+    ///
+    /// Each listener receives its filtered event slice in a separate spawned task
+    /// via `tokio::task::JoinSet`. This ensures a slow listener does not block
+    /// faster ones (required by T1.5 acceptance criteria).
     async fn dispatch_batch(events: &[MutationEvent], listeners: &ListenerList) {
         if events.is_empty() {
             return;
@@ -327,29 +331,37 @@ mod native {
         tracing::trace!(
             event_count = events.len(),
             listener_count = listener_snapshot.len(),
-            "dispatching batch to listeners"
+            "dispatching batch to listeners concurrently"
         );
 
-        for listener in &listener_snapshot {
-            // Filter events this listener accepts
-            let accepted: Vec<&MutationEvent> =
-                events.iter().filter(|e| listener.accepts(e)).collect();
+        // Share events across all spawned tasks via Arc
+        let shared_events: Arc<Vec<MutationEvent>> = Arc::new(events.to_vec());
+        let mut join_set = tokio::task::JoinSet::new();
 
-            if accepted.is_empty() {
-                continue;
-            }
+        for listener in listener_snapshot {
+            let events_ref = Arc::clone(&shared_events);
+            join_set.spawn(async move {
+                // Filter events this listener accepts
+                let accepted: Vec<&MutationEvent> =
+                    events_ref.iter().filter(|e| listener.accepts(e)).collect();
 
-            // Build a contiguous slice for on_batch — we need owned references
-            // Since on_batch takes &[MutationEvent], pass the full events if all are accepted
-            if accepted.len() == events.len() {
-                // All accepted — pass the original slice directly
-                listener.on_batch(events).await;
-            } else {
-                // Partial acceptance — collect accepted events
-                let filtered: Vec<MutationEvent> = accepted.into_iter().cloned().collect();
-                listener.on_batch(&filtered).await;
-            }
+                if accepted.is_empty() {
+                    return;
+                }
+
+                if accepted.len() == events_ref.len() {
+                    // All accepted — pass the full slice
+                    listener.on_batch(&events_ref).await;
+                } else {
+                    // Partial acceptance — collect accepted events
+                    let filtered: Vec<MutationEvent> = accepted.into_iter().cloned().collect();
+                    listener.on_batch(&filtered).await;
+                }
+            });
         }
+
+        // Wait for all listeners to finish processing
+        while join_set.join_next().await.is_some() {}
     }
 }
 

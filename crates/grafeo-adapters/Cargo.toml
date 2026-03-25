@@ -51,6 +51,7 @@ tracing.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 serde_json = "1"
+criterion.workspace = true
 
 [features]
 default = ["gql", "wal", "parallel"]
@@ -71,6 +72,11 @@ full = ["languages", "rdf", "wal", "grafeo-file", "parallel", "algos"]
 
 # Testing utilities (zero overhead when disabled)
 testing-crash-injection = ["grafeo-core/testing-crash-injection"]  # Crash injection for recovery testing
+
+[[bench]]
+name = "gds_bench"
+harness = false
+required-features = ["algos", "parallel"]
 
 [lints]
 workspace = true

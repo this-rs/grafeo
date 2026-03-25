@@ -46,6 +46,7 @@ fn spread_single_hop() {
         decay_factor: 0.5,
         min_propagated_energy: 0.001,
         activation_threshold: 0.0,
+        ..Default::default()
     };
 
     let map = spread_single(n(1), 1.0, &g, &config);
@@ -64,6 +65,7 @@ fn spread_two_hops_chain() {
         decay_factor: 0.5,
         min_propagated_energy: 0.001,
         activation_threshold: 0.0,
+        ..Default::default()
     };
 
     let map = spread_single(n(1), 1.0, &g, &config);
@@ -89,6 +91,7 @@ fn spread_max_hops_cutoff() {
         decay_factor: 1.0,
         min_propagated_energy: 0.001,
         activation_threshold: 0.0,
+        ..Default::default()
     };
 
     let map = spread_single(n(1), 1.0, &g, &config);
@@ -108,6 +111,7 @@ fn spread_min_energy_cutoff() {
         decay_factor: 0.5,
         min_propagated_energy: 0.001,
         activation_threshold: 0.0,
+        ..Default::default()
     };
 
     let map = spread_single(n(1), 1.0, &g, &config);
@@ -127,6 +131,7 @@ fn spread_multi_source_superposition() {
         decay_factor: 0.5,
         min_propagated_energy: 0.001,
         activation_threshold: 0.0,
+        ..Default::default()
     };
 
     let map = spread(&[(n(1), 1.0), (n(3), 1.0)], &g, &config);
@@ -145,6 +150,7 @@ fn spread_activation_threshold_filters() {
         decay_factor: 0.5,
         min_propagated_energy: 0.001,
         activation_threshold: 0.1,
+        ..Default::default()
     };
 
     let map = spread_single(n(1), 1.0, &g, &config);
@@ -184,6 +190,7 @@ fn spread_with_synapse_store() {
         decay_factor: 0.5,
         min_propagated_energy: 0.001,
         activation_threshold: 0.0,
+        ..Default::default()
     };
 
     let map = spread_single(n(1), 1.0, &source, &config);
@@ -214,6 +221,7 @@ fn spread_benchmark_10k_nodes() {
         decay_factor: 0.5,
         min_propagated_energy: 0.001,
         activation_threshold: 0.0,
+        ..Default::default()
     };
 
     // Warm up
