@@ -41,7 +41,7 @@ fn fabric_score_last_mutated_none_by_default() {
 #[test]
 fn fabric_score_last_mutated_set_after_churn() {
     let store = FabricStore::new();
-    store.update_churn(NodeId(1));
+    store.record_mutation(NodeId(1));
     let score = store.get_fabric_score(NodeId(1));
     assert!(score.last_mutated().is_some());
 }
@@ -56,7 +56,7 @@ fn update_staleness_updates_existing_node() {
     let nid = NodeId(1);
 
     // First mutate to create the entry
-    store.update_churn(nid);
+    store.record_mutation(nid);
     // Then wait a tiny bit and update staleness
     std::thread::sleep(std::time::Duration::from_millis(10));
     store.update_staleness(nid);
@@ -79,7 +79,7 @@ fn update_staleness_noop_for_node_without_last_mutated() {
     let store = FabricStore::new();
     let nid = NodeId(1);
     // Create entry via knowledge density (no last_mutated set)
-    store.set_knowledge_density(nid, 0.5);
+    store.set_annotation_density(nid, 0.5);
     store.update_staleness(nid);
     let score = store.get_fabric_score(nid);
     // staleness should still be 0 (no last_mutated timestamp)
@@ -96,7 +96,7 @@ fn recalculate_risk_single_node() {
     let nid = NodeId(1);
 
     for _ in 0..5 {
-        store.update_churn(nid);
+        store.record_mutation(nid);
     }
     store.set_gds_metrics(nid, 0.8, 0.6, Some(1));
 
@@ -121,18 +121,18 @@ fn recalculate_risk_nonexistent_node_is_noop() {
 }
 
 // ---------------------------------------------------------------------------
-// FabricStore::update_churn_at (explicit instant)
+// FabricStore::record_mutation_at (explicit instant)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn update_churn_at_uses_specified_time() {
+fn record_mutation_at_uses_specified_time() {
     let store = FabricStore::new();
     let nid = NodeId(1);
     let now = Instant::now();
 
-    store.update_churn_at(nid, now);
+    store.record_mutation_at(nid, now);
     let score = store.get_fabric_score(nid);
-    assert_eq!(score.churn_score, 1.0);
+    assert_eq!(score.mutation_frequency, 1.0);
     assert!(score.last_mutated().is_some());
 }
 
@@ -162,7 +162,7 @@ fn get_risk_zones_empty_store() {
 fn get_risk_zones_zero_threshold_returns_all_with_risk() {
     let store = FabricStore::new();
     for _ in 0..5 {
-        store.update_churn(NodeId(1));
+        store.record_mutation(NodeId(1));
     }
     store.set_gds_metrics(NodeId(1), 1.0, 1.0, None);
     store.recalculate_all_risks();
@@ -208,8 +208,8 @@ async fn listener_on_batch_with_edge_created() {
     }];
     listener.on_batch(&events).await;
 
-    assert_eq!(store.get_fabric_score(NodeId(10)).churn_score, 1.0);
-    assert_eq!(store.get_fabric_score(NodeId(20)).churn_score, 1.0);
+    assert_eq!(store.get_fabric_score(NodeId(10)).mutation_frequency, 1.0);
+    assert_eq!(store.get_fabric_score(NodeId(20)).mutation_frequency, 1.0);
 }
 
 #[tokio::test]
@@ -222,8 +222,8 @@ async fn listener_on_batch_with_edge_deleted() {
     }];
     listener.on_batch(&events).await;
 
-    assert_eq!(store.get_fabric_score(NodeId(30)).churn_score, 1.0);
-    assert_eq!(store.get_fabric_score(NodeId(40)).churn_score, 1.0);
+    assert_eq!(store.get_fabric_score(NodeId(30)).mutation_frequency, 1.0);
+    assert_eq!(store.get_fabric_score(NodeId(40)).mutation_frequency, 1.0);
 }
 
 #[tokio::test]
@@ -236,7 +236,7 @@ async fn listener_on_batch_with_node_deleted() {
     }];
     listener.on_batch(&events).await;
 
-    assert_eq!(store.get_fabric_score(NodeId(55)).churn_score, 1.0);
+    assert_eq!(store.get_fabric_score(NodeId(55)).mutation_frequency, 1.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -252,10 +252,10 @@ fn risk_score_scar_only_no_base_risk() {
     store.recalculate_all_risks();
 
     let score = store.get_fabric_score(nid);
-    // base_risk = 0 (no churn/pagerank/betweenness), scar_boost = 0.5 * (1.0/1.0) = 0.5
+    // Weighted additive: pr=0 + churn=0 + gap=1*0.20 + btwn=0 + scar=1*0.15 = 0.35
     assert!(
-        (score.risk_score - 0.5).abs() < 0.01,
-        "expected ~0.5 from scar alone, got {}",
+        (score.risk_score - 0.35).abs() < 0.01,
+        "expected ~0.35 from gap+scar, got {}",
         score.risk_score
     );
 }

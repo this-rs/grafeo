@@ -14,16 +14,25 @@ use std::time::Duration;
 struct RecordingListener {
     name: String,
     batches: Arc<Mutex<Vec<Vec<MutationEvent>>>>,
+    event_count_tx: tokio::sync::watch::Sender<usize>,
 }
 
 impl RecordingListener {
-    fn new(name: &str) -> (Arc<Self>, Arc<Mutex<Vec<Vec<MutationEvent>>>>) {
+    fn new(
+        name: &str,
+    ) -> (
+        Arc<Self>,
+        Arc<Mutex<Vec<Vec<MutationEvent>>>>,
+        tokio::sync::watch::Receiver<usize>,
+    ) {
         let batches = Arc::new(Mutex::new(Vec::new()));
+        let (tx, rx) = tokio::sync::watch::channel(0usize);
         let listener = Arc::new(Self {
             name: name.to_string(),
             batches: Arc::clone(&batches),
+            event_count_tx: tx,
         });
-        (listener, batches)
+        (listener, batches, rx)
     }
 }
 
@@ -36,7 +45,12 @@ impl MutationListener for RecordingListener {
     async fn on_event(&self, _event: &MutationEvent) {}
 
     async fn on_batch(&self, events: &[MutationEvent]) {
-        self.batches.lock().push(events.to_vec());
+        let total = {
+            let mut b = self.batches.lock();
+            b.push(events.to_vec());
+            b.iter().map(|batch| batch.len()).sum()
+        };
+        let _ = self.event_count_tx.send(total);
     }
 }
 
@@ -48,6 +62,17 @@ fn make_node_event(id: u64) -> MutationEvent {
             properties: vec![],
         },
     }
+}
+
+/// Wait until at least `expected` events have been received, with a safety timeout.
+async fn wait_for_events(rx: &mut tokio::sync::watch::Receiver<usize>, expected: usize) {
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        rx.wait_for(|count| *count >= expected),
+    )
+    .await
+    .expect("timed out waiting for events")
+    .expect("watch channel closed");
 }
 
 // ========================================================================
@@ -108,7 +133,7 @@ async fn scheduler_starts_on_first_listener() {
 
     assert!(!scheduler.is_running());
 
-    let (listener, _batches) = RecordingListener::new("test");
+    let (listener, _batches, _rx) = RecordingListener::new("test");
     scheduler.register_listener(listener);
 
     assert!(scheduler.is_running());
@@ -123,8 +148,8 @@ async fn scheduler_does_not_restart_on_second_listener() {
     let config = BatchConfig::default();
     let scheduler = Scheduler::new(&bus, config);
 
-    let (l1, _) = RecordingListener::new("first");
-    let (l2, _) = RecordingListener::new("second");
+    let (l1, _, _rx1) = RecordingListener::new("first");
+    let (l2, _, _rx2) = RecordingListener::new("second");
 
     scheduler.register_listener(l1);
     assert!(scheduler.is_running());
@@ -198,7 +223,7 @@ async fn explicit_shutdown_flushes_buffer() {
     let config = BatchConfig::new(1000, Duration::from_secs(60));
     let scheduler = Scheduler::new(&bus, config);
 
-    let (listener, batches) = RecordingListener::new("flush-test");
+    let (listener, batches, _rx) = RecordingListener::new("flush-test");
     scheduler.register_listener(listener);
 
     // Publish some events
@@ -206,10 +231,7 @@ async fn explicit_shutdown_flushes_buffer() {
         bus.publish(make_node_event(i));
     }
 
-    // Small delay for events to reach scheduler buffer
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    // Explicit shutdown should flush remaining events
+    // Explicit shutdown drains remaining events (no sleep needed)
     scheduler.shutdown().await;
 
     let received = batches.lock().clone();
@@ -227,24 +249,27 @@ async fn late_registered_listener_gets_only_new_events() {
     let config = BatchConfig::new(100, Duration::from_millis(30));
     let scheduler = Scheduler::new(&bus, config);
 
-    let (l1, batches1) = RecordingListener::new("early");
+    let (l1, batches1, mut rx1) = RecordingListener::new("early");
     scheduler.register_listener(l1);
 
     // Publish first events
     bus.publish(make_node_event(1));
     bus.publish(make_node_event(2));
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Wait for early listener to receive the first batch
+    wait_for_events(&mut rx1, 2).await;
 
     // Now register second listener
-    let (l2, batches2) = RecordingListener::new("late");
+    let (l2, batches2, mut rx2) = RecordingListener::new("late");
     scheduler.register_listener(l2);
 
     // Publish more events
     bus.publish(make_node_event(3));
     bus.publish(make_node_event(4));
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Wait for both listeners to receive the new events
+    wait_for_events(&mut rx1, 4).await;
+    wait_for_events(&mut rx2, 2).await;
 
     let total1: usize = batches1.lock().iter().map(|b| b.len()).sum();
     let total2: usize = batches2.lock().iter().map(|b| b.len()).sum();
@@ -271,7 +296,7 @@ async fn batch_size_one_dispatches_immediately() {
     let config = BatchConfig::new(1, Duration::from_secs(60));
     let scheduler = Scheduler::new(&bus, config);
 
-    let (listener, batches) = RecordingListener::new("batch-1");
+    let (listener, batches, mut rx) = RecordingListener::new("batch-1");
     scheduler.register_listener(listener);
 
     // Publish 5 events one at a time
@@ -279,7 +304,8 @@ async fn batch_size_one_dispatches_immediately() {
         bus.publish(make_node_event(i));
     }
 
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Wait for all events via channel notification
+    wait_for_events(&mut rx, 5).await;
 
     let received = batches.lock().clone();
     let total: usize = received.iter().map(|b| b.len()).sum();
@@ -307,7 +333,7 @@ async fn large_burst_all_delivered() {
     let config = BatchConfig::new(50, Duration::from_millis(30));
     let scheduler = Scheduler::new(&bus, config);
 
-    let (listener, batches) = RecordingListener::new("burst");
+    let (listener, batches, mut rx) = RecordingListener::new("burst");
     scheduler.register_listener(listener);
 
     let event_count = 500;
@@ -315,8 +341,8 @@ async fn large_burst_all_delivered() {
         bus.publish(make_node_event(i));
     }
 
-    // Give plenty of time for processing
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Wait for all events via channel notification
+    wait_for_events(&mut rx, event_count as usize).await;
 
     let received = batches.lock().clone();
     let total: usize = received.iter().map(|b| b.len()).sum();
@@ -331,21 +357,15 @@ async fn large_burst_all_delivered() {
 // ========================================================================
 // Bus closed path — drop the bus AND the scheduler while loop is running
 // This covers L275-280 (RecvError::Closed branch with flush)
-// The broadcast channel only closes when ALL Senders are dropped.
-// The Scheduler owns a clone of the bus (which contains a Sender),
-// so we must drop the scheduler too. We do this by dropping the
-// scheduler (without calling shutdown) after dropping the external bus.
 // ========================================================================
 
 #[tokio::test]
 async fn bus_closed_flushes_remaining_and_stops() {
-    // Use with_capacity(1) — a tiny channel that we can control
     let bus = MutationBus::with_capacity(16384);
-    // Large batch size + long delay so events stay in the buffer
     let config = BatchConfig::new(1000, Duration::from_secs(60));
     let scheduler = Scheduler::new(&bus, config);
 
-    let (listener, batches) = RecordingListener::new("bus-close");
+    let (listener, batches, mut rx) = RecordingListener::new("bus-close");
     scheduler.register_listener(listener);
 
     // Publish events
@@ -353,18 +373,13 @@ async fn bus_closed_flushes_remaining_and_stops() {
         bus.publish(make_node_event(i));
     }
 
-    // Give events time to reach the scheduler buffer
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    // Drop the external bus first, then drop the scheduler.
-    // Dropping the scheduler drops its internal bus clone (closing all senders)
-    // AND drops the watch::Sender (shutdown signal).
-    // The background task sees either Closed or shutdown — both flush the buffer.
+    // Drop bus and scheduler — the background task sees either Closed or shutdown
+    // and drains the buffer. We use a oneshot to detect when events arrive.
     drop(bus);
     drop(scheduler);
 
-    // Give the background task time to flush and exit
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Wait for the flush to deliver events (with timeout for safety)
+    let _ = tokio::time::timeout(Duration::from_secs(5), rx.wait_for(|c| *c >= 3)).await;
 
     let received = batches.lock().clone();
     let total: usize = received.iter().map(|b| b.len()).sum();
@@ -383,7 +398,7 @@ async fn timeout_flushes_incomplete_batch() {
     let config = BatchConfig::new(1000, Duration::from_millis(30));
     let scheduler = Scheduler::new(&bus, config);
 
-    let (listener, batches) = RecordingListener::new("timeout");
+    let (listener, batches, mut rx) = RecordingListener::new("timeout");
     scheduler.register_listener(listener);
 
     // Publish fewer events than max_batch_size
@@ -391,8 +406,8 @@ async fn timeout_flushes_incomplete_batch() {
         bus.publish(make_node_event(i));
     }
 
-    // Wait longer than max_delay for timeout to trigger
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Wait for events via channel (timeout flush will deliver them)
+    wait_for_events(&mut rx, 3).await;
 
     let received = batches.lock().clone();
     let total: usize = received.iter().map(|b| b.len()).sum();
@@ -403,11 +418,6 @@ async fn timeout_flushes_incomplete_batch() {
 
 // ========================================================================
 // Shutdown drains events from channel (L228-230)
-// Publish events right before shutdown so they're in the broadcast channel.
-// The key: the scheduler loop is blocked waiting for `shutdown_rx.changed()`
-// or `rx.recv()`. We publish events and call shutdown nearly simultaneously
-// so that when the shutdown signal wins (biased select), try_recv finds
-// events still in the channel.
 // ========================================================================
 
 #[tokio::test]
@@ -417,23 +427,18 @@ async fn shutdown_drains_channel_events() {
     let config = BatchConfig::new(10000, Duration::from_secs(3600));
     let scheduler = Scheduler::new(&bus, config);
 
-    let (listener, batches) = RecordingListener::new("drain");
+    let (listener, batches, _rx) = RecordingListener::new("drain");
     scheduler.register_listener(listener);
 
-    // Give the scheduler loop a moment to start
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    // Yield to let the scheduler loop start
+    tokio::task::yield_now().await;
 
-    // Publish a burst of events and immediately shutdown — the biased select
-    // will see the shutdown signal first and try_recv will drain the channel
-    let bus_clone = bus.clone();
-    tokio::spawn(async move {
-        for i in 0..10 {
-            bus_clone.publish(make_node_event(i));
-        }
-    });
+    // Publish a burst of events
+    for i in 0..10 {
+        bus.publish(make_node_event(i));
+    }
 
-    // Tiny sleep to let events enter the channel, then shutdown
-    tokio::time::sleep(Duration::from_millis(5)).await;
+    // Shutdown drains all channel events (no sleep needed)
     scheduler.shutdown().await;
 
     let received = batches.lock().clone();
@@ -452,7 +457,7 @@ async fn lagged_receiver_continues() {
     let config = BatchConfig::new(1, Duration::from_millis(30));
     let scheduler = Scheduler::new(&bus, config);
 
-    let (listener, batches) = RecordingListener::new("lagged");
+    let (listener, batches, mut rx) = RecordingListener::new("lagged");
     scheduler.register_listener(listener);
 
     // Flood the bus beyond its capacity to cause lag
@@ -460,13 +465,12 @@ async fn lagged_receiver_continues() {
         bus.publish(make_node_event(i));
     }
 
-    // Give the scheduler time to process what it can
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Wait for at least some events to arrive (lag means not all will be received)
+    let _ = tokio::time::timeout(Duration::from_secs(5), rx.wait_for(|c| *c > 0)).await;
 
     // The scheduler should have continued despite lagging — it gets at least some events
     let received = batches.lock().clone();
     let total: usize = received.iter().map(|b| b.len()).sum();
-    // We can't know exactly how many, but it should have recovered and received some
     assert!(
         total > 0,
         "scheduler should recover from lag and receive events"
@@ -483,16 +487,25 @@ async fn lagged_receiver_continues() {
 struct SelectiveListener {
     name: String,
     batches: Arc<Mutex<Vec<Vec<MutationEvent>>>>,
+    event_count_tx: tokio::sync::watch::Sender<usize>,
 }
 
 impl SelectiveListener {
-    fn new(name: &str) -> (Arc<Self>, Arc<Mutex<Vec<Vec<MutationEvent>>>>) {
+    fn new(
+        name: &str,
+    ) -> (
+        Arc<Self>,
+        Arc<Mutex<Vec<Vec<MutationEvent>>>>,
+        tokio::sync::watch::Receiver<usize>,
+    ) {
         let batches = Arc::new(Mutex::new(Vec::new()));
+        let (tx, rx) = tokio::sync::watch::channel(0usize);
         let listener = Arc::new(Self {
             name: name.to_string(),
             batches: Arc::clone(&batches),
+            event_count_tx: tx,
         });
-        (listener, batches)
+        (listener, batches, rx)
     }
 }
 
@@ -505,7 +518,12 @@ impl MutationListener for SelectiveListener {
     async fn on_event(&self, _event: &MutationEvent) {}
 
     async fn on_batch(&self, events: &[MutationEvent]) {
-        self.batches.lock().push(events.to_vec());
+        let total = {
+            let mut b = self.batches.lock();
+            b.push(events.to_vec());
+            b.iter().map(|batch| batch.len()).sum()
+        };
+        let _ = self.event_count_tx.send(total);
     }
 
     fn accepts(&self, event: &MutationEvent) -> bool {
@@ -555,11 +573,10 @@ async fn selective_listener_receives_only_accepted_events() {
     let config = BatchConfig::new(100, Duration::from_millis(30));
     let scheduler = Scheduler::new(&bus, config);
 
-    let (selective, sel_batches) = SelectiveListener::new("selective");
+    let (selective, sel_batches, mut sel_rx) = SelectiveListener::new("selective");
     scheduler.register_listener(selective);
 
     // Publish a mix of NodeCreated and NodeDeleted events in a single batch
-    // so that the scheduler has them together and must filter
     let events = vec![
         make_node_event(1),
         make_node_deleted_event(2),
@@ -568,7 +585,8 @@ async fn selective_listener_receives_only_accepted_events() {
     ];
     bus.publish_batch(MutationBatch::new(events));
 
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Wait for the 2 accepted NodeCreated events
+    wait_for_events(&mut sel_rx, 2).await;
 
     let received = sel_batches.lock().clone();
     let total: usize = received.iter().map(|b| b.len()).sum();
@@ -587,7 +605,7 @@ async fn reject_all_listener_receives_nothing() {
     let scheduler = Scheduler::new(&bus, config);
 
     let reject = RejectAllListener::new("reject-all");
-    let (recording, rec_batches) = RecordingListener::new("accept-all");
+    let (recording, rec_batches, mut rec_rx) = RecordingListener::new("accept-all");
 
     // Register both: one that rejects everything, one that accepts everything
     scheduler.register_listener(reject);
@@ -596,7 +614,8 @@ async fn reject_all_listener_receives_nothing() {
     bus.publish(make_node_event(1));
     bus.publish(make_node_event(2));
 
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Wait for the accept-all listener to receive 2 events
+    wait_for_events(&mut rec_rx, 2).await;
 
     // The accept-all listener should have received events
     let total: usize = rec_batches.lock().iter().map(|b| b.len()).sum();
@@ -615,18 +634,20 @@ async fn drop_scheduler_without_shutdown() {
     let config = BatchConfig::new(1000, Duration::from_secs(60));
     let scheduler = Scheduler::new(&bus, config);
 
-    let (listener, _batches) = RecordingListener::new("drop-test");
+    let (listener, _batches, mut rx) = RecordingListener::new("drop-test");
     scheduler.register_listener(listener);
 
     bus.publish(make_node_event(1));
-    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // Wait for event to be received before dropping
+    let _ = tokio::time::timeout(Duration::from_secs(5), rx.wait_for(|c| *c >= 1)).await;
 
     // Drop the scheduler without calling shutdown — the watch sender is dropped,
     // which causes shutdown_rx.changed() to return Err, triggering the drain path
     drop(scheduler);
 
-    // Give the background task time to notice the drop and exit
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Yield to let the background task notice the drop and exit
+    tokio::task::yield_now().await;
     // If we get here without hanging, the background task exited gracefully
 }
 
@@ -641,14 +662,15 @@ async fn batch_splitting_with_small_max_size() {
     let config = BatchConfig::new(2, Duration::from_millis(30));
     let scheduler = Scheduler::new(&bus, config);
 
-    let (listener, batches) = RecordingListener::new("split");
+    let (listener, batches, mut rx) = RecordingListener::new("split");
     scheduler.register_listener(listener);
 
     // Send 5 events in a single MutationBatch via the bus
     let events: Vec<MutationEvent> = (0..5).map(make_node_event).collect();
     bus.publish_batch(MutationBatch::new(events));
 
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Wait for all 5 events
+    wait_for_events(&mut rx, 5).await;
 
     let received = batches.lock().clone();
     let total: usize = received.iter().map(|b| b.len()).sum();

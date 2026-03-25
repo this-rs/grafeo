@@ -32,6 +32,13 @@ pub struct EnergyConfigToml {
     pub half_life_secs: u64,
     /// Minimum energy threshold.
     pub min_energy: f64,
+    /// Maximum energy cap — energy is clamped to `[0.0, max_energy]` after every operation.
+    pub max_energy: f64,
+    /// Reference energy for score normalization: `energy_score = 1 - exp(-energy / ref_energy)`.
+    pub ref_energy: f64,
+    /// Structural reinforcement coefficient (α).
+    /// Modulates half-life by node degree: `effective_half_life = base * (1 + α * ln(1 + degree))`.
+    pub structural_reinforcement_alpha: f64,
 }
 
 impl Default for EnergyConfigToml {
@@ -42,6 +49,9 @@ impl Default for EnergyConfigToml {
             default_energy: 1.0,
             half_life_secs: 24 * 3600,
             min_energy: 0.01,
+            max_energy: 10.0,
+            ref_energy: 1.0,
+            structural_reinforcement_alpha: 0.0,
         }
     }
 }
@@ -55,6 +65,9 @@ impl EnergyConfigToml {
             default_energy: self.default_energy,
             default_half_life: Duration::from_secs(self.half_life_secs),
             min_energy: self.min_energy,
+            max_energy: self.max_energy,
+            ref_energy: self.ref_energy,
+            structural_reinforcement_alpha: self.structural_reinforcement_alpha,
         }
     }
 }
@@ -73,6 +86,10 @@ pub struct SynapseConfigToml {
     pub half_life_secs: u64,
     /// Minimum weight threshold for pruning.
     pub min_weight: f64,
+    /// Maximum individual synapse weight cap.
+    pub max_synapse_weight: f64,
+    /// Maximum total outgoing weight from a single node before competitive normalization.
+    pub max_total_outgoing_weight: f64,
 }
 
 impl Default for SynapseConfigToml {
@@ -83,6 +100,8 @@ impl Default for SynapseConfigToml {
             reinforce_amount: 0.2,
             half_life_secs: 7 * 24 * 3600,
             min_weight: 0.01,
+            max_synapse_weight: 10.0,
+            max_total_outgoing_weight: 100.0,
         }
     }
 }
@@ -96,6 +115,8 @@ impl SynapseConfigToml {
             reinforce_amount: self.reinforce_amount,
             default_half_life: Duration::from_secs(self.half_life_secs),
             min_weight: self.min_weight,
+            max_synapse_weight: self.max_synapse_weight,
+            max_total_outgoing_weight: self.max_total_outgoing_weight,
         }
     }
 }
@@ -106,11 +127,34 @@ impl SynapseConfigToml {
 pub struct FabricConfigToml {
     /// Whether the fabric subsystem is enabled.
     pub enabled: bool,
+    /// Reference weight for synapse score normalization: `synapse_score = tanh(weight / ref_weight)`.
+    pub ref_weight: f64,
+    /// Reference mutation count for normalization: `score = min(1, log(1+count)/log(1+ref_count))`.
+    pub ref_mutation_count: f64,
+    /// Weight for pagerank component in risk scoring.
+    pub risk_weight_pagerank: f64,
+    /// Weight for mutation_frequency component in risk scoring.
+    pub risk_weight_mutation_frequency: f64,
+    /// Weight for annotation gap component in risk scoring.
+    pub risk_weight_annotation_gap: f64,
+    /// Weight for betweenness component in risk scoring.
+    pub risk_weight_betweenness: f64,
+    /// Weight for scar component in risk scoring.
+    pub risk_weight_scar: f64,
 }
 
 impl Default for FabricConfigToml {
     fn default() -> Self {
-        Self { enabled: false }
+        Self {
+            enabled: false,
+            ref_weight: 1.0,
+            ref_mutation_count: 100.0,
+            risk_weight_pagerank: 0.25,
+            risk_weight_mutation_frequency: 0.25,
+            risk_weight_annotation_gap: 0.20,
+            risk_weight_betweenness: 0.15,
+            risk_weight_scar: 0.15,
+        }
     }
 }
 
@@ -234,6 +278,10 @@ pub struct StagnationConfigToml {
     pub trend_tolerance: f64,
     /// Scan interval in seconds.
     pub scan_interval_secs: u64,
+    /// Reference energy for smooth normalization in stagnation formula.
+    pub ref_energy: f64,
+    /// Reference synapse weight for smooth normalization in stagnation formula.
+    pub ref_synapse_weight: f64,
 }
 
 impl Default for StagnationConfigToml {
@@ -249,6 +297,8 @@ impl Default for StagnationConfigToml {
             trend_window_size: 5,
             trend_tolerance: 0.05,
             scan_interval_secs: 3600,
+            ref_energy: 1.0,
+            ref_synapse_weight: 1.0,
         }
     }
 }
@@ -267,6 +317,8 @@ impl StagnationConfigToml {
             trend_window_size: self.trend_window_size,
             trend_tolerance: self.trend_tolerance,
             scan_interval: Duration::from_secs(self.scan_interval_secs),
+            ref_energy: self.ref_energy,
+            ref_synapse_weight: self.ref_synapse_weight,
         }
     }
 }
@@ -340,6 +392,10 @@ pub struct CognitiveConfig {
     pub memory: MemoryConfigToml,
     /// Stagnation detection configuration.
     pub stagnation: StagnationConfigToml,
+    /// Maximum number of entries in each cognitive store's DashMap cache.
+    /// When exceeded, LRU eviction removes the least-recently-accessed entries.
+    /// Evicted entries are reloaded on-demand from the graph store.
+    pub max_cache_entries: usize,
 }
 
 impl Default for CognitiveConfig {
@@ -353,6 +409,7 @@ impl Default for CognitiveConfig {
             scar: ScarConfigToml::default(),
             memory: MemoryConfigToml::default(),
             stagnation: StagnationConfigToml::default(),
+            max_cache_entries: 100_000,
         }
     }
 }
@@ -374,7 +431,10 @@ impl CognitiveConfig {
                 enabled: true,
                 ..Default::default()
             },
-            fabric: FabricConfigToml { enabled: true },
+            fabric: FabricConfigToml {
+                enabled: true,
+                ..Default::default()
+            },
             co_change: CoChangeConfigToml {
                 enabled: true,
                 ..Default::default()
@@ -392,6 +452,7 @@ impl CognitiveConfig {
                 enabled: true,
                 ..Default::default()
             },
+            max_cache_entries: 100_000,
         }
     }
 
@@ -534,6 +595,8 @@ max_batch_nodes = 50
             trend_window_size: 10,
             trend_tolerance: 0.1,
             scan_interval_secs: 1800,
+            ref_energy: 2.0,
+            ref_synapse_weight: 3.0,
         };
         let runtime = toml_config.to_runtime();
         assert_eq!(runtime.weight_energy, 0.5);
@@ -545,5 +608,7 @@ max_batch_nodes = 50
         assert_eq!(runtime.trend_window_size, 10);
         assert_eq!(runtime.trend_tolerance, 0.1);
         assert_eq!(runtime.scan_interval, Duration::from_secs(1800));
+        assert_eq!(runtime.ref_energy, 2.0);
+        assert_eq!(runtime.ref_synapse_weight, 3.0);
     }
 }

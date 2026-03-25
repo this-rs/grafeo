@@ -24,7 +24,7 @@
 //!
 //! - `energy` — Energy subsystem (exponential decay + boost)
 //! - `synapse` — Hebbian synapse learning
-//! - `fabric` — Knowledge fabric metrics (churn, density, risk)
+//! - `fabric` — Knowledge fabric metrics (mutation frequency, annotation density, risk)
 //! - `co-change` — Co-change detection (temporal coupling)
 //! - `gds-refresh` — GDS refresh scheduler (PageRank, Louvain, Betweenness)
 //! - `cognitive` — Convenience: energy + synapse
@@ -73,10 +73,23 @@ pub mod distillation;
 #[cfg(feature = "episodic")]
 pub mod episodic;
 
+#[cfg(feature = "consolidation")]
+pub mod consolidation;
+
+// Provenance — automatic cognitive event tracking
+pub mod provenance;
+
+// Per-tenant isolation via named graphs
+pub mod tenant;
+
+// Search pipeline (requires at least cognitive features for full functionality)
+pub mod search;
+
 // Always-available modules
 pub mod config;
 pub mod engine;
 pub mod error;
+pub mod store_trait;
 
 // ---------------------------------------------------------------------------
 // Re-exports
@@ -93,27 +106,33 @@ pub use co_change::{CoChangeConfig, CoChangeDetector, CoChangeRelation, CoChange
 pub use config::CognitiveConfig;
 
 #[cfg(feature = "energy")]
-pub use energy::{EnergyConfig, EnergyListener, EnergyStore, NodeEnergy};
+pub use energy::{
+    EnergyConfig, EnergyListener, EnergyStore, NodeEnergy, effective_half_life, energy_score,
+};
 
 pub use engine::{CognitiveEngine, CognitiveEngineBuilder, DefaultCognitiveEngine};
 pub use error::CognitiveError;
 
 #[cfg(feature = "fabric")]
-pub use fabric::{FabricListener, FabricScore, FabricStore};
+pub use fabric::{FabricListener, FabricScore, FabricStore, RiskWeights};
 
 #[cfg(feature = "gds-refresh")]
 pub use gds_refresh::{GdsRefreshConfig, GdsRefreshScheduler};
 
 #[cfg(feature = "synapse")]
-pub use synapse::{Synapse, SynapseConfig, SynapseListener, SynapseStore};
+pub use synapse::{
+    Synapse, SynapseConfig, SynapseListener, SynapseStore, mutation_frequency_score, synapse_score,
+};
 
 #[cfg(feature = "scar")]
 pub use scar::{Scar, ScarConfig, ScarStore};
 
+#[cfg(all(feature = "memory", not(target_arch = "wasm32")))]
+pub use memory::FileArchiveBackend;
 #[cfg(feature = "memory")]
 pub use memory::{
-    ArchiveBackend, FileArchiveBackend, InMemoryArchiveBackend, MemoryConfig, MemoryHorizon,
-    MemoryManager, MemoryStore, NodeMemoryState, SweepResult,
+    ArchiveBackend, InMemoryArchiveBackend, MemoryConfig, MemoryHorizon, MemoryManager,
+    MemoryStore, NodeMemoryState, SweepResult,
 };
 
 #[cfg(feature = "stagnation")]
@@ -135,3 +154,20 @@ pub use episodic::{
     ActivationStep, Episode, EpisodeConfig, EpisodeHorizon, EpisodeMemoryManager, EpisodeRecorder,
     EpisodeStore, EpisodeSweepResult, Outcome, Stimulus, ValidationResult,
 };
+
+#[cfg(feature = "consolidation")]
+pub use consolidation::{
+    ConsolidationConfig, ConsolidationEngine, ConsolidationResult,
+    EDGE_DERIVED_FROM as EDGE_CONSOLIDATION_DERIVED_FROM,
+};
+
+pub use search::{
+    NoopReranker, Reranker, SearchConfig, SearchPipeline, SearchResult, SearchWeights,
+};
+
+pub use provenance::{
+    CognitiveEvent, CognitiveEventId, CognitiveEventType, DerivedFromRecord, EDGE_DERIVED_FROM,
+    EDGE_HAS_COGNITIVE_EVENT, ProvenanceRecorder,
+};
+
+pub use tenant::{TenantError, TenantGraph, TenantInfo, TenantManager};

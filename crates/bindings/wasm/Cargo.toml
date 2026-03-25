@@ -15,6 +15,8 @@ crate-type = ["cdylib", "rlib"]
 grafeo-engine = { workspace = true, features = ["gql", "regex-lite"] }
 grafeo-core = { workspace = true, default-features = false, optional = true }
 grafeo-common.workspace = true
+grafeo-reactive = { workspace = true, optional = true }
+grafeo-cognitive = { workspace = true, optional = true, features = ["cognitive"] }
 grafeo-bindings-common = { path = "../common", default-features = false }
 
 # WASM bindings
@@ -49,6 +51,8 @@ text-index = ["grafeo-engine/text-index"]
 hybrid-search = ["grafeo-engine/hybrid-search"]
 languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]
 ai = ["vector-index", "text-index", "hybrid-search"]
+# Cognitive features (energy scoring, synapses, activation)
+cognitive = ["dep:grafeo-reactive", "dep:grafeo-cognitive"]
 # Named profiles
 browser = ["gql", "grafeo-engine/regex-lite"]  # GQL + regex-lite (~507 KB gzip)
 full = ["languages", "ai"]  # All languages + AI search

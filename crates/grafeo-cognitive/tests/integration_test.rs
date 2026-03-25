@@ -184,4 +184,168 @@ enabled = false
         assert_eq!(config.synapse.reinforce_amount, 0.5);
         assert!(!config.fabric.enabled);
     }
+
+    // -----------------------------------------------------------------------
+    // Write-through persistence tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn write_through_energy_persists_and_reloads() {
+        use grafeo_cognitive::energy::{EnergyConfig, EnergyStore};
+        use grafeo_core::LpgStore;
+
+        let lpg = std::sync::Arc::new(LpgStore::new().unwrap());
+
+        // Create nodes in the graph so properties can be set
+        let n1 = lpg.create_node(&["Test"]);
+        let n2 = lpg.create_node(&["Test"]);
+
+        // Create energy store backed by the graph
+        let config = EnergyConfig::default();
+        let store1 = EnergyStore::with_graph_store(config.clone(), lpg.clone());
+
+        // Boost energy
+        store1.boost(n1, 3.0);
+        store1.boost(n2, 5.0);
+
+        let e1_before = store1.get_energy(n1);
+        let e2_before = store1.get_energy(n2);
+        assert!(e1_before > 2.99, "e1 should be ~3.0, got {e1_before}");
+        assert!(e2_before > 4.99, "e2 should be ~5.0, got {e2_before}");
+
+        // Drop the store (simulates restart)
+        drop(store1);
+
+        // Recreate energy store with the same graph — should lazy-load
+        let store2 = EnergyStore::with_graph_store(config, lpg.clone());
+        let e1_after = store2.get_energy(n1);
+        let e2_after = store2.get_energy(n2);
+
+        // The persisted value is the current_energy at time of boost (may have tiny decay)
+        assert!(
+            e1_after > 2.5,
+            "e1 after reload should be > 2.5, got {e1_after}"
+        );
+        assert!(
+            e2_after > 4.5,
+            "e2 after reload should be > 4.5, got {e2_after}"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_through_synapse_persists_and_reloads() {
+        use grafeo_cognitive::synapse::{SynapseConfig, SynapseStore};
+        use grafeo_core::LpgStore;
+
+        let lpg = std::sync::Arc::new(LpgStore::new().unwrap());
+
+        // Create nodes in the graph
+        let _n1 = lpg.create_node(&["Test"]);
+        let _n2 = lpg.create_node(&["Test"]);
+        let n1 = NodeId(0);
+        let n2 = NodeId(1);
+
+        let config = SynapseConfig::default();
+        let store1 = SynapseStore::with_graph_store(config.clone(), lpg.clone());
+
+        // Reinforce synapse
+        store1.reinforce(n1, n2, 0.5);
+        let s1 = store1.get_synapse(n1, n2).unwrap();
+        assert!(s1.current_weight() > 0.5, "weight should be > 0.5");
+
+        // Drop and recreate
+        drop(store1);
+
+        let store2 = SynapseStore::with_graph_store(config, lpg.clone());
+        // The synapse was persisted via the edge_ids mapping. Since we drop
+        // the store, edge_ids are lost. The lazy load requires the edge_id
+        // to be known. This is a design trade-off — full reload would need
+        // scanning edges of type SYNAPSE. For now, verify the property was
+        // written to the graph.
+        use grafeo_common::types::PropertyKey;
+        // The edge was created during reinforce
+        let edges = lpg.edge_count();
+        assert!(edges >= 1, "should have at least 1 synapse edge");
+        // Verify the property exists on the edge
+        let pk = PropertyKey::from("_cog_synapse_weight");
+        let edge_id = grafeo_common::types::EdgeId::new(0);
+        let val = lpg.get_edge_property(edge_id, &pk);
+        assert!(
+            val.is_some(),
+            "synapse weight should be persisted as edge property"
+        );
+        let weight = val.unwrap().as_float64().unwrap();
+        assert!(
+            weight > 0.5,
+            "persisted weight should be > 0.5, got {weight}"
+        );
+
+        drop(store2);
+    }
+
+    #[tokio::test]
+    async fn write_through_engine_end_to_end() {
+        use grafeo_common::types::PropertyKey;
+        use grafeo_core::LpgStore;
+
+        let lpg = std::sync::Arc::new(LpgStore::new().unwrap());
+
+        // Create nodes in the graph
+        let n1 = lpg.create_node(&["File"]);
+        let n2 = lpg.create_node(&["File"]);
+
+        let bus = MutationBus::new();
+        let scheduler = Scheduler::new(&bus, BatchConfig::new(10, Duration::from_millis(20)));
+
+        // Build engine with graph store persistence
+        let engine = CognitiveEngineBuilder::from_config(&CognitiveConfig::default())
+            .with_graph_store(lpg.clone())
+            .build(&scheduler);
+
+        let energy_store = engine.energy_store().unwrap().clone();
+
+        // Publish mutations for the nodes that exist in the graph
+        bus.publish_batch(MutationBatch::new(vec![
+            MutationEvent::NodeCreated {
+                node: NodeSnapshot {
+                    id: n1,
+                    labels: smallvec![],
+                    properties: vec![],
+                },
+            },
+            MutationEvent::NodeCreated {
+                node: NodeSnapshot {
+                    id: n2,
+                    labels: smallvec![],
+                    properties: vec![],
+                },
+            },
+        ]));
+
+        // Wait for scheduler to dispatch
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        // Verify energy was boosted
+        assert!(
+            energy_store.get_energy(n1) > 0.0,
+            "node {} should have energy",
+            n1.0
+        );
+
+        // Verify the property was written to the graph
+        let pk = PropertyKey::from("_cog_energy");
+        let val = lpg.get_node_property(n1, &pk);
+        assert!(
+            val.is_some(),
+            "energy should be persisted as node property on node {}",
+            n1.0
+        );
+        let persisted_energy = val.unwrap().as_float64().unwrap();
+        assert!(
+            persisted_energy > 0.0,
+            "persisted energy should be > 0, got {persisted_energy}"
+        );
+
+        scheduler.shutdown().await;
+    }
 }

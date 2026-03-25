@@ -11,12 +11,14 @@
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use grafeo_common::types::NodeId;
+use grafeo_common::types::{EdgeId, NodeId};
 use grafeo_reactive::{MutationEvent, MutationListener};
 use smallvec::SmallVec;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use crate::store_trait::{OptionalGraphStore, PROP_CO_CHANGE_COUNT, persist_edge_f64};
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -143,21 +145,58 @@ impl CoChangeKey {
 // CoChangeStore
 // ---------------------------------------------------------------------------
 
+/// Edge type used for co-change edges in the graph store.
+const CO_CHANGED_EDGE_TYPE: &str = "CO_CHANGED";
+
 /// Thread-safe store for co-change relations between nodes.
+///
+/// When a backing [`GraphStoreMut`](grafeo_core::graph::GraphStoreMut) is
+/// provided, co-change counts are persisted as edge properties on
+/// `CO_CHANGED`-typed edges (write-through).
 pub struct CoChangeStore {
     /// Co-change relations indexed by canonical key.
     relations: DashMap<CoChangeKey, CoChangeRelation>,
+    /// Mapping from co-change key to graph edge ID (for persistence).
+    edge_ids: DashMap<CoChangeKey, EdgeId>,
     /// Configuration.
     config: CoChangeConfig,
+    /// Optional backing graph store for write-through persistence.
+    graph_store: OptionalGraphStore,
 }
 
 impl CoChangeStore {
-    /// Creates a new, empty co-change store.
+    /// Creates a new, empty co-change store (in-memory only).
     pub fn new(config: CoChangeConfig) -> Self {
         Self {
             relations: DashMap::new(),
+            edge_ids: DashMap::new(),
             config,
+            graph_store: None,
         }
+    }
+
+    /// Creates a new co-change store with write-through persistence.
+    pub fn with_graph_store(
+        config: CoChangeConfig,
+        graph_store: Arc<dyn grafeo_core::graph::GraphStoreMut>,
+    ) -> Self {
+        Self {
+            relations: DashMap::new(),
+            edge_ids: DashMap::new(),
+            config,
+            graph_store: Some(graph_store),
+        }
+    }
+
+    /// Ensures a graph edge exists for the co-change relation and returns its EdgeId.
+    fn ensure_edge(&self, key: CoChangeKey) -> Option<EdgeId> {
+        let gs = self.graph_store.as_ref()?;
+        if let Some(eid) = self.edge_ids.get(&key) {
+            return Some(*eid);
+        }
+        let eid = gs.create_edge(key.0, key.1, CO_CHANGED_EDGE_TYPE);
+        self.edge_ids.insert(key, eid);
+        Some(eid)
     }
 
     /// Records a co-change between two nodes.
@@ -173,6 +212,13 @@ impl CoChangeStore {
             .entry(key)
             .and_modify(|rel| rel.record())
             .or_insert_with(|| CoChangeRelation::new(key.0, key.1, self.config.strength_half_life));
+        // Write-through
+        if let Some(eid) = self.ensure_edge(key)
+            && let Some(gs) = &self.graph_store
+            && let Some(rel) = self.relations.get(&key)
+        {
+            persist_edge_f64(gs.as_ref(), eid, PROP_CO_CHANGE_COUNT, f64::from(rel.count));
+        }
     }
 
     /// Returns all co-change relations for a given node, sorted by strength descending.
@@ -239,14 +285,24 @@ impl std::fmt::Debug for CoChangeStore {
 /// Co-change: when two nodes appear in the same mutation batch (transaction),
 /// they are considered temporally coupled. This is different from synapses
 /// which represent semantic co-activation.
+///
+/// When `window_duration > 0`, nodes from recent batches (within the window)
+/// are also paired with nodes in the current batch, enabling cross-batch
+/// co-change detection for temporally close mutations.
 pub struct CoChangeDetector {
     store: Arc<CoChangeStore>,
+    /// Recent node sets from past batches, with their timestamps.
+    /// Used for time-windowed co-change detection.
+    recent_batches: parking_lot::Mutex<Vec<(Instant, Vec<NodeId>)>>,
 }
 
 impl CoChangeDetector {
     /// Creates a new co-change detector backed by the given store.
     pub fn new(store: Arc<CoChangeStore>) -> Self {
-        Self { store }
+        Self {
+            store,
+            recent_batches: parking_lot::Mutex::new(Vec::new()),
+        }
     }
 
     /// Returns a reference to the underlying store.
@@ -297,8 +353,37 @@ impl MutationListener for CoChangeDetector {
             return;
         }
 
-        // Record co-change for all distinct pairs
-        let nodes: Vec<NodeId> = touched.into_iter().collect();
+        let window = self.store.config().window_duration;
+        let now = Instant::now();
+
+        // Collect nodes within the time window from recent batches
+        let mut windowed_nodes: HashSet<NodeId> = touched.clone();
+        if !window.is_zero() {
+            let mut recent = self.recent_batches.lock();
+            // Evict expired entries
+            recent.retain(|(ts, _)| now.duration_since(*ts) <= window);
+            // Merge recent nodes into the pairing set
+            for (_ts, nodes) in recent.iter() {
+                for &nid in nodes {
+                    windowed_nodes.insert(nid);
+                }
+            }
+            // Store current batch for future window lookups
+            recent.push((now, touched.iter().copied().collect()));
+        }
+
+        // Guard combined set against explosion
+        if windowed_nodes.len() > self.store.config().max_batch_nodes {
+            tracing::warn!(
+                nodes = windowed_nodes.len(),
+                max = self.store.config().max_batch_nodes,
+                "co-change windowed set too large, skipping"
+            );
+            return;
+        }
+
+        // Record co-change for all distinct pairs in the combined set
+        let nodes: Vec<NodeId> = windowed_nodes.into_iter().collect();
         for i in 0..nodes.len() {
             for j in (i + 1)..nodes.len() {
                 self.store.record_co_change(nodes[i], nodes[j]);

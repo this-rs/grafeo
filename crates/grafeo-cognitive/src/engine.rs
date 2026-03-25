@@ -6,6 +6,7 @@
 //! [`Scheduler`].
 
 use crate::config::CognitiveConfig;
+use crate::provenance::ProvenanceRecorder;
 #[allow(unused_imports)]
 use std::sync::Arc;
 
@@ -22,6 +23,8 @@ use crate::fabric::{FabricListener, FabricStore};
 #[cfg(feature = "co-change")]
 use crate::co_change::{CoChangeConfig, CoChangeDetector, CoChangeStore};
 
+use crate::tenant::TenantManager;
+use grafeo_core::graph::GraphStoreMut;
 use grafeo_reactive::Scheduler;
 
 // ---------------------------------------------------------------------------
@@ -54,6 +57,12 @@ pub trait CognitiveEngine: Send + Sync + std::fmt::Debug {
 
     /// Returns the number of active subsystems.
     fn active_subsystem_count(&self) -> usize;
+
+    /// Returns the tenant manager for per-tenant graph isolation.
+    fn tenant_manager(&self) -> &TenantManager;
+
+    /// Returns the provenance recorder for cognitive event tracking.
+    fn provenance(&self) -> &Arc<ProvenanceRecorder>;
 }
 
 // ---------------------------------------------------------------------------
@@ -79,6 +88,12 @@ pub struct DefaultCognitiveEngine {
 
     /// Count of active subsystems.
     active_count: usize,
+
+    /// Per-tenant named graph isolation manager.
+    tenant_manager: TenantManager,
+
+    /// Provenance recorder for automatic cognitive event tracking.
+    provenance: Arc<ProvenanceRecorder>,
 }
 
 impl CognitiveEngine for DefaultCognitiveEngine {
@@ -105,6 +120,30 @@ impl CognitiveEngine for DefaultCognitiveEngine {
     fn active_subsystem_count(&self) -> usize {
         self.active_count
     }
+
+    fn tenant_manager(&self) -> &TenantManager {
+        &self.tenant_manager
+    }
+
+    fn provenance(&self) -> &Arc<ProvenanceRecorder> {
+        &self.provenance
+    }
+}
+
+impl DefaultCognitiveEngine {
+    /// Returns the tenant manager for per-tenant named graph isolation.
+    ///
+    /// Use this to create, delete, list, and switch tenants.
+    /// When a tenant is active, cognitive operations should use the
+    /// tenant-scoped stores via `tenant_manager().energy_store()` etc.
+    pub fn tenants(&self) -> &TenantManager {
+        &self.tenant_manager
+    }
+
+    /// Returns the provenance recorder for querying cognitive event history.
+    pub fn provenance_recorder(&self) -> &Arc<ProvenanceRecorder> {
+        &self.provenance
+    }
 }
 
 impl std::fmt::Debug for DefaultCognitiveEngine {
@@ -123,6 +162,9 @@ impl std::fmt::Debug for DefaultCognitiveEngine {
 
         #[cfg(feature = "co-change")]
         d.field("co_change", &self.co_change.is_some());
+
+        d.field("tenant_count", &self.tenant_manager.tenant_count());
+        d.field("provenance_events", &self.provenance.total_events());
 
         d.finish()
     }
@@ -158,6 +200,9 @@ pub struct CognitiveEngineBuilder {
 
     #[cfg(feature = "co-change")]
     co_change_config: Option<CoChangeConfig>,
+
+    /// Optional backing graph store for write-through persistence.
+    graph_store: Option<Arc<dyn GraphStoreMut>>,
 }
 
 impl CognitiveEngineBuilder {
@@ -175,6 +220,8 @@ impl CognitiveEngineBuilder {
 
             #[cfg(feature = "co-change")]
             co_change_config: None,
+
+            graph_store: None,
         }
     }
 
@@ -205,6 +252,16 @@ impl CognitiveEngineBuilder {
         }
 
         builder
+    }
+
+    /// Sets the backing graph store for write-through persistence.
+    ///
+    /// When set, all cognitive stores will persist their scores as
+    /// node/edge properties on the graph. This enables lazy reconstruction
+    /// of the hot caches on restart.
+    pub fn with_graph_store(mut self, store: Arc<dyn GraphStoreMut>) -> Self {
+        self.graph_store = Some(store);
+        self
     }
 
     /// Enables the energy subsystem with the given configuration.
@@ -238,7 +295,8 @@ impl CognitiveEngineBuilder {
     /// Builds the cognitive engine and registers listeners with the scheduler.
     ///
     /// Each enabled subsystem:
-    /// 1. Creates a shared store (`Arc<XxxStore>`)
+    /// 1. Creates a shared store (`Arc<XxxStore>`) — with write-through if a
+    ///    graph store was configured via [`with_graph_store`](Self::with_graph_store)
     /// 2. Creates a listener wrapping the store
     /// 3. Registers the listener with the scheduler
     ///
@@ -247,10 +305,19 @@ impl CognitiveEngineBuilder {
         #[allow(unused_mut)]
         let mut active_count = 0;
 
+        #[allow(unused_variables)]
+        let gs = self.graph_store;
+
         // Energy
         #[cfg(feature = "energy")]
         let energy = self.energy_config.map(|config| {
-            let store = Arc::new(EnergyStore::new(config));
+            let store = match &gs {
+                Some(graph_store) => Arc::new(EnergyStore::with_graph_store(
+                    config,
+                    Arc::clone(graph_store),
+                )),
+                None => Arc::new(EnergyStore::new(config)),
+            };
             let listener = Arc::new(EnergyListener::new(Arc::clone(&store)));
             scheduler.register_listener(listener);
             active_count += 1;
@@ -261,7 +328,13 @@ impl CognitiveEngineBuilder {
         // Synapses
         #[cfg(feature = "synapse")]
         let synapse = self.synapse_config.map(|config| {
-            let store = Arc::new(SynapseStore::new(config));
+            let store = match &gs {
+                Some(graph_store) => Arc::new(SynapseStore::with_graph_store(
+                    config,
+                    Arc::clone(graph_store),
+                )),
+                None => Arc::new(SynapseStore::new(config)),
+            };
             let listener = Arc::new(SynapseListener::new(Arc::clone(&store)));
             scheduler.register_listener(listener);
             active_count += 1;
@@ -272,7 +345,12 @@ impl CognitiveEngineBuilder {
         // Fabric
         #[cfg(feature = "fabric")]
         let fabric = if self.fabric_enabled {
-            let store = Arc::new(FabricStore::new());
+            let store = match &gs {
+                Some(graph_store) => {
+                    Arc::new(FabricStore::with_graph_store(Arc::clone(graph_store)))
+                }
+                None => Arc::new(FabricStore::new()),
+            };
             let listener = Arc::new(FabricListener::new(Arc::clone(&store)));
             scheduler.register_listener(listener);
             active_count += 1;
@@ -285,13 +363,21 @@ impl CognitiveEngineBuilder {
         // Co-change
         #[cfg(feature = "co-change")]
         let co_change = self.co_change_config.map(|config| {
-            let store = Arc::new(CoChangeStore::new(config));
+            let store = match &gs {
+                Some(graph_store) => Arc::new(CoChangeStore::with_graph_store(
+                    config,
+                    Arc::clone(graph_store),
+                )),
+                None => Arc::new(CoChangeStore::new(config)),
+            };
             let detector = Arc::new(CoChangeDetector::new(Arc::clone(&store)));
             scheduler.register_listener(detector);
             active_count += 1;
             tracing::info!("cognitive: co-change subsystem activated");
             store
         });
+
+        let provenance = Arc::new(ProvenanceRecorder::new());
 
         tracing::info!(
             active = active_count,
@@ -309,6 +395,8 @@ impl CognitiveEngineBuilder {
             #[cfg(feature = "co-change")]
             co_change,
             active_count,
+            tenant_manager: TenantManager::new(),
+            provenance,
         }
     }
 }
@@ -334,6 +422,8 @@ impl std::fmt::Debug for CognitiveEngineBuilder {
 
         #[cfg(feature = "co-change")]
         d.field("co_change", &self.co_change_config.is_some());
+
+        d.field("graph_store", &self.graph_store.is_some());
 
         d.finish()
     }

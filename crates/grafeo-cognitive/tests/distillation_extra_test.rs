@@ -111,9 +111,9 @@ fn pearson_both_empty_returns_one() {
     let b = make_artifact(vec![], vec![]);
     let r = factors(&a, &b);
     assert!(
-        (r.community_overlap - 1.0).abs() < f64::EPSILON,
+        (r.energy_correlation - 1.0).abs() < f64::EPSILON,
         "both empty => pearson 1.0, got {}",
-        r.community_overlap,
+        r.energy_correlation,
     );
 }
 
@@ -123,9 +123,9 @@ fn pearson_no_shared_nodes_returns_zero() {
     let b = make_artifact(vec![], vec![(3, 3.0), (4, 4.0)]);
     let r = factors(&a, &b);
     assert!(
-        r.community_overlap.abs() < f64::EPSILON,
+        r.energy_correlation.abs() < f64::EPSILON,
         "no shared nodes => pearson 0.0, got {}",
-        r.community_overlap,
+        r.energy_correlation,
     );
 }
 
@@ -136,9 +136,9 @@ fn pearson_single_pair_equal() {
     let b = make_artifact(vec![], vec![(1, 5.0)]);
     let r = factors(&a, &b);
     assert!(
-        (r.community_overlap - 1.0).abs() < f64::EPSILON,
+        (r.energy_correlation - 1.0).abs() < f64::EPSILON,
         "single pair equal => pearson 1.0, got {}",
-        r.community_overlap,
+        r.energy_correlation,
     );
 }
 
@@ -149,9 +149,9 @@ fn pearson_single_pair_unequal() {
     let b = make_artifact(vec![], vec![(1, 10.0)]);
     let r = factors(&a, &b);
     assert!(
-        r.community_overlap.abs() < f64::EPSILON,
+        r.energy_correlation.abs() < f64::EPSILON,
         "single pair unequal => pearson 0.0, got {}",
-        r.community_overlap,
+        r.energy_correlation,
     );
 }
 
@@ -162,9 +162,9 @@ fn pearson_constant_values_both_sides() {
     let b = make_artifact(vec![], vec![(1, 3.0), (2, 3.0), (3, 3.0)]);
     let r = factors(&a, &b);
     assert!(
-        (r.community_overlap - 1.0).abs() < f64::EPSILON,
+        (r.energy_correlation - 1.0).abs() < f64::EPSILON,
         "constant both => pearson 1.0, got {}",
-        r.community_overlap,
+        r.energy_correlation,
     );
 }
 
@@ -175,9 +175,9 @@ fn pearson_constant_one_side_only() {
     let b = make_artifact(vec![], vec![(1, 1.0), (2, 2.0), (3, 3.0)]);
     let r = factors(&a, &b);
     assert!(
-        r.community_overlap.abs() < f64::EPSILON,
+        r.energy_correlation.abs() < f64::EPSILON,
         "constant one side => pearson 0.0, got {}",
-        r.community_overlap,
+        r.energy_correlation,
     );
 }
 
@@ -188,9 +188,9 @@ fn pearson_negative_correlation() {
     let b = make_artifact(vec![], vec![(1, 3.0), (2, 2.0), (3, 1.0)]);
     let r = factors(&a, &b);
     assert!(
-        (r.community_overlap - (-1.0)).abs() < 1e-9,
+        (r.energy_correlation - (-1.0)).abs() < 1e-9,
         "negative correlation => pearson -1.0, got {}",
-        r.community_overlap,
+        r.energy_correlation,
     );
 }
 
@@ -387,9 +387,10 @@ fn cross_community_same_degree_class() {
 
 #[test]
 fn cross_community_different_degree_classes() {
+    // Both artifacts have the same cross-degree bridging pattern.
     // Node 1 connects to many targets => high degree (class 2: d>5)
     // Those targets have low degree (class 0: d<=2)
-    // All synapses bridge class 2 <-> class 0 => cross = 1.0
+    // Both have ratio=1.0 => similarity = 1 - |1.0 - 1.0| = 1.0
     let a = make_artifact(
         vec![
             (1, 10, 0.5),
@@ -401,39 +402,44 @@ fn cross_community_different_degree_classes() {
         ],
         vec![],
     );
-    let b = make_artifact(vec![], vec![]);
+    let b = make_artifact(
+        vec![
+            (2, 20, 0.5),
+            (2, 21, 0.5),
+            (2, 22, 0.5),
+            (2, 23, 0.5),
+            (2, 24, 0.5),
+            (2, 25, 0.5),
+        ],
+        vec![],
+    );
     let r = factors(&a, &b);
-    // degree(1)=6 => class 2, degree(10..15)=1 => class 0
-    // All 6 synapses are cross-class => cross = 6/6 = 1.0
+    // Both: hub connects to low-degree leaves => ratio=1.0 each
+    // similarity = 1 - |1.0 - 1.0| = 1.0
     assert!(
         (r.cross_community - 1.0).abs() < f64::EPSILON,
-        "all cross-class => 1.0, got {}",
+        "same bridging pattern => 1.0, got {}",
         r.cross_community,
     );
 }
 
 #[test]
 fn cross_community_mixed_classes() {
-    // Create a scenario with both cross-class and same-class edges
-    // Combine into before+after: degrees computed over all synapses from both
-    // before: (1,2), (1,3), (1,4) => degree(1)=3 in before
-    // after:  (1,5), (1,6), (1,7) => degree(1)=3 in after
-    // Combined: degree(1) = 6 => class 2, degree(2..7) = 1 each => class 0
-    // All 6 synapses are cross-class => cross = 1.0
-    //
-    // Let's also add a same-class edge to get a mix:
+    // New heuristic: compute cross-degree ratio per artifact, then similarity.
     // before: (1,2), (1,3), (1,4), (10,11)
-    // after:  (1,5), (1,6), (1,7)
-    // Combined degrees: 1=>6, 2..7=>1, 10=>1, 11=>1. All class 0 except node 1 (class 2).
-    // Synapses involving node 1: 6 are cross-class. (10,11) is same-class.
-    // Total = 7, cross = 6 => 6/7
+    //   degree(1)=3 (class 1), degree(2,3,4)=1 (class 0), degree(10,11)=1 (class 0)
+    //   cross-class: (1,2),(1,3),(1,4) = 3, same: (10,11) = 1 => ratio = 3/4 = 0.75
+    // after: (1,5), (1,6), (1,7)
+    //   degree(1)=3 (class 1), degree(5,6,7)=1 (class 0)
+    //   all cross-class => ratio = 3/3 = 1.0
+    // similarity = 1 - |0.75 - 1.0| = 0.75
     let a = make_artifact(
         vec![(1, 2, 0.5), (1, 3, 0.5), (1, 4, 0.5), (10, 11, 0.5)],
         vec![],
     );
     let b = make_artifact(vec![(1, 5, 0.5), (1, 6, 0.5), (1, 7, 0.5)], vec![]);
     let r = factors(&a, &b);
-    let expected = 6.0 / 7.0;
+    let expected = 0.75;
     assert!(
         (r.cross_community - expected).abs() < 1e-9,
         "mixed => cross {expected}, got {}",
@@ -502,12 +508,12 @@ fn integration_shared_and_divergent_state() {
         report.evidence_coverage,
     );
 
-    // community_overlap: shared nodes {1,2,3} with correlated energies
+    // energy_correlation: shared nodes {1,2,3} with correlated energies
     // before: (5.0, 3.0, 2.0), after: (4.5, 3.5, 2.5) => positive correlation
     assert!(
-        report.community_overlap > 0.9,
-        "community_overlap should be high positive, got {}",
-        report.community_overlap,
+        report.energy_correlation > 0.9,
+        "energy_correlation should be high positive, got {}",
+        report.energy_correlation,
     );
 
     // hub_coverage: node 1 is the hub in before (degree 4: source of 1->2,1->3,1->4 + target of 5->1)
@@ -558,7 +564,7 @@ fn integration_identical_epochs_pass() {
         "identical => jaccard 1.0",
     );
     assert!(
-        (report.community_overlap - 1.0).abs() < 1e-9,
+        (report.energy_correlation - 1.0).abs() < 1e-9,
         "identical => pearson 1.0",
     );
     assert!(
@@ -589,7 +595,7 @@ fn integration_completely_disjoint_epochs() {
         "disjoint => jaccard 0.0",
     );
     assert!(
-        report.community_overlap.abs() < f64::EPSILON,
+        report.energy_correlation.abs() < f64::EPSILON,
         "disjoint => pearson 0.0",
     );
     assert!(

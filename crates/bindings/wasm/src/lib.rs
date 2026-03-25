@@ -14,6 +14,8 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "cognitive")]
+mod cognitive_browser;
 mod types;
 mod utils;
 

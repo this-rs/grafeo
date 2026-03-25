@@ -35,6 +35,18 @@ path = "persistence.rs"
 required-features = ["storage"]
 
 [[bin]]
+name = "social_network"
+path = "social_network.rs"
+
+[[bin]]
+name = "knowledge_base"
+path = "knowledge_base.rs"
+
+[[bin]]
+name = "iot_stream"
+path = "iot_stream.rs"
+
+[[bin]]
 name = "multi_language"
 path = "multi_language.rs"
 required-features = ["full"]

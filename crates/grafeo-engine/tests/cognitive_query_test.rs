@@ -163,3 +163,76 @@ async fn unknown_procedure_returns_none() {
     let result = try_execute_cognitive_procedure("grafeo.cognitive.unknown", &[], &engine).unwrap();
     assert!(result.is_none());
 }
+
+// ---------------------------------------------------------------------------
+// CALL grafeo.cognitive.search
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn cognitive_search_procedure_rejects_missing_embedding() {
+    let engine = make_engine();
+    // No arguments → should error
+    let result = try_execute_cognitive_procedure("grafeo.cognitive.search", &[], &engine);
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn cognitive_search_procedure_rejects_empty_embedding() {
+    let engine = make_engine();
+    let args = vec![LogicalExpression::Map(vec![(
+        "query_embedding".to_string(),
+        LogicalExpression::List(vec![]),
+    )])];
+    let result = try_execute_cognitive_procedure("grafeo.cognitive.search", &args, &engine);
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn cognitive_search_procedure_returns_result() {
+    let engine = make_engine();
+    let args = vec![LogicalExpression::Map(vec![
+        (
+            "query_embedding".to_string(),
+            LogicalExpression::List(vec![
+                LogicalExpression::Literal(Value::Float64(0.1)),
+                LogicalExpression::Literal(Value::Float64(0.2)),
+                LogicalExpression::Literal(Value::Float64(0.3)),
+            ]),
+        ),
+        (
+            "limit".to_string(),
+            LogicalExpression::Literal(Value::Int64(5)),
+        ),
+        (
+            "weights".to_string(),
+            LogicalExpression::Map(vec![
+                (
+                    "similarity".to_string(),
+                    LogicalExpression::Literal(Value::Float64(0.3)),
+                ),
+                (
+                    "energy".to_string(),
+                    LogicalExpression::Literal(Value::Float64(0.3)),
+                ),
+                (
+                    "topology".to_string(),
+                    LogicalExpression::Literal(Value::Float64(0.3)),
+                ),
+                (
+                    "synapse".to_string(),
+                    LogicalExpression::Literal(Value::Float64(0.1)),
+                ),
+            ]),
+        ),
+    ])];
+    let result = try_execute_cognitive_procedure("grafeo.cognitive.search", &args, &engine);
+    assert!(result.is_ok());
+    let algo_result = result.unwrap().unwrap();
+    assert_eq!(algo_result.columns.len(), 6);
+    assert_eq!(algo_result.columns[0], "node_id");
+    assert_eq!(algo_result.columns[1], "score");
+    assert_eq!(algo_result.columns[2], "signal_similarity");
+    assert_eq!(algo_result.columns[3], "signal_energy");
+    assert_eq!(algo_result.columns[4], "signal_topology");
+    assert_eq!(algo_result.columns[5], "signal_synapse");
+}

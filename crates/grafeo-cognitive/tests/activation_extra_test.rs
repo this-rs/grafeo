@@ -44,6 +44,7 @@ fn spread_config_default_values() {
     assert!((config.min_propagated_energy - 0.01).abs() < 1e-10);
     assert!((config.decay_factor - 0.5).abs() < 1e-10);
     assert!((config.activation_threshold - 0.0).abs() < 1e-10);
+    assert_eq!(config.max_activated_nodes, 1000);
 }
 
 // ---------------------------------------------------------------------------
@@ -60,6 +61,7 @@ fn spread_zero_hops_only_source() {
         decay_factor: 1.0,
         min_propagated_energy: 0.001,
         activation_threshold: 0.0,
+        max_activated_nodes: 0,
     };
 
     let map = spread_single(n(1), 1.0, &g, &config);
@@ -90,6 +92,7 @@ fn spread_diamond_graph_superposition() {
         decay_factor: 0.5,
         min_propagated_energy: 0.001,
         activation_threshold: 0.0,
+        max_activated_nodes: 0,
     };
 
     let map = spread_single(n(1), 1.0, &g, &config);
@@ -116,6 +119,7 @@ fn spread_cycle_terminates() {
         decay_factor: 0.5,
         min_propagated_energy: 0.001,
         activation_threshold: 0.0,
+        max_activated_nodes: 0,
     };
 
     // Should terminate (not infinite loop) because of decay
@@ -149,6 +153,7 @@ fn spread_threshold_filters_low_energy_source() {
         decay_factor: 0.5,
         min_propagated_energy: 0.001,
         activation_threshold: 2.0,
+        max_activated_nodes: 0,
     };
 
     let map = spread_single(n(1), 1.0, &g, &config);

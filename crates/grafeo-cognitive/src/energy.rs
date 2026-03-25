@@ -12,7 +12,10 @@ use dashmap::DashMap;
 use grafeo_common::types::NodeId;
 use grafeo_reactive::{MutationEvent, MutationListener};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+
+use crate::store_trait::{OptionalGraphStore, PROP_ENERGY, load_node_f64, persist_node_f64};
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -29,6 +32,15 @@ pub struct EnergyConfig {
     pub default_half_life: Duration,
     /// Minimum energy threshold — nodes below this are "low energy".
     pub min_energy: f64,
+    /// Maximum energy cap — energy is clamped to `[0.0, max_energy]` after every operation.
+    pub max_energy: f64,
+    /// Reference energy for normalization: `energy_score = 1 - exp(-energy / ref_energy)`.
+    /// Higher values spread the curve, lower values compress it.
+    pub ref_energy: f64,
+    /// Structural reinforcement coefficient (α).
+    /// Modulates half-life by node degree: `effective_half_life = base * (1 + α * ln(1 + degree))`.
+    /// Set to 0.0 to disable structural reinforcement.
+    pub structural_reinforcement_alpha: f64,
 }
 
 impl Default for EnergyConfig {
@@ -38,6 +50,9 @@ impl Default for EnergyConfig {
             default_energy: 1.0,
             default_half_life: Duration::from_secs(24 * 3600), // 24 hours
             min_energy: 0.01,
+            max_energy: 10.0,
+            ref_energy: 1.0,
+            structural_reinforcement_alpha: 0.0,
         }
     }
 }
@@ -73,6 +88,8 @@ pub struct NodeEnergy {
     last_activated: Instant,
     /// Half-life for exponential decay.
     half_life: Duration,
+    /// Monotonic access counter for LRU eviction (updated on every read/write).
+    pub(crate) last_access: u64,
 }
 
 impl NodeEnergy {
@@ -82,6 +99,7 @@ impl NodeEnergy {
             energy,
             last_activated: Instant::now(),
             half_life,
+            last_access: 0,
         }
     }
 
@@ -94,6 +112,7 @@ impl NodeEnergy {
             energy,
             last_activated,
             half_life,
+            last_access: 0,
         }
     }
 
@@ -142,6 +161,11 @@ impl NodeEnergy {
     pub fn half_life(&self) -> Duration {
         self.half_life
     }
+
+    /// Clamps the stored energy to `[min, max]`.
+    pub fn clamp(&mut self, min: f64, max: f64) {
+        self.energy = self.energy.clamp(min, max);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -151,38 +175,143 @@ impl NodeEnergy {
 /// Thread-safe store for node energy states.
 ///
 /// Uses `DashMap` for concurrent read/write without global locks.
+/// When a backing [`GraphStoreMut`](grafeo_core::graph::GraphStoreMut) is
+/// provided, every write is also persisted as a node property (write-through).
+/// On read, if the node is not in the hot cache, the store attempts to load
+/// the value lazily from the graph property.
 pub struct EnergyStore {
-    /// Per-node energy entries.
+    /// Per-node energy entries (includes inline LRU access counter).
     nodes: DashMap<NodeId, NodeEnergy>,
+    /// Monotonic counter for LRU tracking.
+    access_counter: AtomicU64,
+    /// Maximum cache entries (0 = unlimited).
+    max_cache_entries: usize,
     /// Configuration.
     config: EnergyConfig,
+    /// Optional backing graph store for write-through persistence.
+    graph_store: OptionalGraphStore,
 }
 
 impl EnergyStore {
-    /// Creates a new, empty energy store.
+    /// Creates a new, empty energy store (in-memory only, no persistence).
     pub fn new(config: EnergyConfig) -> Self {
         Self {
             nodes: DashMap::new(),
+            access_counter: AtomicU64::new(0),
+            max_cache_entries: 0,
             config,
+            graph_store: None,
+        }
+    }
+
+    /// Creates a new energy store with write-through persistence.
+    pub fn with_graph_store(
+        config: EnergyConfig,
+        graph_store: Arc<dyn grafeo_core::graph::GraphStoreMut>,
+    ) -> Self {
+        Self {
+            nodes: DashMap::new(),
+            access_counter: AtomicU64::new(0),
+            max_cache_entries: 0,
+            config,
+            graph_store: Some(graph_store),
+        }
+    }
+
+    /// Sets the maximum number of cache entries. When exceeded, LRU eviction kicks in.
+    /// Evicted entries remain in the graph store and are reloaded on-demand.
+    pub fn with_max_cache_entries(mut self, max: usize) -> Self {
+        self.max_cache_entries = max;
+        self
+    }
+
+    /// Records an access for LRU tracking — updates the inline counter
+    /// in the already-locked DashMap entry (no extra DashMap lookup).
+    fn touch(&self, node_id: NodeId) {
+        let order = self.access_counter.fetch_add(1, Ordering::Relaxed);
+        if let Some(mut entry) = self.nodes.get_mut(&node_id) {
+            entry.last_access = order;
+        }
+    }
+
+    /// Evicts least-recently-used entries if cache exceeds max_cache_entries.
+    fn maybe_evict(&self) {
+        if self.max_cache_entries == 0 {
+            return;
+        }
+        let current_len = self.nodes.len();
+        if current_len <= self.max_cache_entries {
+            return;
+        }
+        let to_evict = current_len - self.max_cache_entries;
+        // Collect entries sorted by access order (ascending = oldest first)
+        let mut entries: Vec<(NodeId, u64)> = self
+            .nodes
+            .iter()
+            .map(|e| (*e.key(), e.value().last_access))
+            .collect();
+        entries.sort_by_key(|(_, order)| *order);
+        for (node_id, _) in entries.into_iter().take(to_evict) {
+            self.nodes.remove(&node_id);
         }
     }
 
     /// Returns the current energy for a node (with decay applied).
     ///
     /// Returns `0.0` if the node has never been tracked.
+    /// If the node is not in the hot cache but exists in the graph store,
+    /// the value is loaded lazily.
     pub fn get_energy(&self, node_id: NodeId) -> f64 {
-        self.nodes.get(&node_id).map_or(0.0, |e| e.current_energy())
+        if let Some(entry) = self.nodes.get(&node_id) {
+            let energy = entry.current_energy();
+            drop(entry);
+            // Only update LRU access order when eviction is configured —
+            // avoids a DashMap write on every read in the default (no-eviction) path.
+            if self.max_cache_entries > 0 {
+                self.touch(node_id);
+            }
+            return energy;
+        }
+        // Lazy load from graph store
+        if let Some(gs) = &self.graph_store
+            && let Some(val) = load_node_f64(gs.as_ref(), node_id, PROP_ENERGY)
+        {
+            let mut ne = NodeEnergy::new(val, self.config.default_half_life);
+            if self.max_cache_entries > 0 {
+                ne.last_access = self.access_counter.fetch_add(1, Ordering::Relaxed);
+            }
+            self.nodes.insert(node_id, ne);
+            self.maybe_evict();
+            return val;
+        }
+        0.0
     }
 
     /// Boosts a node's energy by `amount`.
     ///
     /// If the node is not yet tracked, it is created with the boost as
-    /// initial energy.
+    /// initial energy. The new energy value is written through to the
+    /// backing graph store (if configured).
     pub fn boost(&self, node_id: NodeId, amount: f64) {
+        let max_energy = self.config.max_energy;
         self.nodes
             .entry(node_id)
-            .and_modify(|e| e.boost(amount))
-            .or_insert_with(|| NodeEnergy::new(amount, self.config.default_half_life));
+            .and_modify(|e| {
+                e.boost(amount);
+                e.clamp(0.0, max_energy);
+            })
+            .or_insert_with(|| {
+                let clamped = amount.clamp(0.0, max_energy);
+                NodeEnergy::new(clamped, self.config.default_half_life)
+            });
+        self.touch(node_id);
+        self.maybe_evict();
+        // Write-through
+        if let Some(gs) = &self.graph_store
+            && let Some(entry) = self.nodes.get(&node_id)
+        {
+            persist_node_f64(gs.as_ref(), node_id, PROP_ENERGY, entry.current_energy());
+        }
     }
 
     /// Returns all node IDs whose current energy is below `threshold`.
@@ -215,6 +344,59 @@ impl EnergyStore {
             .iter()
             .map(|entry| (*entry.key(), entry.value().current_energy()))
             .collect()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Normalized scoring functions
+// ---------------------------------------------------------------------------
+
+/// Converts a raw energy value to a normalized score in `[0.0, 1.0]`.
+///
+/// Uses the formula: `score = 1 - exp(-energy / ref_energy)`.
+///
+/// - `energy = 0` → score = `0.0`
+/// - `energy → ∞` → score → `1.0`
+/// - Negative energy is clamped to `0.0`.
+/// - `ref_energy` controls the curve spread (higher = slower saturation).
+///   If `ref_energy <= 0` or NaN, falls back to `ref_energy = 1.0`.
+///
+/// This provides a smooth, bounded mapping from the unbounded energy
+/// domain to a [0, 1] range suitable for cross-metric comparison.
+#[inline]
+pub fn energy_score(energy: f64, ref_energy: f64) -> f64 {
+    if energy <= 0.0 || energy.is_nan() {
+        return 0.0;
+    }
+    let r = if ref_energy <= 0.0 || ref_energy.is_nan() || ref_energy.is_infinite() {
+        1.0
+    } else {
+        ref_energy
+    };
+    (1.0 - (-energy / r).exp()).clamp(0.0, 1.0)
+}
+
+/// Computes the effective half-life modulated by structural degree.
+///
+/// `effective_half_life = base_half_life * (1 + α * ln(1 + degree))`
+///
+/// Nodes with higher degree (more connections) retain energy longer,
+/// reflecting their structural importance in the graph.
+///
+/// - `degree = 0` → effective = base (no reinforcement)
+/// - Higher α → stronger reinforcement effect
+/// - α = 0 → no reinforcement (returns base)
+#[inline]
+pub fn effective_half_life(base: Duration, degree: usize, alpha: f64) -> Duration {
+    if alpha <= 0.0 || alpha.is_nan() {
+        return base;
+    }
+    let factor = 1.0 + alpha * (1.0 + degree as f64).ln();
+    let secs = base.as_secs_f64() * factor;
+    if secs.is_finite() && secs > 0.0 {
+        Duration::from_secs_f64(secs)
+    } else {
+        base
     }
 }
 

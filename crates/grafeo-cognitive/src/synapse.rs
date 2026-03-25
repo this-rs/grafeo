@@ -7,11 +7,16 @@
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use grafeo_common::types::NodeId;
+use grafeo_common::types::{EdgeId, NodeId};
 use grafeo_reactive::{MutationEvent, MutationListener};
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+
+use crate::store_trait::{
+    OptionalGraphStore, PROP_SYNAPSE_WEIGHT, load_edge_f64, persist_edge_f64,
+};
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -28,6 +33,11 @@ pub struct SynapseConfig {
     pub default_half_life: Duration,
     /// Minimum weight threshold for pruning.
     pub min_weight: f64,
+    /// Maximum individual synapse weight cap.
+    pub max_synapse_weight: f64,
+    /// Maximum total outgoing weight from a single node.
+    /// When exceeded, all outgoing weights are normalized proportionally (competitive Hebbian).
+    pub max_total_outgoing_weight: f64,
 }
 
 impl Default for SynapseConfig {
@@ -37,6 +47,8 @@ impl Default for SynapseConfig {
             reinforce_amount: 0.2,
             default_half_life: Duration::from_secs(7 * 24 * 3600), // 7 days
             min_weight: 0.01,
+            max_synapse_weight: 10.0,
+            max_total_outgoing_weight: 100.0,
         }
     }
 }
@@ -134,6 +146,16 @@ impl Synapse {
     pub fn last_reinforced(&self) -> Instant {
         self.last_reinforced
     }
+
+    /// Clamps the stored weight to `[0.0, max]`.
+    pub fn clamp_weight(&mut self, max: f64) {
+        self.weight = self.weight.clamp(0.0, max);
+    }
+
+    /// Scales the stored weight by `factor` (for competitive normalization).
+    pub fn scale_weight(&mut self, factor: f64) {
+        self.weight *= factor;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -154,46 +176,201 @@ impl SynapseKey {
 // SynapseStore
 // ---------------------------------------------------------------------------
 
+/// Edge type used for synapse edges in the graph store.
+const SYNAPSE_EDGE_TYPE: &str = "SYNAPSE";
+
 /// Thread-safe store for synapses between nodes.
+///
+/// When a backing [`GraphStoreMut`](grafeo_core::graph::GraphStoreMut) is
+/// provided, synapse weights are persisted as edge properties on
+/// `SYNAPSE`-typed edges. On read, if the synapse is not in the hot cache,
+/// the store attempts to load the weight lazily from the graph property.
 pub struct SynapseStore {
     /// Synapses indexed by canonical (source, target) key.
     synapses: DashMap<SynapseKey, Synapse>,
+    /// Mapping from synapse key to graph edge ID (for persistence).
+    edge_ids: DashMap<SynapseKey, EdgeId>,
+    /// LRU access order — maps SynapseKey to monotonic access counter.
+    access_order: DashMap<SynapseKey, u64>,
+    /// Monotonic counter for LRU tracking.
+    access_counter: AtomicU64,
+    /// Maximum cache entries (0 = unlimited).
+    max_cache_entries: usize,
     /// Configuration.
     config: SynapseConfig,
+    /// Optional backing graph store for write-through persistence.
+    graph_store: OptionalGraphStore,
 }
 
 impl SynapseStore {
-    /// Creates a new, empty synapse store.
+    /// Creates a new, empty synapse store (in-memory only).
     pub fn new(config: SynapseConfig) -> Self {
         Self {
             synapses: DashMap::new(),
+            edge_ids: DashMap::new(),
+            access_order: DashMap::new(),
+            access_counter: AtomicU64::new(0),
+            max_cache_entries: 0,
             config,
+            graph_store: None,
         }
     }
 
+    /// Creates a new synapse store with write-through persistence.
+    pub fn with_graph_store(
+        config: SynapseConfig,
+        graph_store: Arc<dyn grafeo_core::graph::GraphStoreMut>,
+    ) -> Self {
+        Self {
+            synapses: DashMap::new(),
+            edge_ids: DashMap::new(),
+            access_order: DashMap::new(),
+            access_counter: AtomicU64::new(0),
+            max_cache_entries: 0,
+            config,
+            graph_store: Some(graph_store),
+        }
+    }
+
+    /// Sets the maximum number of cache entries. When exceeded, LRU eviction kicks in.
+    pub fn with_max_cache_entries(mut self, max: usize) -> Self {
+        self.max_cache_entries = max;
+        self
+    }
+
+    /// Records an access for LRU tracking.
+    fn touch(&self, key: SynapseKey) {
+        let order = self.access_counter.fetch_add(1, Ordering::Relaxed);
+        self.access_order.insert(key, order);
+    }
+
+    /// Evicts least-recently-used entries if cache exceeds max_cache_entries.
+    fn maybe_evict(&self) {
+        if self.max_cache_entries == 0 {
+            return;
+        }
+        let current_len = self.synapses.len();
+        if current_len <= self.max_cache_entries {
+            return;
+        }
+        let to_evict = current_len - self.max_cache_entries;
+        let mut entries: Vec<(SynapseKey, u64)> = self
+            .access_order
+            .iter()
+            .map(|e| (*e.key(), *e.value()))
+            .collect();
+        entries.sort_by_key(|(_, order)| *order);
+        for (key, _) in entries.into_iter().take(to_evict) {
+            self.synapses.remove(&key);
+            self.access_order.remove(&key);
+        }
+    }
+
+    /// Ensures a graph edge exists for the synapse and returns its EdgeId.
+    fn ensure_edge(&self, key: SynapseKey) -> Option<EdgeId> {
+        let gs = self.graph_store.as_ref()?;
+        if let Some(eid) = self.edge_ids.get(&key) {
+            return Some(*eid);
+        }
+        let eid = gs.create_edge(key.0, key.1, SYNAPSE_EDGE_TYPE);
+        self.edge_ids.insert(key, eid);
+        Some(eid)
+    }
+
     /// Reinforces (or creates) a synapse between two nodes.
+    ///
+    /// After reinforcement, the individual weight is clamped to `max_synapse_weight`.
+    /// Then, if the total outgoing weight from `source` (or `target`) exceeds
+    /// `max_total_outgoing_weight`, all outgoing weights from that node are
+    /// normalized proportionally (competitive Hebbian normalization).
     pub fn reinforce(&self, source: NodeId, target: NodeId, amount: f64) {
         if source == target {
             return; // No self-synapses
         }
         let key = SynapseKey::new(source, target);
+        let max_w = self.config.max_synapse_weight;
         self.synapses
             .entry(key)
-            .and_modify(|s| s.reinforce(amount))
+            .and_modify(|s| {
+                s.reinforce(amount);
+                s.clamp_weight(max_w);
+            })
             .or_insert_with(|| {
-                Synapse::new(
-                    key.0,
-                    key.1,
-                    self.config.initial_weight + amount,
-                    self.config.default_half_life,
-                )
+                let w = (self.config.initial_weight + amount).min(max_w);
+                Synapse::new(key.0, key.1, w, self.config.default_half_life)
             });
+
+        // Competitive normalization for both endpoints
+        self.normalize_outgoing(source);
+        self.normalize_outgoing(target);
+
+        self.touch(key);
+        self.maybe_evict();
+
+        // Write-through
+        if let Some(eid) = self.ensure_edge(key)
+            && let Some(gs) = &self.graph_store
+            && let Some(entry) = self.synapses.get(&key)
+        {
+            persist_edge_f64(
+                gs.as_ref(),
+                eid,
+                PROP_SYNAPSE_WEIGHT,
+                entry.current_weight(),
+            );
+        }
+    }
+
+    /// Normalizes all outgoing synapse weights from `node_id` if their sum
+    /// exceeds `max_total_outgoing_weight`. Uses proportional scaling so
+    /// relative weights are preserved (competitive Hebbian normalization).
+    fn normalize_outgoing(&self, node_id: NodeId) {
+        let max_total = self.config.max_total_outgoing_weight;
+        // Collect all synapse keys involving this node and their current weights
+        let entries: Vec<(SynapseKey, f64)> = self
+            .synapses
+            .iter()
+            .filter(|entry| {
+                let k = entry.key();
+                k.0 == node_id || k.1 == node_id
+            })
+            .map(|entry| (*entry.key(), entry.value().current_weight()))
+            .collect();
+
+        let total: f64 = entries.iter().map(|(_, w)| *w).sum();
+        if total <= max_total {
+            return;
+        }
+
+        let scale = max_total / total;
+        for (key, _) in &entries {
+            if let Some(mut syn) = self.synapses.get_mut(key) {
+                syn.scale_weight(scale);
+            }
+        }
     }
 
     /// Returns the synapse between two nodes, if it exists.
+    ///
+    /// If not in the hot cache, attempts lazy load from the graph store.
     pub fn get_synapse(&self, a: NodeId, b: NodeId) -> Option<Synapse> {
         let key = SynapseKey::new(a, b);
-        self.synapses.get(&key).map(|s| s.clone())
+        if let Some(s) = self.synapses.get(&key) {
+            self.touch(key);
+            return Some(s.clone());
+        }
+        // Lazy load from graph: look for an edge with the synapse weight
+        if let Some(gs) = &self.graph_store
+            && let Some(eid) = self.edge_ids.get(&key)
+            && let Some(weight) = load_edge_f64(gs.as_ref(), *eid, PROP_SYNAPSE_WEIGHT)
+        {
+            let syn = Synapse::new(key.0, key.1, weight, self.config.default_half_life);
+            self.synapses.insert(key, syn.clone());
+            self.touch(key);
+            self.maybe_evict();
+            return Some(syn);
+        }
+        None
     }
 
     /// Returns all synapses for a given node, sorted by current weight descending.
@@ -254,6 +431,62 @@ impl SynapseStore {
             .map(|entry| entry.value().clone())
             .collect()
     }
+}
+
+// ---------------------------------------------------------------------------
+// Normalized scoring functions
+// ---------------------------------------------------------------------------
+
+/// Converts a raw synapse weight to a normalized score in `[0.0, 1.0]`.
+///
+/// Uses the formula: `score = tanh(weight / ref_weight)`.
+///
+/// - `weight = 0` → score = `0.0`
+/// - `weight → ∞` → score → `1.0`
+/// - Negative weight is clamped to `0.0`.
+/// - `ref_weight` controls the curve spread (higher = slower saturation).
+///   If `ref_weight <= 0` or NaN, falls back to `ref_weight = 1.0`.
+///
+/// This provides a smooth, bounded mapping from the unbounded weight
+/// domain to a [0, 1] range suitable for cross-metric comparison.
+#[inline]
+pub fn synapse_score(weight: f64, ref_weight: f64) -> f64 {
+    if weight <= 0.0 || weight.is_nan() {
+        return 0.0;
+    }
+    let r = if ref_weight <= 0.0 || ref_weight.is_nan() || ref_weight.is_infinite() {
+        1.0
+    } else {
+        ref_weight
+    };
+    (weight / r).tanh().clamp(0.0, 1.0)
+}
+
+/// Converts a mutation frequency count to a normalized score in `[0.0, 1.0]`.
+///
+/// Uses the formula: `score = min(1, log(1 + count) / log(1 + ref_count))`.
+///
+/// - `count = 0` → score = `0.0`
+/// - `count = ref_count` → score ≈ `1.0`
+/// - `count > ref_count` → score = `1.0` (clamped)
+/// - `ref_count` is the reference count at which the score saturates.
+///   If `ref_count <= 0` or NaN, falls back to `ref_count = 100.0`.
+#[inline]
+pub fn mutation_frequency_score(count: f64, ref_count: f64) -> f64 {
+    if count <= 0.0 || count.is_nan() {
+        return 0.0;
+    }
+    let r = if ref_count <= 0.0 || ref_count.is_nan() || ref_count.is_infinite() {
+        100.0
+    } else {
+        ref_count
+    };
+    let log_num = (1.0 + count).ln();
+    let log_den = (1.0 + r).ln();
+    if log_den <= 0.0 {
+        return 1.0;
+    }
+    (log_num / log_den).clamp(0.0, 1.0)
 }
 
 impl std::fmt::Debug for SynapseStore {

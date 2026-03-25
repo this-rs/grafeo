@@ -428,3 +428,139 @@ async fn listener_boosts_on_edge_deleted() {
     assert!(store.get_energy(NodeId::new(30)) > 0.99);
     assert!(store.get_energy(NodeId::new(40)) > 0.99);
 }
+
+// ---------------------------------------------------------------------------
+// Adversarial tests — NaN energy, zero half_life, overflow values
+// ---------------------------------------------------------------------------
+
+#[test]
+fn adversarial_nan_energy_no_panic() {
+    let start = Instant::now();
+    let node = NodeEnergy::new_at(f64::NAN, Duration::from_secs(3600), start);
+
+    // NaN energy should propagate as NaN, not panic
+    let e = node.energy_at(start);
+    assert!(e.is_nan(), "NaN energy should remain NaN, got {e}");
+
+    let e_later = node.energy_at(start + Duration::from_secs(100));
+    assert!(
+        e_later.is_nan(),
+        "NaN energy after decay should remain NaN, got {e_later}"
+    );
+}
+
+#[test]
+fn adversarial_nan_energy_boost_no_panic() {
+    let start = Instant::now();
+    let mut node = NodeEnergy::new_at(f64::NAN, Duration::from_secs(3600), start);
+
+    // Boosting NaN energy should not panic
+    node.boost_at(1.0, start + Duration::from_secs(1));
+    let e = node.energy_at(start + Duration::from_secs(1));
+    // NaN + 1.0 = NaN
+    assert!(e.is_nan(), "NaN + boost should still be NaN, got {e}");
+}
+
+#[test]
+fn adversarial_infinity_energy_no_panic() {
+    let start = Instant::now();
+    let node = NodeEnergy::new_at(f64::INFINITY, Duration::from_secs(3600), start);
+
+    let e = node.energy_at(start);
+    assert!(
+        e.is_infinite(),
+        "Infinity energy at t=0 should be infinite, got {e}"
+    );
+
+    let e_later = node.energy_at(start + Duration::from_secs(3600));
+    // inf * 0.5 = inf
+    assert!(
+        e_later.is_infinite(),
+        "Infinity energy after decay should still be infinite, got {e_later}"
+    );
+}
+
+#[test]
+fn adversarial_zero_half_life_energy_no_panic() {
+    let start = Instant::now();
+    let node = NodeEnergy::new_at(1.0, Duration::ZERO, start);
+
+    // At t=0: elapsed=0, half_lives = 0/0 = NaN, 2^(-NaN) = NaN
+    let e = node.energy_at(start);
+    assert!(
+        e.is_nan() || e.is_finite(),
+        "zero half_life at t=0 should not panic"
+    );
+
+    // After some time: elapsed > 0, half_lives = t/0 = inf, 2^(-inf) = 0
+    let later = start + Duration::from_secs(1);
+    let e_later = node.energy_at(later);
+    assert!(
+        e_later == 0.0 || e_later.is_nan(),
+        "zero half_life after elapsed time: got {e_later}"
+    );
+}
+
+#[test]
+fn adversarial_negative_energy_no_panic() {
+    let start = Instant::now();
+    let node = NodeEnergy::new_at(-5.0, Duration::from_secs(3600), start);
+
+    let e = node.energy_at(start);
+    assert!(
+        (e - (-5.0)).abs() < 1e-10,
+        "negative energy at t=0: got {e}"
+    );
+
+    // Decay should still work (negative decays towards zero)
+    let e_later = node.energy_at(start + Duration::from_secs(3600));
+    assert!(
+        (e_later - (-2.5)).abs() < 1e-10,
+        "negative energy after 1 half-life: got {e_later}"
+    );
+}
+
+#[test]
+fn adversarial_very_large_energy_no_overflow() {
+    let start = Instant::now();
+    let node = NodeEnergy::new_at(f64::MAX / 2.0, Duration::from_secs(3600), start);
+
+    let e = node.energy_at(start);
+    assert!(
+        e.is_finite(),
+        "large energy at t=0 should be finite, got {e}"
+    );
+
+    // After some decay, still finite
+    let e_later = node.energy_at(start + Duration::from_secs(3600));
+    assert!(
+        e_later.is_finite(),
+        "large energy after decay should be finite, got {e_later}"
+    );
+}
+
+#[test]
+fn adversarial_store_nan_boost_no_panic() {
+    let store = EnergyStore::new(EnergyConfig::default());
+    let id = NodeId::new(1);
+
+    // Boosting with NaN should not panic
+    store.boost(id, f64::NAN);
+    let e = store.get_energy(id);
+    // Result should be NaN (default_energy + NaN = NaN)
+    assert!(e.is_nan(), "NaN boost should produce NaN energy, got {e}");
+}
+
+#[test]
+fn adversarial_store_zero_boost_no_panic() {
+    let store = EnergyStore::new(EnergyConfig::default());
+    let id = NodeId::new(1);
+
+    // Boosting with 0.0 on a new node should not panic
+    store.boost(id, 0.0);
+    let e = store.get_energy(id);
+    assert!(
+        e.is_finite(),
+        "zero boost should produce finite energy, got {e}"
+    );
+}

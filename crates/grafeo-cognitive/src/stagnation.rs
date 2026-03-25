@@ -27,6 +27,38 @@ use crate::synapse::SynapseStore;
 use grafeo_common::types::NodeId;
 
 // ---------------------------------------------------------------------------
+// Inline bounded scoring functions (avoid cross-feature deps)
+// ---------------------------------------------------------------------------
+
+/// Normalized energy score: `1 - exp(-energy / ref_energy)`, in `[0, 1]`.
+#[inline]
+fn energy_score_fn(energy: f64, ref_energy: f64) -> f64 {
+    if energy <= 0.0 || energy.is_nan() {
+        return 0.0;
+    }
+    let r = if ref_energy <= 0.0 || ref_energy.is_nan() || ref_energy.is_infinite() {
+        1.0
+    } else {
+        ref_energy
+    };
+    (1.0 - (-energy / r).exp()).clamp(0.0, 1.0)
+}
+
+/// Normalized synapse score: `tanh(weight / ref_weight)`, in `[0, 1]`.
+#[inline]
+fn synapse_score_fn(weight: f64, ref_weight: f64) -> f64 {
+    if weight <= 0.0 || weight.is_nan() {
+        return 0.0;
+    }
+    let r = if ref_weight <= 0.0 || ref_weight.is_nan() || ref_weight.is_infinite() {
+        1.0
+    } else {
+        ref_weight
+    };
+    (weight / r).tanh().clamp(0.0, 1.0)
+}
+
+// ---------------------------------------------------------------------------
 // Trend
 // ---------------------------------------------------------------------------
 
@@ -87,6 +119,12 @@ pub struct StagnationConfig {
     pub trend_tolerance: f64,
     /// How often communities should be scanned.
     pub scan_interval: Duration,
+    /// Reference energy for normalizing avg_energy via `energy_score(e, ref_energy)`.
+    /// Uses smooth `1 - exp(-e/ref)` instead of binary clamp.
+    pub ref_energy: f64,
+    /// Reference synapse weight for normalizing synapse activity via `synapse_score(w, ref_weight)`.
+    /// Uses smooth `tanh(w/ref)` instead of binary clamp.
+    pub ref_synapse_weight: f64,
 }
 
 impl Default for StagnationConfig {
@@ -101,6 +139,8 @@ impl Default for StagnationConfig {
             trend_window_size: 5,
             trend_tolerance: 0.05,
             scan_interval: Duration::from_secs(3600),
+            ref_energy: 1.0,
+            ref_synapse_weight: 1.0,
         }
     }
 }
@@ -262,12 +302,14 @@ impl StagnationDetector {
         let avg_energy = self.compute_avg_energy(node_ids);
         let synapse_activity = self.compute_synapse_activity(node_ids);
 
-        // Normalize components to [0, 1].
-        let avg_energy_normalized = avg_energy.clamp(0.0, 1.0);
+        // Normalize components to [0, 1] using smooth bounded functions
+        // instead of binary clamp (which loses information for values > 1.0).
+        let avg_energy_normalized = energy_score_fn(avg_energy, self.config.ref_energy);
         let last_mutation_age_normalized = (last_mutation_age.as_secs_f64()
             / self.config.max_mutation_age.as_secs_f64())
         .clamp(0.0, 1.0);
-        let synapse_activity_normalized = synapse_activity.clamp(0.0, 1.0);
+        let synapse_activity_normalized =
+            synapse_score_fn(synapse_activity, self.config.ref_synapse_weight);
 
         let raw = (1.0 - avg_energy_normalized) * self.config.weight_energy
             + last_mutation_age_normalized * self.config.weight_mutation_age
