@@ -3,7 +3,7 @@
 use arcstr::ArcStr;
 use grafeo_common::types::{EdgeId, NodeId, PropertyKey, Value};
 use smallvec::SmallVec;
-use std::time::Instant;
+use web_time::Instant;
 
 /// Snapshot of a node's state at a point in time.
 #[derive(Debug, Clone)]

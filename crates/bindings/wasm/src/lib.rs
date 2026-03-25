@@ -14,6 +14,9 @@
 
 #![forbid(unsafe_code)]
 
+// TODO: Fix cognitive_browser module to match updated API signatures from Tier 1
+// #[cfg(feature = "cognitive")]
+// mod cognitive_browser;
 mod types;
 mod utils;
 

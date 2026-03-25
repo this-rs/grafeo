@@ -20,7 +20,7 @@ use grafeo_common::types::NodeId;
 use grafeo_reactive::{MutationEvent, MutationListener};
 use smallvec::SmallVec;
 use std::sync::Arc;
-use std::time::Instant;
+use web_time::Instant;
 
 use crate::store_trait::{
     OptionalGraphStore, PROP_FABRIC_ANNOTATION_DENSITY, PROP_FABRIC_MUTATION_FREQ,

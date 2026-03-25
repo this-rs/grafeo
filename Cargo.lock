@@ -1229,6 +1229,7 @@ version = "0.5.24"
 dependencies = [
  "arcstr",
  "async-trait",
+ "bincode",
  "criterion",
  "dashmap",
  "grafeo-adapters",
@@ -1244,6 +1245,7 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
+ "web-time",
 ]
 
 [[package]]
@@ -1388,6 +1390,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "web-time",
 ]
 
 [[package]]
@@ -1397,9 +1400,11 @@ dependencies = [
  "console_error_panic_hook",
  "getrandom 0.4.2",
  "grafeo-bindings-common",
+ "grafeo-cognitive",
  "grafeo-common",
  "grafeo-core",
  "grafeo-engine",
+ "grafeo-reactive",
  "js-sys",
  "serde",
  "serde-wasm-bindgen",

@@ -85,9 +85,8 @@ impl DistillArtifact {
 
     /// Deserialize an artifact from bincode bytes.
     pub fn from_bincode(bytes: &[u8]) -> Result<Self, String> {
-        let (artifact, _) =
-            bincode::serde::decode_from_slice(bytes, bincode::config::standard())
-                .map_err(|e| format!("bincode decode error: {e}"))?;
+        let (artifact, _) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
+            .map_err(|e| format!("bincode decode error: {e}"))?;
         Ok(artifact)
     }
 }
@@ -909,10 +908,7 @@ mod tests {
     #[test]
     fn inject_trust_zero_no_effect() {
         // trust = 0.0 should be a no-op (inject returns early)
-        let artifact = make_artifact(
-            vec![(1, 2, 1.0)],
-            vec![(1, 5.0)],
-        );
+        let artifact = make_artifact(vec![(1, 2, 1.0)], vec![(1, 5.0)]);
 
         // We can't call inject without a real engine, but we verify the logic:
         // inject clamps trust to 0.0 and returns early.
@@ -930,10 +926,7 @@ mod tests {
 
     #[test]
     fn inject_trust_one_full_transfer() {
-        let artifact = make_artifact(
-            vec![(1, 2, 0.8), (2, 3, 0.6)],
-            vec![(1, 2.0), (2, 1.5)],
-        );
+        let artifact = make_artifact(vec![(1, 2, 0.8), (2, 3, 0.6)], vec![(1, 2.0), (2, 1.5)]);
 
         let tf = 1.0_f64.clamp(0.0, 1.0);
         assert_eq!(tf, 1.0);

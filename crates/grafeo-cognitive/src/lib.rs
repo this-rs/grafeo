@@ -127,10 +127,12 @@ pub use synapse::{
 #[cfg(feature = "scar")]
 pub use scar::{Scar, ScarConfig, ScarStore};
 
+#[cfg(all(feature = "memory", not(target_arch = "wasm32")))]
+pub use memory::FileArchiveBackend;
 #[cfg(feature = "memory")]
 pub use memory::{
-    ArchiveBackend, FileArchiveBackend, InMemoryArchiveBackend, MemoryConfig, MemoryHorizon,
-    MemoryManager, MemoryStore, NodeMemoryState, SweepResult,
+    ArchiveBackend, InMemoryArchiveBackend, MemoryConfig, MemoryHorizon, MemoryManager,
+    MemoryStore, NodeMemoryState, SweepResult,
 };
 
 #[cfg(feature = "stagnation")]

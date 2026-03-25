@@ -12,8 +12,10 @@ description = "Reactive event substrate for Grafeo — MutationBus, listeners, a
 grafeo-common.workspace = true
 grafeo-core = { workspace = true, default-features = false }
 
-# Async runtime
-tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
+# Async runtime — only sync feature for all targets (works on WASM).
+# NOTE: we don't use `workspace = true` because the workspace tokio
+# includes rt-multi-thread/fs which are unsupported on wasm32.
+tokio = { version = "1", features = ["sync"] }
 
 # Error handling
 thiserror.workspace = true
@@ -30,6 +32,13 @@ parking_lot.workspace = true
 # Data structures
 arcstr.workspace = true
 smallvec.workspace = true
+
+# Portable Instant (std::time::Instant panics on wasm32-unknown-unknown)
+web-time = "1"
+
+# Native-only: full tokio runtime for the async scheduler
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

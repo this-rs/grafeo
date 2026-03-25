@@ -23,8 +23,9 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::Notify;
+use web_time::Instant;
 
 #[cfg(feature = "energy")]
 use crate::energy::EnergyStore;
@@ -305,16 +306,20 @@ pub trait ArchiveBackend: Send + Sync + fmt::Debug {
 }
 
 // ---------------------------------------------------------------------------
-// FileArchiveBackend
+// FileArchiveBackend (native only — uses tokio::fs)
 // ---------------------------------------------------------------------------
 
 /// File-based archive backend. Stores node data as JSON files in a directory.
+///
+/// Not available on WASM targets (no filesystem access).
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone)]
 pub struct FileArchiveBackend {
     /// Directory where archived node data is stored.
     dir: PathBuf,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl FileArchiveBackend {
     /// Creates a new file archive backend in the given directory.
     ///
@@ -329,6 +334,7 @@ impl FileArchiveBackend {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 impl ArchiveBackend for FileArchiveBackend {
     async fn archive(&self, node_id: NodeId, data: &[u8]) -> Result<(), std::io::Error> {
@@ -550,7 +556,8 @@ impl MemoryManager {
     /// Starts the periodic sweep as a background tokio task.
     ///
     /// Returns a handle to the spawned task.
-    #[cfg(feature = "energy")]
+    /// Not available on WASM targets (no tokio runtime).
+    #[cfg(all(feature = "energy", not(target_arch = "wasm32")))]
     pub fn start_periodic(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
         let interval = self.config.sweep_interval;
         let shutdown = Arc::clone(&self.shutdown);

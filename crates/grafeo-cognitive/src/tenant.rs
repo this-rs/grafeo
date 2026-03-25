@@ -16,7 +16,7 @@
 use dashmap::DashMap;
 use std::fmt;
 use std::sync::Arc;
-use std::time::Instant;
+use web_time::Instant;
 
 #[cfg(feature = "energy")]
 use crate::energy::{EnergyConfig, EnergyStore};
