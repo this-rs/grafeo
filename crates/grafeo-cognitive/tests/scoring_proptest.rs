@@ -3,9 +3,7 @@
 
 #![cfg(all(feature = "energy", feature = "synapse", feature = "fabric"))]
 
-use grafeo_cognitive::{
-    effective_half_life, energy_score, mutation_frequency_score, synapse_score,
-};
+use grafeo_cognitive::{effective_half_life, energy_score, synapse_score};
 use proptest::prelude::*;
 
 // ---------------------------------------------------------------------------
@@ -80,7 +78,7 @@ fn energy_score_nan_returns_zero() {
 #[test]
 fn energy_score_positive_infinity_returns_bounded() {
     let s = energy_score(f64::INFINITY, 1.0);
-    assert!(s >= 0.0 && s <= 1.0, "got {s}");
+    assert!((0.0..=1.0).contains(&s), "got {s}");
 }
 
 #[test]
@@ -96,7 +94,7 @@ fn synapse_score_nan_returns_zero() {
 #[test]
 fn synapse_score_positive_infinity_returns_bounded() {
     let s = synapse_score(f64::INFINITY, 1.0);
-    assert!(s >= 0.0 && s <= 1.0, "got {s}");
+    assert!((0.0..=1.0).contains(&s), "got {s}");
 }
 
 #[test]
@@ -148,13 +146,13 @@ proptest! {
 fn energy_score_ref_energy_zero_falls_back() {
     // ref_energy=0 should fall back to 1.0
     let s = energy_score(1.0, 0.0);
-    assert!(s >= 0.0 && s <= 1.0, "got {s}");
+    assert!((0.0..=1.0).contains(&s), "got {s}");
 }
 
 #[test]
 fn energy_score_ref_energy_nan_falls_back() {
     let s = energy_score(1.0, f64::NAN);
-    assert!(s >= 0.0 && s <= 1.0, "got {s}");
+    assert!((0.0..=1.0).contains(&s), "got {s}");
 }
 
 // ---------------------------------------------------------------------------

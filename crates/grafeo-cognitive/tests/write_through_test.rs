@@ -107,7 +107,7 @@ fn synapse_write_through_persists_to_graph() {
 
     // The store manages edge IDs internally — if reinforce succeeded
     // with a graph store, the SYNAPSE edge with _cog_synapse_weight was persisted
-    assert!(store.len() > 0, "synapse store should have entries");
+    assert!(!store.is_empty(), "synapse store should have entries");
 }
 
 // ---------------------------------------------------------------------------

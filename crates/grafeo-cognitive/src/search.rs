@@ -446,20 +446,20 @@ mod tests {
 
     #[test]
     fn search_weights_normalization() {
-        let w = SearchWeights::new(1.0, 1.0, 1.0, 1.0);
-        let (a, b, c, d) = w.normalized();
-        assert!((a - 0.25).abs() < 1e-10);
-        assert!((b - 0.25).abs() < 1e-10);
-        assert!((c - 0.25).abs() < 1e-10);
-        assert!((d - 0.25).abs() < 1e-10);
+        let weights = SearchWeights::new(1.0, 1.0, 1.0, 1.0);
+        let (sim, energy, topo, syn) = weights.normalized();
+        assert!((sim - 0.25).abs() < 1e-10);
+        assert!((energy - 0.25).abs() < 1e-10);
+        assert!((topo - 0.25).abs() < 1e-10);
+        assert!((syn - 0.25).abs() < 1e-10);
     }
 
     #[test]
     fn search_weights_zero_fallback() {
-        let w = SearchWeights::new(0.0, 0.0, 0.0, 0.0);
-        let (a, b, c, d) = w.normalized();
-        assert!((a - 0.25).abs() < 1e-10);
-        assert!((b + c + d - 0.75).abs() < 1e-10);
+        let weights = SearchWeights::new(0.0, 0.0, 0.0, 0.0);
+        let (sim, energy, topo, syn) = weights.normalized();
+        assert!((sim - 0.25).abs() < 1e-10);
+        assert!((energy + topo + syn - 0.75).abs() < 1e-10);
     }
 
     #[test]
