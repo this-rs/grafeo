@@ -80,6 +80,7 @@ pub struct Engram {
     /// Predictive model — P(outcome | context) for this engram.
     /// Stores mean + variance of observed outcomes. Used by the predictive
     /// coding layer (Layer 3+4) to compute prediction errors.
+    #[cfg(feature = "engram")]
     #[serde(default)]
     pub predictive_model: Option<super::hopfield::PredictiveModel>,
 }
@@ -102,6 +103,7 @@ impl Engram {
             last_activated: now,
             fsrs_state: FsrsState::default(),
             recall_count: 0,
+            #[cfg(feature = "engram")]
             predictive_model: None,
         }
     }
