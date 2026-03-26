@@ -133,7 +133,7 @@ impl EngramManager {
 
             // Encode spectral signature.
             let signature = self.spectral.encode(&ensemble);
-            engram.spectral_signature = signature.clone();
+            engram.spectral_signature.clone_from(&signature);
 
             // Insert into store and vector index.
             self.store.insert(engram);
@@ -248,15 +248,13 @@ impl EngramManager {
                 .fsrs_state
                 .last_review
                 .and_then(|lr| now.duration_since(lr).ok())
-                .map(|d| d.as_secs_f64() / 86400.0)
-                .unwrap_or(0.0);
+                .map_or(0.0, |d| d.as_secs_f64() / 86400.0);
 
             // Check if past scheduled review (or if never reviewed and old enough).
             let is_due = engram
                 .fsrs_state
                 .next_review
-                .map(|nr| now >= nr)
-                .unwrap_or(elapsed_days > 1.0);
+                .map_or(elapsed_days > 1.0, |nr| now >= nr);
 
             if is_due {
                 let id = engram.id;
@@ -265,22 +263,20 @@ impl EngramManager {
                         .fsrs_state
                         .last_review
                         .and_then(|lr| now.duration_since(lr).ok())
-                        .map(|d| d.as_secs_f64() / 86400.0)
-                        .unwrap_or(1.0);
+                        .map_or(1.0, |d| d.as_secs_f64() / 86400.0);
                     let new_state = self.fsrs.review(&e.fsrs_state, ReviewRating::Again, days);
                     e.fsrs_state = new_state;
                     e.strength = (e.strength * 0.9).max(0.0);
                 });
 
                 // Check if engram has decayed below threshold.
-                if let Some(updated) = self.store.get(id) {
-                    if updated.strength < 0.05 {
+                if let Some(updated) = self.store.get(id)
+                    && updated.strength < 0.05 {
                         self.store.remove(id);
                         self.vector_index.remove(&id.to_string());
                         self.metrics.record_decay();
                         debug!(%id, "engram decayed and removed");
                     }
-                }
             }
         }
 
@@ -301,12 +297,11 @@ impl EngramManager {
                     e.horizon = new_horizon;
                 });
 
-                if let Some(updated) = self.store.get(id) {
-                    if updated.is_crystallization_candidate() {
+                if let Some(updated) = self.store.get(id)
+                    && updated.is_crystallization_candidate() {
                         self.metrics.record_crystallization();
                         debug!(%id, "engram crystallization candidate");
                     }
-                }
             }
         }
 

@@ -199,17 +199,29 @@ impl Default for CognitiveMetrics {
 /// logging, or display.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CognitiveMetricsSnapshot {
+    /// Number of currently active engrams.
     pub engrams_active: u64,
+    /// Total engrams formed since start.
     pub engrams_formed: u64,
+    /// Total engrams decayed (removed by homeostasis).
     pub engrams_decayed: u64,
+    /// Total engrams successfully recalled.
     pub engrams_recalled: u64,
+    /// Total engrams crystallized into notes.
     pub engrams_crystallized: u64,
+    /// Total formation attempts.
     pub formations_attempted: u64,
+    /// Total recall attempts.
     pub recalls_attempted: u64,
+    /// Successful recalls (matched and returned).
     pub recalls_successful: u64,
+    /// Recalls rejected by immune system.
     pub recalls_rejected: u64,
+    /// Total homeostasis sweep cycles.
     pub homeostasis_sweeps: u64,
+    /// Total prediction errors accumulated.
     pub prediction_errors_total: u64,
+    /// Mean strength across all active engrams.
     pub mean_strength: f64,
     /// Normalized Shannon entropy of pheromone distribution (0.0–1.0).
     pub pheromone_entropy: f64,

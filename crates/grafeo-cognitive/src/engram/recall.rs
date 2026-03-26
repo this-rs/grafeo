@@ -272,8 +272,7 @@ impl WarmupSelector {
             // --- Phase 3 pipeline: Hopfield → softmax → MMR → truncate → enrich ---
 
             // Step 1: Hopfield retrieve top-K candidates (3× budget for headroom).
-            let candidates =
-                hopfield::hopfield_retrieve(&matrix, &query_vec, store, budget * 3);
+            let candidates = hopfield::hopfield_retrieve(&matrix, &query_vec, store, budget * 3);
 
             if candidates.is_empty() {
                 return Vec::new();
@@ -297,8 +296,7 @@ impl WarmupSelector {
             }
 
             // Step 3: MMR for diversity.
-            let mmr_results =
-                hopfield::max_marginal_relevance(&competed, config.diversity_lambda);
+            let mmr_results = hopfield::max_marginal_relevance(&competed, config.diversity_lambda);
 
             // Step 4: Truncate to budget.
             let truncated: Vec<_> = mmr_results.into_iter().take(budget).collect();
@@ -308,8 +306,7 @@ impl WarmupSelector {
         } else {
             // --- Fallback: Phase 1 compatible path (no spectral signatures) ---
             let engine = RecallEngine::new();
-            let recall_results =
-                engine.recall(store, cues, vector_index, spectral, budget * 3);
+            let recall_results = engine.recall(store, cues, vector_index, spectral, budget * 3);
 
             let filtered: Vec<_> = recall_results
                 .into_iter()
@@ -394,6 +391,7 @@ fn make_summary(engram: &Engram) -> DetailLevel {
 ///   to the prediction error.
 /// - Existing node weights are slightly decayed to make room for new information.
 /// - Strength is boosted (successful recall + reconsolidation = reinforcement).
+#[allow(dead_code)]
 pub fn reconsolidate(engram: &mut Engram, new_nodes: &[NodeId], prediction_error: f64) {
     const RECONSOLIDATION_THRESHOLD: f64 = 0.1;
     const DECAY_FACTOR: f64 = 0.95;
@@ -410,7 +408,7 @@ pub fn reconsolidate(engram: &mut Engram, new_nodes: &[NodeId], prediction_error
     let existing: HashSet<NodeId> = engram.ensemble.iter().map(|(nid, _)| *nid).collect();
 
     // Decay existing weights to make room for new information.
-    for (_nid, weight) in engram.ensemble.iter_mut() {
+    for (_nid, weight) in &mut engram.ensemble {
         *weight *= DECAY_FACTOR;
     }
 
@@ -435,6 +433,7 @@ pub fn reconsolidate(engram: &mut Engram, new_nodes: &[NodeId], prediction_error
 // ---------------------------------------------------------------------------
 
 /// Cosine similarity between two vectors. Returns 0.0 for empty or zero-norm vectors.
+#[allow(dead_code)]
 fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
     if a.len() != b.len() || a.is_empty() {
         return 0.0;
@@ -689,10 +688,7 @@ mod tests {
             "Expected <= 3 results, got {}",
             results.len()
         );
-        assert!(
-            !results.is_empty(),
-            "Expected at least 1 result"
-        );
+        assert!(!results.is_empty(), "Expected at least 1 result");
 
         // Exactly one dominant.
         let dominant_count = results.iter().filter(|r| r.is_dominant).count();
@@ -720,7 +716,10 @@ mod tests {
         // cluster. We check via the spectral signatures — they should not all be
         // near-identical.
         if results.len() == 3 {
-            let sigs: Vec<&[f64]> = results.iter().map(|r| r.engram.spectral_signature.as_slice()).collect();
+            let sigs: Vec<&[f64]> = results
+                .iter()
+                .map(|r| r.engram.spectral_signature.as_slice())
+                .collect();
             let sim_01 = cosine_similarity(sigs[0], sigs[1]);
             let sim_02 = cosine_similarity(sigs[0], sigs[2]);
             let sim_12 = cosine_similarity(sigs[1], sigs[2]);
@@ -730,7 +729,9 @@ mod tests {
             assert!(
                 min_sim < 0.99,
                 "Expected diversity in results but all pairwise similarities are high: {:.3}, {:.3}, {:.3}",
-                sim_01, sim_02, sim_12
+                sim_01,
+                sim_02,
+                sim_12
             );
         }
     }
@@ -765,13 +766,8 @@ mod tests {
             min_strength: 0.0,
         };
 
-        let results = WarmupSelector::select_warmup_engrams(
-            &store,
-            &[NodeId(3)],
-            &index,
-            &spectral,
-            &config,
-        );
+        let results =
+            WarmupSelector::select_warmup_engrams(&store, &[NodeId(3)], &index, &spectral, &config);
         // Should still work via fallback.
         // (May be empty if VectorIndex returns no results, but should not panic.)
         assert!(results.len() <= 3);

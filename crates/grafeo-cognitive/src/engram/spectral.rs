@@ -48,6 +48,7 @@ pub struct DefaultSpectralEncoder {
 
 impl DefaultSpectralEncoder {
     /// Creates a new default encoder with the given number of dimensions.
+    #[allow(dead_code)]
     pub fn new(dims: usize) -> Self {
         Self { dims }
     }
@@ -84,11 +85,7 @@ impl SpectralEncoderTrait for DefaultSpectralEncoder {
 
                 // Alternate sign based on another bit to allow cancellation,
                 // producing a more expressive projection.
-                let sign = if (sub_hash >> 32) & 1 == 0 {
-                    1.0
-                } else {
-                    -1.0
-                };
+                let sign = if (sub_hash >> 32) & 1 == 0 { 1.0 } else { -1.0 };
 
                 signature[dim] += sign * weight;
             }
@@ -237,8 +234,7 @@ mod tests {
 
     #[test]
     fn custom_dimensions() {
-        let enc =
-            SpectralEncoder::with_encoder(Box::new(DefaultSpectralEncoder::new(128)));
+        let enc = SpectralEncoder::with_encoder(Box::new(DefaultSpectralEncoder::new(128)));
         assert_eq!(enc.dimensions(), 128);
 
         let sig = enc.encode(&[(NodeId(1), 1.0)]);
