@@ -564,6 +564,151 @@ mod tests {
         assert_eq!(metrics.snapshot().engrams_crystallized, 3);
     }
 
+    // -----------------------------------------------------------------------
+    // Additional coverage tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_custom_config_thresholds() {
+        let config = CrystallizationConfig {
+            strength_threshold: 0.5,
+            min_recall_count: 2,
+        };
+        let detector = CrystallizationDetector::new(config);
+
+        // strength 0.6 > 0.5, recall 2 >= 2 → eligible
+        let eligible = make_engram(0.6, 2, 0.0, 2);
+        assert!(detector.is_eligible(&eligible));
+
+        // strength 0.4 <= 0.5 → not eligible
+        let not_eligible = make_engram(0.4, 5, 0.0, 2);
+        assert!(!detector.is_eligible(&not_eligible));
+    }
+
+    #[test]
+    fn test_valence_label_caution_range() {
+        // -0.3 is between -0.5 and -0.1 → "caution"
+        assert_eq!(valence_label(-0.3), "caution");
+    }
+
+    #[test]
+    fn test_valence_label_positive_range() {
+        // 0.3 is between 0.1 and 0.5 → "positive"
+        assert_eq!(valence_label(0.3), "positive");
+    }
+
+    #[test]
+    fn test_valence_label_boundary_negative_05() {
+        // -0.5 is NOT < -0.5, so it falls into "caution" range (-0.5 < -0.1 is true)
+        assert_eq!(valence_label(-0.5), "caution");
+    }
+
+    #[test]
+    fn test_valence_label_boundary_positive_05() {
+        // 0.5 is NOT > 0.5, so it falls into "positive" range (0.5 > 0.1 is true)
+        assert_eq!(valence_label(0.5), "positive");
+    }
+
+    #[test]
+    fn test_summary_contains_strength_and_recalls() {
+        let engram = make_engram(0.92, 7, 0.0, 2);
+        let summary = generate_summary(&engram);
+        assert!(
+            summary.contains("Strength: 0.92"),
+            "summary should contain strength: {summary}"
+        );
+        assert!(
+            summary.contains("Recalls: 7"),
+            "summary should contain recalls: {summary}"
+        );
+    }
+
+    #[test]
+    fn test_summary_empty_ensemble() {
+        let engram = make_engram(0.9, 6, 0.0, 0);
+        let summary = generate_summary(&engram);
+        // Should not panic with 0 nodes, ensemble should be "[]"
+        assert!(
+            summary.contains("Ensemble: []"),
+            "empty ensemble should produce empty brackets: {summary}"
+        );
+    }
+
+    #[test]
+    fn test_crystallize_note_properties_correct() {
+        let storage = MockStorage::new();
+        let metrics = EngramMetricsCollector::new();
+        let engram = make_engram(0.91, 8, -0.3, 2);
+        let engram_node_id = NodeId(200);
+
+        let result = crystallize(&storage, &engram, engram_node_id, &metrics);
+
+        let nodes = storage.nodes.lock();
+        let props = &nodes[0].2;
+        // Check "content" is a non-empty string
+        if let Value::String(s) = props.get("content").unwrap() {
+            assert!(!s.is_empty());
+        } else {
+            panic!("content should be String");
+        }
+        // Check "source" = "crystallized:42"
+        assert_eq!(
+            props.get("source"),
+            Some(&Value::String(format!("crystallized:{}", engram.id).into()))
+        );
+        // Check valence and strength
+        assert_eq!(props.get("valence"), Some(&Value::Float64(-0.3)));
+        assert_eq!(props.get("strength"), Some(&Value::Float64(0.91)));
+        assert!(!result.summary.is_empty());
+    }
+
+    #[test]
+    fn test_crystallize_edge_properties_correct() {
+        let storage = MockStorage::new();
+        let metrics = EngramMetricsCollector::new();
+        let engram = make_engram(0.88, 6, 0.2, 2);
+        let engram_node_id = NodeId(300);
+
+        crystallize(&storage, &engram, engram_node_id, &metrics);
+
+        let edges = storage.edges.lock();
+        let props = &edges[0].4;
+        assert_eq!(props.get("strength"), Some(&Value::Float64(0.88)));
+        assert_eq!(props.get("recall_count"), Some(&Value::Int64(6)));
+    }
+
+    #[test]
+    fn test_detector_many_engrams_in_store() {
+        let store = EngramStore::new(None);
+        let detector = CrystallizationDetector::with_defaults();
+
+        // Insert 100 engrams, only 10 eligible (strength > 0.85, recall >= 5)
+        for i in 0..100u64 {
+            let mut e = if i < 10 {
+                make_engram(0.9, 6, 0.0, 2)
+            } else {
+                make_engram(0.5, 2, 0.0, 2)
+            };
+            e.id = store.next_id();
+            store.insert(e);
+        }
+
+        let proposals = detector.detect(&store);
+        assert_eq!(proposals.len(), 10);
+    }
+
+    #[test]
+    fn test_check_engram_proposal_fields_match() {
+        let detector = CrystallizationDetector::with_defaults();
+        let engram = make_engram(0.95, 10, -0.7, 3);
+        let proposal = detector.check_engram(&engram).unwrap();
+
+        assert!((proposal.strength - 0.95).abs() < f64::EPSILON);
+        assert_eq!(proposal.recall_count, 10);
+        assert!((proposal.valence - (-0.7)).abs() < f64::EPSILON);
+        assert_eq!(proposal.engram_id, engram.id);
+    }
+
     #[test]
     fn full_flow_detect_and_crystallize() {
         let store = EngramStore::new(None);

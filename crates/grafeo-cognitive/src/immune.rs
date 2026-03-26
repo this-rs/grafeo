@@ -1285,4 +1285,171 @@ mod tests {
         // Also clone_count should have incremented
         assert_eq!(system.get(&id).unwrap().clone_count, 5);
     }
+
+    // -------------------------------------------------------------------
+    // Additional coverage tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_idiotypic_propagation_nonexistent_id() {
+        let system = ImmuneSystem::new();
+        // Register one detector, propagate on a non-existent ID
+        let shape = ShapeDescriptor::new(vec![1.0, 0.0]);
+        system.register(ImmuneDetector::new(shape, 0.5, EngramId(1)));
+
+        let propagated = system.idiotypic_propagate(&DetectorId(99999));
+        assert!(propagated.is_empty());
+    }
+
+    #[test]
+    fn test_idiotypic_neighbours_nonexistent() {
+        let system = ImmuneSystem::new();
+        let neighbours = system.idiotypic_neighbours(&DetectorId(99999));
+        assert!(neighbours.is_empty());
+    }
+
+    #[test]
+    fn test_list_detectors_empty() {
+        let system = ImmuneSystem::new();
+        let list = system.list_detectors();
+        assert!(list.is_empty());
+    }
+
+    #[test]
+    fn test_remove_detector() {
+        let system = ImmuneSystem::new();
+        let shape = ShapeDescriptor::new(vec![1.0, 0.0]);
+        let det = ImmuneDetector::new(shape, 0.5, EngramId(1));
+        let id = system.register(det);
+        assert_eq!(system.detector_count(), 1);
+
+        let removed = system.remove(&id);
+        assert!(removed.is_some());
+        assert_eq!(system.detector_count(), 0);
+
+        // Removing again yields None
+        let removed2 = system.remove(&id);
+        assert!(removed2.is_none());
+    }
+
+    #[test]
+    fn test_mark_rejected_nonexistent() {
+        let system = ImmuneSystem::new();
+        // Should not panic
+        system.mark_rejected(&DetectorId(99999));
+    }
+
+    #[test]
+    fn test_mark_confirmed_nonexistent() {
+        let system = ImmuneSystem::new();
+        // Should not panic
+        system.mark_confirmed(&DetectorId(99999));
+    }
+
+    #[test]
+    fn test_interpolate_towards_self() {
+        let a = ShapeDescriptor::new(vec![1.0, 0.0, 0.0]);
+        let result = a.interpolate_towards(&a, 0.5);
+        // Interpolating towards self should yield same direction
+        for (i, f) in result.features().iter().enumerate() {
+            assert!(
+                (f - a.features()[i]).abs() < 1e-10,
+                "feature {i} should be unchanged"
+            );
+        }
+    }
+
+    #[test]
+    fn test_interpolate_towards_rate_zero() {
+        let a = ShapeDescriptor::new(vec![1.0, 0.0, 0.0]);
+        let b = ShapeDescriptor::new(vec![0.0, 1.0, 0.0]);
+        let result = a.interpolate_towards(&b, 0.0);
+        // rate=0 → result is a (re-normalized, but same direction)
+        for (i, f) in result.features().iter().enumerate() {
+            assert!(
+                (f - a.features()[i]).abs() < 1e-10,
+                "feature {i} should be unchanged at rate=0"
+            );
+        }
+    }
+
+    #[test]
+    fn test_interpolate_towards_rate_one() {
+        let a = ShapeDescriptor::new(vec![1.0, 0.0, 0.0]);
+        let b = ShapeDescriptor::new(vec![0.0, 1.0, 0.0]);
+        let result = a.interpolate_towards(&b, 1.0);
+        // rate=1 → result is b
+        for (i, f) in result.features().iter().enumerate() {
+            assert!(
+                (f - b.features()[i]).abs() < 1e-10,
+                "feature {i} should match target at rate=1"
+            );
+        }
+    }
+
+    #[test]
+    fn test_cosine_similarity_orthogonal() {
+        let a = ShapeDescriptor::new(vec![1.0, 0.0, 0.0]);
+        let b = ShapeDescriptor::new(vec![0.0, 1.0, 0.0]);
+        let sim = a.cosine_similarity(&b);
+        assert!(
+            sim.abs() < 1e-10,
+            "orthogonal vectors should have cosine ~ 0, got {sim}"
+        );
+    }
+
+    #[test]
+    fn test_cosine_similarity_opposite() {
+        let a = ShapeDescriptor::new(vec![1.0, 0.0, 0.0]);
+        let b = ShapeDescriptor::new(vec![-1.0, 0.0, 0.0]);
+        let sim = a.cosine_similarity(&b);
+        assert!(
+            (sim - (-1.0)).abs() < 1e-10,
+            "opposite vectors should have cosine ~ -1, got {sim}"
+        );
+    }
+
+    #[test]
+    fn test_shape_descriptor_euclidean_symmetric() {
+        let a = ShapeDescriptor::new(vec![1.0, 2.0, 3.0]);
+        let b = ShapeDescriptor::new(vec![4.0, 5.0, 6.0]);
+        let d_ab = a.euclidean_distance(&b);
+        let d_ba = b.euclidean_distance(&a);
+        assert!(
+            (d_ab - d_ba).abs() < 1e-10,
+            "distance should be symmetric: {d_ab} vs {d_ba}"
+        );
+    }
+
+    #[test]
+    fn test_scan_all_match() {
+        let system = ImmuneSystem::new();
+
+        // All detectors close to the same shape with large radius
+        let shape = ShapeDescriptor::new(vec![1.0, 0.0, 0.0]);
+        for i in 0..5 {
+            system.register(ImmuneDetector::new(shape.clone(), 2.0, EngramId(i)));
+        }
+
+        let ctx = ShapeDescriptor::new(vec![0.9, 0.1, 0.0]);
+        let results = system.scan(&ctx);
+        assert_eq!(results.len(), 5, "all detectors should match");
+    }
+
+    #[test]
+    fn test_confidence_far_match() {
+        // Detector with large radius matches a distant target → low confidence
+        let d = Detection {
+            detector_id: DetectorId(1),
+            source_engram: EngramId(1),
+            distance: 0.49,
+            affinity_radius: 0.5,
+        };
+        let conf = d.confidence();
+        assert!(
+            conf < 0.1,
+            "far match should have low confidence, got {conf}"
+        );
+        assert!(conf > 0.0);
+    }
 }

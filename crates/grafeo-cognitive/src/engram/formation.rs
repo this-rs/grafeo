@@ -593,6 +593,141 @@ mod tests {
         assert_eq!(suppressed, 1);
     }
 
+    // -----------------------------------------------------------------------
+    // Additional coverage tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_co_activation_default() {
+        let detector = CoActivationDetector::default();
+        assert_eq!(detector.episode_count, 0);
+    }
+
+    #[test]
+    fn test_detect_patterns_zero_episodes() {
+        let detector = CoActivationDetector::new();
+        let patterns = detector.detect_patterns(1, 0.0);
+        assert!(patterns.is_empty());
+    }
+
+    #[test]
+    fn test_detect_patterns_single_node() {
+        let mut detector = CoActivationDetector::new();
+        // Record episodes with only a single node — no pairs possible
+        for _ in 0..5 {
+            detector.record_episode(&[NodeId(1)]);
+        }
+        let patterns = detector.detect_patterns(1, 0.0);
+        assert!(
+            patterns.is_empty(),
+            "single node per episode should produce no pairs"
+        );
+    }
+
+    #[test]
+    fn test_record_episode_empty() {
+        let mut detector = CoActivationDetector::new();
+        detector.record_episode(&[]);
+        assert_eq!(detector.episode_count, 1);
+        // No co-occurrences should be recorded
+        assert!(detector.co_occurrences.is_empty());
+    }
+
+    #[test]
+    fn test_ordered_pair_symmetry() {
+        assert_eq!(
+            ordered_pair(NodeId(1), NodeId(2)),
+            ordered_pair(NodeId(2), NodeId(1))
+        );
+        assert_eq!(
+            ordered_pair(NodeId(5), NodeId(5)),
+            ordered_pair(NodeId(5), NodeId(5))
+        );
+        assert_eq!(
+            ordered_pair(NodeId(100), NodeId(1)),
+            ordered_pair(NodeId(1), NodeId(100))
+        );
+    }
+
+    #[test]
+    fn test_hebbian_activation_count_increments() {
+        let config = FormationConfig::default();
+        let mut hebb = HebbianWithSurprise::new(config);
+        assert_eq!(hebb.activation_count(), 0);
+
+        hebb.record_activation(&[NodeId(1), NodeId(2)], 0.1);
+        assert_eq!(hebb.activation_count(), 1);
+
+        hebb.record_activation(&[NodeId(1), NodeId(2)], 0.2);
+        assert_eq!(hebb.activation_count(), 2);
+
+        hebb.record_activation(&[NodeId(3)], 0.3);
+        assert_eq!(hebb.activation_count(), 3);
+    }
+
+    #[test]
+    fn test_hebbian_cumulative_surprise_accumulates() {
+        let config = FormationConfig::default();
+        let mut hebb = HebbianWithSurprise::new(config);
+
+        hebb.record_activation(&[NodeId(1)], 0.5);
+        assert!((hebb.cumulative_surprise() - 0.5).abs() < f64::EPSILON);
+
+        hebb.record_activation(&[NodeId(2)], 0.3);
+        assert!((hebb.cumulative_surprise() - 0.8).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_should_form_engram_with_marks_below_surprise_threshold() {
+        use crate::epigenetic::{EngramTemplate, EpigeneticBridge, EpigeneticMark, ProjectContext};
+
+        let config = FormationConfig {
+            min_episodes: 2,
+            min_overlap: 0.5,
+            min_prediction_error: 1.0, // surprise threshold
+            max_ensemble_size: 10,
+        };
+        let mut hebb = HebbianWithSurprise::new(config);
+
+        // Record enough co-activations but low surprise
+        for _ in 0..5 {
+            hebb.record_activation(&[NodeId(1), NodeId(2)], 0.1);
+        }
+        // cumulative surprise = 0.5 < 1.0 threshold
+
+        let mut bridge = EpigeneticBridge::new();
+        bridge.add_mark(EpigeneticMark::new(
+            EngramTemplate::any(),
+            0.5,
+            true,
+            vec![],
+        ));
+
+        let ctx = ProjectContext::new();
+        let template = EngramTemplate::any();
+        let (ensembles, _, _, _) = hebb.should_form_engram_with_marks(&template, &bridge, &ctx);
+        assert!(
+            ensembles.is_empty(),
+            "below surprise threshold should produce no ensembles even with marks"
+        );
+    }
+
+    #[test]
+    fn test_compute_modulated_min_episodes_base_1() {
+        // base=1, mod=0.0 → 1
+        assert_eq!(compute_modulated_min_episodes(1, 0.0), 1);
+        // base=1, mod=0.5 → 1 × 0.5 = 0.5 → round → 1 (clamped to min 1)
+        assert_eq!(compute_modulated_min_episodes(1, 0.5), 1);
+        // base=1, mod=-0.5 → 1 × 1.5 = 1.5 → round → 2
+        assert_eq!(compute_modulated_min_episodes(1, -0.5), 2);
+    }
+
+    #[test]
+    fn test_compute_modulated_min_episodes_extreme_positive() {
+        // base=5, mod=2.0 → 5 × (1-2) = -5 → clamped to 1
+        assert_eq!(compute_modulated_min_episodes(5, 2.0), 1);
+    }
+
     #[test]
     fn ensemble_truncated_to_max_size() {
         let config = FormationConfig {

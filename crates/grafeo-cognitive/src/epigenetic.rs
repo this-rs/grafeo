@@ -1239,4 +1239,246 @@ mod tests {
         assert_eq!(count, 2, "2 of 3 marks should pass conditions");
         assert_eq!(bridge.mark_count(), 2);
     }
+
+    // ─── Additional coverage tests ──────────────────────────────────────
+
+    #[test]
+    fn test_persist_creates_node_with_correct_properties() {
+        use crate::engram::traits::{
+            CognitiveEdge, CognitiveFilter, CognitiveNode, CognitiveStorage,
+        };
+        use grafeo_common::types::{EdgeId, NodeId, Value};
+        use std::collections::HashMap;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        struct MockStorage {
+            next_node: AtomicU64,
+            nodes: parking_lot::Mutex<Vec<(NodeId, String, HashMap<String, Value>)>>,
+        }
+
+        impl MockStorage {
+            fn new() -> Self {
+                Self {
+                    next_node: AtomicU64::new(1000),
+                    nodes: parking_lot::Mutex::new(Vec::new()),
+                }
+            }
+        }
+
+        impl CognitiveStorage for MockStorage {
+            fn create_node(&self, label: &str, properties: &HashMap<String, Value>) -> NodeId {
+                let id = NodeId(self.next_node.fetch_add(1, Ordering::Relaxed));
+                self.nodes
+                    .lock()
+                    .push((id, label.to_string(), properties.clone()));
+                id
+            }
+            fn create_edge(
+                &self,
+                _from: NodeId,
+                _to: NodeId,
+                _rel_type: &str,
+                _properties: &HashMap<String, Value>,
+            ) -> EdgeId {
+                EdgeId(0)
+            }
+            fn query_nodes(
+                &self,
+                _label: &str,
+                _filter: Option<&CognitiveFilter>,
+            ) -> Vec<CognitiveNode> {
+                Vec::new()
+            }
+            fn update_node(&self, _id: NodeId, _properties: &HashMap<String, Value>) {}
+            fn delete_node(&self, _id: NodeId) {}
+            fn delete_edge(&self, _id: EdgeId) {}
+            fn query_edges(&self, _from: NodeId, _rel_type: &str) -> Vec<CognitiveEdge> {
+                Vec::new()
+            }
+        }
+
+        let mark = EpigeneticMark::new(
+            EngramTemplate::with_labels(vec!["Func".into()]),
+            0.6,
+            true,
+            vec![ExpressionCondition::HasFile("main.rs".into())],
+        );
+
+        let storage = MockStorage::new();
+        let node_id = mark.persist(&storage);
+        assert_eq!(node_id, NodeId(1000));
+
+        let nodes = storage.nodes.lock();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].1, LABEL_EPIGENETIC_MARK);
+
+        let props = &nodes[0].2;
+        assert_eq!(
+            props.get("mark_id"),
+            Some(&Value::Int64(mark.id().0 as i64))
+        );
+        assert_eq!(props.get("modulation"), Some(&Value::Float64(0.6)));
+        assert_eq!(props.get("transmissible"), Some(&Value::Bool(true)));
+        assert_eq!(props.get("generation"), Some(&Value::Int64(0)));
+        assert!(props.contains_key("target"));
+        assert!(props.contains_key("expression_conditions"));
+    }
+
+    #[test]
+    fn test_effective_modulation_custom_decay() {
+        let mark = EpigeneticMark::new(EngramTemplate::any(), 1.0, true, vec![]);
+        // gen0, decay=0.5 → 1.0 * 0.5^0 = 1.0
+        assert!((mark.effective_modulation_with_decay(0.5) - 1.0).abs() < f64::EPSILON);
+
+        let gen1 = mark.transmit().unwrap();
+        // gen1, decay=0.5 → 1.0 * 0.5^1 = 0.5
+        assert!((gen1.effective_modulation_with_decay(0.5) - 0.5).abs() < f64::EPSILON);
+
+        let gen2 = gen1.transmit().unwrap();
+        // gen2, decay=0.5 → 1.0 * 0.5^2 = 0.25
+        assert!((gen2.effective_modulation_with_decay(0.5) - 0.25).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_effective_modulation_zero_modulation() {
+        let mark = EpigeneticMark::new(EngramTemplate::any(), 0.0, true, vec![]);
+        assert!((mark.effective_modulation()).abs() < f64::EPSILON);
+
+        let gen1 = mark.transmit().unwrap();
+        assert!((gen1.effective_modulation()).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_effective_modulation_negative() {
+        let mark = EpigeneticMark::new(EngramTemplate::any(), -0.8, true, vec![]);
+        // gen0 → -0.8
+        assert!((mark.effective_modulation() - (-0.8)).abs() < f64::EPSILON);
+
+        let gen1 = mark.transmit().unwrap();
+        // gen1 → -0.8 * 0.8 = -0.64
+        assert!((gen1.effective_modulation() - (-0.64)).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_export_empty_bridge() {
+        let bridge = EpigeneticBridge::new();
+        let exported = bridge.export();
+        assert!(exported.is_empty());
+    }
+
+    #[test]
+    fn test_import_empty_list() {
+        let ctx = ProjectContext::new();
+        let mut bridge = EpigeneticBridge::new();
+        bridge.add_mark(EpigeneticMark::new(
+            EngramTemplate::any(),
+            0.5,
+            true,
+            vec![],
+        ));
+        let count = bridge.import(vec![], &ctx);
+        assert_eq!(count, 0);
+        assert_eq!(bridge.mark_count(), 1); // original mark still there
+    }
+
+    #[test]
+    fn test_get_active_marks_empty_bridge() {
+        let bridge = EpigeneticBridge::new();
+        let ctx = ProjectContext::new();
+        let template = EngramTemplate::any();
+        let active = bridge.get_active_marks(&template, &ctx);
+        assert!(active.is_empty());
+    }
+
+    #[test]
+    fn test_get_active_marks_no_description_on_template() {
+        let mut bridge = EpigeneticBridge::new();
+        bridge.add_mark(EpigeneticMark::new(
+            EngramTemplate {
+                required_labels: vec![],
+                min_spectral_similarity: 0.0,
+                description_pattern: Some("WAL bug".into()),
+            },
+            0.5,
+            true,
+            vec![],
+        ));
+
+        let ctx = ProjectContext::new();
+        // Template has no description_pattern → mark's pattern can't match
+        let template = EngramTemplate::any();
+        let active = bridge.get_active_marks(&template, &ctx);
+        assert!(active.is_empty());
+    }
+
+    #[test]
+    fn test_mark_id_uniqueness() {
+        let mut ids = std::collections::HashSet::new();
+        for _ in 0..100 {
+            let mark = EpigeneticMark::new(EngramTemplate::any(), 0.5, true, vec![]);
+            assert!(ids.insert(mark.id()), "mark IDs should be unique");
+        }
+        assert_eq!(ids.len(), 100);
+    }
+
+    #[test]
+    fn test_cow_modulation_clamped_on_with() {
+        let mark = EpigeneticMark::new(EngramTemplate::any(), 0.5, true, vec![]);
+        let clamped = mark.with_modulation(5.0);
+        assert!((clamped.modulation() - 1.0).abs() < f64::EPSILON);
+
+        let clamped_neg = mark.with_modulation(-5.0);
+        assert!((clamped_neg.modulation() - (-1.0)).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_import_high_generation_deep_decay() {
+        let ctx = ProjectContext::new();
+        let serialized = SerializedMark {
+            target: EngramTemplate::any(),
+            modulation: 1.0,
+            generation: 10,
+            expression_conditions: vec![],
+        };
+
+        let mut bridge = EpigeneticBridge::new();
+        let count = bridge.import(vec![serialized], &ctx);
+        assert_eq!(count, 1);
+
+        let imported = &bridge.marks()[0];
+        assert_eq!(imported.generation(), 11);
+        // modulation = 1.0 * 0.7^11
+        let expected = TRANSGENERATIONAL_DECAY.powi(11);
+        assert!(
+            (imported.modulation() - expected).abs() < 1e-10,
+            "expected {expected}, got {}",
+            imported.modulation()
+        );
+    }
+
+    #[test]
+    fn test_serialized_mark_preserves_all_fields() {
+        let mark = EpigeneticMark::new(
+            EngramTemplate {
+                required_labels: vec!["A".into(), "B".into()],
+                min_spectral_similarity: 0.5,
+                description_pattern: Some("test pattern".into()),
+            },
+            -0.6,
+            true,
+            vec![
+                ExpressionCondition::HasFile("foo.rs".into()),
+                ExpressionCondition::MinNodes(42),
+            ],
+        );
+
+        let serialized = SerializedMark::from_mark(&mark);
+        assert_eq!(serialized.target, *mark.target());
+        assert!((serialized.modulation - mark.modulation()).abs() < f64::EPSILON);
+        assert_eq!(serialized.generation, mark.generation());
+        assert_eq!(
+            serialized.expression_conditions,
+            mark.expression_conditions()
+        );
+    }
 }

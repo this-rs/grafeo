@@ -1379,4 +1379,232 @@ mod tests {
             pe
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Additional coverage tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_pattern_matrix_new_empty() {
+        let matrix = PatternMatrix::new(8);
+        assert_eq!(matrix.len(), 0);
+        assert!(matrix.is_empty());
+        assert_eq!(matrix.dim(), 8);
+    }
+
+    #[test]
+    fn test_pattern_matrix_remove_nonexistent() {
+        let mut matrix = PatternMatrix::new(3);
+        matrix.add_pattern(EngramId(1), &[1.0, 0.0, 0.0], 1.0);
+        assert_eq!(matrix.len(), 1);
+
+        // Remove non-existent — no panic, len unchanged
+        matrix.remove_pattern(EngramId(999));
+        assert_eq!(matrix.len(), 1);
+    }
+
+    #[test]
+    fn test_hopfield_retrieve_single_pattern() {
+        let store = EngramStore::new(None);
+        let dim = 3;
+        let mut matrix = PatternMatrix::new(dim);
+
+        let id1 = store.next_id();
+        let mut e1 = Engram::new(id1, vec![(NodeId(1), 1.0)]);
+        e1.spectral_signature = vec![1.0, 0.0, 0.0];
+        e1.precision = 1.0;
+        store.insert(e1);
+        matrix.add_pattern(id1, &[1.0, 0.0, 0.0], 1.0);
+
+        let results = hopfield_retrieve(&matrix, &[1.0, 0.0, 0.0], &store, 5);
+        assert_eq!(results.len(), 1);
+        assert!((results[0].attention_weight - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_softmax_compete_single_candidate() {
+        let store = EngramStore::new(None);
+        let dim = 3;
+        let mut matrix = PatternMatrix::new(dim);
+
+        let id1 = store.next_id();
+        let mut e1 = Engram::new(id1, vec![(NodeId(1), 1.0)]);
+        e1.spectral_signature = vec![1.0, 0.0, 0.0];
+        e1.precision = 1.0;
+        store.insert(e1);
+        matrix.add_pattern(id1, &[1.0, 0.0, 0.0], 1.0);
+
+        let candidates = hopfield_retrieve(&matrix, &[1.0, 0.0, 0.0], &store, 1);
+        let competed = softmax_compete(&candidates, 0.0);
+
+        assert_eq!(competed.len(), 1);
+        assert!((competed[0].activation - 1.0).abs() < 1e-10);
+        assert!(competed[0].is_dominant);
+    }
+
+    #[test]
+    fn test_mmr_lambda_zero_pure_diversity() {
+        // With lambda=0, MMR score = -max_similarity (pure diversity)
+        let similar_sig = vec![1.0, 0.0, 0.0, 0.0];
+
+        let candidates = vec![
+            CompetitionResult {
+                engram_id: EngramId(1),
+                activation: 0.5,
+                engram: {
+                    let mut e = Engram::new(EngramId(1), vec![(NodeId(1), 1.0)]);
+                    e.spectral_signature = similar_sig.clone();
+                    e
+                },
+                is_dominant: true,
+            },
+            CompetitionResult {
+                engram_id: EngramId(2),
+                activation: 0.4,
+                engram: {
+                    let mut e = Engram::new(EngramId(2), vec![(NodeId(2), 1.0)]);
+                    e.spectral_signature = vec![0.99, 0.1, 0.0, 0.0]; // very similar to 1
+                    e
+                },
+                is_dominant: false,
+            },
+            CompetitionResult {
+                engram_id: EngramId(3),
+                activation: 0.1,
+                engram: {
+                    let mut e = Engram::new(EngramId(3), vec![(NodeId(3), 1.0)]);
+                    e.spectral_signature = vec![0.0, 0.0, 1.0, 0.0]; // very different
+                    e
+                },
+                is_dominant: false,
+            },
+        ];
+
+        let mmr_zero = max_marginal_relevance(&candidates, 0.0);
+        let mmr_one = max_marginal_relevance(&candidates, 1.0);
+
+        // With lambda=0 (pure diversity), the diverse engram should be picked earlier
+        // than with lambda=1 (pure relevance)
+        let pos_diverse_l0 = mmr_zero
+            .iter()
+            .position(|r| r.engram_id == EngramId(3))
+            .unwrap();
+        let pos_diverse_l1 = mmr_one
+            .iter()
+            .position(|r| r.engram_id == EngramId(3))
+            .unwrap();
+        assert!(
+            pos_diverse_l0 <= pos_diverse_l1,
+            "lambda=0 should favor diverse engram: pos_l0={}, pos_l1={}",
+            pos_diverse_l0,
+            pos_diverse_l1
+        );
+    }
+
+    #[test]
+    fn test_mmr_lambda_one_pure_relevance() {
+        let candidates = vec![
+            CompetitionResult {
+                engram_id: EngramId(1),
+                activation: 0.5,
+                engram: {
+                    let mut e = Engram::new(EngramId(1), vec![(NodeId(1), 1.0)]);
+                    e.spectral_signature = vec![1.0, 0.0];
+                    e
+                },
+                is_dominant: true,
+            },
+            CompetitionResult {
+                engram_id: EngramId(2),
+                activation: 0.3,
+                engram: {
+                    let mut e = Engram::new(EngramId(2), vec![(NodeId(2), 1.0)]);
+                    e.spectral_signature = vec![0.0, 1.0];
+                    e
+                },
+                is_dominant: false,
+            },
+        ];
+
+        let mmr = max_marginal_relevance(&candidates, 1.0);
+        // With lambda=1, order should follow activation: 1 then 2
+        assert_eq!(mmr[0].engram_id, EngramId(1));
+        assert_eq!(mmr[1].engram_id, EngramId(2));
+    }
+
+    #[test]
+    fn test_mmr_single_candidate() {
+        let candidates = vec![CompetitionResult {
+            engram_id: EngramId(42),
+            activation: 1.0,
+            engram: {
+                let mut e = Engram::new(EngramId(42), vec![(NodeId(1), 1.0)]);
+                e.spectral_signature = vec![1.0, 0.0];
+                e
+            },
+            is_dominant: true,
+        }];
+
+        let mmr = max_marginal_relevance(&candidates, 0.7);
+        assert_eq!(mmr.len(), 1);
+        assert_eq!(mmr[0].engram_id, EngramId(42));
+    }
+
+    #[test]
+    fn test_predictive_model_from_empty_observations() {
+        let result = PredictiveModel::from_observations(&[]);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_predictive_model_observe_multiple_converges() {
+        let mut pm = PredictiveModel::new(1);
+        let target = 5.0;
+        for _ in 0..10 {
+            pm.observe(&[target]);
+        }
+        assert!(
+            (pm.mean[0] - target).abs() < 1e-10,
+            "mean should converge to {target}, got {}",
+            pm.mean[0]
+        );
+    }
+
+    #[test]
+    fn test_compute_prediction_error_identical() {
+        let pm = PredictiveModel::from_observations(&[vec![3.0, 4.0], vec![3.0, 4.0]]).unwrap();
+        let pe = compute_prediction_error(&pm, &[3.0, 4.0]).unwrap();
+        assert!(
+            pe.magnitude < 0.01,
+            "actual == predicted should give near-zero PE, got {}",
+            pe.magnitude
+        );
+    }
+
+    #[test]
+    fn test_bayesian_update_zero_prediction_error() {
+        let mut pm = PredictiveModel::new(1);
+        pm.mean = vec![5.0];
+        pm.variance = vec![1.0];
+        pm.precision = 2.0;
+
+        let actual = &[5.0]; // exactly the mean
+        let pe = compute_prediction_error(&pm, actual).unwrap();
+        assert!(pe.magnitude < 0.01);
+
+        let old_mean = pm.mean[0];
+        let result = bayesian_update(&mut pm, actual, &pe).unwrap();
+
+        // Mean should be essentially unchanged
+        assert!(
+            (pm.mean[0] - old_mean).abs() < 0.01,
+            "mean should be unchanged with zero PE"
+        );
+        // Precision should increase slightly (model confirmed)
+        assert!(
+            result.posterior_precision >= 2.0 * 0.99,
+            "precision should stay stable or increase, got {}",
+            result.posterior_precision
+        );
+    }
 }

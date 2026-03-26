@@ -636,4 +636,148 @@ mod tests {
     fn yield_columns_unknown_returns_none() {
         assert!(yield_columns("grafeo.unknown").is_none());
     }
+
+    // -----------------------------------------------------------------------
+    // Additional coverage tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_forget_double_forget_idempotent() {
+        let (store, index, _metrics) = make_test_store();
+        // First forget succeeds
+        let r1 = engrams_forget(&store, index.as_ref(), 1);
+        assert_eq!(r1.rows[0][1], Value::from("forgotten"));
+
+        // Second forget returns not_found
+        let r2 = engrams_forget(&store, index.as_ref(), 1);
+        assert_eq!(r2.rows[0][1], Value::from("not_found"));
+    }
+
+    #[test]
+    fn test_forget_then_list_excludes_forgotten() {
+        let (store, index, _metrics) = make_test_store();
+        engrams_forget(&store, index.as_ref(), 1);
+
+        let list = engrams_list(&store);
+        assert_eq!(list.rows.len(), 2);
+        for row in &list.rows {
+            if let Value::Int64(id) = &row[0] {
+                assert_ne!(*id, 1, "forgotten engram should not appear in list");
+            }
+        }
+    }
+
+    #[test]
+    fn test_metrics_zero_state() {
+        let metrics = EngramMetricsCollector::new();
+        let result = cognitive_metrics(&metrics);
+        let row = &result.rows[0];
+
+        // All integer counters should be 0
+        for (i, val) in row.iter().enumerate() {
+            match val {
+                Value::Int64(v) => assert_eq!(*v, 0, "column {} should be 0", result.columns[i]),
+                Value::Float64(v) => {
+                    assert!(
+                        v.is_finite(),
+                        "column {} should be finite",
+                        result.columns[i]
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn test_list_single_engram() {
+        let store = EngramStore::new(None);
+        let id = store.next_id();
+        let nodes: Vec<(NodeId, f64)> = vec![(NodeId(1), 1.0)];
+        let engram = Engram::new(id, nodes);
+        store.insert(engram);
+
+        let result = engrams_list(&store);
+        assert_eq!(result.rows.len(), 1);
+    }
+
+    #[test]
+    fn test_inspect_all_fields_present() {
+        let (store, _index, _metrics) = make_test_store();
+        let result = engrams_inspect(&store, 1);
+
+        assert_eq!(result.columns.len(), 13);
+        assert_eq!(result.rows.len(), 1);
+        let row = &result.rows[0];
+
+        // Verify types of each column
+        assert!(matches!(row[0], Value::Int64(_))); // id
+        assert!(matches!(row[1], Value::Float64(_))); // strength
+        assert!(matches!(row[2], Value::Float64(_))); // valence
+        assert!(matches!(row[3], Value::Float64(_))); // precision
+        assert!(matches!(row[4], Value::Int64(_))); // recall_count
+        assert!(matches!(row[5], Value::String(_))); // horizon
+        assert!(matches!(row[6], Value::Int64(_))); // ensemble_size
+        assert!(matches!(row[7], Value::String(_))); // ensemble
+        assert!(matches!(row[8], Value::Int64(_))); // recall_history_count
+        assert!(matches!(row[9], Value::String(_))); // source_episodes
+        assert!(matches!(row[10], Value::Int64(_))); // spectral_dim
+        assert!(matches!(row[11], Value::Float64(_))); // fsrs_stability
+        assert!(matches!(row[12], Value::Float64(_))); // fsrs_difficulty
+    }
+
+    #[test]
+    fn test_yield_columns_short_names() {
+        // Short names (without grafeo. prefix) should work
+        let list_cols = yield_columns("engrams.list").unwrap();
+        assert_eq!(list_cols.len(), 7);
+
+        let inspect_cols = yield_columns("engrams.inspect").unwrap();
+        assert_eq!(inspect_cols.len(), 13);
+
+        let forget_cols = yield_columns("engrams.forget").unwrap();
+        assert_eq!(forget_cols.len(), 3);
+
+        let metrics_cols = yield_columns("cognitive.metrics").unwrap();
+        assert_eq!(metrics_cols.len(), 20);
+    }
+
+    #[test]
+    fn test_procedure_result_new_and_add_row() {
+        let mut result = ProcedureResult::new(vec!["a".into(), "b".into()]);
+        assert_eq!(result.columns.len(), 2);
+        assert_eq!(result.rows.len(), 0);
+
+        result.add_row(vec![Value::Int64(1), Value::Float64(2.0)]);
+        result.add_row(vec![Value::Int64(3), Value::Float64(4.0)]);
+        assert_eq!(result.rows.len(), 2);
+    }
+
+    #[test]
+    fn test_list_ordering_is_deterministic() {
+        let store = EngramStore::new(None);
+
+        // Insert in "random" order with various IDs
+        for &i in &[5u64, 2, 8, 1, 3] {
+            let id = EngramId(i);
+            let nodes: Vec<(NodeId, f64)> = vec![(NodeId(i), 1.0)];
+            let engram = Engram::new(id, nodes);
+            store.insert(engram);
+        }
+
+        let result = engrams_list(&store);
+        let ids: Vec<i64> = result
+            .rows
+            .iter()
+            .map(|row| match &row[0] {
+                Value::Int64(v) => *v,
+                _ => panic!("expected Int64"),
+            })
+            .collect();
+
+        // Should be sorted ascending by id
+        for window in ids.windows(2) {
+            assert!(window[0] < window[1], "IDs should be sorted: {:?}", ids);
+        }
+    }
 }
