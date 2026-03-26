@@ -82,6 +82,15 @@ pub use observe::{
 };
 
 #[cfg(feature = "engram")]
+mod crystallization;
+#[cfg(feature = "engram")]
+pub use crystallization::{
+    CrystallizationConfig, CrystallizationDetector, CrystallizationProposal,
+    CrystallizationResult, LABEL_CRYSTALLIZED_NOTE, REL_CRYSTALLIZED_IN, crystallize,
+    generate_summary,
+};
+
+#[cfg(feature = "engram")]
 mod manager;
 #[cfg(feature = "engram")]
 pub use manager::EngramManager;

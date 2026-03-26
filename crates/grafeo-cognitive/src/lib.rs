@@ -205,12 +205,15 @@ pub use stigmergy::{
 
 #[cfg(feature = "engram")]
 pub use engram::{
-    ActivatedEngram, CoActivationDetector, CognitiveMetrics, CompetitionResult, DetailLevel,
-    EngramFormationTrigger, EngramManager, EngramMetricsCollector, EngramStore, FormationConfig,
-    FsrsConfig, FsrsScheduler, HebbianWithSurprise, HomeostasisConfig, HomeostasisEngine,
-    HomeostasisSignal, IMMUNE_FP_RATE_THRESHOLD, LOW_PRECISION_BETA_THRESHOLD, MmrResult,
-    RecallEngine, RecallResult, ReviewRating, SpectralEncoder, WarmupConfig, WarmupSelector,
-    hopfield_retrieve, max_marginal_relevance, softmax_compete,
+    ActivatedEngram, CoActivationDetector, CognitiveMetrics, CompetitionResult,
+    CrystallizationConfig, CrystallizationDetector, CrystallizationProposal,
+    CrystallizationResult, DetailLevel, EngramFormationTrigger, EngramManager,
+    EngramMetricsCollector, EngramStore, FormationConfig, FsrsConfig, FsrsScheduler,
+    HebbianWithSurprise, HomeostasisConfig, HomeostasisEngine, HomeostasisSignal,
+    IMMUNE_FP_RATE_THRESHOLD, LABEL_CRYSTALLIZED_NOTE, LOW_PRECISION_BETA_THRESHOLD, MmrResult,
+    REL_CRYSTALLIZED_IN, RecallEngine, RecallResult, ReviewRating, SpectralEncoder, WarmupConfig,
+    WarmupSelector, crystallize, generate_summary, hopfield_retrieve, max_marginal_relevance,
+    softmax_compete,
 };
 
 #[cfg(feature = "immune")]
@@ -220,6 +223,6 @@ pub use immune::{
 
 #[cfg(feature = "epigenetic")]
 pub use epigenetic::{
-    EngramTemplate, EpigeneticMark, EpigeneticMarkId, ExpressionCondition, ProjectContext,
-    LABEL_EPIGENETIC_MARK,
+    EngramTemplate, EpigeneticMark, EpigeneticMarkId, ExpressionCondition, LABEL_EPIGENETIC_MARK,
+    ProjectContext,
 };
