@@ -899,12 +899,9 @@ impl CypherTranslator {
                 .collect::<Result<_>>()?;
 
             // Rewrite pattern comprehensions into Apply + Aggregate(Collect)
-            let has_pattern_comp = projections.iter().any(|p| {
-                matches!(
-                    &p.expression,
-                    LogicalExpression::PatternComprehension { .. }
-                )
-            });
+            let has_pattern_comp = projections
+                .iter()
+                .any(|p| Self::expr_contains_pattern_comprehension(&p.expression));
             let (input, projections) = if has_pattern_comp {
                 let items: Vec<ReturnItem> = projections
                     .into_iter()
@@ -1323,12 +1320,9 @@ impl CypherTranslator {
             };
 
             // Rewrite pattern comprehensions into Apply + Aggregate(Collect)
-            let has_pattern_comp = items.iter().any(|item| {
-                matches!(
-                    &item.expression,
-                    LogicalExpression::PatternComprehension { .. }
-                )
-            });
+            let has_pattern_comp = items
+                .iter()
+                .any(|item| Self::expr_contains_pattern_comprehension(&item.expression));
             if has_pattern_comp {
                 let (rewritten_input, rewritten_items) =
                     self.rewrite_pattern_comprehensions(input, items)?;
@@ -2403,12 +2397,13 @@ impl CypherTranslator {
 
     /// Rewrites pattern comprehensions in return items into Apply + Aggregate.
     ///
-    /// For each `PatternComprehension` found in the items:
+    /// For each `PatternComprehension` found in the items (either top-level or
+    /// nested inside wrapper expressions like `size([...])`:
     /// 1. Extracts the anchor variable from the subplan
     /// 2. Replaces the leaf NodeScan with ParameterScan
     /// 3. Wraps the subplan in `Aggregate(collect(projection) AS alias)`
     /// 4. Wraps the current input in `Apply(shared_variables: [anchor])`
-    /// 5. Replaces the expression with `Variable(alias)`
+    /// 5. Replaces the expression (or nested sub-expression) with `Variable(alias)`
     fn rewrite_pattern_comprehensions(
         &self,
         input: LogicalOperator,
@@ -2418,53 +2413,16 @@ impl CypherTranslator {
         let mut rewritten_items = Vec::with_capacity(items.len());
 
         for item in items {
-            if let LogicalExpression::PatternComprehension {
-                ref subplan,
-                ref projection,
-            } = item.expression
-            {
-                // 1. Extract anchor variable
-                let anchor = Self::extract_anchor_variable(subplan).ok_or_else(|| {
-                    Error::Query(QueryError::new(
-                        QueryErrorKind::Semantic,
-                        "Pattern comprehension must start with a node pattern",
-                    ))
-                })?;
-
-                // 2. Generate alias for the collected list
+            if Self::expr_contains_pattern_comprehension(&item.expression) {
                 let alias = item.alias.clone().unwrap_or_else(|| self.next_anon_var());
-
-                // 3. Replace anchor NodeScan with ParameterScan
-                let rewritten_subplan =
-                    Self::replace_anchor_with_parameter_scan(*subplan.clone(), &anchor);
-
-                // 4. Wrap in Aggregate(collect(projection) AS alias)
-                let inner_plan = LogicalOperator::Aggregate(AggregateOp {
-                    group_by: vec![],
-                    aggregates: vec![AggregateExpr {
-                        function: AggregateFunction::Collect,
-                        expression: Some(*projection.clone()),
-                        expression2: None,
-                        distinct: false,
-                        alias: Some(alias.clone()),
-                        percentile: None,
-                        separator: None,
-                    }],
-                    input: Box::new(rewritten_subplan),
-                    having: None,
-                });
-
-                // 5. Wrap outer input in Apply
-                current_input = LogicalOperator::Apply(ApplyOp {
-                    input: Box::new(current_input),
-                    subplan: Box::new(inner_plan),
-                    shared_variables: vec![anchor],
-                    optional: false,
-                });
-
-                // 6. Replace expression with Variable reference
+                let (new_input, new_expr) = self.rewrite_expr_pattern_comprehension(
+                    current_input,
+                    item.expression,
+                    &alias,
+                )?;
+                current_input = new_input;
                 rewritten_items.push(ReturnItem {
-                    expression: LogicalExpression::Variable(alias.clone()),
+                    expression: new_expr,
                     alias: Some(alias),
                 });
             } else {
@@ -2473,6 +2431,151 @@ impl CypherTranslator {
         }
 
         Ok((current_input, rewritten_items))
+    }
+
+    /// Checks recursively if a LogicalExpression contains a PatternComprehension.
+    fn expr_contains_pattern_comprehension(expr: &LogicalExpression) -> bool {
+        match expr {
+            LogicalExpression::PatternComprehension { .. } => true,
+            LogicalExpression::FunctionCall { args, .. } => {
+                args.iter().any(Self::expr_contains_pattern_comprehension)
+            }
+            LogicalExpression::Binary { left, right, .. } => {
+                Self::expr_contains_pattern_comprehension(left)
+                    || Self::expr_contains_pattern_comprehension(right)
+            }
+            LogicalExpression::Unary { operand, .. } => {
+                Self::expr_contains_pattern_comprehension(operand)
+            }
+            _ => false,
+        }
+    }
+
+    /// Rewrites a single expression that contains a PatternComprehension.
+    /// Returns the updated input plan and the rewritten expression.
+    fn rewrite_expr_pattern_comprehension(
+        &self,
+        input: LogicalOperator,
+        expr: LogicalExpression,
+        alias: &str,
+    ) -> Result<(LogicalOperator, LogicalExpression)> {
+        match expr {
+            LogicalExpression::PatternComprehension {
+                subplan,
+                projection,
+            } => {
+                // 1. Extract anchor variable
+                let anchor = Self::extract_anchor_variable(&subplan).ok_or_else(|| {
+                    Error::Query(QueryError::new(
+                        QueryErrorKind::Semantic,
+                        "Pattern comprehension must start with a node pattern",
+                    ))
+                })?;
+
+                // 2. Replace anchor NodeScan with ParameterScan
+                let rewritten_subplan =
+                    Self::replace_anchor_with_parameter_scan(*subplan, &anchor);
+
+                // 3. Wrap in Aggregate(collect(projection) AS alias)
+                let inner_plan = LogicalOperator::Aggregate(AggregateOp {
+                    group_by: vec![],
+                    aggregates: vec![AggregateExpr {
+                        function: AggregateFunction::Collect,
+                        expression: Some(*projection),
+                        expression2: None,
+                        distinct: false,
+                        alias: Some(alias.to_string()),
+                        percentile: None,
+                        separator: None,
+                    }],
+                    input: Box::new(rewritten_subplan),
+                    having: None,
+                });
+
+                // 4. Wrap outer input in Apply
+                let new_input = LogicalOperator::Apply(ApplyOp {
+                    input: Box::new(input),
+                    subplan: Box::new(inner_plan),
+                    shared_variables: vec![anchor],
+                    optional: false,
+                });
+
+                // 5. Replace expression with Variable reference
+                Ok((
+                    new_input,
+                    LogicalExpression::Variable(alias.to_string()),
+                ))
+            }
+            LogicalExpression::FunctionCall {
+                name,
+                args,
+                distinct,
+            } => {
+                // Recurse into the argument that contains the PC
+                let mut current_input = input;
+                let mut new_args = Vec::with_capacity(args.len());
+                for arg in args {
+                    if Self::expr_contains_pattern_comprehension(&arg) {
+                        let inner_alias = self.next_anon_var();
+                        let (updated_input, rewritten_arg) = self
+                            .rewrite_expr_pattern_comprehension(
+                                current_input,
+                                arg,
+                                &inner_alias,
+                            )?;
+                        current_input = updated_input;
+                        new_args.push(rewritten_arg);
+                    } else {
+                        new_args.push(arg);
+                    }
+                }
+                Ok((
+                    current_input,
+                    LogicalExpression::FunctionCall {
+                        name,
+                        args: new_args,
+                        distinct,
+                    },
+                ))
+            }
+            LogicalExpression::Binary {
+                left,
+                op,
+                right,
+            } => {
+                let mut current_input = input;
+                let new_left = if Self::expr_contains_pattern_comprehension(&left) {
+                    let inner_alias = self.next_anon_var();
+                    let (updated, rewritten) = self
+                        .rewrite_expr_pattern_comprehension(current_input, *left, &inner_alias)?;
+                    current_input = updated;
+                    Box::new(rewritten)
+                } else {
+                    left
+                };
+                let new_right = if Self::expr_contains_pattern_comprehension(&right) {
+                    let inner_alias = self.next_anon_var();
+                    let (updated, rewritten) = self
+                        .rewrite_expr_pattern_comprehension(current_input, *right, &inner_alias)?;
+                    current_input = updated;
+                    Box::new(rewritten)
+                } else {
+                    right
+                };
+                Ok((
+                    current_input,
+                    LogicalExpression::Binary {
+                        left: new_left,
+                        op,
+                        right: new_right,
+                    },
+                ))
+            }
+            other => {
+                // Fallback: no rewrite possible, return as-is
+                Ok((input, other))
+            }
+        }
     }
 }
 

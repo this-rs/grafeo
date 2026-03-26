@@ -81,12 +81,41 @@ impl GqlTranslator {
         synthetic_alias: &str,
     ) -> Result<(AggregateExpr, LogicalExpression)> {
         match expr {
-            ast::Expression::FunctionCall { .. } => {
-                let agg = self
+            ast::Expression::FunctionCall { name, args, distinct } => {
+                // First, check if this function itself is an aggregate
+                if let Some(agg) = self
                     .try_extract_aggregate(expr, &Some(synthetic_alias.to_string()))?
-                    .expect("contains_aggregate was true but try_extract_aggregate returned None");
-                let substitute = LogicalExpression::Variable(synthetic_alias.to_string());
-                Ok((agg, substitute))
+                {
+                    let substitute = LogicalExpression::Variable(synthetic_alias.to_string());
+                    return Ok((agg, substitute));
+                }
+                // Not an aggregate (e.g. COALESCE, toString, etc.) — recurse
+                // into arguments to find the nested aggregate.
+                for (i, arg) in args.iter().enumerate() {
+                    if contains_aggregate(arg) {
+                        let (agg, arg_sub) =
+                            self.extract_wrapped_aggregate(arg, synthetic_alias)?;
+                        // Rebuild the function call with the substituted argument
+                        let mut translated_args = Vec::with_capacity(args.len());
+                        for (j, a) in args.iter().enumerate() {
+                            if j == i {
+                                translated_args.push(arg_sub.clone());
+                            } else {
+                                translated_args.push(self.translate_expression(a)?);
+                            }
+                        }
+                        let substitute = LogicalExpression::FunctionCall {
+                            name: name.clone(),
+                            args: translated_args,
+                            distinct: *distinct,
+                        };
+                        return Ok((agg, substitute));
+                    }
+                }
+                Err(Error::Query(QueryError::new(
+                    QueryErrorKind::Semantic,
+                    format!("contains_aggregate was true but no aggregate found in arguments of {name}"),
+                )))
             }
             ast::Expression::Binary { left, op, right } => {
                 let binary_op = self.translate_binary_op(*op);

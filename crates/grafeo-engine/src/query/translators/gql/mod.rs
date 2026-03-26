@@ -131,6 +131,7 @@ impl GqlTranslator {
     }
 
     /// Rewrites pattern comprehensions in return items into Apply + Aggregate.
+    /// Handles both top-level PCs and PCs nested inside wrapper expressions like `size([...])`.
     fn rewrite_pattern_comprehensions(
         &self,
         input: LogicalOperator,
@@ -140,53 +141,16 @@ impl GqlTranslator {
         let mut rewritten_items = Vec::with_capacity(items.len());
 
         for item in items {
-            if let LogicalExpression::PatternComprehension {
-                ref subplan,
-                ref projection,
-            } = item.expression
-            {
-                // 1. Extract anchor variable
-                let anchor = Self::extract_anchor_variable(subplan).ok_or_else(|| {
-                    Error::Query(QueryError::new(
-                        QueryErrorKind::Semantic,
-                        "Pattern comprehension must start with a node pattern",
-                    ))
-                })?;
-
-                // 2. Generate alias for the collected list
+            if Self::expr_contains_pattern_comprehension(&item.expression) {
                 let alias = item.alias.clone().unwrap_or_else(|| self.next_anon_var());
-
-                // 3. Replace anchor NodeScan with ParameterScan
-                let rewritten_subplan =
-                    Self::replace_anchor_with_parameter_scan(*subplan.clone(), &anchor);
-
-                // 4. Wrap in Aggregate(collect(projection) AS alias)
-                let inner_plan = LogicalOperator::Aggregate(AggregateOp {
-                    group_by: vec![],
-                    aggregates: vec![AggregateExpr {
-                        function: AggregateFunction::Collect,
-                        expression: Some(*projection.clone()),
-                        expression2: None,
-                        distinct: false,
-                        alias: Some(alias.clone()),
-                        percentile: None,
-                        separator: None,
-                    }],
-                    input: Box::new(rewritten_subplan),
-                    having: None,
-                });
-
-                // 5. Wrap outer input in Apply
-                current_input = LogicalOperator::Apply(ApplyOp {
-                    input: Box::new(current_input),
-                    subplan: Box::new(inner_plan),
-                    shared_variables: vec![anchor],
-                    optional: false,
-                });
-
-                // 6. Replace expression with Variable reference
+                let (new_input, new_expr) = self.rewrite_expr_pattern_comprehension(
+                    current_input,
+                    item.expression,
+                    &alias,
+                )?;
+                current_input = new_input;
                 rewritten_items.push(ReturnItem {
-                    expression: LogicalExpression::Variable(alias.clone()),
+                    expression: new_expr,
                     alias: Some(alias),
                 });
             } else {
@@ -195,6 +159,142 @@ impl GqlTranslator {
         }
 
         Ok((current_input, rewritten_items))
+    }
+
+    /// Checks recursively if a LogicalExpression contains a PatternComprehension.
+    fn expr_contains_pattern_comprehension(expr: &LogicalExpression) -> bool {
+        match expr {
+            LogicalExpression::PatternComprehension { .. } => true,
+            LogicalExpression::FunctionCall { args, .. } => {
+                args.iter().any(Self::expr_contains_pattern_comprehension)
+            }
+            LogicalExpression::Binary { left, right, .. } => {
+                Self::expr_contains_pattern_comprehension(left)
+                    || Self::expr_contains_pattern_comprehension(right)
+            }
+            LogicalExpression::Unary { operand, .. } => {
+                Self::expr_contains_pattern_comprehension(operand)
+            }
+            _ => false,
+        }
+    }
+
+    /// Rewrites a single expression that contains a PatternComprehension.
+    /// Returns the updated input plan and the rewritten expression.
+    fn rewrite_expr_pattern_comprehension(
+        &self,
+        input: LogicalOperator,
+        expr: LogicalExpression,
+        alias: &str,
+    ) -> Result<(LogicalOperator, LogicalExpression)> {
+        match expr {
+            LogicalExpression::PatternComprehension {
+                subplan,
+                projection,
+            } => {
+                let anchor = Self::extract_anchor_variable(&subplan).ok_or_else(|| {
+                    Error::Query(QueryError::new(
+                        QueryErrorKind::Semantic,
+                        "Pattern comprehension must start with a node pattern",
+                    ))
+                })?;
+
+                let rewritten_subplan =
+                    Self::replace_anchor_with_parameter_scan(*subplan, &anchor);
+
+                let inner_plan = LogicalOperator::Aggregate(AggregateOp {
+                    group_by: vec![],
+                    aggregates: vec![AggregateExpr {
+                        function: AggregateFunction::Collect,
+                        expression: Some(*projection),
+                        expression2: None,
+                        distinct: false,
+                        alias: Some(alias.to_string()),
+                        percentile: None,
+                        separator: None,
+                    }],
+                    input: Box::new(rewritten_subplan),
+                    having: None,
+                });
+
+                let new_input = LogicalOperator::Apply(ApplyOp {
+                    input: Box::new(input),
+                    subplan: Box::new(inner_plan),
+                    shared_variables: vec![anchor],
+                    optional: false,
+                });
+
+                Ok((
+                    new_input,
+                    LogicalExpression::Variable(alias.to_string()),
+                ))
+            }
+            LogicalExpression::FunctionCall {
+                name,
+                args,
+                distinct,
+            } => {
+                let mut current_input = input;
+                let mut new_args = Vec::with_capacity(args.len());
+                for arg in args {
+                    if Self::expr_contains_pattern_comprehension(&arg) {
+                        let inner_alias = self.next_anon_var();
+                        let (updated_input, rewritten_arg) = self
+                            .rewrite_expr_pattern_comprehension(
+                                current_input,
+                                arg,
+                                &inner_alias,
+                            )?;
+                        current_input = updated_input;
+                        new_args.push(rewritten_arg);
+                    } else {
+                        new_args.push(arg);
+                    }
+                }
+                Ok((
+                    current_input,
+                    LogicalExpression::FunctionCall {
+                        name,
+                        args: new_args,
+                        distinct,
+                    },
+                ))
+            }
+            LogicalExpression::Binary {
+                left,
+                op,
+                right,
+            } => {
+                let mut current_input = input;
+                let new_left = if Self::expr_contains_pattern_comprehension(&left) {
+                    let inner_alias = self.next_anon_var();
+                    let (updated, rewritten) = self
+                        .rewrite_expr_pattern_comprehension(current_input, *left, &inner_alias)?;
+                    current_input = updated;
+                    Box::new(rewritten)
+                } else {
+                    left
+                };
+                let new_right = if Self::expr_contains_pattern_comprehension(&right) {
+                    let inner_alias = self.next_anon_var();
+                    let (updated, rewritten) = self
+                        .rewrite_expr_pattern_comprehension(current_input, *right, &inner_alias)?;
+                    current_input = updated;
+                    Box::new(rewritten)
+                } else {
+                    right
+                };
+                Ok((
+                    current_input,
+                    LogicalExpression::Binary {
+                        left: new_left,
+                        op,
+                        right: new_right,
+                    },
+                ))
+            }
+            other => Ok((input, other)),
+        }
     }
 
     fn translate_statement_full(&self, stmt: &ast::Statement) -> Result<GqlTranslationResult> {
@@ -348,12 +448,9 @@ impl GqlTranslator {
                     .collect::<Result<Vec<_>>>()?;
 
                 // Rewrite pattern comprehensions into Apply + Aggregate(Collect)
-                let has_pattern_comp = return_items.iter().any(|p| {
-                    matches!(
-                        &p.expression,
-                        LogicalExpression::PatternComprehension { .. }
-                    )
-                });
+                let has_pattern_comp = return_items
+                    .iter()
+                    .any(|p| Self::expr_contains_pattern_comprehension(&p.expression));
                 let (rewritten_plan, return_items) = if has_pattern_comp {
                     self.rewrite_pattern_comprehensions(plan, return_items)?
                 } else {
@@ -712,11 +809,39 @@ impl GqlTranslator {
                     })
                     .collect::<Result<_>>()?;
 
-                plan = LogicalOperator::Project(ProjectOp {
-                    projections,
-                    input: Box::new(plan),
-                    pass_through_input: false,
-                });
+                // Rewrite pattern comprehensions inside WITH projections
+                let has_pattern_comp = projections
+                    .iter()
+                    .any(|p| Self::expr_contains_pattern_comprehension(&p.expression));
+                if has_pattern_comp {
+                    let items: Vec<ReturnItem> = projections
+                        .into_iter()
+                        .map(|p| ReturnItem {
+                            expression: p.expression,
+                            alias: p.alias,
+                        })
+                        .collect();
+                    let (rewritten_plan, rewritten_items) =
+                        self.rewrite_pattern_comprehensions(plan, items)?;
+                    let rewritten_projections = rewritten_items
+                        .into_iter()
+                        .map(|item| Projection {
+                            expression: item.expression,
+                            alias: item.alias,
+                        })
+                        .collect();
+                    plan = LogicalOperator::Project(ProjectOp {
+                        projections: rewritten_projections,
+                        input: Box::new(rewritten_plan),
+                        pass_through_input: false,
+                    });
+                } else {
+                    plan = LogicalOperator::Project(ProjectOp {
+                        projections,
+                        input: Box::new(plan),
+                        pass_through_input: false,
+                    });
+                }
             }
             // WITH * skips projection: all variables pass through unchanged
 
@@ -968,12 +1093,9 @@ impl GqlTranslator {
             }
 
             // Rewrite pattern comprehensions into Apply + Aggregate(Collect)
-            let has_pattern_comp = return_items.iter().any(|p| {
-                matches!(
-                    &p.expression,
-                    LogicalExpression::PatternComprehension { .. }
-                )
-            });
+            let has_pattern_comp = return_items
+                .iter()
+                .any(|p| Self::expr_contains_pattern_comprehension(&p.expression));
             let (rewritten_plan, return_items) = if has_pattern_comp {
                 self.rewrite_pattern_comprehensions(plan, return_items)?
             } else {
@@ -2855,6 +2977,53 @@ mod tests {
         assert!(
             result.is_ok(),
             "GROUP BY with ORDER BY should translate: {:?}",
+            result.err()
+        );
+    }
+
+    // === COALESCE + aggregate Tests ===
+
+    #[test]
+    fn test_translate_coalesce_wrapping_count() {
+        let query = "MATCH (n:Person)-[:KNOWS]->(m) RETURN n.name, COALESCE(count(m), 0) AS friend_count";
+        let result = translate(query);
+        assert!(
+            result.is_ok(),
+            "COALESCE(count(m), 0) should translate without panic: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_translate_coalesce_wrapping_sum() {
+        let query = "MATCH (n:Person) RETURN COALESCE(sum(n.age), 0) AS total";
+        let result = translate(query);
+        assert!(
+            result.is_ok(),
+            "COALESCE(sum(n.age), 0) should translate: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_translate_coalesce_without_aggregate() {
+        let query = "MATCH (n:Person) RETURN COALESCE(n.name, 'unknown') AS name";
+        let result = translate(query);
+        assert!(
+            result.is_ok(),
+            "COALESCE without aggregate should translate: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_translate_nested_coalesce_with_aggregate() {
+        let query =
+            "MATCH (n:Person) RETURN COALESCE(COALESCE(count(n), 0), -1) AS cnt";
+        let result = translate(query);
+        assert!(
+            result.is_ok(),
+            "Nested COALESCE(COALESCE(count(n), 0), -1) should translate: {:?}",
             result.err()
         );
     }
