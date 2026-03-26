@@ -187,9 +187,9 @@ impl Reranker for NoopReranker {
 ///
 /// Delegates to:
 /// - HNSW index results (provided as pre-computed similarity candidates)
-/// - [`EnergyStore`] for recency scoring
-/// - [`FabricStore`] for topology (PageRank + betweenness)
-/// - [`SynapseStore`] + spreading activation for graph expansion
+/// - `EnergyStore` for recency scoring
+/// - `FabricStore` for topology (PageRank + betweenness)
+/// - `SynapseStore` + spreading activation for graph expansion
 pub struct SearchPipeline {
     /// Energy store for recency-based scoring.
     #[cfg(feature = "energy")]

@@ -472,7 +472,7 @@ impl ImmuneSystem {
         pairs
     }
 
-    /// Get the idiotypic neighbours of a detector (cosine > [`IDIOTYPIC_THRESHOLD`]).
+    /// Get the idiotypic neighbours of a detector (cosine > `IDIOTYPIC_THRESHOLD`).
     ///
     /// Returns `(DetectorId, cosine_similarity)` for each neighbour.
     pub fn idiotypic_neighbours(&self, id: &DetectorId) -> Vec<(DetectorId, f64)> {
@@ -503,7 +503,7 @@ impl ImmuneSystem {
     ///
     /// "Activation" here means incrementing `clone_count` by 1 and recording
     /// the activation. Returns the list of detector IDs that were propagated to,
-    /// along with the propagation weight (similarity × [`IDIOTYPIC_PROPAGATION_FACTOR`]).
+    /// along with the propagation weight (similarity × `IDIOTYPIC_PROPAGATION_FACTOR`).
     pub fn idiotypic_propagate(&self, activated_id: &DetectorId) -> Vec<(DetectorId, f64)> {
         let neighbours = self.idiotypic_neighbours(activated_id);
         let mut propagated = Vec::new();

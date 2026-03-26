@@ -42,7 +42,7 @@ pub struct HopfieldResult {
 
 /// The pattern matrix storing spectral signatures of all engrams.
 ///
-/// Stored as a flat Vec<f64> in row-major order (N_engrams × dim_signature).
+/// Stored as a flat `Vec<f64>` in row-major order (N_engrams × dim_signature).
 /// Each row is the spectral_signature of one engram.
 #[derive(Debug, Clone)]
 pub struct PatternMatrix {
@@ -653,7 +653,9 @@ pub fn bayesian_update(
         }
     }
 
-    model.observation_count += 1;
+    // Note: observation_count is NOT incremented here. bayesian_update is a
+    // PE-driven correction of an existing model, not a new observation.
+    // Use PredictiveModel::observe() for incremental learning without PE.
 
     // Update precision (posterior)
     // Low PE → precision increases (model confirmed)

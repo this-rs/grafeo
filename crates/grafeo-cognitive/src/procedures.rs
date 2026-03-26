@@ -140,19 +140,34 @@ pub fn engrams_inspect(store: &EngramStore, engram_id: u64) -> ProcedureResult {
 
 /// RGPD right to erasure: completely removes an engram and all associated data.
 ///
-/// Deletes:
+/// Cascades deletion to:
 /// 1. The engram itself from the store
 /// 2. Its spectral signature from the vector index
-/// 3. All pheromone annotations on edges traversed by this engram
-///    (via the edge annotator, if provided)
+/// 3. Immune detectors whose `source_engram` matches this engram (if immune system provided)
 ///
-/// After this call, no residual data about the engram should remain.
+/// For full RGPD compliance, the caller should also handle:
+/// - `:CRYSTALLIZED_IN` edges and Note nodes in the graph (via CognitiveStorage)
+/// - Epigenetic marks that targeted this engram's pattern
 ///
 /// Returns a result indicating whether the engram was found and deleted.
 pub fn engrams_forget(
     store: &EngramStore,
     vector_index: &dyn VectorIndex,
     engram_id: u64,
+) -> ProcedureResult {
+    engrams_forget_with_cascade(store, vector_index, engram_id, None)
+}
+
+/// Extended RGPD forget with optional cascade to the immune system.
+///
+/// When `immune` is provided, detectors derived from the forgotten engram
+/// (where `source_engram == engram_id`) are also removed.
+pub fn engrams_forget_with_cascade(
+    store: &EngramStore,
+    vector_index: &dyn VectorIndex,
+    engram_id: u64,
+    #[cfg(feature = "immune")] immune: Option<&crate::immune::ImmuneSystem>,
+    #[cfg(not(feature = "immune"))] _immune: Option<&()>,
 ) -> ProcedureResult {
     let mut result = ProcedureResult::new(vec![
         "id".to_string(),
@@ -169,19 +184,27 @@ pub fn engrams_forget(
         // Step 2: Count relations that will be removed
         // Relations are implicit in the ensemble (PART_OF), source_episodes (DERIVED_FROM),
         // recall_history (RECALLED_IN), and any crystallization links (CRYSTALLIZED_IN).
-        let relations_count =
+        #[allow(unused_mut)]
+        let mut relations_count =
             engram.ensemble.len() + engram.source_episodes.len() + engram.recall_history.len();
 
         // Step 3: Remove from vector index (spectral signature cleanup)
         vector_index.remove(&id.0.to_string());
 
-        // Step 4: Remove the engram from the store
-        store.remove(id);
+        // Step 4: Remove immune detectors derived from this engram
+        #[cfg(feature = "immune")]
+        if let Some(immune) = immune {
+            let detectors = immune.list_detectors();
+            for detector in &detectors {
+                if detector.source_engram == id {
+                    immune.remove(&detector.id);
+                    relations_count += 1;
+                }
+            }
+        }
 
-        // Step 5: Scan remaining engrams and remove any references to this engram
-        // (e.g., in recall histories that might reference it)
-        // Note: in the current architecture, engrams don't cross-reference each other
-        // directly, so this is a no-op. But we document the intent for RGPD compliance.
+        // Step 5: Remove the engram from the store
+        store.remove(id);
 
         result.add_row(vec![
             Value::Int64(engram_id as i64),

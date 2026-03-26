@@ -169,7 +169,7 @@ impl EngramManager {
     /// Warm-up recall: proactively retrieve engrams likely to be useful
     /// given the current cue context, with MMR diversity.
     ///
-    /// Returns [`ActivatedEngram`]s with the dominant engram in full detail
+    /// Returns [`super::recall::ActivatedEngram`]s with the dominant engram in full detail
     /// and secondaries in summary form.
     #[instrument(skip(self), fields(cues = cues.len()))]
     pub fn warmup(&self, cues: &[NodeId]) -> Vec<super::recall::ActivatedEngram> {

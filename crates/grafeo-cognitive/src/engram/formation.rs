@@ -10,6 +10,7 @@ use dashmap::DashMap;
 use grafeo_common::types::NodeId;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "epigenetic")]
 use crate::epigenetic::{EngramTemplate, EpigeneticBridge, ProjectContext};
 
 // ---------------------------------------------------------------------------
@@ -228,6 +229,7 @@ impl Default for CoActivationDetector {
     }
 }
 
+#[cfg(feature = "epigenetic")]
 /// Compute the modulated `min_episodes` given a total epigenetic modulation.
 ///
 /// - Positive modulation (amplification) → **lower** threshold (easier formation)
@@ -328,6 +330,7 @@ impl HebbianWithSurprise {
     /// clamped to `[1, base × 3]` to prevent degenerate cases.
     ///
     /// Returns a tuple of `(ensembles, marks_evaluated, marks_applied, marks_suppressed)`.
+    #[cfg(feature = "epigenetic")]
     pub fn should_form_engram_with_marks(
         &self,
         template: &EngramTemplate,
@@ -472,6 +475,7 @@ mod tests {
         assert_eq!(hebb.activation_count(), 0);
     }
 
+    #[cfg(feature = "epigenetic")]
     #[test]
     fn modulated_min_episodes_positive_mark_lowers_threshold() {
         // base=3, modulation +0.5 → 3 × (1.0 - 0.5) = 1.5 → round → 2
@@ -479,6 +483,7 @@ mod tests {
         assert_eq!(adjusted, 2, "positive modulation should lower min_episodes");
     }
 
+    #[cfg(feature = "epigenetic")]
     #[test]
     fn modulated_min_episodes_negative_mark_raises_threshold() {
         // base=3, modulation -0.5 → 3 × (1.0 - (-0.5)) = 3 × 1.5 = 4.5 → round → 5
@@ -486,6 +491,7 @@ mod tests {
         assert_eq!(adjusted, 5, "negative modulation should raise min_episodes");
     }
 
+    #[cfg(feature = "epigenetic")]
     #[test]
     fn modulated_min_episodes_zero_modulation_unchanged() {
         let adjusted = compute_modulated_min_episodes(3, 0.0);
@@ -495,6 +501,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "epigenetic")]
     #[test]
     fn modulated_min_episodes_clamped_low() {
         // base=3, modulation +1.0 → 3 × 0.0 = 0 → clamped to 1
@@ -502,6 +509,7 @@ mod tests {
         assert_eq!(adjusted, 1, "should clamp to minimum of 1");
     }
 
+    #[cfg(feature = "epigenetic")]
     #[test]
     fn modulated_min_episodes_clamped_high() {
         // base=3, modulation -5.0 → 3 × 6.0 = 18 → clamped to 3*3=9
@@ -509,6 +517,7 @@ mod tests {
         assert_eq!(adjusted, 9, "should clamp to maximum of base*3");
     }
 
+    #[cfg(feature = "epigenetic")]
     #[test]
     fn should_form_engram_with_marks_positive_modulation() {
         use crate::epigenetic::{EngramTemplate, EpigeneticBridge, EpigeneticMark, ProjectContext};
@@ -551,6 +560,7 @@ mod tests {
         assert_eq!(suppressed, 0);
     }
 
+    #[cfg(feature = "epigenetic")]
     #[test]
     fn should_form_engram_with_marks_negative_modulation() {
         use crate::epigenetic::{EngramTemplate, EpigeneticBridge, EpigeneticMark, ProjectContext};
@@ -677,6 +687,7 @@ mod tests {
         assert!((hebb.cumulative_surprise() - 0.8).abs() < f64::EPSILON);
     }
 
+    #[cfg(feature = "epigenetic")]
     #[test]
     fn test_should_form_engram_with_marks_below_surprise_threshold() {
         use crate::epigenetic::{EngramTemplate, EpigeneticBridge, EpigeneticMark, ProjectContext};
@@ -712,6 +723,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "epigenetic")]
     #[test]
     fn test_compute_modulated_min_episodes_base_1() {
         // base=1, mod=0.0 → 1
@@ -722,6 +734,7 @@ mod tests {
         assert_eq!(compute_modulated_min_episodes(1, -0.5), 2);
     }
 
+    #[cfg(feature = "epigenetic")]
     #[test]
     fn test_compute_modulated_min_episodes_extreme_positive() {
         // base=5, mod=2.0 → 5 × (1-2) = -5 → clamped to 1

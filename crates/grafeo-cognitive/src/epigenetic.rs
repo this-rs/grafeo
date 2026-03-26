@@ -301,10 +301,10 @@ impl EpigeneticMark {
 
     /// Compute the effective modulation, accounting for transgenerational decay.
     ///
-    /// Each generation reduces the modulation by a decay factor (default 0.8).
-    /// Generation 0 = full modulation, generation 1 = 80%, generation 2 = 64%, etc.
+    /// Uses [`TRANSGENERATIONAL_DECAY`] (0.7) as the per-generation decay factor.
+    /// Generation 0 = full modulation, generation 1 = 70%, generation 2 = 49%, etc.
     pub fn effective_modulation(&self) -> f64 {
-        self.effective_modulation_with_decay(0.8)
+        self.effective_modulation_with_decay(TRANSGENERATIONAL_DECAY)
     }
 
     /// Compute the effective modulation with a custom decay factor per generation.
@@ -895,10 +895,12 @@ mod tests {
         assert!((mark.effective_modulation() - 1.0).abs() < f64::EPSILON);
 
         let gen1 = mark.transmit().unwrap();
-        assert!((gen1.effective_modulation() - 0.8).abs() < f64::EPSILON);
+        // 1.0 × 0.7^1 = 0.7
+        assert!((gen1.effective_modulation() - 0.7).abs() < f64::EPSILON);
 
         let gen2 = gen1.transmit().unwrap();
-        assert!((gen2.effective_modulation() - 0.64).abs() < f64::EPSILON);
+        // 1.0 × 0.7^2 = 0.49
+        assert!((gen2.effective_modulation() - 0.49).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -1355,8 +1357,8 @@ mod tests {
         assert!((mark.effective_modulation() - (-0.8)).abs() < f64::EPSILON);
 
         let gen1 = mark.transmit().unwrap();
-        // gen1 → -0.8 * 0.8 = -0.64
-        assert!((gen1.effective_modulation() - (-0.64)).abs() < 1e-10);
+        // gen1 → -0.8 × 0.7 = -0.56
+        assert!((gen1.effective_modulation() - (-0.56)).abs() < 1e-10);
     }
 
     #[test]

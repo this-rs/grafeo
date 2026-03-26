@@ -447,10 +447,10 @@ impl StigmergicEngine {
 // StigmergicQueryListener — QueryObserver adapter
 // ---------------------------------------------------------------------------
 
-/// A [`QueryObserver`] that deposits `pheromone_query` on every edge traversed
+/// A `QueryObserver` that deposits `pheromone_query` on every edge traversed
 /// during query execution.
 ///
-/// Each call to [`on_traversal`] atomically increments the pheromone value
+/// Each call to `on_traversal` atomically increments the pheromone value
 /// for every edge in the path by a configurable `deposit_delta` (default `1.0`).
 ///
 /// This is lock-free: uses the underlying [`PheromoneMap`]'s `AtomicF64` CAS.

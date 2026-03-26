@@ -401,6 +401,9 @@ fn execute_cognitive_metrics(engine: &Arc<dyn CognitiveEngine>) -> Result<Algori
         "immune_fp_rate".into(),
         "immune_detector_count".into(),
         "avg_precision_beta".into(),
+        "marks_evaluated".into(),
+        "marks_applied".into(),
+        "marks_suppressed".into(),
     ]))
 }
 

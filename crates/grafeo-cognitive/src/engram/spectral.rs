@@ -106,9 +106,9 @@ impl SpectralEncoderTrait for DefaultSpectralEncoder {
 // SpectralEncoder — wrapper with dynamic dispatch
 // ---------------------------------------------------------------------------
 
-/// A spectral encoder that delegates to a [`SpectralEncoderTrait`] implementation.
+/// A spectral encoder that delegates to a `SpectralEncoderTrait` implementation.
 ///
-/// By default it uses [`DefaultSpectralEncoder`] with 64 dimensions. Users can
+/// By default it uses `DefaultSpectralEncoder` with 64 dimensions. Users can
 /// swap in a custom encoder via [`SpectralEncoder::with_encoder`].
 #[derive(Debug)]
 pub struct SpectralEncoder {

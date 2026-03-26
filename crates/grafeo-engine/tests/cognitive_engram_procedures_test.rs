@@ -220,7 +220,7 @@ async fn cognitive_metrics_returns_all_fields_cypher() {
     assert!(result.is_ok());
     let algo_result = result.unwrap().unwrap();
 
-    assert_eq!(algo_result.columns.len(), 17);
+    assert_eq!(algo_result.columns.len(), 20);
     assert_eq!(algo_result.rows.len(), 1);
 
     // Check specific values
@@ -242,7 +242,7 @@ async fn cognitive_metrics_gql() {
     let result = try_execute_cognitive_procedure("cognitive.metrics", &[], &engine);
     assert!(result.is_ok());
     let algo_result = result.unwrap().unwrap();
-    assert_eq!(algo_result.columns.len(), 17);
+    assert_eq!(algo_result.columns.len(), 20);
     assert_eq!(algo_result.rows.len(), 1);
 }
 

@@ -36,10 +36,11 @@ pub use store::EngramStore;
 
 #[cfg(feature = "engram")]
 mod formation;
+#[cfg(all(feature = "engram", feature = "epigenetic"))]
+pub use formation::compute_modulated_min_episodes;
 #[cfg(feature = "engram")]
 pub use formation::{
     CoActivationDetector, EngramFormationTrigger, FormationConfig, HebbianWithSurprise,
-    compute_modulated_min_episodes,
 };
 
 #[cfg(feature = "engram")]
