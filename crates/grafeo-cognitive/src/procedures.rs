@@ -468,7 +468,7 @@ mod tests {
         assert_eq!(store.count(), 2);
 
         // Spectral signature should be removed from vector index
-        let nearest = index.nearest(&vec![0.1; 8], 10);
+        let nearest = index.nearest(&[0.1; 8], 10);
         for (id_str, _) in &nearest {
             assert_ne!(
                 id_str, "1",

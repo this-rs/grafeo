@@ -846,11 +846,11 @@ mod tests {
     #[test]
     fn metrics_precision_beta_roundtrips() {
         let c = EngramMetricsCollector::new();
-        c.update_avg_precision_beta(3.14);
+        c.update_avg_precision_beta(std::f64::consts::PI);
         let s = c.snapshot();
         assert!(
-            (s.avg_precision_beta - 3.14).abs() < f64::EPSILON,
-            "avg_precision_beta should be 3.14, got {}",
+            (s.avg_precision_beta - std::f64::consts::PI).abs() < f64::EPSILON,
+            "avg_precision_beta should be std::f64::consts::PI, got {}",
             s.avg_precision_beta
         );
     }

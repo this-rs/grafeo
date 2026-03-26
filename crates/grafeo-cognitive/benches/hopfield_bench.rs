@@ -7,7 +7,7 @@
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use grafeo_cognitive::engram::{
-    Engram, EngramId, EngramStore, PatternMatrix, SpectralEncoder, hopfield_retrieve,
+    Engram, EngramStore, PatternMatrix, SpectralEncoder, hopfield_retrieve,
 };
 use grafeo_common::types::NodeId;
 
@@ -30,7 +30,7 @@ fn build_store_and_matrix(n: usize) -> (EngramStore, PatternMatrix, Vec<f64>) {
 
         let mut engram = Engram::new(id, nodes.clone());
         let sig = spectral.encode(&nodes);
-        engram.spectral_signature = sig.clone();
+        engram.spectral_signature.clone_from(&sig);
         // Vary precision: β ∈ [0.5, 5.0]
         engram.precision = 0.5 + (i as f64 % 10.0) * 0.5;
 
@@ -56,7 +56,7 @@ fn bench_hopfield_retrieve(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("retrieve_top10", n), &n, |b, _| {
             b.iter(|| {
                 let results = hopfield_retrieve(&matrix, &query, &store, 10);
-                criterion::black_box(results);
+                std::hint::black_box(results);
             });
         });
     }
@@ -73,7 +73,7 @@ fn bench_pattern_matrix_from_store(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("from_store", n), &n, |b, _| {
             b.iter(|| {
                 let matrix = PatternMatrix::from_store(&store, DIM);
-                criterion::black_box(matrix);
+                std::hint::black_box(matrix);
             });
         });
     }

@@ -39,6 +39,7 @@ impl EdgeAnnotator for super::GrafeoDB {
 ///
 /// Useful for filtering annotations out of user-facing property listings.
 #[must_use]
+#[allow(dead_code)]
 pub fn is_annotation_key(key: &str) -> bool {
     key.starts_with(ANNOTATION_PREFIX)
 }
@@ -47,6 +48,7 @@ pub fn is_annotation_key(key: &str) -> bool {
 ///
 /// Returns `None` if the key doesn't start with the annotation prefix.
 #[must_use]
+#[allow(dead_code)]
 pub fn strip_annotation_prefix(key: &str) -> Option<&str> {
     key.strip_prefix(ANNOTATION_PREFIX)
 }

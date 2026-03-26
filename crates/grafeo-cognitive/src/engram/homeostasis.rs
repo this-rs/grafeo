@@ -404,7 +404,7 @@ mod tests {
     mod stigmergy_tests {
         use super::*;
         use crate::engram::traits::EdgeAnnotator;
-        use crate::stigmergy::{PheromoneMap, StigmergicEngine, TrailType};
+        use crate::stigmergy::{StigmergicEngine, TrailType};
         use grafeo_common::types::EdgeId;
 
         struct NoopAnnotator;

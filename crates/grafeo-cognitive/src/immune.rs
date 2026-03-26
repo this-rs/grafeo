@@ -1023,7 +1023,7 @@ mod tests {
 
         // Verify the distance is in partial zone
         assert!(
-            dist >= 1.0 * PARTIAL_MATCH_LOWER && dist <= 1.0 * PARTIAL_MATCH_UPPER,
+            (1.0 * PARTIAL_MATCH_LOWER..=1.0 * PARTIAL_MATCH_UPPER).contains(&dist),
             "distance {dist} should be in partial zone [0.8, 1.2]"
         );
 
