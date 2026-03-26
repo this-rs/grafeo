@@ -81,10 +81,14 @@ impl GqlTranslator {
         synthetic_alias: &str,
     ) -> Result<(AggregateExpr, LogicalExpression)> {
         match expr {
-            ast::Expression::FunctionCall { name, args, distinct } => {
+            ast::Expression::FunctionCall {
+                name,
+                args,
+                distinct,
+            } => {
                 // First, check if this function itself is an aggregate
-                if let Some(agg) = self
-                    .try_extract_aggregate(expr, &Some(synthetic_alias.to_string()))?
+                if let Some(agg) =
+                    self.try_extract_aggregate(expr, &Some(synthetic_alias.to_string()))?
                 {
                     let substitute = LogicalExpression::Variable(synthetic_alias.to_string());
                     return Ok((agg, substitute));
@@ -114,7 +118,9 @@ impl GqlTranslator {
                 }
                 Err(Error::Query(QueryError::new(
                     QueryErrorKind::Semantic,
-                    format!("contains_aggregate was true but no aggregate found in arguments of {name}"),
+                    format!(
+                        "contains_aggregate was true but no aggregate found in arguments of {name}"
+                    ),
                 )))
             }
             ast::Expression::Binary { left, op, right } => {

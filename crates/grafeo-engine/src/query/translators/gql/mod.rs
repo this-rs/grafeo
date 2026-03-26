@@ -199,8 +199,7 @@ impl GqlTranslator {
                     ))
                 })?;
 
-                let rewritten_subplan =
-                    Self::replace_anchor_with_parameter_scan(*subplan, &anchor);
+                let rewritten_subplan = Self::replace_anchor_with_parameter_scan(*subplan, &anchor);
 
                 let inner_plan = LogicalOperator::Aggregate(AggregateOp {
                     group_by: vec![],
@@ -224,10 +223,7 @@ impl GqlTranslator {
                     optional: false,
                 });
 
-                Ok((
-                    new_input,
-                    LogicalExpression::Variable(alias.to_string()),
-                ))
+                Ok((new_input, LogicalExpression::Variable(alias.to_string())))
             }
             LogicalExpression::FunctionCall {
                 name,
@@ -240,11 +236,7 @@ impl GqlTranslator {
                     if Self::expr_contains_pattern_comprehension(&arg) {
                         let inner_alias = self.next_anon_var();
                         let (updated_input, rewritten_arg) = self
-                            .rewrite_expr_pattern_comprehension(
-                                current_input,
-                                arg,
-                                &inner_alias,
-                            )?;
+                            .rewrite_expr_pattern_comprehension(current_input, arg, &inner_alias)?;
                         current_input = updated_input;
                         new_args.push(rewritten_arg);
                     } else {
@@ -260,16 +252,15 @@ impl GqlTranslator {
                     },
                 ))
             }
-            LogicalExpression::Binary {
-                left,
-                op,
-                right,
-            } => {
+            LogicalExpression::Binary { left, op, right } => {
                 let mut current_input = input;
                 let new_left = if Self::expr_contains_pattern_comprehension(&left) {
                     let inner_alias = self.next_anon_var();
-                    let (updated, rewritten) = self
-                        .rewrite_expr_pattern_comprehension(current_input, *left, &inner_alias)?;
+                    let (updated, rewritten) = self.rewrite_expr_pattern_comprehension(
+                        current_input,
+                        *left,
+                        &inner_alias,
+                    )?;
                     current_input = updated;
                     Box::new(rewritten)
                 } else {
@@ -277,8 +268,11 @@ impl GqlTranslator {
                 };
                 let new_right = if Self::expr_contains_pattern_comprehension(&right) {
                     let inner_alias = self.next_anon_var();
-                    let (updated, rewritten) = self
-                        .rewrite_expr_pattern_comprehension(current_input, *right, &inner_alias)?;
+                    let (updated, rewritten) = self.rewrite_expr_pattern_comprehension(
+                        current_input,
+                        *right,
+                        &inner_alias,
+                    )?;
                     current_input = updated;
                     Box::new(rewritten)
                 } else {
@@ -2985,7 +2979,8 @@ mod tests {
 
     #[test]
     fn test_translate_coalesce_wrapping_count() {
-        let query = "MATCH (n:Person)-[:KNOWS]->(m) RETURN n.name, COALESCE(count(m), 0) AS friend_count";
+        let query =
+            "MATCH (n:Person)-[:KNOWS]->(m) RETURN n.name, COALESCE(count(m), 0) AS friend_count";
         let result = translate(query);
         assert!(
             result.is_ok(),
@@ -3018,8 +3013,7 @@ mod tests {
 
     #[test]
     fn test_translate_nested_coalesce_with_aggregate() {
-        let query =
-            "MATCH (n:Person) RETURN COALESCE(COALESCE(count(n), 0), -1) AS cnt";
+        let query = "MATCH (n:Person) RETURN COALESCE(COALESCE(count(n), 0), -1) AS cnt";
         let result = translate(query);
         assert!(
             result.is_ok(),
@@ -3216,6 +3210,57 @@ mod tests {
         assert!(
             find_case_in_return(&plan.root),
             "Expected NULLIF to desugar into a CASE expression in RETURN"
+        );
+    }
+
+    // === Nested PatternComprehension Tests ===
+
+    #[test]
+    fn test_translate_size_wrapping_pattern_comprehension() {
+        let query = "MATCH (n:Person) RETURN size([(n)-[:KNOWS]->(f) | f.name]) AS cnt";
+        let result = translate(query);
+        assert!(
+            result.is_ok(),
+            "size([(n)-[:KNOWS]->(f) | f.name]) should translate: {:?}",
+            result.err()
+        );
+        // Verify the PC was rewritten (should have Apply in tree)
+        let plan = result.unwrap();
+        fn find_apply(op: &LogicalOperator) -> bool {
+            match op {
+                LogicalOperator::Apply(_) => true,
+                LogicalOperator::Return(r) => find_apply(&r.input),
+                LogicalOperator::Project(p) => find_apply(&p.input),
+                LogicalOperator::Filter(f) => find_apply(&f.input),
+                _ => false,
+            }
+        }
+        assert!(
+            find_apply(&plan.root),
+            "size(PC) should be rewritten with Apply operator"
+        );
+    }
+
+    #[test]
+    fn test_translate_with_size_pattern_comprehension() {
+        let query =
+            "MATCH (n:Person) WITH n, size([(n)-[:KNOWS]->(f) | 1]) AS deg RETURN n.name, deg";
+        let result = translate(query);
+        assert!(
+            result.is_ok(),
+            "WITH size(PC) should translate: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_translate_pattern_comprehension_in_binary_expr() {
+        let query = "MATCH (n:Person) RETURN size([(n)-[:KNOWS]->(f) | 1]) > 3 AS popular";
+        let result = translate(query);
+        assert!(
+            result.is_ok(),
+            "size(PC) > 3 should translate: {:?}",
+            result.err()
         );
     }
 }

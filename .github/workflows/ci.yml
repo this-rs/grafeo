@@ -34,6 +34,7 @@ jobs:
   rust-check:
     name: Rust Check
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -122,6 +123,7 @@ jobs:
   miri:
     name: Miri UB Check
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Pin nightly due to cargo regression in nightly-2026-02-12+
     # See: https://github.com/rust-lang/miri/issues/4855
     # Remove pin once rust-lang/cargo#16631 lands in nightly
@@ -161,6 +163,7 @@ jobs:
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -194,6 +197,7 @@ jobs:
   python-test:
     name: Python Test (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -246,6 +250,7 @@ jobs:
   node-test:
     name: Node.js Test (${{ matrix.os }}, Node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -291,6 +296,7 @@ jobs:
   go-test:
     name: Go Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -350,6 +356,7 @@ jobs:
   csharp-test:
     name: C# Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -414,6 +421,7 @@ jobs:
   dart-test:
     name: Dart Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -479,6 +487,7 @@ jobs:
   wasm-build:
     name: WASM Build
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -597,6 +606,7 @@ jobs:
   supply-chain:
     name: Supply Chain Audit
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 

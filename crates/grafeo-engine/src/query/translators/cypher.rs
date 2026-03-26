@@ -2473,8 +2473,7 @@ impl CypherTranslator {
                 })?;
 
                 // 2. Replace anchor NodeScan with ParameterScan
-                let rewritten_subplan =
-                    Self::replace_anchor_with_parameter_scan(*subplan, &anchor);
+                let rewritten_subplan = Self::replace_anchor_with_parameter_scan(*subplan, &anchor);
 
                 // 3. Wrap in Aggregate(collect(projection) AS alias)
                 let inner_plan = LogicalOperator::Aggregate(AggregateOp {
@@ -2501,10 +2500,7 @@ impl CypherTranslator {
                 });
 
                 // 5. Replace expression with Variable reference
-                Ok((
-                    new_input,
-                    LogicalExpression::Variable(alias.to_string()),
-                ))
+                Ok((new_input, LogicalExpression::Variable(alias.to_string())))
             }
             LogicalExpression::FunctionCall {
                 name,
@@ -2518,11 +2514,7 @@ impl CypherTranslator {
                     if Self::expr_contains_pattern_comprehension(&arg) {
                         let inner_alias = self.next_anon_var();
                         let (updated_input, rewritten_arg) = self
-                            .rewrite_expr_pattern_comprehension(
-                                current_input,
-                                arg,
-                                &inner_alias,
-                            )?;
+                            .rewrite_expr_pattern_comprehension(current_input, arg, &inner_alias)?;
                         current_input = updated_input;
                         new_args.push(rewritten_arg);
                     } else {
@@ -2538,16 +2530,15 @@ impl CypherTranslator {
                     },
                 ))
             }
-            LogicalExpression::Binary {
-                left,
-                op,
-                right,
-            } => {
+            LogicalExpression::Binary { left, op, right } => {
                 let mut current_input = input;
                 let new_left = if Self::expr_contains_pattern_comprehension(&left) {
                     let inner_alias = self.next_anon_var();
-                    let (updated, rewritten) = self
-                        .rewrite_expr_pattern_comprehension(current_input, *left, &inner_alias)?;
+                    let (updated, rewritten) = self.rewrite_expr_pattern_comprehension(
+                        current_input,
+                        *left,
+                        &inner_alias,
+                    )?;
                     current_input = updated;
                     Box::new(rewritten)
                 } else {
@@ -2555,8 +2546,11 @@ impl CypherTranslator {
                 };
                 let new_right = if Self::expr_contains_pattern_comprehension(&right) {
                     let inner_alias = self.next_anon_var();
-                    let (updated, rewritten) = self
-                        .rewrite_expr_pattern_comprehension(current_input, *right, &inner_alias)?;
+                    let (updated, rewritten) = self.rewrite_expr_pattern_comprehension(
+                        current_input,
+                        *right,
+                        &inner_alias,
+                    )?;
                     current_input = updated;
                     Box::new(rewritten)
                 } else {
@@ -3832,5 +3826,71 @@ mod tests {
         } else {
             panic!("Expected Return");
         }
+    }
+
+    // === Nested PatternComprehension Tests ===
+
+    #[test]
+    fn test_translate_size_wrapping_pattern_comprehension() {
+        let plan =
+            translate("MATCH (n:Person) RETURN size([(n)-[:KNOWS]->(f) | f.name]) AS cnt").unwrap();
+
+        if let LogicalOperator::Return(ret) = &plan.root {
+            // The size(PC) expression should contain a FunctionCall(size, [Variable])
+            // after rewrite (the PC was replaced with a Variable reference)
+            assert_eq!(ret.items.len(), 1);
+            if let LogicalExpression::FunctionCall { name, args, .. } = &ret.items[0].expression {
+                assert_eq!(name, "size");
+                assert_eq!(args.len(), 1);
+                assert!(
+                    matches!(&args[0], LogicalExpression::Variable(_)),
+                    "Expected Variable inside size() after rewrite, got {:?}",
+                    args[0]
+                );
+            } else {
+                panic!(
+                    "Expected FunctionCall(size) in return, got {:?}",
+                    ret.items[0].expression
+                );
+            }
+            // Should have Apply in the tree
+            fn find_apply(op: &LogicalOperator) -> bool {
+                match op {
+                    LogicalOperator::Apply(_) => true,
+                    LogicalOperator::Return(r) => find_apply(&r.input),
+                    LogicalOperator::Project(p) => find_apply(&p.input),
+                    _ => false,
+                }
+            }
+            assert!(
+                find_apply(&plan.root),
+                "size(PC) should be rewritten with Apply operator"
+            );
+        } else {
+            panic!("Expected Return");
+        }
+    }
+
+    #[test]
+    fn test_translate_with_size_pattern_comprehension() {
+        let result = translate(
+            "MATCH (n:Person) WITH n, size([(n)-[:KNOWS]->(f) | 1]) AS deg RETURN n.name, deg",
+        );
+        assert!(
+            result.is_ok(),
+            "WITH size(PC) should translate: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_translate_pattern_comprehension_in_binary_expr() {
+        let result =
+            translate("MATCH (n:Person) RETURN size([(n)-[:KNOWS]->(f) | 1]) > 3 AS popular");
+        assert!(
+            result.is_ok(),
+            "size(PC) > 3 should translate: {:?}",
+            result.err()
+        );
     }
 }
