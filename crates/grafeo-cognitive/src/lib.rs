@@ -80,6 +80,10 @@ pub mod consolidation;
 #[cfg(feature = "stigmergy")]
 pub mod stigmergy;
 
+// Immune system — anomaly detection via shape space (Layer 1)
+#[cfg(feature = "immune")]
+pub mod immune;
+
 // Engram system — biomimetic memory traces (Layer 0+)
 pub mod engram;
 
@@ -201,4 +205,10 @@ pub use engram::{
     EngramMetricsCollector, EngramStore, FormationConfig, FsrsConfig, FsrsScheduler,
     HebbianWithSurprise, HomeostasisConfig, HomeostasisEngine, RecallEngine, RecallResult,
     ReviewRating, SpectralEncoder, WarmupConfig, WarmupSelector,
+};
+
+#[cfg(feature = "immune")]
+pub use immune::{
+    DEFAULT_AFFINITY_RADIUS, Detection, DetectorId, ImmuneDetector, ImmuneSystem,
+    ShapeDescriptor,
 };

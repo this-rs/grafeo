@@ -24,6 +24,9 @@ engram = []
 # Stigmergy (Layer 2: diffuse memory on edges)
 stigmergy = []
 
+# Immune system (Layer 1: anomaly detection via shape space)
+immune = []
+
 # Future subsystems
 scar = []
 memory = ["energy"]
