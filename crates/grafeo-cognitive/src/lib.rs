@@ -84,6 +84,10 @@ pub mod stigmergy;
 #[cfg(feature = "immune")]
 pub mod immune;
 
+// Epigenetic layer — cross-instance transgenerational memory (Layer 5)
+#[cfg(feature = "epigenetic")]
+pub mod epigenetic;
+
 // Engram system — biomimetic memory traces (Layer 0+)
 pub mod engram;
 
@@ -212,4 +216,10 @@ pub use engram::{
 #[cfg(feature = "immune")]
 pub use immune::{
     DEFAULT_AFFINITY_RADIUS, Detection, DetectorId, ImmuneDetector, ImmuneSystem, ShapeDescriptor,
+};
+
+#[cfg(feature = "epigenetic")]
+pub use epigenetic::{
+    EngramTemplate, EpigeneticMark, EpigeneticMarkId, ExpressionCondition, ProjectContext,
+    LABEL_EPIGENETIC_MARK,
 };

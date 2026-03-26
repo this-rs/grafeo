@@ -30,6 +30,9 @@ hopfield = ["engram"]
 # Immune system (Layer 1: anomaly detection via shape space)
 immune = []
 
+# Epigenetic layer (Layer 5: cross-instance transgenerational memory)
+epigenetic = ["dep:serde_json"]
+
 # Future subsystems
 scar = []
 memory = ["energy"]
