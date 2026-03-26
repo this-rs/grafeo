@@ -12,6 +12,8 @@
 //! - `admin` - Stats, introspection, diagnostics, CDC
 
 mod admin;
+#[cfg(feature = "cognitive")]
+pub(crate) mod annotator;
 mod crud;
 #[cfg(feature = "embed")]
 mod embed;
