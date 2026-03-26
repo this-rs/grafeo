@@ -190,7 +190,10 @@ pub use engram::{
 };
 
 #[cfg(feature = "stigmergy")]
-pub use stigmergy::{AtomicF64, PheromoneMap, StigmergicEngine, StigmergicTrace, TrailType};
+pub use stigmergy::{
+    AtomicF64, PheromoneMap, StigmergicEngine, StigmergicFormationBridge,
+    StigmergicMutationListener, StigmergicQueryListener, StigmergicTrace, TrailType,
+};
 
 #[cfg(feature = "engram")]
 pub use engram::{

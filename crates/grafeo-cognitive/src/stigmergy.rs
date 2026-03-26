@@ -14,6 +14,7 @@
 //! The flush to [`EdgeAnnotator`] is a periodic batch operation, NOT synchronous
 //! per deposit.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use dashmap::DashMap;
@@ -82,7 +83,10 @@ impl StigmergicTrace {
     /// Total pheromone intensity across all trail types.
     #[inline]
     pub fn total_intensity(&self) -> f64 {
-        self.pheromone_query + self.pheromone_mutation + self.pheromone_error + self.pheromone_surprise
+        self.pheromone_query
+            + self.pheromone_mutation
+            + self.pheromone_error
+            + self.pheromone_surprise
     }
 }
 
@@ -267,7 +271,10 @@ impl PheromoneMap {
         for entry in self.annotations.iter() {
             let (edge, trail) = *entry.key();
             // Swap to 0 and capture the old value
-            let old_bits = entry.value().bits.swap(0.0_f64.to_bits(), Ordering::Relaxed);
+            let old_bits = entry
+                .value()
+                .bits
+                .swap(0.0_f64.to_bits(), Ordering::Relaxed);
             let val = f64::from_bits(old_bits);
             if val > 0.0 {
                 result.push((edge, trail, val));
@@ -364,6 +371,224 @@ impl StigmergicEngine {
     /// Returns a reference to the underlying `PheromoneMap`.
     pub fn pheromone_map(&self) -> &PheromoneMap {
         &self.pheromone_map
+    }
+}
+
+// ---------------------------------------------------------------------------
+// StigmergicQueryListener — QueryObserver adapter
+// ---------------------------------------------------------------------------
+
+/// A [`QueryObserver`] that deposits `pheromone_query` on every edge traversed
+/// during query execution.
+///
+/// Each call to [`on_traversal`] atomically increments the pheromone value
+/// for every edge in the path by a configurable `deposit_delta` (default `1.0`).
+///
+/// This is lock-free: uses the underlying [`PheromoneMap`]'s `AtomicF64` CAS.
+pub struct StigmergicQueryListener {
+    engine: Arc<StigmergicEngine>,
+    /// Amount of pheromone deposited per edge per traversal.
+    deposit_delta: f64,
+}
+
+impl StigmergicQueryListener {
+    /// Creates a new query listener wrapping the given engine.
+    pub fn new(engine: Arc<StigmergicEngine>) -> Self {
+        Self {
+            engine,
+            deposit_delta: 1.0,
+        }
+    }
+
+    /// Creates a new query listener with a custom deposit delta.
+    pub fn with_delta(engine: Arc<StigmergicEngine>, delta: f64) -> Self {
+        Self {
+            engine,
+            deposit_delta: delta,
+        }
+    }
+
+    /// Returns a reference to the underlying engine.
+    pub fn engine(&self) -> &Arc<StigmergicEngine> {
+        &self.engine
+    }
+}
+
+impl crate::engram::traits::QueryObserver for StigmergicQueryListener {
+    fn on_query_executed(&self, _query_text: &str, _result_count: usize, _duration: std::time::Duration) {
+        // No pheromone deposit for query execution stats — only traversals matter.
+    }
+
+    fn on_traversal(&self, path: &[EdgeId]) {
+        for &edge in path {
+            self.engine.deposit(edge, TrailType::Query, self.deposit_delta);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// StigmergicMutationListener — MutationListener adapter
+// ---------------------------------------------------------------------------
+
+/// A [`MutationListener`](grafeo_reactive::MutationListener) that deposits
+/// `pheromone_mutation` on edges involved in mutation events.
+///
+/// Reacts to `EdgeCreated`, `EdgeUpdated`, and `EdgeDeleted` events.
+/// Node mutations are ignored (no edge to annotate).
+///
+/// Lock-free deposits via [`PheromoneMap`]'s `AtomicF64`.
+pub struct StigmergicMutationListener {
+    engine: Arc<StigmergicEngine>,
+    /// Amount of pheromone deposited per mutation event.
+    deposit_delta: f64,
+}
+
+impl StigmergicMutationListener {
+    /// Creates a new mutation listener wrapping the given engine.
+    pub fn new(engine: Arc<StigmergicEngine>) -> Self {
+        Self {
+            engine,
+            deposit_delta: 1.0,
+        }
+    }
+
+    /// Creates a new mutation listener with a custom deposit delta.
+    pub fn with_delta(engine: Arc<StigmergicEngine>, delta: f64) -> Self {
+        Self {
+            engine,
+            deposit_delta: delta,
+        }
+    }
+
+    /// Returns a reference to the underlying engine.
+    pub fn engine(&self) -> &Arc<StigmergicEngine> {
+        &self.engine
+    }
+}
+
+#[async_trait::async_trait]
+impl grafeo_reactive::MutationListener for StigmergicMutationListener {
+    fn name(&self) -> &str {
+        "stigmergic-mutation-listener"
+    }
+
+    async fn on_event(&self, event: &grafeo_reactive::MutationEvent) {
+        match event {
+            grafeo_reactive::MutationEvent::EdgeCreated { edge } => {
+                self.engine.deposit(edge.id, TrailType::Mutation, self.deposit_delta);
+            }
+            grafeo_reactive::MutationEvent::EdgeUpdated { after, .. } => {
+                self.engine.deposit(after.id, TrailType::Mutation, self.deposit_delta);
+            }
+            grafeo_reactive::MutationEvent::EdgeDeleted { edge } => {
+                self.engine.deposit(edge.id, TrailType::Mutation, self.deposit_delta);
+            }
+            // Node mutations don't directly map to edge pheromones.
+            _ => {}
+        }
+    }
+
+    async fn on_batch(&self, events: &[grafeo_reactive::MutationEvent]) {
+        for event in events {
+            self.on_event(event).await;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// StigmergicFormationBridge — deposit error/surprise on engram formation
+// ---------------------------------------------------------------------------
+
+/// Deposits `pheromone_error` and `pheromone_surprise` on edges belonging to
+/// an engram's ensemble when the engram is formed with error or surprise context.
+///
+/// This is not a trait implementation — it's a utility called by the formation
+/// pipeline when an engram is created. The caller provides the edge set and
+/// the context (scar/surprise).
+pub struct StigmergicFormationBridge {
+    engine: Arc<StigmergicEngine>,
+    /// Delta deposited per edge for error pheromones.
+    error_delta: f64,
+    /// Delta deposited per edge for surprise pheromones.
+    surprise_delta: f64,
+    /// Prediction error threshold above which pheromone_surprise is deposited.
+    surprise_threshold: f64,
+}
+
+impl StigmergicFormationBridge {
+    /// Creates a new formation bridge with default deltas.
+    pub fn new(engine: Arc<StigmergicEngine>) -> Self {
+        Self {
+            engine,
+            error_delta: 2.0,
+            surprise_delta: 1.5,
+            surprise_threshold: 0.5,
+        }
+    }
+
+    /// Creates a formation bridge with custom parameters.
+    pub fn with_params(
+        engine: Arc<StigmergicEngine>,
+        error_delta: f64,
+        surprise_delta: f64,
+        surprise_threshold: f64,
+    ) -> Self {
+        Self {
+            engine,
+            error_delta,
+            surprise_delta,
+            surprise_threshold,
+        }
+    }
+
+    /// Deposits `pheromone_error` on all edges in the ensemble when the engram
+    /// is associated with a scar (error context).
+    ///
+    /// `ensemble_edges` — the edges belonging to the engram's node ensemble.
+    pub fn on_error_engram(&self, ensemble_edges: &[EdgeId]) {
+        for &edge in ensemble_edges {
+            self.engine.deposit(edge, TrailType::Error, self.error_delta);
+        }
+    }
+
+    /// Deposits `pheromone_surprise` on all edges in the ensemble when the
+    /// prediction error exceeds the surprise threshold.
+    ///
+    /// `ensemble_edges` — the edges belonging to the engram's node ensemble.
+    /// `prediction_error` — the PE magnitude that triggered formation.
+    pub fn on_surprise_engram(&self, ensemble_edges: &[EdgeId], prediction_error: f64) {
+        if prediction_error >= self.surprise_threshold {
+            for &edge in ensemble_edges {
+                self.engine
+                    .deposit(edge, TrailType::Surprise, self.surprise_delta);
+            }
+        }
+    }
+
+    /// Combined handler: deposits error and/or surprise pheromones based on context.
+    ///
+    /// - If `has_scar` is true → deposits `pheromone_error` on all edges.
+    /// - If `prediction_error >= surprise_threshold` → deposits `pheromone_surprise`.
+    pub fn on_engram_formed(
+        &self,
+        ensemble_edges: &[EdgeId],
+        has_scar: bool,
+        prediction_error: f64,
+    ) {
+        if has_scar {
+            self.on_error_engram(ensemble_edges);
+        }
+        self.on_surprise_engram(ensemble_edges, prediction_error);
+    }
+
+    /// Returns a reference to the underlying engine.
+    pub fn engine(&self) -> &Arc<StigmergicEngine> {
+        &self.engine
+    }
+
+    /// Returns the surprise threshold.
+    pub fn surprise_threshold(&self) -> f64 {
+        self.surprise_threshold
     }
 }
 
@@ -592,5 +817,251 @@ mod tests {
             .get_annotation(edge, TrailType::Query.annotation_key())
             .unwrap();
         assert_eq!(val, 5.0);
+    }
+
+    // ---- StigmergicQueryListener tests ----
+
+    fn make_engine() -> Arc<StigmergicEngine> {
+        Arc::new(StigmergicEngine::new(Box::new(InMemoryAnnotator::new())))
+    }
+
+    #[test]
+    fn stigmergic_query_listener_deposits_on_traversal() {
+        use crate::engram::traits::QueryObserver;
+
+        let engine = make_engine();
+        let listener = StigmergicQueryListener::new(Arc::clone(&engine));
+
+        let edges = vec![EdgeId::new(10), EdgeId::new(20), EdgeId::new(30)];
+        listener.on_traversal(&edges);
+
+        assert_eq!(engine.read(EdgeId::new(10), TrailType::Query), 1.0);
+        assert_eq!(engine.read(EdgeId::new(20), TrailType::Query), 1.0);
+        assert_eq!(engine.read(EdgeId::new(30), TrailType::Query), 1.0);
+        // Other trail types untouched
+        assert_eq!(engine.read(EdgeId::new(10), TrailType::Mutation), 0.0);
+    }
+
+    #[test]
+    fn stigmergic_query_listener_custom_delta() {
+        use crate::engram::traits::QueryObserver;
+
+        let engine = make_engine();
+        let listener = StigmergicQueryListener::with_delta(Arc::clone(&engine), 0.5);
+
+        let edges = vec![EdgeId::new(1)];
+        listener.on_traversal(&edges);
+        listener.on_traversal(&edges);
+
+        assert!((engine.read(EdgeId::new(1), TrailType::Query) - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn stigmergic_query_listener_empty_path_is_noop() {
+        use crate::engram::traits::QueryObserver;
+
+        let engine = make_engine();
+        let listener = StigmergicQueryListener::new(Arc::clone(&engine));
+
+        listener.on_traversal(&[]);
+        assert!(engine.pheromone_map().is_empty());
+    }
+
+    #[test]
+    fn stigmergic_query_listener_multiple_traversals_accumulate() {
+        use crate::engram::traits::QueryObserver;
+
+        let engine = make_engine();
+        let listener = StigmergicQueryListener::new(Arc::clone(&engine));
+
+        let path = vec![EdgeId::new(1), EdgeId::new(2)];
+        for _ in 0..5 {
+            listener.on_traversal(&path);
+        }
+        assert_eq!(engine.read(EdgeId::new(1), TrailType::Query), 5.0);
+        assert_eq!(engine.read(EdgeId::new(2), TrailType::Query), 5.0);
+    }
+
+    // ---- StigmergicMutationListener tests ----
+
+    #[tokio::test]
+    async fn stigmergic_mutation_listener_on_edge_created() {
+        use grafeo_reactive::MutationListener;
+
+        let engine = make_engine();
+        let listener = StigmergicMutationListener::new(Arc::clone(&engine));
+
+        let event = grafeo_reactive::MutationEvent::EdgeCreated {
+            edge: grafeo_reactive::EdgeSnapshot {
+                id: EdgeId::new(42),
+                src: grafeo_common::types::NodeId(1),
+                dst: grafeo_common::types::NodeId(2),
+                edge_type: arcstr::literal!("KNOWS"),
+                properties: vec![],
+            },
+        };
+
+        listener.on_event(&event).await;
+
+        assert_eq!(engine.read(EdgeId::new(42), TrailType::Mutation), 1.0);
+        assert_eq!(engine.read(EdgeId::new(42), TrailType::Query), 0.0);
+    }
+
+    #[tokio::test]
+    async fn stigmergic_mutation_listener_on_edge_updated() {
+        use grafeo_reactive::MutationListener;
+
+        let engine = make_engine();
+        let listener = StigmergicMutationListener::new(Arc::clone(&engine));
+
+        let snapshot = grafeo_reactive::EdgeSnapshot {
+            id: EdgeId::new(7),
+            src: grafeo_common::types::NodeId(1),
+            dst: grafeo_common::types::NodeId(2),
+            edge_type: arcstr::literal!("FOLLOWS"),
+            properties: vec![],
+        };
+
+        let event = grafeo_reactive::MutationEvent::EdgeUpdated {
+            before: snapshot.clone(),
+            after: snapshot,
+        };
+
+        listener.on_event(&event).await;
+        assert_eq!(engine.read(EdgeId::new(7), TrailType::Mutation), 1.0);
+    }
+
+    #[tokio::test]
+    async fn stigmergic_mutation_listener_ignores_node_events() {
+        use grafeo_reactive::MutationListener;
+
+        let engine = make_engine();
+        let listener = StigmergicMutationListener::new(Arc::clone(&engine));
+
+        let event = grafeo_reactive::MutationEvent::NodeCreated {
+            node: grafeo_reactive::NodeSnapshot {
+                id: grafeo_common::types::NodeId(1),
+                labels: smallvec::smallvec![],
+                properties: vec![],
+            },
+        };
+
+        listener.on_event(&event).await;
+        // No edges deposited
+        assert!(engine.pheromone_map().is_empty());
+    }
+
+    #[tokio::test]
+    async fn stigmergic_mutation_listener_batch_deposits() {
+        use grafeo_reactive::MutationListener;
+
+        let engine = make_engine();
+        let listener = StigmergicMutationListener::new(Arc::clone(&engine));
+
+        let make_edge_event = |id: u64| grafeo_reactive::MutationEvent::EdgeCreated {
+            edge: grafeo_reactive::EdgeSnapshot {
+                id: EdgeId::new(id),
+                src: grafeo_common::types::NodeId(1),
+                dst: grafeo_common::types::NodeId(2),
+                edge_type: arcstr::literal!("REL"),
+                properties: vec![],
+            },
+        };
+
+        let events = vec![
+            make_edge_event(100),
+            make_edge_event(200),
+            make_edge_event(300),
+        ];
+
+        listener.on_batch(&events).await;
+
+        assert_eq!(engine.read(EdgeId::new(100), TrailType::Mutation), 1.0);
+        assert_eq!(engine.read(EdgeId::new(200), TrailType::Mutation), 1.0);
+        assert_eq!(engine.read(EdgeId::new(300), TrailType::Mutation), 1.0);
+    }
+
+    // ---- StigmergicFormationBridge tests ----
+
+    #[test]
+    fn stigmergic_formation_bridge_error_deposits() {
+        let engine = make_engine();
+        let bridge = StigmergicFormationBridge::new(Arc::clone(&engine));
+
+        let edges = vec![EdgeId::new(1), EdgeId::new(2), EdgeId::new(3)];
+        bridge.on_error_engram(&edges);
+
+        assert_eq!(engine.read(EdgeId::new(1), TrailType::Error), 2.0); // default error_delta
+        assert_eq!(engine.read(EdgeId::new(2), TrailType::Error), 2.0);
+        assert_eq!(engine.read(EdgeId::new(3), TrailType::Error), 2.0);
+        // Other trails unaffected
+        assert_eq!(engine.read(EdgeId::new(1), TrailType::Query), 0.0);
+    }
+
+    #[test]
+    fn stigmergic_formation_bridge_surprise_deposits_above_threshold() {
+        let engine = make_engine();
+        let bridge = StigmergicFormationBridge::new(Arc::clone(&engine));
+
+        let edges = vec![EdgeId::new(10), EdgeId::new(20)];
+        bridge.on_surprise_engram(&edges, 0.8); // above default threshold 0.5
+
+        assert_eq!(engine.read(EdgeId::new(10), TrailType::Surprise), 1.5); // default surprise_delta
+        assert_eq!(engine.read(EdgeId::new(20), TrailType::Surprise), 1.5);
+    }
+
+    #[test]
+    fn stigmergic_formation_bridge_surprise_ignored_below_threshold() {
+        let engine = make_engine();
+        let bridge = StigmergicFormationBridge::new(Arc::clone(&engine));
+
+        let edges = vec![EdgeId::new(10)];
+        bridge.on_surprise_engram(&edges, 0.3); // below default threshold 0.5
+
+        assert_eq!(engine.read(EdgeId::new(10), TrailType::Surprise), 0.0);
+    }
+
+    #[test]
+    fn stigmergic_formation_bridge_combined_error_and_surprise() {
+        let engine = make_engine();
+        let bridge = StigmergicFormationBridge::new(Arc::clone(&engine));
+
+        let edges = vec![EdgeId::new(5), EdgeId::new(6)];
+        bridge.on_engram_formed(&edges, true, 0.9);
+
+        // Both error and surprise should be deposited
+        assert_eq!(engine.read(EdgeId::new(5), TrailType::Error), 2.0);
+        assert_eq!(engine.read(EdgeId::new(5), TrailType::Surprise), 1.5);
+        assert_eq!(engine.read(EdgeId::new(6), TrailType::Error), 2.0);
+        assert_eq!(engine.read(EdgeId::new(6), TrailType::Surprise), 1.5);
+    }
+
+    #[test]
+    fn stigmergic_formation_bridge_scar_only_no_surprise() {
+        let engine = make_engine();
+        let bridge = StigmergicFormationBridge::new(Arc::clone(&engine));
+
+        let edges = vec![EdgeId::new(1)];
+        bridge.on_engram_formed(&edges, true, 0.2); // scar but low PE
+
+        assert_eq!(engine.read(EdgeId::new(1), TrailType::Error), 2.0);
+        assert_eq!(engine.read(EdgeId::new(1), TrailType::Surprise), 0.0);
+    }
+
+    #[test]
+    fn stigmergic_formation_bridge_custom_params() {
+        let engine = make_engine();
+        let bridge = StigmergicFormationBridge::with_params(
+            Arc::clone(&engine),
+            5.0,  // error_delta
+            3.0,  // surprise_delta
+            0.7,  // surprise_threshold
+        );
+
+        let edges = vec![EdgeId::new(1)];
+        bridge.on_engram_formed(&edges, true, 0.8);
+
+        assert_eq!(engine.read(EdgeId::new(1), TrailType::Error), 5.0);
+        assert_eq!(engine.read(EdgeId::new(1), TrailType::Surprise), 3.0);
     }
 }
