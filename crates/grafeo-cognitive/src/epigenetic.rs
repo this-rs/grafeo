@@ -399,17 +399,17 @@ impl EpigeneticMark {
     ///
     /// Creates a new `:EpigeneticMark` node. Since marks are immutable,
     /// there is no `update` — a CoW mutation creates a new node.
-    pub fn persist(&self, storage: &dyn crate::engram::traits::CognitiveStorage) -> grafeo_common::types::NodeId {
+    pub fn persist(
+        &self,
+        storage: &dyn crate::engram::traits::CognitiveStorage,
+    ) -> grafeo_common::types::NodeId {
         use grafeo_common::types::Value;
         use std::collections::HashMap;
 
         let mut props = HashMap::new();
         props.insert("mark_id".to_string(), Value::Int64(self.id.0 as i64));
         props.insert("modulation".to_string(), Value::Float64(self.modulation));
-        props.insert(
-            "transmissible".to_string(),
-            Value::Bool(self.transmissible),
-        );
+        props.insert("transmissible".to_string(), Value::Bool(self.transmissible));
         props.insert(
             "generation".to_string(),
             Value::Int64(i64::from(self.generation)),
@@ -427,6 +427,154 @@ impl EpigeneticMark {
         }
 
         storage.create_node(LABEL_EPIGENETIC_MARK, &props)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SerializedMark — portable representation for export/import
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// A portable, serialized representation of an `EpigeneticMark`.
+///
+/// Used for cross-instance transport (export/import). Contains all metadata
+/// needed to reconstruct and evaluate the mark in a target project context.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SerializedMark {
+    /// The target engram template.
+    pub target: EngramTemplate,
+
+    /// Modulation factor ∈ [-1.0, +1.0].
+    pub modulation: f64,
+
+    /// Generation counter at time of export.
+    pub generation: u32,
+
+    /// Expression conditions for context-aware activation.
+    pub expression_conditions: Vec<ExpressionCondition>,
+}
+
+impl SerializedMark {
+    /// Create a `SerializedMark` from an `EpigeneticMark`.
+    pub fn from_mark(mark: &EpigeneticMark) -> Self {
+        Self {
+            target: mark.target.clone(),
+            modulation: mark.modulation,
+            generation: mark.generation,
+            expression_conditions: mark.expression_conditions.clone(),
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EpigeneticBridge — cross-instance export/import
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// The decay factor applied per generation during transgenerational import.
+///
+/// `modulation × TRANSGENERATIONAL_DECAY^generation`
+pub const TRANSGENERATIONAL_DECAY: f64 = 0.7;
+
+/// Bridge for cross-instance epigenetic memory transfer.
+///
+/// Manages a collection of `EpigeneticMark`s and provides export/import
+/// operations with transgenerational decay and conditional filtering.
+#[derive(Debug, Default)]
+pub struct EpigeneticBridge {
+    marks: Vec<EpigeneticMark>,
+}
+
+impl EpigeneticBridge {
+    /// Create a new empty bridge.
+    pub fn new() -> Self {
+        Self { marks: Vec::new() }
+    }
+
+    /// Add a mark to the bridge.
+    pub fn add_mark(&mut self, mark: EpigeneticMark) {
+        self.marks.push(mark);
+    }
+
+    /// Return the number of marks in the bridge.
+    pub fn mark_count(&self) -> usize {
+        self.marks.len()
+    }
+
+    /// Return a reference to all marks.
+    pub fn marks(&self) -> &[EpigeneticMark] {
+        &self.marks
+    }
+
+    /// Export all transmissible marks as a serialized package.
+    ///
+    /// Filters to only marks where `transmissible == true`, then serializes
+    /// each one with its full metadata (generation, modulation, conditions).
+    pub fn export(&self) -> Vec<SerializedMark> {
+        self.marks
+            .iter()
+            .filter(|m| m.transmissible)
+            .map(|m| SerializedMark::from_mark(m))
+            .collect()
+    }
+
+    /// Import serialized marks into this bridge, applying them against
+    /// a target project context.
+    ///
+    /// For each mark:
+    /// 1. Evaluate `expression_conditions` against `ctx` — skip silently if false.
+    /// 2. Increment `generation` by 1.
+    /// 3. Apply transgenerational decay: `modulation × 0.7^new_generation`.
+    ///
+    /// Marks that don't match the context are silently ignored (log::debug).
+    /// Returns the number of marks actually imported.
+    pub fn import(&mut self, marks: Vec<SerializedMark>, ctx: &ProjectContext) -> usize {
+        let mut imported = 0;
+        for serialized in marks {
+            // Build a temporary mark to evaluate conditions
+            let probe = EpigeneticMark::new(
+                serialized.target.clone(),
+                serialized.modulation,
+                true, // imported marks are transmissible by definition
+                serialized.expression_conditions.clone(),
+            );
+
+            // Overwrite generation to match source (new() sets gen=0)
+            // We use a direct struct construction via a helper to preserve source generation
+            let probe_with_gen = EpigeneticMark {
+                id: probe.id,
+                target: probe.target,
+                modulation: probe.modulation,
+                transmissible: probe.transmissible,
+                generation: serialized.generation,
+                expression_conditions: probe.expression_conditions,
+            };
+
+            if !probe_with_gen.evaluate_conditions(ctx) {
+                tracing::debug!(
+                    generation = serialized.generation,
+                    modulation = serialized.modulation,
+                    "epigenetic import: mark skipped — expression conditions not met in target project"
+                );
+                continue;
+            }
+
+            // CoW semantics: increment generation, apply decay
+            let new_generation = serialized.generation + 1;
+            let decayed_modulation =
+                serialized.modulation * TRANSGENERATIONAL_DECAY.powi(new_generation as i32);
+
+            let imported_mark = EpigeneticMark {
+                id: EpigeneticMarkId::next(),
+                target: serialized.target,
+                modulation: decayed_modulation.clamp(-1.0, 1.0),
+                transmissible: true,
+                generation: new_generation,
+                expression_conditions: serialized.expression_conditions,
+            };
+
+            self.marks.push(imported_mark);
+            imported += 1;
+        }
+        imported
     }
 }
 
@@ -656,9 +804,7 @@ mod tests {
         );
         assert_eq!(original.expression_conditions().len(), 1);
 
-        let mutated = original.with_additional_conditions(vec![
-            ExpressionCondition::MinNodes(100),
-        ]);
+        let mutated = original.with_additional_conditions(vec![ExpressionCondition::MinNodes(100)]);
 
         assert_eq!(original.expression_conditions().len(), 1); // original unchanged
         assert_eq!(mutated.expression_conditions().len(), 2);
@@ -711,5 +857,222 @@ mod tests {
         assert!(display.contains("gen=0"));
         assert!(display.contains("mod=0.75"));
         assert!(display.contains("tx=true"));
+    }
+
+    // ─── Step 4: Export tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_export_filters_transmissible_only() {
+        let mut bridge = EpigeneticBridge::new();
+
+        // 3 transmissible marks
+        bridge.add_mark(EpigeneticMark::new(
+            EngramTemplate::with_labels(vec!["A".into()]),
+            0.8,
+            true,
+            vec![],
+        ));
+        bridge.add_mark(EpigeneticMark::new(
+            EngramTemplate::with_labels(vec!["B".into()]),
+            0.6,
+            true,
+            vec![ExpressionCondition::HasFile("main.rs".into())],
+        ));
+        bridge.add_mark(EpigeneticMark::new(
+            EngramTemplate::with_labels(vec!["C".into()]),
+            -0.3,
+            true,
+            vec![],
+        ));
+
+        // 2 non-transmissible marks
+        bridge.add_mark(EpigeneticMark::new(
+            EngramTemplate::with_labels(vec!["D".into()]),
+            0.9,
+            false,
+            vec![],
+        ));
+        bridge.add_mark(EpigeneticMark::new(
+            EngramTemplate::with_labels(vec!["E".into()]),
+            0.5,
+            false,
+            vec![],
+        ));
+
+        let exported = bridge.export();
+        assert_eq!(exported.len(), 3, "export should return exactly 3 transmissible marks");
+
+        // Verify the exported marks have correct metadata
+        assert!((exported[0].modulation - 0.8).abs() < f64::EPSILON);
+        assert!((exported[1].modulation - 0.6).abs() < f64::EPSILON);
+        assert!((exported[2].modulation - (-0.3)).abs() < f64::EPSILON);
+        assert_eq!(exported[0].generation, 0);
+        assert_eq!(exported[1].expression_conditions.len(), 1);
+    }
+
+    #[test]
+    fn test_export_serialized_mark_serde_roundtrip() {
+        let mark = EpigeneticMark::new(
+            EngramTemplate::with_labels(vec!["Test".into()]),
+            0.75,
+            true,
+            vec![ExpressionCondition::HasFile("lib.rs".into())],
+        );
+        let serialized = SerializedMark::from_mark(&mark);
+        let json = serde_json::to_string(&serialized).unwrap();
+        let deserialized: SerializedMark = serde_json::from_str(&json).unwrap();
+        assert_eq!(serialized, deserialized);
+    }
+
+    // ─── Step 5: Import with transgenerational decay ──────────────────────
+
+    #[test]
+    fn test_import_increments_generation_and_applies_decay() {
+        // gen 0, modulation 1.0 → import → gen 1, modulation 0.7
+        let mark_gen0 = EpigeneticMark::new(EngramTemplate::any(), 1.0, true, vec![]);
+        let serialized = SerializedMark::from_mark(&mark_gen0);
+        assert_eq!(serialized.generation, 0);
+        assert!((serialized.modulation - 1.0).abs() < f64::EPSILON);
+
+        let ctx = ProjectContext::new(); // unconditional marks, so empty ctx is fine
+        let mut bridge = EpigeneticBridge::new();
+        let count = bridge.import(vec![serialized], &ctx);
+        assert_eq!(count, 1);
+        assert_eq!(bridge.mark_count(), 1);
+
+        let imported = &bridge.marks()[0];
+        assert_eq!(imported.generation(), 1);
+        // modulation = 1.0 × 0.7^1 = 0.7
+        assert!(
+            (imported.modulation() - 0.7).abs() < 1e-10,
+            "expected 0.7, got {}",
+            imported.modulation()
+        );
+
+        // Re-import: gen 1 → gen 2, modulation = 1.0 × 0.7^2 = 0.49
+        let re_serialized = SerializedMark {
+            target: imported.target().clone(),
+            modulation: 1.0, // original modulation (source project's value)
+            generation: imported.generation(),
+            expression_conditions: imported.expression_conditions().to_vec(),
+        };
+
+        let mut bridge2 = EpigeneticBridge::new();
+        let count2 = bridge2.import(vec![re_serialized], &ctx);
+        assert_eq!(count2, 1);
+
+        let reimported = &bridge2.marks()[0];
+        assert_eq!(reimported.generation(), 2);
+        // modulation = 1.0 × 0.7^2 = 0.49
+        assert!(
+            (reimported.modulation() - 0.49).abs() < 1e-10,
+            "expected 0.49, got {}",
+            reimported.modulation()
+        );
+    }
+
+    #[test]
+    fn test_import_chain_decay_from_exported_modulation() {
+        // Scenario: export at gen 0 mod 1.0 → import → export at gen 1 mod 0.7 → import → gen 2 mod 0.49
+        let ctx = ProjectContext::new();
+
+        // First project: create and export
+        let mut bridge1 = EpigeneticBridge::new();
+        bridge1.add_mark(EpigeneticMark::new(EngramTemplate::any(), 1.0, true, vec![]));
+        let exported1 = bridge1.export();
+
+        // Second project: import
+        let mut bridge2 = EpigeneticBridge::new();
+        bridge2.import(exported1, &ctx);
+        let mark_gen1 = &bridge2.marks()[0];
+        assert_eq!(mark_gen1.generation(), 1);
+        assert!((mark_gen1.modulation() - 0.7).abs() < 1e-10);
+
+        // Second project re-exports (the imported mark with its current modulation)
+        let exported2 = bridge2.export();
+        assert_eq!(exported2.len(), 1);
+        assert_eq!(exported2[0].generation, 1);
+        assert!((exported2[0].modulation - 0.7).abs() < 1e-10);
+
+        // Third project: import from second
+        let mut bridge3 = EpigeneticBridge::new();
+        bridge3.import(exported2, &ctx);
+        let mark_gen2 = &bridge3.marks()[0];
+        assert_eq!(mark_gen2.generation(), 2);
+        // 0.7 × 0.7^2 = 0.7 × 0.49 = 0.343
+        assert!(
+            (mark_gen2.modulation() - 0.7 * 0.49).abs() < 1e-10,
+            "expected {}, got {}",
+            0.7 * 0.49,
+            mark_gen2.modulation()
+        );
+    }
+
+    // ─── Step 6: Conditional filtering at import ──────────────────────────
+
+    #[test]
+    fn test_import_skips_marks_with_unmet_conditions() {
+        let serialized = SerializedMark {
+            target: EngramTemplate::any(),
+            modulation: 0.8,
+            generation: 0,
+            expression_conditions: vec![ExpressionCondition::HasFile("inexistant.rs".into())],
+        };
+
+        // Context without the required file
+        let ctx = ProjectContext::new().with_file("main.rs");
+        let mut bridge = EpigeneticBridge::new();
+        let count = bridge.import(vec![serialized], &ctx);
+        assert_eq!(count, 0, "mark should be skipped — condition not met");
+        assert_eq!(bridge.mark_count(), 0, "no marks should be in the bridge");
+    }
+
+    #[test]
+    fn test_import_accepts_marks_with_met_conditions() {
+        let serialized = SerializedMark {
+            target: EngramTemplate::any(),
+            modulation: 0.8,
+            generation: 0,
+            expression_conditions: vec![ExpressionCondition::HasFile("filter.rs".into())],
+        };
+
+        let ctx = ProjectContext::new().with_file("filter.rs");
+        let mut bridge = EpigeneticBridge::new();
+        let count = bridge.import(vec![serialized], &ctx);
+        assert_eq!(count, 1);
+        assert_eq!(bridge.mark_count(), 1);
+    }
+
+    #[test]
+    fn test_import_mixed_conditions() {
+        let marks = vec![
+            // Should pass — no conditions
+            SerializedMark {
+                target: EngramTemplate::any(),
+                modulation: 0.5,
+                generation: 0,
+                expression_conditions: vec![],
+            },
+            // Should fail — file missing
+            SerializedMark {
+                target: EngramTemplate::any(),
+                modulation: 0.8,
+                generation: 0,
+                expression_conditions: vec![ExpressionCondition::HasFile("nope.rs".into())],
+            },
+            // Should pass — label present
+            SerializedMark {
+                target: EngramTemplate::any(),
+                modulation: 0.6,
+                generation: 1,
+                expression_conditions: vec![ExpressionCondition::HasLabel("Function".into())],
+            },
+        ];
+
+        let ctx = ProjectContext::new().with_label("Function");
+        let mut bridge = EpigeneticBridge::new();
+        let count = bridge.import(marks, &ctx);
+        assert_eq!(count, 2, "2 of 3 marks should pass conditions");
+        assert_eq!(bridge.mark_count(), 2);
     }
 }
