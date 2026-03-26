@@ -261,6 +261,59 @@ impl PheromoneMap {
         }
     }
 
+    /// Applies temporal decay to ALL pheromones by multiplying each by `decay_rate`.
+    ///
+    /// Default `decay_rate` is `0.95`. After 100 cycles without deposit, a
+    /// pheromone of initial value 1.0 decays to ~0.006 (0.95^100 ≈ 0.00592).
+    ///
+    /// Entries that fall below `1e-6` are pruned to avoid map bloat.
+    /// This is the batch async lock-free evaporation called by the homeostasis
+    /// scheduler.
+    pub fn evaporate_all(&self, decay_rate: f64) {
+        self.evaporate(decay_rate, 1e-6);
+    }
+
+    /// Returns the maximum pheromone value across all entries, or `0.0` if empty.
+    pub fn max_value(&self) -> f64 {
+        let mut max = 0.0_f64;
+        for entry in self.annotations.iter() {
+            let v = entry.value().load();
+            if v > max {
+                max = v;
+            }
+        }
+        max
+    }
+
+    /// Anti-lock-in: adds noise to pheromones that exceed `ratio` of the max value.
+    ///
+    /// For each pheromone value > `ratio * max`, a deterministic perturbation of
+    /// ±`noise_pct` is applied. This breaks dominant paths and encourages exploration.
+    ///
+    /// `ratio` — threshold as fraction of max (e.g., 0.9 = 90%).
+    /// `noise_pct` — noise magnitude as fraction (e.g., 0.05 = ±5%).
+    /// `seed` — seed for reproducible noise (use timestamp or counter in prod).
+    pub fn inject_noise(&self, ratio: f64, noise_pct: f64, seed: u64) {
+        let max = self.max_value();
+        if max <= 0.0 {
+            return;
+        }
+        let threshold = max * ratio;
+        let mut counter: u64 = seed;
+        for entry in self.annotations.iter() {
+            let val = entry.value().load();
+            if val >= threshold {
+                // Simple deterministic hash-based noise — no external RNG dependency.
+                // Produces a value in [-1.0, 1.0] from a counter.
+                counter = counter.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                let noise_unit = ((counter >> 33) as f64 / (u32::MAX as f64)) * 2.0 - 1.0;
+                let perturbation = val * noise_pct * noise_unit;
+                let new_val = (val + perturbation).max(0.0);
+                entry.value().store(new_val);
+            }
+        }
+    }
+
     /// Drains all entries into a Vec for batch flushing, resetting values to 0.
     ///
     /// Returns `(EdgeId, TrailType, f64)` tuples. The pheromone values are
@@ -368,6 +421,20 @@ impl StigmergicEngine {
         self.pheromone_map.evaporate(factor, threshold);
     }
 
+    /// Applies temporal decay to all pheromones (default decay_rate = 0.95).
+    ///
+    /// Lock-free batch operation. Entries below 1e-6 are pruned.
+    pub fn evaporate_all(&self, decay_rate: f64) {
+        self.pheromone_map.evaporate_all(decay_rate);
+    }
+
+    /// Anti-lock-in: injects noise into pheromones > 90% of max.
+    ///
+    /// Breaks dominant paths to encourage exploration.
+    pub fn prevent_lock_in(&self, noise_pct: f64, seed: u64) {
+        self.pheromone_map.inject_noise(0.9, noise_pct, seed);
+    }
+
     /// Returns a reference to the underlying `PheromoneMap`.
     pub fn pheromone_map(&self) -> &PheromoneMap {
         &self.pheromone_map
@@ -415,13 +482,19 @@ impl StigmergicQueryListener {
 }
 
 impl crate::engram::traits::QueryObserver for StigmergicQueryListener {
-    fn on_query_executed(&self, _query_text: &str, _result_count: usize, _duration: std::time::Duration) {
+    fn on_query_executed(
+        &self,
+        _query_text: &str,
+        _result_count: usize,
+        _duration: std::time::Duration,
+    ) {
         // No pheromone deposit for query execution stats — only traversals matter.
     }
 
     fn on_traversal(&self, path: &[EdgeId]) {
         for &edge in path {
-            self.engine.deposit(edge, TrailType::Query, self.deposit_delta);
+            self.engine
+                .deposit(edge, TrailType::Query, self.deposit_delta);
         }
     }
 }
@@ -475,13 +548,16 @@ impl grafeo_reactive::MutationListener for StigmergicMutationListener {
     async fn on_event(&self, event: &grafeo_reactive::MutationEvent) {
         match event {
             grafeo_reactive::MutationEvent::EdgeCreated { edge } => {
-                self.engine.deposit(edge.id, TrailType::Mutation, self.deposit_delta);
+                self.engine
+                    .deposit(edge.id, TrailType::Mutation, self.deposit_delta);
             }
             grafeo_reactive::MutationEvent::EdgeUpdated { after, .. } => {
-                self.engine.deposit(after.id, TrailType::Mutation, self.deposit_delta);
+                self.engine
+                    .deposit(after.id, TrailType::Mutation, self.deposit_delta);
             }
             grafeo_reactive::MutationEvent::EdgeDeleted { edge } => {
-                self.engine.deposit(edge.id, TrailType::Mutation, self.deposit_delta);
+                self.engine
+                    .deposit(edge.id, TrailType::Mutation, self.deposit_delta);
             }
             // Node mutations don't directly map to edge pheromones.
             _ => {}
@@ -547,7 +623,8 @@ impl StigmergicFormationBridge {
     /// `ensemble_edges` — the edges belonging to the engram's node ensemble.
     pub fn on_error_engram(&self, ensemble_edges: &[EdgeId]) {
         for &edge in ensemble_edges {
-            self.engine.deposit(edge, TrailType::Error, self.error_delta);
+            self.engine
+                .deposit(edge, TrailType::Error, self.error_delta);
         }
     }
 
@@ -1053,9 +1130,9 @@ mod tests {
         let engine = make_engine();
         let bridge = StigmergicFormationBridge::with_params(
             Arc::clone(&engine),
-            5.0,  // error_delta
-            3.0,  // surprise_delta
-            0.7,  // surprise_threshold
+            5.0, // error_delta
+            3.0, // surprise_delta
+            0.7, // surprise_threshold
         );
 
         let edges = vec![EdgeId::new(1)];
@@ -1063,5 +1140,132 @@ mod tests {
 
         assert_eq!(engine.read(EdgeId::new(1), TrailType::Error), 5.0);
         assert_eq!(engine.read(EdgeId::new(1), TrailType::Surprise), 3.0);
+    }
+
+    // ---- Evaporation tests ----
+
+    #[test]
+    fn evaporation_100_cycles_decays_to_near_zero() {
+        let map = PheromoneMap::new();
+        let edge = EdgeId::new(1);
+        map.deposit(edge, TrailType::Query, 1.0);
+
+        // Apply 100 cycles of decay at 0.95
+        for _ in 0..100 {
+            map.evaporate_all(0.95);
+        }
+
+        let val = map.read(edge, TrailType::Query);
+        // 0.95^100 ≈ 0.00592
+        assert!(
+            val < 0.007,
+            "After 100 cycles, expected < 0.007, got {val}"
+        );
+        assert!(
+            val > 0.005,
+            "After 100 cycles, expected > 0.005, got {val}"
+        );
+    }
+
+    #[test]
+    fn evaporation_removes_entries_below_threshold() {
+        let map = PheromoneMap::new();
+        let edge = EdgeId::new(1);
+        map.deposit(edge, TrailType::Query, 1e-5);
+
+        // A single evaporate at 0.95 → 9.5e-6 → below 1e-6 threshold? No.
+        // Need more cycles.
+        // 1e-5 * 0.95^n < 1e-6 → 0.95^n < 0.1 → n > log(0.1)/log(0.95) ≈ 44.9
+        for _ in 0..50 {
+            map.evaporate_all(0.95);
+        }
+
+        assert_eq!(map.len(), 0, "Entry should be pruned after enough decay");
+    }
+
+    #[test]
+    fn evaporate_all_via_engine() {
+        let engine = StigmergicEngine::new(Box::new(InMemoryAnnotator::new()));
+        let edge = EdgeId::new(1);
+        engine.deposit(edge, TrailType::Query, 1.0);
+
+        for _ in 0..100 {
+            engine.evaporate_all(0.95);
+        }
+
+        let val = engine.read(edge, TrailType::Query);
+        assert!(val < 0.007, "Expected < 0.007, got {val}");
+        assert!(val > 0.005, "Expected > 0.005, got {val}");
+    }
+
+    // ---- Anti-lock-in tests ----
+
+    #[test]
+    fn anti_lock_in_injects_noise_on_strong_pheromones() {
+        let map = PheromoneMap::new();
+
+        // Create a dominant pheromone and a weak one
+        map.deposit(EdgeId::new(1), TrailType::Query, 100.0); // strong
+        map.deposit(EdgeId::new(2), TrailType::Query, 50.0); // below 90% of max (90.0)
+        map.deposit(EdgeId::new(3), TrailType::Query, 95.0); // above 90% threshold
+
+        let original_strong = map.read(EdgeId::new(1), TrailType::Query);
+        let original_weak = map.read(EdgeId::new(2), TrailType::Query);
+        let original_high = map.read(EdgeId::new(3), TrailType::Query);
+
+        map.inject_noise(0.9, 0.05, 42);
+
+        let after_strong = map.read(EdgeId::new(1), TrailType::Query);
+        let after_weak = map.read(EdgeId::new(2), TrailType::Query);
+        let after_high = map.read(EdgeId::new(3), TrailType::Query);
+
+        // Strong pheromone (100.0) should have changed by ±5%
+        assert!(
+            (after_strong - original_strong).abs() <= original_strong * 0.05 + f64::EPSILON,
+            "Strong pheromone should change by at most ±5%, delta = {}",
+            (after_strong - original_strong).abs()
+        );
+        assert!(
+            (after_strong - original_strong).abs() > 0.0,
+            "Strong pheromone should have been perturbed"
+        );
+
+        // Weak pheromone (50.0 < 90.0) should NOT be affected
+        assert_eq!(
+            after_weak, original_weak,
+            "Weak pheromone should not be affected"
+        );
+
+        // High pheromone (95.0 >= 90.0) should also be perturbed
+        assert!(
+            (after_high - original_high).abs() <= original_high * 0.05 + f64::EPSILON,
+            "High pheromone should change by at most ±5%"
+        );
+    }
+
+    #[test]
+    fn anti_lock_in_noop_on_empty_map() {
+        let map = PheromoneMap::new();
+        map.inject_noise(0.9, 0.05, 0); // should not panic
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn anti_lock_in_via_engine() {
+        let engine = StigmergicEngine::new(Box::new(InMemoryAnnotator::new()));
+        engine.deposit(EdgeId::new(1), TrailType::Query, 100.0);
+
+        let before = engine.read(EdgeId::new(1), TrailType::Query);
+        engine.prevent_lock_in(0.05, 123);
+        let after = engine.read(EdgeId::new(1), TrailType::Query);
+
+        assert!(
+            (after - before).abs() <= before * 0.05 + f64::EPSILON,
+            "Perturbation should be within ±5%"
+        );
+        assert!(
+            (after - before).abs() > 0.0,
+            "Pheromone max should have been perturbed"
+        );
     }
 }

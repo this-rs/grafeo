@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 
 use super::store::EngramStore;
 
+#[cfg(feature = "stigmergy")]
+use crate::stigmergy::StigmergicEngine;
+
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
@@ -31,6 +34,13 @@ pub struct HomeostasisConfig {
 
     /// Number of recent recall outcomes to track for meta-plasticity.
     pub meta_plasticity_window: usize,
+
+    /// Pheromone decay rate per sweep cycle (0.0–1.0). Default: 0.95.
+    /// After 100 cycles, a pheromone of 1.0 decays to ~0.006.
+    pub pheromone_decay_rate: f64,
+
+    /// Noise magnitude for anti-lock-in (fraction, e.g. 0.05 = ±5%).
+    pub anti_lock_in_noise: f64,
 }
 
 impl Default for HomeostasisConfig {
@@ -40,6 +50,8 @@ impl Default for HomeostasisConfig {
             scaling_rate: 0.1,
             sweep_interval_secs: 3600,
             meta_plasticity_window: 100,
+            pheromone_decay_rate: 0.95,
+            anti_lock_in_noise: 0.05,
         }
     }
 }
@@ -59,6 +71,8 @@ pub struct HomeostasisEngine {
     config: HomeostasisConfig,
     /// Ring buffer of recent recall outcomes (true = useful, false = not useful).
     recall_outcomes: Mutex<VecDeque<bool>>,
+    /// Monotonic counter used as seed for anti-lock-in noise.
+    sweep_counter: std::sync::atomic::AtomicU64,
 }
 
 impl HomeostasisEngine {
@@ -68,6 +82,7 @@ impl HomeostasisEngine {
         Self {
             config,
             recall_outcomes: Mutex::new(VecDeque::with_capacity(window)),
+            sweep_counter: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -146,11 +161,41 @@ impl HomeostasisEngine {
         outcomes.push_back(was_useful);
     }
 
-    /// Runs all homeostatic mechanisms on the store.
+    /// Runs all homeostatic mechanisms on the engram store only.
     ///
     /// Call this periodically (e.g., every `sweep_interval_secs`).
     pub fn sweep(&self, store: &EngramStore) {
         self.synaptic_scaling(store);
+    }
+
+    /// Runs all homeostatic mechanisms including stigmergic regulation.
+    ///
+    /// 1. Synaptic scaling on engrams
+    /// 2. Pheromone evaporation (temporal decay)
+    /// 3. Anti-lock-in noise injection on dominant pheromones
+    #[cfg(feature = "stigmergy")]
+    pub fn sweep_with_stigmergy(&self, store: &EngramStore, engine: &StigmergicEngine) {
+        // 1. Engram synaptic scaling
+        self.synaptic_scaling(store);
+
+        // 2. Pheromone evaporation
+        engine.evaporate_all(self.config.pheromone_decay_rate);
+
+        // 3. Anti-lock-in: inject noise on dominant pheromones
+        let seed = self
+            .sweep_counter
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        engine.prevent_lock_in(self.config.anti_lock_in_noise, seed);
+    }
+
+    /// Returns the configured pheromone decay rate.
+    pub fn pheromone_decay_rate(&self) -> f64 {
+        self.config.pheromone_decay_rate
+    }
+
+    /// Returns the configured anti-lock-in noise magnitude.
+    pub fn anti_lock_in_noise(&self) -> f64 {
+        self.config.anti_lock_in_noise
     }
 }
 
@@ -277,5 +322,106 @@ mod tests {
         let store = test_store();
         let engine = HomeostasisEngine::new(HomeostasisConfig::default());
         engine.sweep(&store); // should not panic
+    }
+
+    // ---- Stigmergy integration tests ----
+
+    #[cfg(feature = "stigmergy")]
+    mod stigmergy_tests {
+        use super::*;
+        use crate::stigmergy::{PheromoneMap, StigmergicEngine, TrailType};
+        use crate::engram::traits::EdgeAnnotator;
+        use grafeo_common::types::EdgeId;
+
+        struct NoopAnnotator;
+        impl EdgeAnnotator for NoopAnnotator {
+            fn annotate(&self, _edge: EdgeId, _key: &str, _value: f64) {}
+            fn get_annotation(&self, _edge: EdgeId, _key: &str) -> Option<f64> {
+                None
+            }
+            fn remove_annotation(&self, _edge: EdgeId, _key: &str) {}
+        }
+
+        fn make_stigmergic_engine() -> StigmergicEngine {
+            StigmergicEngine::new(Box::new(NoopAnnotator))
+        }
+
+        #[test]
+        fn homeostasis_with_stigmergy_evaporates() {
+            let store = test_store();
+            let stig = make_stigmergic_engine();
+            let homeo = HomeostasisEngine::new(HomeostasisConfig::default());
+
+            // Deposit a pheromone
+            stig.deposit(EdgeId::new(1), TrailType::Query, 1.0);
+
+            // Run sweep with stigmergy
+            homeo.sweep_with_stigmergy(&store, &stig);
+
+            // Pheromone should have decayed by 0.95 (plus possible noise)
+            let val = stig.read(EdgeId::new(1), TrailType::Query);
+            // Single entry = it's the max, so noise is also applied.
+            // After decay: 0.95, then noise of ±5% → [0.9025, 0.9975]
+            assert!(
+                val < 1.0,
+                "Pheromone should have decayed, got {val}"
+            );
+            assert!(
+                val > 0.85,
+                "Pheromone should not have decayed too much, got {val}"
+            );
+        }
+
+        #[test]
+        fn homeostasis_with_stigmergy_full_cycle() {
+            let store = test_store();
+            let stig = make_stigmergic_engine();
+
+            // Add engrams with high strengths
+            for i in 0..5 {
+                let id = EngramId(i);
+                let mut e = Engram::new(id, vec![(NodeId(i), 1.0)]);
+                e.strength = 0.9;
+                store.insert(e);
+            }
+
+            // Add pheromones: one dominant, others weak
+            stig.deposit(EdgeId::new(1), TrailType::Query, 100.0);
+            stig.deposit(EdgeId::new(2), TrailType::Query, 50.0);
+
+            let homeo = HomeostasisEngine::new(HomeostasisConfig::default());
+            homeo.sweep_with_stigmergy(&store, &stig);
+
+            // Engram strengths should have been scaled
+            for e in store.list() {
+                assert!(e.strength < 0.9, "Engram strength should decrease");
+            }
+
+            // Pheromone should have decayed
+            let val1 = stig.read(EdgeId::new(1), TrailType::Query);
+            let val2 = stig.read(EdgeId::new(2), TrailType::Query);
+            assert!(val1 < 100.0, "Dominant pheromone should decay");
+            assert!(val2 < 50.0, "Weak pheromone should decay");
+        }
+
+        #[test]
+        fn anti_lock_in_perturbs_max_pheromone() {
+            let stig = make_stigmergic_engine();
+
+            // All pheromones at max
+            stig.deposit(EdgeId::new(1), TrailType::Query, 100.0);
+            stig.deposit(EdgeId::new(2), TrailType::Query, 100.0);
+
+            let before = stig.read(EdgeId::new(1), TrailType::Query);
+            stig.prevent_lock_in(0.05, 42);
+            let after = stig.read(EdgeId::new(1), TrailType::Query);
+
+            // Should have changed by ±5%
+            let delta = (after - before).abs();
+            assert!(
+                delta <= before * 0.05 + f64::EPSILON,
+                "Noise should be within ±5%, delta = {delta}"
+            );
+        }
     }
 }
