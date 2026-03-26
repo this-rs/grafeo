@@ -271,12 +271,13 @@ impl EngramManager {
 
                 // Check if engram has decayed below threshold.
                 if let Some(updated) = self.store.get(id)
-                    && updated.strength < 0.05 {
-                        self.store.remove(id);
-                        self.vector_index.remove(&id.to_string());
-                        self.metrics.record_decay();
-                        debug!(%id, "engram decayed and removed");
-                    }
+                    && updated.strength < 0.05
+                {
+                    self.store.remove(id);
+                    self.vector_index.remove(&id.to_string());
+                    self.metrics.record_decay();
+                    debug!(%id, "engram decayed and removed");
+                }
             }
         }
 
@@ -298,10 +299,11 @@ impl EngramManager {
                 });
 
                 if let Some(updated) = self.store.get(id)
-                    && updated.is_crystallization_candidate() {
-                        self.metrics.record_crystallization();
-                        debug!(%id, "engram crystallization candidate");
-                    }
+                    && updated.is_crystallization_candidate()
+                {
+                    self.metrics.record_crystallization();
+                    debug!(%id, "engram crystallization candidate");
+                }
             }
         }
 

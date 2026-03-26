@@ -706,17 +706,18 @@ impl PredictionErrorCalculator {
         for &eid in active_engram_ids {
             if let Some(engram) = store.get(eid)
                 && let Some(ref pm) = engram.predictive_model
-                    && pm.dim() == actual_outcome.len()
-                        && let Some(pe_result) = compute_prediction_error(pm, actual_outcome) {
-                            match best_pe {
-                                None => best_pe = Some(pe_result.magnitude),
-                                Some(current_best) => {
-                                    if pe_result.magnitude < current_best {
-                                        best_pe = Some(pe_result.magnitude);
-                                    }
-                                }
-                            }
+                && pm.dim() == actual_outcome.len()
+                && let Some(pe_result) = compute_prediction_error(pm, actual_outcome)
+            {
+                match best_pe {
+                    None => best_pe = Some(pe_result.magnitude),
+                    Some(current_best) => {
+                        if pe_result.magnitude < current_best {
+                            best_pe = Some(pe_result.magnitude);
                         }
+                    }
+                }
+            }
         }
 
         // If no engram had a predictive model → novel observation → max surprise

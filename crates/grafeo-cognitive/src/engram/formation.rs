@@ -185,10 +185,7 @@ impl CoActivationDetector {
                 for i in 0..component.len() {
                     for j in (i + 1)..component.len() {
                         let key = ordered_pair(component[i], component[j]);
-                        let co_count = self
-                            .co_occurrences
-                            .get(&key)
-                            .map_or(0.0, |v| *v as f64);
+                        let co_count = self.co_occurrences.get(&key).map_or(0.0, |v| *v as f64);
                         let na = self
                             .node_episodes
                             .get(&component[i])
