@@ -264,12 +264,7 @@ pub fn crystallize(
         Value::Int64(engram.recall_count as i64),
     );
 
-    let edge_id = storage.create_edge(
-        engram_node_id,
-        note_id,
-        REL_CRYSTALLIZED_IN,
-        &edge_props,
-    );
+    let edge_id = storage.create_edge(engram_node_id, note_id, REL_CRYSTALLIZED_IN, &edge_props);
 
     // 3. Increment crystallization_proposals metric
     metrics.record_crystallization();

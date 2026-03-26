@@ -247,7 +247,7 @@ impl PheromoneMap {
     /// by this factor. Values below `threshold` are removed entirely.
     pub fn evaporate(&self, factor: f64, threshold: f64) {
         let mut to_remove = Vec::new();
-        for entry in self.annotations.iter() {
+        for entry in &self.annotations {
             let old = entry.value().load();
             let new = old * factor;
             if new < threshold {
@@ -276,7 +276,7 @@ impl PheromoneMap {
     /// Returns the maximum pheromone value across all entries, or `0.0` if empty.
     pub fn max_value(&self) -> f64 {
         let mut max = 0.0_f64;
-        for entry in self.annotations.iter() {
+        for entry in &self.annotations {
             let v = entry.value().load();
             if v > max {
                 max = v;
@@ -300,12 +300,14 @@ impl PheromoneMap {
         }
         let threshold = max * ratio;
         let mut counter: u64 = seed;
-        for entry in self.annotations.iter() {
+        for entry in &self.annotations {
             let val = entry.value().load();
             if val >= threshold {
                 // Simple deterministic hash-based noise — no external RNG dependency.
                 // Produces a value in [-1.0, 1.0] from a counter.
-                counter = counter.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                counter = counter
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 let noise_unit = ((counter >> 33) as f64 / (u32::MAX as f64)) * 2.0 - 1.0;
                 let perturbation = val * noise_pct * noise_unit;
                 let new_val = (val + perturbation).max(0.0);
@@ -321,7 +323,7 @@ impl PheromoneMap {
     /// to `EdgeAnnotator`.
     pub fn drain_snapshot(&self) -> Vec<(EdgeId, TrailType, f64)> {
         let mut result = Vec::with_capacity(self.annotations.len());
-        for entry in self.annotations.iter() {
+        for entry in &self.annotations {
             let (edge, trail) = *entry.key();
             // Swap to 0 and capture the old value
             let old_bits = entry
@@ -1157,14 +1159,8 @@ mod tests {
 
         let val = map.read(edge, TrailType::Query);
         // 0.95^100 ≈ 0.00592
-        assert!(
-            val < 0.007,
-            "After 100 cycles, expected < 0.007, got {val}"
-        );
-        assert!(
-            val > 0.005,
-            "After 100 cycles, expected > 0.005, got {val}"
-        );
+        assert!(val < 0.007, "After 100 cycles, expected < 0.007, got {val}");
+        assert!(val > 0.005, "After 100 cycles, expected > 0.005, got {val}");
     }
 
     #[test]

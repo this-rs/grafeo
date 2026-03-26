@@ -2,8 +2,8 @@
 //!
 //! Provides concurrent access to engrams via `DashMap` and atomic ID generation.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use dashmap::DashMap;
 use grafeo_common::types::NodeId;

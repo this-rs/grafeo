@@ -154,7 +154,10 @@ async fn engrams_forget_removes_engram_cypher() {
     assert!(result.is_ok());
     let algo_result = result.unwrap().unwrap();
 
-    assert_eq!(algo_result.columns, vec!["id", "status", "relations_removed"]);
+    assert_eq!(
+        algo_result.columns,
+        vec!["id", "status", "relations_removed"]
+    );
     assert_eq!(algo_result.rows.len(), 1);
     assert_eq!(algo_result.rows[0][1], Value::from("forgotten"));
 
@@ -162,7 +165,11 @@ async fn engrams_forget_removes_engram_cypher() {
     let after = try_execute_cognitive_procedure("grafeo.engrams.inspect", &args_inspect, &engine)
         .unwrap()
         .unwrap();
-    assert_eq!(after.rows.len(), 0, "engram 1 should not exist after forget");
+    assert_eq!(
+        after.rows.len(),
+        0,
+        "engram 1 should not exist after forget"
+    );
 
     // List should now have 2 engrams
     let list = try_execute_cognitive_procedure("grafeo.engrams.list", &[], &engine)

@@ -41,25 +41,25 @@ impl Default for FsrsConfig {
     fn default() -> Self {
         Self {
             w: [
-                0.4072, // w[0]  — initial stability for Again
-                1.1829, // w[1]  — initial stability for Hard
-                3.1262, // w[2]  — initial stability for Good
+                0.4072,  // w[0]  — initial stability for Again
+                1.1829,  // w[1]  — initial stability for Hard
+                3.1262,  // w[2]  — initial stability for Good
                 15.4722, // w[3]  — initial stability for Easy
-                7.2102, // w[4]  — difficulty init: base
-                0.5316, // w[5]  — difficulty init: rating factor
-                1.0651, // w[6]  — difficulty update rate
-                0.0046, // w[7]  — grade factor for stability increase
-                1.5400, // w[8]  — stability recall: exponent base
-                0.1192, // w[9]  — stability recall: S^(-w9)
-                1.0100, // w[10] — stability recall: retention factor
-                1.9395, // w[11] — stability lapse: base
-                0.1100, // w[12] — stability lapse: D factor
-                0.2900, // w[13] — stability lapse: S factor
-                2.2700, // w[14] — short-term stability param
-                0.0460, // w[15] — short-term stability param
-                0.2000, // w[16] — short-term stability param
-                1.1000, // w[17] — calibration param
-                0.0600, // w[18] — calibration param
+                7.2102,  // w[4]  — difficulty init: base
+                0.5316,  // w[5]  — difficulty init: rating factor
+                1.0651,  // w[6]  — difficulty update rate
+                0.0046,  // w[7]  — grade factor for stability increase
+                1.5400,  // w[8]  — stability recall: exponent base
+                0.1192,  // w[9]  — stability recall: S^(-w9)
+                1.0100,  // w[10] — stability recall: retention factor
+                1.9395,  // w[11] — stability lapse: base
+                0.1100,  // w[12] — stability lapse: D factor
+                0.2900,  // w[13] — stability lapse: S factor
+                2.2700,  // w[14] — short-term stability param
+                0.0460,  // w[15] — short-term stability param
+                0.2000,  // w[16] — short-term stability param
+                1.1000,  // w[17] — calibration param
+                0.0600,  // w[18] — calibration param
             ],
         }
     }

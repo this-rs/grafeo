@@ -346,7 +346,7 @@ impl ImmuneSystem {
     /// the context within its affinity radius.
     pub fn scan(&self, context: &ShapeDescriptor) -> Vec<Detection> {
         let mut detections = Vec::new();
-        for entry in self.detectors.iter() {
+        for entry in &self.detectors {
             let detector = entry.value();
             if detector.matches(context) {
                 let distance = detector.shape.euclidean_distance(context);
@@ -457,7 +457,7 @@ impl ImmuneSystem {
         let all: Vec<(DetectorId, ShapeDescriptor)> = self
             .detectors
             .iter()
-            .map(|e| (e.key().clone(), e.value().shape.clone()))
+            .map(|e| (*e.key(), e.value().shape.clone()))
             .collect();
 
         let mut pairs = Vec::new();
@@ -538,7 +538,11 @@ impl ImmuneSystem {
     }
 
     /// Like [`regulate_immune`](Self::regulate_immune) but with custom thresholds.
-    pub fn regulate_immune_with(&self, fp_threshold: f64, shrink_factor: f64) -> Vec<(DetectorId, f64)> {
+    pub fn regulate_immune_with(
+        &self,
+        fp_threshold: f64,
+        shrink_factor: f64,
+    ) -> Vec<(DetectorId, f64)> {
         let candidates: Vec<DetectorId> = self
             .detectors
             .iter()
@@ -1136,10 +1140,7 @@ mod tests {
         let propagated = system.idiotypic_propagate(&id_a);
         let propagated_ids: Vec<DetectorId> = propagated.iter().map(|p| p.0).collect();
 
-        assert!(
-            propagated_ids.contains(&id_b),
-            "B should be activated by A"
-        );
+        assert!(propagated_ids.contains(&id_b), "B should be activated by A");
         assert!(
             !propagated_ids.contains(&id_c),
             "C should NOT be activated by A"
@@ -1171,7 +1172,10 @@ mod tests {
             "weight should be ≤ propagation factor, got {}",
             propagated[0].1
         );
-        assert!(propagated[0].1 > 0.3, "weight should be substantial for similar detectors");
+        assert!(
+            propagated[0].1 > 0.3,
+            "weight should be substantial for similar detectors"
+        );
     }
 
     // -------------------------------------------------------------------
@@ -1209,7 +1213,10 @@ mod tests {
         system.register(det);
 
         let regulated = system.regulate_immune();
-        assert!(regulated.is_empty(), "low FP detector should not be regulated");
+        assert!(
+            regulated.is_empty(),
+            "low FP detector should not be regulated"
+        );
     }
 
     #[test]
@@ -1251,7 +1258,10 @@ mod tests {
         }
 
         let fp = system.get(&id).unwrap().false_positive_rate;
-        assert!(fp > 0.3, "after 5 rejections, FP rate should be > 0.3, got {fp}");
+        assert!(
+            fp > 0.3,
+            "after 5 rejections, FP rate should be > 0.3, got {fp}"
+        );
     }
 
     #[test]
@@ -1268,7 +1278,10 @@ mod tests {
         }
 
         let fp = system.get(&id).unwrap().false_positive_rate;
-        assert!(fp < 0.5, "after confirmations, FP rate should decrease, got {fp}");
+        assert!(
+            fp < 0.5,
+            "after confirmations, FP rate should decrease, got {fp}"
+        );
         // Also clone_count should have incremented
         assert_eq!(system.get(&id).unwrap().clone_count, 5);
     }

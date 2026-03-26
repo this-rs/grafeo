@@ -5,9 +5,9 @@
 //!
 //! Run with: cargo bench -p grafeo-cognitive --features hopfield -- hopfield
 
-use criterion::{Criterion, criterion_group, criterion_main, BenchmarkId};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use grafeo_cognitive::engram::{
-    hopfield_retrieve, Engram, EngramId, EngramStore, PatternMatrix, SpectralEncoder,
+    Engram, EngramId, EngramStore, PatternMatrix, SpectralEncoder, hopfield_retrieve,
 };
 use grafeo_common::types::NodeId;
 
@@ -39,11 +39,8 @@ fn build_store_and_matrix(n: usize) -> (EngramStore, PatternMatrix, Vec<f64>) {
     }
 
     // Build a query vector from some arbitrary nodes
-    let query_nodes: Vec<(NodeId, f64)> = vec![
-        (NodeId(42), 1.0),
-        (NodeId(99), 0.8),
-        (NodeId(7), 0.5),
-    ];
+    let query_nodes: Vec<(NodeId, f64)> =
+        vec![(NodeId(42), 1.0), (NodeId(99), 0.8), (NodeId(7), 0.5)];
     let query_vec = spectral.encode(&query_nodes);
 
     (store, matrix, query_vec)
@@ -56,16 +53,12 @@ fn bench_hopfield_retrieve(c: &mut Criterion) {
     for &n in &[100, 500, 1000] {
         let (store, matrix, query) = build_store_and_matrix(n);
 
-        group.bench_with_input(
-            BenchmarkId::new("retrieve_top10", n),
-            &n,
-            |b, _| {
-                b.iter(|| {
-                    let results = hopfield_retrieve(&matrix, &query, &store, 10);
-                    criterion::black_box(results);
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("retrieve_top10", n), &n, |b, _| {
+            b.iter(|| {
+                let results = hopfield_retrieve(&matrix, &query, &store, 10);
+                criterion::black_box(results);
+            });
+        });
     }
 
     group.finish();
@@ -77,20 +70,20 @@ fn bench_pattern_matrix_from_store(c: &mut Criterion) {
     for &n in &[100, 500, 1000] {
         let (store, _, _) = build_store_and_matrix(n);
 
-        group.bench_with_input(
-            BenchmarkId::new("from_store", n),
-            &n,
-            |b, _| {
-                b.iter(|| {
-                    let matrix = PatternMatrix::from_store(&store, DIM);
-                    criterion::black_box(matrix);
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("from_store", n), &n, |b, _| {
+            b.iter(|| {
+                let matrix = PatternMatrix::from_store(&store, DIM);
+                criterion::black_box(matrix);
+            });
+        });
     }
 
     group.finish();
 }
 
-criterion_group!(hopfield_benches, bench_hopfield_retrieve, bench_pattern_matrix_from_store);
+criterion_group!(
+    hopfield_benches,
+    bench_hopfield_retrieve,
+    bench_pattern_matrix_from_store
+);
 criterion_main!(hopfield_benches);

@@ -392,7 +392,10 @@ mod tests {
         immune.register(det);
 
         let regulated = engine.sweep_with_immune(&store, &immune);
-        assert!(regulated.is_empty(), "healthy detector should not be regulated");
+        assert!(
+            regulated.is_empty(),
+            "healthy detector should not be regulated"
+        );
     }
 
     // ---- Stigmergy integration tests ----

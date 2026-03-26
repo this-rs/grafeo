@@ -183,9 +183,7 @@ impl InMemoryVectorIndex {
 
 impl VectorIndex for InMemoryVectorIndex {
     fn upsert(&self, id: &str, vector: &[f64]) {
-        self.vectors
-            .write()
-            .insert(id.to_string(), vector.to_vec());
+        self.vectors.write().insert(id.to_string(), vector.to_vec());
     }
 
     fn nearest(&self, query: &[f64], k: usize) -> Vec<(String, f64)> {
@@ -207,11 +205,7 @@ impl VectorIndex for InMemoryVectorIndex {
     }
 
     fn dimensions(&self) -> usize {
-        self.vectors
-            .read()
-            .values()
-            .next()
-            .map_or(0, |v| v.len())
+        self.vectors.read().values().next().map_or(0, |v| v.len())
     }
 }
 

@@ -532,8 +532,11 @@ impl EpigeneticBridge {
                 // 2. Check template matching: required_labels subset check
                 let mark_target = mark.target();
                 if !mark_target.required_labels.is_empty() {
-                    let query_labels: std::collections::HashSet<&str> =
-                        template.required_labels.iter().map(|s| s.as_str()).collect();
+                    let query_labels: std::collections::HashSet<&str> = template
+                        .required_labels
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect();
                     let all_present = mark_target
                         .required_labels
                         .iter()
@@ -575,7 +578,7 @@ impl EpigeneticBridge {
         self.marks
             .iter()
             .filter(|m| m.transmissible)
-            .map(|m| SerializedMark::from_mark(m))
+            .map(SerializedMark::from_mark)
             .collect()
     }
 

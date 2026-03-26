@@ -10,7 +10,7 @@ use dashmap::DashMap;
 use grafeo_common::types::NodeId;
 use serde::{Deserialize, Serialize};
 
-use crate::epigenetic::{EpigeneticMark, EngramTemplate, EpigeneticBridge, ProjectContext};
+use crate::epigenetic::{EngramTemplate, EpigeneticBridge, ProjectContext};
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -137,7 +137,7 @@ impl CoActivationDetector {
 
         // Step 1: collect strong pairs.
         let mut adjacency: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
-        for entry in self.co_occurrences.iter() {
+        for entry in &self.co_occurrences {
             let ((a, b), &count) = (entry.key(), entry.value());
             if (count as usize) >= min_episodes {
                 adjacency.entry(*a).or_default().push(*b);
@@ -188,18 +188,15 @@ impl CoActivationDetector {
                         let co_count = self
                             .co_occurrences
                             .get(&key)
-                            .map(|v| *v as f64)
-                            .unwrap_or(0.0);
+                            .map_or(0.0, |v| *v as f64);
                         let na = self
                             .node_episodes
                             .get(&component[i])
-                            .map(|v| *v as f64)
-                            .unwrap_or(1.0);
+                            .map_or(1.0, |v| *v as f64);
                         let nb = self
                             .node_episodes
                             .get(&component[j])
-                            .map(|v| *v as f64)
-                            .unwrap_or(1.0);
+                            .map_or(1.0, |v| *v as f64);
                         let min_count = na.min(nb);
                         if min_count > 0.0 {
                             overlap_sum += co_count / min_count;
@@ -219,8 +216,7 @@ impl CoActivationDetector {
                         let weight = self
                             .node_episodes
                             .get(&node)
-                            .map(|v| *v as f64 / total)
-                            .unwrap_or(0.0);
+                            .map_or(0.0, |v| *v as f64 / total);
                         (node, weight)
                     })
                     .collect()
@@ -362,10 +358,8 @@ impl HebbianWithSurprise {
             total_modulation += eff;
         }
 
-        let adjusted_min = compute_modulated_min_episodes(
-            self.config.min_episodes,
-            total_modulation,
-        );
+        let adjusted_min =
+            compute_modulated_min_episodes(self.config.min_episodes, total_modulation);
 
         let mut ensembles = self
             .detector
@@ -498,7 +492,10 @@ mod tests {
     #[test]
     fn modulated_min_episodes_zero_modulation_unchanged() {
         let adjusted = compute_modulated_min_episodes(3, 0.0);
-        assert_eq!(adjusted, 3, "zero modulation should not change min_episodes");
+        assert_eq!(
+            adjusted, 3,
+            "zero modulation should not change min_episodes"
+        );
     }
 
     #[test]
@@ -517,7 +514,7 @@ mod tests {
 
     #[test]
     fn should_form_engram_with_marks_positive_modulation() {
-        use crate::epigenetic::{EpigeneticBridge, EpigeneticMark, EngramTemplate, ProjectContext};
+        use crate::epigenetic::{EngramTemplate, EpigeneticBridge, EpigeneticMark, ProjectContext};
 
         let config = FormationConfig {
             min_episodes: 3,
@@ -548,7 +545,10 @@ mod tests {
         let template = EngramTemplate::any();
         let (ensembles, evaluated, applied, suppressed) =
             hebb.should_form_engram_with_marks(&template, &bridge, &ctx);
-        assert!(!ensembles.is_empty(), "positive mark should lower threshold and allow formation");
+        assert!(
+            !ensembles.is_empty(),
+            "positive mark should lower threshold and allow formation"
+        );
         assert_eq!(evaluated, 1);
         assert_eq!(applied, 1);
         assert_eq!(suppressed, 0);
@@ -556,7 +556,7 @@ mod tests {
 
     #[test]
     fn should_form_engram_with_marks_negative_modulation() {
-        use crate::epigenetic::{EpigeneticBridge, EpigeneticMark, EngramTemplate, ProjectContext};
+        use crate::epigenetic::{EngramTemplate, EpigeneticBridge, EpigeneticMark, ProjectContext};
 
         let config = FormationConfig {
             min_episodes: 3,
@@ -587,7 +587,10 @@ mod tests {
         let template = EngramTemplate::any();
         let (ensembles, evaluated, applied, suppressed) =
             hebb.should_form_engram_with_marks(&template, &bridge, &ctx);
-        assert!(ensembles.is_empty(), "negative mark should raise threshold and block formation");
+        assert!(
+            ensembles.is_empty(),
+            "negative mark should raise threshold and block formation"
+        );
         assert_eq!(evaluated, 1);
         assert_eq!(applied, 0);
         assert_eq!(suppressed, 1);

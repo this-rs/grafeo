@@ -8,7 +8,6 @@
 
 use grafeo_common::types::Value;
 
-use crate::engram::CognitiveMetricsSnapshot;
 use crate::{EngramId, EngramMetricsCollector, EngramStore, VectorIndex};
 
 // ---------------------------------------------------------------------------

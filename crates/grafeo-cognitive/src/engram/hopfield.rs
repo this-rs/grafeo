@@ -171,7 +171,7 @@ pub fn hopfield_retrieve(
     }
 
     // Step 2: Softmax with numerical stability (subtract max)
-    let max_logit = logits.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let max_logit = logits.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let mut weights: Vec<f64> = logits.iter().map(|&l| (l - max_logit).exp()).collect();
     let sum: f64 = weights.iter().sum();
     if sum > 0.0 {
@@ -259,7 +259,7 @@ pub fn softmax_compete(
 
     let max_lw = log_weights
         .iter()
-        .cloned()
+        .copied()
         .fold(f64::NEG_INFINITY, f64::max);
 
     if max_lw == f64::NEG_INFINITY {
@@ -280,8 +280,7 @@ pub fn softmax_compete(
         .iter()
         .enumerate()
         .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-        .map(|(i, _)| i)
-        .unwrap_or(0);
+        .map_or(0, |(i, _)| i);
 
     // Filter by threshold (lateral inhibition) and build results.
     let mut results: Vec<CompetitionResult> = normalized
@@ -660,8 +659,7 @@ pub fn bayesian_update(
     // Low PE → precision increases (model confirmed)
     // High PE → precision decreases (model was wrong)
     let pe_sq = pe_mag * pe_mag;
-    let posterior_precision =
-        prior_precision * (1.0 - pe_sq) + pe_sq * (1.0 / (1.0 + pe_mag));
+    let posterior_precision = prior_precision * (1.0 - pe_sq) + pe_sq * (1.0 / (1.0 + pe_mag));
     // Floor precision to avoid zero/negative
     model.precision = posterior_precision.max(0.01);
 
@@ -706,10 +704,10 @@ impl PredictionErrorCalculator {
         let mut best_pe: Option<f64> = None;
 
         for &eid in active_engram_ids {
-            if let Some(engram) = store.get(eid) {
-                if let Some(ref pm) = engram.predictive_model {
-                    if pm.dim() == actual_outcome.len() {
-                        if let Some(pe_result) = compute_prediction_error(pm, actual_outcome) {
+            if let Some(engram) = store.get(eid)
+                && let Some(ref pm) = engram.predictive_model
+                    && pm.dim() == actual_outcome.len()
+                        && let Some(pe_result) = compute_prediction_error(pm, actual_outcome) {
                             match best_pe {
                                 None => best_pe = Some(pe_result.magnitude),
                                 Some(current_best) => {
@@ -719,9 +717,6 @@ impl PredictionErrorCalculator {
                                 }
                             }
                         }
-                    }
-                }
-            }
         }
 
         // If no engram had a predictive model → novel observation → max surprise
@@ -1207,7 +1202,10 @@ mod tests {
         let old_mean = pm.mean[0];
         let result = bayesian_update(&mut pm, actual, &pe).unwrap();
 
-        assert!(result.significant, "High PE + high precision → significant update");
+        assert!(
+            result.significant,
+            "High PE + high precision → significant update"
+        );
         assert!(result.learning_rate > 0.3, "Learning rate should be high");
         // Mean should have moved significantly towards actual
         let correction = (pm.mean[0] - old_mean).abs();
@@ -1316,11 +1314,7 @@ mod tests {
         store.insert(e1);
 
         // Actual outcome matches prediction → low PE
-        let pe_low = PredictionErrorCalculator::compute_from_engrams(
-            &store,
-            &[id1],
-            &[5.0, 5.0],
-        );
+        let pe_low = PredictionErrorCalculator::compute_from_engrams(&store, &[id1], &[5.0, 5.0]);
         assert!(
             pe_low < 0.1,
             "PE should be low when outcome matches prediction, got {}",
@@ -1328,11 +1322,8 @@ mod tests {
         );
 
         // Actual outcome far from prediction → high PE
-        let pe_high = PredictionErrorCalculator::compute_from_engrams(
-            &store,
-            &[id1],
-            &[100.0, 100.0],
-        );
+        let pe_high =
+            PredictionErrorCalculator::compute_from_engrams(&store, &[id1], &[100.0, 100.0]);
         assert!(
             pe_high > 0.5,
             "PE should be high when outcome differs from prediction, got {}",
@@ -1349,11 +1340,7 @@ mod tests {
         let e1 = Engram::new(id1, vec![(NodeId(1), 1.0)]);
         store.insert(e1);
 
-        let pe = PredictionErrorCalculator::compute_from_engrams(
-            &store,
-            &[id1],
-            &[1.0, 2.0],
-        );
+        let pe = PredictionErrorCalculator::compute_from_engrams(&store, &[id1], &[1.0, 2.0]);
         assert!(
             (pe - 1.0).abs() < f64::EPSILON,
             "No predictive models → max surprise (1.0), got {}",
@@ -1368,21 +1355,21 @@ mod tests {
         // Engram 1: predicts [0.0, 0.0] — far from actual
         let id1 = store.next_id();
         let mut e1 = Engram::new(id1, vec![(NodeId(1), 1.0)]);
-        e1.predictive_model = Some(PredictiveModel::from_observations(&[vec![0.0, 0.0], vec![0.0, 0.0]]).unwrap());
+        e1.predictive_model =
+            Some(PredictiveModel::from_observations(&[vec![0.0, 0.0], vec![0.0, 0.0]]).unwrap());
         store.insert(e1);
 
         // Engram 2: predicts [10.0, 10.0] — close to actual
         let id2 = store.next_id();
         let mut e2 = Engram::new(id2, vec![(NodeId(2), 1.0)]);
-        e2.predictive_model = Some(PredictiveModel::from_observations(&[vec![10.0, 10.0], vec![10.0, 10.0]]).unwrap());
+        e2.predictive_model = Some(
+            PredictiveModel::from_observations(&[vec![10.0, 10.0], vec![10.0, 10.0]]).unwrap(),
+        );
         store.insert(e2);
 
         // Actual is [10.0, 10.0] → engram 2 should be the best predictor
-        let pe = PredictionErrorCalculator::compute_from_engrams(
-            &store,
-            &[id1, id2],
-            &[10.0, 10.0],
-        );
+        let pe =
+            PredictionErrorCalculator::compute_from_engrams(&store, &[id1, id2], &[10.0, 10.0]);
 
         // The PE should be low because engram 2 predicted correctly
         assert!(

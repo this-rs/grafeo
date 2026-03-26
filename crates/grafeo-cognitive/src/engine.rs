@@ -11,9 +11,9 @@ use crate::provenance::ProvenanceRecorder;
 use std::sync::Arc;
 
 #[cfg(feature = "engram")]
-use crate::engram::{EngramMetricsCollector, EngramStore};
-#[cfg(feature = "engram")]
 use crate::engram::traits::VectorIndex;
+#[cfg(feature = "engram")]
+use crate::engram::{EngramMetricsCollector, EngramStore};
 
 // Conditional imports based on feature flags
 #[cfg(feature = "energy")]
