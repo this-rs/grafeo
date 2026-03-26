@@ -76,6 +76,9 @@ pub mod episodic;
 #[cfg(feature = "consolidation")]
 pub mod consolidation;
 
+// Engram system — biomimetic memory traces (Layer 0+)
+pub mod engram;
+
 // Provenance — automatic cognitive event tracking
 pub mod provenance;
 
@@ -171,3 +174,21 @@ pub use provenance::{
 };
 
 pub use tenant::{TenantError, TenantGraph, TenantInfo, TenantManager};
+
+// Engram re-exports (always available: traits + types; feature-gated: subsystems)
+pub use engram::traits::{
+    CognitiveEdge, CognitiveFilter, CognitiveNode, CognitiveObservability, CognitiveStorage,
+    EdgeAnnotator, InMemoryVectorIndex, NoopQueryObserver, QueryObserver, VectorIndex,
+};
+pub use engram::{
+    Engram, EngramHorizon, EngramId, EpisodeId, FsrsState, PredictionError, RecallEvent,
+    RecallFeedback,
+};
+
+#[cfg(feature = "engram")]
+pub use engram::{
+    CoActivationDetector, CognitiveMetrics, EngramFormationTrigger, EngramManager,
+    EngramMetricsCollector, EngramStore, FormationConfig, FsrsConfig, FsrsScheduler,
+    HebbianWithSurprise, HomeostasisConfig, HomeostasisEngine, RecallEngine, RecallResult,
+    ReviewRating, SpectralEncoder, WarmupConfig, WarmupSelector,
+};

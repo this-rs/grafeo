@@ -18,6 +18,9 @@ fabric = []
 co-change = []
 gds-refresh = ["fabric", "dep:grafeo-adapters"]
 
+# Engram subsystem (Layer 0: Hebbian + FSRS)
+engram = []
+
 # Future subsystems
 scar = []
 memory = ["energy"]
