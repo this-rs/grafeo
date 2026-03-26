@@ -64,7 +64,10 @@ pub use homeostasis::{HomeostasisConfig, HomeostasisEngine};
 #[cfg(feature = "engram")]
 mod observe;
 #[cfg(feature = "engram")]
-pub use observe::{CognitiveMetrics, EngramMetricsCollector};
+pub use observe::{
+    CognitiveMetrics, CognitiveMetricsSnapshot, EngramMetricsCollector,
+    compute_max_pheromone_ratio, compute_pheromone_entropy,
+};
 
 #[cfg(feature = "engram")]
 mod manager;

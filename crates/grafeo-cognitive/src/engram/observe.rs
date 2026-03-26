@@ -9,6 +9,97 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
+// Stigmergic metrics — pure functions on pheromone distributions
+// ---------------------------------------------------------------------------
+
+/// Computes the normalized Shannon entropy of a pheromone distribution.
+///
+/// H_norm = H / log(N), where H = -Σ p_i × log(p_i).
+///
+/// Returns a value in `[0.0, 1.0]`:
+/// - `1.0` = perfectly uniform distribution (healthy diversity)
+/// - `0.0` = all mass on a single value (lock-in)
+///
+/// Edge cases:
+/// - Empty slice → `0.0`
+/// - Single element → `1.0` (trivially uniform)
+/// - All zeros → `0.0`
+pub fn compute_pheromone_entropy(values: &[f64]) -> f64 {
+    if values.len() <= 1 {
+        return if values.len() == 1 && values[0] > 0.0 {
+            1.0
+        } else {
+            0.0
+        };
+    }
+
+    let total: f64 = values.iter().copied().filter(|v| *v > 0.0).sum();
+    if total <= 0.0 {
+        return 0.0;
+    }
+
+    let n = values.iter().filter(|v| **v > 0.0).count();
+    if n <= 1 {
+        return 0.0;
+    }
+
+    let mut h = 0.0_f64;
+    for &v in values {
+        if v > 0.0 {
+            let p = v / total;
+            h -= p * p.ln();
+        }
+    }
+
+    let max_h = (n as f64).ln();
+    if max_h <= 0.0 {
+        return 0.0;
+    }
+
+    (h / max_h).clamp(0.0, 1.0)
+}
+
+/// Computes the max/mean ratio of pheromone values.
+///
+/// Target: `< 10.0`. A ratio above this threshold indicates that a single
+/// pheromone dominates the distribution, signaling potential lock-in.
+///
+/// Edge cases:
+/// - Empty slice → `0.0`
+/// - All zeros → `0.0`
+/// - Single non-zero element → `1.0`
+pub fn compute_max_pheromone_ratio(values: &[f64]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+
+    let mut max = 0.0_f64;
+    let mut sum = 0.0_f64;
+    let mut count = 0usize;
+
+    for &v in values {
+        if v > 0.0 {
+            sum += v;
+            count += 1;
+            if v > max {
+                max = v;
+            }
+        }
+    }
+
+    if count == 0 || sum <= 0.0 {
+        return 0.0;
+    }
+
+    let mean = sum / count as f64;
+    if mean <= 0.0 {
+        return 0.0;
+    }
+
+    max / mean
+}
+
+// ---------------------------------------------------------------------------
 // CognitiveMetrics — raw atomic counters
 // ---------------------------------------------------------------------------
 
@@ -42,6 +133,12 @@ pub struct CognitiveMetrics {
     pub prediction_errors_total: AtomicU64,
     /// Mean engram strength, stored as `f64::to_bits`.
     pub mean_strength: AtomicU64,
+    /// Normalized Shannon entropy of pheromone distribution, stored as `f64::to_bits`.
+    /// High (→1.0) = healthy diversity, Low (→0.0) = lock-in.
+    pub pheromone_entropy: AtomicU64,
+    /// Max/mean ratio of pheromone values, stored as `f64::to_bits`.
+    /// Target < 10.0. Above = single pheromone dominates.
+    pub max_pheromone_ratio: AtomicU64,
 }
 
 impl Default for CognitiveMetrics {
@@ -59,6 +156,8 @@ impl Default for CognitiveMetrics {
             homeostasis_sweeps: AtomicU64::new(0),
             prediction_errors_total: AtomicU64::new(0),
             mean_strength: AtomicU64::new(0.0_f64.to_bits()),
+            pheromone_entropy: AtomicU64::new(0.0_f64.to_bits()),
+            max_pheromone_ratio: AtomicU64::new(0.0_f64.to_bits()),
         }
     }
 }
@@ -85,6 +184,10 @@ pub struct CognitiveMetricsSnapshot {
     pub homeostasis_sweeps: u64,
     pub prediction_errors_total: u64,
     pub mean_strength: f64,
+    /// Normalized Shannon entropy of pheromone distribution (0.0–1.0).
+    pub pheromone_entropy: f64,
+    /// Max/mean ratio of pheromone values (target < 10.0).
+    pub max_pheromone_ratio: f64,
 }
 
 // ---------------------------------------------------------------------------
@@ -114,30 +217,20 @@ impl EngramMetricsCollector {
         self.metrics
             .formations_attempted
             .fetch_add(1, Ordering::Relaxed);
-        self.metrics
-            .engrams_formed
-            .fetch_add(1, Ordering::Relaxed);
-        self.metrics
-            .engrams_active
-            .fetch_add(1, Ordering::Relaxed);
+        self.metrics.engrams_formed.fetch_add(1, Ordering::Relaxed);
+        self.metrics.engrams_active.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Records that an engram has decayed (removed from active set).
     pub fn record_decay(&self) {
-        self.metrics
-            .engrams_decayed
-            .fetch_add(1, Ordering::Relaxed);
+        self.metrics.engrams_decayed.fetch_add(1, Ordering::Relaxed);
         // Saturating decrement for the active counter.
-        let _ = self
-            .metrics
-            .engrams_active
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-                if v > 0 {
-                    Some(v - 1)
-                } else {
-                    Some(0)
-                }
-            });
+        let _ =
+            self.metrics
+                .engrams_active
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                    if v > 0 { Some(v - 1) } else { Some(0) }
+                });
     }
 
     /// Records a recall attempt and its outcome.
@@ -187,6 +280,32 @@ impl EngramMetricsCollector {
             .store(mean.to_bits(), Ordering::Relaxed);
     }
 
+    /// Updates pheromone entropy from a distribution of pheromone values.
+    ///
+    /// Computes normalized Shannon entropy and stores the result.
+    pub fn update_pheromone_entropy(&self, pheromone_values: &[f64]) {
+        let entropy = compute_pheromone_entropy(pheromone_values);
+        self.metrics
+            .pheromone_entropy
+            .store(entropy.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Updates max/mean pheromone ratio from a distribution of pheromone values.
+    ///
+    /// Computes max/mean and stores the result.
+    pub fn update_max_pheromone_ratio(&self, pheromone_values: &[f64]) {
+        let ratio = compute_max_pheromone_ratio(pheromone_values);
+        self.metrics
+            .max_pheromone_ratio
+            .store(ratio.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Convenience: updates both pheromone entropy and max/mean ratio at once.
+    pub fn update_stigmergy_metrics(&self, pheromone_values: &[f64]) {
+        self.update_pheromone_entropy(pheromone_values);
+        self.update_max_pheromone_ratio(pheromone_values);
+    }
+
     /// Takes a point-in-time snapshot of all metrics.
     pub fn snapshot(&self) -> CognitiveMetricsSnapshot {
         CognitiveMetricsSnapshot {
@@ -200,11 +319,10 @@ impl EngramMetricsCollector {
             recalls_successful: self.metrics.recalls_successful.load(Ordering::Relaxed),
             recalls_rejected: self.metrics.recalls_rejected.load(Ordering::Relaxed),
             homeostasis_sweeps: self.metrics.homeostasis_sweeps.load(Ordering::Relaxed),
-            prediction_errors_total: self
-                .metrics
-                .prediction_errors_total
-                .load(Ordering::Relaxed),
+            prediction_errors_total: self.metrics.prediction_errors_total.load(Ordering::Relaxed),
             mean_strength: f64::from_bits(self.metrics.mean_strength.load(Ordering::Relaxed)),
+            pheromone_entropy: f64::from_bits(self.metrics.pheromone_entropy.load(Ordering::Relaxed)),
+            max_pheromone_ratio: f64::from_bits(self.metrics.max_pheromone_ratio.load(Ordering::Relaxed)),
         }
     }
 }
@@ -309,6 +427,143 @@ mod tests {
         c.update_mean_strength(0.42);
         let s = c.snapshot();
         assert!((s.mean_strength - 0.42).abs() < f64::EPSILON);
+    }
+
+    // -----------------------------------------------------------------------
+    // Pheromone entropy tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn pheromone_entropy_uniform_distribution() {
+        // Uniform distribution → entropy ≈ 1.0
+        let values = vec![1.0, 1.0, 1.0, 1.0, 1.0];
+        let entropy = compute_pheromone_entropy(&values);
+        assert!(
+            (entropy - 1.0).abs() < 1e-10,
+            "uniform distribution should have entropy ≈ 1.0, got {entropy}"
+        );
+    }
+
+    #[test]
+    fn pheromone_entropy_single_dominant() {
+        // One pheromone dominates → entropy < 0.3
+        let values = vec![100.0, 0.01, 0.01, 0.01, 0.01];
+        let entropy = compute_pheromone_entropy(&values);
+        assert!(
+            entropy < 0.3,
+            "dominant pheromone should have entropy < 0.3, got {entropy}"
+        );
+    }
+
+    #[test]
+    fn pheromone_entropy_empty() {
+        assert_eq!(compute_pheromone_entropy(&[]), 0.0);
+    }
+
+    #[test]
+    fn pheromone_entropy_single_nonzero() {
+        assert_eq!(compute_pheromone_entropy(&[5.0]), 1.0);
+    }
+
+    #[test]
+    fn pheromone_entropy_all_zeros() {
+        assert_eq!(compute_pheromone_entropy(&[0.0, 0.0, 0.0]), 0.0);
+    }
+
+    #[test]
+    fn pheromone_entropy_with_zeros_mixed() {
+        // Only non-zero values count; two equal non-zero → entropy = 1.0
+        let values = vec![0.0, 5.0, 0.0, 5.0, 0.0];
+        let entropy = compute_pheromone_entropy(&values);
+        assert!(
+            (entropy - 1.0).abs() < 1e-10,
+            "two equal non-zero among zeros → entropy ≈ 1.0, got {entropy}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Max pheromone ratio tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn pheromone_ratio_uniform() {
+        let values = vec![5.0, 5.0, 5.0, 5.0];
+        let ratio = compute_max_pheromone_ratio(&values);
+        assert!(
+            (ratio - 1.0).abs() < 1e-10,
+            "uniform → ratio = 1.0, got {ratio}"
+        );
+    }
+
+    #[test]
+    fn pheromone_ratio_dominant() {
+        // max = 100, mean = (100+1+1+1)/4 = 25.75 → ratio ≈ 3.88
+        let values = vec![100.0, 1.0, 1.0, 1.0];
+        let ratio = compute_max_pheromone_ratio(&values);
+        assert!(ratio > 1.0, "should be > 1.0, got {ratio}");
+        assert!(ratio < 10.0, "4 values, max 100 → ratio < 10, got {ratio}");
+    }
+
+    #[test]
+    fn pheromone_ratio_extreme_lock_in() {
+        // max = 1000, others = 0.1 → mean ≈ (1000+0.1*9)/10 = 100.09 → ratio ≈ 9.99
+        // Actually with only non-zero: all 10 are non-zero
+        let mut values = vec![0.1; 9];
+        values.push(1000.0);
+        let ratio = compute_max_pheromone_ratio(&values);
+        assert!(
+            ratio > 5.0,
+            "extreme lock-in should have high ratio, got {ratio}"
+        );
+    }
+
+    #[test]
+    fn pheromone_ratio_empty() {
+        assert_eq!(compute_max_pheromone_ratio(&[]), 0.0);
+    }
+
+    #[test]
+    fn pheromone_ratio_all_zeros() {
+        assert_eq!(compute_max_pheromone_ratio(&[0.0, 0.0]), 0.0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Integration: metrics_stigmergy
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn metrics_stigmergy_integration() {
+        let c = EngramMetricsCollector::new();
+
+        // Uniform pheromones
+        let uniform = vec![1.0, 1.0, 1.0, 1.0];
+        c.update_stigmergy_metrics(&uniform);
+        let s = c.snapshot();
+        assert!(
+            (s.pheromone_entropy - 1.0).abs() < 1e-10,
+            "entropy should be ≈ 1.0 for uniform, got {}",
+            s.pheromone_entropy
+        );
+        assert!(
+            (s.max_pheromone_ratio - 1.0).abs() < 1e-10,
+            "ratio should be 1.0 for uniform, got {}",
+            s.max_pheromone_ratio
+        );
+
+        // Now skewed pheromones
+        let skewed = vec![100.0, 0.01, 0.01, 0.01];
+        c.update_stigmergy_metrics(&skewed);
+        let s2 = c.snapshot();
+        assert!(
+            s2.pheromone_entropy < 0.3,
+            "entropy should be < 0.3 for skewed, got {}",
+            s2.pheromone_entropy
+        );
+        assert!(
+            s2.max_pheromone_ratio > 1.0,
+            "ratio should be > 1.0 for skewed, got {}",
+            s2.max_pheromone_ratio
+        );
     }
 
     #[test]
