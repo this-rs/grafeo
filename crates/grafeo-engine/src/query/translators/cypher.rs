@@ -1711,11 +1711,42 @@ impl CypherTranslator {
                 }))
             }
             ast::Pattern::Path(path) => {
-                let mut current =
-                    self.translate_create_pattern(&ast::Pattern::Node(path.start.clone()), input)?;
+                // If the source node is a pure variable reference (no labels, no
+                // properties), it was already bound by a previous MATCH clause, so
+                // we must NOT emit a CreateNodeOp for it — otherwise we would
+                // create a phantom empty node.
+                let mut current = if path.start.labels.is_empty()
+                    && path.start.properties.is_empty()
+                {
+                    if let Some(inp) = input {
+                        inp
+                    } else {
+                        self.translate_create_pattern(
+                            &ast::Pattern::Node(path.start.clone()),
+                            None,
+                        )?
+                    }
+                } else {
+                    self.translate_create_pattern(&ast::Pattern::Node(path.start.clone()), input)?
+                };
+
+                // Track the variable name of the "last node" we have seen so
+                // far.  When the source was a bare reference (no CreateNodeOp
+                // emitted), `get_last_node_variable` might not be able to find
+                // it in the operator tree, so we keep an explicit tracker.
+                let mut last_node_var: Option<String> =
+                    if path.start.labels.is_empty() && path.start.properties.is_empty() {
+                        path.start.variable.clone()
+                    } else {
+                        None
+                    };
 
                 for rel in &path.chain {
-                    let from_variable = self.get_last_node_variable(&Some(current.clone()))?;
+                    let from_variable = if let Some(ref v) = last_node_var {
+                        v.clone()
+                    } else {
+                        self.get_last_node_variable(&Some(current.clone()))?
+                    };
                     let to_variable = rel
                         .target
                         .variable
@@ -1735,12 +1766,17 @@ impl CypherTranslator {
                         .map(|(k, v)| Ok((k.clone(), self.translate_expression(v)?)))
                         .collect::<Result<_>>()?;
 
-                    current = LogicalOperator::CreateNode(CreateNodeOp {
-                        variable: to_variable.clone(),
-                        labels: target_labels,
-                        properties: target_props,
-                        input: Some(Box::new(current)),
-                    });
+                    // Only create a new node for the target if it has labels or
+                    // properties (inline definition).  A bare variable reference
+                    // means the node was already bound by MATCH.
+                    if !target_labels.is_empty() || !target_props.is_empty() {
+                        current = LogicalOperator::CreateNode(CreateNodeOp {
+                            variable: to_variable.clone(),
+                            labels: target_labels,
+                            properties: target_props,
+                            input: Some(Box::new(current)),
+                        });
+                    }
 
                     let edge_props: Vec<(String, LogicalExpression)> = rel
                         .properties
@@ -1751,11 +1787,15 @@ impl CypherTranslator {
                     current = LogicalOperator::CreateEdge(CreateEdgeOp {
                         variable: rel.variable.clone(),
                         from_variable,
-                        to_variable,
+                        to_variable: to_variable.clone(),
                         edge_type,
                         properties: edge_props,
                         input: Box::new(current),
                     });
+
+                    // Update the tracker for the next iteration in a chained
+                    // path (e.g. (a)-[:R1]->(b)-[:R2]->(c)).
+                    last_node_var = Some(to_variable);
                 }
 
                 Ok(current)

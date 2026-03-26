@@ -2751,6 +2751,13 @@ impl ExpressionPredicate {
             "now" | "current_timestamp" | "currenttimestamp" => {
                 Some(Value::Timestamp(grafeo_common::types::Timestamp::now()))
             }
+            "timestamp" => {
+                // Neo4j-compatible: returns milliseconds since Unix epoch as Int64
+                let duration = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or(std::time::Duration::ZERO);
+                Some(Value::Int64(duration.as_millis() as i64))
+            }
             // Component extraction
             "year" => {
                 let val = self.eval_expr(args.first()?, chunk, row)?;
@@ -3135,6 +3142,46 @@ impl ExpressionPredicate {
                 } else {
                     Some(val1)
                 }
+            }
+            "startnode" => {
+                // startNode(r) — returns the source node of relationship r
+                if args.len() != 1 {
+                    return None;
+                }
+                let edge_id = if let FilterExpression::Variable(var) = &args[0] {
+                    let col_idx = *self.variable_columns.get(var)?;
+                    let col = chunk.column(col_idx)?;
+                    col.get_edge_id(row)?
+                } else {
+                    let val = self.eval_expr(&args[0], chunk, row)?;
+                    match val {
+                        Value::Int64(id) => grafeo_common::types::EdgeId(id as u64),
+                        _ => return None,
+                    }
+                };
+                let edge = self.resolve_edge(edge_id)?;
+                let node = self.resolve_node(edge.src)?;
+                Some(Value::Int64(node.id.0 as i64))
+            }
+            "endnode" => {
+                // endNode(r) — returns the destination node of relationship r
+                if args.len() != 1 {
+                    return None;
+                }
+                let edge_id = if let FilterExpression::Variable(var) = &args[0] {
+                    let col_idx = *self.variable_columns.get(var)?;
+                    let col = chunk.column(col_idx)?;
+                    col.get_edge_id(row)?
+                } else {
+                    let val = self.eval_expr(&args[0], chunk, row)?;
+                    match val {
+                        Value::Int64(id) => grafeo_common::types::EdgeId(id as u64),
+                        _ => return None,
+                    }
+                };
+                let edge = self.resolve_edge(edge_id)?;
+                let node = self.resolve_node(edge.dst)?;
+                Some(Value::Int64(node.id.0 as i64))
             }
             _ => None, // Unknown function
         }
