@@ -24,6 +24,9 @@ engram = []
 # Stigmergy (Layer 2: diffuse memory on edges)
 stigmergy = []
 
+# Modern Hopfield + Predictive Coding (Layers 3+4)
+hopfield = ["engram"]
+
 # Immune system (Layer 1: anomaly detection via shape space)
 immune = []
 
@@ -98,3 +101,8 @@ workspace = true
 name = "cognitive_bench"
 harness = false
 required-features = ["cognitive"]
+
+[[bench]]
+name = "hopfield_bench"
+harness = false
+required-features = ["hopfield"]

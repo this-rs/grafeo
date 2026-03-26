@@ -57,6 +57,11 @@ mod recall;
 pub use recall::{RecallEngine, RecallResult, WarmupConfig, WarmupSelector};
 
 #[cfg(feature = "engram")]
+mod hopfield;
+#[cfg(feature = "engram")]
+pub use hopfield::{HopfieldResult, PatternMatrix, hopfield_retrieve};
+
+#[cfg(feature = "engram")]
 mod homeostasis;
 #[cfg(feature = "engram")]
 pub use homeostasis::{HomeostasisConfig, HomeostasisEngine};

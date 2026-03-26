@@ -1,8 +1,10 @@
 //! Recall engine, warmup selection, and reconsolidation.
 //!
-//! This module implements the two-path recall mechanism:
+//! This module implements a two-path recall mechanism:
 //! 1. **Direct recall** — find engrams whose ensemble contains the cue nodes.
-//! 2. **Spectral recall** — encode cues as a vector and find nearest neighbors.
+//! 2. **Hopfield recall** — Modern Hopfield attention: `softmax(β × P^T × q) × P`
+//!    with per-engram precision β. Falls back to VectorIndex if no patterns are
+//!    loaded in the Hopfield matrix.
 //!
 //! Results are merged, deduplicated, and ranked by a combined confidence score.
 //!
@@ -15,6 +17,7 @@ use std::collections::{HashMap, HashSet};
 use grafeo_common::types::NodeId;
 use serde::{Deserialize, Serialize};
 
+use super::hopfield::{self, PatternMatrix};
 use super::spectral::SpectralEncoder;
 use super::store::EngramStore;
 use super::traits::VectorIndex;
@@ -49,9 +52,7 @@ pub struct RecallEngine {
 impl RecallEngine {
     /// Creates a new recall engine with default weights (0.6 direct, 0.4 spectral).
     pub fn new() -> Self {
-        Self {
-            direct_weight: 0.6,
-        }
+        Self { direct_weight: 0.6 }
     }
 
     /// Recall engrams matching the given cue nodes.
@@ -59,8 +60,9 @@ impl RecallEngine {
     /// # Two-path recall
     /// 1. **Direct**: finds engrams whose ensemble contains any of the cue nodes
     ///    and scores them by overlap fraction.
-    /// 2. **Spectral**: encodes cues as a vector signature and queries the
-    ///    `vector_index` for nearest neighbors, converting distance to similarity.
+    /// 2. **Hopfield**: encodes cues as a spectral vector and uses Modern Hopfield
+    ///    retrieval (`softmax(β × P^T × q)`) with per-engram precision β.
+    ///    Falls back to VectorIndex nearest-neighbor if no Hopfield patterns are loaded.
     ///
     /// Results are merged by engram ID, deduplicated, and sorted by descending
     /// confidence.
@@ -79,7 +81,7 @@ impl RecallEngine {
         let cue_set: HashSet<NodeId> = cues.iter().copied().collect();
 
         // -- Path 1: Direct recall via node overlap --
-        let mut scores: HashMap<EngramId, (f64, f64)> = HashMap::new(); // (direct, spectral)
+        let mut scores: HashMap<EngramId, (f64, f64)> = HashMap::new(); // (direct, hopfield)
 
         for &cue in cues {
             for engram_id in store.find_by_node(cue) {
@@ -101,21 +103,38 @@ impl RecallEngine {
             }
         }
 
-        // -- Path 2: Spectral recall via vector similarity --
+        // -- Path 2: Modern Hopfield retrieval (replaces basic VectorIndex lookup) --
         let cue_ensemble: Vec<(NodeId, f64)> = cues.iter().map(|&nid| (nid, 1.0)).collect();
         let query_vec = spectral.encode(&cue_ensemble);
+        let dim = spectral.dimensions();
 
-        // Request more than k to account for overlap with direct results.
-        let spectral_results = vector_index.nearest(&query_vec, k * 2);
+        // Build Hopfield pattern matrix from the store's spectral signatures.
+        let matrix = PatternMatrix::from_store(store, dim);
 
-        for (id_str, distance) in &spectral_results {
-            if let Ok(raw_id) = id_str.parse::<u64>() {
-                let engram_id = EngramId(raw_id);
-                // Convert cosine distance to similarity.
-                let similarity = (1.0 - distance).clamp(0.0, 1.0);
-                let entry = scores.entry(engram_id).or_insert((0.0, 0.0));
-                if similarity > entry.1 {
-                    entry.1 = similarity;
+        if !matrix.is_empty() {
+            // Use Modern Hopfield attention: softmax(β × P^T × q)
+            let hopfield_results = hopfield::hopfield_retrieve(&matrix, &query_vec, store, k * 2);
+            for hr in &hopfield_results {
+                let entry = scores.entry(hr.engram_id).or_insert((0.0, 0.0));
+                // Attention weight is already in [0, 1] and sums to 1 — use it
+                // as the "spectral" score. Scale by the number of patterns so
+                // that a dominant Hopfield match produces a score close to 1.0.
+                let hopfield_score = (hr.attention_weight * matrix.len() as f64).min(1.0);
+                if hopfield_score > entry.1 {
+                    entry.1 = hopfield_score;
+                }
+            }
+        } else {
+            // Fallback: no spectral signatures indexed → use VectorIndex (Phase 1 compat)
+            let spectral_results = vector_index.nearest(&query_vec, k * 2);
+            for (id_str, distance) in &spectral_results {
+                if let Ok(raw_id) = id_str.parse::<u64>() {
+                    let engram_id = EngramId(raw_id);
+                    let similarity = (1.0 - distance).clamp(0.0, 1.0);
+                    let entry = scores.entry(engram_id).or_insert((0.0, 0.0));
+                    if similarity > entry.1 {
+                        entry.1 = similarity;
+                    }
                 }
             }
         }
@@ -124,11 +143,11 @@ impl RecallEngine {
         let spectral_weight = 1.0 - self.direct_weight;
         let mut results: Vec<RecallResult> = scores
             .into_iter()
-            .filter_map(|(engram_id, (direct_score, spectral_score))| {
+            .filter_map(|(engram_id, (direct_score, hopfield_score))| {
                 let engram = store.get(engram_id)?;
-                let confidence =
-                    (self.direct_weight * direct_score + spectral_weight * spectral_score)
-                        .clamp(0.0, 1.0);
+                let confidence = (self.direct_weight * direct_score
+                    + spectral_weight * hopfield_score)
+                    .clamp(0.0, 1.0);
                 Some(RecallResult {
                     engram_id,
                     confidence,
@@ -355,7 +374,8 @@ mod tests {
         // Insert a few engrams.
         for i in 1..=5u64 {
             let id = store.next_id();
-            let nodes: Vec<(NodeId, f64)> = (i..i + 3).map(|n| (NodeId(n), 1.0 / n as f64)).collect();
+            let nodes: Vec<(NodeId, f64)> =
+                (i..i + 3).map(|n| (NodeId(n), 1.0 / n as f64)).collect();
             let mut engram = Engram::new(id, nodes.clone());
             engram.strength = 0.5 + (i as f64) * 0.05;
 
