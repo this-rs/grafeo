@@ -35,6 +35,23 @@ pub fn try_execute_cognitive_procedure(
             let result = execute_search(arguments, engine)?;
             Ok(Some(result))
         }
+        // Level 2 — Engram introspection procedures
+        "grafeo.engrams.list" | "engrams.list" => {
+            let result = execute_engrams_list(engine)?;
+            Ok(Some(result))
+        }
+        "grafeo.engrams.inspect" | "engrams.inspect" => {
+            let result = execute_engrams_inspect(arguments, engine)?;
+            Ok(Some(result))
+        }
+        "grafeo.engrams.forget" | "engrams.forget" => {
+            let result = execute_engrams_forget(arguments, engine)?;
+            Ok(Some(result))
+        }
+        "grafeo.cognitive.metrics" | "cognitive.metrics" => {
+            let result = execute_cognitive_metrics(engine)?;
+            Ok(Some(result))
+        }
         _ => Ok(None),
     }
 }
@@ -231,6 +248,172 @@ fn execute_search(
     }
 
     Ok(algo_result)
+}
+
+// ============================================================================
+// Level 2 — Engram introspection procedures
+// ============================================================================
+
+/// `CALL grafeo.engrams.list() YIELD id, strength, valence, precision, recall_count, horizon, ensemble_size`
+///
+/// Lists all engrams in the store with their key metrics.
+fn execute_engrams_list(engine: &Arc<dyn CognitiveEngine>) -> Result<AlgorithmResult> {
+    #[cfg(feature = "cognitive-engram")]
+    {
+        if let Some(store) = engine.engram_store() {
+            let proc_result = grafeo_cognitive::procedures::engrams_list(store);
+            return Ok(procedure_result_to_algorithm_result(proc_result));
+        }
+    }
+    let _ = engine;
+
+    // Engram subsystem not available — return empty result with correct columns
+    Ok(AlgorithmResult::new(vec![
+        "id".into(),
+        "strength".into(),
+        "valence".into(),
+        "precision".into(),
+        "recall_count".into(),
+        "horizon".into(),
+        "ensemble_size".into(),
+    ]))
+}
+
+/// `CALL grafeo.engrams.inspect(id) YIELD ...`
+///
+/// Returns full detail for a single engram including recall history.
+fn execute_engrams_inspect(
+    arguments: &[LogicalExpression],
+    engine: &Arc<dyn CognitiveEngine>,
+) -> Result<AlgorithmResult> {
+    let engram_id = match arguments.first() {
+        Some(LogicalExpression::Literal(Value::Int64(id))) => *id as u64,
+        Some(_) => {
+            return Err(Error::Internal(
+                "grafeo.engrams.inspect(): argument must be an engram ID (integer)".to_string(),
+            ));
+        }
+        None => {
+            return Err(Error::Internal(
+                "grafeo.engrams.inspect(): requires 1 argument (engram ID)".to_string(),
+            ));
+        }
+    };
+
+    #[cfg(feature = "cognitive-engram")]
+    {
+        if let Some(store) = engine.engram_store() {
+            let proc_result = grafeo_cognitive::procedures::engrams_inspect(store, engram_id);
+            return Ok(procedure_result_to_algorithm_result(proc_result));
+        }
+    }
+    let _ = (engram_id, engine);
+
+    Ok(AlgorithmResult::new(vec![
+        "id".into(),
+        "strength".into(),
+        "valence".into(),
+        "precision".into(),
+        "recall_count".into(),
+        "horizon".into(),
+        "ensemble_size".into(),
+        "ensemble".into(),
+        "recall_history_count".into(),
+        "source_episodes".into(),
+        "spectral_dim".into(),
+        "fsrs_stability".into(),
+        "fsrs_difficulty".into(),
+    ]))
+}
+
+/// `CALL grafeo.engrams.forget(id) YIELD id, status, relations_removed`
+///
+/// RGPD right to erasure: completely removes an engram and all associated data.
+fn execute_engrams_forget(
+    arguments: &[LogicalExpression],
+    engine: &Arc<dyn CognitiveEngine>,
+) -> Result<AlgorithmResult> {
+    let engram_id = match arguments.first() {
+        Some(LogicalExpression::Literal(Value::Int64(id))) => *id as u64,
+        Some(_) => {
+            return Err(Error::Internal(
+                "grafeo.engrams.forget(): argument must be an engram ID (integer)".to_string(),
+            ));
+        }
+        None => {
+            return Err(Error::Internal(
+                "grafeo.engrams.forget(): requires 1 argument (engram ID)".to_string(),
+            ));
+        }
+    };
+
+    #[cfg(feature = "cognitive-engram")]
+    {
+        if let (Some(store), Some(vi)) = (engine.engram_store(), engine.vector_index()) {
+            let proc_result =
+                grafeo_cognitive::procedures::engrams_forget(store, vi.as_ref(), engram_id);
+            return Ok(procedure_result_to_algorithm_result(proc_result));
+        }
+    }
+    let _ = (engram_id, engine);
+
+    let mut result = AlgorithmResult::new(vec![
+        "id".into(),
+        "status".into(),
+        "relations_removed".into(),
+    ]);
+    result.add_row(vec![
+        Value::Int64(engram_id as i64),
+        Value::from("not_available"),
+        Value::Int64(0),
+    ]);
+    Ok(result)
+}
+
+/// `CALL grafeo.cognitive.metrics() YIELD engrams_active, engrams_formed, ...`
+///
+/// Returns full cognitive metrics snapshot.
+fn execute_cognitive_metrics(engine: &Arc<dyn CognitiveEngine>) -> Result<AlgorithmResult> {
+    #[cfg(feature = "cognitive-engram")]
+    {
+        if let Some(metrics) = engine.engram_metrics() {
+            let proc_result = grafeo_cognitive::procedures::cognitive_metrics(metrics);
+            return Ok(procedure_result_to_algorithm_result(proc_result));
+        }
+    }
+    let _ = engine;
+
+    Ok(AlgorithmResult::new(vec![
+        "engrams_active".into(),
+        "engrams_formed".into(),
+        "engrams_decayed".into(),
+        "engrams_recalled".into(),
+        "engrams_crystallized".into(),
+        "formations_attempted".into(),
+        "recalls_attempted".into(),
+        "recalls_successful".into(),
+        "recalls_rejected".into(),
+        "homeostasis_sweeps".into(),
+        "prediction_errors_total".into(),
+        "mean_strength".into(),
+        "pheromone_entropy".into(),
+        "max_pheromone_ratio".into(),
+        "immune_fp_rate".into(),
+        "immune_detector_count".into(),
+        "avg_precision_beta".into(),
+    ]))
+}
+
+/// Converts a `grafeo_cognitive::procedures::ProcedureResult` to an `AlgorithmResult`.
+#[cfg(feature = "cognitive-engram")]
+fn procedure_result_to_algorithm_result(
+    proc_result: grafeo_cognitive::procedures::ProcedureResult,
+) -> AlgorithmResult {
+    let mut result = AlgorithmResult::new(proc_result.columns);
+    for row in proc_result.rows {
+        result.add_row(row);
+    }
+    result
 }
 
 /// Extracts an integer from a map expression argument: `{key: value}`.

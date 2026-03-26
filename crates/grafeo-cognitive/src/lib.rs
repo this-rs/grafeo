@@ -91,6 +91,10 @@ pub mod epigenetic;
 // Engram system — biomimetic memory traces (Layer 0+)
 pub mod engram;
 
+// Level 2 introspection procedures (engrams.list, engrams.inspect, engrams.forget, cognitive.metrics)
+#[cfg(feature = "engram")]
+pub mod procedures;
+
 // Provenance — automatic cognitive event tracking
 pub mod provenance;
 
