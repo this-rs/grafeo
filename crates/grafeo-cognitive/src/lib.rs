@@ -76,6 +76,10 @@ pub mod episodic;
 #[cfg(feature = "consolidation")]
 pub mod consolidation;
 
+// Stigmergy — diffuse pheromone memory on edges (Layer 2)
+#[cfg(feature = "stigmergy")]
+pub mod stigmergy;
+
 // Engram system — biomimetic memory traces (Layer 0+)
 pub mod engram;
 
@@ -184,6 +188,9 @@ pub use engram::{
     Engram, EngramHorizon, EngramId, EpisodeId, FsrsState, PredictionError, RecallEvent,
     RecallFeedback,
 };
+
+#[cfg(feature = "stigmergy")]
+pub use stigmergy::{AtomicF64, PheromoneMap, StigmergicEngine, StigmergicTrace, TrailType};
 
 #[cfg(feature = "engram")]
 pub use engram::{

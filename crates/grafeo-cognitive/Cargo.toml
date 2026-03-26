@@ -21,6 +21,9 @@ gds-refresh = ["fabric", "dep:grafeo-adapters"]
 # Engram subsystem (Layer 0: Hebbian + FSRS)
 engram = []
 
+# Stigmergy (Layer 2: diffuse memory on edges)
+stigmergy = []
+
 # Future subsystems
 scar = []
 memory = ["energy"]
