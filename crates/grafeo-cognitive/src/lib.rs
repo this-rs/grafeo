@@ -204,8 +204,9 @@ pub use engram::{
     ActivatedEngram, CoActivationDetector, CognitiveMetrics, CompetitionResult, DetailLevel,
     EngramFormationTrigger, EngramManager, EngramMetricsCollector, EngramStore, FormationConfig,
     FsrsConfig, FsrsScheduler, HebbianWithSurprise, HomeostasisConfig, HomeostasisEngine,
-    MmrResult, RecallEngine, RecallResult, ReviewRating, SpectralEncoder, WarmupConfig,
-    WarmupSelector, hopfield_retrieve, max_marginal_relevance, softmax_compete,
+    HomeostasisSignal, IMMUNE_FP_RATE_THRESHOLD, LOW_PRECISION_BETA_THRESHOLD, MmrResult,
+    RecallEngine, RecallResult, ReviewRating, SpectralEncoder, WarmupConfig, WarmupSelector,
+    hopfield_retrieve, max_marginal_relevance, softmax_compete,
 };
 
 #[cfg(feature = "immune")]

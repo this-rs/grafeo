@@ -139,6 +139,20 @@ pub struct CognitiveMetrics {
     /// Max/mean ratio of pheromone values, stored as `f64::to_bits`.
     /// Target < 10.0. Above = single pheromone dominates.
     pub max_pheromone_ratio: AtomicU64,
+
+    // -- Immune metrics (Layer 1) --
+
+    /// Total immune detections (scans that matched).
+    pub immune_detections_total: AtomicU64,
+    /// Total immune detections marked as false positives (rejected).
+    pub immune_detections_rejected: AtomicU64,
+    /// Number of active immune detectors.
+    pub immune_detector_count: AtomicU64,
+
+    // -- Precision β (Hopfield Layer 3+4) --
+
+    /// Average precision β across all active engrams, stored as `f64::to_bits`.
+    pub avg_precision_beta: AtomicU64,
 }
 
 impl Default for CognitiveMetrics {
@@ -158,6 +172,10 @@ impl Default for CognitiveMetrics {
             mean_strength: AtomicU64::new(0.0_f64.to_bits()),
             pheromone_entropy: AtomicU64::new(0.0_f64.to_bits()),
             max_pheromone_ratio: AtomicU64::new(0.0_f64.to_bits()),
+            immune_detections_total: AtomicU64::new(0),
+            immune_detections_rejected: AtomicU64::new(0),
+            immune_detector_count: AtomicU64::new(0),
+            avg_precision_beta: AtomicU64::new(0.0_f64.to_bits()),
         }
     }
 }
@@ -188,6 +206,18 @@ pub struct CognitiveMetricsSnapshot {
     pub pheromone_entropy: f64,
     /// Max/mean ratio of pheromone values (target < 10.0).
     pub max_pheromone_ratio: f64,
+
+    // -- Immune metrics (Layer 1) --
+
+    /// Immune false-positive rate: rejected / total detections. Target < 20%.
+    pub immune_fp_rate: f64,
+    /// Number of active immune detectors.
+    pub immune_detector_count: u64,
+
+    // -- Precision β (Hopfield Layer 3+4) --
+
+    /// Average precision β across all active engrams.
+    pub avg_precision_beta: f64,
 }
 
 // ---------------------------------------------------------------------------
@@ -300,6 +330,54 @@ impl EngramMetricsCollector {
             .store(ratio.to_bits(), Ordering::Relaxed);
     }
 
+    // -- Immune metrics --
+
+    /// Records an immune detection event. If `rejected` is true the detection
+    /// was a false positive (the agent overrode it).
+    pub fn record_immune_detection(&self, rejected: bool) {
+        self.metrics
+            .immune_detections_total
+            .fetch_add(1, Ordering::Relaxed);
+        if rejected {
+            self.metrics
+                .immune_detections_rejected
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Updates the current immune detector count.
+    pub fn update_immune_detector_count(&self, count: usize) {
+        self.metrics
+            .immune_detector_count
+            .store(count as u64, Ordering::Relaxed);
+    }
+
+    /// Returns the current immune false-positive rate (rejected / total).
+    /// Returns 0.0 when there are no detections.
+    pub fn immune_fp_rate(&self) -> f64 {
+        let total = self
+            .metrics
+            .immune_detections_total
+            .load(Ordering::Relaxed);
+        if total == 0 {
+            return 0.0;
+        }
+        let rejected = self
+            .metrics
+            .immune_detections_rejected
+            .load(Ordering::Relaxed);
+        rejected as f64 / total as f64
+    }
+
+    // -- Precision β --
+
+    /// Updates the average precision β across all active engrams.
+    pub fn update_avg_precision_beta(&self, avg_beta: f64) {
+        self.metrics
+            .avg_precision_beta
+            .store(avg_beta.to_bits(), Ordering::Relaxed);
+    }
+
     /// Convenience: updates both pheromone entropy and max/mean ratio at once.
     pub fn update_stigmergy_metrics(&self, pheromone_values: &[f64]) {
         self.update_pheromone_entropy(pheromone_values);
@@ -321,8 +399,17 @@ impl EngramMetricsCollector {
             homeostasis_sweeps: self.metrics.homeostasis_sweeps.load(Ordering::Relaxed),
             prediction_errors_total: self.metrics.prediction_errors_total.load(Ordering::Relaxed),
             mean_strength: f64::from_bits(self.metrics.mean_strength.load(Ordering::Relaxed)),
-            pheromone_entropy: f64::from_bits(self.metrics.pheromone_entropy.load(Ordering::Relaxed)),
-            max_pheromone_ratio: f64::from_bits(self.metrics.max_pheromone_ratio.load(Ordering::Relaxed)),
+            pheromone_entropy: f64::from_bits(
+                self.metrics.pheromone_entropy.load(Ordering::Relaxed),
+            ),
+            max_pheromone_ratio: f64::from_bits(
+                self.metrics.max_pheromone_ratio.load(Ordering::Relaxed),
+            ),
+            immune_fp_rate: self.immune_fp_rate(),
+            immune_detector_count: self.metrics.immune_detector_count.load(Ordering::Relaxed),
+            avg_precision_beta: f64::from_bits(
+                self.metrics.avg_precision_beta.load(Ordering::Relaxed),
+            ),
         }
     }
 }
@@ -330,6 +417,73 @@ impl EngramMetricsCollector {
 impl Default for EngramMetricsCollector {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HomeostasisSignal — metrics → Layer ⊥ regulation decisions
+// ---------------------------------------------------------------------------
+
+/// Threshold for immune false-positive rate triggering T-reg regulation.
+pub const IMMUNE_FP_RATE_THRESHOLD: f64 = 0.20;
+
+/// Threshold for avg_precision_beta below which meta-plasticity is boosted.
+/// When the global system confidence is very low, the system needs to learn
+/// more aggressively.
+pub const LOW_PRECISION_BETA_THRESHOLD: f64 = 0.5;
+
+/// Regulation signals derived from cognitive metrics.
+///
+/// These signals feed into the HomeostasisScheduler (Layer ⊥) to trigger
+/// corrective actions:
+/// - `should_regulate_immune` → call `regulate_immune()` to shrink detector radii
+/// - `meta_plasticity_boost` → multiplier for the learning rate (> 1.0 = more learning)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HomeostasisSignal {
+    /// If true, the immune FP rate exceeds [`IMMUNE_FP_RATE_THRESHOLD`] and
+    /// the HomeostasisScheduler should call `regulate_immune()` to reduce
+    /// affinity radii of high-FP detectors.
+    pub should_regulate_immune: bool,
+
+    /// Meta-plasticity multiplier derived from `avg_precision_beta`.
+    /// - `1.0` = no adjustment (healthy system)
+    /// - `> 1.0` = increase learning rate (low confidence, needs exploration)
+    ///
+    /// Formula: when `avg_precision_beta < LOW_PRECISION_BETA_THRESHOLD`,
+    /// boost = 1.0 + (threshold - β) / threshold, capped at 2.0.
+    pub meta_plasticity_boost: f64,
+
+    /// The raw immune FP rate that triggered the signal.
+    pub immune_fp_rate: f64,
+
+    /// The raw avg_precision_beta that triggered the signal.
+    pub avg_precision_beta: f64,
+}
+
+impl HomeostasisSignal {
+    /// Derive regulation signals from a metrics snapshot.
+    ///
+    /// - `immune_fp_rate > 20%` → `should_regulate_immune = true`
+    /// - `avg_precision_beta < 0.5` → `meta_plasticity_boost > 1.0`
+    pub fn from_metrics(snapshot: &CognitiveMetricsSnapshot) -> Self {
+        let should_regulate_immune = snapshot.immune_fp_rate > IMMUNE_FP_RATE_THRESHOLD;
+
+        let meta_plasticity_boost = if snapshot.avg_precision_beta < LOW_PRECISION_BETA_THRESHOLD {
+            // Linear boost: 0.0 β → 2.0x, threshold β → 1.0x
+            let ratio =
+                (LOW_PRECISION_BETA_THRESHOLD - snapshot.avg_precision_beta)
+                    / LOW_PRECISION_BETA_THRESHOLD;
+            (1.0 + ratio).min(2.0)
+        } else {
+            1.0
+        };
+
+        Self {
+            should_regulate_immune,
+            meta_plasticity_boost,
+            immune_fp_rate: snapshot.immune_fp_rate,
+            avg_precision_beta: snapshot.avg_precision_beta,
+        }
     }
 }
 
@@ -564,6 +718,194 @@ mod tests {
             "ratio should be > 1.0 for skewed, got {}",
             s2.max_pheromone_ratio
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Immune metrics tests (metrics_immune)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn metrics_immune_fp_rate_zero_when_no_detections() {
+        let c = EngramMetricsCollector::new();
+        let s = c.snapshot();
+        assert!((s.immune_fp_rate - 0.0).abs() < f64::EPSILON);
+        assert_eq!(s.immune_detector_count, 0);
+    }
+
+    #[test]
+    fn metrics_immune_fp_rate_computed_correctly() {
+        let c = EngramMetricsCollector::new();
+        // 10 detections, 3 rejected → FP rate = 0.3
+        for _ in 0..7 {
+            c.record_immune_detection(false);
+        }
+        for _ in 0..3 {
+            c.record_immune_detection(true);
+        }
+        let s = c.snapshot();
+        assert!(
+            (s.immune_fp_rate - 0.3).abs() < 1e-10,
+            "FP rate should be 0.3, got {}",
+            s.immune_fp_rate
+        );
+    }
+
+    #[test]
+    fn metrics_immune_detector_count_updates() {
+        let c = EngramMetricsCollector::new();
+        c.update_immune_detector_count(42);
+        assert_eq!(c.snapshot().immune_detector_count, 42);
+        c.update_immune_detector_count(0);
+        assert_eq!(c.snapshot().immune_detector_count, 0);
+    }
+
+    #[test]
+    fn metrics_immune_all_rejected() {
+        let c = EngramMetricsCollector::new();
+        for _ in 0..5 {
+            c.record_immune_detection(true);
+        }
+        let s = c.snapshot();
+        assert!(
+            (s.immune_fp_rate - 1.0).abs() < f64::EPSILON,
+            "All rejected → FP rate should be 1.0, got {}",
+            s.immune_fp_rate
+        );
+    }
+
+    #[test]
+    fn metrics_immune_none_rejected() {
+        let c = EngramMetricsCollector::new();
+        for _ in 0..5 {
+            c.record_immune_detection(false);
+        }
+        let s = c.snapshot();
+        assert!(
+            (s.immune_fp_rate - 0.0).abs() < f64::EPSILON,
+            "None rejected → FP rate should be 0.0, got {}",
+            s.immune_fp_rate
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Precision β tests (metrics_precision)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn metrics_precision_beta_default_zero() {
+        let c = EngramMetricsCollector::new();
+        let s = c.snapshot();
+        assert!((s.avg_precision_beta - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn metrics_precision_beta_roundtrips() {
+        let c = EngramMetricsCollector::new();
+        c.update_avg_precision_beta(3.14);
+        let s = c.snapshot();
+        assert!(
+            (s.avg_precision_beta - 3.14).abs() < f64::EPSILON,
+            "avg_precision_beta should be 3.14, got {}",
+            s.avg_precision_beta
+        );
+    }
+
+    #[test]
+    fn metrics_precision_beta_updates_overwrite() {
+        let c = EngramMetricsCollector::new();
+        c.update_avg_precision_beta(1.0);
+        c.update_avg_precision_beta(2.5);
+        let s = c.snapshot();
+        assert!(
+            (s.avg_precision_beta - 2.5).abs() < f64::EPSILON,
+            "should reflect last update, got {}",
+            s.avg_precision_beta
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Homeostasis integration tests (metrics_to_homeostasis_immune)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn metrics_to_homeostasis_immune_high_fp_triggers_regulation() {
+        let c = EngramMetricsCollector::new();
+        // 25% FP rate → above 20% threshold → should trigger regulate_immune
+        for _ in 0..75 {
+            c.record_immune_detection(false);
+        }
+        for _ in 0..25 {
+            c.record_immune_detection(true);
+        }
+        let s = c.snapshot();
+        let regulation = HomeostasisSignal::from_metrics(&s);
+        assert!(
+            regulation.should_regulate_immune,
+            "FP rate {} > 0.20 should trigger immune regulation",
+            s.immune_fp_rate
+        );
+    }
+
+    #[test]
+    fn metrics_to_homeostasis_immune_low_fp_no_regulation() {
+        let c = EngramMetricsCollector::new();
+        // 10% FP rate → below 20% threshold → no regulation
+        for _ in 0..90 {
+            c.record_immune_detection(false);
+        }
+        for _ in 0..10 {
+            c.record_immune_detection(true);
+        }
+        let s = c.snapshot();
+        let regulation = HomeostasisSignal::from_metrics(&s);
+        assert!(
+            !regulation.should_regulate_immune,
+            "FP rate {} <= 0.20 should NOT trigger immune regulation",
+            s.immune_fp_rate
+        );
+    }
+
+    #[test]
+    fn metrics_to_homeostasis_immune_low_precision_increases_plasticity() {
+        let c = EngramMetricsCollector::new();
+        c.update_avg_precision_beta(0.1); // very low β
+        let s = c.snapshot();
+        let regulation = HomeostasisSignal::from_metrics(&s);
+        assert!(
+            regulation.meta_plasticity_boost > 1.0,
+            "Low avg_precision_beta should boost meta_plasticity, got {}",
+            regulation.meta_plasticity_boost
+        );
+    }
+
+    #[test]
+    fn metrics_to_homeostasis_immune_high_precision_no_boost() {
+        let c = EngramMetricsCollector::new();
+        c.update_avg_precision_beta(5.0); // healthy β
+        let s = c.snapshot();
+        let regulation = HomeostasisSignal::from_metrics(&s);
+        assert!(
+            (regulation.meta_plasticity_boost - 1.0).abs() < f64::EPSILON,
+            "High avg_precision_beta should not boost meta_plasticity, got {}",
+            regulation.meta_plasticity_boost
+        );
+    }
+
+    #[test]
+    fn metrics_to_homeostasis_immune_combined() {
+        let c = EngramMetricsCollector::new();
+        // High FP + low precision → both triggers fire
+        for _ in 0..60 {
+            c.record_immune_detection(false);
+        }
+        for _ in 0..40 {
+            c.record_immune_detection(true);
+        }
+        c.update_avg_precision_beta(0.05);
+        let s = c.snapshot();
+        let regulation = HomeostasisSignal::from_metrics(&s);
+        assert!(regulation.should_regulate_immune);
+        assert!(regulation.meta_plasticity_boost > 1.0);
     }
 
     #[test]
