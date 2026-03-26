@@ -437,6 +437,151 @@ impl ImmuneSystem {
         let detector = ImmuneDetector::new(shape, DEFAULT_AFFINITY_RADIUS, source_engram);
         self.register(detector)
     }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Idiotypic network — detectors recognising each other (Jerne, 1974)
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// Cosine-similarity threshold above which two detectors are considered
+    /// part of the same idiotypic family (`:RECOGNIZES` relation).
+    pub const IDIOTYPIC_THRESHOLD: f64 = 0.7;
+
+    /// Propagation factor for idiotypic activation (1-hop only).
+    pub const IDIOTYPIC_PROPAGATION_FACTOR: f64 = 0.5;
+
+    /// Find all pairs of detectors whose shapes have cosine similarity > threshold.
+    ///
+    /// Returns a list of `(DetectorId, DetectorId, cosine_similarity)` triples.
+    /// Each pair appears only once (A,B but not B,A).
+    pub fn find_idiotypic_pairs(&self, threshold: f64) -> Vec<(DetectorId, DetectorId, f64)> {
+        let all: Vec<(DetectorId, ShapeDescriptor)> = self
+            .detectors
+            .iter()
+            .map(|e| (e.key().clone(), e.value().shape.clone()))
+            .collect();
+
+        let mut pairs = Vec::new();
+        for i in 0..all.len() {
+            for j in (i + 1)..all.len() {
+                let sim = all[i].1.cosine_similarity(&all[j].1);
+                if sim > threshold {
+                    pairs.push((all[i].0, all[j].0, sim));
+                }
+            }
+        }
+        pairs
+    }
+
+    /// Get the idiotypic neighbours of a detector (cosine > [`IDIOTYPIC_THRESHOLD`]).
+    ///
+    /// Returns `(DetectorId, cosine_similarity)` for each neighbour.
+    pub fn idiotypic_neighbours(&self, id: &DetectorId) -> Vec<(DetectorId, f64)> {
+        let shape = match self.detectors.get(id) {
+            Some(d) => d.shape.clone(),
+            None => return Vec::new(),
+        };
+
+        self.detectors
+            .iter()
+            .filter_map(|entry| {
+                let other_id = *entry.key();
+                if other_id == *id {
+                    return None;
+                }
+                let sim = shape.cosine_similarity(&entry.value().shape);
+                if sim > Self::IDIOTYPIC_THRESHOLD {
+                    Some((other_id, sim))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Idiotypic propagation: when a detector is activated, partially activate
+    /// its idiotypic neighbours (1-hop only, no cascade).
+    ///
+    /// "Activation" here means incrementing `clone_count` by 1 and recording
+    /// the activation. Returns the list of detector IDs that were propagated to,
+    /// along with the propagation weight (similarity × [`IDIOTYPIC_PROPAGATION_FACTOR`]).
+    pub fn idiotypic_propagate(&self, activated_id: &DetectorId) -> Vec<(DetectorId, f64)> {
+        let neighbours = self.idiotypic_neighbours(activated_id);
+        let mut propagated = Vec::new();
+
+        for (neighbour_id, similarity) in neighbours {
+            let weight = similarity * Self::IDIOTYPIC_PROPAGATION_FACTOR;
+            if let Some(mut det) = self.detectors.get_mut(&neighbour_id) {
+                det.clone_count = det.clone_count.saturating_add(1);
+                propagated.push((neighbour_id, weight));
+            }
+        }
+
+        propagated
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // T-reg — regulatory suppression of overly promiscuous detectors
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// False-positive rate threshold above which T-reg kicks in.
+    pub const T_REG_FP_THRESHOLD: f64 = 0.3;
+
+    /// Shrink factor applied to affinity_radius when FP rate is too high.
+    pub const T_REG_SHRINK_FACTOR: f64 = 0.8;
+
+    /// T-reg homeostatic regulation: for each detector with
+    /// `false_positive_rate > threshold`, shrink `affinity_radius` by `factor`.
+    ///
+    /// Returns the list of regulated detector IDs and their new radii.
+    pub fn regulate_immune(&self) -> Vec<(DetectorId, f64)> {
+        self.regulate_immune_with(Self::T_REG_FP_THRESHOLD, Self::T_REG_SHRINK_FACTOR)
+    }
+
+    /// Like [`regulate_immune`](Self::regulate_immune) but with custom thresholds.
+    pub fn regulate_immune_with(&self, fp_threshold: f64, shrink_factor: f64) -> Vec<(DetectorId, f64)> {
+        let candidates: Vec<DetectorId> = self
+            .detectors
+            .iter()
+            .filter(|e| e.value().false_positive_rate > fp_threshold)
+            .map(|e| *e.key())
+            .collect();
+
+        let mut regulated = Vec::new();
+        for id in candidates {
+            if let Some(mut det) = self.detectors.get_mut(&id) {
+                det.affinity_radius *= shrink_factor;
+                regulated.push((id, det.affinity_radius));
+            }
+        }
+
+        regulated
+    }
+
+    /// Mark a detection as rejected (false positive).
+    ///
+    /// Updates the detector's `false_positive_rate` using an exponential
+    /// moving average: `fp = 0.9 * fp + 0.1 * 1.0`.
+    pub fn mark_rejected(&self, detector_id: &DetectorId) {
+        if let Some(mut det) = self.detectors.get_mut(detector_id) {
+            det.false_positive_rate = 0.9 * det.false_positive_rate + 0.1;
+        }
+    }
+
+    /// Mark a detection as confirmed (true positive).
+    ///
+    /// Updates the detector's `false_positive_rate` using an exponential
+    /// moving average: `fp = 0.9 * fp + 0.1 * 0.0 = 0.9 * fp`.
+    pub fn mark_confirmed(&self, detector_id: &DetectorId) {
+        if let Some(mut det) = self.detectors.get_mut(detector_id) {
+            det.false_positive_rate *= 0.9;
+            det.record_match();
+        }
+    }
+
+    /// Returns all detectors as a snapshot (cloned).
+    pub fn list_detectors(&self) -> Vec<ImmuneDetector> {
+        self.detectors.iter().map(|e| e.value().clone()).collect()
+    }
 }
 
 impl Default for ImmuneSystem {
@@ -884,7 +1029,11 @@ mod tests {
 
         let det = system.get(&det_id).unwrap();
         assert_eq!(det.clone_count, 1, "clone_count should increment");
-        assert_eq!(det.mutation_history.len(), 1, "history should have one entry");
+        assert_eq!(
+            det.mutation_history.len(),
+            1,
+            "history should have one entry"
+        );
         assert!(
             det.affinity_radius > 1.0,
             "radius should have expanded from 1.0"
@@ -919,9 +1068,208 @@ mod tests {
         // Orthogonal — distance ≈ sqrt(2) >> 0.3*1.2
         let far = ShapeDescriptor::new(vec![0.0, 1.0, 0.0]);
         let matured = system.on_detection(&far, 1.1, DEFAULT_MAX_AFFINITY_RADIUS);
+        assert!(matured.is_empty(), "far miss should NOT trigger maturation");
+    }
+
+    // -------------------------------------------------------------------
+    // Idiotypic network tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn idiotypic_network_finds_similar_pairs() {
+        let system = ImmuneSystem::new();
+
+        // A and B are very similar (cosine ~ 0.99)
+        let shape_a = ShapeDescriptor::new(vec![1.0, 0.1, 0.0]);
+        let shape_b = ShapeDescriptor::new(vec![1.0, 0.15, 0.0]);
+        // C is orthogonal (cosine ~ 0)
+        let shape_c = ShapeDescriptor::new(vec![0.0, 0.0, 1.0]);
+
+        system.register(ImmuneDetector::new(shape_a, 0.5, EngramId(1)));
+        system.register(ImmuneDetector::new(shape_b, 0.5, EngramId(2)));
+        system.register(ImmuneDetector::new(shape_c, 0.5, EngramId(3)));
+
+        let pairs = system.find_idiotypic_pairs(ImmuneSystem::IDIOTYPIC_THRESHOLD);
+        assert_eq!(pairs.len(), 1, "only A-B should be an idiotypic pair");
         assert!(
-            matured.is_empty(),
-            "far miss should NOT trigger maturation"
+            pairs[0].2 > ImmuneSystem::IDIOTYPIC_THRESHOLD,
+            "cosine should be above threshold"
         );
+    }
+
+    #[test]
+    fn idiotypic_neighbours_returns_only_close() {
+        let system = ImmuneSystem::new();
+
+        let shape_a = ShapeDescriptor::new(vec![1.0, 0.1, 0.0]);
+        let id_a = system.register(ImmuneDetector::new(shape_a, 0.5, EngramId(1)));
+
+        // B is similar to A
+        let shape_b = ShapeDescriptor::new(vec![1.0, 0.2, 0.0]);
+        let id_b = system.register(ImmuneDetector::new(shape_b, 0.5, EngramId(2)));
+
+        // C is orthogonal
+        let shape_c = ShapeDescriptor::new(vec![0.0, 0.0, 1.0]);
+        system.register(ImmuneDetector::new(shape_c, 0.5, EngramId(3)));
+
+        let neighbours = system.idiotypic_neighbours(&id_a);
+        assert_eq!(neighbours.len(), 1);
+        assert_eq!(neighbours[0].0, id_b);
+    }
+
+    #[test]
+    fn idiotypic_propagation_activates_neighbours_not_unrelated() {
+        let system = ImmuneSystem::new();
+
+        // A and B are similar
+        let shape_a = ShapeDescriptor::new(vec![1.0, 0.05, 0.0]);
+        let id_a = system.register(ImmuneDetector::new(shape_a, 0.5, EngramId(1)));
+
+        let shape_b = ShapeDescriptor::new(vec![1.0, 0.1, 0.0]);
+        let id_b = system.register(ImmuneDetector::new(shape_b, 0.5, EngramId(2)));
+
+        // C is orthogonal
+        let shape_c = ShapeDescriptor::new(vec![0.0, 0.0, 1.0]);
+        let id_c = system.register(ImmuneDetector::new(shape_c, 0.5, EngramId(3)));
+
+        // Activate A → should propagate to B but NOT C
+        let propagated = system.idiotypic_propagate(&id_a);
+        let propagated_ids: Vec<DetectorId> = propagated.iter().map(|p| p.0).collect();
+
+        assert!(
+            propagated_ids.contains(&id_b),
+            "B should be activated by A"
+        );
+        assert!(
+            !propagated_ids.contains(&id_c),
+            "C should NOT be activated by A"
+        );
+
+        // B's clone_count should have incremented
+        let det_b = system.get(&id_b).unwrap();
+        assert_eq!(det_b.clone_count, 1, "B clone_count should be 1");
+
+        // C's clone_count should remain 0
+        let det_c = system.get(&id_c).unwrap();
+        assert_eq!(det_c.clone_count, 0, "C clone_count should remain 0");
+    }
+
+    #[test]
+    fn idiotypic_propagation_weight_is_bounded() {
+        let system = ImmuneSystem::new();
+
+        // Two nearly identical detectors (cosine ~ 1.0)
+        let shape_a = ShapeDescriptor::new(vec![1.0, 0.0, 0.0]);
+        let id_a = system.register(ImmuneDetector::new(shape_a.clone(), 0.5, EngramId(1)));
+        system.register(ImmuneDetector::new(shape_a, 0.5, EngramId(2)));
+
+        let propagated = system.idiotypic_propagate(&id_a);
+        assert_eq!(propagated.len(), 1);
+        // Weight = similarity × 0.5 — for cosine ~1.0 → weight ~0.5
+        assert!(
+            propagated[0].1 <= ImmuneSystem::IDIOTYPIC_PROPAGATION_FACTOR + 0.01,
+            "weight should be ≤ propagation factor, got {}",
+            propagated[0].1
+        );
+        assert!(propagated[0].1 > 0.3, "weight should be substantial for similar detectors");
+    }
+
+    // -------------------------------------------------------------------
+    // T-reg regulation tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn t_reg_shrinks_high_fp_detector() {
+        let system = ImmuneSystem::new();
+
+        let shape = ShapeDescriptor::new(vec![1.0, 0.0, 0.0]);
+        let mut det = ImmuneDetector::new(shape, 1.0, EngramId(1));
+        det.false_positive_rate = 0.4; // above 0.3 threshold
+        let id = system.register(det);
+
+        let regulated = system.regulate_immune();
+        assert_eq!(regulated.len(), 1);
+        assert_eq!(regulated[0].0, id);
+
+        let det = system.get(&id).unwrap();
+        assert!(
+            (det.affinity_radius - 0.8).abs() < 1e-10,
+            "radius should be 1.0 × 0.8 = 0.8, got {}",
+            det.affinity_radius
+        );
+    }
+
+    #[test]
+    fn t_reg_ignores_low_fp_detector() {
+        let system = ImmuneSystem::new();
+
+        let shape = ShapeDescriptor::new(vec![1.0, 0.0, 0.0]);
+        let mut det = ImmuneDetector::new(shape, 1.0, EngramId(1));
+        det.false_positive_rate = 0.1; // below threshold
+        system.register(det);
+
+        let regulated = system.regulate_immune();
+        assert!(regulated.is_empty(), "low FP detector should not be regulated");
+    }
+
+    #[test]
+    fn t_reg_repeated_regulation_shrinks_progressively() {
+        let system = ImmuneSystem::new();
+
+        let shape = ShapeDescriptor::new(vec![1.0, 0.0, 0.0]);
+        let mut det = ImmuneDetector::new(shape, 1.0, EngramId(1));
+        det.false_positive_rate = 0.5; // stays high
+        let id = system.register(det);
+
+        // 3 rounds of regulation
+        for _ in 0..3 {
+            system.regulate_immune();
+        }
+
+        let det = system.get(&id).unwrap();
+        let expected = 1.0 * 0.8 * 0.8 * 0.8; // 0.512
+        assert!(
+            (det.affinity_radius - expected).abs() < 1e-10,
+            "after 3 regulations, radius should be {expected}, got {}",
+            det.affinity_radius
+        );
+    }
+
+    #[test]
+    fn mark_rejected_increases_fp_rate() {
+        let system = ImmuneSystem::new();
+        let shape = ShapeDescriptor::new(vec![1.0, 0.0]);
+        let det = ImmuneDetector::new(shape, 0.5, EngramId(1));
+        let id = system.register(det);
+
+        // Initial FP rate is 0.0
+        assert!((system.get(&id).unwrap().false_positive_rate - 0.0).abs() < 1e-10);
+
+        // Mark 5 rejections — FP rate should climb
+        for _ in 0..5 {
+            system.mark_rejected(&id);
+        }
+
+        let fp = system.get(&id).unwrap().false_positive_rate;
+        assert!(fp > 0.3, "after 5 rejections, FP rate should be > 0.3, got {fp}");
+    }
+
+    #[test]
+    fn mark_confirmed_decreases_fp_rate() {
+        let system = ImmuneSystem::new();
+        let shape = ShapeDescriptor::new(vec![1.0, 0.0]);
+        let mut det = ImmuneDetector::new(shape, 0.5, EngramId(1));
+        det.false_positive_rate = 0.5;
+        let id = system.register(det);
+
+        // Confirm 5 times — FP rate should decrease
+        for _ in 0..5 {
+            system.mark_confirmed(&id);
+        }
+
+        let fp = system.get(&id).unwrap().false_positive_rate;
+        assert!(fp < 0.5, "after confirmations, FP rate should decrease, got {fp}");
+        // Also clone_count should have incremented
+        assert_eq!(system.get(&id).unwrap().clone_count, 5);
     }
 }

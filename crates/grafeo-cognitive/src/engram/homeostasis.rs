@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 
 use super::store::EngramStore;
 
+#[cfg(feature = "immune")]
+use crate::immune::ImmuneSystem;
+
 #[cfg(feature = "stigmergy")]
 use crate::stigmergy::StigmergicEngine;
 
@@ -188,6 +191,29 @@ impl HomeostasisEngine {
         engine.prevent_lock_in(self.config.anti_lock_in_noise, seed);
     }
 
+    /// T-reg homeostatic regulation: delegate to [`ImmuneSystem::regulate_immune`].
+    ///
+    /// For each detector with `false_positive_rate > 30%`, shrink
+    /// `affinity_radius × 0.8`. Returns the list of regulated detector IDs.
+    #[cfg(feature = "immune")]
+    pub fn regulate_immune(&self, immune: &ImmuneSystem) -> Vec<(crate::immune::DetectorId, f64)> {
+        immune.regulate_immune()
+    }
+
+    /// Runs all homeostatic mechanisms including immune regulation.
+    ///
+    /// 1. Synaptic scaling on engrams
+    /// 2. T-reg regulation on immune detectors
+    #[cfg(feature = "immune")]
+    pub fn sweep_with_immune(
+        &self,
+        store: &EngramStore,
+        immune: &ImmuneSystem,
+    ) -> Vec<(crate::immune::DetectorId, f64)> {
+        self.synaptic_scaling(store);
+        self.regulate_immune(immune)
+    }
+
     /// Returns the configured pheromone decay rate.
     pub fn pheromone_decay_rate(&self) -> f64 {
         self.config.pheromone_decay_rate
@@ -324,13 +350,58 @@ mod tests {
         engine.sweep(&store); // should not panic
     }
 
+    // ---- Immune T-reg integration tests ----
+
+    #[cfg(feature = "immune")]
+    #[test]
+    fn t_reg_via_homeostasis_regulates_high_fp() {
+        use crate::immune::{ImmuneDetector, ImmuneSystem, ShapeDescriptor};
+
+        let store = test_store();
+        let engine = HomeostasisEngine::new(HomeostasisConfig::default());
+        let immune = ImmuneSystem::new();
+
+        let shape = ShapeDescriptor::new(vec![1.0, 0.0, 0.0]);
+        let mut det = ImmuneDetector::new(shape, 1.0, EngramId(1));
+        det.false_positive_rate = 0.4;
+        let id = immune.register(det);
+
+        let regulated = engine.sweep_with_immune(&store, &immune);
+        assert_eq!(regulated.len(), 1);
+        assert_eq!(regulated[0].0, id);
+
+        let det = immune.get(&id).unwrap();
+        assert!(
+            (det.affinity_radius - 0.8).abs() < 1e-10,
+            "radius should be shrunk to 0.8"
+        );
+    }
+
+    #[cfg(feature = "immune")]
+    #[test]
+    fn t_reg_via_homeostasis_no_regulation_when_healthy() {
+        use crate::immune::{ImmuneDetector, ImmuneSystem, ShapeDescriptor};
+
+        let store = test_store();
+        let engine = HomeostasisEngine::new(HomeostasisConfig::default());
+        let immune = ImmuneSystem::new();
+
+        let shape = ShapeDescriptor::new(vec![1.0, 0.0, 0.0]);
+        let mut det = ImmuneDetector::new(shape, 1.0, EngramId(1));
+        det.false_positive_rate = 0.1; // healthy
+        immune.register(det);
+
+        let regulated = engine.sweep_with_immune(&store, &immune);
+        assert!(regulated.is_empty(), "healthy detector should not be regulated");
+    }
+
     // ---- Stigmergy integration tests ----
 
     #[cfg(feature = "stigmergy")]
     mod stigmergy_tests {
         use super::*;
-        use crate::stigmergy::{PheromoneMap, StigmergicEngine, TrailType};
         use crate::engram::traits::EdgeAnnotator;
+        use crate::stigmergy::{PheromoneMap, StigmergicEngine, TrailType};
         use grafeo_common::types::EdgeId;
 
         struct NoopAnnotator;
@@ -362,10 +433,7 @@ mod tests {
             let val = stig.read(EdgeId::new(1), TrailType::Query);
             // Single entry = it's the max, so noise is also applied.
             // After decay: 0.95, then noise of ±5% → [0.9025, 0.9975]
-            assert!(
-                val < 1.0,
-                "Pheromone should have decayed, got {val}"
-            );
+            assert!(val < 1.0, "Pheromone should have decayed, got {val}");
             assert!(
                 val > 0.85,
                 "Pheromone should not have decayed too much, got {val}"
