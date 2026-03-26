@@ -129,6 +129,22 @@ impl ShapeDescriptor {
     pub fn from_spectral_signature(spectral: &[f64]) -> Self {
         Self::new(spectral.to_vec())
     }
+
+    /// Interpolate towards another descriptor by `rate` ∈ [0, 1].
+    ///
+    /// Returns a new `ShapeDescriptor` that is `(1-rate)*self + rate*other`,
+    /// re-normalised to L2 = 1.0. Dimensions are zero-padded if needed.
+    pub fn interpolate_towards(&self, other: &ShapeDescriptor, rate: f64) -> ShapeDescriptor {
+        let rate = rate.clamp(0.0, 1.0);
+        let max_dim = self.features.len().max(other.features.len());
+        let mut raw = Vec::with_capacity(max_dim);
+        for i in 0..max_dim {
+            let a = self.features.get(i).copied().unwrap_or(0.0);
+            let b = other.features.get(i).copied().unwrap_or(0.0);
+            raw.push((1.0 - rate) * a + rate * b);
+        }
+        ShapeDescriptor::new(raw)
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -170,11 +186,7 @@ pub struct ImmuneDetector {
 
 impl ImmuneDetector {
     /// Create a new detector with the given shape and source engram.
-    pub fn new(
-        shape: ShapeDescriptor,
-        affinity_radius: f64,
-        source_engram: EngramId,
-    ) -> Self {
+    pub fn new(shape: ShapeDescriptor, affinity_radius: f64, source_engram: EngramId) -> Self {
         Self {
             id: DetectorId::next(),
             shape,
@@ -209,6 +221,33 @@ impl ImmuneDetector {
     pub fn mutate(&mut self, new_shape: ShapeDescriptor) {
         self.mutation_history.push(self.shape.clone());
         self.shape = new_shape;
+    }
+
+    /// Somatic hypermutation: move the detector shape 10% towards a variant.
+    ///
+    /// - Saves the current shape in `mutation_history`.
+    /// - Replaces `shape` with an interpolation `(1-rate)*self + rate*variant`.
+    /// - Increments `clone_count` (clonal expansion).
+    ///
+    /// The default rate is [`DEFAULT_MUTATION_RATE`] (0.1).
+    pub fn mutate_towards(&mut self, variant: &ShapeDescriptor) {
+        self.mutate_towards_with_rate(variant, DEFAULT_MUTATION_RATE);
+    }
+
+    /// Like [`mutate_towards`](Self::mutate_towards) but with a custom rate.
+    pub fn mutate_towards_with_rate(&mut self, variant: &ShapeDescriptor, rate: f64) {
+        let new_shape = self.shape.interpolate_towards(variant, rate);
+        self.mutation_history.push(self.shape.clone());
+        self.shape = new_shape;
+        self.clone_count = self.clone_count.saturating_add(1);
+    }
+
+    /// Expand affinity radius by `factor` (multiplicative), clamped to `max_radius`.
+    ///
+    /// Returns the new radius.
+    pub fn expand_radius(&mut self, factor: f64, max_radius: f64) -> f64 {
+        self.affinity_radius = (self.affinity_radius * factor).min(max_radius);
+        self.affinity_radius
     }
 }
 
@@ -249,6 +288,18 @@ impl Detection {
 /// Default conservative affinity radius for auto-generated detectors.
 pub const DEFAULT_AFFINITY_RADIUS: f64 = 0.3;
 
+/// Default maximum affinity radius — ceiling for `expand_radius`.
+pub const DEFAULT_MAX_AFFINITY_RADIUS: f64 = 2.0;
+
+/// Default interpolation rate for `mutate_towards` (10% step towards variant).
+pub const DEFAULT_MUTATION_RATE: f64 = 0.1;
+
+/// Lower bound of the partial-match zone (fraction of affinity_radius).
+pub const PARTIAL_MATCH_LOWER: f64 = 0.8;
+
+/// Upper bound of the partial-match zone (fraction of affinity_radius).
+pub const PARTIAL_MATCH_UPPER: f64 = 1.2;
+
 /// The immune system maintains a registry of detectors and can scan a context
 /// (represented as a `ShapeDescriptor`) to find matching detectors.
 pub struct ImmuneSystem {
@@ -277,7 +328,10 @@ impl ImmuneSystem {
     }
 
     /// Get a reference to a detector (via DashMap Ref guard).
-    pub fn get(&self, id: &DetectorId) -> Option<dashmap::mapref::one::Ref<'_, DetectorId, ImmuneDetector>> {
+    pub fn get(
+        &self,
+        id: &DetectorId,
+    ) -> Option<dashmap::mapref::one::Ref<'_, DetectorId, ImmuneDetector>> {
         self.detectors.get(id)
     }
 
@@ -305,8 +359,69 @@ impl ImmuneSystem {
             }
         }
         // Sort by distance ascending (closest match first)
-        detections.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal));
+        detections.sort_by(|a, b| {
+            a.distance
+                .partial_cmp(&b.distance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         detections
+    }
+
+    /// Get a mutable reference to a detector (via DashMap RefMut guard).
+    pub fn get_mut(
+        &self,
+        id: &DetectorId,
+    ) -> Option<dashmap::mapref::one::RefMut<'_, DetectorId, ImmuneDetector>> {
+        self.detectors.get_mut(id)
+    }
+
+    /// Scan and trigger affinity maturation on partial matches.
+    ///
+    /// A *partial match* is defined as a target whose distance `d` satisfies:
+    ///   `radius * PARTIAL_MATCH_LOWER ≤ d ≤ radius * PARTIAL_MATCH_UPPER`
+    ///
+    /// For each partial match:
+    /// 1. `mutate_towards(context)` — somatic hypermutation (10% step).
+    /// 2. `expand_radius(factor, max_radius)` — broaden detection zone.
+    ///
+    /// Returns the list of detector IDs that underwent maturation.
+    pub fn on_detection(
+        &self,
+        context: &ShapeDescriptor,
+        expansion_factor: f64,
+        max_radius: f64,
+    ) -> Vec<DetectorId> {
+        let mut matured = Vec::new();
+
+        // Collect candidates first to avoid holding DashMap iterators while mutating.
+        let candidates: Vec<(DetectorId, f64, f64)> = self
+            .detectors
+            .iter()
+            .filter_map(|entry| {
+                let det = entry.value();
+                if det.shape.is_empty() || context.is_empty() {
+                    return None;
+                }
+                let dist = det.shape.euclidean_distance(context);
+                let lower = det.affinity_radius * PARTIAL_MATCH_LOWER;
+                let upper = det.affinity_radius * PARTIAL_MATCH_UPPER;
+                if dist >= lower && dist <= upper {
+                    Some((det.id, dist, det.affinity_radius))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for (id, _dist, _radius) in candidates {
+            if let Some(mut det) = self.detectors.get_mut(&id) {
+                det.mutate_towards(context);
+                det.expand_radius(expansion_factor, max_radius);
+                matured.push(id);
+            }
+        }
+
+        matured
     }
 
     /// Automatically create a detector from a scarred engram.
@@ -355,7 +470,10 @@ mod tests {
     fn shape_descriptor_normalisation() {
         let sd = ShapeDescriptor::new(vec![3.0, 4.0]);
         let norm: f64 = sd.features().iter().map(|x| x * x).sum::<f64>().sqrt();
-        assert!((norm - 1.0).abs() < 1e-10, "L2 norm should be 1.0, got {norm}");
+        assert!(
+            (norm - 1.0).abs() < 1e-10,
+            "L2 norm should be 1.0, got {norm}"
+        );
         assert!((sd.features()[0] - 0.6).abs() < 1e-10);
         assert!((sd.features()[1] - 0.8).abs() < 1e-10);
     }
@@ -424,7 +542,10 @@ mod tests {
 
         // Target orthogonal — distance ≈ sqrt(2) >> 0.1
         let target = ShapeDescriptor::new(vec![0.0, 1.0, 0.0]);
-        assert!(!detector.matches(&target), "distant target should NOT match");
+        assert!(
+            !detector.matches(&target),
+            "distant target should NOT match"
+        );
     }
 
     #[test]
@@ -512,7 +633,12 @@ mod tests {
         let results = system.scan(&ctx);
 
         // A and C should match, B should not
-        assert_eq!(results.len(), 2, "expected 2 detections, got {}", results.len());
+        assert_eq!(
+            results.len(),
+            2,
+            "expected 2 detections, got {}",
+            results.len()
+        );
         let engram_ids: Vec<_> = results.iter().map(|d| d.source_engram).collect();
         assert!(engram_ids.contains(&EngramId(1)));
         assert!(engram_ids.contains(&EngramId(3)));
@@ -610,5 +736,192 @@ mod tests {
             affinity_radius: 0.5,
         };
         assert!((d.confidence() - 0.5).abs() < 1e-10);
+    }
+
+    // -------------------------------------------------------------------
+    // Hypermutation tests (mutate_towards)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn hypermutation_reduces_distance_to_variant() {
+        let shape = ShapeDescriptor::new(vec![1.0, 0.0, 0.0]);
+        let variant = ShapeDescriptor::new(vec![0.0, 1.0, 0.0]);
+        let mut detector = ImmuneDetector::new(shape.clone(), 0.5, EngramId(1));
+
+        let dist_before = detector.shape.euclidean_distance(&variant);
+        detector.mutate_towards(&variant);
+        let dist_after = detector.shape.euclidean_distance(&variant);
+
+        assert!(
+            dist_after < dist_before,
+            "after mutation, distance to variant should decrease: {dist_before} -> {dist_after}"
+        );
+    }
+
+    #[test]
+    fn hypermutation_saves_history_and_increments_clone() {
+        let shape = ShapeDescriptor::new(vec![1.0, 0.0]);
+        let variant = ShapeDescriptor::new(vec![0.0, 1.0]);
+        let mut detector = ImmuneDetector::new(shape.clone(), 0.5, EngramId(1));
+
+        assert_eq!(detector.mutation_history.len(), 0);
+        assert_eq!(detector.clone_count, 0);
+
+        detector.mutate_towards(&variant);
+
+        assert_eq!(detector.mutation_history.len(), 1);
+        assert_eq!(detector.clone_count, 1);
+        // History should contain the original shape
+        assert_eq!(detector.mutation_history[0], shape);
+    }
+
+    #[test]
+    fn hypermutation_multiple_steps_converge() {
+        let shape = ShapeDescriptor::new(vec![1.0, 0.0, 0.0]);
+        let variant = ShapeDescriptor::new(vec![0.0, 0.0, 1.0]);
+        let mut detector = ImmuneDetector::new(shape, 0.5, EngramId(1));
+
+        let initial_dist = detector.shape.euclidean_distance(&variant);
+
+        // Apply 5 mutations — distance should monotonically decrease
+        let mut prev_dist = initial_dist;
+        for i in 0..5 {
+            detector.mutate_towards(&variant);
+            let d = detector.shape.euclidean_distance(&variant);
+            assert!(
+                d < prev_dist,
+                "step {i}: distance should decrease: {prev_dist} -> {d}"
+            );
+            prev_dist = d;
+        }
+
+        assert_eq!(detector.mutation_history.len(), 5);
+        assert_eq!(detector.clone_count, 5);
+    }
+
+    // -------------------------------------------------------------------
+    // Affinity expansion tests (expand_radius)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn affinity_expansion_basic() {
+        let shape = ShapeDescriptor::new(vec![1.0, 0.0]);
+        let mut detector = ImmuneDetector::new(shape, 0.3, EngramId(1));
+
+        let r = detector.expand_radius(1.1, DEFAULT_MAX_AFFINITY_RADIUS);
+        assert!((r - 0.33).abs() < 0.01, "radius should grow by 10%: {r}");
+    }
+
+    #[test]
+    fn affinity_expansion_capped_at_max() {
+        let shape = ShapeDescriptor::new(vec![1.0, 0.0]);
+        let mut detector = ImmuneDetector::new(shape, 1.8, EngramId(1));
+
+        // 3 expansions at 1.1x — should cap at 2.0
+        for _ in 0..3 {
+            detector.expand_radius(1.1, DEFAULT_MAX_AFFINITY_RADIUS);
+        }
+        assert!(
+            detector.affinity_radius <= DEFAULT_MAX_AFFINITY_RADIUS,
+            "radius {} should not exceed max {}",
+            detector.affinity_radius,
+            DEFAULT_MAX_AFFINITY_RADIUS,
+        );
+        assert!(
+            (detector.affinity_radius - DEFAULT_MAX_AFFINITY_RADIUS).abs() < 1e-10,
+            "radius should be capped at exactly max"
+        );
+    }
+
+    #[test]
+    fn affinity_expansion_three_exposures() {
+        let shape = ShapeDescriptor::new(vec![1.0, 0.0, 0.0]);
+        let mut detector = ImmuneDetector::new(shape, 0.3, EngramId(1));
+
+        let initial = detector.affinity_radius;
+        detector.expand_radius(1.1, DEFAULT_MAX_AFFINITY_RADIUS);
+        detector.expand_radius(1.1, DEFAULT_MAX_AFFINITY_RADIUS);
+        detector.expand_radius(1.1, DEFAULT_MAX_AFFINITY_RADIUS);
+
+        let expected = (initial * 1.1 * 1.1 * 1.1).min(DEFAULT_MAX_AFFINITY_RADIUS);
+        assert!(
+            (detector.affinity_radius - expected).abs() < 1e-10,
+            "after 3 expositions, radius should be {expected}, got {}",
+            detector.affinity_radius,
+        );
+        assert!(detector.affinity_radius > initial);
+    }
+
+    // -------------------------------------------------------------------
+    // Maturation pipeline tests (on_detection)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn maturation_pipeline_partial_match_triggers_mutation() {
+        let system = ImmuneSystem::new();
+
+        // Detector with radius 1.0 — partial zone is [0.8, 1.2]
+        let shape = ShapeDescriptor::new(vec![1.0, 0.0, 0.0]);
+        let det_id = system.register(ImmuneDetector::new(shape.clone(), 1.0, EngramId(1)));
+
+        // We need a context whose distance is between 0.8 and 1.2.
+        // shape = [1,0,0] normalised. Build a context at known distance ~1.0.
+        // Two unit vectors at angle θ have distance 2*sin(θ/2).
+        // For dist=1.0, θ = 2*arcsin(0.5) = π/3 = 60°.
+        let angle = std::f64::consts::FRAC_PI_3; // 60 degrees → distance = 1.0
+        let ctx = ShapeDescriptor::new(vec![angle.cos(), angle.sin(), 0.0]);
+        let dist = shape.euclidean_distance(&ctx);
+
+        // Verify the distance is in partial zone
+        assert!(
+            dist >= 1.0 * PARTIAL_MATCH_LOWER && dist <= 1.0 * PARTIAL_MATCH_UPPER,
+            "distance {dist} should be in partial zone [0.8, 1.2]"
+        );
+
+        let matured = system.on_detection(&ctx, 1.1, DEFAULT_MAX_AFFINITY_RADIUS);
+        assert_eq!(matured.len(), 1, "one detector should mature");
+        assert_eq!(matured[0], det_id);
+
+        let det = system.get(&det_id).unwrap();
+        assert_eq!(det.clone_count, 1, "clone_count should increment");
+        assert_eq!(det.mutation_history.len(), 1, "history should have one entry");
+        assert!(
+            det.affinity_radius > 1.0,
+            "radius should have expanded from 1.0"
+        );
+        // After mutation, shape should be closer to ctx
+        assert!(
+            det.shape.euclidean_distance(&ctx) < shape.euclidean_distance(&ctx),
+            "mutated shape should be closer to the variant"
+        );
+    }
+
+    #[test]
+    fn maturation_pipeline_exact_match_no_maturation() {
+        let system = ImmuneSystem::new();
+        let shape = ShapeDescriptor::new(vec![1.0, 0.0, 0.0]);
+        system.register(ImmuneDetector::new(shape.clone(), 1.0, EngramId(1)));
+
+        // Exact match — distance ≈ 0, which is < 0.8 (lower bound)
+        let matured = system.on_detection(&shape, 1.1, DEFAULT_MAX_AFFINITY_RADIUS);
+        assert!(
+            matured.is_empty(),
+            "exact match should NOT trigger maturation (not a partial match)"
+        );
+    }
+
+    #[test]
+    fn maturation_pipeline_far_miss_no_maturation() {
+        let system = ImmuneSystem::new();
+        let shape = ShapeDescriptor::new(vec![1.0, 0.0, 0.0]);
+        system.register(ImmuneDetector::new(shape, 0.3, EngramId(1)));
+
+        // Orthogonal — distance ≈ sqrt(2) >> 0.3*1.2
+        let far = ShapeDescriptor::new(vec![0.0, 1.0, 0.0]);
+        let matured = system.on_detection(&far, 1.1, DEFAULT_MAX_AFFINITY_RADIUS);
+        assert!(
+            matured.is_empty(),
+            "far miss should NOT trigger maturation"
+        );
     }
 }
