@@ -76,6 +76,25 @@ pub mod episodic;
 #[cfg(feature = "consolidation")]
 pub mod consolidation;
 
+// Stigmergy — diffuse pheromone memory on edges (Layer 2)
+#[cfg(feature = "stigmergy")]
+pub mod stigmergy;
+
+// Immune system — anomaly detection via shape space (Layer 1)
+#[cfg(feature = "immune")]
+pub mod immune;
+
+// Epigenetic layer — cross-instance transgenerational memory (Layer 5)
+#[cfg(feature = "epigenetic")]
+pub mod epigenetic;
+
+// Engram system — biomimetic memory traces (Layer 0+)
+pub mod engram;
+
+// Level 2 introspection procedures (engrams.list, engrams.inspect, engrams.forget, cognitive.metrics)
+#[cfg(feature = "engram")]
+pub mod procedures;
+
 // Provenance — automatic cognitive event tracking
 pub mod provenance;
 
@@ -171,3 +190,42 @@ pub use provenance::{
 };
 
 pub use tenant::{TenantError, TenantGraph, TenantInfo, TenantManager};
+
+// Engram re-exports (always available: traits + types; feature-gated: subsystems)
+pub use engram::traits::{
+    CognitiveEdge, CognitiveFilter, CognitiveNode, CognitiveObservability, CognitiveStorage,
+    EdgeAnnotator, InMemoryVectorIndex, NoopQueryObserver, QueryObserver, VectorIndex,
+};
+pub use engram::{
+    Engram, EngramHorizon, EngramId, EpisodeId, FsrsState, PredictionError, RecallEvent,
+    RecallFeedback,
+};
+
+#[cfg(feature = "stigmergy")]
+pub use stigmergy::{
+    AtomicF64, PheromoneMap, StigmergicEngine, StigmergicFormationBridge,
+    StigmergicMutationListener, StigmergicQueryListener, StigmergicTrace, TrailType,
+};
+
+#[cfg(feature = "engram")]
+pub use engram::{
+    ActivatedEngram, CoActivationDetector, CognitiveMetrics, CompetitionResult,
+    CrystallizationConfig, CrystallizationDetector, CrystallizationProposal, CrystallizationResult,
+    DetailLevel, EngramFormationTrigger, EngramManager, EngramMetricsCollector, EngramStore,
+    FormationConfig, FsrsConfig, FsrsScheduler, HebbianWithSurprise, HomeostasisConfig,
+    HomeostasisEngine, HomeostasisSignal, IMMUNE_FP_RATE_THRESHOLD, LABEL_CRYSTALLIZED_NOTE,
+    LOW_PRECISION_BETA_THRESHOLD, MmrResult, REL_CRYSTALLIZED_IN, RecallEngine, RecallResult,
+    ReviewRating, SpectralEncoder, WarmupConfig, WarmupSelector, crystallize, generate_summary,
+    hopfield_retrieve, max_marginal_relevance, softmax_compete,
+};
+
+#[cfg(feature = "immune")]
+pub use immune::{
+    DEFAULT_AFFINITY_RADIUS, Detection, DetectorId, ImmuneDetector, ImmuneSystem, ShapeDescriptor,
+};
+
+#[cfg(feature = "epigenetic")]
+pub use epigenetic::{
+    EngramTemplate, EpigeneticBridge, EpigeneticMark, EpigeneticMarkId, ExpressionCondition,
+    LABEL_EPIGENETIC_MARK, ProjectContext, SerializedMark, TRANSGENERATIONAL_DECAY,
+};

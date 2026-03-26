@@ -18,6 +18,21 @@ fabric = []
 co-change = []
 gds-refresh = ["fabric", "dep:grafeo-adapters"]
 
+# Engram subsystem (Layer 0: Hebbian + FSRS)
+engram = []
+
+# Stigmergy (Layer 2: diffuse memory on edges)
+stigmergy = []
+
+# Modern Hopfield + Predictive Coding (Layers 3+4)
+hopfield = ["engram"]
+
+# Immune system (Layer 1: anomaly detection via shape space)
+immune = []
+
+# Epigenetic layer (Layer 5: cross-instance transgenerational memory)
+epigenetic = ["dep:serde_json"]
+
 # Future subsystems
 scar = []
 memory = ["energy"]
@@ -89,3 +104,8 @@ workspace = true
 name = "cognitive_bench"
 harness = false
 required-features = ["cognitive"]
+
+[[bench]]
+name = "hopfield_bench"
+harness = false
+required-features = ["hopfield"]

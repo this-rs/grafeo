@@ -10,6 +10,11 @@ use crate::provenance::ProvenanceRecorder;
 #[allow(unused_imports)]
 use std::sync::Arc;
 
+#[cfg(feature = "engram")]
+use crate::engram::traits::VectorIndex;
+#[cfg(feature = "engram")]
+use crate::engram::{EngramMetricsCollector, EngramStore};
+
 // Conditional imports based on feature flags
 #[cfg(feature = "energy")]
 use crate::energy::{EnergyConfig, EnergyListener, EnergyStore};
@@ -55,6 +60,18 @@ pub trait CognitiveEngine: Send + Sync + std::fmt::Debug {
     #[cfg(feature = "co-change")]
     fn co_change_store(&self) -> Option<&Arc<CoChangeStore>>;
 
+    /// Returns the engram store, if the engram subsystem is active.
+    #[cfg(feature = "engram")]
+    fn engram_store(&self) -> Option<&Arc<EngramStore>>;
+
+    /// Returns the engram metrics collector, if the engram subsystem is active.
+    #[cfg(feature = "engram")]
+    fn engram_metrics(&self) -> Option<&Arc<EngramMetricsCollector>>;
+
+    /// Returns the vector index used for spectral signature search, if available.
+    #[cfg(feature = "engram")]
+    fn vector_index(&self) -> Option<&Arc<dyn VectorIndex>>;
+
     /// Returns the number of active subsystems.
     fn active_subsystem_count(&self) -> usize;
 
@@ -85,6 +102,15 @@ pub struct DefaultCognitiveEngine {
 
     #[cfg(feature = "co-change")]
     co_change: Option<Arc<CoChangeStore>>,
+
+    #[cfg(feature = "engram")]
+    engram_store: Option<Arc<EngramStore>>,
+
+    #[cfg(feature = "engram")]
+    engram_metrics: Option<Arc<EngramMetricsCollector>>,
+
+    #[cfg(feature = "engram")]
+    vector_index: Option<Arc<dyn VectorIndex>>,
 
     /// Count of active subsystems.
     active_count: usize,
@@ -117,6 +143,21 @@ impl CognitiveEngine for DefaultCognitiveEngine {
         self.co_change.as_ref()
     }
 
+    #[cfg(feature = "engram")]
+    fn engram_store(&self) -> Option<&Arc<EngramStore>> {
+        self.engram_store.as_ref()
+    }
+
+    #[cfg(feature = "engram")]
+    fn engram_metrics(&self) -> Option<&Arc<EngramMetricsCollector>> {
+        self.engram_metrics.as_ref()
+    }
+
+    #[cfg(feature = "engram")]
+    fn vector_index(&self) -> Option<&Arc<dyn VectorIndex>> {
+        self.vector_index.as_ref()
+    }
+
     fn active_subsystem_count(&self) -> usize {
         self.active_count
     }
@@ -143,6 +184,22 @@ impl DefaultCognitiveEngine {
     /// Returns the provenance recorder for querying cognitive event history.
     pub fn provenance_recorder(&self) -> &Arc<ProvenanceRecorder> {
         &self.provenance
+    }
+
+    /// Sets the engram store, metrics collector, and vector index.
+    ///
+    /// Called by higher-level coordinators (e.g., EngramManager) to wire
+    /// the engram subsystem into the cognitive engine for procedure access.
+    #[cfg(feature = "engram")]
+    pub fn set_engram_subsystem(
+        &mut self,
+        store: Arc<EngramStore>,
+        metrics: Arc<EngramMetricsCollector>,
+        vector_index: Arc<dyn VectorIndex>,
+    ) {
+        self.engram_store = Some(store);
+        self.engram_metrics = Some(metrics);
+        self.vector_index = Some(vector_index);
     }
 }
 
@@ -394,6 +451,12 @@ impl CognitiveEngineBuilder {
             fabric,
             #[cfg(feature = "co-change")]
             co_change,
+            #[cfg(feature = "engram")]
+            engram_store: None,
+            #[cfg(feature = "engram")]
+            engram_metrics: None,
+            #[cfg(feature = "engram")]
+            vector_index: None,
             active_count,
             tenant_manager: TenantManager::new(),
             provenance,

@@ -101,6 +101,7 @@ reactive = []  # Reactive mutation event bus (post-commit hook for grafeo-reacti
 cognitive = ["reactive", "dep:grafeo-reactive", "dep:grafeo-cognitive", "grafeo-cognitive/cognitive"]  # Cognitive engine (energy + synapses)
 cognitive-fabric = ["cognitive", "grafeo-cognitive/cognitive-fabric"]  # + fabric, co-change, GDS
 cognitive-full = ["cognitive", "grafeo-cognitive/cognitive-full"]  # All cognitive subsystems
+cognitive-engram = ["cognitive", "grafeo-cognitive/engram"]  # Engram subsystem (Layer 0: Hebbian + FSRS)
 metrics = []  # Lock-free query, transaction, and session metrics
 embed = ["ort", "tokenizers", "hf-hub"]  # ONNX embedding generation (opt-in, adds ~17MB)
 
