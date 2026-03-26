@@ -141,7 +141,6 @@ pub struct CognitiveMetrics {
     pub max_pheromone_ratio: AtomicU64,
 
     // -- Immune metrics (Layer 1) --
-
     /// Total immune detections (scans that matched).
     pub immune_detections_total: AtomicU64,
     /// Total immune detections marked as false positives (rejected).
@@ -150,9 +149,16 @@ pub struct CognitiveMetrics {
     pub immune_detector_count: AtomicU64,
 
     // -- Precision β (Hopfield Layer 3+4) --
-
     /// Average precision β across all active engrams, stored as `f64::to_bits`.
     pub avg_precision_beta: AtomicU64,
+
+    // -- Epigenetic metrics (Layer 5) --
+    /// Total epigenetic marks evaluated during formation decisions.
+    pub marks_evaluated: AtomicU64,
+    /// Total epigenetic marks with positive modulation that were applied.
+    pub marks_applied: AtomicU64,
+    /// Total epigenetic marks with negative modulation (suppression) that were applied.
+    pub marks_suppressed: AtomicU64,
 }
 
 impl Default for CognitiveMetrics {
@@ -176,6 +182,9 @@ impl Default for CognitiveMetrics {
             immune_detections_rejected: AtomicU64::new(0),
             immune_detector_count: AtomicU64::new(0),
             avg_precision_beta: AtomicU64::new(0.0_f64.to_bits()),
+            marks_evaluated: AtomicU64::new(0),
+            marks_applied: AtomicU64::new(0),
+            marks_suppressed: AtomicU64::new(0),
         }
     }
 }
@@ -208,16 +217,22 @@ pub struct CognitiveMetricsSnapshot {
     pub max_pheromone_ratio: f64,
 
     // -- Immune metrics (Layer 1) --
-
     /// Immune false-positive rate: rejected / total detections. Target < 20%.
     pub immune_fp_rate: f64,
     /// Number of active immune detectors.
     pub immune_detector_count: u64,
 
     // -- Precision β (Hopfield Layer 3+4) --
-
     /// Average precision β across all active engrams.
     pub avg_precision_beta: f64,
+
+    // -- Epigenetic metrics (Layer 5) --
+    /// Total epigenetic marks evaluated during formation decisions.
+    pub marks_evaluated: u64,
+    /// Total epigenetic marks with positive modulation applied.
+    pub marks_applied: u64,
+    /// Total epigenetic marks with negative modulation (suppression) applied.
+    pub marks_suppressed: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -355,10 +370,7 @@ impl EngramMetricsCollector {
     /// Returns the current immune false-positive rate (rejected / total).
     /// Returns 0.0 when there are no detections.
     pub fn immune_fp_rate(&self) -> f64 {
-        let total = self
-            .metrics
-            .immune_detections_total
-            .load(Ordering::Relaxed);
+        let total = self.metrics.immune_detections_total.load(Ordering::Relaxed);
         if total == 0 {
             return 0.0;
         }
@@ -376,6 +388,25 @@ impl EngramMetricsCollector {
         self.metrics
             .avg_precision_beta
             .store(avg_beta.to_bits(), Ordering::Relaxed);
+    }
+
+    // -- Epigenetic metrics --
+
+    /// Records the outcome of epigenetic mark evaluation during formation.
+    ///
+    /// `evaluated` is the total number of marks checked.
+    /// `applied` is the number with positive modulation.
+    /// `suppressed` is the number with negative modulation.
+    pub fn record_epigenetic_marks(&self, evaluated: usize, applied: usize, suppressed: usize) {
+        self.metrics
+            .marks_evaluated
+            .fetch_add(evaluated as u64, Ordering::Relaxed);
+        self.metrics
+            .marks_applied
+            .fetch_add(applied as u64, Ordering::Relaxed);
+        self.metrics
+            .marks_suppressed
+            .fetch_add(suppressed as u64, Ordering::Relaxed);
     }
 
     /// Convenience: updates both pheromone entropy and max/mean ratio at once.
@@ -410,6 +441,9 @@ impl EngramMetricsCollector {
             avg_precision_beta: f64::from_bits(
                 self.metrics.avg_precision_beta.load(Ordering::Relaxed),
             ),
+            marks_evaluated: self.metrics.marks_evaluated.load(Ordering::Relaxed),
+            marks_applied: self.metrics.marks_applied.load(Ordering::Relaxed),
+            marks_suppressed: self.metrics.marks_suppressed.load(Ordering::Relaxed),
         }
     }
 }
@@ -470,9 +504,8 @@ impl HomeostasisSignal {
 
         let meta_plasticity_boost = if snapshot.avg_precision_beta < LOW_PRECISION_BETA_THRESHOLD {
             // Linear boost: 0.0 β → 2.0x, threshold β → 1.0x
-            let ratio =
-                (LOW_PRECISION_BETA_THRESHOLD - snapshot.avg_precision_beta)
-                    / LOW_PRECISION_BETA_THRESHOLD;
+            let ratio = (LOW_PRECISION_BETA_THRESHOLD - snapshot.avg_precision_beta)
+                / LOW_PRECISION_BETA_THRESHOLD;
             (1.0 + ratio).min(2.0)
         } else {
             1.0
@@ -906,6 +939,40 @@ mod tests {
         let regulation = HomeostasisSignal::from_metrics(&s);
         assert!(regulation.should_regulate_immune);
         assert!(regulation.meta_plasticity_boost > 1.0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Epigenetic metrics tests (marks_evaluated, marks_applied, marks_suppressed)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn metrics_epigenetic_defaults_zero() {
+        let c = EngramMetricsCollector::new();
+        let s = c.snapshot();
+        assert_eq!(s.marks_evaluated, 0);
+        assert_eq!(s.marks_applied, 0);
+        assert_eq!(s.marks_suppressed, 0);
+    }
+
+    #[test]
+    fn metrics_epigenetic_records_correctly() {
+        let c = EngramMetricsCollector::new();
+        c.record_epigenetic_marks(5, 3, 1);
+        let s = c.snapshot();
+        assert_eq!(s.marks_evaluated, 5);
+        assert_eq!(s.marks_applied, 3);
+        assert_eq!(s.marks_suppressed, 1);
+    }
+
+    #[test]
+    fn metrics_epigenetic_accumulates() {
+        let c = EngramMetricsCollector::new();
+        c.record_epigenetic_marks(3, 2, 1);
+        c.record_epigenetic_marks(2, 1, 0);
+        let s = c.snapshot();
+        assert_eq!(s.marks_evaluated, 5);
+        assert_eq!(s.marks_applied, 3);
+        assert_eq!(s.marks_suppressed, 1);
     }
 
     #[test]

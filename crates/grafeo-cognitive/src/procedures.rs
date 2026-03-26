@@ -8,8 +8,8 @@
 
 use grafeo_common::types::Value;
 
-use crate::{EngramId, EngramMetricsCollector, EngramStore, VectorIndex};
 use crate::engram::CognitiveMetricsSnapshot;
+use crate::{EngramId, EngramMetricsCollector, EngramStore, VectorIndex};
 
 // ---------------------------------------------------------------------------
 // Result type — rows + columns (mirrors AlgorithmResult without depending on adapters)
@@ -170,9 +170,8 @@ pub fn engrams_forget(
         // Step 2: Count relations that will be removed
         // Relations are implicit in the ensemble (PART_OF), source_episodes (DERIVED_FROM),
         // recall_history (RECALLED_IN), and any crystallization links (CRYSTALLIZED_IN).
-        let relations_count = engram.ensemble.len()
-            + engram.source_episodes.len()
-            + engram.recall_history.len();
+        let relations_count =
+            engram.ensemble.len() + engram.source_episodes.len() + engram.recall_history.len();
 
         // Step 3: Remove from vector index (spectral signature cleanup)
         vector_index.remove(&id.0.to_string());
@@ -225,6 +224,9 @@ pub fn cognitive_metrics(collector: &EngramMetricsCollector) -> ProcedureResult 
         "immune_fp_rate".to_string(),
         "immune_detector_count".to_string(),
         "avg_precision_beta".to_string(),
+        "marks_evaluated".to_string(),
+        "marks_applied".to_string(),
+        "marks_suppressed".to_string(),
     ]);
 
     let snap = collector.snapshot();
@@ -247,6 +249,9 @@ pub fn cognitive_metrics(collector: &EngramMetricsCollector) -> ProcedureResult 
         Value::Float64(snap.immune_fp_rate),
         Value::Int64(snap.immune_detector_count as i64),
         Value::Float64(snap.avg_precision_beta),
+        Value::Int64(snap.marks_evaluated as i64),
+        Value::Int64(snap.marks_applied as i64),
+        Value::Int64(snap.marks_suppressed as i64),
     ]);
 
     result
@@ -306,6 +311,9 @@ pub fn yield_columns(procedure_name: &str) -> Option<Vec<String>> {
             "immune_fp_rate".into(),
             "immune_detector_count".into(),
             "avg_precision_beta".into(),
+            "marks_evaluated".into(),
+            "marks_applied".into(),
+            "marks_suppressed".into(),
         ]),
         _ => None,
     }
@@ -318,14 +326,16 @@ pub fn yield_columns(procedure_name: &str) -> Option<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        Engram, EpisodeId, InMemoryVectorIndex, RecallEvent, RecallFeedback,
-    };
+    use crate::{Engram, EpisodeId, InMemoryVectorIndex, RecallEvent, RecallFeedback};
     use grafeo_common::types::NodeId;
     use std::sync::Arc;
     use std::time::SystemTime;
 
-    fn make_test_store() -> (EngramStore, Arc<InMemoryVectorIndex>, EngramMetricsCollector) {
+    fn make_test_store() -> (
+        EngramStore,
+        Arc<InMemoryVectorIndex>,
+        EngramMetricsCollector,
+    ) {
         let store = EngramStore::new(None);
         let index = Arc::new(InMemoryVectorIndex::new());
         let metrics = EngramMetricsCollector::new();
@@ -461,7 +471,10 @@ mod tests {
         // Spectral signature should be removed from vector index
         let nearest = index.nearest(&vec![0.1; 8], 10);
         for (id_str, _) in &nearest {
-            assert_ne!(id_str, "1", "forgotten engram should not appear in vector index");
+            assert_ne!(
+                id_str, "1",
+                "forgotten engram should not appear in vector index"
+            );
         }
     }
 
@@ -480,7 +493,11 @@ mod tests {
         let (store, index, _metrics) = make_test_store();
         engrams_forget(&store, index.as_ref(), 2);
         let result = engrams_inspect(&store, 2);
-        assert_eq!(result.rows.len(), 0, "inspect after forget should return empty");
+        assert_eq!(
+            result.rows.len(),
+            0,
+            "inspect after forget should return empty"
+        );
     }
 
     #[test]
@@ -515,7 +532,7 @@ mod tests {
 
         let result = cognitive_metrics(&metrics);
 
-        assert_eq!(result.columns.len(), 17);
+        assert_eq!(result.columns.len(), 20);
         assert_eq!(result.rows.len(), 1);
 
         let row = &result.rows[0];
@@ -544,6 +561,10 @@ mod tests {
         if let Value::Float64(v) = &row[16] {
             assert!((*v - 2.5).abs() < f64::EPSILON);
         }
+        // marks_evaluated, marks_applied, marks_suppressed — all 0 (not recorded)
+        assert_eq!(row[17], Value::Int64(0));
+        assert_eq!(row[18], Value::Int64(0));
+        assert_eq!(row[19], Value::Int64(0));
     }
 
     #[test]
@@ -570,14 +591,14 @@ mod tests {
         let result = cognitive_metrics(&metrics);
         let row = &result.rows[0];
 
-        assert_eq!(row[0], Value::Int64(5));  // engrams_active
-        assert_eq!(row[1], Value::Int64(5));  // engrams_formed
-        assert_eq!(row[4], Value::Int64(2));  // engrams_crystallized
-        assert_eq!(row[5], Value::Int64(5));  // formations_attempted
+        assert_eq!(row[0], Value::Int64(5)); // engrams_active
+        assert_eq!(row[1], Value::Int64(5)); // engrams_formed
+        assert_eq!(row[4], Value::Int64(2)); // engrams_crystallized
+        assert_eq!(row[5], Value::Int64(5)); // formations_attempted
         assert_eq!(row[6], Value::Int64(10)); // recalls_attempted
-        assert_eq!(row[7], Value::Int64(8));  // recalls_successful
-        assert_eq!(row[8], Value::Int64(2));  // recalls_rejected
-        assert_eq!(row[9], Value::Int64(3));  // homeostasis_sweeps
+        assert_eq!(row[7], Value::Int64(8)); // recalls_successful
+        assert_eq!(row[8], Value::Int64(2)); // recalls_rejected
+        assert_eq!(row[9], Value::Int64(3)); // homeostasis_sweeps
     }
 
     // -----------------------------------------------------------------------

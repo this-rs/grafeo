@@ -504,6 +504,69 @@ impl EpigeneticBridge {
         &self.marks
     }
 
+    /// Retrieve active marks whose conditions are satisfied in the given
+    /// `ProjectContext` and whose target template matches the provided template.
+    ///
+    /// Matching logic:
+    /// - If the mark's target has `required_labels`, every label must appear in
+    ///   the query template's `required_labels`.
+    /// - If the mark's target has a `description_pattern`, the query template
+    ///   must also have a description pattern that contains the mark's pattern
+    ///   as a substring.
+    /// - `min_spectral_similarity` is not evaluated here (requires vector data).
+    ///
+    /// Non-matching marks are silently ignored (log::debug).
+    pub fn get_active_marks(
+        &self,
+        template: &EngramTemplate,
+        ctx: &ProjectContext,
+    ) -> Vec<EpigeneticMark> {
+        self.marks
+            .iter()
+            .filter(|mark| {
+                // 1. Evaluate expression conditions against project context
+                if !mark.evaluate_conditions(ctx) {
+                    return false;
+                }
+
+                // 2. Check template matching: required_labels subset check
+                let mark_target = mark.target();
+                if !mark_target.required_labels.is_empty() {
+                    let query_labels: std::collections::HashSet<&str> =
+                        template.required_labels.iter().map(|s| s.as_str()).collect();
+                    let all_present = mark_target
+                        .required_labels
+                        .iter()
+                        .all(|l| query_labels.contains(l.as_str()));
+                    if !all_present {
+                        tracing::debug!(
+                            mark_id = %mark.id(),
+                            "epigenetic mark template labels don't match — skipping"
+                        );
+                        return false;
+                    }
+                }
+
+                // 3. Check description_pattern match (substring)
+                if let Some(ref mark_pattern) = mark_target.description_pattern {
+                    match &template.description_pattern {
+                        Some(query_desc) if query_desc.contains(mark_pattern.as_str()) => {}
+                        _ => {
+                            tracing::debug!(
+                                mark_id = %mark.id(),
+                                "epigenetic mark description_pattern doesn't match — skipping"
+                            );
+                            return false;
+                        }
+                    }
+                }
+
+                true
+            })
+            .cloned()
+            .collect()
+    }
+
     /// Export all transmissible marks as a serialized package.
     ///
     /// Filters to only marks where `transmissible == true`, then serializes
@@ -900,7 +963,11 @@ mod tests {
         ));
 
         let exported = bridge.export();
-        assert_eq!(exported.len(), 3, "export should return exactly 3 transmissible marks");
+        assert_eq!(
+            exported.len(),
+            3,
+            "export should return exactly 3 transmissible marks"
+        );
 
         // Verify the exported marks have correct metadata
         assert!((exported[0].modulation - 0.8).abs() < f64::EPSILON);
@@ -978,7 +1045,12 @@ mod tests {
 
         // First project: create and export
         let mut bridge1 = EpigeneticBridge::new();
-        bridge1.add_mark(EpigeneticMark::new(EngramTemplate::any(), 1.0, true, vec![]));
+        bridge1.add_mark(EpigeneticMark::new(
+            EngramTemplate::any(),
+            1.0,
+            true,
+            vec![],
+        ));
         let exported1 = bridge1.export();
 
         // Second project: import
@@ -1041,6 +1113,95 @@ mod tests {
         let count = bridge.import(vec![serialized], &ctx);
         assert_eq!(count, 1);
         assert_eq!(bridge.mark_count(), 1);
+    }
+
+    // ─── Step: get_active_marks tests ──────────────────────────────────
+
+    #[test]
+    fn test_get_active_marks_returns_matching_only() {
+        let mut bridge = EpigeneticBridge::new();
+
+        // Mark 1: targets "WAL" + "Bug" labels, condition HasFile("wal.rs") → should match
+        bridge.add_mark(EpigeneticMark::new(
+            EngramTemplate {
+                required_labels: vec!["WAL".into(), "Bug".into()],
+                min_spectral_similarity: 0.0,
+                description_pattern: None,
+            },
+            0.5,
+            true,
+            vec![ExpressionCondition::HasFile("wal.rs".into())],
+        ));
+
+        // Mark 2: targets "Perf" label → should NOT match (template has WAL+Bug)
+        bridge.add_mark(EpigeneticMark::new(
+            EngramTemplate::with_labels(vec!["Perf".into()]),
+            -0.3,
+            true,
+            vec![],
+        ));
+
+        // Mark 3: unconditional, no labels → matches anything BUT condition HasFile("nope.rs") fails
+        bridge.add_mark(EpigeneticMark::new(
+            EngramTemplate::any(),
+            0.2,
+            false,
+            vec![ExpressionCondition::HasFile("nope.rs".into())],
+        ));
+
+        let ctx = ProjectContext::new()
+            .with_file("wal.rs")
+            .with_node_count(20);
+
+        let query_template = EngramTemplate {
+            required_labels: vec!["WAL".into(), "Bug".into(), "Recovery".into()],
+            min_spectral_similarity: 0.0,
+            description_pattern: None,
+        };
+
+        let active = bridge.get_active_marks(&query_template, &ctx);
+        assert_eq!(
+            active.len(),
+            1,
+            "only mark 1 should match (mark 2 wrong labels, mark 3 condition fails)"
+        );
+        assert!((active[0].modulation() - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_get_active_marks_description_pattern_matching() {
+        let mut bridge = EpigeneticBridge::new();
+
+        bridge.add_mark(EpigeneticMark::new(
+            EngramTemplate {
+                required_labels: vec![],
+                min_spectral_similarity: 0.0,
+                description_pattern: Some("WAL bug".into()),
+            },
+            0.7,
+            true,
+            vec![],
+        ));
+
+        let ctx = ProjectContext::new();
+
+        // Template description contains the pattern
+        let matching = EngramTemplate {
+            required_labels: vec![],
+            min_spectral_similarity: 0.0,
+            description_pattern: Some("A WAL bug in recovery".into()),
+        };
+        let active = bridge.get_active_marks(&matching, &ctx);
+        assert_eq!(active.len(), 1);
+
+        // Template description does NOT contain the pattern
+        let non_matching = EngramTemplate {
+            required_labels: vec![],
+            min_spectral_similarity: 0.0,
+            description_pattern: Some("query optimization".into()),
+        };
+        let active2 = bridge.get_active_marks(&non_matching, &ctx);
+        assert_eq!(active2.len(), 0);
     }
 
     #[test]

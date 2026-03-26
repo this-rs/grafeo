@@ -10,6 +10,8 @@ use dashmap::DashMap;
 use grafeo_common::types::NodeId;
 use serde::{Deserialize, Serialize};
 
+use crate::epigenetic::{EpigeneticMark, EngramTemplate, EpigeneticBridge, ProjectContext};
+
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
@@ -233,13 +235,26 @@ impl Default for CoActivationDetector {
     }
 }
 
+/// Compute the modulated `min_episodes` given a total epigenetic modulation.
+///
+/// - Positive modulation (amplification) → **lower** threshold (easier formation)
+/// - Negative modulation (suppression) → **higher** threshold (harder formation)
+///
+/// Formula: `adjusted = base × (1.0 - total_modulation)`, clamped to `[1, base × 3]`.
+///
+/// Examples with base=3:
+/// - modulation +0.5 → 3 × 0.5 = 1.5 → 2
+/// - modulation -0.5 → 3 × 1.5 = 4.5 → 5
+/// - modulation  0.0 → 3 × 1.0 = 3.0 → 3
+pub fn compute_modulated_min_episodes(base_min_episodes: usize, total_modulation: f64) -> usize {
+    let factor = 1.0 - total_modulation;
+    let adjusted = (base_min_episodes as f64 * factor).round() as usize;
+    adjusted.clamp(1, base_min_episodes.saturating_mul(3).max(1))
+}
+
 /// Returns the pair `(min, max)` to canonicalize unordered node pairs.
 fn ordered_pair(a: NodeId, b: NodeId) -> (NodeId, NodeId) {
-    if a.0 <= b.0 {
-        (a, b)
-    } else {
-        (b, a)
-    }
+    if a.0 <= b.0 { (a, b) } else { (b, a) }
 }
 
 // ---------------------------------------------------------------------------
@@ -304,6 +319,65 @@ impl HebbianWithSurprise {
         }
 
         ensembles
+    }
+
+    /// Returns ensembles that meet both the co-activation *and* the surprise
+    /// threshold, with epigenetic mark modulation applied to `min_episodes`.
+    ///
+    /// A mark with positive modulation (+0.5) **lowers** the threshold (easier
+    /// formation). A mark with negative modulation (-0.5) **raises** it
+    /// (suppression).
+    ///
+    /// The effective `min_episodes` is:
+    /// ```text
+    /// adjusted = base_min_episodes × (1.0 - Σ effective_modulation)
+    /// ```
+    /// clamped to `[1, base × 3]` to prevent degenerate cases.
+    ///
+    /// Returns a tuple of `(ensembles, marks_evaluated, marks_applied, marks_suppressed)`.
+    pub fn should_form_engram_with_marks(
+        &self,
+        template: &EngramTemplate,
+        bridge: &EpigeneticBridge,
+        ctx: &ProjectContext,
+    ) -> (Vec<Vec<(NodeId, f64)>>, usize, usize, usize) {
+        // Check the cumulative surprise threshold first (cheap gate).
+        if self.surprise_accumulator < self.config.min_prediction_error {
+            return (Vec::new(), 0, 0, 0);
+        }
+
+        let active_marks = bridge.get_active_marks(template, ctx);
+        let marks_evaluated = active_marks.len();
+        let mut marks_applied = 0usize;
+        let mut marks_suppressed = 0usize;
+
+        let mut total_modulation = 0.0_f64;
+        for mark in &active_marks {
+            let eff = mark.effective_modulation();
+            if eff > 0.0 {
+                marks_applied += 1;
+            } else if eff < 0.0 {
+                marks_suppressed += 1;
+            }
+            total_modulation += eff;
+        }
+
+        let adjusted_min = compute_modulated_min_episodes(
+            self.config.min_episodes,
+            total_modulation,
+        );
+
+        let mut ensembles = self
+            .detector
+            .detect_patterns(adjusted_min, self.config.min_overlap);
+
+        // Enforce max ensemble size by truncating large clusters.
+        for ensemble in &mut ensembles {
+            ensemble.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            ensemble.truncate(self.config.max_ensemble_size);
+        }
+
+        (ensembles, marks_evaluated, marks_applied, marks_suppressed)
     }
 
     /// Returns the current cumulative surprise value.
@@ -405,6 +479,118 @@ mod tests {
         hebb.reset_surprise();
         assert!((hebb.cumulative_surprise()).abs() < f64::EPSILON);
         assert_eq!(hebb.activation_count(), 0);
+    }
+
+    #[test]
+    fn modulated_min_episodes_positive_mark_lowers_threshold() {
+        // base=3, modulation +0.5 → 3 × (1.0 - 0.5) = 1.5 → round → 2
+        let adjusted = compute_modulated_min_episodes(3, 0.5);
+        assert_eq!(adjusted, 2, "positive modulation should lower min_episodes");
+    }
+
+    #[test]
+    fn modulated_min_episodes_negative_mark_raises_threshold() {
+        // base=3, modulation -0.5 → 3 × (1.0 - (-0.5)) = 3 × 1.5 = 4.5 → round → 5
+        let adjusted = compute_modulated_min_episodes(3, -0.5);
+        assert_eq!(adjusted, 5, "negative modulation should raise min_episodes");
+    }
+
+    #[test]
+    fn modulated_min_episodes_zero_modulation_unchanged() {
+        let adjusted = compute_modulated_min_episodes(3, 0.0);
+        assert_eq!(adjusted, 3, "zero modulation should not change min_episodes");
+    }
+
+    #[test]
+    fn modulated_min_episodes_clamped_low() {
+        // base=3, modulation +1.0 → 3 × 0.0 = 0 → clamped to 1
+        let adjusted = compute_modulated_min_episodes(3, 1.0);
+        assert_eq!(adjusted, 1, "should clamp to minimum of 1");
+    }
+
+    #[test]
+    fn modulated_min_episodes_clamped_high() {
+        // base=3, modulation -5.0 → 3 × 6.0 = 18 → clamped to 3*3=9
+        let adjusted = compute_modulated_min_episodes(3, -5.0);
+        assert_eq!(adjusted, 9, "should clamp to maximum of base*3");
+    }
+
+    #[test]
+    fn should_form_engram_with_marks_positive_modulation() {
+        use crate::epigenetic::{EpigeneticBridge, EpigeneticMark, EngramTemplate, ProjectContext};
+
+        let config = FormationConfig {
+            min_episodes: 3,
+            min_overlap: 0.5,
+            min_prediction_error: 0.0,
+            max_ensemble_size: 10,
+        };
+        let mut hebb = HebbianWithSurprise::new(config);
+        let nodes = vec![NodeId(1), NodeId(2), NodeId(3)];
+
+        // Record exactly 2 episodes — below base min_episodes=3
+        for _ in 0..2 {
+            hebb.record_activation(&nodes, 0.5);
+        }
+
+        // Without marks: min_episodes=3, only 2 episodes → no formation
+        assert!(hebb.should_form_engram().is_empty());
+
+        // With a +0.5 mark → adjusted min_episodes = 2 → should form
+        let mut bridge = EpigeneticBridge::new();
+        bridge.add_mark(EpigeneticMark::new(
+            EngramTemplate::any(),
+            0.5,
+            true,
+            vec![],
+        ));
+        let ctx = ProjectContext::new();
+        let template = EngramTemplate::any();
+        let (ensembles, evaluated, applied, suppressed) =
+            hebb.should_form_engram_with_marks(&template, &bridge, &ctx);
+        assert!(!ensembles.is_empty(), "positive mark should lower threshold and allow formation");
+        assert_eq!(evaluated, 1);
+        assert_eq!(applied, 1);
+        assert_eq!(suppressed, 0);
+    }
+
+    #[test]
+    fn should_form_engram_with_marks_negative_modulation() {
+        use crate::epigenetic::{EpigeneticBridge, EpigeneticMark, EngramTemplate, ProjectContext};
+
+        let config = FormationConfig {
+            min_episodes: 3,
+            min_overlap: 0.5,
+            min_prediction_error: 0.0,
+            max_ensemble_size: 10,
+        };
+        let mut hebb = HebbianWithSurprise::new(config);
+        let nodes = vec![NodeId(1), NodeId(2), NodeId(3)];
+
+        // Record 4 episodes — enough for base min_episodes=3
+        for _ in 0..4 {
+            hebb.record_activation(&nodes, 0.5);
+        }
+
+        // Without marks: should form (4 >= 3)
+        assert!(!hebb.should_form_engram().is_empty());
+
+        // With -0.5 mark → adjusted min_episodes = 5 → 4 < 5 → no formation
+        let mut bridge = EpigeneticBridge::new();
+        bridge.add_mark(EpigeneticMark::new(
+            EngramTemplate::any(),
+            -0.5,
+            true,
+            vec![],
+        ));
+        let ctx = ProjectContext::new();
+        let template = EngramTemplate::any();
+        let (ensembles, evaluated, applied, suppressed) =
+            hebb.should_form_engram_with_marks(&template, &bridge, &ctx);
+        assert!(ensembles.is_empty(), "negative mark should raise threshold and block formation");
+        assert_eq!(evaluated, 1);
+        assert_eq!(applied, 0);
+        assert_eq!(suppressed, 1);
     }
 
     #[test]

@@ -39,6 +39,7 @@ mod formation;
 #[cfg(feature = "engram")]
 pub use formation::{
     CoActivationDetector, EngramFormationTrigger, FormationConfig, HebbianWithSurprise,
+    compute_modulated_min_episodes,
 };
 
 #[cfg(feature = "engram")]
@@ -85,9 +86,8 @@ pub use observe::{
 mod crystallization;
 #[cfg(feature = "engram")]
 pub use crystallization::{
-    CrystallizationConfig, CrystallizationDetector, CrystallizationProposal,
-    CrystallizationResult, LABEL_CRYSTALLIZED_NOTE, REL_CRYSTALLIZED_IN, crystallize,
-    generate_summary,
+    CrystallizationConfig, CrystallizationDetector, CrystallizationProposal, CrystallizationResult,
+    LABEL_CRYSTALLIZED_NOTE, REL_CRYSTALLIZED_IN, crystallize, generate_summary,
 };
 
 #[cfg(feature = "engram")]
