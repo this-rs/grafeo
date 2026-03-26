@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 use grafeo_common::types::NodeId;
 use serde::{Deserialize, Serialize};
 
-use super::hopfield::{self, PatternMatrix};
+use super::hopfield::{self, MmrResult, PatternMatrix};
 use super::spectral::SpectralEncoder;
 use super::store::EngramStore;
 use super::traits::VectorIndex;
@@ -197,88 +197,179 @@ impl Default for WarmupConfig {
     }
 }
 
-/// Selects diverse, relevant engrams for context warm-up using MMR.
+/// An activated engram selected for context warm-up.
+///
+/// The dominant engram is enriched with full detail, while secondaries
+/// carry only a condensed summary of their ensemble.
+#[derive(Debug, Clone)]
+pub struct ActivatedEngram {
+    /// The engram identifier.
+    pub engram_id: EngramId,
+    /// Relevance score from the selection pipeline.
+    pub relevance: f64,
+    /// MMR score at selection time.
+    pub mmr_score: f64,
+    /// The full engram data.
+    pub engram: Engram,
+    /// Whether this is the dominant (highest-activation) engram.
+    pub is_dominant: bool,
+    /// Summary: for the dominant this is `DetailLevel::Full`, for secondaries
+    /// it is `DetailLevel::Summary` with a condensed representation.
+    pub detail: DetailLevel,
+}
+
+/// Detail level for an activated engram in the warm-up context.
+#[derive(Debug, Clone)]
+pub enum DetailLevel {
+    /// Full detail — all ensemble nodes with weights.
+    Full,
+    /// Condensed summary — only the top-N contributing nodes.
+    Summary {
+        /// The top contributing nodes (sorted by weight descending).
+        top_nodes: Vec<(NodeId, f64)>,
+    },
+}
+
+/// Selects diverse, relevant engrams for context warm-up using the full
+/// Hopfield → softmax_compete → MMR pipeline.
 #[derive(Debug)]
 pub struct WarmupSelector;
 
 impl WarmupSelector {
-    /// Select warmup engrams using Maximal Marginal Relevance for diversity.
+    /// Select warmup engrams using the full Phase 3 pipeline.
     ///
-    /// # Algorithm (MMR)
-    /// At each step, the next engram is chosen to maximize:
-    ///   `score = lambda * relevance - (1 - lambda) * max_similarity_to_already_selected`
+    /// # Pipeline
+    /// 1. **Hopfield retrieve** — top-K candidates via Modern Hopfield attention
+    /// 2. **Softmax compete** — lateral inhibition eliminates weak candidates (threshold 0.15)
+    /// 3. **MMR** — Max Marginal Relevance ensures diversity (λ=0.7)
+    /// 4. **Truncate** — limit to budget
+    /// 5. **Enrich** — dominant in detail, secondaries in summary
     ///
-    /// This balances relevance to the cues with diversity among selected engrams.
+    /// Falls back to the basic recall path when no spectral signatures are available
+    /// (Phase 1 backward compatibility).
     pub fn select_warmup_engrams(
         store: &EngramStore,
         cues: &[NodeId],
         vector_index: &dyn VectorIndex,
         spectral: &SpectralEncoder,
         config: &WarmupConfig,
-    ) -> Vec<RecallResult> {
+    ) -> Vec<ActivatedEngram> {
         if cues.is_empty() || config.max_engrams == 0 {
             return Vec::new();
         }
 
-        // Start with a broad recall to get candidates.
-        let engine = RecallEngine::new();
-        let candidates = engine.recall(store, cues, vector_index, spectral, config.max_engrams * 3);
+        let budget = config.max_engrams;
+        let dim = spectral.dimensions();
 
-        // Filter by minimum strength.
-        let candidates: Vec<RecallResult> = candidates
-            .into_iter()
-            .filter(|r| r.engram.strength >= config.min_strength)
-            .collect();
+        // Build the Hopfield pattern matrix from stored spectral signatures.
+        let matrix = PatternMatrix::from_store(store, dim);
 
-        if candidates.is_empty() {
-            return Vec::new();
-        }
+        // Encode query from cues.
+        let cue_ensemble: Vec<(NodeId, f64)> = cues.iter().map(|&nid| (nid, 1.0)).collect();
+        let query_vec = spectral.encode(&cue_ensemble);
 
-        // Pre-compute spectral signatures for all candidates.
-        let signatures: Vec<Vec<f64>> = candidates
-            .iter()
-            .map(|r| spectral.encode(&r.engram.ensemble))
-            .collect();
+        if !matrix.is_empty() {
+            // --- Phase 3 pipeline: Hopfield → softmax → MMR → truncate → enrich ---
 
-        // Greedy MMR selection.
-        let lambda = config.diversity_lambda;
-        let mut selected: Vec<usize> = Vec::new();
-        let mut remaining: HashSet<usize> = (0..candidates.len()).collect();
+            // Step 1: Hopfield retrieve top-K candidates (3× budget for headroom).
+            let candidates =
+                hopfield::hopfield_retrieve(&matrix, &query_vec, store, budget * 3);
 
-        while selected.len() < config.max_engrams && !remaining.is_empty() {
-            let mut best_idx = None;
-            let mut best_score = f64::NEG_INFINITY;
-
-            for &i in &remaining {
-                let relevance = candidates[i].confidence;
-
-                // Compute max similarity to any already-selected engram.
-                let max_sim = selected
-                    .iter()
-                    .map(|&j| cosine_similarity(&signatures[i], &signatures[j]))
-                    .fold(0.0f64, f64::max);
-
-                let mmr_score = lambda * relevance - (1.0 - lambda) * max_sim;
-
-                if mmr_score > best_score {
-                    best_score = mmr_score;
-                    best_idx = Some(i);
-                }
+            if candidates.is_empty() {
+                return Vec::new();
             }
 
-            if let Some(idx) = best_idx {
-                selected.push(idx);
-                remaining.remove(&idx);
-            } else {
-                break;
-            }
-        }
+            // Filter by minimum strength before competition.
+            let candidates: Vec<_> = candidates
+                .into_iter()
+                .filter(|c| c.engram.strength >= config.min_strength)
+                .collect();
 
-        selected
-            .into_iter()
-            .map(|i| candidates[i].clone())
-            .collect()
+            if candidates.is_empty() {
+                return Vec::new();
+            }
+
+            // Step 2: Softmax competitive activation with lateral inhibition.
+            let competed = hopfield::softmax_compete(&candidates, 0.15);
+
+            if competed.is_empty() {
+                return Vec::new();
+            }
+
+            // Step 3: MMR for diversity.
+            let mmr_results =
+                hopfield::max_marginal_relevance(&competed, config.diversity_lambda);
+
+            // Step 4: Truncate to budget.
+            let truncated: Vec<_> = mmr_results.into_iter().take(budget).collect();
+
+            // Step 5: Enrich — dominant gets full detail, secondaries get summary.
+            enrich_with_background(truncated)
+        } else {
+            // --- Fallback: Phase 1 compatible path (no spectral signatures) ---
+            let engine = RecallEngine::new();
+            let recall_results =
+                engine.recall(store, cues, vector_index, spectral, budget * 3);
+
+            let filtered: Vec<_> = recall_results
+                .into_iter()
+                .filter(|r| r.engram.strength >= config.min_strength)
+                .take(budget)
+                .collect();
+
+            // Convert to ActivatedEngram with first as dominant.
+            filtered
+                .into_iter()
+                .enumerate()
+                .map(|(i, r)| {
+                    let is_dominant = i == 0;
+                    ActivatedEngram {
+                        engram_id: r.engram_id,
+                        relevance: r.confidence,
+                        mmr_score: r.confidence,
+                        engram: r.engram.clone(),
+                        is_dominant,
+                        detail: if is_dominant {
+                            DetailLevel::Full
+                        } else {
+                            make_summary(&r.engram)
+                        },
+                    }
+                })
+                .collect()
+        }
     }
+}
+
+/// Enrich MMR results: dominant engram gets full detail, secondaries get condensed summary.
+fn enrich_with_background(results: Vec<MmrResult>) -> Vec<ActivatedEngram> {
+    results
+        .into_iter()
+        .map(|r| {
+            let detail = if r.is_dominant {
+                DetailLevel::Full
+            } else {
+                make_summary(&r.engram)
+            };
+            ActivatedEngram {
+                engram_id: r.engram_id,
+                relevance: r.relevance,
+                mmr_score: r.mmr_score,
+                engram: r.engram,
+                is_dominant: r.is_dominant,
+                detail,
+            }
+        })
+        .collect()
+}
+
+/// Create a summary detail level from an engram — top 3 contributing nodes.
+fn make_summary(engram: &Engram) -> DetailLevel {
+    const SUMMARY_TOP_N: usize = 3;
+    let mut top: Vec<(NodeId, f64)> = engram.ensemble.clone();
+    top.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    top.truncate(SUMMARY_TOP_N);
+    DetailLevel::Summary { top_nodes: top }
 }
 
 // ---------------------------------------------------------------------------
@@ -440,7 +531,6 @@ mod tests {
             max_engrams: 10,
             diversity_lambda: 0.7,
             min_strength: 0.7, // Only the strongest engrams.
-            ..Default::default()
         };
 
         let results =
@@ -518,5 +608,172 @@ mod tests {
         let b = vec![0.0, 1.0];
         let sim = cosine_similarity(&a, &b);
         assert!(sim.abs() < 1e-10);
+    }
+
+    // -- warmup_pipeline end-to-end test --
+
+    #[test]
+    fn warmup_pipeline_end_to_end() {
+        use std::time::Instant;
+
+        let store = EngramStore::new(None);
+        let index = InMemoryVectorIndex::new();
+        let spectral = SpectralEncoder::new();
+        let _dim = spectral.dimensions();
+
+        // Create 50 engrams with spectral signatures for the Hopfield path.
+        // Group them into clusters to test diversity:
+        //   - Cluster A (25 engrams): nodes 1..=3, high overlap
+        //   - Cluster B (15 engrams): nodes 50..=52, different region
+        //   - Cluster C (10 engrams): nodes 100..=102, another region
+        for i in 0..50u64 {
+            let id = store.next_id();
+            let nodes: Vec<(NodeId, f64)> = if i < 25 {
+                // Cluster A: variations around nodes 1-3
+                vec![
+                    (NodeId(1), 1.0),
+                    (NodeId(2), 0.8 + (i as f64) * 0.005),
+                    (NodeId(3), 0.5),
+                ]
+            } else if i < 40 {
+                // Cluster B
+                vec![
+                    (NodeId(50), 1.0),
+                    (NodeId(51), 0.7 + (i as f64) * 0.005),
+                    (NodeId(52), 0.4),
+                ]
+            } else {
+                // Cluster C
+                vec![
+                    (NodeId(100), 1.0),
+                    (NodeId(101), 0.6 + (i as f64) * 0.005),
+                    (NodeId(102), 0.3),
+                ]
+            };
+
+            let mut engram = Engram::new(id, nodes.clone());
+            engram.strength = 0.5 + (i as f64) * 0.008;
+            let sig = spectral.encode(&nodes);
+            engram.spectral_signature = sig.clone();
+            engram.precision = 2.0 + (i as f64) * 0.1;
+            index.upsert(&id.0.to_string(), &sig);
+            store.insert(engram);
+        }
+
+        assert_eq!(store.count(), 50);
+
+        let config = WarmupConfig {
+            max_engrams: 3,
+            diversity_lambda: 0.7,
+            min_strength: 0.3,
+        };
+
+        // Query with cues from cluster A.
+        let cues = vec![NodeId(1), NodeId(2)];
+
+        let start = Instant::now();
+        let results =
+            WarmupSelector::select_warmup_engrams(&store, &cues, &index, &spectral, &config);
+        let elapsed = start.elapsed();
+
+        // Performance: must be < 50ms.
+        assert!(
+            elapsed.as_millis() < 50,
+            "Warmup pipeline took {}ms, expected < 50ms",
+            elapsed.as_millis()
+        );
+
+        // Budget: at most 3 results.
+        assert!(
+            results.len() <= 3,
+            "Expected <= 3 results, got {}",
+            results.len()
+        );
+        assert!(
+            !results.is_empty(),
+            "Expected at least 1 result"
+        );
+
+        // Exactly one dominant.
+        let dominant_count = results.iter().filter(|r| r.is_dominant).count();
+        assert_eq!(dominant_count, 1, "Expected exactly 1 dominant engram");
+
+        // Dominant should be first.
+        assert!(results[0].is_dominant, "First result should be dominant");
+
+        // Dominant has Full detail, secondaries have Summary detail.
+        for r in &results {
+            match (&r.detail, r.is_dominant) {
+                (DetailLevel::Full, true) => {} // OK
+                (DetailLevel::Summary { top_nodes }, false) => {
+                    assert!(!top_nodes.is_empty(), "Summary should have top nodes");
+                }
+                _ => panic!(
+                    "Unexpected detail level for engram {} (dominant={})",
+                    r.engram_id, r.is_dominant
+                ),
+            }
+        }
+
+        // Diversity check: if we have 3 results, they shouldn't all be from the
+        // same cluster. The MMR should have pulled in at least one from a different
+        // cluster. We check via the spectral signatures — they should not all be
+        // near-identical.
+        if results.len() == 3 {
+            let sigs: Vec<&[f64]> = results.iter().map(|r| r.engram.spectral_signature.as_slice()).collect();
+            let sim_01 = cosine_similarity(sigs[0], sigs[1]);
+            let sim_02 = cosine_similarity(sigs[0], sigs[2]);
+            let sim_12 = cosine_similarity(sigs[1], sigs[2]);
+            let _max_sim = sim_01.max(sim_02).max(sim_12);
+            // At least one pair should have lower similarity (diversity).
+            let min_sim = sim_01.min(sim_02).min(sim_12);
+            assert!(
+                min_sim < 0.99,
+                "Expected diversity in results but all pairwise similarities are high: {:.3}, {:.3}, {:.3}",
+                sim_01, sim_02, sim_12
+            );
+        }
+    }
+
+    #[test]
+    fn warmup_pipeline_empty_cues() {
+        let store = EngramStore::new(None);
+        let index = InMemoryVectorIndex::new();
+        let spectral = SpectralEncoder::new();
+        let config = WarmupConfig::default();
+
+        let results =
+            WarmupSelector::select_warmup_engrams(&store, &[], &index, &spectral, &config);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn warmup_pipeline_fallback_no_signatures() {
+        // Test the Phase 1 fallback path (no spectral signatures in store).
+        let (store, index, spectral) = make_store_and_index();
+
+        // Clear spectral signatures to force fallback.
+        for engram in store.list() {
+            store.update(engram.id, |e| {
+                e.spectral_signature.clear();
+            });
+        }
+
+        let config = WarmupConfig {
+            max_engrams: 3,
+            diversity_lambda: 0.7,
+            min_strength: 0.0,
+        };
+
+        let results = WarmupSelector::select_warmup_engrams(
+            &store,
+            &[NodeId(3)],
+            &index,
+            &spectral,
+            &config,
+        );
+        // Should still work via fallback.
+        // (May be empty if VectorIndex returns no results, but should not panic.)
+        assert!(results.len() <= 3);
     }
 }

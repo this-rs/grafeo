@@ -201,14 +201,14 @@ pub use stigmergy::{
 
 #[cfg(feature = "engram")]
 pub use engram::{
-    CoActivationDetector, CognitiveMetrics, EngramFormationTrigger, EngramManager,
-    EngramMetricsCollector, EngramStore, FormationConfig, FsrsConfig, FsrsScheduler,
-    HebbianWithSurprise, HomeostasisConfig, HomeostasisEngine, RecallEngine, RecallResult,
-    ReviewRating, SpectralEncoder, WarmupConfig, WarmupSelector,
+    ActivatedEngram, CoActivationDetector, CognitiveMetrics, CompetitionResult, DetailLevel,
+    EngramFormationTrigger, EngramManager, EngramMetricsCollector, EngramStore, FormationConfig,
+    FsrsConfig, FsrsScheduler, HebbianWithSurprise, HomeostasisConfig, HomeostasisEngine,
+    MmrResult, RecallEngine, RecallResult, ReviewRating, SpectralEncoder, WarmupConfig,
+    WarmupSelector, hopfield_retrieve, max_marginal_relevance, softmax_compete,
 };
 
 #[cfg(feature = "immune")]
 pub use immune::{
-    DEFAULT_AFFINITY_RADIUS, Detection, DetectorId, ImmuneDetector, ImmuneSystem,
-    ShapeDescriptor,
+    DEFAULT_AFFINITY_RADIUS, Detection, DetectorId, ImmuneDetector, ImmuneSystem, ShapeDescriptor,
 };

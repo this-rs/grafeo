@@ -168,8 +168,11 @@ impl EngramManager {
 
     /// Warm-up recall: proactively retrieve engrams likely to be useful
     /// given the current cue context, with MMR diversity.
+    ///
+    /// Returns [`ActivatedEngram`]s with the dominant engram in full detail
+    /// and secondaries in summary form.
     #[instrument(skip(self), fields(cues = cues.len()))]
-    pub fn warmup(&self, cues: &[NodeId]) -> Vec<RecallResult> {
+    pub fn warmup(&self, cues: &[NodeId]) -> Vec<super::recall::ActivatedEngram> {
         WarmupSelector::select_warmup_engrams(
             &self.store,
             cues,
@@ -264,8 +267,7 @@ impl EngramManager {
                         .and_then(|lr| now.duration_since(lr).ok())
                         .map(|d| d.as_secs_f64() / 86400.0)
                         .unwrap_or(1.0);
-                    let new_state =
-                        self.fsrs.review(&e.fsrs_state, ReviewRating::Again, days);
+                    let new_state = self.fsrs.review(&e.fsrs_state, ReviewRating::Again, days);
                     e.fsrs_state = new_state;
                     e.strength = (e.strength * 0.9).max(0.0);
                 });

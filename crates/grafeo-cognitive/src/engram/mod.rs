@@ -54,12 +54,15 @@ pub use spectral::SpectralEncoder;
 #[cfg(feature = "engram")]
 mod recall;
 #[cfg(feature = "engram")]
-pub use recall::{RecallEngine, RecallResult, WarmupConfig, WarmupSelector};
+pub use recall::{ActivatedEngram, DetailLevel, RecallEngine, RecallResult, WarmupConfig, WarmupSelector};
 
 #[cfg(feature = "engram")]
 mod hopfield;
 #[cfg(feature = "engram")]
-pub use hopfield::{HopfieldResult, PatternMatrix, hopfield_retrieve};
+pub use hopfield::{
+    CompetitionResult, HopfieldResult, MmrResult, PatternMatrix, hopfield_retrieve,
+    max_marginal_relevance, softmax_compete,
+};
 
 #[cfg(feature = "engram")]
 mod homeostasis;
