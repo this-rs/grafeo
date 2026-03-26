@@ -76,6 +76,12 @@ pub struct Engram {
 
     /// Number of times this engram has been recalled.
     pub recall_count: u32,
+
+    /// Predictive model — P(outcome | context) for this engram.
+    /// Stores mean + variance of observed outcomes. Used by the predictive
+    /// coding layer (Layer 3+4) to compute prediction errors.
+    #[serde(default)]
+    pub predictive_model: Option<super::hopfield::PredictiveModel>,
 }
 
 impl Engram {
@@ -96,6 +102,7 @@ impl Engram {
             last_activated: now,
             fsrs_state: FsrsState::default(),
             recall_count: 0,
+            predictive_model: None,
         }
     }
 

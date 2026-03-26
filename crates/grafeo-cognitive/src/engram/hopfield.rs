@@ -16,6 +16,8 @@
 //! The retrieve operation is lock-free read — it only reads the pattern matrix.
 //! Updates to the matrix happen only during engram formation/reconsolidation.
 
+use serde::{Deserialize, Serialize};
+
 use super::store::EngramStore;
 use super::types::{Engram, EngramId};
 
@@ -228,7 +230,10 @@ pub struct CompetitionResult {
 /// # Returns
 /// Filtered candidates sorted by activation descending, with `is_dominant` set
 /// on the top-scoring engram.
-pub fn softmax_compete(candidates: &[HopfieldResult], min_threshold: f64) -> Vec<CompetitionResult> {
+pub fn softmax_compete(
+    candidates: &[HopfieldResult],
+    min_threshold: f64,
+) -> Vec<CompetitionResult> {
     if candidates.is_empty() {
         return Vec::new();
     }
@@ -402,6 +407,326 @@ fn cosine_sim(a: &[f64], b: &[f64]) -> f64 {
         return 0.0;
     }
     (dot / (norm_a * norm_b)).clamp(-1.0, 1.0)
+}
+
+// ---------------------------------------------------------------------------
+// PredictiveModel — P(outcome | context) per engram
+// ---------------------------------------------------------------------------
+
+/// Simplified conditional distribution P(outcome | context) for an engram.
+///
+/// Each engram stores a running estimate of the outcomes it has observed
+/// across its source episodes: the mean outcome vector and the variance
+/// (uncertainty) around that mean.
+///
+/// This enables predictive coding: when a new context matches this engram,
+/// the model predicts `mean` as the expected outcome; the prediction error
+/// is then `|actual - mean| / variance`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PredictiveModel {
+    /// Mean of the observed outcomes (running average).
+    /// Each element corresponds to a dimension of the outcome space.
+    pub mean: Vec<f64>,
+    /// Variance of the observed outcomes per dimension.
+    /// Higher variance → less precise prediction → smaller PE impact.
+    pub variance: Vec<f64>,
+    /// Number of observations that contributed to this model.
+    pub observation_count: u32,
+    /// Precision β — inverse of expected prediction error.
+    /// High precision = confident model. Adjusts via Bayesian update.
+    pub precision: f64,
+}
+
+impl PredictiveModel {
+    /// Creates a new predictive model with the given dimensionality.
+    ///
+    /// Initialised with zero mean, unit variance (maximal uncertainty),
+    /// and default precision of 1.0.
+    pub fn new(dim: usize) -> Self {
+        Self {
+            mean: vec![0.0; dim],
+            variance: vec![1.0; dim],
+            observation_count: 0,
+            precision: 1.0,
+        }
+    }
+
+    /// Creates a predictive model from initial observations.
+    ///
+    /// If only one observation is provided, variance defaults to 1.0 (uncertain).
+    pub fn from_observations(observations: &[Vec<f64>]) -> Option<Self> {
+        if observations.is_empty() {
+            return None;
+        }
+        let dim = observations[0].len();
+        if dim == 0 {
+            return None;
+        }
+
+        let n = observations.len() as f64;
+        let mut mean = vec![0.0; dim];
+        for obs in observations {
+            if obs.len() != dim {
+                return None;
+            }
+            for (i, &v) in obs.iter().enumerate() {
+                mean[i] += v;
+            }
+        }
+        for m in &mut mean {
+            *m /= n;
+        }
+
+        let mut variance = vec![1.0; dim]; // default variance if n=1
+        if observations.len() > 1 {
+            for d in 0..dim {
+                let var: f64 = observations
+                    .iter()
+                    .map(|obs| {
+                        let diff = obs[d] - mean[d];
+                        diff * diff
+                    })
+                    .sum::<f64>()
+                    / n;
+                // Floor variance to avoid division by zero
+                variance[d] = var.max(1e-6);
+            }
+        }
+
+        Some(Self {
+            mean,
+            variance,
+            observation_count: observations.len() as u32,
+            precision: 1.0,
+        })
+    }
+
+    /// Returns the dimensionality of this predictive model.
+    pub fn dim(&self) -> usize {
+        self.mean.len()
+    }
+
+    /// Incrementally update the model with a new observation (online mean/variance).
+    pub fn observe(&mut self, outcome: &[f64]) {
+        if outcome.len() != self.dim() {
+            return;
+        }
+        self.observation_count += 1;
+        let n = self.observation_count as f64;
+
+        for i in 0..self.dim() {
+            let old_mean = self.mean[i];
+            // Welford's online algorithm for mean and variance
+            let delta = outcome[i] - old_mean;
+            self.mean[i] += delta / n;
+            let delta2 = outcome[i] - self.mean[i];
+            // Running variance (population variance)
+            if n > 1.0 {
+                self.variance[i] += (delta * delta2 - self.variance[i]) / n;
+                // Floor variance
+                if self.variance[i] < 1e-6 {
+                    self.variance[i] = 1e-6;
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// compute_prediction_error — PE = |actual - predicted| / variance
+// ---------------------------------------------------------------------------
+
+/// Result of a prediction error computation.
+#[derive(Debug, Clone)]
+pub struct PredictionErrorResult {
+    /// Per-dimension prediction error (normalized by variance).
+    pub per_dimension: Vec<f64>,
+    /// Aggregate prediction error ∈ [0, 1] — mean of per-dimension PEs, clamped.
+    pub magnitude: f64,
+    /// Raw (unnormalized) error magnitude — L2 distance between actual and predicted.
+    pub raw_error: f64,
+}
+
+/// Compute the prediction error between an engram's predictive model and actual outcome.
+///
+/// PE per dimension = |actual_i - mean_i| / sqrt(variance_i).
+/// Aggregate PE = mean of per-dimension PEs, normalized to [0, 1] via tanh.
+///
+/// Returns `None` if the model or outcome dimensions don't match.
+pub fn compute_prediction_error(
+    model: &PredictiveModel,
+    actual_outcome: &[f64],
+) -> Option<PredictionErrorResult> {
+    if model.dim() == 0 || actual_outcome.len() != model.dim() {
+        return None;
+    }
+
+    let mut per_dim = Vec::with_capacity(model.dim());
+    let mut raw_sq_sum = 0.0f64;
+
+    for i in 0..model.dim() {
+        let diff = (actual_outcome[i] - model.mean[i]).abs();
+        raw_sq_sum += diff * diff;
+        // Normalize by standard deviation (sqrt of variance)
+        let std_dev = model.variance[i].sqrt();
+        let pe_i = diff / std_dev;
+        per_dim.push(pe_i);
+    }
+
+    let raw_error = raw_sq_sum.sqrt();
+
+    // Aggregate: mean of per-dimension PEs, then tanh to normalize to [0, 1]
+    let mean_pe = per_dim.iter().sum::<f64>() / per_dim.len() as f64;
+    let magnitude = mean_pe.tanh(); // smooth normalization to [0, 1]
+
+    Some(PredictionErrorResult {
+        per_dimension: per_dim,
+        magnitude,
+        raw_error,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// bayesian_update — learning_rate = precision × pe
+// ---------------------------------------------------------------------------
+
+/// Result of a Bayesian update step.
+#[derive(Debug, Clone)]
+pub struct BayesianUpdateResult {
+    /// The effective learning rate used (precision × pe).
+    pub learning_rate: f64,
+    /// The posterior precision after the update.
+    pub posterior_precision: f64,
+    /// Whether this was a significant update (learning_rate > 0.1).
+    pub significant: bool,
+}
+
+/// Perform a Bayesian update on an engram's predictive model given a prediction error.
+///
+/// # Learning dynamics
+/// - `learning_rate = precision × pe_magnitude`
+/// - **High PE + high precision** → large learning rate → big model update
+///   (confident model was surprised → must correct strongly)
+/// - **High PE + low precision** → small learning rate → small model update
+///   (uncertain model was surprised → not much new info)
+/// - **Low PE** → small learning rate regardless of precision
+///   (prediction was accurate → little correction needed)
+///
+/// # Precision update (posterior)
+/// The precision itself adjusts after seeing the PE:
+/// - If PE is low (prediction was good), precision increases (model becomes more confident)
+/// - If PE is high (prediction was wrong), precision decreases proportionally
+///
+/// Formula: `posterior_precision = prior_precision × (1 - pe²) + pe² × (1 / (1 + pe))`
+/// This smoothly interpolates between reinforcement (low PE) and weakening (high PE).
+///
+/// Returns `None` if the actual outcome dimensions don't match the model.
+pub fn bayesian_update(
+    model: &mut PredictiveModel,
+    actual_outcome: &[f64],
+    pe: &PredictionErrorResult,
+) -> Option<BayesianUpdateResult> {
+    if actual_outcome.len() != model.dim() {
+        return None;
+    }
+
+    let prior_precision = model.precision;
+    let pe_mag = pe.magnitude;
+
+    // Learning rate = precision × prediction error magnitude
+    let learning_rate = (prior_precision * pe_mag).clamp(0.0, 1.0);
+
+    // Update the mean towards the actual outcome, weighted by learning rate
+    for i in 0..model.dim() {
+        let error = actual_outcome[i] - model.mean[i];
+        model.mean[i] += learning_rate * error;
+    }
+
+    // Update variance: shrink towards observed squared error
+    for i in 0..model.dim() {
+        let diff = actual_outcome[i] - model.mean[i]; // post-update residual
+        let observed_var = diff * diff;
+        model.variance[i] =
+            (1.0 - learning_rate) * model.variance[i] + learning_rate * observed_var;
+        // Floor variance
+        if model.variance[i] < 1e-6 {
+            model.variance[i] = 1e-6;
+        }
+    }
+
+    model.observation_count += 1;
+
+    // Update precision (posterior)
+    // Low PE → precision increases (model confirmed)
+    // High PE → precision decreases (model was wrong)
+    let pe_sq = pe_mag * pe_mag;
+    let posterior_precision =
+        prior_precision * (1.0 - pe_sq) + pe_sq * (1.0 / (1.0 + pe_mag));
+    // Floor precision to avoid zero/negative
+    model.precision = posterior_precision.max(0.01);
+
+    Some(BayesianUpdateResult {
+        learning_rate,
+        posterior_precision: model.precision,
+        significant: learning_rate > 0.1,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// PredictionErrorCalculator — bridges predictive models to formation
+// ---------------------------------------------------------------------------
+
+/// Calculates prediction error using existing engrams' predictive models.
+///
+/// Given a set of active engrams and an observed outcome, this finds the
+/// best-matching engram's prediction and computes the PE against reality.
+/// This replaces the simple heuristic PE used in early formation.
+pub struct PredictionErrorCalculator;
+
+impl PredictionErrorCalculator {
+    /// Compute the prediction error for a new observation given existing engrams.
+    ///
+    /// # Algorithm
+    /// 1. For each engram that has a PredictiveModel, compute PE(engram, actual).
+    /// 2. Use the engram with the **lowest** raw PE as the "best prediction" —
+    ///    this is the engram that expected something closest to what happened.
+    /// 3. Return the PE of that best-matching engram.
+    ///
+    /// If no engrams have predictive models, returns a default high PE (1.0)
+    /// to indicate maximum surprise (novel observation).
+    pub fn compute_from_engrams(
+        store: &EngramStore,
+        active_engram_ids: &[EngramId],
+        actual_outcome: &[f64],
+    ) -> f64 {
+        if actual_outcome.is_empty() {
+            return 1.0;
+        }
+
+        let mut best_pe: Option<f64> = None;
+
+        for &eid in active_engram_ids {
+            if let Some(engram) = store.get(eid) {
+                if let Some(ref pm) = engram.predictive_model {
+                    if pm.dim() == actual_outcome.len() {
+                        if let Some(pe_result) = compute_prediction_error(pm, actual_outcome) {
+                            match best_pe {
+                                None => best_pe = Some(pe_result.magnitude),
+                                Some(current_best) => {
+                                    if pe_result.magnitude < current_best {
+                                        best_pe = Some(pe_result.magnitude);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // If no engram had a predictive model → novel observation → max surprise
+        best_pe.unwrap_or(1.0)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -755,5 +1080,315 @@ mod tests {
 
         let mmr_results = max_marginal_relevance(&candidates, 0.7);
         assert_eq!(mmr_results.len(), 2);
+    }
+
+    // -- PredictiveModel tests --
+
+    #[test]
+    fn predictive_model_new_defaults() {
+        let pm = PredictiveModel::new(3);
+        assert_eq!(pm.dim(), 3);
+        assert_eq!(pm.observation_count, 0);
+        assert!((pm.precision - 1.0).abs() < f64::EPSILON);
+        assert!(pm.mean.iter().all(|&v| v == 0.0));
+        assert!(pm.variance.iter().all(|&v| (v - 1.0).abs() < f64::EPSILON));
+    }
+
+    #[test]
+    fn predictive_model_from_observations_single() {
+        let obs = vec![vec![1.0, 2.0, 3.0]];
+        let pm = PredictiveModel::from_observations(&obs).unwrap();
+        assert_eq!(pm.mean, vec![1.0, 2.0, 3.0]);
+        // Single observation → variance defaults to 1.0
+        assert!(pm.variance.iter().all(|&v| (v - 1.0).abs() < f64::EPSILON));
+        assert_eq!(pm.observation_count, 1);
+    }
+
+    #[test]
+    fn predictive_model_from_observations_multiple() {
+        let obs = vec![vec![0.0, 0.0], vec![2.0, 4.0]];
+        let pm = PredictiveModel::from_observations(&obs).unwrap();
+        assert!((pm.mean[0] - 1.0).abs() < 1e-10);
+        assert!((pm.mean[1] - 2.0).abs() < 1e-10);
+        // Variance: E[(x-mean)^2] = 1.0 for dim 0, 4.0 for dim 1
+        assert!((pm.variance[0] - 1.0).abs() < 1e-10);
+        assert!((pm.variance[1] - 4.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn predictive_model_observe_updates_mean() {
+        let mut pm = PredictiveModel::new(2);
+        pm.observe(&[2.0, 4.0]);
+        assert!((pm.mean[0] - 2.0).abs() < 1e-10);
+        assert!((pm.mean[1] - 4.0).abs() < 1e-10);
+        assert_eq!(pm.observation_count, 1);
+
+        pm.observe(&[4.0, 0.0]);
+        assert!((pm.mean[0] - 3.0).abs() < 1e-10);
+        assert!((pm.mean[1] - 2.0).abs() < 1e-10);
+        assert_eq!(pm.observation_count, 2);
+    }
+
+    // -- compute_prediction_error tests --
+
+    #[test]
+    fn prediction_error_compute_zero_error() {
+        let pm = PredictiveModel::from_observations(&[vec![1.0, 2.0], vec![1.0, 2.0]]).unwrap();
+        let pe = compute_prediction_error(&pm, &[1.0, 2.0]).unwrap();
+        assert!(
+            pe.magnitude < 0.01,
+            "Expected near-zero PE when actual == predicted, got {}",
+            pe.magnitude
+        );
+        assert!(pe.raw_error < 1e-10);
+    }
+
+    #[test]
+    fn prediction_error_compute_high_error() {
+        let pm = PredictiveModel::from_observations(&[vec![0.0], vec![0.0]]).unwrap();
+        // Actual is very far from predicted (0.0), and variance is tiny (1e-6 floor)
+        let pe = compute_prediction_error(&pm, &[10.0]).unwrap();
+        assert!(
+            pe.magnitude > 0.9,
+            "Expected high PE for large deviation, got {}",
+            pe.magnitude
+        );
+    }
+
+    #[test]
+    fn prediction_error_compute_normalized_between_0_and_1() {
+        let pm = PredictiveModel::from_observations(&[vec![1.0, 2.0], vec![3.0, 4.0]]).unwrap();
+        let pe = compute_prediction_error(&pm, &[100.0, 200.0]).unwrap();
+        assert!(pe.magnitude >= 0.0 && pe.magnitude <= 1.0);
+    }
+
+    #[test]
+    fn prediction_error_compute_dimension_mismatch() {
+        let pm = PredictiveModel::new(3);
+        assert!(compute_prediction_error(&pm, &[1.0, 2.0]).is_none());
+    }
+
+    #[test]
+    fn prediction_error_compute_variance_affects_pe() {
+        // High variance → same deviation produces lower PE
+        let mut pm_precise = PredictiveModel::new(1);
+        pm_precise.mean = vec![0.0];
+        pm_precise.variance = vec![0.01]; // very precise
+
+        let mut pm_uncertain = PredictiveModel::new(1);
+        pm_uncertain.mean = vec![0.0];
+        pm_uncertain.variance = vec![100.0]; // very uncertain
+
+        let actual = &[1.0];
+        let pe_precise = compute_prediction_error(&pm_precise, actual).unwrap();
+        let pe_uncertain = compute_prediction_error(&pm_uncertain, actual).unwrap();
+
+        assert!(
+            pe_precise.magnitude > pe_uncertain.magnitude,
+            "Same deviation should give higher PE for precise model ({}) vs uncertain ({})",
+            pe_precise.magnitude,
+            pe_uncertain.magnitude
+        );
+    }
+
+    // -- bayesian_update tests --
+
+    #[test]
+    fn bayesian_update_high_pe_high_precision_large_correction() {
+        let mut pm = PredictiveModel::new(1);
+        pm.mean = vec![0.0];
+        pm.variance = vec![0.01]; // precise model
+        pm.precision = 5.0; // high confidence
+
+        let actual = &[10.0]; // far from prediction
+        let pe = compute_prediction_error(&pm, actual).unwrap();
+        assert!(pe.magnitude > 0.5, "PE should be high");
+
+        let old_mean = pm.mean[0];
+        let result = bayesian_update(&mut pm, actual, &pe).unwrap();
+
+        assert!(result.significant, "High PE + high precision → significant update");
+        assert!(result.learning_rate > 0.3, "Learning rate should be high");
+        // Mean should have moved significantly towards actual
+        let correction = (pm.mean[0] - old_mean).abs();
+        assert!(
+            correction > 1.0,
+            "Mean should have moved significantly, got correction {}",
+            correction
+        );
+    }
+
+    #[test]
+    fn bayesian_update_high_pe_low_precision_small_correction() {
+        let mut pm = PredictiveModel::new(1);
+        pm.mean = vec![0.0];
+        pm.variance = vec![100.0]; // very uncertain model
+        pm.precision = 0.05; // low confidence
+
+        let actual = &[10.0]; // far from prediction
+        let pe = compute_prediction_error(&pm, actual).unwrap();
+
+        let old_mean = pm.mean[0];
+        let result = bayesian_update(&mut pm, actual, &pe).unwrap();
+
+        // Low precision × PE → small learning rate
+        assert!(
+            result.learning_rate < 0.2,
+            "Learning rate should be low with low precision, got {}",
+            result.learning_rate
+        );
+        let correction = (pm.mean[0] - old_mean).abs();
+        assert!(
+            correction < 2.0,
+            "Correction should be small with low precision, got {}",
+            correction
+        );
+    }
+
+    #[test]
+    fn bayesian_update_low_pe_precision_increases() {
+        let mut pm = PredictiveModel::new(1);
+        pm.mean = vec![5.0];
+        pm.variance = vec![1.0];
+        pm.precision = 1.0;
+
+        // Actual very close to prediction → low PE
+        let actual = &[5.01];
+        let pe = compute_prediction_error(&pm, actual).unwrap();
+        assert!(pe.magnitude < 0.1, "PE should be low");
+
+        let prior_precision = pm.precision;
+        bayesian_update(&mut pm, actual, &pe).unwrap();
+
+        // Low PE → precision should increase (model confirmed)
+        assert!(
+            pm.precision >= prior_precision * 0.99,
+            "Precision should stay stable or increase with low PE, was {} now {}",
+            prior_precision,
+            pm.precision
+        );
+    }
+
+    #[test]
+    fn bayesian_update_high_pe_precision_decreases() {
+        let mut pm = PredictiveModel::new(1);
+        pm.mean = vec![0.0];
+        pm.variance = vec![0.01];
+        pm.precision = 5.0;
+
+        let actual = &[100.0]; // massive deviation
+        let pe = compute_prediction_error(&pm, actual).unwrap();
+
+        let prior_precision = pm.precision;
+        bayesian_update(&mut pm, actual, &pe).unwrap();
+
+        assert!(
+            pm.precision < prior_precision,
+            "Precision should decrease after high PE, was {} now {}",
+            prior_precision,
+            pm.precision
+        );
+    }
+
+    #[test]
+    fn bayesian_update_dimension_mismatch() {
+        let mut pm = PredictiveModel::new(2);
+        let pe = PredictionErrorResult {
+            per_dimension: vec![0.5, 0.5],
+            magnitude: 0.5,
+            raw_error: 1.0,
+        };
+        assert!(bayesian_update(&mut pm, &[1.0], &pe).is_none());
+    }
+
+    // -- PredictionErrorCalculator tests --
+
+    #[test]
+    fn formation_with_predictive_engrams_use_model() {
+        let store = EngramStore::new(None);
+
+        // Create an engram with a predictive model predicting [5.0, 5.0]
+        let id1 = store.next_id();
+        let mut e1 = Engram::new(id1, vec![(NodeId(1), 1.0)]);
+        let mut pm = PredictiveModel::from_observations(&[vec![5.0, 5.0], vec![5.0, 5.0]]).unwrap();
+        pm.precision = 3.0;
+        e1.predictive_model = Some(pm);
+        store.insert(e1);
+
+        // Actual outcome matches prediction → low PE
+        let pe_low = PredictionErrorCalculator::compute_from_engrams(
+            &store,
+            &[id1],
+            &[5.0, 5.0],
+        );
+        assert!(
+            pe_low < 0.1,
+            "PE should be low when outcome matches prediction, got {}",
+            pe_low
+        );
+
+        // Actual outcome far from prediction → high PE
+        let pe_high = PredictionErrorCalculator::compute_from_engrams(
+            &store,
+            &[id1],
+            &[100.0, 100.0],
+        );
+        assert!(
+            pe_high > 0.5,
+            "PE should be high when outcome differs from prediction, got {}",
+            pe_high
+        );
+    }
+
+    #[test]
+    fn formation_with_predictive_no_models_returns_max() {
+        let store = EngramStore::new(None);
+
+        // Engram without predictive model
+        let id1 = store.next_id();
+        let e1 = Engram::new(id1, vec![(NodeId(1), 1.0)]);
+        store.insert(e1);
+
+        let pe = PredictionErrorCalculator::compute_from_engrams(
+            &store,
+            &[id1],
+            &[1.0, 2.0],
+        );
+        assert!(
+            (pe - 1.0).abs() < f64::EPSILON,
+            "No predictive models → max surprise (1.0), got {}",
+            pe
+        );
+    }
+
+    #[test]
+    fn formation_with_predictive_best_match_wins() {
+        let store = EngramStore::new(None);
+
+        // Engram 1: predicts [0.0, 0.0] — far from actual
+        let id1 = store.next_id();
+        let mut e1 = Engram::new(id1, vec![(NodeId(1), 1.0)]);
+        e1.predictive_model = Some(PredictiveModel::from_observations(&[vec![0.0, 0.0], vec![0.0, 0.0]]).unwrap());
+        store.insert(e1);
+
+        // Engram 2: predicts [10.0, 10.0] — close to actual
+        let id2 = store.next_id();
+        let mut e2 = Engram::new(id2, vec![(NodeId(2), 1.0)]);
+        e2.predictive_model = Some(PredictiveModel::from_observations(&[vec![10.0, 10.0], vec![10.0, 10.0]]).unwrap());
+        store.insert(e2);
+
+        // Actual is [10.0, 10.0] → engram 2 should be the best predictor
+        let pe = PredictionErrorCalculator::compute_from_engrams(
+            &store,
+            &[id1, id2],
+            &[10.0, 10.0],
+        );
+
+        // The PE should be low because engram 2 predicted correctly
+        assert!(
+            pe < 0.1,
+            "Best-matching engram should yield low PE, got {}",
+            pe
+        );
     }
 }
