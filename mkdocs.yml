@@ -3,10 +3,11 @@ site_name: Obrain
 site_url: https://obrain.dev
 site_author: S.T. Grond
 site_description: >-
-  A high-performance, embeddable graph database with a Rust core and no required
-  C dependencies. Python, Node.js, Go, and WebAssembly bindings. Supports LPG and
-  RDF data models, multiple query languages (GQL, Cypher, Gremlin, GraphQL, SPARQL, SQL/PGQ),
-  ACID transactions, and extensible storage backends.
+  Obrain is a cognitive graph database with energy-based memory, synaptic activation,
+  and knowledge fabric built on a high-performance Rust core. Embeddable with Python,
+  Node.js, Go, and WebAssembly bindings. Supports LPG/RDF data models, multiple query
+  languages (GQL, Cypher, Gremlin, GraphQL, SPARQL, SQL/PGQ), ACID transactions,
+  and extensible storage backends.
 
 # Repository
 repo_name: this-rs/obrain
@@ -192,6 +193,14 @@ nav:
     - Migration Guide: getting-started/migration.md
     - Security: getting-started/security.md
 
+  - Cognitive Layer:
+    - Overview: cognitive/overview.md
+    - Energy & Decay: cognitive/energy.md
+    - Synapses & Activation: cognitive/synapses.md
+    - Engrams: cognitive/engrams.md
+    - Knowledge Fabric: cognitive/fabric.md
+    - RAG Pipeline: cognitive/rag.md
+
   - User Guide:
     - user-guide/index.md
     - Data Model:
@@ -291,14 +300,6 @@ nav:
       - Vector Search: tutorials/examples/vector-search.md
       - Fraud Detection: tutorials/examples/fraud-detection-example.md
       - NetworkX Integration: tutorials/examples/networkx-integration.md
-
-  - Cognitive Layer:
-    - Overview: cognitive/overview.md
-    - Energy & Decay: cognitive/energy.md
-    - Synapses & Activation: cognitive/synapses.md
-    - Engrams: cognitive/engrams.md
-    - Knowledge Fabric: cognitive/fabric.md
-    - RAG Pipeline: cognitive/rag.md
 
   - Architecture:
     - architecture/index.md
