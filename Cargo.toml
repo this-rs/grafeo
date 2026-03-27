@@ -1,15 +1,15 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/grafeo",
-    "crates/grafeo-common",
-    "crates/grafeo-core",
-    "crates/grafeo-adapters",
-    "crates/grafeo-engine",
-    "crates/grafeo-reactive",
-    "crates/grafeo-cognitive",
-    "crates/grafeo-rag",
-    "crates/grafeo-cli",
+    "crates/obrain",
+    "crates/obrain-common",
+    "crates/obrain-core",
+    "crates/obrain-adapters",
+    "crates/obrain-engine",
+    "crates/obrain-reactive",
+    "crates/obrain-cognitive",
+    "crates/obrain-rag",
+    "crates/obrain-cli",
     "crates/bindings/python",
     "crates/bindings/node",
     "crates/bindings/c",
@@ -19,7 +19,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.5.24"
+version = "0.0.1"
 edition = "2024"
 rust-version = "1.91.1"
 license = "Apache-2.0"
@@ -29,15 +29,15 @@ description = "A high-performance, embeddable graph database with support for LP
 
 [workspace.dependencies]
 # Internal crates (default-features = false to allow per-crate control)
-grafeo-common = { path = "crates/grafeo-common", version = "0.5.24" }
-grafeo-core = { path = "crates/grafeo-core", version = "0.5.24", default-features = false }
-grafeo-adapters = { path = "crates/grafeo-adapters", version = "0.5.24", default-features = false }
-grafeo-engine = { path = "crates/grafeo-engine", version = "0.5.24", default-features = false }
-grafeo = { path = "crates/grafeo", version = "0.5.24" }
-grafeo-reactive = { path = "crates/grafeo-reactive", version = "0.5.24" }
-grafeo-cognitive = { path = "crates/grafeo-cognitive", version = "0.5.24", default-features = false }
-grafeo-rag = { path = "crates/grafeo-rag", version = "0.5.24", default-features = false }
-grafeo-bindings-common = { path = "crates/bindings/common", version = "0.5.24", default-features = false }
+grafeo-common = { path = "crates/obrain-common", version = "0.0.1" }
+grafeo-core = { path = "crates/obrain-core", version = "0.0.1", default-features = false }
+grafeo-adapters = { path = "crates/obrain-adapters", version = "0.0.1", default-features = false }
+grafeo-engine = { path = "crates/obrain-engine", version = "0.0.1", default-features = false }
+grafeo = { path = "crates/obrain", version = "0.0.1" }
+grafeo-reactive = { path = "crates/obrain-reactive", version = "0.0.1" }
+grafeo-cognitive = { path = "crates/obrain-cognitive", version = "0.0.1", default-features = false }
+grafeo-rag = { path = "crates/obrain-rag", version = "0.0.1", default-features = false }
+grafeo-bindings-common = { path = "crates/bindings/common", version = "0.0.1", default-features = false }
 
 # Error handling
 thiserror = "2.0"
