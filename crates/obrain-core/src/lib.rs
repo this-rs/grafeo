@@ -1,9 +1,9 @@
-//! # grafeo-core
+//! # obrain-core
 //!
-//! The core data structures behind Grafeo. You'll find graph storage, indexes,
+//! The core data structures behind Obrain. You'll find graph storage, indexes,
 //! and the execution engine here.
 //!
-//! Most users don't need this crate directly - use `grafeo` or `grafeo-engine`
+//! Most users don't need this crate directly - use `obrain` or `obrain-engine`
 //! instead. But if you're building algorithms or need low-level access, this
 //! is where the action is.
 //!

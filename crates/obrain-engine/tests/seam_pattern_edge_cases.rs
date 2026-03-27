@@ -4,18 +4,18 @@
 //! with aggregation, and label expression edge cases.
 //!
 //! ```bash
-//! cargo test -p grafeo-engine --test seam_pattern_edge_cases
+//! cargo test -p obrain-engine --test seam_pattern_edge_cases
 //! ```
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
-fn db() -> GrafeoDB {
-    GrafeoDB::new_in_memory()
+fn db() -> ObrainDB {
+    ObrainDB::new_in_memory()
 }
 
 /// Creates a small chain: Alix -> Gus -> Vincent
-fn chain_graph() -> GrafeoDB {
+fn chain_graph() -> ObrainDB {
     let db = db();
     let session = db.session();
     session

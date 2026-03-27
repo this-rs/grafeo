@@ -1,6 +1,6 @@
 """Base class for NetworkX comparison tests.
 
-This module defines tests that compare Grafeo algorithm results against NetworkX
+This module defines tests that compare Obrain algorithm results against NetworkX
 to verify correctness. NetworkX serves as the reference implementation.
 
 Tests cover:
@@ -111,15 +111,15 @@ class BaseNetworkXComparisonTest(ABC):
         edges = graph_info["edges"]
         start_node = node_ids[0]
 
-        # Grafeo BFS
-        grafeo_visited = self.run_bfs(db, start_node)
+        # Obrain BFS
+        obrain_visited = self.run_bfs(db, start_node)
 
         # NetworkX BFS
         graph = self._build_networkx_graph(edges, directed=True, weighted=False)
         nx_visited = set(nx.bfs_tree(graph, start_node).nodes())
 
-        assert grafeo_visited == nx_visited, (
-            f"BFS reachability mismatch: Grafeo found {len(grafeo_visited)} nodes, "
+        assert obrain_visited == nx_visited, (
+            f"BFS reachability mismatch: Obrain found {len(obrain_visited)} nodes, "
             f"NetworkX found {len(nx_visited)} nodes"
         )
 
@@ -131,15 +131,15 @@ class BaseNetworkXComparisonTest(ABC):
         edges = graph_info["edges"]
         start_node = node_ids[0]
 
-        # Grafeo DFS
-        grafeo_visited = self.run_dfs(db, start_node)
+        # Obrain DFS
+        obrain_visited = self.run_dfs(db, start_node)
 
         # NetworkX DFS
         graph = self._build_networkx_graph(edges, directed=True, weighted=False)
         nx_visited = set(nx.dfs_tree(graph, start_node).nodes())
 
-        assert grafeo_visited == nx_visited, (
-            f"DFS reachability mismatch: Grafeo found {len(grafeo_visited)} nodes, "
+        assert obrain_visited == nx_visited, (
+            f"DFS reachability mismatch: Obrain found {len(obrain_visited)} nodes, "
             f"NetworkX found {len(nx_visited)} nodes"
         )
 
@@ -151,22 +151,22 @@ class BaseNetworkXComparisonTest(ABC):
         edges = graph_info["edges"]
         source = node_ids[0]
 
-        # Grafeo Dijkstra
-        grafeo_distances = self.run_dijkstra(db, source)
+        # Obrain Dijkstra
+        obrain_distances = self.run_dijkstra(db, source)
 
         # NetworkX Dijkstra
         graph = self._build_networkx_graph(edges, directed=True, weighted=True)
         nx_distances = nx.single_source_dijkstra_path_length(graph, source, weight="weight")
 
         # Compare distances for nodes reachable by both
-        common_nodes = set(grafeo_distances.keys()) & set(nx_distances.keys())
+        common_nodes = set(obrain_distances.keys()) & set(nx_distances.keys())
         assert len(common_nodes) > 0, "No common reachable nodes"
 
         for node in common_nodes:
-            grafeo_dist = grafeo_distances[node]
+            obrain_dist = obrain_distances[node]
             nx_dist = nx_distances[node]
-            assert abs(grafeo_dist - nx_dist) < 1e-6, (
-                f"Distance mismatch for node {node}: Grafeo={grafeo_dist}, NetworkX={nx_dist}"
+            assert abs(obrain_dist - nx_dist) < 1e-6, (
+                f"Distance mismatch for node {node}: Obrain={obrain_dist}, NetworkX={nx_dist}"
             )
 
     @pytest.mark.skipif(not NETWORKX_AVAILABLE, reason="NetworkX not installed")
@@ -175,8 +175,8 @@ class BaseNetworkXComparisonTest(ABC):
         graph_info = self.setup_random_graph(db, 100, 200, weighted=False, seed=42)
         edges = graph_info["edges"]
 
-        # Grafeo connected components
-        grafeo_count = self.run_connected_components(db)
+        # Obrain connected components
+        obrain_count = self.run_connected_components(db)
 
         # NetworkX connected components (undirected)
         graph = self._build_networkx_graph(edges, directed=False, weighted=False)
@@ -186,8 +186,8 @@ class BaseNetworkXComparisonTest(ABC):
                 graph.add_node(node_id)
         nx_count = nx.number_connected_components(graph)
 
-        assert grafeo_count == nx_count, (
-            f"Connected component count mismatch: Grafeo={grafeo_count}, NetworkX={nx_count}"
+        assert obrain_count == nx_count, (
+            f"Connected component count mismatch: Obrain={obrain_count}, NetworkX={nx_count}"
         )
 
     @pytest.mark.skipif(not NETWORKX_AVAILABLE, reason="NetworkX not installed")
@@ -196,25 +196,25 @@ class BaseNetworkXComparisonTest(ABC):
         graph_info = self.setup_random_graph(db, 50, 200, weighted=False, seed=42)
         edges = graph_info["edges"]
 
-        # Grafeo PageRank
-        grafeo_pr = self.run_pagerank(db)
+        # Obrain PageRank
+        obrain_pr = self.run_pagerank(db)
 
         # NetworkX PageRank
         graph = self._build_networkx_graph(edges, directed=True, weighted=False)
         nx_pr = nx.pagerank(graph, alpha=0.85)
 
         # Compare top-5 ranking
-        grafeo_top5 = sorted(grafeo_pr.items(), key=lambda x: x[1], reverse=True)[:5]
+        obrain_top5 = sorted(obrain_pr.items(), key=lambda x: x[1], reverse=True)[:5]
         nx_top5 = sorted(nx_pr.items(), key=lambda x: x[1], reverse=True)[:5]
 
-        grafeo_top5_nodes = [n for n, _ in grafeo_top5]
+        obrain_top5_nodes = [n for n, _ in obrain_top5]
         nx_top5_nodes = [n for n, _ in nx_top5]
 
         # At least 3 of top 5 should match (some variation due to implementation)
-        overlap = len(set(grafeo_top5_nodes) & set(nx_top5_nodes))
+        overlap = len(set(obrain_top5_nodes) & set(nx_top5_nodes))
         assert overlap >= 3, (
             f"PageRank top-5 mismatch: only {overlap} overlap. "
-            f"Grafeo top 5: {grafeo_top5_nodes}, NetworkX top 5: {nx_top5_nodes}"
+            f"Obrain top 5: {obrain_top5_nodes}, NetworkX top 5: {nx_top5_nodes}"
         )
 
     @pytest.mark.skipif(not NETWORKX_AVAILABLE, reason="NetworkX not installed")
@@ -222,9 +222,9 @@ class BaseNetworkXComparisonTest(ABC):
         """PageRank scores should sum to approximately 1.0."""
         self.setup_random_graph(db, 50, 200, weighted=False, seed=42)
 
-        # Grafeo PageRank
-        grafeo_pr = self.run_pagerank(db)
-        pr_sum = sum(grafeo_pr.values())
+        # Obrain PageRank
+        obrain_pr = self.run_pagerank(db)
+        pr_sum = sum(obrain_pr.values())
 
         assert abs(pr_sum - 1.0) < 0.01, f"PageRank sum should be ~1.0, got {pr_sum}"
 
@@ -234,28 +234,28 @@ class BaseNetworkXComparisonTest(ABC):
         graph_info = self.setup_random_graph(db, 50, 150, weighted=False, seed=42)
         edges = graph_info["edges"]
 
-        # Grafeo degree centrality
-        grafeo_dc = self.run_degree_centrality(db)
+        # Obrain degree centrality
+        obrain_dc = self.run_degree_centrality(db)
 
         # NetworkX degree centrality
         graph = self._build_networkx_graph(edges, directed=True, weighted=False)
         nx_dc = nx.degree_centrality(graph)
 
         # Compare values for common nodes
-        common_nodes = set(grafeo_dc.keys()) & set(nx_dc.keys())
+        common_nodes = set(obrain_dc.keys()) & set(nx_dc.keys())
         assert len(common_nodes) > 0, "No common nodes for degree centrality"
 
         for node in common_nodes:
-            grafeo_val = grafeo_dc[node]
+            obrain_val = obrain_dc[node]
             nx_val = nx_dc[node]
-            assert abs(grafeo_val - nx_val) < 0.01, (
+            assert abs(obrain_val - nx_val) < 0.01, (
                 f"Degree centrality mismatch for node {node}: "
-                f"Grafeo={grafeo_val}, NetworkX={nx_val}"
+                f"Obrain={obrain_val}, NetworkX={nx_val}"
             )
 
 
 class BaseNetworkXBenchmarkTest(ABC):
-    """Abstract base class for NetworkX vs Grafeo performance comparison.
+    """Abstract base class for NetworkX vs Obrain performance comparison.
 
     Runs the same algorithms on both and compares performance.
     """
@@ -273,30 +273,30 @@ class BaseNetworkXBenchmarkTest(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def run_grafeo_pagerank(self, db) -> float:
-        """Run Grafeo PageRank and return execution time in ms."""
+    def run_obrain_pagerank(self, db) -> float:
+        """Run Obrain PageRank and return execution time in ms."""
         raise NotImplementedError
 
     @abstractmethod
-    def run_grafeo_dijkstra(self, db, source) -> float:
-        """Run Grafeo Dijkstra and return execution time in ms."""
+    def run_obrain_dijkstra(self, db, source) -> float:
+        """Run Obrain Dijkstra and return execution time in ms."""
         raise NotImplementedError
 
     @abstractmethod
-    def run_grafeo_bfs(self, db, start) -> float:
-        """Run Grafeo BFS and return execution time in ms."""
+    def run_obrain_bfs(self, db, start) -> float:
+        """Run Obrain BFS and return execution time in ms."""
         raise NotImplementedError
 
     @pytest.mark.skipif(not NETWORKX_AVAILABLE, reason="NetworkX not installed")
     def test_pagerank_performance_comparison(self, db):
-        """Compare PageRank performance between Grafeo and NetworkX."""
+        """Compare PageRank performance between Obrain and NetworkX."""
         import time
 
         graph_info = self.setup_random_graph(db, 1000, 5000, weighted=False, seed=42)
         edges = graph_info["edges"]
 
-        # Grafeo timing
-        grafeo_time = self.run_grafeo_pagerank(db)
+        # Obrain timing
+        obrain_time = self.run_obrain_pagerank(db)
 
         # NetworkX timing
         graph = nx.DiGraph()
@@ -308,17 +308,17 @@ class BaseNetworkXBenchmarkTest(ABC):
         nx_time = (time.perf_counter() - start) * 1000
 
         print("\nPageRank (1000 nodes, 5000 edges):")
-        print(f"  Grafeo: {grafeo_time:.2f}ms")
+        print(f"  Obrain: {obrain_time:.2f}ms")
         print(f"  NetworkX: {nx_time:.2f}ms")
-        print(f"  Ratio: {grafeo_time / nx_time:.2f}x")
+        print(f"  Ratio: {obrain_time / nx_time:.2f}x")
 
         # Just ensure both complete, don't assert performance
-        assert grafeo_time > 0
+        assert obrain_time > 0
         assert nx_time > 0
 
     @pytest.mark.skipif(not NETWORKX_AVAILABLE, reason="NetworkX not installed")
     def test_dijkstra_performance_comparison(self, db):
-        """Compare Dijkstra performance between Grafeo and NetworkX."""
+        """Compare Dijkstra performance between Obrain and NetworkX."""
         import time
 
         graph_info = self.setup_random_graph(db, 1000, 5000, weighted=True, seed=42)
@@ -326,8 +326,8 @@ class BaseNetworkXBenchmarkTest(ABC):
         edges = graph_info["edges"]
         source = node_ids[0]
 
-        # Grafeo timing
-        grafeo_time = self.run_grafeo_dijkstra(db, source)
+        # Obrain timing
+        obrain_time = self.run_obrain_dijkstra(db, source)
 
         # NetworkX timing
         graph = nx.DiGraph()
@@ -339,17 +339,17 @@ class BaseNetworkXBenchmarkTest(ABC):
         nx_time = (time.perf_counter() - start) * 1000
 
         print("\nDijkstra (1000 nodes, 5000 edges):")
-        print(f"  Grafeo: {grafeo_time:.2f}ms")
+        print(f"  Obrain: {obrain_time:.2f}ms")
         print(f"  NetworkX: {nx_time:.2f}ms")
-        print(f"  Ratio: {grafeo_time / nx_time:.2f}x")
+        print(f"  Ratio: {obrain_time / nx_time:.2f}x")
 
         # Just ensure both complete
-        assert grafeo_time > 0
+        assert obrain_time > 0
         assert nx_time > 0
 
     @pytest.mark.skipif(not NETWORKX_AVAILABLE, reason="NetworkX not installed")
     def test_bfs_performance_comparison(self, db):
-        """Compare BFS performance between Grafeo and NetworkX."""
+        """Compare BFS performance between Obrain and NetworkX."""
         import time
 
         graph_info = self.setup_random_graph(db, 1000, 5000, weighted=False, seed=42)
@@ -357,8 +357,8 @@ class BaseNetworkXBenchmarkTest(ABC):
         edges = graph_info["edges"]
         start_node = node_ids[0]
 
-        # Grafeo timing
-        grafeo_time = self.run_grafeo_bfs(db, start_node)
+        # Obrain timing
+        obrain_time = self.run_obrain_bfs(db, start_node)
 
         # NetworkX timing
         graph = nx.DiGraph()
@@ -370,10 +370,10 @@ class BaseNetworkXBenchmarkTest(ABC):
         nx_time = (time.perf_counter() - start) * 1000
 
         print("\nBFS (1000 nodes, 5000 edges):")
-        print(f"  Grafeo: {grafeo_time:.2f}ms")
+        print(f"  Obrain: {obrain_time:.2f}ms")
         print(f"  NetworkX: {nx_time:.2f}ms")
-        print(f"  Ratio: {grafeo_time / nx_time:.2f}x")
+        print(f"  Ratio: {obrain_time / nx_time:.2f}x")
 
         # Just ensure both complete
-        assert grafeo_time > 0
+        assert obrain_time > 0
         assert nx_time > 0

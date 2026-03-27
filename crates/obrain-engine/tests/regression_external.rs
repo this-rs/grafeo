@@ -3,15 +3,15 @@
 //! Unicode handling, and query correctness.
 //!
 //! ```bash
-//! cargo test -p grafeo-engine --test regression_external -- --nocapture
+//! cargo test -p obrain-engine --test regression_external -- --nocapture
 //! ```
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
-use grafeo_engine::database::QueryResult;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
+use obrain_engine::database::QueryResult;
 
-fn db() -> GrafeoDB {
-    GrafeoDB::new_in_memory()
+fn db() -> ObrainDB {
+    ObrainDB::new_in_memory()
 }
 
 /// Helper: extract a column of string values from query results.
@@ -579,7 +579,7 @@ mod deleted_node_access {
 
 mod nested_properties {
     use super::*;
-    use grafeo_common::types::PropertyKey;
+    use obrain_common::types::PropertyKey;
     use std::collections::{BTreeMap, HashMap};
 
     #[test]

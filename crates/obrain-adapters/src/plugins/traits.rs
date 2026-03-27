@@ -1,9 +1,9 @@
 //! Plugin traits.
 
-use grafeo_common::utils::error::Result;
+use obrain_common::utils::error::Result;
 use std::collections::HashMap;
 
-/// A Grafeo plugin.
+/// A Obrain plugin.
 pub trait Plugin: Send + Sync {
     /// Returns the name of the plugin.
     fn name(&self) -> &str;
@@ -158,7 +158,7 @@ pub struct AlgorithmResult {
     /// Result columns.
     pub columns: Vec<String>,
     /// Result rows.
-    pub rows: Vec<Vec<grafeo_common::types::Value>>,
+    pub rows: Vec<Vec<obrain_common::types::Value>>,
 }
 
 impl AlgorithmResult {
@@ -171,7 +171,7 @@ impl AlgorithmResult {
     }
 
     /// Adds a row to the result.
-    pub fn add_row(&mut self, row: Vec<grafeo_common::types::Value>) {
+    pub fn add_row(&mut self, row: Vec<obrain_common::types::Value>) {
         self.rows.push(row);
     }
 

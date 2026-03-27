@@ -2,7 +2,7 @@
 //!
 //! Tokenizes Cypher query strings into a stream of tokens.
 
-use grafeo_common::utils::error::SourceSpan;
+use obrain_common::utils::error::SourceSpan;
 
 /// A token in the Cypher language.
 #[derive(Debug, Clone, PartialEq)]

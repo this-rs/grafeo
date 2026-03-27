@@ -1,8 +1,8 @@
 //! WAL log file management.
 
 use super::WalRecord;
-use grafeo_common::types::{EpochId, TransactionId};
-use grafeo_common::utils::error::{Error, Result};
+use obrain_common::types::{EpochId, TransactionId};
+use obrain_common::utils::error::{Error, Result};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
@@ -193,7 +193,7 @@ impl WalManager {
     /// `force_sync` controls whether an fsync is performed in Sync durability
     /// mode. Callers typically set this to `true` for commit markers.
     pub(crate) fn write_frame(&self, data: &[u8], force_sync: bool) -> Result<()> {
-        use grafeo_core::testing::crash::maybe_crash;
+        use obrain_core::testing::crash::maybe_crash;
 
         self.ensure_active_log()?;
 
@@ -611,7 +611,7 @@ impl WalManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grafeo_common::types::NodeId;
+    use obrain_common::types::NodeId;
     use tempfile::tempdir;
 
     #[test]

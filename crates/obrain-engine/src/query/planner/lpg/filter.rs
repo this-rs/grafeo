@@ -339,7 +339,7 @@ impl super::Planner {
 
         // Set up ParameterState for correlated variables
         let param_state = std::sync::Arc::new(
-            grafeo_core::execution::operators::ParameterState::new(param_vars.to_vec()),
+            obrain_core::execution::operators::ParameterState::new(param_vars.to_vec()),
         );
         let param_col_indices: Vec<usize> = param_vars
             .iter()
@@ -649,7 +649,7 @@ impl super::Planner {
         &self,
         predicate: &LogicalExpression,
     ) -> Option<bool> {
-        use grafeo_core::graph::lpg::CompareOp;
+        use obrain_core::graph::lpg::CompareOp;
 
         match predicate {
             LogicalExpression::Binary { left, op, right } => {

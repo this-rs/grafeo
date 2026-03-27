@@ -1,9 +1,9 @@
-//! # grafeo-adapters
+//! # obrain-adapters
 //!
 //! The integration layer - parsers, storage backends, and plugins.
 //!
-//! This is where external formats meet Grafeo's internal representation.
-//! You probably don't need this crate directly unless you're extending Grafeo.
+//! This is where external formats meet Obrain's internal representation.
+//! You probably don't need this crate directly unless you're extending Obrain.
 //!
 //! ## Modules
 //!

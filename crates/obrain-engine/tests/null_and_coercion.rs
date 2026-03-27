@@ -4,14 +4,14 @@
 //! T2-04: Type coercion (Int64 vs Float64, mixed aggregates)
 //!
 //! ```bash
-//! cargo test -p grafeo-engine --features full --test null_and_coercion
+//! cargo test -p obrain-engine --features full --test null_and_coercion
 //! ```
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
-fn setup_with_nulls() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn setup_with_nulls() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.create_node_with_props(
         &["Item"],
@@ -146,7 +146,7 @@ fn test_and_with_null_unknown() {
 
 #[test]
 fn test_nullif_both_null() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let r = session
         .execute("RETURN NULLIF(NULL, NULL) AS result")
@@ -159,7 +159,7 @@ fn test_nullif_both_null() {
 
 #[test]
 fn test_nullif_value_null() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let r = session
         .execute("RETURN NULLIF(42, NULL) AS result")
@@ -188,7 +188,7 @@ fn test_null_comparison_gt_filters_out() {
 
 #[test]
 fn test_missing_property_is_null() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.create_node_with_props(&["Thing"], [("name", Value::String("only_name".into()))]);
 
@@ -298,7 +298,7 @@ fn test_case_when_null_goes_to_else() {
 
 #[test]
 fn test_case_when_with_null_value() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.create_node_with_props(&["X"], [("v", Value::Int64(1))]);
     let r = session
@@ -317,7 +317,7 @@ fn test_case_when_with_null_value() {
 
 #[test]
 fn test_where_value_in_list_with_null() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.create_node_with_props(&["N"], [("v", Value::Int64(1))]);
     session.create_node_with_props(&["N"], [("v", Value::Int64(2))]);
@@ -360,7 +360,7 @@ fn test_null_arithmetic_returns_null() {
 /// Int64 property compared against Float64 literal: `WHERE n.v > 2.5` matches Int64(3).
 #[test]
 fn test_int_float_comparison_gt() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.create_node_with_props(&["Num"], [("v", Value::Int64(3))]);
 
@@ -373,7 +373,7 @@ fn test_int_float_comparison_gt() {
 /// Int64 vs Float64 with `<` operator.
 #[test]
 fn test_int_float_comparison_lt() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.create_node_with_props(&["Num"], [("v", Value::Int64(2))]);
 
@@ -385,7 +385,7 @@ fn test_int_float_comparison_lt() {
 
 #[test]
 fn test_int_float_arithmetic() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.create_node_with_props(&["Num"], [("v", Value::Int64(3))]);
 
@@ -406,7 +406,7 @@ fn test_int_float_arithmetic() {
 /// TODO: Once aggregate coercion is fixed, change to assert Float64(60.5).
 #[test]
 fn test_sum_mixed_int_float() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.create_node_with_props(&["Val"], [("n", Value::Int64(10))]);
     session.create_node_with_props(&["Val"], [("n", Value::Float64(20.5))]);
@@ -431,7 +431,7 @@ fn test_sum_mixed_int_float() {
 /// Int64 vs Float64 equality: `WHERE n.v = 5.0` matches Int64(5).
 #[test]
 fn test_int_equality_with_float() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.create_node_with_props(&["Num"], [("v", Value::Int64(5))]);
 
@@ -444,7 +444,7 @@ fn test_int_equality_with_float() {
 /// Same-type comparison works correctly.
 #[test]
 fn test_same_type_int_comparison() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.create_node_with_props(&["Num"], [("v", Value::Int64(3))]);
 
@@ -458,7 +458,7 @@ fn test_same_type_int_comparison() {
 /// Same-type Float64 comparison works.
 #[test]
 fn test_same_type_float_comparison() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.create_node_with_props(&["Num"], [("v", Value::Float64(3.5))]);
 
@@ -474,7 +474,7 @@ fn test_same_type_float_comparison() {
 
 #[test]
 fn test_distinct_with_nulls() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.create_node_with_props(&["D"], [("v", Value::Int64(1))]);
     session.create_node_with_props(&["D"], [("v", Value::Int64(1))]);
@@ -500,7 +500,7 @@ fn test_distinct_with_nulls() {
 
 #[test]
 fn test_group_by_null_key() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.create_node_with_props(
         &["Sale"],

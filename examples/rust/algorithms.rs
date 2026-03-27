@@ -1,11 +1,11 @@
 //! Graph algorithms via CALL procedures.
 //!
-//! Run with: `cargo run -p grafeo-examples --bin algorithms`
+//! Run with: `cargo run -p obrain-examples --bin algorithms`
 
-use grafeo::{GrafeoDB, NodeId};
+use obrain::{ObrainDB, NodeId};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // ── Build a collaboration network ─────────────────────────────
@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── PageRank ──────────────────────────────────────────────────
     // Identifies the most "influential" nodes in the graph.
     // Parameters are passed as a map literal: {key: value}.
-    let result = session.execute("CALL grafeo.pagerank({damping: 0.85, max_iterations: 20})")?;
+    let result = session.execute("CALL obrain.pagerank({damping: 0.85, max_iterations: 20})")?;
 
     // Collect and sort by score descending
     let mut scores: Vec<_> = result
@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── Connected Components ──────────────────────────────────────
     // Finds groups of nodes that are all reachable from each other.
-    let result = session.execute("CALL grafeo.connected_components()")?;
+    let result = session.execute("CALL obrain.connected_components()")?;
 
     println!("\nConnected Components:");
     for row in result.iter() {
@@ -75,7 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── Louvain Community Detection ───────────────────────────────
     // Detects communities by optimizing modularity.
-    let result = session.execute("CALL grafeo.louvain()")?;
+    let result = session.execute("CALL obrain.louvain()")?;
 
     println!("\nLouvain Communities:");
     for row in result.iter() {
@@ -88,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Degree Centrality ─────────────────────────────────────────
     // Measures connectivity: in-degree, out-degree, and total.
     // Columns: node_id, in_degree, out_degree, total_degree
-    let result = session.execute("CALL grafeo.degree_centrality()")?;
+    let result = session.execute("CALL obrain.degree_centrality()")?;
 
     // Collect and sort by total_degree descending
     let mut degrees: Vec<_> = result
@@ -116,7 +116,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Look up a person's name by their raw node ID from CALL procedure results.
-fn get_person_name(db: &GrafeoDB, raw_id: i64) -> String {
+fn get_person_name(db: &ObrainDB, raw_id: i64) -> String {
     let node_id = NodeId::from(raw_id as u64);
     db.get_node(node_id)
         .and_then(|n| {

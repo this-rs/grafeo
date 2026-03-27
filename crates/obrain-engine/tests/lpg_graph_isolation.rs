@@ -4,10 +4,10 @@
 //! correctly route queries and mutations to the selected named graph,
 //! not the default store.
 
-use grafeo_engine::GrafeoDB;
+use obrain_engine::ObrainDB;
 
-fn db() -> GrafeoDB {
-    GrafeoDB::new_in_memory()
+fn db() -> ObrainDB {
+    ObrainDB::new_in_memory()
 }
 
 // ── Basic data isolation ─────────────────────────────────────────
@@ -428,7 +428,7 @@ fn show_graphs_empty() {
 
 #[test]
 fn show_graphs_lists_created_graphs() {
-    use grafeo_common::types::Value;
+    use obrain_common::types::Value;
 
     let db = db();
     let session = db.session();
@@ -454,7 +454,7 @@ fn show_graphs_reflects_drop() {
     assert_eq!(session.execute("SHOW GRAPHS").unwrap().row_count(), 0);
 }
 
-// ── GrafeoDB-level graph context persistence ────────────────────
+// ── ObrainDB-level graph context persistence ────────────────────
 
 #[test]
 fn db_execute_use_graph_persists_across_calls() {
@@ -600,10 +600,10 @@ fn concurrent_sessions_on_different_graphs() {
     // Cross-check: each graph has its own data
     assert_eq!(
         r1.rows[0][0],
-        grafeo_common::types::Value::String("widget".into())
+        obrain_common::types::Value::String("widget".into())
     );
     assert_eq!(
         r2.rows[0][0],
-        grafeo_common::types::Value::String("gadget".into())
+        obrain_common::types::Value::String("gadget".into())
     );
 }

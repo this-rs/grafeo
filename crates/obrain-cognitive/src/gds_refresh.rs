@@ -1,9 +1,9 @@
 //! GDS Refresh Scheduler — periodic batch refresh of global graph metrics.
 //!
-//! Reuses the existing algorithms from `grafeo-adapters`:
-//! - [`pagerank`](grafeo_adapters::plugins::algorithms::pagerank)
-//! - [`betweenness_centrality`](grafeo_adapters::plugins::algorithms::betweenness_centrality)
-//! - [`louvain`](grafeo_adapters::plugins::algorithms::louvain)
+//! Reuses the existing algorithms from `obrain-adapters`:
+//! - [`pagerank`](obrain_adapters::plugins::algorithms::pagerank)
+//! - [`betweenness_centrality`](obrain_adapters::plugins::algorithms::betweenness_centrality)
+//! - [`louvain`](obrain_adapters::plugins::algorithms::louvain)
 //!
 //! The scheduler runs on a configurable interval or mutation-count threshold,
 //! computing these metrics and injecting results into the [`FabricStore`].
@@ -13,9 +13,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 #[cfg(feature = "gds-refresh")]
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 #[cfg(feature = "gds-refresh")]
-use grafeo_core::graph::GraphStore;
+use obrain_core::graph::GraphStore;
 
 use crate::fabric::FabricStore;
 
@@ -108,7 +108,7 @@ impl GdsRefreshScheduler {
 
     /// Executes a full GDS refresh using the provided graph store.
     ///
-    /// This reuses the algorithms from `grafeo-adapters`:
+    /// This reuses the algorithms from `obrain-adapters`:
     /// - PageRank for link-structure importance
     /// - Betweenness centrality for path involvement
     /// - Louvain for community detection
@@ -116,7 +116,7 @@ impl GdsRefreshScheduler {
     /// Results are injected into the [`FabricStore`] and risk scores are recalculated.
     #[cfg(feature = "gds-refresh")]
     pub fn refresh(&self, store: &dyn GraphStore) {
-        use grafeo_adapters::plugins::algorithms::{betweenness_centrality, louvain, pagerank};
+        use obrain_adapters::plugins::algorithms::{betweenness_centrality, louvain, pagerank};
 
         tracing::info!("GDS refresh starting");
 
@@ -163,7 +163,7 @@ impl GdsRefreshScheduler {
         );
     }
 
-    /// Executes a GDS refresh without grafeo-adapters (no-op stub).
+    /// Executes a GDS refresh without obrain-adapters (no-op stub).
     ///
     /// When the `gds-refresh` feature is not enabled, this method does nothing.
     /// Use the `gds-refresh` feature to enable full GDS computation.

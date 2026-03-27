@@ -2,12 +2,12 @@
 
 #![cfg(all(feature = "memory", feature = "energy"))]
 
-use grafeo_cognitive::memory::{
+use obrain_cognitive::memory::{
     InMemoryArchiveBackend, MemoryConfig, MemoryHorizon, MemoryManager, MemoryStore,
     NodeMemoryState, SweepResult,
 };
-use grafeo_cognitive::{EnergyConfig, EnergyStore};
-use grafeo_common::types::NodeId;
+use obrain_cognitive::{EnergyConfig, EnergyStore};
+use obrain_common::types::NodeId;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -142,7 +142,7 @@ fn memory_manager_with_archive_sets_backend() {
     let archive = Arc::new(InMemoryArchiveBackend::new());
 
     let manager = MemoryManager::new(memory_store, config, energy_store)
-        .with_archive(archive as Arc<dyn grafeo_cognitive::memory::ArchiveBackend>);
+        .with_archive(archive as Arc<dyn obrain_cognitive::memory::ArchiveBackend>);
     let dbg = format!("{:?}", manager);
     assert!(dbg.contains("has_archive: true"));
 }
@@ -237,7 +237,7 @@ async fn in_memory_archive_len_is_empty() {
     assert_eq!(backend.len(), 0);
     assert!(backend.is_empty());
 
-    use grafeo_cognitive::memory::ArchiveBackend;
+    use obrain_cognitive::memory::ArchiveBackend;
     backend.archive(NodeId(1), b"data").await.unwrap();
     assert_eq!(backend.len(), 1);
     assert!(!backend.is_empty());
@@ -249,7 +249,7 @@ async fn in_memory_archive_len_is_empty() {
 
 #[tokio::test]
 async fn in_memory_archive_remove_nonexistent() {
-    use grafeo_cognitive::memory::ArchiveBackend;
+    use obrain_cognitive::memory::ArchiveBackend;
     let backend = InMemoryArchiveBackend::new();
     // Should not panic
     backend.remove(NodeId(999)).await.unwrap();
@@ -261,7 +261,7 @@ async fn in_memory_archive_remove_nonexistent() {
 
 #[tokio::test]
 async fn in_memory_archive_exists_nonexistent() {
-    use grafeo_cognitive::memory::ArchiveBackend;
+    use obrain_cognitive::memory::ArchiveBackend;
     let backend = InMemoryArchiveBackend::new();
     assert!(!backend.exists(NodeId(999)).await.unwrap());
 }

@@ -11,13 +11,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use grafeo_common::types::{EdgeId, EpochId, NodeId, TransactionId, Value};
-use grafeo_common::utils::error::Result;
-use grafeo_core::graph::Direction;
-use grafeo_core::graph::GraphStoreMut;
-use grafeo_core::graph::lpg::{Edge, LpgStore, Node};
+use obrain_common::types::{EdgeId, EpochId, NodeId, TransactionId, Value};
+use obrain_common::utils::error::Result;
+use obrain_core::graph::Direction;
+use obrain_core::graph::GraphStoreMut;
+use obrain_core::graph::lpg::{Edge, LpgStore, Node};
 #[cfg(feature = "rdf")]
-use grafeo_core::graph::rdf::RdfStore;
+use obrain_core::graph::rdf::RdfStore;
 
 use crate::catalog::{Catalog, CatalogConstraintValidator};
 use crate::config::{AdaptiveConfig, GraphModel};
@@ -76,7 +76,7 @@ pub(crate) struct SessionConfig {
 
 /// Your handle to the database - execute queries and manage transactions.
 ///
-/// Get one from [`GrafeoDB::session()`](crate::GrafeoDB::session). Each session
+/// Get one from [`ObrainDB::session()`](crate::ObrainDB::session). Each session
 /// tracks its own transaction state, so you can have multiple concurrent
 /// sessions without them interfering.
 pub struct Session {
@@ -123,7 +123,7 @@ pub struct Session {
     transaction_start_edge_count: AtomicUsize,
     /// WAL for logging schema changes.
     #[cfg(feature = "wal")]
-    wal: Option<Arc<grafeo_adapters::storage::wal::LpgWal>>,
+    wal: Option<Arc<obrain_adapters::storage::wal::LpgWal>>,
     /// Shared WAL graph context tracker for named graph awareness.
     #[cfg(feature = "wal")]
     wal_graph_context: Option<Arc<parking_lot::Mutex<Option<String>>>>,
@@ -139,7 +139,7 @@ pub struct Session {
     time_zone: parking_lot::Mutex<Option<String>>,
     /// Session-level parameters (SET PARAMETER).
     session_params:
-        parking_lot::Mutex<std::collections::HashMap<String, grafeo_common::types::Value>>,
+        parking_lot::Mutex<std::collections::HashMap<String, obrain_common::types::Value>>,
     /// Override epoch for time-travel queries (None = use transaction/current epoch).
     viewing_epoch_override: parking_lot::Mutex<Option<EpochId>>,
     /// Savepoints within the current transaction.
@@ -161,7 +161,7 @@ pub struct Session {
     /// Optional post-commit hook for reactive event publishing.
     ///
     /// When set, called after every successful commit with the graph store
-    /// reference. Used by `grafeo-reactive` to drain pending mutation events
+    /// reference. Used by `obrain-reactive` to drain pending mutation events
     /// from an `InstrumentedStore` and publish them to the `MutationBus`.
     ///
     /// This is the single injection point for the reactive substrate — it
@@ -246,7 +246,7 @@ impl Session {
     #[cfg(feature = "wal")]
     pub(crate) fn set_wal(
         &mut self,
-        wal: Arc<grafeo_adapters::storage::wal::LpgWal>,
+        wal: Arc<obrain_adapters::storage::wal::LpgWal>,
         wal_graph_context: Arc<parking_lot::Mutex<Option<String>>>,
     ) {
         // Wrap the graph store so query-engine mutations are WAL-logged
@@ -274,7 +274,7 @@ impl Session {
     /// Sets a post-commit hook for reactive event publishing.
     ///
     /// The hook receives a reference to the graph store after each successful
-    /// commit. Used by `grafeo-reactive` to drain mutation events from an
+    /// commit. Used by `obrain-reactive` to drain mutation events from an
     /// `InstrumentedStore` and publish them to the `MutationBus`.
     #[cfg(feature = "reactive")]
     pub fn set_post_commit_hook(&mut self, hook: Arc<dyn Fn(&dyn GraphStoreMut) + Send + Sync>) {
@@ -479,13 +479,13 @@ impl Session {
     }
 
     /// Sets a session parameter.
-    pub fn set_parameter(&self, key: &str, value: grafeo_common::types::Value) {
+    pub fn set_parameter(&self, key: &str, value: obrain_common::types::Value) {
         self.session_params.lock().insert(key.to_string(), value);
     }
 
     /// Gets a session parameter by cloning it.
     #[must_use]
-    pub fn get_parameter(&self, key: &str) -> Option<grafeo_common::types::Value> {
+    pub fn get_parameter(&self, key: &str) -> Option<obrain_common::types::Value> {
         self.session_params.lock().get(key).cloned()
     }
 
@@ -559,7 +559,7 @@ impl Session {
     /// Checks that the session's graph model supports LPG operations.
     fn require_lpg(&self, language: &str) -> Result<()> {
         if self.graph_model == GraphModel::Rdf {
-            return Err(grafeo_common::utils::error::Error::Internal(format!(
+            return Err(obrain_common::utils::error::Error::Internal(format!(
                 "This is an RDF database. {language} queries require an LPG database."
             )));
         }
@@ -570,17 +570,17 @@ impl Session {
     #[cfg(feature = "gql")]
     fn execute_session_command(
         &self,
-        cmd: grafeo_adapters::query::gql::ast::SessionCommand,
+        cmd: obrain_adapters::query::gql::ast::SessionCommand,
     ) -> Result<QueryResult> {
-        use grafeo_adapters::query::gql::ast::{SessionCommand, TransactionIsolationLevel};
-        use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind};
+        use obrain_adapters::query::gql::ast::{SessionCommand, TransactionIsolationLevel};
+        use obrain_common::utils::error::{Error, QueryError, QueryErrorKind};
 
         // Block DDL in read-only transactions (ISO/IEC 39075 Section 8)
         if *self.read_only_tx.lock() {
             match &cmd {
                 SessionCommand::CreateGraph { .. } | SessionCommand::DropGraph { .. } => {
                     return Err(Error::Transaction(
-                        grafeo_common::utils::error::TransactionError::ReadOnly,
+                        obrain_common::utils::error::TransactionError::ReadOnly,
                     ));
                 }
                 _ => {} // Session state + transaction control allowed
@@ -632,7 +632,7 @@ impl Session {
                 if created {
                     #[cfg(feature = "wal")]
                     self.log_schema_wal(
-                        &grafeo_adapters::storage::wal::WalRecord::CreateNamedGraph {
+                        &obrain_adapters::storage::wal::WalRecord::CreateNamedGraph {
                             name: storage_key.clone(),
                         },
                     );
@@ -680,7 +680,7 @@ impl Session {
                 if dropped {
                     #[cfg(feature = "wal")]
                     self.log_schema_wal(
-                        &grafeo_adapters::storage::wal::WalRecord::DropNamedGraph {
+                        &obrain_adapters::storage::wal::WalRecord::DropNamedGraph {
                             name: storage_key.clone(),
                         },
                     );
@@ -762,7 +762,7 @@ impl Session {
                 }
             }
             SessionCommand::SessionReset(target) => {
-                use grafeo_adapters::query::gql::ast::SessionResetTarget;
+                use obrain_adapters::query::gql::ast::SessionResetTarget;
                 match target {
                     SessionResetTarget::All => self.reset_session(),
                     SessionResetTarget::Schema => self.reset_schema(),
@@ -821,7 +821,7 @@ impl Session {
 
     /// Logs a WAL record for a schema change (no-op if WAL is not enabled).
     #[cfg(feature = "wal")]
-    fn log_schema_wal(&self, record: &grafeo_adapters::storage::wal::WalRecord) {
+    fn log_schema_wal(&self, record: &obrain_adapters::storage::wal::WalRecord) {
         if let Some(ref wal) = self.wal
             && let Err(e) = wal.log(record)
         {
@@ -833,15 +833,15 @@ impl Session {
     #[cfg(feature = "gql")]
     fn execute_schema_command(
         &self,
-        cmd: grafeo_adapters::query::gql::ast::SchemaStatement,
+        cmd: obrain_adapters::query::gql::ast::SchemaStatement,
     ) -> Result<QueryResult> {
         use crate::catalog::{
             EdgeTypeDefinition, NodeTypeDefinition, PropertyDataType, TypedProperty,
         };
-        use grafeo_adapters::query::gql::ast::SchemaStatement;
+        use obrain_adapters::query::gql::ast::SchemaStatement;
         #[cfg(feature = "wal")]
-        use grafeo_adapters::storage::wal::WalRecord;
-        use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind};
+        use obrain_adapters::storage::wal::WalRecord;
+        use obrain_common::utils::error::{Error, QueryError, QueryErrorKind};
 
         /// Logs a WAL record for schema changes. Compiles to nothing without `wal`.
         macro_rules! wal_log {
@@ -1020,7 +1020,7 @@ impl Session {
                 }
             }
             SchemaStatement::CreateIndex(stmt) => {
-                use grafeo_adapters::query::gql::ast::IndexKind;
+                use obrain_adapters::query::gql::ast::IndexKind;
                 let active = self.active_lpg_store();
                 let index_type_str = match stmt.index_kind {
                     IndexKind::Property => "property",
@@ -1089,7 +1089,7 @@ impl Session {
             }
             SchemaStatement::CreateConstraint(stmt) => {
                 use crate::catalog::TypeConstraint;
-                use grafeo_adapters::query::gql::ast::ConstraintKind;
+                use obrain_adapters::query::gql::ast::ConstraintKind;
                 let kind_str = match stmt.constraint_kind {
                     ConstraintKind::Unique => "unique",
                     ConstraintKind::NodeKey => "node_key",
@@ -1159,7 +1159,7 @@ impl Session {
             }
             SchemaStatement::CreateGraphType(stmt) => {
                 use crate::catalog::GraphTypeDefinition;
-                use grafeo_adapters::query::gql::ast::InlineElementType;
+                use obrain_adapters::query::gql::ast::InlineElementType;
 
                 // GG04: LIKE clause copies type from existing graph
                 let (mut node_types, mut edge_types, open) =
@@ -1388,7 +1388,7 @@ impl Session {
                 }
             }
             SchemaStatement::AlterNodeType(stmt) => {
-                use grafeo_adapters::query::gql::ast::TypeAlteration;
+                use obrain_adapters::query::gql::ast::TypeAlteration;
                 let mut wal_alts = Vec::new();
                 for alt in &stmt.alterations {
                     match alt {
@@ -1443,7 +1443,7 @@ impl Session {
                 )))
             }
             SchemaStatement::AlterEdgeType(stmt) => {
-                use grafeo_adapters::query::gql::ast::TypeAlteration;
+                use obrain_adapters::query::gql::ast::TypeAlteration;
                 let mut wal_alts = Vec::new();
                 for alt in &stmt.alterations {
                     match alt {
@@ -1498,7 +1498,7 @@ impl Session {
                 )))
             }
             SchemaStatement::AlterGraphType(stmt) => {
-                use grafeo_adapters::query::gql::ast::GraphTypeAlteration;
+                use obrain_adapters::query::gql::ast::GraphTypeAlteration;
                 let mut wal_alts = Vec::new();
                 for alt in &stmt.alterations {
                     match alt {
@@ -1682,9 +1682,9 @@ impl Session {
         dimensions: Option<usize>,
         metric: Option<&str>,
     ) -> Result<()> {
-        use grafeo_common::types::{PropertyKey, Value};
-        use grafeo_common::utils::error::Error;
-        use grafeo_core::index::vector::{DistanceMetric, HnswConfig, HnswIndex};
+        use obrain_common::types::{PropertyKey, Value};
+        use obrain_common::utils::error::Error;
+        use obrain_core::index::vector::{DistanceMetric, HnswConfig, HnswIndex};
 
         let metric = match metric {
             Some(m) => DistanceMetric::from_str(m).ok_or_else(|| {
@@ -1697,7 +1697,7 @@ impl Session {
 
         let prop_key = PropertyKey::new(property);
         let mut found_dims: Option<usize> = dimensions;
-        let mut vectors: Vec<(grafeo_common::types::NodeId, Vec<f32>)> = Vec::new();
+        let mut vectors: Vec<(obrain_common::types::NodeId, Vec<f32>)> = Vec::new();
 
         for node in store.nodes_with_label(label) {
             if let Some(Value::Vector(v)) = node.properties.get(&prop_key) {
@@ -1724,7 +1724,7 @@ impl Session {
 
         let config = HnswConfig::new(dims, metric);
         let index = HnswIndex::with_capacity(config, vectors.len());
-        let accessor = grafeo_core::index::vector::PropertyVectorAccessor::new(store, property);
+        let accessor = obrain_core::index::vector::PropertyVectorAccessor::new(store, property);
         for (node_id, vec) in &vectors {
             index.insert(*node_id, vec, &accessor);
         }
@@ -1742,7 +1742,7 @@ impl Session {
         _dimensions: Option<usize>,
         _metric: Option<&str>,
     ) -> Result<()> {
-        Err(grafeo_common::utils::error::Error::Internal(
+        Err(obrain_common::utils::error::Error::Internal(
             "Vector index support requires the 'vector-index' feature".to_string(),
         ))
     }
@@ -1750,8 +1750,8 @@ impl Session {
     /// Creates a text index on the store by scanning existing nodes.
     #[cfg(all(feature = "gql", feature = "text-index"))]
     fn create_text_index_on_store(store: &LpgStore, label: &str, property: &str) -> Result<()> {
-        use grafeo_common::types::{PropertyKey, Value};
-        use grafeo_core::index::text::{BM25Config, InvertedIndex};
+        use obrain_common::types::{PropertyKey, Value};
+        use obrain_core::index::text::{BM25Config, InvertedIndex};
 
         let mut index = InvertedIndex::new(BM25Config::default());
         let prop_key = PropertyKey::new(property);
@@ -1770,7 +1770,7 @@ impl Session {
     /// Stub for when text-index feature is not enabled.
     #[cfg(all(feature = "gql", not(feature = "text-index")))]
     fn create_text_index_on_store(_store: &LpgStore, _label: &str, _property: &str) -> Result<()> {
-        Err(grafeo_common::utils::error::Error::Internal(
+        Err(obrain_common::utils::error::Error::Internal(
             "Text index support requires the 'text-index' feature".to_string(),
         ))
     }
@@ -1981,7 +1981,7 @@ impl Session {
 
     /// Returns detailed info for a specific graph type.
     fn execute_show_graph_type(&self, name: &str) -> Result<QueryResult> {
-        use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind};
+        use obrain_common::utils::error::{Error, QueryError, QueryErrorKind};
 
         let def = self.catalog.get_graph_type_def(name).ok_or_else(|| {
             Error::Query(QueryError::new(
@@ -2066,9 +2066,9 @@ impl Session {
     ///
     /// ```no_run
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use grafeo_engine::GrafeoDB;
+    /// use obrain_engine::ObrainDB;
     ///
-    /// let db = GrafeoDB::new_in_memory();
+    /// let db = ObrainDB::new_in_memory();
     /// let session = db.session();
     ///
     /// // Create a node
@@ -2092,7 +2092,7 @@ impl Session {
         };
 
         let _span = tracing::info_span!(
-            "grafeo::session::execute",
+            "obrain::session::execute",
             language = "gql",
             query_len = query.len(),
         )
@@ -2110,8 +2110,8 @@ impl Session {
             gql::GqlTranslationResult::SchemaCommand(cmd) => {
                 // All DDL is a write operation
                 if *self.read_only_tx.lock() {
-                    return Err(grafeo_common::utils::error::Error::Transaction(
-                        grafeo_common::utils::error::TransactionError::ReadOnly,
+                    return Err(obrain_common::utils::error::Error::Transaction(
+                        obrain_common::utils::error::TransactionError::ReadOnly,
                     ));
                 }
                 return self.execute_schema_command(cmd);
@@ -2119,8 +2119,8 @@ impl Session {
             gql::GqlTranslationResult::Plan(plan) => {
                 // Block mutations in read-only transactions
                 if *self.read_only_tx.lock() && plan.root.has_mutations() {
-                    return Err(grafeo_common::utils::error::Error::Transaction(
-                        grafeo_common::utils::error::TransactionError::ReadOnly,
+                    return Err(obrain_common::utils::error::Error::Transaction(
+                        obrain_common::utils::error::TransactionError::ReadOnly,
                     ));
                 }
                 plan
@@ -2337,7 +2337,7 @@ impl Session {
         _query: &str,
         _params: std::collections::HashMap<String, Value>,
     ) -> Result<QueryResult> {
-        Err(grafeo_common::utils::error::Error::Internal(
+        Err(obrain_common::utils::error::Error::Internal(
             "No query language enabled".to_string(),
         ))
     }
@@ -2349,7 +2349,7 @@ impl Session {
     /// Returns an error if no query language is enabled.
     #[cfg(not(any(feature = "gql", feature = "cypher")))]
     pub fn execute(&self, _query: &str) -> Result<QueryResult> {
-        Err(grafeo_common::utils::error::Error::Internal(
+        Err(obrain_common::utils::error::Error::Internal(
             "No query language enabled".to_string(),
         ))
     }
@@ -2365,14 +2365,14 @@ impl Session {
             Executor, binder::Binder, cache::CacheKey, optimizer::Optimizer,
             processor::QueryLanguage, translators::cypher,
         };
-        use grafeo_common::utils::error::{Error as GrafeoError, QueryError, QueryErrorKind};
+        use obrain_common::utils::error::{Error as ObrainError, QueryError, QueryErrorKind};
 
         // Handle schema DDL and SHOW commands before the normal query path
         let translation = cypher::translate_full(query)?;
         match translation {
             cypher::CypherTranslationResult::SchemaCommand(cmd) => {
                 if *self.read_only_tx.lock() {
-                    return Err(GrafeoError::Query(QueryError::new(
+                    return Err(ObrainError::Query(QueryError::new(
                         QueryErrorKind::Semantic,
                         "Cannot execute schema DDL in a read-only transaction",
                     )));
@@ -2508,9 +2508,9 @@ impl Session {
     ///
     /// ```no_run
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use grafeo_engine::GrafeoDB;
+    /// use obrain_engine::ObrainDB;
     ///
-    /// let db = GrafeoDB::new_in_memory();
+    /// let db = ObrainDB::new_in_memory();
     /// let session = db.session();
     ///
     /// // Create some nodes first
@@ -2624,9 +2624,9 @@ impl Session {
     ///
     /// ```no_run
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use grafeo_engine::GrafeoDB;
+    /// use obrain_engine::ObrainDB;
     ///
-    /// let db = GrafeoDB::new_in_memory();
+    /// let db = ObrainDB::new_in_memory();
     /// let session = db.session();
     ///
     /// // Create some nodes first
@@ -2730,9 +2730,9 @@ impl Session {
     ///
     /// ```no_run
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use grafeo_engine::GrafeoDB;
+    /// use obrain_engine::ObrainDB;
     ///
-    /// let db = GrafeoDB::new_in_memory();
+    /// let db = ObrainDB::new_in_memory();
     /// let session = db.session();
     ///
     /// let result = session.execute_sql(
@@ -2761,7 +2761,7 @@ impl Session {
         if let LogicalOperator::CreatePropertyGraph(ref cpg) = logical_plan.root {
             return Ok(QueryResult {
                 columns: vec!["status".into()],
-                column_types: vec![grafeo_common::types::LogicalType::String],
+                column_types: vec![obrain_common::types::LogicalType::String],
                 rows: vec![vec![Value::from(format!(
                     "Property graph '{}' created ({} node tables, {} edge tables)",
                     cpg.name,
@@ -2771,7 +2771,7 @@ impl Session {
                 execution_time_ms: None,
                 rows_scanned: None,
                 status_message: None,
-                gql_status: grafeo_common::utils::GqlStatus::SUCCESS,
+                gql_status: obrain_common::utils::GqlStatus::SUCCESS,
             });
         }
 
@@ -2874,7 +2874,7 @@ impl Session {
         params: Option<std::collections::HashMap<String, Value>>,
     ) -> Result<QueryResult> {
         let _span = tracing::info_span!(
-            "grafeo::session::execute",
+            "obrain::session::execute",
             language,
             query_len = query.len(),
         )
@@ -2965,9 +2965,9 @@ impl Session {
                     self.execute_sparql(query)
                 }
             }
-            other => Err(grafeo_common::utils::error::Error::Query(
-                grafeo_common::utils::error::QueryError::new(
-                    grafeo_common::utils::error::QueryErrorKind::Semantic,
+            other => Err(obrain_common::utils::error::Error::Query(
+                obrain_common::utils::error::QueryError::new(
+                    obrain_common::utils::error::QueryErrorKind::Semantic,
                     format!("Unknown query language: '{other}'"),
                 ),
             )),
@@ -2984,9 +2984,9 @@ impl Session {
     ///
     /// ```no_run
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use grafeo_engine::GrafeoDB;
+    /// use obrain_engine::ObrainDB;
     ///
-    /// let db = GrafeoDB::new_in_memory();
+    /// let db = ObrainDB::new_in_memory();
     /// let mut session = db.session();
     ///
     /// session.begin_transaction()?;
@@ -3035,7 +3035,7 @@ impl Session {
         read_only: bool,
         isolation_level: Option<crate::transaction::IsolationLevel>,
     ) -> Result<()> {
-        let _span = tracing::debug_span!("grafeo::tx::begin", read_only).entered();
+        let _span = tracing::debug_span!("obrain::tx::begin", read_only).entered();
         let mut current = self.current_transaction.lock();
         if current.is_some() {
             // Nested transaction: create an auto-savepoint instead of a new tx.
@@ -3092,7 +3092,7 @@ impl Session {
 
     /// Core commit logic, usable from both `&mut self` and `&self` paths.
     fn commit_inner(&self) -> Result<()> {
-        let _span = tracing::debug_span!("grafeo::tx::commit").entered();
+        let _span = tracing::debug_span!("obrain::tx::commit").entered();
         // Nested transaction: release the auto-savepoint (changes are preserved).
         {
             let mut depth = self.transaction_nesting_depth.lock();
@@ -3105,8 +3105,8 @@ impl Session {
         }
 
         let transaction_id = self.current_transaction.lock().take().ok_or_else(|| {
-            grafeo_common::utils::error::Error::Transaction(
-                grafeo_common::utils::error::TransactionError::InvalidState(
+            obrain_common::utils::error::Error::Transaction(
+                obrain_common::utils::error::TransactionError::InvalidState(
                     "No active transaction".to_string(),
                 ),
             )
@@ -3222,9 +3222,9 @@ impl Session {
     ///
     /// ```no_run
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use grafeo_engine::GrafeoDB;
+    /// use obrain_engine::ObrainDB;
     ///
-    /// let db = GrafeoDB::new_in_memory();
+    /// let db = ObrainDB::new_in_memory();
     /// let mut session = db.session();
     ///
     /// session.begin_transaction()?;
@@ -3239,7 +3239,7 @@ impl Session {
 
     /// Core rollback logic, usable from both `&mut self` and `&self` paths.
     fn rollback_inner(&self) -> Result<()> {
-        let _span = tracing::debug_span!("grafeo::tx::rollback").entered();
+        let _span = tracing::debug_span!("obrain::tx::rollback").entered();
         // Nested transaction: rollback to the auto-savepoint.
         {
             let mut depth = self.transaction_nesting_depth.lock();
@@ -3252,8 +3252,8 @@ impl Session {
         }
 
         let transaction_id = self.current_transaction.lock().take().ok_or_else(|| {
-            grafeo_common::utils::error::Error::Transaction(
-                grafeo_common::utils::error::TransactionError::InvalidState(
+            obrain_common::utils::error::Error::Transaction(
+                obrain_common::utils::error::TransactionError::InvalidState(
                     "No active transaction".to_string(),
                 ),
             )
@@ -3305,8 +3305,8 @@ impl Session {
     /// Returns an error if no transaction is active.
     pub fn savepoint(&self, name: &str) -> Result<()> {
         let tx_id = self.current_transaction.lock().ok_or_else(|| {
-            grafeo_common::utils::error::Error::Transaction(
-                grafeo_common::utils::error::TransactionError::InvalidState(
+            obrain_common::utils::error::Error::Transaction(
+                obrain_common::utils::error::TransactionError::InvalidState(
                     "No active transaction".to_string(),
                 ),
             )
@@ -3345,8 +3345,8 @@ impl Session {
     /// Returns an error if no transaction is active or the savepoint does not exist.
     pub fn rollback_to_savepoint(&self, name: &str) -> Result<()> {
         let transaction_id = self.current_transaction.lock().ok_or_else(|| {
-            grafeo_common::utils::error::Error::Transaction(
-                grafeo_common::utils::error::TransactionError::InvalidState(
+            obrain_common::utils::error::Error::Transaction(
+                obrain_common::utils::error::TransactionError::InvalidState(
                     "No active transaction".to_string(),
                 ),
             )
@@ -3359,8 +3359,8 @@ impl Session {
             .iter()
             .rposition(|sp| sp.name == name)
             .ok_or_else(|| {
-                grafeo_common::utils::error::Error::Transaction(
-                    grafeo_common::utils::error::TransactionError::InvalidState(format!(
+                obrain_common::utils::error::Error::Transaction(
+                    obrain_common::utils::error::TransactionError::InvalidState(format!(
                         "Savepoint '{name}' not found"
                     )),
                 )
@@ -3429,8 +3429,8 @@ impl Session {
     /// Returns an error if no transaction is active or the savepoint does not exist.
     pub fn release_savepoint(&self, name: &str) -> Result<()> {
         let _tx_id = self.current_transaction.lock().ok_or_else(|| {
-            grafeo_common::utils::error::Error::Transaction(
-                grafeo_common::utils::error::TransactionError::InvalidState(
+            obrain_common::utils::error::Error::Transaction(
+                obrain_common::utils::error::TransactionError::InvalidState(
                     "No active transaction".to_string(),
                 ),
             )
@@ -3441,8 +3441,8 @@ impl Session {
             .iter()
             .rposition(|sp| sp.name == name)
             .ok_or_else(|| {
-                grafeo_common::utils::error::Error::Transaction(
-                    grafeo_common::utils::error::TransactionError::InvalidState(format!(
+                obrain_common::utils::error::Error::Transaction(
+                    obrain_common::utils::error::TransactionError::InvalidState(format!(
                         "Savepoint '{name}' not found"
                     )),
                 )
@@ -3505,9 +3505,9 @@ impl Session {
     ///
     /// ```no_run
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use grafeo_engine::GrafeoDB;
+    /// use obrain_engine::ObrainDB;
     ///
-    /// let db = GrafeoDB::new_in_memory();
+    /// let db = ObrainDB::new_in_memory();
     /// let mut session = db.session();
     ///
     /// session.begin_transaction()?;
@@ -3638,8 +3638,8 @@ impl Session {
     }
 
     /// Evaluates a simple integer literal from a session parameter expression.
-    fn eval_integer_literal(expr: &grafeo_adapters::query::gql::ast::Expression) -> Option<i64> {
-        use grafeo_adapters::query::gql::ast::{Expression, Literal};
+    fn eval_integer_literal(expr: &obrain_adapters::query::gql::ast::Expression) -> Option<i64> {
+        use obrain_adapters::query::gql::ast::{Expression, Literal};
         match expr {
             Expression::Literal(Literal::Integer(n)) => Some(*n),
             _ => None,
@@ -3692,7 +3692,7 @@ impl Session {
         read_only: bool,
     ) -> crate::query::Planner {
         use crate::query::Planner;
-        use grafeo_core::execution::operators::{LazyValue, SessionContext};
+        use obrain_core::execution::operators::{LazyValue, SessionContext};
 
         // Capture store reference for lazy introspection (only computed if info()/schema() called).
         let info_store = Arc::clone(&store);
@@ -3726,7 +3726,7 @@ impl Session {
 
     /// Builds a `Value::Map` for the `info()` introspection function.
     fn build_info_value(store: &dyn GraphStoreMut) -> Value {
-        use grafeo_common::types::PropertyKey;
+        use obrain_common::types::PropertyKey;
         use std::collections::BTreeMap;
 
         let mut map = BTreeMap::new();
@@ -3748,7 +3748,7 @@ impl Session {
 
     /// Builds a `Value::Map` for the `schema()` introspection function.
     fn build_schema_value(store: &dyn GraphStoreMut) -> Value {
-        use grafeo_common::types::PropertyKey;
+        use obrain_common::types::PropertyKey;
         use std::collections::BTreeMap;
 
         let labels: Vec<Value> = store
@@ -3819,7 +3819,7 @@ impl Session {
         src: NodeId,
         dst: NodeId,
         edge_type: &str,
-    ) -> grafeo_common::types::EdgeId {
+    ) -> obrain_common::types::EdgeId {
         let (epoch, transaction_id) = self.get_transaction_context();
         self.active_lpg_store().create_edge_versioned(
             src,
@@ -3848,8 +3848,8 @@ impl Session {
     /// # Example
     ///
     /// ```no_run
-    /// # use grafeo_engine::GrafeoDB;
-    /// # let db = GrafeoDB::new_in_memory();
+    /// # use obrain_engine::ObrainDB;
+    /// # let db = ObrainDB::new_in_memory();
     /// let session = db.session();
     /// let node_id = session.create_node(&["Person"]);
     ///
@@ -3880,9 +3880,9 @@ impl Session {
     /// # Example
     ///
     /// ```no_run
-    /// # use grafeo_engine::GrafeoDB;
-    /// # use grafeo_common::types::Value;
-    /// # let db = GrafeoDB::new_in_memory();
+    /// # use obrain_engine::ObrainDB;
+    /// # use obrain_common::types::Value;
+    /// # let db = ObrainDB::new_in_memory();
     /// let session = db.session();
     /// let id = session.create_node_with_props(&["Person"], [("name", "Alix".into())]);
     ///
@@ -3925,8 +3925,8 @@ impl Session {
     /// # Example
     ///
     /// ```no_run
-    /// # use grafeo_engine::GrafeoDB;
-    /// # let db = GrafeoDB::new_in_memory();
+    /// # use obrain_engine::ObrainDB;
+    /// # let db = ObrainDB::new_in_memory();
     /// let session = db.session();
     /// let alix = session.create_node(&["Person"]);
     /// let gus = session.create_node(&["Person"]);
@@ -3964,8 +3964,8 @@ impl Session {
     /// # Example
     ///
     /// ```no_run
-    /// # use grafeo_engine::GrafeoDB;
-    /// # let db = GrafeoDB::new_in_memory();
+    /// # use obrain_engine::ObrainDB;
+    /// # let db = ObrainDB::new_in_memory();
     /// # let session = db.session();
     /// # let alix = session.create_node(&["Person"]);
     /// let neighbors = session.get_neighbors_outgoing_by_type(alix, "KNOWS");
@@ -4083,8 +4083,8 @@ impl Drop for Session {
 #[cfg(test)]
 mod tests {
     use super::parse_default_literal;
-    use crate::database::GrafeoDB;
-    use grafeo_common::types::Value;
+    use crate::database::ObrainDB;
+    use obrain_common::types::Value;
 
     // -----------------------------------------------------------------------
     // parse_default_literal
@@ -4145,7 +4145,7 @@ mod tests {
 
     #[test]
     fn test_session_create_node() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         let id = session.create_node(&["Person"]);
@@ -4155,7 +4155,7 @@ mod tests {
 
     #[test]
     fn test_session_transaction() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let mut session = db.session();
 
         assert!(!session.in_transaction());
@@ -4169,7 +4169,7 @@ mod tests {
 
     #[test]
     fn test_session_transaction_context() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let mut session = db.session();
 
         // Without transaction - context should have current epoch and no transaction_id
@@ -4193,7 +4193,7 @@ mod tests {
 
     #[test]
     fn test_session_rollback() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let mut session = db.session();
 
         session.begin_transaction().unwrap();
@@ -4203,9 +4203,9 @@ mod tests {
 
     #[test]
     fn test_session_rollback_discards_versions() {
-        use grafeo_common::types::TransactionId;
+        use obrain_common::types::TransactionId;
 
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
 
         // Create a node outside of any transaction (at system level)
         let node_before = db.store().create_node(&["Person"]);
@@ -4272,7 +4272,7 @@ mod tests {
     #[test]
     fn test_session_create_node_in_transaction() {
         // Test that session.create_node() is transaction-aware
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
 
         // Create a node outside of any transaction
         let node_before = db.create_node(&["Person"]);
@@ -4316,10 +4316,10 @@ mod tests {
 
     #[test]
     fn test_session_create_node_with_props_in_transaction() {
-        use grafeo_common::types::Value;
+        use obrain_common::types::Value;
 
         // Test that session.create_node_with_props() is transaction-aware
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
 
         // Create a node outside of any transaction
         db.create_node(&["Person"]);
@@ -4366,7 +4366,7 @@ mod tests {
 
         #[test]
         fn test_gql_query_execution() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             // Create some test data
@@ -4385,7 +4385,7 @@ mod tests {
 
         #[test]
         fn test_gql_empty_result() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             // No data in database
@@ -4396,7 +4396,7 @@ mod tests {
 
         #[test]
         fn test_gql_parse_error() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             // Invalid GQL syntax
@@ -4407,7 +4407,7 @@ mod tests {
 
         #[test]
         fn test_gql_relationship_traversal() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             // Create a graph: Alix -> Gus, Alix -> Vincent
@@ -4432,7 +4432,7 @@ mod tests {
 
         #[test]
         fn test_gql_relationship_with_type_filter() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             // Create a graph: Alix -KNOWS-> Gus, Alix -WORKS_WITH-> Vincent
@@ -4454,7 +4454,7 @@ mod tests {
 
         #[test]
         fn test_gql_semantic_error_undefined_variable() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             // Reference undefined variable 'x' in RETURN
@@ -4474,9 +4474,9 @@ mod tests {
 
         #[test]
         fn test_gql_where_clause_property_filter() {
-            use grafeo_common::types::Value;
+            use obrain_common::types::Value;
 
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             // Create people with ages
@@ -4495,9 +4495,9 @@ mod tests {
 
         #[test]
         fn test_gql_where_clause_equality() {
-            use grafeo_common::types::Value;
+            use obrain_common::types::Value;
 
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             // Create people with names
@@ -4516,9 +4516,9 @@ mod tests {
 
         #[test]
         fn test_gql_return_property_access() {
-            use grafeo_common::types::Value;
+            use obrain_common::types::Value;
 
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             // Create people with names and ages
@@ -4556,9 +4556,9 @@ mod tests {
 
         #[test]
         fn test_gql_return_mixed_expressions() {
-            use grafeo_common::types::Value;
+            use obrain_common::types::Value;
 
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             // Create a person
@@ -4585,7 +4585,7 @@ mod tests {
 
         #[test]
         fn test_cypher_query_execution() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             // Create some test data
@@ -4604,7 +4604,7 @@ mod tests {
 
         #[test]
         fn test_cypher_empty_result() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             // No data in database
@@ -4615,7 +4615,7 @@ mod tests {
 
         #[test]
         fn test_cypher_parse_error() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             // Invalid Cypher syntax
@@ -4629,11 +4629,11 @@ mod tests {
 
     mod direct_lookup_tests {
         use super::*;
-        use grafeo_common::types::Value;
+        use obrain_common::types::Value;
 
         #[test]
         fn test_get_node() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             let id = session.create_node(&["Person"]);
@@ -4646,9 +4646,9 @@ mod tests {
 
         #[test]
         fn test_get_node_not_found() {
-            use grafeo_common::types::NodeId;
+            use obrain_common::types::NodeId;
 
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             // Try to get a non-existent node
@@ -4658,7 +4658,7 @@ mod tests {
 
         #[test]
         fn test_get_node_property() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             let id = session
@@ -4674,7 +4674,7 @@ mod tests {
 
         #[test]
         fn test_get_edge() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             let alix = session.create_node(&["Person"]);
@@ -4691,9 +4691,9 @@ mod tests {
 
         #[test]
         fn test_get_edge_not_found() {
-            use grafeo_common::types::EdgeId;
+            use obrain_common::types::EdgeId;
 
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             let edge = session.get_edge(EdgeId::new(9999));
@@ -4702,7 +4702,7 @@ mod tests {
 
         #[test]
         fn test_get_neighbors_outgoing() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             let alix = session.create_node(&["Person"]);
@@ -4722,7 +4722,7 @@ mod tests {
 
         #[test]
         fn test_get_neighbors_incoming() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             let alix = session.create_node(&["Person"]);
@@ -4742,7 +4742,7 @@ mod tests {
 
         #[test]
         fn test_get_neighbors_outgoing_by_type() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             let alix = session.create_node(&["Person"]);
@@ -4767,9 +4767,9 @@ mod tests {
 
         #[test]
         fn test_node_exists() {
-            use grafeo_common::types::NodeId;
+            use obrain_common::types::NodeId;
 
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             let id = session.create_node(&["Person"]);
@@ -4780,9 +4780,9 @@ mod tests {
 
         #[test]
         fn test_edge_exists() {
-            use grafeo_common::types::EdgeId;
+            use obrain_common::types::EdgeId;
 
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             let alix = session.create_node(&["Person"]);
@@ -4795,7 +4795,7 @@ mod tests {
 
         #[test]
         fn test_get_degree() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             let alix = session.create_node(&["Person"]);
@@ -4821,7 +4821,7 @@ mod tests {
 
         #[test]
         fn test_get_nodes_batch() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             let alix = session.create_node(&["Person"]);
@@ -4835,7 +4835,7 @@ mod tests {
             assert!(nodes[2].is_some());
 
             // With non-existent node
-            use grafeo_common::types::NodeId;
+            use obrain_common::types::NodeId;
             let nodes_with_missing = session.get_nodes_batch(&[alix, NodeId::new(9999), harm]);
             assert_eq!(nodes_with_missing.len(), 3);
             assert!(nodes_with_missing[0].is_some());
@@ -4845,7 +4845,7 @@ mod tests {
 
         #[test]
         fn test_auto_commit_setting() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let mut session = db.session();
 
             // Default is auto-commit enabled
@@ -4860,7 +4860,7 @@ mod tests {
 
         #[test]
         fn test_transaction_double_begin_nests() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let mut session = db.session();
 
             session.begin_transaction().unwrap();
@@ -4875,7 +4875,7 @@ mod tests {
 
         #[test]
         fn test_commit_without_transaction_error() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let mut session = db.session();
 
             let result = session.commit();
@@ -4884,7 +4884,7 @@ mod tests {
 
         #[test]
         fn test_rollback_without_transaction_error() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let mut session = db.session();
 
             let result = session.rollback();
@@ -4893,7 +4893,7 @@ mod tests {
 
         #[test]
         fn test_create_edge_in_transaction() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let mut session = db.session();
 
             // Create nodes outside transaction
@@ -4916,7 +4916,7 @@ mod tests {
 
         #[test]
         fn test_neighbors_empty_node() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             let lonely = session.create_node(&["Person"]);
@@ -4936,7 +4936,7 @@ mod tests {
         use crate::config::Config;
 
         let config = Config::in_memory().with_gc_interval(2);
-        let db = GrafeoDB::with_config(config).unwrap();
+        let db = ObrainDB::with_config(config).unwrap();
         let mut session = db.session();
 
         // First commit: counter = 1, no GC (not a multiple of 2)
@@ -4959,7 +4959,7 @@ mod tests {
         use std::time::Duration;
 
         let config = Config::in_memory().with_query_timeout(Duration::from_secs(5));
-        let db = GrafeoDB::with_config(config).unwrap();
+        let db = ObrainDB::with_config(config).unwrap();
         let session = db.session();
 
         // Verify the session has a query deadline (timeout was set)
@@ -4968,7 +4968,7 @@ mod tests {
 
     #[test]
     fn test_no_query_timeout_returns_no_deadline() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         // Default config has no timeout
@@ -4979,7 +4979,7 @@ mod tests {
     fn test_graph_model_accessor() {
         use crate::config::GraphModel;
 
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         assert_eq!(session.graph_model(), GraphModel::Lpg);
@@ -4988,13 +4988,13 @@ mod tests {
     #[cfg(feature = "gql")]
     #[test]
     fn test_external_store_session() {
-        use grafeo_core::graph::GraphStoreMut;
+        use obrain_core::graph::GraphStoreMut;
         use std::sync::Arc;
 
         let config = crate::config::Config::in_memory();
         let store =
-            Arc::new(grafeo_core::graph::lpg::LpgStore::new().unwrap()) as Arc<dyn GraphStoreMut>;
-        let db = GrafeoDB::with_store(store, config).unwrap();
+            Arc::new(obrain_core::graph::lpg::LpgStore::new().unwrap()) as Arc<dyn GraphStoreMut>;
+        let db = ObrainDB::with_store(store, config).unwrap();
 
         let mut session = db.session();
 
@@ -5016,11 +5016,11 @@ mod tests {
     #[cfg(feature = "gql")]
     mod session_command_tests {
         use super::*;
-        use grafeo_common::types::Value;
+        use obrain_common::types::Value;
 
         #[test]
         fn test_use_graph_sets_current_graph() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             // Create the graph first, then USE it
@@ -5032,7 +5032,7 @@ mod tests {
 
         #[test]
         fn test_use_graph_nonexistent_errors() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             let result = session.execute("USE GRAPH doesnotexist");
@@ -5046,7 +5046,7 @@ mod tests {
 
         #[test]
         fn test_use_graph_default_always_valid() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             // "default" is always valid, even without CREATE GRAPH
@@ -5056,7 +5056,7 @@ mod tests {
 
         #[test]
         fn test_session_set_graph() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             session.execute("CREATE GRAPH analytics").unwrap();
@@ -5066,7 +5066,7 @@ mod tests {
 
         #[test]
         fn test_session_set_graph_nonexistent_errors() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             let result = session.execute("SESSION SET GRAPH nosuchgraph");
@@ -5075,7 +5075,7 @@ mod tests {
 
         #[test]
         fn test_session_set_time_zone() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             assert_eq!(session.time_zone(), None);
@@ -5091,7 +5091,7 @@ mod tests {
 
         #[test]
         fn test_session_set_parameter() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             session
@@ -5105,7 +5105,7 @@ mod tests {
 
         #[test]
         fn test_session_reset_clears_all_state() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             // Set various session state
@@ -5131,7 +5131,7 @@ mod tests {
 
         #[test]
         fn test_session_close_clears_state() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             session.execute("CREATE GRAPH analytics").unwrap();
@@ -5146,7 +5146,7 @@ mod tests {
 
         #[test]
         fn test_create_graph() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             session.execute("CREATE GRAPH mydb").unwrap();
@@ -5158,7 +5158,7 @@ mod tests {
 
         #[test]
         fn test_create_graph_duplicate_errors() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             session.execute("CREATE GRAPH mydb").unwrap();
@@ -5174,7 +5174,7 @@ mod tests {
 
         #[test]
         fn test_create_graph_if_not_exists() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             session.execute("CREATE GRAPH mydb").unwrap();
@@ -5184,7 +5184,7 @@ mod tests {
 
         #[test]
         fn test_drop_graph() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             session.execute("CREATE GRAPH mydb").unwrap();
@@ -5197,7 +5197,7 @@ mod tests {
 
         #[test]
         fn test_drop_graph_nonexistent_errors() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             let result = session.execute("DROP GRAPH nosuchgraph");
@@ -5211,7 +5211,7 @@ mod tests {
 
         #[test]
         fn test_drop_graph_if_exists() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             // Should succeed silently with IF EXISTS
@@ -5220,7 +5220,7 @@ mod tests {
 
         #[test]
         fn test_start_transaction_via_gql() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             session.execute("START TRANSACTION").unwrap();
@@ -5235,7 +5235,7 @@ mod tests {
 
         #[test]
         fn test_start_transaction_read_only_blocks_insert() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             session.execute("START TRANSACTION READ ONLY").unwrap();
@@ -5251,7 +5251,7 @@ mod tests {
 
         #[test]
         fn test_start_transaction_read_only_allows_reads() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let mut session = db.session();
             session.begin_transaction().unwrap();
             session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
@@ -5265,7 +5265,7 @@ mod tests {
 
         #[test]
         fn test_rollback_via_gql() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             session.execute("START TRANSACTION").unwrap();
@@ -5278,7 +5278,7 @@ mod tests {
 
         #[test]
         fn test_start_transaction_with_isolation_level() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             session
@@ -5290,7 +5290,7 @@ mod tests {
 
         #[test]
         fn test_session_commands_return_empty_result() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             session.execute("CREATE GRAPH test").unwrap();
@@ -5301,7 +5301,7 @@ mod tests {
 
         #[test]
         fn test_current_graph_default_is_none() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             assert_eq!(session.current_graph(), None);
@@ -5309,7 +5309,7 @@ mod tests {
 
         #[test]
         fn test_time_zone_default_is_none() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             assert_eq!(session.time_zone(), None);
@@ -5317,7 +5317,7 @@ mod tests {
 
         #[test]
         fn test_session_state_independent_across_sessions() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session1 = db.session();
             let session2 = db.session();
 
@@ -5332,7 +5332,7 @@ mod tests {
 
         #[test]
         fn test_show_node_types() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             session
@@ -5351,7 +5351,7 @@ mod tests {
 
         #[test]
         fn test_show_edge_types() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             session
@@ -5369,7 +5369,7 @@ mod tests {
 
         #[test]
         fn test_show_graph_types() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             session
@@ -5394,7 +5394,7 @@ mod tests {
 
         #[test]
         fn test_show_graph_type_named() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             session
@@ -5415,7 +5415,7 @@ mod tests {
 
         #[test]
         fn test_show_graph_type_not_found() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             let result = session.execute("SHOW GRAPH TYPE nonexistent");
@@ -5424,7 +5424,7 @@ mod tests {
 
         #[test]
         fn test_show_indexes_via_gql() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             let result = session.execute("SHOW INDEXES").unwrap();
@@ -5433,7 +5433,7 @@ mod tests {
 
         #[test]
         fn test_show_constraints_via_gql() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             let result = session.execute("SHOW CONSTRAINTS").unwrap();
@@ -5442,7 +5442,7 @@ mod tests {
 
         #[test]
         fn test_pattern_form_graph_type_roundtrip() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
 
             // Register the types first

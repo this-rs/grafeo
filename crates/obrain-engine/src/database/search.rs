@@ -1,19 +1,19 @@
-//! Vector, text, and hybrid search operations for GrafeoDB.
+//! Vector, text, and hybrid search operations for ObrainDB.
 
 #[cfg(any(feature = "text-index", feature = "hybrid-search"))]
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 #[cfg(feature = "vector-index")]
-use grafeo_common::types::Value;
+use obrain_common::types::Value;
 #[cfg(any(feature = "text-index", feature = "hybrid-search"))]
-use grafeo_common::utils::error::Error;
+use obrain_common::utils::error::Error;
 #[cfg(any(
     feature = "vector-index",
     feature = "text-index",
     feature = "hybrid-search"
 ))]
-use grafeo_common::utils::error::Result;
+use obrain_common::utils::error::Result;
 
-impl super::GrafeoDB {
+impl super::ObrainDB {
     /// Computes a node allowlist from property filters.
     ///
     /// Supports equality filters (scalar values) and operator filters (Map values
@@ -89,15 +89,15 @@ impl super::GrafeoDB {
         k: usize,
         ef: Option<usize>,
         filters: Option<&std::collections::HashMap<String, Value>>,
-    ) -> Result<Vec<(grafeo_common::types::NodeId, f32)>> {
+    ) -> Result<Vec<(obrain_common::types::NodeId, f32)>> {
         let index = self.store.get_vector_index(label, property).ok_or_else(|| {
-            grafeo_common::utils::error::Error::Internal(format!(
+            obrain_common::utils::error::Error::Internal(format!(
                 "No vector index found for :{label}({property}). Call create_vector_index() first."
             ))
         })?;
 
         let accessor =
-            grafeo_core::index::vector::PropertyVectorAccessor::new(&*self.store, property);
+            obrain_core::index::vector::PropertyVectorAccessor::new(&*self.store, property);
 
         let results = match self.compute_filter_allowlist(label, filters) {
             Some(allowlist) => match ef {
@@ -136,15 +136,15 @@ impl super::GrafeoDB {
         k: usize,
         ef: Option<usize>,
         filters: Option<&std::collections::HashMap<String, Value>>,
-    ) -> Result<Vec<Vec<(grafeo_common::types::NodeId, f32)>>> {
+    ) -> Result<Vec<Vec<(obrain_common::types::NodeId, f32)>>> {
         let index = self.store.get_vector_index(label, property).ok_or_else(|| {
-            grafeo_common::utils::error::Error::Internal(format!(
+            obrain_common::utils::error::Error::Internal(format!(
                 "No vector index found for :{label}({property}). Call create_vector_index() first."
             ))
         })?;
 
         let accessor =
-            grafeo_core::index::vector::PropertyVectorAccessor::new(&*self.store, property);
+            obrain_core::index::vector::PropertyVectorAccessor::new(&*self.store, property);
 
         let results = match self.compute_filter_allowlist(label, filters) {
             Some(allowlist) => match ef {
@@ -196,17 +196,17 @@ impl super::GrafeoDB {
         lambda: Option<f32>,
         ef: Option<usize>,
         filters: Option<&std::collections::HashMap<String, Value>>,
-    ) -> Result<Vec<(grafeo_common::types::NodeId, f32)>> {
-        use grafeo_core::index::vector::mmr_select;
+    ) -> Result<Vec<(obrain_common::types::NodeId, f32)>> {
+        use obrain_core::index::vector::mmr_select;
 
         let index = self.store.get_vector_index(label, property).ok_or_else(|| {
-            grafeo_common::utils::error::Error::Internal(format!(
+            obrain_common::utils::error::Error::Internal(format!(
                 "No vector index found for :{label}({property}). Call create_vector_index() first."
             ))
         })?;
 
         let accessor =
-            grafeo_core::index::vector::PropertyVectorAccessor::new(&*self.store, property);
+            obrain_core::index::vector::PropertyVectorAccessor::new(&*self.store, property);
 
         let fetch_k = fetch_k.unwrap_or(k.saturating_mul(4).max(k));
         let lambda = lambda.unwrap_or(0.5);
@@ -230,15 +230,15 @@ impl super::GrafeoDB {
         }
 
         // Step 2: Retrieve stored vectors for MMR pairwise comparison
-        use grafeo_core::index::vector::VectorAccessor;
-        let candidates: Vec<(grafeo_common::types::NodeId, f32, std::sync::Arc<[f32]>)> =
+        use obrain_core::index::vector::VectorAccessor;
+        let candidates: Vec<(obrain_common::types::NodeId, f32, std::sync::Arc<[f32]>)> =
             initial_results
                 .into_iter()
                 .filter_map(|(id, dist)| accessor.get_vector(id).map(|vec| (id, dist, vec)))
                 .collect();
 
         // Step 3: Build slice-based candidates for mmr_select
-        let candidate_refs: Vec<(grafeo_common::types::NodeId, f32, &[f32])> = candidates
+        let candidate_refs: Vec<(obrain_common::types::NodeId, f32, &[f32])> = candidates
             .iter()
             .map(|(id, dist, vec)| (*id, *dist, vec.as_ref()))
             .collect();
@@ -301,9 +301,9 @@ impl super::GrafeoDB {
         query_text: &str,
         query_vector: Option<&[f32]>,
         k: usize,
-        fusion: Option<grafeo_core::index::text::FusionMethod>,
+        fusion: Option<obrain_core::index::text::FusionMethod>,
     ) -> Result<Vec<(NodeId, f64)>> {
-        use grafeo_core::index::text::fuse_results;
+        use obrain_core::index::text::fuse_results;
 
         let fusion_method = fusion.unwrap_or_default();
         let mut sources: Vec<Vec<(NodeId, f64)>> = Vec::new();
@@ -320,7 +320,7 @@ impl super::GrafeoDB {
         if let Some(query_vec) = query_vector
             && let Some(vector_index) = self.store.get_vector_index(label, vector_property)
         {
-            let accessor = grafeo_core::index::vector::PropertyVectorAccessor::new(
+            let accessor = obrain_core::index::vector::PropertyVectorAccessor::new(
                 &*self.store,
                 vector_property,
             );

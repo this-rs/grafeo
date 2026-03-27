@@ -3,11 +3,11 @@
 #![cfg(feature = "episodic")]
 
 use arcstr::ArcStr;
-use grafeo_cognitive::episodic::{
+use obrain_cognitive::episodic::{
     ActivationStep, EpisodeConfig, EpisodeHorizon, EpisodeMemoryManager, EpisodeRecorder,
     EpisodeStore, Outcome, Stimulus, ValidationResult,
 };
-use grafeo_reactive::{EdgeSnapshot, MutationEvent, MutationListener, NodeSnapshot};
+use obrain_reactive::{EdgeSnapshot, MutationEvent, MutationListener, NodeSnapshot};
 use smallvec::smallvec;
 use std::sync::Arc;
 
@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 fn node_snap(id: u64) -> NodeSnapshot {
     NodeSnapshot {
-        id: grafeo_common::types::NodeId(id),
+        id: obrain_common::types::NodeId(id),
         labels: smallvec![ArcStr::from("Test")],
         properties: vec![],
     }
@@ -25,9 +25,9 @@ fn node_snap(id: u64) -> NodeSnapshot {
 
 fn edge_snap(id: u64, src: u64, dst: u64) -> EdgeSnapshot {
     EdgeSnapshot {
-        id: grafeo_common::types::EdgeId(id),
-        src: grafeo_common::types::NodeId(src),
-        dst: grafeo_common::types::NodeId(dst),
+        id: obrain_common::types::EdgeId(id),
+        src: obrain_common::types::NodeId(src),
+        dst: obrain_common::types::NodeId(dst),
         edge_type: ArcStr::from("RELATES_TO"),
         properties: vec![],
     }

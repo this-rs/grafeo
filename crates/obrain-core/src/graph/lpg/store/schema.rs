@@ -2,9 +2,9 @@
 
 use super::{LpgStore, PropertyUndoEntry};
 #[cfg(feature = "temporal")]
-use grafeo_common::types::EpochId;
-use grafeo_common::types::{NodeId, TransactionId};
-use grafeo_common::utils::hash::FxHashMap;
+use obrain_common::types::EpochId;
+use obrain_common::types::{NodeId, TransactionId};
+use obrain_common::utils::hash::FxHashMap;
 
 impl LpgStore {
     /// Adds a label to a node.

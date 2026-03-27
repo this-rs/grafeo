@@ -7,18 +7,18 @@
 //!
 //! Run with:
 //! ```bash
-//! cargo test -p grafeo-engine --features full --test create_relationship_phantom_nodes
+//! cargo test -p obrain-engine --features full --test create_relationship_phantom_nodes
 //! ```
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 /// Returns the total node count via `MATCH (n) RETURN count(n)`.
-fn node_count(db: &GrafeoDB) -> i64 {
+fn node_count(db: &ObrainDB) -> i64 {
     let session = db.session();
     let result = session
         .execute("MATCH (n) RETURN count(n)")
@@ -30,7 +30,7 @@ fn node_count(db: &GrafeoDB) -> i64 {
 }
 
 /// Returns the total relationship count via `MATCH ()-[r]->() RETURN count(r)`.
-fn edge_count(db: &GrafeoDB) -> i64 {
+fn edge_count(db: &ObrainDB) -> i64 {
     let session = db.session();
     let result = session
         .execute("MATCH ()-[r]->() RETURN count(r)")
@@ -47,7 +47,7 @@ fn edge_count(db: &GrafeoDB) -> i64 {
 
 #[test]
 fn test_match_match_create_rel_no_phantom_nodes() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -69,7 +69,7 @@ fn test_match_match_create_rel_no_phantom_nodes() {
 
 #[test]
 fn test_match_match_create_rel_multiple() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -93,7 +93,7 @@ fn test_match_match_create_rel_multiple() {
 
 #[test]
 fn test_match_match_create_rel_scale_100() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     for i in 0..100 {
@@ -127,7 +127,7 @@ fn test_match_match_create_rel_scale_100() {
 
 #[test]
 fn test_create_inline_rel_still_works() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session.execute("CREATE (a:X)-[:REL]->(b:Y)").unwrap();
@@ -142,7 +142,7 @@ fn test_create_inline_rel_still_works() {
 
 #[test]
 fn test_create_inline_chain_still_works() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -159,7 +159,7 @@ fn test_create_inline_chain_still_works() {
 
 #[test]
 fn test_match_create_rel_with_properties() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -192,7 +192,7 @@ fn test_match_create_rel_with_properties() {
 
 #[test]
 fn test_match_create_rel_edge_count_correct() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -219,7 +219,7 @@ fn test_match_create_rel_edge_count_correct() {
 
 #[test]
 fn test_merge_still_no_phantoms() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -240,7 +240,7 @@ fn test_merge_still_no_phantoms() {
 
 #[test]
 fn test_create_rel_mixed_inline_and_reference() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session.execute("CREATE (:A {id: 'existing'})").unwrap();
@@ -264,7 +264,7 @@ fn test_create_rel_mixed_inline_and_reference() {
 
 #[test]
 fn test_match_create_rel_bidirectional() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -292,7 +292,7 @@ fn test_match_create_rel_bidirectional() {
 
 #[test]
 fn test_match_create_rel_self_loop() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session.execute("CREATE (:S {id: 'loop'})").unwrap();
@@ -315,7 +315,7 @@ fn test_match_create_rel_self_loop() {
 
 #[test]
 fn test_match_create_multiple_rels_same_pair() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -345,7 +345,7 @@ fn test_match_create_multiple_rels_same_pair() {
 
 #[test]
 fn test_labels_preserved_after_create_rel() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -379,7 +379,7 @@ fn test_create_path_bare_variable_no_input() {
     // Bare variables in CREATE without labels trigger the fallback node creation,
     // but edge creation then fails with a semantic error because the variable
     // isn't registered in the scope. We verify the error is raised gracefully.
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // CREATE (a)-[:REL]->(b) with no prior MATCH and no labels — semantic error expected
@@ -400,7 +400,7 @@ fn test_create_path_bare_variable_no_input() {
 #[test]
 fn test_match_create_rel_via_cypher_translator() {
     // Ensures the cypher.rs code path for bare-variable-with-input is exercised
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -419,7 +419,7 @@ fn test_match_create_rel_via_cypher_translator() {
 #[test]
 fn test_create_chained_path_via_cypher() {
     // Covers the last_node_var tracker in cypher.rs translate_create_pattern
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -442,7 +442,7 @@ fn test_create_chained_path_via_cypher() {
 fn test_create_rel_with_single_label_start() {
     // Covers the non-bare path: start node has labels, target node has labels
     // Exercises the standard CREATE path pattern through translate_create_path
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -463,7 +463,7 @@ fn test_create_rel_with_single_label_start() {
 fn test_create_chained_path_mixed() {
     // Covers the last_node_var tracker across iterations in a chained path
     // where some nodes are inline and some are bare references
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -485,7 +485,7 @@ fn test_create_chained_path_mixed() {
 
 #[test]
 fn test_properties_preserved_after_create_rel() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session

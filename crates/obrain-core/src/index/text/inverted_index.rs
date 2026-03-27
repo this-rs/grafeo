@@ -1,7 +1,7 @@
 //! BM25-scored inverted index for full-text search.
 
 use super::tokenizer::{SimpleTokenizer, Tokenizer};
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 use std::collections::HashMap;
 
 /// Configuration for BM25 scoring.
@@ -46,8 +46,8 @@ struct PostingList {
 /// ```
 /// # #[cfg(feature = "text-index")]
 /// # {
-/// use grafeo_core::index::text::{InvertedIndex, BM25Config};
-/// use grafeo_common::types::NodeId;
+/// use obrain_core::index::text::{InvertedIndex, BM25Config};
+/// use obrain_common::types::NodeId;
 ///
 /// let mut index = InvertedIndex::new(BM25Config::default());
 /// index.insert(NodeId::new(1), "rust graph database");

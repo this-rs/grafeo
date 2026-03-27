@@ -3,15 +3,15 @@
 //! Targets: session.rs (73.07%), common.rs optional predicate classification
 //!
 //! ```bash
-//! cargo test -p grafeo-engine --features full --test coverage_session
+//! cargo test -p obrain-engine --features full --test coverage_session
 //! ```
 
-use grafeo_common::types::{EpochId, Value};
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::{EpochId, Value};
+use obrain_engine::ObrainDB;
 
 /// Creates 2 Person nodes: Alix (age 30) and Gus (age 25).
-fn setup() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn setup() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.create_node_with_props(
         &["Person"],
@@ -99,7 +99,7 @@ fn test_viewing_epoch_lifecycle() {
 
 #[test]
 fn test_execute_at_epoch() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.create_node_with_props(&["Item"], [("name", Value::String("original".into()))]);
 
@@ -192,7 +192,7 @@ fn test_execute_with_params_direct() {
 
 #[test]
 fn test_use_graph_via_gql() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.execute("CREATE GRAPH test_graph").unwrap();
     session.execute("USE GRAPH test_graph").unwrap();
@@ -220,7 +220,7 @@ fn test_optional_match_no_match() {
 
 #[test]
 fn test_optional_match_with_where() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let a = session.create_node_with_props(&["Person"], [("name", Value::String("Alix".into()))]);
     let b = session.create_node_with_props(&["Person"], [("name", Value::String("Gus".into()))]);
@@ -243,7 +243,7 @@ fn test_optional_match_with_where() {
 
 #[test]
 fn test_standalone_return_arithmetic() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let s = db.session();
     let r = s.execute("RETURN 1 + 2 AS result").unwrap();
     assert_eq!(r.rows.len(), 1);
@@ -252,7 +252,7 @@ fn test_standalone_return_arithmetic() {
 
 #[test]
 fn test_standalone_return_string() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let s = db.session();
     let r = s.execute("RETURN 'hello' AS greeting").unwrap();
     assert_eq!(r.rows.len(), 1);
@@ -261,7 +261,7 @@ fn test_standalone_return_string() {
 
 #[test]
 fn test_standalone_return_list() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let s = db.session();
     let r = s.execute("RETURN [1, 2, 3] AS nums").unwrap();
     assert_eq!(r.rows.len(), 1);
@@ -278,7 +278,7 @@ fn test_standalone_return_list() {
 
 #[test]
 fn test_unwind_list() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let r = session.execute("UNWIND [1, 2, 3] AS x RETURN x").unwrap();
     assert_eq!(r.rows.len(), 3);
@@ -359,7 +359,7 @@ fn test_session_recovers_after_rollback() {
 
 #[test]
 fn test_prepare_commit_lifecycle() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.begin_transaction().unwrap();
     session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
@@ -390,7 +390,7 @@ fn test_prepare_commit_lifecycle() {
 
 #[test]
 fn test_prepare_commit_abort() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.begin_transaction().unwrap();
     session.execute("INSERT (:Temp {val: 1})").unwrap();
@@ -405,7 +405,7 @@ fn test_prepare_commit_abort() {
 
 #[test]
 fn test_prepare_commit_without_transaction_fails() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     let result = session.prepare_commit();
     match result {
@@ -429,7 +429,7 @@ fn test_begin_transaction_with_read_committed() {
     let db = setup();
     let mut session = db.session();
     session
-        .begin_transaction_with_isolation(grafeo_engine::transaction::IsolationLevel::ReadCommitted)
+        .begin_transaction_with_isolation(obrain_engine::transaction::IsolationLevel::ReadCommitted)
         .unwrap();
     let r = session.execute("MATCH (p:Person) RETURN count(p)").unwrap();
     assert_eq!(r.rows[0][0], Value::Int64(2));
@@ -441,7 +441,7 @@ fn test_begin_transaction_with_serializable() {
     let db = setup();
     let mut session = db.session();
     session
-        .begin_transaction_with_isolation(grafeo_engine::transaction::IsolationLevel::Serializable)
+        .begin_transaction_with_isolation(obrain_engine::transaction::IsolationLevel::Serializable)
         .unwrap();
     let r = session.execute("MATCH (p:Person) RETURN count(p)").unwrap();
     assert_eq!(r.rows[0][0], Value::Int64(2));
@@ -454,12 +454,12 @@ fn test_begin_transaction_with_isolation_nested_creates_savepoint() {
     let mut session = db.session();
     session
         .begin_transaction_with_isolation(
-            grafeo_engine::transaction::IsolationLevel::SnapshotIsolation,
+            obrain_engine::transaction::IsolationLevel::SnapshotIsolation,
         )
         .unwrap();
     // A second begin creates a nested savepoint rather than failing
     session
-        .begin_transaction_with_isolation(grafeo_engine::transaction::IsolationLevel::ReadCommitted)
+        .begin_transaction_with_isolation(obrain_engine::transaction::IsolationLevel::ReadCommitted)
         .unwrap();
     // Queries should still work inside the nested transaction
     let r = session.execute("MATCH (p:Person) RETURN count(p)").unwrap();
@@ -510,7 +510,7 @@ fn test_clear_plan_cache() {
 
 #[test]
 fn test_buffer_manager_accessible() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let bm = db.buffer_manager();
     // Should return a valid budget > 0
     assert!(
@@ -521,7 +521,7 @@ fn test_buffer_manager_accessible() {
 
 #[test]
 fn test_query_cache_accessible() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let cache = db.query_cache();
     // After fresh creation, stats should be zero
     let stats = cache.stats();
@@ -536,9 +536,9 @@ fn test_query_cache_accessible() {
 #[cfg(all(feature = "sparql", feature = "rdf"))]
 #[test]
 fn test_execute_sparql_with_params() {
-    use grafeo_engine::config::{Config, GraphModel};
+    use obrain_engine::config::{Config, GraphModel};
 
-    let db = GrafeoDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
+    let db = ObrainDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
     let session = db.session();
 
     // Insert RDF triples via SPARQL
@@ -578,12 +578,12 @@ fn test_execute_sparql_with_params() {
 
 #[cfg(feature = "cdc")]
 mod cdc_tests {
-    use grafeo_common::types::{EpochId, Value};
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::{EpochId, Value};
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn test_cdc_history_records_create() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let node_id = db.create_node(&["Person"]);
         db.set_node_property(node_id, "name", Value::String("Alix".into()));
 
@@ -597,14 +597,14 @@ mod cdc_tests {
         assert!(
             history
                 .iter()
-                .any(|e| e.kind == grafeo_engine::cdc::ChangeKind::Create),
+                .any(|e| e.kind == obrain_engine::cdc::ChangeKind::Create),
             "Should contain a Create event"
         );
     }
 
     #[test]
     fn test_cdc_history_records_update() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let node_id = db.create_node(&["Person"]);
         db.set_node_property(node_id, "name", Value::String("Alix".into()));
         db.set_node_property(node_id, "name", Value::String("Gus".into()));
@@ -613,7 +613,7 @@ mod cdc_tests {
         let history = session.history(node_id).unwrap();
         let update_count = history
             .iter()
-            .filter(|e| e.kind == grafeo_engine::cdc::ChangeKind::Update)
+            .filter(|e| e.kind == obrain_engine::cdc::ChangeKind::Update)
             .count();
         assert!(
             update_count >= 2,
@@ -623,7 +623,7 @@ mod cdc_tests {
 
     #[test]
     fn test_cdc_history_since_filters_by_epoch() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let node_id = db.create_node(&["Person"]);
         db.set_node_property(node_id, "name", Value::String("Alix".into()));
 
@@ -647,7 +647,7 @@ mod cdc_tests {
 
     #[test]
     fn test_cdc_changes_between_epoch_range() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         db.create_node(&["Person"]);
         db.create_node(&["Person"]);
 
@@ -669,8 +669,8 @@ mod cdc_tests {
 // ============================================================================
 
 /// Creates a partial network: Alix->Gus, Vincent has no outgoing edges.
-fn setup_questioned_edge() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn setup_questioned_edge() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let alix =
         session.create_node_with_props(&["Person"], [("name", Value::String("Alix".into()))]);
@@ -733,7 +733,7 @@ fn test_questioned_edge_null_when_no_match() {
 
 #[test]
 fn test_questioned_edge_with_target_label_filter() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let alix =

@@ -7,19 +7,19 @@ cosine_similarity/distance functions, and create_vector_index().
 import pytest
 
 try:
-    import grafeo
+    import obrain
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
-pytestmark = pytest.mark.skipif(not GRAFEO_AVAILABLE, reason="Grafeo Python bindings not installed")
+pytestmark = pytest.mark.skipif(not OBRAIN_AVAILABLE, reason="Obrain Python bindings not installed")
 
 
 @pytest.fixture
 def db():
     """Create a fresh in-memory database with vector test data."""
-    db = grafeo.GrafeoDB()
+    db = obrain.ObrainDB()
     return db
 
 

@@ -3,12 +3,12 @@
 //! These verify that text indexes are automatically kept in sync
 //! when nodes are created, updated, or deleted.
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 /// Helper: create a DB with a text index on :Doc(content).
-fn setup_db_with_text_index() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn setup_db_with_text_index() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     db.create_text_index("Doc", "content").unwrap();
     db
 }
@@ -102,7 +102,7 @@ fn test_text_index_auto_delete() {
 
 #[test]
 fn test_text_index_add_label() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     db.create_text_index("Article", "content").unwrap();
 
     // Create a node WITHOUT the Article label

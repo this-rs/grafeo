@@ -3,13 +3,13 @@
 //! This module provides algorithms for finding connected components,
 //! strongly connected components, and topological ordering.
 
-use grafeo_common::types::{NodeId, Value};
-use grafeo_common::utils::error::Result;
-use grafeo_common::utils::hash::{FxHashMap, FxHashSet};
-use grafeo_core::graph::Direction;
-use grafeo_core::graph::GraphStore;
+use obrain_common::types::{NodeId, Value};
+use obrain_common::utils::error::Result;
+use obrain_common::utils::hash::{FxHashMap, FxHashSet};
+use obrain_core::graph::Direction;
+use obrain_core::graph::GraphStore;
 #[cfg(test)]
-use grafeo_core::graph::lpg::LpgStore;
+use obrain_core::graph::lpg::LpgStore;
 
 use super::super::{AlgorithmResult, ParameterDef, Parameters};
 use super::traits::{ComponentResultBuilder, GraphAlgorithm};

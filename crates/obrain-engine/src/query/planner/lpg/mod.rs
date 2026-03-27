@@ -23,11 +23,11 @@ use crate::query::plan::{
     NodeScanOp, OtherwiseOp, PathMode, RemoveLabelOp, ReturnOp, SetPropertyOp, ShortestPathOp,
     SkipOp, SortOp, SortOrder, UnaryOp, UnionOp, UnwindOp,
 };
-use grafeo_common::types::{EpochId, TransactionId};
-use grafeo_common::types::{LogicalType, Value};
-use grafeo_common::utils::error::{Error, Result};
-use grafeo_core::execution::AdaptiveContext;
-use grafeo_core::execution::operators::{
+use obrain_common::types::{EpochId, TransactionId};
+use obrain_common::types::{LogicalType, Value};
+use obrain_common::utils::error::{Error, Result};
+use obrain_core::execution::AdaptiveContext;
+use obrain_core::execution::operators::{
     AddLabelOperator, AggregateExpr as PhysicalAggregateExpr, ApplyOperator, ConstraintValidator,
     CreateEdgeOperator, CreateNodeOperator, DeleteEdgeOperator, DeleteNodeOperator, EmptyOperator,
     EntityKind, ExecutionPathMode, ExpandOperator, ExpandStep, ExpressionPredicate,
@@ -41,7 +41,7 @@ use grafeo_core::execution::operators::{
     SortDirection, SortKey as PhysicalSortKey, SortOperator, UnwindOperator,
     VariableLengthExpandOperator,
 };
-use grafeo_core::graph::{Direction, GraphStore, GraphStoreMut};
+use obrain_core::graph::{Direction, GraphStore, GraphStoreMut};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -89,7 +89,7 @@ pub struct Planner {
     /// Set by `plan_apply` before planning the inner operator, consumed by
     /// `plan_operator` when encountering `ParameterScan`.
     pub(super) correlated_param_state:
-        std::cell::RefCell<Option<Arc<grafeo_core::execution::operators::ParameterState>>>,
+        std::cell::RefCell<Option<Arc<obrain_core::execution::operators::ParameterState>>>,
     /// Variables from variable-length expand patterns (group-list variables).
     /// Used by the aggregate planner to detect horizontal aggregation (GE09).
     pub(super) group_list_variables: std::cell::RefCell<std::collections::HashSet<String>>,
@@ -98,16 +98,16 @@ pub struct Planner {
     /// Profile entries collected during planning (post-order).
     profile_entries: std::cell::RefCell<Vec<crate::query::profile::ProfileEntry>>,
     /// Optional write tracker for recording writes during mutations.
-    write_tracker: Option<grafeo_core::execution::operators::SharedWriteTracker>,
+    write_tracker: Option<obrain_core::execution::operators::SharedWriteTracker>,
     /// Session context for introspection functions (info, schema, current_schema, etc.).
-    pub(super) session_context: grafeo_core::execution::operators::SessionContext,
+    pub(super) session_context: obrain_core::execution::operators::SessionContext,
     /// When true, expand operators use epoch-only visibility (no MVCC version
     /// chain walks).  Set when the plan contains no mutations, so PENDING
     /// writes are impossible to observe.
     pub(super) read_only: bool,
     /// Optional cognitive engine for cognitive UDFs and procedures.
     #[cfg(feature = "cognitive")]
-    pub(super) cognitive_engine: Option<Arc<dyn grafeo_cognitive::CognitiveEngine>>,
+    pub(super) cognitive_engine: Option<Arc<dyn obrain_cognitive::CognitiveEngine>>,
 }
 
 impl Planner {
@@ -134,7 +134,7 @@ impl Planner {
             profiling: std::cell::Cell::new(false),
             profile_entries: std::cell::RefCell::new(Vec::new()),
             write_tracker: None,
-            session_context: grafeo_core::execution::operators::SessionContext::default(),
+            session_context: obrain_core::execution::operators::SessionContext::default(),
             read_only: false,
             #[cfg(feature = "cognitive")]
             cognitive_engine: None,
@@ -152,7 +152,7 @@ impl Planner {
         use crate::transaction::TransactionWriteTracker;
 
         // Create write tracker when there's an active transaction
-        let write_tracker: Option<grafeo_core::execution::operators::SharedWriteTracker> =
+        let write_tracker: Option<obrain_core::execution::operators::SharedWriteTracker> =
             if transaction_id.is_some() {
                 Some(Arc::new(TransactionWriteTracker::new(Arc::clone(
                     &transaction_manager,
@@ -177,7 +177,7 @@ impl Planner {
             profiling: std::cell::Cell::new(false),
             profile_entries: std::cell::RefCell::new(Vec::new()),
             write_tracker,
-            session_context: grafeo_core::execution::operators::SessionContext::default(),
+            session_context: obrain_core::execution::operators::SessionContext::default(),
             read_only: false,
             #[cfg(feature = "cognitive")]
             cognitive_engine: None,
@@ -197,7 +197,7 @@ impl Planner {
     #[must_use]
     pub fn with_cognitive_engine(
         mut self,
-        engine: Arc<dyn grafeo_cognitive::CognitiveEngine>,
+        engine: Arc<dyn obrain_cognitive::CognitiveEngine>,
     ) -> Self {
         self.cognitive_engine = Some(engine);
         self
@@ -246,7 +246,7 @@ impl Planner {
     #[must_use]
     pub fn with_session_context(
         mut self,
-        context: grafeo_core::execution::operators::SessionContext,
+        context: obrain_core::execution::operators::SessionContext,
     ) -> Self {
         self.session_context = context;
         self
@@ -293,7 +293,7 @@ impl Planner {
 
     /// Plans a logical plan into a physical operator.
     pub fn plan(&self, logical_plan: &LogicalPlan) -> Result<PhysicalPlan> {
-        let _span = tracing::debug_span!("grafeo::query::plan").entered();
+        let _span = tracing::debug_span!("obrain::query::plan").entered();
         let (operator, columns) = self.plan_operator(&logical_plan.root)?;
         Ok(PhysicalPlan {
             operator,
@@ -303,7 +303,7 @@ impl Planner {
     }
 
     /// Plans a logical plan with profiling: each physical operator is wrapped
-    /// in [`ProfiledOperator`](grafeo_core::execution::ProfiledOperator) to
+    /// in [`ProfiledOperator`](obrain_core::execution::ProfiledOperator) to
     /// collect row counts and timing. Returns the physical plan together with
     /// the collected [`ProfileEntry`](crate::query::profile::ProfileEntry)
     /// items in post-order (children before parents).
@@ -518,7 +518,7 @@ impl Planner {
     /// Estimates the average edge degree for an expand operation using store statistics.
     fn estimate_expand_degree(
         &self,
-        stats: &grafeo_core::statistics::Statistics,
+        stats: &obrain_core::statistics::Statistics,
         expand: &ExpandOp,
     ) -> f64 {
         let outgoing = !matches!(expand.direction, ExpandDirection::Incoming);
@@ -542,7 +542,7 @@ impl Planner {
             let (physical, columns) = result?;
             let (entry, stats) =
                 crate::query::profile::ProfileEntry::new(physical.name(), op.display_label());
-            let profiled = grafeo_core::execution::ProfiledOperator::new(physical, stats);
+            let profiled = obrain_core::execution::ProfiledOperator::new(physical, stats);
             self.profile_entries.borrow_mut().push(entry);
             Ok((Box::new(profiled), columns))
         } else {
@@ -712,7 +712,7 @@ impl Planner {
     }
 }
 
-/// An operator that yields a static set of rows (for `grafeo.procedures()` etc.).
+/// An operator that yields a static set of rows (for `obrain.procedures()` etc.).
 #[cfg(feature = "algos")]
 struct StaticResultOperator {
     rows: Vec<Vec<Value>>,
@@ -722,8 +722,8 @@ struct StaticResultOperator {
 
 #[cfg(feature = "algos")]
 impl Operator for StaticResultOperator {
-    fn next(&mut self) -> grafeo_core::execution::operators::OperatorResult {
-        use grafeo_core::execution::DataChunk;
+    fn next(&mut self) -> obrain_core::execution::operators::OperatorResult {
+        use obrain_core::execution::DataChunk;
 
         if self.row_index >= self.rows.len() {
             return Ok(None);
@@ -769,10 +769,10 @@ mod tests {
         LimitOp as LogicalLimitOp, NodeScanOp, PathMode, ReturnItem, ReturnOp,
         SkipOp as LogicalSkipOp, SortKey, SortOp,
     };
-    use grafeo_common::types::Value;
-    use grafeo_core::execution::operators::AggregateFunction as PhysicalAggregateFunction;
-    use grafeo_core::graph::GraphStoreMut;
-    use grafeo_core::graph::lpg::LpgStore;
+    use obrain_common::types::Value;
+    use obrain_core::execution::operators::AggregateFunction as PhysicalAggregateFunction;
+    use obrain_core::graph::GraphStoreMut;
+    use obrain_core::graph::lpg::LpgStore;
 
     fn create_test_store() -> Arc<dyn GraphStoreMut> {
         let store = Arc::new(LpgStore::new().unwrap());

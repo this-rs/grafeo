@@ -11,8 +11,8 @@ use crate::graph::lpg::{Edge, Node};
 use crate::graph::traits::{GraphStore, GraphStoreMut};
 use crate::statistics::Statistics;
 use arcstr::ArcStr;
-use grafeo_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TransactionId, Value};
-use grafeo_common::utils::hash::FxHashMap;
+use obrain_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TransactionId, Value};
+use obrain_common::utils::hash::FxHashMap;
 use std::sync::Arc;
 
 impl GraphStore for LpgStore {

@@ -1,14 +1,14 @@
 use super::LpgStore;
 use crate::graph::lpg::{Node, NodeRecord};
-use grafeo_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TransactionId, Value};
-use grafeo_common::utils::hash::{FxHashMap, FxHashSet};
+use obrain_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TransactionId, Value};
+use obrain_common::utils::hash::{FxHashMap, FxHashSet};
 use std::sync::atomic::Ordering;
 
 #[cfg(not(feature = "tiered-storage"))]
-use grafeo_common::mvcc::VersionChain;
+use obrain_common::mvcc::VersionChain;
 
 #[cfg(feature = "tiered-storage")]
-use grafeo_common::mvcc::{HotVersionRef, VersionIndex, VersionRef};
+use obrain_common::mvcc::{HotVersionRef, VersionIndex, VersionRef};
 
 impl LpgStore {
     /// Creates a new node with the given labels.
@@ -46,7 +46,7 @@ impl LpgStore {
 
     #[cfg(feature = "temporal")]
     pub(super) fn register_node_labels(&self, id: NodeId, labels: &[&str], epoch: EpochId) {
-        use grafeo_common::temporal::VersionLog;
+        use obrain_common::temporal::VersionLog;
 
         let mut node_label_set = FxHashSet::default();
         let mut label_ids = Vec::with_capacity(labels.len());
@@ -808,7 +808,7 @@ impl LpgStore {
     /// Deletes all edges connected to a node (implements DETACH DELETE).
     ///
     /// Call this before `delete_node()` if you want to remove a node that
-    /// has edges. Grafeo doesn't auto-delete edges - you have to be explicit.
+    /// has edges. Obrain doesn't auto-delete edges - you have to be explicit.
     #[cfg(not(feature = "tiered-storage"))]
     pub fn delete_node_edges(&self, node_id: NodeId) {
         // Get outgoing edges

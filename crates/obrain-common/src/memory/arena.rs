@@ -1,6 +1,6 @@
 //! Epoch-based arena allocator for MVCC.
 //!
-//! This is how Grafeo manages memory for versioned data. Each epoch gets its
+//! This is how Obrain manages memory for versioned data. Each epoch gets its
 //! own arena, and when all readers from an old epoch finish, we free the whole
 //! thing at once. Much faster than tracking individual allocations.
 //!

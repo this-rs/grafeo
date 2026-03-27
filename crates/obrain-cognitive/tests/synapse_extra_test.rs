@@ -2,9 +2,9 @@
 
 #![cfg(feature = "synapse")]
 
-use grafeo_cognitive::{Synapse, SynapseConfig, SynapseListener, SynapseStore};
-use grafeo_common::types::NodeId;
-use grafeo_reactive::{MutationEvent, MutationListener, NodeSnapshot};
+use obrain_cognitive::{Synapse, SynapseConfig, SynapseListener, SynapseStore};
+use obrain_common::types::NodeId;
+use obrain_reactive::{MutationEvent, MutationListener, NodeSnapshot};
 use std::sync::Arc;
 use std::time::Duration;
 

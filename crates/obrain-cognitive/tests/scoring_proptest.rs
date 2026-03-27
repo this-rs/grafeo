@@ -3,7 +3,7 @@
 
 #![cfg(all(feature = "energy", feature = "synapse", feature = "fabric"))]
 
-use grafeo_cognitive::{effective_half_life, energy_score, synapse_score};
+use obrain_cognitive::{effective_half_life, energy_score, synapse_score};
 use proptest::prelude::*;
 
 // ---------------------------------------------------------------------------
@@ -196,8 +196,8 @@ proptest! {
         betweenness in 0.0_f64..100.0,
         scar_intensity in 0.0_f64..50.0,
     ) {
-        use grafeo_cognitive::FabricStore;
-        use grafeo_common::types::NodeId;
+        use obrain_cognitive::FabricStore;
+        use obrain_common::types::NodeId;
 
         let store = FabricStore::new();
         let nid = NodeId::new(1);
@@ -229,7 +229,7 @@ proptest! {
         mutation_age_secs in 0u64..100_000_000,
         synapse_activity in 0.0_f64..10.0,
     ) {
-        use grafeo_cognitive::StagnationConfig;
+        use obrain_cognitive::StagnationConfig;
         let config = StagnationConfig::default();
 
         // Replicate the stagnation formula

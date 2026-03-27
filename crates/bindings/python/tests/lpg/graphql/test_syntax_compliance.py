@@ -12,16 +12,16 @@ Run with:
 
 import pytest
 
-# Try to import grafeo
+# Try to import obrain
 try:
-    from grafeo import GrafeoDB
+    from obrain import ObrainDB
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
 
-pytestmark = pytest.mark.skipif(not GRAFEO_AVAILABLE, reason="Grafeo Python bindings not installed")
+pytestmark = pytest.mark.skipif(not OBRAIN_AVAILABLE, reason="Obrain Python bindings not installed")
 
 
 class TestGraphQLQueryOperations:
@@ -29,7 +29,7 @@ class TestGraphQLQueryOperations:
 
     def setup_method(self):
         """Create a database with test data."""
-        self.db = GrafeoDB()
+        self.db = ObrainDB()
         self._setup_test_data()
 
     def _setup_test_data(self):
@@ -295,7 +295,7 @@ class TestGraphQLMutationOperations:
 
     def setup_method(self):
         """Create a fresh database."""
-        self.db = GrafeoDB()
+        self.db = ObrainDB()
 
     def _execute_graphql(self, query: str):
         """Execute GraphQL query, skip if not supported."""

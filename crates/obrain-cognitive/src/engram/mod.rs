@@ -1,4 +1,4 @@
-//! # Engram System — Mémoire Vivante pour Grafeo
+//! # Engram System — Mémoire Vivante pour Obrain
 //!
 //! Engrams are emergent memory traces formed from repeated co-activation patterns.
 //! Unlike raw synapses or energy scores, engrams represent *consolidated knowledge*

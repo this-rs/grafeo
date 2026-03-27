@@ -216,7 +216,7 @@ mod tests {
     use super::*;
     use crate::execution::sink::CollectorSink;
     use crate::execution::vector::ValueVector;
-    use grafeo_common::types::Value;
+    use obrain_common::types::Value;
 
     fn create_test_chunk(values: &[i64]) -> DataChunk {
         let v: Vec<Value> = values.iter().map(|&i| Value::Int64(i)).collect();

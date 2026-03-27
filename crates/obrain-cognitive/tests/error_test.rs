@@ -1,6 +1,6 @@
 //! Tests for the CognitiveError type.
 
-use grafeo_cognitive::CognitiveError;
+use obrain_cognitive::CognitiveError;
 
 #[test]
 fn energy_error_display() {
@@ -34,7 +34,7 @@ fn store_error_display() {
 
 #[test]
 fn reactive_error_from_conversion() {
-    let reactive_err = grafeo_reactive::ReactiveError::BusCapacityExceeded(42);
+    let reactive_err = obrain_reactive::ReactiveError::BusCapacityExceeded(42);
     let cognitive_err: CognitiveError = reactive_err.into();
     let msg = cognitive_err.to_string();
     assert!(msg.starts_with("reactive error:"), "got: {msg}");
@@ -49,7 +49,7 @@ fn error_is_debug() {
 
 #[test]
 fn cognitive_result_ok() {
-    fn produce_ok() -> grafeo_cognitive::error::CognitiveResult<i32> {
+    fn produce_ok() -> obrain_cognitive::error::CognitiveResult<i32> {
         Ok(42)
     }
     let result = produce_ok();
@@ -59,7 +59,7 @@ fn cognitive_result_ok() {
 
 #[test]
 fn cognitive_result_err() {
-    let result: grafeo_cognitive::error::CognitiveResult<i32> =
+    let result: obrain_cognitive::error::CognitiveResult<i32> =
         Err(CognitiveError::Config("bad".into()));
     assert!(result.is_err());
 }

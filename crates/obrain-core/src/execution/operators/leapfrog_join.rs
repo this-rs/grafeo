@@ -6,7 +6,7 @@
 //! Traditional binary hash joins cascade O(N²) for triangle patterns; leapfrog
 //! achieves O(N^1.5) by processing all relations simultaneously.
 
-use grafeo_common::types::{EdgeId, LogicalType, NodeId, Value};
+use obrain_common::types::{EdgeId, LogicalType, NodeId, Value};
 
 use super::{Operator, OperatorError, OperatorResult};
 use crate::execution::DataChunk;

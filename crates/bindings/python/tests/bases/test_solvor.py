@@ -1,6 +1,6 @@
 """Base class for solvOR plugin comparison tests.
 
-This module defines tests that compare Grafeo's solvOR plugin (db.as_solvor())
+This module defines tests that compare Obrain's solvOR plugin (db.as_solvor())
 against the standalone solvOR library to verify correctness.
 
 Tests cover:
@@ -28,7 +28,7 @@ class BaseSolvORComparisonTest(ABC):
     """Abstract base class for solvOR plugin comparison tests.
 
     Subclasses implement graph construction using their query language,
-    then the tests compare Grafeo's as_solvor() plugin results against
+    then the tests compare Obrain's as_solvor() plugin results against
     the standalone solvOR library.
     """
 
@@ -60,16 +60,16 @@ class BaseSolvORComparisonTest(ABC):
 
     @pytest.mark.skipif(not SOLVOR_AVAILABLE, reason="solvOR not installed")
     def test_shortest_path_vs_solvor(self, db):
-        """Grafeo's as_solvor().shortest_path() should match standalone solvOR."""
+        """Obrain's as_solvor().shortest_path() should match standalone solvOR."""
         graph_info = self.setup_flow_network(db, 50, 150, seed=42)
         node_ids = graph_info["node_ids"]
         edges = graph_info["edges"]
         source = graph_info["source"]
         sink = graph_info["sink"]
 
-        # Grafeo solvOR plugin
+        # Obrain solvOR plugin
         solvor_adapter = db.as_solvor()
-        grafeo_result = solvor_adapter.shortest_path(source, sink, weight="cost")
+        obrain_result = solvor_adapter.shortest_path(source, sink, weight="cost")
 
         # Standalone solvOR dijkstra
         # Build adjacency list: {node_idx: [(neighbor_idx, cost), ...]}
@@ -85,27 +85,27 @@ class BaseSolvORComparisonTest(ABC):
 
         solvor_result = solvor_dijkstra(node_to_idx[source], node_to_idx[sink], neighbors)
 
-        if grafeo_result is not None and solvor_result.status.name == "OPTIMAL":
-            grafeo_dist, grafeo_path = grafeo_result
+        if obrain_result is not None and solvor_result.status.name == "OPTIMAL":
+            obrain_dist, grafeo_path = obrain_result
             solvor_dist = solvor_result.objective
-            assert abs(grafeo_dist - solvor_dist) < 1e-6, (
-                f"Shortest path mismatch: Grafeo={grafeo_dist}, solvOR={solvor_dist}"
+            assert abs(obrain_dist - solvor_dist) < 1e-6, (
+                f"Shortest path mismatch: Obrain={obrain_dist}, solvOR={solvor_dist}"
             )
 
     # ===== Max Flow Tests =====
 
     @pytest.mark.skipif(not SOLVOR_AVAILABLE, reason="solvOR not installed")
     def test_max_flow_vs_solvor(self, db):
-        """Grafeo's as_solvor().max_flow() should match standalone solvOR."""
+        """Obrain's as_solvor().max_flow() should match standalone solvOR."""
         graph_info = self.setup_flow_network(db, 20, 60, seed=42)
         node_ids = graph_info["node_ids"]
         edges = graph_info["edges"]
         source = graph_info["source"]
         sink = graph_info["sink"]
 
-        # Grafeo solvOR plugin
+        # Obrain solvOR plugin
         solvor_adapter = db.as_solvor()
-        grafeo_result = solvor_adapter.max_flow(source, sink, capacity="capacity")
+        obrain_result = solvor_adapter.max_flow(source, sink, capacity="capacity")
 
         # Standalone solvOR max_flow
         # Build graph: {node: [(neighbor, capacity), ...]}
@@ -117,25 +117,25 @@ class BaseSolvORComparisonTest(ABC):
 
         solvor_result = solvor_max_flow(graph, node_to_idx[source], node_to_idx[sink])
 
-        if grafeo_result is not None and solvor_result.status.name == "OPTIMAL":
-            grafeo_flow = grafeo_result.get("max_flow")
+        if obrain_result is not None and solvor_result.status.name == "OPTIMAL":
+            obrain_flow = obrain_result.get("max_flow")
             solvor_flow = solvor_result.objective
-            assert grafeo_flow == solvor_flow, (
-                f"Max flow mismatch: Grafeo={grafeo_flow}, solvOR={solvor_flow}"
+            assert obrain_flow == solvor_flow, (
+                f"Max flow mismatch: Obrain={obrain_flow}, solvOR={solvor_flow}"
             )
 
     # ===== Minimum Spanning Tree Tests =====
 
     @pytest.mark.skipif(not SOLVOR_AVAILABLE, reason="solvOR not installed")
     def test_mst_vs_solvor(self, db):
-        """Grafeo's as_solvor().minimum_spanning_tree() should match solvOR."""
+        """Obrain's as_solvor().minimum_spanning_tree() should match solvOR."""
         graph_info = self.setup_flow_network(db, 30, 100, seed=42)
         node_ids = graph_info["node_ids"]
         edges = graph_info["edges"]
 
-        # Grafeo solvOR plugin
+        # Obrain solvOR plugin
         solvor_adapter = db.as_solvor()
-        grafeo_result = solvor_adapter.minimum_spanning_tree(weight="cost")
+        obrain_result = solvor_adapter.minimum_spanning_tree(weight="cost")
 
         # Standalone solvOR kruskal
         # Build edge list: [(u, v, weight), ...]
@@ -152,22 +152,22 @@ class BaseSolvORComparisonTest(ABC):
 
         solvor_result = solvor_kruskal(len(node_ids), edge_list, allow_forest=True)
 
-        if grafeo_result is not None and solvor_result.status.name in (
+        if obrain_result is not None and solvor_result.status.name in (
             "OPTIMAL",
             "FEASIBLE",
         ):
-            grafeo_weight = grafeo_result.get("total_weight", 0)
+            grafeo_weight = obrain_result.get("total_weight", 0)
             solvor_weight = solvor_result.objective
             # MST weights should match (allowing small float error)
             assert abs(grafeo_weight - solvor_weight) < 1e-6, (
-                f"MST weight mismatch: Grafeo={grafeo_weight}, solvOR={solvor_weight}"
+                f"MST weight mismatch: Obrain={grafeo_weight}, solvOR={solvor_weight}"
             )
 
 
 class BaseSolvORBenchmarkTest(ABC):
     """Abstract base class for solvOR plugin performance comparison.
 
-    Compares Grafeo's as_solvor() plugin performance against standalone solvOR.
+    Compares Obrain's as_solvor() plugin performance against standalone solvOR.
     """
 
     @abstractmethod
@@ -182,7 +182,7 @@ class BaseSolvORBenchmarkTest(ABC):
 
     @pytest.mark.skipif(not SOLVOR_AVAILABLE, reason="solvOR not installed")
     def test_max_flow_performance(self, db):
-        """Compare max flow performance: Grafeo plugin vs standalone solvOR."""
+        """Compare max flow performance: Obrain plugin vs standalone solvOR."""
         import time
 
         graph_info = self.setup_flow_network(db, 100, 500, seed=42)
@@ -191,11 +191,11 @@ class BaseSolvORBenchmarkTest(ABC):
         source = graph_info["source"]
         sink = graph_info["sink"]
 
-        # Grafeo plugin timing
+        # Obrain plugin timing
         solvor_adapter = db.as_solvor()
         start = time.perf_counter()
         solvor_adapter.max_flow(source, sink, capacity="capacity")
-        grafeo_time = (time.perf_counter() - start) * 1000
+        obrain_time = (time.perf_counter() - start) * 1000
 
         # Standalone solvOR timing
         node_to_idx = {nid: i for i, nid in enumerate(node_ids)}
@@ -209,17 +209,17 @@ class BaseSolvORBenchmarkTest(ABC):
         solvor_time = (time.perf_counter() - start) * 1000
 
         print("\nMax Flow (100 nodes, 500 edges):")
-        print(f"  Grafeo plugin: {grafeo_time:.2f}ms")
+        print(f"  Obrain plugin: {obrain_time:.2f}ms")
         print(f"  Standalone solvOR: {solvor_time:.2f}ms")
         if solvor_time > 0:
-            print(f"  Ratio: {grafeo_time / solvor_time:.2f}x")
+            print(f"  Ratio: {obrain_time / solvor_time:.2f}x")
 
-        assert grafeo_time >= 0
+        assert obrain_time >= 0
         assert solvor_time >= 0
 
     @pytest.mark.skipif(not SOLVOR_AVAILABLE, reason="solvOR not installed")
     def test_shortest_path_performance(self, db):
-        """Compare shortest path performance: Grafeo plugin vs standalone solvOR."""
+        """Compare shortest path performance: Obrain plugin vs standalone solvOR."""
         import time
 
         graph_info = self.setup_flow_network(db, 500, 2000, seed=42)
@@ -228,11 +228,11 @@ class BaseSolvORBenchmarkTest(ABC):
         source = graph_info["source"]
         sink = graph_info["sink"]
 
-        # Grafeo plugin timing
+        # Obrain plugin timing
         solvor_adapter = db.as_solvor()
         start = time.perf_counter()
         solvor_adapter.shortest_path(source, sink, weight="cost")
-        grafeo_time = (time.perf_counter() - start) * 1000
+        obrain_time = (time.perf_counter() - start) * 1000
 
         # Standalone solvOR timing
         node_to_idx = {nid: i for i, nid in enumerate(node_ids)}
@@ -249,10 +249,10 @@ class BaseSolvORBenchmarkTest(ABC):
         solvor_time = (time.perf_counter() - start) * 1000
 
         print("\nShortest Path (500 nodes, 2000 edges):")
-        print(f"  Grafeo plugin: {grafeo_time:.2f}ms")
+        print(f"  Obrain plugin: {obrain_time:.2f}ms")
         print(f"  Standalone solvOR: {solvor_time:.2f}ms")
         if solvor_time > 0:
-            print(f"  Ratio: {grafeo_time / solvor_time:.2f}x")
+            print(f"  Ratio: {obrain_time / solvor_time:.2f}x")
 
-        assert grafeo_time >= 0
+        assert obrain_time >= 0
         assert solvor_time >= 0

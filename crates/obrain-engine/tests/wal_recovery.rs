@@ -4,22 +4,22 @@
 //! and checkpoint operations.
 //!
 //! ```bash
-//! cargo test -p grafeo-engine --features full --test wal_recovery
+//! cargo test -p obrain-engine --features full --test wal_recovery
 //! ```
 
 #[cfg(feature = "wal")]
 mod wal {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn test_persistent_db_roundtrip() {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let path = dir.path().join("test.grafeo");
+        let path = dir.path().join("test.obrain");
 
         // Create and populate
         {
-            let db = GrafeoDB::open(&path).expect("open for write");
+            let db = ObrainDB::open(&path).expect("open for write");
             let a = db.create_node(&["Person"]);
             db.set_node_property(a, "name", Value::String("Alix".into()));
             db.set_node_property(a, "age", Value::Int64(30));
@@ -31,7 +31,7 @@ mod wal {
 
         // Reopen and verify
         {
-            let db = GrafeoDB::open(&path).expect("reopen");
+            let db = ObrainDB::open(&path).expect("reopen");
             assert_eq!(db.node_count(), 2);
             assert_eq!(db.edge_count(), 1);
 
@@ -49,17 +49,17 @@ mod wal {
     #[test]
     fn test_wal_recovery_labels() {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let path = dir.path().join("labels.grafeo");
+        let path = dir.path().join("labels.obrain");
 
         {
-            let db = GrafeoDB::open(&path).expect("open");
+            let db = ObrainDB::open(&path).expect("open");
             let n = db.create_node(&["Person"]);
             db.add_node_label(n, "Employee");
             db.close().expect("close");
         }
 
         {
-            let db = GrafeoDB::open(&path).expect("reopen");
+            let db = ObrainDB::open(&path).expect("reopen");
             let session = db.session();
             let result = session.execute("MATCH (n:Employee) RETURN n").unwrap();
             assert_eq!(result.rows.len(), 1, "label should survive WAL recovery");
@@ -70,10 +70,10 @@ mod wal {
     #[test]
     fn test_wal_recovery_deletes() {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let path = dir.path().join("deletes.grafeo");
+        let path = dir.path().join("deletes.obrain");
 
         {
-            let db = GrafeoDB::open(&path).expect("open");
+            let db = ObrainDB::open(&path).expect("open");
             let a = db.create_node(&["Person"]);
             db.set_node_property(a, "name", Value::String("Alix".into()));
             let b = db.create_node(&["Person"]);
@@ -88,7 +88,7 @@ mod wal {
         }
 
         {
-            let db = GrafeoDB::open(&path).expect("reopen");
+            let db = ObrainDB::open(&path).expect("reopen");
             assert_eq!(
                 db.node_count(),
                 2,
@@ -102,9 +102,9 @@ mod wal {
     #[test]
     fn test_save_to_new_location() {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let save_path = dir.path().join("saved.grafeo");
+        let save_path = dir.path().join("saved.obrain");
 
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let a = db.create_node(&["Person"]);
         db.set_node_property(a, "name", Value::String("Alix".into()));
         let b = db.create_node(&["Person"]);
@@ -115,7 +115,7 @@ mod wal {
         db.save(&save_path).expect("save should succeed");
 
         // Open the saved database
-        let restored = GrafeoDB::open(&save_path).expect("open saved");
+        let restored = ObrainDB::open(&save_path).expect("open saved");
         assert_eq!(restored.node_count(), 2);
         assert_eq!(restored.edge_count(), 1);
         restored.close().expect("close");
@@ -124,18 +124,18 @@ mod wal {
     #[test]
     fn test_open_in_memory_from_file() {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let path = dir.path().join("source.grafeo");
+        let path = dir.path().join("source.obrain");
 
         // Create persistent database
         {
-            let db = GrafeoDB::open(&path).expect("open");
+            let db = ObrainDB::open(&path).expect("open");
             let n = db.create_node(&["Person"]);
             db.set_node_property(n, "name", Value::String("Alix".into()));
             db.close().expect("close");
         }
 
         // Load into memory (detached from file)
-        let mem_db = GrafeoDB::open_in_memory(&path).expect("open_in_memory");
+        let mem_db = ObrainDB::open_in_memory(&path).expect("open_in_memory");
         assert_eq!(mem_db.node_count(), 1);
         assert!(
             !mem_db.is_persistent(),
@@ -147,7 +147,7 @@ mod wal {
         assert_eq!(mem_db.node_count(), 2);
 
         // Reopening the file should still show 1 node
-        let file_db = GrafeoDB::open(&path).expect("reopen");
+        let file_db = ObrainDB::open(&path).expect("reopen");
         assert_eq!(file_db.node_count(), 1);
         file_db.close().expect("close");
     }
@@ -155,9 +155,9 @@ mod wal {
     #[test]
     fn test_wal_status_persistent() {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let path = dir.path().join("status.grafeo");
+        let path = dir.path().join("status.obrain");
 
-        let db = GrafeoDB::open(&path).expect("open");
+        let db = ObrainDB::open(&path).expect("open");
         db.create_node(&["N"]);
 
         let status = db.wal_status();
@@ -169,11 +169,11 @@ mod wal {
     #[test]
     fn test_query_mutations_persist() {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let path = dir.path().join("query_persist.grafeo");
+        let path = dir.path().join("query_persist.obrain");
 
         // Create data via GQL queries (not CRUD API)
         {
-            let db = GrafeoDB::open(&path).expect("open");
+            let db = ObrainDB::open(&path).expect("open");
             let session = db.session();
             session
                 .execute("INSERT (:Person {name: 'Alix', age: 30})")
@@ -199,7 +199,7 @@ mod wal {
 
         // Reopen and verify all query-created data survived
         {
-            let db = GrafeoDB::open(&path).expect("reopen");
+            let db = ObrainDB::open(&path).expect("reopen");
             assert_eq!(db.node_count(), 2, "query-created nodes should persist");
             assert_eq!(db.edge_count(), 1, "query-created edges should persist");
 
@@ -222,10 +222,10 @@ mod wal {
     #[test]
     fn test_query_delete_persists() {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let path = dir.path().join("query_delete.grafeo");
+        let path = dir.path().join("query_delete.obrain");
 
         {
-            let db = GrafeoDB::open(&path).expect("open");
+            let db = ObrainDB::open(&path).expect("open");
             let session = db.session();
             session
                 .execute("INSERT (:Person {name: 'Alix'})")
@@ -240,7 +240,7 @@ mod wal {
         }
 
         {
-            let db = GrafeoDB::open(&path).expect("reopen");
+            let db = ObrainDB::open(&path).expect("reopen");
             assert_eq!(db.node_count(), 1, "delete should persist");
             let session = db.session();
             let result = session.execute("MATCH (n:Person) RETURN n.name").unwrap();
@@ -253,10 +253,10 @@ mod wal {
     #[test]
     fn test_query_set_property_persists() {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let path = dir.path().join("query_set.grafeo");
+        let path = dir.path().join("query_set.obrain");
 
         {
-            let db = GrafeoDB::open(&path).expect("open");
+            let db = ObrainDB::open(&path).expect("open");
             let session = db.session();
             session
                 .execute("INSERT (:Person {name: 'Alix', age: 30})")
@@ -268,7 +268,7 @@ mod wal {
         }
 
         {
-            let db = GrafeoDB::open(&path).expect("reopen");
+            let db = ObrainDB::open(&path).expect("reopen");
             let session = db.session();
             let result = session
                 .execute("MATCH (n:Person {name: 'Alix'}) RETURN n.age")
@@ -282,9 +282,9 @@ mod wal {
     #[test]
     fn test_wal_checkpoint_succeeds() {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let path = dir.path().join("checkpoint.grafeo");
+        let path = dir.path().join("checkpoint.obrain");
 
-        let db = GrafeoDB::open(&path).expect("open");
+        let db = ObrainDB::open(&path).expect("open");
         let n = db.create_node(&["Person"]);
         db.set_node_property(n, "name", Value::String("Alix".into()));
 
@@ -304,10 +304,10 @@ mod wal {
     #[test]
     fn test_named_graph_persists_across_restart() {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let path = dir.path().join("named_graph.grafeo");
+        let path = dir.path().join("named_graph.obrain");
 
         {
-            let db = GrafeoDB::open(&path).expect("open");
+            let db = ObrainDB::open(&path).expect("open");
             let session = db.session();
             session.execute("CREATE GRAPH analytics").unwrap();
             session.execute("USE GRAPH analytics").unwrap();
@@ -319,7 +319,7 @@ mod wal {
         }
 
         {
-            let db = GrafeoDB::open(&path).expect("reopen");
+            let db = ObrainDB::open(&path).expect("reopen");
             let session = db.session();
             // Default graph should still be empty
             assert_eq!(db.node_count(), 0);
@@ -339,10 +339,10 @@ mod wal {
     #[test]
     fn test_drop_named_graph_persists() {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let path = dir.path().join("drop_graph.grafeo");
+        let path = dir.path().join("drop_graph.obrain");
 
         {
-            let db = GrafeoDB::open(&path).expect("open");
+            let db = ObrainDB::open(&path).expect("open");
             let session = db.session();
             session.execute("CREATE GRAPH temp_graph").unwrap();
             session.execute("USE GRAPH temp_graph").unwrap();
@@ -354,7 +354,7 @@ mod wal {
         }
 
         {
-            let db = GrafeoDB::open(&path).expect("reopen");
+            let db = ObrainDB::open(&path).expect("reopen");
             let session = db.session();
             // Trying to use the dropped graph should fail
             let result = session.execute("USE GRAPH temp_graph");
@@ -369,10 +369,10 @@ mod wal {
     #[test]
     fn test_multiple_named_graphs_persist() {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let path = dir.path().join("multi_graph.grafeo");
+        let path = dir.path().join("multi_graph.obrain");
 
         {
-            let db = GrafeoDB::open(&path).expect("open");
+            let db = ObrainDB::open(&path).expect("open");
             let session = db.session();
 
             // Create data in default graph
@@ -395,7 +395,7 @@ mod wal {
         }
 
         {
-            let db = GrafeoDB::open(&path).expect("reopen");
+            let db = ObrainDB::open(&path).expect("reopen");
             let session = db.session();
 
             // Check default graph
@@ -422,10 +422,10 @@ mod wal {
     #[test]
     fn test_named_graph_wal_interleaved_with_default() {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let path = dir.path().join("interleaved.grafeo");
+        let path = dir.path().join("interleaved.obrain");
 
         {
-            let db = GrafeoDB::open(&path).expect("open");
+            let db = ObrainDB::open(&path).expect("open");
             let session = db.session();
 
             // Interleave mutations between default and named graph
@@ -442,7 +442,7 @@ mod wal {
         }
 
         {
-            let db = GrafeoDB::open(&path).expect("reopen");
+            let db = ObrainDB::open(&path).expect("reopen");
             let session = db.session();
 
             // Default graph: 2 persons
@@ -473,19 +473,19 @@ mod wal {
     #[test]
     fn test_wal_recovery_map_property() {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let path = dir.path().join("map_prop.grafeo");
+        let path = dir.path().join("map_prop.obrain");
 
         {
-            let db = GrafeoDB::open(&path).expect("open");
+            let db = ObrainDB::open(&path).expect("open");
             let n = db.create_node(&["Config"]);
             db.set_node_property(n, "name", Value::String("settings".into()));
             let mut map = std::collections::BTreeMap::new();
             map.insert(
-                grafeo_common::types::PropertyKey::from("theme"),
+                obrain_common::types::PropertyKey::from("theme"),
                 Value::String("dark".into()),
             );
             map.insert(
-                grafeo_common::types::PropertyKey::from("font_size"),
+                obrain_common::types::PropertyKey::from("font_size"),
                 Value::Int64(14),
             );
             db.set_node_property(n, "prefs", Value::Map(std::sync::Arc::new(map)));
@@ -493,7 +493,7 @@ mod wal {
         }
 
         {
-            let db = GrafeoDB::open(&path).expect("reopen");
+            let db = ObrainDB::open(&path).expect("reopen");
             let session = db.session();
             let result = session
                 .execute("MATCH (c:Config) RETURN c.prefs AS prefs")
@@ -503,7 +503,7 @@ mod wal {
                 Value::Map(m) => {
                     assert_eq!(m.len(), 2);
                     assert_eq!(
-                        m[&grafeo_common::types::PropertyKey::from("theme")],
+                        m[&obrain_common::types::PropertyKey::from("theme")],
                         Value::String("dark".into())
                     );
                 }
@@ -516,10 +516,10 @@ mod wal {
     #[test]
     fn test_wal_recovery_vector_property() {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let path = dir.path().join("vector_prop.grafeo");
+        let path = dir.path().join("vector_prop.obrain");
 
         {
-            let db = GrafeoDB::open(&path).expect("open");
+            let db = ObrainDB::open(&path).expect("open");
             let n = db.create_node(&["Document"]);
             db.set_node_property(n, "name", Value::String("doc1".into()));
             let embedding: std::sync::Arc<[f32]> =
@@ -529,7 +529,7 @@ mod wal {
         }
 
         {
-            let db = GrafeoDB::open(&path).expect("reopen");
+            let db = ObrainDB::open(&path).expect("reopen");
             let session = db.session();
             let result = session
                 .execute("MATCH (d:Document) RETURN d.embedding AS emb")
@@ -549,19 +549,19 @@ mod wal {
     #[test]
     fn test_wal_recovery_timestamp_property() {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let path = dir.path().join("timestamp_prop.grafeo");
+        let path = dir.path().join("timestamp_prop.obrain");
 
         {
-            let db = GrafeoDB::open(&path).expect("open");
+            let db = ObrainDB::open(&path).expect("open");
             let n = db.create_node(&["Event"]);
             db.set_node_property(n, "name", Value::String("launch".into()));
-            let ts = grafeo_common::types::Timestamp::from_secs(1_700_000_000);
+            let ts = obrain_common::types::Timestamp::from_secs(1_700_000_000);
             db.set_node_property(n, "occurred_at", Value::Timestamp(ts));
             db.close().expect("close");
         }
 
         {
-            let db = GrafeoDB::open(&path).expect("reopen");
+            let db = ObrainDB::open(&path).expect("reopen");
             let session = db.session();
             let result = session
                 .execute("MATCH (e:Event) RETURN e.occurred_at AS ts")
@@ -580,20 +580,20 @@ mod wal {
     #[test]
     fn test_wal_recovery_zoned_datetime_property() {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let path = dir.path().join("zdt_prop.grafeo");
+        let path = dir.path().join("zdt_prop.obrain");
 
         {
-            let db = GrafeoDB::open(&path).expect("open");
+            let db = ObrainDB::open(&path).expect("open");
             let n = db.create_node(&["Meeting"]);
             db.set_node_property(n, "name", Value::String("standup".into()));
-            let ts = grafeo_common::types::Timestamp::from_secs(1_700_000_000);
-            let zdt = grafeo_common::types::ZonedDatetime::from_timestamp_offset(ts, 3600);
+            let ts = obrain_common::types::Timestamp::from_secs(1_700_000_000);
+            let zdt = obrain_common::types::ZonedDatetime::from_timestamp_offset(ts, 3600);
             db.set_node_property(n, "scheduled_at", Value::ZonedDatetime(zdt));
             db.close().expect("close");
         }
 
         {
-            let db = GrafeoDB::open(&path).expect("reopen");
+            let db = ObrainDB::open(&path).expect("reopen");
             let session = db.session();
             let result = session
                 .execute("MATCH (m:Meeting) RETURN m.scheduled_at AS zdt")
@@ -613,19 +613,19 @@ mod wal {
     #[test]
     fn test_wal_recovery_duration_property() {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let path = dir.path().join("duration_prop.grafeo");
+        let path = dir.path().join("duration_prop.obrain");
 
         {
-            let db = GrafeoDB::open(&path).expect("open");
+            let db = ObrainDB::open(&path).expect("open");
             let n = db.create_node(&["Task"]);
             db.set_node_property(n, "name", Value::String("sprint".into()));
-            let dur = grafeo_common::types::Duration::new(0, 14, 0); // 14 days
+            let dur = obrain_common::types::Duration::new(0, 14, 0); // 14 days
             db.set_node_property(n, "duration", Value::Duration(dur));
             db.close().expect("close");
         }
 
         {
-            let db = GrafeoDB::open(&path).expect("reopen");
+            let db = ObrainDB::open(&path).expect("reopen");
             let session = db.session();
             let result = session
                 .execute("MATCH (t:Task) RETURN t.duration AS dur")
@@ -652,7 +652,7 @@ mod wal {
         let path = dir.path().join("ddl_node_type");
 
         {
-            let db = GrafeoDB::open(&path).expect("open");
+            let db = ObrainDB::open(&path).expect("open");
             let session = db.session();
             session
                 .execute("CREATE NODE TYPE Vehicle (make STRING NOT NULL, year INTEGER)")
@@ -661,7 +661,7 @@ mod wal {
         }
 
         {
-            let db = GrafeoDB::open(&path).expect("reopen");
+            let db = ObrainDB::open(&path).expect("reopen");
             let session = db.session();
             let result = session.execute("SHOW NODE TYPES").unwrap();
             let type_names: Vec<&str> = result
@@ -686,7 +686,7 @@ mod wal {
         let path = dir.path().join("ddl_edge_type");
 
         {
-            let db = GrafeoDB::open(&path).expect("open");
+            let db = ObrainDB::open(&path).expect("open");
             let session = db.session();
             session
                 .execute("CREATE EDGE TYPE SUPPLIES (quantity INTEGER)")
@@ -695,7 +695,7 @@ mod wal {
         }
 
         {
-            let db = GrafeoDB::open(&path).expect("reopen");
+            let db = ObrainDB::open(&path).expect("reopen");
             let session = db.session();
             let result = session.execute("SHOW EDGE TYPES").unwrap();
             let type_names: Vec<&str> = result
@@ -720,7 +720,7 @@ mod wal {
         let path = dir.path().join("ddl_drop_type");
 
         {
-            let db = GrafeoDB::open(&path).expect("open");
+            let db = ObrainDB::open(&path).expect("open");
             let session = db.session();
             session
                 .execute("CREATE NODE TYPE Temp (name STRING)")
@@ -730,7 +730,7 @@ mod wal {
         }
 
         {
-            let db = GrafeoDB::open(&path).expect("reopen");
+            let db = ObrainDB::open(&path).expect("reopen");
             let session = db.session();
             let result = session.execute("SHOW NODE TYPES").unwrap();
             let type_names: Vec<&str> = result
@@ -755,7 +755,7 @@ mod wal {
         let path = dir.path().join("ddl_with_data");
 
         {
-            let db = GrafeoDB::open(&path).expect("open");
+            let db = ObrainDB::open(&path).expect("open");
             let session = db.session();
             session
                 .execute("CREATE NODE TYPE Person (name STRING NOT NULL, age INTEGER)")
@@ -770,7 +770,7 @@ mod wal {
         }
 
         {
-            let db = GrafeoDB::open(&path).expect("reopen");
+            let db = ObrainDB::open(&path).expect("reopen");
             let session = db.session();
 
             // Schema should be present
@@ -804,14 +804,14 @@ mod wal {
     #[cfg(all(feature = "sparql", feature = "rdf"))]
     #[test]
     fn test_rdf_triples_persist_across_restart() {
-        use grafeo_engine::{Config, GraphModel};
+        use obrain_engine::{Config, GraphModel};
 
         let dir = tempfile::tempdir().expect("create temp dir");
-        let path = dir.path().join("rdf.grafeo");
+        let path = dir.path().join("rdf.obrain");
 
         {
             let config = Config::persistent(&path).with_graph_model(GraphModel::Rdf);
-            let db = GrafeoDB::with_config(config).expect("open");
+            let db = ObrainDB::with_config(config).expect("open");
             let session = db.session();
             session
                 .execute_sparql(
@@ -826,7 +826,7 @@ mod wal {
 
         {
             let config = Config::persistent(&path).with_graph_model(GraphModel::Rdf);
-            let db = GrafeoDB::with_config(config).expect("reopen");
+            let db = ObrainDB::with_config(config).expect("reopen");
             let session = db.session();
             let result = session
                 .execute_sparql(
@@ -843,14 +843,14 @@ mod wal {
     #[cfg(all(feature = "sparql", feature = "rdf"))]
     #[test]
     fn test_rdf_named_graph_persists_across_restart() {
-        use grafeo_engine::{Config, GraphModel};
+        use obrain_engine::{Config, GraphModel};
 
         let dir = tempfile::tempdir().expect("create temp dir");
-        let path = dir.path().join("rdf_named.grafeo");
+        let path = dir.path().join("rdf_named.obrain");
 
         {
             let config = Config::persistent(&path).with_graph_model(GraphModel::Rdf);
-            let db = GrafeoDB::with_config(config).expect("open");
+            let db = ObrainDB::with_config(config).expect("open");
             let session = db.session();
             session
                 .execute_sparql(
@@ -866,7 +866,7 @@ mod wal {
 
         {
             let config = Config::persistent(&path).with_graph_model(GraphModel::Rdf);
-            let db = GrafeoDB::with_config(config).expect("reopen");
+            let db = ObrainDB::with_config(config).expect("reopen");
             let session = db.session();
             let result = session
                 .execute_sparql(
@@ -888,14 +888,14 @@ mod wal {
     #[cfg(all(feature = "sparql", feature = "rdf"))]
     #[test]
     fn test_rdf_delete_persists_across_restart() {
-        use grafeo_engine::{Config, GraphModel};
+        use obrain_engine::{Config, GraphModel};
 
         let dir = tempfile::tempdir().expect("create temp dir");
-        let path = dir.path().join("rdf_delete.grafeo");
+        let path = dir.path().join("rdf_delete.obrain");
 
         {
             let config = Config::persistent(&path).with_graph_model(GraphModel::Rdf);
-            let db = GrafeoDB::with_config(config).expect("open");
+            let db = ObrainDB::with_config(config).expect("open");
             let session = db.session();
             session
                 .execute_sparql(
@@ -917,7 +917,7 @@ mod wal {
 
         {
             let config = Config::persistent(&path).with_graph_model(GraphModel::Rdf);
-            let db = GrafeoDB::with_config(config).expect("reopen");
+            let db = ObrainDB::with_config(config).expect("reopen");
             let session = db.session();
             let result = session
                 .execute_sparql("SELECT ?name WHERE { ?s <http://ex.org/name> ?name }")
@@ -931,14 +931,14 @@ mod wal {
     #[cfg(all(feature = "sparql", feature = "rdf"))]
     #[test]
     fn test_rdf_clear_graph_persists_across_restart() {
-        use grafeo_engine::{Config, GraphModel};
+        use obrain_engine::{Config, GraphModel};
 
         let dir = tempfile::tempdir().expect("create temp dir");
-        let path = dir.path().join("rdf_clear.grafeo");
+        let path = dir.path().join("rdf_clear.obrain");
 
         {
             let config = Config::persistent(&path).with_graph_model(GraphModel::Rdf);
-            let db = GrafeoDB::with_config(config).expect("open");
+            let db = ObrainDB::with_config(config).expect("open");
             let session = db.session();
             session
                 .execute_sparql(
@@ -953,7 +953,7 @@ mod wal {
 
         {
             let config = Config::persistent(&path).with_graph_model(GraphModel::Rdf);
-            let db = GrafeoDB::with_config(config).expect("reopen");
+            let db = ObrainDB::with_config(config).expect("reopen");
             let session = db.session();
             let result = session
                 .execute_sparql("SELECT ?s WHERE { ?s ?p ?o }")
@@ -966,14 +966,14 @@ mod wal {
     #[cfg(all(feature = "sparql", feature = "rdf"))]
     #[test]
     fn test_rdf_create_drop_graph_persists() {
-        use grafeo_engine::{Config, GraphModel};
+        use obrain_engine::{Config, GraphModel};
 
         let dir = tempfile::tempdir().expect("create temp dir");
-        let path = dir.path().join("rdf_create_drop.grafeo");
+        let path = dir.path().join("rdf_create_drop.obrain");
 
         {
             let config = Config::persistent(&path).with_graph_model(GraphModel::Rdf);
-            let db = GrafeoDB::with_config(config).expect("open");
+            let db = ObrainDB::with_config(config).expect("open");
             let session = db.session();
             session
                 .execute_sparql("CREATE GRAPH <http://ex.org/g1>")
@@ -995,7 +995,7 @@ mod wal {
 
         {
             let config = Config::persistent(&path).with_graph_model(GraphModel::Rdf);
-            let db = GrafeoDB::with_config(config).expect("reopen");
+            let db = ObrainDB::with_config(config).expect("reopen");
             let session = db.session();
             // Graph was dropped, so querying it should yield nothing or error
             let result = session
@@ -1013,13 +1013,13 @@ mod wal {
     #[cfg(all(feature = "sparql", feature = "rdf"))]
     #[test]
     fn test_rdf_save_preserves_triples() {
-        use grafeo_engine::{Config, GraphModel};
+        use obrain_engine::{Config, GraphModel};
 
         let dir = tempfile::tempdir().expect("create temp dir");
-        let save_path = dir.path().join("rdf_saved.grafeo");
+        let save_path = dir.path().join("rdf_saved.obrain");
 
         let config = Config::in_memory().with_graph_model(GraphModel::Rdf);
-        let db = GrafeoDB::with_config(config).expect("create");
+        let db = ObrainDB::with_config(config).expect("create");
         let session = db.session();
         session
             .execute_sparql(
@@ -1034,7 +1034,7 @@ mod wal {
 
         db.save(&save_path).expect("save");
 
-        let restored = GrafeoDB::open(&save_path).expect("open saved");
+        let restored = ObrainDB::open(&save_path).expect("open saved");
         let session2 = restored.session();
         let result = session2
             .execute_sparql("SELECT ?name WHERE { ?s <http://ex.org/name> ?name }")
@@ -1057,9 +1057,9 @@ mod wal {
     #[test]
     fn test_save_preserves_named_graphs() {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let save_path = dir.path().join("saved_graphs.grafeo");
+        let save_path = dir.path().join("saved_graphs.obrain");
 
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
@@ -1071,7 +1071,7 @@ mod wal {
 
         db.save(&save_path).expect("save should succeed");
 
-        let restored = GrafeoDB::open(&save_path).expect("open saved");
+        let restored = ObrainDB::open(&save_path).expect("open saved");
         assert_eq!(restored.node_count(), 1, "default graph: 1 person");
 
         let session2 = restored.session();

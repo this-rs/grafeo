@@ -24,8 +24,8 @@
 //! # Example
 //!
 //! ```no_run
-//! # use grafeo_core::index::ring::TripleRing;
-//! # use grafeo_core::graph::rdf::{Triple, Term, TriplePattern};
+//! # use obrain_core::index::ring::TripleRing;
+//! # use obrain_core::graph::rdf::{Triple, Term, TriplePattern};
 //! // Build from triples
 //! let triples = vec![
 //!     Triple::new(Term::iri("s1"), Term::iri("p1"), Term::iri("o1")),

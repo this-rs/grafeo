@@ -3,14 +3,14 @@
 //! Demonstrates energy decay on interactions, community detection via Louvain,
 //! and spreading activation for influence measurement in a social graph.
 //!
-//! Run with: `cargo run -p grafeo-examples --bin social_network`
+//! Run with: `cargo run -p obrain-examples --bin social_network`
 
-use grafeo::{GrafeoDB, NodeId};
+use obrain::{ObrainDB, NodeId};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Social Network — Cognitive Graph Example ===\n");
 
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // ── Build social graph ────────────────────────────────────────
@@ -72,7 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── Energy Decay Simulation ───────────────────────────────────
     // Show how energy levels naturally separate active from stale users.
-    // In production, Grafeo's EnergyStore handles this automatically
+    // In production, Obrain's EnergyStore handles this automatically
     // via exponential decay with configurable half-life.
 
     println!("── Energy Levels (activation state) ──");
@@ -130,7 +130,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n── Community Detection (Louvain) ──");
 
-    let result = session.execute("CALL grafeo.louvain()")?;
+    let result = session.execute("CALL obrain.louvain()")?;
 
     // Group nodes by community
     let mut communities: std::collections::HashMap<i64, Vec<String>> =
@@ -157,7 +157,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Use PageRank as a proxy for influence — it captures how
     // energy flows through the network structure.
-    let result = session.execute("CALL grafeo.pagerank({damping: 0.85, max_iterations: 20})")?;
+    let result = session.execute("CALL obrain.pagerank({damping: 0.85, max_iterations: 20})")?;
 
     let mut scores: Vec<_> = result
         .iter()
@@ -187,7 +187,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // higher risk scores because their failure disconnects the graph.
 
     println!("\n── Bridge Detection (Betweenness Centrality) ──");
-    let result = session.execute("CALL grafeo.betweenness_centrality()")?;
+    let result = session.execute("CALL obrain.betweenness_centrality()")?;
 
     let mut bridges: Vec<_> = result
         .iter()
@@ -252,7 +252,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Look up a user's name by their raw node ID from CALL procedure results.
-fn get_user_name(db: &GrafeoDB, raw_id: i64) -> String {
+fn get_user_name(db: &ObrainDB, raw_id: i64) -> String {
     let node_id = NodeId::from(raw_id as u64);
     db.get_node(node_id)
         .and_then(|n| {

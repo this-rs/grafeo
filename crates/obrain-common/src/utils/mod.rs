@@ -1,4 +1,4 @@
-//! Common utilities used throughout Grafeo.
+//! Common utilities used throughout Obrain.
 //!
 //! - [`error`] - Error types like [`Error`] and [`QueryError`](error::QueryError)
 //! - [`gqlstatus`] - GQLSTATUS diagnostic codes (ISO/IEC 39075:2024, sec 23)

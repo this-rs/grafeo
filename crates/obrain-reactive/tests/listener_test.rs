@@ -2,8 +2,8 @@
 //! accepts filtering, and on_batch delegation.
 
 use async_trait::async_trait;
-use grafeo_common::types::NodeId;
-use grafeo_reactive::{MutationEvent, MutationListener, NodeSnapshot};
+use obrain_common::types::NodeId;
+use obrain_reactive::{MutationEvent, MutationListener, NodeSnapshot};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
@@ -19,8 +19,8 @@ fn make_node_event(id: u64) -> MutationEvent {
 
 fn make_edge_event(id: u64) -> MutationEvent {
     MutationEvent::EdgeCreated {
-        edge: grafeo_reactive::EdgeSnapshot {
-            id: grafeo_common::types::EdgeId::new(id),
+        edge: obrain_reactive::EdgeSnapshot {
+            id: obrain_common::types::EdgeId::new(id),
             src: NodeId::new(1),
             dst: NodeId::new(2),
             edge_type: arcstr::literal!("KNOWS"),
@@ -158,15 +158,15 @@ fn default_accepts_returns_true_for_all_variants() {
         },
         make_edge_event(1),
         MutationEvent::EdgeUpdated {
-            before: grafeo_reactive::EdgeSnapshot {
-                id: grafeo_common::types::EdgeId::new(1),
+            before: obrain_reactive::EdgeSnapshot {
+                id: obrain_common::types::EdgeId::new(1),
                 src: NodeId::new(1),
                 dst: NodeId::new(2),
                 edge_type: arcstr::literal!("KNOWS"),
                 properties: vec![],
             },
-            after: grafeo_reactive::EdgeSnapshot {
-                id: grafeo_common::types::EdgeId::new(1),
+            after: obrain_reactive::EdgeSnapshot {
+                id: obrain_common::types::EdgeId::new(1),
                 src: NodeId::new(1),
                 dst: NodeId::new(2),
                 edge_type: arcstr::literal!("KNOWS"),
@@ -174,8 +174,8 @@ fn default_accepts_returns_true_for_all_variants() {
             },
         },
         MutationEvent::EdgeDeleted {
-            edge: grafeo_reactive::EdgeSnapshot {
-                id: grafeo_common::types::EdgeId::new(1),
+            edge: obrain_reactive::EdgeSnapshot {
+                id: obrain_common::types::EdgeId::new(1),
                 src: NodeId::new(1),
                 dst: NodeId::new(2),
                 edge_type: arcstr::literal!("KNOWS"),
@@ -215,8 +215,8 @@ fn custom_accepts_filters_edge_events() {
     // Edge events should be rejected
     assert!(!listener.accepts(&make_edge_event(1)));
     assert!(!listener.accepts(&MutationEvent::EdgeDeleted {
-        edge: grafeo_reactive::EdgeSnapshot {
-            id: grafeo_common::types::EdgeId::new(1),
+        edge: obrain_reactive::EdgeSnapshot {
+            id: obrain_common::types::EdgeId::new(1),
             src: NodeId::new(1),
             dst: NodeId::new(2),
             edge_type: arcstr::literal!("KNOWS"),

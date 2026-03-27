@@ -1,6 +1,6 @@
 """Comprehensive Cypher tests covering all query patterns used by Deriva.
 
-Deriva uses Grafeo as an embedded graph database for ArchiMate model generation.
+Deriva uses Obrain as an embedded graph database for ArchiMate model generation.
 It relies on a dual-namespace pattern (Graph: for source extraction, Model: for
 ArchiMate elements) and exercises a wide range of Cypher features.
 

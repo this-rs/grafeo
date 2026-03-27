@@ -1,10 +1,10 @@
 //! Comprehensive tests for InstrumentedStore — mutation tracking, event capture,
 //! drain/clear, and delegation of read operations.
 
-use grafeo_common::types::{EdgeId, NodeId, PropertyKey, TransactionId, Value};
-use grafeo_core::LpgStore;
-use grafeo_core::graph::traits::{GraphStore, GraphStoreMut};
-use grafeo_reactive::{InstrumentedStore, MutationEvent};
+use obrain_common::types::{EdgeId, NodeId, PropertyKey, TransactionId, Value};
+use obrain_core::LpgStore;
+use obrain_core::graph::traits::{GraphStore, GraphStoreMut};
+use obrain_reactive::{InstrumentedStore, MutationEvent};
 
 fn new_store() -> InstrumentedStore<LpgStore> {
     let inner = LpgStore::new().expect("LpgStore::new failed");
@@ -273,7 +273,7 @@ fn delete_edge_emits_edge_deleted_event() {
 #[test]
 fn delete_nonexistent_edge_no_event() {
     let store = new_store();
-    let deleted = store.delete_edge(grafeo_common::types::EdgeId::new(999));
+    let deleted = store.delete_edge(obrain_common::types::EdgeId::new(999));
     assert!(!deleted);
     assert_eq!(store.pending_count(), 0);
 }
@@ -632,7 +632,7 @@ fn get_edge_property_delegates_to_inner() {
 
 #[test]
 fn neighbors_delegates_to_inner() {
-    use grafeo_core::graph::Direction;
+    use obrain_core::graph::Direction;
 
     let store = new_store();
     let n1 = store.create_node(&["A"]);
@@ -954,7 +954,7 @@ fn get_edges_properties_selective_batch_delegates_to_inner() {
 
 #[test]
 fn edges_from_delegates_to_inner() {
-    use grafeo_core::graph::Direction;
+    use obrain_core::graph::Direction;
 
     let store = new_store();
     let n1 = store.create_node(&["A"]);
@@ -1086,7 +1086,7 @@ fn find_nodes_in_range_delegates_to_inner() {
 
 #[test]
 fn node_property_might_match_delegates_to_inner() {
-    use grafeo_core::graph::lpg::CompareOp;
+    use obrain_core::graph::lpg::CompareOp;
 
     let store = new_store();
     let _n1 = store.create_node(&["A"]);
@@ -1100,7 +1100,7 @@ fn node_property_might_match_delegates_to_inner() {
 
 #[test]
 fn edge_property_might_match_delegates_to_inner() {
-    use grafeo_core::graph::lpg::CompareOp;
+    use obrain_core::graph::lpg::CompareOp;
 
     let store = new_store();
     let key = PropertyKey::from("weight");

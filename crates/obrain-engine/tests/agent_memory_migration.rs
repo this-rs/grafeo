@@ -5,10 +5,10 @@
 //!
 //! ```bash
 //! # Correctness (non-ignored)
-//! cargo test -p grafeo-engine --features full --test agent_memory_migration -- --nocapture
+//! cargo test -p obrain-engine --features full --test agent_memory_migration -- --nocapture
 //!
 //! # Full benchmarks (ignored)
-//! cargo test -p grafeo-engine --features full --release --test agent_memory_migration -- --ignored --nocapture
+//! cargo test -p obrain-engine --features full --release --test agent_memory_migration -- --ignored --nocapture
 //! ```
 
 #![cfg(feature = "full")]
@@ -17,8 +17,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::time::Instant;
 
-use grafeo_common::types::Value;
-use grafeo_engine::{Config, GrafeoDB};
+use obrain_common::types::Value;
+use obrain_engine::{Config, ObrainDB};
 
 // ============================================================================
 // Helpers
@@ -74,7 +74,7 @@ const EDGE_TYPES: &[&str] = &["KNOWS", "RELATED_TO", "MENTIONS", "OCCURRED_AT", 
 #[test]
 fn test_incremental_growth_with_persistence() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("agent_memory.grafeo");
+    let path = dir.path().join("agent_memory.obrain");
 
     let total_nodes = 500;
     let batch_size = 50;
@@ -84,7 +84,7 @@ fn test_incremental_growth_with_persistence() {
 
     // First open: create DB and seed first batch
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         for i in 0..batch_size {
             let node = db.create_node(&["Memory"]);
             db.set_node_property(node, "text", Value::String(format!("fact_{i}").into()));
@@ -113,7 +113,7 @@ fn test_incremental_growth_with_persistence() {
 
     // Continue inserting in batches, reopening periodically
     while inserted < total_nodes as u64 {
-        let db = GrafeoDB::open(&path).unwrap();
+        let db = ObrainDB::open(&path).unwrap();
 
         // Index metadata is persisted in snapshot v4 (single-file format),
         // but WAL-based persistence requires manual recreation after reopen.
@@ -154,7 +154,7 @@ fn test_incremental_growth_with_persistence() {
     }
 
     // Final reopen: verify everything survived
-    let db = GrafeoDB::open(&path).unwrap();
+    let db = ObrainDB::open(&path).unwrap();
     assert_eq!(
         db.node_count(),
         total_nodes,
@@ -166,7 +166,7 @@ fn test_incremental_growth_with_persistence() {
 #[test]
 #[ignore = "heavy benchmark: 20k vectors with HNSW, run locally"]
 fn bench_hnsw_at_20k() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let total = 20_000;
     let milestones = [1_000, 5_000, 10_000, 15_000, 20_000];
 
@@ -229,7 +229,7 @@ fn bench_hnsw_at_20k() {
 
 #[test]
 fn test_hnsw_recall_at_2k() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let count = 2_000;
 
     // Insert nodes with seeded vectors, tracking node_id -> vector_index
@@ -298,7 +298,7 @@ fn test_hnsw_recall_at_2k() {
 
 #[test]
 fn test_concurrent_vector_search_during_writes() {
-    let db = Arc::new(GrafeoDB::new_in_memory());
+    let db = Arc::new(ObrainDB::new_in_memory());
 
     // Seed 500 nodes with vectors
     for i in 0..500u64 {
@@ -384,16 +384,16 @@ fn test_concurrent_vector_search_during_writes() {
 #[test]
 fn test_multi_process_file_lock_rejected() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("locked.grafeo");
+    let path = dir.path().join("locked.obrain");
 
-    let db1 = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+    let db1 = ObrainDB::with_config(Config::persistent(&path)).unwrap();
     let session = db1.session();
     session
         .execute("INSERT (:Memory {text: 'fact_1'})")
         .unwrap();
 
     // Second open should fail due to file lock
-    let result = GrafeoDB::open(&path);
+    let result = ObrainDB::open(&path);
     assert!(
         result.is_err(),
         "second open of the same file should fail (no multi-process support)"
@@ -402,7 +402,7 @@ fn test_multi_process_file_lock_rejected() {
     db1.close().unwrap();
 
     // After close, open should succeed
-    let db2 = GrafeoDB::open(&path).unwrap();
+    let db2 = ObrainDB::open(&path).unwrap();
     assert_eq!(db2.node_count(), 1);
     db2.close().unwrap();
 }
@@ -414,11 +414,11 @@ fn test_multi_process_file_lock_rejected() {
 #[test]
 fn test_close_reopen_preserves_data() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("lifecycle.grafeo");
+    let path = dir.path().join("lifecycle.obrain");
 
     // Create, populate, close
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         let mut node_ids = Vec::with_capacity(100);
         for i in 0..100 {
             let label = ENTITY_LABELS[i % ENTITY_LABELS.len()];
@@ -437,7 +437,7 @@ fn test_close_reopen_preserves_data() {
 
     // Reopen, verify
     {
-        let db = GrafeoDB::open(&path).unwrap();
+        let db = ObrainDB::open(&path).unwrap();
         assert_eq!(db.node_count(), 100, "nodes should survive close/reopen");
         assert!(db.edge_count() >= 50, "edges should survive close/reopen");
         db.close().unwrap();
@@ -447,17 +447,17 @@ fn test_close_reopen_preserves_data() {
 #[test]
 fn test_drop_releases_lock() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("drop_lock.grafeo");
+    let path = dir.path().join("drop_lock.obrain");
 
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         let session = db.session();
         session.execute("INSERT (:Memory {text: 'test'})").unwrap();
         // Drop without explicit close()
     }
 
     // Reopen should succeed (lock released on Drop)
-    let db = GrafeoDB::open(&path).unwrap();
+    let db = ObrainDB::open(&path).unwrap();
     // Data may or may not persist without explicit close, but the lock should be released
     drop(db);
 }
@@ -469,9 +469,9 @@ fn test_drop_releases_lock() {
 #[test]
 fn test_storage_size_100_entities() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("size_test.grafeo");
+    let path = dir.path().join("size_test.obrain");
 
-    let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+    let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
     let mut node_ids = Vec::with_capacity(100);
     for i in 0..100u64 {
         let label = ENTITY_LABELS[i as usize % ENTITY_LABELS.len()];
@@ -520,9 +520,9 @@ fn bench_storage_size_5400_entities() {
     //   384-dim sentence-transformer embeddings on every entity
     //   text observations of varying length, timestamps spanning months
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("size_bench.grafeo");
+    let path = dir.path().join("size_bench.obrain");
 
-    let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+    let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
     let start = Instant::now();
 
     let num_nodes = 5_400;
@@ -611,7 +611,7 @@ fn bench_storage_size_5400_entities() {
     );
     eprintln!("  Kuzu:        7.3 GB for same entity count");
     eprintln!(
-        "  Ratio:       Grafeo is {:.0}x smaller",
+        "  Ratio:       Obrain is {:.0}x smaller",
         kuzu_bytes / file_size as f64
     );
     eprintln!();
@@ -634,13 +634,13 @@ fn bench_vector_index_rebuild_5k() {
     // every application restart with 5k+ entities.
 
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("rebuild_bench.grafeo");
+    let path = dir.path().join("rebuild_bench.obrain");
 
     let num_nodes = 5_000;
 
     // Phase 1: populate and close
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
 
         for i in 0..num_nodes as u64 {
             let node = db.create_node_with_props(
@@ -679,7 +679,7 @@ fn bench_vector_index_rebuild_5k() {
 
     // Phase 2: reopen and measure index rebuild time
     let reopen_start = Instant::now();
-    let db = GrafeoDB::open(&path).unwrap();
+    let db = ObrainDB::open(&path).unwrap();
     let reopen_time = reopen_start.elapsed();
 
     assert_eq!(db.node_count(), num_nodes, "all nodes survived reopen");
@@ -737,7 +737,7 @@ fn bench_vector_index_rebuild_5k() {
 
 #[test]
 fn test_byov_384_cosine() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     // Insert 50 nodes with 384-dim vectors
     for i in 0..50u64 {
@@ -781,7 +781,7 @@ fn test_byov_384_cosine() {
 #[test]
 fn test_byov_all_metrics() {
     for metric in &["cosine", "euclidean", "dot_product", "manhattan"] {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
 
         for i in 0..20u64 {
             let node = db.create_node(&["Memory"]);
@@ -813,7 +813,7 @@ fn test_byov_all_metrics() {
 
 #[test]
 fn test_byov_incremental_after_index() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     // Create index on empty set with declared dimension
     let sentinel = db.create_node(&["Memory"]);
@@ -864,7 +864,7 @@ fn test_byov_incremental_after_index() {
 
 #[test]
 fn test_bulk_import_single_transaction() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let num_nodes = 1_500;
     let num_edges = 3_000;
 
@@ -920,7 +920,7 @@ fn bench_bulk_import_15k() {
 
     // Method 1: Direct API
     {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let start = Instant::now();
 
         let mut node_ids = Vec::with_capacity(num_nodes);
@@ -954,7 +954,7 @@ fn bench_bulk_import_15k() {
 
     // Method 2: GQL via session
     {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let start = Instant::now();
 
         let mut session = db.session();
@@ -997,7 +997,7 @@ fn bench_bulk_import_15k() {
 
 #[test]
 fn test_batch_create_nodes_384() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     // batch_create_nodes with 200 384-dim vectors
     let vectors: Vec<Vec<f32>> = (0..200u64).map(random_384d_vector).collect();

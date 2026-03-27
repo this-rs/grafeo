@@ -1,14 +1,14 @@
 //! Language-agnostic error classification for bindings.
 //!
 //! Each binding maps [`ErrorCategory`] to its language-specific exception type
-//! (Python `PyErr`, Node.js `napi::Error`, C `GrafeoStatus`, etc.) using a
+//! (Python `PyErr`, Node.js `napi::Error`, C `ObrainStatus`, etc.) using a
 //! single small match expression.
 
-use grafeo_common::utils::error::Error;
+use obrain_common::utils::error::Error;
 
 /// Categories that all bindings map errors into.
 ///
-/// These mirror the natural groupings in [`grafeo_common::utils::error::Error`]
+/// These mirror the natural groupings in [`obrain_common::utils::error::Error`]
 /// and match what every binding was already doing independently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorCategory {
@@ -28,7 +28,7 @@ pub enum ErrorCategory {
     Database,
 }
 
-/// Classifies a Grafeo error into a binding-agnostic category.
+/// Classifies a Obrain error into a binding-agnostic category.
 #[must_use]
 pub fn classify_error(err: &Error) -> ErrorCategory {
     match err {
@@ -42,7 +42,7 @@ pub fn classify_error(err: &Error) -> ErrorCategory {
     }
 }
 
-/// Returns the human-readable message for a Grafeo error.
+/// Returns the human-readable message for a Obrain error.
 #[must_use]
 pub fn error_message(err: &Error) -> String {
     err.to_string()
@@ -50,7 +50,7 @@ pub fn error_message(err: &Error) -> String {
 
 #[cfg(test)]
 mod tests {
-    use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind};
+    use obrain_common::utils::error::{Error, QueryError, QueryErrorKind};
 
     use super::*;
 
@@ -62,7 +62,7 @@ mod tests {
 
     #[test]
     fn classifies_not_found_as_database() {
-        let err = Error::NodeNotFound(grafeo_common::types::NodeId(42));
+        let err = Error::NodeNotFound(obrain_common::types::NodeId(42));
         assert_eq!(classify_error(&err), ErrorCategory::Database);
     }
 

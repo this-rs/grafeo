@@ -18,8 +18,8 @@ use crate::query::plan::{
     LogicalOperator, LogicalPlan, NodeScanOp, PathMode, ReturnItem, SetPropertyOp, SortKey,
     SortOrder,
 };
-use grafeo_adapters::query::graphql::{self, ast};
-use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
+use obrain_adapters::query::graphql::{self, ast};
+use obrain_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
 use std::collections::HashMap;
 
 /// Translates a GraphQL query string to a logical plan.
@@ -545,7 +545,7 @@ impl GraphQLTranslator {
                             plan,
                             LogicalExpression::Binary {
                                 left: Box::new(LogicalExpression::Literal(
-                                    grafeo_common::types::Value::String(type_cond.clone().into()),
+                                    obrain_common::types::Value::String(type_cond.clone().into()),
                                 )),
                                 op: BinaryOp::In,
                                 right: Box::new(LogicalExpression::Labels(current_var.to_string())),
@@ -690,7 +690,7 @@ impl GraphQLTranslator {
     }
 
     /// Converts an InputValue to a Value.
-    fn input_value_to_value(&self, input: &ast::InputValue) -> grafeo_common::types::Value {
+    fn input_value_to_value(&self, input: &ast::InputValue) -> obrain_common::types::Value {
         input.to_value()
     }
 

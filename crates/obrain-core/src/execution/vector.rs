@@ -2,7 +2,7 @@
 
 use arcstr::ArcStr;
 
-use grafeo_common::types::{EdgeId, LogicalType, NodeId, Value};
+use obrain_common::types::{EdgeId, LogicalType, NodeId, Value};
 
 /// Default vector capacity (tuples per vector).
 pub const DEFAULT_VECTOR_CAPACITY: usize = 2048;

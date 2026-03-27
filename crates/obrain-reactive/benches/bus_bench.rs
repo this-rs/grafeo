@@ -3,8 +3,8 @@
 //! Acceptance criterion: < 5µs per mutation with zero subscribers.
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use grafeo_common::types::NodeId;
-use grafeo_reactive::{MutationBatch, MutationBus, MutationEvent, NodeSnapshot};
+use obrain_common::types::NodeId;
+use obrain_reactive::{MutationBatch, MutationBus, MutationEvent, NodeSnapshot};
 use smallvec::smallvec;
 
 fn make_node_event(id: u64) -> MutationEvent {

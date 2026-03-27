@@ -4,10 +4,10 @@ use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 
-use grafeo_common::types::{EdgeId, NodeId};
-use grafeo_core::index::adjacency::ChunkedAdjacency;
-use grafeo_core::index::hash::HashIndex;
-use grafeo_core::index::vector::{
+use obrain_common::types::{EdgeId, NodeId};
+use obrain_core::index::adjacency::ChunkedAdjacency;
+use obrain_core::index::hash::HashIndex;
+use obrain_core::index::vector::{
     DistanceMetric, HnswConfig, HnswIndex, ProductQuantizer, ScalarQuantizer, brute_force_knn,
     compute_distance,
 };

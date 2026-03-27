@@ -2,11 +2,11 @@
 
 #![cfg(all(feature = "stagnation", feature = "energy"))]
 
-use grafeo_cognitive::energy::{EnergyConfig, EnergyStore};
-use grafeo_cognitive::stagnation::{
+use obrain_cognitive::energy::{EnergyConfig, EnergyStore};
+use obrain_cognitive::stagnation::{
     StagnationConfig, StagnationDetector, StagnationScore, StagnationStore, Trend,
 };
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -26,9 +26,9 @@ fn make_energy_store(ids_and_energy: &[(u64, f64)]) -> Arc<EnergyStore> {
 }
 
 #[cfg(feature = "synapse")]
-fn make_synapse_store(pairs: &[(u64, u64, f64)]) -> Arc<grafeo_cognitive::synapse::SynapseStore> {
-    let store = Arc::new(grafeo_cognitive::synapse::SynapseStore::new(
-        grafeo_cognitive::synapse::SynapseConfig {
+fn make_synapse_store(pairs: &[(u64, u64, f64)]) -> Arc<obrain_cognitive::synapse::SynapseStore> {
+    let store = Arc::new(obrain_cognitive::synapse::SynapseStore::new(
+        obrain_cognitive::synapse::SynapseConfig {
             initial_weight: 0.0,
             reinforce_amount: 0.0,
             default_half_life: Duration::from_secs(7 * 24 * 3600),

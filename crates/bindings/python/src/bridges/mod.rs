@@ -1,4 +1,4 @@
-//! Connect Grafeo to Python's graph analysis ecosystem.
+//! Connect Obrain to Python's graph analysis ecosystem.
 //!
 //! | Adapter | Python library | When to use |
 //! | ------- | -------------- | ----------- |

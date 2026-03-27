@@ -1,16 +1,16 @@
-//! Error types for Grafeo operations.
+//! Error types for Obrain operations.
 //!
 //! [`Error`] is the main error type you'll encounter. For query-specific errors,
 //! [`QueryError`] includes source location and hints to help users fix issues.
 //!
-//! Every error carries a machine-readable [`ErrorCode`] (e.g. `GRAFEO-Q001`)
+//! Every error carries a machine-readable [`ErrorCode`] (e.g. `OBRAIN-Q001`)
 //! for programmatic handling across the ecosystem (core, server, web, bindings).
 
 use std::fmt;
 
 /// Machine-readable error code for programmatic error handling.
 ///
-/// Error codes follow the pattern `GRAFEO-{category}{number}`:
+/// Error codes follow the pattern `OBRAIN-{category}{number}`:
 /// - **Q**: Query errors (parse, semantic, timeout)
 /// - **T**: Transaction errors (conflict, timeout, state)
 /// - **S**: Storage errors (full, corruption)
@@ -22,10 +22,10 @@ use std::fmt;
 /// # Examples
 ///
 /// ```
-/// use grafeo_common::utils::error::{Error, ErrorCode};
+/// use obrain_common::utils::error::{Error, ErrorCode};
 ///
 /// let err = Error::Internal("something broke".into());
-/// assert_eq!(err.error_code().as_str(), "GRAFEO-X001");
+/// assert_eq!(err.error_code().as_str(), "OBRAIN-X001");
 /// assert!(!err.error_code().is_retryable());
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -90,38 +90,38 @@ pub enum ErrorCode {
 }
 
 impl ErrorCode {
-    /// Returns the string code (e.g. `"GRAFEO-Q001"`).
+    /// Returns the string code (e.g. `"OBRAIN-Q001"`).
     #[must_use]
     pub const fn as_str(&self) -> &'static str {
         match self {
-            Self::QuerySyntax => "GRAFEO-Q001",
-            Self::QuerySemantic => "GRAFEO-Q002",
-            Self::QueryTimeout => "GRAFEO-Q003",
-            Self::QueryUnsupported => "GRAFEO-Q004",
-            Self::QueryOptimization => "GRAFEO-Q005",
-            Self::QueryExecution => "GRAFEO-Q006",
+            Self::QuerySyntax => "OBRAIN-Q001",
+            Self::QuerySemantic => "OBRAIN-Q002",
+            Self::QueryTimeout => "OBRAIN-Q003",
+            Self::QueryUnsupported => "OBRAIN-Q004",
+            Self::QueryOptimization => "OBRAIN-Q005",
+            Self::QueryExecution => "OBRAIN-Q006",
 
-            Self::TransactionConflict => "GRAFEO-T001",
-            Self::TransactionTimeout => "GRAFEO-T002",
-            Self::TransactionReadOnly => "GRAFEO-T003",
-            Self::TransactionInvalidState => "GRAFEO-T004",
-            Self::TransactionSerialization => "GRAFEO-T005",
-            Self::TransactionDeadlock => "GRAFEO-T006",
+            Self::TransactionConflict => "OBRAIN-T001",
+            Self::TransactionTimeout => "OBRAIN-T002",
+            Self::TransactionReadOnly => "OBRAIN-T003",
+            Self::TransactionInvalidState => "OBRAIN-T004",
+            Self::TransactionSerialization => "OBRAIN-T005",
+            Self::TransactionDeadlock => "OBRAIN-T006",
 
-            Self::StorageFull => "GRAFEO-S001",
-            Self::StorageCorrupted => "GRAFEO-S002",
-            Self::StorageRecoveryFailed => "GRAFEO-S003",
+            Self::StorageFull => "OBRAIN-S001",
+            Self::StorageCorrupted => "OBRAIN-S002",
+            Self::StorageRecoveryFailed => "OBRAIN-S003",
 
-            Self::InvalidInput => "GRAFEO-V001",
-            Self::NodeNotFound => "GRAFEO-V002",
-            Self::EdgeNotFound => "GRAFEO-V003",
-            Self::PropertyNotFound => "GRAFEO-V004",
-            Self::LabelNotFound => "GRAFEO-V005",
-            Self::TypeMismatch => "GRAFEO-V006",
+            Self::InvalidInput => "OBRAIN-V001",
+            Self::NodeNotFound => "OBRAIN-V002",
+            Self::EdgeNotFound => "OBRAIN-V003",
+            Self::PropertyNotFound => "OBRAIN-V004",
+            Self::LabelNotFound => "OBRAIN-V005",
+            Self::TypeMismatch => "OBRAIN-V006",
 
-            Self::Internal => "GRAFEO-X001",
-            Self::SerializationError => "GRAFEO-X002",
-            Self::IoError => "GRAFEO-X003",
+            Self::Internal => "OBRAIN-X001",
+            Self::SerializationError => "OBRAIN-X002",
+            Self::IoError => "OBRAIN-X003",
         }
     }
 
@@ -144,7 +144,7 @@ impl fmt::Display for ErrorCode {
     }
 }
 
-/// The main error type - covers everything that can go wrong in Grafeo.
+/// The main error type - covers everything that can go wrong in Obrain.
 ///
 /// Most methods return `Result<T, Error>`. Use pattern matching to handle
 /// specific cases, or just propagate with `?`.
@@ -552,7 +552,7 @@ mod tests {
     #[test]
     fn test_error_display() {
         let err = Error::NodeNotFound(crate::types::NodeId::new(42));
-        assert_eq!(err.to_string(), "GRAFEO-V002: Node not found: 42");
+        assert_eq!(err.to_string(), "OBRAIN-V002: Node not found: 42");
 
         let err = Error::TypeMismatch {
             expected: "INT64".to_string(),
@@ -560,7 +560,7 @@ mod tests {
         };
         assert_eq!(
             err.to_string(),
-            "GRAFEO-V006: Type mismatch: expected INT64, found STRING"
+            "OBRAIN-V006: Type mismatch: expected INT64, found STRING"
         );
     }
 
@@ -570,7 +570,7 @@ mod tests {
             Error::Internal("x".into()).error_code(),
             ErrorCode::Internal
         );
-        assert_eq!(ErrorCode::Internal.as_str(), "GRAFEO-X001");
+        assert_eq!(ErrorCode::Internal.as_str(), "OBRAIN-X001");
         assert!(!ErrorCode::Internal.is_retryable());
 
         assert_eq!(

@@ -1,17 +1,17 @@
-//! Integration tests for GrafeoDB public API methods that lacked coverage.
+//! Integration tests for ObrainDB public API methods that lacked coverage.
 //!
 //! Covers: edge operations, property indexes, label management,
 //! node/edge iteration, validation, info/stats, to_memory, and
 //! remove_property operations.
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 // ── Edge operations ──────────────────────────────────────────────
 
 #[test]
 fn test_create_edge_with_props() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let alix = db.create_node(&["Person"]);
     let gus = db.create_node(&["Person"]);
 
@@ -33,16 +33,16 @@ fn test_create_edge_with_props() {
 
 #[test]
 fn test_get_edge_returns_none_for_invalid_id() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     assert!(
-        db.get_edge(grafeo_common::types::EdgeId::new(999))
+        db.get_edge(obrain_common::types::EdgeId::new(999))
             .is_none()
     );
 }
 
 #[test]
 fn test_set_and_remove_edge_property() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let a = db.create_node(&["N"]);
     let b = db.create_node(&["N"]);
     let eid = db.create_edge(a, b, "R");
@@ -51,7 +51,7 @@ fn test_set_and_remove_edge_property() {
     let edge = db.get_edge(eid).unwrap();
     assert_eq!(
         edge.properties
-            .get(&grafeo_common::types::PropertyKey::new("weight")),
+            .get(&obrain_common::types::PropertyKey::new("weight")),
         Some(&Value::Float64(1.5))
     );
 
@@ -61,7 +61,7 @@ fn test_set_and_remove_edge_property() {
     assert!(
         !edge
             .properties
-            .contains_key(&grafeo_common::types::PropertyKey::new("weight"))
+            .contains_key(&obrain_common::types::PropertyKey::new("weight"))
     );
 
     // Removing again returns false
@@ -70,7 +70,7 @@ fn test_set_and_remove_edge_property() {
 
 #[test]
 fn test_delete_edge() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let a = db.create_node(&["N"]);
     let b = db.create_node(&["N"]);
     let eid = db.create_edge(a, b, "R");
@@ -85,7 +85,7 @@ fn test_delete_edge() {
 
 #[test]
 fn test_add_and_remove_node_label() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let n = db.create_node(&["Person"]);
 
     // Add label
@@ -109,9 +109,9 @@ fn test_add_and_remove_node_label() {
 
 #[test]
 fn test_get_node_labels_returns_none_for_invalid_id() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     assert!(
-        db.get_node_labels(grafeo_common::types::NodeId::new(999))
+        db.get_node_labels(obrain_common::types::NodeId::new(999))
             .is_none()
     );
 }
@@ -120,7 +120,7 @@ fn test_get_node_labels_returns_none_for_invalid_id() {
 
 #[test]
 fn test_remove_node_property() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let n = db.create_node(&["Person"]);
     db.set_node_property(n, "name", Value::String("Alix".into()));
 
@@ -129,7 +129,7 @@ fn test_remove_node_property() {
     assert!(
         !node
             .properties
-            .contains_key(&grafeo_common::types::PropertyKey::new("name"))
+            .contains_key(&obrain_common::types::PropertyKey::new("name"))
     );
 
     // Removing again returns false
@@ -140,7 +140,7 @@ fn test_remove_node_property() {
 
 #[test]
 fn test_property_index_lifecycle() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     // No index initially
     assert!(!db.has_property_index("name"));
@@ -181,7 +181,7 @@ fn test_property_index_lifecycle() {
 
 #[test]
 fn test_iter_nodes() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let _n1 = db.create_node(&["Person"]);
     let _n2 = db.create_node(&["Company"]);
     let _n3 = db.create_node(&["Person"]);
@@ -192,7 +192,7 @@ fn test_iter_nodes() {
 
 #[test]
 fn test_iter_edges() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let a = db.create_node(&["N"]);
     let b = db.create_node(&["N"]);
     let c = db.create_node(&["N"]);
@@ -206,7 +206,7 @@ fn test_iter_edges() {
 
 #[test]
 fn test_iter_empty_database() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     assert_eq!(db.iter_nodes().count(), 0);
     assert_eq!(db.iter_edges().count(), 0);
 }
@@ -215,7 +215,7 @@ fn test_iter_empty_database() {
 
 #[test]
 fn test_validate_healthy_database() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let a = db.create_node(&["Person"]);
     let b = db.create_node(&["Person"]);
     db.create_edge(a, b, "KNOWS");
@@ -226,7 +226,7 @@ fn test_validate_healthy_database() {
 
 #[test]
 fn test_validate_empty_database() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let result = db.validate();
     assert!(result.is_valid());
 }
@@ -235,7 +235,7 @@ fn test_validate_empty_database() {
 
 #[test]
 fn test_info() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let _n = db.create_node(&["Person"]);
     db.set_node_property(_n, "name", Value::String("Alix".into()));
 
@@ -248,7 +248,7 @@ fn test_info() {
 
 #[test]
 fn test_detailed_stats() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let a = db.create_node(&["Person"]);
     db.set_node_property(a, "name", Value::String("Alix".into()));
     let b = db.create_node(&["Company"]);
@@ -267,7 +267,7 @@ fn test_detailed_stats() {
 
 #[test]
 fn test_graph_model_default() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let model = db.graph_model();
     // GraphModel::Lpg displays as "LPG"
     assert_eq!(
@@ -281,7 +281,7 @@ fn test_graph_model_default() {
 
 #[test]
 fn test_to_memory_clones_data() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let a = db.create_node(&["Person"]);
     db.set_node_property(a, "name", Value::String("Alix".into()));
     let b = db.create_node(&["Person"]);
@@ -302,7 +302,7 @@ fn test_to_memory_clones_data() {
 
 #[test]
 fn test_snapshot_export_import_roundtrip() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let a = db.create_node(&["Person"]);
     db.set_node_property(a, "name", Value::String("Alix".into()));
     db.set_node_property(a, "age", Value::Int64(30));
@@ -315,7 +315,7 @@ fn test_snapshot_export_import_roundtrip() {
     assert!(!snapshot.is_empty(), "snapshot should not be empty");
 
     // Import into a new database
-    let restored = GrafeoDB::import_snapshot(&snapshot).expect("import should succeed");
+    let restored = ObrainDB::import_snapshot(&snapshot).expect("import should succeed");
     assert_eq!(restored.node_count(), 2);
     assert_eq!(restored.edge_count(), 1);
 
@@ -330,7 +330,7 @@ fn test_snapshot_export_import_roundtrip() {
 
 #[test]
 fn test_snapshot_import_invalid_data() {
-    let result = GrafeoDB::import_snapshot(b"not a valid snapshot");
+    let result = ObrainDB::import_snapshot(b"not a valid snapshot");
     assert!(result.is_err(), "invalid snapshot data should return error");
 }
 
@@ -338,9 +338,9 @@ fn test_snapshot_import_invalid_data() {
 
 #[test]
 fn test_schema_returns_labels_and_edge_types() {
-    use grafeo_engine::SchemaInfo;
+    use obrain_engine::SchemaInfo;
 
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let a = db.create_node(&["Person"]);
     db.set_node_property(a, "name", Value::String("Alix".into()));
     db.set_node_property(a, "age", Value::Int64(30));
@@ -371,7 +371,7 @@ fn test_schema_returns_labels_and_edge_types() {
 
 #[test]
 fn test_label_and_type_counts() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let a = db.create_node(&["Person"]);
     let b = db.create_node(&["Company"]);
     db.create_edge(a, b, "WORKS_AT");
@@ -386,7 +386,7 @@ fn test_label_and_type_counts() {
 
 #[test]
 fn test_is_persistent_in_memory() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     assert!(!db.is_persistent(), "in-memory db should not be persistent");
 }
 
@@ -394,7 +394,7 @@ fn test_is_persistent_in_memory() {
 
 #[test]
 fn test_wal_status_in_memory() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let status = db.wal_status();
     // In-memory databases have no WAL
     assert!(!status.enabled);
@@ -404,7 +404,7 @@ fn test_wal_status_in_memory() {
 
 #[test]
 fn test_close_in_memory_database() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let a = db.create_node(&["N"]);
     db.set_node_property(a, "x", Value::Int64(1));
 
@@ -416,7 +416,7 @@ fn test_close_in_memory_database() {
 
 #[test]
 fn test_execute_with_params() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session.create_node_with_props(
@@ -448,7 +448,7 @@ fn test_execute_with_params() {
 
 #[test]
 fn test_info_updates_after_operations() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let info0 = db.info();
     assert_eq!(info0.node_count, 0);
     assert_eq!(info0.edge_count, 0);
@@ -466,7 +466,7 @@ fn test_info_updates_after_operations() {
 
 #[test]
 fn test_complex_graph_with_multiple_edge_types() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let alix = db.create_node(&["Person"]);
     db.set_node_property(alix, "name", Value::String("Alix".into()));
 

@@ -7,7 +7,7 @@
 //! This provides 4-6x improvement over RwLock-based approaches under contention.
 
 use dashmap::DashMap;
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 use std::hash::Hash;
 
 /// A thread-safe hash index for O(1) key lookups.
@@ -27,8 +27,8 @@ use std::hash::Hash;
 /// # Example
 ///
 /// ```
-/// use grafeo_core::index::HashIndex;
-/// use grafeo_common::types::NodeId;
+/// use obrain_core::index::HashIndex;
+/// use obrain_common::types::NodeId;
 ///
 /// let index: HashIndex<String, NodeId> = HashIndex::new();
 /// index.insert("alix".to_string(), NodeId::new(1));

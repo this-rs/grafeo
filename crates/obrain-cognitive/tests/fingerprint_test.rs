@@ -2,7 +2,7 @@
 
 #![cfg(feature = "fingerprint")]
 
-use grafeo_cognitive::fingerprint::{MotifType, compare, detect_twins, fingerprint};
+use obrain_cognitive::fingerprint::{MotifType, compare, detect_twins, fingerprint};
 use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------

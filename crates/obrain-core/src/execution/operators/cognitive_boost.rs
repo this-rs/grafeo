@@ -12,20 +12,20 @@
 
 use std::collections::HashMap;
 
-use grafeo_common::types::{LogicalType, Value};
+use obrain_common::types::{LogicalType, Value};
 
 use super::{Operator, OperatorResult};
 use crate::execution::DataChunk;
 use crate::execution::vector::ValueVector;
 
 // ---------------------------------------------------------------------------
-// ActivationMap — re-exported from grafeo-cognitive when available,
-// but defined locally to avoid grafeo-core depending on grafeo-cognitive.
+// ActivationMap — re-exported from obrain-cognitive when available,
+// but defined locally to avoid obrain-core depending on obrain-cognitive.
 // ---------------------------------------------------------------------------
 
 /// Node activation map: node ID (u64) → activation energy (f64).
 ///
-/// Mirrors `grafeo_cognitive::ActivationMap` but avoids a circular dependency.
+/// Mirrors `obrain_cognitive::ActivationMap` but avoids a circular dependency.
 pub type ActivationMap = HashMap<u64, f64>;
 
 /// How the activation score is combined with the existing row.

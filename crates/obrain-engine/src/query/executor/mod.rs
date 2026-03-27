@@ -11,10 +11,10 @@ use std::time::Instant;
 
 use crate::config::AdaptiveConfig;
 use crate::database::QueryResult;
-use grafeo_common::types::{LogicalType, Value};
-use grafeo_common::utils::error::{Error, QueryError, Result};
-use grafeo_core::execution::operators::{Operator, OperatorError};
-use grafeo_core::execution::{
+use obrain_common::types::{LogicalType, Value};
+use obrain_common::utils::error::{Error, QueryError, Result};
+use obrain_core::execution::operators::{Operator, OperatorError};
+use obrain_core::execution::{
     AdaptiveContext, AdaptiveSummary, CardinalityTrackingWrapper, DataChunk, SharedAdaptiveContext,
 };
 
@@ -84,7 +84,7 @@ impl Executor {
     ///
     /// Returns an error if operator execution fails or the query timeout is exceeded.
     pub fn execute(&self, operator: &mut dyn Operator) -> Result<QueryResult> {
-        let _span = tracing::debug_span!("grafeo::query::execute").entered();
+        let _span = tracing::debug_span!("obrain::query::execute").entered();
         let mut result = QueryResult::with_types(self.columns.clone(), self.column_types.clone());
         let mut types_captured = !result.column_types.iter().all(|t| *t == LogicalType::Any);
 
@@ -326,7 +326,7 @@ fn convert_operator_error(err: OperatorError) -> Error {
             Error::InvalidValue(format!("Constraint violation: {msg}"))
         }
         OperatorError::WriteConflict(msg) => {
-            Error::Transaction(grafeo_common::utils::error::TransactionError::WriteConflict(msg))
+            Error::Transaction(obrain_common::utils::error::TransactionError::WriteConflict(msg))
         }
     }
 }
@@ -334,8 +334,8 @@ fn convert_operator_error(err: OperatorError) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grafeo_common::types::LogicalType;
-    use grafeo_core::execution::DataChunk;
+    use obrain_common::types::LogicalType;
+    use obrain_core::execution::DataChunk;
 
     /// A mock operator that generates chunks with integer data on demand.
     struct MockIntOperator {
@@ -355,7 +355,7 @@ mod tests {
     }
 
     impl Operator for MockIntOperator {
-        fn next(&mut self) -> grafeo_core::execution::operators::OperatorResult {
+        fn next(&mut self) -> obrain_core::execution::operators::OperatorResult {
             if self.position >= self.values.len() {
                 return Ok(None);
             }
@@ -388,7 +388,7 @@ mod tests {
     struct EmptyOperator;
 
     impl Operator for EmptyOperator {
-        fn next(&mut self) -> grafeo_core::execution::operators::OperatorResult {
+        fn next(&mut self) -> obrain_core::execution::operators::OperatorResult {
             Ok(None)
         }
 

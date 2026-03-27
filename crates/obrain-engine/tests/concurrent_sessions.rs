@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-use grafeo_engine::GrafeoDB;
+use obrain_engine::ObrainDB;
 
 // ============================================================================
 // Concurrent Session Access Tests
@@ -19,7 +19,7 @@ use grafeo_engine::GrafeoDB;
 #[test]
 fn test_concurrent_read_sessions() {
     // Multiple sessions reading simultaneously should not block
-    let db = Arc::new(GrafeoDB::new_in_memory());
+    let db = Arc::new(ObrainDB::new_in_memory());
 
     // Create some initial data
     {
@@ -71,7 +71,7 @@ fn test_concurrent_read_sessions() {
 #[test]
 fn test_concurrent_write_sessions() {
     // Multiple sessions writing to different entities should succeed
-    let db = Arc::new(GrafeoDB::new_in_memory());
+    let db = Arc::new(ObrainDB::new_in_memory());
 
     let num_threads = 4;
     let barrier = Arc::new(Barrier::new(num_threads));
@@ -127,7 +127,7 @@ fn test_concurrent_write_sessions() {
 fn test_session_isolation_between_threads() {
     // Changes in one session's transaction should not be visible to other sessions
     // until committed
-    let db = Arc::new(GrafeoDB::new_in_memory());
+    let db = Arc::new(ObrainDB::new_in_memory());
 
     // Writer thread creates data in a transaction
     let db_clone = Arc::clone(&db);
@@ -206,7 +206,7 @@ fn test_session_isolation_between_threads() {
 #[test]
 fn test_many_sessions_rapid_creation() {
     // Creating many sessions rapidly should not cause issues
-    let db = Arc::new(GrafeoDB::new_in_memory());
+    let db = Arc::new(ObrainDB::new_in_memory());
 
     let num_threads = 4;
     let sessions_per_thread = 20;
@@ -248,7 +248,7 @@ fn test_interleaved_transactions() {
     // Multiple sessions with interleaved transaction operations.
     // Kept lightweight (2 threads, 3 iterations) to avoid lock-contention
     // slowdowns on resource-constrained CI runners.
-    let db = Arc::new(GrafeoDB::new_in_memory());
+    let db = Arc::new(ObrainDB::new_in_memory());
 
     let completed = Arc::new(AtomicUsize::new(0));
 
@@ -297,7 +297,7 @@ fn test_interleaved_transactions() {
 #[test]
 fn test_session_transaction_state_independence() {
     // Each session should maintain independent transaction state
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     let mut session1 = db.session();
     let mut session2 = db.session();
@@ -326,7 +326,7 @@ fn test_session_transaction_state_independence() {
 #[test]
 fn test_session_auto_commit_independence() {
     // Auto-commit setting should be independent per session
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     let mut session1 = db.session();
     let session2 = db.session();
@@ -347,7 +347,7 @@ fn test_session_auto_commit_independence() {
 #[test]
 fn test_sessions_share_committed_data() {
     // Data committed by one session should be visible to others
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     let session1 = db.session();
     let session2 = db.session();
@@ -367,7 +367,7 @@ fn test_sessions_share_committed_data() {
 #[test]
 fn test_node_count_consistency() {
     // Node count should be consistent across sessions
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     // Create nodes from multiple sessions
     for i in 0..10 {
@@ -392,14 +392,14 @@ async fn test_async_concurrent_sessions() {
     // on resource-constrained CI runners (2-core GitHub Actions).
     use tokio::task;
 
-    let db = Arc::new(GrafeoDB::new_in_memory());
+    let db = Arc::new(ObrainDB::new_in_memory());
     let num_tasks = 3;
 
     // Spawn async tasks
     let mut handles = Vec::new();
 
     for i in 0..num_tasks {
-        let db: Arc<GrafeoDB> = Arc::clone(&db);
+        let db: Arc<ObrainDB> = Arc::clone(&db);
         handles.push(task::spawn_blocking(move || {
             let session = db.session();
             let query = format!("INSERT (:AsyncNode {{id: {}}})", i);
@@ -427,11 +427,11 @@ async fn test_async_transaction_isolation() {
     use std::sync::atomic::AtomicBool;
     use tokio::task;
 
-    let db = Arc::new(GrafeoDB::new_in_memory());
+    let db = Arc::new(ObrainDB::new_in_memory());
     let writer_committed = Arc::new(AtomicBool::new(false));
 
     // Writer task
-    let db_writer: Arc<GrafeoDB> = Arc::clone(&db);
+    let db_writer: Arc<ObrainDB> = Arc::clone(&db);
     let committed_flag = Arc::clone(&writer_committed);
 
     let writer = task::spawn_blocking(move || {
@@ -445,7 +445,7 @@ async fn test_async_transaction_isolation() {
     });
 
     // Reader task: waits for writer commit via atomic flag, no sleep
-    let db_reader: Arc<GrafeoDB> = Arc::clone(&db);
+    let db_reader: Arc<ObrainDB> = Arc::clone(&db);
     let reader_flag = Arc::clone(&writer_committed);
 
     let reader = task::spawn_blocking(move || {
@@ -472,7 +472,7 @@ async fn test_async_transaction_isolation() {
 #[test]
 fn test_session_after_transaction_error() {
     // Session should be usable after a transaction error
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     // Try to commit without transaction (should error)
@@ -491,7 +491,7 @@ fn test_session_after_transaction_error() {
 #[test]
 fn test_multiple_sequential_transactions() {
     // Same session should handle multiple sequential transactions
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     for i in 0..5 {
@@ -517,7 +517,7 @@ fn test_multiple_sequential_transactions() {
 #[ignore = "stress test: slow in CI, run locally with --ignored"]
 fn test_stress_concurrent_writers() {
     // 8 threads each inserting 50 nodes simultaneously
-    let db = Arc::new(GrafeoDB::new_in_memory());
+    let db = Arc::new(ObrainDB::new_in_memory());
 
     let num_threads = 8;
     let writes_per_thread = 50;
@@ -562,7 +562,7 @@ fn test_stress_concurrent_writers() {
 #[ignore = "stress test: slow in CI, run locally with --ignored"]
 fn test_stress_concurrent_reads_during_writes() {
     // Mixed workload: 4 writers + 8 readers operating simultaneously
-    let db = Arc::new(GrafeoDB::new_in_memory());
+    let db = Arc::new(ObrainDB::new_in_memory());
 
     // Seed initial data
     {
@@ -638,7 +638,7 @@ fn test_stress_concurrent_reads_during_writes() {
 #[ignore = "stress test: slow in CI, run locally with --ignored"]
 fn test_stress_transaction_conflicts() {
     // 4 threads with interleaved commit/rollback patterns
-    let db = Arc::new(GrafeoDB::new_in_memory());
+    let db = Arc::new(ObrainDB::new_in_memory());
 
     let num_threads = 4;
     let iterations = 6;
@@ -693,7 +693,7 @@ fn test_stress_transaction_conflicts() {
 #[ignore = "stress test: slow in CI, run locally with --ignored"]
 fn test_stress_concurrent_epoch_pressure() {
     // 4 threads each running 8 sequential transactions, creates many epochs
-    let db = Arc::new(GrafeoDB::new_in_memory());
+    let db = Arc::new(ObrainDB::new_in_memory());
 
     let num_threads = 4;
     let txns_per_thread = 8;
@@ -741,7 +741,7 @@ fn test_stress_concurrent_epoch_pressure() {
 #[ignore = "stress test: slow in CI, run locally with --ignored"]
 fn test_stress_rapid_session_lifecycle() {
     // 16 threads rapidly creating, using, and dropping sessions
-    let db = Arc::new(GrafeoDB::new_in_memory());
+    let db = Arc::new(ObrainDB::new_in_memory());
 
     let num_threads = 16;
     let cycles = 100;
@@ -781,7 +781,7 @@ fn test_stress_rapid_session_lifecycle() {
 #[ignore = "stress test: slow in CI, run locally with --ignored"]
 fn test_stress_concurrent_edges_and_nodes() {
     // Create nodes and edges simultaneously from multiple threads
-    let db = Arc::new(GrafeoDB::new_in_memory());
+    let db = Arc::new(ObrainDB::new_in_memory());
 
     // Seed some nodes first (needed for edge creation)
     let session = db.session();
@@ -848,7 +848,7 @@ fn test_stress_concurrent_edges_and_nodes() {
 /// to other sessions. Versions use PENDING epoch until committed.
 #[test]
 fn test_dirty_read_prevented() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     let mut writer = db.session();
     writer.begin_transaction().unwrap();
@@ -881,7 +881,7 @@ fn test_dirty_read_prevented() {
 /// Documents that after rollback, the rolled-back data is no longer visible.
 #[test]
 fn test_rollback_hides_data_from_other_sessions() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     let mut writer = db.session();
     writer.begin_transaction().unwrap();
@@ -903,7 +903,7 @@ fn test_rollback_hides_data_from_other_sessions() {
 /// when another session commits between reads.
 #[test]
 fn test_non_repeatable_read() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     let session1 = db.session();
     session1.execute("INSERT (:NRR {val: 'original'})").unwrap();
@@ -924,7 +924,7 @@ fn test_non_repeatable_read() {
     // Without snapshot isolation, the reader sees the updated value
     assert_eq!(
         r2.rows[0][0],
-        grafeo_common::types::Value::String("updated".into()),
+        obrain_common::types::Value::String("updated".into()),
         "Non-repeatable read: reader sees committed update"
     );
 }
@@ -933,7 +933,7 @@ fn test_non_repeatable_read() {
 /// because another session inserted and committed between reads.
 #[test]
 fn test_phantom_read() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     let session1 = db.session();
     session1.execute("INSERT (:Phantom {id: 1})").unwrap();
@@ -959,7 +959,7 @@ fn test_phantom_read() {
 /// (Related to T1-04: Session Drop should auto-rollback.)
 #[test]
 fn test_drop_session_mid_transaction() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     {
         let mut session = db.session();
@@ -991,7 +991,7 @@ fn test_drop_session_mid_transaction() {
 /// the first session already recorded a write to the same entity.
 #[test]
 fn test_write_write_conflict_through_execute() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("INSERT (:Account {name: 'shared', balance: 100})")
@@ -1024,13 +1024,13 @@ fn test_write_write_conflict_through_execute() {
         .execute("MATCH (a:Account {name: 'shared'}) RETURN a.balance AS b")
         .unwrap();
     assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0], grafeo_common::types::Value::Int64(200));
+    assert_eq!(result.rows[0][0], obrain_common::types::Value::Int64(200));
 }
 
 /// Tests that a rollback in one session doesn't affect another session's committed writes.
 #[test]
 fn test_concurrent_write_one_rollback() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("INSERT (:Counter {name: 'hits', val: 0})")
@@ -1057,7 +1057,7 @@ fn test_concurrent_write_one_rollback() {
     assert_eq!(result.rows.len(), 1);
     assert_eq!(
         result.rows[0][0],
-        grafeo_common::types::Value::Int64(10),
+        obrain_common::types::Value::Int64(10),
         "Rolled-back write should not affect committed value"
     );
 }
@@ -1069,7 +1069,7 @@ fn test_concurrent_write_one_rollback() {
 /// Create an edge inside a transaction, rollback, verify edge is absent.
 #[test]
 fn test_edge_create_rollback() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
     session.execute("INSERT (:Person {name: 'Gus'})").unwrap();
@@ -1107,7 +1107,7 @@ fn test_edge_create_rollback() {
 /// and marks the version with `deleted_by`. Rollback replays the undo log to restore.
 #[test]
 fn test_edge_delete_rollback() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})")
@@ -1136,7 +1136,7 @@ fn test_edge_delete_rollback() {
 /// DELETE node followed by rollback restores the node with its labels and properties.
 #[test]
 fn test_node_delete_rollback() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("INSERT (:Temp {name: 'ephemeral'})")
@@ -1160,14 +1160,14 @@ fn test_node_delete_rollback() {
     );
     assert_eq!(
         result.rows[0][0],
-        grafeo_common::types::Value::String("ephemeral".into())
+        obrain_common::types::Value::String("ephemeral".into())
     );
 }
 
 /// DETACH DELETE followed by rollback restores the node and its edges.
 #[test]
 fn test_detach_delete_rollback() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})")
@@ -1191,11 +1191,11 @@ fn test_detach_delete_rollback() {
     );
     assert_eq!(
         nodes.rows[0][0],
-        grafeo_common::types::Value::String("Alix".into())
+        obrain_common::types::Value::String("Alix".into())
     );
     assert_eq!(
         nodes.rows[1][0],
-        grafeo_common::types::Value::String("Gus".into())
+        obrain_common::types::Value::String("Gus".into())
     );
 
     // Edge should also be restored
@@ -1214,7 +1214,7 @@ fn test_detach_delete_rollback() {
 /// After INSERT+COMMIT in an explicit transaction, a new session sees the data.
 #[test]
 fn test_cross_session_visibility_after_explicit_commit() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     let mut writer = db.session();
     writer.begin_transaction().unwrap();
@@ -1235,14 +1235,14 @@ fn test_cross_session_visibility_after_explicit_commit() {
     );
     assert_eq!(
         result.rows[0][0],
-        grafeo_common::types::Value::String("committed".into())
+        obrain_common::types::Value::String("committed".into())
     );
 }
 
 /// Multiple mutations across transactions, verified by a fresh session.
 #[test]
 fn test_cross_session_visibility_multiple_mutations() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     // First session: insert + set property
     let session1 = db.session();
@@ -1261,7 +1261,7 @@ fn test_cross_session_visibility_multiple_mutations() {
     assert_eq!(result.row_count(), 1);
     assert_eq!(
         result.rows[0][0],
-        grafeo_common::types::Value::Int64(25),
+        obrain_common::types::Value::Int64(25),
         "New session should see the updated price"
     );
 }
@@ -1269,7 +1269,7 @@ fn test_cross_session_visibility_multiple_mutations() {
 /// Edge creation visibility: edges inserted in one session visible in another.
 #[test]
 fn test_cross_session_edge_visibility() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     let session1 = db.session();
     session1
@@ -1283,10 +1283,10 @@ fn test_cross_session_edge_visibility() {
     assert_eq!(result.row_count(), 1);
     assert_eq!(
         result.rows[0][0],
-        grafeo_common::types::Value::String("Alix".into())
+        obrain_common::types::Value::String("Alix".into())
     );
     assert_eq!(
         result.rows[0][1],
-        grafeo_common::types::Value::String("Gus".into())
+        obrain_common::types::Value::String("Gus".into())
     );
 }

@@ -1,11 +1,11 @@
-//! # Grafeo
+//! # Obrain
 //!
 //! A high-performance, embeddable graph database with a Rust core and no required
 //! C dependencies. Optional allocators (jemalloc/mimalloc) and TLS use C libraries
 //! for performance.
 //!
-//! If you're new here, start with [`GrafeoDB`] - that's your entry point for
-//! creating databases and running queries. Grafeo uses GQL (the ISO standard)
+//! If you're new here, start with [`ObrainDB`] - that's your entry point for
+//! creating databases and running queries. Obrain uses GQL (the ISO standard)
 //! by default, but you can enable other query languages through feature flags.
 //!
 //! ## Query Languages
@@ -24,10 +24,10 @@
 //! ## Quick Start
 //!
 //! ```rust
-//! use grafeo::GrafeoDB;
+//! use obrain::ObrainDB;
 //!
 //! // Create an in-memory database
-//! let db = GrafeoDB::new_in_memory();
+//! let db = ObrainDB::new_in_memory();
 //! let mut session = db.session();
 //!
 //! // Add a person
@@ -35,7 +35,7 @@
 //!
 //! // Find them
 //! let result = session.execute("MATCH (p:Person) RETURN p.name")?;
-//! # Ok::<(), grafeo_common::utils::error::Error>(())
+//! # Ok::<(), obrain_common::utils::error::Error>(())
 //! ```
 //!
 #![forbid(unsafe_code)]
@@ -65,10 +65,10 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 // Re-export the main database API
-pub use grafeo_engine::{
-    AccessMode, Catalog, CatalogError, Config, ConfigError, DurabilityMode, GrafeoDB, GraphModel,
+pub use obrain_engine::{
+    AccessMode, Catalog, CatalogError, Config, ConfigError, DurabilityMode, ObrainDB, GraphModel,
     GraphStore, GraphStoreMut, IndexDefinition, IndexType, Session, VERSION,
 };
 
 // Re-export core types - you'll need these for working with IDs and values
-pub use grafeo_common::types::{EdgeId, NodeId, Value};
+pub use obrain_common::types::{EdgeId, NodeId, Value};

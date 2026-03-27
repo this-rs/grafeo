@@ -1,4 +1,4 @@
-//! Caching utilities for Grafeo.
+//! Caching utilities for Obrain.
 //!
 //! This module provides cache implementations optimized for graph database workloads:
 //!

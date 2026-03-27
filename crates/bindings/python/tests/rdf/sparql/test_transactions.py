@@ -8,26 +8,26 @@ import pytest
 
 from tests.bases.test_transactions import BaseTransactionsTest
 
-# Try to import grafeo
+# Try to import obrain
 try:
-    from grafeo import GrafeoDB
+    from obrain import ObrainDB
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
-_HAS_SPARQL = GRAFEO_AVAILABLE and hasattr(GrafeoDB(), "execute_sparql")
+_HAS_SPARQL = OBRAIN_AVAILABLE and hasattr(ObrainDB(), "execute_sparql")
 
 pytestmark = [
-    pytest.mark.skipif(not GRAFEO_AVAILABLE, reason="Grafeo Python bindings not installed"),
-    pytest.mark.skipif(not _HAS_SPARQL, reason="grafeo built without sparql feature"),
+    pytest.mark.skipif(not OBRAIN_AVAILABLE, reason="Obrain Python bindings not installed"),
+    pytest.mark.skipif(not _HAS_SPARQL, reason="obrain built without sparql feature"),
 ]
 
 
 @pytest.fixture
 def db():
     """Create a fresh database instance for each test."""
-    return GrafeoDB()
+    return ObrainDB()
 
 
 class TestSPARQLTransactions(BaseTransactionsTest):
@@ -103,7 +103,7 @@ class TestSPARQLTransactionVerification:
 
     def setup_method(self):
         """Create a fresh database."""
-        self.db = GrafeoDB()
+        self.db = ObrainDB()
 
     def test_transaction_commit_on_success(self):
         """Verify transaction commits on success."""

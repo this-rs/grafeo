@@ -6,13 +6,13 @@
 use std::collections::VecDeque;
 use std::sync::OnceLock;
 
-use grafeo_common::types::{NodeId, Value};
-use grafeo_common::utils::error::Result;
-use grafeo_common::utils::hash::{FxHashMap, FxHashSet};
-use grafeo_core::graph::Direction;
-use grafeo_core::graph::GraphStore;
+use obrain_common::types::{NodeId, Value};
+use obrain_common::utils::error::Result;
+use obrain_common::utils::hash::{FxHashMap, FxHashSet};
+use obrain_core::graph::Direction;
+use obrain_core::graph::GraphStore;
 #[cfg(test)]
-use grafeo_core::graph::lpg::LpgStore;
+use obrain_core::graph::lpg::LpgStore;
 
 use super::super::{AlgorithmResult, ParameterDef, ParameterType, Parameters};
 use super::traits::{Control, GraphAlgorithm, NodeValueResultBuilder, TraversalEvent};
@@ -229,7 +229,7 @@ where
 
     // Stack entries: (node, edge_iterator_index, is_first_visit)
     // We use indices to track progress through neighbors
-    let mut stack: Vec<(NodeId, Vec<(NodeId, grafeo_common::types::EdgeId)>, usize)> = Vec::new();
+    let mut stack: Vec<(NodeId, Vec<(NodeId, obrain_common::types::EdgeId)>, usize)> = Vec::new();
 
     // Check if start node exists
     store.get_node(start)?;
@@ -397,7 +397,7 @@ impl GraphAlgorithm for BfsAlgorithm {
 
     fn execute(&self, store: &dyn GraphStore, params: &Parameters) -> Result<AlgorithmResult> {
         let start_id = params.get_int("start").ok_or_else(|| {
-            grafeo_common::utils::error::Error::InvalidValue("start parameter required".to_string())
+            obrain_common::utils::error::Error::InvalidValue("start parameter required".to_string())
         })?;
 
         let start = NodeId::new(start_id as u64);
@@ -451,7 +451,7 @@ impl GraphAlgorithm for DfsAlgorithm {
 
     fn execute(&self, store: &dyn GraphStore, params: &Parameters) -> Result<AlgorithmResult> {
         let start_id = params.get_int("start").ok_or_else(|| {
-            grafeo_common::utils::error::Error::InvalidValue("start parameter required".to_string())
+            obrain_common::utils::error::Error::InvalidValue("start parameter required".to_string())
         })?;
 
         let start = NodeId::new(start_id as u64);

@@ -2,12 +2,12 @@
 
 #![cfg(feature = "cognitive-full")]
 
-use grafeo_cognitive::co_change::CoChangeConfig;
-use grafeo_cognitive::config::CognitiveConfig;
-use grafeo_cognitive::energy::EnergyConfig;
-use grafeo_cognitive::engine::{CognitiveEngine, CognitiveEngineBuilder};
-use grafeo_cognitive::synapse::SynapseConfig;
-use grafeo_reactive::{BatchConfig, MutationBus, Scheduler};
+use obrain_cognitive::co_change::CoChangeConfig;
+use obrain_cognitive::config::CognitiveConfig;
+use obrain_cognitive::energy::EnergyConfig;
+use obrain_cognitive::engine::{CognitiveEngine, CognitiveEngineBuilder};
+use obrain_cognitive::synapse::SynapseConfig;
+use obrain_reactive::{BatchConfig, MutationBus, Scheduler};
 use std::time::Duration;
 
 fn make_scheduler() -> (MutationBus, Scheduler) {
@@ -150,7 +150,7 @@ async fn accessor_stores_are_functional() {
     // Energy store is functional
     let energy = engine.energy_store().unwrap();
     assert!(energy.is_empty());
-    energy.boost(grafeo_common::types::NodeId::new(1), 1.0);
+    energy.boost(obrain_common::types::NodeId::new(1), 1.0);
     assert_eq!(energy.len(), 1);
 
     // Synapse store is functional

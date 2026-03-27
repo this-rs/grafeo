@@ -1,12 +1,12 @@
 //! EngramManager — the main coordinator for the engram system.
 //!
 //! Owns all subsystems (formation, decay, recall, homeostasis, metrics)
-//! and provides a unified API for the rest of grafeo-cognitive.
+//! and provides a unified API for the rest of obrain-cognitive.
 
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, instrument};

@@ -1,13 +1,13 @@
 //! Parameterized queries: safe, reusable query execution.
 //!
-//! Run with: `cargo run -p grafeo-examples --bin parameterized`
+//! Run with: `cargo run -p obrain-examples --bin parameterized`
 
 use std::collections::HashMap;
 
-use grafeo::{GrafeoDB, Value};
+use obrain::{ObrainDB, Value};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // ── Insert products using parameterized queries ────────────────

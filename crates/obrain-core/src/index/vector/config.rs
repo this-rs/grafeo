@@ -21,7 +21,7 @@ use super::DistanceMetric;
 /// # Example
 ///
 /// ```
-/// use grafeo_core::index::vector::{HnswConfig, DistanceMetric};
+/// use obrain_core::index::vector::{HnswConfig, DistanceMetric};
 ///
 /// // Configuration for OpenAI embeddings (1536 dimensions)
 /// let config = HnswConfig::new(1536, DistanceMetric::Cosine)

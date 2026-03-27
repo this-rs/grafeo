@@ -2,7 +2,7 @@
 //!
 //! Represents the traversal-based structure of Gremlin queries.
 
-use grafeo_common::types::Value;
+use obrain_common::types::Value;
 
 /// A complete Gremlin statement.
 #[derive(Debug, Clone)]

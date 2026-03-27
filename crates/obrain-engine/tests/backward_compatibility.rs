@@ -4,13 +4,13 @@
 //! round-tripped (export then import) without data loss. If the format
 //! changes, the fixture must be regenerated.
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 /// Generate a pinned v3 snapshot at runtime (the fixture is not committed
 /// because format changes are tracked via this test, not via binary files).
 fn generate_fixture() -> Vec<u8> {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // Nodes
@@ -49,21 +49,21 @@ fn generate_fixture() -> Vec<u8> {
 #[test]
 fn snapshot_round_trip_preserves_node_count() {
     let snapshot = generate_fixture();
-    let db = GrafeoDB::import_snapshot(&snapshot).unwrap();
+    let db = ObrainDB::import_snapshot(&snapshot).unwrap();
     assert_eq!(db.node_count(), 3);
 }
 
 #[test]
 fn snapshot_round_trip_preserves_edge_count() {
     let snapshot = generate_fixture();
-    let db = GrafeoDB::import_snapshot(&snapshot).unwrap();
+    let db = ObrainDB::import_snapshot(&snapshot).unwrap();
     assert_eq!(db.edge_count(), 2);
 }
 
 #[test]
 fn snapshot_round_trip_preserves_labels() {
     let snapshot = generate_fixture();
-    let db = GrafeoDB::import_snapshot(&snapshot).unwrap();
+    let db = ObrainDB::import_snapshot(&snapshot).unwrap();
     let session = db.session();
 
     let persons = session
@@ -81,7 +81,7 @@ fn snapshot_round_trip_preserves_labels() {
 #[test]
 fn snapshot_round_trip_preserves_node_properties() {
     let snapshot = generate_fixture();
-    let db = GrafeoDB::import_snapshot(&snapshot).unwrap();
+    let db = ObrainDB::import_snapshot(&snapshot).unwrap();
     let session = db.session();
 
     let result = session
@@ -94,7 +94,7 @@ fn snapshot_round_trip_preserves_node_properties() {
 #[test]
 fn snapshot_round_trip_preserves_edge_properties() {
     let snapshot = generate_fixture();
-    let db = GrafeoDB::import_snapshot(&snapshot).unwrap();
+    let db = ObrainDB::import_snapshot(&snapshot).unwrap();
     let session = db.session();
 
     let knows = session
@@ -113,7 +113,7 @@ fn snapshot_round_trip_preserves_edge_properties() {
 #[test]
 fn snapshot_round_trip_preserves_multi_labels() {
     let snapshot = generate_fixture();
-    let db = GrafeoDB::import_snapshot(&snapshot).unwrap();
+    let db = ObrainDB::import_snapshot(&snapshot).unwrap();
     let session = db.session();
 
     let employees = session.execute("MATCH (e:Employee) RETURN e.name").unwrap();
@@ -124,7 +124,7 @@ fn snapshot_round_trip_preserves_multi_labels() {
 #[test]
 fn snapshot_round_trip_preserves_schema() {
     let snapshot = generate_fixture();
-    let db = GrafeoDB::import_snapshot(&snapshot).unwrap();
+    let db = ObrainDB::import_snapshot(&snapshot).unwrap();
     let session = db.session();
 
     let result = session.execute("SHOW NODE TYPES").unwrap();
@@ -147,10 +147,10 @@ fn snapshot_round_trip_preserves_schema() {
 fn snapshot_double_round_trip() {
     // Export -> import -> re-export -> re-import: verify data integrity.
     let snapshot = generate_fixture();
-    let db = GrafeoDB::import_snapshot(&snapshot).unwrap();
+    let db = ObrainDB::import_snapshot(&snapshot).unwrap();
     let re_exported = db.export_snapshot().unwrap();
 
-    let db2 = GrafeoDB::import_snapshot(&re_exported).unwrap();
+    let db2 = ObrainDB::import_snapshot(&re_exported).unwrap();
     assert_eq!(db2.node_count(), 3);
     assert_eq!(db2.edge_count(), 2);
 

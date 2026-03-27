@@ -5,14 +5,14 @@
 //! queries, and introspection functions reflecting current state.
 //!
 //! ```bash
-//! cargo test -p grafeo-engine --test seam_session_state
+//! cargo test -p obrain-engine --test seam_session_state
 //! ```
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
-fn db() -> GrafeoDB {
-    GrafeoDB::new_in_memory()
+fn db() -> ObrainDB {
+    ObrainDB::new_in_memory()
 }
 
 // ============================================================================
@@ -280,7 +280,7 @@ mod selective_reset {
     /// Helper: set all four session fields.
     /// Creates graph without schema first, then sets schema separately,
     /// since graphs resolve relative to the current schema.
-    fn set_all_fields(session: &grafeo_engine::Session) {
+    fn set_all_fields(session: &obrain_engine::Session) {
         session.execute("CREATE GRAPH mygraph").unwrap();
         session.execute("SESSION SET GRAPH mygraph").unwrap();
         session.execute("CREATE SCHEMA myschema").unwrap();

@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-//! Shared abstractions for Grafeo language bindings.
+//! Shared abstractions for Obrain language bindings.
 //!
 //! This crate provides language-agnostic implementations of common binding
 //! logic: entity extraction from query results, error classification, and

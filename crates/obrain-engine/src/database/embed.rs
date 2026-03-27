@@ -1,10 +1,10 @@
-//! Embedding model management for GrafeoDB.
+//! Embedding model management for ObrainDB.
 
 use std::sync::Arc;
 
-use grafeo_common::utils::error::Result;
+use obrain_common::utils::error::Result;
 
-impl super::GrafeoDB {
+impl super::ObrainDB {
     // ── Embedding ────────────────────────────────────────────────────────
 
     /// Loads a pre-configured embedding model, downloading from HuggingFace Hub if needed.
@@ -16,10 +16,10 @@ impl super::GrafeoDB {
     /// # Examples
     ///
     /// ```no_run
-    /// use grafeo_engine::{GrafeoDB, Config, embedding::EmbeddingModelConfig};
+    /// use obrain_engine::{ObrainDB, Config, embedding::EmbeddingModelConfig};
     ///
-    /// # fn main() -> grafeo_common::utils::error::Result<()> {
-    /// let db = GrafeoDB::with_config(Config::in_memory())?;
+    /// # fn main() -> obrain_common::utils::error::Result<()> {
+    /// let db = ObrainDB::with_config(Config::in_memory())?;
     /// db.load_embedding_model(EmbeddingModelConfig::MiniLmL6v2)?;
     /// let vecs = db.embed_text("all-MiniLM-L6-v2", &["hello"])?;
     /// # Ok(())
@@ -77,7 +77,7 @@ impl super::GrafeoDB {
     pub fn embed_text(&self, model_name: &str, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
         let models = self.embedding_models.read();
         let model = models.get(model_name).ok_or_else(|| {
-            grafeo_common::utils::error::Error::Internal(format!(
+            obrain_common::utils::error::Error::Internal(format!(
                 "Embedding model '{}' not registered",
                 model_name
             ))
@@ -103,10 +103,10 @@ impl super::GrafeoDB {
         query_text: &str,
         k: usize,
         ef: Option<usize>,
-    ) -> Result<Vec<(grafeo_common::types::NodeId, f32)>> {
+    ) -> Result<Vec<(obrain_common::types::NodeId, f32)>> {
         let vectors = self.embed_text(model_name, &[query_text])?;
         let query_vec = vectors.into_iter().next().ok_or_else(|| {
-            grafeo_common::utils::error::Error::Internal(
+            obrain_common::utils::error::Error::Internal(
                 "Embedding model returned no vectors".to_string(),
             )
         })?;

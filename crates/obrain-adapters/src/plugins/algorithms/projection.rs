@@ -26,9 +26,9 @@
 //! # Example
 //!
 //! ```no_run
-//! use grafeo_adapters::plugins::algorithms::projection::ProjectionBuilder;
-//! use grafeo_core::graph::lpg::LpgStore;
-//! use grafeo_core::graph::GraphStore;
+//! use obrain_adapters::plugins::algorithms::projection::ProjectionBuilder;
+//! use obrain_core::graph::lpg::LpgStore;
+//! use obrain_core::graph::GraphStore;
 //!
 //! let store = LpgStore::new().unwrap();
 //! // ... populate store ...
@@ -44,11 +44,11 @@
 //! ```
 
 use arcstr::ArcStr;
-use grafeo_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TransactionId, Value};
-use grafeo_common::utils::hash::FxHashMap;
-use grafeo_core::graph::lpg::{CompareOp, Edge, Node};
-use grafeo_core::graph::{Direction, GraphStore};
-use grafeo_core::statistics::Statistics;
+use obrain_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TransactionId, Value};
+use obrain_common::utils::hash::FxHashMap;
+use obrain_core::graph::lpg::{CompareOp, Edge, Node};
+use obrain_core::graph::{Direction, GraphStore};
+use obrain_core::statistics::Statistics;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -65,8 +65,8 @@ use std::sync::Arc;
 /// # Example
 ///
 /// ```no_run
-/// use grafeo_adapters::plugins::algorithms::projection::PropertyPredicate;
-/// use grafeo_common::types::Value;
+/// use obrain_adapters::plugins::algorithms::projection::PropertyPredicate;
+/// use obrain_common::types::Value;
 ///
 /// let pred = PropertyPredicate::new("weight", |v| {
 ///     matches!(v, Value::Float64(w) if *w > 0.5)
@@ -95,8 +95,8 @@ impl PropertyPredicate {
     /// # Example
     ///
     /// ```no_run
-    /// use grafeo_adapters::plugins::algorithms::projection::PropertyPredicate;
-    /// use grafeo_common::types::Value;
+    /// use obrain_adapters::plugins::algorithms::projection::PropertyPredicate;
+    /// use obrain_common::types::Value;
     ///
     /// let pred = PropertyPredicate::new("status", |v| {
     ///     matches!(v, Value::String(s) if s.as_str() == "active")
@@ -158,8 +158,8 @@ impl std::fmt::Debug for PropertyPredicate {
 /// # Example
 ///
 /// ```no_run
-/// use grafeo_adapters::plugins::algorithms::projection::{NodeFilter, PropertyPredicate};
-/// use grafeo_common::types::Value;
+/// use obrain_adapters::plugins::algorithms::projection::{NodeFilter, PropertyPredicate};
+/// use obrain_common::types::Value;
 ///
 /// let filter = NodeFilter::new()
 ///     .labels(vec!["File".into(), "Function".into()])
@@ -189,7 +189,7 @@ impl NodeFilter {
     /// # Example
     ///
     /// ```no_run
-    /// use grafeo_adapters::plugins::algorithms::projection::NodeFilter;
+    /// use obrain_adapters::plugins::algorithms::projection::NodeFilter;
     ///
     /// let filter = NodeFilter::new(); // accepts everything
     /// ```
@@ -214,7 +214,7 @@ impl NodeFilter {
     /// # Example
     ///
     /// ```no_run
-    /// use grafeo_adapters::plugins::algorithms::projection::NodeFilter;
+    /// use obrain_adapters::plugins::algorithms::projection::NodeFilter;
     ///
     /// let filter = NodeFilter::new().labels(vec!["Person".into()]);
     /// ```
@@ -240,8 +240,8 @@ impl NodeFilter {
     /// # Example
     ///
     /// ```no_run
-    /// use grafeo_adapters::plugins::algorithms::projection::{NodeFilter, PropertyPredicate};
-    /// use grafeo_common::types::Value;
+    /// use obrain_adapters::plugins::algorithms::projection::{NodeFilter, PropertyPredicate};
+    /// use obrain_common::types::Value;
     ///
     /// let filter = NodeFilter::new()
     ///     .property(PropertyPredicate::new("weight", |v| {
@@ -324,7 +324,7 @@ impl NodeFilter {
 /// # Example
 ///
 /// ```no_run
-/// use grafeo_adapters::plugins::algorithms::projection::EdgeFilter;
+/// use obrain_adapters::plugins::algorithms::projection::EdgeFilter;
 ///
 /// let filter = EdgeFilter::new()
 ///     .types(vec!["IMPORTS".into(), "CALLS".into()]);
@@ -351,7 +351,7 @@ impl EdgeFilter {
     /// # Example
     ///
     /// ```no_run
-    /// use grafeo_adapters::plugins::algorithms::projection::EdgeFilter;
+    /// use obrain_adapters::plugins::algorithms::projection::EdgeFilter;
     ///
     /// let filter = EdgeFilter::new(); // accepts everything
     /// ```
@@ -376,7 +376,7 @@ impl EdgeFilter {
     /// # Example
     ///
     /// ```no_run
-    /// use grafeo_adapters::plugins::algorithms::projection::EdgeFilter;
+    /// use obrain_adapters::plugins::algorithms::projection::EdgeFilter;
     ///
     /// let filter = EdgeFilter::new().types(vec!["KNOWS".into()]);
     /// ```
@@ -402,8 +402,8 @@ impl EdgeFilter {
     /// # Example
     ///
     /// ```no_run
-    /// use grafeo_adapters::plugins::algorithms::projection::{EdgeFilter, PropertyPredicate};
-    /// use grafeo_common::types::Value;
+    /// use obrain_adapters::plugins::algorithms::projection::{EdgeFilter, PropertyPredicate};
+    /// use obrain_common::types::Value;
     ///
     /// let filter = EdgeFilter::new()
     ///     .property(PropertyPredicate::new("weight", |v| {
@@ -522,9 +522,9 @@ impl EdgeFilter {
 /// # Example
 ///
 /// ```no_run
-/// use grafeo_adapters::plugins::algorithms::projection::ProjectionBuilder;
-/// use grafeo_core::graph::lpg::LpgStore;
-/// use grafeo_core::graph::GraphStore;
+/// use obrain_adapters::plugins::algorithms::projection::ProjectionBuilder;
+/// use obrain_core::graph::lpg::LpgStore;
+/// use obrain_core::graph::GraphStore;
 ///
 /// let store = LpgStore::new().unwrap();
 /// // ... populate the store with nodes and edges ...
@@ -569,10 +569,10 @@ impl<'a> GraphProjection<'a> {
     /// # Example
     ///
     /// ```no_run
-    /// use grafeo_adapters::plugins::algorithms::projection::{
+    /// use obrain_adapters::plugins::algorithms::projection::{
     ///     GraphProjection, NodeFilter, EdgeFilter,
     /// };
-    /// use grafeo_core::graph::lpg::LpgStore;
+    /// use obrain_core::graph::lpg::LpgStore;
     ///
     /// let store = LpgStore::new().unwrap();
     /// let projection = GraphProjection::new(
@@ -1253,10 +1253,10 @@ impl GraphStore for GraphProjection<'_> {
 /// # Example
 ///
 /// ```no_run
-/// use grafeo_adapters::plugins::algorithms::projection::ProjectionBuilder;
-/// use grafeo_core::graph::lpg::LpgStore;
-/// use grafeo_core::graph::GraphStore;
-/// use grafeo_common::types::Value;
+/// use obrain_adapters::plugins::algorithms::projection::ProjectionBuilder;
+/// use obrain_core::graph::lpg::LpgStore;
+/// use obrain_core::graph::GraphStore;
+/// use obrain_common::types::Value;
 ///
 /// let store = LpgStore::new().unwrap();
 ///
@@ -1292,8 +1292,8 @@ impl<'a> ProjectionBuilder<'a> {
     /// # Example
     ///
     /// ```no_run
-    /// use grafeo_adapters::plugins::algorithms::projection::ProjectionBuilder;
-    /// use grafeo_core::graph::lpg::LpgStore;
+    /// use obrain_adapters::plugins::algorithms::projection::ProjectionBuilder;
+    /// use obrain_core::graph::lpg::LpgStore;
     ///
     /// let store = LpgStore::new().unwrap();
     /// let builder = ProjectionBuilder::new(&store);
@@ -1323,8 +1323,8 @@ impl<'a> ProjectionBuilder<'a> {
     /// # Example
     ///
     /// ```no_run
-    /// use grafeo_adapters::plugins::algorithms::projection::ProjectionBuilder;
-    /// use grafeo_core::graph::lpg::LpgStore;
+    /// use obrain_adapters::plugins::algorithms::projection::ProjectionBuilder;
+    /// use obrain_core::graph::lpg::LpgStore;
     ///
     /// let store = LpgStore::new().unwrap();
     /// let builder = ProjectionBuilder::new(&store)
@@ -1352,8 +1352,8 @@ impl<'a> ProjectionBuilder<'a> {
     /// # Example
     ///
     /// ```no_run
-    /// use grafeo_adapters::plugins::algorithms::projection::ProjectionBuilder;
-    /// use grafeo_core::graph::lpg::LpgStore;
+    /// use obrain_adapters::plugins::algorithms::projection::ProjectionBuilder;
+    /// use obrain_core::graph::lpg::LpgStore;
     ///
     /// let store = LpgStore::new().unwrap();
     /// let builder = ProjectionBuilder::new(&store)
@@ -1385,9 +1385,9 @@ impl<'a> ProjectionBuilder<'a> {
     /// # Example
     ///
     /// ```no_run
-    /// use grafeo_adapters::plugins::algorithms::projection::ProjectionBuilder;
-    /// use grafeo_core::graph::lpg::LpgStore;
-    /// use grafeo_common::types::Value;
+    /// use obrain_adapters::plugins::algorithms::projection::ProjectionBuilder;
+    /// use obrain_core::graph::lpg::LpgStore;
+    /// use obrain_common::types::Value;
     ///
     /// let store = LpgStore::new().unwrap();
     /// let builder = ProjectionBuilder::new(&store)
@@ -1426,9 +1426,9 @@ impl<'a> ProjectionBuilder<'a> {
     /// # Example
     ///
     /// ```no_run
-    /// use grafeo_adapters::plugins::algorithms::projection::ProjectionBuilder;
-    /// use grafeo_core::graph::lpg::LpgStore;
-    /// use grafeo_common::types::Value;
+    /// use obrain_adapters::plugins::algorithms::projection::ProjectionBuilder;
+    /// use obrain_core::graph::lpg::LpgStore;
+    /// use obrain_common::types::Value;
     ///
     /// let store = LpgStore::new().unwrap();
     /// let builder = ProjectionBuilder::new(&store)
@@ -1459,9 +1459,9 @@ impl<'a> ProjectionBuilder<'a> {
     /// # Example
     ///
     /// ```no_run
-    /// use grafeo_adapters::plugins::algorithms::projection::ProjectionBuilder;
-    /// use grafeo_core::graph::lpg::LpgStore;
-    /// use grafeo_core::graph::GraphStore;
+    /// use obrain_adapters::plugins::algorithms::projection::ProjectionBuilder;
+    /// use obrain_core::graph::lpg::LpgStore;
+    /// use obrain_core::graph::GraphStore;
     ///
     /// let store = LpgStore::new().unwrap();
     /// let projection = ProjectionBuilder::new(&store)
@@ -1490,7 +1490,7 @@ impl<'a> ProjectionBuilder<'a> {
 /// # Example
 ///
 /// ```no_run
-/// use grafeo_adapters::plugins::algorithms::projection::ProjectionConfig;
+/// use obrain_adapters::plugins::algorithms::projection::ProjectionConfig;
 ///
 /// let config = ProjectionConfig::new("code_view")
 ///     .node_labels(vec!["File".into(), "Function".into()])
@@ -1523,7 +1523,7 @@ impl ProjectionConfig {
     /// # Example
     ///
     /// ```no_run
-    /// use grafeo_adapters::plugins::algorithms::projection::ProjectionConfig;
+    /// use obrain_adapters::plugins::algorithms::projection::ProjectionConfig;
     ///
     /// let config = ProjectionConfig::new("my_view");
     /// ```
@@ -1630,9 +1630,9 @@ impl ProjectionConfig {
     /// # Example
     ///
     /// ```no_run
-    /// use grafeo_adapters::plugins::algorithms::projection::ProjectionConfig;
-    /// use grafeo_core::graph::lpg::LpgStore;
-    /// use grafeo_core::graph::GraphStore;
+    /// use obrain_adapters::plugins::algorithms::projection::ProjectionConfig;
+    /// use obrain_core::graph::lpg::LpgStore;
+    /// use obrain_core::graph::GraphStore;
     ///
     /// let store = LpgStore::new().unwrap();
     /// let config = ProjectionConfig::new("view")
@@ -1666,14 +1666,14 @@ impl ProjectionConfig {
 /// over any [`GraphStore`]. Thread-safe via `parking_lot::RwLock`.
 ///
 /// Named projections are created/dropped via:
-/// - `CALL grafeo.projection.create('name', {node_labels: [...], edge_types: [...]})`
-/// - `CALL grafeo.projection.drop('name')`
-/// - `CALL grafeo.projection.list()`
+/// - `CALL obrain.projection.create('name', {node_labels: [...], edge_types: [...]})`
+/// - `CALL obrain.projection.drop('name')`
+/// - `CALL obrain.projection.list()`
 ///
 /// # Example
 ///
 /// ```no_run
-/// use grafeo_adapters::plugins::algorithms::projection::{ProjectionConfig, ProjectionRegistry};
+/// use obrain_adapters::plugins::algorithms::projection::{ProjectionConfig, ProjectionRegistry};
 ///
 /// let registry = ProjectionRegistry::new();
 /// let config = ProjectionConfig::new("code_view")
@@ -1703,7 +1703,7 @@ impl ProjectionRegistry {
     /// # Example
     ///
     /// ```no_run
-    /// use grafeo_adapters::plugins::algorithms::projection::ProjectionRegistry;
+    /// use obrain_adapters::plugins::algorithms::projection::ProjectionRegistry;
     ///
     /// let registry = ProjectionRegistry::new();
     /// ```
@@ -1730,7 +1730,7 @@ impl ProjectionRegistry {
     /// # Example
     ///
     /// ```no_run
-    /// use grafeo_adapters::plugins::algorithms::projection::{ProjectionConfig, ProjectionRegistry};
+    /// use obrain_adapters::plugins::algorithms::projection::{ProjectionConfig, ProjectionRegistry};
     ///
     /// let registry = ProjectionRegistry::new();
     /// registry.create(ProjectionConfig::new("view")).unwrap();
@@ -1764,7 +1764,7 @@ impl ProjectionRegistry {
     /// # Example
     ///
     /// ```no_run
-    /// use grafeo_adapters::plugins::algorithms::projection::{ProjectionConfig, ProjectionRegistry};
+    /// use obrain_adapters::plugins::algorithms::projection::{ProjectionConfig, ProjectionRegistry};
     ///
     /// let registry = ProjectionRegistry::new();
     /// registry.create(ProjectionConfig::new("view")).unwrap();
@@ -1848,7 +1848,7 @@ impl Default for ProjectionRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grafeo_core::graph::lpg::LpgStore;
+    use obrain_core::graph::lpg::LpgStore;
     /// Creates a test graph with multiple labels and edge types:
     ///
     /// (File:f1) --IMPORTS--> (Function:fn1) --CALLS--> (Function:fn2)
@@ -2922,7 +2922,7 @@ mod tests {
 
     #[test]
     fn test_projection_zone_map_delegates() {
-        use grafeo_core::graph::lpg::CompareOp;
+        use obrain_core::graph::lpg::CompareOp;
 
         let store = LpgStore::new().unwrap();
         let n0 = store.create_node(&["File"]);
@@ -3231,7 +3231,7 @@ mod tests {
 
     #[test]
     fn test_projection_versioned_methods() {
-        use grafeo_common::types::{EpochId, TransactionId};
+        use obrain_common::types::{EpochId, TransactionId};
 
         let store = LpgStore::new().unwrap();
         let n0 = store.create_node(&["File"]);

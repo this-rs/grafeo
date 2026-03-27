@@ -3,8 +3,8 @@
 //! Verifies that property mutations (SET, REMOVE) are correctly undone
 //! when a transaction is rolled back.
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 // ============================================================================
 // SET property rollback tests
@@ -12,7 +12,7 @@ use grafeo_engine::GrafeoDB;
 
 #[test]
 fn test_set_property_rollback_restores_original_value() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     // Create a node with a known property value
@@ -48,7 +48,7 @@ fn test_set_property_rollback_restores_original_value() {
 
 #[test]
 fn test_set_new_property_rollback_removes_it() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     // Create a node without the 'status' property
@@ -90,7 +90,7 @@ fn test_set_new_property_rollback_removes_it() {
 
 #[test]
 fn test_set_property_twice_rollback_restores_original() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     // Create a node with initial value
@@ -122,7 +122,7 @@ fn test_set_property_twice_rollback_restores_original() {
 
 #[test]
 fn test_insert_and_set_in_same_transaction_rollback() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     // Begin transaction, insert node, then modify it, then rollback
@@ -148,7 +148,7 @@ fn test_insert_and_set_in_same_transaction_rollback() {
 
 #[test]
 fn test_set_property_committed_stays() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     // Create a node with initial value
@@ -177,7 +177,7 @@ fn test_set_property_committed_stays() {
 
 #[test]
 fn test_set_multiple_properties_rollback() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     // Create a node with multiple properties
@@ -212,7 +212,7 @@ fn test_set_multiple_properties_rollback() {
 #[test]
 fn test_autocommit_set_not_affected() {
     // Verify that auto-commit SET (outside a transaction) still works normally
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -235,7 +235,7 @@ fn test_autocommit_set_not_affected() {
 
 #[test]
 fn test_set_then_commit_then_rollback_different_tx() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     // Create initial data

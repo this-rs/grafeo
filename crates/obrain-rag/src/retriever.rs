@@ -12,14 +12,14 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock, RwLock};
 
-use grafeo_cognitive::activation::{SpreadConfig, SynapseActivationSource, spread};
-use grafeo_cognitive::engram::{
+use obrain_cognitive::activation::{SpreadConfig, SynapseActivationSource, spread};
+use obrain_cognitive::engram::{
     EngramStore, RecallEngine, SpectralEncoder,
     traits::{InMemoryVectorIndex, VectorIndex},
 };
-use grafeo_cognitive::synapse::SynapseStore;
-use grafeo_common::types::NodeId;
-use grafeo_core::LpgStore;
+use obrain_cognitive::synapse::SynapseStore;
+use obrain_common::types::NodeId;
+use obrain_core::LpgStore;
 
 use crate::config::RagConfig;
 use crate::error::{RagError, RagResult};
@@ -301,10 +301,10 @@ impl InvertedIndex {
 // EngramRetriever
 // ─────────────────────────────────────────────────────────────────
 
-/// Schema-agnostic retriever backed by Grafeo's cognitive layer.
+/// Schema-agnostic retriever backed by Obrain's cognitive layer.
 ///
 /// Uses engrams as the abstraction layer so it doesn't need to know
-/// the database schema. Any GrafeoDB with a cognitive engine will work.
+/// the database schema. Any ObrainDB with a cognitive engine will work.
 ///
 /// The internal inverted index is behind a `RwLock` and supports
 /// incremental updates via `index_node()` / `remove_node()`.
@@ -516,7 +516,7 @@ impl EngramRetriever {
         // Get outgoing relations
         let outgoing: Vec<(String, NodeId)> = self
             .graph
-            .edges_from(node_id, grafeo_core::graph::Direction::Outgoing)
+            .edges_from(node_id, obrain_core::graph::Direction::Outgoing)
             .filter_map(|(target, edge_id)| {
                 let edge = self.graph.get_edge(edge_id)?;
                 Some((edge.edge_type.to_string(), target))
@@ -526,7 +526,7 @@ impl EngramRetriever {
         // Get incoming relations
         let incoming: Vec<(String, NodeId)> = self
             .graph
-            .edges_from(node_id, grafeo_core::graph::Direction::Incoming)
+            .edges_from(node_id, obrain_core::graph::Direction::Incoming)
             .filter_map(|(source, edge_id)| {
                 let edge = self.graph.get_edge(edge_id)?;
                 Some((edge.edge_type.to_string(), source))
@@ -733,19 +733,19 @@ mod tests {
             NodeId(1),
             &["Project".to_string()],
             &[
-                ("name".into(), "Grafeo".into()),
+                ("name".into(), "Obrain".into()),
                 ("description".into(), "Graph database engine".into()),
             ],
         );
         idx.add_node(
             NodeId(2),
             &["Note".to_string()],
-            &[("title".into(), "WAL bug in Grafeo".into())],
+            &[("title".into(), "WAL bug in Obrain".into())],
         );
 
-        let results = idx.query(&tokenize_query("Grafeo"), 10);
-        assert!(!results.is_empty(), "Should find nodes matching 'Grafeo'");
-        // Both nodes mention "grafeo"
+        let results = idx.query(&tokenize_query("Obrain"), 10);
+        assert!(!results.is_empty(), "Should find nodes matching 'Obrain'");
+        // Both nodes mention "obrain"
         assert_eq!(results.len(), 2);
     }
 
@@ -755,7 +755,7 @@ mod tests {
         idx.add_node(
             NodeId(1),
             &["Project".to_string()],
-            &[("name".into(), "Grafeo".into())],
+            &[("name".into(), "Obrain".into())],
         );
         idx.add_node(
             NodeId(2),
@@ -767,7 +767,7 @@ mod tests {
         idx.remove_node(NodeId(1));
         assert_eq!(idx.total_nodes, 1);
 
-        let results = idx.query(&tokenize_query("Grafeo"), 10);
+        let results = idx.query(&tokenize_query("Obrain"), 10);
         assert!(results.is_empty(), "Removed node should not appear");
     }
 
@@ -777,17 +777,17 @@ mod tests {
         idx.add_node(
             NodeId(1),
             &["Project".to_string()],
-            &[("name".into(), "Grafeo".into())],
+            &[("name".into(), "Obrain".into())],
         );
         // Re-add same node with different content
         idx.add_node(
             NodeId(1),
             &["Project".to_string()],
-            &[("name".into(), "Grafeo v2".into())],
+            &[("name".into(), "Obrain v2".into())],
         );
         assert_eq!(idx.total_nodes, 1, "Should still be 1 node after update");
 
-        let results = idx.query(&tokenize_query("Grafeo"), 10);
+        let results = idx.query(&tokenize_query("Obrain"), 10);
         assert_eq!(results.len(), 1);
     }
 
@@ -1013,16 +1013,16 @@ mod tests {
     fn idf_changes_with_index_evolution() {
         let mut idx = InvertedIndex::new();
 
-        // Initially: 1 node with "grafeo"
+        // Initially: 1 node with "obrain"
         idx.add_node(
             NodeId(1),
             &["Project".into()],
-            &[("name".into(), "grafeo".into())],
+            &[("name".into(), "obrain".into())],
         );
-        let results1 = idx.query(&tokenize_query("grafeo"), 10);
+        let results1 = idx.query(&tokenize_query("obrain"), 10);
         let score1 = results1[0].1;
 
-        // Add 99 more nodes WITHOUT "grafeo" → IDF of "grafeo" should increase
+        // Add 99 more nodes WITHOUT "obrain" → IDF of "obrain" should increase
         for i in 2..=100 {
             idx.add_node(
                 NodeId(i),
@@ -1032,7 +1032,7 @@ mod tests {
         }
         idx.refresh_cardinalities();
 
-        let results2 = idx.query(&tokenize_query("grafeo"), 10);
+        let results2 = idx.query(&tokenize_query("obrain"), 10);
         let score2 = results2[0].1;
 
         assert!(
@@ -1112,13 +1112,13 @@ mod tests {
         idx.add_node(
             NodeId(1),
             &["Note".into()],
-            &[("content".into(), "grafeo database engine".into())],
+            &[("content".into(), "obrain database engine".into())],
         );
         // Node 2 matches only one term
         idx.add_node(
             NodeId(2),
             &["Note".into()],
-            &[("content".into(), "grafeo project".into())],
+            &[("content".into(), "obrain project".into())],
         );
         idx.refresh_cardinalities();
 
@@ -1168,8 +1168,8 @@ mod tests {
 
     #[test]
     fn tokenize_mixed_case() {
-        let terms = tokenize_query("GraFeo DataBase");
-        assert!(terms.contains(&"grafeo".to_string()));
+        let terms = tokenize_query("OBrain DataBase");
+        assert!(terms.contains(&"obrain".to_string()));
         assert!(terms.contains(&"database".to_string()));
     }
 
@@ -1184,11 +1184,11 @@ mod tests {
             [
                 (
                     "name".to_string(),
-                    grafeo_common::types::Value::from("Grafeo"),
+                    obrain_common::types::Value::from("Obrain"),
                 ),
                 (
                     "description".to_string(),
-                    grafeo_common::types::Value::from("A graph database engine"),
+                    obrain_common::types::Value::from("A graph database engine"),
                 ),
             ],
         );
@@ -1198,11 +1198,11 @@ mod tests {
             [
                 (
                     "title".to_string(),
-                    grafeo_common::types::Value::from("WAL Bug"),
+                    obrain_common::types::Value::from("WAL Bug"),
                 ),
                 (
                     "content".to_string(),
-                    grafeo_common::types::Value::from("checkpoint.meta breaks recovery"),
+                    obrain_common::types::Value::from("checkpoint.meta breaks recovery"),
                 ),
             ],
         );
@@ -1211,7 +1211,7 @@ mod tests {
             &["Task"],
             [(
                 "title".to_string(),
-                grafeo_common::types::Value::from("Fix WAL recovery"),
+                obrain_common::types::Value::from("Fix WAL recovery"),
             )],
         );
 
@@ -1309,8 +1309,8 @@ mod tests {
         let graph = make_test_graph();
         let retriever = make_retriever(graph);
 
-        let cues = retriever.text_to_cues("Grafeo database", 10);
-        assert!(!cues.is_empty(), "Should find nodes matching 'Grafeo'");
+        let cues = retriever.text_to_cues("Obrain database", 10);
+        assert!(!cues.is_empty(), "Should find nodes matching 'Obrain'");
     }
 
     #[test]
@@ -1381,7 +1381,7 @@ mod tests {
         let retriever = make_retriever(graph);
         let config = RagConfig::default();
 
-        let result = retriever.retrieve("Grafeo database", &config).unwrap();
+        let result = retriever.retrieve("Obrain database", &config).unwrap();
         assert!(!result.nodes.is_empty());
 
         let node = &result.nodes[0];
@@ -1414,7 +1414,7 @@ mod tests {
             ..RagConfig::default()
         };
 
-        let result = retriever.retrieve("WAL Grafeo", &config).unwrap();
+        let result = retriever.retrieve("WAL Obrain", &config).unwrap();
         assert!(result.nodes.len() <= 1);
     }
 
@@ -1425,7 +1425,7 @@ mod tests {
         let vector_index = Arc::new(InMemoryVectorIndex::new());
         let spectral = Arc::new(SpectralEncoder::new());
         let synapse_store = Arc::new(SynapseStore::new(
-            grafeo_cognitive::synapse::SynapseConfig::default(),
+            obrain_cognitive::synapse::SynapseConfig::default(),
         ));
 
         let retriever = EngramRetriever::new(
@@ -1445,7 +1445,7 @@ mod tests {
         let graph = make_test_graph();
         let engram_store = Arc::new(EngramStore::new(None));
         let synapse_store = Arc::new(SynapseStore::new(
-            grafeo_cognitive::synapse::SynapseConfig::default(),
+            obrain_cognitive::synapse::SynapseConfig::default(),
         ));
 
         let retriever =
@@ -1453,7 +1453,7 @@ mod tests {
         let config = RagConfig::default();
 
         // Should work even with synapse store (spreading activation path)
-        let result = retriever.retrieve("Grafeo", &config);
+        let result = retriever.retrieve("Obrain", &config);
         assert!(result.is_ok());
     }
 

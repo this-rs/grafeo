@@ -1,12 +1,12 @@
-//! Interactive REPL (Read-Eval-Print Loop) for Grafeo.
+//! Interactive REPL (Read-Eval-Print Loop) for Obrain.
 //!
-//! `grafeo shell <path>` launches a persistent session with history,
+//! `obrain shell <path>` launches a persistent session with history,
 //! transaction tracking, and meta-commands.
 
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use grafeo_engine::GrafeoDB;
+use obrain_engine::ObrainDB;
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
 
@@ -50,7 +50,7 @@ pub fn run(
     if !quiet {
         let info = db.info();
         println!(
-            "Grafeo {} - {:?} mode, {} nodes, {} edges",
+            "Obrain {} - {:?} mode, {} nodes, {} edges",
             info.version, info.mode, info.node_count, info.edge_count
         );
         println!("Type :help for commands, :quit to exit.\n");
@@ -72,8 +72,8 @@ pub fn run(
 
     loop {
         let prompt = match settings.state {
-            ReplState::Idle => "grafeo> ",
-            ReplState::InTransaction => "grafeo[tx]> ",
+            ReplState::Idle => "obrain> ",
+            ReplState::InTransaction => "obrain[tx]> ",
         };
 
         let line = match rl.readline(prompt) {
@@ -226,8 +226,8 @@ enum MetaResult {
 /// Process a `:` meta-command.
 fn handle_meta_command(
     cmd: &str,
-    db: &GrafeoDB,
-    session: &mut grafeo_engine::Session,
+    db: &ObrainDB,
+    session: &mut obrain_engine::Session,
     settings: &mut ReplSettings,
 ) -> MetaResult {
     let ReplSettings {
@@ -263,7 +263,7 @@ fn handle_meta_command(
         ":schema" => {
             let schema = db.schema();
             match schema {
-                grafeo_engine::SchemaInfo::Lpg(lpg) => {
+                obrain_engine::SchemaInfo::Lpg(lpg) => {
                     if !quiet {
                         println!("Labels:");
                         for label in &lpg.labels {
@@ -279,7 +279,7 @@ fn handle_meta_command(
                         }
                     }
                 }
-                grafeo_engine::SchemaInfo::Rdf(rdf) => {
+                obrain_engine::SchemaInfo::Rdf(rdf) => {
                     if !quiet {
                         println!("Predicates:");
                         for pred in &rdf.predicates {
@@ -403,7 +403,7 @@ fn handle_meta_command(
 
 /// Get the history file path.
 fn dirs_history_path() -> Option<std::path::PathBuf> {
-    // Use %APPDATA%/grafeo/history on Windows, ~/.config/grafeo/history on Unix
+    // Use %APPDATA%/obrain/history on Windows, ~/.config/obrain/history on Unix
     let base = if cfg!(windows) {
         std::env::var_os("APPDATA").map(std::path::PathBuf::from)
     } else {
@@ -413,5 +413,5 @@ fn dirs_history_path() -> Option<std::path::PathBuf> {
                 std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))
             })
     };
-    base.map(|b| b.join("grafeo").join("history"))
+    base.map(|b| b.join("obrain").join("history"))
 }

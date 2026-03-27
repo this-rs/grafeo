@@ -7,19 +7,19 @@
 //! - apply.rs: EXISTS semi-join, anti-join, optional NULL padding
 //!
 //! ```bash
-//! cargo test -p grafeo-engine --features full --test subquery_integration
+//! cargo test -p obrain-engine --features full --test subquery_integration
 //! ```
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 // ============================================================================
 // Fixtures
 // ============================================================================
 
 /// Creates 3 Person + 1 Company nodes (Amsterdam/Berlin/Paris), 3 KNOWS + 2 WORKS_AT edges.
-fn social_graph() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn social_graph() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let alix = session.create_node_with_props(

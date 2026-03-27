@@ -1,14 +1,14 @@
 //! MVCC (Multi-Version Concurrency Control) re-exports.
 //!
-//! The core MVCC types are defined in `grafeo-common` and re-exported here
+//! The core MVCC types are defined in `obrain-common` and re-exported here
 //! for convenience within the engine crate.
 
-pub use grafeo_common::mvcc::{VersionChain, VersionInfo};
+pub use obrain_common::mvcc::{VersionChain, VersionInfo};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grafeo_common::types::{EpochId, TransactionId};
+    use obrain_common::types::{EpochId, TransactionId};
 
     #[test]
     fn test_version_visibility() {

@@ -327,7 +327,7 @@ impl Sink for ChunkCollector {
 mod tests {
     use super::*;
     use crate::execution::vector::ValueVector;
-    use grafeo_common::types::Value;
+    use obrain_common::types::Value;
 
     /// Test source that produces a fixed number of chunks.
     struct TestSource {

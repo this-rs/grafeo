@@ -2,7 +2,7 @@
 
 #[cfg(feature = "sparql")]
 mod tests {
-    use grafeo_adapters::query::sparql::{self, ast};
+    use obrain_adapters::query::sparql::{self, ast};
 
     #[test]
     fn test_parse_simple_select() {

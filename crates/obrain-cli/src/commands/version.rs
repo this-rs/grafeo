@@ -7,7 +7,7 @@ pub fn run(quiet: bool) {
     }
 
     let version = env!("CARGO_PKG_VERSION");
-    println!("grafeo {version}");
+    println!("obrain {version}");
     println!();
 
     // Build info
@@ -68,7 +68,7 @@ fn config_dir() -> Option<std::path::PathBuf> {
                 std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))
             })
     };
-    base.map(|b| b.join("grafeo"))
+    base.map(|b| b.join("obrain"))
 }
 
 /// Get the history file path.
@@ -91,7 +91,7 @@ mod tests {
         // On CI or dev machines, HOME/APPDATA is usually set
         let dir = config_dir();
         if let Some(d) = dir {
-            assert!(d.ends_with("grafeo"));
+            assert!(d.ends_with("obrain"));
         }
     }
 
@@ -99,7 +99,7 @@ mod tests {
     fn test_history_file_ends_with_history() {
         let path = history_file();
         if let Some(p) = path {
-            assert!(p.ends_with("grafeo/history") || p.ends_with("grafeo\\history"));
+            assert!(p.ends_with("obrain/history") || p.ends_with("obrain\\history"));
         }
     }
 }

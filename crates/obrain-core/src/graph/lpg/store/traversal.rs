@@ -3,7 +3,7 @@
 use super::LpgStore;
 use crate::graph::Direction;
 use crate::graph::lpg::{Edge, Node};
-use grafeo_common::types::{EdgeId, NodeId};
+use obrain_common::types::{EdgeId, NodeId};
 
 impl LpgStore {
     // === Traversal ===
@@ -75,8 +75,8 @@ impl LpgStore {
     /// # Example
     ///
     /// ```
-    /// # use grafeo_core::graph::lpg::LpgStore;
-    /// # use grafeo_common::types::Value;
+    /// # use obrain_core::graph::lpg::LpgStore;
+    /// # use obrain_common::types::Value;
     /// let store = LpgStore::new().expect("arena allocation");
     /// let a = store.create_node(&["Node"]);
     /// let b = store.create_node(&["Node"]);

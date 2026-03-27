@@ -2,9 +2,9 @@
 
 #![cfg(feature = "synapse")]
 
-use grafeo_cognitive::{Synapse, SynapseConfig, SynapseListener, SynapseStore};
-use grafeo_common::types::NodeId;
-use grafeo_reactive::{MutationEvent, MutationListener, NodeSnapshot};
+use obrain_cognitive::{Synapse, SynapseConfig, SynapseListener, SynapseStore};
+use obrain_common::types::NodeId;
+use obrain_reactive::{MutationEvent, MutationListener, NodeSnapshot};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -20,9 +20,9 @@ fn make_node(id: u64) -> NodeSnapshot {
     }
 }
 
-fn make_edge_snapshot(id: u64, src: u64, dst: u64) -> grafeo_reactive::EdgeSnapshot {
-    grafeo_reactive::EdgeSnapshot {
-        id: grafeo_common::types::EdgeId::new(id),
+fn make_edge_snapshot(id: u64, src: u64, dst: u64) -> obrain_reactive::EdgeSnapshot {
+    obrain_reactive::EdgeSnapshot {
+        id: obrain_common::types::EdgeId::new(id),
         src: NodeId::new(src),
         dst: NodeId::new(dst),
         edge_type: arcstr::literal!("KNOWS"),

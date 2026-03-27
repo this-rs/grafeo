@@ -1,9 +1,9 @@
-//! Integration tests for the single-file `.grafeo` database format.
+//! Integration tests for the single-file `.obrain` database format.
 
-#![cfg(feature = "grafeo-file")]
+#![cfg(feature = "obrain-file")]
 
-use grafeo_common::types::Value;
-use grafeo_engine::{Config, GrafeoDB};
+use obrain_common::types::Value;
+use obrain_engine::{Config, ObrainDB};
 
 /// Helper: extract string values from column 0 of query result rows.
 fn extract_strings(rows: &[Vec<Value>]) -> Vec<String> {
@@ -18,7 +18,7 @@ fn extract_strings(rows: &[Vec<Value>]) -> Vec<String> {
     names
 }
 
-/// Helper: compute sidecar WAL path for a .grafeo file.
+/// Helper: compute sidecar WAL path for a .obrain file.
 fn sidecar_wal_path(db_path: &std::path::Path) -> std::path::PathBuf {
     let mut p = db_path.as_os_str().to_owned();
     p.push(".wal");
@@ -30,11 +30,11 @@ fn sidecar_wal_path(db_path: &std::path::Path) -> std::path::PathBuf {
 // =========================================================================
 
 #[test]
-fn create_new_grafeo_file() {
+fn create_new_obrain_file() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("test.grafeo");
+    let path = dir.path().join("test.obrain");
 
-    let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+    let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
     assert_eq!(db.node_count(), 0);
     assert_eq!(db.edge_count(), 0);
 
@@ -48,11 +48,11 @@ fn create_new_grafeo_file() {
 #[test]
 fn insert_close_reopen_persists_data() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("persist.grafeo");
+    let path = dir.path().join("persist.obrain");
 
     // Create and populate
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         let session = db.session();
         session
             .execute("INSERT (:Person {name: 'Alix', age: 30})")
@@ -79,7 +79,7 @@ fn insert_close_reopen_persists_data() {
 
     // Reopen and verify
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         assert_eq!(db.node_count(), 2);
         assert_eq!(db.edge_count(), 1);
 
@@ -94,12 +94,12 @@ fn insert_close_reopen_persists_data() {
 }
 
 #[test]
-fn save_as_grafeo_file_from_in_memory() {
+fn save_as_obrain_file_from_in_memory() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("exported.grafeo");
+    let path = dir.path().join("exported.obrain");
 
     // Create in-memory DB and populate
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("INSERT (:City {name: 'Amsterdam'})")
@@ -107,11 +107,11 @@ fn save_as_grafeo_file_from_in_memory() {
     session.execute("INSERT (:City {name: 'Berlin'})").unwrap();
     assert_eq!(db.node_count(), 2);
 
-    // Save as .grafeo file
+    // Save as .obrain file
     db.save(&path).unwrap();
 
     // Open the file and verify
-    let db2 = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+    let db2 = ObrainDB::with_config(Config::persistent(&path)).unwrap();
     assert_eq!(db2.node_count(), 2);
 
     let session2 = db2.session();
@@ -125,9 +125,9 @@ fn save_as_grafeo_file_from_in_memory() {
 #[test]
 fn wal_checkpoint_writes_to_file() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("checkpoint.grafeo");
+    let path = dir.path().join("checkpoint.obrain");
 
-    let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+    let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
     let session = db.session();
     session
         .execute("INSERT (:Person {name: 'Vincent'})")
@@ -149,9 +149,9 @@ fn wal_checkpoint_writes_to_file() {
 #[test]
 fn multiple_checkpoints_alternate_headers() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("multi.grafeo");
+    let path = dir.path().join("multi.obrain");
 
-    let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+    let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
     let session = db.session();
 
     session.execute("INSERT (:Person {name: 'Jules'})").unwrap();
@@ -168,20 +168,20 @@ fn multiple_checkpoints_alternate_headers() {
     db.close().unwrap();
 
     // Reopen and verify both nodes are there
-    let db2 = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+    let db2 = ObrainDB::with_config(Config::persistent(&path)).unwrap();
     assert_eq!(db2.node_count(), 2);
     db2.close().unwrap();
 }
 
 #[test]
-fn auto_detect_does_not_use_grafeo_file_for_directory_path() {
+fn auto_detect_does_not_use_obrain_file_for_directory_path() {
     let dir = tempfile::TempDir::new().unwrap();
     let path = dir.path().join("test_legacy");
 
-    // Without .grafeo extension, should use WAL directory format
-    let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+    // Without .obrain extension, should use WAL directory format
+    let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
 
-    #[cfg(feature = "grafeo-file")]
+    #[cfg(feature = "obrain-file")]
     assert!(
         db.file_manager().is_none(),
         "directory path should not use single-file format"
@@ -198,9 +198,9 @@ fn auto_detect_does_not_use_grafeo_file_for_directory_path() {
 #[test]
 fn info_reports_persistence() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("info.grafeo");
+    let path = dir.path().join("info.obrain");
 
-    let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+    let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
     let info = db.info();
     assert!(info.is_persistent);
     assert!(info.path.is_some());
@@ -214,9 +214,9 @@ fn info_reports_persistence() {
 #[test]
 fn checkpoint_merges_incremental_writes() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("merge.grafeo");
+    let path = dir.path().join("merge.obrain");
 
-    let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+    let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
     let session = db.session();
 
     // Batch 1: insert 3 nodes, checkpoint
@@ -257,7 +257,7 @@ fn checkpoint_merges_incremental_writes() {
     db.close().unwrap();
 
     // Reopen and verify final state
-    let db2 = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+    let db2 = ObrainDB::with_config(Config::persistent(&path)).unwrap();
     assert_eq!(db2.node_count(), 4);
     assert_eq!(db2.edge_count(), 1);
 
@@ -282,9 +282,9 @@ fn checkpoint_merges_incremental_writes() {
 #[test]
 fn writes_after_checkpoint_survive_reopen() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("post_checkpoint.grafeo");
+    let path = dir.path().join("post_checkpoint.obrain");
 
-    let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+    let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
     let session = db.session();
 
     session
@@ -298,7 +298,7 @@ fn writes_after_checkpoint_survive_reopen() {
     db.close().unwrap(); // close() does its own checkpoint
 
     // Reopen: all 3 cities should be present
-    let db2 = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+    let db2 = ObrainDB::with_config(Config::persistent(&path)).unwrap();
     assert_eq!(db2.node_count(), 3);
 
     let session2 = db2.session();
@@ -319,15 +319,15 @@ fn writes_after_checkpoint_survive_reopen() {
 #[test]
 fn empty_database_roundtrip() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("empty.grafeo");
+    let path = dir.path().join("empty.obrain");
 
     // Create, close immediately, reopen
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         db.close().unwrap();
     }
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         assert_eq!(db.node_count(), 0);
         assert_eq!(db.edge_count(), 0);
         db.close().unwrap();
@@ -337,11 +337,11 @@ fn empty_database_roundtrip() {
 #[test]
 fn multiple_reopen_cycles() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("cycles.grafeo");
+    let path = dir.path().join("cycles.obrain");
 
     // Cycle 1: create with data
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         db.session()
             .execute("INSERT (:Person {name: 'Alix'})")
             .unwrap();
@@ -350,7 +350,7 @@ fn multiple_reopen_cycles() {
 
     // Cycle 2: add more data
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         assert_eq!(db.node_count(), 1);
         db.session()
             .execute("INSERT (:Person {name: 'Gus'})")
@@ -360,7 +360,7 @@ fn multiple_reopen_cycles() {
 
     // Cycle 3: add more data
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         assert_eq!(db.node_count(), 2);
         db.session()
             .execute("INSERT (:Person {name: 'Vincent'})")
@@ -370,7 +370,7 @@ fn multiple_reopen_cycles() {
 
     // Cycle 4: verify all data present
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         assert_eq!(db.node_count(), 3);
         let session = db.session();
         let result = session
@@ -387,12 +387,12 @@ fn multiple_reopen_cycles() {
 #[test]
 fn large_property_values_roundtrip() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("large_props.grafeo");
+    let path = dir.path().join("large_props.obrain");
 
     let big_string = "x".repeat(100_000);
 
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         let session = db.session();
         session
             .execute_with_params(
@@ -406,7 +406,7 @@ fn large_property_values_roundtrip() {
     }
 
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         let session = db.session();
         let result = session.execute("MATCH (d:Doc) RETURN d.content").unwrap();
         match &result.rows[0][0] {
@@ -420,10 +420,10 @@ fn large_property_values_roundtrip() {
 #[test]
 fn diverse_property_types_roundtrip() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("types.grafeo");
+    let path = dir.path().join("types.obrain");
 
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         let session = db.session();
         session
             .execute(
@@ -440,7 +440,7 @@ fn diverse_property_types_roundtrip() {
     }
 
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         let session = db.session();
         let result = session
             .execute(
@@ -460,10 +460,10 @@ fn diverse_property_types_roundtrip() {
 #[test]
 fn open_nonexistent_creates_new() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("new.grafeo");
+    let path = dir.path().join("new.obrain");
 
     assert!(!path.exists());
-    let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+    let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
     assert!(path.exists());
     assert_eq!(db.node_count(), 0);
     db.close().unwrap();
@@ -472,9 +472,9 @@ fn open_nonexistent_creates_new() {
 #[test]
 fn file_grows_and_shrinks_with_data() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("size.grafeo");
+    let path = dir.path().join("size.obrain");
 
-    let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+    let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
     let fm = db.file_manager().unwrap();
     let initial_size = fm.file_size().unwrap();
 
@@ -509,9 +509,9 @@ fn file_grows_and_shrinks_with_data() {
 #[test]
 fn sidecar_wal_exists_during_operation() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("wal_lifecycle.grafeo");
+    let path = dir.path().join("wal_lifecycle.obrain");
 
-    let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+    let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
     let session = db.session();
     session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
@@ -529,9 +529,9 @@ fn sidecar_wal_exists_during_operation() {
 #[test]
 fn checkpoint_idempotent() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("idempotent.grafeo");
+    let path = dir.path().join("idempotent.obrain");
 
-    let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+    let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
     let session = db.session();
     session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
@@ -558,10 +558,10 @@ fn checkpoint_idempotent() {
 #[test]
 fn concurrent_sessions_before_close() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("sessions.grafeo");
+    let path = dir.path().join("sessions.obrain");
 
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
 
         // Multiple sessions writing data
         let s1 = db.session();
@@ -576,7 +576,7 @@ fn concurrent_sessions_before_close() {
     }
 
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         assert_eq!(db.node_count(), 3);
         db.close().unwrap();
     }
@@ -585,10 +585,10 @@ fn concurrent_sessions_before_close() {
 #[test]
 fn named_graphs_persist() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("named_graphs.grafeo");
+    let path = dir.path().join("named_graphs.obrain");
 
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         let session = db.session();
         session.execute("CREATE GRAPH social").unwrap();
         session.execute("USE GRAPH social").unwrap();
@@ -599,7 +599,7 @@ fn named_graphs_persist() {
     }
 
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         // Default graph should have Gus
         let session = db.session();
         let result = session.execute("MATCH (p:Person) RETURN p.name").unwrap();
@@ -616,10 +616,10 @@ fn named_graphs_persist() {
 #[test]
 fn edges_with_properties_persist() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("edge_props.grafeo");
+    let path = dir.path().join("edge_props.obrain");
 
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         let session = db.session();
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
         session.execute("INSERT (:Person {name: 'Gus'})").unwrap();
@@ -633,7 +633,7 @@ fn edges_with_properties_persist() {
     }
 
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         let session = db.session();
         let result = session
             .execute("MATCH ()-[e:KNOWS]->() RETURN e.since, e.strength")
@@ -652,11 +652,11 @@ fn edges_with_properties_persist() {
 #[test]
 fn corrupt_snapshot_detected_on_open() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("corrupt.grafeo");
+    let path = dir.path().join("corrupt.obrain");
 
     // Write valid data
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         let session = db.session();
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
         db.close().unwrap();
@@ -671,7 +671,7 @@ fn corrupt_snapshot_detected_on_open() {
     }
 
     // Opening should fail with a checksum error
-    let result = GrafeoDB::with_config(Config::persistent(&path));
+    let result = ObrainDB::with_config(Config::persistent(&path));
     assert!(result.is_err());
     let err_msg = result.err().unwrap().to_string();
     assert!(
@@ -683,9 +683,9 @@ fn corrupt_snapshot_detected_on_open() {
 #[test]
 fn validate_reports_clean_state() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("valid.grafeo");
+    let path = dir.path().join("valid.obrain");
 
-    let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+    let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
     let session = db.session();
     session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
     session.execute("INSERT (:Person {name: 'Gus'})").unwrap();
@@ -708,9 +708,9 @@ fn validate_reports_clean_state() {
 #[test]
 fn wal_status_reflects_single_file() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("wal_status.grafeo");
+    let path = dir.path().join("wal_status.obrain");
 
-    let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+    let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
     let session = db.session();
     session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
@@ -721,11 +721,11 @@ fn wal_status_reflects_single_file() {
 }
 
 #[test]
-fn detailed_stats_with_grafeo_file() {
+fn detailed_stats_with_obrain_file() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("stats.grafeo");
+    let path = dir.path().join("stats.obrain");
 
-    let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+    let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
     let session = db.session();
 
     for i in 0..10 {
@@ -748,20 +748,20 @@ fn detailed_stats_with_grafeo_file() {
 #[test]
 fn second_open_of_same_file_is_rejected() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("locked.grafeo");
+    let path = dir.path().join("locked.obrain");
 
-    let db1 = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+    let db1 = ObrainDB::with_config(Config::persistent(&path)).unwrap();
     let session = db1.session();
     session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
     // Second open should fail because the file is locked
-    let result = GrafeoDB::open(&path);
+    let result = ObrainDB::open(&path);
     assert!(result.is_err(), "second open should fail due to file lock");
 
     db1.close().unwrap();
 
     // After close, open should succeed
-    let db2 = GrafeoDB::open(&path).unwrap();
+    let db2 = ObrainDB::open(&path).unwrap();
     assert_eq!(db2.node_count(), 1);
     db2.close().unwrap();
 }
@@ -769,16 +769,16 @@ fn second_open_of_same_file_is_rejected() {
 #[test]
 fn lock_released_on_drop() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("drop_lock.grafeo");
+    let path = dir.path().join("drop_lock.obrain");
 
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         db.session().execute("INSERT (:X {v: 1})").unwrap();
         // Drop without explicit close: lock should still be released
     }
 
     // Should be able to open after drop
-    let db2 = GrafeoDB::open(&path).unwrap();
+    let db2 = ObrainDB::open(&path).unwrap();
     // Data may or may not persist (no explicit close/checkpoint), but open should succeed
     db2.close().unwrap();
 }
@@ -790,11 +790,11 @@ fn lock_released_on_drop() {
 #[test]
 fn node_type_definitions_persist() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("schema.grafeo");
+    let path = dir.path().join("schema.obrain");
 
     // Create DB and define node types
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         let session = db.session();
         session
             .execute("CREATE NODE TYPE Person (name STRING NOT NULL, age INT64)")
@@ -810,7 +810,7 @@ fn node_type_definitions_persist() {
 
     // Reopen and verify types survived
     {
-        let db = GrafeoDB::open(&path).unwrap();
+        let db = ObrainDB::open(&path).unwrap();
         let session = db.session();
 
         // Verify data
@@ -836,10 +836,10 @@ fn node_type_definitions_persist() {
 #[test]
 fn edge_type_definitions_persist() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("edge_types.grafeo");
+    let path = dir.path().join("edge_types.obrain");
 
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         let session = db.session();
         session
             .execute("CREATE EDGE TYPE KNOWS (since INT64)")
@@ -851,7 +851,7 @@ fn edge_type_definitions_persist() {
     }
 
     {
-        let db = GrafeoDB::open(&path).unwrap();
+        let db = ObrainDB::open(&path).unwrap();
         let session = db.session();
 
         let result = session.execute("SHOW EDGE TYPES").unwrap();
@@ -872,10 +872,10 @@ fn edge_type_definitions_persist() {
 #[test]
 fn graph_type_definitions_persist() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("graph_types.grafeo");
+    let path = dir.path().join("graph_types.obrain");
 
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         let session = db.session();
         session
             .execute("CREATE NODE TYPE Person (name STRING)")
@@ -895,7 +895,7 @@ fn graph_type_definitions_persist() {
     }
 
     {
-        let db = GrafeoDB::open(&path).unwrap();
+        let db = ObrainDB::open(&path).unwrap();
         let session = db.session();
 
         let result = session.execute("SHOW GRAPH TYPES").unwrap();
@@ -911,7 +911,7 @@ fn graph_type_definitions_persist() {
 
 #[test]
 fn schema_survives_export_import_roundtrip() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -923,7 +923,7 @@ fn schema_survives_export_import_roundtrip() {
 
     // Export and import
     let snapshot = db.export_snapshot().unwrap();
-    let db2 = GrafeoDB::import_snapshot(&snapshot).unwrap();
+    let db2 = ObrainDB::import_snapshot(&snapshot).unwrap();
     let session2 = db2.session();
 
     // Verify data
@@ -942,10 +942,10 @@ fn schema_survives_export_import_roundtrip() {
 #[test]
 fn stored_procedures_persist() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("procedures.grafeo");
+    let path = dir.path().join("procedures.obrain");
 
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         let session = db.session();
         session
             .execute(
@@ -957,7 +957,7 @@ fn stored_procedures_persist() {
     }
 
     {
-        let db = GrafeoDB::open(&path).unwrap();
+        let db = ObrainDB::open(&path).unwrap();
         let session = db.session();
         // Insert data so the procedure has something to return
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
@@ -972,11 +972,11 @@ fn stored_procedures_persist() {
 #[test]
 fn schema_with_data_across_multiple_cycles() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("schema_cycles.grafeo");
+    let path = dir.path().join("schema_cycles.obrain");
 
     // Cycle 1: Create type + insert
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         let session = db.session();
         session
             .execute("CREATE NODE TYPE Person (name STRING NOT NULL)")
@@ -987,7 +987,7 @@ fn schema_with_data_across_multiple_cycles() {
 
     // Cycle 2: Add another type + more data
     {
-        let db = GrafeoDB::open(&path).unwrap();
+        let db = ObrainDB::open(&path).unwrap();
         let session = db.session();
 
         // Verify first type survived
@@ -1005,7 +1005,7 @@ fn schema_with_data_across_multiple_cycles() {
 
     // Cycle 3: Verify everything
     {
-        let db = GrafeoDB::open(&path).unwrap();
+        let db = ObrainDB::open(&path).unwrap();
         let session = db.session();
 
         let result = session.execute("SHOW NODE TYPES").unwrap();

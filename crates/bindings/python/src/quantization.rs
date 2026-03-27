@@ -3,7 +3,7 @@
 //! Provides Python access to scalar and product quantization for
 //! memory-efficient vector storage.
 
-use grafeo_core::index::vector::{
+use obrain_core::index::vector::{
     BinaryQuantizer, ProductQuantizer, QuantizationType, ScalarQuantizer,
 };
 use pyo3::prelude::*;
@@ -20,7 +20,7 @@ use pyo3::prelude::*;
 /// - "product" or "pq": Product quantization, 8-32x compression, ~90% accuracy
 ///
 /// Example:
-///     quant_type = grafeo.QuantizationType.from_str("scalar")
+///     quant_type = obrain.QuantizationType.from_str("scalar")
 ///     print(quant_type.name())  # "scalar"
 ///     print(quant_type.compression_ratio(384))  # 4
 #[pyclass(name = "QuantizationType")]
@@ -114,7 +114,7 @@ impl PyQuantizationType {
 /// Example:
 ///     # Train on sample vectors
 ///     vectors = [[0.1, 0.5, 0.9], [0.2, 0.3, 0.8], [0.0, 0.6, 1.0]]
-///     quantizer = grafeo.ScalarQuantizer.train(vectors)
+///     quantizer = obrain.ScalarQuantizer.train(vectors)
 ///
 ///     # Quantize a vector
 ///     quantized = quantizer.quantize([0.15, 0.45, 0.85])
@@ -230,7 +230,7 @@ impl PyScalarQuantizer {
 ///     vectors = [[random.random() for _ in range(384)] for _ in range(1000)]
 ///
 ///     # Train with 8 subvectors, 256 centroids
-///     quantizer = grafeo.ProductQuantizer.train(vectors, num_subvectors=8)
+///     quantizer = obrain.ProductQuantizer.train(vectors, num_subvectors=8)
 ///
 ///     # Quantize a vector to 8 u8 codes
 ///     codes = quantizer.quantize(vectors[0])
@@ -380,11 +380,11 @@ impl PyProductQuantizer {
 ///
 /// Example:
 ///     # Quantize vectors to binary
-///     bits1 = grafeo.BinaryQuantizer.quantize([0.5, -0.3, 0.0, 0.8])
-///     bits2 = grafeo.BinaryQuantizer.quantize([0.4, -0.2, 0.1, 0.7])
+///     bits1 = obrain.BinaryQuantizer.quantize([0.5, -0.3, 0.0, 0.8])
+///     bits2 = obrain.BinaryQuantizer.quantize([0.4, -0.2, 0.1, 0.7])
 ///
 ///     # Compute hamming distance
-///     dist = grafeo.BinaryQuantizer.hamming_distance(bits1, bits2)
+///     dist = obrain.BinaryQuantizer.hamming_distance(bits1, bits2)
 #[pyclass(name = "BinaryQuantizer")]
 pub struct PyBinaryQuantizer;
 
@@ -438,7 +438,7 @@ impl PyBinaryQuantizer {
 // Module Registration
 // ============================================================================
 
-/// Registers quantization types in the grafeo module.
+/// Registers quantization types in the obrain module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyQuantizationType>()?;
     m.add_class::<PyScalarQuantizer>()?;

@@ -2,15 +2,15 @@
 //!
 //! Extracts the k-hop neighborhood around a center node using bounded BFS,
 //! with optional relation-type filtering and stratified sampling. This is the
-//! native Grafeo replacement for Cypher-based ego-graph extraction (~8ms → <100μs).
+//! native Obrain replacement for Cypher-based ego-graph extraction (~8ms → <100μs).
 
 use std::sync::OnceLock;
 
-use grafeo_common::types::{EdgeId, NodeId, PropertyKey, Value};
-use grafeo_common::utils::error::Result;
-use grafeo_common::utils::hash::{FxHashMap, FxHashSet};
-use grafeo_core::graph::Direction;
-use grafeo_core::graph::GraphStore;
+use obrain_common::types::{EdgeId, NodeId, PropertyKey, Value};
+use obrain_common::utils::error::Result;
+use obrain_common::utils::hash::{FxHashMap, FxHashSet};
+use obrain_core::graph::Direction;
+use obrain_core::graph::GraphStore;
 
 use super::super::{AlgorithmResult, ParameterDef, ParameterType, Parameters};
 use super::traits::GraphAlgorithm;
@@ -54,9 +54,9 @@ pub struct EgoEdge {
 /// # Example
 ///
 /// ```no_run
-/// use grafeo_adapters::plugins::algorithms::{khop_subgraph, KHopConfig};
-/// use grafeo_core::graph::lpg::LpgStore;
-/// use grafeo_common::types::NodeId;
+/// use obrain_adapters::plugins::algorithms::{khop_subgraph, KHopConfig};
+/// use obrain_core::graph::lpg::LpgStore;
+/// use obrain_common::types::NodeId;
 ///
 /// let store = LpgStore::new().unwrap();
 /// let n0 = store.create_node(&["Person"]);
@@ -124,8 +124,8 @@ impl EgoGraph {
 /// # Example
 ///
 /// ```no_run
-/// use grafeo_adapters::plugins::algorithms::KHopConfig;
-/// use grafeo_common::types::NodeId;
+/// use obrain_adapters::plugins::algorithms::KHopConfig;
+/// use obrain_common::types::NodeId;
 ///
 /// let config = KHopConfig {
 ///     center: NodeId::new(42),
@@ -180,9 +180,9 @@ pub struct KHopConfig {
 /// # Example
 ///
 /// ```no_run
-/// use grafeo_adapters::plugins::algorithms::{khop_subgraph, KHopConfig};
-/// use grafeo_core::graph::lpg::LpgStore;
-/// use grafeo_common::types::NodeId;
+/// use obrain_adapters::plugins::algorithms::{khop_subgraph, KHopConfig};
+/// use obrain_core::graph::lpg::LpgStore;
+/// use obrain_common::types::NodeId;
 ///
 /// let store = LpgStore::new().unwrap();
 /// let center = store.create_node(&["Person"]);
@@ -368,7 +368,7 @@ fn khop_params() -> &'static [ParameterDef] {
 
 /// K-hop ego-graph extraction algorithm wrapper for the plugin registry.
 ///
-/// Callable via `CALL grafeo.subgraph.khop(center, k, rel_types, max_per_hop)
+/// Callable via `CALL obrain.subgraph.khop(center, k, rel_types, max_per_hop)
 /// YIELD node, edge, hop`.
 ///
 /// # Output Columns
@@ -396,12 +396,12 @@ impl GraphAlgorithm for KHopAlgorithm {
 
     fn execute(&self, store: &dyn GraphStore, params: &Parameters) -> Result<AlgorithmResult> {
         let center_id = params.get_int("center").ok_or_else(|| {
-            grafeo_common::utils::error::Error::InvalidValue(
+            obrain_common::utils::error::Error::InvalidValue(
                 "center parameter required".to_string(),
             )
         })?;
         let k = params.get_int("k").ok_or_else(|| {
-            grafeo_common::utils::error::Error::InvalidValue("k parameter required".to_string())
+            obrain_common::utils::error::Error::InvalidValue("k parameter required".to_string())
         })?;
 
         // Parse rel_types from comma-separated string
@@ -475,7 +475,7 @@ impl GraphAlgorithm for KHopAlgorithm {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grafeo_core::graph::lpg::LpgStore;
+    use obrain_core::graph::lpg::LpgStore;
 
     fn create_multi_rel_graph() -> LpgStore {
         let store = LpgStore::new().unwrap();

@@ -1,10 +1,10 @@
 //! Hierarchical memory usage breakdown for the database.
 //!
-//! Store-level types (`StoreMemory`, `IndexMemory`, etc.) live in grafeo-common.
+//! Store-level types (`StoreMemory`, `IndexMemory`, etc.) live in obrain-common.
 //! This module defines the top-level `MemoryUsage` aggregate and engine-specific
 //! types (`CacheMemory`, `BufferManagerMemory`).
 
-pub use grafeo_common::memory::usage::{
+pub use obrain_common::memory::usage::{
     IndexMemory, MvccMemory, NamedMemory, StoreMemory, StringPoolMemory,
 };
 use serde::{Deserialize, Serialize};

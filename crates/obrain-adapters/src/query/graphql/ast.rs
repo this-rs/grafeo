@@ -2,7 +2,7 @@
 //!
 //! Represents the structure of GraphQL documents according to the specification.
 
-use grafeo_common::types::Value;
+use obrain_common::types::Value;
 
 /// A complete GraphQL document.
 #[derive(Debug, Clone)]
@@ -145,7 +145,7 @@ pub enum InputValue {
 }
 
 impl InputValue {
-    /// Converts to a grafeo Value.
+    /// Converts to a obrain Value.
     pub fn to_value(&self) -> Value {
         match self {
             InputValue::Int(n) => Value::Int64(*n),

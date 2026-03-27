@@ -15,8 +15,8 @@
 //! # Example
 //!
 //! ```rust
-//! use grafeo_core::execution::factorized_chunk::FactorizedChunk;
-//! use grafeo_core::execution::factorized_iter::PrecomputedIter;
+//! use obrain_core::execution::factorized_chunk::FactorizedChunk;
+//! use obrain_core::execution::factorized_iter::PrecomputedIter;
 //!
 //! let chunk = FactorizedChunk::empty();
 //!
@@ -32,7 +32,7 @@
 use smallvec::SmallVec;
 
 use super::factorized_chunk::FactorizedChunk;
-use grafeo_common::types::{EdgeId, NodeId, Value};
+use obrain_common::types::{EdgeId, NodeId, Value};
 
 /// Maximum number of levels to stack-allocate.
 /// 4 levels covers most practical graph queries (source -> hop1 -> hop2 -> hop3).
@@ -524,7 +524,7 @@ mod tests {
     use crate::execution::factorized_chunk::FactorizationLevel;
     use crate::execution::factorized_vector::FactorizedVector;
     use crate::execution::vector::ValueVector;
-    use grafeo_common::types::{LogicalType, NodeId};
+    use obrain_common::types::{LogicalType, NodeId};
 
     fn create_test_chunk() -> FactorizedChunk {
         // Level 0: 2 sources with values [10, 20]

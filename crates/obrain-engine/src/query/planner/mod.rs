@@ -23,10 +23,10 @@ pub use lpg::Planner;
 use crate::query::plan::{
     AggregateFunction as LogicalAggregateFunction, BinaryOp, LogicalExpression, UnaryOp,
 };
-use grafeo_common::types::LogicalType;
-use grafeo_common::utils::error::{Error, Result};
-use grafeo_core::execution::AdaptiveContext;
-use grafeo_core::execution::operators::{
+use obrain_common::types::LogicalType;
+use obrain_common::utils::error::{Error, Result};
+use obrain_core::execution::AdaptiveContext;
+use obrain_core::execution::operators::{
     AggregateFunction as PhysicalAggregateFunction, BinaryFilterOp, FilterExpression, Operator,
     UnaryFilterOp,
 };
@@ -287,10 +287,10 @@ pub fn convert_filter_expression(expr: &LogicalExpression) -> Result<FilterExpre
         } => {
             use crate::query::plan::ListPredicateKind as LPK;
             let filter_kind = match kind {
-                LPK::All => grafeo_core::execution::operators::ListPredicateKind::All,
-                LPK::Any => grafeo_core::execution::operators::ListPredicateKind::Any,
-                LPK::None => grafeo_core::execution::operators::ListPredicateKind::None,
-                LPK::Single => grafeo_core::execution::operators::ListPredicateKind::Single,
+                LPK::All => obrain_core::execution::operators::ListPredicateKind::All,
+                LPK::Any => obrain_core::execution::operators::ListPredicateKind::Any,
+                LPK::None => obrain_core::execution::operators::ListPredicateKind::None,
+                LPK::Single => obrain_core::execution::operators::ListPredicateKind::Single,
             };
             let list = convert_filter_expression(list_expr)?;
             let pred = convert_filter_expression(predicate)?;
@@ -363,8 +363,8 @@ pub fn convert_filter_expression(expr: &LogicalExpression) -> Result<FilterExpre
 }
 
 /// Infers the logical type from a value.
-pub(crate) fn value_to_logical_type(value: &grafeo_common::types::Value) -> LogicalType {
-    use grafeo_common::types::Value;
+pub(crate) fn value_to_logical_type(value: &obrain_common::types::Value) -> LogicalType {
+    use obrain_common::types::Value;
     match value {
         Value::Null => LogicalType::String,
         Value::Bool(_) => LogicalType::Bool,
@@ -391,9 +391,9 @@ pub(crate) fn value_to_logical_type(value: &grafeo_common::types::Value) -> Logi
 #[cfg(feature = "algos")]
 pub(crate) fn eval_constant_expression(
     expr: &crate::query::plan::LogicalExpression,
-) -> Result<grafeo_common::types::Value> {
+) -> Result<obrain_common::types::Value> {
     use crate::query::plan::LogicalExpression;
-    use grafeo_common::types::Value;
+    use obrain_common::types::Value;
 
     match expr {
         LogicalExpression::Literal(val) => Ok(val.clone()),

@@ -1,6 +1,6 @@
 //! Execution memory context for memory-aware query execution.
 
-use grafeo_common::memory::buffer::{BufferManager, MemoryGrant, MemoryRegion, PressureLevel};
+use obrain_common::memory::buffer::{BufferManager, MemoryGrant, MemoryRegion, PressureLevel};
 use std::sync::Arc;
 
 /// Default chunk size for execution buffers.
@@ -164,7 +164,7 @@ impl ExecutionMemoryContextBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grafeo_common::memory::buffer::BufferManagerConfig;
+    use obrain_common::memory::buffer::BufferManagerConfig;
 
     #[test]
     fn test_execution_context_creation() {

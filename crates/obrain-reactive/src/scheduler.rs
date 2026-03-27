@@ -138,7 +138,7 @@ mod native {
             let task_config = self.config.clone();
 
             // Only spawn the background task if a tokio runtime is available.
-            // When running inside sync-only tests (e.g. grafeo-c), there is no
+            // When running inside sync-only tests (e.g. obrain-c), there is no
             // reactor and tokio::spawn would panic.
             if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {
                 *handle = Some(rt_handle.spawn(scheduler_loop(

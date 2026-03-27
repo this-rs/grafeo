@@ -1,7 +1,7 @@
 //! Memory usage breakdown types for graph store components.
 //!
-//! These types live in grafeo-common so both grafeo-core (which implements
-//! the estimations) and grafeo-engine (which aggregates them) can use them.
+//! These types live in obrain-common so both obrain-core (which implements
+//! the estimations) and obrain-engine (which aggregates them) can use them.
 
 use serde::{Deserialize, Serialize};
 

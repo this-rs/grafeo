@@ -1,15 +1,15 @@
-//! Cognitive procedure implementations for `CALL grafeo.cognitive.*`.
+//! Cognitive procedure implementations for `CALL obrain.cognitive.*`.
 //!
 //! These procedures provide query-time access to the cognitive subsystems:
-//! - `CALL grafeo.cognitive.spread(node, {hops: 3}) YIELD activated, energy`
-//! - `CALL grafeo.cognitive.distill({min_weight: 0.1}) YIELD artifact`
+//! - `CALL obrain.cognitive.spread(node, {hops: 3}) YIELD activated, energy`
+//! - `CALL obrain.cognitive.distill({min_weight: 0.1}) YIELD artifact`
 //!
 //! They are resolved in the planner when the `cognitive` feature is enabled.
 
-use grafeo_adapters::plugins::AlgorithmResult;
-use grafeo_cognitive::CognitiveEngine;
-use grafeo_common::types::Value;
-use grafeo_common::utils::error::{Error, Result};
+use obrain_adapters::plugins::AlgorithmResult;
+use obrain_cognitive::CognitiveEngine;
+use obrain_common::types::Value;
+use obrain_common::utils::error::{Error, Result};
 use std::sync::Arc;
 
 use crate::query::plan::LogicalExpression;
@@ -23,32 +23,32 @@ pub fn try_execute_cognitive_procedure(
     engine: &Arc<dyn CognitiveEngine>,
 ) -> Result<Option<AlgorithmResult>> {
     match resolved_name {
-        "grafeo.cognitive.spread" => {
+        "obrain.cognitive.spread" => {
             let result = execute_spread(arguments, engine)?;
             Ok(Some(result))
         }
-        "grafeo.cognitive.distill" => {
+        "obrain.cognitive.distill" => {
             let result = execute_distill(arguments, engine)?;
             Ok(Some(result))
         }
-        "grafeo.cognitive.search" => {
+        "obrain.cognitive.search" => {
             let result = execute_search(arguments, engine)?;
             Ok(Some(result))
         }
         // Level 2 — Engram introspection procedures
-        "grafeo.engrams.list" | "engrams.list" => {
+        "obrain.engrams.list" | "engrams.list" => {
             let result = execute_engrams_list(engine)?;
             Ok(Some(result))
         }
-        "grafeo.engrams.inspect" | "engrams.inspect" => {
+        "obrain.engrams.inspect" | "engrams.inspect" => {
             let result = execute_engrams_inspect(arguments, engine)?;
             Ok(Some(result))
         }
-        "grafeo.engrams.forget" | "engrams.forget" => {
+        "obrain.engrams.forget" | "engrams.forget" => {
             let result = execute_engrams_forget(arguments, engine)?;
             Ok(Some(result))
         }
-        "grafeo.cognitive.metrics" | "cognitive.metrics" => {
+        "obrain.cognitive.metrics" | "cognitive.metrics" => {
             let result = execute_cognitive_metrics(engine)?;
             Ok(Some(result))
         }
@@ -56,7 +56,7 @@ pub fn try_execute_cognitive_procedure(
     }
 }
 
-/// `CALL grafeo.cognitive.spread(node_id, {hops: N}) YIELD activated, energy`
+/// `CALL obrain.cognitive.spread(node_id, {hops: N}) YIELD activated, energy`
 ///
 /// Performs spreading activation from a source node and returns all activated
 /// nodes with their energy values.
@@ -69,12 +69,12 @@ fn execute_spread(
         Some(LogicalExpression::Literal(Value::Int64(id))) => *id as u64,
         Some(_) => {
             return Err(Error::Internal(
-                "grafeo.cognitive.spread(): first argument must be a node ID (integer)".to_string(),
+                "obrain.cognitive.spread(): first argument must be a node ID (integer)".to_string(),
             ));
         }
         None => {
             return Err(Error::Internal(
-                "grafeo.cognitive.spread(): requires at least 1 argument (node ID)".to_string(),
+                "obrain.cognitive.spread(): requires at least 1 argument (node ID)".to_string(),
             ));
         }
     };
@@ -86,8 +86,8 @@ fn execute_spread(
     // Perform spreading activation if synapse subsystem is available
     #[cfg(feature = "cognitive")]
     {
-        use grafeo_cognitive::activation::{SpreadConfig, SynapseActivationSource, spread_single};
-        use grafeo_common::types::NodeId;
+        use obrain_cognitive::activation::{SpreadConfig, SynapseActivationSource, spread_single};
+        use obrain_common::types::NodeId;
 
         if let Some(synapse_store) = engine.synapse_store() {
             let config = SpreadConfig::default().with_max_hops(max_hops);
@@ -105,7 +105,7 @@ fn execute_spread(
     Ok(result)
 }
 
-/// `CALL grafeo.cognitive.distill({min_weight: 0.1}) YIELD artifact`
+/// `CALL obrain.cognitive.distill({min_weight: 0.1}) YIELD artifact`
 ///
 /// Distills the knowledge graph by extracting high-weight synaptic connections
 /// as knowledge artifacts. Each artifact is a map with source, target, weight.
@@ -119,7 +119,7 @@ fn execute_distill(
 
     #[cfg(feature = "cognitive")]
     {
-        use grafeo_common::types::PropertyKey;
+        use obrain_common::types::PropertyKey;
         use std::collections::BTreeMap;
 
         if let Some(synapse_store) = engine.synapse_store() {
@@ -150,7 +150,7 @@ fn execute_distill(
     Ok(result)
 }
 
-/// `CALL grafeo.cognitive.search({query_embedding: [...], weights: {energy: 0.3, ...}, limit: 10})`
+/// `CALL obrain.cognitive.search({query_embedding: [...], weights: {energy: 0.3, ...}, limit: 10})`
 ///
 /// Performs a multi-signal search combining vector similarity, energy, topology,
 /// and synapse traversal. Returns scored nodes with per-signal breakdown.
@@ -158,8 +158,8 @@ fn execute_search(
     arguments: &[LogicalExpression],
     engine: &Arc<dyn CognitiveEngine>,
 ) -> Result<AlgorithmResult> {
-    use grafeo_cognitive::search::{SearchConfig, SearchPipeline, SearchWeights};
-    use grafeo_common::types::NodeId;
+    use obrain_cognitive::search::{SearchConfig, SearchPipeline, SearchWeights};
+    use obrain_common::types::NodeId;
 
     // Parse the config map (first argument)
     let config_arg = arguments.first();
@@ -168,13 +168,13 @@ fn execute_search(
     let query_embedding =
         extract_map_float_list(config_arg, "query_embedding").ok_or_else(|| {
             Error::Internal(
-                "grafeo.cognitive.search(): requires query_embedding (list of floats)".to_string(),
+                "obrain.cognitive.search(): requires query_embedding (list of floats)".to_string(),
             )
         })?;
 
     if query_embedding.is_empty() {
         return Err(Error::Internal(
-            "grafeo.cognitive.search(): query_embedding must not be empty".to_string(),
+            "obrain.cognitive.search(): query_embedding must not be empty".to_string(),
         ));
     }
 
@@ -194,9 +194,9 @@ fn execute_search(
     };
 
     // For now, simulate vector candidates from query_embedding
-    // In a full integration, this would delegate to the HNSW index on GrafeoDB.
+    // In a full integration, this would delegate to the HNSW index on ObrainDB.
     // We create placeholder candidates — the actual vector search integration
-    // happens at the GrafeoDB level when wiring the procedure.
+    // happens at the ObrainDB level when wiring the procedure.
     let vector_candidates: Vec<(NodeId, f64)> = Vec::new();
 
     // Build the pipeline from cognitive engine stores
@@ -213,8 +213,8 @@ fn execute_search(
         }
     }
 
-    // Fabric store access requires the fabric feature on grafeo-cognitive
-    // which is enabled via cognitive-fabric feature on grafeo-engine.
+    // Fabric store access requires the fabric feature on obrain-cognitive
+    // which is enabled via cognitive-fabric feature on obrain-engine.
     // We use cfg to conditionally access it.
     #[cfg(feature = "cognitive-fabric")]
     {
@@ -254,14 +254,14 @@ fn execute_search(
 // Level 2 — Engram introspection procedures
 // ============================================================================
 
-/// `CALL grafeo.engrams.list() YIELD id, strength, valence, precision, recall_count, horizon, ensemble_size`
+/// `CALL obrain.engrams.list() YIELD id, strength, valence, precision, recall_count, horizon, ensemble_size`
 ///
 /// Lists all engrams in the store with their key metrics.
 fn execute_engrams_list(engine: &Arc<dyn CognitiveEngine>) -> Result<AlgorithmResult> {
     #[cfg(feature = "cognitive-engram")]
     {
         if let Some(store) = engine.engram_store() {
-            let proc_result = grafeo_cognitive::procedures::engrams_list(store);
+            let proc_result = obrain_cognitive::procedures::engrams_list(store);
             return Ok(procedure_result_to_algorithm_result(proc_result));
         }
     }
@@ -279,7 +279,7 @@ fn execute_engrams_list(engine: &Arc<dyn CognitiveEngine>) -> Result<AlgorithmRe
     ]))
 }
 
-/// `CALL grafeo.engrams.inspect(id) YIELD ...`
+/// `CALL obrain.engrams.inspect(id) YIELD ...`
 ///
 /// Returns full detail for a single engram including recall history.
 fn execute_engrams_inspect(
@@ -290,12 +290,12 @@ fn execute_engrams_inspect(
         Some(LogicalExpression::Literal(Value::Int64(id))) => *id as u64,
         Some(_) => {
             return Err(Error::Internal(
-                "grafeo.engrams.inspect(): argument must be an engram ID (integer)".to_string(),
+                "obrain.engrams.inspect(): argument must be an engram ID (integer)".to_string(),
             ));
         }
         None => {
             return Err(Error::Internal(
-                "grafeo.engrams.inspect(): requires 1 argument (engram ID)".to_string(),
+                "obrain.engrams.inspect(): requires 1 argument (engram ID)".to_string(),
             ));
         }
     };
@@ -303,7 +303,7 @@ fn execute_engrams_inspect(
     #[cfg(feature = "cognitive-engram")]
     {
         if let Some(store) = engine.engram_store() {
-            let proc_result = grafeo_cognitive::procedures::engrams_inspect(store, engram_id);
+            let proc_result = obrain_cognitive::procedures::engrams_inspect(store, engram_id);
             return Ok(procedure_result_to_algorithm_result(proc_result));
         }
     }
@@ -326,7 +326,7 @@ fn execute_engrams_inspect(
     ]))
 }
 
-/// `CALL grafeo.engrams.forget(id) YIELD id, status, relations_removed`
+/// `CALL obrain.engrams.forget(id) YIELD id, status, relations_removed`
 ///
 /// RGPD right to erasure: completely removes an engram and all associated data.
 fn execute_engrams_forget(
@@ -337,12 +337,12 @@ fn execute_engrams_forget(
         Some(LogicalExpression::Literal(Value::Int64(id))) => *id as u64,
         Some(_) => {
             return Err(Error::Internal(
-                "grafeo.engrams.forget(): argument must be an engram ID (integer)".to_string(),
+                "obrain.engrams.forget(): argument must be an engram ID (integer)".to_string(),
             ));
         }
         None => {
             return Err(Error::Internal(
-                "grafeo.engrams.forget(): requires 1 argument (engram ID)".to_string(),
+                "obrain.engrams.forget(): requires 1 argument (engram ID)".to_string(),
             ));
         }
     };
@@ -351,7 +351,7 @@ fn execute_engrams_forget(
     {
         if let (Some(store), Some(vi)) = (engine.engram_store(), engine.vector_index()) {
             let proc_result =
-                grafeo_cognitive::procedures::engrams_forget(store, vi.as_ref(), engram_id);
+                obrain_cognitive::procedures::engrams_forget(store, vi.as_ref(), engram_id);
             return Ok(procedure_result_to_algorithm_result(proc_result));
         }
     }
@@ -370,14 +370,14 @@ fn execute_engrams_forget(
     Ok(result)
 }
 
-/// `CALL grafeo.cognitive.metrics() YIELD engrams_active, engrams_formed, ...`
+/// `CALL obrain.cognitive.metrics() YIELD engrams_active, engrams_formed, ...`
 ///
 /// Returns full cognitive metrics snapshot.
 fn execute_cognitive_metrics(engine: &Arc<dyn CognitiveEngine>) -> Result<AlgorithmResult> {
     #[cfg(feature = "cognitive-engram")]
     {
         if let Some(metrics) = engine.engram_metrics() {
-            let proc_result = grafeo_cognitive::procedures::cognitive_metrics(metrics);
+            let proc_result = obrain_cognitive::procedures::cognitive_metrics(metrics);
             return Ok(procedure_result_to_algorithm_result(proc_result));
         }
     }
@@ -407,10 +407,10 @@ fn execute_cognitive_metrics(engine: &Arc<dyn CognitiveEngine>) -> Result<Algori
     ]))
 }
 
-/// Converts a `grafeo_cognitive::procedures::ProcedureResult` to an `AlgorithmResult`.
+/// Converts a `obrain_cognitive::procedures::ProcedureResult` to an `AlgorithmResult`.
 #[cfg(feature = "cognitive-engram")]
 fn procedure_result_to_algorithm_result(
-    proc_result: grafeo_cognitive::procedures::ProcedureResult,
+    proc_result: obrain_cognitive::procedures::ProcedureResult,
 ) -> AlgorithmResult {
     let mut result = AlgorithmResult::new(proc_result.columns);
     for row in proc_result.rows {

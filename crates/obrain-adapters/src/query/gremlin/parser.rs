@@ -5,8 +5,8 @@
 #[allow(clippy::wildcard_imports)]
 use super::ast::*;
 use super::lexer::{Lexer, Token, TokenKind};
-use grafeo_common::types::Value;
-use grafeo_common::utils::error::{Error, Result};
+use obrain_common::types::Value;
+use obrain_common::utils::error::{Error, Result};
 
 /// Gremlin parser.
 pub struct Parser<'a> {
@@ -1045,20 +1045,20 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn current_span(&self) -> grafeo_common::utils::error::SourceSpan {
+    fn current_span(&self) -> obrain_common::utils::error::SourceSpan {
         self.tokens
             .get(self.position)
             .or_else(|| self.tokens.last())
             .map_or(
-                grafeo_common::utils::error::SourceSpan::new(0, 0, 1, 1),
+                obrain_common::utils::error::SourceSpan::new(0, 0, 1, 1),
                 |t| t.span,
             )
     }
 
     fn error(&self, message: &str) -> Error {
         Error::Query(
-            grafeo_common::utils::error::QueryError::new(
-                grafeo_common::utils::error::QueryErrorKind::Syntax,
+            obrain_common::utils::error::QueryError::new(
+                obrain_common::utils::error::QueryErrorKind::Syntax,
                 message,
             )
             .with_span(self.current_span())

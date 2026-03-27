@@ -26,7 +26,7 @@
 //! # Usage
 //!
 //! ```no_run
-//! use grafeo_common::memory::buffer::{BufferManager, MemoryRegion};
+//! use obrain_common::memory::buffer::{BufferManager, MemoryRegion};
 //!
 //! // Create with default config (75% of system RAM)
 //! let manager = BufferManager::with_defaults();

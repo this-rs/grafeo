@@ -30,7 +30,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use grafeo_engine::transaction::parallel::{ParallelExecutor, BatchRequest};
+//! use obrain_engine::transaction::parallel::{ParallelExecutor, BatchRequest};
 //!
 //! let executor = ParallelExecutor::new(4); // 4 workers
 //!
@@ -50,8 +50,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use grafeo_common::types::EpochId;
-use grafeo_common::utils::hash::FxHashMap;
+use obrain_common::types::EpochId;
+use obrain_common::utils::hash::FxHashMap;
 use parking_lot::{Mutex, RwLock};
 use rayon::prelude::*;
 
@@ -461,7 +461,7 @@ impl Default for ParallelExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grafeo_common::types::NodeId;
+    use obrain_common::types::NodeId;
     use std::sync::atomic::AtomicU64;
     use std::thread;
     use std::time::Duration;

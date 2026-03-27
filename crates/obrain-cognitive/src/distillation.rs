@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
 use crate::engine::CognitiveEngine;
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 
 #[allow(unused_imports)]
 use std::sync::Arc;

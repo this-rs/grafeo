@@ -1,9 +1,9 @@
-//! Node and edge CRUD operations for GrafeoDB.
+//! Node and edge CRUD operations for ObrainDB.
 
 #[cfg(feature = "wal")]
-use grafeo_adapters::storage::wal::WalRecord;
+use obrain_adapters::storage::wal::WalRecord;
 
-impl super::GrafeoDB {
+impl super::ObrainDB {
     // === Node Operations ===
 
     /// Creates a node with the given labels and returns its ID.
@@ -14,13 +14,13 @@ impl super::GrafeoDB {
     /// # Examples
     ///
     /// ```
-    /// use grafeo_engine::GrafeoDB;
+    /// use obrain_engine::ObrainDB;
     ///
-    /// let db = GrafeoDB::new_in_memory();
+    /// let db = ObrainDB::new_in_memory();
     /// let alix = db.create_node(&["Person"]);
     /// let company = db.create_node(&["Company", "Startup"]);
     /// ```
-    pub fn create_node(&self, labels: &[&str]) -> grafeo_common::types::NodeId {
+    pub fn create_node(&self, labels: &[&str]) -> obrain_common::types::NodeId {
         let id = self.store.create_node(labels);
 
         // Log to WAL if enabled
@@ -47,15 +47,15 @@ impl super::GrafeoDB {
         labels: &[&str],
         properties: impl IntoIterator<
             Item = (
-                impl Into<grafeo_common::types::PropertyKey>,
-                impl Into<grafeo_common::types::Value>,
+                impl Into<obrain_common::types::PropertyKey>,
+                impl Into<obrain_common::types::Value>,
             ),
         >,
-    ) -> grafeo_common::types::NodeId {
+    ) -> obrain_common::types::NodeId {
         // Collect properties first so we can log them to WAL
         let props: Vec<(
-            grafeo_common::types::PropertyKey,
-            grafeo_common::types::Value,
+            obrain_common::types::PropertyKey,
+            obrain_common::types::Value,
         )> = properties
             .into_iter()
             .map(|(k, v)| (k.into(), v.into()))
@@ -67,7 +67,7 @@ impl super::GrafeoDB {
 
         // Build CDC snapshot before WAL consumes props
         #[cfg(feature = "cdc")]
-        let cdc_props: std::collections::HashMap<String, grafeo_common::types::Value> = props
+        let cdc_props: std::collections::HashMap<String, obrain_common::types::Value> = props
             .iter()
             .map(|(k, v)| (k.to_string(), v.clone()))
             .collect();
@@ -110,7 +110,7 @@ impl super::GrafeoDB {
         if let Some(node) = self.store.get_node(id) {
             for label in &node.labels {
                 for (prop_key, prop_val) in &node.properties {
-                    if let grafeo_common::types::Value::String(text) = prop_val
+                    if let obrain_common::types::Value::String(text) = prop_val
                         && let Some(index) =
                             self.store.get_text_index(label.as_str(), prop_key.as_ref())
                     {
@@ -127,8 +127,8 @@ impl super::GrafeoDB {
     #[must_use]
     pub fn get_node(
         &self,
-        id: grafeo_common::types::NodeId,
-    ) -> Option<grafeo_core::graph::lpg::Node> {
+        id: obrain_common::types::NodeId,
+    ) -> Option<obrain_core::graph::lpg::Node> {
         self.store.get_node(id)
     }
 
@@ -140,9 +140,9 @@ impl super::GrafeoDB {
     #[must_use]
     pub fn get_node_at_epoch(
         &self,
-        id: grafeo_common::types::NodeId,
-        epoch: grafeo_common::types::EpochId,
-    ) -> Option<grafeo_core::graph::lpg::Node> {
+        id: obrain_common::types::NodeId,
+        epoch: obrain_common::types::EpochId,
+    ) -> Option<obrain_core::graph::lpg::Node> {
         self.store.get_node_at_epoch(id, epoch)
     }
 
@@ -152,9 +152,9 @@ impl super::GrafeoDB {
     #[must_use]
     pub fn get_edge_at_epoch(
         &self,
-        id: grafeo_common::types::EdgeId,
-        epoch: grafeo_common::types::EpochId,
-    ) -> Option<grafeo_core::graph::lpg::Edge> {
+        id: obrain_common::types::EdgeId,
+        epoch: obrain_common::types::EpochId,
+    ) -> Option<obrain_core::graph::lpg::Edge> {
         self.store.get_edge_at_epoch(id, epoch)
     }
 
@@ -164,11 +164,11 @@ impl super::GrafeoDB {
     #[must_use]
     pub fn get_node_history(
         &self,
-        id: grafeo_common::types::NodeId,
+        id: obrain_common::types::NodeId,
     ) -> Vec<(
-        grafeo_common::types::EpochId,
-        Option<grafeo_common::types::EpochId>,
-        grafeo_core::graph::lpg::Node,
+        obrain_common::types::EpochId,
+        Option<obrain_common::types::EpochId>,
+        obrain_core::graph::lpg::Node,
     )> {
         self.store.get_node_history(id)
     }
@@ -179,37 +179,37 @@ impl super::GrafeoDB {
     #[must_use]
     pub fn get_edge_history(
         &self,
-        id: grafeo_common::types::EdgeId,
+        id: obrain_common::types::EdgeId,
     ) -> Vec<(
-        grafeo_common::types::EpochId,
-        Option<grafeo_common::types::EpochId>,
-        grafeo_core::graph::lpg::Edge,
+        obrain_common::types::EpochId,
+        Option<obrain_common::types::EpochId>,
+        obrain_core::graph::lpg::Edge,
     )> {
         self.store.get_edge_history(id)
     }
 
     /// Returns the current epoch of the database.
     #[must_use]
-    pub fn current_epoch(&self) -> grafeo_common::types::EpochId {
+    pub fn current_epoch(&self) -> obrain_common::types::EpochId {
         self.store.current_epoch()
     }
 
     /// Deletes a node and all its edges.
     ///
     /// If WAL is enabled, the operation is logged for durability.
-    pub fn delete_node(&self, id: grafeo_common::types::NodeId) -> bool {
+    pub fn delete_node(&self, id: obrain_common::types::NodeId) -> bool {
         // Capture properties for CDC before deletion
         #[cfg(feature = "cdc")]
         let cdc_props = self.store.get_node(id).map(|node| {
             node.properties
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.clone()))
-                .collect::<std::collections::HashMap<String, grafeo_common::types::Value>>()
+                .collect::<std::collections::HashMap<String, obrain_common::types::Value>>()
         });
 
         // Collect matching vector indexes BEFORE deletion removes labels
         #[cfg(feature = "vector-index")]
-        let indexes_to_clean: Vec<std::sync::Arc<grafeo_core::index::vector::HnswIndex>> = self
+        let indexes_to_clean: Vec<std::sync::Arc<obrain_core::index::vector::HnswIndex>> = self
             .store
             .get_node(id)
             .map(|node| {
@@ -229,7 +229,7 @@ impl super::GrafeoDB {
         // Collect matching text indexes BEFORE deletion removes labels
         #[cfg(feature = "text-index")]
         let text_indexes_to_clean: Vec<
-            std::sync::Arc<parking_lot::RwLock<grafeo_core::index::text::InvertedIndex>>,
+            std::sync::Arc<parking_lot::RwLock<obrain_core::index::text::InvertedIndex>>,
         > = self
             .store
             .get_node(id)
@@ -287,14 +287,14 @@ impl super::GrafeoDB {
     /// If WAL is enabled, the operation is logged for durability.
     pub fn set_node_property(
         &self,
-        id: grafeo_common::types::NodeId,
+        id: obrain_common::types::NodeId,
         key: &str,
-        value: grafeo_common::types::Value,
+        value: obrain_common::types::Value,
     ) {
         // Extract vector data before the value is moved into the store
         #[cfg(feature = "vector-index")]
         let vector_data = match &value {
-            grafeo_common::types::Value::Vector(v) => Some(v.clone()),
+            obrain_common::types::Value::Vector(v) => Some(v.clone()),
             _ => None,
         };
 
@@ -312,7 +312,7 @@ impl super::GrafeoDB {
         #[cfg(feature = "cdc")]
         let cdc_old_value = self
             .store
-            .get_node_property(id, &grafeo_common::types::PropertyKey::new(key));
+            .get_node_property(id, &obrain_common::types::PropertyKey::new(key));
         #[cfg(feature = "cdc")]
         let cdc_new_value = value.clone();
 
@@ -335,7 +335,7 @@ impl super::GrafeoDB {
             for label in &node.labels {
                 if let Some(index) = self.store.get_vector_index(label.as_str(), key) {
                     let accessor =
-                        grafeo_core::index::vector::PropertyVectorAccessor::new(&*self.store, key);
+                        obrain_core::index::vector::PropertyVectorAccessor::new(&*self.store, key);
                     index.insert(id, &vec, &accessor);
                 }
             }
@@ -346,9 +346,9 @@ impl super::GrafeoDB {
         if let Some(node) = self.store.get_node(id) {
             let text_val = node
                 .properties
-                .get(&grafeo_common::types::PropertyKey::new(key))
+                .get(&obrain_common::types::PropertyKey::new(key))
                 .and_then(|v| match v {
-                    grafeo_common::types::Value::String(s) => Some(s.to_string()),
+                    obrain_common::types::Value::String(s) => Some(s.to_string()),
                     _ => None,
                 });
             for label in &node.labels {
@@ -372,16 +372,16 @@ impl super::GrafeoDB {
     /// # Examples
     ///
     /// ```
-    /// use grafeo_engine::GrafeoDB;
+    /// use obrain_engine::ObrainDB;
     ///
-    /// let db = GrafeoDB::new_in_memory();
+    /// let db = ObrainDB::new_in_memory();
     /// let alix = db.create_node(&["Person"]);
     ///
     /// // Promote Alix to Employee
     /// let added = db.add_node_label(alix, "Employee");
     /// assert!(added);
     /// ```
-    pub fn add_node_label(&self, id: grafeo_common::types::NodeId, label: &str) -> bool {
+    pub fn add_node_label(&self, id: obrain_common::types::NodeId, label: &str) -> bool {
         let result = self.store.add_label(id, label);
 
         #[cfg(feature = "wal")]
@@ -403,11 +403,11 @@ impl super::GrafeoDB {
                 if let Some(property) = key.strip_prefix(&prefix)
                     && let Some(node) = self.store.get_node(id)
                 {
-                    let prop_key = grafeo_common::types::PropertyKey::new(property);
-                    if let Some(grafeo_common::types::Value::Vector(v)) =
+                    let prop_key = obrain_common::types::PropertyKey::new(property);
+                    if let Some(obrain_common::types::Value::Vector(v)) =
                         node.properties.get(&prop_key)
                     {
-                        let accessor = grafeo_core::index::vector::PropertyVectorAccessor::new(
+                        let accessor = obrain_core::index::vector::PropertyVectorAccessor::new(
                             &*self.store,
                             property,
                         );
@@ -421,7 +421,7 @@ impl super::GrafeoDB {
         #[cfg(feature = "text-index")]
         if result && let Some(node) = self.store.get_node(id) {
             for (prop_key, prop_val) in &node.properties {
-                if let grafeo_common::types::Value::String(text) = prop_val
+                if let obrain_common::types::Value::String(text) = prop_val
                     && let Some(index) = self.store.get_text_index(label, prop_key.as_ref())
                 {
                     index.write().insert(id, text);
@@ -440,20 +440,20 @@ impl super::GrafeoDB {
     /// # Examples
     ///
     /// ```
-    /// use grafeo_engine::GrafeoDB;
+    /// use obrain_engine::ObrainDB;
     ///
-    /// let db = GrafeoDB::new_in_memory();
+    /// let db = ObrainDB::new_in_memory();
     /// let alix = db.create_node(&["Person", "Employee"]);
     ///
     /// // Remove Employee status
     /// let removed = db.remove_node_label(alix, "Employee");
     /// assert!(removed);
     /// ```
-    pub fn remove_node_label(&self, id: grafeo_common::types::NodeId, label: &str) -> bool {
+    pub fn remove_node_label(&self, id: obrain_common::types::NodeId, label: &str) -> bool {
         // Collect text indexes to clean BEFORE removing the label
         #[cfg(feature = "text-index")]
         let text_indexes_to_clean: Vec<
-            std::sync::Arc<parking_lot::RwLock<grafeo_core::index::text::InvertedIndex>>,
+            std::sync::Arc<parking_lot::RwLock<obrain_core::index::text::InvertedIndex>>,
         > = {
             let prefix = format!("{label}:");
             self.store
@@ -495,9 +495,9 @@ impl super::GrafeoDB {
     /// # Examples
     ///
     /// ```
-    /// use grafeo_engine::GrafeoDB;
+    /// use obrain_engine::ObrainDB;
     ///
-    /// let db = GrafeoDB::new_in_memory();
+    /// let db = ObrainDB::new_in_memory();
     /// let alix = db.create_node(&["Person", "Employee"]);
     ///
     /// let labels = db.get_node_labels(alix).unwrap();
@@ -505,7 +505,7 @@ impl super::GrafeoDB {
     /// assert!(labels.contains(&"Employee".to_string()));
     /// ```
     #[must_use]
-    pub fn get_node_labels(&self, id: grafeo_common::types::NodeId) -> Option<Vec<String>> {
+    pub fn get_node_labels(&self, id: obrain_common::types::NodeId) -> Option<Vec<String>> {
         self.store
             .get_node(id)
             .map(|node| node.labels.iter().map(|s| s.to_string()).collect())
@@ -521,9 +521,9 @@ impl super::GrafeoDB {
     /// # Examples
     ///
     /// ```
-    /// use grafeo_engine::GrafeoDB;
+    /// use obrain_engine::ObrainDB;
     ///
-    /// let db = GrafeoDB::new_in_memory();
+    /// let db = ObrainDB::new_in_memory();
     /// let alix = db.create_node(&["Person"]);
     /// let gus = db.create_node(&["Person"]);
     ///
@@ -532,10 +532,10 @@ impl super::GrafeoDB {
     /// ```
     pub fn create_edge(
         &self,
-        src: grafeo_common::types::NodeId,
-        dst: grafeo_common::types::NodeId,
+        src: obrain_common::types::NodeId,
+        dst: obrain_common::types::NodeId,
         edge_type: &str,
-    ) -> grafeo_common::types::EdgeId {
+    ) -> obrain_common::types::EdgeId {
         let id = self.store.create_edge(src, dst, edge_type);
 
         // Log to WAL if enabled
@@ -561,20 +561,20 @@ impl super::GrafeoDB {
     /// If WAL is enabled, the operation is logged for durability.
     pub fn create_edge_with_props(
         &self,
-        src: grafeo_common::types::NodeId,
-        dst: grafeo_common::types::NodeId,
+        src: obrain_common::types::NodeId,
+        dst: obrain_common::types::NodeId,
         edge_type: &str,
         properties: impl IntoIterator<
             Item = (
-                impl Into<grafeo_common::types::PropertyKey>,
-                impl Into<grafeo_common::types::Value>,
+                impl Into<obrain_common::types::PropertyKey>,
+                impl Into<obrain_common::types::Value>,
             ),
         >,
-    ) -> grafeo_common::types::EdgeId {
+    ) -> obrain_common::types::EdgeId {
         // Collect properties first so we can log them to WAL
         let props: Vec<(
-            grafeo_common::types::PropertyKey,
-            grafeo_common::types::Value,
+            obrain_common::types::PropertyKey,
+            obrain_common::types::Value,
         )> = properties
             .into_iter()
             .map(|(k, v)| (k.into(), v.into()))
@@ -589,7 +589,7 @@ impl super::GrafeoDB {
 
         // Build CDC snapshot before WAL consumes props
         #[cfg(feature = "cdc")]
-        let cdc_props: std::collections::HashMap<String, grafeo_common::types::Value> = props
+        let cdc_props: std::collections::HashMap<String, obrain_common::types::Value> = props
             .iter()
             .map(|(k, v)| (k.to_string(), v.clone()))
             .collect();
@@ -636,22 +636,22 @@ impl super::GrafeoDB {
     #[must_use]
     pub fn get_edge(
         &self,
-        id: grafeo_common::types::EdgeId,
-    ) -> Option<grafeo_core::graph::lpg::Edge> {
+        id: obrain_common::types::EdgeId,
+    ) -> Option<obrain_core::graph::lpg::Edge> {
         self.store.get_edge(id)
     }
 
     /// Deletes an edge.
     ///
     /// If WAL is enabled, the operation is logged for durability.
-    pub fn delete_edge(&self, id: grafeo_common::types::EdgeId) -> bool {
+    pub fn delete_edge(&self, id: obrain_common::types::EdgeId) -> bool {
         // Capture properties for CDC before deletion
         #[cfg(feature = "cdc")]
         let cdc_props = self.store.get_edge(id).map(|edge| {
             edge.properties
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.clone()))
-                .collect::<std::collections::HashMap<String, grafeo_common::types::Value>>()
+                .collect::<std::collections::HashMap<String, obrain_common::types::Value>>()
         });
 
         let result = self.store.delete_edge(id);
@@ -678,9 +678,9 @@ impl super::GrafeoDB {
     /// If WAL is enabled, the operation is logged for durability.
     pub fn set_edge_property(
         &self,
-        id: grafeo_common::types::EdgeId,
+        id: obrain_common::types::EdgeId,
         key: &str,
-        value: grafeo_common::types::Value,
+        value: obrain_common::types::Value,
     ) {
         // Log to WAL first
         #[cfg(feature = "wal")]
@@ -696,7 +696,7 @@ impl super::GrafeoDB {
         #[cfg(feature = "cdc")]
         let cdc_old_value = self
             .store
-            .get_edge_property(id, &grafeo_common::types::PropertyKey::new(key));
+            .get_edge_property(id, &obrain_common::types::PropertyKey::new(key));
         #[cfg(feature = "cdc")]
         let cdc_new_value = value.clone();
 
@@ -715,7 +715,7 @@ impl super::GrafeoDB {
     /// Removes a property from a node.
     ///
     /// Returns true if the property existed and was removed, false otherwise.
-    pub fn remove_node_property(&self, id: grafeo_common::types::NodeId, key: &str) -> bool {
+    pub fn remove_node_property(&self, id: obrain_common::types::NodeId, key: &str) -> bool {
         let removed = self.store.remove_node_property(id, key).is_some();
 
         #[cfg(feature = "wal")]
@@ -744,7 +744,7 @@ impl super::GrafeoDB {
     /// Removes a property from an edge.
     ///
     /// Returns true if the property existed and was removed, false otherwise.
-    pub fn remove_edge_property(&self, id: grafeo_common::types::EdgeId, key: &str) -> bool {
+    pub fn remove_edge_property(&self, id: obrain_common::types::EdgeId, key: &str) -> bool {
         let removed = self.store.remove_edge_property(id, key).is_some();
 
         #[cfg(feature = "wal")]
@@ -780,13 +780,13 @@ impl super::GrafeoDB {
         label: &str,
         property: &str,
         vectors: Vec<Vec<f32>>,
-    ) -> Vec<grafeo_common::types::NodeId> {
-        use grafeo_common::types::{PropertyKey, Value};
+    ) -> Vec<obrain_common::types::NodeId> {
+        use obrain_common::types::{PropertyKey, Value};
 
         let prop_key = PropertyKey::new(property);
         let labels: &[&str] = &[label];
 
-        let ids: Vec<grafeo_common::types::NodeId> = vectors
+        let ids: Vec<obrain_common::types::NodeId> = vectors
             .into_iter()
             .map(|vec| {
                 let value = Value::Vector(vec.into());
@@ -821,11 +821,11 @@ impl super::GrafeoDB {
         #[cfg(feature = "vector-index")]
         if let Some(index) = self.store.get_vector_index(label, property) {
             let accessor =
-                grafeo_core::index::vector::PropertyVectorAccessor::new(&*self.store, property);
+                obrain_core::index::vector::PropertyVectorAccessor::new(&*self.store, property);
             for &id in &ids {
                 if let Some(node) = self.store.get_node(id) {
-                    let pk = grafeo_common::types::PropertyKey::new(property);
-                    if let Some(grafeo_common::types::Value::Vector(v)) = node.properties.get(&pk) {
+                    let pk = obrain_common::types::PropertyKey::new(property);
+                    if let Some(obrain_common::types::Value::Vector(v)) = node.properties.get(&pk) {
                         index.insert(id, v, &accessor);
                     }
                 }

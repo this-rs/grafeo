@@ -1,6 +1,6 @@
 //! The main database struct and operations.
 //!
-//! Start here with [`GrafeoDB`] - it's your handle to everything.
+//! Start here with [`ObrainDB`] - it's your handle to everything.
 //!
 //! Operations are split across focused submodules:
 //! - `query` - Query execution (execute, execute_cypher, etc.)
@@ -33,18 +33,18 @@ use std::sync::atomic::AtomicUsize;
 
 use parking_lot::RwLock;
 
-#[cfg(feature = "grafeo-file")]
-use grafeo_adapters::storage::file::GrafeoFileManager;
+#[cfg(feature = "obrain-file")]
+use obrain_adapters::storage::file::ObrainFileManager;
 #[cfg(feature = "wal")]
-use grafeo_adapters::storage::wal::{
+use obrain_adapters::storage::wal::{
     DurabilityMode as WalDurabilityMode, LpgWal, WalConfig, WalRecord, WalRecovery,
 };
-use grafeo_common::memory::buffer::{BufferManager, BufferManagerConfig};
-use grafeo_common::utils::error::Result;
-use grafeo_core::graph::GraphStoreMut;
-use grafeo_core::graph::lpg::LpgStore;
+use obrain_common::memory::buffer::{BufferManager, BufferManagerConfig};
+use obrain_common::utils::error::Result;
+use obrain_core::graph::GraphStoreMut;
+use obrain_core::graph::lpg::LpgStore;
 #[cfg(feature = "rdf")]
-use grafeo_core::graph::rdf::RdfStore;
+use obrain_core::graph::rdf::RdfStore;
 
 use crate::catalog::Catalog;
 use crate::config::Config;
@@ -52,7 +52,7 @@ use crate::query::cache::QueryCache;
 use crate::session::Session;
 use crate::transaction::TransactionManager;
 
-/// Your handle to a Grafeo database.
+/// Your handle to a Obrain database.
 ///
 /// Start here. Create one with [`new_in_memory()`](Self::new_in_memory) for
 /// quick experiments, or [`open()`](Self::open) for persistent storage.
@@ -61,10 +61,10 @@ use crate::transaction::TransactionManager;
 /// # Examples
 ///
 /// ```
-/// use grafeo_engine::GrafeoDB;
+/// use obrain_engine::ObrainDB;
 ///
 /// // Quick in-memory database
-/// let db = GrafeoDB::new_in_memory();
+/// let db = ObrainDB::new_in_memory();
 ///
 /// // Add some data
 /// db.create_node(&["Person"]);
@@ -72,9 +72,9 @@ use crate::transaction::TransactionManager;
 /// // Query it
 /// let session = db.session();
 /// let result = session.execute("MATCH (p:Person) RETURN p")?;
-/// # Ok::<(), grafeo_common::utils::error::Error>(())
+/// # Ok::<(), obrain_common::utils::error::Error>(())
 /// ```
-pub struct GrafeoDB {
+pub struct ObrainDB {
     /// Database configuration.
     pub(super) config: Config,
     /// The underlying graph store.
@@ -109,9 +109,9 @@ pub struct GrafeoDB {
     #[cfg(feature = "embed")]
     pub(super) embedding_models:
         RwLock<hashbrown::HashMap<String, Arc<dyn crate::embedding::EmbeddingModel>>>,
-    /// Single-file database manager (when using `.grafeo` format).
-    #[cfg(feature = "grafeo-file")]
-    pub(super) file_manager: Option<Arc<GrafeoFileManager>>,
+    /// Single-file database manager (when using `.obrain` format).
+    #[cfg(feature = "obrain-file")]
+    pub(super) file_manager: Option<Arc<ObrainFileManager>>,
     /// External graph store (when using with_store()).
     /// When set, sessions route queries through this store instead of the built-in LpgStore.
     pub(super) external_store: Option<Arc<dyn GraphStoreMut>>,
@@ -128,13 +128,13 @@ pub struct GrafeoDB {
     /// Cognitive engine — unified access to energy, synapses, fabric, etc.
     /// Only present when the `cognitive` feature flag is enabled at compile time.
     #[cfg(feature = "cognitive")]
-    cognitive_engine: Option<Arc<dyn grafeo_cognitive::CognitiveEngine>>,
+    cognitive_engine: Option<Arc<dyn obrain_cognitive::CognitiveEngine>>,
     /// Reactive scheduler (keeps the background task alive).
     #[cfg(feature = "cognitive")]
-    _cognitive_scheduler: Option<grafeo_reactive::Scheduler>,
+    _cognitive_scheduler: Option<obrain_reactive::Scheduler>,
 }
 
-impl GrafeoDB {
+impl ObrainDB {
     /// Creates an in-memory database, fast to create, gone when dropped.
     ///
     /// Use this for tests, experiments, or when you don't need persistence.
@@ -148,12 +148,12 @@ impl GrafeoDB {
     /// # Examples
     ///
     /// ```
-    /// use grafeo_engine::GrafeoDB;
+    /// use obrain_engine::ObrainDB;
     ///
-    /// let db = GrafeoDB::new_in_memory();
+    /// let db = ObrainDB::new_in_memory();
     /// let session = db.session();
     /// session.execute("INSERT (:Person {name: 'Alix'})")?;
-    /// # Ok::<(), grafeo_common::utils::error::Error>(())
+    /// # Ok::<(), obrain_common::utils::error::Error>(())
     /// ```
     #[must_use]
     pub fn new_in_memory() -> Self {
@@ -162,7 +162,7 @@ impl GrafeoDB {
 
     /// Opens a database at the given path, creating it if it doesn't exist.
     ///
-    /// If you've used this path before, Grafeo recovers your data from the
+    /// If you've used this path before, Obrain recovers your data from the
     /// write-ahead log automatically. First open on a new path creates an
     /// empty database.
     ///
@@ -173,10 +173,10 @@ impl GrafeoDB {
     /// # Examples
     ///
     /// ```no_run
-    /// use grafeo_engine::GrafeoDB;
+    /// use obrain_engine::ObrainDB;
     ///
-    /// let db = GrafeoDB::open("./my_social_network")?;
-    /// # Ok::<(), grafeo_common::utils::error::Error>(())
+    /// let db = ObrainDB::open("./my_social_network")?;
+    /// # Ok::<(), obrain_common::utils::error::Error>(())
     /// ```
     #[cfg(feature = "wal")]
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -186,10 +186,10 @@ impl GrafeoDB {
     /// Opens an existing database in read-only mode.
     ///
     /// Uses a shared file lock, so multiple processes can read the same
-    /// `.grafeo` file concurrently. The database loads the last checkpoint
+    /// `.obrain` file concurrently. The database loads the last checkpoint
     /// snapshot but does **not** replay the WAL or allow mutations.
     ///
-    /// Currently only supports the single-file (`.grafeo`) format.
+    /// Currently only supports the single-file (`.obrain`) format.
     ///
     /// # Errors
     ///
@@ -198,16 +198,16 @@ impl GrafeoDB {
     /// # Examples
     ///
     /// ```no_run
-    /// use grafeo_engine::GrafeoDB;
+    /// use obrain_engine::ObrainDB;
     ///
-    /// let db = GrafeoDB::open_read_only("./my_graph.grafeo")?;
+    /// let db = ObrainDB::open_read_only("./my_graph.obrain")?;
     /// let session = db.session();
     /// let result = session.execute("MATCH (n) RETURN n LIMIT 10")?;
     /// // Mutations will return an error:
     /// // session.execute("INSERT (:Person)") => Err(ReadOnly)
-    /// # Ok::<(), grafeo_common::utils::error::Error>(())
+    /// # Ok::<(), obrain_common::utils::error::Error>(())
     /// ```
-    #[cfg(feature = "grafeo-file")]
+    #[cfg(feature = "obrain-file")]
     pub fn open_read_only(path: impl AsRef<std::path::Path>) -> Result<Self> {
         Self::with_config(Config::read_only(path.as_ref()))
     }
@@ -226,20 +226,20 @@ impl GrafeoDB {
     /// # Examples
     ///
     /// ```
-    /// use grafeo_engine::{GrafeoDB, Config};
+    /// use obrain_engine::{ObrainDB, Config};
     ///
     /// // In-memory with a 512MB limit
     /// let config = Config::in_memory()
     ///     .with_memory_limit(512 * 1024 * 1024);
     ///
-    /// let db = GrafeoDB::with_config(config)?;
-    /// # Ok::<(), grafeo_common::utils::error::Error>(())
+    /// let db = ObrainDB::with_config(config)?;
+    /// # Ok::<(), obrain_common::utils::error::Error>(())
     /// ```
     pub fn with_config(config: Config) -> Result<Self> {
         // Validate configuration before proceeding
         config
             .validate()
-            .map_err(|e| grafeo_common::utils::error::Error::Internal(e.to_string()))?;
+            .map_err(|e| obrain_common::utils::error::Error::Internal(e.to_string()))?;
 
         let store = Arc::new(LpgStore::new()?);
         #[cfg(feature = "rdf")]
@@ -264,13 +264,13 @@ impl GrafeoDB {
 
         let is_read_only = config.access_mode == crate::config::AccessMode::ReadOnly;
 
-        // --- Single-file format (.grafeo) ---
-        #[cfg(feature = "grafeo-file")]
-        let file_manager: Option<Arc<GrafeoFileManager>> = if is_read_only {
+        // --- Single-file format (.obrain) ---
+        #[cfg(feature = "obrain-file")]
+        let file_manager: Option<Arc<ObrainFileManager>> = if is_read_only {
             // Read-only mode: open with shared lock, load snapshot, skip WAL
             if let Some(ref db_path) = config.path {
                 if db_path.exists() && db_path.is_file() {
-                    let fm = GrafeoFileManager::open_read_only(db_path)?;
+                    let fm = ObrainFileManager::open_read_only(db_path)?;
                     let snapshot_data = fm.read_snapshot()?;
                     if !snapshot_data.is_empty() {
                         Self::apply_snapshot_data(
@@ -283,13 +283,13 @@ impl GrafeoDB {
                     }
                     Some(Arc::new(fm))
                 } else {
-                    return Err(grafeo_common::utils::error::Error::Internal(format!(
-                        "read-only open requires an existing .grafeo file: {}",
+                    return Err(obrain_common::utils::error::Error::Internal(format!(
+                        "read-only open requires an existing .obrain file: {}",
                         db_path.display()
                     )));
                 }
             } else {
-                return Err(grafeo_common::utils::error::Error::Internal(
+                return Err(obrain_common::utils::error::Error::Internal(
                     "read-only mode requires a database path".to_string(),
                 ));
             }
@@ -297,12 +297,12 @@ impl GrafeoDB {
             if let Some(ref db_path) = config.path {
                 if Self::should_use_single_file(db_path, config.storage_format) {
                     let fm = if db_path.exists() && db_path.is_file() {
-                        GrafeoFileManager::open(db_path)?
+                        ObrainFileManager::open(db_path)?
                     } else if !db_path.exists() {
-                        GrafeoFileManager::create(db_path)?
+                        ObrainFileManager::create(db_path)?
                     } else {
                         // Path exists but is not a file (directory, etc.)
-                        return Err(grafeo_common::utils::error::Error::Internal(format!(
+                        return Err(obrain_common::utils::error::Error::Internal(format!(
                             "path exists but is not a file: {}",
                             db_path.display()
                         )));
@@ -352,7 +352,7 @@ impl GrafeoDB {
         } else if config.wal_enabled {
             if let Some(ref db_path) = config.path {
                 // When using single-file format, the WAL is a sidecar directory
-                #[cfg(feature = "grafeo-file")]
+                #[cfg(feature = "obrain-file")]
                 let wal_path = if let Some(ref fm) = file_manager {
                     let p = fm.sidecar_wal_path();
                     std::fs::create_dir_all(&p)?;
@@ -363,16 +363,16 @@ impl GrafeoDB {
                     db_path.join("wal")
                 };
 
-                #[cfg(not(feature = "grafeo-file"))]
+                #[cfg(not(feature = "obrain-file"))]
                 let wal_path = {
                     std::fs::create_dir_all(db_path)?;
                     db_path.join("wal")
                 };
 
                 // For legacy WAL directory format, check if WAL exists and recover
-                #[cfg(feature = "grafeo-file")]
+                #[cfg(feature = "obrain-file")]
                 let is_single_file = file_manager.is_some();
-                #[cfg(not(feature = "grafeo-file"))]
+                #[cfg(not(feature = "obrain-file"))]
                 let is_single_file = false;
 
                 if !is_single_file && wal_path.exists() {
@@ -428,14 +428,14 @@ impl GrafeoDB {
         // Zero-cost: this entire block is compiled out when `cognitive` feature is off.
         #[cfg(feature = "cognitive")]
         let (cognitive_engine, _cognitive_scheduler) = {
-            let bus = grafeo_reactive::MutationBus::new();
+            let bus = obrain_reactive::MutationBus::new();
             let scheduler =
-                grafeo_reactive::Scheduler::new(&bus, grafeo_reactive::BatchConfig::default());
-            let config = grafeo_cognitive::CognitiveConfig::default();
+                obrain_reactive::Scheduler::new(&bus, obrain_reactive::BatchConfig::default());
+            let config = obrain_cognitive::CognitiveConfig::default();
             let engine =
-                grafeo_cognitive::CognitiveEngineBuilder::from_config(&config).build(&scheduler);
+                obrain_cognitive::CognitiveEngineBuilder::from_config(&config).build(&scheduler);
             (
-                Some(Arc::new(engine) as Arc<dyn grafeo_cognitive::CognitiveEngine>),
+                Some(Arc::new(engine) as Arc<dyn obrain_cognitive::CognitiveEngine>),
                 Some(scheduler),
             )
         };
@@ -459,7 +459,7 @@ impl GrafeoDB {
             cdc_log: Arc::new(crate::cdc::CdcLog::new()),
             #[cfg(feature = "embed")]
             embedding_models: RwLock::new(hashbrown::HashMap::new()),
-            #[cfg(feature = "grafeo-file")]
+            #[cfg(feature = "obrain-file")]
             file_manager,
             external_store: None,
             #[cfg(feature = "metrics")]
@@ -486,21 +486,21 @@ impl GrafeoDB {
     ///
     /// ```no_run
     /// use std::sync::Arc;
-    /// use grafeo_engine::{GrafeoDB, Config};
-    /// use grafeo_core::graph::GraphStoreMut;
+    /// use obrain_engine::{ObrainDB, Config};
+    /// use obrain_core::graph::GraphStoreMut;
     ///
-    /// fn example(store: Arc<dyn GraphStoreMut>) -> grafeo_common::utils::error::Result<()> {
-    ///     let db = GrafeoDB::with_store(store, Config::in_memory())?;
+    /// fn example(store: Arc<dyn GraphStoreMut>) -> obrain_common::utils::error::Result<()> {
+    ///     let db = ObrainDB::with_store(store, Config::in_memory())?;
     ///     let result = db.execute("MATCH (n) RETURN count(n)")?;
     ///     Ok(())
     /// }
     /// ```
     ///
-    /// [`GraphStoreMut`]: grafeo_core::graph::GraphStoreMut
+    /// [`GraphStoreMut`]: obrain_core::graph::GraphStoreMut
     pub fn with_store(store: Arc<dyn GraphStoreMut>, config: Config) -> Result<Self> {
         config
             .validate()
-            .map_err(|e| grafeo_common::utils::error::Error::Internal(e.to_string()))?;
+            .map_err(|e| obrain_common::utils::error::Error::Internal(e.to_string()))?;
 
         let dummy_store = Arc::new(LpgStore::new()?);
         let transaction_manager = Arc::new(TransactionManager::new());
@@ -535,7 +535,7 @@ impl GrafeoDB {
             cdc_log: Arc::new(crate::cdc::CdcLog::new()),
             #[cfg(feature = "embed")]
             embedding_models: RwLock::new(hashbrown::HashMap::new()),
-            #[cfg(feature = "grafeo-file")]
+            #[cfg(feature = "obrain-file")]
             file_manager: None,
             external_store: Some(store),
             #[cfg(feature = "metrics")]
@@ -564,7 +564,7 @@ impl GrafeoDB {
         use crate::catalog::{
             EdgeTypeDefinition, NodeTypeDefinition, PropertyDataType, TypeConstraint, TypedProperty,
         };
-        use grafeo_common::utils::error::Error;
+        use obrain_common::utils::error::Error;
 
         // Graph cursor: tracks which named graph receives data mutations.
         // `None` means the default graph.
@@ -854,7 +854,7 @@ impl GrafeoDB {
     // =========================================================================
 
     /// Returns `true` if the given path should use single-file format.
-    #[cfg(feature = "grafeo-file")]
+    #[cfg(feature = "obrain-file")]
     fn should_use_single_file(
         path: &std::path::Path,
         configured: crate::config::StorageFormat,
@@ -870,7 +870,7 @@ impl GrafeoDB {
                         use std::io::Read;
                         let mut magic = [0u8; 4];
                         if f.read_exact(&mut magic).is_ok()
-                            && magic == grafeo_adapters::storage::file::MAGIC
+                            && magic == obrain_adapters::storage::file::MAGIC
                         {
                             return true;
                         }
@@ -882,13 +882,13 @@ impl GrafeoDB {
                     return false;
                 }
                 // New path: check extension
-                path.extension().is_some_and(|ext| ext == "grafeo")
+                path.extension().is_some_and(|ext| ext == "obrain")
             }
         }
     }
 
-    /// Applies snapshot data (from a `.grafeo` file) to restore the store and catalog.
-    #[cfg(feature = "grafeo-file")]
+    /// Applies snapshot data (from a `.obrain` file) to restore the store and catalog.
+    #[cfg(feature = "obrain-file")]
     fn apply_snapshot_data(
         store: &Arc<LpgStore>,
         catalog: &Arc<crate::catalog::Catalog>,
@@ -922,14 +922,14 @@ impl GrafeoDB {
     /// # Examples
     ///
     /// ```
-    /// use grafeo_engine::GrafeoDB;
+    /// use obrain_engine::ObrainDB;
     ///
-    /// let db = GrafeoDB::new_in_memory();
+    /// let db = ObrainDB::new_in_memory();
     /// let session = db.session();
     ///
     /// // Run queries through the session
     /// let result = session.execute("MATCH (n) RETURN count(n)")?;
-    /// # Ok::<(), grafeo_common::utils::error::Error>(())
+    /// # Ok::<(), obrain_common::utils::error::Error>(())
     /// ```
     #[must_use]
     pub fn session(&self) -> Session {
@@ -1033,7 +1033,7 @@ impl GrafeoDB {
     /// cognitive subsystems.
     #[cfg(feature = "cognitive")]
     #[must_use]
-    pub fn cognitive_engine(&self) -> Option<&Arc<dyn grafeo_cognitive::CognitiveEngine>> {
+    pub fn cognitive_engine(&self) -> Option<&Arc<dyn obrain_cognitive::CognitiveEngine>> {
         self.cognitive_engine.as_ref()
     }
 
@@ -1149,7 +1149,7 @@ impl GrafeoDB {
     /// with any storage backend. Use this when you only need graph read/write
     /// operations and don't need admin methods like index management.
     ///
-    /// [`GraphStoreMut`]: grafeo_core::graph::GraphStoreMut
+    /// [`GraphStoreMut`]: obrain_core::graph::GraphStoreMut
     #[must_use]
     pub fn graph_store(&self) -> Arc<dyn GraphStoreMut> {
         if let Some(ref ext_store) = self.external_store {
@@ -1212,7 +1212,7 @@ impl GrafeoDB {
 
         // Read-only databases: just release the shared lock, no checkpointing
         if self.read_only {
-            #[cfg(feature = "grafeo-file")]
+            #[cfg(feature = "obrain-file")]
             if let Some(ref fm) = self.file_manager {
                 fm.close()?;
             }
@@ -1220,15 +1220,15 @@ impl GrafeoDB {
             return Ok(());
         }
 
-        // For single-file format: checkpoint to .grafeo file, then clean up sidecar WAL.
+        // For single-file format: checkpoint to .obrain file, then clean up sidecar WAL.
         // We must do this BEFORE the WAL close path because checkpoint_to_file
         // removes the sidecar WAL directory.
-        #[cfg(feature = "grafeo-file")]
+        #[cfg(feature = "obrain-file")]
         let is_single_file = self.file_manager.is_some();
-        #[cfg(not(feature = "grafeo-file"))]
+        #[cfg(not(feature = "obrain-file"))]
         let is_single_file = false;
 
-        #[cfg(feature = "grafeo-file")]
+        #[cfg(feature = "obrain-file")]
         if let Some(ref fm) = self.file_manager {
             // Flush WAL first so all records are on disk before we snapshot
             #[cfg(feature = "wal")]
@@ -1254,7 +1254,7 @@ impl GrafeoDB {
         // directory format has no base snapshot — data lives only in the WAL
         // files. Writing a checkpoint would cause recovery to skip all WAL
         // files before the checkpoint sequence, effectively losing all data.
-        // (The single-file `.grafeo` format handles this correctly via
+        // (The single-file `.obrain` format handles this correctly via
         // `checkpoint_to_file()` which exports a real snapshot first.)
         #[cfg(feature = "wal")]
         if !is_single_file && let Some(ref wal) = self.wal {
@@ -1294,14 +1294,14 @@ impl GrafeoDB {
         Ok(())
     }
 
-    /// Writes the current database snapshot to the `.grafeo` file.
+    /// Writes the current database snapshot to the `.obrain` file.
     ///
     /// Does NOT remove the sidecar WAL: callers that want to clean up
     /// the sidecar (e.g. `close()`) should call `fm.remove_sidecar_wal()`
     /// separately after this returns.
-    #[cfg(feature = "grafeo-file")]
-    fn checkpoint_to_file(&self, fm: &GrafeoFileManager) -> Result<()> {
-        use grafeo_core::testing::crash::maybe_crash;
+    #[cfg(feature = "obrain-file")]
+    fn checkpoint_to_file(&self, fm: &ObrainFileManager) -> Result<()> {
+        use obrain_core::testing::crash::maybe_crash;
 
         maybe_crash("checkpoint_to_file:before_export");
         let snapshot_data = self.export_snapshot()?;
@@ -1328,14 +1328,14 @@ impl GrafeoDB {
     }
 
     /// Returns the file manager if using single-file format.
-    #[cfg(feature = "grafeo-file")]
+    #[cfg(feature = "obrain-file")]
     #[must_use]
-    pub fn file_manager(&self) -> Option<&Arc<GrafeoFileManager>> {
+    pub fn file_manager(&self) -> Option<&Arc<ObrainFileManager>> {
         self.file_manager.as_ref()
     }
 }
 
-impl Drop for GrafeoDB {
+impl Drop for ObrainDB {
     fn drop(&mut self) {
         if let Err(e) = self.close() {
             tracing::error!("Error closing database: {}", e);
@@ -1343,7 +1343,7 @@ impl Drop for GrafeoDB {
     }
 }
 
-impl crate::admin::AdminService for GrafeoDB {
+impl crate::admin::AdminService for ObrainDB {
     fn info(&self) -> crate::admin::DatabaseInfo {
         self.info()
     }
@@ -1381,9 +1381,9 @@ impl crate::admin::AdminService for GrafeoDB {
 /// # Examples
 ///
 /// ```
-/// use grafeo_engine::GrafeoDB;
+/// use obrain_engine::ObrainDB;
 ///
-/// let db = GrafeoDB::new_in_memory();
+/// let db = ObrainDB::new_in_memory();
 /// db.create_node(&["Person"]);
 ///
 /// let result = db.execute("MATCH (p:Person) RETURN count(p) AS total")?;
@@ -1396,16 +1396,16 @@ impl crate::admin::AdminService for GrafeoDB {
 /// for row in result.iter() {
 ///     println!("{:?}", row);
 /// }
-/// # Ok::<(), grafeo_common::utils::error::Error>(())
+/// # Ok::<(), obrain_common::utils::error::Error>(())
 /// ```
 #[derive(Debug)]
 pub struct QueryResult {
     /// Column names from the RETURN clause.
     pub columns: Vec<String>,
     /// Column types - useful for distinguishing NodeId/EdgeId from plain integers.
-    pub column_types: Vec<grafeo_common::types::LogicalType>,
+    pub column_types: Vec<obrain_common::types::LogicalType>,
     /// The actual result rows.
-    pub rows: Vec<Vec<grafeo_common::types::Value>>,
+    pub rows: Vec<Vec<obrain_common::types::Value>>,
     /// Query execution time in milliseconds (if timing was enabled).
     pub execution_time_ms: Option<f64>,
     /// Number of rows scanned during query execution (estimate).
@@ -1413,7 +1413,7 @@ pub struct QueryResult {
     /// Status message for DDL and session commands (e.g., "Created node type 'Person'").
     pub status_message: Option<String>,
     /// GQLSTATUS code per ISO/IEC 39075:2024, sec 23.
-    pub gql_status: grafeo_common::utils::GqlStatus,
+    pub gql_status: obrain_common::utils::GqlStatus,
 }
 
 impl QueryResult {
@@ -1427,7 +1427,7 @@ impl QueryResult {
             execution_time_ms: None,
             rows_scanned: None,
             status_message: None,
-            gql_status: grafeo_common::utils::GqlStatus::SUCCESS,
+            gql_status: obrain_common::utils::GqlStatus::SUCCESS,
         }
     }
 
@@ -1441,7 +1441,7 @@ impl QueryResult {
             execution_time_ms: None,
             rows_scanned: None,
             status_message: Some(msg.into()),
-            gql_status: grafeo_common::utils::GqlStatus::SUCCESS,
+            gql_status: obrain_common::utils::GqlStatus::SUCCESS,
         }
     }
 
@@ -1451,12 +1451,12 @@ impl QueryResult {
         let len = columns.len();
         Self {
             columns,
-            column_types: vec![grafeo_common::types::LogicalType::Any; len],
+            column_types: vec![obrain_common::types::LogicalType::Any; len],
             rows: Vec::new(),
             execution_time_ms: None,
             rows_scanned: None,
             status_message: None,
-            gql_status: grafeo_common::utils::GqlStatus::SUCCESS,
+            gql_status: obrain_common::utils::GqlStatus::SUCCESS,
         }
     }
 
@@ -1464,7 +1464,7 @@ impl QueryResult {
     #[must_use]
     pub fn with_types(
         columns: Vec<String>,
-        column_types: Vec<grafeo_common::types::LogicalType>,
+        column_types: Vec<obrain_common::types::LogicalType>,
     ) -> Self {
         Self {
             columns,
@@ -1473,7 +1473,7 @@ impl QueryResult {
             execution_time_ms: None,
             rows_scanned: None,
             status_message: None,
-            gql_status: grafeo_common::utils::GqlStatus::SUCCESS,
+            gql_status: obrain_common::utils::GqlStatus::SUCCESS,
         }
     }
 
@@ -1524,7 +1524,7 @@ impl QueryResult {
     /// Returns an error if the result has multiple rows or columns.
     pub fn scalar<T: FromValue>(&self) -> Result<T> {
         if self.rows.len() != 1 || self.columns.len() != 1 {
-            return Err(grafeo_common::utils::error::Error::InvalidValue(
+            return Err(obrain_common::utils::error::Error::InvalidValue(
                 "Expected single value".to_string(),
             ));
         }
@@ -1532,14 +1532,14 @@ impl QueryResult {
     }
 
     /// Returns an iterator over the rows.
-    pub fn iter(&self) -> impl Iterator<Item = &Vec<grafeo_common::types::Value>> {
+    pub fn iter(&self) -> impl Iterator<Item = &Vec<obrain_common::types::Value>> {
         self.rows.iter()
     }
 }
 
 impl std::fmt::Display for QueryResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let table = grafeo_common::fmt::format_result_table(
+        let table = obrain_common::fmt::format_result_table(
             &self.columns,
             &self.rows,
             self.execution_time_ms,
@@ -1549,20 +1549,20 @@ impl std::fmt::Display for QueryResult {
     }
 }
 
-/// Converts a [`grafeo_common::types::Value`] to a concrete Rust type.
+/// Converts a [`obrain_common::types::Value`] to a concrete Rust type.
 ///
 /// Implemented for common types like `i64`, `f64`, `String`, and `bool`.
 /// Used by [`QueryResult::scalar()`] to extract typed values.
 pub trait FromValue: Sized {
     /// Attempts the conversion, returning an error on type mismatch.
-    fn from_value(value: &grafeo_common::types::Value) -> Result<Self>;
+    fn from_value(value: &obrain_common::types::Value) -> Result<Self>;
 }
 
 impl FromValue for i64 {
-    fn from_value(value: &grafeo_common::types::Value) -> Result<Self> {
+    fn from_value(value: &obrain_common::types::Value) -> Result<Self> {
         value
             .as_int64()
-            .ok_or_else(|| grafeo_common::utils::error::Error::TypeMismatch {
+            .ok_or_else(|| obrain_common::utils::error::Error::TypeMismatch {
                 expected: "INT64".to_string(),
                 found: value.type_name().to_string(),
             })
@@ -1570,10 +1570,10 @@ impl FromValue for i64 {
 }
 
 impl FromValue for f64 {
-    fn from_value(value: &grafeo_common::types::Value) -> Result<Self> {
+    fn from_value(value: &obrain_common::types::Value) -> Result<Self> {
         value
             .as_float64()
-            .ok_or_else(|| grafeo_common::utils::error::Error::TypeMismatch {
+            .ok_or_else(|| obrain_common::utils::error::Error::TypeMismatch {
                 expected: "FLOAT64".to_string(),
                 found: value.type_name().to_string(),
             })
@@ -1581,9 +1581,9 @@ impl FromValue for f64 {
 }
 
 impl FromValue for String {
-    fn from_value(value: &grafeo_common::types::Value) -> Result<Self> {
+    fn from_value(value: &obrain_common::types::Value) -> Result<Self> {
         value.as_str().map(String::from).ok_or_else(|| {
-            grafeo_common::utils::error::Error::TypeMismatch {
+            obrain_common::utils::error::Error::TypeMismatch {
                 expected: "STRING".to_string(),
                 found: value.type_name().to_string(),
             }
@@ -1592,10 +1592,10 @@ impl FromValue for String {
 }
 
 impl FromValue for bool {
-    fn from_value(value: &grafeo_common::types::Value) -> Result<Self> {
+    fn from_value(value: &obrain_common::types::Value) -> Result<Self> {
         value
             .as_bool()
-            .ok_or_else(|| grafeo_common::utils::error::Error::TypeMismatch {
+            .ok_or_else(|| obrain_common::utils::error::Error::TypeMismatch {
                 expected: "BOOL".to_string(),
                 found: value.type_name().to_string(),
             })
@@ -1608,7 +1608,7 @@ mod tests {
 
     #[test]
     fn test_create_in_memory_database() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         assert_eq!(db.node_count(), 0);
         assert_eq!(db.edge_count(), 0);
     }
@@ -1617,14 +1617,14 @@ mod tests {
     fn test_database_config() {
         let config = Config::in_memory().with_threads(4).with_query_logging();
 
-        let db = GrafeoDB::with_config(config).unwrap();
+        let db = ObrainDB::with_config(config).unwrap();
         assert_eq!(db.config().threads, 4);
         assert!(db.config().query_logging);
     }
 
     #[test]
     fn test_database_session() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let _session = db.session();
         // Session should be created successfully
     }
@@ -1632,7 +1632,7 @@ mod tests {
     #[cfg(feature = "wal")]
     #[test]
     fn test_persistent_database_recovery() {
-        use grafeo_common::types::Value;
+        use obrain_common::types::Value;
         use tempfile::tempdir;
 
         let dir = tempdir().unwrap();
@@ -1640,7 +1640,7 @@ mod tests {
 
         // Create database and add some data
         {
-            let db = GrafeoDB::open(&db_path).unwrap();
+            let db = ObrainDB::open(&db_path).unwrap();
 
             let alix = db.create_node(&["Person"]);
             db.set_node_property(alix, "name", Value::from("Alix"));
@@ -1656,16 +1656,16 @@ mod tests {
 
         // Reopen and verify data was recovered
         {
-            let db = GrafeoDB::open(&db_path).unwrap();
+            let db = ObrainDB::open(&db_path).unwrap();
 
             assert_eq!(db.node_count(), 2);
             assert_eq!(db.edge_count(), 1);
 
             // Verify nodes exist
-            let node0 = db.get_node(grafeo_common::types::NodeId::new(0));
+            let node0 = db.get_node(obrain_common::types::NodeId::new(0));
             assert!(node0.is_some());
 
-            let node1 = db.get_node(grafeo_common::types::NodeId::new(1));
+            let node1 = db.get_node(obrain_common::types::NodeId::new(1));
             assert!(node1.is_some());
         }
     }
@@ -1678,7 +1678,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("wal_test_db");
 
-        let db = GrafeoDB::open(&db_path).unwrap();
+        let db = ObrainDB::open(&db_path).unwrap();
 
         // Create some data
         let node = db.create_node(&["Test"]);
@@ -1696,7 +1696,7 @@ mod tests {
     #[test]
     fn test_wal_recovery_multiple_sessions() {
         // Tests that WAL recovery works correctly across multiple open/close cycles
-        use grafeo_common::types::Value;
+        use obrain_common::types::Value;
         use tempfile::tempdir;
 
         let dir = tempdir().unwrap();
@@ -1704,7 +1704,7 @@ mod tests {
 
         // Session 1: Create initial data
         {
-            let db = GrafeoDB::open(&db_path).unwrap();
+            let db = ObrainDB::open(&db_path).unwrap();
             let alix = db.create_node(&["Person"]);
             db.set_node_property(alix, "name", Value::from("Alix"));
             db.close().unwrap();
@@ -1712,7 +1712,7 @@ mod tests {
 
         // Session 2: Add more data
         {
-            let db = GrafeoDB::open(&db_path).unwrap();
+            let db = ObrainDB::open(&db_path).unwrap();
             assert_eq!(db.node_count(), 1); // Previous data recovered
             let gus = db.create_node(&["Person"]);
             db.set_node_property(gus, "name", Value::from("Gus"));
@@ -1721,14 +1721,14 @@ mod tests {
 
         // Session 3: Verify all data
         {
-            let db = GrafeoDB::open(&db_path).unwrap();
+            let db = ObrainDB::open(&db_path).unwrap();
             assert_eq!(db.node_count(), 2);
 
             // Verify properties were recovered correctly
-            let node0 = db.get_node(grafeo_common::types::NodeId::new(0)).unwrap();
+            let node0 = db.get_node(obrain_common::types::NodeId::new(0)).unwrap();
             assert!(node0.labels.iter().any(|l| l.as_str() == "Person"));
 
-            let node1 = db.get_node(grafeo_common::types::NodeId::new(1)).unwrap();
+            let node1 = db.get_node(obrain_common::types::NodeId::new(1)).unwrap();
             assert!(node1.labels.iter().any(|l| l.as_str() == "Person"));
         }
     }
@@ -1737,14 +1737,14 @@ mod tests {
     #[test]
     fn test_database_consistency_after_mutations() {
         // Tests that database remains consistent after a series of create/delete operations
-        use grafeo_common::types::Value;
+        use obrain_common::types::Value;
         use tempfile::tempdir;
 
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("consistency_db");
 
         {
-            let db = GrafeoDB::open(&db_path).unwrap();
+            let db = ObrainDB::open(&db_path).unwrap();
 
             // Create nodes
             let a = db.create_node(&["Node"]);
@@ -1768,19 +1768,19 @@ mod tests {
 
         // Reopen and verify consistency
         {
-            let db = GrafeoDB::open(&db_path).unwrap();
+            let db = ObrainDB::open(&db_path).unwrap();
 
             // Should have 2 nodes (a and c), b was deleted
             // Note: node_count includes deleted nodes in some implementations
             // What matters is that the non-deleted nodes are accessible
-            let node_a = db.get_node(grafeo_common::types::NodeId::new(0));
+            let node_a = db.get_node(obrain_common::types::NodeId::new(0));
             assert!(node_a.is_some());
 
-            let node_c = db.get_node(grafeo_common::types::NodeId::new(2));
+            let node_c = db.get_node(obrain_common::types::NodeId::new(2));
             assert!(node_c.is_some());
 
             // Middle node should be deleted
-            let node_b = db.get_node(grafeo_common::types::NodeId::new(1));
+            let node_b = db.get_node(obrain_common::types::NodeId::new(1));
             assert!(node_b.is_none());
         }
     }
@@ -1794,7 +1794,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("close_test_db");
 
-        let db = GrafeoDB::open(&db_path).unwrap();
+        let db = ObrainDB::open(&db_path).unwrap();
         db.create_node(&["Test"]);
 
         // First close should succeed
@@ -1806,15 +1806,15 @@ mod tests {
 
     #[test]
     fn test_with_store_external_backend() {
-        use grafeo_core::graph::lpg::LpgStore;
+        use obrain_core::graph::lpg::LpgStore;
 
         let external = Arc::new(LpgStore::new().unwrap());
 
         // Seed data on the external store directly
         let n1 = external.create_node(&["Person"]);
-        external.set_node_property(n1, "name", grafeo_common::types::Value::from("Alix"));
+        external.set_node_property(n1, "name", obrain_common::types::Value::from("Alix"));
 
-        let db = GrafeoDB::with_store(
+        let db = ObrainDB::with_store(
             Arc::clone(&external) as Arc<dyn GraphStoreMut>,
             Config::in_memory(),
         )
@@ -1834,7 +1834,7 @@ mod tests {
     fn test_with_config_custom_memory_limit() {
         let config = Config::in_memory().with_memory_limit(64 * 1024 * 1024); // 64 MB
 
-        let db = GrafeoDB::with_config(config).unwrap();
+        let db = ObrainDB::with_config(config).unwrap();
         assert_eq!(db.config().memory_limit, Some(64 * 1024 * 1024));
         assert_eq!(db.node_count(), 0);
     }
@@ -1842,7 +1842,7 @@ mod tests {
     #[cfg(feature = "metrics")]
     #[test]
     fn test_database_metrics_registry() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
 
         // Perform some operations
         db.create_node(&["Person"]);
@@ -1857,7 +1857,7 @@ mod tests {
     #[test]
     fn test_query_result_has_metrics() {
         // Verifies that query results include execution metrics
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         db.create_node(&["Person"]);
         db.create_node(&["Person"]);
 
@@ -1876,7 +1876,7 @@ mod tests {
     #[test]
     fn test_empty_query_result_metrics() {
         // Verifies metrics are correct for queries returning no results
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         db.create_node(&["Person"]);
 
         #[cfg(feature = "gql")]
@@ -1896,7 +1896,7 @@ mod tests {
 
         #[test]
         fn test_node_lifecycle_history() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
 
             // Create
             let id = db.create_node(&["Person"]);
@@ -1918,7 +1918,7 @@ mod tests {
 
         #[test]
         fn test_edge_lifecycle_history() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
 
             let alix = db.create_node(&["Person"]);
             let gus = db.create_node(&["Person"]);
@@ -1935,13 +1935,13 @@ mod tests {
 
         #[test]
         fn test_create_node_with_props_cdc() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
 
             let id = db.create_node_with_props(
                 &["Person"],
                 vec![
-                    ("name", grafeo_common::types::Value::from("Alix")),
-                    ("age", grafeo_common::types::Value::from(30i64)),
+                    ("name", obrain_common::types::Value::from("Alix")),
+                    ("age", obrain_common::types::Value::from(30i64)),
                 ],
             );
 
@@ -1955,7 +1955,7 @@ mod tests {
 
         #[test]
         fn test_changes_between() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
 
             let id1 = db.create_node(&["A"]);
             let _id2 = db.create_node(&["B"]);
@@ -1964,8 +1964,8 @@ mod tests {
             // All events should be at the same epoch (in-memory, epoch doesn't advance without tx)
             let changes = db
                 .changes_between(
-                    grafeo_common::types::EpochId(0),
-                    grafeo_common::types::EpochId(u64::MAX),
+                    obrain_common::types::EpochId(0),
+                    obrain_common::types::EpochId(u64::MAX),
                 )
                 .unwrap();
             assert_eq!(changes.len(), 3); // 2 creates + 1 update
@@ -1974,14 +1974,14 @@ mod tests {
 
     #[test]
     fn test_with_store_basic() {
-        use grafeo_core::graph::lpg::LpgStore;
+        use obrain_core::graph::lpg::LpgStore;
 
         let store = Arc::new(LpgStore::new().unwrap());
         let n1 = store.create_node(&["Person"]);
         store.set_node_property(n1, "name", "Alix".into());
 
         let graph_store = Arc::clone(&store) as Arc<dyn GraphStoreMut>;
-        let db = GrafeoDB::with_store(graph_store, Config::in_memory()).unwrap();
+        let db = ObrainDB::with_store(graph_store, Config::in_memory()).unwrap();
 
         let result = db.execute("MATCH (n:Person) RETURN n.name").unwrap();
         assert_eq!(result.rows.len(), 1);
@@ -1989,11 +1989,11 @@ mod tests {
 
     #[test]
     fn test_with_store_session() {
-        use grafeo_core::graph::lpg::LpgStore;
+        use obrain_core::graph::lpg::LpgStore;
 
         let store = Arc::new(LpgStore::new().unwrap());
         let graph_store = Arc::clone(&store) as Arc<dyn GraphStoreMut>;
-        let db = GrafeoDB::with_store(graph_store, Config::in_memory()).unwrap();
+        let db = ObrainDB::with_store(graph_store, Config::in_memory()).unwrap();
 
         let session = db.session();
         let result = session.execute("MATCH (n) RETURN count(n)").unwrap();
@@ -2002,11 +2002,11 @@ mod tests {
 
     #[test]
     fn test_with_store_mutations() {
-        use grafeo_core::graph::lpg::LpgStore;
+        use obrain_core::graph::lpg::LpgStore;
 
         let store = Arc::new(LpgStore::new().unwrap());
         let graph_store = Arc::clone(&store) as Arc<dyn GraphStoreMut>;
-        let db = GrafeoDB::with_store(graph_store, Config::in_memory()).unwrap();
+        let db = ObrainDB::with_store(graph_store, Config::in_memory()).unwrap();
 
         let mut session = db.session();
 

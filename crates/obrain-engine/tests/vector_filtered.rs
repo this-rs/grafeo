@@ -7,8 +7,8 @@
 
 use std::collections::HashMap;
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 /// Helper: create a 3D vector value.
 fn vec3(x: f32, y: f32, z: f32) -> Value {
@@ -16,8 +16,8 @@ fn vec3(x: f32, y: f32, z: f32) -> Value {
 }
 
 /// Sets up a database with 6 Doc nodes, each with a vector and a `user_id` property.
-fn setup_db() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn setup_db() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
 
     // user_id=1: nodes near [1, 0, 0]
     let n1 = db.create_node(&["Doc"]);
@@ -78,7 +78,7 @@ fn test_filtered_vector_search_by_user_id() {
         let node = db.get_node(*id).expect("node exists");
         let uid = node
             .properties
-            .get(&grafeo_common::types::PropertyKey::new("user_id"))
+            .get(&obrain_common::types::PropertyKey::new("user_id"))
             .expect("has user_id");
         assert_eq!(uid, &Value::Int64(2), "result should be user_id=2");
     }
@@ -147,7 +147,7 @@ fn test_batch_vector_search_with_filters() {
             let node = db.get_node(*id).expect("node exists");
             let uid = node
                 .properties
-                .get(&grafeo_common::types::PropertyKey::new("user_id"))
+                .get(&obrain_common::types::PropertyKey::new("user_id"))
                 .expect("has user_id");
             assert_eq!(uid, &Value::Int64(1));
         }
@@ -182,7 +182,7 @@ fn test_mmr_search_with_filters() {
         let node = db.get_node(*id).expect("node exists");
         let uid = node
             .properties
-            .get(&grafeo_common::types::PropertyKey::new("user_id"))
+            .get(&obrain_common::types::PropertyKey::new("user_id"))
             .expect("has user_id");
         assert_eq!(uid, &Value::Int64(2));
     }
@@ -221,7 +221,7 @@ fn test_filtered_search_non_indexed_property() {
 /// Creating an index with no dimensions and no existing vectors should error.
 #[test]
 fn test_create_vector_index_no_dims_no_data_errors() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let result = db.create_vector_index("Doc", "emb", None, None, None, None);
     assert!(result.is_err(), "should error without dimensions or data");
 }
@@ -229,7 +229,7 @@ fn test_create_vector_index_no_dims_no_data_errors() {
 /// Creating an index with explicit dimensions but no data should succeed (empty index).
 #[test]
 fn test_create_vector_index_with_dims_no_data_succeeds() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     db.create_vector_index("Doc", "emb", Some(4), Some("cosine"), None, None)
         .expect("should create empty index with explicit dimensions");
 
@@ -243,34 +243,34 @@ fn test_create_vector_index_with_dims_no_data_succeeds() {
     assert_eq!(results.len(), 1, "should find the one auto-inserted node");
 }
 
-/// Mimics the grafeo-memory pattern: create_node_with_props, set vector
+/// Mimics the obrain-memory pattern: create_node_with_props, set vector
 /// separately, String-valued filters, no property index.
 #[test]
-fn test_grafeo_memory_pattern() {
-    let db = GrafeoDB::new_in_memory();
+fn test_obrain_memory_pattern() {
+    let db = ObrainDB::new_in_memory();
 
-    // Create vector index first (grafeo-memory calls _ensure_indexes early)
+    // Create vector index first (obrain-memory calls _ensure_indexes early)
     db.create_vector_index("Memory", "embedding", Some(4), Some("cosine"), None, None)
         .expect("create index");
 
-    // Create nodes with properties at creation time (grafeo-memory pattern)
+    // Create nodes with properties at creation time (obrain-memory pattern)
     for i in 0..10 {
         let user = if i < 5 { "alix" } else { "gus" };
         let id = db.create_node_with_props(
             &["Memory"],
             vec![
                 (
-                    grafeo_common::types::PropertyKey::new("text"),
+                    obrain_common::types::PropertyKey::new("text"),
                     Value::String(format!("memory {i}").into()),
                 ),
                 (
-                    grafeo_common::types::PropertyKey::new("user_id"),
+                    obrain_common::types::PropertyKey::new("user_id"),
                     Value::String(user.into()),
                 ),
             ],
         );
 
-        // Set embedding separately (grafeo-memory calls set_node_property for vectors)
+        // Set embedding separately (obrain-memory calls set_node_property for vectors)
         let emb = vec![(i as f32) / 10.0, 1.0 - (i as f32) / 10.0, 0.1, 0.1];
         db.set_node_property(id, "embedding", Value::Vector(emb.into()));
     }
@@ -304,7 +304,7 @@ fn test_grafeo_memory_pattern() {
         let node = db.get_node(*id).expect("node exists");
         let uid = node
             .properties
-            .get(&grafeo_common::types::PropertyKey::new("user_id"))
+            .get(&obrain_common::types::PropertyKey::new("user_id"))
             .expect("has user_id");
         assert_eq!(uid, &Value::String("alix".into()));
     }
@@ -313,9 +313,9 @@ fn test_grafeo_memory_pattern() {
 // === Advanced filter operator tests ===
 
 /// Helper: setup a database with 10 nodes having numeric `score` and string `category` properties.
-fn setup_operator_db() -> GrafeoDB {
-    use grafeo_common::types::PropertyKey;
-    let db = GrafeoDB::new_in_memory();
+fn setup_operator_db() -> ObrainDB {
+    use obrain_common::types::PropertyKey;
+    let db = ObrainDB::new_in_memory();
     db.create_vector_index("Item", "emb", Some(3), Some("cosine"), None, None)
         .expect("create index");
 
@@ -345,9 +345,9 @@ fn setup_operator_db() -> GrafeoDB {
 
 /// Helper: build an operator filter as a Value::Map.
 fn op_filter(ops: Vec<(&str, Value)>) -> Value {
-    let map: std::collections::BTreeMap<grafeo_common::types::PropertyKey, Value> = ops
+    let map: std::collections::BTreeMap<obrain_common::types::PropertyKey, Value> = ops
         .into_iter()
-        .map(|(k, v)| (grafeo_common::types::PropertyKey::new(k), v))
+        .map(|(k, v)| (obrain_common::types::PropertyKey::new(k), v))
         .collect();
     Value::Map(std::sync::Arc::new(map))
 }

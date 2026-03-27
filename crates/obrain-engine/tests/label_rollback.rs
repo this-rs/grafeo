@@ -3,11 +3,11 @@
 //! Verifies that ADD/REMOVE label operations are correctly undone
 //! when a transaction is rolled back.
 
-use grafeo_engine::GrafeoDB;
+use obrain_engine::ObrainDB;
 
 #[test]
 fn test_add_label_rollback_removes_label() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
@@ -55,7 +55,7 @@ fn test_add_label_rollback_removes_label() {
 
 #[test]
 fn test_remove_label_rollback_restores_label() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session
@@ -95,7 +95,7 @@ fn test_remove_label_rollback_restores_label() {
 
 #[test]
 fn test_add_label_committed_stays() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session
@@ -126,7 +126,7 @@ fn test_add_label_committed_stays() {
 
 #[test]
 fn test_label_add_undo_on_transaction_rollback() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session
@@ -150,7 +150,7 @@ fn test_label_add_undo_on_transaction_rollback() {
 
 #[test]
 fn test_label_remove_undo_on_transaction_rollback() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session

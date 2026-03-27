@@ -8,12 +8,12 @@
 
 use crate::event::{EdgeSnapshot, MutationEvent, NodeSnapshot};
 use arcstr::ArcStr;
-use grafeo_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TransactionId, Value};
-use grafeo_common::utils::hash::FxHashMap;
-use grafeo_core::graph::Direction;
-use grafeo_core::graph::lpg::{CompareOp, Edge, Node};
-use grafeo_core::graph::traits::{GraphStore, GraphStoreMut};
-use grafeo_core::statistics::Statistics;
+use obrain_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TransactionId, Value};
+use obrain_common::utils::hash::FxHashMap;
+use obrain_core::graph::Direction;
+use obrain_core::graph::lpg::{CompareOp, Edge, Node};
+use obrain_core::graph::traits::{GraphStore, GraphStoreMut};
+use obrain_core::statistics::Statistics;
 use parking_lot::Mutex;
 use std::sync::Arc;
 

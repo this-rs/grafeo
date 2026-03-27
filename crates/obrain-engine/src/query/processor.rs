@@ -9,10 +9,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use grafeo_common::types::{EpochId, TransactionId, Value};
-use grafeo_common::utils::error::{Error, Result};
-use grafeo_core::graph::GraphStoreMut;
-use grafeo_core::graph::lpg::LpgStore;
+use obrain_common::types::{EpochId, TransactionId, Value};
+use obrain_common::utils::error::{Error, Result};
+use obrain_core::graph::GraphStoreMut;
+use obrain_core::graph::lpg::LpgStore;
 
 use crate::catalog::Catalog;
 use crate::database::QueryResult;
@@ -84,10 +84,10 @@ pub type QueryParams = HashMap<String, Value>;
 ///
 /// ```no_run
 /// # use std::sync::Arc;
-/// # use grafeo_core::graph::lpg::LpgStore;
-/// use grafeo_engine::query::processor::{QueryProcessor, QueryLanguage};
+/// # use obrain_core::graph::lpg::LpgStore;
+/// use obrain_engine::query::processor::{QueryProcessor, QueryLanguage};
 ///
-/// # fn main() -> grafeo_common::utils::error::Result<()> {
+/// # fn main() -> obrain_common::utils::error::Result<()> {
 /// let store = Arc::new(LpgStore::new().unwrap());
 /// let processor = QueryProcessor::for_lpg(store);
 /// let result = processor.process("MATCH (n:Person) RETURN n", QueryLanguage::Gql, None)?;
@@ -109,7 +109,7 @@ pub struct QueryProcessor {
     transaction_context: Option<(EpochId, TransactionId)>,
     /// RDF store for triple pattern queries (optional).
     #[cfg(feature = "rdf")]
-    rdf_store: Option<Arc<grafeo_core::graph::rdf::RdfStore>>,
+    rdf_store: Option<Arc<obrain_core::graph::rdf::RdfStore>>,
 }
 
 impl QueryProcessor {
@@ -313,7 +313,7 @@ impl QueryProcessor {
 
     /// Translates an LPG query to a logical plan.
     fn translate_lpg(&self, query: &str, language: QueryLanguage) -> Result<LogicalPlan> {
-        let _span = tracing::debug_span!("grafeo::query::parse", ?language).entered();
+        let _span = tracing::debug_span!("obrain::query::parse", ?language).entered();
         match language {
             #[cfg(feature = "gql")]
             QueryLanguage::Gql => {
@@ -385,7 +385,7 @@ impl QueryProcessor {
     #[must_use]
     pub fn with_rdf(
         lpg_store: Arc<LpgStore>,
-        rdf_store: Arc<grafeo_core::graph::rdf::RdfStore>,
+        rdf_store: Arc<obrain_core::graph::rdf::RdfStore>,
     ) -> Self {
         let optimizer = Optimizer::from_store(&lpg_store);
         let graph_store = Arc::clone(&lpg_store) as Arc<dyn GraphStoreMut>;
@@ -402,7 +402,7 @@ impl QueryProcessor {
 
     /// Returns a reference to the RDF store (if configured).
     #[must_use]
-    pub fn rdf_store(&self) -> Option<&Arc<grafeo_core::graph::rdf::RdfStore>> {
+    pub fn rdf_store(&self) -> Option<&Arc<obrain_core::graph::rdf::RdfStore>> {
         self.rdf_store.as_ref()
     }
 
@@ -476,7 +476,7 @@ impl QueryProcessor {
 /// whether a property index exists for equality predicates.
 pub(crate) fn annotate_pushdown_hints(
     op: &mut LogicalOperator,
-    store: &dyn grafeo_core::graph::GraphStore,
+    store: &dyn obrain_core::graph::GraphStore,
 ) {
     #[allow(clippy::wildcard_imports)]
     use crate::query::plan::*;
@@ -534,7 +534,7 @@ pub(crate) fn annotate_pushdown_hints(
 fn infer_pushdown(
     predicate: &LogicalExpression,
     scan: &crate::query::plan::NodeScanOp,
-    store: &dyn grafeo_core::graph::GraphStore,
+    store: &dyn obrain_core::graph::GraphStore,
 ) -> Option<crate::query::plan::PushdownHint> {
     #[allow(clippy::wildcard_imports)]
     use crate::query::plan::*;
@@ -606,12 +606,12 @@ pub(crate) fn explain_result(plan: &LogicalPlan) -> QueryResult {
     let tree_text = plan.root.explain_tree();
     QueryResult {
         columns: vec!["plan".to_string()],
-        column_types: vec![grafeo_common::types::LogicalType::String],
+        column_types: vec![obrain_common::types::LogicalType::String],
         rows: vec![vec![Value::String(tree_text.into())]],
         execution_time_ms: None,
         rows_scanned: None,
         status_message: None,
-        gql_status: grafeo_common::utils::GqlStatus::SUCCESS,
+        gql_status: obrain_common::utils::GqlStatus::SUCCESS,
     }
 }
 
@@ -860,7 +860,7 @@ fn resolve_count_param(
     params: &QueryParams,
 ) -> Result<()> {
     use crate::query::plan::CountExpr;
-    use grafeo_common::utils::error::{QueryError, QueryErrorKind};
+    use obrain_common::utils::error::{QueryError, QueryErrorKind};
 
     if let CountExpr::Parameter(name) = count {
         let value = params.get(name.as_str()).ok_or_else(|| {

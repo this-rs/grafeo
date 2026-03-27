@@ -11,9 +11,9 @@ use crate::query::plan::{
     ExpandOp, FilterOp, LogicalExpression, LogicalOperator, LogicalPlan, NodeScanOp, ReturnItem,
     ReturnOp, TripleScanOp,
 };
-use grafeo_common::types::LogicalType;
-use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
-use grafeo_common::utils::strings::{find_similar, format_suggestion};
+use obrain_common::types::LogicalType;
+use obrain_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
+use obrain_common::utils::strings::{find_similar, format_suggestion};
 use std::collections::HashMap;
 
 /// Creates a semantic binding error.
@@ -1165,7 +1165,7 @@ impl Binder {
             LogicalExpression::Property { .. } => LogicalType::Any, // Properties can be any type
             LogicalExpression::Literal(value) => {
                 // Infer type from literal value
-                use grafeo_common::types::Value;
+                use obrain_common::types::Value;
                 match value {
                     Value::Bool(_) => LogicalType::Bool,
                     Value::Int64(_) => LogicalType::Int64,
@@ -1372,7 +1372,7 @@ mod tests {
                     }),
                     op: BinaryOp::Gt,
                     right: Box::new(LogicalExpression::Literal(
-                        grafeo_common::types::Value::Int64(30),
+                        obrain_common::types::Value::Int64(30),
                     )),
                 },
                 input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
@@ -1494,7 +1494,7 @@ mod tests {
                     alias: Some("cnt".to_string()),
                 },
                 ReturnItem {
-                    expression: LogicalExpression::Literal(grafeo_common::types::Value::Int64(1)),
+                    expression: LogicalExpression::Literal(obrain_common::types::Value::Int64(1)),
                     alias: Some("one".to_string()),
                 },
             ],
@@ -1751,7 +1751,7 @@ mod tests {
             variable: "ghost".to_string(),
             properties: vec![(
                 "name".to_string(),
-                LogicalExpression::Literal(grafeo_common::types::Value::String("Alix".into())),
+                LogicalExpression::Literal(obrain_common::types::Value::String("Alix".into())),
             )],
             replace: false,
             is_edge: false,
@@ -1877,8 +1877,8 @@ mod tests {
             distinct: false,
             input: Box::new(LogicalOperator::Unwind(UnwindOp {
                 expression: LogicalExpression::List(vec![
-                    LogicalExpression::Literal(grafeo_common::types::Value::Int64(1)),
-                    LogicalExpression::Literal(grafeo_common::types::Value::Int64(2)),
+                    LogicalExpression::Literal(obrain_common::types::Value::Int64(1)),
+                    LogicalExpression::Literal(obrain_common::types::Value::Int64(2)),
                 ]),
                 variable: "item".to_string(),
                 ordinality_var: None,
@@ -1914,15 +1914,15 @@ mod tests {
                 labels: vec!["Person".to_string()],
                 match_properties: vec![(
                     "name".to_string(),
-                    LogicalExpression::Literal(grafeo_common::types::Value::String("Alix".into())),
+                    LogicalExpression::Literal(obrain_common::types::Value::String("Alix".into())),
                 )],
                 on_create: vec![(
                     "created".to_string(),
-                    LogicalExpression::Literal(grafeo_common::types::Value::Bool(true)),
+                    LogicalExpression::Literal(obrain_common::types::Value::Bool(true)),
                 )],
                 on_match: vec![(
                     "updated".to_string(),
-                    LogicalExpression::Literal(grafeo_common::types::Value::Bool(true)),
+                    LogicalExpression::Literal(obrain_common::types::Value::Bool(true)),
                 )],
                 input: Box::new(LogicalOperator::Empty),
             })),
@@ -2045,10 +2045,10 @@ mod tests {
                                 }),
                                 op: BinaryOp::Gt,
                                 right: Box::new(LogicalExpression::Literal(
-                                    grafeo_common::types::Value::Int64(18),
+                                    obrain_common::types::Value::Int64(18),
                                 )),
                             },
-                            LogicalExpression::Literal(grafeo_common::types::Value::String(
+                            LogicalExpression::Literal(obrain_common::types::Value::String(
                                 "adult".into(),
                             )),
                         ),
@@ -2058,13 +2058,13 @@ mod tests {
                                 variable: "ghost".to_string(),
                                 property: "flag".to_string(),
                             },
-                            LogicalExpression::Literal(grafeo_common::types::Value::String(
+                            LogicalExpression::Literal(obrain_common::types::Value::String(
                                 "flagged".into(),
                             )),
                         ),
                     ],
                     else_clause: Some(Box::new(LogicalExpression::Literal(
-                        grafeo_common::types::Value::String("other".into()),
+                        obrain_common::types::Value::String("other".into()),
                     ))),
                 },
                 alias: None,
@@ -2092,8 +2092,8 @@ mod tests {
                 expression: LogicalExpression::Case {
                     operand: None,
                     when_clauses: vec![(
-                        LogicalExpression::Literal(grafeo_common::types::Value::Bool(true)),
-                        LogicalExpression::Literal(grafeo_common::types::Value::Int64(1)),
+                        LogicalExpression::Literal(obrain_common::types::Value::Bool(true)),
+                        LogicalExpression::Literal(obrain_common::types::Value::Int64(1)),
                     )],
                     else_clause: Some(Box::new(LogicalExpression::Property {
                         variable: "missing".to_string(),

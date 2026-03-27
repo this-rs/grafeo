@@ -10,8 +10,8 @@
 //! - **Compression** - cold chunks can be compressed using DeltaBitPacked
 
 use crate::storage::{BitPackedInts, DeltaBitPacked};
-use grafeo_common::types::{EdgeId, NodeId};
-use grafeo_common::utils::hash::{FxHashMap, FxHashSet};
+use obrain_common::types::{EdgeId, NodeId};
+use obrain_common::utils::hash::{FxHashMap, FxHashSet};
 use parking_lot::RwLock;
 use smallvec::SmallVec;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -508,8 +508,8 @@ impl AdjacencyList {
 /// # Example
 ///
 /// ```
-/// use grafeo_core::index::ChunkedAdjacency;
-/// use grafeo_common::types::{NodeId, EdgeId};
+/// use obrain_core::index::ChunkedAdjacency;
+/// use obrain_common::types::{NodeId, EdgeId};
 ///
 /// let adj = ChunkedAdjacency::new();
 ///

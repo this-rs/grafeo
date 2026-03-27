@@ -1,15 +1,15 @@
-//! # grafeo-cognitive
+//! # obrain-cognitive
 //!
-//! Cognitive features for Grafeo — energy scoring, Hebbian synapses,
+//! Cognitive features for Obrain — energy scoring, Hebbian synapses,
 //! spreading activation, knowledge fabric, and more.
 //!
-//! Each cognitive subsystem implements [`grafeo_reactive::MutationListener`]
+//! Each cognitive subsystem implements [`obrain_reactive::MutationListener`]
 //! and reacts asynchronously to graph mutations via the reactive substrate.
 //!
 //! ## Architecture
 //!
 //! ```text
-//! MutationBus (grafeo-reactive)
+//! MutationBus (obrain-reactive)
 //!       |
 //!   Scheduler → dispatches batches to:
 //!       |

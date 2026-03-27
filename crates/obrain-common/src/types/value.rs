@@ -73,7 +73,7 @@ impl AsRef<str> for PropertyKey {
 /// # Examples
 ///
 /// ```
-/// use grafeo_common::types::Value;
+/// use obrain_common::types::Value;
 ///
 /// let name = Value::from("Alix");
 /// let age = Value::from(30i64);
@@ -595,7 +595,7 @@ pub struct HashableValue(pub Value);
 /// # Examples
 ///
 /// ```
-/// use grafeo_common::types::{OrderableValue, Value};
+/// use obrain_common::types::{OrderableValue, Value};
 /// use std::collections::BTreeSet;
 ///
 /// let mut set = BTreeSet::new();

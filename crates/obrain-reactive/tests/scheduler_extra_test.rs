@@ -2,8 +2,8 @@
 //! and edge cases.
 
 use async_trait::async_trait;
-use grafeo_common::types::NodeId;
-use grafeo_reactive::{
+use obrain_common::types::NodeId;
+use obrain_reactive::{
     BatchConfig, MutationBatch, MutationBus, MutationEvent, MutationListener, NodeSnapshot,
     Scheduler,
 };
@@ -560,7 +560,7 @@ impl MutationListener for RejectAllListener {
 fn make_node_deleted_event(id: u64) -> MutationEvent {
     MutationEvent::NodeDeleted {
         node: NodeSnapshot {
-            id: grafeo_common::types::NodeId::new(id),
+            id: obrain_common::types::NodeId::new(id),
             labels: smallvec::smallvec![arcstr::literal!("Test")],
             properties: vec![],
         },

@@ -6,7 +6,7 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use grafeo_adapters::query::sparql;
+//! use obrain_adapters::query::sparql;
 //!
 //! let query = r#"
 //!     PREFIX foaf: <http://xmlns.com/foaf/0.1/>
@@ -27,7 +27,7 @@ pub use ast::*;
 pub use lexer::{Lexer, Token, TokenKind};
 pub use parser::Parser;
 
-use grafeo_common::utils::error::Result;
+use obrain_common::utils::error::Result;
 
 /// Parses a SPARQL query string into an AST.
 ///

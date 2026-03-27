@@ -12,7 +12,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use grafeo_core::storage::succinct::{SuccinctBitVector, EliasFano};
+//! use obrain_core::storage::succinct::{SuccinctBitVector, EliasFano};
 //!
 //! // Succinct bitvector with O(1) rank/select
 //! let bits: Vec<bool> = (0..10000).map(|i| i % 3 == 0).collect();

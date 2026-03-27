@@ -1,6 +1,6 @@
 //! Extra tests for config module — edge cases and TOML parsing.
 
-use grafeo_cognitive::config::CognitiveConfig;
+use obrain_cognitive::config::CognitiveConfig;
 
 #[test]
 fn from_toml_empty_string_uses_defaults() {

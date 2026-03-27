@@ -48,7 +48,7 @@ impl SpillManager {
     ///
     /// Returns an error if the temp directory cannot be created.
     pub fn with_temp_dir() -> std::io::Result<Self> {
-        let temp_dir = std::env::temp_dir().join("grafeo_spill");
+        let temp_dir = std::env::temp_dir().join("obrain_spill");
         Self::new(temp_dir)
     }
 

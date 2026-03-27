@@ -18,7 +18,7 @@ use super::{FactorizedResult, LazyFactorizedChainOperator, Operator, OperatorRes
 use crate::execution::DataChunk;
 use crate::execution::factorized_chunk::FactorizedChunk;
 use crate::execution::vector::ValueVector;
-use grafeo_common::types::{LogicalType, Value};
+use obrain_common::types::{LogicalType, Value};
 
 /// Types of aggregates that can be computed on factorized data.
 #[derive(Debug, Clone)]
@@ -132,8 +132,8 @@ impl FactorizedAggregate {
     /// # Example
     ///
     /// ```rust
-    /// # use grafeo_core::execution::factorized_chunk::FactorizedChunk;
-    /// # use grafeo_core::execution::operators::FactorizedAggregate;
+    /// # use obrain_core::execution::factorized_chunk::FactorizedChunk;
+    /// # use obrain_core::execution::operators::FactorizedAggregate;
     /// let mut chunk = FactorizedChunk::empty();
     /// let mults = chunk.path_multiplicities_cached();
     ///
@@ -223,7 +223,7 @@ impl FactorizedAggregate {
 /// # Example
 ///
 /// ```no_run
-/// # use grafeo_core::execution::operators::{
+/// # use obrain_core::execution::operators::{
 /// #     FactorizedAggregateOperator, FactorizedAggregate,
 /// #     LazyFactorizedChainOperator,
 /// # };

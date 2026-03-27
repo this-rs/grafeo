@@ -2,20 +2,20 @@
 
 #![cfg(feature = "cognitive")]
 
-use grafeo_cognitive::{CognitiveConfig, CognitiveEngine, CognitiveEngineBuilder};
-use grafeo_common::types::{NodeId, Value};
-use grafeo_engine::cognitive_procedures::try_execute_cognitive_procedure;
-use grafeo_engine::cognitive_udfs::{EnergyUdf, RiskUdf, SynapsesUdf, register_cognitive_udfs};
-use grafeo_engine::query::plan::LogicalExpression;
+use obrain_cognitive::{CognitiveConfig, CognitiveEngine, CognitiveEngineBuilder};
+use obrain_common::types::{NodeId, Value};
+use obrain_engine::cognitive_procedures::try_execute_cognitive_procedure;
+use obrain_engine::cognitive_udfs::{EnergyUdf, RiskUdf, SynapsesUdf, register_cognitive_udfs};
+use obrain_engine::query::plan::LogicalExpression;
 
-use grafeo_adapters::plugins::{PluginRegistry, UserDefinedFunction};
+use obrain_adapters::plugins::{PluginRegistry, UserDefinedFunction};
 use std::sync::Arc;
 
 /// Helper: create a cognitive engine (as dyn CognitiveEngine) with energy enabled.
 /// Must be called within a tokio runtime (Scheduler requires it).
 fn make_engine() -> Arc<dyn CognitiveEngine> {
-    let bus = grafeo_reactive::MutationBus::new();
-    let scheduler = grafeo_reactive::Scheduler::new(&bus, grafeo_reactive::BatchConfig::default());
+    let bus = obrain_reactive::MutationBus::new();
+    let scheduler = obrain_reactive::Scheduler::new(&bus, obrain_reactive::BatchConfig::default());
     let mut config = CognitiveConfig::new();
     config.energy.enabled = true;
     let engine = CognitiveEngineBuilder::from_config(&config).build(&scheduler);
@@ -23,7 +23,7 @@ fn make_engine() -> Arc<dyn CognitiveEngine> {
 }
 
 // ---------------------------------------------------------------------------
-// UDF: grafeo.energy()
+// UDF: obrain.energy()
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -63,11 +63,11 @@ async fn energy_udf_rejects_missing_args() {
 async fn energy_udf_name() {
     let engine = make_engine();
     let udf = EnergyUdf::new(engine);
-    assert_eq!(udf.name(), "grafeo.energy");
+    assert_eq!(udf.name(), "obrain.energy");
 }
 
 // ---------------------------------------------------------------------------
-// UDF: grafeo.risk()
+// UDF: obrain.risk()
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -85,11 +85,11 @@ async fn risk_udf_returns_zero_without_fabric() {
 async fn risk_udf_name() {
     let engine = make_engine();
     let udf = RiskUdf::new(engine);
-    assert_eq!(udf.name(), "grafeo.risk");
+    assert_eq!(udf.name(), "obrain.risk");
 }
 
 // ---------------------------------------------------------------------------
-// UDF: grafeo.synapses()
+// UDF: obrain.synapses()
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -107,7 +107,7 @@ async fn synapses_udf_returns_empty_list_without_synapse() {
 async fn synapses_udf_name() {
     let engine = make_engine();
     let udf = SynapsesUdf::new(engine);
-    assert_eq!(udf.name(), "grafeo.synapses");
+    assert_eq!(udf.name(), "obrain.synapses");
 }
 
 // ---------------------------------------------------------------------------
@@ -120,9 +120,9 @@ async fn register_cognitive_udfs_adds_three_udfs() {
     let registry = PluginRegistry::new();
     register_cognitive_udfs(&registry, engine);
 
-    assert!(registry.get_udf("grafeo.energy").is_some());
-    assert!(registry.get_udf("grafeo.risk").is_some());
-    assert!(registry.get_udf("grafeo.synapses").is_some());
+    assert!(registry.get_udf("obrain.energy").is_some());
+    assert!(registry.get_udf("obrain.risk").is_some());
+    assert!(registry.get_udf("obrain.synapses").is_some());
     assert_eq!(registry.list_udfs().len(), 3);
 }
 
@@ -133,7 +133,7 @@ async fn register_cognitive_udfs_adds_three_udfs() {
 #[tokio::test]
 async fn spread_procedure_rejects_missing_args() {
     let engine = make_engine();
-    let result = try_execute_cognitive_procedure("grafeo.cognitive.spread", &[], &engine);
+    let result = try_execute_cognitive_procedure("obrain.cognitive.spread", &[], &engine);
     assert!(result.is_err());
 }
 
@@ -141,7 +141,7 @@ async fn spread_procedure_rejects_missing_args() {
 async fn spread_procedure_returns_result_for_valid_args() {
     let engine = make_engine();
     let args = vec![LogicalExpression::Literal(Value::Int64(1))];
-    let result = try_execute_cognitive_procedure("grafeo.cognitive.spread", &args, &engine);
+    let result = try_execute_cognitive_procedure("obrain.cognitive.spread", &args, &engine);
     assert!(result.is_ok());
     let algo_result = result.unwrap().unwrap();
     assert_eq!(algo_result.columns.len(), 2); // "activated", "energy"
@@ -151,7 +151,7 @@ async fn spread_procedure_returns_result_for_valid_args() {
 async fn distill_procedure_returns_result() {
     let engine = make_engine();
     let args = vec![]; // default min_weight = 0.1
-    let result = try_execute_cognitive_procedure("grafeo.cognitive.distill", &args, &engine);
+    let result = try_execute_cognitive_procedure("obrain.cognitive.distill", &args, &engine);
     assert!(result.is_ok());
     let algo_result = result.unwrap().unwrap();
     assert_eq!(algo_result.columns.len(), 1); // "artifact"
@@ -160,19 +160,19 @@ async fn distill_procedure_returns_result() {
 #[tokio::test]
 async fn unknown_procedure_returns_none() {
     let engine = make_engine();
-    let result = try_execute_cognitive_procedure("grafeo.cognitive.unknown", &[], &engine).unwrap();
+    let result = try_execute_cognitive_procedure("obrain.cognitive.unknown", &[], &engine).unwrap();
     assert!(result.is_none());
 }
 
 // ---------------------------------------------------------------------------
-// CALL grafeo.cognitive.search
+// CALL obrain.cognitive.search
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn cognitive_search_procedure_rejects_missing_embedding() {
     let engine = make_engine();
     // No arguments → should error
-    let result = try_execute_cognitive_procedure("grafeo.cognitive.search", &[], &engine);
+    let result = try_execute_cognitive_procedure("obrain.cognitive.search", &[], &engine);
     assert!(result.is_err());
 }
 
@@ -183,7 +183,7 @@ async fn cognitive_search_procedure_rejects_empty_embedding() {
         "query_embedding".to_string(),
         LogicalExpression::List(vec![]),
     )])];
-    let result = try_execute_cognitive_procedure("grafeo.cognitive.search", &args, &engine);
+    let result = try_execute_cognitive_procedure("obrain.cognitive.search", &args, &engine);
     assert!(result.is_err());
 }
 
@@ -225,7 +225,7 @@ async fn cognitive_search_procedure_returns_result() {
             ]),
         ),
     ])];
-    let result = try_execute_cognitive_procedure("grafeo.cognitive.search", &args, &engine);
+    let result = try_execute_cognitive_procedure("obrain.cognitive.search", &args, &engine);
     assert!(result.is_ok());
     let algo_result = result.unwrap().unwrap();
     assert_eq!(algo_result.columns.len(), 6);

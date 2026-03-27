@@ -6,13 +6,13 @@
 use std::collections::BinaryHeap;
 use std::sync::OnceLock;
 
-use grafeo_common::types::{NodeId, Value};
-use grafeo_common::utils::error::{Error, Result};
-use grafeo_common::utils::hash::FxHashMap;
-use grafeo_core::graph::Direction;
-use grafeo_core::graph::GraphStore;
+use obrain_common::types::{NodeId, Value};
+use obrain_common::utils::error::{Error, Result};
+use obrain_common::utils::hash::FxHashMap;
+use obrain_core::graph::Direction;
+use obrain_core::graph::GraphStore;
 #[cfg(test)]
-use grafeo_core::graph::lpg::LpgStore;
+use obrain_core::graph::lpg::LpgStore;
 
 use super::super::{AlgorithmResult, ParameterDef, ParameterType, Parameters};
 use super::traits::{GraphAlgorithm, MinScored};
@@ -26,7 +26,7 @@ use super::traits::{GraphAlgorithm, MinScored};
 /// Supports Int64 and Float64 values, defaulting to 1.0 if no weight property.
 fn extract_weight(
     store: &dyn GraphStore,
-    edge_id: grafeo_common::types::EdgeId,
+    edge_id: obrain_common::types::EdgeId,
     weight_prop: Option<&str>,
 ) -> f64 {
     if let Some(prop_name) = weight_prop
@@ -369,7 +369,7 @@ pub fn bellman_ford(
 
     // Collect all nodes and edges
     let nodes: Vec<NodeId> = store.node_ids();
-    let edges: Vec<(NodeId, NodeId, grafeo_common::types::EdgeId)> = nodes
+    let edges: Vec<(NodeId, NodeId, obrain_common::types::EdgeId)> = nodes
         .iter()
         .flat_map(|&node| {
             store

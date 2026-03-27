@@ -4,7 +4,7 @@
 //! The inner MATCH clause reuses GQL AST types since SQL/PGQ
 //! uses GQL pattern syntax inside `GRAPH_TABLE(...)`.
 
-use grafeo_common::utils::error::SourceSpan;
+use obrain_common::utils::error::SourceSpan;
 
 // Re-use GQL pattern and expression types for the inner MATCH clause
 pub use crate::query::gql::ast::{
@@ -134,7 +134,7 @@ pub struct CreatePropertyGraphStatement {
 /// A node table definition in `NODE TABLES (...)`.
 #[derive(Debug, Clone)]
 pub struct NodeTableDefinition {
-    /// Table name (maps to a node label in Grafeo).
+    /// Table name (maps to a node label in Obrain).
     pub name: String,
     /// Column definitions.
     pub columns: Vec<ColumnDefinition>,
@@ -145,7 +145,7 @@ pub struct NodeTableDefinition {
 /// An edge table definition in `EDGE TABLES (...)`.
 #[derive(Debug, Clone)]
 pub struct EdgeTableDefinition {
-    /// Table name (maps to an edge type in Grafeo).
+    /// Table name (maps to an edge type in Obrain).
     pub name: String,
     /// Column definitions.
     pub columns: Vec<ColumnDefinition>,

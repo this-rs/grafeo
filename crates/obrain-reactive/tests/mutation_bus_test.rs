@@ -1,7 +1,7 @@
 //! Integration tests for the MutationBus.
 
-use grafeo_common::types::{EdgeId, NodeId};
-use grafeo_reactive::{EdgeSnapshot, MutationBatch, MutationBus, MutationEvent, NodeSnapshot};
+use obrain_common::types::{EdgeId, NodeId};
+use obrain_reactive::{EdgeSnapshot, MutationBatch, MutationBus, MutationEvent, NodeSnapshot};
 
 fn make_node(id: u64, labels: &[&str]) -> NodeSnapshot {
     NodeSnapshot {

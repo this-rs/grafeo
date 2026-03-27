@@ -4,13 +4,13 @@ import pytest
 
 from tests.bases.test_admin import BaseAdminTest
 
-# Try to import grafeo
+# Try to import obrain
 try:
-    from grafeo import GrafeoDB
+    from obrain import ObrainDB
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
 
 class TestCypherAdmin(BaseAdminTest):
@@ -18,10 +18,10 @@ class TestCypherAdmin(BaseAdminTest):
 
     @pytest.fixture
     def db(self):
-        """Create a fresh in-memory GrafeoDB instance."""
-        if not GRAFEO_AVAILABLE:
-            pytest.skip("grafeo not installed")
-        return GrafeoDB()
+        """Create a fresh in-memory ObrainDB instance."""
+        if not OBRAIN_AVAILABLE:
+            pytest.skip("obrain not installed")
+        return ObrainDB()
 
     def setup_test_graph(self, db):
         """Set up test data for admin tests."""

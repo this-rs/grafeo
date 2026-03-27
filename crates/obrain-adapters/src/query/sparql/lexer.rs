@@ -1,6 +1,6 @@
 //! SPARQL Lexer.
 
-use grafeo_common::utils::error::SourceSpan;
+use obrain_common::utils::error::SourceSpan;
 
 /// A token in the SPARQL language.
 #[derive(Debug, Clone, PartialEq)]

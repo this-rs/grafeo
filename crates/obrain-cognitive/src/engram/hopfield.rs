@@ -735,7 +735,7 @@ impl PredictionErrorCalculator {
 mod tests {
     use super::*;
     use crate::engram::types::EngramId;
-    use grafeo_common::types::NodeId;
+    use obrain_common::types::NodeId;
 
     fn make_test_store_and_matrix() -> (EngramStore, PatternMatrix) {
         let store = EngramStore::new(None);

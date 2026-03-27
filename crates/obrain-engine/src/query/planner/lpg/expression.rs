@@ -147,16 +147,16 @@ impl super::Planner {
             } => {
                 let filter_kind = match kind {
                     crate::query::plan::ListPredicateKind::All => {
-                        grafeo_core::execution::operators::ListPredicateKind::All
+                        obrain_core::execution::operators::ListPredicateKind::All
                     }
                     crate::query::plan::ListPredicateKind::Any => {
-                        grafeo_core::execution::operators::ListPredicateKind::Any
+                        obrain_core::execution::operators::ListPredicateKind::Any
                     }
                     crate::query::plan::ListPredicateKind::None => {
-                        grafeo_core::execution::operators::ListPredicateKind::None
+                        obrain_core::execution::operators::ListPredicateKind::None
                     }
                     crate::query::plan::ListPredicateKind::Single => {
-                        grafeo_core::execution::operators::ListPredicateKind::Single
+                        obrain_core::execution::operators::ListPredicateKind::Single
                     }
                 };
                 let list = self.convert_expression(list_expr)?;

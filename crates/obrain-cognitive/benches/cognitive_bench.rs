@@ -3,14 +3,14 @@
 //! Measures the per-mutation cost of cognitive features (energy tracking, synapse
 //! reinforcement) to ensure the reactive pipeline stays within acceptable bounds.
 //!
-//! Run with: cargo bench -p grafeo-cognitive --features cognitive
+//! Run with: cargo bench -p obrain-cognitive --features cognitive
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use grafeo_common::types::NodeId;
-use grafeo_reactive::{
+use obrain_common::types::NodeId;
+use obrain_reactive::{
     BatchConfig, MutationBatch, MutationBus, MutationEvent, NodeSnapshot, Scheduler,
 };
 use smallvec::smallvec;
@@ -44,7 +44,7 @@ fn bench_scheduler_dispatch(c: &mut Criterion) {
     }
 
     #[async_trait::async_trait]
-    impl grafeo_reactive::MutationListener for CountingListener {
+    impl obrain_reactive::MutationListener for CountingListener {
         fn name(&self) -> &str {
             "counter"
         }
@@ -87,7 +87,7 @@ fn bench_scheduler_dispatch(c: &mut Criterion) {
 
 #[cfg(feature = "energy")]
 fn bench_energy_tracking(c: &mut Criterion) {
-    use grafeo_cognitive::energy::{EnergyConfig, EnergyListener, EnergyStore};
+    use obrain_cognitive::energy::{EnergyConfig, EnergyListener, EnergyStore};
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let bus = MutationBus::new();
@@ -131,7 +131,7 @@ fn bench_energy_tracking(c: &mut Criterion) {
 
 #[cfg(feature = "synapse")]
 fn bench_synapse_reinforcement(c: &mut Criterion) {
-    use grafeo_cognitive::synapse::{SynapseConfig, SynapseListener, SynapseStore};
+    use obrain_cognitive::synapse::{SynapseConfig, SynapseListener, SynapseStore};
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let bus = MutationBus::new();
@@ -158,7 +158,7 @@ fn bench_synapse_reinforcement(c: &mut Criterion) {
 // ============================================================================
 
 fn bench_full_cognitive_pipeline(c: &mut Criterion) {
-    use grafeo_cognitive::{CognitiveConfig, CognitiveEngineBuilder};
+    use obrain_cognitive::{CognitiveConfig, CognitiveEngineBuilder};
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let bus = MutationBus::new();

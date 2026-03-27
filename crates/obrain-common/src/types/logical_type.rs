@@ -148,7 +148,7 @@ impl LogicalType {
 
     /// Returns true if this type is nullable (can hold NULL values).
     ///
-    /// In Grafeo, all types except Null itself are nullable by default.
+    /// In Obrain, all types except Null itself are nullable by default.
     #[must_use]
     pub const fn is_nullable(&self) -> bool {
         true

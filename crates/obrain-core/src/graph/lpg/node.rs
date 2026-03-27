@@ -4,7 +4,7 @@
 //! [`NodeRecord`] is the compact 32-byte struct for storage.
 
 use arcstr::ArcStr;
-use grafeo_common::types::{EpochId, NodeId, PropertyKey, PropertyMap, Value};
+use obrain_common::types::{EpochId, NodeId, PropertyKey, PropertyMap, Value};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -16,8 +16,8 @@ use smallvec::SmallVec;
 /// # Example
 ///
 /// ```
-/// use grafeo_core::graph::lpg::Node;
-/// use grafeo_common::types::NodeId;
+/// use obrain_core::graph::lpg::Node;
+/// use obrain_common::types::NodeId;
 ///
 /// let mut person = Node::new(NodeId::new(1));
 /// person.add_label("Person");

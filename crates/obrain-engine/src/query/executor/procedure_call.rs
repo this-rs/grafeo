@@ -5,12 +5,12 @@
 
 use std::sync::Arc;
 
-use grafeo_adapters::plugins::algorithms::GraphAlgorithm;
-use grafeo_adapters::plugins::{AlgorithmResult, Parameters};
-use grafeo_common::types::{LogicalType, Value};
-use grafeo_core::execution::DataChunk;
-use grafeo_core::execution::operators::{Operator, OperatorError, OperatorResult};
-use grafeo_core::graph::GraphStore;
+use obrain_adapters::plugins::algorithms::GraphAlgorithm;
+use obrain_adapters::plugins::{AlgorithmResult, Parameters};
+use obrain_common::types::{LogicalType, Value};
+use obrain_core::execution::DataChunk;
+use obrain_core::execution::operators::{Operator, OperatorError, OperatorResult};
+use obrain_core::graph::GraphStore;
 
 /// Physical operator that executes a graph algorithm and yields its results.
 ///

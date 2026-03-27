@@ -6,10 +6,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use grafeo_common::types::{EpochId, TransactionId, Value};
-use grafeo_core::execution::DataChunk;
-use grafeo_core::execution::operators::{Operator, OperatorError, OperatorResult};
-use grafeo_core::graph::GraphStoreMut;
+use obrain_common::types::{EpochId, TransactionId, Value};
+use obrain_core::execution::DataChunk;
+use obrain_core::execution::operators::{Operator, OperatorError, OperatorResult};
+use obrain_core::graph::GraphStoreMut;
 
 use crate::catalog::Catalog;
 use crate::database::QueryResult;
@@ -196,8 +196,8 @@ impl Operator for UserProcedureOperator {
             .len()
             .max(rows.first().map_or(self.output_columns.len(), |r| r.len()));
 
-        let types: Vec<grafeo_common::types::LogicalType> =
-            vec![grafeo_common::types::LogicalType::Any; col_count];
+        let types: Vec<obrain_common::types::LogicalType> =
+            vec![obrain_common::types::LogicalType::Any; col_count];
         let mut chunk = DataChunk::with_capacity(&types, chunk_rows);
 
         for row_idx in self.row_index..end {

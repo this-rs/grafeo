@@ -11,7 +11,7 @@ use crate::query::plan::{
     AggregateFunction, BinaryOp, CountExpr, DistinctOp, FilterOp, LeftJoinOp, LimitOp,
     LogicalExpression, LogicalOperator, ReturnItem, ReturnOp, SkipOp, SortKey, SortOp,
 };
-use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
+use obrain_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
 
 /// Returns true if the function name is a recognized aggregate function.
 pub(crate) fn is_aggregate_function(name: &str) -> bool {
@@ -588,7 +588,7 @@ pub(crate) fn wrap_return(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grafeo_common::types::Value;
+    use obrain_common::types::Value;
 
     // --- capitalize_first ---
 

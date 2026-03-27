@@ -54,7 +54,7 @@ fn levenshtein_distance(a: &str, b: &str) -> usize {
 /// # Examples
 ///
 /// ```
-/// use grafeo_common::utils::strings::find_similar;
+/// use obrain_common::utils::strings::find_similar;
 ///
 /// let candidates = ["Person", "Place", "Organization"];
 /// assert_eq!(find_similar("Peron", &candidates), Some("Person"));
@@ -109,7 +109,7 @@ pub fn find_similar<'a, S: AsRef<str>>(query: &str, candidates: &'a [S]) -> Opti
 /// # Examples
 ///
 /// ```
-/// use grafeo_common::utils::strings::format_suggestion;
+/// use obrain_common::utils::strings::format_suggestion;
 ///
 /// assert_eq!(format_suggestion("Person"), "Did you mean 'Person'?");
 /// ```
@@ -122,7 +122,7 @@ pub fn format_suggestion(suggestion: &str) -> String {
 /// # Examples
 ///
 /// ```
-/// use grafeo_common::utils::strings::format_suggestions;
+/// use obrain_common::utils::strings::format_suggestions;
 ///
 /// assert_eq!(
 ///     format_suggestions(&["Person", "Place"]),

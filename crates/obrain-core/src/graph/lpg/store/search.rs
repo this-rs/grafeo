@@ -1,7 +1,7 @@
 use super::{LpgStore, value_in_range};
 use crate::graph::lpg::property::CompareOp;
 use crate::index::zone_map::ZoneMapEntry;
-use grafeo_common::types::{HashableValue, NodeId, PropertyKey, Value};
+use obrain_common::types::{HashableValue, NodeId, PropertyKey, Value};
 
 impl LpgStore {
     /// Finds all nodes whose property value falls within a range.
@@ -21,8 +21,8 @@ impl LpgStore {
     /// # Example
     ///
     /// ```
-    /// use grafeo_core::graph::lpg::LpgStore;
-    /// use grafeo_common::types::Value;
+    /// use obrain_core::graph::lpg::LpgStore;
+    /// use obrain_common::types::Value;
     ///
     /// let store = LpgStore::new().expect("arena allocation");
     /// let n1 = store.create_node(&["Person"]);
@@ -79,8 +79,8 @@ impl LpgStore {
     /// # Example
     ///
     /// ```
-    /// use grafeo_core::graph::lpg::LpgStore;
-    /// use grafeo_common::types::Value;
+    /// use obrain_core::graph::lpg::LpgStore;
+    /// use obrain_common::types::Value;
     ///
     /// let store = LpgStore::new().expect("arena allocation");
     /// let alix = store.create_node(&["Person"]);
@@ -168,8 +168,8 @@ impl LpgStore {
     /// # Example
     ///
     /// ```
-    /// use grafeo_core::graph::lpg::LpgStore;
-    /// use grafeo_common::types::Value;
+    /// use obrain_core::graph::lpg::LpgStore;
+    /// use obrain_common::types::Value;
     ///
     /// let store = LpgStore::new().expect("arena allocation");
     /// store.create_property_index("city"); // Optional but makes lookups fast

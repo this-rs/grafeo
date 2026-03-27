@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use grafeo_common::types::{EdgeId, NodeId, Value};
+use obrain_common::types::{EdgeId, NodeId, Value};
 use tracing::debug;
 
 use super::observe::EngramMetricsCollector;

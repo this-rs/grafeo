@@ -4,7 +4,7 @@ use super::{Operator, OperatorError, OperatorResult};
 use crate::execution::DataChunk;
 use crate::graph::Direction;
 use crate::graph::GraphStore;
-use grafeo_common::types::{EdgeId, EpochId, LogicalType, NodeId, TransactionId};
+use obrain_common::types::{EdgeId, EpochId, LogicalType, NodeId, TransactionId};
 use std::sync::Arc;
 
 /// An expand operator that traverses edges from source nodes.

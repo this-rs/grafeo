@@ -15,7 +15,7 @@ use std::ptr::NonNull;
 /// # Examples
 ///
 /// ```
-/// use grafeo_common::memory::BumpAllocator;
+/// use obrain_common::memory::BumpAllocator;
 ///
 /// let mut bump = BumpAllocator::new();
 ///

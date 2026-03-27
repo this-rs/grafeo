@@ -6,7 +6,7 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use grafeo_adapters::query::graphql;
+//! use obrain_adapters::query::graphql;
 //!
 //! let query = r#"
 //!     query GetUser($id: ID!) {
@@ -33,7 +33,7 @@ pub use ast::*;
 pub use lexer::{Lexer, Token, TokenKind};
 pub use parser::Parser;
 
-use grafeo_common::utils::error::Result;
+use obrain_common::utils::error::Result;
 
 /// Parses a GraphQL query string into a Document AST.
 ///

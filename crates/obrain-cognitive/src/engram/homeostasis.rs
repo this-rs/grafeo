@@ -231,7 +231,7 @@ impl HomeostasisEngine {
 mod tests {
     use super::*;
     use crate::engram::types::{Engram, EngramId};
-    use grafeo_common::types::NodeId;
+    use obrain_common::types::NodeId;
 
     fn test_store() -> EngramStore {
         EngramStore::new(None)
@@ -407,7 +407,7 @@ mod tests {
         use super::*;
         use crate::engram::traits::EdgeAnnotator;
         use crate::stigmergy::{StigmergicEngine, TrailType};
-        use grafeo_common::types::EdgeId;
+        use obrain_common::types::EdgeId;
 
         struct NoopAnnotator;
         impl EdgeAnnotator for NoopAnnotator {

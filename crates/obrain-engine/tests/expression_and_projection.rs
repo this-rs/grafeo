@@ -6,19 +6,19 @@
 //! - `gql_translator.rs` (44.78%): aggregates, GROUP BY
 //!
 //! ```bash
-//! cargo test -p grafeo-engine --features full --test expression_and_projection
+//! cargo test -p obrain-engine --features full --test expression_and_projection
 //! ```
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 // ============================================================================
 // Fixtures
 // ============================================================================
 
 /// Creates 3 Person nodes (Alix/NYC, Gus/NYC, Harm/London) with 3 KNOWS edges.
-fn create_test_graph() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn create_test_graph() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let alix = session.create_node_with_props(
@@ -120,8 +120,8 @@ fn test_exists_subquery_no_match() {
 /// Extended graph: Person nodes with KNOWS edges, City nodes with LIVES_IN edges.
 /// Alix -> Gus, Alix -> Harm, Gus -> Harm (KNOWS)
 /// Alix lives in NYC, Gus lives in NYC, Harm lives in London.
-fn create_multi_hop_graph() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn create_multi_hop_graph() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let alix = session.create_node_with_props(
@@ -174,7 +174,7 @@ fn create_multi_hop_graph() -> GrafeoDB {
     db
 }
 
-fn sorted_names(db: &GrafeoDB, query: &str) -> Vec<String> {
+fn sorted_names(db: &ObrainDB, query: &str) -> Vec<String> {
     let session = db.session();
     let result = session.execute(query).unwrap();
     let mut names: Vec<String> = result
@@ -310,8 +310,8 @@ mod cypher_bugs {
     use super::*;
 
     /// Graph mimicking Deriva's dual-namespace pattern with different edge types.
-    fn create_deriva_graph() -> GrafeoDB {
-        let db = GrafeoDB::new_in_memory();
+    fn create_deriva_graph() -> ObrainDB {
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         // Model elements (like ArchiMate elements)
@@ -394,7 +394,7 @@ mod cypher_bugs {
     #[test]
     fn test_case_when_in_aggregate() {
         // Reproduces Deriva's directory classification pattern: CASE WHEN inside SUM
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         session
@@ -512,7 +512,7 @@ mod cypher_bugs {
     #[test]
     fn test_any_labels_in_list() {
         // Bug 3 from cypher-bugs-0.5.17: any() with IN list returns 0 rows
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         session.execute("INSERT (:A:B:C {name: 'Test'})").unwrap();
@@ -540,7 +540,7 @@ mod cypher_bugs {
     #[test]
     fn test_case_when_in_reduce() {
         // Bug 4 from cypher-bugs-0.5.17: CASE WHEN inside reduce()
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         let result = session.execute_cypher(
@@ -559,7 +559,7 @@ mod cypher_bugs {
     #[test]
     fn test_two_not_exists_in_same_where() {
         // Bug: multiple NOT EXISTS subqueries fail with "Unsupported EXISTS subquery pattern"
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         session.execute("INSERT (:Node {name: 'A'})").unwrap();
@@ -648,7 +648,7 @@ mod cypher_bugs {
 
 #[test]
 fn test_list_property_in_return() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // List literals in RETURN aren't supported directly; test via list property
@@ -671,7 +671,7 @@ fn test_list_property_in_return() {
 
 #[test]
 fn test_index_access() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let result = session
@@ -870,7 +870,7 @@ fn test_aggregate_order_by() {
 
 #[test]
 fn test_sum_case_when_in_aggregate() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session.execute("INSERT (:Dir {name: 'src'})").unwrap();
@@ -1116,7 +1116,7 @@ mod cypher_filter_ops {
 
     #[test]
     fn test_string_slicing() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         let result = session
@@ -1129,7 +1129,7 @@ mod cypher_filter_ops {
 
     #[test]
     fn test_list_comprehension_with_filter() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         let result = session
@@ -1152,7 +1152,7 @@ mod cypher_filter_ops {
 
     #[test]
     fn test_list_comprehension_without_filter() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         let result = session
@@ -1175,7 +1175,7 @@ mod cypher_filter_ops {
 
     #[test]
     fn test_all_predicate() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         let result = session
@@ -1190,7 +1190,7 @@ mod cypher_filter_ops {
 
     #[test]
     fn test_all_predicate_false() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         let result = session
@@ -1205,7 +1205,7 @@ mod cypher_filter_ops {
 
     #[test]
     fn test_none_predicate() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         let result = session
@@ -1220,7 +1220,7 @@ mod cypher_filter_ops {
 
     #[test]
     fn test_single_predicate() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         let result = session
@@ -1235,7 +1235,7 @@ mod cypher_filter_ops {
 
     #[test]
     fn test_reduce_sum() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         let result = session
@@ -1250,7 +1250,7 @@ mod cypher_filter_ops {
 
     #[test]
     fn test_reduce_string_concat() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         let result = session
@@ -1464,7 +1464,7 @@ fn test_gql_concat_with_non_string() {
 
 #[test]
 fn test_gql_is_null_in_where() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.create_node_with_props(&["Item"], [("name", Value::String("widget".into()))]);
     session.create_node_with_props(
@@ -1484,7 +1484,7 @@ fn test_gql_is_null_in_where() {
 
 #[test]
 fn test_gql_is_not_null_in_where() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.create_node_with_props(&["Item"], [("name", Value::String("widget".into()))]);
     session.create_node_with_props(

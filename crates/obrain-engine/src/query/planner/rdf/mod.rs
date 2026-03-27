@@ -9,15 +9,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use grafeo_common::types::{LogicalType, TransactionId, Value};
-use grafeo_common::utils::error::{Error, Result};
-use grafeo_core::execution::DataChunk;
-use grafeo_core::execution::operators::{
+use obrain_common::types::{LogicalType, TransactionId, Value};
+use obrain_common::utils::error::{Error, Result};
+use obrain_core::execution::DataChunk;
+use obrain_core::execution::operators::{
     BinaryFilterOp, FilterExpression, FilterOperator, HashAggregateOperator, Operator,
     OperatorError, Predicate, ProjectExpr, ProjectOperator, SimpleAggregateOperator,
     SingleRowOperator, SortOperator, UnaryFilterOp,
 };
-use grafeo_core::graph::rdf::{Literal, RdfStore, Term, Triple, TriplePattern};
+use obrain_core::graph::rdf::{Literal, RdfStore, Term, Triple, TriplePattern};
 
 use crate::query::plan::{
     AddGraphOp, AggregateFunction as LogicalAggregateFunction, AggregateOp, AntiJoinOp, BindOp,
@@ -37,7 +37,7 @@ const DEFAULT_CHUNK_SIZE: usize = 1024;
 
 /// Logs an RDF WAL record if a WAL reference is present.
 #[cfg(feature = "wal")]
-fn log_rdf_wal(wal: &Option<Arc<RdfWal>>, record: &grafeo_adapters::storage::wal::WalRecord) {
+fn log_rdf_wal(wal: &Option<Arc<RdfWal>>, record: &obrain_adapters::storage::wal::WalRecord) {
     if let Some(wal) = wal
         && let Err(err) = wal.log(record)
     {
@@ -57,7 +57,7 @@ fn term_to_wal(term: &Term) -> String {
 /// (morsels) for cache efficiency and parallelism compatibility.
 /// Type alias for the WAL used by the RDF planner.
 #[cfg(feature = "wal")]
-type RdfWal = grafeo_adapters::storage::wal::LpgWal;
+type RdfWal = obrain_adapters::storage::wal::LpgWal;
 
 /// Converts logical plans with RDF operators to physical operators.
 ///
@@ -131,7 +131,7 @@ impl RdfPlanner {
     }
 
     /// Plans a logical plan with profiling: each physical operator is wrapped
-    /// in [`ProfiledOperator`](grafeo_core::execution::ProfiledOperator) to
+    /// in [`ProfiledOperator`](obrain_core::execution::ProfiledOperator) to
     /// collect row counts and timing.
     pub fn plan_profiled(
         &self,
@@ -167,7 +167,7 @@ impl RdfPlanner {
             let (physical, columns) = result?;
             let (entry, stats) =
                 crate::query::profile::ProfileEntry::new(physical.name(), op.display_label());
-            let profiled = grafeo_core::execution::ProfiledOperator::new(physical, stats);
+            let profiled = obrain_core::execution::ProfiledOperator::new(physical, stats);
             self.profile_entries.borrow_mut().push(entry);
             Ok((Box::new(profiled), columns))
         } else {
@@ -414,7 +414,7 @@ impl RdfPlanner {
     /// Plans a SORT operator.
     fn plan_sort(&self, sort: &SortOp) -> Result<(Box<dyn Operator>, Vec<String>)> {
         use crate::query::plan::SortOrder;
-        use grafeo_core::execution::operators::{NullOrder, SortDirection, SortKey};
+        use obrain_core::execution::operators::{NullOrder, SortDirection, SortKey};
 
         let (input_op, columns) = self.plan_operator(&sort.input)?;
 
@@ -452,7 +452,7 @@ impl RdfPlanner {
         &self,
         project: &crate::query::plan::ProjectOp,
     ) -> Result<(Box<dyn Operator>, Vec<String>)> {
-        use grafeo_core::execution::operators::{ProjectExpr, ProjectOperator};
+        use obrain_core::execution::operators::{ProjectExpr, ProjectOperator};
 
         let (input_op, input_columns) = self.plan_operator(&project.input)?;
 
@@ -534,7 +534,7 @@ impl RdfPlanner {
 
     /// Plans an AGGREGATE operator.
     fn plan_aggregate(&self, agg: &AggregateOp) -> Result<(Box<dyn Operator>, Vec<String>)> {
-        use grafeo_core::execution::operators::AggregateExpr as PhysicalAggregateExpr;
+        use obrain_core::execution::operators::AggregateExpr as PhysicalAggregateExpr;
 
         let (mut input_op, input_columns) = self.plan_operator(&agg.input)?;
 
@@ -1111,7 +1111,7 @@ impl Operator for RdfInsertTripleOperator {
         #[cfg(feature = "wal")]
         log_rdf_wal(
             &self.wal,
-            &grafeo_adapters::storage::wal::WalRecord::InsertRdfTriple {
+            &obrain_adapters::storage::wal::WalRecord::InsertRdfTriple {
                 subject: term_to_wal(self.triple.subject()),
                 predicate: term_to_wal(self.triple.predicate()),
                 object: term_to_wal(self.triple.object()),
@@ -1274,7 +1274,7 @@ impl Operator for RdfInsertPatternOperator {
         for triple in &triples_to_insert {
             log_rdf_wal(
                 &self.wal,
-                &grafeo_adapters::storage::wal::WalRecord::InsertRdfTriple {
+                &obrain_adapters::storage::wal::WalRecord::InsertRdfTriple {
                     subject: term_to_wal(triple.subject()),
                     predicate: term_to_wal(triple.predicate()),
                     object: term_to_wal(triple.object()),
@@ -1354,7 +1354,7 @@ impl Operator for RdfDeleteTripleOperator {
         #[cfg(feature = "wal")]
         log_rdf_wal(
             &self.wal,
-            &grafeo_adapters::storage::wal::WalRecord::DeleteRdfTriple {
+            &obrain_adapters::storage::wal::WalRecord::DeleteRdfTriple {
                 subject: term_to_wal(self.triple.subject()),
                 predicate: term_to_wal(self.triple.predicate()),
                 object: term_to_wal(self.triple.object()),
@@ -1517,7 +1517,7 @@ impl Operator for RdfDeletePatternOperator {
         for triple in &triples_to_delete {
             log_rdf_wal(
                 &self.wal,
-                &grafeo_adapters::storage::wal::WalRecord::DeleteRdfTriple {
+                &obrain_adapters::storage::wal::WalRecord::DeleteRdfTriple {
                     subject: term_to_wal(triple.subject()),
                     predicate: term_to_wal(triple.predicate()),
                     object: term_to_wal(triple.object()),
@@ -1581,7 +1581,7 @@ impl Operator for RdfClearGraphOperator {
         #[cfg(feature = "wal")]
         log_rdf_wal(
             &self.wal,
-            &grafeo_adapters::storage::wal::WalRecord::ClearRdfGraph {
+            &obrain_adapters::storage::wal::WalRecord::ClearRdfGraph {
                 graph: self.graph.clone(),
             },
         );
@@ -1649,7 +1649,7 @@ impl Operator for RdfCreateGraphOperator {
         if created {
             log_rdf_wal(
                 &self.wal,
-                &grafeo_adapters::storage::wal::WalRecord::CreateRdfGraph {
+                &obrain_adapters::storage::wal::WalRecord::CreateRdfGraph {
                     name: self.graph.clone(),
                 },
             );
@@ -1717,7 +1717,7 @@ impl Operator for RdfDropGraphOperator {
         #[cfg(feature = "wal")]
         log_rdf_wal(
             &self.wal,
-            &grafeo_adapters::storage::wal::WalRecord::DropRdfGraph {
+            &obrain_adapters::storage::wal::WalRecord::DropRdfGraph {
                 name: self.graph.clone(),
             },
         );
@@ -3095,7 +3095,7 @@ impl RdfExpressionPredicate {
 
             // NOW - current datetime
             "NOW" => {
-                let ts = grafeo_common::types::Timestamp::now();
+                let ts = obrain_common::types::Timestamp::now();
                 Some(Value::Timestamp(ts))
             }
 
@@ -3105,7 +3105,7 @@ impl RdfExpressionPredicate {
                 match val {
                     Value::Date(d) => Some(Value::Int64(i64::from(d.year()))),
                     Value::Timestamp(ts) => Some(Value::Int64(i64::from(ts.to_date().year()))),
-                    Value::String(s) => grafeo_common::types::Date::parse(&s)
+                    Value::String(s) => obrain_common::types::Date::parse(&s)
                         .map(|d| Value::Int64(i64::from(d.year()))),
                     _ => None,
                 }
@@ -3117,7 +3117,7 @@ impl RdfExpressionPredicate {
                 match val {
                     Value::Date(d) => Some(Value::Int64(i64::from(d.month()))),
                     Value::Timestamp(ts) => Some(Value::Int64(i64::from(ts.to_date().month()))),
-                    Value::String(s) => grafeo_common::types::Date::parse(&s)
+                    Value::String(s) => obrain_common::types::Date::parse(&s)
                         .map(|d| Value::Int64(i64::from(d.month()))),
                     _ => None,
                 }
@@ -3129,7 +3129,7 @@ impl RdfExpressionPredicate {
                 match val {
                     Value::Date(d) => Some(Value::Int64(i64::from(d.day()))),
                     Value::Timestamp(ts) => Some(Value::Int64(i64::from(ts.to_date().day()))),
-                    Value::String(s) => grafeo_common::types::Date::parse(&s)
+                    Value::String(s) => obrain_common::types::Date::parse(&s)
                         .map(|d| Value::Int64(i64::from(d.day()))),
                     _ => None,
                 }
@@ -3141,7 +3141,7 @@ impl RdfExpressionPredicate {
                 match val {
                     Value::Time(t) => Some(Value::Int64(i64::from(t.hour()))),
                     Value::Timestamp(ts) => Some(Value::Int64(i64::from(ts.to_time().hour()))),
-                    Value::String(s) => grafeo_common::types::Time::parse(&s)
+                    Value::String(s) => obrain_common::types::Time::parse(&s)
                         .map(|t| Value::Int64(i64::from(t.hour()))),
                     _ => None,
                 }
@@ -3153,7 +3153,7 @@ impl RdfExpressionPredicate {
                 match val {
                     Value::Time(t) => Some(Value::Int64(i64::from(t.minute()))),
                     Value::Timestamp(ts) => Some(Value::Int64(i64::from(ts.to_time().minute()))),
-                    Value::String(s) => grafeo_common::types::Time::parse(&s)
+                    Value::String(s) => obrain_common::types::Time::parse(&s)
                         .map(|t| Value::Int64(i64::from(t.minute()))),
                     _ => None,
                 }
@@ -3162,14 +3162,14 @@ impl RdfExpressionPredicate {
             // SECONDS - extract seconds (with fractional) from time/datetime
             "SECONDS" => {
                 let val = self.eval_expr(args.first()?, chunk, row)?;
-                let to_secs = |t: &grafeo_common::types::Time| {
+                let to_secs = |t: &obrain_common::types::Time| {
                     f64::from(t.second()) + f64::from(t.nanosecond()) / 1_000_000_000.0
                 };
                 match val {
                     Value::Time(t) => Some(Value::Float64(to_secs(&t))),
                     Value::Timestamp(ts) => Some(Value::Float64(to_secs(&ts.to_time()))),
                     Value::String(s) => {
-                        grafeo_common::types::Time::parse(&s).map(|t| Value::Float64(to_secs(&t)))
+                        obrain_common::types::Time::parse(&s).map(|t| Value::Float64(to_secs(&t)))
                     }
                     _ => None,
                 }
@@ -3180,12 +3180,12 @@ impl RdfExpressionPredicate {
                 let val = self.eval_expr(args.first()?, chunk, row)?;
                 match val {
                     Value::Time(t) => t.offset_seconds().map(|offset| {
-                        Value::Duration(grafeo_common::types::Duration::from_seconds(i64::from(
+                        Value::Duration(obrain_common::types::Duration::from_seconds(i64::from(
                             offset,
                         )))
                     }),
                     Value::ZonedDatetime(zdt) => Some(Value::Duration(
-                        grafeo_common::types::Duration::from_seconds(i64::from(
+                        obrain_common::types::Duration::from_seconds(i64::from(
                             zdt.offset_seconds(),
                         )),
                     )),
@@ -3424,7 +3424,7 @@ fn term_to_string(term: &Term) -> String {
 /// For RDF columns (which use String type), we always push as string to avoid
 /// type mismatches. The typed literal's value is preserved as a string, and
 /// numeric comparisons are handled at the filter level.
-fn push_term_value(col: &mut grafeo_core::execution::ValueVector, term: &Term) {
+fn push_term_value(col: &mut obrain_core::execution::ValueVector, term: &Term) {
     match term {
         Term::Iri(iri) => col.push_string(iri.as_str().to_string()),
         Term::BlankNode(bnode) => col.push_string(format!("_:{}", bnode.id())),

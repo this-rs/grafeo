@@ -4,7 +4,7 @@ use napi::bindgen_prelude::*;
 use napi::sys;
 use napi_derive::napi;
 
-use grafeo_common::types::Value;
+use obrain_common::types::Value;
 
 use crate::graph::{JsEdge, JsNode};
 use crate::types;
@@ -102,7 +102,7 @@ impl QueryResult {
     /// Returns the result formatted as a Unicode table.
     #[napi(js_name = "toString")]
     pub fn to_string_js(&self) -> String {
-        grafeo_common::fmt::format_result_table(
+        obrain_common::fmt::format_result_table(
             &self.columns,
             &self.rows,
             self.execution_time_ms,

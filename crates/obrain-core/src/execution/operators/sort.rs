@@ -5,7 +5,7 @@
 
 use std::cmp::Ordering;
 
-use grafeo_common::types::{LogicalType, Value};
+use obrain_common::types::{LogicalType, Value};
 
 use super::value_utils::compare_values_total;
 use super::{Operator, OperatorError, OperatorResult};

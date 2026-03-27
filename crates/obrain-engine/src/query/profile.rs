@@ -7,8 +7,8 @@
 use std::fmt::Write;
 use std::sync::Arc;
 
-use grafeo_common::types::{LogicalType, Value};
-use grafeo_core::execution::profile::{ProfileStats, SharedProfileStats};
+use obrain_common::types::{LogicalType, Value};
+use obrain_core::execution::profile::{ProfileStats, SharedProfileStats};
 use parking_lot::Mutex;
 
 use super::plan::LogicalOperator;
@@ -94,7 +94,7 @@ pub fn profile_result(root: &ProfileNode, total_time_ms: f64) -> QueryResult {
         execution_time_ms: Some(total_time_ms),
         rows_scanned: None,
         status_message: None,
-        gql_status: grafeo_common::utils::GqlStatus::SUCCESS,
+        gql_status: obrain_common::utils::GqlStatus::SUCCESS,
     }
 }
 

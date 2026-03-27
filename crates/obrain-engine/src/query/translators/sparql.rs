@@ -10,9 +10,9 @@ use crate::query::plan::{
     MoveGraphOp, ProjectOp, Projection, SortKey, SortOrder, TripleComponent, TripleScanOp,
     TripleTemplate, UnaryOp, UnionOp,
 };
-use grafeo_adapters::query::sparql::{self, ast};
-use grafeo_common::types::Value;
-use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
+use obrain_adapters::query::sparql::{self, ast};
+use obrain_common::types::Value;
+use obrain_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -1441,30 +1441,30 @@ impl SparqlTranslator {
                     return Value::Bool(lit.value == "true" || lit.value == "1");
                 }
                 "http://www.w3.org/2001/XMLSchema#date" => {
-                    if let Some(d) = grafeo_common::types::Date::parse(&lit.value) {
+                    if let Some(d) = obrain_common::types::Date::parse(&lit.value) {
                         return Value::Date(d);
                     }
                 }
                 "http://www.w3.org/2001/XMLSchema#time" => {
-                    if let Some(t) = grafeo_common::types::Time::parse(&lit.value) {
+                    if let Some(t) = obrain_common::types::Time::parse(&lit.value) {
                         return Value::Time(t);
                     }
                 }
                 "http://www.w3.org/2001/XMLSchema#duration"
                 | "http://www.w3.org/2001/XMLSchema#dayTimeDuration"
                 | "http://www.w3.org/2001/XMLSchema#yearMonthDuration" => {
-                    if let Some(d) = grafeo_common::types::Duration::parse(&lit.value) {
+                    if let Some(d) = obrain_common::types::Duration::parse(&lit.value) {
                         return Value::Duration(d);
                     }
                 }
                 "http://www.w3.org/2001/XMLSchema#dateTime" => {
                     if let Some(pos) = lit.value.find('T')
                         && let (Some(d), Some(t)) = (
-                            grafeo_common::types::Date::parse(&lit.value[..pos]),
-                            grafeo_common::types::Time::parse(&lit.value[pos + 1..]),
+                            obrain_common::types::Date::parse(&lit.value[..pos]),
+                            obrain_common::types::Time::parse(&lit.value[pos + 1..]),
                         )
                     {
-                        return Value::Timestamp(grafeo_common::types::Timestamp::from_date_time(
+                        return Value::Timestamp(obrain_common::types::Timestamp::from_date_time(
                             d, t,
                         ));
                     }

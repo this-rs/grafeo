@@ -2,9 +2,9 @@
 
 #![cfg(feature = "energy")]
 
-use grafeo_cognitive::{EnergyConfig, EnergyListener, EnergyStore, NodeEnergy};
-use grafeo_common::types::NodeId;
-use grafeo_reactive::{MutationBus, MutationEvent, MutationListener, NodeSnapshot};
+use obrain_cognitive::{EnergyConfig, EnergyListener, EnergyStore, NodeEnergy};
+use obrain_common::types::NodeId;
+use obrain_reactive::{MutationBus, MutationEvent, MutationListener, NodeSnapshot};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -173,9 +173,9 @@ fn make_node(id: u64) -> NodeSnapshot {
     }
 }
 
-fn make_edge_snapshot(id: u64, src: u64, dst: u64) -> grafeo_reactive::EdgeSnapshot {
-    grafeo_reactive::EdgeSnapshot {
-        id: grafeo_common::types::EdgeId::new(id),
+fn make_edge_snapshot(id: u64, src: u64, dst: u64) -> obrain_reactive::EdgeSnapshot {
+    obrain_reactive::EdgeSnapshot {
+        id: obrain_common::types::EdgeId::new(id),
         src: NodeId::new(src),
         dst: NodeId::new(dst),
         edge_type: arcstr::literal!("KNOWS"),
@@ -242,11 +242,11 @@ async fn listener_on_batch_accumulates() {
 
 #[tokio::test]
 async fn listener_with_scheduler_integration() {
-    use grafeo_reactive::BatchConfig;
+    use obrain_reactive::BatchConfig;
 
     let bus = MutationBus::new();
     let config = BatchConfig::new(100, Duration::from_millis(30));
-    let scheduler = grafeo_reactive::Scheduler::new(&bus, config);
+    let scheduler = obrain_reactive::Scheduler::new(&bus, config);
 
     let store = Arc::new(EnergyStore::new(EnergyConfig {
         boost_on_mutation: 1.0,

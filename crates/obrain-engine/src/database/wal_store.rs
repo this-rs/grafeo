@@ -6,12 +6,12 @@
 
 use std::sync::Arc;
 
-use grafeo_adapters::storage::wal::{LpgWal, WalRecord};
-use grafeo_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TransactionId, Value};
-use grafeo_common::utils::hash::FxHashMap;
-use grafeo_core::graph::lpg::{CompareOp, Edge, LpgStore, Node};
-use grafeo_core::graph::{Direction, GraphStore, GraphStoreMut};
-use grafeo_core::statistics::Statistics;
+use obrain_adapters::storage::wal::{LpgWal, WalRecord};
+use obrain_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TransactionId, Value};
+use obrain_common::utils::hash::FxHashMap;
+use obrain_core::graph::lpg::{CompareOp, Edge, LpgStore, Node};
+use obrain_core::graph::{Direction, GraphStore, GraphStoreMut};
+use obrain_core::statistics::Statistics;
 
 use arcstr::ArcStr;
 
@@ -522,7 +522,7 @@ impl GraphStoreMut for WalGraphStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grafeo_adapters::storage::wal::TypedWal;
+    use obrain_adapters::storage::wal::TypedWal;
 
     fn setup() -> (WalGraphStore, Arc<LpgWal>) {
         let dir = tempfile::tempdir().unwrap();
@@ -795,7 +795,7 @@ mod tests {
 
     #[test]
     fn create_node_with_props_via_trait_default() {
-        use grafeo_core::graph::GraphStoreMut;
+        use obrain_core::graph::GraphStoreMut;
 
         let (ws, wal) = setup();
         let store: &dyn GraphStoreMut = &ws;
@@ -823,7 +823,7 @@ mod tests {
 
     #[test]
     fn create_edge_with_props_via_trait_default() {
-        use grafeo_core::graph::GraphStoreMut;
+        use obrain_core::graph::GraphStoreMut;
 
         let (ws, wal) = setup();
         let store: &dyn GraphStoreMut = &ws;

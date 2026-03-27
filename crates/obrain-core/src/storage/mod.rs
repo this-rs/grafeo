@@ -17,7 +17,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use grafeo_core::storage::{TypeSpecificCompressor, CodecSelector};
+//! use obrain_core::storage::{TypeSpecificCompressor, CodecSelector};
 //!
 //! // Compress sorted integers
 //! let values: Vec<u64> = (100..200).collect();

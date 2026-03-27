@@ -3,9 +3,9 @@
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use grafeo_common::types::{EdgeId, EpochId, NodeId, TransactionId};
-use grafeo_common::utils::error::{Error, Result, TransactionError};
-use grafeo_common::utils::hash::FxHashMap;
+use obrain_common::types::{EdgeId, EpochId, NodeId, TransactionId};
+use obrain_common::utils::error::{Error, Result, TransactionError};
+use obrain_common::utils::hash::FxHashMap;
 use parking_lot::RwLock;
 
 /// State of a transaction.

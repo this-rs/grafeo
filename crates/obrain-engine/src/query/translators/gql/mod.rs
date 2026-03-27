@@ -24,9 +24,9 @@ use crate::query::plan::{
 };
 #[cfg(test)]
 use crate::query::plan::{FilterOp, LimitOp, SkipOp};
-use grafeo_adapters::query::gql::{self, ast};
-use grafeo_common::types::Value;
-use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
+use obrain_adapters::query::gql::{self, ast};
+use obrain_common::types::Value;
+use obrain_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
 
 /// Result of translating a GQL query: either a logical plan, session command, or schema command.
 #[derive(Debug)]

@@ -1,4 +1,4 @@
-//! Testing utilities for Grafeo internals.
+//! Testing utilities for Obrain internals.
 //!
 //! These modules are feature-gated and compile to no-ops in production builds.
 

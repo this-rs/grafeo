@@ -7,9 +7,9 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use thiserror::Error;
 
-/// Grafeo errors that translate to Python exceptions.
+/// Obrain errors that translate to Python exceptions.
 #[derive(Error, Debug)]
-pub enum PyGrafeoError {
+pub enum PyObrainError {
     #[error("Database error: {0}")]
     Database(String),
 
@@ -26,30 +26,30 @@ pub enum PyGrafeoError {
     InvalidArgument(String),
 }
 
-impl From<PyGrafeoError> for PyErr {
-    fn from(err: PyGrafeoError) -> Self {
+impl From<PyObrainError> for PyErr {
+    fn from(err: PyObrainError) -> Self {
         match err {
-            PyGrafeoError::InvalidArgument(msg) | PyGrafeoError::Type(msg) => {
+            PyObrainError::InvalidArgument(msg) | PyObrainError::Type(msg) => {
                 PyValueError::new_err(msg)
             }
-            PyGrafeoError::Database(msg)
-            | PyGrafeoError::Query(msg)
-            | PyGrafeoError::Transaction(msg) => PyRuntimeError::new_err(msg),
+            PyObrainError::Database(msg)
+            | PyObrainError::Query(msg)
+            | PyObrainError::Transaction(msg) => PyRuntimeError::new_err(msg),
         }
     }
 }
 
-impl From<grafeo_common::utils::error::Error> for PyGrafeoError {
-    fn from(err: grafeo_common::utils::error::Error) -> Self {
-        use grafeo_bindings_common::error::{ErrorCategory, classify_error};
+impl From<obrain_common::utils::error::Error> for PyObrainError {
+    fn from(err: obrain_common::utils::error::Error) -> Self {
+        use obrain_bindings_common::error::{ErrorCategory, classify_error};
         let msg = err.to_string();
         match classify_error(&err) {
-            ErrorCategory::Query => PyGrafeoError::Query(msg),
-            ErrorCategory::Transaction => PyGrafeoError::Transaction(msg),
-            _ => PyGrafeoError::Database(msg),
+            ErrorCategory::Query => PyObrainError::Query(msg),
+            ErrorCategory::Transaction => PyObrainError::Transaction(msg),
+            _ => PyObrainError::Database(msg),
         }
     }
 }
 
 /// Convenience type for functions that may fail with a Python-compatible error.
-pub type PyGrafeoResult<T> = Result<T, PyGrafeoError>;
+pub type PyObrainResult<T> = Result<T, PyObrainError>;

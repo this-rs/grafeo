@@ -4,7 +4,7 @@
 //! stream of tokens. Handles both SQL-level syntax and GQL-style
 //! graph pattern tokens inside the MATCH clause.
 
-use grafeo_common::utils::error::SourceSpan;
+use obrain_common::utils::error::SourceSpan;
 
 /// A token in the SQL/PGQ language.
 #[derive(Debug, Clone, PartialEq)]

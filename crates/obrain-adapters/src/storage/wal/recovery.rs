@@ -2,7 +2,7 @@
 
 use super::record::WalEntry;
 use super::{CheckpointMetadata, WalManager, WalRecord};
-use grafeo_common::utils::error::{Error, Result, StorageError};
+use obrain_common::utils::error::{Error, Result, StorageError};
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
@@ -294,7 +294,7 @@ impl WalRecovery {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grafeo_common::types::{NodeId, TransactionId};
+    use obrain_common::types::{NodeId, TransactionId};
     use tempfile::tempdir;
 
     #[test]
@@ -403,7 +403,7 @@ mod tests {
 
     #[test]
     fn test_checkpoint_metadata() {
-        use grafeo_common::types::EpochId;
+        use obrain_common::types::EpochId;
 
         let dir = tempdir().unwrap();
 
@@ -453,7 +453,7 @@ mod tests {
     #[test]
     fn test_recovery_from_checkpoint() {
         use super::super::WalConfig;
-        use grafeo_common::types::EpochId;
+        use obrain_common::types::EpochId;
 
         let dir = tempdir().unwrap();
 
@@ -670,13 +670,13 @@ mod tests {
 ///
 /// Run with:
 /// ```bash
-/// cargo test -p grafeo-adapters --features "wal,testing-crash-injection" -- crash
+/// cargo test -p obrain-adapters --features "wal,testing-crash-injection" -- crash
 /// ```
 #[cfg(all(test, feature = "testing-crash-injection"))]
 mod crash_tests {
     use super::*;
-    use grafeo_common::types::{EpochId, NodeId, TransactionId, Value};
-    use grafeo_core::testing::crash::{CrashResult, with_crash_at};
+    use obrain_common::types::{EpochId, NodeId, TransactionId, Value};
+    use obrain_core::testing::crash::{CrashResult, with_crash_at};
     use tempfile::tempdir;
 
     /// Helper: Sync durability config so all three crash points are reachable.

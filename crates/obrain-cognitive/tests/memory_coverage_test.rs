@@ -2,12 +2,12 @@
 
 #![cfg(all(feature = "memory", feature = "energy"))]
 
-use grafeo_cognitive::memory::{
+use obrain_cognitive::memory::{
     ArchiveBackend, FileArchiveBackend, InMemoryArchiveBackend, MemoryConfig, MemoryHorizon,
     MemoryManager, MemoryStore,
 };
-use grafeo_cognitive::{EnergyConfig, EnergyStore};
-use grafeo_common::types::NodeId;
+use obrain_cognitive::{EnergyConfig, EnergyStore};
+use obrain_common::types::NodeId;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 #[tokio::test]
 async fn file_archive_backend_full_lifecycle() {
-    let tmp_dir = std::env::temp_dir().join(format!("grafeo_fab_coverage_{}", std::process::id()));
+    let tmp_dir = std::env::temp_dir().join(format!("obrain_fab_coverage_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp_dir);
 
     let backend = FileArchiveBackend::new(&tmp_dir);
@@ -53,7 +53,7 @@ async fn file_archive_backend_full_lifecycle() {
 
 #[tokio::test]
 async fn file_archive_backend_multiple_nodes() {
-    let tmp_dir = std::env::temp_dir().join(format!("grafeo_fab_multi_{}", std::process::id()));
+    let tmp_dir = std::env::temp_dir().join(format!("obrain_fab_multi_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp_dir);
 
     let backend = FileArchiveBackend::new(&tmp_dir);

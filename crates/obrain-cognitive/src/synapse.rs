@@ -7,8 +7,8 @@
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use grafeo_common::types::{EdgeId, NodeId};
-use grafeo_reactive::{MutationEvent, MutationListener};
+use obrain_common::types::{EdgeId, NodeId};
+use obrain_reactive::{MutationEvent, MutationListener};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -181,7 +181,7 @@ const SYNAPSE_EDGE_TYPE: &str = "SYNAPSE";
 
 /// Thread-safe store for synapses between nodes.
 ///
-/// When a backing [`GraphStoreMut`](grafeo_core::graph::GraphStoreMut) is
+/// When a backing [`GraphStoreMut`](obrain_core::graph::GraphStoreMut) is
 /// provided, synapse weights are persisted as edge properties on
 /// `SYNAPSE`-typed edges. On read, if the synapse is not in the hot cache,
 /// the store attempts to load the weight lazily from the graph property.
@@ -219,7 +219,7 @@ impl SynapseStore {
     /// Creates a new synapse store with write-through persistence.
     pub fn with_graph_store(
         config: SynapseConfig,
-        graph_store: Arc<dyn grafeo_core::graph::GraphStoreMut>,
+        graph_store: Arc<dyn obrain_core::graph::GraphStoreMut>,
     ) -> Self {
         Self {
             synapses: DashMap::new(),

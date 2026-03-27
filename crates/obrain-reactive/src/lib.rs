@@ -1,6 +1,6 @@
-//! # grafeo-reactive
+//! # obrain-reactive
 //!
-//! Reactive event substrate for Grafeo. Provides a [`MutationBus`] that publishes
+//! Reactive event substrate for Obrain. Provides a [`MutationBus`] that publishes
 //! [`MutationEvent`]s whenever graph mutations occur, enabling downstream cognitive
 //! features to react in real-time.
 //!

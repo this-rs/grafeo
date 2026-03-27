@@ -34,7 +34,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use grafeo_core::execution::parallel::{
+//! use obrain_core::execution::parallel::{
 //!     ParallelPipeline, ParallelPipelineConfig, CloneableOperatorFactory, RangeSource
 //! };
 //! use std::sync::Arc;

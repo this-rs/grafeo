@@ -1,6 +1,6 @@
-//! On-disk format constants and header structures for `.grafeo` files.
+//! On-disk format constants and header structures for `.obrain` files.
 //!
-//! A `.grafeo` file has three regions:
+//! A `.obrain` file has three regions:
 //!
 //! | Offset | Size | Contents |
 //! |--------|------|----------|
@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-/// 4-byte file magic identifying a `.grafeo` database file.
+/// 4-byte file magic identifying a `.obrain` database file.
 pub const MAGIC: [u8; 4] = *b"GRAF";
 
 /// Current on-disk format version. Bump when the layout changes incompatibly.
@@ -42,7 +42,7 @@ pub struct FileHeader {
     pub page_size: u32,
     /// Milliseconds since UNIX epoch when the file was created.
     pub creation_timestamp_ms: u64,
-    /// Grafeo version that created this file (UTF-8, zero-padded).
+    /// Obrain version that created this file (UTF-8, zero-padded).
     pub creator_version: [u8; 32],
 }
 

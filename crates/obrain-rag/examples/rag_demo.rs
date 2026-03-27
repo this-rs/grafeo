@@ -1,8 +1,8 @@
-//! RAG demo — queries a GrafeoDB and produces augmented context.
+//! RAG demo — queries a ObrainDB and produces augmented context.
 //!
 //! Usage:
-//!   cargo run -p grafeo-rag --example rag_demo -- --db /path/to/db --query "your question"
-//!   cargo run -p grafeo-rag --example rag_demo -- --db /path/to/db   (interactive mode)
+//!   cargo run -p obrain-rag --example rag_demo -- --db /path/to/db --query "your question"
+//!   cargo run -p obrain-rag --example rag_demo -- --db /path/to/db   (interactive mode)
 //!
 //! Without --query, enters interactive REPL mode.
 //! Without --db, creates an in-memory demo database.
@@ -11,9 +11,9 @@ use std::io::{self, BufRead, Write};
 use std::sync::Arc;
 use std::time::Instant;
 
-use grafeo::GrafeoDB;
-use grafeo_cognitive::engram::EngramStore;
-use grafeo_rag::{EngramRetriever, GraphContextBuilder, RagConfig, RagPipeline};
+use obrain::ObrainDB;
+use obrain_cognitive::engram::EngramStore;
+use obrain_rag::{EngramRetriever, GraphContextBuilder, RagConfig, RagPipeline};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -38,7 +38,7 @@ fn main() {
             }
             "--help" | "-h" => {
                 eprintln!("Usage: rag_demo [--db <path>] [--query <text>]");
-                eprintln!("  --db <path>    Path to a GrafeoDB directory");
+                eprintln!("  --db <path>    Path to a ObrainDB directory");
                 eprintln!("  --query <text>  Single query mode");
                 eprintln!("  (no --query)    Interactive REPL mode");
                 return;
@@ -60,7 +60,7 @@ fn main() {
             let ckpt = format!("{}/wal/checkpoint.meta", path);
             let _ = std::fs::remove_file(&ckpt);
 
-            match GrafeoDB::open(path) {
+            match ObrainDB::open(path) {
                 Ok(db) => {
                     eprintln!("[rag] Database opened");
                     db
@@ -115,7 +115,7 @@ fn main() {
     };
 
     let mut pipeline = RagPipeline::new(
-        Arc::clone(&retriever) as Arc<dyn grafeo_rag::traits::Retriever>,
+        Arc::clone(&retriever) as Arc<dyn obrain_rag::traits::Retriever>,
         context_builder,
         None,
         config,
@@ -329,16 +329,16 @@ fn interactive_loop(
 }
 
 /// Create a demo in-memory database with sample data.
-fn create_demo_db() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn create_demo_db() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let queries = [
-        "INSERT (:Project {name: 'Grafeo', description: 'High-performance embeddable graph database'})",
+        "INSERT (:Project {name: 'Obrain', description: 'High-performance embeddable graph database'})",
         "INSERT (:Project {name: 'Project Orchestrator', description: 'MCP-based project management with cognitive features'})",
         "INSERT (:Note {title: 'WAL Recovery Bug', content: 'checkpoint.meta causes data loss in directory format', type: 'gotcha', importance: 'high'})",
         "INSERT (:Note {title: 'Engram Architecture', content: 'Engrams are consolidated memory traces built from node ensembles via Hopfield spectral matching', type: 'pattern'})",
-        "INSERT (:Plan {title: 'grafeo-rag implementation', description: 'Schema-agnostic retrieval via engrams', status: 'in_progress'})",
+        "INSERT (:Plan {title: 'obrain-rag implementation', description: 'Schema-agnostic retrieval via engrams', status: 'in_progress'})",
         "INSERT (:Task {title: 'Scaffolding crate', status: 'completed', tags: 'setup,architecture'})",
         "INSERT (:Task {title: 'Engram-based Retriever', status: 'completed', tags: 'core,retrieval'})",
         "INSERT (:Function {name: 'hopfield_retrieve', file: 'engram/hopfield.rs', description: 'Modern Hopfield content-addressable memory retrieval with per-engram precision'})",
@@ -352,7 +352,7 @@ fn create_demo_db() -> GrafeoDB {
     }
 
     let rel_queries = [
-        "MATCH (p:Project {name: 'Grafeo'}), (n:Note {title: 'WAL Recovery Bug'}) INSERT (p)-[:HAS_NOTE]->(n)",
+        "MATCH (p:Project {name: 'Obrain'}), (n:Note {title: 'WAL Recovery Bug'}) INSERT (p)-[:HAS_NOTE]->(n)",
         "MATCH (p:Project {name: 'Project Orchestrator'}), (pl:Plan) INSERT (p)-[:HAS_PLAN]->(pl)",
         "MATCH (pl:Plan), (t:Task {title: 'Scaffolding crate'}) INSERT (pl)-[:HAS_TASK]->(t)",
         "MATCH (pl:Plan), (t:Task {title: 'Engram-based Retriever'}) INSERT (pl)-[:HAS_TASK]->(t)",

@@ -787,7 +787,7 @@ mod tests {
     fn test_cost_model_filter() {
         let model = CostModel::new();
         let filter = FilterOp {
-            predicate: LogicalExpression::Literal(grafeo_common::types::Value::Bool(true)),
+            predicate: LogicalExpression::Literal(obrain_common::types::Value::Bool(true)),
             input: Box::new(LogicalOperator::Empty),
             pushdown_hint: None,
         };
@@ -1432,7 +1432,7 @@ mod tests {
                     }),
                     op: crate::query::plan::BinaryOp::Gt,
                     right: Box::new(LogicalExpression::Literal(
-                        grafeo_common::types::Value::Int64(30),
+                        obrain_common::types::Value::Int64(30),
                     )),
                 },
                 input: Box::new(LogicalOperator::NodeScan(NodeScanOp {

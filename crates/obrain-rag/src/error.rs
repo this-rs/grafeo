@@ -1,4 +1,4 @@
-//! Error types for grafeo-rag.
+//! Error types for obrain-rag.
 
 /// Errors that can occur during RAG operations.
 #[derive(Debug, thiserror::Error)]

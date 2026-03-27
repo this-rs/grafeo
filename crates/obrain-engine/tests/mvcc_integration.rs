@@ -6,10 +6,10 @@
 
 use std::sync::Arc;
 
-use grafeo_common::types::{EpochId, Value};
-use grafeo_core::graph::lpg::LpgStore;
-use grafeo_engine::{
-    GrafeoDB,
+use obrain_common::types::{EpochId, Value};
+use obrain_core::graph::lpg::LpgStore;
+use obrain_engine::{
+    ObrainDB,
     transaction::{TransactionManager, TransactionState},
 };
 
@@ -329,13 +329,13 @@ fn test_gc_cleans_up_completed_transactions() {
 }
 
 // ============================================================================
-// Session Integration Tests (using GrafeoDB)
+// Session Integration Tests (using ObrainDB)
 // ============================================================================
 
 #[test]
 fn test_session_transaction_isolation() {
     // Verify session-level transaction isolation
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     // Begin transaction
@@ -364,7 +364,7 @@ fn test_session_rollback_state() {
     // Verify session rollback properly releases transaction state
     // NOTE: Full SQL rollback (discarding INSERT/UPDATE/DELETE) requires
     // the query executor to use versioned storage, which is a separate enhancement.
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     // Begin transaction
@@ -505,7 +505,7 @@ fn test_many_concurrent_transactions() {
 #[test]
 fn test_multiple_sessions_independent() {
     // Multiple sessions should operate independently
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     let session1 = db.session();
     let session2 = db.session();
@@ -527,7 +527,7 @@ fn test_multiple_sessions_independent() {
 #[test]
 fn test_session_auto_commit_mode() {
     // Verify auto-commit mode works correctly
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // Auto-commit should be on by default
@@ -553,7 +553,7 @@ fn test_session_auto_commit_mode() {
 /// epoch and couldn't see the edge record.
 #[test]
 fn edge_type_visible_after_tx_commit_autocommit_edge() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     // Create nodes inside a transaction
@@ -583,7 +583,7 @@ fn edge_type_visible_after_tx_commit_autocommit_edge() {
 /// Same scenario but the edge is also created inside a new transaction.
 #[test]
 fn edge_type_visible_after_tx_commit_transaction_edge() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     // Create nodes in first transaction
@@ -613,7 +613,7 @@ fn edge_type_visible_after_tx_commit_transaction_edge() {
 /// Nodes and edges created in the same transaction should work.
 #[test]
 fn edge_type_visible_same_tx() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session.begin_transaction().unwrap();
@@ -636,7 +636,7 @@ fn edge_type_visible_same_tx() {
 /// Bulk: many nodes in tx, many typed edges after commit.
 #[test]
 fn edge_types_preserved_bulk_after_tx() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     // Bulk-create nodes in a transaction
@@ -672,7 +672,7 @@ fn edge_types_preserved_bulk_after_tx() {
 /// Interleave auto-commit and transaction node creation.
 #[test]
 fn edge_types_interleaved_autocommit_and_tx() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     // Auto-commit node

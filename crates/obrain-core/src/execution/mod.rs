@@ -1,6 +1,6 @@
 //! Vectorized query execution engine.
 //!
-//! Grafeo uses vectorized processing - instead of one row at a time, we process
+//! Obrain uses vectorized processing - instead of one row at a time, we process
 //! batches of ~1024 rows. This unlocks SIMD and keeps the CPU busy.
 //!
 //! | Module | Purpose |

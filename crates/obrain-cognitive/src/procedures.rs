@@ -1,12 +1,12 @@
 //! Level 2 introspection procedures for the engram cognitive system.
 //!
 //! Provides CALL-able procedures for power users:
-//! - `grafeo.engrams.list()` — list all engrams with key metrics
-//! - `grafeo.engrams.inspect(id)` — detailed inspection of a single engram
-//! - `grafeo.engrams.forget(id)` — RGPD right to erasure (droit l'oubli)
-//! - `grafeo.cognitive.metrics()` — full cognitive metrics snapshot
+//! - `obrain.engrams.list()` — list all engrams with key metrics
+//! - `obrain.engrams.inspect(id)` — detailed inspection of a single engram
+//! - `obrain.engrams.forget(id)` — RGPD right to erasure (droit l'oubli)
+//! - `obrain.cognitive.metrics()` — full cognitive metrics snapshot
 
-use grafeo_common::types::Value;
+use obrain_common::types::Value;
 
 use crate::{EngramId, EngramMetricsCollector, EngramStore, VectorIndex};
 
@@ -39,7 +39,7 @@ impl ProcedureResult {
 }
 
 // ---------------------------------------------------------------------------
-// grafeo.engrams.list()
+// obrain.engrams.list()
 // ---------------------------------------------------------------------------
 
 /// Lists all engrams with key fields: id, strength, valence, retention, recall_count, horizon.
@@ -73,7 +73,7 @@ pub fn engrams_list(store: &EngramStore) -> ProcedureResult {
 }
 
 // ---------------------------------------------------------------------------
-// grafeo.engrams.inspect(id)
+// obrain.engrams.inspect(id)
 // ---------------------------------------------------------------------------
 
 /// Inspects a single engram in detail, including full recall history.
@@ -135,7 +135,7 @@ pub fn engrams_inspect(store: &EngramStore, engram_id: u64) -> ProcedureResult {
 }
 
 // ---------------------------------------------------------------------------
-// grafeo.engrams.forget(id) — RGPD droit à l'oubli
+// obrain.engrams.forget(id) — RGPD droit à l'oubli
 // ---------------------------------------------------------------------------
 
 /// RGPD right to erasure: completely removes an engram and all associated data.
@@ -223,7 +223,7 @@ pub fn engrams_forget_with_cascade(
 }
 
 // ---------------------------------------------------------------------------
-// grafeo.cognitive.metrics()
+// obrain.cognitive.metrics()
 // ---------------------------------------------------------------------------
 
 /// Returns a full cognitive metrics snapshot as a single-row result.
@@ -286,7 +286,7 @@ pub fn cognitive_metrics(collector: &EngramMetricsCollector) -> ProcedureResult 
 /// Returns the YIELD column names for a given procedure name.
 pub fn yield_columns(procedure_name: &str) -> Option<Vec<String>> {
     match procedure_name {
-        "engrams.list" | "grafeo.engrams.list" => Some(vec![
+        "engrams.list" | "obrain.engrams.list" => Some(vec![
             "id".into(),
             "strength".into(),
             "valence".into(),
@@ -295,7 +295,7 @@ pub fn yield_columns(procedure_name: &str) -> Option<Vec<String>> {
             "horizon".into(),
             "ensemble_size".into(),
         ]),
-        "engrams.inspect" | "grafeo.engrams.inspect" => Some(vec![
+        "engrams.inspect" | "obrain.engrams.inspect" => Some(vec![
             "id".into(),
             "strength".into(),
             "valence".into(),
@@ -310,12 +310,12 @@ pub fn yield_columns(procedure_name: &str) -> Option<Vec<String>> {
             "fsrs_stability".into(),
             "fsrs_difficulty".into(),
         ]),
-        "engrams.forget" | "grafeo.engrams.forget" => Some(vec![
+        "engrams.forget" | "obrain.engrams.forget" => Some(vec![
             "id".into(),
             "status".into(),
             "relations_removed".into(),
         ]),
-        "cognitive.metrics" | "grafeo.cognitive.metrics" => Some(vec![
+        "cognitive.metrics" | "obrain.cognitive.metrics" => Some(vec![
             "engrams_active".into(),
             "engrams_formed".into(),
             "engrams_decayed".into(),
@@ -349,7 +349,7 @@ pub fn yield_columns(procedure_name: &str) -> Option<Vec<String>> {
 mod tests {
     use super::*;
     use crate::{Engram, EpisodeId, InMemoryVectorIndex, RecallEvent, RecallFeedback};
-    use grafeo_common::types::NodeId;
+    use obrain_common::types::NodeId;
     use std::sync::Arc;
     use std::time::SystemTime;
 
@@ -629,27 +629,27 @@ mod tests {
 
     #[test]
     fn yield_columns_engrams_list() {
-        let cols = yield_columns("grafeo.engrams.list").unwrap();
+        let cols = yield_columns("obrain.engrams.list").unwrap();
         assert_eq!(cols[0], "id");
         assert_eq!(cols.len(), 7);
     }
 
     #[test]
     fn yield_columns_engrams_inspect() {
-        let cols = yield_columns("grafeo.engrams.inspect").unwrap();
+        let cols = yield_columns("obrain.engrams.inspect").unwrap();
         assert!(cols.len() >= 10);
     }
 
     #[test]
     fn yield_columns_engrams_forget() {
-        let cols = yield_columns("grafeo.engrams.forget").unwrap();
+        let cols = yield_columns("obrain.engrams.forget").unwrap();
         assert_eq!(cols.len(), 3);
         assert!(cols.contains(&"status".to_string()));
     }
 
     #[test]
     fn yield_columns_cognitive_metrics() {
-        let cols = yield_columns("grafeo.cognitive.metrics").unwrap();
+        let cols = yield_columns("obrain.cognitive.metrics").unwrap();
         assert!(cols.len() >= 15);
         assert!(cols.contains(&"engrams_active".to_string()));
         assert!(cols.contains(&"immune_fp_rate".to_string()));
@@ -657,7 +657,7 @@ mod tests {
 
     #[test]
     fn yield_columns_unknown_returns_none() {
-        assert!(yield_columns("grafeo.unknown").is_none());
+        assert!(yield_columns("obrain.unknown").is_none());
     }
 
     // -----------------------------------------------------------------------
@@ -751,7 +751,7 @@ mod tests {
 
     #[test]
     fn test_yield_columns_short_names() {
-        // Short names (without grafeo. prefix) should work
+        // Short names (without obrain. prefix) should work
         let list_cols = yield_columns("engrams.list").unwrap();
         assert_eq!(list_cols.len(), 7);
 

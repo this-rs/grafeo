@@ -3,15 +3,15 @@
 //! Targets: aggregate.rs (45.45%), common.rs (64.48%), expression.rs (82.32%)
 //!
 //! ```bash
-//! cargo test -p grafeo-engine --test coverage_aggregates
+//! cargo test -p obrain-engine --test coverage_aggregates
 //! ```
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 /// Creates 5 Data nodes (Alix, Gus, Vincent, Jules, Mia) with x/y/score properties.
-fn stats_graph() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn stats_graph() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     for (name, x, y) in [
         ("Alix", 1.0, 2.0),
@@ -237,7 +237,7 @@ fn test_variance_and_variance_pop() {
 
 #[test]
 fn test_mixed_aggregates_with_group_by() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     for (name, city, score) in [
         ("Alix", "Amsterdam", 80),
@@ -273,7 +273,7 @@ fn test_mixed_aggregates_with_group_by() {
 
 #[test]
 fn test_order_by_alias_after_aggregation() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     for (name, city) in [
         ("Alix", "Berlin"),
@@ -302,7 +302,7 @@ fn test_order_by_alias_after_aggregation() {
 
 #[test]
 fn test_order_by_aggregate_alias_desc() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     for (name, city) in [
         ("Alix", "Berlin"),
@@ -356,7 +356,7 @@ fn test_nullif_expression() {
 
 #[test]
 fn test_list_predicate_all() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let s = db.session();
     s.create_node_with_props(&["Flag"], [("v", Value::Int64(1))]);
     let r = s
@@ -367,7 +367,7 @@ fn test_list_predicate_all() {
 
 #[test]
 fn test_list_predicate_any() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let s = db.session();
     s.create_node_with_props(&["Flag"], [("v", Value::Int64(1))]);
     let r = s
@@ -398,7 +398,7 @@ fn test_wrapped_aggregate_literal_plus_count() {
 
 #[test]
 fn test_count_distinct() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     for city in ["Amsterdam", "Amsterdam", "Berlin", "Berlin", "Paris"] {
         session.create_node_with_props(&["City"], [("name", Value::String(city.into()))]);
@@ -411,7 +411,7 @@ fn test_count_distinct() {
 
 #[test]
 fn test_count_expression_non_null() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.create_node_with_props(&["Item"], [("val", Value::Int64(1))]);
     session.create_node_with_props(&["Item"], [("val", Value::Null)]);
@@ -429,7 +429,7 @@ fn test_count_expression_non_null() {
 
 #[test]
 fn test_having_filters_groups() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     for (name, city) in [
         ("Alix", "Amsterdam"),
@@ -464,7 +464,7 @@ fn test_having_filters_groups() {
 
 #[test]
 fn test_having_no_matching_groups() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     for city in ["Amsterdam", "Berlin", "Paris"] {
         session.create_node_with_props(&["City"], [("name", Value::String(city.into()))]);
@@ -482,7 +482,7 @@ fn test_having_no_matching_groups() {
 
 #[test]
 fn test_having_with_sum_aggregate() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     for (name, dept, salary) in [
         ("Alix", "Engineering", 90),

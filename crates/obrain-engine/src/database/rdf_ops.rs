@@ -1,4 +1,4 @@
-//! RDF-specific operations for GrafeoDB.
+//! RDF-specific operations for ObrainDB.
 //!
 //! This module consolidates all RDF functionality that was previously scattered
 //! across `query.rs`, `crud.rs`, `admin.rs`, and `mod.rs`. The entire module
@@ -6,16 +6,16 @@
 
 use std::sync::Arc;
 
-use grafeo_common::utils::error::Result;
-use grafeo_core::graph::rdf::RdfStore;
+use obrain_common::utils::error::Result;
+use obrain_core::graph::rdf::RdfStore;
 
-use super::GrafeoDB;
+use super::ObrainDB;
 
 // =========================================================================
 // Query operations
 // =========================================================================
 
-impl GrafeoDB {
+impl ObrainDB {
     /// Executes a SPARQL query and returns the result.
     ///
     /// SPARQL queries operate on the RDF triple store.
@@ -28,9 +28,9 @@ impl GrafeoDB {
     ///
     /// ```no_run
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use grafeo_engine::GrafeoDB;
+    /// use obrain_engine::ObrainDB;
     ///
-    /// let db = GrafeoDB::new_in_memory();
+    /// let db = ObrainDB::new_in_memory();
     /// let result = db.execute_sparql("SELECT ?s ?p ?o WHERE { ?s ?p ?o }")?;
     /// # Ok(())
     /// # }
@@ -79,7 +79,7 @@ impl GrafeoDB {
 // CRUD operations
 // =========================================================================
 
-impl GrafeoDB {
+impl ObrainDB {
     /// Batch-inserts RDF triples into the RDF store.
     ///
     /// Delegates to `RdfStore::batch_insert`, which acquires each index lock
@@ -88,7 +88,7 @@ impl GrafeoDB {
     /// Returns the number of triples that were newly inserted.
     pub fn batch_insert_rdf(
         &self,
-        triples: impl IntoIterator<Item = grafeo_core::graph::rdf::Triple>,
+        triples: impl IntoIterator<Item = obrain_core::graph::rdf::Triple>,
     ) -> usize {
         self.rdf_store.batch_insert(triples)
     }
@@ -98,7 +98,7 @@ impl GrafeoDB {
 // Admin operations
 // =========================================================================
 
-impl GrafeoDB {
+impl ObrainDB {
     /// Returns RDF schema information.
     ///
     /// Only available when the RDF feature is enabled.
@@ -138,10 +138,10 @@ impl GrafeoDB {
 #[cfg(feature = "wal")]
 pub(super) fn replay_rdf_wal_record(
     rdf_store: &Arc<RdfStore>,
-    record: &grafeo_adapters::storage::wal::WalRecord,
+    record: &obrain_adapters::storage::wal::WalRecord,
 ) {
-    use grafeo_adapters::storage::wal::WalRecord;
-    use grafeo_core::graph::rdf::Term;
+    use obrain_adapters::storage::wal::WalRecord;
+    use obrain_core::graph::rdf::Term;
 
     match record {
         WalRecord::InsertRdfTriple {
@@ -155,7 +155,7 @@ pub(super) fn replay_rdf_wal_record(
                 Term::from_ntriples(predicate),
                 Term::from_ntriples(object),
             ) {
-                let triple = grafeo_core::graph::rdf::Triple::new(s, p, o);
+                let triple = obrain_core::graph::rdf::Triple::new(s, p, o);
                 let target = match graph {
                     Some(name) => rdf_store.graph_or_create(name),
                     None => Arc::clone(rdf_store),
@@ -174,7 +174,7 @@ pub(super) fn replay_rdf_wal_record(
                 Term::from_ntriples(predicate),
                 Term::from_ntriples(object),
             ) {
-                let triple = grafeo_core::graph::rdf::Triple::new(s, p, o);
+                let triple = obrain_core::graph::rdf::Triple::new(s, p, o);
                 let target = match graph {
                     Some(name) => rdf_store.graph_or_create(name),
                     None => Arc::clone(rdf_store),

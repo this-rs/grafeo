@@ -3,15 +3,15 @@
 //! Targets: memory.rs (0%), admin.rs memory_usage path
 //!
 //! ```bash
-//! cargo test -p grafeo-engine --features full --test coverage_memory
+//! cargo test -p obrain-engine --features full --test coverage_memory
 //! ```
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 #[test]
 fn test_memory_usage_empty_database() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let usage = db.memory_usage();
     // Empty database still has structural overhead
     assert!(
@@ -24,7 +24,7 @@ fn test_memory_usage_empty_database() {
 
 #[test]
 fn test_memory_usage_with_data() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     for i in 0..20 {
@@ -72,7 +72,7 @@ fn test_memory_usage_with_data() {
 
 #[test]
 fn test_memory_usage_after_mutations() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let _n = session.create_node_with_props(&["Account"], [("balance", Value::Int64(100))]);
@@ -108,7 +108,7 @@ fn test_memory_usage_after_mutations() {
 
 #[test]
 fn test_memory_usage_caches() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.create_node_with_props(&["Tag"], [("name", Value::String("test".into()))]);
 

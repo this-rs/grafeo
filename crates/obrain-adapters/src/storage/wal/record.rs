@@ -1,6 +1,6 @@
 //! WAL record types and the [`WalEntry`] trait.
 
-use grafeo_common::types::{EdgeId, NodeId, TransactionId, Value};
+use obrain_common::types::{EdgeId, NodeId, TransactionId, Value};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -730,7 +730,7 @@ mod tests {
 
     #[test]
     fn test_value_map_roundtrip() {
-        use grafeo_common::types::PropertyKey;
+        use obrain_common::types::PropertyKey;
         use std::collections::BTreeMap;
         use std::sync::Arc;
 
@@ -783,7 +783,7 @@ mod tests {
 
     #[test]
     fn test_value_timestamp_roundtrip() {
-        use grafeo_common::types::Timestamp;
+        use obrain_common::types::Timestamp;
 
         let ts = Timestamp::from_secs(1_700_000_000); // 2023-11-14
         let record = WalRecord::SetNodeProperty {
@@ -805,7 +805,7 @@ mod tests {
 
     #[test]
     fn test_value_zoned_datetime_roundtrip() {
-        use grafeo_common::types::{Timestamp, ZonedDatetime};
+        use obrain_common::types::{Timestamp, ZonedDatetime};
 
         let ts = Timestamp::from_secs(1_700_000_000);
         let zdt = ZonedDatetime::from_timestamp_offset(ts, 3600); // +01:00
@@ -865,7 +865,7 @@ mod tests {
 
     #[test]
     fn test_value_date_roundtrip() {
-        use grafeo_common::types::Date;
+        use obrain_common::types::Date;
 
         let date = Date::from_ymd(2024, 6, 15).unwrap();
         let record = WalRecord::SetNodeProperty {
@@ -889,7 +889,7 @@ mod tests {
 
     #[test]
     fn test_value_time_roundtrip() {
-        use grafeo_common::types::Time;
+        use obrain_common::types::Time;
 
         let time = Time::from_hms(14, 30, 45).unwrap().with_offset(3600);
         let record = WalRecord::SetNodeProperty {
@@ -914,7 +914,7 @@ mod tests {
 
     #[test]
     fn test_value_duration_roundtrip() {
-        use grafeo_common::types::Duration;
+        use obrain_common::types::Duration;
 
         let dur = Duration::new(14, 3, 4 * 3_600_000_000_000 + 5 * 60_000_000_000); // P1Y2M3DT4H5M
         let record = WalRecord::SetNodeProperty {

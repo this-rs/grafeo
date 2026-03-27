@@ -10,7 +10,7 @@
 //! # Example
 //!
 //! ```rust
-//! use grafeo_core::execution::chunk_state::ChunkState;
+//! use obrain_core::execution::chunk_state::ChunkState;
 //!
 //! let mut state = ChunkState::unflat(3, 1000);
 //!
@@ -453,7 +453,7 @@ impl ChunkState {
     /// # Example
     ///
     /// ```rust
-    /// # use grafeo_core::execution::chunk_state::ChunkState;
+    /// # use obrain_core::execution::chunk_state::ChunkState;
     /// # let mut state = ChunkState::unflat(2, 100);
     /// let mults = state.get_or_compute_multiplicities(|| {
     ///     vec![1; 100] // compute multiplicities

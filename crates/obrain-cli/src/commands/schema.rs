@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use comfy_table::Cell;
-use grafeo_engine::SchemaInfo;
+use obrain_engine::SchemaInfo;
 use serde::Serialize;
 
 use crate::OutputFormat;

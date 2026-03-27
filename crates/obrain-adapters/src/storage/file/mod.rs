@@ -1,7 +1,7 @@
-//! Single-file database format (`.grafeo`).
+//! Single-file database format (`.obrain`).
 //!
 //! This module implements a portable, crash-safe, single-file storage format.
-//! At rest, only the `.grafeo` file exists. During operation a sidecar
+//! At rest, only the `.obrain` file exists. During operation a sidecar
 //! WAL directory (`<path>.wal/`) captures in-flight mutations and is
 //! removed after each checkpoint.
 //!
@@ -25,4 +25,4 @@ pub mod header;
 pub mod manager;
 
 pub use format::{DbHeader, FileHeader, MAGIC};
-pub use manager::GrafeoFileManager;
+pub use manager::ObrainFileManager;

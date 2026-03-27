@@ -1,15 +1,15 @@
 //! One-shot helper to generate the v1 snapshot fixture.
 //!
-//! Run with: cargo test --all-features -p grafeo-engine --test generate_fixture -- --ignored
+//! Run with: cargo test --all-features -p obrain-engine --test generate_fixture -- --ignored
 //! Then commit the generated file. This test is ignored by default.
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 #[test]
 #[ignore = "one-shot fixture generator, not a regular test"]
 fn generate_v1_snapshot_fixture() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     // 3 nodes with different labels and properties
     let alix = db.create_node(&["Person"]);

@@ -16,13 +16,13 @@ try:
 except ImportError:
     HAS_POLARS = False
 
-import grafeo
+import obrain
 
 
 @pytest.fixture
 def populated_db():
     """Create a database with Person and Company nodes plus edges."""
-    db = grafeo.GrafeoDB()
+    db = obrain.ObrainDB()
     db.execute("INSERT (:Person {name: 'Alix', age: 30})")
     db.execute("INSERT (:Person {name: 'Gus', age: 25})")
     db.execute("INSERT (:Person {name: 'Vincent', age: 35, city: 'Amsterdam'})")
@@ -147,7 +147,7 @@ class TestNodesDf:
             assert isinstance(labels, list)
 
     def test_empty_graph(self):
-        db = grafeo.GrafeoDB()
+        db = obrain.ObrainDB()
         df = db.nodes_df()
         assert isinstance(df, pd.DataFrame)
         assert len(df) == 0
@@ -186,7 +186,7 @@ class TestEdgesDf:
         assert knows_rows["role"].isna().all()
 
     def test_empty_graph(self):
-        db = grafeo.GrafeoDB()
+        db = obrain.ObrainDB()
         df = db.edges_df()
         assert isinstance(df, pd.DataFrame)
         assert len(df) == 0

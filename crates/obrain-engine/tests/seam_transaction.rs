@@ -6,14 +6,14 @@
 //! interactions, and basic isolation between sessions.
 //!
 //! ```bash
-//! cargo test -p grafeo-engine --test seam_transaction
+//! cargo test -p obrain-engine --test seam_transaction
 //! ```
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
-fn db() -> GrafeoDB {
-    GrafeoDB::new_in_memory()
+fn db() -> ObrainDB {
+    ObrainDB::new_in_memory()
 }
 
 // ============================================================================

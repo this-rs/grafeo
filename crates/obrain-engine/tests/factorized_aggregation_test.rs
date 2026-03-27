@@ -6,13 +6,13 @@
 //! Requires the `cypher` feature (uses `execute_cypher` for graph setup).
 //!
 //! ```bash
-//! cargo test -p grafeo-engine --features cypher --test factorized_aggregation_test
+//! cargo test -p obrain-engine --features cypher --test factorized_aggregation_test
 //! ```
 
 #![cfg(feature = "cypher")]
 
-use grafeo_common::types::Value;
-use grafeo_engine::{Config, GrafeoDB};
+use obrain_common::types::Value;
+use obrain_engine::{Config, ObrainDB};
 
 /// Creates a test graph with known structure for aggregation testing.
 ///
@@ -23,7 +23,7 @@ use grafeo_engine::{Config, GrafeoDB};
 /// - Node 2 -> 3 neighbors (id 30, 31, 32)
 ///
 /// Total 1-hop paths: 4 + 2 + 3 = 9
-fn create_star_graph(db: &GrafeoDB) {
+fn create_star_graph(db: &ObrainDB) {
     let session = db.session();
 
     // Create source nodes
@@ -72,7 +72,7 @@ fn create_star_graph(db: &GrafeoDB) {
 
 #[test]
 fn test_count_with_factorized_execution() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     create_star_graph(&db);
 
     let session = db.session();
@@ -94,7 +94,7 @@ fn test_count_with_factorized_execution() {
 
 #[test]
 fn test_count_two_hop_factorized() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     create_star_graph(&db);
 
     let session = db.session();
@@ -115,8 +115,8 @@ fn test_count_two_hop_factorized() {
 #[test]
 fn test_factorized_vs_flat_count_correctness() {
     // Create a small graph where we can verify the exact count
-    let db_factorized = GrafeoDB::new_in_memory();
-    let db_flat = GrafeoDB::with_config(Config::default().without_factorized_execution()).unwrap();
+    let db_factorized = ObrainDB::new_in_memory();
+    let db_flat = ObrainDB::with_config(Config::default().without_factorized_execution()).unwrap();
 
     // Create identical graphs
     for db in [&db_factorized, &db_flat] {
@@ -193,7 +193,7 @@ fn test_factorized_vs_flat_count_correctness() {
 #[test]
 fn test_count_star_simple() {
     // Very simple test: single expand then COUNT
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // Create: Center -> A, B, C
@@ -234,8 +234,8 @@ fn test_factorized_aggregation_speedup_demonstration() {
     // This test demonstrates the speedup of factorized aggregation
     // by comparing execution on a larger graph
 
-    let db_factorized = GrafeoDB::new_in_memory();
-    let db_flat = GrafeoDB::with_config(Config::default().without_factorized_execution()).unwrap();
+    let db_factorized = ObrainDB::new_in_memory();
+    let db_flat = ObrainDB::with_config(Config::default().without_factorized_execution()).unwrap();
 
     // Create a graph with high fan-out
     for db in [&db_factorized, &db_flat] {
@@ -344,7 +344,7 @@ fn test_factorized_aggregation_speedup_demonstration() {
 ///   R0 -> H1_1 -> H2_2 -> H3_1              = 1
 ///   R1 -> H1_2 -> H2_3 -> (none)            = 0
 ///   Total: 4
-fn create_chain_graph(db: &GrafeoDB) {
+fn create_chain_graph(db: &ObrainDB) {
     let session = db.session();
 
     // Layer 0: roots
@@ -387,7 +387,7 @@ fn create_chain_graph(db: &GrafeoDB) {
 
 #[test]
 fn test_three_hop_factorized_count() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     create_chain_graph(&db);
 
     let session = db.session();
@@ -405,8 +405,8 @@ fn test_three_hop_factorized_count() {
 #[test]
 fn test_three_hop_factorized_vs_flat() {
     // Verify that factorized and flat execution agree on a 3-hop query.
-    let db_factorized = GrafeoDB::new_in_memory();
-    let db_flat = GrafeoDB::with_config(Config::default().without_factorized_execution()).unwrap();
+    let db_factorized = ObrainDB::new_in_memory();
+    let db_flat = ObrainDB::with_config(Config::default().without_factorized_execution()).unwrap();
 
     create_chain_graph(&db_factorized);
     create_chain_graph(&db_flat);
@@ -473,8 +473,8 @@ fn test_asymmetric_fanout_two_hop() {
     // 2-hop paths from Leaf: 0 (no outgoing edges at all)
     // Grand total: 7
 
-    let db_factorized = GrafeoDB::new_in_memory();
-    let db_flat = GrafeoDB::with_config(Config::default().without_factorized_execution()).unwrap();
+    let db_factorized = ObrainDB::new_in_memory();
+    let db_flat = ObrainDB::with_config(Config::default().without_factorized_execution()).unwrap();
 
     for db in [&db_factorized, &db_flat] {
         let session = db.session();

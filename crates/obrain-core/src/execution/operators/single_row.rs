@@ -9,7 +9,7 @@
 
 use super::{Operator, OperatorResult};
 use crate::execution::DataChunk;
-use grafeo_common::types::{LogicalType, NodeId};
+use obrain_common::types::{LogicalType, NodeId};
 
 /// An operator that produces exactly one empty row.
 ///
@@ -96,8 +96,8 @@ impl Operator for EmptyOperator {
 /// # Example
 ///
 /// ```
-/// use grafeo_core::execution::operators::NodeListOperator;
-/// use grafeo_common::types::NodeId;
+/// use obrain_core::execution::operators::NodeListOperator;
+/// use obrain_common::types::NodeId;
 ///
 /// // Simulate nodes returned from property index lookup
 /// let matching_nodes = vec![NodeId::new(1), NodeId::new(5), NodeId::new(10)];

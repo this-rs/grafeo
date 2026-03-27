@@ -1,6 +1,6 @@
 """SolvOR comparison tests for the RDF GraphQL context.
 
-NOTE: The SolvOR adapter in Grafeo works with the LPG (Labeled Property Graph)
+NOTE: The SolvOR adapter in Obrain works with the LPG (Labeled Property Graph)
 store for flow network optimization problems. RDF triples are stored separately.
 
 The "RDF GraphQL" context indicates the query language environment, but
@@ -16,34 +16,34 @@ from tests.bases.test_solvor import (
     BaseSolvORComparisonTest,
 )
 
-# Try to import grafeo
+# Try to import obrain
 try:
-    from grafeo import GrafeoDB
+    from obrain import ObrainDB
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
 
-pytestmark = pytest.mark.skipif(not GRAFEO_AVAILABLE, reason="Grafeo Python bindings not installed")
+pytestmark = pytest.mark.skipif(not OBRAIN_AVAILABLE, reason="Obrain Python bindings not installed")
 
 
 @pytest.fixture
 def db():
     """Create a fresh database instance."""
-    return GrafeoDB()
+    return ObrainDB()
 
 
 class TestRDFGraphQLSolvORComparison(BaseSolvORComparisonTest):
     """GraphQL on RDF implementation of solvOR plugin comparison tests.
 
-    Tests Grafeo's as_solvor() plugin against standalone solvOR library.
+    Tests Obrain's as_solvor() plugin against standalone solvOR library.
     Graph setup uses Python API with RDF-style nodes (GraphQL execution not required).
     """
 
     def create_db(self):
         """Create a fresh database instance."""
-        return GrafeoDB()
+        return ObrainDB()
 
     def setup_flow_network(self, db, n_nodes: int, n_edges: int, seed: int = 42) -> dict:
         """Set up a flow network using Python API with RDF-style nodes."""
@@ -98,7 +98,7 @@ class TestRDFGraphQLSolvORBenchmark(BaseSolvORBenchmarkTest):
 
     def create_db(self):
         """Create a fresh database instance."""
-        return GrafeoDB()
+        return ObrainDB()
 
     def setup_flow_network(self, db, n_nodes: int, n_edges: int, seed: int = 42) -> dict:
         """Set up a flow network using Python API with RDF-style nodes."""

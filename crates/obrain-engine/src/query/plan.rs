@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-use grafeo_common::types::Value;
+use obrain_common::types::Value;
 
 /// A count expression for SKIP/LIMIT: either a resolved literal or an unresolved parameter.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1919,11 +1919,11 @@ pub struct PropertyGraphEdgeTable {
 /// A CALL procedure operation.
 ///
 /// ```text
-/// CALL grafeo.pagerank({damping: 0.85}) YIELD nodeId, score
+/// CALL obrain.pagerank({damping: 0.85}) YIELD nodeId, score
 /// ```
 #[derive(Debug, Clone)]
 pub struct CallProcedureOp {
-    /// Dotted procedure name, e.g. `["grafeo", "pagerank"]`.
+    /// Dotted procedure name, e.g. `["obrain", "pagerank"]`.
     pub name: Vec<String>,
     /// Argument expressions (constants in Phase 1).
     pub arguments: Vec<LogicalExpression>,
@@ -1941,7 +1941,7 @@ pub struct ProcedureYield {
 }
 
 /// Re-export format enum from the physical operator.
-pub use grafeo_core::execution::operators::LoadDataFormat;
+pub use obrain_core::execution::operators::LoadDataFormat;
 
 /// LOAD DATA operator: reads a file and produces rows.
 ///

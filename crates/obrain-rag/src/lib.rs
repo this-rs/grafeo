@@ -1,9 +1,9 @@
-//! # grafeo-rag
+//! # obrain-rag
 //!
-//! Graph-Augmented Retrieval via Engrams — schema-agnostic RAG for Grafeo.
+//! Graph-Augmented Retrieval via Engrams — schema-agnostic RAG for Obrain.
 //!
 //! This crate implements a retrieval-augmented generation pipeline that uses
-//! Grafeo's cognitive layer (engrams, synapses, energy) to find relevant
+//! Obrain's cognitive layer (engrams, synapses, energy) to find relevant
 //! graph content for LLM prompts, **without knowing the database schema**.
 //!
 //! ## Architecture
@@ -30,12 +30,12 @@
 //! - Extracts **all string-valued properties** from activated nodes
 //! - Includes **labels and relation types** as metadata
 //!
-//! This means it works on any GrafeoDB regardless of its schema.
+//! This means it works on any ObrainDB regardless of its schema.
 //!
 //! ## Example
 //!
 //! ```rust,no_run
-//! use grafeo_rag::{RagPipeline, RagConfig};
+//! use obrain_rag::{RagPipeline, RagConfig};
 //!
 //! // pipeline = RagPipeline::new(db, cognitive_engine, config);
 //! // let context = pipeline.query("What projects use plans?")?;

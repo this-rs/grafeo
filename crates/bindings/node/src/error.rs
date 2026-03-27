@@ -6,9 +6,9 @@
 use napi::Status;
 use thiserror::Error;
 
-/// Grafeo errors that translate to JavaScript Error instances.
+/// Obrain errors that translate to JavaScript Error instances.
 #[derive(Error, Debug)]
-pub enum NodeGrafeoError {
+pub enum NodeObrainError {
     #[error("Database error: {0}")]
     Database(String),
 
@@ -25,29 +25,29 @@ pub enum NodeGrafeoError {
     InvalidArgument(String),
 }
 
-impl From<NodeGrafeoError> for napi::Error {
-    fn from(err: NodeGrafeoError) -> Self {
+impl From<NodeObrainError> for napi::Error {
+    fn from(err: NodeObrainError) -> Self {
         match &err {
-            NodeGrafeoError::InvalidArgument(_) | NodeGrafeoError::Type(_) => {
+            NodeObrainError::InvalidArgument(_) | NodeObrainError::Type(_) => {
                 napi::Error::new(Status::InvalidArg, err.to_string())
             }
-            NodeGrafeoError::Database(_)
-            | NodeGrafeoError::Query(_)
-            | NodeGrafeoError::Transaction(_) => {
+            NodeObrainError::Database(_)
+            | NodeObrainError::Query(_)
+            | NodeObrainError::Transaction(_) => {
                 napi::Error::new(Status::GenericFailure, err.to_string())
             }
         }
     }
 }
 
-impl From<grafeo_common::utils::error::Error> for NodeGrafeoError {
-    fn from(err: grafeo_common::utils::error::Error) -> Self {
-        use grafeo_bindings_common::error::{ErrorCategory, classify_error};
+impl From<obrain_common::utils::error::Error> for NodeObrainError {
+    fn from(err: obrain_common::utils::error::Error) -> Self {
+        use obrain_bindings_common::error::{ErrorCategory, classify_error};
         let msg = err.to_string();
         match classify_error(&err) {
-            ErrorCategory::Query => NodeGrafeoError::Query(msg),
-            ErrorCategory::Transaction => NodeGrafeoError::Transaction(msg),
-            _ => NodeGrafeoError::Database(msg),
+            ErrorCategory::Query => NodeObrainError::Query(msg),
+            ErrorCategory::Transaction => NodeObrainError::Transaction(msg),
+            _ => NodeObrainError::Database(msg),
         }
     }
 }

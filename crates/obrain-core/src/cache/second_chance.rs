@@ -22,7 +22,7 @@ use hashbrown::HashMap;
 /// # Example
 ///
 /// ```
-/// use grafeo_core::cache::SecondChanceLru;
+/// use obrain_core::cache::SecondChanceLru;
 ///
 /// let mut cache = SecondChanceLru::new(3);
 /// cache.insert("a", 1);

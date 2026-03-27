@@ -3,9 +3,9 @@
 use super::LpgStore;
 use super::PropertyUndoEntry;
 #[cfg(feature = "temporal")]
-use grafeo_common::types::EpochId;
-use grafeo_common::types::{EdgeId, NodeId, PropertyKey, TransactionId, Value};
-use grafeo_common::utils::hash::FxHashMap;
+use obrain_common::types::EpochId;
+use obrain_common::types::{EdgeId, NodeId, PropertyKey, TransactionId, Value};
+use obrain_common::utils::hash::FxHashMap;
 use std::sync::atomic::Ordering;
 
 impl LpgStore {
@@ -182,8 +182,8 @@ impl LpgStore {
     /// # Example
     ///
     /// ```
-    /// # use grafeo_core::graph::lpg::LpgStore;
-    /// # use grafeo_common::types::{PropertyKey, Value};
+    /// # use obrain_core::graph::lpg::LpgStore;
+    /// # use obrain_common::types::{PropertyKey, Value};
     /// let store = LpgStore::new().expect("arena allocation");
     /// let node_id = store.create_node(&["Person"]);
     /// store.set_node_property(node_id, "age", Value::from(30i64));
@@ -217,8 +217,8 @@ impl LpgStore {
     /// # Example
     ///
     /// ```
-    /// use grafeo_core::graph::lpg::LpgStore;
-    /// use grafeo_common::types::{NodeId, PropertyKey, Value};
+    /// use obrain_core::graph::lpg::LpgStore;
+    /// use obrain_common::types::{NodeId, PropertyKey, Value};
     ///
     /// let store = LpgStore::new().expect("arena allocation");
     /// let n1 = store.create_node(&["Person"]);
@@ -255,8 +255,8 @@ impl LpgStore {
     /// # Example
     ///
     /// ```
-    /// use grafeo_core::graph::lpg::LpgStore;
-    /// use grafeo_common::types::{PropertyKey, Value};
+    /// use obrain_core::graph::lpg::LpgStore;
+    /// use obrain_common::types::{PropertyKey, Value};
     ///
     /// let store = LpgStore::new().expect("arena allocation");
     /// let n1 = store.create_node(&["Person"]);
@@ -329,7 +329,7 @@ impl LpgStore {
             #[cfg(feature = "text-index")]
             self.update_text_index_on_set(id, key, &value);
             self.node_properties
-                .set(id, prop_key2, value, grafeo_common::types::EpochId::PENDING);
+                .set(id, prop_key2, value, obrain_common::types::EpochId::PENDING);
         }
     }
 
@@ -366,7 +366,7 @@ impl LpgStore {
             id,
             key.into(),
             value,
-            grafeo_common::types::EpochId::PENDING,
+            obrain_common::types::EpochId::PENDING,
         );
     }
 
@@ -510,12 +510,12 @@ impl LpgStore {
         let entries = self.property_undo_log.write().remove(&transaction_id);
         if let Some(entries) = entries {
             // Collect which node/edge properties and labels were touched
-            let mut node_props: grafeo_common::utils::hash::FxHashSet<(NodeId, PropertyKey)> =
-                grafeo_common::utils::hash::FxHashSet::default();
-            let mut edge_props: grafeo_common::utils::hash::FxHashSet<(EdgeId, PropertyKey)> =
-                grafeo_common::utils::hash::FxHashSet::default();
-            let mut label_nodes: grafeo_common::utils::hash::FxHashSet<NodeId> =
-                grafeo_common::utils::hash::FxHashSet::default();
+            let mut node_props: obrain_common::utils::hash::FxHashSet<(NodeId, PropertyKey)> =
+                obrain_common::utils::hash::FxHashSet::default();
+            let mut edge_props: obrain_common::utils::hash::FxHashSet<(EdgeId, PropertyKey)> =
+                obrain_common::utils::hash::FxHashSet::default();
+            let mut label_nodes: obrain_common::utils::hash::FxHashSet<NodeId> =
+                obrain_common::utils::hash::FxHashSet::default();
 
             // First pass: collect touched entries and handle entity deletions
             for entry in entries.into_iter().rev() {
@@ -729,16 +729,16 @@ impl LpgStore {
             drop(log);
 
             // Count how many PENDING entries to pop per (entity, key) and per label node.
-            let mut node_prop_counts: grafeo_common::utils::hash::FxHashMap<
+            let mut node_prop_counts: obrain_common::utils::hash::FxHashMap<
                 (NodeId, PropertyKey),
                 usize,
-            > = grafeo_common::utils::hash::FxHashMap::default();
-            let mut edge_prop_counts: grafeo_common::utils::hash::FxHashMap<
+            > = obrain_common::utils::hash::FxHashMap::default();
+            let mut edge_prop_counts: obrain_common::utils::hash::FxHashMap<
                 (EdgeId, PropertyKey),
                 usize,
-            > = grafeo_common::utils::hash::FxHashMap::default();
-            let mut label_counts: grafeo_common::utils::hash::FxHashMap<NodeId, usize> =
-                grafeo_common::utils::hash::FxHashMap::default();
+            > = obrain_common::utils::hash::FxHashMap::default();
+            let mut label_counts: obrain_common::utils::hash::FxHashMap<NodeId, usize> =
+                obrain_common::utils::hash::FxHashMap::default();
 
             for entry in to_undo.into_iter().rev() {
                 match entry {

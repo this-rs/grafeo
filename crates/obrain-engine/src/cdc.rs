@@ -8,10 +8,10 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use grafeo_engine::GrafeoDB;
-//! use grafeo_common::types::Value;
+//! use obrain_engine::ObrainDB;
+//! use obrain_common::types::Value;
 //!
-//! let db = GrafeoDB::new_in_memory();
+//! let db = ObrainDB::new_in_memory();
 //! let id = db.create_node(&["Person"]);
 //! db.set_node_property(id, "name", Value::from("Alix"));
 //! db.set_node_property(id, "name", Value::from("Gus"));
@@ -22,7 +22,7 @@
 //! # }
 //! ```
 
-use grafeo_common::types::{EdgeId, EpochId, NodeId, Value};
+use obrain_common::types::{EdgeId, EpochId, NodeId, Value};
 use hashbrown::HashMap as HbHashMap;
 use parking_lot::RwLock;
 use std::collections::HashMap;

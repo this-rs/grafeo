@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use grafeo_common::types::{EdgeId, LogicalType, NodeId, PropertyKey, Value};
+use obrain_common::types::{EdgeId, LogicalType, NodeId, PropertyKey, Value};
 
 use super::accumulator::AggregateFunction;
 use super::aggregate::AggregateState;

@@ -399,27 +399,27 @@ impl MetricsRegistry {
 
         // Query metrics
         counter!(
-            "grafeo_query_count",
+            "obrain_query_count",
             "Total queries executed.",
             self.query_count.load(Ordering::Relaxed)
         );
         counter!(
-            "grafeo_query_errors",
+            "obrain_query_errors",
             "Queries that returned an error.",
             self.query_errors.load(Ordering::Relaxed)
         );
         counter!(
-            "grafeo_query_timeouts",
+            "obrain_query_timeouts",
             "Queries cancelled by timeout.",
             self.query_timeouts.load(Ordering::Relaxed)
         );
         counter!(
-            "grafeo_query_rows_returned",
+            "obrain_query_rows_returned",
             "Cumulative rows returned.",
             self.rows_returned.load(Ordering::Relaxed)
         );
         counter!(
-            "grafeo_query_rows_scanned",
+            "obrain_query_rows_scanned",
             "Cumulative rows scanned.",
             self.rows_scanned.load(Ordering::Relaxed)
         );
@@ -427,7 +427,7 @@ impl MetricsRegistry {
         // Query latency histogram
         Self::write_histogram(
             &mut out,
-            "grafeo_query_latency_ms",
+            "obrain_query_latency_ms",
             "Query latency in milliseconds.",
             &self.query_latency,
         );
@@ -436,83 +436,83 @@ impl MetricsRegistry {
         let lang = self.query_count_by_language.snapshot();
         let _ = writeln!(
             out,
-            "# HELP grafeo_query_count_by_language Queries executed per language."
+            "# HELP obrain_query_count_by_language Queries executed per language."
         );
-        let _ = writeln!(out, "# TYPE grafeo_query_count_by_language counter");
+        let _ = writeln!(out, "# TYPE obrain_query_count_by_language counter");
         let _ = writeln!(
             out,
-            "grafeo_query_count_by_language{{language=\"gql\"}} {}",
+            "obrain_query_count_by_language{{language=\"gql\"}} {}",
             lang.gql
         );
         let _ = writeln!(
             out,
-            "grafeo_query_count_by_language{{language=\"cypher\"}} {}",
+            "obrain_query_count_by_language{{language=\"cypher\"}} {}",
             lang.cypher
         );
         let _ = writeln!(
             out,
-            "grafeo_query_count_by_language{{language=\"sparql\"}} {}",
+            "obrain_query_count_by_language{{language=\"sparql\"}} {}",
             lang.sparql
         );
         let _ = writeln!(
             out,
-            "grafeo_query_count_by_language{{language=\"gremlin\"}} {}",
+            "obrain_query_count_by_language{{language=\"gremlin\"}} {}",
             lang.gremlin
         );
         let _ = writeln!(
             out,
-            "grafeo_query_count_by_language{{language=\"graphql\"}} {}",
+            "obrain_query_count_by_language{{language=\"graphql\"}} {}",
             lang.graphql
         );
         let _ = writeln!(
             out,
-            "grafeo_query_count_by_language{{language=\"sql_pgq\"}} {}",
+            "obrain_query_count_by_language{{language=\"sql_pgq\"}} {}",
             lang.sql_pgq
         );
 
         // Transaction metrics
         gauge!(
-            "grafeo_tx_active",
+            "obrain_tx_active",
             "Currently active transactions.",
             self.tx_active.load(Ordering::Relaxed)
         );
         counter!(
-            "grafeo_tx_committed",
+            "obrain_tx_committed",
             "Total transactions committed.",
             self.tx_committed.load(Ordering::Relaxed)
         );
         counter!(
-            "grafeo_tx_rolled_back",
+            "obrain_tx_rolled_back",
             "Total transactions rolled back.",
             self.tx_rolled_back.load(Ordering::Relaxed)
         );
         counter!(
-            "grafeo_tx_conflicts",
+            "obrain_tx_conflicts",
             "Write-write conflicts detected.",
             self.tx_conflicts.load(Ordering::Relaxed)
         );
         Self::write_histogram(
             &mut out,
-            "grafeo_tx_duration_ms",
+            "obrain_tx_duration_ms",
             "Transaction duration in milliseconds.",
             &self.tx_duration,
         );
 
         // Session metrics
         gauge!(
-            "grafeo_session_active",
+            "obrain_session_active",
             "Currently active sessions.",
             self.session_active.load(Ordering::Relaxed)
         );
         counter!(
-            "grafeo_session_created",
+            "obrain_session_created",
             "Total sessions created.",
             self.session_created.load(Ordering::Relaxed)
         );
 
         // GC metrics
         counter!(
-            "grafeo_gc_runs",
+            "obrain_gc_runs",
             "Total garbage collection runs.",
             self.gc_runs.load(Ordering::Relaxed)
         );
@@ -995,24 +995,24 @@ mod tests {
         let output = registry.to_prometheus();
 
         // Counters
-        assert!(output.contains("# TYPE grafeo_query_count counter"));
-        assert!(output.contains("grafeo_query_count 42"));
-        assert!(output.contains("grafeo_query_errors 3"));
-        assert!(output.contains("grafeo_tx_committed 10"));
-        assert!(output.contains("grafeo_session_created 5"));
-        assert!(output.contains("grafeo_gc_runs 2"));
+        assert!(output.contains("# TYPE obrain_query_count counter"));
+        assert!(output.contains("obrain_query_count 42"));
+        assert!(output.contains("obrain_query_errors 3"));
+        assert!(output.contains("obrain_tx_committed 10"));
+        assert!(output.contains("obrain_session_created 5"));
+        assert!(output.contains("obrain_gc_runs 2"));
 
         // Gauges
-        assert!(output.contains("# TYPE grafeo_tx_active gauge"));
-        assert!(output.contains("# TYPE grafeo_session_active gauge"));
+        assert!(output.contains("# TYPE obrain_tx_active gauge"));
+        assert!(output.contains("# TYPE obrain_session_active gauge"));
 
         // Histogram
-        assert!(output.contains("# TYPE grafeo_query_latency_ms histogram"));
-        assert!(output.contains("grafeo_query_latency_ms_bucket{le=\"+Inf\"} 2"));
-        assert!(output.contains("grafeo_query_latency_ms_count 2"));
+        assert!(output.contains("# TYPE obrain_query_latency_ms histogram"));
+        assert!(output.contains("obrain_query_latency_ms_bucket{le=\"+Inf\"} 2"));
+        assert!(output.contains("obrain_query_latency_ms_count 2"));
 
         // Per-language
-        assert!(output.contains("grafeo_query_count_by_language{language=\"gql\"} 1"));
+        assert!(output.contains("obrain_query_count_by_language{language=\"gql\"} 1"));
     }
 
     #[test]

@@ -11,9 +11,9 @@
 //! ## Usage
 //!
 //! ```no_run
-//! use grafeo_engine::query::cache::{QueryCache, CacheKey};
-//! use grafeo_engine::query::processor::QueryLanguage;
-//! use grafeo_engine::query::plan::{LogicalPlan, LogicalOperator};
+//! use obrain_engine::query::cache::{QueryCache, CacheKey};
+//! use obrain_engine::query::processor::QueryLanguage;
+//! use obrain_engine::query::plan::{LogicalPlan, LogicalOperator};
 //!
 //! let cache = QueryCache::new(1000);
 //! let cache_key = CacheKey::new("MATCH (n) RETURN n", QueryLanguage::Gql);

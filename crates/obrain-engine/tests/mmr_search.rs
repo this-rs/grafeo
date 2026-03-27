@@ -4,15 +4,15 @@
 
 #![cfg(feature = "vector-index")]
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 fn vec3(x: f32, y: f32, z: f32) -> Value {
     Value::Vector(vec![x, y, z].into())
 }
 
-fn setup_db() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn setup_db() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
 
     // Create 5 nodes with varied vectors
     let n1 = db.create_node(&["Doc"]);
@@ -148,7 +148,7 @@ fn test_mmr_k_greater_than_nodes() {
 
 #[test]
 fn test_mmr_search_nonexistent_index_fails() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let result = db.mmr_search("Nope", "emb", &[1.0, 0.0, 0.0], 3, None, None, None, None);
     assert!(result.is_err());
 }

@@ -24,7 +24,7 @@ use std::time::Duration;
 use crate::energy::EnergyStore;
 #[cfg(feature = "synapse")]
 use crate::synapse::SynapseStore;
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 
 // ---------------------------------------------------------------------------
 // Inline bounded scoring functions (avoid cross-feature deps)

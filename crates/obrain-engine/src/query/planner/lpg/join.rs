@@ -168,8 +168,8 @@ impl super::Planner {
             if i == 0 {
                 columns = cols;
             } else if cols.len() != columns.len() {
-                return Err(Error::Query(grafeo_common::utils::error::QueryError::new(
-                    grafeo_common::utils::error::QueryErrorKind::Semantic,
+                return Err(Error::Query(obrain_common::utils::error::QueryError::new(
+                    obrain_common::utils::error::QueryErrorKind::Semantic,
                     format!(
                         "UNION branches must return the same number of columns (left: {}, right: {})",
                         columns.len(),
@@ -273,7 +273,7 @@ impl super::Planner {
 
         // Correlated Apply: create shared ParameterState
         let param_state = std::sync::Arc::new(
-            grafeo_core::execution::operators::ParameterState::new(shared_vars.clone()),
+            obrain_core::execution::operators::ParameterState::new(shared_vars.clone()),
         );
 
         // Find column indices for the shared variables in outer columns

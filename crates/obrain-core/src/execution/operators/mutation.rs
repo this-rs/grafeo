@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use grafeo_common::types::{
+use obrain_common::types::{
     EdgeId, EpochId, LogicalType, NodeId, PropertyKey, TransactionId, Value,
 };
 
@@ -1962,7 +1962,7 @@ mod tests {
         assert_eq!(
             node_data
                 .properties
-                .get(&grafeo_common::types::PropertyKey::new("name")),
+                .get(&obrain_common::types::PropertyKey::new("name")),
             Some(&Value::String("Alix".into()))
         );
     }
@@ -1997,7 +1997,7 @@ mod tests {
         assert_eq!(
             node_data
                 .properties
-                .get(&grafeo_common::types::PropertyKey::new("name")),
+                .get(&obrain_common::types::PropertyKey::new("name")),
             Some(&Value::String("Gus".into()))
         );
     }
@@ -2028,7 +2028,7 @@ mod tests {
         assert_eq!(
             edge_data
                 .properties
-                .get(&grafeo_common::types::PropertyKey::new("weight")),
+                .get(&obrain_common::types::PropertyKey::new("weight")),
             Some(&Value::Float64(0.75))
         );
     }
@@ -2062,13 +2062,13 @@ mod tests {
         assert_eq!(
             node_data
                 .properties
-                .get(&grafeo_common::types::PropertyKey::new("name")),
+                .get(&obrain_common::types::PropertyKey::new("name")),
             Some(&Value::String("Alix".into()))
         );
         assert_eq!(
             node_data
                 .properties
-                .get(&grafeo_common::types::PropertyKey::new("age")),
+                .get(&obrain_common::types::PropertyKey::new("age")),
             Some(&Value::Int64(30))
         );
     }
@@ -2191,7 +2191,7 @@ mod tests {
         let edge = store.get_edge(edge_id).expect("edge should exist");
         assert_eq!(
             edge.properties
-                .get(&grafeo_common::types::PropertyKey::new("since")),
+                .get(&obrain_common::types::PropertyKey::new("since")),
             Some(&Value::Int64(2024))
         );
     }

@@ -2,8 +2,8 @@
 
 #![cfg(feature = "gds-refresh")]
 
-use grafeo_cognitive::fabric::FabricStore;
-use grafeo_cognitive::gds_refresh::{GdsRefreshConfig, GdsRefreshScheduler};
+use obrain_cognitive::fabric::FabricStore;
+use obrain_cognitive::gds_refresh::{GdsRefreshConfig, GdsRefreshScheduler};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -262,12 +262,12 @@ fn debug_formatting_zero_mutations() {
 }
 
 // ---------------------------------------------------------------------------
-// refresh() integration test (requires gds-refresh + grafeo-adapters)
+// refresh() integration test (requires gds-refresh + obrain-adapters)
 // ---------------------------------------------------------------------------
 
 #[test]
 fn refresh_with_graph_store() {
-    use grafeo_core::LpgStore;
+    use obrain_core::LpgStore;
     let store = LpgStore::new().expect("LpgStore::new");
 
     // Create a small graph: A -> B -> C, A -> C
@@ -340,7 +340,7 @@ fn refresh_with_graph_store() {
 
 #[test]
 fn refresh_empty_graph_does_not_panic() {
-    use grafeo_core::LpgStore;
+    use obrain_core::LpgStore;
 
     let store = LpgStore::new().expect("LpgStore::new");
     let fabric = Arc::new(FabricStore::new());
@@ -358,7 +358,7 @@ fn refresh_empty_graph_does_not_panic() {
 
 #[test]
 fn refresh_single_node_no_edges() {
-    use grafeo_core::LpgStore;
+    use obrain_core::LpgStore;
 
     let store = LpgStore::new().expect("LpgStore::new");
     let _a = store.create_node(&["Isolated"]);
@@ -376,7 +376,7 @@ fn refresh_single_node_no_edges() {
 
 #[test]
 fn refresh_resets_mutation_count_even_if_above_threshold() {
-    use grafeo_core::LpgStore;
+    use obrain_core::LpgStore;
 
     let store = LpgStore::new().expect("LpgStore::new");
     let fabric = Arc::new(FabricStore::new());
@@ -400,7 +400,7 @@ fn refresh_resets_mutation_count_even_if_above_threshold() {
 
 #[test]
 fn refresh_updates_metrics_for_larger_graph() {
-    use grafeo_core::LpgStore;
+    use obrain_core::LpgStore;
     let store = LpgStore::new().expect("LpgStore::new");
 
     // Build a star graph: center -> spoke1, center -> spoke2, ..., center -> spoke5

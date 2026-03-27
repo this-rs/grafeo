@@ -8,7 +8,7 @@
 use super::{ConstraintValidator, Operator, OperatorResult, PropertySource};
 use crate::execution::chunk::{DataChunk, DataChunkBuilder};
 use crate::graph::{GraphStore, GraphStoreMut};
-use grafeo_common::types::{
+use obrain_common::types::{
     EdgeId, EpochId, LogicalType, NodeId, PropertyKey, TransactionId, Value,
 };
 use std::sync::Arc;

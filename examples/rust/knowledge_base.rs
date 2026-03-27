@@ -4,14 +4,14 @@
 //! combining graph structure with relevance scoring, and consolidation of
 //! stale nodes.
 //!
-//! Run with: `cargo run -p grafeo-examples --bin knowledge_base`
+//! Run with: `cargo run -p obrain-examples --bin knowledge_base`
 
-use grafeo::{GrafeoDB, NodeId};
+use obrain::{ObrainDB, NodeId};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Knowledge Base — Cognitive Graph Example ===\n");
 
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // ── Build knowledge graph ─────────────────────────────────────
@@ -117,12 +117,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //   3. Synapse weight — strength of connections to the query topic
     //
     // In a cognitive graph, the Fabric provides a composite risk_score
-    // and the UDF grafeo.energy() gives real-time activation levels.
+    // and the UDF obrain.energy() gives real-time activation levels.
 
     println!("\n── Multi-Signal Search: 'query languages' ──");
 
     // Signal 1: PageRank for structural importance
-    let pr_result = session.execute("CALL grafeo.pagerank({damping: 0.85, max_iterations: 20})")?;
+    let pr_result = session.execute("CALL obrain.pagerank({damping: 0.85, max_iterations: 20})")?;
     let pageranks: Vec<(i64, f64)> = pr_result
         .iter()
         .map(|row| {
@@ -230,7 +230,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Louvain community detection reveals natural topic clusters.
 
     println!("\n── Knowledge Clusters (Louvain) ──");
-    let result = session.execute("CALL grafeo.louvain()")?;
+    let result = session.execute("CALL obrain.louvain()")?;
 
     let mut clusters: std::collections::HashMap<i64, Vec<String>> =
         std::collections::HashMap::new();
@@ -251,7 +251,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Look up a concept's name by raw node ID.
-fn get_concept_name(db: &GrafeoDB, raw_id: i64) -> String {
+fn get_concept_name(db: &ObrainDB, raw_id: i64) -> String {
     let node_id = NodeId::from(raw_id as u64);
     db.get_node(node_id)
         .and_then(|n| {
@@ -262,7 +262,7 @@ fn get_concept_name(db: &GrafeoDB, raw_id: i64) -> String {
 }
 
 /// Find the PageRank score for a concept by name.
-fn find_score_by_name(db: &GrafeoDB, scores: &[(i64, f64)], name: &str) -> f64 {
+fn find_score_by_name(db: &ObrainDB, scores: &[(i64, f64)], name: &str) -> f64 {
     scores
         .iter()
         .find(|(nid, _)| get_concept_name(db, *nid) == name)

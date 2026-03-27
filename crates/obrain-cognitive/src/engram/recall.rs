@@ -14,7 +14,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 use serde::{Deserialize, Serialize};
 
 use super::hopfield::{self, MmrResult, PatternMatrix};

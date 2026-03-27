@@ -5,7 +5,7 @@
 
 use super::{Operator, OperatorResult};
 use crate::execution::DataChunk;
-use grafeo_common::types::{LogicalType, PropertyKey, Value};
+use obrain_common::types::{LogicalType, PropertyKey, Value};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 

@@ -3,7 +3,7 @@
 //! Provides the canonical definitions of [`AggregateFunction`], [`AggregateExpr`],
 //! and [`HashableValue`] used by both `aggregate.rs` (pull) and `push/aggregate.rs`.
 
-use grafeo_common::types::Value;
+use obrain_common::types::Value;
 
 /// Aggregation function types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

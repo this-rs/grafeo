@@ -1,6 +1,6 @@
-//! The core types you'll work with in Grafeo.
+//! The core types you'll work with in Obrain.
 //!
-//! Most of these are re-exported from the main `grafeo` crate, so you rarely
+//! Most of these are re-exported from the main `obrain` crate, so you rarely
 //! need to import from here directly.
 //!
 //! - **IDs**: [`NodeId`], [`EdgeId`] - handles to graph elements

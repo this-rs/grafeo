@@ -1,6 +1,6 @@
 //! GQL Lexer.
 
-use grafeo_common::utils::error::SourceSpan;
+use obrain_common::utils::error::SourceSpan;
 
 /// A token in the GQL language.
 #[derive(Debug, Clone, PartialEq)]

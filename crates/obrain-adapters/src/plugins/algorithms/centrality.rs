@@ -6,13 +6,13 @@
 use std::collections::VecDeque;
 use std::sync::OnceLock;
 
-use grafeo_common::types::{NodeId, Value};
-use grafeo_common::utils::error::Result;
-use grafeo_common::utils::hash::FxHashMap;
-use grafeo_core::graph::Direction;
-use grafeo_core::graph::GraphStore;
+use obrain_common::types::{NodeId, Value};
+use obrain_common::utils::error::Result;
+use obrain_common::utils::hash::FxHashMap;
+use obrain_core::graph::Direction;
+use obrain_core::graph::GraphStore;
 #[cfg(test)]
-use grafeo_core::graph::lpg::LpgStore;
+use obrain_core::graph::lpg::LpgStore;
 
 use super::super::{AlgorithmResult, ParameterDef, ParameterType, Parameters};
 use super::traits::{GraphAlgorithm, NodeValueResultBuilder};
@@ -695,8 +695,8 @@ pub struct HitsResult {
 /// # Example
 ///
 /// ```no_run
-/// use grafeo_adapters::plugins::algorithms::hits;
-/// use grafeo_core::graph::lpg::LpgStore;
+/// use obrain_adapters::plugins::algorithms::hits;
+/// use obrain_core::graph::lpg::LpgStore;
 ///
 /// let store = LpgStore::new().unwrap();
 /// let a = store.create_node(&["Page"]);
@@ -857,7 +857,7 @@ fn hits_params() -> &'static [ParameterDef] {
 /// HITS (Hyperlink-Induced Topic Search) algorithm wrapper for the plugin registry.
 ///
 /// Implements Kleinberg's HITS algorithm computing hub and authority scores
-/// for every node in the graph. Callable via `CALL grafeo.hits()`.
+/// for every node in the graph. Callable via `CALL obrain.hits()`.
 ///
 /// # Parameters
 ///
@@ -877,9 +877,9 @@ fn hits_params() -> &'static [ParameterDef] {
 /// # Example
 ///
 /// ```no_run
-/// use grafeo_adapters::plugins::algorithms::{HitsAlgorithm, GraphAlgorithm};
-/// use grafeo_adapters::plugins::Parameters;
-/// use grafeo_core::graph::lpg::LpgStore;
+/// use obrain_adapters::plugins::algorithms::{HitsAlgorithm, GraphAlgorithm};
+/// use obrain_adapters::plugins::Parameters;
+/// use obrain_core::graph::lpg::LpgStore;
 ///
 /// let store = LpgStore::new().unwrap();
 /// let algo = HitsAlgorithm;

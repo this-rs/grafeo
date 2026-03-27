@@ -1,9 +1,9 @@
 //! Bridge to the [NetworkX](https://networkx.org/) Python library.
 //!
 //! NetworkX is Python's most popular graph analysis library. This adapter lets
-//! you convert Grafeo graphs to NetworkX for visualization (matplotlib, pyvis)
+//! you convert Obrain graphs to NetworkX for visualization (matplotlib, pyvis)
 //! or tap into NetworkX's algorithm library. You can also import NetworkX graphs
-//! into Grafeo for faster querying.
+//! into Obrain for faster querying.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,13 +12,13 @@ use parking_lot::RwLock;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
-use grafeo_common::types::NodeId;
-use grafeo_core::graph::Direction;
-use grafeo_engine::database::GrafeoDB;
+use obrain_common::types::NodeId;
+use obrain_core::graph::Direction;
+use obrain_engine::database::ObrainDB;
 
-use crate::error::PyGrafeoError;
+use crate::error::PyObrainError;
 
-/// Work with your Grafeo graph using NetworkX conventions.
+/// Work with your Obrain graph using NetworkX conventions.
 ///
 /// Get this via `db.as_networkx()`. You can convert to a real NetworkX graph
 /// for visualization, or use the built-in algorithms that match NetworkX's API
@@ -29,18 +29,18 @@ use crate::error::PyGrafeoError;
 /// G = db.as_networkx().to_networkx()
 /// nx.draw(G)
 ///
-/// # Option 2: Use NetworkX-style API with Grafeo performance
+/// # Option 2: Use NetworkX-style API with Obrain performance
 /// pr = db.as_networkx().pagerank()
 /// ```
 #[pyclass(name = "NetworkXAdapter")]
 pub struct PyNetworkXAdapter {
-    db: Arc<RwLock<GrafeoDB>>,
+    db: Arc<RwLock<ObrainDB>>,
     directed: bool,
 }
 
 impl PyNetworkXAdapter {
     /// Creates a new NetworkX adapter for the given database.
-    pub fn new(db: Arc<RwLock<GrafeoDB>>, directed: bool) -> Self {
+    pub fn new(db: Arc<RwLock<ObrainDB>>, directed: bool) -> Self {
         Self { db, directed }
     }
 }
@@ -211,7 +211,7 @@ impl PyNetworkXAdapter {
         Ok(graph.into_any().unbind())
     }
 
-    /// Create a Grafeo database from a NetworkX graph.
+    /// Create a Obrain database from a NetworkX graph.
     ///
     /// Args:
     ///     G: NetworkX graph object
@@ -220,10 +220,10 @@ impl PyNetworkXAdapter {
     ///     New PyNetworkXAdapter wrapping the imported graph
     #[staticmethod]
     fn from_networkx(g: &Bound<'_, PyAny>, _py: Python<'_>) -> PyResult<Self> {
-        use grafeo_engine::config::Config;
+        use obrain_engine::config::Config;
 
         // Create new in-memory database
-        let db = GrafeoDB::with_config(Config::in_memory())
+        let db = ObrainDB::with_config(Config::in_memory())
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         let db = Arc::new(RwLock::new(db));
 
@@ -252,8 +252,8 @@ impl PyNetworkXAdapter {
             };
 
             let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
-            let grafeo_id = db_guard.create_node(&label_refs);
-            node_map.insert(py_id, grafeo_id);
+            let obrain_id = db_guard.create_node(&label_refs);
+            node_map.insert(py_id, obrain_id);
 
             // Import all properties except "labels"
             if let Ok(dict) = node_data.cast::<pyo3::types::PyDict>() {
@@ -266,7 +266,7 @@ impl PyNetworkXAdapter {
                         continue; // Skip labels, already handled
                     }
                     if let Ok(val) = crate::types::PyValue::from_py(&value) {
-                        db_guard.set_node_property(grafeo_id, &key_str, val);
+                        db_guard.set_node_property(obrain_id, &key_str, val);
                     }
                 }
             }
@@ -324,7 +324,7 @@ impl PyNetworkXAdapter {
     /// Compute PageRank (NetworkX-compatible).
     #[pyo3(signature = (alpha=0.85, max_iter=100, tol=1e-6))]
     fn pagerank(&self, alpha: f64, max_iter: usize, tol: f64) -> PyResult<HashMap<u64, f64>> {
-        use grafeo_adapters::plugins::algorithms;
+        use obrain_adapters::plugins::algorithms;
 
         let db = self.db.read();
         let store = db.store();
@@ -335,7 +335,7 @@ impl PyNetworkXAdapter {
     /// Compute betweenness centrality (NetworkX-compatible).
     #[pyo3(signature = (normalized=true))]
     fn betweenness_centrality(&self, normalized: bool) -> PyResult<HashMap<u64, f64>> {
-        use grafeo_adapters::plugins::algorithms;
+        use obrain_adapters::plugins::algorithms;
 
         let db = self.db.read();
         let store = db.store();
@@ -346,7 +346,7 @@ impl PyNetworkXAdapter {
     /// Compute closeness centrality (NetworkX-compatible).
     #[pyo3(signature = (wf_improved=false))]
     fn closeness_centrality(&self, wf_improved: bool) -> PyResult<HashMap<u64, f64>> {
-        use grafeo_adapters::plugins::algorithms;
+        use obrain_adapters::plugins::algorithms;
 
         let db = self.db.read();
         let store = db.store();
@@ -356,7 +356,7 @@ impl PyNetworkXAdapter {
 
     /// Find connected components (NetworkX-compatible).
     fn connected_components(&self) -> PyResult<Vec<Vec<u64>>> {
-        use grafeo_adapters::plugins::algorithms;
+        use obrain_adapters::plugins::algorithms;
 
         let db = self.db.read();
         let store = db.store();
@@ -380,7 +380,7 @@ impl PyNetworkXAdapter {
         weight: Option<&str>,
         py: Python<'_>,
     ) -> PyResult<Py<PyAny>> {
-        use grafeo_adapters::plugins::algorithms;
+        use obrain_adapters::plugins::algorithms;
 
         let db = self.db.read();
         let store = db.store();
@@ -396,7 +396,7 @@ impl PyNetworkXAdapter {
                     let path_list: Vec<u64> = path.into_iter().map(|n| n.0).collect();
                     Ok(path_list.into_pyobject(py)?.into_any().unbind())
                 }
-                None => Err(PyGrafeoError::InvalidArgument("No path found".into()).into()),
+                None => Err(PyObrainError::InvalidArgument("No path found".into()).into()),
             }
         } else {
             // Return paths to all reachable nodes
@@ -423,7 +423,7 @@ impl PyNetworkXAdapter {
         weight: Option<&str>,
         py: Python<'_>,
     ) -> PyResult<Py<PyAny>> {
-        use grafeo_adapters::plugins::algorithms;
+        use obrain_adapters::plugins::algorithms;
 
         let db = self.db.read();
         let store = db.store();
@@ -436,7 +436,7 @@ impl PyNetworkXAdapter {
                 weight,
             ) {
                 Some((dist, _)) => Ok(dist.into_pyobject(py)?.into_any().unbind()),
-                None => Err(PyGrafeoError::InvalidArgument("No path found".into()).into()),
+                None => Err(PyObrainError::InvalidArgument("No path found".into()).into()),
             }
         } else {
             let result = algorithms::dijkstra(&**store, NodeId::new(source), weight);

@@ -1,4 +1,4 @@
-//! Bidirectional conversion between `serde_json::Value` and `grafeo Value`.
+//! Bidirectional conversion between `serde_json::Value` and `obrain Value`.
 //!
 //! Used by the Node.js and C bindings for parameter parsing and result
 //! serialization. The C binding adds a thin wrapper for its `$timestamp_us`
@@ -7,9 +7,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use grafeo_common::types::{PropertyKey, Value};
+use obrain_common::types::{PropertyKey, Value};
 
-/// Convert a `serde_json::Value` to a Grafeo [`Value`].
+/// Convert a `serde_json::Value` to a Obrain [`Value`].
 ///
 /// Numbers are parsed as `Int64` when they fit, otherwise `Float64`.
 /// Objects with a `$timestamp_us` key are decoded as timestamps.
@@ -34,23 +34,23 @@ pub fn json_to_value(v: &serde_json::Value) -> Value {
         serde_json::Value::Object(obj) => {
             // Check for special $timestamp_us encoding (used by C binding).
             if let Some(ts) = obj.get("$timestamp_us").and_then(serde_json::Value::as_i64) {
-                return Value::Timestamp(grafeo_common::types::Timestamp::from_micros(ts));
+                return Value::Timestamp(obrain_common::types::Timestamp::from_micros(ts));
             }
             // Check for $date encoding
             if let Some(s) = obj.get("$date").and_then(serde_json::Value::as_str)
-                && let Some(d) = grafeo_common::types::Date::parse(s)
+                && let Some(d) = obrain_common::types::Date::parse(s)
             {
                 return Value::Date(d);
             }
             // Check for $time encoding
             if let Some(s) = obj.get("$time").and_then(serde_json::Value::as_str)
-                && let Some(t) = grafeo_common::types::Time::parse(s)
+                && let Some(t) = obrain_common::types::Time::parse(s)
             {
                 return Value::Time(t);
             }
             // Check for $duration encoding
             if let Some(s) = obj.get("$duration").and_then(serde_json::Value::as_str)
-                && let Some(d) = grafeo_common::types::Duration::parse(s)
+                && let Some(d) = obrain_common::types::Duration::parse(s)
             {
                 return Value::Duration(d);
             }
@@ -58,7 +58,7 @@ pub fn json_to_value(v: &serde_json::Value) -> Value {
             if let Some(s) = obj
                 .get("$zoned_datetime")
                 .and_then(serde_json::Value::as_str)
-                && let Some(zdt) = grafeo_common::types::ZonedDatetime::parse(s)
+                && let Some(zdt) = obrain_common::types::ZonedDatetime::parse(s)
             {
                 return Value::ZonedDatetime(zdt);
             }
@@ -71,7 +71,7 @@ pub fn json_to_value(v: &serde_json::Value) -> Value {
     }
 }
 
-/// Convert a Grafeo [`Value`] to a `serde_json::Value`.
+/// Convert a Obrain [`Value`] to a `serde_json::Value`.
 ///
 /// Timestamps are encoded as `{ "$timestamp_us": <micros> }`.
 /// Bytes are encoded as a JSON array of integers for lossless roundtrip.
@@ -137,7 +137,7 @@ pub fn json_params_to_map(
 
 #[cfg(test)]
 mod tests {
-    use grafeo_common::types::Timestamp;
+    use obrain_common::types::Timestamp;
 
     use super::*;
 

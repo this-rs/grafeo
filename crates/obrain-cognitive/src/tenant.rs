@@ -456,7 +456,7 @@ mod tests {
     #[cfg(feature = "energy")]
     #[test]
     fn test_tenant_isolation_energy() {
-        use grafeo_common::types::NodeId;
+        use obrain_common::types::NodeId;
 
         let tm = TenantManager::new();
         tm.create_tenant("tenant_1").unwrap();
@@ -501,7 +501,7 @@ mod tests {
     #[cfg(feature = "synapse")]
     #[test]
     fn test_tenant_isolation_synapse() {
-        use grafeo_common::types::NodeId;
+        use obrain_common::types::NodeId;
 
         let tm = TenantManager::new();
         tm.create_tenant("tenant_a").unwrap();
@@ -532,7 +532,7 @@ mod tests {
     #[cfg(feature = "energy")]
     #[test]
     fn test_active_graph_store_access() {
-        use grafeo_common::types::NodeId;
+        use obrain_common::types::NodeId;
 
         let tm = TenantManager::new();
         tm.create_tenant("active_test").unwrap();
@@ -554,7 +554,7 @@ mod tests {
         #[cfg(feature = "energy")]
         {
             let g = tm.get_tenant("cleanup").unwrap();
-            g.energy_store.boost(grafeo_common::types::NodeId(1), 5.0);
+            g.energy_store.boost(obrain_common::types::NodeId(1), 5.0);
             assert!(!g.energy_store.is_empty());
         }
 

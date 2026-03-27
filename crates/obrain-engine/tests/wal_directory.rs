@@ -1,33 +1,33 @@
 //! Integration tests for WAL directory-format persistence.
 //!
-//! These tests specifically target the directory WAL format (NOT the `.grafeo`
+//! These tests specifically target the directory WAL format (NOT the `.obrain`
 //! single-file format) to ensure data survives close/reopen cycles.
 //!
-//! This is the format used by `GrafeoDB::open("path/to/dir")` where the path
-//! does NOT end in `.grafeo`.
+//! This is the format used by `ObrainDB::open("path/to/dir")` where the path
+//! does NOT end in `.obrain`.
 //!
 //! ```bash
-//! cargo test -p grafeo-engine --features full --test wal_directory
+//! cargo test -p obrain-engine --features full --test wal_directory
 //! ```
 
 #[cfg(feature = "wal")]
 mod tests {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
     use std::sync::Arc;
 
-    /// Helper: open a directory-format DB (path must NOT end in .grafeo)
-    fn open_dir_db(path: &std::path::Path) -> GrafeoDB {
-        // Ensure the path doesn't look like a single-file .grafeo
+    /// Helper: open a directory-format DB (path must NOT end in .obrain)
+    fn open_dir_db(path: &std::path::Path) -> ObrainDB {
+        // Ensure the path doesn't look like a single-file .obrain
         assert!(
-            !path.to_string_lossy().ends_with(".grafeo"),
-            "Directory WAL tests must NOT use .grafeo extension"
+            !path.to_string_lossy().ends_with(".obrain"),
+            "Directory WAL tests must NOT use .obrain extension"
         );
-        GrafeoDB::open(path).expect("open directory DB")
+        ObrainDB::open(path).expect("open directory DB")
     }
 
     /// Helper: count nodes via Cypher
-    fn count_nodes(db: &GrafeoDB, label: Option<&str>) -> i64 {
+    fn count_nodes(db: &ObrainDB, label: Option<&str>) -> i64 {
         let session = db.session();
         let cypher = match label {
             Some(l) => format!("MATCH (n:{l}) RETURN count(n) AS c"),
@@ -41,7 +41,7 @@ mod tests {
     }
 
     /// Helper: count edges via Cypher
-    fn count_edges(db: &GrafeoDB) -> i64 {
+    fn count_edges(db: &ObrainDB) -> i64 {
         let session = db.session();
         let result = session
             .execute_cypher("MATCH ()-[r]->() RETURN count(r) AS c")

@@ -1,7 +1,7 @@
 //! Mutation event types published by the [`MutationBus`](crate::MutationBus).
 
 use arcstr::ArcStr;
-use grafeo_common::types::{EdgeId, NodeId, PropertyKey, Value};
+use obrain_common::types::{EdgeId, NodeId, PropertyKey, Value};
 use smallvec::SmallVec;
 use web_time::Instant;
 

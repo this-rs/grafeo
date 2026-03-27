@@ -5,7 +5,7 @@ use crate::execution::{ChunkZoneHints, DataChunk, SelectionVector};
 use crate::graph::Direction;
 use crate::graph::GraphStore;
 use crate::graph::lpg::{Edge, Node};
-use grafeo_common::types::{EpochId, HashableValue, NodeId, PropertyKey, TransactionId, Value};
+use obrain_common::types::{EpochId, HashableValue, NodeId, PropertyKey, TransactionId, Value};
 #[cfg(feature = "regex")]
 use regex::Regex;
 #[cfg(all(feature = "regex-lite", not(feature = "regex")))]
@@ -498,7 +498,7 @@ impl ExpressionPredicate {
     }
 
     /// Resolves an edge using transaction-aware access when available.
-    fn resolve_edge(&self, edge_id: grafeo_common::types::EdgeId) -> Option<Edge> {
+    fn resolve_edge(&self, edge_id: obrain_common::types::EdgeId) -> Option<Edge> {
         if let (Some(ep), Some(tx)) = (self.viewing_epoch, self.transaction_id) {
             self.store.get_edge_versioned(edge_id, ep, tx)
         } else if let Some(ep) = self.viewing_epoch {
@@ -543,7 +543,7 @@ impl ExpressionPredicate {
                 }
                 // Try as map value (e.g. from UNWIND with map elements)
                 if let Some(Value::Map(map)) = col.get_value(row) {
-                    let key = grafeo_common::types::PropertyKey::new(property);
+                    let key = obrain_common::types::PropertyKey::new(property);
                     return map.get(&key).cloned();
                 }
                 None
@@ -1291,19 +1291,19 @@ impl ExpressionPredicate {
                 }
                 (Value::Date(a), Value::Date(b)) => {
                     let days = a.as_days() as i64 - b.as_days() as i64;
-                    Some(Value::Duration(grafeo_common::types::Duration::from_days(
+                    Some(Value::Duration(obrain_common::types::Duration::from_days(
                         days,
                     )))
                 }
                 (Value::Time(a), Value::Time(b)) => {
                     let nanos = a.as_nanos() as i64 - b.as_nanos() as i64;
-                    Some(Value::Duration(grafeo_common::types::Duration::from_nanos(
+                    Some(Value::Duration(obrain_common::types::Duration::from_nanos(
                         nanos,
                     )))
                 }
                 (Value::Timestamp(a), Value::Timestamp(b)) => {
                     let micros = a.duration_since(*b);
-                    Some(Value::Duration(grafeo_common::types::Duration::from_nanos(
+                    Some(Value::Duration(obrain_common::types::Duration::from_nanos(
                         micros * 1000,
                     )))
                 }
@@ -2592,29 +2592,29 @@ impl ExpressionPredicate {
             // Temporal constructors and accessors
             "date" | "todate" => {
                 if args.is_empty() {
-                    return Some(Value::Date(grafeo_common::types::Date::today()));
+                    return Some(Value::Date(obrain_common::types::Date::today()));
                 }
                 let val = self.eval_expr(&args[0], chunk, row)?;
                 match val {
-                    Value::String(s) => grafeo_common::types::Date::parse(&s).map(Value::Date),
+                    Value::String(s) => obrain_common::types::Date::parse(&s).map(Value::Date),
                     Value::Timestamp(ts) => Some(Value::Date(ts.to_date())),
                     Value::Date(_) => Some(val),
                     Value::Map(m) => {
                         let year = map_int(&m, "year")? as i32;
                         let month = map_int_or(&m, "month", 1) as u32;
                         let day = map_int_or(&m, "day", 1) as u32;
-                        grafeo_common::types::Date::from_ymd(year, month, day).map(Value::Date)
+                        obrain_common::types::Date::from_ymd(year, month, day).map(Value::Date)
                     }
                     _ => None,
                 }
             }
             "time" | "totime" | "local_time" => {
                 if args.is_empty() {
-                    return Some(Value::Time(grafeo_common::types::Time::now()));
+                    return Some(Value::Time(obrain_common::types::Time::now()));
                 }
                 let val = self.eval_expr(&args[0], chunk, row)?;
                 match val {
-                    Value::String(s) => grafeo_common::types::Time::parse(&s).map(Value::Time),
+                    Value::String(s) => obrain_common::types::Time::parse(&s).map(Value::Time),
                     Value::Timestamp(ts) => Some(Value::Time(ts.to_time())),
                     Value::Time(_) => Some(val),
                     Value::Map(m) => {
@@ -2622,7 +2622,7 @@ impl ExpressionPredicate {
                         let minute = map_int_or(&m, "minute", 0) as u32;
                         let second = map_int_or(&m, "second", 0) as u32;
                         let nanosecond = map_int_or(&m, "nanosecond", 0) as u32;
-                        grafeo_common::types::Time::from_hms_nano(hour, minute, second, nanosecond)
+                        obrain_common::types::Time::from_hms_nano(hour, minute, second, nanosecond)
                             .map(Value::Time)
                     }
                     _ => None,
@@ -2630,13 +2630,13 @@ impl ExpressionPredicate {
             }
             "datetime" | "localdatetime" | "local_datetime" | "todatetime" => {
                 if args.is_empty() {
-                    return Some(Value::Timestamp(grafeo_common::types::Timestamp::now()));
+                    return Some(Value::Timestamp(obrain_common::types::Timestamp::now()));
                 }
                 let val = self.eval_expr(&args[0], chunk, row)?;
                 match val {
                     Value::String(s) => {
                         // Parse ISO datetime: try Date first, then full timestamp
-                        if let Some(d) = grafeo_common::types::Date::parse(&s) {
+                        if let Some(d) = obrain_common::types::Date::parse(&s) {
                             return Some(Value::Timestamp(d.to_timestamp()));
                         }
                         // Try full ISO format: YYYY-MM-DDTHH:MM:SS[.fff][Z|+HH:MM]
@@ -2644,11 +2644,11 @@ impl ExpressionPredicate {
                             let date_part = &s[..pos];
                             let time_part = &s[pos + 1..];
                             if let (Some(d), Some(t)) = (
-                                grafeo_common::types::Date::parse(date_part),
-                                grafeo_common::types::Time::parse(time_part),
+                                obrain_common::types::Date::parse(date_part),
+                                obrain_common::types::Time::parse(time_part),
                             ) {
                                 return Some(Value::Timestamp(
-                                    grafeo_common::types::Timestamp::from_date_time(d, t),
+                                    obrain_common::types::Timestamp::from_date_time(d, t),
                                 ));
                             }
                         }
@@ -2663,12 +2663,12 @@ impl ExpressionPredicate {
                         let minute = map_int_or(&m, "minute", 0) as u32;
                         let second = map_int_or(&m, "second", 0) as u32;
                         let nanosecond = map_int_or(&m, "nanosecond", 0) as u32;
-                        let date = grafeo_common::types::Date::from_ymd(year, month, day)?;
-                        let time = grafeo_common::types::Time::from_hms_nano(
+                        let date = obrain_common::types::Date::from_ymd(year, month, day)?;
+                        let time = obrain_common::types::Time::from_hms_nano(
                             hour, minute, second, nanosecond,
                         )?;
                         Some(Value::Timestamp(
-                            grafeo_common::types::Timestamp::from_date_time(date, time),
+                            obrain_common::types::Timestamp::from_date_time(date, time),
                         ))
                     }
                     _ => None,
@@ -2681,7 +2681,7 @@ impl ExpressionPredicate {
                 let val = self.eval_expr(&args[0], chunk, row)?;
                 match val {
                     Value::String(s) => {
-                        grafeo_common::types::Duration::parse(&s).map(Value::Duration)
+                        obrain_common::types::Duration::parse(&s).map(Value::Duration)
                     }
                     Value::Duration(_) => Some(val),
                     Value::Map(m) => {
@@ -2699,7 +2699,7 @@ impl ExpressionPredicate {
                             + minutes * 60_000_000_000
                             + seconds * 1_000_000_000
                             + nanoseconds;
-                        Some(Value::Duration(grafeo_common::types::Duration::new(
+                        Some(Value::Duration(obrain_common::types::Duration::new(
                             total_months,
                             total_days,
                             total_nanos,
@@ -2711,8 +2711,8 @@ impl ExpressionPredicate {
             "tozoneddatetime" | "zoneddatetime" | "zoned_datetime" => {
                 if args.is_empty() {
                     return Some(Value::ZonedDatetime(
-                        grafeo_common::types::ZonedDatetime::from_timestamp_offset(
-                            grafeo_common::types::Timestamp::now(),
+                        obrain_common::types::ZonedDatetime::from_timestamp_offset(
+                            obrain_common::types::Timestamp::now(),
                             0,
                         ),
                     ));
@@ -2720,10 +2720,10 @@ impl ExpressionPredicate {
                 let val = self.eval_expr(&args[0], chunk, row)?;
                 match val {
                     Value::String(s) => {
-                        grafeo_common::types::ZonedDatetime::parse(&s).map(Value::ZonedDatetime)
+                        obrain_common::types::ZonedDatetime::parse(&s).map(Value::ZonedDatetime)
                     }
                     Value::Timestamp(ts) => Some(Value::ZonedDatetime(
-                        grafeo_common::types::ZonedDatetime::from_timestamp_offset(ts, 0),
+                        obrain_common::types::ZonedDatetime::from_timestamp_offset(ts, 0),
                     )),
                     Value::ZonedDatetime(_) => Some(val),
                     _ => None,
@@ -2733,7 +2733,7 @@ impl ExpressionPredicate {
                 let val = self.eval_expr(args.first()?, chunk, row)?;
                 match val {
                     Value::String(s) => {
-                        let t = grafeo_common::types::Time::parse(&s)?;
+                        let t = obrain_common::types::Time::parse(&s)?;
                         if t.offset_seconds().is_some() {
                             Some(Value::Time(t))
                         } else {
@@ -2745,11 +2745,11 @@ impl ExpressionPredicate {
                 }
             }
             "current_date" | "currentdate" => {
-                Some(Value::Date(grafeo_common::types::Date::today()))
+                Some(Value::Date(obrain_common::types::Date::today()))
             }
-            "current_time" | "currenttime" => Some(Value::Time(grafeo_common::types::Time::now())),
+            "current_time" | "currenttime" => Some(Value::Time(obrain_common::types::Time::now())),
             "now" | "current_timestamp" | "currenttimestamp" => {
-                Some(Value::Timestamp(grafeo_common::types::Timestamp::now()))
+                Some(Value::Timestamp(obrain_common::types::Timestamp::now()))
             }
             "timestamp" => {
                 // Neo4j-compatible: returns milliseconds since Unix epoch as Int64
@@ -3075,9 +3075,9 @@ impl ExpressionPredicate {
                 // Home schema/graph: not configurable yet, returns null
                 Some(Value::Null)
             }
-            // Grafeo extension: info() returns database metadata as a map
+            // Obrain extension: info() returns database metadata as a map
             "info" => Some(self.session_context.db_info.get().clone()),
-            // Grafeo extension: schema() returns schema metadata as a map
+            // Obrain extension: schema() returns schema metadata as a map
             "schema" => Some(self.session_context.schema_info.get().clone()),
             "octet_length" | "byte_length" => {
                 // octet_length(string) - byte length
@@ -3155,7 +3155,7 @@ impl ExpressionPredicate {
                 } else {
                     let val = self.eval_expr(&args[0], chunk, row)?;
                     match val {
-                        Value::Int64(id) => grafeo_common::types::EdgeId(id as u64),
+                        Value::Int64(id) => obrain_common::types::EdgeId(id as u64),
                         _ => return None,
                     }
                 };
@@ -3175,7 +3175,7 @@ impl ExpressionPredicate {
                 } else {
                     let val = self.eval_expr(&args[0], chunk, row)?;
                     match val {
-                        Value::Int64(id) => grafeo_common::types::EdgeId(id as u64),
+                        Value::Int64(id) => obrain_common::types::EdgeId(id as u64),
                         _ => return None,
                     }
                 };
@@ -3509,7 +3509,7 @@ fn value_to_string(val: &Value) -> Option<String> {
 mod tests {
     use super::*;
     use crate::execution::chunk::DataChunkBuilder;
-    use grafeo_common::types::LogicalType;
+    use obrain_common::types::LogicalType;
 
     struct MockScanOperator {
         chunks: Vec<DataChunk>,

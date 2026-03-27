@@ -2,7 +2,7 @@
 //!
 //! # Isolation Levels
 //!
-//! Grafeo supports multiple isolation levels to balance consistency vs. performance:
+//! Obrain supports multiple isolation levels to balance consistency vs. performance:
 //!
 //! | Level | Anomalies Prevented | Use Case |
 //! |-------|---------------------|----------|
@@ -55,7 +55,7 @@
 //!
 //! ## Epoch-Based Versioning
 //!
-//! Grafeo uses epoch-based MVCC where:
+//! Obrain uses epoch-based MVCC where:
 //! - Each commit advances the global epoch
 //! - Transactions read data visible at their start epoch
 //! - Version chains store multiple versions for concurrent access
@@ -65,9 +65,9 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use grafeo_engine::GrafeoDB;
+//! use obrain_engine::ObrainDB;
 //!
-//! let db = GrafeoDB::new_in_memory();
+//! let db = ObrainDB::new_in_memory();
 //! let mut session = db.session();
 //!
 //! session.begin_transaction()?;

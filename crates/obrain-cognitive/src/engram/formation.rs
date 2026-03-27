@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use dashmap::DashMap;
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "epigenetic")]

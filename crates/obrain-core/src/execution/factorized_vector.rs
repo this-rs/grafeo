@@ -24,7 +24,7 @@
 //!   -> 5 values total, no duplication
 //! ```
 
-use grafeo_common::types::{LogicalType, Value};
+use obrain_common::types::{LogicalType, Value};
 
 use super::vector::ValueVector;
 
@@ -218,7 +218,7 @@ impl FactorizedVector {
     pub fn get_node_id_physical(
         &self,
         physical_idx: usize,
-    ) -> Option<grafeo_common::types::NodeId> {
+    ) -> Option<obrain_common::types::NodeId> {
         self.data.get_node_id(physical_idx)
     }
 
@@ -227,7 +227,7 @@ impl FactorizedVector {
     pub fn get_edge_id_physical(
         &self,
         physical_idx: usize,
-    ) -> Option<grafeo_common::types::EdgeId> {
+    ) -> Option<obrain_common::types::EdgeId> {
         self.data.get_edge_id(physical_idx)
     }
 
@@ -378,7 +378,7 @@ impl Iterator for FactorizedVectorIter<'_> {
 
 #[cfg(test)]
 mod tests {
-    use grafeo_common::types::{EdgeId, NodeId};
+    use obrain_common::types::{EdgeId, NodeId};
 
     use super::*;
 

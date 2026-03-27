@@ -1,6 +1,6 @@
 //! MVCC (Multi-Version Concurrency Control) primitives.
 //!
-//! This is how Grafeo handles concurrent reads and writes without blocking.
+//! This is how Obrain handles concurrent reads and writes without blocking.
 //! Each entity has a [`VersionChain`] that tracks all versions. Readers see
 //! consistent snapshots, writers create new versions, and old versions get
 //! garbage collected when no one needs them anymore.

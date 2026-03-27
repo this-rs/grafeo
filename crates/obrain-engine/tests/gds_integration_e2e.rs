@@ -10,19 +10,19 @@
 
 use std::time::Instant;
 
-use grafeo_common::types::{NodeId, Value};
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::{NodeId, Value};
+use obrain_engine::ObrainDB;
 
-use grafeo_adapters::plugins::algorithms::{
+use obrain_adapters::plugins::algorithms::{
     KHopConfig, ProjectionBuilder, adamic_adar, hits, jaccard, khop_subgraph, leiden,
 };
-use grafeo_core::graph::GraphStore;
+use obrain_core::graph::GraphStore;
 
 /// Builds a realistic PO-style graph with ~1000 nodes:
 /// - File nodes (~100), Function nodes (~400), Note nodes (~500)
 /// - Relations: IMPORTS (File→File), CALLS (Function→Function), SYNAPSE (Note→Note)
 /// - Properties: path, name, content, weight
-fn build_realistic_graph(db: &GrafeoDB) -> (Vec<NodeId>, Vec<NodeId>, Vec<NodeId>) {
+fn build_realistic_graph(db: &ObrainDB) -> (Vec<NodeId>, Vec<NodeId>, Vec<NodeId>) {
     let mut files = Vec::with_capacity(100);
     let mut functions = Vec::with_capacity(400);
     let mut notes = Vec::with_capacity(500);
@@ -89,7 +89,7 @@ fn build_realistic_graph(db: &GrafeoDB) -> (Vec<NodeId>, Vec<NodeId>, Vec<NodeId
 
 #[test]
 fn test_full_pipeline_projection_hits_leiden_khop_similarity() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let (files, _functions, _notes) = build_realistic_graph(&db);
 
     // ---- Step 1: Create a filtered projection (File+Function, IMPORTS+CALLS) ----
@@ -191,7 +191,7 @@ fn test_full_pipeline_projection_hits_leiden_khop_similarity() {
 
 #[test]
 fn pipeline_perf() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let (files, _functions, _notes) = build_realistic_graph(&db);
 
     let start = Instant::now();
@@ -251,7 +251,7 @@ fn pipeline_perf() {
 /// - similarity scores (from Jaccard/Adamic-Adar)
 #[test]
 fn test_po_compatibility_format() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let n0 = db.create_node(&["File"]);
     let n1 = db.create_node(&["File"]);
     let n2 = db.create_node(&["Function"]);

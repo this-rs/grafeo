@@ -4,12 +4,12 @@
 //! synapse creation, spreading activation search), and displaying results
 //! via `console.log`.
 //!
-//! Enabled by the `cognitive` feature flag on `grafeo-wasm`.
+//! Enabled by the `cognitive` feature flag on `obrain-wasm`.
 
-use grafeo_cognitive::energy::{EnergyConfig, EnergyStore};
-use grafeo_cognitive::search::{SearchConfig, SearchPipeline, SearchWeights};
-use grafeo_cognitive::synapse::{SynapseConfig, SynapseStore};
-use grafeo_common::types::Value;
+use obrain_cognitive::energy::{EnergyConfig, EnergyStore};
+use obrain_cognitive::search::{SearchConfig, SearchPipeline, SearchWeights};
+use obrain_cognitive::synapse::{SynapseConfig, SynapseStore};
+use obrain_common::types::Value;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -32,11 +32,11 @@ macro_rules! console_log {
 pub fn cognitive_demo() -> Result<JsValue, JsError> {
     crate::utils::set_panic_hook();
 
-    console_log!("=== Grafeo Cognitive Browser Demo ===");
+    console_log!("=== Obrain Cognitive Browser Demo ===");
     console_log!("");
 
     // --- 1. Create an in-memory graph ---
-    let db = grafeo_engine::GrafeoDB::new_in_memory();
+    let db = obrain_engine::ObrainDB::new_in_memory();
 
     console_log!("[1/5] Creating knowledge graph...");
 
@@ -56,17 +56,17 @@ pub fn cognitive_demo() -> Result<JsValue, JsError> {
     db.store()
         .set_node_property(wasm_topic, "name", Value::String("WebAssembly".into()));
 
-    let grafeo_topic = db.store().create_node(&["Topic"]);
+    let obrain_topic = db.store().create_node(&["Topic"]);
     db.store()
-        .set_node_property(grafeo_topic, "name", Value::String("Grafeo".into()));
+        .set_node_property(obrain_topic, "name", Value::String("Obrain".into()));
 
     db.store().create_edge(alice, rust_lang, "KNOWS");
     db.store().create_edge(alice, wasm_topic, "KNOWS");
     db.store().create_edge(bob, rust_lang, "KNOWS");
-    db.store().create_edge(bob, grafeo_topic, "KNOWS");
+    db.store().create_edge(bob, obrain_topic, "KNOWS");
     db.store().create_edge(rust_lang, wasm_topic, "RELATED_TO");
     db.store()
-        .create_edge(wasm_topic, grafeo_topic, "RELATED_TO");
+        .create_edge(wasm_topic, obrain_topic, "RELATED_TO");
 
     console_log!(
         "  Created {} nodes and {} edges",
@@ -88,14 +88,14 @@ pub fn cognitive_demo() -> Result<JsValue, JsError> {
     energy_store.boost(rust_lang, 1.0);
     energy_store.boost(rust_lang, 1.0); // double access
     energy_store.boost(wasm_topic, 1.0);
-    energy_store.boost(grafeo_topic, 1.0);
+    energy_store.boost(obrain_topic, 1.0);
 
     for (name, nid) in [
         ("Alice", alice),
         ("Bob", bob),
         ("Rust", rust_lang),
         ("WebAssembly", wasm_topic),
-        ("Grafeo", grafeo_topic),
+        ("Obrain", obrain_topic),
     ] {
         let energy = energy_store.get_energy(nid);
         console_log!("  {name}: energy = {energy:.3}");
@@ -109,7 +109,7 @@ pub fn cognitive_demo() -> Result<JsValue, JsError> {
     synapse_store.reinforce(alice, wasm_topic, 1.0);
     synapse_store.reinforce(rust_lang, wasm_topic, 1.0);
     synapse_store.reinforce(bob, rust_lang, 1.0);
-    synapse_store.reinforce(bob, grafeo_topic, 1.0);
+    synapse_store.reinforce(bob, obrain_topic, 1.0);
 
     console_log!("  Created {} synapses", synapse_store.len());
 
@@ -117,7 +117,7 @@ pub fn cognitive_demo() -> Result<JsValue, JsError> {
         ("Alice", alice, "Rust", rust_lang),
         ("Alice", alice, "WebAssembly", wasm_topic),
         ("Rust", rust_lang, "WebAssembly", wasm_topic),
-        ("Bob", bob, "Grafeo", grafeo_topic),
+        ("Bob", bob, "Obrain", obrain_topic),
     ] {
         if let Some(syn) = synapse_store.get_synapse(a_id, b_id) {
             console_log!(
@@ -144,7 +144,7 @@ pub fn cognitive_demo() -> Result<JsValue, JsError> {
         (bob, 0.3),
         (rust_lang, 0.8),
         (wasm_topic, 0.7),
-        (grafeo_topic, 0.6),
+        (obrain_topic, 0.6),
     ];
 
     let results = pipeline.search(&candidates, &config);

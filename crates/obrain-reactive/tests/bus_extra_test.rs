@@ -1,8 +1,8 @@
 //! Additional tests for MutationBus — edge cases, Default impl, Debug,
 //! lagged receiver, cloned bus metrics.
 
-use grafeo_common::types::NodeId;
-use grafeo_reactive::{MutationBatch, MutationBus, MutationEvent, NodeSnapshot};
+use obrain_common::types::NodeId;
+use obrain_reactive::{MutationBatch, MutationBus, MutationEvent, NodeSnapshot};
 
 fn make_node_event(id: u64) -> MutationEvent {
     MutationEvent::NodeCreated {

@@ -3,7 +3,7 @@
 use super::{Operator, OperatorResult};
 use crate::execution::DataChunk;
 use crate::graph::GraphStore;
-use grafeo_common::types::{EpochId, LogicalType, NodeId, TransactionId};
+use obrain_common::types::{EpochId, LogicalType, NodeId, TransactionId};
 use std::sync::Arc;
 
 /// A scan operator that reads nodes from storage.

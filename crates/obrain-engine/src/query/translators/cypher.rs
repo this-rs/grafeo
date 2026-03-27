@@ -16,9 +16,9 @@ use crate::query::plan::{
     ParameterScanOp, PathMode, ProcedureYield, ProjectOp, Projection, RemoveLabelOp, ReturnItem,
     SetPropertyOp, ShortestPathOp, SortKey, SortOrder, UnaryOp, UnionOp, UnwindOp,
 };
-use grafeo_adapters::query::cypher::{self, ast};
-use grafeo_common::types::Value;
-use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
+use obrain_adapters::query::cypher::{self, ast};
+use obrain_common::types::Value;
+use obrain_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 
@@ -27,7 +27,7 @@ pub enum CypherTranslationResult {
     /// Regular query or mutation, produces a logical plan.
     Plan(LogicalPlan),
     /// Schema DDL (CREATE/DROP INDEX, CREATE/DROP CONSTRAINT).
-    SchemaCommand(grafeo_adapters::query::gql::ast::SchemaStatement),
+    SchemaCommand(obrain_adapters::query::gql::ast::SchemaStatement),
     /// SHOW INDEXES introspection.
     ShowIndexes,
     /// SHOW CONSTRAINTS introspection.

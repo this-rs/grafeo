@@ -8,8 +8,8 @@
 
 #![cfg(feature = "cognitive")]
 
-use grafeo_cognitive::TenantManager;
-use grafeo_common::types::NodeId;
+use obrain_cognitive::TenantManager;
+use obrain_common::types::NodeId;
 use std::sync::Arc;
 use std::thread;
 

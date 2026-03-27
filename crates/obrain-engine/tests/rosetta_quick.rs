@@ -1,9 +1,9 @@
 //! Quick Rosetta tests for cross-language query comparison.
 
-use grafeo_engine::GrafeoDB;
+use obrain_engine::ObrainDB;
 
-fn setup_db() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn setup_db() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     db.execute("CREATE (:Entity {name: 'Alice', mentions: 10})")
         .unwrap();
     db.execute("CREATE (:Entity {name: 'Bob', mentions: 5})")

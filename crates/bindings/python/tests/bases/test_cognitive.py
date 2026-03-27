@@ -1,17 +1,17 @@
 """Tests for cognitive features: energy, synapse, scar, fabric, GDS, cognitive search.
 
-These tests verify the Python bindings for Grafeo's cognitive subsystems.
+These tests verify the Python bindings for Obrain's cognitive subsystems.
 Requires the 'cognitive' feature to be enabled at build time.
 """
 
 import pytest
 
 try:
-    import grafeo
+    import obrain
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
 
 def has_cognitive(db):
@@ -26,10 +26,10 @@ def has_gds(db):
 
 @pytest.fixture
 def db():
-    """Create a fresh in-memory GrafeoDB instance."""
-    if not GRAFEO_AVAILABLE:
-        pytest.skip("grafeo not installed")
-    return grafeo.GrafeoDB()
+    """Create a fresh in-memory ObrainDB instance."""
+    if not OBRAIN_AVAILABLE:
+        pytest.skip("obrain not installed")
+    return obrain.ObrainDB()
 
 
 @pytest.fixture

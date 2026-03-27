@@ -2,10 +2,10 @@
 
 #![cfg(feature = "fabric")]
 
-use grafeo_cognitive::FabricListener;
-use grafeo_cognitive::fabric::{FabricScore, FabricStore};
-use grafeo_common::types::NodeId;
-use grafeo_reactive::{MutationEvent, MutationListener, NodeSnapshot};
+use obrain_cognitive::FabricListener;
+use obrain_cognitive::fabric::{FabricScore, FabricStore};
+use obrain_common::types::NodeId;
+use obrain_reactive::{MutationEvent, MutationListener, NodeSnapshot};
 use smallvec::smallvec;
 use std::sync::Arc;
 use std::time::Instant;
@@ -18,9 +18,9 @@ fn node_snapshot(id: u64) -> NodeSnapshot {
     }
 }
 
-fn make_edge(id: u64, src: u64, dst: u64) -> grafeo_reactive::EdgeSnapshot {
-    grafeo_reactive::EdgeSnapshot {
-        id: grafeo_common::types::EdgeId::new(id),
+fn make_edge(id: u64, src: u64, dst: u64) -> obrain_reactive::EdgeSnapshot {
+    obrain_reactive::EdgeSnapshot {
+        id: obrain_common::types::EdgeId::new(id),
         src: NodeId(src),
         dst: NodeId(dst),
         edge_type: arcstr::literal!("KNOWS"),

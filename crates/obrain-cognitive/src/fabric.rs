@@ -16,8 +16,8 @@
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use grafeo_common::types::NodeId;
-use grafeo_reactive::{MutationEvent, MutationListener};
+use obrain_common::types::NodeId;
+use obrain_reactive::{MutationEvent, MutationListener};
 use smallvec::SmallVec;
 use std::sync::Arc;
 use web_time::Instant;
@@ -92,7 +92,7 @@ impl FabricScore {
 /// Thread-safe store for per-node [`FabricScore`]s.
 ///
 /// Uses [`DashMap`] for concurrent read/write without global locks.
-/// When a backing [`GraphStoreMut`](grafeo_core::graph::GraphStoreMut) is
+/// When a backing [`GraphStoreMut`](obrain_core::graph::GraphStoreMut) is
 /// provided, risk_score, mutation_frequency, and annotation_density are persisted
 /// as node properties prefixed with `_cog_` (write-through).
 pub struct FabricStore {
@@ -124,7 +124,7 @@ impl FabricStore {
     }
 
     /// Creates a new fabric store with write-through persistence.
-    pub fn with_graph_store(graph_store: Arc<dyn grafeo_core::graph::GraphStoreMut>) -> Self {
+    pub fn with_graph_store(graph_store: Arc<dyn obrain_core::graph::GraphStoreMut>) -> Self {
         Self {
             scores: DashMap::new(),
             graph_store: Some(graph_store),

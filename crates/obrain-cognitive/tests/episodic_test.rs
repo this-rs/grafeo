@@ -2,7 +2,7 @@
 
 #![cfg(feature = "episodic")]
 
-use grafeo_cognitive::episodic::{
+use obrain_cognitive::episodic::{
     ActivationStep, EpisodeConfig, EpisodeHorizon, EpisodeMemoryManager, EpisodeRecorder,
     EpisodeStore, Outcome, Stimulus, ValidationResult, extract_cross_lesson,
 };
@@ -714,7 +714,7 @@ fn episode_full_serialization_roundtrip() {
 
     let ep = store.get(id).unwrap();
     let json = serde_json::to_string_pretty(&ep).unwrap();
-    let restored: grafeo_cognitive::episodic::Episode = serde_json::from_str(&json).unwrap();
+    let restored: obrain_cognitive::episodic::Episode = serde_json::from_str(&json).unwrap();
 
     assert_eq!(restored.id, ep.id);
     assert_eq!(restored.involved_nodes, vec![99]);

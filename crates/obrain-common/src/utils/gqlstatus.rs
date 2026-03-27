@@ -197,7 +197,7 @@ impl fmt::Display for GqlStatus {
     }
 }
 
-/// Maps a Grafeo [`super::error::Error`] to a GQLSTATUS code.
+/// Maps a Obrain [`super::error::Error`] to a GQLSTATUS code.
 impl From<&super::error::Error> for GqlStatus {
     fn from(err: &super::error::Error) -> Self {
         use super::error::{Error, QueryErrorKind, TransactionError};

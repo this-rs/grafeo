@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use grafeo_common::types::{EdgeId, NodeId, TransactionId};
-use grafeo_core::execution::operators::{OperatorError, WriteTracker};
+use obrain_common::types::{EdgeId, NodeId, TransactionId};
+use obrain_core::execution::operators::{OperatorError, WriteTracker};
 
 use super::TransactionManager;
 

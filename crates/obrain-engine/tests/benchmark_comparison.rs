@@ -1,11 +1,11 @@
 //! Benchmark comparison: Factorized vs Non-factorized execution
 
-use grafeo_common::types::Value;
-use grafeo_engine::{Config, GrafeoDB};
+use obrain_common::types::Value;
+use obrain_engine::{Config, ObrainDB};
 use std::time::Instant;
 
-fn setup_graph_with_config(node_count: usize, avg_degree: usize, config: Config) -> GrafeoDB {
-    let db = GrafeoDB::with_config(config).expect("Failed to create database");
+fn setup_graph_with_config(node_count: usize, avg_degree: usize, config: Config) -> ObrainDB {
+    let db = ObrainDB::with_config(config).expect("Failed to create database");
     let session = db.session();
 
     // Create nodes

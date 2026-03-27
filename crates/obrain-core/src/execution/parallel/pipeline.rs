@@ -9,7 +9,7 @@ use super::source::ParallelSource;
 use crate::execution::chunk::DataChunk;
 use crate::execution::operators::OperatorError;
 use crate::execution::pipeline::{ChunkCollector, DEFAULT_CHUNK_SIZE, PushOperator, Sink};
-use grafeo_common::memory::buffer::PressureLevel;
+use obrain_common::memory::buffer::PressureLevel;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -465,7 +465,7 @@ mod tests {
     use super::*;
     use crate::execution::parallel::source::RangeSource;
     use crate::execution::vector::ValueVector;
-    use grafeo_common::types::Value;
+    use obrain_common::types::Value;
 
     /// Pass-through operator for testing.
     struct PassThroughOp;

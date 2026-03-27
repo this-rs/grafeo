@@ -1,11 +1,11 @@
 //! Transaction example: commit, rollback, and savepoints.
 //!
-//! Run with: `cargo run -p grafeo-examples --bin transactions`
+//! Run with: `cargo run -p obrain-examples --bin transactions`
 
-use grafeo::GrafeoDB;
+use obrain::ObrainDB;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     // ── Act 1: Committed transaction ──────────────────────────────

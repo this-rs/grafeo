@@ -21,7 +21,7 @@ use super::{Date, Time, Timestamp};
 /// # Examples
 ///
 /// ```
-/// use grafeo_common::types::ZonedDatetime;
+/// use obrain_common::types::ZonedDatetime;
 ///
 /// let zdt = ZonedDatetime::parse("2024-06-15T10:30:00+05:30").unwrap();
 /// assert_eq!(zdt.offset_seconds(), 19800);

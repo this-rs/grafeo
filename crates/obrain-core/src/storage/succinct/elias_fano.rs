@@ -22,7 +22,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use grafeo_core::storage::succinct::EliasFano;
+//! use obrain_core::storage::succinct::EliasFano;
 //!
 //! // Node IDs with label "Admin" (sparse in universe of 10M)
 //! let admin_nodes = vec![100, 5_000, 50_000, 1_000_000, 9_999_999];

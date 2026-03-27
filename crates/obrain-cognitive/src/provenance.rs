@@ -9,7 +9,7 @@
 //! record events — the [`ProvenanceRecorder`] is called internally by the
 //! cognitive engine subsystems.
 
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

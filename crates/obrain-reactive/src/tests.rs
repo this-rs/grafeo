@@ -1,10 +1,10 @@
-//! Tests for grafeo-reactive crate.
+//! Tests for obrain-reactive crate.
 
 #[cfg(test)]
 mod reactive_tests {
     use crate::bus::MutationBus;
     use crate::event::{EdgeSnapshot, MutationBatch, MutationEvent, NodeSnapshot};
-    use grafeo_common::types::{EdgeId, NodeId};
+    use obrain_common::types::{EdgeId, NodeId};
 
     fn make_node_snapshot(id: u64, labels: &[&str]) -> NodeSnapshot {
         NodeSnapshot {
@@ -329,7 +329,7 @@ mod reactive_tests {
 
     #[test]
     fn node_snapshot_with_properties() {
-        use grafeo_common::types::{PropertyKey, Value};
+        use obrain_common::types::{PropertyKey, Value};
 
         let snap = NodeSnapshot {
             id: NodeId::new(5),
@@ -346,7 +346,7 @@ mod reactive_tests {
 
     #[test]
     fn edge_snapshot_with_properties() {
-        use grafeo_common::types::{PropertyKey, Value};
+        use obrain_common::types::{PropertyKey, Value};
 
         let snap = EdgeSnapshot {
             id: EdgeId::new(10),

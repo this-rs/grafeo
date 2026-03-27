@@ -6,7 +6,7 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use grafeo_adapters::query::gremlin;
+//! use obrain_adapters::query::gremlin;
 //!
 //! let query = "g.V().hasLabel('Person').out('knows').values('name')";
 //! let ast = gremlin::parse(query)?;
@@ -22,7 +22,7 @@ pub use ast::*;
 pub use lexer::{Lexer, Token, TokenKind};
 pub use parser::Parser;
 
-use grafeo_common::utils::error::Result;
+use obrain_common::utils::error::Result;
 
 /// Parses a Gremlin query string into an AST.
 ///

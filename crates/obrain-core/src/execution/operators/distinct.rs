@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 
-use grafeo_common::types::{LogicalType, Value};
+use obrain_common::types::{LogicalType, Value};
 
 use super::{Operator, OperatorResult};
 use crate::execution::DataChunk;

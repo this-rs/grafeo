@@ -18,7 +18,7 @@ const NANOS_PER_SECOND: u64 = 1_000_000_000;
 /// # Examples
 ///
 /// ```
-/// use grafeo_common::types::Time;
+/// use obrain_common::types::Time;
 ///
 /// let t = Time::from_hms(14, 30, 0).unwrap();
 /// assert_eq!(t.hour(), 14);

@@ -1,8 +1,8 @@
-//! # grafeo-common
+//! # obrain-common
 //!
-//! The foundation layer - types and utilities used everywhere in Grafeo.
+//! The foundation layer - types and utilities used everywhere in Obrain.
 //!
-//! You probably don't need to use this crate directly. The main `grafeo` crate
+//! You probably don't need to use this crate directly. The main `obrain` crate
 //! re-exports the types you'll actually use ([`NodeId`], [`EdgeId`], [`Value`]).
 //!
 //! If you're building extensions or diving into internals, here's what's here:

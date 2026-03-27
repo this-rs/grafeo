@@ -1,7 +1,7 @@
 //! Memory introspection for `LpgStore`.
 
 use super::LpgStore;
-use grafeo_common::memory::usage::{IndexMemory, MvccMemory, StoreMemory, StringPoolMemory};
+use obrain_common::memory::usage::{IndexMemory, MvccMemory, StoreMemory, StringPoolMemory};
 use std::mem::size_of;
 
 impl LpgStore {
@@ -30,12 +30,12 @@ impl LpgStore {
             let nodes = self.nodes.read();
             let edges = self.edges.read();
             let n = nodes.capacity()
-                * (size_of::<grafeo_common::types::NodeId>()
-                    + size_of::<grafeo_common::mvcc::VersionChain<super::super::NodeRecord>>()
+                * (size_of::<obrain_common::types::NodeId>()
+                    + size_of::<obrain_common::mvcc::VersionChain<super::super::NodeRecord>>()
                     + 1);
             let e = edges.capacity()
-                * (size_of::<grafeo_common::types::EdgeId>()
-                    + size_of::<grafeo_common::mvcc::VersionChain<super::super::EdgeRecord>>()
+                * (size_of::<obrain_common::types::EdgeId>()
+                    + size_of::<obrain_common::mvcc::VersionChain<super::super::EdgeRecord>>()
                     + 1);
             (n, e)
         };
@@ -44,12 +44,12 @@ impl LpgStore {
             let nv = self.node_versions.read();
             let ev = self.edge_versions.read();
             let n = nv.capacity()
-                * (size_of::<grafeo_common::types::NodeId>()
-                    + size_of::<grafeo_common::mvcc::VersionIndex>()
+                * (size_of::<obrain_common::types::NodeId>()
+                    + size_of::<obrain_common::mvcc::VersionIndex>()
                     + 1);
             let e = ev.capacity()
-                * (size_of::<grafeo_common::types::EdgeId>()
-                    + size_of::<grafeo_common::mvcc::VersionIndex>()
+                * (size_of::<obrain_common::types::EdgeId>()
+                    + size_of::<obrain_common::mvcc::VersionIndex>()
                     + 1);
             (n, e)
         };
@@ -146,10 +146,10 @@ impl LpgStore {
         let label_idx = self.label_index.read();
         let label_index_bytes: usize = label_idx
             .iter()
-            .map(|map| map.capacity() * (size_of::<grafeo_common::types::NodeId>() + 1))
+            .map(|map| map.capacity() * (size_of::<obrain_common::types::NodeId>() + 1))
             .sum::<usize>()
             + label_idx.capacity()
-                * size_of::<grafeo_common::utils::hash::FxHashMap<grafeo_common::types::NodeId, ()>>(
+                * size_of::<obrain_common::utils::hash::FxHashMap<obrain_common::types::NodeId, ()>>(
                 );
         drop(label_idx);
 
@@ -157,8 +157,8 @@ impl LpgStore {
         let node_labels = self.node_labels.read();
         #[cfg(not(feature = "temporal"))]
         let node_labels_bytes = node_labels.capacity()
-            * (size_of::<grafeo_common::types::NodeId>()
-                + size_of::<grafeo_common::utils::hash::FxHashSet<u32>>()
+            * (size_of::<obrain_common::types::NodeId>()
+                + size_of::<obrain_common::utils::hash::FxHashSet<u32>>()
                 + 1)
             + node_labels
                 .values()
@@ -166,14 +166,14 @@ impl LpgStore {
                 .sum::<usize>();
         #[cfg(feature = "temporal")]
         let node_labels_bytes = node_labels.capacity()
-            * (size_of::<grafeo_common::types::NodeId>()
+            * (size_of::<obrain_common::types::NodeId>()
                 + size_of::<
-                    grafeo_common::temporal::VersionLog<grafeo_common::utils::hash::FxHashSet<u32>>,
+                    obrain_common::temporal::VersionLog<obrain_common::utils::hash::FxHashSet<u32>>,
                 >()
                 + 1)
             + node_labels
                 .values()
-                .map(|log| log.len() * size_of::<grafeo_common::utils::hash::FxHashSet<u32>>())
+                .map(|log| log.len() * size_of::<obrain_common::utils::hash::FxHashSet<u32>>())
                 .sum::<usize>();
         drop(node_labels);
 
@@ -184,9 +184,9 @@ impl LpgStore {
             .map(|dmap| {
                 // DashMap: approximate as capacity * entry size
                 dmap.len()
-                    * (size_of::<grafeo_common::types::HashableValue>()
+                    * (size_of::<obrain_common::types::HashableValue>()
                         + size_of::<
-                            grafeo_common::utils::hash::FxHashSet<grafeo_common::types::NodeId>,
+                            obrain_common::utils::hash::FxHashSet<obrain_common::types::NodeId>,
                         >()
                         + 32)
             })
@@ -195,8 +195,8 @@ impl LpgStore {
 
         // Vector indexes
         #[cfg(feature = "vector-index")]
-        let vector_indexes: Vec<grafeo_common::memory::NamedMemory> = {
-            use grafeo_common::memory::NamedMemory;
+        let vector_indexes: Vec<obrain_common::memory::NamedMemory> = {
+            use obrain_common::memory::NamedMemory;
             let vidx = self.vector_indexes.read();
             vidx.iter()
                 .map(|(name, idx)| NamedMemory {
@@ -211,8 +211,8 @@ impl LpgStore {
 
         // Text indexes
         #[cfg(feature = "text-index")]
-        let text_indexes: Vec<grafeo_common::memory::NamedMemory> = {
-            use grafeo_common::memory::NamedMemory;
+        let text_indexes: Vec<obrain_common::memory::NamedMemory> = {
+            use obrain_common::memory::NamedMemory;
             let tidx = self.text_indexes.read();
             tidx.iter()
                 .map(|(name, idx)| {

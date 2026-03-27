@@ -1,8 +1,8 @@
 //! Plugin registry.
 
 use super::{Algorithm, Plugin};
-use grafeo_common::types::Value;
-use grafeo_common::utils::error::Result;
+use obrain_common::types::Value;
+use obrain_common::utils::error::Result;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -10,10 +10,10 @@ use std::sync::Arc;
 /// A user-defined function (UDF) that can be called from query expressions.
 ///
 /// UDFs take a node ID (as `Value::Int64`) and return a scalar `Value`.
-/// They are registered by name (e.g., `"grafeo.energy"`) and resolved at
+/// They are registered by name (e.g., `"obrain.energy"`) and resolved at
 /// query planning time.
 pub trait UserDefinedFunction: Send + Sync {
-    /// Returns the dotted name of this UDF (e.g., `"grafeo.energy"`).
+    /// Returns the dotted name of this UDF (e.g., `"obrain.energy"`).
     fn name(&self) -> &str;
 
     /// Returns a short description.

@@ -6,9 +6,9 @@
 //! plus a schema derivation function to handle LPG vs RDF type differences.
 
 use crate::query::plan::LogicalExpression;
-use grafeo_common::types::LogicalType;
-use grafeo_common::utils::error::{Error, Result};
-use grafeo_core::execution::operators::{
+use obrain_common::types::LogicalType;
+use obrain_common::utils::error::{Error, Result};
+use obrain_core::execution::operators::{
     DistinctOperator, ExceptOperator, HashJoinOperator, IntersectOperator,
     JoinType as PhysicalJoinType, LimitOperator, Operator, OtherwiseOperator, ProjectExpr,
     ProjectOperator, SkipOperator, UnionOperator,

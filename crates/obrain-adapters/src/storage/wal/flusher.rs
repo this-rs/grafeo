@@ -87,7 +87,7 @@ impl AdaptiveFlusher {
         let (shutdown_tx, shutdown_rx) = mpsc::channel();
 
         let handle = thread::Builder::new()
-            .name("grafeo-wal-flusher".to_string())
+            .name("obrain-wal-flusher".to_string())
             .spawn(move || {
                 Self::flusher_loop(wal, target_interval, shutdown_rx);
             })?;

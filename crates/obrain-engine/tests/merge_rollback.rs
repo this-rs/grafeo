@@ -3,12 +3,12 @@
 //! Verifies that ON MATCH SET properties written by MERGE are correctly
 //! undone when a transaction is rolled back.
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 #[test]
 fn test_merge_on_match_set_rollback() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     // Create existing node
@@ -43,7 +43,7 @@ fn test_merge_on_match_set_rollback() {
 
 #[test]
 fn test_merge_on_match_set_new_property_rollback() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     // Create existing node without 'updated' property
@@ -69,7 +69,7 @@ fn test_merge_on_match_set_new_property_rollback() {
 
 #[test]
 fn test_merge_on_match_committed_stays() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session

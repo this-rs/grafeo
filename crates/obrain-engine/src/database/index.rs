@@ -1,4 +1,4 @@
-//! Index management for GrafeoDB (property, vector, and text indexes).
+//! Index management for ObrainDB (property, vector, and text indexes).
 
 #[cfg(any(feature = "vector-index", feature = "text-index"))]
 use std::sync::Arc;
@@ -6,9 +6,9 @@ use std::sync::Arc;
 #[cfg(feature = "text-index")]
 use parking_lot::RwLock;
 
-use grafeo_common::utils::error::Result;
+use obrain_common::utils::error::Result;
 
-impl super::GrafeoDB {
+impl super::ObrainDB {
     // =========================================================================
     // PROPERTY INDEX API
     // =========================================================================
@@ -22,9 +22,9 @@ impl super::GrafeoDB {
     /// # Example
     ///
     /// ```no_run
-    /// # use grafeo_engine::GrafeoDB;
-    /// # use grafeo_common::types::Value;
-    /// # let db = GrafeoDB::new_in_memory();
+    /// # use obrain_engine::ObrainDB;
+    /// # use obrain_common::types::Value;
+    /// # let db = ObrainDB::new_in_memory();
     /// // Create an index on the 'email' property
     /// db.create_property_index("email");
     ///
@@ -56,9 +56,9 @@ impl super::GrafeoDB {
     /// # Example
     ///
     /// ```no_run
-    /// # use grafeo_engine::GrafeoDB;
-    /// # use grafeo_common::types::Value;
-    /// # let db = GrafeoDB::new_in_memory();
+    /// # use obrain_engine::ObrainDB;
+    /// # use obrain_common::types::Value;
+    /// # let db = ObrainDB::new_in_memory();
     /// // Create index for fast lookups (optional but recommended)
     /// db.create_property_index("city");
     ///
@@ -69,8 +69,8 @@ impl super::GrafeoDB {
     pub fn find_nodes_by_property(
         &self,
         property: &str,
-        value: &grafeo_common::types::Value,
-    ) -> Vec<grafeo_common::types::NodeId> {
+        value: &obrain_common::types::Value,
+    ) -> Vec<obrain_common::types::NodeId> {
         self.store.find_nodes_by_property(property, value)
     }
 
@@ -106,12 +106,12 @@ impl super::GrafeoDB {
         m: Option<usize>,
         ef_construction: Option<usize>,
     ) -> Result<()> {
-        use grafeo_common::types::{PropertyKey, Value};
-        use grafeo_core::index::vector::DistanceMetric;
+        use obrain_common::types::{PropertyKey, Value};
+        use obrain_core::index::vector::DistanceMetric;
 
         let metric = match metric {
             Some(m) => DistanceMetric::from_str(m).ok_or_else(|| {
-                grafeo_common::utils::error::Error::Internal(format!(
+                obrain_common::utils::error::Error::Internal(format!(
                     "Unknown distance metric '{}'. Use: cosine, euclidean, dot_product, manhattan",
                     m
                 ))
@@ -125,13 +125,13 @@ impl super::GrafeoDB {
         let mut vector_count = 0usize;
 
         #[cfg(feature = "vector-index")]
-        let mut vectors: Vec<(grafeo_common::types::NodeId, Vec<f32>)> = Vec::new();
+        let mut vectors: Vec<(obrain_common::types::NodeId, Vec<f32>)> = Vec::new();
 
         for node in self.store.nodes_with_label(label) {
             if let Some(Value::Vector(v)) = node.properties.get(&prop_key) {
                 if let Some(expected) = found_dims {
                     if v.len() != expected {
-                        return Err(grafeo_common::utils::error::Error::Internal(format!(
+                        return Err(obrain_common::utils::error::Error::Internal(format!(
                             "Vector dimension mismatch: expected {}, found {} on node {}",
                             expected,
                             v.len(),
@@ -153,7 +153,7 @@ impl super::GrafeoDB {
             return if let Some(d) = dimensions {
                 #[cfg(feature = "vector-index")]
                 {
-                    use grafeo_core::index::vector::{HnswConfig, HnswIndex};
+                    use obrain_core::index::vector::{HnswConfig, HnswIndex};
 
                     let mut config = HnswConfig::new(d, metric);
                     if let Some(m_val) = m {
@@ -175,7 +175,7 @@ impl super::GrafeoDB {
                 );
                 Ok(())
             } else {
-                Err(grafeo_common::utils::error::Error::Internal(format!(
+                Err(obrain_common::utils::error::Error::Internal(format!(
                     "No vector properties found on :{label}({property}) and no dimensions specified"
                 )))
             };
@@ -184,7 +184,7 @@ impl super::GrafeoDB {
         // Build and populate the HNSW index
         #[cfg(feature = "vector-index")]
         {
-            use grafeo_core::index::vector::{HnswConfig, HnswIndex};
+            use obrain_core::index::vector::{HnswConfig, HnswIndex};
 
             let mut config = HnswConfig::new(dims, metric);
             if let Some(m_val) = m {
@@ -196,7 +196,7 @@ impl super::GrafeoDB {
 
             let index = HnswIndex::with_capacity(config, vectors.len());
             let accessor =
-                grafeo_core::index::vector::PropertyVectorAccessor::new(&*self.store, property);
+                obrain_core::index::vector::PropertyVectorAccessor::new(&*self.store, property);
             for (node_id, vec) in &vectors {
                 index.insert(*node_id, vec, &accessor);
             }
@@ -285,8 +285,8 @@ impl super::GrafeoDB {
     /// Returns an error if the label has no nodes or the property contains no text values.
     #[cfg(feature = "text-index")]
     pub fn create_text_index(&self, label: &str, property: &str) -> Result<()> {
-        use grafeo_common::types::{PropertyKey, Value};
-        use grafeo_core::index::text::{BM25Config, InvertedIndex};
+        use obrain_common::types::{PropertyKey, Value};
+        use obrain_core::index::text::{BM25Config, InvertedIndex};
 
         let mut index = InvertedIndex::new(BM25Config::default());
         let prop_key = PropertyKey::new(property);

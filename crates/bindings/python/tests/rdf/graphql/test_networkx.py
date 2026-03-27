@@ -1,8 +1,8 @@
 """NetworkX comparison tests for the RDF GraphQL context.
 
-NOTE: NetworkX adapter in Grafeo works with the LPG (Labeled Property Graph)
+NOTE: NetworkX adapter in Obrain works with the LPG (Labeled Property Graph)
 store. RDF triples are stored separately. These tests verify algorithm
-correctness by comparing Grafeo results against NetworkX.
+correctness by comparing Obrain results against NetworkX.
 
 The "RDF GraphQL" context indicates the query language environment, but
 NetworkX comparison tests use LPG data for graph structure.
@@ -18,22 +18,22 @@ from tests.bases.test_networkx import (
     BaseNetworkXComparisonTest,
 )
 
-# Try to import grafeo
+# Try to import obrain
 try:
-    from grafeo import GrafeoDB
+    from obrain import ObrainDB
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
 
-pytestmark = pytest.mark.skipif(not GRAFEO_AVAILABLE, reason="Grafeo Python bindings not installed")
+pytestmark = pytest.mark.skipif(not OBRAIN_AVAILABLE, reason="Obrain Python bindings not installed")
 
 
 @pytest.fixture
 def db():
     """Create a fresh database instance (no GraphQL required)."""
-    return GrafeoDB()
+    return ObrainDB()
 
 
 class TestRDFGraphQLNetworkXComparison(BaseNetworkXComparisonTest):
@@ -45,7 +45,7 @@ class TestRDFGraphQLNetworkXComparison(BaseNetworkXComparisonTest):
 
     def create_db(self):
         """Create a fresh database instance."""
-        return GrafeoDB()
+        return ObrainDB()
 
     def setup_random_graph(
         self, db, n_nodes: int, n_edges: int, weighted: bool = True, seed: int = 42
@@ -111,7 +111,7 @@ class TestRDFGraphQLNetworkXBenchmark(BaseNetworkXBenchmarkTest):
 
     def create_db(self):
         """Create a fresh database instance."""
-        return GrafeoDB()
+        return ObrainDB()
 
     def setup_random_graph(
         self, db, n_nodes: int, n_edges: int, weighted: bool = True, seed: int = 42
@@ -141,20 +141,20 @@ class TestRDFGraphQLNetworkXBenchmark(BaseNetworkXBenchmarkTest):
 
         return {"node_ids": node_ids, "edges": edges}
 
-    def run_grafeo_pagerank(self, db) -> float:
-        """Run Grafeo PageRank and return execution time in ms."""
+    def run_obrain_pagerank(self, db) -> float:
+        """Run Obrain PageRank and return execution time in ms."""
         start = time.perf_counter()
         db.algorithms.pagerank(damping=0.85)
         return (time.perf_counter() - start) * 1000
 
-    def run_grafeo_dijkstra(self, db, source) -> float:
-        """Run Grafeo Dijkstra and return execution time in ms."""
+    def run_obrain_dijkstra(self, db, source) -> float:
+        """Run Obrain Dijkstra and return execution time in ms."""
         start = time.perf_counter()
         db.algorithms.dijkstra(source, weight="weight")
         return (time.perf_counter() - start) * 1000
 
-    def run_grafeo_bfs(self, db, start) -> float:
-        """Run Grafeo BFS and return execution time in ms."""
+    def run_obrain_bfs(self, db, start) -> float:
+        """Run Obrain BFS and return execution time in ms."""
         start_time = time.perf_counter()
         db.algorithms.bfs(start)
         return (time.perf_counter() - start_time) * 1000

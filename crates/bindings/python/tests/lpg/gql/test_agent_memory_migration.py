@@ -16,13 +16,13 @@ from pathlib import Path
 import pytest
 
 try:
-    from grafeo import GrafeoDB
+    from obrain import ObrainDB
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
-pytestmark = pytest.mark.skipif(not GRAFEO_AVAILABLE, reason="Grafeo Python bindings not installed")
+pytestmark = pytest.mark.skipif(not OBRAIN_AVAILABLE, reason="Obrain Python bindings not installed")
 
 
 def random_384d_vector(seed: int) -> list[float]:
@@ -51,9 +51,9 @@ class TestPersistence:
     def test_create_persist_reopen(self):
         """Persistent DB survives close/reopen with all data intact."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = str(Path(tmpdir) / "agent.grafeo")
+            db_path = str(Path(tmpdir) / "agent.obrain")
 
-            db = GrafeoDB(path=db_path)
+            db = ObrainDB(path=db_path)
             for i in range(50):
                 label = ENTITY_LABELS[i % len(ENTITY_LABELS)]
                 db.create_node(
@@ -68,7 +68,7 @@ class TestPersistence:
             db.close()
 
             # Reopen and verify
-            db2 = GrafeoDB.open(db_path)
+            db2 = ObrainDB.open(db_path)
             info2 = db2.info()
             assert info2["node_count"] == 50, "nodes should survive close/reopen"
             db2.close()
@@ -76,9 +76,9 @@ class TestPersistence:
     def test_vector_index_after_reopen(self):
         """Vectors persist, but index must be recreated after reopen."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = str(Path(tmpdir) / "vectors.grafeo")
+            db_path = str(Path(tmpdir) / "vectors.obrain")
 
-            db = GrafeoDB(path=db_path)
+            db = ObrainDB(path=db_path)
             for i in range(20):
                 db.create_node(
                     ["Memory"],
@@ -93,7 +93,7 @@ class TestPersistence:
 
             # Reopen: data persists; index metadata is in snapshot v4 format
             # but WAL-based persistence requires manual recreation.
-            db2 = GrafeoDB.open(db_path)
+            db2 = ObrainDB.open(db_path)
             assert db2.info()["node_count"] == 20
 
             # Recreate vector index after reopen
@@ -105,9 +105,9 @@ class TestPersistence:
     def test_context_manager(self):
         """with-statement lifecycle works correctly."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = str(Path(tmpdir) / "ctx.grafeo")
+            db_path = str(Path(tmpdir) / "ctx.obrain")
 
-            with GrafeoDB(path=db_path) as db:
+            with ObrainDB(path=db_path) as db:
                 db.execute("INSERT (:Memory {text: 'context manager test'})")
                 info = db.info()
                 assert info["node_count"] == 1
@@ -116,19 +116,19 @@ class TestPersistence:
             assert Path(db_path).exists(), "database should exist after context exit"
 
             # Data persists on reopen
-            db2 = GrafeoDB.open(db_path)
+            db2 = ObrainDB.open(db_path)
             assert db2.info()["node_count"] == 1
             db2.close()
 
     def test_error_propagation(self):
         """Invalid GQL raises RuntimeError."""
-        db = GrafeoDB()
+        db = ObrainDB()
         with pytest.raises(RuntimeError):
             db.execute("THIS IS NOT VALID GQL")
 
     def test_close_idempotent(self):
         """Calling close() twice should not error."""
-        db = GrafeoDB()
+        db = ObrainDB()
         db.execute("INSERT (:Memory {text: 'test'})")
         db.close()
         db.close()  # second close should be fine
@@ -143,9 +143,9 @@ class TestStorageSize:
     def test_measure_disk_size(self):
         """Measure disk footprint for 500 entities with 384-dim vectors."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = str(Path(tmpdir) / "size.grafeo")
+            db_path = str(Path(tmpdir) / "size.obrain")
 
-            db = GrafeoDB(path=db_path)
+            db = ObrainDB(path=db_path)
             for i in range(500):
                 label = ENTITY_LABELS[i % len(ENTITY_LABELS)]
                 db.create_node(
@@ -188,7 +188,7 @@ class TestStorageSize:
 class TestBYOV:
     def test_384_dim_vectors(self):
         """Insert 384-dim vectors as list[float], create index, search."""
-        db = GrafeoDB()
+        db = ObrainDB()
         for i in range(30):
             db.create_node(
                 ["Memory"],
@@ -210,7 +210,7 @@ class TestBYOV:
 
     def test_batch_create_vectors(self):
         """batch_create_nodes with 100 384-dim vectors."""
-        db = GrafeoDB()
+        db = ObrainDB()
         vectors = [random_384d_vector(i) for i in range(100)]
         ids = db.batch_create_nodes("Memory", "embedding", vectors)
         assert len(ids) == 100
@@ -221,7 +221,7 @@ class TestBYOV:
 
     def test_hybrid_search(self):
         """Combined text + vector search for agent memory retrieval."""
-        db = GrafeoDB()
+        db = ObrainDB()
         facts = [
             ("Alix works at the Amsterdam office", 0),
             ("Gus is a data scientist in Berlin", 1),
@@ -258,7 +258,7 @@ class TestBYOV:
 class TestBulkImport:
     def test_gql_loop_import(self):
         """Import 500 entities via execute() loop in a transaction."""
-        db = GrafeoDB()
+        db = ObrainDB()
         start = time.time()
 
         with db.begin_transaction() as tx:
@@ -275,7 +275,7 @@ class TestBulkImport:
 
     def test_api_import(self):
         """Import 500 entities via create_node() API."""
-        db = GrafeoDB()
+        db = ObrainDB()
         start = time.time()
 
         for i in range(500):
@@ -299,7 +299,7 @@ class TestBulkImport:
 class TestConcurrency:
     def test_threaded_vector_search(self):
         """4 threads doing vector_search simultaneously."""
-        db = GrafeoDB()
+        db = ObrainDB()
         # Seed data
         for i in range(200):
             db.create_node(

@@ -7,7 +7,7 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 
-use grafeo_common::utils::error::{Error, Result};
+use obrain_common::utils::error::{Error, Result};
 
 use super::format::{DATA_OFFSET, DB_HEADER_SIZE, DbHeader, FILE_HEADER_SIZE, FileHeader, MAGIC};
 

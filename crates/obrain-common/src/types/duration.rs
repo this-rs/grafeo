@@ -16,7 +16,7 @@ const NANOS_PER_HOUR: i64 = 60 * NANOS_PER_MINUTE;
 /// # Examples
 ///
 /// ```
-/// use grafeo_common::types::Duration;
+/// use obrain_common::types::Duration;
 ///
 /// let d = Duration::parse("P1Y2M3DT4H5M6S").unwrap();
 /// assert_eq!(d.months(), 14); // 1 year + 2 months

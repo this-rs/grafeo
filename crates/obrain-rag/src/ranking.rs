@@ -140,7 +140,7 @@ pub fn text_richness(node: &RetrievedNode) -> usize {
 mod tests {
     use super::*;
     use crate::traits::RetrievalSource;
-    use grafeo_common::types::NodeId;
+    use obrain_common::types::NodeId;
     use std::collections::HashMap;
 
     fn make_node(id: u64, score: f64) -> RetrievedNode {

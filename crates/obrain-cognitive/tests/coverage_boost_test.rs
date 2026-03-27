@@ -19,16 +19,16 @@
 
 use std::sync::Arc;
 
-use grafeo_cognitive::energy::{EnergyConfig, EnergyStore};
-use grafeo_cognitive::fabric::FabricStore;
-use grafeo_cognitive::provenance::{CognitiveEventId, CognitiveEventType, ProvenanceRecorder};
-use grafeo_cognitive::scar::{ScarConfig, ScarReason, ScarStore};
-use grafeo_cognitive::search::{
+use obrain_cognitive::energy::{EnergyConfig, EnergyStore};
+use obrain_cognitive::fabric::FabricStore;
+use obrain_cognitive::provenance::{CognitiveEventId, CognitiveEventType, ProvenanceRecorder};
+use obrain_cognitive::scar::{ScarConfig, ScarReason, ScarStore};
+use obrain_cognitive::search::{
     NoopReranker, Reranker, SearchConfig, SearchPipeline, SearchResult, SearchWeights,
 };
-use grafeo_cognitive::synapse::{SynapseConfig, SynapseStore};
-use grafeo_cognitive::tenant::{TenantError, TenantManager};
-use grafeo_common::types::NodeId;
+use obrain_cognitive::synapse::{SynapseConfig, SynapseStore};
+use obrain_cognitive::tenant::{TenantError, TenantManager};
+use obrain_common::types::NodeId;
 
 fn nid(id: u64) -> NodeId {
     NodeId(id)
@@ -471,8 +471,8 @@ fn tenant_exists_and_count() {
 
 #[test]
 fn store_trait_load_persist_node_f64() {
-    use grafeo_cognitive::store_trait::{load_node_f64, persist_node_f64};
-    use grafeo_core::LpgStore;
+    use obrain_cognitive::store_trait::{load_node_f64, persist_node_f64};
+    use obrain_core::LpgStore;
 
     let store = LpgStore::new().expect("LpgStore::new should succeed");
     let node_id = store.create_node(&["TestNode"]);
@@ -491,8 +491,8 @@ fn store_trait_load_persist_node_f64() {
 
 #[test]
 fn store_trait_load_persist_edge_f64() {
-    use grafeo_cognitive::store_trait::{load_edge_f64, persist_edge_f64};
-    use grafeo_core::LpgStore;
+    use obrain_cognitive::store_trait::{load_edge_f64, persist_edge_f64};
+    use obrain_core::LpgStore;
 
     let store = LpgStore::new().expect("LpgStore::new should succeed");
     let n1 = store.create_node(&["A"]);
@@ -513,8 +513,8 @@ fn store_trait_load_persist_edge_f64() {
 
 #[test]
 fn store_trait_overwrite_node_f64() {
-    use grafeo_cognitive::store_trait::{load_node_f64, persist_node_f64};
-    use grafeo_core::LpgStore;
+    use obrain_cognitive::store_trait::{load_node_f64, persist_node_f64};
+    use obrain_core::LpgStore;
 
     let store = LpgStore::new().expect("LpgStore::new should succeed");
     let node_id = store.create_node(&["TestNode"]);
@@ -529,8 +529,8 @@ fn store_trait_overwrite_node_f64() {
 
 #[test]
 fn store_trait_load_nonexistent_node() {
-    use grafeo_cognitive::store_trait::load_node_f64;
-    use grafeo_core::LpgStore;
+    use obrain_cognitive::store_trait::load_node_f64;
+    use obrain_core::LpgStore;
 
     let store = LpgStore::new().expect("LpgStore::new should succeed");
     // Node 99999 does not exist
@@ -662,8 +662,8 @@ fn provenance_multiple_event_types_on_same_node() {
 
 #[test]
 fn scar_store_with_graph_store() {
-    use grafeo_cognitive::store_trait::{PROP_SCAR_COUNT, PROP_SCAR_INTENSITY, load_node_f64};
-    use grafeo_core::LpgStore;
+    use obrain_cognitive::store_trait::{PROP_SCAR_COUNT, PROP_SCAR_INTENSITY, load_node_f64};
+    use obrain_core::LpgStore;
 
     let gs = Arc::new(LpgStore::new().expect("LpgStore::new should succeed"));
     let node_id = gs.create_node(&["ScarNode"]);
@@ -685,8 +685,8 @@ fn scar_store_with_graph_store() {
 
 #[test]
 fn scar_store_persist_scar_summary_multiple_scars() {
-    use grafeo_cognitive::store_trait::{PROP_SCAR_COUNT, load_node_f64};
-    use grafeo_core::LpgStore;
+    use obrain_cognitive::store_trait::{PROP_SCAR_COUNT, load_node_f64};
+    use obrain_core::LpgStore;
 
     let gs = Arc::new(LpgStore::new().expect("LpgStore::new should succeed"));
     let node_id = gs.create_node(&["ScarNode"]);
@@ -708,8 +708,8 @@ fn scar_store_persist_scar_summary_multiple_scars() {
 
 #[test]
 fn scar_store_persist_after_heal() {
-    use grafeo_cognitive::store_trait::{PROP_SCAR_COUNT, load_node_f64};
-    use grafeo_core::LpgStore;
+    use obrain_cognitive::store_trait::{PROP_SCAR_COUNT, load_node_f64};
+    use obrain_core::LpgStore;
 
     let gs = Arc::new(LpgStore::new().expect("LpgStore::new should succeed"));
     let node_id = gs.create_node(&["ScarNode"]);

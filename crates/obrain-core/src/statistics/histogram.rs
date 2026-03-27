@@ -4,7 +4,7 @@
 //! rows match. Histograms split the value range into buckets of roughly equal
 //! row counts, letting us estimate selectivity without scanning the data.
 
-use grafeo_common::types::Value;
+use obrain_common::types::Value;
 use std::cmp::Ordering;
 
 /// One slice of the value distribution - a range with its row count.

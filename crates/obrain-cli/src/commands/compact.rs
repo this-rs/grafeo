@@ -89,11 +89,11 @@ mod tests {
     use tempfile::TempDir;
 
     fn create_test_db(dir: &std::path::Path) {
-        let db = grafeo_engine::GrafeoDB::open(dir).expect("create db");
+        let db = obrain_engine::ObrainDB::open(dir).expect("create db");
         let n1 = db.create_node(&["Person"]);
         let n2 = db.create_node(&["Person"]);
-        db.set_node_property(n1, "name", grafeo_common::types::Value::from("Alix"));
-        db.set_node_property(n2, "name", grafeo_common::types::Value::from("Gus"));
+        db.set_node_property(n1, "name", obrain_common::types::Value::from("Alix"));
+        db.set_node_property(n2, "name", obrain_common::types::Value::from("Gus"));
         db.create_edge(n1, n2, "KNOWS");
         db.close().expect("close db");
     }
@@ -101,7 +101,7 @@ mod tests {
     #[test]
     fn test_compact_dry_run() {
         let temp = TempDir::new().unwrap();
-        let db_path = temp.path().join("test.grafeo");
+        let db_path = temp.path().join("test.obrain");
         create_test_db(&db_path);
 
         // Dry run should succeed without modifying the database
@@ -111,7 +111,7 @@ mod tests {
     #[test]
     fn test_compact_actual() {
         let temp = TempDir::new().unwrap();
-        let db_path = temp.path().join("test.grafeo");
+        let db_path = temp.path().join("test.obrain");
         create_test_db(&db_path);
 
         // Actual compaction
@@ -121,7 +121,7 @@ mod tests {
     #[test]
     fn test_compact_json_format() {
         let temp = TempDir::new().unwrap();
-        let db_path = temp.path().join("test.grafeo");
+        let db_path = temp.path().join("test.obrain");
         create_test_db(&db_path);
 
         run(&db_path, true, OutputFormat::Json, true).expect("json format dry run should succeed");
@@ -132,7 +132,7 @@ mod tests {
     #[test]
     fn test_compact_nonexistent_database() {
         let temp = TempDir::new().unwrap();
-        let db_path = temp.path().join("nonexistent.grafeo");
+        let db_path = temp.path().join("nonexistent.obrain");
 
         let result = run(&db_path, true, OutputFormat::Table, true);
         assert!(result.is_err());

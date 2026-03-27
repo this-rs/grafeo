@@ -5,19 +5,19 @@
 //! OPTIONAL MATCH (left join), CALL PROCEDURE.
 //!
 //! ```bash
-//! cargo test -p grafeo-engine --features full --test mutation_planning
+//! cargo test -p obrain-engine --features full --test mutation_planning
 //! ```
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 // ============================================================================
 // Fixtures
 // ============================================================================
 
 /// Creates 3 Person + 1 Company nodes, 3 KNOWS + 2 WORKS_AT edges.
-fn create_social_network() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn create_social_network() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let alix = session.create_node_with_props(
@@ -63,7 +63,7 @@ fn create_social_network() -> GrafeoDB {
 
 #[test]
 fn test_unwind_literal_list() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let result = session.execute("UNWIND [1, 2, 3] AS x RETURN x").unwrap();
@@ -94,7 +94,7 @@ fn test_unwind_after_match() {
 
 #[test]
 fn test_unwind_with_strings() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let result = session
@@ -111,7 +111,7 @@ fn test_unwind_with_strings() {
 #[cfg(feature = "cypher")]
 #[test]
 fn test_unwind_create() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // Cypher syntax for UNWIND + CREATE
@@ -134,7 +134,7 @@ fn test_unwind_create() {
 fn test_unwind_create_map_property_access() {
     // Regression test: UNWIND with map list + property access in CREATE
     // Previously all properties resolved to NULL (bug in plan_create_node)
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -162,9 +162,9 @@ fn test_unwind_param_create_map_property_access() {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use grafeo_common::types::PropertyKey;
+    use obrain_common::types::PropertyKey;
 
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let nodes = Value::List(Arc::from(vec![
@@ -200,7 +200,7 @@ fn test_unwind_param_create_map_property_access() {
 
 #[test]
 fn test_for_with_ordinality() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let result = session
@@ -230,7 +230,7 @@ fn test_for_with_ordinality() {
 
 #[test]
 fn test_for_with_offset() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let result = session
@@ -261,7 +261,7 @@ fn test_for_with_offset() {
 #[test]
 fn test_for_without_ordinality_or_offset() {
     // Ensure basic FOR without WITH still works
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let result = session.execute("FOR x IN [1, 2, 3] RETURN x").unwrap();
@@ -275,7 +275,7 @@ fn test_for_without_ordinality_or_offset() {
 
 #[test]
 fn test_merge_creates_when_not_exists() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let result = session
@@ -306,7 +306,7 @@ fn test_merge_matches_existing() {
 
 #[test]
 fn test_merge_on_create_set() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let result = session
@@ -342,7 +342,7 @@ fn test_merge_on_match_set() {
 
 #[test]
 fn test_create_node_with_list_property() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -396,7 +396,7 @@ fn test_create_edge_anonymous() {
 
 #[test]
 fn test_create_path_with_new_nodes() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // Create two nodes and an edge using the programmatic API
@@ -905,7 +905,7 @@ fn test_chained_dependent_optional_partial_match() {
 fn test_optional_match_with_node_label_filter() {
     // OPTIONAL MATCH with label on optional side node.
     // Create a Developer label for Gus only.
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -934,7 +934,7 @@ fn test_optional_match_with_node_label_filter() {
 #[test]
 fn test_optional_match_with_vle() {
     // OPTIONAL MATCH with variable-length path.
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -979,7 +979,7 @@ fn test_optional_match_with_vle() {
 #[test]
 fn test_optional_match_with_vle_no_path() {
     // OPTIONAL MATCH with VLE where no path exists: should produce NULL.
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -1208,7 +1208,7 @@ fn test_optional_match_count_per_group() {
 fn test_optional_match_boolean_null_comparison() {
     // Comparing NULL to a value should produce NULL (falsy), not true or false.
     // This means WHERE m.age > 30 should not match when m is NULL.
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -1251,7 +1251,7 @@ fn test_call_list_procedures() {
     let db = create_social_network();
     let session = db.session();
 
-    let result = session.execute("CALL grafeo.procedures()").unwrap();
+    let result = session.execute("CALL obrain.procedures()").unwrap();
 
     // Should return a list of available procedures
     assert!(!result.rows.is_empty());
@@ -1262,7 +1262,7 @@ fn test_call_degree_centrality() {
     let db = create_social_network();
     let session = db.session();
 
-    let result = session.execute("CALL grafeo.degree_centrality()").unwrap();
+    let result = session.execute("CALL obrain.degree_centrality()").unwrap();
 
     // Should return results for each node
     assert!(!result.rows.is_empty());
@@ -1274,7 +1274,7 @@ fn test_call_procedure_with_yield() {
     let session = db.session();
 
     let result = session
-        .execute("CALL grafeo.pagerank() YIELD node_id, score RETURN node_id, score")
+        .execute("CALL obrain.pagerank() YIELD node_id, score RETURN node_id, score")
         .unwrap();
 
     assert!(!result.rows.is_empty());
@@ -1385,7 +1385,7 @@ fn test_gql_merge_with_match_input() {
 
 #[test]
 fn test_gql_merge_in_ordered_clauses() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -1410,7 +1410,7 @@ fn test_gql_merge_in_ordered_clauses() {
 
 #[test]
 fn test_gql_match_create_edge_ordered() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session.execute("INSERT (:City {name: 'Prague'})").unwrap();
@@ -1458,7 +1458,7 @@ fn test_gql_match_detach_delete_ordered() {
 
 #[test]
 fn test_gql_for_in_ordered_clauses() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let result = session
@@ -1478,7 +1478,7 @@ fn test_gql_for_in_ordered_clauses() {
 
 #[test]
 fn test_gql_ordered_create_delete() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -1496,7 +1496,7 @@ fn test_gql_ordered_create_delete() {
 
 #[test]
 fn test_traits_create_with_props_convenience() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let node = session.create_node_with_props(
@@ -1603,7 +1603,7 @@ mod cypher_mutations {
 
     #[test]
     fn test_unwind_standalone_create() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         session
@@ -1624,7 +1624,7 @@ mod cypher_mutations {
 
     #[test]
     fn test_set_map_replace() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         session
@@ -1646,7 +1646,7 @@ mod cypher_mutations {
 
     #[test]
     fn test_set_map_merge() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         session
@@ -1706,7 +1706,7 @@ mod cypher_mutations {
 
     #[test]
     fn test_multi_pattern_no_shared_vars() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         session.execute("INSERT (:A {val: 1})").unwrap();

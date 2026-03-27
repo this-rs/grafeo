@@ -3,9 +3,9 @@
 //! This module provides the fundamental building blocks for implementing
 //! high-performance graph algorithms, inspired by rustworkx patterns.
 
-use grafeo_common::types::{EdgeId, NodeId, Value};
-use grafeo_common::utils::error::Result;
-use grafeo_core::graph::GraphStore;
+use obrain_common::types::{EdgeId, NodeId, Value};
+use obrain_common::utils::error::Result;
+use obrain_core::graph::GraphStore;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 

@@ -3,9 +3,9 @@
 #![cfg(feature = "scar")]
 
 #[cfg(feature = "fabric")]
-use grafeo_cognitive::fabric::{FabricScore, FabricStore};
-use grafeo_cognitive::scar::{Scar, ScarConfig, ScarId, ScarReason, ScarStore};
-use grafeo_common::types::NodeId;
+use obrain_cognitive::fabric::{FabricScore, FabricStore};
+use obrain_cognitive::scar::{Scar, ScarConfig, ScarId, ScarReason, ScarStore};
+use obrain_common::types::NodeId;
 use std::time::{Duration, Instant};
 
 // ---------------------------------------------------------------------------

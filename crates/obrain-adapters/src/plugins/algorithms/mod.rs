@@ -1,7 +1,7 @@
 //! Classic graph algorithms - traversals, paths, centrality, communities.
 //!
 //! Everything you'd expect from a graph analytics library, designed to work
-//! seamlessly with Grafeo's LPG store. All algorithms are available from Python too.
+//! seamlessly with Obrain's LPG store. All algorithms are available from Python too.
 //!
 //! | Category | Algorithms |
 //! | -------- | ---------- |
@@ -15,9 +15,9 @@
 //! ## Usage
 //!
 //! ```no_run
-//! use grafeo_adapters::plugins::algorithms::{bfs, connected_components, dijkstra};
-//! use grafeo_core::graph::lpg::LpgStore;
-//! use grafeo_common::types::NodeId;
+//! use obrain_adapters::plugins::algorithms::{bfs, connected_components, dijkstra};
+//! use obrain_core::graph::lpg::LpgStore;
+//! use obrain_common::types::NodeId;
 //!
 //! let store = LpgStore::new().unwrap();
 //! let n0 = store.create_node(&["Node"]);

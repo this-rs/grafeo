@@ -4,15 +4,15 @@
 //! across GQL, Cypher, and SPARQL query languages.
 //!
 //! ```bash
-//! cargo test -p grafeo-engine --features full --test temporal_types
+//! cargo test -p obrain-engine --features full --test temporal_types
 //! ```
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 /// Creates 2 Person nodes (Alix birthday 1990-06-15, Gus birthday 2000-01-01).
-fn create_test_db() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn create_test_db() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session.create_node_with_props(
@@ -21,7 +21,7 @@ fn create_test_db() -> GrafeoDB {
             ("name", Value::String("Alix".into())),
             (
                 "birthday",
-                Value::Date(grafeo_common::types::Date::from_ymd(1990, 6, 15).unwrap()),
+                Value::Date(obrain_common::types::Date::from_ymd(1990, 6, 15).unwrap()),
             ),
         ],
     );
@@ -31,7 +31,7 @@ fn create_test_db() -> GrafeoDB {
             ("name", Value::String("Gus".into())),
             (
                 "birthday",
-                Value::Date(grafeo_common::types::Date::from_ymd(2000, 1, 1).unwrap()),
+                Value::Date(obrain_common::types::Date::from_ymd(2000, 1, 1).unwrap()),
             ),
         ],
     );
@@ -46,7 +46,7 @@ fn create_test_db() -> GrafeoDB {
 #[test]
 #[cfg(feature = "cypher")]
 fn cypher_date_function() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let result = db.execute_cypher("RETURN date('2024-01-15') AS d").unwrap();
     let row = &result.rows[0];
     let d = row[0].as_date().expect("expected Date value");
@@ -58,7 +58,7 @@ fn cypher_date_function() {
 #[test]
 #[cfg(feature = "cypher")]
 fn cypher_duration_function() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let result = db.execute_cypher("RETURN duration('P1Y') AS d").unwrap();
     let row = &result.rows[0];
     let d = row[0].as_duration().expect("expected Duration value");
@@ -68,7 +68,7 @@ fn cypher_duration_function() {
 #[test]
 #[cfg(feature = "cypher")]
 fn cypher_time_function() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let result = db.execute_cypher("RETURN time('23:59:59') AS t").unwrap();
     let row = &result.rows[0];
     let t = row[0].as_time().expect("expected Time value");
@@ -80,7 +80,7 @@ fn cypher_time_function() {
 #[test]
 #[cfg(feature = "cypher")]
 fn cypher_datetime_function() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let result = db
         .execute_cypher("RETURN datetime('2024-03-15T14:30:00Z') AS dt")
         .unwrap();
@@ -95,7 +95,7 @@ fn cypher_datetime_function() {
 #[test]
 #[cfg(feature = "cypher")]
 fn cypher_duration_with_components() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let result = db
         .execute_cypher("RETURN duration('P1Y2M3D') AS d")
         .unwrap();
@@ -172,7 +172,7 @@ fn gql_datetime_typed_literal() {
 #[test]
 #[cfg(feature = "cypher")]
 fn cypher_year_month_day_extraction() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let result = db
         .execute_cypher(
             "RETURN year(date('2024-03-15')) AS y, month(date('2024-03-15')) AS m, day(date('2024-03-15')) AS d",
@@ -187,7 +187,7 @@ fn cypher_year_month_day_extraction() {
 #[test]
 #[cfg(feature = "cypher")]
 fn cypher_hour_minute_second_extraction() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let result = db
         .execute_cypher(
             "RETURN hour(time('14:30:45')) AS h, minute(time('14:30:45')) AS m, second(time('14:30:45')) AS s",
@@ -206,7 +206,7 @@ fn cypher_hour_minute_second_extraction() {
 #[test]
 #[cfg(feature = "cypher")]
 fn cypher_date_plus_duration() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let result = db
         .execute_cypher("RETURN date('2024-01-15') + duration('P1M') AS next_month")
         .unwrap();
@@ -220,7 +220,7 @@ fn cypher_date_plus_duration() {
 #[test]
 #[cfg(feature = "cypher")]
 fn cypher_date_minus_date() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let result = db
         .execute_cypher("RETURN date('2024-03-15') - date('2024-01-01') AS diff")
         .unwrap();
@@ -233,7 +233,7 @@ fn cypher_date_minus_date() {
 #[test]
 #[cfg(feature = "cypher")]
 fn cypher_duration_arithmetic() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let result = db
         .execute_cypher("RETURN duration('P1Y') + duration('P6M') AS combined")
         .unwrap();
@@ -311,7 +311,7 @@ fn gql_date_json_param_roundtrip() {
     let mut params = std::collections::HashMap::new();
     params.insert(
         "d".to_string(),
-        Value::Date(grafeo_common::types::Date::from_ymd(2024, 6, 15).unwrap()),
+        Value::Date(obrain_common::types::Date::from_ymd(2024, 6, 15).unwrap()),
     );
     let result = db
         .execute_with_params("MATCH (p:Person) RETURN $d AS val LIMIT 1", params)
@@ -331,7 +331,7 @@ fn gql_date_json_param_roundtrip() {
 #[test]
 #[cfg(feature = "sparql")]
 fn sparql_xsd_date_literal() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let result = db
         .execute_sparql(
             r#"SELECT ?d WHERE { BIND("2024-03-15"^^<http://www.w3.org/2001/XMLSchema#date> AS ?d) }"#,
@@ -347,7 +347,7 @@ fn sparql_xsd_date_literal() {
 #[test]
 #[cfg(feature = "sparql")]
 fn sparql_xsd_duration_literal() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let result = db
         .execute_sparql(
             r#"SELECT ?d WHERE { BIND("P1Y6M"^^<http://www.w3.org/2001/XMLSchema#duration> AS ?d) }"#,
@@ -367,7 +367,7 @@ fn sparql_xsd_duration_literal() {
 #[test]
 #[cfg(feature = "cypher")]
 fn cypher_date_map_constructor() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let result = db
         .execute_cypher("RETURN date({year: 2024, month: 3, day: 15}) AS d")
         .unwrap();
@@ -380,7 +380,7 @@ fn cypher_date_map_constructor() {
 #[test]
 #[cfg(feature = "cypher")]
 fn cypher_date_map_defaults() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     // month and day should default to 1 when omitted
     let result = db.execute_cypher("RETURN date({year: 2024}) AS d").unwrap();
     let d = result.rows[0][0].as_date().expect("expected Date value");
@@ -392,7 +392,7 @@ fn cypher_date_map_defaults() {
 #[test]
 #[cfg(feature = "cypher")]
 fn cypher_time_map_constructor() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let result = db
         .execute_cypher("RETURN time({hour: 14, minute: 30, second: 45}) AS t")
         .unwrap();
@@ -405,7 +405,7 @@ fn cypher_time_map_constructor() {
 #[test]
 #[cfg(feature = "cypher")]
 fn cypher_datetime_map_constructor() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let result = db
         .execute_cypher(
             "RETURN datetime({year: 2024, month: 3, day: 15, hour: 14, minute: 30}) AS dt",
@@ -426,7 +426,7 @@ fn cypher_datetime_map_constructor() {
 #[test]
 #[cfg(feature = "cypher")]
 fn cypher_duration_map_constructor() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let result = db
         .execute_cypher("RETURN duration({years: 1, months: 2, days: 3, hours: 4}) AS dur")
         .unwrap();
@@ -442,7 +442,7 @@ fn cypher_duration_map_constructor() {
 #[test]
 #[cfg(feature = "cypher")]
 fn cypher_duration_map_with_weeks() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let result = db
         .execute_cypher("RETURN duration({weeks: 2, days: 3}) AS dur")
         .unwrap();

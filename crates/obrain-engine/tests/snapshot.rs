@@ -1,7 +1,7 @@
 //! Integration tests for snapshot export/import.
 
-use grafeo_common::types::{EdgeId, EpochId, NodeId, Value};
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::{EdgeId, EpochId, NodeId, Value};
+use obrain_engine::ObrainDB;
 
 /// Mirror of the private Snapshot struct for crafting test payloads.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -72,16 +72,16 @@ fn encode_snapshot(snap: &TestSnapshot) -> Vec<u8> {
 
 #[test]
 fn export_import_empty_database() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let bytes = db.export_snapshot().unwrap();
-    let restored = GrafeoDB::import_snapshot(&bytes).unwrap();
+    let restored = ObrainDB::import_snapshot(&bytes).unwrap();
     assert_eq!(restored.node_count(), 0);
     assert_eq!(restored.edge_count(), 0);
 }
 
 #[test]
 fn export_import_preserves_nodes() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("INSERT (:Person {name: 'Alix', age: 30})")
@@ -91,7 +91,7 @@ fn export_import_preserves_nodes() {
         .unwrap();
 
     let bytes = db.export_snapshot().unwrap();
-    let restored = GrafeoDB::import_snapshot(&bytes).unwrap();
+    let restored = ObrainDB::import_snapshot(&bytes).unwrap();
 
     assert_eq!(restored.node_count(), 2);
 
@@ -104,7 +104,7 @@ fn export_import_preserves_nodes() {
 
 #[test]
 fn export_import_preserves_edges() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let alix = db.create_node(&["Person"]);
     db.set_node_property(alix, "name", "Alix".into());
     let gus = db.create_node(&["Person"]);
@@ -112,7 +112,7 @@ fn export_import_preserves_edges() {
     db.create_edge(alix, gus, "KNOWS");
 
     let bytes = db.export_snapshot().unwrap();
-    let restored = GrafeoDB::import_snapshot(&bytes).unwrap();
+    let restored = ObrainDB::import_snapshot(&bytes).unwrap();
 
     assert_eq!(restored.node_count(), 2);
     assert_eq!(restored.edge_count(), 1);
@@ -126,14 +126,14 @@ fn export_import_preserves_edges() {
 
 #[test]
 fn export_import_preserves_properties() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("INSERT (:Item {name: 'Widget', price: 9.99, active: true})")
         .unwrap();
 
     let bytes = db.export_snapshot().unwrap();
-    let restored = GrafeoDB::import_snapshot(&bytes).unwrap();
+    let restored = ObrainDB::import_snapshot(&bytes).unwrap();
 
     let session2 = restored.session();
     let result = session2
@@ -144,13 +144,13 @@ fn export_import_preserves_properties() {
 
 #[test]
 fn import_rejects_invalid_data() {
-    let result = GrafeoDB::import_snapshot(b"not a valid snapshot");
+    let result = ObrainDB::import_snapshot(b"not a valid snapshot");
     assert!(result.is_err());
 }
 
 #[test]
 fn snapshot_round_trip_schema() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let alix = db.create_node(&["Person"]);
     db.set_node_property(alix, "name", "Alix".into());
     let gus = db.create_node(&["Person"]);
@@ -159,7 +159,7 @@ fn snapshot_round_trip_schema() {
 
     let schema_before = db.schema();
     let bytes = db.export_snapshot().unwrap();
-    let restored = GrafeoDB::import_snapshot(&bytes).unwrap();
+    let restored = ObrainDB::import_snapshot(&bytes).unwrap();
     let schema_after = restored.schema();
 
     // Both schemas should report the same label/edge info
@@ -172,7 +172,7 @@ fn snapshot_round_trip_schema() {
 
 #[test]
 fn export_import_preserves_edge_properties() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let a = db.create_node(&["Person"]);
     let b = db.create_node(&["Person"]);
     let edge = db.create_edge(a, b, "KNOWS");
@@ -180,7 +180,7 @@ fn export_import_preserves_edge_properties() {
     db.set_edge_property(edge, "strength", Value::Float64(0.95));
 
     let bytes = db.export_snapshot().unwrap();
-    let restored = GrafeoDB::import_snapshot(&bytes).unwrap();
+    let restored = ObrainDB::import_snapshot(&bytes).unwrap();
 
     let session = restored.session();
     let result = session
@@ -195,13 +195,13 @@ fn export_import_preserves_edge_properties() {
 
 #[test]
 fn export_import_preserves_multiple_labels() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     db.create_node(&["Person", "Employee"]);
     db.create_node(&["Person", "Manager"]);
     db.create_node(&["Animal"]);
 
     let bytes = db.export_snapshot().unwrap();
-    let restored = GrafeoDB::import_snapshot(&bytes).unwrap();
+    let restored = ObrainDB::import_snapshot(&bytes).unwrap();
 
     assert_eq!(restored.node_count(), 3);
 
@@ -223,9 +223,9 @@ fn export_import_preserves_multiple_labels() {
 
 #[test]
 fn export_import_preserves_temporal_values() {
-    use grafeo_common::types::{Date, Duration, Time, Timestamp, ZonedDatetime};
+    use obrain_common::types::{Date, Duration, Time, Timestamp, ZonedDatetime};
 
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let id = db.create_node(&["Temporal"]);
 
     let date = Date::from_ymd(2025, 6, 15).unwrap();
@@ -241,7 +241,7 @@ fn export_import_preserves_temporal_values() {
     db.set_node_property(id, "zdt_val", Value::ZonedDatetime(zoned));
 
     let bytes = db.export_snapshot().unwrap();
-    let restored = GrafeoDB::import_snapshot(&bytes).unwrap();
+    let restored = ObrainDB::import_snapshot(&bytes).unwrap();
 
     let session = restored.session();
     let result = session
@@ -259,7 +259,7 @@ fn export_import_preserves_temporal_values() {
 
 #[test]
 fn export_import_preserves_all_value_types() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let id = db.create_node(&["Test"]);
     db.set_node_property(id, "str_val", Value::String("hello".into()));
     db.set_node_property(id, "int_val", Value::Int64(42));
@@ -273,7 +273,7 @@ fn export_import_preserves_all_value_types() {
     );
 
     let bytes = db.export_snapshot().unwrap();
-    let restored = GrafeoDB::import_snapshot(&bytes).unwrap();
+    let restored = ObrainDB::import_snapshot(&bytes).unwrap();
 
     let session = restored.session();
     let result = session
@@ -295,7 +295,7 @@ fn export_import_preserves_all_value_types() {
 
 #[test]
 fn export_import_preserves_collection_values() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let id = db.create_node(&["Test"]);
     db.set_node_property(
         id,
@@ -304,7 +304,7 @@ fn export_import_preserves_collection_values() {
     );
 
     let bytes = db.export_snapshot().unwrap();
-    let restored = GrafeoDB::import_snapshot(&bytes).unwrap();
+    let restored = ObrainDB::import_snapshot(&bytes).unwrap();
 
     let session = restored.session();
     let result = session.execute("MATCH (t:Test) RETURN t.tags").unwrap();
@@ -319,7 +319,7 @@ fn export_import_preserves_collection_values() {
 
 #[test]
 fn export_import_preserves_multiple_edge_types() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let a = db.create_node(&["Person"]);
     let b = db.create_node(&["Person"]);
     let c = db.create_node(&["Company"]);
@@ -329,7 +329,7 @@ fn export_import_preserves_multiple_edge_types() {
     db.create_edge(b, c, "WORKS_AT");
 
     let bytes = db.export_snapshot().unwrap();
-    let restored = GrafeoDB::import_snapshot(&bytes).unwrap();
+    let restored = ObrainDB::import_snapshot(&bytes).unwrap();
 
     assert_eq!(restored.node_count(), 3);
     assert_eq!(restored.edge_count(), 3);
@@ -348,12 +348,12 @@ fn export_import_preserves_multiple_edge_types() {
 
 #[test]
 fn export_import_preserves_empty_property_nodes() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     db.create_node(&["Empty"]);
     db.create_node(&["Empty"]);
 
     let bytes = db.export_snapshot().unwrap();
-    let restored = GrafeoDB::import_snapshot(&bytes).unwrap();
+    let restored = ObrainDB::import_snapshot(&bytes).unwrap();
 
     assert_eq!(restored.node_count(), 2);
 
@@ -366,7 +366,7 @@ fn export_import_preserves_empty_property_nodes() {
 
 #[test]
 fn export_import_moderate_dataset() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     // Create 100 nodes with properties
     let mut ids = Vec::new();
@@ -385,7 +385,7 @@ fn export_import_moderate_dataset() {
     let bytes = db.export_snapshot().unwrap();
     assert!(!bytes.is_empty());
 
-    let restored = GrafeoDB::import_snapshot(&bytes).unwrap();
+    let restored = ObrainDB::import_snapshot(&bytes).unwrap();
 
     assert_eq!(restored.node_count(), 100);
     assert_eq!(restored.edge_count(), 50);
@@ -403,7 +403,7 @@ fn export_import_moderate_dataset() {
 
 #[test]
 fn import_rejects_empty_bytes() {
-    let result = GrafeoDB::import_snapshot(&[]);
+    let result = ObrainDB::import_snapshot(&[]);
     assert!(result.is_err());
 }
 
@@ -413,7 +413,7 @@ fn import_rejects_empty_bytes() {
 fn import_rejects_unsupported_version() {
     // Export a valid snapshot, then tamper with the version byte to trigger the
     // "unsupported snapshot version" error path.
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
@@ -422,7 +422,7 @@ fn import_rejects_unsupported_version() {
     // a u8 field is the version byte itself.
     bytes[0] = 99; // Set to invalid version
 
-    let result = GrafeoDB::import_snapshot(&bytes);
+    let result = ObrainDB::import_snapshot(&bytes);
     match result {
         Ok(_) => panic!("Expected error for tampered snapshot"),
         Err(e) => {
@@ -441,7 +441,7 @@ fn import_rejects_unsupported_version() {
 
 #[test]
 fn double_export_is_deterministic() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
@@ -456,14 +456,14 @@ fn double_export_is_deterministic() {
 fn import_rejects_dangling_edge_source() {
     // Create a valid snapshot, then re-export after deleting the source node
     // to create a snapshot with a dangling edge reference.
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let a = db.create_node(&["Person"]);
     let b = db.create_node(&["Person"]);
     db.create_edge(a, b, "KNOWS");
 
     // Export valid snapshot
     let bytes = db.export_snapshot().unwrap();
-    let restored = GrafeoDB::import_snapshot(&bytes).unwrap();
+    let restored = ObrainDB::import_snapshot(&bytes).unwrap();
     assert_eq!(restored.edge_count(), 1);
 
     // Now create a corrupted snapshot by exporting nodes only from a db
@@ -472,21 +472,21 @@ fn import_rejects_dangling_edge_source() {
     // The simplest way: delete a node, re-export (edge still exists in store)
     // Actually, let's tamper with binary data at a higher level:
     // Build a snapshot where edge references node ID 999 which doesn't exist.
-    let db2 = GrafeoDB::new_in_memory();
+    let db2 = ObrainDB::new_in_memory();
     let n = db2.create_node(&["Person"]);
     // Create an edge referencing a non-existent source node
     // We need to use the direct store API since create_edge validates at a higher level
     db2.store()
         .create_edge_with_id(
-            grafeo_common::types::EdgeId::new(0),
-            grafeo_common::types::NodeId::new(999), // doesn't exist
+            obrain_common::types::EdgeId::new(0),
+            obrain_common::types::NodeId::new(999), // doesn't exist
             n,
             "KNOWS",
         )
         .unwrap();
 
     let bytes = db2.export_snapshot().unwrap();
-    let result = GrafeoDB::import_snapshot(&bytes);
+    let result = ObrainDB::import_snapshot(&bytes);
     match result {
         Ok(_) => panic!("Expected error for dangling source node"),
         Err(e) => {
@@ -501,19 +501,19 @@ fn import_rejects_dangling_edge_source() {
 
 #[test]
 fn import_rejects_dangling_edge_destination() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let n = db.create_node(&["Person"]);
     db.store()
         .create_edge_with_id(
-            grafeo_common::types::EdgeId::new(0),
+            obrain_common::types::EdgeId::new(0),
             n,
-            grafeo_common::types::NodeId::new(999), // doesn't exist
+            obrain_common::types::NodeId::new(999), // doesn't exist
             "KNOWS",
         )
         .unwrap();
 
     let bytes = db.export_snapshot().unwrap();
-    let result = GrafeoDB::import_snapshot(&bytes);
+    let result = ObrainDB::import_snapshot(&bytes);
     match result {
         Ok(_) => panic!("Expected error for dangling destination node"),
         Err(e) => {
@@ -545,7 +545,7 @@ fn import_rejects_duplicate_node_ids() {
         vec![],
     );
     let bytes = encode_snapshot(&snap);
-    let result = GrafeoDB::import_snapshot(&bytes);
+    let result = ObrainDB::import_snapshot(&bytes);
     match result {
         Ok(_) => panic!("Expected error for duplicate node ID"),
         Err(e) => {
@@ -592,7 +592,7 @@ fn import_rejects_duplicate_edge_ids() {
         ],
     );
     let bytes = encode_snapshot(&snap);
-    let result = GrafeoDB::import_snapshot(&bytes);
+    let result = ObrainDB::import_snapshot(&bytes);
     match result {
         Ok(_) => panic!("Expected error for duplicate edge ID"),
         Err(e) => {
@@ -611,7 +611,7 @@ fn import_rejects_duplicate_edge_ids() {
 
 #[test]
 fn export_import_preserves_named_graphs() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
@@ -622,7 +622,7 @@ fn export_import_preserves_named_graphs() {
         .unwrap();
 
     let bytes = db.export_snapshot().unwrap();
-    let restored = GrafeoDB::import_snapshot(&bytes).unwrap();
+    let restored = ObrainDB::import_snapshot(&bytes).unwrap();
 
     // Default graph
     assert_eq!(restored.node_count(), 1);
@@ -643,7 +643,7 @@ fn export_import_preserves_named_graphs() {
 
 #[test]
 fn export_import_preserves_multiple_named_graphs() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session.execute("CREATE GRAPH alpha").unwrap();
@@ -659,7 +659,7 @@ fn export_import_preserves_multiple_named_graphs() {
     session.execute("INSERT (:City {name: 'Berlin'})").unwrap();
 
     let bytes = db.export_snapshot().unwrap();
-    let restored = GrafeoDB::import_snapshot(&bytes).unwrap();
+    let restored = ObrainDB::import_snapshot(&bytes).unwrap();
 
     let session2 = restored.session();
 
@@ -679,7 +679,7 @@ fn export_import_preserves_multiple_named_graphs() {
 
 #[test]
 fn restore_snapshot_includes_named_graphs() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
@@ -722,7 +722,7 @@ fn import_v1_snapshot_is_rejected() {
     );
     let bytes = encode_snapshot(&snap);
 
-    let result = GrafeoDB::import_snapshot(&bytes);
+    let result = ObrainDB::import_snapshot(&bytes);
     assert!(result.is_err(), "V1 snapshots should be rejected");
     let err = result.err().unwrap().to_string();
     assert!(
@@ -733,7 +733,7 @@ fn import_v1_snapshot_is_rejected() {
 
 #[test]
 fn to_memory_copies_named_graphs() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
@@ -769,11 +769,11 @@ fn to_memory_copies_named_graphs() {
 
 #[cfg(all(feature = "sparql", feature = "rdf"))]
 mod rdf_snapshots {
-    use grafeo_common::types::Value;
-    use grafeo_engine::{Config, GrafeoDB, GraphModel};
+    use obrain_common::types::Value;
+    use obrain_engine::{Config, ObrainDB, GraphModel};
 
-    fn rdf_db() -> GrafeoDB {
-        GrafeoDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap()
+    fn rdf_db() -> ObrainDB {
+        ObrainDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap()
     }
 
     #[test]
@@ -790,7 +790,7 @@ mod rdf_snapshots {
             .unwrap();
 
         let bytes = db.export_snapshot().unwrap();
-        let restored = GrafeoDB::import_snapshot(&bytes).unwrap();
+        let restored = ObrainDB::import_snapshot(&bytes).unwrap();
 
         let session2 = restored.session();
         let result = session2
@@ -817,7 +817,7 @@ mod rdf_snapshots {
             .unwrap();
 
         let bytes = db.export_snapshot().unwrap();
-        let restored = GrafeoDB::import_snapshot(&bytes).unwrap();
+        let restored = ObrainDB::import_snapshot(&bytes).unwrap();
 
         let session2 = restored.session();
 
@@ -936,7 +936,7 @@ mod rdf_snapshots {
             .unwrap();
 
         let bytes = db.export_snapshot().unwrap();
-        let restored = GrafeoDB::import_snapshot(&bytes).unwrap();
+        let restored = ObrainDB::import_snapshot(&bytes).unwrap();
 
         let session2 = restored.session();
         let result = session2
@@ -959,7 +959,7 @@ fn import_unknown_snapshot_version_returns_clear_error() {
     // Craft a snapshot with version 99 (unknown future version)
     let snap = TestSnapshot::new(99, vec![], vec![]);
     let bytes = encode_snapshot(&snap);
-    let result = GrafeoDB::import_snapshot(&bytes);
+    let result = ObrainDB::import_snapshot(&bytes);
     match result {
         Err(e) => {
             let err = e.to_string();
@@ -974,13 +974,13 @@ fn import_unknown_snapshot_version_returns_clear_error() {
 
 #[test]
 fn import_truncated_snapshot_returns_error() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     db.create_node(&["Test"]);
     let bytes = db.export_snapshot().unwrap();
 
     // Truncate to half
     let truncated = &bytes[..bytes.len() / 2];
-    let result = GrafeoDB::import_snapshot(truncated);
+    let result = ObrainDB::import_snapshot(truncated);
     assert!(
         result.is_err(),
         "importing a truncated snapshot should error"
@@ -989,6 +989,6 @@ fn import_truncated_snapshot_returns_error() {
 
 #[test]
 fn import_empty_bytes_returns_error() {
-    let result = GrafeoDB::import_snapshot(&[]);
+    let result = ObrainDB::import_snapshot(&[]);
     assert!(result.is_err(), "importing empty bytes should error");
 }

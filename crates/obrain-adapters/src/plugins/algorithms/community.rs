@@ -6,13 +6,13 @@
 use std::collections::VecDeque;
 use std::sync::OnceLock;
 
-use grafeo_common::types::{NodeId, Value};
-use grafeo_common::utils::error::Result;
-use grafeo_common::utils::hash::{FxHashMap, FxHashSet};
-use grafeo_core::graph::Direction;
-use grafeo_core::graph::GraphStore;
+use obrain_common::types::{NodeId, Value};
+use obrain_common::utils::error::Result;
+use obrain_common::utils::hash::{FxHashMap, FxHashSet};
+use obrain_core::graph::Direction;
+use obrain_core::graph::GraphStore;
 #[cfg(test)]
-use grafeo_core::graph::lpg::LpgStore;
+use obrain_core::graph::lpg::LpgStore;
 
 use super::super::{AlgorithmResult, ParameterDef, ParameterType, Parameters};
 use super::traits::{ComponentResultBuilder, GraphAlgorithm};
@@ -397,9 +397,9 @@ pub fn community_count(communities: &FxHashMap<NodeId, u64>) -> usize {
 /// # Example
 ///
 /// ```
-/// use grafeo_core::graph::lpg::LpgStore;
-/// use grafeo_core::graph::GraphStore;
-/// use grafeo_adapters::plugins::algorithms::leiden;
+/// use obrain_core::graph::lpg::LpgStore;
+/// use obrain_core::graph::GraphStore;
+/// use obrain_adapters::plugins::algorithms::leiden;
 ///
 /// let store = LpgStore::new().unwrap();
 /// let n0 = store.create_node(&["Node"]);
@@ -969,7 +969,7 @@ fn leiden_params() -> &'static [ParameterDef] {
 /// Leiden community detection algorithm wrapper.
 ///
 /// Implements [`GraphAlgorithm`] for registration in the procedure registry.
-/// Callable via `CALL grafeo.leiden({resolution: 1.0, gamma: 0.01}) YIELD node, community`.
+/// Callable via `CALL obrain.leiden({resolution: 1.0, gamma: 0.01}) YIELD node, community`.
 ///
 /// See [`leiden()`] for algorithm details.
 pub struct LeidenAlgorithm;

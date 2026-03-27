@@ -3,16 +3,16 @@
 //! Performance benchmarks similar to Memgraph vs Neo4j comparisons.
 //! Tests insertion throughput, traversal performance, and query patterns.
 //!
-//! Run with: cargo test -p grafeo-engine --release -- graph_benchmarks --nocapture
+//! Run with: cargo test -p obrain-engine --release -- graph_benchmarks --nocapture
 //!
 //! Some heavy benchmarks are marked `#[ignore]` to keep default `cargo test` fast.
 //! To run all benchmarks including heavy ones:
-//!   cargo test -p grafeo-engine --release -- graph_benchmarks --nocapture --include-ignored
+//!   cargo test -p obrain-engine --release -- graph_benchmarks --nocapture --include-ignored
 
 use std::time::{Duration, Instant};
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 // ============================================================================
 // Benchmark Configuration
@@ -107,7 +107,7 @@ fn print_header(section: &str) {
 fn bench_bulk_node_insertion() {
     print_header("BULK NODE INSERTION BENCHMARKS");
 
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // Warmup
@@ -126,7 +126,7 @@ fn bench_bulk_node_insertion() {
     print_result("Simple nodes (1 property)", NODE_COUNT, duration);
 
     // Benchmark: Nodes with multiple properties
-    let db2 = GrafeoDB::new_in_memory();
+    let db2 = ObrainDB::new_in_memory();
     let session2 = db2.session();
 
     let start = Instant::now();
@@ -144,7 +144,7 @@ fn bench_bulk_node_insertion() {
     print_result("Nodes with 5 properties", NODE_COUNT, duration);
 
     // Benchmark: Multiple labels
-    let db3 = GrafeoDB::new_in_memory();
+    let db3 = ObrainDB::new_in_memory();
     let session3 = db3.session();
 
     let start = Instant::now();
@@ -172,7 +172,7 @@ fn bench_bulk_edge_insertion() {
     print_header("BULK EDGE INSERTION BENCHMARKS");
 
     // First, create nodes
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let node_count = EDGE_NODES; // Use fewer nodes for edge tests
@@ -201,7 +201,7 @@ fn bench_bulk_edge_insertion() {
     print_result("Simple edges (KNOWS)", edge_count, duration);
 
     // Benchmark: Edges with properties
-    let db2 = GrafeoDB::new_in_memory();
+    let db2 = ObrainDB::new_in_memory();
     let session2 = db2.session();
 
     for i in 0..node_count {
@@ -237,7 +237,7 @@ fn bench_graph_traversals() {
     print_header("GRAPH TRAVERSAL BENCHMARKS");
 
     // Create a scale-free-like graph
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let node_count = TRAVERSAL_NODES;
@@ -375,7 +375,7 @@ fn bench_graph_traversals() {
 fn bench_filtering() {
     print_header("FILTERING AND PREDICATE BENCHMARKS");
 
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let node_count = FILTER_NODES;
@@ -504,7 +504,7 @@ fn bench_filtering() {
 fn bench_aggregations() {
     print_header("AGGREGATION BENCHMARKS");
 
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let node_count = AGGREGATION_NODES;
@@ -606,7 +606,7 @@ fn bench_aggregations() {
 fn bench_point_lookups() {
     print_header("POINT LOOKUP BENCHMARKS");
 
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let node_count = LOOKUP_NODES;
@@ -707,7 +707,7 @@ fn bench_point_lookups() {
 fn bench_pattern_matching() {
     print_header("PATTERN MATCHING BENCHMARKS");
 
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let node_count = PATTERN_NODES;
@@ -788,7 +788,7 @@ fn bench_pattern_matching() {
 fn bench_mixed_workload() {
     print_header("MIXED WORKLOAD BENCHMARK (OLTP-like)");
 
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let initial_nodes = MIXED_NODES;
@@ -914,7 +914,7 @@ fn bench_concurrent_reads() {
 
     print_header("CONCURRENT READ BENCHMARKS");
 
-    let db = Arc::new(GrafeoDB::new_in_memory());
+    let db = Arc::new(ObrainDB::new_in_memory());
     let node_count = CONCURRENT_NODES;
 
     println!("  Setting up {} nodes...", node_count);
@@ -999,11 +999,11 @@ fn bench_summary() {
     println!("  - Large scale:  {} nodes", LARGE_SCALE);
     println!("  - Edge multiplier: {}x", EDGE_MULTIPLIER);
     println!("\n  Run individual benchmarks with:");
-    println!("    cargo test -p grafeo-engine --release -- bench_ --nocapture");
+    println!("    cargo test -p obrain-engine --release -- bench_ --nocapture");
     println!("\n  Run fast benchmarks only (default):");
-    println!("    cargo test -p grafeo-engine --release -- graph_benchmarks --nocapture");
+    println!("    cargo test -p obrain-engine --release -- graph_benchmarks --nocapture");
     println!("\n  Run ALL benchmarks including heavy ones:");
     println!(
-        "    cargo test -p grafeo-engine --release -- graph_benchmarks --nocapture --include-ignored"
+        "    cargo test -p obrain-engine --release -- graph_benchmarks --nocapture --include-ignored"
     );
 }

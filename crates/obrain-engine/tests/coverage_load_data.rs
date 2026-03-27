@@ -3,15 +3,15 @@
 //! Targets: load_data.rs (61.77%), parser.rs LOAD DATA syntax
 //!
 //! ```bash
-//! cargo test -p grafeo-engine --features full --test coverage_load_data
+//! cargo test -p obrain-engine --features full --test coverage_load_data
 //! ```
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 use std::io::Write;
 
 fn temp_file(name: &str, content: &str) -> String {
-    let dir = std::env::temp_dir().join("grafeo_test_load");
+    let dir = std::env::temp_dir().join("obrain_test_load");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(name);
     let mut f = std::fs::File::create(&path).unwrap();
@@ -27,7 +27,7 @@ fn temp_file(name: &str, content: &str) -> String {
 fn test_csv_with_utf8_bom() {
     let csv = "\u{feff}name,score\nAlix,95\nGus,88";
     let path = temp_file("bom_test.csv", csv);
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let r = session
         .execute(&format!(
@@ -47,7 +47,7 @@ fn test_csv_with_utf8_bom() {
 fn test_csv_without_headers_returns_list() {
     let csv = "Alix,30\nGus,25\n";
     let path = temp_file("no_headers.csv", csv);
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let r = session
         .execute(&format!(
@@ -66,7 +66,7 @@ fn test_csv_without_headers_returns_list() {
 fn test_csv_windows_line_endings() {
     let csv = "name,city\r\nAlix,Amsterdam\r\nGus,Berlin\r\n";
     let path = temp_file("crlf.csv", csv);
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let r = session
         .execute(&format!(
@@ -85,7 +85,7 @@ fn test_csv_windows_line_endings() {
 fn test_csv_quoted_commas() {
     let csv = "name,bio\n\"Alix\",\"likes cats, dogs\"\n\"Gus\",\"quiet\"\n";
     let path = temp_file("quoted.csv", csv);
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let r = session
         .execute(&format!(
@@ -103,7 +103,7 @@ fn test_csv_quoted_commas() {
 fn test_csv_headers_only() {
     let csv = "name,age\n";
     let path = temp_file("empty_data.csv", csv);
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let r = session
         .execute(&format!(
@@ -121,7 +121,7 @@ fn test_csv_headers_only() {
 fn test_csv_pipe_delimiter() {
     let csv = "name|score\nAlix|100\nGus|85\n";
     let path = temp_file("pipe.csv", csv);
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let r = session
         .execute(&format!(
@@ -140,7 +140,7 @@ fn test_csv_pipe_delimiter() {
 fn test_csv_semicolon_delimiter() {
     let csv = "name;city\nAlix;Amsterdam\nGus;Berlin\n";
     let path = temp_file("semicolon.csv", csv);
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let r = session
         .execute(&format!(
@@ -160,7 +160,7 @@ fn test_csv_semicolon_delimiter() {
 fn test_jsonl_blank_lines() {
     let jsonl = "{\"name\":\"Alix\"}\n\n{\"name\":\"Gus\"}\n\n";
     let path = temp_file("blanks.jsonl", jsonl);
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let r = session
         .execute(&format!(
@@ -179,7 +179,7 @@ fn test_jsonl_blank_lines() {
 fn test_jsonl_nested_objects() {
     let jsonl = "{\"name\":\"Alix\",\"address\":{\"city\":\"Amsterdam\",\"zip\":\"1011\"}}\n";
     let path = temp_file("nested.jsonl", jsonl);
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let r = session
         .execute(&format!(
@@ -199,7 +199,7 @@ fn test_jsonl_nested_objects() {
 fn test_jsonl_arrays() {
     let jsonl = "{\"name\":\"Alix\",\"tags\":[\"rust\",\"graph\"]}\n";
     let path = temp_file("arrays.jsonl", jsonl);
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let r = session
         .execute(&format!(
@@ -218,7 +218,7 @@ fn test_jsonl_arrays() {
 fn test_jsonl_null_and_bool() {
     let jsonl = "{\"name\":\"Alix\",\"active\":true,\"note\":null}\n{\"name\":\"Gus\",\"active\":false,\"note\":\"hello\"}\n";
     let path = temp_file("null_bool.jsonl", jsonl);
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let r = session
         .execute(&format!(
@@ -237,7 +237,7 @@ fn test_jsonl_null_and_bool() {
 
 #[test]
 fn test_load_data_file_not_found() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let r = session.execute(
         "LOAD DATA FROM '/does/not/exist/data.csv' FORMAT CSV WITH HEADERS AS row RETURN row",
@@ -253,7 +253,7 @@ fn test_load_data_file_not_found() {
 fn test_csv_insert_nodes() {
     let csv = "name,age\nVincent,40\nJules,35\n";
     let path = temp_file("insert_nodes.csv", csv);
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute(&format!(
@@ -277,7 +277,7 @@ fn test_csv_insert_nodes() {
 fn test_ndjson_alias() {
     let jsonl = "{\"name\":\"Mia\"}\n{\"name\":\"Butch\"}\n";
     let path = temp_file("ndjson.jsonl", jsonl);
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let r = session
         .execute(&format!(
@@ -296,7 +296,7 @@ fn test_csv_fewer_columns_than_header() {
     // Row has fewer columns than header: should still parse (missing columns become empty)
     let csv = "name,score,grade\nAlix,95\nGus,88,A";
     let path = temp_file("fewer_cols.csv", csv);
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let r = session
         .execute(&format!(
@@ -311,7 +311,7 @@ fn test_csv_more_columns_than_header() {
     // Row has more columns than header: extra columns should be handled gracefully
     let csv = "name,score\nAlix,95,extra_value\nGus,88";
     let path = temp_file("more_cols.csv", csv);
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let r = session
         .execute(&format!(
@@ -325,7 +325,7 @@ fn test_csv_more_columns_than_header() {
 fn test_csv_empty_file() {
     let csv = "";
     let path = temp_file("empty.csv", csv);
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let r = session
         .execute(&format!(
@@ -340,7 +340,7 @@ fn test_csv_empty_file() {
 fn test_jsonl_invalid_json_line() {
     let jsonl = "{\"name\":\"Alix\"}\n{invalid json}\n{\"name\":\"Gus\"}";
     let path = temp_file("invalid.jsonl", jsonl);
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let r = session.execute(&format!(
         "LOAD DATA FROM '{path}' FORMAT JSONL AS row RETURN row.name AS name"
@@ -358,7 +358,7 @@ fn test_jsonl_invalid_json_line() {
 fn test_csv_only_newlines() {
     let csv = "\n\n\n";
     let path = temp_file("only_newlines.csv", csv);
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let r = session
         .execute(&format!(

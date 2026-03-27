@@ -30,7 +30,7 @@
 //! YIELD node_id, score, signal_energy, signal_topology, signal_similarity, signal_synapse
 //! ```
 
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 use std::collections::HashMap;
 #[allow(unused_imports)]
 use std::sync::Arc;

@@ -5,19 +5,19 @@
 
 #![cfg(feature = "cognitive-engram")]
 
-use grafeo_cognitive::{
+use obrain_cognitive::{
     CognitiveConfig, CognitiveEngineBuilder, Engram, EngramMetricsCollector, EngramStore,
     InMemoryVectorIndex, VectorIndex,
 };
-use grafeo_common::types::{NodeId, Value};
-use grafeo_engine::cognitive_procedures::try_execute_cognitive_procedure;
-use grafeo_engine::query::plan::LogicalExpression;
+use obrain_common::types::{NodeId, Value};
+use obrain_engine::cognitive_procedures::try_execute_cognitive_procedure;
+use obrain_engine::query::plan::LogicalExpression;
 use std::sync::Arc;
 
 /// Helper: create a cognitive engine with the engram subsystem wired up.
-fn make_engine_with_engrams() -> Arc<dyn grafeo_cognitive::CognitiveEngine> {
-    let bus = grafeo_reactive::MutationBus::new();
-    let scheduler = grafeo_reactive::Scheduler::new(&bus, grafeo_reactive::BatchConfig::default());
+fn make_engine_with_engrams() -> Arc<dyn obrain_cognitive::CognitiveEngine> {
+    let bus = obrain_reactive::MutationBus::new();
+    let scheduler = obrain_reactive::Scheduler::new(&bus, obrain_reactive::BatchConfig::default());
     let mut config = CognitiveConfig::new();
     config.energy.enabled = true;
     let mut engine = CognitiveEngineBuilder::from_config(&config).build(&scheduler);
@@ -54,13 +54,13 @@ fn make_engine_with_engrams() -> Arc<dyn grafeo_cognitive::CognitiveEngine> {
 }
 
 // ---------------------------------------------------------------------------
-// CALL grafeo.engrams.list() — Cypher syntax
+// CALL obrain.engrams.list() — Cypher syntax
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn engrams_list_returns_all_engrams_cypher() {
     let engine = make_engine_with_engrams();
-    let result = try_execute_cognitive_procedure("grafeo.engrams.list", &[], &engine);
+    let result = try_execute_cognitive_procedure("obrain.engrams.list", &[], &engine);
     assert!(result.is_ok());
     let algo_result = result.unwrap().unwrap();
 
@@ -72,7 +72,7 @@ async fn engrams_list_returns_all_engrams_cypher() {
 }
 
 // ---------------------------------------------------------------------------
-// CALL grafeo.engrams.list() — GQL syntax (same dispatch)
+// CALL obrain.engrams.list() — GQL syntax (same dispatch)
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -86,14 +86,14 @@ async fn engrams_list_returns_all_engrams_gql() {
 }
 
 // ---------------------------------------------------------------------------
-// CALL grafeo.engrams.inspect(id) — Cypher syntax
+// CALL obrain.engrams.inspect(id) — Cypher syntax
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn engrams_inspect_returns_full_detail_cypher() {
     let engine = make_engine_with_engrams();
     let args = vec![LogicalExpression::Literal(Value::Int64(1))];
-    let result = try_execute_cognitive_procedure("grafeo.engrams.inspect", &args, &engine);
+    let result = try_execute_cognitive_procedure("obrain.engrams.inspect", &args, &engine);
     assert!(result.is_ok());
     let algo_result = result.unwrap().unwrap();
 
@@ -106,7 +106,7 @@ async fn engrams_inspect_returns_full_detail_cypher() {
 async fn engrams_inspect_returns_empty_for_nonexistent() {
     let engine = make_engine_with_engrams();
     let args = vec![LogicalExpression::Literal(Value::Int64(9999))];
-    let result = try_execute_cognitive_procedure("grafeo.engrams.inspect", &args, &engine);
+    let result = try_execute_cognitive_procedure("obrain.engrams.inspect", &args, &engine);
     assert!(result.is_ok());
     let algo_result = result.unwrap().unwrap();
     assert_eq!(algo_result.rows.len(), 0);
@@ -115,12 +115,12 @@ async fn engrams_inspect_returns_empty_for_nonexistent() {
 #[tokio::test]
 async fn engrams_inspect_rejects_missing_args() {
     let engine = make_engine_with_engrams();
-    let result = try_execute_cognitive_procedure("grafeo.engrams.inspect", &[], &engine);
+    let result = try_execute_cognitive_procedure("obrain.engrams.inspect", &[], &engine);
     assert!(result.is_err());
 }
 
 // ---------------------------------------------------------------------------
-// CALL grafeo.engrams.inspect(id) — GQL syntax
+// CALL obrain.engrams.inspect(id) — GQL syntax
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -134,7 +134,7 @@ async fn engrams_inspect_gql() {
 }
 
 // ---------------------------------------------------------------------------
-// CALL grafeo.engrams.forget(id) — Cypher syntax (RGPD)
+// CALL obrain.engrams.forget(id) — Cypher syntax (RGPD)
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -143,14 +143,14 @@ async fn engrams_forget_removes_engram_cypher() {
 
     // Verify the engram exists first
     let args_inspect = vec![LogicalExpression::Literal(Value::Int64(1))];
-    let before = try_execute_cognitive_procedure("grafeo.engrams.inspect", &args_inspect, &engine)
+    let before = try_execute_cognitive_procedure("obrain.engrams.inspect", &args_inspect, &engine)
         .unwrap()
         .unwrap();
     assert_eq!(before.rows.len(), 1, "engram 1 should exist before forget");
 
     // Forget it
     let args = vec![LogicalExpression::Literal(Value::Int64(1))];
-    let result = try_execute_cognitive_procedure("grafeo.engrams.forget", &args, &engine);
+    let result = try_execute_cognitive_procedure("obrain.engrams.forget", &args, &engine);
     assert!(result.is_ok());
     let algo_result = result.unwrap().unwrap();
 
@@ -162,7 +162,7 @@ async fn engrams_forget_removes_engram_cypher() {
     assert_eq!(algo_result.rows[0][1], Value::from("forgotten"));
 
     // Verify it's gone
-    let after = try_execute_cognitive_procedure("grafeo.engrams.inspect", &args_inspect, &engine)
+    let after = try_execute_cognitive_procedure("obrain.engrams.inspect", &args_inspect, &engine)
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -172,7 +172,7 @@ async fn engrams_forget_removes_engram_cypher() {
     );
 
     // List should now have 2 engrams
-    let list = try_execute_cognitive_procedure("grafeo.engrams.list", &[], &engine)
+    let list = try_execute_cognitive_procedure("obrain.engrams.list", &[], &engine)
         .unwrap()
         .unwrap();
     assert_eq!(list.rows.len(), 2);
@@ -182,7 +182,7 @@ async fn engrams_forget_removes_engram_cypher() {
 async fn engrams_forget_nonexistent_returns_not_found() {
     let engine = make_engine_with_engrams();
     let args = vec![LogicalExpression::Literal(Value::Int64(9999))];
-    let result = try_execute_cognitive_procedure("grafeo.engrams.forget", &args, &engine);
+    let result = try_execute_cognitive_procedure("obrain.engrams.forget", &args, &engine);
     assert!(result.is_ok());
     let algo_result = result.unwrap().unwrap();
     assert_eq!(algo_result.rows[0][1], Value::from("not_found"));
@@ -191,12 +191,12 @@ async fn engrams_forget_nonexistent_returns_not_found() {
 #[tokio::test]
 async fn engrams_forget_rejects_missing_args() {
     let engine = make_engine_with_engrams();
-    let result = try_execute_cognitive_procedure("grafeo.engrams.forget", &[], &engine);
+    let result = try_execute_cognitive_procedure("obrain.engrams.forget", &[], &engine);
     assert!(result.is_err());
 }
 
 // ---------------------------------------------------------------------------
-// CALL grafeo.engrams.forget(id) — GQL syntax
+// CALL obrain.engrams.forget(id) — GQL syntax
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -210,13 +210,13 @@ async fn engrams_forget_gql() {
 }
 
 // ---------------------------------------------------------------------------
-// CALL grafeo.cognitive.metrics() — Cypher syntax
+// CALL obrain.cognitive.metrics() — Cypher syntax
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn cognitive_metrics_returns_all_fields_cypher() {
     let engine = make_engine_with_engrams();
-    let result = try_execute_cognitive_procedure("grafeo.cognitive.metrics", &[], &engine);
+    let result = try_execute_cognitive_procedure("obrain.cognitive.metrics", &[], &engine);
     assert!(result.is_ok());
     let algo_result = result.unwrap().unwrap();
 
@@ -233,7 +233,7 @@ async fn cognitive_metrics_returns_all_fields_cypher() {
 }
 
 // ---------------------------------------------------------------------------
-// CALL grafeo.cognitive.metrics() — GQL syntax
+// CALL obrain.cognitive.metrics() — GQL syntax
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -253,6 +253,6 @@ async fn cognitive_metrics_gql() {
 #[tokio::test]
 async fn unknown_procedure_returns_none() {
     let engine = make_engine_with_engrams();
-    let result = try_execute_cognitive_procedure("grafeo.engrams.unknown", &[], &engine).unwrap();
+    let result = try_execute_cognitive_procedure("obrain.engrams.unknown", &[], &engine).unwrap();
     assert!(result.is_none());
 }

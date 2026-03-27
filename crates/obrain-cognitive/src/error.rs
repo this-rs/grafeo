@@ -27,7 +27,7 @@ pub enum CognitiveError {
 
     /// Error propagated from the reactive substrate.
     #[error("reactive error: {0}")]
-    Reactive(#[from] grafeo_reactive::ReactiveError),
+    Reactive(#[from] obrain_reactive::ReactiveError),
 }
 
 /// Result type alias for cognitive operations.

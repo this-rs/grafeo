@@ -10,7 +10,7 @@ use std::os::raw::c_char;
 /// Status codes returned by C FFI functions.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GrafeoStatus {
+pub enum ObrainStatus {
     Ok = 0,
     ErrorDatabase = 1,
     ErrorQuery = 2,
@@ -23,17 +23,17 @@ pub enum GrafeoStatus {
     ErrorInvalidUtf8 = 9,
 }
 
-impl From<&grafeo_common::utils::error::Error> for GrafeoStatus {
-    fn from(err: &grafeo_common::utils::error::Error) -> Self {
-        use grafeo_bindings_common::error::{ErrorCategory, classify_error};
+impl From<&obrain_common::utils::error::Error> for ObrainStatus {
+    fn from(err: &obrain_common::utils::error::Error) -> Self {
+        use obrain_bindings_common::error::{ErrorCategory, classify_error};
         match classify_error(err) {
-            ErrorCategory::Query => GrafeoStatus::ErrorQuery,
-            ErrorCategory::Transaction => GrafeoStatus::ErrorTransaction,
-            ErrorCategory::Storage => GrafeoStatus::ErrorStorage,
-            ErrorCategory::Io => GrafeoStatus::ErrorIo,
-            ErrorCategory::Serialization => GrafeoStatus::ErrorSerialization,
-            ErrorCategory::Internal => GrafeoStatus::ErrorInternal,
-            ErrorCategory::Database => GrafeoStatus::ErrorDatabase,
+            ErrorCategory::Query => ObrainStatus::ErrorQuery,
+            ErrorCategory::Transaction => ObrainStatus::ErrorTransaction,
+            ErrorCategory::Storage => ObrainStatus::ErrorStorage,
+            ErrorCategory::Io => ObrainStatus::ErrorIo,
+            ErrorCategory::Serialization => ObrainStatus::ErrorSerialization,
+            ErrorCategory::Internal => ObrainStatus::ErrorInternal,
+            ErrorCategory::Database => ObrainStatus::ErrorDatabase,
         }
     }
 }
@@ -42,18 +42,18 @@ thread_local! {
     static LAST_ERROR: RefCell<Option<CString>> = const { RefCell::new(None) };
 }
 
-/// Store an error message for later retrieval via [`grafeo_last_error`].
+/// Store an error message for later retrieval via [`obrain_last_error`].
 pub fn set_last_error(msg: &str) {
     LAST_ERROR.with(|cell| {
         *cell.borrow_mut() = CString::new(msg).ok();
     });
 }
 
-/// Store an error from a [`grafeo_common::utils::error::Error`] and return
+/// Store an error from a [`obrain_common::utils::error::Error`] and return
 /// the corresponding status code.
-pub fn set_error(err: &grafeo_common::utils::error::Error) -> GrafeoStatus {
+pub fn set_error(err: &obrain_common::utils::error::Error) -> ObrainStatus {
     set_last_error(&err.to_string());
-    GrafeoStatus::from(err)
+    ObrainStatus::from(err)
 }
 
 /// Returns the last error message, or null if no error.
@@ -61,7 +61,7 @@ pub fn set_error(err: &grafeo_common::utils::error::Error) -> GrafeoStatus {
 /// The returned pointer is valid until the next FFI call on this thread.
 /// The caller must NOT free this pointer.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_last_error() -> *const c_char {
+pub extern "C" fn obrain_last_error() -> *const c_char {
     LAST_ERROR.with(|cell| {
         cell.borrow()
             .as_ref()
@@ -71,7 +71,7 @@ pub extern "C" fn grafeo_last_error() -> *const c_char {
 
 /// Clears the last error.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_clear_error() {
+pub extern "C" fn obrain_clear_error() {
     LAST_ERROR.with(|cell| {
         *cell.borrow_mut() = None;
     });
@@ -79,14 +79,14 @@ pub extern "C" fn grafeo_clear_error() {
 
 /// Extract a `&str` from a C string pointer, returning an error status if null
 /// or invalid UTF-8.
-pub fn str_from_ptr<'a>(ptr: *const c_char) -> Result<&'a str, GrafeoStatus> {
+pub fn str_from_ptr<'a>(ptr: *const c_char) -> Result<&'a str, ObrainStatus> {
     if ptr.is_null() {
         set_last_error("Null string pointer");
-        return Err(GrafeoStatus::ErrorNullPointer);
+        return Err(ObrainStatus::ErrorNullPointer);
     }
     // SAFETY: Caller guarantees ptr is a valid, null-terminated C string.
     unsafe { CStr::from_ptr(ptr) }.to_str().map_err(|_| {
         set_last_error("Invalid UTF-8 in string");
-        GrafeoStatus::ErrorInvalidUtf8
+        ObrainStatus::ErrorInvalidUtf8
     })
 }

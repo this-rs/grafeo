@@ -1,17 +1,17 @@
-//! Cognitive UDF implementations — `grafeo.energy()`, `grafeo.risk()`, `grafeo.synapses()`.
+//! Cognitive UDF implementations — `obrain.energy()`, `obrain.risk()`, `obrain.synapses()`.
 //!
-//! These UDFs bridge the `grafeo-cognitive` stores with the query engine's UDF
+//! These UDFs bridge the `obrain-cognitive` stores with the query engine's UDF
 //! registry. They are registered when the `cognitive` feature flag is active.
 
-use grafeo_adapters::plugins::UserDefinedFunction;
-use grafeo_cognitive::CognitiveEngine;
-use grafeo_common::types::{NodeId, PropertyKey, Value};
-use grafeo_common::utils::error::{Error, Result};
+use obrain_adapters::plugins::UserDefinedFunction;
+use obrain_cognitive::CognitiveEngine;
+use obrain_common::types::{NodeId, PropertyKey, Value};
+use obrain_common::utils::error::{Error, Result};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
-// grafeo.energy(node) → Float64
+// obrain.energy(node) → Float64
 // ---------------------------------------------------------------------------
 
 /// UDF that returns the current energy of a node.
@@ -28,7 +28,7 @@ impl EnergyUdf {
 
 impl UserDefinedFunction for EnergyUdf {
     fn name(&self) -> &str {
-        "grafeo.energy"
+        "obrain.energy"
     }
 
     fn description(&self) -> &str {
@@ -36,7 +36,7 @@ impl UserDefinedFunction for EnergyUdf {
     }
 
     fn evaluate(&self, args: &[Value]) -> Result<Value> {
-        let node_id = extract_node_id(args, "grafeo.energy")?;
+        let node_id = extract_node_id(args, "obrain.energy")?;
         #[cfg(feature = "cognitive")]
         {
             if let Some(store) = self.engine.energy_store() {
@@ -48,7 +48,7 @@ impl UserDefinedFunction for EnergyUdf {
 }
 
 // ---------------------------------------------------------------------------
-// grafeo.risk(node) → Float64
+// obrain.risk(node) → Float64
 // ---------------------------------------------------------------------------
 
 /// UDF that returns the risk score of a node (from fabric metrics).
@@ -65,7 +65,7 @@ impl RiskUdf {
 
 impl UserDefinedFunction for RiskUdf {
     fn name(&self) -> &str {
-        "grafeo.risk"
+        "obrain.risk"
     }
 
     fn description(&self) -> &str {
@@ -73,7 +73,7 @@ impl UserDefinedFunction for RiskUdf {
     }
 
     fn evaluate(&self, args: &[Value]) -> Result<Value> {
-        let node_id = extract_node_id(args, "grafeo.risk")?;
+        let node_id = extract_node_id(args, "obrain.risk")?;
         #[cfg(feature = "cognitive-fabric")]
         {
             if let Some(store) = self.engine.fabric_store() {
@@ -87,7 +87,7 @@ impl UserDefinedFunction for RiskUdf {
 }
 
 // ---------------------------------------------------------------------------
-// grafeo.synapses(node) → List<Map>
+// obrain.synapses(node) → List<Map>
 // ---------------------------------------------------------------------------
 
 /// UDF that returns the list of synapses connected to a node.
@@ -104,7 +104,7 @@ impl SynapsesUdf {
 
 impl UserDefinedFunction for SynapsesUdf {
     fn name(&self) -> &str {
-        "grafeo.synapses"
+        "obrain.synapses"
     }
 
     fn description(&self) -> &str {
@@ -112,7 +112,7 @@ impl UserDefinedFunction for SynapsesUdf {
     }
 
     fn evaluate(&self, args: &[Value]) -> Result<Value> {
-        let node_id = extract_node_id(args, "grafeo.synapses")?;
+        let node_id = extract_node_id(args, "obrain.synapses")?;
         #[cfg(feature = "cognitive")]
         {
             if let Some(store) = self.engine.synapse_store() {
@@ -162,11 +162,11 @@ fn extract_node_id(args: &[Value], fn_name: &str) -> Result<NodeId> {
 ///
 /// Called during database initialization when `cognitive` feature is enabled.
 pub fn register_cognitive_udfs(
-    registry: &grafeo_adapters::plugins::PluginRegistry,
+    registry: &obrain_adapters::plugins::PluginRegistry,
     engine: Arc<dyn CognitiveEngine>,
 ) {
     registry.register_udf(Arc::new(EnergyUdf::new(Arc::clone(&engine))));
     registry.register_udf(Arc::new(RiskUdf::new(Arc::clone(&engine))));
     registry.register_udf(Arc::new(SynapsesUdf::new(engine)));
-    tracing::info!("cognitive: registered UDFs (grafeo.energy, grafeo.risk, grafeo.synapses)");
+    tracing::info!("cognitive: registered UDFs (obrain.energy, obrain.risk, obrain.synapses)");
 }

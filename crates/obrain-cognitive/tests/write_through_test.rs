@@ -6,16 +6,16 @@
 
 #![cfg(feature = "cognitive-full")]
 
-use grafeo_cognitive::co_change::CoChangeConfig;
-use grafeo_cognitive::co_change::CoChangeStore;
-use grafeo_cognitive::energy::{EnergyConfig, EnergyStore};
-use grafeo_cognitive::engine::{CognitiveEngine, CognitiveEngineBuilder};
-use grafeo_cognitive::fabric::FabricStore;
-use grafeo_cognitive::synapse::{SynapseConfig, SynapseStore};
-use grafeo_common::types::PropertyKey;
-use grafeo_core::LpgStore;
-use grafeo_core::graph::GraphStoreMut;
-use grafeo_reactive::{BatchConfig, MutationBus, Scheduler};
+use obrain_cognitive::co_change::CoChangeConfig;
+use obrain_cognitive::co_change::CoChangeStore;
+use obrain_cognitive::energy::{EnergyConfig, EnergyStore};
+use obrain_cognitive::engine::{CognitiveEngine, CognitiveEngineBuilder};
+use obrain_cognitive::fabric::FabricStore;
+use obrain_cognitive::synapse::{SynapseConfig, SynapseStore};
+use obrain_common::types::PropertyKey;
+use obrain_core::LpgStore;
+use obrain_core::graph::GraphStoreMut;
+use obrain_reactive::{BatchConfig, MutationBus, Scheduler};
 use std::sync::Arc;
 use std::time::Duration;
 

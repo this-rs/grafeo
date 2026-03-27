@@ -6,18 +6,18 @@
 //!
 //! Run with:
 //! ```bash
-//! cargo test -p grafeo-engine --features full --test set_label_binding
+//! cargo test -p obrain-engine --features full --test set_label_binding
 //! ```
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn db_with_nodes(count: usize) -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn db_with_nodes(count: usize) -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     for i in 0..count {
         session
@@ -197,7 +197,7 @@ fn test_remove_label_count_star() {
 
 #[test]
 fn test_set_label_preserves_all_columns() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE (a:Person {name: 'Alice'})-[:KNOWS]->(b:Person {name: 'Bob'})")
@@ -234,7 +234,7 @@ fn test_set_label_with_where_clause() {
 
 #[test]
 fn test_merge_set_label_remove_property() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE (n:X {id: 1, foreign: 'yes'})")
@@ -306,7 +306,7 @@ fn test_set_label_on_single_node() {
 
 #[test]
 fn test_set_label_on_empty_match() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let result = session
         .execute("MATCH (n:NonExistent) SET n:Tagged RETURN count(*) AS cnt")
@@ -348,7 +348,7 @@ fn test_set_label_idempotent() {
 #[test]
 fn test_set_label_preserves_null_properties() {
     // Covers the push_value(Value::Null) branch in column copy when a property is null
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE (:Node {name: 'a'}), (:Node {name: 'b', extra: 'yes'})")
@@ -371,7 +371,7 @@ fn test_set_label_preserves_null_properties() {
 #[test]
 fn test_set_label_in_transaction() {
     // Covers the versioned label path (add_label_versioned / remove_label_versioned)
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.execute("CREATE (:Node {name: 'x'})").unwrap();
 
@@ -397,7 +397,7 @@ fn test_set_label_in_transaction() {
 #[test]
 fn test_remove_label_in_transaction() {
     // Covers remove_label_versioned path
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.execute("CREATE (:Node:Temp {name: 'y'})").unwrap();
 

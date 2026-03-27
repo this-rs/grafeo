@@ -2,13 +2,13 @@
 
 import pytest
 
-# Try to import grafeo
+# Try to import obrain
 try:
-    from grafeo import GrafeoDB
+    from obrain import ObrainDB
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
 
 def has_sparql_support(db):
@@ -24,10 +24,10 @@ def has_sparql_support(db):
 
 @pytest.fixture
 def db():
-    """Create a fresh in-memory GrafeoDB instance."""
-    if not GRAFEO_AVAILABLE:
-        pytest.skip("grafeo not installed")
-    db = GrafeoDB()
+    """Create a fresh in-memory ObrainDB instance."""
+    if not OBRAIN_AVAILABLE:
+        pytest.skip("obrain not installed")
+    db = ObrainDB()
     if not has_sparql_support(db):
         pytest.skip("SPARQL support not available in this build")
     return db
@@ -35,11 +35,11 @@ def db():
 
 @pytest.fixture
 def db_api():
-    """Create a fresh in-memory GrafeoDB instance for Python API tests.
+    """Create a fresh in-memory ObrainDB instance for Python API tests.
     This fixture does NOT require SPARQL support."""
-    if not GRAFEO_AVAILABLE:
-        pytest.skip("grafeo not installed")
-    return GrafeoDB()
+    if not OBRAIN_AVAILABLE:
+        pytest.skip("obrain not installed")
+    return ObrainDB()
 
 
 @pytest.fixture

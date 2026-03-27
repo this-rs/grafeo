@@ -24,8 +24,8 @@
 //! # Example
 //!
 //! ```
-//! use grafeo_core::index::vector::{HnswIndex, HnswConfig, DistanceMetric, VectorAccessor};
-//! use grafeo_common::types::NodeId;
+//! use obrain_core::index::vector::{HnswIndex, HnswConfig, DistanceMetric, VectorAccessor};
+//! use obrain_common::types::NodeId;
 //! use std::sync::Arc;
 //! use std::collections::HashMap;
 //!
@@ -54,7 +54,7 @@
 use super::VectorAccessor;
 use super::compute_distance;
 use crate::index::vector::HnswConfig;
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 use ordered_float::OrderedFloat;
 use parking_lot::RwLock;
 use rand::{RngExt, SeedableRng};
@@ -866,8 +866,8 @@ impl HnswIndex {
     /// # Example
     ///
     /// ```
-    /// use grafeo_core::index::vector::{HnswIndex, HnswConfig, DistanceMetric, VectorAccessor};
-    /// use grafeo_common::types::NodeId;
+    /// use obrain_core::index::vector::{HnswIndex, HnswConfig, DistanceMetric, VectorAccessor};
+    /// use obrain_common::types::NodeId;
     /// use std::sync::Arc;
     /// use std::collections::HashMap;
     ///
@@ -919,8 +919,8 @@ impl HnswIndex {
     /// # Example
     ///
     /// ```
-    /// use grafeo_core::index::vector::{HnswIndex, HnswConfig, DistanceMetric, VectorAccessor};
-    /// use grafeo_common::types::NodeId;
+    /// use obrain_core::index::vector::{HnswIndex, HnswConfig, DistanceMetric, VectorAccessor};
+    /// use obrain_common::types::NodeId;
     /// use std::sync::Arc;
     /// use std::collections::HashMap;
     ///

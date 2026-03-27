@@ -7,15 +7,15 @@
 //! - Compound predicates with remaining non-equality parts
 //! - Non-pushable expressions (kept as generic FilterOperator)
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 /// Builds a small social graph for filter tests.
 ///
 /// 5 Person nodes (Alix/NYC, Gus/NYC, Harm/London, Dave/London, Eve/Paris)
 /// 2 Company nodes (Acme, Globex)
-fn setup() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn setup() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session

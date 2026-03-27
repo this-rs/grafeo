@@ -20,7 +20,7 @@ use super::{Operator, OperatorError, OperatorResult};
 use crate::execution::DataChunk;
 use crate::graph::GraphStore;
 use crate::index::vector::{DistanceMetric, brute_force_knn};
-use grafeo_common::types::{LogicalType, NodeId, PropertyKey, Value};
+use obrain_common::types::{LogicalType, NodeId, PropertyKey, Value};
 use std::sync::Arc;
 
 #[cfg(feature = "vector-index")]

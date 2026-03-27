@@ -5,7 +5,7 @@ use crate::execution::operators::OperatorError;
 use crate::execution::operators::value_utils::compare_values;
 use crate::execution::pipeline::{ChunkSizeHint, PushOperator, Sink};
 use crate::execution::selection::SelectionVector;
-use grafeo_common::types::Value;
+use obrain_common::types::Value;
 
 /// Predicate for filtering rows.
 pub trait FilterPredicate: Send + Sync {

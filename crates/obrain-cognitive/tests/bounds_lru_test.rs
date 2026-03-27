@@ -3,9 +3,9 @@
 
 #![cfg(feature = "cognitive")]
 
-use grafeo_cognitive::energy::{EnergyConfig, EnergyStore};
-use grafeo_cognitive::synapse::{SynapseConfig, SynapseStore};
-use grafeo_common::types::NodeId;
+use obrain_cognitive::energy::{EnergyConfig, EnergyStore};
+use obrain_cognitive::synapse::{SynapseConfig, SynapseStore};
+use obrain_common::types::NodeId;
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
@@ -252,8 +252,8 @@ fn synapse_lru_eviction_caps_cache_size() {
 
 #[test]
 fn energy_lru_evicted_entry_reloaded_from_graph() {
-    use grafeo_core::LpgStore;
-    use grafeo_core::graph::GraphStoreMut;
+    use obrain_core::LpgStore;
+    use obrain_core::graph::GraphStoreMut;
 
     let graph = Arc::new(LpgStore::new().unwrap());
     let max_entries = 10;
@@ -294,7 +294,7 @@ fn energy_lru_evicted_entry_reloaded_from_graph() {
 
 #[test]
 fn cognitive_config_default_has_bounds() {
-    let config = grafeo_cognitive::config::CognitiveConfig::default();
+    let config = obrain_cognitive::config::CognitiveConfig::default();
     assert_eq!(config.energy.max_energy, 10.0);
     assert_eq!(config.synapse.max_synapse_weight, 10.0);
     assert_eq!(config.synapse.max_total_outgoing_weight, 100.0);
@@ -313,7 +313,7 @@ max_energy = 20.0
 max_synapse_weight = 15.0
 max_total_outgoing_weight = 200.0
 "#;
-    let config: grafeo_cognitive::config::CognitiveConfig = toml::from_str(toml_str).unwrap();
+    let config: obrain_cognitive::config::CognitiveConfig = toml::from_str(toml_str).unwrap();
     assert_eq!(config.energy.max_energy, 20.0);
     assert_eq!(config.synapse.max_synapse_weight, 15.0);
     assert_eq!(config.synapse.max_total_outgoing_weight, 200.0);

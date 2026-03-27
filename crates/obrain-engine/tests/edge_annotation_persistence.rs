@@ -1,21 +1,21 @@
 //! Persistence tests for EdgeAnnotator — annotations must survive close/reopen.
 //!
-//! Uses the single-file `.grafeo` format to avoid the checkpoint.meta WAL
+//! Uses the single-file `.obrain` format to avoid the checkpoint.meta WAL
 //! recovery gotcha (cf. knowledge note on WAL recovery bug).
 
-#![cfg(all(feature = "cognitive", feature = "grafeo-file"))]
+#![cfg(all(feature = "cognitive", feature = "obrain-file"))]
 
-use grafeo_cognitive::EdgeAnnotator;
-use grafeo_engine::{Config, GrafeoDB};
+use obrain_cognitive::EdgeAnnotator;
+use obrain_engine::{Config, ObrainDB};
 
 #[test]
 fn edge_annotation_persistence_across_close_reopen() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("annotations.grafeo");
+    let path = dir.path().join("annotations.obrain");
 
     // --- Phase 1: create graph, annotate, close ---
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         let a = db.create_node(&["Concept"]);
         let b = db.create_node(&["Concept"]);
         let edge = db.create_edge(a, b, "RELATED");
@@ -32,10 +32,10 @@ fn edge_annotation_persistence_across_close_reopen() {
 
     // --- Phase 2: reopen and verify annotations survived ---
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
 
         // The edge ID should be deterministic (first edge = EdgeId(0))
-        let edge = grafeo_common::types::EdgeId::new(0);
+        let edge = obrain_common::types::EdgeId::new(0);
 
         let pq = db.get_annotation(edge, "pheromone_query");
         let pe = db.get_annotation(edge, "pheromone_error");
@@ -53,11 +53,11 @@ fn edge_annotation_persistence_across_close_reopen() {
 #[test]
 fn edge_annotation_remove_persists() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("ann_remove.grafeo");
+    let path = dir.path().join("ann_remove.obrain");
 
     // --- Phase 1: annotate then remove one key ---
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         let a = db.create_node(&["X"]);
         let b = db.create_node(&["Y"]);
         let edge = db.create_edge(a, b, "LINK");
@@ -74,8 +74,8 @@ fn edge_annotation_remove_persists() {
 
     // --- Phase 2: verify removal persisted ---
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
-        let edge = grafeo_common::types::EdgeId::new(0);
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
+        let edge = obrain_common::types::EdgeId::new(0);
 
         assert_eq!(db.get_annotation(edge, "keep"), Some(1.0));
         assert_eq!(db.get_annotation(edge, "drop"), None);
@@ -87,11 +87,11 @@ fn edge_annotation_remove_persists() {
 #[test]
 fn edge_annotation_overwrite_persists() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("ann_overwrite.grafeo");
+    let path = dir.path().join("ann_overwrite.obrain");
 
     // --- Phase 1: annotate, then overwrite ---
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         let a = db.create_node(&["A"]);
         let b = db.create_node(&["B"]);
         let edge = db.create_edge(a, b, "REL");
@@ -105,8 +105,8 @@ fn edge_annotation_overwrite_persists() {
 
     // --- Phase 2: verify overwrite persisted ---
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
-        let edge = grafeo_common::types::EdgeId::new(0);
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
+        let edge = obrain_common::types::EdgeId::new(0);
 
         assert_eq!(
             db.get_annotation(edge, "strength"),

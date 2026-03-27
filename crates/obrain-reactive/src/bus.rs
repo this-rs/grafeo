@@ -20,7 +20,7 @@ const DEFAULT_CAPACITY: usize = 16_384;
 /// # Usage
 ///
 /// ```rust,no_run
-/// use grafeo_reactive::{MutationBus, MutationEvent, MutationBatch};
+/// use obrain_reactive::{MutationBus, MutationEvent, MutationBatch};
 ///
 /// let bus = MutationBus::new();
 /// let mut rx = bus.subscribe();

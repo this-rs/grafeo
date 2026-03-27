@@ -8,7 +8,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use arcstr::ArcStr;
-use grafeo_common::types::{LogicalType, Value};
+use obrain_common::types::{LogicalType, Value};
 
 use super::{Operator, OperatorError, OperatorResult};
 use crate::execution::chunk::DataChunkBuilder;

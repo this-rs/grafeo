@@ -5,13 +5,13 @@
 //!
 //! Run with:
 //! ```bash
-//! cargo test -p grafeo-engine --features sql-pgq --test sql_pgq
+//! cargo test -p obrain-engine --features sql-pgq --test sql_pgq
 //! ```
 
 #![cfg(feature = "sql-pgq")]
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 // ============================================================================
 // Test Fixtures
@@ -23,8 +23,8 @@ use grafeo_engine::GrafeoDB;
 /// - Alix (Person, age: 30) -KNOWS-> Gus (Person, age: 25)
 /// - Alix -KNOWS-> Harm (Person, age: 35)
 /// - Gus -KNOWS-> Harm
-fn create_social_network() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn create_social_network() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let alix = session.create_node_with_props(
@@ -248,8 +248,8 @@ fn test_database_execute_sql() {
 ///
 /// Structure:
 /// - A (Person) -KNOWS-> B (Person) -KNOWS-> C (Person) -KNOWS-> D (Person)
-fn create_chain_network() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn create_chain_network() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let a = session.create_node_with_props(&["Person"], [("name", Value::String("A".into()))]);
@@ -419,7 +419,7 @@ fn test_missing_columns_clause() {
 
 #[test]
 fn test_create_property_graph() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let result = session
@@ -463,7 +463,7 @@ fn test_create_property_graph() {
 
 #[test]
 fn test_create_property_graph_multiple_tables() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let result = session
@@ -496,7 +496,7 @@ fn test_create_property_graph_multiple_tables() {
 
 #[test]
 fn test_create_property_graph_invalid_reference() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let result = session.execute_sql(
@@ -523,8 +523,8 @@ fn test_create_property_graph_invalid_reference() {
 // ============================================================================
 
 /// Creates a network where some nodes have no outgoing KNOWS edges.
-fn create_partial_network() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn create_partial_network() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let alix =

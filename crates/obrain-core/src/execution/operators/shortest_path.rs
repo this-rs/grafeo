@@ -7,8 +7,8 @@ use super::{Operator, OperatorResult};
 use crate::execution::chunk::DataChunkBuilder;
 use crate::graph::Direction;
 use crate::graph::GraphStore;
-use grafeo_common::types::{LogicalType, NodeId, Value};
-use grafeo_common::utils::hash::FxHashMap;
+use obrain_common::types::{LogicalType, NodeId, Value};
+use obrain_common::utils::hash::FxHashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
 

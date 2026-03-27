@@ -1,6 +1,6 @@
-//! High-level manager for `.grafeo` database files.
+//! High-level manager for `.obrain` database files.
 //!
-//! [`GrafeoFileManager`] owns the file handle and provides create, open,
+//! [`ObrainFileManager`] owns the file handle and provides create, open,
 //! snapshot write/read, and sidecar WAL lifecycle management.
 
 use std::fs::{self, File, OpenOptions};
@@ -9,13 +9,13 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use fs2::FileExt;
-use grafeo_common::utils::error::{Error, Result};
+use obrain_common::utils::error::{Error, Result};
 use parking_lot::Mutex;
 
 use super::format::{DATA_OFFSET, DbHeader, FileHeader};
 use super::header;
 
-/// Manages a single `.grafeo` database file.
+/// Manages a single `.obrain` database file.
 ///
 /// # Lifecycle
 ///
@@ -24,8 +24,8 @@ use super::header;
 /// 3. [`write_snapshot`](Self::write_snapshot) checkpoints memory to the file
 /// 4. After a successful checkpoint, call [`remove_sidecar_wal`](Self::remove_sidecar_wal)
 /// 5. [`close`](Self::close) (or drop) releases the file handle
-pub struct GrafeoFileManager {
-    /// Path to the `.grafeo` file.
+pub struct ObrainFileManager {
+    /// Path to the `.obrain` file.
     path: PathBuf,
     /// Open file handle (read/write or read-only).
     file: Mutex<File>,
@@ -39,8 +39,8 @@ pub struct GrafeoFileManager {
     read_only: bool,
 }
 
-impl GrafeoFileManager {
-    /// Creates a new `.grafeo` file at `path`.
+impl ObrainFileManager {
+    /// Creates a new `.obrain` file at `path`.
     ///
     /// Writes the file header and two empty database headers. The file must
     /// not already exist.
@@ -108,7 +108,7 @@ impl GrafeoFileManager {
         })
     }
 
-    /// Opens an existing `.grafeo` file.
+    /// Opens an existing `.obrain` file.
     ///
     /// Validates the magic bytes and format version, then selects the
     /// active database header.
@@ -146,7 +146,7 @@ impl GrafeoFileManager {
         })
     }
 
-    /// Opens an existing `.grafeo` file in read-only mode.
+    /// Opens an existing `.obrain` file in read-only mode.
     ///
     /// Uses a **shared** file lock (`try_lock_shared`), allowing multiple
     /// readers to open the same file concurrently, even while a writer holds
@@ -222,7 +222,7 @@ impl GrafeoFileManager {
             ));
         }
 
-        use grafeo_core::testing::crash::maybe_crash;
+        use obrain_core::testing::crash::maybe_crash;
 
         let checksum = crc32fast::hash(data);
         let timestamp_ms = SystemTime::now()
@@ -317,7 +317,7 @@ impl GrafeoFileManager {
 
     /// Returns the path for the sidecar WAL directory.
     ///
-    /// For a database at `mydb.grafeo`, the sidecar is `mydb.grafeo.wal/`.
+    /// For a database at `mydb.obrain`, the sidecar is `mydb.obrain.wal/`.
     #[must_use]
     pub fn sidecar_wal_path(&self) -> PathBuf {
         let mut wal_path = self.path.as_os_str().to_owned();
@@ -398,7 +398,7 @@ impl GrafeoFileManager {
     }
 }
 
-impl Drop for GrafeoFileManager {
+impl Drop for ObrainFileManager {
     fn drop(&mut self) {
         let file = self.file.lock();
         let _ = file.unlock();
@@ -417,46 +417,46 @@ mod tests {
     #[test]
     fn create_and_open() {
         let dir = test_dir();
-        let path = dir.path().join("test.grafeo");
+        let path = dir.path().join("test.obrain");
 
         // Create
-        let manager = GrafeoFileManager::create(&path).unwrap();
+        let manager = ObrainFileManager::create(&path).unwrap();
         assert!(path.exists());
         assert!(manager.active_header().is_empty());
         drop(manager);
 
         // Open
-        let manager = GrafeoFileManager::open(&path).unwrap();
+        let manager = ObrainFileManager::open(&path).unwrap();
         assert!(manager.active_header().is_empty());
     }
 
     #[test]
     fn create_fails_if_exists() {
         let dir = test_dir();
-        let path = dir.path().join("test.grafeo");
+        let path = dir.path().join("test.obrain");
 
-        GrafeoFileManager::create(&path).unwrap();
-        let result = GrafeoFileManager::create(&path);
+        ObrainFileManager::create(&path).unwrap();
+        let result = ObrainFileManager::create(&path);
         assert!(result.is_err());
     }
 
     #[test]
     fn open_fails_if_not_exists() {
         let dir = test_dir();
-        let path = dir.path().join("nonexistent.grafeo");
+        let path = dir.path().join("nonexistent.obrain");
 
-        let result = GrafeoFileManager::open(&path);
+        let result = ObrainFileManager::open(&path);
         assert!(result.is_err());
     }
 
     #[test]
     fn write_and_read_snapshot() {
         let dir = test_dir();
-        let path = dir.path().join("test.grafeo");
+        let path = dir.path().join("test.obrain");
 
-        let manager = GrafeoFileManager::create(&path).unwrap();
+        let manager = ObrainFileManager::create(&path).unwrap();
 
-        let snapshot_data = b"hello grafeo snapshot data";
+        let snapshot_data = b"hello obrain snapshot data";
         manager.write_snapshot(snapshot_data, 1, 1, 10, 20).unwrap();
 
         let loaded = manager.read_snapshot().unwrap();
@@ -474,13 +474,13 @@ mod tests {
     #[test]
     fn snapshot_persists_across_reopen() {
         let dir = test_dir();
-        let path = dir.path().join("test.grafeo");
+        let path = dir.path().join("test.obrain");
 
         let snapshot_data = b"persistent data across reopen";
 
         // Write
         {
-            let manager = GrafeoFileManager::create(&path).unwrap();
+            let manager = ObrainFileManager::create(&path).unwrap();
             manager
                 .write_snapshot(snapshot_data, 5, 3, 100, 200)
                 .unwrap();
@@ -488,7 +488,7 @@ mod tests {
 
         // Reopen and read
         {
-            let manager = GrafeoFileManager::open(&path).unwrap();
+            let manager = ObrainFileManager::open(&path).unwrap();
             let loaded = manager.read_snapshot().unwrap();
             assert_eq!(loaded, snapshot_data);
 
@@ -502,9 +502,9 @@ mod tests {
     #[test]
     fn alternating_snapshots() {
         let dir = test_dir();
-        let path = dir.path().join("test.grafeo");
+        let path = dir.path().join("test.obrain");
 
-        let manager = GrafeoFileManager::create(&path).unwrap();
+        let manager = ObrainFileManager::create(&path).unwrap();
 
         // First checkpoint
         let data1 = b"snapshot version 1";
@@ -523,9 +523,9 @@ mod tests {
     #[test]
     fn read_empty_snapshot() {
         let dir = test_dir();
-        let path = dir.path().join("test.grafeo");
+        let path = dir.path().join("test.obrain");
 
-        let manager = GrafeoFileManager::create(&path).unwrap();
+        let manager = ObrainFileManager::create(&path).unwrap();
         let data = manager.read_snapshot().unwrap();
         assert!(data.is_empty());
     }
@@ -533,14 +533,14 @@ mod tests {
     #[test]
     fn sidecar_wal_path_computation() {
         let dir = test_dir();
-        let path = dir.path().join("mydb.grafeo");
+        let path = dir.path().join("mydb.obrain");
 
-        let manager = GrafeoFileManager::create(&path).unwrap();
+        let manager = ObrainFileManager::create(&path).unwrap();
         let wal_path = manager.sidecar_wal_path();
 
         assert_eq!(
             wal_path.file_name().unwrap().to_str().unwrap(),
-            "mydb.grafeo.wal"
+            "mydb.obrain.wal"
         );
         assert!(!manager.has_sidecar_wal());
     }
@@ -548,9 +548,9 @@ mod tests {
     #[test]
     fn sidecar_wal_detect_and_remove() {
         let dir = test_dir();
-        let path = dir.path().join("test.grafeo");
+        let path = dir.path().join("test.obrain");
 
-        let manager = GrafeoFileManager::create(&path).unwrap();
+        let manager = ObrainFileManager::create(&path).unwrap();
         assert!(!manager.has_sidecar_wal());
 
         // Create sidecar directory manually (simulating engine behavior)
@@ -565,9 +565,9 @@ mod tests {
     #[test]
     fn file_size_grows_with_data() {
         let dir = test_dir();
-        let path = dir.path().join("test.grafeo");
+        let path = dir.path().join("test.obrain");
 
-        let manager = GrafeoFileManager::create(&path).unwrap();
+        let manager = ObrainFileManager::create(&path).unwrap();
         let empty_size = manager.file_size().unwrap();
 
         // Empty file should be at least 12 KiB (3 headers)
@@ -584,12 +584,12 @@ mod tests {
     #[test]
     fn exclusive_lock_prevents_second_open() {
         let dir = test_dir();
-        let path = dir.path().join("locked.grafeo");
+        let path = dir.path().join("locked.obrain");
 
-        let _manager1 = GrafeoFileManager::create(&path).unwrap();
+        let _manager1 = ObrainFileManager::create(&path).unwrap();
 
         // Second open should fail
-        let result = GrafeoFileManager::open(&path);
+        let result = ObrainFileManager::open(&path);
         assert!(result.is_err());
         assert!(result.err().unwrap().to_string().contains("locked"));
     }
@@ -597,14 +597,14 @@ mod tests {
     #[test]
     fn lock_released_after_close() {
         let dir = test_dir();
-        let path = dir.path().join("lockclose.grafeo");
+        let path = dir.path().join("lockclose.obrain");
 
-        let manager = GrafeoFileManager::create(&path).unwrap();
+        let manager = ObrainFileManager::create(&path).unwrap();
         manager.write_snapshot(b"data", 1, 1, 0, 0).unwrap();
         manager.close().unwrap();
 
         // Should succeed after close
-        let manager2 = GrafeoFileManager::open(&path).unwrap();
+        let manager2 = ObrainFileManager::open(&path).unwrap();
         let data = manager2.read_snapshot().unwrap();
         assert_eq!(data, b"data");
     }
@@ -612,23 +612,23 @@ mod tests {
     #[test]
     fn lock_released_on_drop() {
         let dir = test_dir();
-        let path = dir.path().join("lockdrop.grafeo");
+        let path = dir.path().join("lockdrop.obrain");
 
         {
-            let _manager = GrafeoFileManager::create(&path).unwrap();
+            let _manager = ObrainFileManager::create(&path).unwrap();
             // Drop without explicit close
         }
 
         // Should succeed after drop
-        let _manager2 = GrafeoFileManager::open(&path).unwrap();
+        let _manager2 = ObrainFileManager::open(&path).unwrap();
     }
 
     #[test]
     fn checksum_mismatch_detected() {
         let dir = test_dir();
-        let path = dir.path().join("test.grafeo");
+        let path = dir.path().join("test.obrain");
 
-        let manager = GrafeoFileManager::create(&path).unwrap();
+        let manager = ObrainFileManager::create(&path).unwrap();
         manager.write_snapshot(b"valid data", 1, 1, 0, 0).unwrap();
         drop(manager);
 
@@ -639,7 +639,7 @@ mod tests {
             file.write_all(b"CORRUPT!!!").unwrap();
         }
 
-        let manager = GrafeoFileManager::open(&path).unwrap();
+        let manager = ObrainFileManager::open(&path).unwrap();
         let result = manager.read_snapshot();
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("checksum"));
@@ -648,11 +648,11 @@ mod tests {
     #[test]
     fn open_read_only_reads_snapshot() {
         let dir = test_dir();
-        let path = dir.path().join("ro.grafeo");
+        let path = dir.path().join("ro.obrain");
 
         // Create and write snapshot, then close
         {
-            let manager = GrafeoFileManager::create(&path).unwrap();
+            let manager = ObrainFileManager::create(&path).unwrap();
             manager
                 .write_snapshot(b"read-only test data", 3, 2, 5, 10)
                 .unwrap();
@@ -660,7 +660,7 @@ mod tests {
         }
 
         // Open read-only
-        let ro = GrafeoFileManager::open_read_only(&path).unwrap();
+        let ro = ObrainFileManager::open_read_only(&path).unwrap();
         assert!(ro.is_read_only());
         let data = ro.read_snapshot().unwrap();
         assert_eq!(data, b"read-only test data");
@@ -674,14 +674,14 @@ mod tests {
     #[test]
     fn read_only_rejects_write_snapshot() {
         let dir = test_dir();
-        let path = dir.path().join("ro_write.grafeo");
+        let path = dir.path().join("ro_write.obrain");
 
         {
-            let manager = GrafeoFileManager::create(&path).unwrap();
+            let manager = ObrainFileManager::create(&path).unwrap();
             manager.close().unwrap();
         }
 
-        let ro = GrafeoFileManager::open_read_only(&path).unwrap();
+        let ro = ObrainFileManager::open_read_only(&path).unwrap();
         let result = ro.write_snapshot(b"nope", 1, 1, 0, 0);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("read-only"));
@@ -690,18 +690,18 @@ mod tests {
     #[test]
     fn read_only_coexists_with_exclusive_after_close() {
         let dir = test_dir();
-        let path = dir.path().join("coexist.grafeo");
+        let path = dir.path().join("coexist.obrain");
 
         // Create, write, close
         {
-            let manager = GrafeoFileManager::create(&path).unwrap();
+            let manager = ObrainFileManager::create(&path).unwrap();
             manager.write_snapshot(b"coexist data", 1, 1, 1, 1).unwrap();
             manager.close().unwrap();
         }
 
         // Two read-only opens should coexist
-        let ro1 = GrafeoFileManager::open_read_only(&path).unwrap();
-        let ro2 = GrafeoFileManager::open_read_only(&path).unwrap();
+        let ro1 = ObrainFileManager::open_read_only(&path).unwrap();
+        let ro2 = ObrainFileManager::open_read_only(&path).unwrap();
 
         assert_eq!(ro1.read_snapshot().unwrap(), b"coexist data");
         assert_eq!(ro2.read_snapshot().unwrap(), b"coexist data");

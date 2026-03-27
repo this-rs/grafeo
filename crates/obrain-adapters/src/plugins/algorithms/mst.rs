@@ -6,13 +6,13 @@
 use std::collections::BinaryHeap;
 use std::sync::OnceLock;
 
-use grafeo_common::types::{EdgeId, NodeId, Value};
-use grafeo_common::utils::error::Result;
-use grafeo_common::utils::hash::FxHashMap;
-use grafeo_core::graph::Direction;
-use grafeo_core::graph::GraphStore;
+use obrain_common::types::{EdgeId, NodeId, Value};
+use obrain_common::utils::error::Result;
+use obrain_common::utils::hash::FxHashMap;
+use obrain_core::graph::Direction;
+use obrain_core::graph::GraphStore;
 #[cfg(test)]
-use grafeo_core::graph::lpg::LpgStore;
+use obrain_core::graph::lpg::LpgStore;
 
 use super::super::{AlgorithmResult, ParameterDef, ParameterType, Parameters};
 use super::components::UnionFind;

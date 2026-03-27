@@ -13,10 +13,10 @@
 //! # Example
 //!
 //! ```no_run
-//! use grafeo_core::execution::collector::{Collector, PartitionCollector, CountCollector};
-//! use grafeo_core::execution::DataChunk;
+//! use obrain_core::execution::collector::{Collector, PartitionCollector, CountCollector};
+//! use obrain_core::execution::DataChunk;
 //!
-//! # fn example(partitions: Vec<Vec<DataChunk>>) -> Result<(), grafeo_core::execution::operators::OperatorError> {
+//! # fn example(partitions: Vec<Vec<DataChunk>>) -> Result<(), obrain_core::execution::operators::OperatorError> {
 //! let collector = CountCollector;
 //!
 //! // In parallel execution:
@@ -90,10 +90,10 @@ pub trait PartitionCollector: Send {
 /// # Example
 ///
 /// ```no_run
-/// use grafeo_core::execution::collector::{Collector, PartitionCollector, CountCollector};
-/// use grafeo_core::execution::DataChunk;
+/// use obrain_core::execution::collector::{Collector, PartitionCollector, CountCollector};
+/// use obrain_core::execution::DataChunk;
 ///
-/// # fn example(chunk1: DataChunk, chunk2: DataChunk) -> Result<(), grafeo_core::execution::operators::OperatorError> {
+/// # fn example(chunk1: DataChunk, chunk2: DataChunk) -> Result<(), obrain_core::execution::operators::OperatorError> {
 /// let collector = CountCollector;
 /// let mut pc = collector.for_partition(0);
 ///
@@ -369,8 +369,8 @@ impl PartitionCollector for StatsPartitionCollector {
             } else if let Some(value) = column.get_value(i) {
                 // Handle Generic vectors - extract numeric value
                 match value {
-                    grafeo_common::types::Value::Int64(i) => Some(i as f64),
-                    grafeo_common::types::Value::Float64(f) => Some(f),
+                    obrain_common::types::Value::Int64(i) => Some(i as f64),
+                    obrain_common::types::Value::Float64(f) => Some(f),
                     _ => None,
                 }
             } else {
@@ -403,7 +403,7 @@ impl PartitionCollector for StatsPartitionCollector {
 mod tests {
     use super::*;
     use crate::execution::ValueVector;
-    use grafeo_common::types::Value;
+    use obrain_common::types::Value;
 
     fn make_test_chunk(size: usize) -> DataChunk {
         let values: Vec<Value> = (0..size).map(|i| Value::from(i as i64)).collect();

@@ -1,6 +1,6 @@
 //! Score fusion for combining results from multiple search sources.
 
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 use std::collections::HashMap;
 
 /// Method for fusing scores from multiple search sources.
@@ -40,8 +40,8 @@ impl Default for FusionMethod {
 /// ```
 /// # #[cfg(feature = "hybrid-search")]
 /// # {
-/// use grafeo_core::index::text::{FusionMethod, fuse_results};
-/// use grafeo_common::types::NodeId;
+/// use obrain_core::index::text::{FusionMethod, fuse_results};
+/// use obrain_common::types::NodeId;
 ///
 /// let text_results = vec![(NodeId::new(1), 2.5), (NodeId::new(2), 1.8)];
 /// let vector_results = vec![(NodeId::new(2), 0.95), (NodeId::new(3), 0.80)];

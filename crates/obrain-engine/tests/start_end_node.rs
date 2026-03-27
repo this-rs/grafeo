@@ -1,11 +1,11 @@
 //! Tests for startNode(r) and endNode(r) functions (#180).
 //!
 //! ```bash
-//! cargo test -p grafeo-engine --features full --test start_end_node
+//! cargo test -p obrain-engine --features full --test start_end_node
 //! ```
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 // ============================================================================
 // Basic functionality
@@ -13,7 +13,7 @@ use grafeo_engine::GrafeoDB;
 
 #[test]
 fn test_startnode_returns_source_id() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE (a:A {name: 'alice'})-[:KNOWS]->(b:B {name: 'bob'})")
@@ -31,7 +31,7 @@ fn test_startnode_returns_source_id() {
 
 #[test]
 fn test_endnode_returns_target_id() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE (a:A {name: 'alice'})-[:KNOWS]->(b:B {name: 'bob'})")
@@ -49,7 +49,7 @@ fn test_endnode_returns_target_id() {
 
 #[test]
 fn test_startnode_endnode_correct_direction() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE (a:A {name: 'alice'})-[:KNOWS]->(b:B {name: 'bob'})")
@@ -82,7 +82,7 @@ fn test_startnode_endnode_correct_direction() {
 
 #[test]
 fn test_startnode_with_elementid() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE (a:A {name: 'alice'})-[:KNOWS]->(b:B {name: 'bob'})")
@@ -98,7 +98,7 @@ fn test_startnode_with_elementid() {
 
 #[test]
 fn test_endnode_with_elementid() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE (a:A {name: 'alice'})-[:KNOWS]->(b:B {name: 'bob'})")
@@ -112,7 +112,7 @@ fn test_endnode_with_elementid() {
 
 #[test]
 fn test_startnode_with_id_function() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE (a:A {name: 'alice'})-[:KNOWS]->(b:B {name: 'bob'})")
@@ -130,7 +130,7 @@ fn test_startnode_with_id_function() {
 
 #[test]
 fn test_endnode_with_id_function() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE (a:A {name: 'alice'})-[:KNOWS]->(b:B {name: 'bob'})")
@@ -151,7 +151,7 @@ fn test_endnode_with_id_function() {
 
 #[test]
 fn test_startnode_endnode_multiple_rels() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute(
@@ -183,7 +183,7 @@ fn test_startnode_endnode_multiple_rels() {
 
 #[test]
 fn test_startnode_different_from_endnode() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE (a:X {name: 'a'})-[:E]->(b:Y {name: 'b'})")
@@ -205,7 +205,7 @@ fn test_startnode_different_from_endnode() {
 
 #[test]
 fn test_self_loop_startnode_equals_endnode() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE (a:X {name: 'loop'})-[:SELF]->(a)")
@@ -227,7 +227,7 @@ fn test_self_loop_startnode_equals_endnode() {
 
 #[test]
 fn test_startnode_in_where_clause() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE (a:P {name: 'alice'})-[:KNOWS]->(b:P {name: 'bob'})")
@@ -255,7 +255,7 @@ fn test_startnode_in_where_clause() {
 
 #[test]
 fn test_endnode_in_where_clause() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE (a:P {name: 'alice'})-[:KNOWS]->(b:P {name: 'bob'})")
@@ -287,7 +287,7 @@ fn test_endnode_in_where_clause() {
 
 #[test]
 fn test_startnode_with_labels() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE (a:Person {name: 'alice'})-[:KNOWS]->(b:Animal {name: 'rex'})")
@@ -310,7 +310,7 @@ fn test_startnode_with_labels() {
 
 #[test]
 fn test_startnode_endnode_bidirectional() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute(
@@ -351,7 +351,7 @@ fn test_startnode_endnode_bidirectional() {
 #[test]
 fn test_startnode_no_args_returns_none() {
     // Covers the args.len() != 1 guard in startNode/endNode
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE (a:A {name: 'alice'})-[:KNOWS]->(b:B {name: 'bob'})")
@@ -374,7 +374,7 @@ fn test_startnode_no_args_returns_none() {
 
 #[test]
 fn test_startnode_on_multiple_edge_types() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute(
@@ -407,7 +407,7 @@ fn test_startnode_on_multiple_edge_types() {
 
 #[test]
 fn test_startnode_via_cypher_translator() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute_cypher("CREATE (a:A {name: 'alice'})-[:KNOWS]->(b:B {name: 'bob'})")
@@ -424,7 +424,7 @@ fn test_startnode_via_cypher_translator() {
 
 #[test]
 fn test_startnode_endnode_in_cypher_where() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute_cypher("CREATE (a:P {name: 'alice'})-[:KNOWS]->(b:P {name: 'bob'})")

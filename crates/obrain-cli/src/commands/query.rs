@@ -4,7 +4,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use grafeo_common::types::Value;
+use obrain_common::types::Value;
 
 use crate::output::{self, Format, format_duration_ms};
 use crate::{OutputFormat, QueryLanguage};
@@ -103,10 +103,10 @@ pub fn run(opts: QueryRunOptions<'_>) -> Result<()> {
 
 /// Execute a query without parameters.
 fn execute_query(
-    session: &grafeo_engine::Session,
+    session: &obrain_engine::Session,
     query: &str,
     lang: QueryLanguage,
-) -> Result<grafeo_engine::database::QueryResult> {
+) -> Result<obrain_engine::database::QueryResult> {
     let result = match lang {
         QueryLanguage::Gql => session.execute(query),
         #[cfg(feature = "cypher")]
@@ -133,11 +133,11 @@ fn execute_query(
 
 /// Execute a query with parameters.
 fn execute_query_with_params(
-    session: &grafeo_engine::Session,
+    session: &obrain_engine::Session,
     query: &str,
     params: std::collections::HashMap<String, Value>,
     lang: QueryLanguage,
-) -> Result<grafeo_engine::database::QueryResult> {
+) -> Result<obrain_engine::database::QueryResult> {
     let result = match lang {
         QueryLanguage::Gql => session.execute_with_params(query, params),
         // Cypher with params falls back to GQL execute_with_params

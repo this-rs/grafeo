@@ -6,7 +6,7 @@ use super::chunk::DataChunk;
 use super::operators::{Operator, OperatorError};
 use super::pipeline::Source;
 use super::vector::ValueVector;
-use grafeo_common::types::{NodeId, Value};
+use obrain_common::types::{NodeId, Value};
 
 /// Adapts a pull-based operator to work as a Source.
 ///

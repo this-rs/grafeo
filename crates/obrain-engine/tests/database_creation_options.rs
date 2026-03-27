@@ -3,13 +3,13 @@
 //! Verifies GraphModel, DurabilityMode, Config::validate(), query routing,
 //! schema_constraints, and inspection API.
 
-use grafeo_engine::{Config, ConfigError, DurabilityMode, GrafeoDB, GraphModel};
+use obrain_engine::{Config, ConfigError, DurabilityMode, ObrainDB, GraphModel};
 
 // --- GraphModel routing tests ---
 
 #[test]
 fn lpg_database_executes_gql() {
-    let db = GrafeoDB::with_config(Config::in_memory().with_graph_model(GraphModel::Lpg)).unwrap();
+    let db = ObrainDB::with_config(Config::in_memory().with_graph_model(GraphModel::Lpg)).unwrap();
     let session = db.session();
     session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
     let result = session.execute("MATCH (p:Person) RETURN p.name").unwrap();
@@ -19,7 +19,7 @@ fn lpg_database_executes_gql() {
 #[cfg(feature = "rdf")]
 #[test]
 fn rdf_database_rejects_gql() {
-    let db = GrafeoDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
+    let db = ObrainDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
     let session = db.session();
     let result = session.execute("MATCH (p:Person) RETURN p.name");
     assert!(result.is_err());
@@ -33,7 +33,7 @@ fn rdf_database_rejects_gql() {
 #[cfg(all(feature = "sparql", feature = "rdf"))]
 #[test]
 fn rdf_database_executes_sparql() {
-    let db = GrafeoDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
+    let db = ObrainDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
     let session = db.session();
     // Simple SPARQL query - may return empty but should not error
     let result = session.execute_sparql("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 1");
@@ -45,7 +45,7 @@ fn rdf_database_executes_sparql() {
 fn lpg_database_allows_explicit_sparql() {
     // Explicit execute_sparql() works on any database (both stores are always initialized).
     // Only the generic execute() enforces graph model routing.
-    let db = GrafeoDB::with_config(Config::in_memory().with_graph_model(GraphModel::Lpg)).unwrap();
+    let db = ObrainDB::with_config(Config::in_memory().with_graph_model(GraphModel::Lpg)).unwrap();
     let session = db.session();
     let result = session.execute_sparql("SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 1");
     assert!(
@@ -57,7 +57,7 @@ fn lpg_database_allows_explicit_sparql() {
 #[cfg(feature = "cypher")]
 #[test]
 fn lpg_database_executes_cypher() {
-    let db = GrafeoDB::with_config(Config::in_memory().with_graph_model(GraphModel::Lpg)).unwrap();
+    let db = ObrainDB::with_config(Config::in_memory().with_graph_model(GraphModel::Lpg)).unwrap();
     let session = db.session();
     session.execute("INSERT (:Person {name: 'Gus'})").unwrap();
     let result = session.execute_cypher("MATCH (p:Person) RETURN p.name");
@@ -69,7 +69,7 @@ fn lpg_database_executes_cypher() {
 fn rdf_database_allows_explicit_cypher() {
     // Explicit execute_cypher() works on any database (both stores are always initialized).
     // Only the generic execute() enforces graph model routing.
-    let db = GrafeoDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
+    let db = ObrainDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
     let session = db.session();
     let result = session.execute_cypher("MATCH (p:Person) RETURN p.name");
     assert!(
@@ -109,7 +109,7 @@ fn validate_rejects_rdf_without_feature() {
 #[test]
 fn with_config_rejects_invalid_config() {
     let config = Config::in_memory().with_threads(0);
-    let result = GrafeoDB::with_config(config);
+    let result = ObrainDB::with_config(config);
     assert!(result.is_err());
 }
 
@@ -117,20 +117,20 @@ fn with_config_rejects_invalid_config() {
 
 #[test]
 fn graph_model_accessor_returns_lpg() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     assert_eq!(db.graph_model(), GraphModel::Lpg);
 }
 
 #[cfg(feature = "rdf")]
 #[test]
 fn graph_model_accessor_returns_rdf() {
-    let db = GrafeoDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
+    let db = ObrainDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
     assert_eq!(db.graph_model(), GraphModel::Rdf);
 }
 
 #[test]
 fn memory_limit_accessor_returns_none_by_default() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     // Default in-memory config has no explicit memory limit
     // (it gets set during buffer manager init, not in config)
     assert!(db.memory_limit().is_none());
@@ -139,7 +139,7 @@ fn memory_limit_accessor_returns_none_by_default() {
 #[test]
 fn memory_limit_accessor_returns_configured_value() {
     let db =
-        GrafeoDB::with_config(Config::in_memory().with_memory_limit(256 * 1024 * 1024)).unwrap();
+        ObrainDB::with_config(Config::in_memory().with_memory_limit(256 * 1024 * 1024)).unwrap();
     assert_eq!(db.memory_limit(), Some(256 * 1024 * 1024));
 }
 
@@ -183,7 +183,7 @@ fn schema_constraints_can_be_enabled() {
 
 #[test]
 fn session_reports_graph_model() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     assert_eq!(session.graph_model(), GraphModel::Lpg);
 }
@@ -191,7 +191,7 @@ fn session_reports_graph_model() {
 #[cfg(feature = "rdf")]
 #[test]
 fn session_reports_rdf_graph_model() {
-    let db = GrafeoDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
+    let db = ObrainDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
     let session = db.session();
     assert_eq!(session.graph_model(), GraphModel::Rdf);
 }
@@ -207,9 +207,9 @@ fn session_reports_rdf_graph_model() {
 #[cfg(all(feature = "sparql", feature = "rdf"))]
 #[test]
 fn sparql_filter_equality_coerces_string_to_numeric() {
-    use grafeo_common::types::Value;
+    use obrain_common::types::Value;
 
-    let db = GrafeoDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
+    let db = ObrainDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
     let session = db.session();
 
     // Insert triples: :alix :age "30" ; :gus :age "25"
@@ -250,7 +250,7 @@ fn sparql_filter_equality_coerces_string_to_numeric() {
 #[cfg(all(feature = "sparql", feature = "rdf"))]
 #[test]
 fn sparql_filter_inequality_coerces_string_to_numeric() {
-    let db = GrafeoDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
+    let db = ObrainDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
     let session = db.session();
 
     session

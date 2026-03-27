@@ -1,7 +1,7 @@
 //! Pure in-memory storage backend.
 
-use grafeo_common::memory::arena::AllocError;
-use grafeo_core::graph::lpg::LpgStore;
+use obrain_common::memory::arena::AllocError;
+use obrain_core::graph::lpg::LpgStore;
 use std::sync::Arc;
 
 /// In-memory storage backend.

@@ -9,7 +9,7 @@
 //! Users can provide a custom encoder by implementing [`SpectralEncoderTrait`]
 //! and passing it to [`SpectralEncoder::with_encoder`].
 
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 

@@ -11,19 +11,19 @@ from datetime import UTC, datetime
 import pytest
 
 try:
-    import grafeo
+    import obrain
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
-pytestmark = pytest.mark.skipif(not GRAFEO_AVAILABLE, reason="Grafeo Python bindings not installed")
+pytestmark = pytest.mark.skipif(not OBRAIN_AVAILABLE, reason="Obrain Python bindings not installed")
 
 
 @pytest.fixture
 def db():
     """Create a fresh in-memory database."""
-    return grafeo.GrafeoDB()
+    return obrain.ObrainDB()
 
 
 @pytest.fixture

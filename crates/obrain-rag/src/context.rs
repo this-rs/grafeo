@@ -81,7 +81,7 @@ impl ContextBuilder for GraphContextBuilder {
         // Step 4: Format grouped markdown
         let mut text = String::with_capacity(4096);
         let mut node_ids = Vec::with_capacity(selected.len());
-        let mut node_texts: Vec<(grafeo_common::types::NodeId, Vec<String>)> =
+        let mut node_texts: Vec<(obrain_common::types::NodeId, Vec<String>)> =
             Vec::with_capacity(selected.len());
 
         // Count distinct label types for the summary
@@ -226,7 +226,7 @@ impl ContextBuilder for GraphContextBuilder {
 /// Uses the first available "name" or "title" property as the display name.
 /// This allows relation targets that are also in the selected set to show
 /// human-readable names instead of raw IDs.
-fn build_name_lookup(nodes: &[&RetrievedNode]) -> HashMap<grafeo_common::types::NodeId, String> {
+fn build_name_lookup(nodes: &[&RetrievedNode]) -> HashMap<obrain_common::types::NodeId, String> {
     let mut lookup = HashMap::new();
     for node in nodes {
         if let Some(name) = node
@@ -250,7 +250,7 @@ pub fn estimate_text_tokens(text: &str, chars_per_token: f64) -> usize {
 mod tests {
     use super::*;
     use crate::traits::{RetrievalResult, RetrievalSource, RetrievedNode};
-    use grafeo_common::types::NodeId;
+    use obrain_common::types::NodeId;
     use std::collections::HashMap;
 
     fn make_result(count: usize) -> RetrievalResult {
@@ -288,7 +288,7 @@ mod tests {
                 node_id: NodeId(1),
                 labels: vec!["Project".into()],
                 properties: [
-                    ("name".into(), "Grafeo".into()),
+                    ("name".into(), "Obrain".into()),
                     ("id".into(), "123".into()),
                 ]
                 .into_iter()
@@ -417,7 +417,7 @@ mod tests {
         );
 
         // Real properties should be present
-        assert!(ctx.text.contains("Grafeo"));
+        assert!(ctx.text.contains("Obrain"));
         assert!(ctx.text.contains("WAL Bug"));
     }
 
@@ -565,9 +565,9 @@ mod tests {
             !ctx.node_texts.is_empty(),
             "node_texts should be populated for feedback"
         );
-        // "Grafeo" (6 chars > 3) should be in node_texts
-        let grafeo_texts = ctx.node_texts.iter().find(|(id, _)| *id == NodeId(1));
-        assert!(grafeo_texts.is_some());
+        // "Obrain" (6 chars > 3) should be in node_texts
+        let obrain_texts = ctx.node_texts.iter().find(|(id, _)| *id == NodeId(1));
+        assert!(obrain_texts.is_some());
     }
 
     #[test]
@@ -589,7 +589,7 @@ mod tests {
 
         // Relations should show resolved names when available
         assert!(
-            ctx.text.contains("\"WAL Bug\"") || ctx.text.contains("\"Grafeo\""),
+            ctx.text.contains("\"WAL Bug\"") || ctx.text.contains("\"Obrain\""),
             "Relations should show resolved node names"
         );
     }

@@ -1,14 +1,14 @@
 use super::LpgStore;
 use crate::graph::lpg::{Edge, EdgeRecord};
 use arcstr::ArcStr;
-use grafeo_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TransactionId, Value};
+use obrain_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TransactionId, Value};
 use std::sync::atomic::Ordering;
 
 #[cfg(not(feature = "tiered-storage"))]
-use grafeo_common::mvcc::VersionChain;
+use obrain_common::mvcc::VersionChain;
 
 #[cfg(feature = "tiered-storage")]
-use grafeo_common::mvcc::{HotVersionRef, VersionIndex, VersionRef};
+use obrain_common::mvcc::{HotVersionRef, VersionIndex, VersionRef};
 
 impl LpgStore {
     /// Builds an `Edge` from a record, resolving the type name and loading properties.
@@ -298,7 +298,7 @@ impl LpgStore {
 
         #[cfg(not(feature = "temporal"))]
         {
-            let properties: grafeo_common::types::PropertyMap =
+            let properties: obrain_common::types::PropertyMap =
                 self.edge_properties.get_all(id).into_iter().collect();
             chain
                 .history()
@@ -340,7 +340,7 @@ impl LpgStore {
         };
 
         let id_to_type = self.id_to_edge_type.read();
-        let properties: grafeo_common::types::PropertyMap =
+        let properties: obrain_common::types::PropertyMap =
             self.edge_properties.get_all(id).into_iter().collect();
 
         index
@@ -656,8 +656,8 @@ impl LpgStore {
         let mut ids = Vec::with_capacity(edges.len());
         let mut forward_batch = Vec::with_capacity(edges.len());
         let mut backward_batch = Vec::with_capacity(edges.len());
-        let mut type_increments: grafeo_common::utils::hash::FxHashMap<u32, i64> =
-            grafeo_common::utils::hash::FxHashMap::default();
+        let mut type_increments: obrain_common::utils::hash::FxHashMap<u32, i64> =
+            obrain_common::utils::hash::FxHashMap::default();
 
         // Create all edge records under a single edges write lock
         {
@@ -724,8 +724,8 @@ impl LpgStore {
         let mut ids = Vec::with_capacity(edges.len());
         let mut forward_batch = Vec::with_capacity(edges.len());
         let mut backward_batch = Vec::with_capacity(edges.len());
-        let mut type_increments: grafeo_common::utils::hash::FxHashMap<u32, i64> =
-            grafeo_common::utils::hash::FxHashMap::default();
+        let mut type_increments: obrain_common::utils::hash::FxHashMap<u32, i64> =
+            obrain_common::utils::hash::FxHashMap::default();
 
         // Create all edge records under a single versions write lock
         {

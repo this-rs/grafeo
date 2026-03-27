@@ -3,12 +3,12 @@
 //! Verifies that rollback_to_savepoint correctly undoes property and label
 //! mutations made after the savepoint, while preserving earlier changes.
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 #[test]
 fn test_savepoint_rolls_back_set_property() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session
@@ -52,7 +52,7 @@ fn test_savepoint_rolls_back_set_property() {
 
 #[test]
 fn test_savepoint_rolls_back_new_property() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session.execute("INSERT (:Person {name: 'Gus'})").unwrap();
@@ -82,7 +82,7 @@ fn test_savepoint_rolls_back_new_property() {
 
 #[test]
 fn test_savepoint_rolls_back_label_add() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session
@@ -126,7 +126,7 @@ fn test_savepoint_rolls_back_label_add() {
 
 #[test]
 fn test_savepoint_preserves_pre_savepoint_changes() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session
@@ -176,7 +176,7 @@ fn test_savepoint_preserves_pre_savepoint_changes() {
 
 #[test]
 fn test_full_rollback_after_savepoint_undoes_everything() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session
@@ -214,7 +214,7 @@ fn test_full_rollback_after_savepoint_undoes_everything() {
 
 #[test]
 fn test_savepoint_rollback_preserves_earlier_label() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session.execute("INSERT (:Base {name: 'test'})").unwrap();

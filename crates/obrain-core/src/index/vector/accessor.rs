@@ -9,8 +9,8 @@
 //! # Example
 //!
 //! ```
-//! use grafeo_core::index::vector::VectorAccessor;
-//! use grafeo_common::types::NodeId;
+//! use obrain_core::index::vector::VectorAccessor;
+//! use obrain_common::types::NodeId;
 //! use std::sync::Arc;
 //!
 //! // Closure-based accessor for tests
@@ -22,7 +22,7 @@
 
 use std::sync::Arc;
 
-use grafeo_common::types::{NodeId, PropertyKey, Value};
+use obrain_common::types::{NodeId, PropertyKey, Value};
 
 use crate::graph::GraphStore;
 

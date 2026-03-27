@@ -24,7 +24,7 @@ pub use join_order::{BitSet, DPccp, JoinGraph, JoinGraphBuilder, JoinPlan};
 use crate::query::plan::{
     FilterOp, JoinCondition, LogicalExpression, LogicalOperator, LogicalPlan, MultiWayJoinOp,
 };
-use grafeo_common::utils::error::Result;
+use obrain_common::utils::error::Result;
 use std::collections::HashSet;
 
 /// Information about a join condition for join reordering.
@@ -81,7 +81,7 @@ impl Optimizer {
     /// edge type fanout. Feeds per-edge-type degree stats, label cardinalities,
     /// and graph totals into the cost model for accurate estimation.
     #[must_use]
-    pub fn from_store(store: &grafeo_core::graph::lpg::LpgStore) -> Self {
+    pub fn from_store(store: &obrain_core::graph::lpg::LpgStore) -> Self {
         store.ensure_statistics_fresh();
         let stats = store.statistics();
         Self::from_statistics(&stats)
@@ -91,10 +91,10 @@ impl Optimizer {
     ///
     /// Unlike [`from_store`](Self::from_store), this does not call
     /// `ensure_statistics_fresh()` since external stores manage their own
-    /// statistics. The store's [`statistics()`](grafeo_core::graph::GraphStore::statistics) method
+    /// statistics. The store's [`statistics()`](obrain_core::graph::GraphStore::statistics) method
     /// is called directly.
     #[must_use]
-    pub fn from_graph_store(store: &dyn grafeo_core::graph::GraphStore) -> Self {
+    pub fn from_graph_store(store: &dyn obrain_core::graph::GraphStore) -> Self {
         let stats = store.statistics();
         Self::from_statistics(&stats)
     }
@@ -105,7 +105,7 @@ impl Optimizer {
     /// of SPARQL queries. Maps total triples to graph totals for the cost model.
     #[cfg(feature = "rdf")]
     #[must_use]
-    pub fn from_rdf_statistics(rdf_stats: grafeo_core::statistics::RdfStatistics) -> Self {
+    pub fn from_rdf_statistics(rdf_stats: obrain_core::statistics::RdfStatistics) -> Self {
         let total = rdf_stats.total_triples;
         let estimator = CardinalityEstimator::from_rdf_statistics(rdf_stats);
         Self {
@@ -122,7 +122,7 @@ impl Optimizer {
     /// Extracts label cardinalities, edge type degrees, and graph totals
     /// for both the cardinality estimator and cost model.
     #[must_use]
-    fn from_statistics(stats: &grafeo_core::statistics::Statistics) -> Self {
+    fn from_statistics(stats: &obrain_core::statistics::Statistics) -> Self {
         let estimator = CardinalityEstimator::from_statistics(stats);
 
         let avg_fanout = if stats.total_nodes > 0 {
@@ -223,7 +223,7 @@ impl Optimizer {
     ///
     /// Returns an error if optimization fails.
     pub fn optimize(&self, plan: LogicalPlan) -> Result<LogicalPlan> {
-        let _span = tracing::debug_span!("grafeo::query::optimize").entered();
+        let _span = tracing::debug_span!("obrain::query::optimize").entered();
         let mut root = plan.root;
 
         // Apply optimization rules
@@ -1150,7 +1150,7 @@ mod tests {
         ExpandOp, JoinOp, JoinType, LimitOp, NodeScanOp, PathMode, ProjectOp, Projection,
         ReturnItem, ReturnOp, SkipOp, SortKey, SortOp, SortOrder, UnaryOp,
     };
-    use grafeo_common::types::Value;
+    use obrain_common::types::Value;
 
     #[test]
     fn test_optimizer_filter_pushdown_simple() {

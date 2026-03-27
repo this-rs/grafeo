@@ -10,7 +10,7 @@
 //! ```
 
 use dashmap::DashMap;
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -206,7 +206,7 @@ impl Scar {
 /// Thread-safe store for scars.
 ///
 /// Indexed by target `NodeId` for efficient lookup.
-/// When a backing [`GraphStoreMut`](grafeo_core::graph::GraphStoreMut) is
+/// When a backing [`GraphStoreMut`](obrain_core::graph::GraphStoreMut) is
 /// provided, scar count and cumulative intensity are persisted as node
 /// properties (write-through). On read, if the node is not in the hot cache,
 /// the store does NOT lazy-load individual scars (since scar details like
@@ -237,7 +237,7 @@ impl ScarStore {
     /// Creates a new scar store with write-through persistence.
     pub fn with_graph_store(
         config: ScarConfig,
-        graph_store: Arc<dyn grafeo_core::graph::GraphStoreMut>,
+        graph_store: Arc<dyn obrain_core::graph::GraphStoreMut>,
     ) -> Self {
         Self {
             scars: DashMap::new(),

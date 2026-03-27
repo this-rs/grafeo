@@ -6,10 +6,10 @@
 
 #[cfg(all(feature = "sparql", feature = "rdf"))]
 mod tests {
-    use grafeo_engine::{Config, GrafeoDB, GraphModel};
+    use obrain_engine::{Config, ObrainDB, GraphModel};
 
-    fn rdf_db() -> GrafeoDB {
-        GrafeoDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap()
+    fn rdf_db() -> ObrainDB {
+        ObrainDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap()
     }
 
     // ==================== CREATE / DROP GRAPH ====================
@@ -137,7 +137,7 @@ mod tests {
         let rdf = db.rdf_store();
         rdf.graph_or_create("http://ex.org/g1");
         if let Some(g) = rdf.graph("http://ex.org/g1") {
-            use grafeo_core::graph::rdf::{Literal, Term, Triple};
+            use obrain_core::graph::rdf::{Literal, Term, Triple};
             g.insert(Triple::new(
                 Term::iri("http://ex.org/b"),
                 Term::iri("http://ex.org/p"),
@@ -177,7 +177,7 @@ mod tests {
         let rdf = db.rdf_store();
         let g = rdf.graph_or_create("http://ex.org/g1");
         {
-            use grafeo_core::graph::rdf::{Literal, Term, Triple};
+            use obrain_core::graph::rdf::{Literal, Term, Triple};
             g.insert(Triple::new(
                 Term::iri("http://ex.org/alix"),
                 Term::iri("http://ex.org/name"),
@@ -213,7 +213,7 @@ mod tests {
         // Populate named graphs via store API
         let rdf = db.rdf_store();
         {
-            use grafeo_core::graph::rdf::{Literal, Term, Triple};
+            use obrain_core::graph::rdf::{Literal, Term, Triple};
             let g1 = rdf.graph_or_create("http://ex.org/g1");
             g1.insert(Triple::new(
                 Term::iri("http://ex.org/gus"),
@@ -387,7 +387,7 @@ mod tests {
         // Populate named graph via store API
         let rdf = db.rdf_store();
         {
-            use grafeo_core::graph::rdf::{Literal, Term, Triple};
+            use obrain_core::graph::rdf::{Literal, Term, Triple};
             let g = rdf.graph_or_create("http://ex.org/g1");
             g.insert(Triple::new(
                 Term::iri("http://ex.org/gus"),

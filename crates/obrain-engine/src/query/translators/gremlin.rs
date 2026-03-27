@@ -9,9 +9,9 @@ use crate::query::plan::{
     LogicalExpression, LogicalOperator, LogicalPlan, MapCollectOp, NodeScanOp, PathMode, ProjectOp,
     Projection, ReturnItem, SetPropertyOp, SortKey, SortOrder, UnaryOp, UnionOp, UnwindOp,
 };
-use grafeo_adapters::query::gremlin::{self, ast};
-use grafeo_common::types::Value;
-use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
+use obrain_adapters::query::gremlin::{self, ast};
+use obrain_common::types::Value;
+use obrain_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
 
 /// Translates a Gremlin query string to a logical plan.
 ///

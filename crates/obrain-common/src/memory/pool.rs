@@ -18,7 +18,7 @@ use parking_lot::Mutex;
 /// # Examples
 ///
 /// ```
-/// use grafeo_common::memory::ObjectPool;
+/// use obrain_common::memory::ObjectPool;
 ///
 /// // Pool of vectors that get cleared on return
 /// let pool = ObjectPool::with_reset(Vec::<u8>::new, |v| v.clear());

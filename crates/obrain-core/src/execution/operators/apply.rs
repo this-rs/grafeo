@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use grafeo_common::types::{LogicalType, Value};
+use obrain_common::types::{LogicalType, Value};
 
 use super::parameter_scan::ParameterState;
 use super::{DataChunk, Operator, OperatorResult};

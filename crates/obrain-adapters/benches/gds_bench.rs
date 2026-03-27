@@ -3,12 +3,12 @@
 //! Measures the performance of PageRank, Louvain, Leiden, and Betweenness Centrality
 //! on synthetic graphs of increasing size (Barabási-Albert scale-free model).
 //!
-//! Run with: cargo bench -p grafeo-adapters --features "algos,parallel"
+//! Run with: cargo bench -p obrain-adapters --features "algos,parallel"
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use grafeo_core::LpgStore;
+use obrain_core::LpgStore;
 
-use grafeo_adapters::plugins::algorithms::{betweenness_centrality, leiden, louvain, pagerank};
+use obrain_adapters::plugins::algorithms::{betweenness_centrality, leiden, louvain, pagerank};
 
 /// Creates a Barabási-Albert scale-free graph with `n` nodes and `m` edges per new node.
 ///

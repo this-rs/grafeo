@@ -24,8 +24,8 @@
 //! # Example
 //!
 //! ```
-//! use grafeo_core::index::vector::{compute_distance, DistanceMetric, brute_force_knn};
-//! use grafeo_common::types::NodeId;
+//! use obrain_core::index::vector::{compute_distance, DistanceMetric, brute_force_knn};
+//! use obrain_common::types::NodeId;
 //!
 //! // Compute distance between two vectors
 //! let query = [0.1f32, 0.2, 0.3];
@@ -55,8 +55,8 @@
 //! ```no_run
 //! # #[cfg(feature = "vector-index")]
 //! # {
-//! use grafeo_core::index::vector::{HnswIndex, HnswConfig, DistanceMetric, VectorAccessor};
-//! use grafeo_common::types::NodeId;
+//! use obrain_core::index::vector::{HnswIndex, HnswConfig, DistanceMetric, VectorAccessor};
+//! use obrain_common::types::NodeId;
 //! use std::sync::Arc;
 //! use std::collections::HashMap;
 //!
@@ -113,7 +113,7 @@ pub use hnsw::HnswIndex;
 #[cfg(feature = "vector-index")]
 pub use quantized_hnsw::QuantizedHnswIndex;
 
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 
 /// Configuration for vector search operations.
 #[derive(Debug, Clone)]
@@ -176,8 +176,8 @@ impl Default for VectorConfig {
 /// # Example
 ///
 /// ```
-/// use grafeo_core::index::vector::{brute_force_knn, DistanceMetric};
-/// use grafeo_common::types::NodeId;
+/// use obrain_core::index::vector::{brute_force_knn, DistanceMetric};
+/// use obrain_common::types::NodeId;
 ///
 /// let vectors = vec![
 ///     (NodeId::new(1), [0.1f32, 0.2, 0.3].as_slice()),

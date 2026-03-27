@@ -7,7 +7,7 @@ use super::{Operator, OperatorError, OperatorResult};
 use crate::execution::DataChunk;
 use crate::graph::GraphStore;
 use crate::index::vector::DistanceMetric;
-use grafeo_common::types::{LogicalType, NodeId, PropertyKey, Value};
+use obrain_common::types::{LogicalType, NodeId, PropertyKey, Value};
 use std::sync::Arc;
 
 #[cfg(feature = "vector-index")]
@@ -28,12 +28,12 @@ use crate::index::vector::HnswIndex;
 /// # Example
 ///
 /// ```no_run
-/// use grafeo_core::execution::operators::{Operator, VectorScanOperator};
-/// use grafeo_core::index::vector::DistanceMetric;
-/// use grafeo_core::graph::lpg::LpgStore;
+/// use obrain_core::execution::operators::{Operator, VectorScanOperator};
+/// use obrain_core::index::vector::DistanceMetric;
+/// use obrain_core::graph::lpg::LpgStore;
 /// use std::sync::Arc;
 ///
-/// # fn example() -> Result<(), grafeo_core::execution::operators::OperatorError> {
+/// # fn example() -> Result<(), obrain_core::execution::operators::OperatorError> {
 /// let store = Arc::new(LpgStore::new().unwrap());
 /// let query = vec![0.1f32, 0.2, 0.3];
 /// let mut scan = VectorScanOperator::brute_force(

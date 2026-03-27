@@ -3,11 +3,11 @@
 //! These tests verify that the LeapfrogJoinOperator works correctly
 //! when used directly for multi-way joins and cyclic patterns.
 
-use grafeo_common::types::LogicalType;
-use grafeo_core::execution::DataChunk;
-use grafeo_core::execution::operators::{LeapfrogJoinOperator, Operator};
-use grafeo_core::execution::vector::ValueVector;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::LogicalType;
+use obrain_core::execution::DataChunk;
+use obrain_core::execution::operators::{LeapfrogJoinOperator, Operator};
+use obrain_core::execution::vector::ValueVector;
+use obrain_engine::ObrainDB;
 
 /// Creates a chunk with a single Int64 column.
 fn create_int64_chunk(values: &[i64]) -> DataChunk {
@@ -34,7 +34,7 @@ impl MockScanOperator {
 }
 
 impl Operator for MockScanOperator {
-    fn next(&mut self) -> grafeo_core::execution::operators::OperatorResult {
+    fn next(&mut self) -> obrain_core::execution::operators::OperatorResult {
         if self.returned {
             Ok(None)
         } else {
@@ -177,7 +177,7 @@ fn test_triangle_graph_manual() {
     // the graph structure is set up correctly.
 
     // Create database and add triangle
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // Create nodes with properties

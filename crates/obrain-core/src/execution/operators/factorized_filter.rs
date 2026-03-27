@@ -18,7 +18,7 @@ use super::{FactorizedOperator, FactorizedResult, LazyFactorizedChainOperator, O
 use crate::execution::chunk_state::{FactorizedSelection, LevelSelection};
 use crate::execution::factorized_chunk::FactorizedChunk;
 use crate::graph::GraphStore;
-use grafeo_common::types::{EpochId, PropertyKey, Value};
+use obrain_common::types::{EpochId, PropertyKey, Value};
 
 /// A predicate that can be evaluated on factorized data at a specific level.
 ///
@@ -518,12 +518,12 @@ impl FactorizedPredicate for OrPredicate {
 /// # Example
 ///
 /// ```no_run
-/// # use grafeo_core::execution::operators::{
+/// # use obrain_core::execution::operators::{
 /// #     FactorizedFilterOperator, PropertyPredicate, FactorizedCompareOp,
 /// #     LazyFactorizedChainOperator,
 /// # };
-/// # use grafeo_core::graph::GraphStore;
-/// # use grafeo_common::types::Value;
+/// # use obrain_core::graph::GraphStore;
+/// # use obrain_common::types::Value;
 /// # use std::sync::Arc;
 /// # fn example(expand_chain: LazyFactorizedChainOperator, store: Arc<dyn GraphStore>) {
 /// // Query: MATCH (a)->(b)->(c) WHERE c.age > 30
@@ -684,7 +684,7 @@ mod tests {
     use crate::execution::factorized_vector::FactorizedVector;
     use crate::execution::vector::ValueVector;
     use crate::graph::lpg::LpgStore;
-    use grafeo_common::types::LogicalType;
+    use obrain_common::types::LogicalType;
 
     /// Creates a test factorized chunk for filtering tests.
     fn create_test_chunk() -> FactorizedChunk {

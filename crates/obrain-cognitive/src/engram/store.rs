@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use dashmap::DashMap;
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 
 use super::traits::CognitiveStorage;
 use super::types::{Engram, EngramId};

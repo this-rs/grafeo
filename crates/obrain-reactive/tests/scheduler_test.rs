@@ -1,8 +1,8 @@
 //! Integration tests for the Scheduler — batching and dispatch behavior.
 
 use async_trait::async_trait;
-use grafeo_common::types::NodeId;
-use grafeo_reactive::{
+use obrain_common::types::NodeId;
+use obrain_reactive::{
     BatchConfig, MutationBus, MutationEvent, MutationListener, NodeSnapshot, Scheduler,
 };
 use parking_lot::Mutex;
@@ -280,8 +280,8 @@ async fn accepts_filter_skips_unwanted_events() {
     // Publish mix of node and edge events
     bus.publish(make_node_event(1));
     bus.publish(MutationEvent::EdgeCreated {
-        edge: grafeo_reactive::EdgeSnapshot {
-            id: grafeo_common::types::EdgeId::new(1),
+        edge: obrain_reactive::EdgeSnapshot {
+            id: obrain_common::types::EdgeId::new(1),
             src: NodeId::new(1),
             dst: NodeId::new(2),
             edge_type: arcstr::literal!("KNOWS"),

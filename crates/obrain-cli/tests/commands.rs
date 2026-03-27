@@ -4,8 +4,8 @@ use std::path::Path;
 use tempfile::TempDir;
 
 /// Helper to create a test database.
-fn create_test_db(dir: &Path) -> grafeo_engine::GrafeoDB {
-    let db = grafeo_engine::GrafeoDB::open(dir).expect("Failed to create test database");
+fn create_test_db(dir: &Path) -> obrain_engine::ObrainDB {
+    let db = obrain_engine::ObrainDB::open(dir).expect("Failed to create test database");
 
     // Add some test data
     let n1 = db.create_node(&["Person"]);
@@ -25,13 +25,13 @@ fn create_test_db(dir: &Path) -> grafeo_engine::GrafeoDB {
 #[test]
 fn test_database_can_be_opened() {
     let temp_dir = TempDir::new().expect("create temp dir");
-    let db_path = temp_dir.path().join("test.grafeo");
+    let db_path = temp_dir.path().join("test.obrain");
 
-    let db = grafeo_engine::GrafeoDB::open(&db_path).expect("create db");
+    let db = obrain_engine::ObrainDB::open(&db_path).expect("create db");
     drop(db);
 
     // Reopen to verify persistence
-    let db2 = grafeo_engine::GrafeoDB::open(&db_path).expect("reopen db");
+    let db2 = obrain_engine::ObrainDB::open(&db_path).expect("reopen db");
     let info = db2.info();
     assert!(info.is_persistent);
 }
@@ -39,7 +39,7 @@ fn test_database_can_be_opened() {
 #[test]
 fn test_database_info() {
     let temp_dir = TempDir::new().expect("create temp dir");
-    let db_path = temp_dir.path().join("test.grafeo");
+    let db_path = temp_dir.path().join("test.obrain");
 
     let db = create_test_db(&db_path);
     let info = db.info();
@@ -52,7 +52,7 @@ fn test_database_info() {
 #[test]
 fn test_database_stats() {
     let temp_dir = TempDir::new().expect("create temp dir");
-    let db_path = temp_dir.path().join("test.grafeo");
+    let db_path = temp_dir.path().join("test.obrain");
 
     let db = create_test_db(&db_path);
     let stats = db.detailed_stats();
@@ -68,7 +68,7 @@ fn test_database_stats() {
 #[test]
 fn test_query_execution() {
     let temp_dir = TempDir::new().expect("create temp dir");
-    let db_path = temp_dir.path().join("test.grafeo");
+    let db_path = temp_dir.path().join("test.obrain");
 
     let db = create_test_db(&db_path);
 
@@ -81,7 +81,7 @@ fn test_query_execution() {
 
 #[test]
 fn test_in_memory_database() {
-    let db = grafeo_engine::GrafeoDB::new_in_memory();
+    let db = obrain_engine::ObrainDB::new_in_memory();
     let info = db.info();
 
     assert!(!info.is_persistent);
@@ -91,7 +91,7 @@ fn test_in_memory_database() {
 
 #[test]
 fn test_node_and_edge_creation() {
-    let db = grafeo_engine::GrafeoDB::new_in_memory();
+    let db = obrain_engine::ObrainDB::new_in_memory();
 
     let n1 = db.create_node(&["Test"]);
     let n2 = db.create_node(&["Test"]);
@@ -109,7 +109,7 @@ fn test_node_and_edge_creation() {
 #[test]
 fn test_validate_passes_on_good_database() {
     let temp_dir = TempDir::new().expect("create temp dir");
-    let db_path = temp_dir.path().join("test.grafeo");
+    let db_path = temp_dir.path().join("test.obrain");
 
     let db = create_test_db(&db_path);
     let result = db.validate();
@@ -120,13 +120,13 @@ fn test_validate_passes_on_good_database() {
 #[test]
 fn test_schema_inspection() {
     let temp_dir = TempDir::new().expect("create temp dir");
-    let db_path = temp_dir.path().join("test.grafeo");
+    let db_path = temp_dir.path().join("test.obrain");
 
     let db = create_test_db(&db_path);
     let schema = db.schema();
 
     match schema {
-        grafeo_engine::SchemaInfo::Lpg(lpg) => {
+        obrain_engine::SchemaInfo::Lpg(lpg) => {
             let label_names: Vec<&str> = lpg.labels.iter().map(|l| l.name.as_str()).collect();
             assert!(label_names.contains(&"Person"));
             assert!(label_names.contains(&"Company"));
@@ -143,9 +143,9 @@ fn test_schema_inspection() {
 
 #[test]
 fn test_admin_service_trait() {
-    use grafeo_engine::AdminService;
+    use obrain_engine::AdminService;
 
-    let db = grafeo_engine::GrafeoDB::new_in_memory();
+    let db = obrain_engine::ObrainDB::new_in_memory();
     let n1 = db.create_node(&["Test"]);
     db.set_node_property(n1, "key", "value".into());
 
@@ -157,7 +157,7 @@ fn test_admin_service_trait() {
     assert_eq!(stats.node_count, 1);
 
     let schema = AdminService::schema(&db);
-    assert!(matches!(schema, grafeo_engine::SchemaInfo::Lpg(_)));
+    assert!(matches!(schema, obrain_engine::SchemaInfo::Lpg(_)));
 
     let validation = AdminService::validate(&db);
     assert!(validation.errors.is_empty());
@@ -166,7 +166,7 @@ fn test_admin_service_trait() {
 #[test]
 fn test_query_with_parameters() {
     let temp_dir = TempDir::new().expect("create temp dir");
-    let db_path = temp_dir.path().join("test.grafeo");
+    let db_path = temp_dir.path().join("test.obrain");
 
     let db = create_test_db(&db_path);
 
@@ -174,7 +174,7 @@ fn test_query_with_parameters() {
     let mut params = std::collections::HashMap::new();
     params.insert(
         "name".to_string(),
-        grafeo_common::types::Value::from("Alix"),
+        obrain_common::types::Value::from("Alix"),
     );
 
     let session = db.session();
@@ -187,9 +187,9 @@ fn test_query_with_parameters() {
 #[test]
 fn test_init_creates_database() {
     let temp_dir = TempDir::new().expect("create temp dir");
-    let db_path = temp_dir.path().join("new.grafeo");
+    let db_path = temp_dir.path().join("new.obrain");
 
-    let db = grafeo_engine::GrafeoDB::open(&db_path).expect("create db");
+    let db = obrain_engine::ObrainDB::open(&db_path).expect("create db");
     let info = db.info();
     assert_eq!(info.node_count, 0);
     assert_eq!(info.edge_count, 0);

@@ -16,8 +16,8 @@ pub trait Tokenizer: Send + Sync {
 /// ```
 /// # #[cfg(feature = "text-index")]
 /// # {
-/// use grafeo_core::index::text::SimpleTokenizer;
-/// use grafeo_core::index::text::Tokenizer;
+/// use obrain_core::index::text::SimpleTokenizer;
+/// use obrain_core::index::text::Tokenizer;
 ///
 /// let tokenizer = SimpleTokenizer::new();
 /// let tokens = tokenizer.tokenize("The Quick Brown Fox");
@@ -200,7 +200,7 @@ mod tests {
     #[test]
     fn test_mixed_case() {
         let t = SimpleTokenizer::new();
-        let tokens = t.tokenize("GrafeoDB is FAST");
-        assert_eq!(tokens, vec!["grafeodb", "fast"]);
+        let tokens = t.tokenize("ObrainDB is FAST");
+        assert_eq!(tokens, vec!["obraindb", "fast"]);
     }
 }

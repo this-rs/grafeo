@@ -33,7 +33,7 @@ impl fmt::Display for GraphModel {
 ///
 /// Controls whether the database is opened for full read-write access
 /// (the default) or read-only access. Read-only mode uses a shared file
-/// lock, allowing multiple processes to read the same `.grafeo` file
+/// lock, allowing multiple processes to read the same `.obrain` file
 /// concurrently.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum AccessMode {
@@ -57,19 +57,19 @@ impl fmt::Display for AccessMode {
 
 /// Storage format for persistent databases.
 ///
-/// Controls whether the database uses a single `.grafeo` file or a legacy
+/// Controls whether the database uses a single `.obrain` file or a legacy
 /// WAL directory. The default (`Auto`) auto-detects based on the path:
-/// files ending in `.grafeo` use single-file format, directories use WAL.
+/// files ending in `.obrain` use single-file format, directories use WAL.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum StorageFormat {
-    /// Auto-detect based on path: `.grafeo` extension = single file,
+    /// Auto-detect based on path: `.obrain` extension = single file,
     /// existing directory = WAL directory, new path without extension = WAL directory.
     #[default]
     Auto,
     /// Legacy WAL directory format (directory with `wal/` subdirectory).
     WalDirectory,
-    /// Single `.grafeo` file with a sidecar `.grafeo.wal/` directory during operation.
-    /// At rest (after checkpoint), only the `.grafeo` file exists.
+    /// Single `.obrain` file with a sidecar `.obrain.wal/` directory during operation.
+    /// At rest (after checkpoint), only the `.obrain` file exists.
     SingleFile,
 }
 
@@ -197,7 +197,7 @@ pub struct Config {
 
     /// Storage format for persistent databases.
     ///
-    /// `Auto` (default) detects the format from the path: `.grafeo` extension
+    /// `Auto` (default) detects the format from the path: `.obrain` extension
     /// uses single-file format, directories use the legacy WAL directory.
     pub storage_format: StorageFormat,
 
@@ -372,7 +372,7 @@ impl Config {
     /// Sets the memory budget as a fraction of system RAM.
     #[must_use]
     pub fn with_memory_fraction(mut self, fraction: f64) -> Self {
-        use grafeo_common::memory::buffer::BufferManagerConfig;
+        use obrain_common::memory::buffer::BufferManagerConfig;
         let system_memory = BufferManagerConfig::detect_system_memory();
         self.memory_limit = Some((system_memory as f64 * fraction) as usize);
         self
@@ -464,7 +464,7 @@ impl Config {
     /// Shorthand for opening a persistent database in read-only mode.
     ///
     /// Uses a shared file lock, allowing multiple processes to read the same
-    /// `.grafeo` file concurrently. Mutations are rejected at the session level.
+    /// `.obrain` file concurrently. Mutations are rejected at the session level.
     #[must_use]
     pub fn read_only(path: impl Into<PathBuf>) -> Self {
         Self {
@@ -477,7 +477,7 @@ impl Config {
 
     /// Validates the configuration, returning an error for invalid combinations.
     ///
-    /// Called automatically by [`GrafeoDB::with_config()`](crate::GrafeoDB::with_config).
+    /// Called automatically by [`ObrainDB::with_config()`](crate::ObrainDB::with_config).
     ///
     /// # Errors
     ///
@@ -877,7 +877,7 @@ mod tests {
 
     #[test]
     fn test_config_read_only() {
-        let config = Config::read_only("/tmp/db.grafeo");
+        let config = Config::read_only("/tmp/db.obrain");
         assert_eq!(config.access_mode, AccessMode::ReadOnly);
         assert!(config.path.is_some());
         assert!(!config.wal_enabled);

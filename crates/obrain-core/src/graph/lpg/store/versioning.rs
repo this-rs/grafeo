@@ -1,16 +1,16 @@
 use super::LpgStore;
 use crate::graph::lpg::{EdgeRecord, NodeRecord};
-use grafeo_common::memory::AllocError;
-use grafeo_common::types::{EdgeId, EpochId, NodeId, TransactionId};
+use obrain_common::memory::AllocError;
+use obrain_common::types::{EdgeId, EpochId, NodeId, TransactionId};
 #[cfg(feature = "tiered-storage")]
-use grafeo_common::utils::hash::FxHashMap;
+use obrain_common::utils::hash::FxHashMap;
 use std::sync::atomic::Ordering;
 
 #[cfg(not(feature = "tiered-storage"))]
-use grafeo_common::mvcc::VersionChain;
+use obrain_common::mvcc::VersionChain;
 
 #[cfg(feature = "tiered-storage")]
-use grafeo_common::mvcc::{ColdVersionRef, HotVersionRef, VersionIndex};
+use obrain_common::mvcc::{ColdVersionRef, HotVersionRef, VersionIndex};
 
 impl LpgStore {
     /// Discards all uncommitted versions created by a transaction.

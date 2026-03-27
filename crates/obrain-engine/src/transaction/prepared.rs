@@ -8,9 +8,9 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use grafeo_engine::GrafeoDB;
+//! use obrain_engine::ObrainDB;
 //!
-//! let db = GrafeoDB::new_in_memory();
+//! let db = ObrainDB::new_in_memory();
 //! let mut session = db.session();
 //!
 //! session.begin_transaction()?;
@@ -28,8 +28,8 @@
 
 use std::collections::HashMap;
 
-use grafeo_common::types::{EpochId, TransactionId};
-use grafeo_common::utils::error::{Error, Result, TransactionError};
+use obrain_common::types::{EpochId, TransactionId};
+use obrain_common::utils::error::{Error, Result, TransactionError};
 
 use crate::Session;
 
@@ -149,11 +149,11 @@ impl Drop for PreparedCommit<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::GrafeoDB;
+    use crate::ObrainDB;
 
     #[test]
     fn test_prepared_commit_basic() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let mut session = db.session();
 
         session.begin_transaction().unwrap();
@@ -177,7 +177,7 @@ mod tests {
 
     #[test]
     fn test_prepared_commit_with_edges() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let mut session = db.session();
 
         // Create nodes first, commit, then create edge in a second transaction.
@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn test_prepared_commit_metadata() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let mut session = db.session();
 
         session.begin_transaction().unwrap();
@@ -238,7 +238,7 @@ mod tests {
 
     #[test]
     fn test_prepared_commit_abort() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let mut session = db.session();
 
         session.begin_transaction().unwrap();
@@ -254,7 +254,7 @@ mod tests {
 
     #[test]
     fn test_prepared_commit_drop_rollback() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let mut session = db.session();
 
         session.begin_transaction().unwrap();
@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn test_prepared_commit_no_transaction() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let mut session = db.session();
 
         // Should fail when no transaction is active

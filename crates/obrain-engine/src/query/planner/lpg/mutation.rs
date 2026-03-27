@@ -235,7 +235,7 @@ impl super::Planner {
         let (left_op, left_columns): (Box<dyn Operator>, Vec<String>) =
             if matches!(left_join.left.as_ref(), LogicalOperator::Empty) {
                 let single_row: Box<dyn Operator> = Box::new(
-                    grafeo_core::execution::operators::single_row::SingleRowOperator::new(),
+                    obrain_core::execution::operators::single_row::SingleRowOperator::new(),
                 );
                 (single_row, Vec::new())
             } else {
@@ -286,7 +286,7 @@ impl super::Planner {
 
                 // Create a project operator that produces a single row with the list
                 let single_row_op: Box<dyn Operator> = Box::new(
-                    grafeo_core::execution::operators::single_row::SingleRowOperator::new(),
+                    obrain_core::execution::operators::single_row::SingleRowOperator::new(),
                 );
                 let project_op: Box<dyn Operator> = Box::new(
                     ProjectOperator::with_store(
@@ -691,9 +691,9 @@ impl super::Planner {
         static PROCEDURES: std::sync::OnceLock<BuiltinProcedures> = std::sync::OnceLock::new();
         let registry = PROCEDURES.get_or_init(BuiltinProcedures::new);
 
-        // Special case: grafeo.procedures() lists all procedures
+        // Special case: obrain.procedures() lists all procedures
         let resolved_name = call.name.join(".");
-        if resolved_name == "grafeo.procedures" || resolved_name == "procedures" {
+        if resolved_name == "obrain.procedures" || resolved_name == "procedures" {
             let result = procedures::procedures_result(registry);
             return self.plan_static_result(result, &call.yield_items);
         }
@@ -703,14 +703,14 @@ impl super::Planner {
             return self.plan_static_result(result, &call.yield_items);
         }
 
-        // Projection procedures (CALL grafeo.projection.*)
+        // Projection procedures (CALL obrain.projection.*)
         if let Some(result) =
             crate::procedures::try_execute_projection_procedure(&resolved_name, &call.arguments)?
         {
             return self.plan_static_result(result, &call.yield_items);
         }
 
-        // Cognitive procedures (CALL grafeo.cognitive.*)
+        // Cognitive procedures (CALL obrain.cognitive.*)
         #[cfg(feature = "cognitive")]
         if let Some(engine) = &self.cognitive_engine
             && let Some(result) = crate::cognitive_procedures::try_execute_cognitive_procedure(
@@ -738,7 +738,7 @@ impl super::Planner {
         // Look up the algorithm
         let algorithm = registry.get(&call.name).ok_or_else(|| {
             Error::Internal(format!(
-                "Unknown procedure: '{}'. Use CALL grafeo.procedures() to list available procedures.",
+                "Unknown procedure: '{}'. Use CALL obrain.procedures() to list available procedures.",
                 call.name.join(".")
             ))
         })?;
@@ -784,11 +784,11 @@ impl super::Planner {
         Ok((operator, output_columns))
     }
 
-    /// Plans a static result set (e.g., from `grafeo.procedures()`).
+    /// Plans a static result set (e.g., from `obrain.procedures()`).
     #[cfg(feature = "algos")]
     pub(super) fn plan_static_result(
         &self,
-        result: grafeo_adapters::plugins::AlgorithmResult,
+        result: obrain_adapters::plugins::AlgorithmResult,
         yield_items: &Option<Vec<crate::query::plan::ProcedureYield>>,
     ) -> Result<(Box<dyn Operator>, Vec<String>)> {
         // Determine output columns and column indices
@@ -914,17 +914,17 @@ impl super::Planner {
     /// Resolves a catalog introspection procedure by name.
     ///
     /// Supports `db.labels`, `db.relationshipTypes`, `db.propertyKeys`,
-    /// `db.schema`, and `db.indexes` (also with `grafeo.` prefix).
+    /// `db.schema`, and `db.indexes` (also with `obrain.` prefix).
     #[cfg(feature = "algos")]
     fn plan_catalog_procedure(
         &self,
         name: &str,
-    ) -> Option<grafeo_adapters::plugins::AlgorithmResult> {
-        use grafeo_adapters::plugins::AlgorithmResult;
-        use grafeo_common::types::Value;
+    ) -> Option<obrain_adapters::plugins::AlgorithmResult> {
+        use obrain_adapters::plugins::AlgorithmResult;
+        use obrain_common::types::Value;
 
         match name {
-            "db.labels" | "grafeo.labels" => {
+            "db.labels" | "obrain.labels" => {
                 let labels = self.store.all_labels();
                 let mut result = AlgorithmResult::new(vec!["label".to_string()]);
                 for label in labels {
@@ -932,7 +932,7 @@ impl super::Planner {
                 }
                 Some(result)
             }
-            "db.relationshipTypes" | "grafeo.relationshipTypes" => {
+            "db.relationshipTypes" | "obrain.relationshipTypes" => {
                 let types = self.store.all_edge_types();
                 let mut result = AlgorithmResult::new(vec!["relationshipType".to_string()]);
                 for t in types {
@@ -940,7 +940,7 @@ impl super::Planner {
                 }
                 Some(result)
             }
-            "db.propertyKeys" | "grafeo.propertyKeys" => {
+            "db.propertyKeys" | "obrain.propertyKeys" => {
                 let keys = self.store.all_property_keys();
                 let mut result = AlgorithmResult::new(vec!["propertyKey".to_string()]);
                 for key in keys {
@@ -1129,7 +1129,7 @@ impl super::Planner {
                 // Parameters should be resolved before planning
                 // For now, treat as a placeholder
                 Ok(PropertySource::Constant(
-                    grafeo_common::types::Value::String(format!("${}", name).into()),
+                    obrain_common::types::Value::String(format!("${}", name).into()),
                 ))
             }
             _ => {
@@ -1193,7 +1193,7 @@ impl super::Planner {
                         let val = Self::try_fold_expression(&args[0])?;
                         match val {
                             Value::String(s) => {
-                                grafeo_common::types::Date::parse(&s).map(Value::Date)
+                                obrain_common::types::Date::parse(&s).map(Value::Date)
                             }
                             _ => None,
                         }
@@ -1205,7 +1205,7 @@ impl super::Planner {
                         let val = Self::try_fold_expression(&args[0])?;
                         match val {
                             Value::String(s) => {
-                                grafeo_common::types::Time::parse(&s).map(Value::Time)
+                                obrain_common::types::Time::parse(&s).map(Value::Time)
                             }
                             _ => None,
                         }
@@ -1224,17 +1224,17 @@ impl super::Planner {
                         let val = Self::try_fold_expression(&args[0])?;
                         match val {
                             Value::String(s) => {
-                                if let Some(d) = grafeo_common::types::Date::parse(&s) {
+                                if let Some(d) = obrain_common::types::Date::parse(&s) {
                                     return Some(Value::Timestamp(d.to_timestamp()));
                                 }
                                 if let Some(pos) = s.find('T') {
                                     let (date_part, time_part) = (&s[..pos], &s[pos + 1..]);
                                     if let (Some(d), Some(t)) = (
-                                        grafeo_common::types::Date::parse(date_part),
-                                        grafeo_common::types::Time::parse(time_part),
+                                        obrain_common::types::Date::parse(date_part),
+                                        obrain_common::types::Time::parse(time_part),
                                     ) {
                                         return Some(Value::Timestamp(
-                                            grafeo_common::types::Timestamp::from_date_time(d, t),
+                                            obrain_common::types::Timestamp::from_date_time(d, t),
                                         ));
                                     }
                                 }
@@ -1252,10 +1252,10 @@ impl super::Planner {
                     .map(|(k, v)| Self::try_fold_expression(v).map(|val| (k.clone(), val)))
                     .collect();
                 let folded = folded?;
-                let map: std::collections::BTreeMap<grafeo_common::types::PropertyKey, Value> =
+                let map: std::collections::BTreeMap<obrain_common::types::PropertyKey, Value> =
                     folded
                         .into_iter()
-                        .map(|(k, v)| (grafeo_common::types::PropertyKey::from(k), v))
+                        .map(|(k, v)| (obrain_common::types::PropertyKey::from(k), v))
                         .collect();
                 Some(Value::Map(std::sync::Arc::new(map)))
             }

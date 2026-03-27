@@ -10,13 +10,13 @@ import time
 
 import pytest
 
-# Try to import grafeo
+# Try to import obrain
 try:
-    from grafeo import GrafeoDB
+    from obrain import ObrainDB
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
 
 class TestSPARQLFilters:
@@ -24,7 +24,7 @@ class TestSPARQLFilters:
 
     def setup_method(self):
         """Create a database with RDF test data."""
-        self.db = GrafeoDB()
+        self.db = ObrainDB()
 
     def _execute_sparql(self, query: str):
         """Execute SPARQL query, skip if not supported."""

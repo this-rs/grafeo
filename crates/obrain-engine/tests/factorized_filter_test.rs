@@ -1,12 +1,12 @@
 //! Test to debug factorized execution with filters
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 #[test]
 fn test_filter_in_multihop_query() {
     // Enable factorized execution (default) to test the bug
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // Create 5 Person nodes with id property

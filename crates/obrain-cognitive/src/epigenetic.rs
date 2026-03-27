@@ -402,8 +402,8 @@ impl EpigeneticMark {
     pub fn persist(
         &self,
         storage: &dyn crate::engram::traits::CognitiveStorage,
-    ) -> grafeo_common::types::NodeId {
-        use grafeo_common::types::Value;
+    ) -> obrain_common::types::NodeId {
+        use obrain_common::types::Value;
         use std::collections::HashMap;
 
         let mut props = HashMap::new();
@@ -1249,7 +1249,7 @@ mod tests {
         use crate::engram::traits::{
             CognitiveEdge, CognitiveFilter, CognitiveNode, CognitiveStorage,
         };
-        use grafeo_common::types::{EdgeId, NodeId, Value};
+        use obrain_common::types::{EdgeId, NodeId, Value};
         use std::collections::HashMap;
         use std::sync::atomic::{AtomicU64, Ordering};
 

@@ -16,7 +16,7 @@
 //! # Example
 //!
 //! ```
-//! use grafeo_core::graph::rdf::{RdfStore, Term, Triple};
+//! use obrain_core::graph::rdf::{RdfStore, Term, Triple};
 //!
 //! let store = RdfStore::new();
 //!

@@ -2,12 +2,12 @@
 
 #![cfg(all(feature = "memory", feature = "energy"))]
 
-use grafeo_cognitive::memory::{
+use obrain_cognitive::memory::{
     ArchiveBackend, FileArchiveBackend, InMemoryArchiveBackend, MemoryConfig, MemoryHorizon,
     MemoryManager, MemoryStore, NodeMemoryState, SweepResult,
 };
-use grafeo_cognitive::{EnergyConfig, EnergyStore};
-use grafeo_common::types::NodeId;
+use obrain_cognitive::{EnergyConfig, EnergyStore};
+use obrain_common::types::NodeId;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -425,7 +425,7 @@ async fn in_memory_archive_restore_missing_returns_none() {
 
 #[tokio::test]
 async fn file_archive_roundtrip() {
-    let tmp_dir = std::env::temp_dir().join(format!("grafeo_memory_test_{}", std::process::id()));
+    let tmp_dir = std::env::temp_dir().join(format!("obrain_memory_test_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp_dir); // clean up from previous runs
 
     let backend = FileArchiveBackend::new(&tmp_dir);

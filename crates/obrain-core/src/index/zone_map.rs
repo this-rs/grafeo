@@ -7,7 +7,7 @@
 //! This is huge for large scans. Combined with columnar storage, you often skip
 //! 90%+ of the data for selective predicates.
 
-use grafeo_common::types::Value;
+use obrain_common::types::Value;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
@@ -738,7 +738,7 @@ mod tests {
 
     #[test]
     fn test_zone_map_date_range() {
-        use grafeo_common::types::Date;
+        use obrain_common::types::Date;
 
         let min_date = Date::from_ymd(2024, 1, 1).unwrap();
         let max_date = Date::from_ymd(2024, 12, 31).unwrap();
@@ -814,7 +814,7 @@ mod tests {
 
     #[test]
     fn test_zone_map_timestamp_range() {
-        use grafeo_common::types::Timestamp;
+        use obrain_common::types::Timestamp;
 
         // 2024-01-01T00:00:00Z and 2024-12-31T23:59:59Z
         let min_ts = Timestamp::from_secs(1_704_067_200); // 2024-01-01

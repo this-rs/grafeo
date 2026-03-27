@@ -6,9 +6,9 @@
 //! # Example
 //!
 //! ```no_run
-//! use grafeo_engine::embedding::{EmbeddingModel, OnnxEmbeddingModel};
+//! use obrain_engine::embedding::{EmbeddingModel, OnnxEmbeddingModel};
 //!
-//! # fn main() -> grafeo_common::utils::error::Result<()> {
+//! # fn main() -> obrain_common::utils::error::Result<()> {
 //! let model = OnnxEmbeddingModel::from_files(
 //!     "all-MiniLM-L6-v2",
 //!     "model.onnx",
@@ -29,7 +29,7 @@ mod onnx;
 pub use config::{EmbeddingModelConfig, EmbeddingOptions};
 pub use onnx::OnnxEmbeddingModel;
 
-use grafeo_common::utils::error::Result;
+use obrain_common::utils::error::Result;
 
 /// Trait for embedding models that convert text to vectors.
 ///
@@ -144,9 +144,9 @@ mod tests {
 
     #[test]
     fn database_register_and_embed() {
-        use crate::{Config, GrafeoDB};
+        use crate::{Config, ObrainDB};
 
-        let db = GrafeoDB::with_config(Config::in_memory()).unwrap();
+        let db = ObrainDB::with_config(Config::in_memory()).unwrap();
         let model: Arc<dyn EmbeddingModel> = Arc::new(MockEmbeddingModel::new(128));
         db.register_embedding_model("test-model", model);
 
@@ -158,9 +158,9 @@ mod tests {
 
     #[test]
     fn database_embed_model_not_found() {
-        use crate::{Config, GrafeoDB};
+        use crate::{Config, ObrainDB};
 
-        let db = GrafeoDB::with_config(Config::in_memory()).unwrap();
+        let db = ObrainDB::with_config(Config::in_memory()).unwrap();
         let result = db.embed_text("nonexistent", &["hello"]);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();

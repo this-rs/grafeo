@@ -6,7 +6,7 @@
 //! predicates, and objects to make those estimates.
 
 use super::histogram::Histogram;
-use grafeo_common::types::Value;
+use obrain_common::types::Value;
 use std::collections::HashMap;
 
 /// Everything the SPARQL optimizer knows about your RDF data.

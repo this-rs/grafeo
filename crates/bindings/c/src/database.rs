@@ -1,4 +1,4 @@
-//! All `#[no_mangle] extern "C"` functions exposed by the Grafeo C API.
+//! All `#[no_mangle] extern "C"` functions exposed by the Obrain C API.
 
 use std::ffi::CString;
 use std::os::raw::c_char;
@@ -6,12 +6,12 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 
-use grafeo_common::types::{EdgeId, NodeId};
-use grafeo_engine::config::Config;
-use grafeo_engine::database::GrafeoDB;
+use obrain_common::types::{EdgeId, NodeId};
+use obrain_engine::config::Config;
+use obrain_engine::database::ObrainDB;
 
-use crate::error::{GrafeoStatus, set_error, set_last_error, str_from_ptr};
-use crate::types::{GrafeoDatabase, GrafeoEdge, GrafeoNode, GrafeoResult, GrafeoTransaction};
+use crate::error::{ObrainStatus, set_error, set_last_error, str_from_ptr};
+use crate::types::{ObrainDatabase, ObrainEdge, ObrainNode, ObrainResult, ObrainTransaction};
 
 // ===== Helpers =====
 
@@ -20,9 +20,9 @@ macro_rules! db_ref {
     ($ptr:expr) => {{
         if $ptr.is_null() {
             set_last_error("Null database pointer");
-            return GrafeoStatus::ErrorNullPointer;
+            return ObrainStatus::ErrorNullPointer;
         }
-        // SAFETY: Caller guarantees ptr from grafeo_open* and not yet freed.
+        // SAFETY: Caller guarantees ptr from obrain_open* and not yet freed.
         unsafe { &*$ptr }
     }};
 }
@@ -35,13 +35,13 @@ macro_rules! db_ref_or_null {
             set_last_error("Null database pointer");
             return std::ptr::null_mut();
         }
-        // SAFETY: Caller guarantees ptr from grafeo_open* and not yet freed.
+        // SAFETY: Caller guarantees ptr from obrain_open* and not yet freed.
         unsafe { &*$ptr }
     }};
 }
 
-/// Serialize a `QueryResult` into a `GrafeoResult`.
-fn build_result(result: &grafeo_engine::database::QueryResult) -> *mut GrafeoResult {
+/// Serialize a `QueryResult` into a `ObrainResult`.
+fn build_result(result: &obrain_engine::database::QueryResult) -> *mut ObrainResult {
     let json_rows: Vec<serde_json::Value> = result
         .rows
         .iter()
@@ -59,7 +59,7 @@ fn build_result(result: &grafeo_engine::database::QueryResult) -> *mut GrafeoRes
     let json_str = serde_json::to_string(&json_rows).unwrap_or_default();
     let c_json = CString::new(json_str).unwrap_or_default();
 
-    Box::into_raw(Box::new(GrafeoResult {
+    Box::into_raw(Box::new(ObrainResult {
         json: c_json,
         row_count: result.rows.len(),
         execution_time_ms: result.execution_time_ms.unwrap_or(0.0),
@@ -73,11 +73,11 @@ fn build_result(result: &grafeo_engine::database::QueryResult) -> *mut GrafeoRes
 
 /// Create a new in-memory database.
 ///
-/// Returns an opaque pointer, or null on error (check `grafeo_last_error()`).
+/// Returns an opaque pointer, or null on error (check `obrain_last_error()`).
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_open_memory() -> *mut GrafeoDatabase {
-    let db = GrafeoDB::new_in_memory();
-    Box::into_raw(Box::new(GrafeoDatabase {
+pub extern "C" fn obrain_open_memory() -> *mut ObrainDatabase {
+    let db = ObrainDB::new_in_memory();
+    Box::into_raw(Box::new(ObrainDatabase {
         inner: Arc::new(RwLock::new(db)),
     }))
 }
@@ -86,12 +86,12 @@ pub extern "C" fn grafeo_open_memory() -> *mut GrafeoDatabase {
 ///
 /// Returns an opaque pointer, or null on error.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_open(path: *const c_char) -> *mut GrafeoDatabase {
+pub extern "C" fn obrain_open(path: *const c_char) -> *mut ObrainDatabase {
     let Ok(path_str) = str_from_ptr(path) else {
         return std::ptr::null_mut();
     };
-    match GrafeoDB::with_config(Config::persistent(path_str)) {
-        Ok(db) => Box::into_raw(Box::new(GrafeoDatabase {
+    match ObrainDB::with_config(Config::persistent(path_str)) {
+        Ok(db) => Box::into_raw(Box::new(ObrainDatabase {
             inner: Arc::new(RwLock::new(db)),
         })),
         Err(e) => {
@@ -104,16 +104,16 @@ pub extern "C" fn grafeo_open(path: *const c_char) -> *mut GrafeoDatabase {
 /// Open an existing database in read-only mode.
 ///
 /// Uses a shared file lock, so multiple processes can read the same
-/// .grafeo file concurrently. Mutations will return an error.
+/// .obrain file concurrently. Mutations will return an error.
 ///
 /// Returns an opaque pointer, or null on error.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_open_read_only(path: *const c_char) -> *mut GrafeoDatabase {
+pub extern "C" fn obrain_open_read_only(path: *const c_char) -> *mut ObrainDatabase {
     let Ok(path_str) = str_from_ptr(path) else {
         return std::ptr::null_mut();
     };
-    match GrafeoDB::with_config(Config::read_only(path_str)) {
-        Ok(db) => Box::into_raw(Box::new(GrafeoDatabase {
+    match ObrainDB::with_config(Config::read_only(path_str)) {
+        Ok(db) => Box::into_raw(Box::new(ObrainDatabase {
             inner: Arc::new(RwLock::new(db)),
         })),
         Err(e) => {
@@ -125,21 +125,21 @@ pub extern "C" fn grafeo_open_read_only(path: *const c_char) -> *mut GrafeoDatab
 
 /// Close the database, flushing pending writes.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_close(db: *mut GrafeoDatabase) -> GrafeoStatus {
+pub extern "C" fn obrain_close(db: *mut ObrainDatabase) -> ObrainStatus {
     if db.is_null() {
-        return GrafeoStatus::Ok;
+        return ObrainStatus::Ok;
     }
-    // SAFETY: Caller guarantees valid pointer from grafeo_open*.
+    // SAFETY: Caller guarantees valid pointer from obrain_open*.
     let db = unsafe { &*db };
     match db.inner.read().close() {
-        Ok(()) => GrafeoStatus::Ok,
+        Ok(()) => ObrainStatus::Ok,
         Err(e) => set_error(&e),
     }
 }
 
-/// Free a database handle. Must be called after `grafeo_close`.
+/// Free a database handle. Must be called after `obrain_close`.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_free_database(db: *mut GrafeoDatabase) {
+pub extern "C" fn obrain_free_database(db: *mut ObrainDatabase) {
     if !db.is_null() {
         // SAFETY: We take ownership back and drop it.
         unsafe { drop(Box::from_raw(db)) };
@@ -148,7 +148,7 @@ pub extern "C" fn grafeo_free_database(db: *mut GrafeoDatabase) {
 
 /// Returns the library version string. The pointer is static and must NOT be freed.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_version() -> *const c_char {
+pub extern "C" fn obrain_version() -> *const c_char {
     // Include a trailing NUL in the byte literal.
     static VERSION: &[u8] = concat!(env!("CARGO_PKG_VERSION"), "\0").as_bytes();
     VERSION.as_ptr().cast::<c_char>()
@@ -160,10 +160,10 @@ pub extern "C" fn grafeo_version() -> *const c_char {
 
 /// Execute a GQL query. Returns a result pointer, or null on error.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_execute(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_execute(
+    db: *mut ObrainDatabase,
     query: *const c_char,
-) -> *mut GrafeoResult {
+) -> *mut ObrainResult {
     let db = db_ref_or_null!(db);
     let Ok(query_str) = str_from_ptr(query) else {
         return std::ptr::null_mut();
@@ -180,11 +180,11 @@ pub extern "C" fn grafeo_execute(
 
 /// Execute a GQL query with JSON-encoded parameters.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_execute_with_params(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_execute_with_params(
+    db: *mut ObrainDatabase,
     query: *const c_char,
     params_json: *const c_char,
-) -> *mut GrafeoResult {
+) -> *mut ObrainResult {
     let db = db_ref_or_null!(db);
     let Ok(query_str) = str_from_ptr(query) else {
         return std::ptr::null_mut();
@@ -203,10 +203,10 @@ pub extern "C" fn grafeo_execute_with_params(
 /// Execute a Cypher query.
 #[cfg(feature = "cypher")]
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_execute_cypher(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_execute_cypher(
+    db: *mut ObrainDatabase,
     query: *const c_char,
-) -> *mut GrafeoResult {
+) -> *mut ObrainResult {
     let db = db_ref_or_null!(db);
     let Ok(query_str) = str_from_ptr(query) else {
         return std::ptr::null_mut();
@@ -223,10 +223,10 @@ pub extern "C" fn grafeo_execute_cypher(
 /// Execute a Gremlin query.
 #[cfg(feature = "gremlin")]
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_execute_gremlin(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_execute_gremlin(
+    db: *mut ObrainDatabase,
     query: *const c_char,
-) -> *mut GrafeoResult {
+) -> *mut ObrainResult {
     let db = db_ref_or_null!(db);
     let Ok(query_str) = str_from_ptr(query) else {
         return std::ptr::null_mut();
@@ -243,10 +243,10 @@ pub extern "C" fn grafeo_execute_gremlin(
 /// Execute a GraphQL query.
 #[cfg(feature = "graphql")]
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_execute_graphql(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_execute_graphql(
+    db: *mut ObrainDatabase,
     query: *const c_char,
-) -> *mut GrafeoResult {
+) -> *mut ObrainResult {
     let db = db_ref_or_null!(db);
     let Ok(query_str) = str_from_ptr(query) else {
         return std::ptr::null_mut();
@@ -263,10 +263,10 @@ pub extern "C" fn grafeo_execute_graphql(
 /// Execute a SPARQL query.
 #[cfg(feature = "sparql")]
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_execute_sparql(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_execute_sparql(
+    db: *mut ObrainDatabase,
     query: *const c_char,
-) -> *mut GrafeoResult {
+) -> *mut ObrainResult {
     let db = db_ref_or_null!(db);
     let Ok(query_str) = str_from_ptr(query) else {
         return std::ptr::null_mut();
@@ -283,10 +283,10 @@ pub extern "C" fn grafeo_execute_sparql(
 /// Execute a SQL/PGQ query (SQL:2023 GRAPH_TABLE).
 #[cfg(feature = "sql-pgq")]
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_execute_sql(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_execute_sql(
+    db: *mut ObrainDatabase,
     query: *const c_char,
-) -> *mut GrafeoResult {
+) -> *mut ObrainResult {
     let db = db_ref_or_null!(db);
     let Ok(query_str) = str_from_ptr(query) else {
         return std::ptr::null_mut();
@@ -305,19 +305,19 @@ pub extern "C" fn grafeo_execute_sql(
 // =========================================================================
 
 /// Get the JSON-encoded result rows. Returns null if result is null.
-/// The pointer is valid until `grafeo_free_result` is called.
+/// The pointer is valid until `obrain_free_result` is called.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_result_json(result: *const GrafeoResult) -> *const c_char {
+pub extern "C" fn obrain_result_json(result: *const ObrainResult) -> *const c_char {
     if result.is_null() {
         return std::ptr::null();
     }
-    // SAFETY: Caller guarantees valid pointer from grafeo_execute*.
+    // SAFETY: Caller guarantees valid pointer from obrain_execute*.
     unsafe { &*result }.json.as_ptr()
 }
 
 /// Get the number of rows in the result.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_result_row_count(result: *const GrafeoResult) -> usize {
+pub extern "C" fn obrain_result_row_count(result: *const ObrainResult) -> usize {
     if result.is_null() {
         return 0;
     }
@@ -327,7 +327,7 @@ pub extern "C" fn grafeo_result_row_count(result: *const GrafeoResult) -> usize 
 
 /// Get execution time in milliseconds.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_result_execution_time_ms(result: *const GrafeoResult) -> f64 {
+pub extern "C" fn obrain_result_execution_time_ms(result: *const ObrainResult) -> f64 {
     if result.is_null() {
         return 0.0;
     }
@@ -337,7 +337,7 @@ pub extern "C" fn grafeo_result_execution_time_ms(result: *const GrafeoResult) -
 
 /// Get estimated rows scanned.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_result_rows_scanned(result: *const GrafeoResult) -> u64 {
+pub extern "C" fn obrain_result_rows_scanned(result: *const ObrainResult) -> u64 {
     if result.is_null() {
         return 0;
     }
@@ -347,7 +347,7 @@ pub extern "C" fn grafeo_result_rows_scanned(result: *const GrafeoResult) -> u64
 
 /// Free a query result.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_free_result(result: *mut GrafeoResult) {
+pub extern "C" fn obrain_free_result(result: *mut ObrainResult) {
     if !result.is_null() {
         // SAFETY: We take ownership back and drop it.
         unsafe { drop(Box::from_raw(result)) };
@@ -361,8 +361,8 @@ pub extern "C" fn grafeo_free_result(result: *mut GrafeoResult) {
 /// Create a node with labels (JSON array) and optional properties (JSON object).
 /// Returns the new node ID, or `u64::MAX` on error.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_create_node(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_create_node(
+    db: *mut ObrainDatabase,
     labels_json: *const c_char,
     properties_json: *const c_char,
 ) -> u64 {
@@ -385,17 +385,17 @@ pub extern "C" fn grafeo_create_node(
 }
 
 /// Get a node by ID. Writes into `out`. Returns `Ok` or an error status.
-/// On success, `out` must be freed with `grafeo_free_node`.
+/// On success, `out` must be freed with `obrain_free_node`.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_get_node(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_get_node(
+    db: *mut ObrainDatabase,
     id: u64,
-    out: *mut *mut GrafeoNode,
-) -> GrafeoStatus {
+    out: *mut *mut ObrainNode,
+) -> ObrainStatus {
     let db = db_ref!(db);
     if out.is_null() {
         set_last_error("Null output pointer");
-        return GrafeoStatus::ErrorNullPointer;
+        return ObrainStatus::ErrorNullPointer;
     }
     let guard = db.inner.read();
     match guard.get_node(NodeId::new(id)) {
@@ -409,27 +409,27 @@ pub extern "C" fn grafeo_get_node(
                 .unwrap_or_default();
             let properties_json = crate::types::properties_to_json(&node.properties);
 
-            let gnode = Box::new(GrafeoNode {
+            let gnode = Box::new(ObrainNode {
                 id: node.id.as_u64(),
                 labels_json,
                 properties_json,
             });
             // SAFETY: We checked out is not null above.
             unsafe { *out = Box::into_raw(gnode) };
-            GrafeoStatus::Ok
+            ObrainStatus::Ok
         }
         None => {
             set_last_error(&format!("Node not found: {id}"));
             // SAFETY: We checked out is not null above.
             unsafe { *out = std::ptr::null_mut() };
-            GrafeoStatus::ErrorDatabase
+            ObrainStatus::ErrorDatabase
         }
     }
 }
 
 /// Delete a node by ID. Returns 1 if deleted, 0 if not found.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_delete_node(db: *mut GrafeoDatabase, id: u64) -> i32 {
+pub extern "C" fn obrain_delete_node(db: *mut ObrainDatabase, id: u64) -> i32 {
     if db.is_null() {
         set_last_error("Null database pointer");
         return -1;
@@ -441,12 +441,12 @@ pub extern "C" fn grafeo_delete_node(db: *mut GrafeoDatabase, id: u64) -> i32 {
 
 /// Set a property on a node. `value_json` is a JSON-encoded value.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_set_node_property(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_set_node_property(
+    db: *mut ObrainDatabase,
     id: u64,
     key: *const c_char,
     value_json: *const c_char,
-) -> GrafeoStatus {
+) -> ObrainStatus {
     let db = db_ref!(db);
     let key_str = match str_from_ptr(key) {
         Ok(s) => s,
@@ -454,18 +454,18 @@ pub extern "C" fn grafeo_set_node_property(
     };
     let Some(value) = crate::types::parse_value(value_json) else {
         set_last_error("Invalid JSON value");
-        return GrafeoStatus::ErrorSerialization;
+        return ObrainStatus::ErrorSerialization;
     };
     db.inner
         .read()
         .set_node_property(NodeId::new(id), key_str, value);
-    GrafeoStatus::Ok
+    ObrainStatus::Ok
 }
 
 /// Remove a property from a node. Returns 1 if removed, 0 if not found.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_remove_node_property(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_remove_node_property(
+    db: *mut ObrainDatabase,
     id: u64,
     key: *const c_char,
 ) -> i32 {
@@ -487,8 +487,8 @@ pub extern "C" fn grafeo_remove_node_property(
 
 /// Add a label to a node. Returns 1 if added, 0 if already present.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_add_node_label(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_add_node_label(
+    db: *mut ObrainDatabase,
     id: u64,
     label: *const c_char,
 ) -> i32 {
@@ -506,8 +506,8 @@ pub extern "C" fn grafeo_add_node_label(
 
 /// Remove a label from a node. Returns 1 if removed, 0 if not present.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_remove_node_label(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_remove_node_label(
+    db: *mut ObrainDatabase,
     id: u64,
     label: *const c_char,
 ) -> i32 {
@@ -528,9 +528,9 @@ pub extern "C" fn grafeo_remove_node_label(
 }
 
 /// Get labels for a node as a JSON array string.
-/// Returns null if node not found. Caller must free with `grafeo_free_string`.
+/// Returns null if node not found. Caller must free with `obrain_free_string`.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_get_node_labels(db: *mut GrafeoDatabase, id: u64) -> *mut c_char {
+pub extern "C" fn obrain_get_node_labels(db: *mut ObrainDatabase, id: u64) -> *mut c_char {
     if db.is_null() {
         set_last_error("Null database pointer");
         return std::ptr::null_mut();
@@ -546,18 +546,18 @@ pub extern "C" fn grafeo_get_node_labels(db: *mut GrafeoDatabase, id: u64) -> *m
     }
 }
 
-/// Free a `GrafeoNode` returned by `grafeo_get_node`.
+/// Free a `ObrainNode` returned by `obrain_get_node`.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_free_node(node: *mut GrafeoNode) {
+pub extern "C" fn obrain_free_node(node: *mut ObrainNode) {
     if !node.is_null() {
         // SAFETY: We take ownership back.
         unsafe { drop(Box::from_raw(node)) };
     }
 }
 
-/// Access the node ID from a `GrafeoNode`.
+/// Access the node ID from a `ObrainNode`.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_node_id(node: *const GrafeoNode) -> u64 {
+pub extern "C" fn obrain_node_id(node: *const ObrainNode) -> u64 {
     if node.is_null() {
         return u64::MAX;
     }
@@ -565,9 +565,9 @@ pub extern "C" fn grafeo_node_id(node: *const GrafeoNode) -> u64 {
     unsafe { &*node }.id
 }
 
-/// Access labels JSON from a `GrafeoNode`. Valid until `grafeo_free_node`.
+/// Access labels JSON from a `ObrainNode`. Valid until `obrain_free_node`.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_node_labels_json(node: *const GrafeoNode) -> *const c_char {
+pub extern "C" fn obrain_node_labels_json(node: *const ObrainNode) -> *const c_char {
     if node.is_null() {
         return std::ptr::null();
     }
@@ -575,9 +575,9 @@ pub extern "C" fn grafeo_node_labels_json(node: *const GrafeoNode) -> *const c_c
     unsafe { &*node }.labels_json.as_ptr()
 }
 
-/// Access properties JSON from a `GrafeoNode`. Valid until `grafeo_free_node`.
+/// Access properties JSON from a `ObrainNode`. Valid until `obrain_free_node`.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_node_properties_json(node: *const GrafeoNode) -> *const c_char {
+pub extern "C" fn obrain_node_properties_json(node: *const ObrainNode) -> *const c_char {
     if node.is_null() {
         return std::ptr::null();
     }
@@ -592,8 +592,8 @@ pub extern "C" fn grafeo_node_properties_json(node: *const GrafeoNode) -> *const
 /// Create an edge. `properties_json` may be null for no properties.
 /// Returns the new edge ID, or `u64::MAX` on error.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_create_edge(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_create_edge(
+    db: *mut ObrainDatabase,
     source_id: u64,
     target_id: u64,
     edge_type: *const c_char,
@@ -621,17 +621,17 @@ pub extern "C" fn grafeo_create_edge(
 }
 
 /// Get an edge by ID. Writes into `out`. Returns `Ok` or error status.
-/// On success, `out` must be freed with `grafeo_free_edge`.
+/// On success, `out` must be freed with `obrain_free_edge`.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_get_edge(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_get_edge(
+    db: *mut ObrainDatabase,
     id: u64,
-    out: *mut *mut GrafeoEdge,
-) -> GrafeoStatus {
+    out: *mut *mut ObrainEdge,
+) -> ObrainStatus {
     let db = db_ref!(db);
     if out.is_null() {
         set_last_error("Null output pointer");
-        return GrafeoStatus::ErrorNullPointer;
+        return ObrainStatus::ErrorNullPointer;
     }
     let guard = db.inner.read();
     match guard.get_edge(EdgeId(id)) {
@@ -639,7 +639,7 @@ pub extern "C" fn grafeo_get_edge(
             let edge_type = CString::new(edge.edge_type.to_string()).unwrap_or_default();
             let properties_json = crate::types::properties_to_json(&edge.properties);
 
-            let gedge = Box::new(GrafeoEdge {
+            let gedge = Box::new(ObrainEdge {
                 id: edge.id.as_u64(),
                 source_id: edge.src.as_u64(),
                 target_id: edge.dst.as_u64(),
@@ -648,20 +648,20 @@ pub extern "C" fn grafeo_get_edge(
             });
             // SAFETY: We checked out is not null above.
             unsafe { *out = Box::into_raw(gedge) };
-            GrafeoStatus::Ok
+            ObrainStatus::Ok
         }
         None => {
             set_last_error(&format!("Edge not found: {id}"));
             // SAFETY: We checked out is not null above.
             unsafe { *out = std::ptr::null_mut() };
-            GrafeoStatus::ErrorDatabase
+            ObrainStatus::ErrorDatabase
         }
     }
 }
 
 /// Delete an edge by ID. Returns 1 if deleted, 0 if not found.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_delete_edge(db: *mut GrafeoDatabase, id: u64) -> i32 {
+pub extern "C" fn obrain_delete_edge(db: *mut ObrainDatabase, id: u64) -> i32 {
     if db.is_null() {
         set_last_error("Null database pointer");
         return -1;
@@ -673,12 +673,12 @@ pub extern "C" fn grafeo_delete_edge(db: *mut GrafeoDatabase, id: u64) -> i32 {
 
 /// Set a property on an edge.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_set_edge_property(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_set_edge_property(
+    db: *mut ObrainDatabase,
     id: u64,
     key: *const c_char,
     value_json: *const c_char,
-) -> GrafeoStatus {
+) -> ObrainStatus {
     let db = db_ref!(db);
     let key_str = match str_from_ptr(key) {
         Ok(s) => s,
@@ -686,18 +686,18 @@ pub extern "C" fn grafeo_set_edge_property(
     };
     let Some(value) = crate::types::parse_value(value_json) else {
         set_last_error("Invalid JSON value");
-        return GrafeoStatus::ErrorSerialization;
+        return ObrainStatus::ErrorSerialization;
     };
     db.inner
         .read()
         .set_edge_property(EdgeId(id), key_str, value);
-    GrafeoStatus::Ok
+    ObrainStatus::Ok
 }
 
 /// Remove a property from an edge. Returns 1 if removed, 0 if not found.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_remove_edge_property(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_remove_edge_property(
+    db: *mut ObrainDatabase,
     id: u64,
     key: *const c_char,
 ) -> i32 {
@@ -713,9 +713,9 @@ pub extern "C" fn grafeo_remove_edge_property(
     i32::from(db.inner.read().remove_edge_property(EdgeId(id), key_str))
 }
 
-/// Free a `GrafeoEdge` returned by `grafeo_get_edge`.
+/// Free a `ObrainEdge` returned by `obrain_get_edge`.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_free_edge(edge: *mut GrafeoEdge) {
+pub extern "C" fn obrain_free_edge(edge: *mut ObrainEdge) {
     if !edge.is_null() {
         // SAFETY: We take ownership back.
         unsafe { drop(Box::from_raw(edge)) };
@@ -724,7 +724,7 @@ pub extern "C" fn grafeo_free_edge(edge: *mut GrafeoEdge) {
 
 /// Access the edge ID.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_edge_id(edge: *const GrafeoEdge) -> u64 {
+pub extern "C" fn obrain_edge_id(edge: *const ObrainEdge) -> u64 {
     if edge.is_null() {
         return u64::MAX;
     }
@@ -734,7 +734,7 @@ pub extern "C" fn grafeo_edge_id(edge: *const GrafeoEdge) -> u64 {
 
 /// Access source node ID.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_edge_source_id(edge: *const GrafeoEdge) -> u64 {
+pub extern "C" fn obrain_edge_source_id(edge: *const ObrainEdge) -> u64 {
     if edge.is_null() {
         return u64::MAX;
     }
@@ -744,7 +744,7 @@ pub extern "C" fn grafeo_edge_source_id(edge: *const GrafeoEdge) -> u64 {
 
 /// Access target node ID.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_edge_target_id(edge: *const GrafeoEdge) -> u64 {
+pub extern "C" fn obrain_edge_target_id(edge: *const ObrainEdge) -> u64 {
     if edge.is_null() {
         return u64::MAX;
     }
@@ -752,9 +752,9 @@ pub extern "C" fn grafeo_edge_target_id(edge: *const GrafeoEdge) -> u64 {
     unsafe { &*edge }.target_id
 }
 
-/// Access edge type string. Valid until `grafeo_free_edge`.
+/// Access edge type string. Valid until `obrain_free_edge`.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_edge_type(edge: *const GrafeoEdge) -> *const c_char {
+pub extern "C" fn obrain_edge_type(edge: *const ObrainEdge) -> *const c_char {
     if edge.is_null() {
         return std::ptr::null();
     }
@@ -762,9 +762,9 @@ pub extern "C" fn grafeo_edge_type(edge: *const GrafeoEdge) -> *const c_char {
     unsafe { &*edge }.edge_type.as_ptr()
 }
 
-/// Access edge properties JSON. Valid until `grafeo_free_edge`.
+/// Access edge properties JSON. Valid until `obrain_free_edge`.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_edge_properties_json(edge: *const GrafeoEdge) -> *const c_char {
+pub extern "C" fn obrain_edge_properties_json(edge: *const ObrainEdge) -> *const c_char {
     if edge.is_null() {
         return std::ptr::null();
     }
@@ -778,23 +778,23 @@ pub extern "C" fn grafeo_edge_properties_json(edge: *const GrafeoEdge) -> *const
 
 /// Create a property index.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_create_property_index(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_create_property_index(
+    db: *mut ObrainDatabase,
     property: *const c_char,
-) -> GrafeoStatus {
+) -> ObrainStatus {
     let db = db_ref!(db);
     let prop_str = match str_from_ptr(property) {
         Ok(s) => s,
         Err(e) => return e,
     };
     db.inner.read().create_property_index(prop_str);
-    GrafeoStatus::Ok
+    ObrainStatus::Ok
 }
 
 /// Drop a property index. Returns 1 if dropped, 0 if not found.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_drop_property_index(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_drop_property_index(
+    db: *mut ObrainDatabase,
     property: *const c_char,
 ) -> i32 {
     if db.is_null() {
@@ -811,8 +811,8 @@ pub extern "C" fn grafeo_drop_property_index(
 
 /// Check if a property index exists. Returns 1 if exists, 0 otherwise.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_has_property_index(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_has_property_index(
+    db: *mut ObrainDatabase,
     property: *const c_char,
 ) -> i32 {
     if db.is_null() {
@@ -827,19 +827,19 @@ pub extern "C" fn grafeo_has_property_index(
 }
 
 /// Find nodes by property value. Writes node IDs into `out_ids` and count
-/// into `out_count`. Caller must free `*out_ids` with `grafeo_free_node_ids`.
+/// into `out_count`. Caller must free `*out_ids` with `obrain_free_node_ids`.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_find_nodes_by_property(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_find_nodes_by_property(
+    db: *mut ObrainDatabase,
     property: *const c_char,
     value_json: *const c_char,
     out_ids: *mut *mut u64,
     out_count: *mut usize,
-) -> GrafeoStatus {
+) -> ObrainStatus {
     let db = db_ref!(db);
     if out_ids.is_null() || out_count.is_null() {
         set_last_error("Null output pointer");
-        return GrafeoStatus::ErrorNullPointer;
+        return ObrainStatus::ErrorNullPointer;
     }
     let prop_str = match str_from_ptr(property) {
         Ok(s) => s,
@@ -847,7 +847,7 @@ pub extern "C" fn grafeo_find_nodes_by_property(
     };
     let Some(value) = crate::types::parse_value(value_json) else {
         set_last_error("Invalid JSON value");
-        return GrafeoStatus::ErrorSerialization;
+        return ObrainStatus::ErrorSerialization;
     };
     let ids = db.inner.read().find_nodes_by_property(prop_str, &value);
     let count = ids.len();
@@ -861,12 +861,12 @@ pub extern "C" fn grafeo_find_nodes_by_property(
         *out_ids = ptr;
         *out_count = count;
     }
-    GrafeoStatus::Ok
+    ObrainStatus::Ok
 }
 
-/// Free a node ID array from `grafeo_find_nodes_by_property`.
+/// Free a node ID array from `obrain_find_nodes_by_property`.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_free_node_ids(ids: *mut u64, count: usize) {
+pub extern "C" fn obrain_free_node_ids(ids: *mut u64, count: usize) {
     if !ids.is_null() && count > 0 {
         // SAFETY: Reconstructs the Vec that was forgotten in find_nodes_by_property.
         unsafe {
@@ -885,15 +885,15 @@ pub extern "C" fn grafeo_free_node_ids(ids: *mut u64, count: usize) {
 /// `metric` may be null for default (cosine).
 #[cfg(feature = "vector-index")]
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_create_vector_index(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_create_vector_index(
+    db: *mut ObrainDatabase,
     label: *const c_char,
     property: *const c_char,
     dimensions: i32,
     metric: *const c_char,
     m: i32,
     ef_construction: i32,
-) -> GrafeoStatus {
+) -> ObrainStatus {
     let db = db_ref!(db);
     let label_str = match str_from_ptr(label) {
         Ok(s) => s,
@@ -925,7 +925,7 @@ pub extern "C" fn grafeo_create_vector_index(
         .read()
         .create_vector_index(label_str, prop_str, dims, metric_str, m_val, ef_val)
     {
-        Ok(()) => GrafeoStatus::Ok,
+        Ok(()) => ObrainStatus::Ok,
         Err(e) => set_error(&e),
     }
 }
@@ -934,8 +934,8 @@ pub extern "C" fn grafeo_create_vector_index(
 /// Returns 1 if removed, 0 if not found.
 #[cfg(feature = "vector-index")]
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_drop_vector_index(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_drop_vector_index(
+    db: *mut ObrainDatabase,
     label: *const c_char,
     property: *const c_char,
 ) -> i32 {
@@ -943,7 +943,7 @@ pub extern "C" fn grafeo_drop_vector_index(
         set_last_error("Null database pointer");
         return 0;
     }
-    // SAFETY: Caller guarantees valid pointer from grafeo_open*.
+    // SAFETY: Caller guarantees valid pointer from obrain_open*.
     let db = unsafe { &*db };
     let Ok(label_str) = str_from_ptr(label) else {
         return 0;
@@ -958,11 +958,11 @@ pub extern "C" fn grafeo_drop_vector_index(
 /// Preserves original configuration.
 #[cfg(feature = "vector-index")]
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_rebuild_vector_index(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_rebuild_vector_index(
+    db: *mut ObrainDatabase,
     label: *const c_char,
     property: *const c_char,
-) -> GrafeoStatus {
+) -> ObrainStatus {
     let db = db_ref!(db);
     let label_str = match str_from_ptr(label) {
         Ok(s) => s,
@@ -973,19 +973,19 @@ pub extern "C" fn grafeo_rebuild_vector_index(
         Err(e) => return e,
     };
     match db.inner.read().rebuild_vector_index(label_str, prop_str) {
-        Ok(()) => GrafeoStatus::Ok,
+        Ok(()) => ObrainStatus::Ok,
         Err(e) => set_error(&e),
     }
 }
 
 /// Search for k nearest neighbors of a query vector.
 /// Results written to `out_ids` and `out_distances` arrays of length `*out_count`.
-/// Caller must free with `grafeo_free_vector_results`.
+/// Caller must free with `obrain_free_vector_results`.
 /// `ef` uses -1 for default.
 #[cfg(feature = "vector-index")]
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_vector_search(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_vector_search(
+    db: *mut ObrainDatabase,
     label: *const c_char,
     property: *const c_char,
     query: *const f32,
@@ -995,11 +995,11 @@ pub extern "C" fn grafeo_vector_search(
     out_ids: *mut *mut u64,
     out_distances: *mut *mut f32,
     out_count: *mut usize,
-) -> GrafeoStatus {
+) -> ObrainStatus {
     let db = db_ref!(db);
     if query.is_null() || out_ids.is_null() || out_distances.is_null() || out_count.is_null() {
         set_last_error("Null pointer argument");
-        return GrafeoStatus::ErrorNullPointer;
+        return ObrainStatus::ErrorNullPointer;
     }
     let label_str = match str_from_ptr(label) {
         Ok(s) => s,
@@ -1035,7 +1035,7 @@ pub extern "C" fn grafeo_vector_search(
                 *out_distances = dists_ptr;
                 *out_count = count;
             }
-            GrafeoStatus::Ok
+            ObrainStatus::Ok
         }
         Err(e) => set_error(&e),
     }
@@ -1043,12 +1043,12 @@ pub extern "C" fn grafeo_vector_search(
 
 /// Search for diverse nearest neighbors using Maximal Marginal Relevance (MMR).
 /// Results written to `out_ids` and `out_distances` arrays of length `*out_count`.
-/// Caller must free with `grafeo_free_vector_results`.
+/// Caller must free with `obrain_free_vector_results`.
 /// `fetch_k` and `ef` use -1 for defaults. `lambda` uses negative for default (0.5).
 #[cfg(feature = "vector-index")]
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_mmr_search(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_mmr_search(
+    db: *mut ObrainDatabase,
     label: *const c_char,
     property: *const c_char,
     query: *const f32,
@@ -1060,11 +1060,11 @@ pub extern "C" fn grafeo_mmr_search(
     out_ids: *mut *mut u64,
     out_distances: *mut *mut f32,
     out_count: *mut usize,
-) -> GrafeoStatus {
+) -> ObrainStatus {
     let db = db_ref!(db);
     if query.is_null() || out_ids.is_null() || out_distances.is_null() || out_count.is_null() {
         set_last_error("Null pointer argument");
-        return GrafeoStatus::ErrorNullPointer;
+        return ObrainStatus::ErrorNullPointer;
     }
     let label_str = match str_from_ptr(label) {
         Ok(s) => s,
@@ -1111,7 +1111,7 @@ pub extern "C" fn grafeo_mmr_search(
                 *out_distances = dists_ptr;
                 *out_count = count;
             }
-            GrafeoStatus::Ok
+            ObrainStatus::Ok
         }
         Err(e) => set_error(&e),
     }
@@ -1119,22 +1119,22 @@ pub extern "C" fn grafeo_mmr_search(
 
 /// Bulk-insert nodes with vector properties. Returns node IDs in `out_ids`.
 /// `vectors` is a flat array of `vector_count * dimensions` f32 values.
-/// Caller must free `*out_ids` with `grafeo_free_node_ids`.
+/// Caller must free `*out_ids` with `obrain_free_node_ids`.
 #[cfg(feature = "vector-index")]
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_batch_create_nodes(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_batch_create_nodes(
+    db: *mut ObrainDatabase,
     label: *const c_char,
     property: *const c_char,
     vectors: *const f32,
     vector_count: usize,
     dimensions: usize,
     out_ids: *mut *mut u64,
-) -> GrafeoStatus {
+) -> ObrainStatus {
     let db = db_ref!(db);
     if vectors.is_null() || out_ids.is_null() {
         set_last_error("Null pointer argument");
-        return GrafeoStatus::ErrorNullPointer;
+        return ObrainStatus::ErrorNullPointer;
     }
     let label_str = match str_from_ptr(label) {
         Ok(s) => s,
@@ -1160,13 +1160,13 @@ pub extern "C" fn grafeo_batch_create_nodes(
 
     // SAFETY: We checked out_ids is not null.
     unsafe { *out_ids = ptr };
-    GrafeoStatus::Ok
+    ObrainStatus::Ok
 }
 
 /// Free vector search result arrays.
 #[cfg(feature = "vector-index")]
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_free_vector_results(ids: *mut u64, distances: *mut f32, count: usize) {
+pub extern "C" fn obrain_free_vector_results(ids: *mut u64, distances: *mut f32, count: usize) {
     if !ids.is_null() && count > 0 {
         // SAFETY: Reconstructs the Vec that was forgotten in vector_search.
         unsafe {
@@ -1189,7 +1189,7 @@ pub extern "C" fn grafeo_free_vector_results(ids: *mut u64, distances: *mut f32,
 
 /// Get the number of nodes.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_node_count(db: *mut GrafeoDatabase) -> usize {
+pub extern "C" fn obrain_node_count(db: *mut ObrainDatabase) -> usize {
     if db.is_null() {
         return 0;
     }
@@ -1199,7 +1199,7 @@ pub extern "C" fn grafeo_node_count(db: *mut GrafeoDatabase) -> usize {
 
 /// Get the number of edges.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_edge_count(db: *mut GrafeoDatabase) -> usize {
+pub extern "C" fn obrain_edge_count(db: *mut ObrainDatabase) -> usize {
     if db.is_null() {
         return 0;
     }
@@ -1213,7 +1213,7 @@ pub extern "C" fn grafeo_edge_count(db: *mut GrafeoDatabase) -> usize {
 
 /// Begin a transaction with default isolation (snapshot isolation).
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_begin_transaction(db: *mut GrafeoDatabase) -> *mut GrafeoTransaction {
+pub extern "C" fn obrain_begin_transaction(db: *mut ObrainDatabase) -> *mut ObrainTransaction {
     if db.is_null() {
         set_last_error("Null database pointer");
         return std::ptr::null_mut();
@@ -1222,7 +1222,7 @@ pub extern "C" fn grafeo_begin_transaction(db: *mut GrafeoDatabase) -> *mut Graf
     let db = unsafe { &*db };
     let mut session = db.inner.read().session();
     match session.begin_transaction() {
-        Ok(()) => Box::into_raw(Box::new(GrafeoTransaction {
+        Ok(()) => Box::into_raw(Box::new(ObrainTransaction {
             session: parking_lot::Mutex::new(Some(session)),
             committed: false,
             rolled_back: false,
@@ -1237,10 +1237,10 @@ pub extern "C" fn grafeo_begin_transaction(db: *mut GrafeoDatabase) -> *mut Graf
 /// Begin a transaction with a specific isolation level.
 /// Levels: 0 = ReadCommitted, 1 = SnapshotIsolation, 2 = Serializable.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_begin_transaction_with_isolation(
-    db: *mut GrafeoDatabase,
+pub extern "C" fn obrain_begin_transaction_with_isolation(
+    db: *mut ObrainDatabase,
     isolation: i32,
-) -> *mut GrafeoTransaction {
+) -> *mut ObrainTransaction {
     if db.is_null() {
         set_last_error("Null database pointer");
         return std::ptr::null_mut();
@@ -1249,9 +1249,9 @@ pub extern "C" fn grafeo_begin_transaction_with_isolation(
     let db = unsafe { &*db };
 
     let level = match isolation {
-        0 => grafeo_engine::transaction::IsolationLevel::ReadCommitted,
-        1 => grafeo_engine::transaction::IsolationLevel::SnapshotIsolation,
-        2 => grafeo_engine::transaction::IsolationLevel::Serializable,
+        0 => obrain_engine::transaction::IsolationLevel::ReadCommitted,
+        1 => obrain_engine::transaction::IsolationLevel::SnapshotIsolation,
+        2 => obrain_engine::transaction::IsolationLevel::Serializable,
         _ => {
             set_last_error("Invalid isolation level (expected 0, 1, or 2)");
             return std::ptr::null_mut();
@@ -1260,7 +1260,7 @@ pub extern "C" fn grafeo_begin_transaction_with_isolation(
 
     let mut session = db.inner.read().session();
     match session.begin_transaction_with_isolation(level) {
-        Ok(()) => Box::into_raw(Box::new(GrafeoTransaction {
+        Ok(()) => Box::into_raw(Box::new(ObrainTransaction {
             session: parking_lot::Mutex::new(Some(session)),
             committed: false,
             rolled_back: false,
@@ -1274,10 +1274,10 @@ pub extern "C" fn grafeo_begin_transaction_with_isolation(
 
 /// Execute a query within a transaction.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_transaction_execute(
-    tx: *mut GrafeoTransaction,
+pub extern "C" fn obrain_transaction_execute(
+    tx: *mut ObrainTransaction,
     query: *const c_char,
-) -> *mut GrafeoResult {
+) -> *mut ObrainResult {
     if tx.is_null() {
         set_last_error("Null transaction pointer");
         return std::ptr::null_mut();
@@ -1307,11 +1307,11 @@ pub extern "C" fn grafeo_transaction_execute(
 
 /// Execute a query with params within a transaction.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_transaction_execute_with_params(
-    tx: *mut GrafeoTransaction,
+pub extern "C" fn obrain_transaction_execute_with_params(
+    tx: *mut ObrainTransaction,
     query: *const c_char,
     params_json: *const c_char,
-) -> *mut GrafeoResult {
+) -> *mut ObrainResult {
     if tx.is_null() {
         set_last_error("Null transaction pointer");
         return std::ptr::null_mut();
@@ -1346,71 +1346,71 @@ pub extern "C" fn grafeo_transaction_execute_with_params(
 
 /// Commit a transaction.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_commit(tx: *mut GrafeoTransaction) -> GrafeoStatus {
+pub extern "C" fn obrain_commit(tx: *mut ObrainTransaction) -> ObrainStatus {
     if tx.is_null() {
         set_last_error("Null transaction pointer");
-        return GrafeoStatus::ErrorNullPointer;
+        return ObrainStatus::ErrorNullPointer;
     }
     // SAFETY: Caller guarantees valid pointer.
     let tx = unsafe { &mut *tx };
     if tx.committed {
         set_last_error("Transaction already committed");
-        return GrafeoStatus::ErrorTransaction;
+        return ObrainStatus::ErrorTransaction;
     }
     if tx.rolled_back {
         set_last_error("Transaction already rolled back");
-        return GrafeoStatus::ErrorTransaction;
+        return ObrainStatus::ErrorTransaction;
     }
     let mut guard = tx.session.lock();
     if let Some(ref mut session) = *guard {
         match session.commit() {
             Ok(()) => {
                 tx.committed = true;
-                GrafeoStatus::Ok
+                ObrainStatus::Ok
             }
             Err(e) => set_error(&e),
         }
     } else {
         set_last_error("Transaction is no longer active");
-        GrafeoStatus::ErrorTransaction
+        ObrainStatus::ErrorTransaction
     }
 }
 
 /// Rollback a transaction.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_rollback(tx: *mut GrafeoTransaction) -> GrafeoStatus {
+pub extern "C" fn obrain_rollback(tx: *mut ObrainTransaction) -> ObrainStatus {
     if tx.is_null() {
         set_last_error("Null transaction pointer");
-        return GrafeoStatus::ErrorNullPointer;
+        return ObrainStatus::ErrorNullPointer;
     }
     // SAFETY: Caller guarantees valid pointer.
     let tx = unsafe { &mut *tx };
     if tx.committed {
         set_last_error("Transaction already committed");
-        return GrafeoStatus::ErrorTransaction;
+        return ObrainStatus::ErrorTransaction;
     }
     if tx.rolled_back {
         set_last_error("Transaction already rolled back");
-        return GrafeoStatus::ErrorTransaction;
+        return ObrainStatus::ErrorTransaction;
     }
     let mut guard = tx.session.lock();
     if let Some(ref mut session) = *guard {
         match session.rollback() {
             Ok(()) => {
                 tx.rolled_back = true;
-                GrafeoStatus::Ok
+                ObrainStatus::Ok
             }
             Err(e) => set_error(&e),
         }
     } else {
         set_last_error("Transaction is no longer active");
-        GrafeoStatus::ErrorTransaction
+        ObrainStatus::ErrorTransaction
     }
 }
 
 /// Free a transaction handle.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_free_transaction(tx: *mut GrafeoTransaction) {
+pub extern "C" fn obrain_free_transaction(tx: *mut ObrainTransaction) {
     if !tx.is_null() {
         // SAFETY: We take ownership back. Drop impl handles auto-rollback.
         unsafe { drop(Box::from_raw(tx)) };
@@ -1426,15 +1426,15 @@ pub extern "C" fn grafeo_free_transaction(tx: *mut GrafeoTransaction) {
 /// Forces re-parsing and re-optimization on next execution.
 /// Called automatically after DDL operations, but can be invoked manually.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_clear_plan_cache(db: *mut GrafeoDatabase) -> GrafeoStatus {
+pub extern "C" fn obrain_clear_plan_cache(db: *mut ObrainDatabase) -> ObrainStatus {
     let db = db_ref!(db);
     db.inner.read().clear_plan_cache();
-    GrafeoStatus::Ok
+    ObrainStatus::Ok
 }
 
-/// Get database info as a JSON string. Caller must free with `grafeo_free_string`.
+/// Get database info as a JSON string. Caller must free with `obrain_free_string`.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_info(db: *mut GrafeoDatabase) -> *mut c_char {
+pub extern "C" fn obrain_info(db: *mut ObrainDatabase) -> *mut c_char {
     if db.is_null() {
         set_last_error("Null database pointer");
         return std::ptr::null_mut();
@@ -1456,24 +1456,24 @@ pub extern "C" fn grafeo_info(db: *mut GrafeoDatabase) -> *mut c_char {
 
 /// Save database to a path. Caller provides a path string.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_save(db: *mut GrafeoDatabase, path: *const c_char) -> GrafeoStatus {
+pub extern "C" fn obrain_save(db: *mut ObrainDatabase, path: *const c_char) -> ObrainStatus {
     let db = db_ref!(db);
     let path_str = match str_from_ptr(path) {
         Ok(s) => s,
         Err(e) => return e,
     };
     match db.inner.read().save(path_str) {
-        Ok(()) => GrafeoStatus::Ok,
+        Ok(()) => ObrainStatus::Ok,
         Err(e) => set_error(&e),
     }
 }
 
 /// Trigger a WAL checkpoint.
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_wal_checkpoint(db: *mut GrafeoDatabase) -> GrafeoStatus {
+pub extern "C" fn obrain_wal_checkpoint(db: *mut ObrainDatabase) -> ObrainStatus {
     let db = db_ref!(db);
     match db.inner.read().wal_checkpoint() {
-        Ok(()) => GrafeoStatus::Ok,
+        Ok(()) => ObrainStatus::Ok,
         Err(e) => set_error(&e),
     }
 }
@@ -1482,10 +1482,10 @@ pub extern "C" fn grafeo_wal_checkpoint(db: *mut GrafeoDatabase) -> GrafeoStatus
 // Memory Management
 // =========================================================================
 
-/// Free a string returned by any `grafeo_*` function that documents
-/// "caller must free with `grafeo_free_string`".
+/// Free a string returned by any `obrain_*` function that documents
+/// "caller must free with `obrain_free_string`".
 #[unsafe(no_mangle)]
-pub extern "C" fn grafeo_free_string(s: *mut c_char) {
+pub extern "C" fn obrain_free_string(s: *mut c_char) {
     if !s.is_null() {
         // SAFETY: Reconstructs the CString that was turned into a raw pointer.
         unsafe { drop(CString::from_raw(s)) };
@@ -1503,54 +1503,54 @@ mod tests {
 
     #[test]
     fn test_open_memory_and_close() {
-        let db = grafeo_open_memory();
+        let db = obrain_open_memory();
         assert!(!db.is_null());
-        assert_eq!(grafeo_node_count(db), 0);
-        assert_eq!(grafeo_edge_count(db), 0);
-        let status = grafeo_close(db);
-        assert_eq!(status, GrafeoStatus::Ok);
-        grafeo_free_database(db);
+        assert_eq!(obrain_node_count(db), 0);
+        assert_eq!(obrain_edge_count(db), 0);
+        let status = obrain_close(db);
+        assert_eq!(status, ObrainStatus::Ok);
+        obrain_free_database(db);
     }
 
     #[test]
     fn test_create_node_and_get() {
-        let db = grafeo_open_memory();
+        let db = obrain_open_memory();
         let labels = CString::new(r#"["Person"]"#).unwrap();
         let props = CString::new(r#"{"name":"Alix","age":30}"#).unwrap();
-        let id = grafeo_create_node(db, labels.as_ptr(), props.as_ptr());
+        let id = obrain_create_node(db, labels.as_ptr(), props.as_ptr());
         assert_ne!(id, u64::MAX);
-        assert_eq!(grafeo_node_count(db), 1);
+        assert_eq!(obrain_node_count(db), 1);
 
-        let mut node_ptr: *mut GrafeoNode = std::ptr::null_mut();
-        let status = grafeo_get_node(db, id, &raw mut node_ptr);
-        assert_eq!(status, GrafeoStatus::Ok);
+        let mut node_ptr: *mut ObrainNode = std::ptr::null_mut();
+        let status = obrain_get_node(db, id, &raw mut node_ptr);
+        assert_eq!(status, ObrainStatus::Ok);
         assert!(!node_ptr.is_null());
 
         // SAFETY: We just verified it's not null.
         let node = unsafe { &*node_ptr };
         assert_eq!(node.id, id);
 
-        grafeo_free_node(node_ptr);
-        grafeo_close(db);
-        grafeo_free_database(db);
+        obrain_free_node(node_ptr);
+        obrain_close(db);
+        obrain_free_database(db);
     }
 
     #[test]
     fn test_create_edge_and_get() {
-        let db = grafeo_open_memory();
+        let db = obrain_open_memory();
         let labels_a = CString::new(r#"["Person"]"#).unwrap();
         let labels_b = CString::new(r#"["Person"]"#).unwrap();
-        let id_a = grafeo_create_node(db, labels_a.as_ptr(), std::ptr::null());
-        let id_b = grafeo_create_node(db, labels_b.as_ptr(), std::ptr::null());
+        let id_a = obrain_create_node(db, labels_a.as_ptr(), std::ptr::null());
+        let id_b = obrain_create_node(db, labels_b.as_ptr(), std::ptr::null());
 
         let edge_type = CString::new("KNOWS").unwrap();
-        let edge_id = grafeo_create_edge(db, id_a, id_b, edge_type.as_ptr(), std::ptr::null());
+        let edge_id = obrain_create_edge(db, id_a, id_b, edge_type.as_ptr(), std::ptr::null());
         assert_ne!(edge_id, u64::MAX);
-        assert_eq!(grafeo_edge_count(db), 1);
+        assert_eq!(obrain_edge_count(db), 1);
 
-        let mut edge_ptr: *mut GrafeoEdge = std::ptr::null_mut();
-        let status = grafeo_get_edge(db, edge_id, &raw mut edge_ptr);
-        assert_eq!(status, GrafeoStatus::Ok);
+        let mut edge_ptr: *mut ObrainEdge = std::ptr::null_mut();
+        let status = obrain_get_edge(db, edge_id, &raw mut edge_ptr);
+        assert_eq!(status, ObrainStatus::Ok);
         assert!(!edge_ptr.is_null());
 
         // SAFETY: We just verified it's not null.
@@ -1558,27 +1558,27 @@ mod tests {
         assert_eq!(edge.source_id, id_a);
         assert_eq!(edge.target_id, id_b);
 
-        grafeo_free_edge(edge_ptr);
-        grafeo_close(db);
-        grafeo_free_database(db);
+        obrain_free_edge(edge_ptr);
+        obrain_close(db);
+        obrain_free_database(db);
     }
 
     #[test]
     fn test_execute_query() {
-        let db = grafeo_open_memory();
+        let db = obrain_open_memory();
         let create = CString::new("CREATE (:Person {name: 'Alix', age: 30})").unwrap();
-        let result = grafeo_execute(db, create.as_ptr());
+        let result = obrain_execute(db, create.as_ptr());
         // CREATE returns a result (possibly empty rows).
         if !result.is_null() {
-            grafeo_free_result(result);
+            obrain_free_result(result);
         }
 
         let query = CString::new("MATCH (p:Person) RETURN p.name, p.age").unwrap();
-        let result = grafeo_execute(db, query.as_ptr());
+        let result = obrain_execute(db, query.as_ptr());
         assert!(!result.is_null());
-        assert_eq!(grafeo_result_row_count(result), 1);
+        assert_eq!(obrain_result_row_count(result), 1);
 
-        let json_ptr = grafeo_result_json(result);
+        let json_ptr = obrain_result_json(result);
         assert!(!json_ptr.is_null());
         // SAFETY: Valid C string from our API.
         let json_str = unsafe { std::ffi::CStr::from_ptr(json_ptr) }
@@ -1586,96 +1586,96 @@ mod tests {
             .unwrap();
         assert!(json_str.contains("Alix"));
 
-        grafeo_free_result(result);
-        grafeo_close(db);
-        grafeo_free_database(db);
+        obrain_free_result(result);
+        obrain_close(db);
+        obrain_free_database(db);
     }
 
     #[test]
     fn test_null_pointer_safety() {
         // All functions should handle null gracefully.
-        let result = grafeo_execute(std::ptr::null_mut(), std::ptr::null());
+        let result = obrain_execute(std::ptr::null_mut(), std::ptr::null());
         assert!(result.is_null());
-        let err = crate::error::grafeo_last_error();
+        let err = crate::error::obrain_last_error();
         assert!(!err.is_null());
 
-        assert_eq!(grafeo_node_count(std::ptr::null_mut()), 0);
-        assert_eq!(grafeo_edge_count(std::ptr::null_mut()), 0);
-        assert_eq!(grafeo_delete_node(std::ptr::null_mut(), 0), -1);
-        assert_eq!(grafeo_delete_edge(std::ptr::null_mut(), 0), -1);
+        assert_eq!(obrain_node_count(std::ptr::null_mut()), 0);
+        assert_eq!(obrain_edge_count(std::ptr::null_mut()), 0);
+        assert_eq!(obrain_delete_node(std::ptr::null_mut(), 0), -1);
+        assert_eq!(obrain_delete_edge(std::ptr::null_mut(), 0), -1);
     }
 
     #[test]
     fn test_transaction_commit() {
-        let db = grafeo_open_memory();
-        let tx = grafeo_begin_transaction(db);
+        let db = obrain_open_memory();
+        let tx = obrain_begin_transaction(db);
         assert!(!tx.is_null());
 
         let query = CString::new("CREATE (:Tx {val: 1})").unwrap();
-        let result = grafeo_transaction_execute(tx, query.as_ptr());
+        let result = obrain_transaction_execute(tx, query.as_ptr());
         if !result.is_null() {
-            grafeo_free_result(result);
+            obrain_free_result(result);
         }
 
-        let status = grafeo_commit(tx);
-        assert_eq!(status, GrafeoStatus::Ok);
-        grafeo_free_transaction(tx);
+        let status = obrain_commit(tx);
+        assert_eq!(status, ObrainStatus::Ok);
+        obrain_free_transaction(tx);
 
         // Verify committed data is visible.
-        assert_eq!(grafeo_node_count(db), 1);
+        assert_eq!(obrain_node_count(db), 1);
 
-        grafeo_close(db);
-        grafeo_free_database(db);
+        obrain_close(db);
+        obrain_free_database(db);
     }
 
     #[test]
     fn test_transaction_rollback() {
-        let db = grafeo_open_memory();
+        let db = obrain_open_memory();
 
         // Create a baseline node.
         let labels = CString::new(r#"["Base"]"#).unwrap();
-        grafeo_create_node(db, labels.as_ptr(), std::ptr::null());
-        assert_eq!(grafeo_node_count(db), 1);
+        obrain_create_node(db, labels.as_ptr(), std::ptr::null());
+        assert_eq!(obrain_node_count(db), 1);
 
-        let tx = grafeo_begin_transaction(db);
+        let tx = obrain_begin_transaction(db);
         let query = CString::new("CREATE (:Rolled {val: 2})").unwrap();
-        let result = grafeo_transaction_execute(tx, query.as_ptr());
+        let result = obrain_transaction_execute(tx, query.as_ptr());
         if !result.is_null() {
-            grafeo_free_result(result);
+            obrain_free_result(result);
         }
 
-        let status = grafeo_rollback(tx);
-        assert_eq!(status, GrafeoStatus::Ok);
-        grafeo_free_transaction(tx);
+        let status = obrain_rollback(tx);
+        assert_eq!(status, ObrainStatus::Ok);
+        obrain_free_transaction(tx);
 
         // Rolled-back node should not be visible.
-        assert_eq!(grafeo_node_count(db), 1);
+        assert_eq!(obrain_node_count(db), 1);
 
-        grafeo_close(db);
-        grafeo_free_database(db);
+        obrain_close(db);
+        obrain_free_database(db);
     }
 
     #[test]
     fn test_node_property_crud() {
-        let db = grafeo_open_memory();
+        let db = obrain_open_memory();
         let labels = CString::new(r#"["Person"]"#).unwrap();
-        let id = grafeo_create_node(db, labels.as_ptr(), std::ptr::null());
+        let id = obrain_create_node(db, labels.as_ptr(), std::ptr::null());
 
         let key = CString::new("city").unwrap();
         let value = CString::new(r#""Berlin""#).unwrap();
-        let status = grafeo_set_node_property(db, id, key.as_ptr(), value.as_ptr());
-        assert_eq!(status, GrafeoStatus::Ok);
+        let status = obrain_set_node_property(db, id, key.as_ptr(), value.as_ptr());
+        assert_eq!(status, ObrainStatus::Ok);
 
-        let removed = grafeo_remove_node_property(db, id, key.as_ptr());
+        let removed = obrain_remove_node_property(db, id, key.as_ptr());
         assert_eq!(removed, 1);
 
-        grafeo_close(db);
-        grafeo_free_database(db);
+        obrain_close(db);
+        obrain_free_database(db);
     }
 
     #[test]
     fn test_version() {
-        let v = grafeo_version();
+        let v = obrain_version();
         assert!(!v.is_null());
         // SAFETY: Static string, always valid.
         let version_str = unsafe { std::ffi::CStr::from_ptr(v) }.to_str().unwrap();
@@ -1686,79 +1686,79 @@ mod tests {
 
     #[test]
     fn test_edge_property_crud() {
-        let db = grafeo_open_memory();
+        let db = obrain_open_memory();
         let labels = CString::new(r#"["N"]"#).unwrap();
-        let id_a = grafeo_create_node(db, labels.as_ptr(), std::ptr::null());
-        let id_b = grafeo_create_node(db, labels.as_ptr(), std::ptr::null());
+        let id_a = obrain_create_node(db, labels.as_ptr(), std::ptr::null());
+        let id_b = obrain_create_node(db, labels.as_ptr(), std::ptr::null());
 
         let edge_type = CString::new("R").unwrap();
-        let eid = grafeo_create_edge(db, id_a, id_b, edge_type.as_ptr(), std::ptr::null());
+        let eid = obrain_create_edge(db, id_a, id_b, edge_type.as_ptr(), std::ptr::null());
         assert_ne!(eid, u64::MAX);
 
         // Set edge property
         let key = CString::new("weight").unwrap();
         let value = CString::new("1.5").unwrap();
-        let status = grafeo_set_edge_property(db, eid, key.as_ptr(), value.as_ptr());
-        assert_eq!(status, GrafeoStatus::Ok);
+        let status = obrain_set_edge_property(db, eid, key.as_ptr(), value.as_ptr());
+        assert_eq!(status, ObrainStatus::Ok);
 
         // Remove edge property
-        let removed = grafeo_remove_edge_property(db, eid, key.as_ptr());
+        let removed = obrain_remove_edge_property(db, eid, key.as_ptr());
         assert_eq!(removed, 1);
 
         // Removing again returns 0
-        let removed2 = grafeo_remove_edge_property(db, eid, key.as_ptr());
+        let removed2 = obrain_remove_edge_property(db, eid, key.as_ptr());
         assert_eq!(removed2, 0);
 
-        grafeo_close(db);
-        grafeo_free_database(db);
+        obrain_close(db);
+        obrain_free_database(db);
     }
 
     // ── Delete operations ──
 
     #[test]
     fn test_delete_node_and_edge() {
-        let db = grafeo_open_memory();
+        let db = obrain_open_memory();
         let labels = CString::new(r#"["N"]"#).unwrap();
-        let id_a = grafeo_create_node(db, labels.as_ptr(), std::ptr::null());
-        let id_b = grafeo_create_node(db, labels.as_ptr(), std::ptr::null());
+        let id_a = obrain_create_node(db, labels.as_ptr(), std::ptr::null());
+        let id_b = obrain_create_node(db, labels.as_ptr(), std::ptr::null());
 
         let edge_type = CString::new("R").unwrap();
-        let eid = grafeo_create_edge(db, id_a, id_b, edge_type.as_ptr(), std::ptr::null());
+        let eid = obrain_create_edge(db, id_a, id_b, edge_type.as_ptr(), std::ptr::null());
 
-        assert_eq!(grafeo_node_count(db), 2);
-        assert_eq!(grafeo_edge_count(db), 1);
+        assert_eq!(obrain_node_count(db), 2);
+        assert_eq!(obrain_edge_count(db), 1);
 
         // Delete edge
-        assert_eq!(grafeo_delete_edge(db, eid), 1);
-        assert_eq!(grafeo_edge_count(db), 0);
+        assert_eq!(obrain_delete_edge(db, eid), 1);
+        assert_eq!(obrain_edge_count(db), 0);
         // Second delete returns 0
-        assert_eq!(grafeo_delete_edge(db, eid), 0);
+        assert_eq!(obrain_delete_edge(db, eid), 0);
 
         // Delete node
-        assert_eq!(grafeo_delete_node(db, id_a), 1);
-        assert_eq!(grafeo_node_count(db), 1);
-        assert_eq!(grafeo_delete_node(db, id_a), 0);
+        assert_eq!(obrain_delete_node(db, id_a), 1);
+        assert_eq!(obrain_node_count(db), 1);
+        assert_eq!(obrain_delete_node(db, id_a), 0);
 
-        grafeo_close(db);
-        grafeo_free_database(db);
+        obrain_close(db);
+        obrain_free_database(db);
     }
 
     // ── Label operations ──
 
     #[test]
     fn test_label_operations() {
-        let db = grafeo_open_memory();
+        let db = obrain_open_memory();
         let labels = CString::new(r#"["Person"]"#).unwrap();
-        let id = grafeo_create_node(db, labels.as_ptr(), std::ptr::null());
+        let id = obrain_create_node(db, labels.as_ptr(), std::ptr::null());
 
         // Add label
         let label = CString::new("Employee").unwrap();
-        assert_eq!(grafeo_add_node_label(db, id, label.as_ptr()), 1);
+        assert_eq!(obrain_add_node_label(db, id, label.as_ptr()), 1);
         // Adding same label returns 0
-        assert_eq!(grafeo_add_node_label(db, id, label.as_ptr()), 0);
+        assert_eq!(obrain_add_node_label(db, id, label.as_ptr()), 0);
 
         // Get labels
-        let labels_json = grafeo_get_node_labels(db, id);
+        let labels_json = obrain_get_node_labels(db, id);
         assert!(!labels_json.is_null());
         // SAFETY: We just verified the pointer is not null.
         let labels_str = unsafe { std::ffi::CStr::from_ptr(labels_json) }
@@ -1766,155 +1766,155 @@ mod tests {
             .unwrap();
         assert!(labels_str.contains("Person"));
         assert!(labels_str.contains("Employee"));
-        grafeo_free_string(labels_json);
+        obrain_free_string(labels_json);
 
         // Remove label
-        assert_eq!(grafeo_remove_node_label(db, id, label.as_ptr()), 1);
-        assert_eq!(grafeo_remove_node_label(db, id, label.as_ptr()), 0);
+        assert_eq!(obrain_remove_node_label(db, id, label.as_ptr()), 1);
+        assert_eq!(obrain_remove_node_label(db, id, label.as_ptr()), 0);
 
-        grafeo_close(db);
-        grafeo_free_database(db);
+        obrain_close(db);
+        obrain_free_database(db);
     }
 
     // ── Execute with parameters ──
 
     #[test]
     fn test_execute_with_params() {
-        let db = grafeo_open_memory();
+        let db = obrain_open_memory();
 
         // Create a node first
         let create = CString::new("CREATE (:Person {name: 'Alix', age: 30})").unwrap();
-        let result = grafeo_execute(db, create.as_ptr());
+        let result = obrain_execute(db, create.as_ptr());
         if !result.is_null() {
-            grafeo_free_result(result);
+            obrain_free_result(result);
         }
 
         // Query with parameters
         let query = CString::new("MATCH (n:Person) WHERE n.name = $name RETURN n.age").unwrap();
         let params = CString::new(r#"{"name":"Alix"}"#).unwrap();
-        let result = grafeo_execute_with_params(db, query.as_ptr(), params.as_ptr());
+        let result = obrain_execute_with_params(db, query.as_ptr(), params.as_ptr());
         assert!(!result.is_null());
-        assert_eq!(grafeo_result_row_count(result), 1);
-        grafeo_free_result(result);
+        assert_eq!(obrain_result_row_count(result), 1);
+        obrain_free_result(result);
 
-        grafeo_close(db);
-        grafeo_free_database(db);
+        obrain_close(db);
+        obrain_free_database(db);
     }
 
     // ── Property index operations ──
 
     #[test]
     fn test_property_index_lifecycle() {
-        let db = grafeo_open_memory();
+        let db = obrain_open_memory();
         let prop = CString::new("name").unwrap();
 
         // No index initially
-        assert_eq!(grafeo_has_property_index(db, prop.as_ptr()), 0);
+        assert_eq!(obrain_has_property_index(db, prop.as_ptr()), 0);
 
         // Create index
-        let status = grafeo_create_property_index(db, prop.as_ptr());
-        assert_eq!(status, GrafeoStatus::Ok);
-        assert_eq!(grafeo_has_property_index(db, prop.as_ptr()), 1);
+        let status = obrain_create_property_index(db, prop.as_ptr());
+        assert_eq!(status, ObrainStatus::Ok);
+        assert_eq!(obrain_has_property_index(db, prop.as_ptr()), 1);
 
         // Create node with the property
         let labels = CString::new(r#"["Person"]"#).unwrap();
         let props = CString::new(r#"{"name":"Alix"}"#).unwrap();
-        grafeo_create_node(db, labels.as_ptr(), props.as_ptr());
+        obrain_create_node(db, labels.as_ptr(), props.as_ptr());
 
         // Find by property
         let value = CString::new(r#""Alix""#).unwrap();
         let mut out_ids: *mut u64 = std::ptr::null_mut();
         let mut out_count: usize = 0;
-        let status = grafeo_find_nodes_by_property(
+        let status = obrain_find_nodes_by_property(
             db,
             prop.as_ptr(),
             value.as_ptr(),
             &raw mut out_ids,
             &raw mut out_count,
         );
-        assert_eq!(status, GrafeoStatus::Ok);
+        assert_eq!(status, ObrainStatus::Ok);
         assert_eq!(out_count, 1);
         if !out_ids.is_null() {
-            grafeo_free_node_ids(out_ids, out_count);
+            obrain_free_node_ids(out_ids, out_count);
         }
 
         // Drop index
-        assert_eq!(grafeo_drop_property_index(db, prop.as_ptr()), 1);
-        assert_eq!(grafeo_has_property_index(db, prop.as_ptr()), 0);
-        assert_eq!(grafeo_drop_property_index(db, prop.as_ptr()), 0);
+        assert_eq!(obrain_drop_property_index(db, prop.as_ptr()), 1);
+        assert_eq!(obrain_has_property_index(db, prop.as_ptr()), 0);
+        assert_eq!(obrain_drop_property_index(db, prop.as_ptr()), 0);
 
-        grafeo_close(db);
-        grafeo_free_database(db);
+        obrain_close(db);
+        obrain_free_database(db);
     }
 
     // ── Database info ──
 
     #[test]
     fn test_database_info() {
-        let db = grafeo_open_memory();
+        let db = obrain_open_memory();
         let labels = CString::new(r#"["Person"]"#).unwrap();
         let props = CString::new(r#"{"name":"Alix"}"#).unwrap();
-        grafeo_create_node(db, labels.as_ptr(), props.as_ptr());
+        obrain_create_node(db, labels.as_ptr(), props.as_ptr());
 
-        let info = grafeo_info(db);
+        let info = obrain_info(db);
         assert!(!info.is_null());
         // SAFETY: We just verified the pointer is not null.
         let info_str = unsafe { std::ffi::CStr::from_ptr(info) }.to_str().unwrap();
         assert!(info_str.contains("node_count"));
-        grafeo_free_string(info);
+        obrain_free_string(info);
 
-        grafeo_close(db);
-        grafeo_free_database(db);
+        obrain_close(db);
+        obrain_free_database(db);
     }
 
     // ── Result metadata ──
 
     #[test]
     fn test_result_metadata() {
-        let db = grafeo_open_memory();
+        let db = obrain_open_memory();
         let create = CString::new("CREATE (:N {x: 1}), (:N {x: 2}), (:N {x: 3})").unwrap();
-        let result = grafeo_execute(db, create.as_ptr());
+        let result = obrain_execute(db, create.as_ptr());
         if !result.is_null() {
-            grafeo_free_result(result);
+            obrain_free_result(result);
         }
 
         let query = CString::new("MATCH (n:N) RETURN n.x").unwrap();
-        let result = grafeo_execute(db, query.as_ptr());
+        let result = obrain_execute(db, query.as_ptr());
         assert!(!result.is_null());
 
-        assert_eq!(grafeo_result_row_count(result), 3);
-        let time = grafeo_result_execution_time_ms(result);
+        assert_eq!(obrain_result_row_count(result), 3);
+        let time = obrain_result_execution_time_ms(result);
         assert!(time >= 0.0);
 
-        grafeo_free_result(result);
-        grafeo_close(db);
-        grafeo_free_database(db);
+        obrain_free_result(result);
+        obrain_close(db);
+        obrain_free_database(db);
     }
 
     // ── Edge accessor functions ──
 
     #[test]
     fn test_edge_accessors() {
-        let db = grafeo_open_memory();
+        let db = obrain_open_memory();
         let labels = CString::new(r#"["N"]"#).unwrap();
-        let id_a = grafeo_create_node(db, labels.as_ptr(), std::ptr::null());
-        let id_b = grafeo_create_node(db, labels.as_ptr(), std::ptr::null());
+        let id_a = obrain_create_node(db, labels.as_ptr(), std::ptr::null());
+        let id_b = obrain_create_node(db, labels.as_ptr(), std::ptr::null());
 
         let edge_type = CString::new("KNOWS").unwrap();
         let edge_props = CString::new(r#"{"since":2020}"#).unwrap();
-        let eid = grafeo_create_edge(db, id_a, id_b, edge_type.as_ptr(), edge_props.as_ptr());
+        let eid = obrain_create_edge(db, id_a, id_b, edge_type.as_ptr(), edge_props.as_ptr());
 
-        let mut edge_ptr: *mut GrafeoEdge = std::ptr::null_mut();
-        let status = grafeo_get_edge(db, eid, &raw mut edge_ptr);
-        assert_eq!(status, GrafeoStatus::Ok);
+        let mut edge_ptr: *mut ObrainEdge = std::ptr::null_mut();
+        let status = obrain_get_edge(db, eid, &raw mut edge_ptr);
+        assert_eq!(status, ObrainStatus::Ok);
         assert!(!edge_ptr.is_null());
 
         // Test all accessor functions
-        assert_eq!(grafeo_edge_id(edge_ptr), eid);
-        assert_eq!(grafeo_edge_source_id(edge_ptr), id_a);
-        assert_eq!(grafeo_edge_target_id(edge_ptr), id_b);
+        assert_eq!(obrain_edge_id(edge_ptr), eid);
+        assert_eq!(obrain_edge_source_id(edge_ptr), id_a);
+        assert_eq!(obrain_edge_target_id(edge_ptr), id_b);
 
-        let type_ptr = grafeo_edge_type(edge_ptr);
+        let type_ptr = obrain_edge_type(edge_ptr);
         assert!(!type_ptr.is_null());
         // SAFETY: We just verified the pointer is not null.
         let type_str = unsafe { std::ffi::CStr::from_ptr(type_ptr) }
@@ -1922,7 +1922,7 @@ mod tests {
             .unwrap();
         assert_eq!(type_str, "KNOWS");
 
-        let props_ptr = grafeo_edge_properties_json(edge_ptr);
+        let props_ptr = obrain_edge_properties_json(edge_ptr);
         assert!(!props_ptr.is_null());
         // SAFETY: We just verified the pointer is not null.
         let props_str = unsafe { std::ffi::CStr::from_ptr(props_ptr) }
@@ -1930,8 +1930,8 @@ mod tests {
             .unwrap();
         assert!(props_str.contains("2020"));
 
-        grafeo_free_edge(edge_ptr);
-        grafeo_close(db);
-        grafeo_free_database(db);
+        obrain_free_edge(edge_ptr);
+        obrain_close(db);
+        obrain_free_database(db);
     }
 }

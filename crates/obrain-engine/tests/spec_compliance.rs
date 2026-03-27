@@ -5,18 +5,18 @@
 //! GQL statements, Cypher features, and SPARQL features.
 //!
 //! ```bash
-//! cargo test -p grafeo-engine --features full --test spec_compliance
+//! cargo test -p obrain-engine --features full --test spec_compliance
 //! ```
 
-use grafeo_common::types::{PropertyKey, Value};
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::{PropertyKey, Value};
+use obrain_engine::ObrainDB;
 
 // ============================================================================
 // Test Fixtures
 // ============================================================================
 
-fn social_network() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn social_network() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let alix = session.create_node_with_props(
@@ -72,7 +72,7 @@ fn social_network() -> GrafeoDB {
     db
 }
 
-fn extract_strings(db: &GrafeoDB, query: &str) -> Vec<String> {
+fn extract_strings(db: &ObrainDB, query: &str) -> Vec<String> {
     let session = db.session();
     let result = session.execute(query).unwrap();
     result
@@ -443,7 +443,7 @@ mod gql_predicates {
 
     #[test]
     fn cast_to_integer() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:Item {value: '42'})").unwrap();
         let result = session
@@ -454,7 +454,7 @@ mod gql_predicates {
 
     #[test]
     fn cast_to_float() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:Item {value: '3.14'})").unwrap();
         let result = session
@@ -468,7 +468,7 @@ mod gql_predicates {
 
     #[test]
     fn cast_to_boolean() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:Item {value: 'true'})").unwrap();
         let result = session
@@ -692,7 +692,7 @@ mod gql_statements {
 
     #[test]
     fn list_index_access() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:Item {tags: ['a', 'b', 'c']})")
@@ -724,7 +724,7 @@ mod gql_session_commands {
 
     #[test]
     fn create_graph_and_drop_graph() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         // CREATE GRAPH
         let result = session.execute("CREATE GRAPH test_graph");
@@ -741,7 +741,7 @@ mod gql_session_commands {
 
     #[test]
     fn create_graph_if_not_exists() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("CREATE GRAPH g1").unwrap();
         // Without IF NOT EXISTS, should fail
@@ -754,7 +754,7 @@ mod gql_session_commands {
 
     #[test]
     fn drop_graph_if_exists() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         // Without IF EXISTS, should fail on nonexistent
         let result = session.execute("DROP GRAPH nonexistent");
@@ -766,7 +766,7 @@ mod gql_session_commands {
 
     #[test]
     fn create_property_graph() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("CREATE PROPERTY GRAPH my_graph");
         assert!(result.is_ok());
@@ -775,7 +775,7 @@ mod gql_session_commands {
 
     #[test]
     fn drop_property_graph() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("CREATE PROPERTY GRAPH pg").unwrap();
         let result = session.execute("DROP PROPERTY GRAPH pg");
@@ -784,7 +784,7 @@ mod gql_session_commands {
 
     #[test]
     fn use_graph_command() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("CREATE GRAPH workspace").unwrap();
         let result = session.execute("USE GRAPH workspace");
@@ -794,7 +794,7 @@ mod gql_session_commands {
 
     #[test]
     fn use_graph_nonexistent_errors() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("USE GRAPH nonexistent");
         assert!(result.is_err());
@@ -802,7 +802,7 @@ mod gql_session_commands {
 
     #[test]
     fn session_set_time_zone() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("SESSION SET TIME ZONE 'UTC+5'");
         assert!(result.is_ok());
@@ -811,7 +811,7 @@ mod gql_session_commands {
 
     #[test]
     fn session_set_graph() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("CREATE GRAPH analytics").unwrap();
         let result = session.execute("SESSION SET GRAPH analytics");
@@ -821,7 +821,7 @@ mod gql_session_commands {
 
     #[test]
     fn session_set_schema() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         // ISO/IEC 39075 Section 7.1 GR1: SESSION SET SCHEMA sets session schema independently
         session.execute("CREATE SCHEMA myschema").unwrap();
@@ -834,7 +834,7 @@ mod gql_session_commands {
 
     #[test]
     fn session_set_schema_nonexistent_errors() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         // SESSION SET SCHEMA should error if schema does not exist
         let result = session.execute("SESSION SET SCHEMA nosuchschema");
@@ -843,7 +843,7 @@ mod gql_session_commands {
 
     #[test]
     fn session_reset() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("CREATE GRAPH g1").unwrap();
         session.execute("USE GRAPH g1").unwrap();
@@ -861,7 +861,7 @@ mod gql_session_commands {
     #[test]
     fn session_reset_schema_only() {
         // ISO/IEC 39075 Section 7.2 GR1: SESSION RESET SCHEMA resets schema only
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("CREATE GRAPH g1").unwrap();
         session.execute("USE GRAPH g1").unwrap();
@@ -877,7 +877,7 @@ mod gql_session_commands {
     #[test]
     fn session_reset_graph_only() {
         // ISO/IEC 39075 Section 7.2 GR2: SESSION RESET GRAPH resets graph only
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("CREATE GRAPH g1").unwrap();
         session.execute("USE GRAPH g1").unwrap();
@@ -896,7 +896,7 @@ mod gql_session_commands {
 
     #[test]
     fn return_current_schema_default_when_unset() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("RETURN CURRENT_SCHEMA AS s").unwrap();
         assert_eq!(result.columns, vec!["s"]);
@@ -907,7 +907,7 @@ mod gql_session_commands {
 
     #[test]
     fn return_current_schema_after_set() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("CREATE SCHEMA analytics").unwrap();
         session.execute("SESSION SET SCHEMA analytics").unwrap();
@@ -917,7 +917,7 @@ mod gql_session_commands {
 
     #[test]
     fn return_current_graph_default_when_unset() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("RETURN CURRENT_GRAPH AS g").unwrap();
         assert_eq!(result.columns, vec!["g"]);
@@ -927,7 +927,7 @@ mod gql_session_commands {
 
     #[test]
     fn return_current_graph_after_use() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("CREATE GRAPH social").unwrap();
         session.execute("USE GRAPH social").unwrap();
@@ -937,7 +937,7 @@ mod gql_session_commands {
 
     #[test]
     fn return_info_function() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         // Insert some data first
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
@@ -969,7 +969,7 @@ mod gql_session_commands {
 
     #[test]
     fn return_schema_function() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:Person {name: 'Alix'})-[:KNOWS]->(:Person {name: 'Gus'})")
@@ -1002,7 +1002,7 @@ mod gql_session_commands {
 
     #[test]
     fn session_close() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("SESSION CLOSE");
         assert!(result.is_ok());
@@ -1010,7 +1010,7 @@ mod gql_session_commands {
 
     #[test]
     fn start_transaction_commit_rollback_via_gql() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         // START TRANSACTION works
@@ -1029,7 +1029,7 @@ mod gql_session_commands {
 
     #[test]
     fn commit_without_transaction_errors() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("COMMIT");
         assert!(result.is_err());
@@ -1037,7 +1037,7 @@ mod gql_session_commands {
 
     #[test]
     fn rollback_without_transaction_errors() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("ROLLBACK");
         assert!(result.is_err());
@@ -1045,7 +1045,7 @@ mod gql_session_commands {
 
     #[test]
     fn session_set_parameter() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("SESSION SET PARAMETER my_param = 42");
         assert!(result.is_ok());
@@ -1123,7 +1123,7 @@ mod gql_insert_patterns {
 
     #[test]
     fn insert_node_with_properties() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:Person {name: 'Eve', age: 22})")
@@ -1134,7 +1134,7 @@ mod gql_insert_patterns {
 
     #[test]
     fn insert_path_creates_nodes_and_edge() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:Person {name: 'X'})-[:KNOWS]->(:Person {name: 'Y'})")
@@ -1148,7 +1148,7 @@ mod gql_insert_patterns {
     #[test]
     fn create_edge_with_properties_in_query() {
         // Regression: {since: 2020} was misinterpreted as quantifier
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:Person {name: 'A'})").unwrap();
         session.execute("INSERT (:Person {name: 'B'})").unwrap();
@@ -1221,7 +1221,7 @@ mod cypher_features {
 
     #[test]
     fn reduce_function() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:Item {nums: [1, 2, 3, 4, 5]})")
@@ -1284,7 +1284,7 @@ mod cypher_features {
 
     #[test]
     fn cypher_trig_functions() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:Val {x: 0.0})").unwrap();
         let result = session
@@ -1302,7 +1302,7 @@ mod cypher_features {
 
     #[test]
     fn cypher_pi_and_e() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:X {x: 1})").unwrap();
         let result = session
@@ -1316,7 +1316,7 @@ mod cypher_features {
 
     #[test]
     fn cypher_power_operator() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:X {x: 3})").unwrap();
         let result = session
@@ -1331,7 +1331,7 @@ mod cypher_features {
 
     #[test]
     fn cypher_create_index() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         // Set up data so there's a label in the catalog
         session
@@ -1348,7 +1348,7 @@ mod cypher_features {
 
     #[test]
     fn cypher_create_index_if_not_exists() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
         session
@@ -1362,7 +1362,7 @@ mod cypher_features {
 
     #[test]
     fn cypher_drop_index() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
         session
@@ -1379,7 +1379,7 @@ mod cypher_features {
 
     #[test]
     fn cypher_drop_index_if_exists() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         // Dropping non-existent index with IF EXISTS should not error
         let result = session.execute_cypher("DROP INDEX nonexistent IF EXISTS");
@@ -1388,7 +1388,7 @@ mod cypher_features {
 
     #[test]
     fn cypher_create_constraint() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
         let result = session.execute_cypher(
@@ -1403,7 +1403,7 @@ mod cypher_features {
 
     #[test]
     fn cypher_show_indexes() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute_cypher("SHOW INDEXES");
         assert!(
@@ -1418,7 +1418,7 @@ mod cypher_features {
 
     #[test]
     fn cypher_show_constraints() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute_cypher("SHOW CONSTRAINTS");
         assert!(
@@ -1504,7 +1504,7 @@ mod cypher_features {
 
     #[test]
     fn cypher_foreach_set() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:Person {name: 'A', verified: false})")
@@ -1639,7 +1639,7 @@ mod cypher_features {
         use std::io::Write;
         // Create a temp CSV file
         let dir = std::env::temp_dir();
-        let csv_path = dir.join("grafeo_test_load_csv_headers.csv");
+        let csv_path = dir.join("obrain_test_load_csv_headers.csv");
         {
             let mut f = std::fs::File::create(&csv_path).unwrap();
             writeln!(f, "name,age,city").unwrap();
@@ -1648,7 +1648,7 @@ mod cypher_features {
             writeln!(f, "Mia,28,Paris").unwrap();
         }
 
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let query = format!(
             "LOAD CSV WITH HEADERS FROM '{}' AS row RETURN row.name AS name, row.age AS age ORDER BY row.name",
@@ -1674,14 +1674,14 @@ mod cypher_features {
     fn cypher_load_csv_without_headers() {
         use std::io::Write;
         let dir = std::env::temp_dir();
-        let csv_path = dir.join("grafeo_test_load_csv_no_headers.csv");
+        let csv_path = dir.join("obrain_test_load_csv_no_headers.csv");
         {
             let mut f = std::fs::File::create(&csv_path).unwrap();
             writeln!(f, "Alix,30,Amsterdam").unwrap();
             writeln!(f, "Gus,25,Berlin").unwrap();
         }
 
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let query = format!(
             "LOAD CSV FROM '{}' AS row RETURN row[0] AS name, row[1] AS age",
@@ -1705,7 +1705,7 @@ mod cypher_features {
     fn cypher_load_csv_create_nodes() {
         use std::io::Write;
         let dir = std::env::temp_dir();
-        let csv_path = dir.join("grafeo_test_load_csv_create.csv");
+        let csv_path = dir.join("obrain_test_load_csv_create.csv");
         {
             let mut f = std::fs::File::create(&csv_path).unwrap();
             writeln!(f, "name,city").unwrap();
@@ -1713,7 +1713,7 @@ mod cypher_features {
             writeln!(f, "Jules,Paris").unwrap();
         }
 
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let query = format!(
             "LOAD CSV WITH HEADERS FROM '{}' AS row CREATE (p:Person {{name: row.name, city: row.city}})",
@@ -1741,7 +1741,7 @@ mod cypher_features {
     fn cypher_load_csv_with_fieldterminator() {
         use std::io::Write;
         let dir = std::env::temp_dir();
-        let csv_path = dir.join("grafeo_test_load_csv_tab.tsv");
+        let csv_path = dir.join("obrain_test_load_csv_tab.tsv");
         {
             let mut f = std::fs::File::create(&csv_path).unwrap();
             writeln!(f, "name\tage").unwrap();
@@ -1749,7 +1749,7 @@ mod cypher_features {
             writeln!(f, "Gus\t25").unwrap();
         }
 
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let query = format!(
             "LOAD CSV WITH HEADERS FROM '{}' AS row FIELDTERMINATOR '\\t' RETURN row.name, row.age",
@@ -1770,7 +1770,7 @@ mod cypher_features {
 
     #[test]
     fn cypher_load_csv_file_not_found() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute_cypher(
             "LOAD CSV WITH HEADERS FROM '/nonexistent/path/file.csv' AS row RETURN row.name",
@@ -1781,7 +1781,7 @@ mod cypher_features {
     #[test]
     fn cypher_load_csv_parse_only() {
         // Verify LOAD CSV parses without executing (EXPLAIN)
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session
             .execute_cypher("EXPLAIN LOAD CSV WITH HEADERS FROM 'test.csv' AS row RETURN row.name");
@@ -1799,20 +1799,20 @@ mod cypher_features {
 
 #[cfg(feature = "gql")]
 mod load_data_features {
-    use grafeo_engine::GrafeoDB;
+    use obrain_engine::ObrainDB;
     use std::io::Write;
 
     #[test]
     fn gql_load_data_csv_with_headers() {
         let dir = std::env::temp_dir();
-        let csv_path = dir.join("grafeo_test_gql_load_csv.csv");
+        let csv_path = dir.join("obrain_test_gql_load_csv.csv");
         {
             let mut f = std::fs::File::create(&csv_path).unwrap();
             writeln!(f, "name,age,city").unwrap();
             writeln!(f, "Alix,30,Amsterdam").unwrap();
             writeln!(f, "Gus,25,Berlin").unwrap();
         }
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let query = format!(
             "LOAD DATA FROM '{}' FORMAT CSV WITH HEADERS AS row RETURN row.name AS name, row.age AS age ORDER BY row.name",
@@ -1831,13 +1831,13 @@ mod load_data_features {
     #[test]
     fn gql_load_data_csv_without_headers() {
         let dir = std::env::temp_dir();
-        let csv_path = dir.join("grafeo_test_gql_load_csv_no_headers.csv");
+        let csv_path = dir.join("obrain_test_gql_load_csv_no_headers.csv");
         {
             let mut f = std::fs::File::create(&csv_path).unwrap();
             writeln!(f, "Alix,30,Amsterdam").unwrap();
             writeln!(f, "Gus,25,Berlin").unwrap();
         }
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let query = format!(
             "LOAD DATA FROM '{}' FORMAT CSV AS row RETURN row[0] AS name, row[1] AS age",
@@ -1857,13 +1857,13 @@ mod load_data_features {
     fn gql_load_csv_compat_syntax() {
         // GQL parser also accepts Cypher-compatible LOAD CSV syntax
         let dir = std::env::temp_dir();
-        let csv_path = dir.join("grafeo_test_gql_load_csv_compat.csv");
+        let csv_path = dir.join("obrain_test_gql_load_csv_compat.csv");
         {
             let mut f = std::fs::File::create(&csv_path).unwrap();
             writeln!(f, "name,city").unwrap();
             writeln!(f, "Alix,Amsterdam").unwrap();
         }
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let query = format!(
             "LOAD CSV WITH HEADERS FROM '{}' AS row RETURN row.name AS name",
@@ -1882,14 +1882,14 @@ mod load_data_features {
     #[test]
     fn gql_load_data_csv_create_nodes() {
         let dir = std::env::temp_dir();
-        let csv_path = dir.join("grafeo_test_gql_load_csv_create.csv");
+        let csv_path = dir.join("obrain_test_gql_load_csv_create.csv");
         {
             let mut f = std::fs::File::create(&csv_path).unwrap();
             writeln!(f, "name,city").unwrap();
             writeln!(f, "Alix,Amsterdam").unwrap();
             writeln!(f, "Gus,Berlin").unwrap();
         }
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let query = format!(
             "LOAD DATA FROM '{}' FORMAT CSV WITH HEADERS AS row INSERT (:Person {{name: row.name, city: row.city}})",
@@ -1912,13 +1912,13 @@ mod load_data_features {
     #[test]
     fn gql_load_data_csv_with_fieldterminator() {
         let dir = std::env::temp_dir();
-        let tsv_path = dir.join("grafeo_test_gql_load_csv_tab.tsv");
+        let tsv_path = dir.join("obrain_test_gql_load_csv_tab.tsv");
         {
             let mut f = std::fs::File::create(&tsv_path).unwrap();
             writeln!(f, "name\tage").unwrap();
             writeln!(f, "Alix\t30").unwrap();
         }
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let query = format!(
             "LOAD DATA FROM '{}' FORMAT CSV WITH HEADERS AS row FIELDTERMINATOR '\\t' RETURN row.name AS name",
@@ -1936,7 +1936,7 @@ mod load_data_features {
 
     #[test]
     fn gql_load_data_file_not_found() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session
             .execute("LOAD DATA FROM '/nonexistent/path/file.csv' FORMAT CSV AS row RETURN row");
@@ -1945,7 +1945,7 @@ mod load_data_features {
 
     #[test]
     fn gql_load_data_explain() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute(
             "EXPLAIN LOAD DATA FROM 'test.csv' FORMAT CSV WITH HEADERS AS row RETURN row.name",
@@ -1961,13 +1961,13 @@ mod load_data_features {
     #[test]
     fn gql_load_data_jsonl() {
         let dir = std::env::temp_dir();
-        let jsonl_path = dir.join("grafeo_test_gql_load_jsonl.jsonl");
+        let jsonl_path = dir.join("obrain_test_gql_load_jsonl.jsonl");
         {
             let mut f = std::fs::File::create(&jsonl_path).unwrap();
             writeln!(f, r#"{{"name": "Alix", "age": 30, "city": "Amsterdam"}}"#).unwrap();
             writeln!(f, r#"{{"name": "Gus", "age": 25, "city": "Berlin"}}"#).unwrap();
         }
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let query = format!(
             "LOAD DATA FROM '{}' FORMAT JSONL AS row RETURN row.name AS name, row.age AS age ORDER BY row.name",
@@ -1987,13 +1987,13 @@ mod load_data_features {
     #[test]
     fn gql_load_data_jsonl_create_nodes() {
         let dir = std::env::temp_dir();
-        let jsonl_path = dir.join("grafeo_test_gql_load_jsonl_create.jsonl");
+        let jsonl_path = dir.join("obrain_test_gql_load_jsonl_create.jsonl");
         {
             let mut f = std::fs::File::create(&jsonl_path).unwrap();
             writeln!(f, r#"{{"name": "Vincent", "city": "Paris"}}"#).unwrap();
             writeln!(f, r#"{{"name": "Jules", "city": "Amsterdam"}}"#).unwrap();
         }
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let query = format!(
             "LOAD DATA FROM '{}' FORMAT JSONL AS row INSERT (:Person {{name: row.name, city: row.city}})",
@@ -2017,12 +2017,12 @@ mod load_data_features {
     fn gql_load_data_ndjson_alias() {
         // NDJSON is an alias for JSONL
         let dir = std::env::temp_dir();
-        let jsonl_path = dir.join("grafeo_test_gql_load_ndjson.jsonl");
+        let jsonl_path = dir.join("obrain_test_gql_load_ndjson.jsonl");
         {
             let mut f = std::fs::File::create(&jsonl_path).unwrap();
             writeln!(f, r#"{{"x": 1}}"#).unwrap();
         }
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let query = format!(
             "LOAD DATA FROM '{}' FORMAT NDJSON AS row RETURN row.x AS x",
@@ -2040,7 +2040,7 @@ mod load_data_features {
     fn gql_load_data_parquet_disabled_error() {
         // When parquet-import feature is disabled, should give a clear error
         if cfg!(not(feature = "parquet-import")) {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let session = db.session();
             let result =
                 session.execute("LOAD DATA FROM 'test.parquet' FORMAT PARQUET AS row RETURN row");
@@ -2063,11 +2063,11 @@ mod load_data_features {
 
 #[cfg(all(feature = "sparql", feature = "rdf"))]
 mod sparql_features {
-    use grafeo_common::types::Value;
-    use grafeo_engine::{Config, GrafeoDB, GraphModel};
+    use obrain_common::types::Value;
+    use obrain_engine::{Config, GraphModel, ObrainDB};
 
-    fn rdf_db() -> GrafeoDB {
-        GrafeoDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap()
+    fn rdf_db() -> ObrainDB {
+        ObrainDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap()
     }
 
     #[test]
@@ -2833,8 +2833,8 @@ mod sparql_features {
 
 #[cfg(feature = "gql")]
 mod gql_parser_unit {
-    use grafeo_adapters::query::gql;
-    use grafeo_adapters::query::gql::ast::{SessionCommand, SessionResetTarget, Statement};
+    use obrain_adapters::query::gql;
+    use obrain_adapters::query::gql::ast::{SessionCommand, SessionResetTarget, Statement};
 
     #[test]
     fn parse_create_graph() {
@@ -3076,7 +3076,7 @@ mod gql_parser_unit {
 
 #[cfg(feature = "gql")]
 mod gql_translator_unit {
-    use grafeo_engine::query::translators::gql;
+    use obrain_engine::query::translators::gql;
 
     #[test]
     fn translate_returns_plan_for_query() {
@@ -3163,12 +3163,12 @@ mod gql_translator_unit {
 // ============================================================================
 
 mod foreach_tests {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn gql_foreach_create() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("FOREACH (i IN range(1,3) | CREATE (:_Test {i: i}))")
@@ -3187,7 +3187,7 @@ mod foreach_tests {
     #[test]
     #[ignore = "FOREACH SET on collected nodes requires node-identity-aware Unwind — tracked for follow-up"]
     fn gql_foreach_set() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:_Test {name: 'A', done: false})")
@@ -3212,7 +3212,7 @@ mod foreach_tests {
 
     #[test]
     fn gql_foreach_variable_scope_isolation() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("FOREACH (i IN range(1,2) | CREATE (:_Test {i: i}))")
@@ -3227,7 +3227,7 @@ mod foreach_tests {
 
     #[test]
     fn gql_foreach_nested() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute(
@@ -3252,7 +3252,7 @@ mod foreach_tests {
 
     #[test]
     fn gql_foreach_with_range() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("FOREACH (i IN range(1,3) | CREATE (:_Test {i: i}))")
@@ -3267,7 +3267,7 @@ mod foreach_tests {
 
     #[test]
     fn cypher_foreach_standalone() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute_cypher("FOREACH (i IN [1,2,3] | CREATE (:_Test {i: i}))")
@@ -3283,7 +3283,7 @@ mod foreach_tests {
     #[test]
     fn gql_foreach_standalone_no_match() {
         // FOREACH without preceding MATCH — uses implicit SingleRow input
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("FOREACH (x IN [10, 20, 30] | CREATE (:_FE {v: x}))")
@@ -3300,7 +3300,7 @@ mod foreach_tests {
 
     #[test]
     fn gql_foreach_with_delete() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:_FE {v: 1}), (:_FE {v: 2}), (:_FE {v: 3})")
@@ -3321,7 +3321,7 @@ mod foreach_tests {
 
     #[test]
     fn gql_foreach_with_merge() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("FOREACH (i IN [1, 2, 3] | MERGE (:_FM {id: i}))")
@@ -3344,7 +3344,7 @@ mod foreach_tests {
     #[test]
     fn gql_foreach_complex_list_expression() {
         // FOREACH with function call as list expression
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("FOREACH (i IN range(10, 12) | CREATE (:_FC {v: i}))")
@@ -3364,7 +3364,7 @@ mod foreach_tests {
         // Two FOREACH clauses in sequence — in Neo4j each is independent (4 nodes).
         // Current implementation cross-products: 1st creates 2 rows, 2nd iterates
         // 2 list items × 2 input rows = 4, total = 2 + 4 = 6.
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute(
@@ -3385,11 +3385,11 @@ mod foreach_tests {
 // ============================================================================
 
 mod bare_pattern_tests {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
-    fn setup_pattern_db() -> GrafeoDB {
-        let db = GrafeoDB::new_in_memory();
+    fn setup_pattern_db() -> ObrainDB {
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         // A -[:KNOWS]-> B -[:KNOWS]-> C
         // D (isolated)
@@ -3480,7 +3480,7 @@ mod bare_pattern_tests {
     #[test]
     fn bare_pattern_single_node_is_not_pattern() {
         // WHERE NOT (n) should NOT be interpreted as a pattern — it's NOT expression
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:X {v: 1})").unwrap();
         // This should parse as NOT (variable), not as NOT (pattern)
@@ -3495,11 +3495,11 @@ mod bare_pattern_tests {
 // ============================================================================
 
 mod case_when_extended {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
-    fn setup_case_db() -> GrafeoDB {
-        let db = GrafeoDB::new_in_memory();
+    fn setup_case_db() -> ObrainDB {
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:T {status: 'active', priority: 1})")
@@ -3589,7 +3589,7 @@ mod case_when_extended {
 
     #[test]
     fn case_with_null_check() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:N {v: 1}), (:N)").unwrap();
         let result = session
@@ -3642,11 +3642,11 @@ mod case_when_extended {
 // ============================================================================
 
 mod union_extended {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
-    fn setup_union_db() -> GrafeoDB {
-        let db = GrafeoDB::new_in_memory();
+    fn setup_union_db() -> ObrainDB {
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:Cat {name: 'Whiskers'}), (:Cat {name: 'Felix'})")
@@ -3724,7 +3724,7 @@ mod union_extended {
 
     #[test]
     fn union_three_way() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:A {v: 1}), (:B {v: 2}), (:C {v: 3})")
@@ -3761,11 +3761,11 @@ mod union_extended {
 // ============================================================================
 
 mod pattern_comprehension_extended {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
-    fn setup_comp_db() -> GrafeoDB {
-        let db = GrafeoDB::new_in_memory();
+    fn setup_comp_db() -> ObrainDB {
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         // Alice -KNOWS-> Bob, Charlie
         // Bob -KNOWS-> Charlie
@@ -3873,11 +3873,11 @@ mod pattern_comprehension_extended {
 // ============================================================================
 
 mod parser_unit_tests {
-    use grafeo_engine::GrafeoDB;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn parse_foreach_with_create() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("FOREACH (i IN [1] | CREATE (:X {v: i}))");
         assert!(
@@ -3889,7 +3889,7 @@ mod parser_unit_tests {
 
     #[test]
     fn parse_foreach_with_merge() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("FOREACH (i IN [1] | MERGE (:X {v: i}))");
         assert!(
@@ -3901,7 +3901,7 @@ mod parser_unit_tests {
 
     #[test]
     fn parse_foreach_after_with() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:W {v: 1})").unwrap();
         let result = session.execute(
@@ -3918,7 +3918,7 @@ mod parser_unit_tests {
 
     #[test]
     fn parse_nested_foreach() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result =
             session.execute("FOREACH (i IN [1] | FOREACH (j IN [2] | CREATE (:N {i: i, j: j})))");
@@ -3931,7 +3931,7 @@ mod parser_unit_tests {
 
     #[test]
     fn parse_bare_positive_pattern() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:A)-[:R]->(:B)").unwrap();
         let result = session.execute("MATCH (n:A) WHERE (n)-[:R]->() RETURN count(n) AS c");
@@ -3944,7 +3944,7 @@ mod parser_unit_tests {
 
     #[test]
     fn parse_pattern_comprehension_gql() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:P {name: 'x'})-[:R]->(:Q {name: 'y'})")
@@ -3960,7 +3960,7 @@ mod parser_unit_tests {
     #[test]
     fn foreach_invalid_clause_in_body_is_error() {
         // FOREACH with MATCH inside should error (only mutations allowed)
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("FOREACH (i IN [1] | MATCH (n) RETURN n)");
         assert!(
@@ -3971,7 +3971,7 @@ mod parser_unit_tests {
 
     #[test]
     fn foreach_return_inside_is_error() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("FOREACH (i IN [1] | RETURN i)");
         assert!(
@@ -3986,12 +3986,12 @@ mod parser_unit_tests {
 // ============================================================================
 
 mod foreach_edge_cases {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn foreach_empty_list_creates_nothing() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("FOREACH (i IN [] | CREATE (:Empty {v: i}))")
@@ -4004,7 +4004,7 @@ mod foreach_edge_cases {
 
     #[test]
     fn foreach_single_element_list() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("FOREACH (i IN [42] | CREATE (:Single {v: i}))")
@@ -4017,7 +4017,7 @@ mod foreach_edge_cases {
 
     #[test]
     fn foreach_with_string_list() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("FOREACH (name IN ['Alice', 'Bob'] | CREATE (:FE {name: name}))")
@@ -4033,7 +4033,7 @@ mod foreach_edge_cases {
 
     #[test]
     fn foreach_with_delete_clause() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:ToDel {v: 1}), (:ToDel {v: 2}), (:Keep {v: 3})")
@@ -4047,7 +4047,7 @@ mod foreach_edge_cases {
 
     #[test]
     fn foreach_with_where_inside_is_error() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("FOREACH (i IN [1] | WHERE i > 0)");
         assert!(
@@ -4058,7 +4058,7 @@ mod foreach_edge_cases {
 
     #[test]
     fn foreach_with_unwind_inside_is_error() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("FOREACH (i IN [1] | UNWIND [i] AS j)");
         assert!(
@@ -4069,7 +4069,7 @@ mod foreach_edge_cases {
 
     #[test]
     fn foreach_case_insensitive() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         // lowercase foreach should work
         let result = session.execute("foreach (i IN [1] | CREATE (:CI {v: i}))");
@@ -4085,7 +4085,7 @@ mod foreach_edge_cases {
 
     #[test]
     fn foreach_large_list() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         // Test with a larger list to exercise iteration
         session
@@ -4100,7 +4100,7 @@ mod foreach_edge_cases {
 
     #[test]
     fn foreach_nested_creates_correct_count() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute(
             "FOREACH (i IN [1, 2] | FOREACH (j IN [10, 20] | CREATE (:Nest {i: i, j: j})))",
@@ -4121,11 +4121,11 @@ mod foreach_edge_cases {
 // ============================================================================
 
 mod bare_pattern_edge_cases {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
-    fn setup_db() -> GrafeoDB {
-        let db = GrafeoDB::new_in_memory();
+    fn setup_db() -> ObrainDB {
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         // A -[:R1]-> B -[:R2]-> C, D isolated
         session
@@ -4250,7 +4250,7 @@ mod bare_pattern_edge_cases {
 
     #[test]
     fn bare_pattern_no_match_returns_empty() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:Alone {v: 1})").unwrap();
         let result = session
@@ -4265,11 +4265,11 @@ mod bare_pattern_edge_cases {
 // ============================================================================
 
 mod case_when_deep {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
-    fn setup_db() -> GrafeoDB {
-        let db = GrafeoDB::new_in_memory();
+    fn setup_db() -> ObrainDB {
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:Item {name: 'A', price: 100, qty: 5})")
@@ -4343,7 +4343,7 @@ mod case_when_deep {
 
     #[test]
     fn case_when_null_property() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:X {a: 1}), (:X)").unwrap();
         let result = session
@@ -4393,7 +4393,7 @@ mod case_when_deep {
 
     #[test]
     fn simple_case_form_with_integer() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:S {code: 1}), (:S {code: 2}), (:S {code: 3})")
@@ -4468,12 +4468,12 @@ mod case_when_deep {
 // ============================================================================
 
 mod union_deep {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn union_with_empty_first_branch() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:UA {v: 1})").unwrap();
         let result = session
@@ -4490,7 +4490,7 @@ mod union_deep {
 
     #[test]
     fn union_with_empty_second_branch() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:UB {v: 2})").unwrap();
         let result = session
@@ -4507,7 +4507,7 @@ mod union_deep {
 
     #[test]
     fn union_both_empty() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session
             .execute(
@@ -4521,7 +4521,7 @@ mod union_deep {
 
     #[test]
     fn union_with_null_values() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:UC {v: 1}), (:UC)").unwrap();
         let result = session
@@ -4538,7 +4538,7 @@ mod union_deep {
 
     #[test]
     fn union_four_way() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session
             .execute(
@@ -4553,7 +4553,7 @@ mod union_deep {
 
     #[test]
     fn union_dedup_with_same_values() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session
             .execute(
@@ -4568,7 +4568,7 @@ mod union_deep {
 
     #[test]
     fn union_column_count_mismatch_two_vs_one() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("RETURN 1 AS a, 2 AS b UNION RETURN 3 AS a");
         assert!(
@@ -4579,7 +4579,7 @@ mod union_deep {
 
     #[test]
     fn union_preserves_order_within_branches() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:UO {v: 3}), (:UO {v: 1}), (:UO {v: 2})")
@@ -4599,7 +4599,7 @@ mod union_deep {
 
     #[test]
     fn union_with_aggregation_in_both() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:UD {t: 'a'}), (:UD {t: 'a'}), (:UD {t: 'b'})")
@@ -4623,11 +4623,11 @@ mod union_deep {
 // ============================================================================
 
 mod pattern_comprehension_deep {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
-    fn setup_db() -> GrafeoDB {
-        let db = GrafeoDB::new_in_memory();
+    fn setup_db() -> ObrainDB {
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         // Create Alice once, then link to Bob and Carol separately
         session
@@ -4732,11 +4732,11 @@ mod pattern_comprehension_deep {
 // ============================================================================
 
 mod exists_deep {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
-    fn setup_db() -> GrafeoDB {
-        let db = GrafeoDB::new_in_memory();
+    fn setup_db() -> ObrainDB {
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         // Graph: A-[:X]->B-[:Y]->C, D isolated, E-[:X]->F
         session
@@ -4831,7 +4831,7 @@ mod exists_deep {
 
     #[test]
     fn exists_on_empty_graph() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session
             .execute("MATCH (n) WHERE EXISTS { MATCH (n)-->() } RETURN n")
@@ -4846,12 +4846,12 @@ mod exists_deep {
 
 #[cfg(feature = "cypher")]
 mod optional_match_deep {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn optional_match_all_null() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:OM {name: 'Alone'})").unwrap();
         let result = session
@@ -4865,7 +4865,7 @@ mod optional_match_deep {
 
     #[test]
     fn optional_match_partial_results() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:OM2 {name: 'A'})-[:R]->(:OM2 {name: 'B'})")
@@ -4890,7 +4890,7 @@ mod optional_match_deep {
 
     #[test]
     fn optional_match_with_where() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute(
@@ -4916,11 +4916,11 @@ mod optional_match_deep {
 // ============================================================================
 
 mod cross_feature_integration {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
-    fn setup_db() -> GrafeoDB {
-        let db = GrafeoDB::new_in_memory();
+    fn setup_db() -> ObrainDB {
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute(
@@ -4951,7 +4951,7 @@ mod cross_feature_integration {
 
     #[test]
     fn union_with_case_when() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:T1 {v: 1}), (:T1 {v: 2})")
@@ -5020,7 +5020,7 @@ mod cross_feature_integration {
 
     #[test]
     fn foreach_then_match_verify() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("FOREACH (i IN [1, 2, 3] | CREATE (:Verify {v: i}))")
@@ -5042,12 +5042,12 @@ mod cross_feature_integration {
 
 #[cfg(feature = "cypher")]
 mod cypher_parser_parity {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn cypher_case_when_with_aggregation() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute(
@@ -5072,7 +5072,7 @@ mod cypher_parser_parity {
 
     #[test]
     fn cypher_union_all() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session
             .execute_cypher("RETURN 1 AS v UNION ALL RETURN 2 AS v UNION ALL RETURN 1 AS v")
@@ -5082,7 +5082,7 @@ mod cypher_parser_parity {
 
     #[test]
     fn cypher_union_dedup() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session
             .execute_cypher("RETURN 1 AS v UNION RETURN 1 AS v")
@@ -5092,7 +5092,7 @@ mod cypher_parser_parity {
 
     #[test]
     fn cypher_exists_in_where() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:CY {name: 'A'})-[:R]->(:CY {name: 'B'})")
@@ -5108,7 +5108,7 @@ mod cypher_parser_parity {
 
     #[test]
     fn cypher_case_when_no_else() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session
             .execute_cypher("RETURN CASE WHEN false THEN 'yes' END AS v")
@@ -5119,7 +5119,7 @@ mod cypher_parser_parity {
 
     #[test]
     fn cypher_simple_case() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:SC {code: 'A'}), (:SC {code: 'B'}), (:SC {code: 'C'})")
@@ -5140,7 +5140,7 @@ mod cypher_parser_parity {
 
     #[test]
     fn cypher_pattern_comprehension_basic() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:PCC {name: 'A'})-[:R]->(:PCC {name: 'B'})")
@@ -5160,12 +5160,12 @@ mod cypher_parser_parity {
 
 #[cfg(feature = "cypher")]
 mod cypher_foreach {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn cypher_foreach_create() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute_cypher("FOREACH (i IN [1, 2, 3] | CREATE (:CF {v: i}))")
@@ -5179,7 +5179,7 @@ mod cypher_foreach {
 
     #[test]
     fn cypher_foreach_merge() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute_cypher("FOREACH (name IN ['Alice', 'Bob'] | MERGE (:FM {name: name}))")
@@ -5193,7 +5193,7 @@ mod cypher_foreach {
 
     #[test]
     fn cypher_foreach_after_match() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:Src {v: 1})").unwrap();
         let result =
@@ -5211,7 +5211,7 @@ mod cypher_foreach {
 
     #[test]
     fn cypher_foreach_nested() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute_cypher(
             "FOREACH (i IN [1, 2] | FOREACH (j IN [10, 20] | CREATE (:CN {i: i, j: j})))",
@@ -5227,7 +5227,7 @@ mod cypher_foreach {
 
     #[test]
     fn cypher_foreach_empty_list() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute_cypher("FOREACH (i IN [] | CREATE (:CE {v: i}))")
@@ -5244,12 +5244,12 @@ mod cypher_foreach {
 // ============================================================================
 
 mod foreach_mutation_variants {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn foreach_with_merge_creates_nodes() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("FOREACH (name IN ['X', 'Y', 'Z'] | MERGE (:MV {name: name}))")
@@ -5267,7 +5267,7 @@ mod foreach_mutation_variants {
     #[test]
     fn foreach_with_insert() {
         // INSERT is an alias for CREATE in GQL
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("FOREACH (v IN [100, 200] | INSERT (:INS {val: v}))")
@@ -5283,7 +5283,7 @@ mod foreach_mutation_variants {
 
     #[test]
     fn foreach_with_create_edge() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("FOREACH (i IN [1, 2] | CREATE (:FEdge {v: i})-[:LINK]->(:FTarget {v: i}))")
@@ -5299,7 +5299,7 @@ mod foreach_mutation_variants {
 
     #[test]
     fn foreach_with_mixed_types_in_list() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         // List with mixed string values
         session
@@ -5318,11 +5318,11 @@ mod foreach_mutation_variants {
 // ============================================================================
 
 mod correlated_apply {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
-    fn setup_db() -> GrafeoDB {
-        let db = GrafeoDB::new_in_memory();
+    fn setup_db() -> ObrainDB {
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:CA {name: 'A', val: 10})-[:E]->(:CA {name: 'B', val: 20})")
@@ -5424,11 +5424,11 @@ mod correlated_apply {
 // ============================================================================
 
 mod exists_and_tree {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
-    fn setup_db() -> GrafeoDB {
-        let db = GrafeoDB::new_in_memory();
+    fn setup_db() -> ObrainDB {
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         // A -[:X]-> B -[:Y]-> C
         // A -[:Z]-> D
@@ -5564,11 +5564,11 @@ mod exists_and_tree {
 // ============================================================================
 
 mod aggregate_complex_expressions {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
-    fn setup_db() -> GrafeoDB {
-        let db = GrafeoDB::new_in_memory();
+    fn setup_db() -> ObrainDB {
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute(
@@ -5713,12 +5713,12 @@ mod aggregate_complex_expressions {
 // ============================================================================
 
 mod unwind_coverage {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn unwind_basic() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session
             .execute("UNWIND [1, 2, 3] AS x RETURN x ORDER BY x")
@@ -5730,7 +5730,7 @@ mod unwind_coverage {
 
     #[test]
     fn unwind_empty_list() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("UNWIND [] AS x RETURN x").unwrap();
         assert_eq!(result.rows.len(), 0);
@@ -5738,7 +5738,7 @@ mod unwind_coverage {
 
     #[test]
     fn unwind_with_match() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:UW {v: 1}), (:UW {v: 2})")
@@ -5753,7 +5753,7 @@ mod unwind_coverage {
 
     #[test]
     fn unwind_string_list() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session
             .execute("UNWIND ['a', 'b', 'c'] AS s RETURN s")
@@ -5763,7 +5763,7 @@ mod unwind_coverage {
 
     #[test]
     fn unwind_with_aggregation() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session
             .execute("UNWIND [1, 2, 3, 4, 5] AS x RETURN sum(x) AS total")
@@ -5773,7 +5773,7 @@ mod unwind_coverage {
 
     #[test]
     fn unwind_with_where() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session
             .execute("UNWIND [1, 2, 3, 4, 5] AS x WHERE x > 3 RETURN x ORDER BY x")
@@ -5789,11 +5789,11 @@ mod unwind_coverage {
 // ============================================================================
 
 mod error_handling {
-    use grafeo_engine::GrafeoDB;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn union_mismatched_three_columns_vs_two() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("RETURN 1 AS a, 2 AS b UNION RETURN 3 AS a, 4 AS b, 5 AS c");
         assert!(result.is_err());
@@ -5801,7 +5801,7 @@ mod error_handling {
 
     #[test]
     fn foreach_missing_pipe() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("FOREACH (i IN [1] CREATE (:X))");
         assert!(result.is_err(), "Missing pipe | should error");
@@ -5809,7 +5809,7 @@ mod error_handling {
 
     #[test]
     fn foreach_missing_list() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("FOREACH (i | CREATE (:X))");
         assert!(result.is_err(), "Missing IN keyword should error");
@@ -5817,7 +5817,7 @@ mod error_handling {
 
     #[test]
     fn foreach_with_optional_match_inside() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("FOREACH (i IN [1] | OPTIONAL MATCH (n) DELETE n)");
         assert!(
@@ -5828,7 +5828,7 @@ mod error_handling {
 
     #[test]
     fn foreach_with_with_inside() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("FOREACH (i IN [1] | WITH i AS x CREATE (:X {v: x}))");
         assert!(result.is_err(), "WITH inside FOREACH should error");
@@ -5836,7 +5836,7 @@ mod error_handling {
 
     #[test]
     fn invalid_case_syntax() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("RETURN CASE THEN 1 END");
         assert!(result.is_err(), "CASE without WHEN should error");
@@ -5844,7 +5844,7 @@ mod error_handling {
 
     #[test]
     fn union_no_return_in_branch() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("MATCH (n) UNION RETURN 1 AS v");
         // First branch has no RETURN — should error
@@ -5854,7 +5854,7 @@ mod error_handling {
     #[cfg(feature = "cypher")]
     #[test]
     fn cypher_foreach_invalid_clause() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute_cypher("FOREACH (i IN [1] | RETURN i)");
         assert!(
@@ -5866,7 +5866,7 @@ mod error_handling {
     #[cfg(feature = "cypher")]
     #[test]
     fn cypher_union_column_mismatch() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute_cypher("RETURN 1 AS a UNION RETURN 1 AS a, 2 AS b");
         assert!(result.is_err());
@@ -5878,12 +5878,12 @@ mod error_handling {
 // ============================================================================
 
 mod distinct_skip_limit {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn union_with_order_and_limit() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session
             .execute("RETURN 3 AS v UNION ALL RETURN 1 AS v UNION ALL RETURN 2 AS v")
@@ -5893,7 +5893,7 @@ mod distinct_skip_limit {
 
     #[test]
     fn case_when_with_distinct() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:DI {v: 1}), (:DI {v: 2}), (:DI {v: 3}), (:DI {v: 4})")
@@ -5913,7 +5913,7 @@ mod distinct_skip_limit {
 
     #[test]
     fn exists_with_skip_limit() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute(
@@ -5934,7 +5934,7 @@ mod distinct_skip_limit {
 
     #[test]
     fn case_when_with_limit() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:LI {v: 1}), (:LI {v: 2}), (:LI {v: 3})")
@@ -5956,14 +5956,14 @@ mod distinct_skip_limit {
 // ============================================================================
 
 mod pattern_comprehension_rewrite {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn pattern_comp_basic_list_result() {
         // Forces rewrite_pattern_comprehensions path: anchor extraction,
         // ParameterScan replacement, Aggregate(Collect), Apply wrapping
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:PR {name: 'A'})-[:L]->(:PR {name: 'B'})")
@@ -5985,7 +5985,7 @@ mod pattern_comprehension_rewrite {
     #[test]
     fn pattern_comp_with_where_filters() {
         // Tests the optional WHERE filter branch in expression.rs
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:PW {name: 'X'})-[:R]->(:PW {name: 'Y', v: 10})")
@@ -6012,7 +6012,7 @@ mod pattern_comprehension_rewrite {
     #[test]
     fn pattern_comp_empty_result_is_empty_list() {
         // Node with no matching edges → empty list (not null)
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:PE {name: 'Alone'})").unwrap();
         let result = session
@@ -6030,7 +6030,7 @@ mod pattern_comprehension_rewrite {
     #[test]
     fn pattern_comp_alongside_other_columns() {
         // Tests that rewrite correctly handles mixed return items
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:PM {name: 'Root'})-[:C]->(:PM {name: 'Child1'})")
@@ -6056,7 +6056,7 @@ mod pattern_comprehension_rewrite {
     #[test]
     fn pattern_comp_per_row_correlated() {
         // Multiple outer rows each get their own pattern comprehension result
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:PP {name: 'A'})-[:F]->(:PP {name: 'A1'})")
@@ -6091,7 +6091,7 @@ mod pattern_comprehension_rewrite {
     #[test]
     fn pattern_comp_cypher_parser_basic() {
         // Tests Cypher translator's pattern comprehension rewrite path
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:PC2 {name: 'X'})-[:R]->(:PC2 {name: 'Y'})")
@@ -6116,14 +6116,14 @@ mod pattern_comprehension_rewrite {
 // ============================================================================
 
 mod foreach_with_context {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn foreach_standalone_no_match() {
         // Top-level FOREACH as first statement → parse_query dispatch (parser line 300-305)
         // Also tests Empty input path in translate_foreach_gql
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("FOREACH (x IN ['a', 'b'] | CREATE (:FS {val: x}))")
@@ -6140,7 +6140,7 @@ mod foreach_with_context {
     #[test]
     fn foreach_pre_with_no_with_clauses() {
         // FOREACH before any WITH → translated in ordered_clauses pass (with_clauses.is_empty=true)
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("MATCH (n:NonExistent) FOREACH (i IN [1] | CREATE (:FPW {v: i}))")
@@ -6155,7 +6155,7 @@ mod foreach_with_context {
     #[test]
     fn foreach_after_with_projection() {
         // FOREACH after WITH → translated in post-WITH pass (with_clauses.is_empty=false)
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute(
             "WITH [10, 20, 30] AS vals \
@@ -6175,7 +6175,7 @@ mod foreach_with_context {
     #[test]
     fn foreach_in_match_context() {
         // FOREACH after MATCH → uses MATCH input rows
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:Src2 {name: 'A'}), (:Src2 {name: 'B'})")
@@ -6198,12 +6198,12 @@ mod foreach_with_context {
 // ============================================================================
 
 mod binder_column_count {
-    use grafeo_engine::GrafeoDB;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn union_with_distinct_branches() {
         // Tests return_column_count traversing through Distinct
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session
             .execute(
@@ -6218,7 +6218,7 @@ mod binder_column_count {
     #[test]
     fn union_with_order_by_branches() {
         // Tests return_column_count traversing through Sort
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session
             .execute(
@@ -6232,7 +6232,7 @@ mod binder_column_count {
     #[test]
     fn union_with_limit_in_branch() {
         // Tests return_column_count traversing through Limit
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:BL {v: 1}), (:BL {v: 2}), (:BL {v: 3})")
@@ -6252,7 +6252,7 @@ mod binder_column_count {
     #[test]
     fn union_with_skip_in_branch() {
         // Tests return_column_count traversing through Skip
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:BS {v: 1}), (:BS {v: 2}), (:BS {v: 3})")
@@ -6272,7 +6272,7 @@ mod binder_column_count {
     #[test]
     fn union_mismatch_through_distinct() {
         // Column count error through Distinct operator
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("RETURN DISTINCT 1 AS a, 2 AS b UNION RETURN 3 AS a");
         assert!(result.is_err(), "Mismatch through DISTINCT should error");
@@ -6284,13 +6284,13 @@ mod binder_column_count {
 // ============================================================================
 
 mod parser_foreach_positions {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn foreach_as_first_statement() {
         // Parser dispatch at line 300-305: top-level FOREACH → parse_query
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("FOREACH (i IN [42] | CREATE (:TopLevel {v: i}))")
@@ -6304,7 +6304,7 @@ mod parser_foreach_positions {
     fn foreach_in_pre_with_ordered_clauses() {
         // Parser line 594: FOREACH in first ordered_clauses loop (before WITH)
         // CREATE + FOREACH in same statement — FOREACH sees CREATE's output row
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute(
             "CREATE (:PO {v: 1}) \
@@ -6323,7 +6323,7 @@ mod parser_foreach_positions {
     #[test]
     fn foreach_in_post_with_ordered_clauses() {
         // Parser line 685: FOREACH in post-WITH ordered_clauses loop
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:PW2 {v: 1})").unwrap();
         let result = session.execute(
@@ -6341,7 +6341,7 @@ mod parser_foreach_positions {
     #[test]
     fn foreach_mutation_only_no_return() {
         // Tests parser line 719-726: ForEach check for mutation-only queries
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("FOREACH (i IN [1, 2] | CREATE (:MO {v: i}))")
@@ -6360,13 +6360,13 @@ mod parser_foreach_positions {
 // ============================================================================
 
 mod parser_backtracking {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn list_literal_not_confused_with_pattern_comp() {
         // [(1), (2), (3)] should parse as list, NOT pattern comprehension
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("RETURN [(1), (2), (3)] AS list").unwrap();
         assert_eq!(result.rows.len(), 1);
@@ -6379,7 +6379,7 @@ mod parser_backtracking {
     #[test]
     fn parenthesized_expression_not_confused() {
         // (n) alone in WHERE is just a parenthesized expression, not bare pattern
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:BT {v: 1})").unwrap();
         // WHERE (n.v > 0) — parenthesized scalar, not pattern
@@ -6392,7 +6392,7 @@ mod parser_backtracking {
 
     #[test]
     fn empty_list_literal() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("RETURN [] AS empty").unwrap();
         assert_eq!(result.rows.len(), 1);
@@ -6405,7 +6405,7 @@ mod parser_backtracking {
     #[test]
     fn list_comprehension_not_pattern_comp() {
         // [x IN [1,2,3] | x * 2] is list comprehension, not pattern comprehension
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session
             .execute("RETURN [x IN [1, 2, 3] | x * 2] AS doubled")
@@ -6424,7 +6424,7 @@ mod parser_backtracking {
 
     #[test]
     fn list_comprehension_with_where() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session
             .execute("RETURN [x IN [1, 2, 3, 4, 5] WHERE x > 3 | x] AS filtered")
@@ -6446,13 +6446,13 @@ mod parser_backtracking {
 // ============================================================================
 
 mod translator_foreach_clauses {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn foreach_set_property_on_variable() {
         // Tests the Set branch in translate_foreach_gql via a simpler path
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         // Use FOREACH with CREATE to test the translator Set path indirectly
         session
@@ -6469,7 +6469,7 @@ mod translator_foreach_clauses {
     fn foreach_delete_clause() {
         // Tests the Delete branch in translate_foreach_gql
         // Direct FOREACH DELETE requires variable binding — test the translator path
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:TD {v: 1}), (:TD {v: 2}), (:TD {v: 3})")
@@ -6483,7 +6483,7 @@ mod translator_foreach_clauses {
     #[test]
     fn foreach_merge_clause() {
         // Tests the Merge branch in translate_foreach_gql
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("FOREACH (name IN ['X', 'Y'] | MERGE (:TM {name: name}))")
@@ -6503,7 +6503,7 @@ mod translator_foreach_clauses {
     #[test]
     fn foreach_invalid_clause_semantic_error() {
         // Tests the catch-all _ branch that returns semantic error
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         // WITH inside FOREACH should hit the error branch
         let result = session.execute("FOREACH (i IN [1] | WITH i AS x)");
@@ -6517,13 +6517,13 @@ mod translator_foreach_clauses {
 
 #[cfg(feature = "cypher")]
 mod cypher_translator_foreach {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn cypher_foreach_standalone_empty_input() {
         // Tests Cypher translator's unwrap_or(Empty) path for standalone FOREACH
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute_cypher("FOREACH (i IN [1, 2] | CREATE (:CSE {v: i}))")
@@ -6538,7 +6538,7 @@ mod cypher_translator_foreach {
     #[test]
     fn cypher_foreach_with_match_input() {
         // Tests Cypher translator's Some(input) path
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:CYI {v: 1})").unwrap();
         let result = session.execute_cypher(
@@ -6556,7 +6556,7 @@ mod cypher_translator_foreach {
 
     #[test]
     fn cypher_foreach_merge_idempotent() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute_cypher("FOREACH (n IN ['P', 'Q'] | MERGE (:CYM {name: n}))")
@@ -6577,13 +6577,13 @@ mod cypher_translator_foreach {
 // ============================================================================
 
 mod not_pattern_parsing {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn not_pattern_with_typed_relationship() {
         // Tests parse_not_expression → try_parse_bare_pattern_as_exists path
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:NP {name: 'A'})-[:R]->(:NP {name: 'B'})")
@@ -6607,7 +6607,7 @@ mod not_pattern_parsing {
 
     #[test]
     fn not_pattern_with_any_relationship() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:NP2 {name: 'X'})-[:ANY]->(:NP2 {name: 'Y'})")
@@ -6623,7 +6623,7 @@ mod not_pattern_parsing {
     #[test]
     fn positive_pattern_in_primary_expression() {
         // Tests parse_primary → try_parse_bare_pattern_as_exists path (non-NOT)
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:PP2 {name: 'A'})-[:R]->(:PP2 {name: 'B'})")
@@ -6640,7 +6640,7 @@ mod not_pattern_parsing {
     #[test]
     fn not_pattern_fallback_to_scalar_not() {
         // When NOT is followed by a non-pattern, it should be normal boolean NOT
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:FN {active: true})").unwrap();
         let result = session
@@ -6657,14 +6657,14 @@ mod not_pattern_parsing {
 // ============================================================================
 
 mod pattern_comp_query_path {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn pattern_comp_with_aggregation_in_query() {
         // Forces the translate_query path (line 970+) which has its own rewrite block
         // MATCH + RETURN with both aggregation AND pattern comprehension
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:PQ {name: 'A'})-[:F]->(:PQ {name: 'B'})")
@@ -6687,7 +6687,7 @@ mod pattern_comp_query_path {
     #[test]
     fn pattern_comp_without_explicit_alias() {
         // Tests next_anon_var() path — pattern comp without AS alias
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:PNA {name: 'X'})-[:L]->(:PNA {name: 'Y'})")
@@ -6704,7 +6704,7 @@ mod pattern_comp_query_path {
     fn pattern_comp_with_filter_node() {
         // Pattern with WHERE → Filter node in subplan
         // Exercises extract_anchor_variable(Filter) + replace_anchor_with_parameter_scan(Filter)
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:PF {name: 'A'})-[:R]->(:PF {name: 'B', v: 10})")
@@ -6733,7 +6733,7 @@ mod pattern_comp_query_path {
     #[test]
     fn pattern_comp_with_multiple_comprehensions() {
         // Two pattern comprehensions in same RETURN → rewrite called twice in loop
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:PM2 {name: 'A'})-[:X]->(:PM2 {name: 'B'})")
@@ -6757,14 +6757,14 @@ mod pattern_comp_query_path {
 // ============================================================================
 
 mod foreach_set_delete_translator {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     #[test]
     #[ignore = "FOREACH SET on Unwind values doesn't persist - node identity lost"]
     fn foreach_set_on_matched_nodes() {
         // Tests translate_foreach_gql SET branch (lines 1262-1272)
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:FS {name: 'A', v: 0}), (:FS {name: 'B', v: 0})")
@@ -6786,7 +6786,7 @@ mod foreach_set_delete_translator {
     fn cypher_foreach_set_branch() {
         // Cypher translator's translate_foreach delegates to translate_clause
         // which handles Set differently
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:CFS {name: 'A', v: 0}), (:CFS {name: 'B', v: 0})")
@@ -6810,7 +6810,7 @@ mod foreach_set_delete_translator {
     #[test]
     fn cypher_foreach_delete_branch() {
         // Tests translate_foreach → translate_clause for DELETE
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:CFD {v: 1}), (:CFD {v: 2})")
@@ -6836,13 +6836,13 @@ mod foreach_set_delete_translator {
 // ============================================================================
 
 mod aggregate_expression2 {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn case_when_in_collect() {
         // collect() uses expression (single arg) — exercises the aggregate arg CASE path
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:AE {v: 1}), (:AE {v: 2}), (:AE {v: 3})")
@@ -6859,7 +6859,7 @@ mod aggregate_expression2 {
     #[test]
     fn case_when_in_sum_with_group_by_case() {
         // CASE in both group_by AND aggregate expression
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute(
@@ -6883,7 +6883,7 @@ mod aggregate_expression2 {
     #[test]
     fn literal_in_aggregate_expression() {
         // Literal value inside aggregate — exercises the _ catch-all in aggregate expression check
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:AL {v: 1}), (:AL {v: 2})")
@@ -6899,7 +6899,7 @@ mod aggregate_expression2 {
     #[test]
     fn variable_in_group_by() {
         // Tests the Variable arm in group_by expression check (line 62-64)
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:VG {cat: 'A'}), (:VG {cat: 'A'}), (:VG {cat: 'B'})")
@@ -6922,12 +6922,12 @@ mod aggregate_expression2 {
 // ============================================================================
 
 mod parser_error_paths {
-    use grafeo_engine::GrafeoDB;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn foreach_missing_variable() {
         // Tests parser line 1019-1020: no identifier after FOREACH (
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("FOREACH (123 IN [1] | CREATE (:X))");
         assert!(result.is_err(), "Non-identifier in FOREACH should error");
@@ -6936,7 +6936,7 @@ mod parser_error_paths {
     #[test]
     fn foreach_unclosed_paren() {
         // Tests parser EOF handling in FOREACH while loop (line 1029)
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("FOREACH (i IN [1] | CREATE (:X)");
         assert!(result.is_err(), "Unclosed FOREACH paren should error");
@@ -6946,7 +6946,7 @@ mod parser_error_paths {
     fn bare_pattern_single_node_not_treated_as_pattern() {
         // Tests try_parse_bare_pattern_as_exists returning None for non-Path
         // Single node (n) is NOT a path pattern → falls through to parenthesized expr
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:SP {v: 1})").unwrap();
         // WHERE (n) would be a parenthesized ref — should not desugar to EXISTS
@@ -6960,7 +6960,7 @@ mod parser_error_paths {
     fn pattern_comp_backtrack_on_non_pattern() {
         // Triggers backtracking in pattern comp detection (line 3735-3738)
         // [(expr)] is a list literal, not pattern comprehension
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("RETURN [(1 + 2)] AS list").unwrap();
         assert_eq!(result.rows.len(), 1);
@@ -6969,7 +6969,7 @@ mod parser_error_paths {
     #[test]
     fn foreach_with_order_by_inside() {
         // ORDER BY is not a valid mutation clause
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         let result = session.execute("FOREACH (i IN [1] | ORDER BY i)");
         assert!(result.is_err());
@@ -6981,14 +6981,14 @@ mod parser_error_paths {
 // ============================================================================
 
 mod call_with_pattern_comp {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn call_subquery_returning_pattern_comp() {
         // Exercises the translate_call rewrite path (lines 350-361)
         // CALL { ... RETURN [(pattern) | expr] }
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:CC {name: 'A'})-[:R]->(:CC {name: 'B'})")
@@ -7014,7 +7014,7 @@ mod call_with_pattern_comp {
     #[test]
     fn inline_call_with_pattern_comp() {
         // MATCH (n) CALL { WITH n ... RETURN [comp] } RETURN ...
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:IC {name: 'X'})-[:L]->(:IC {name: 'Y'})")

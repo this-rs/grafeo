@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader, Write};
 
 use anyhow::{Context, Result};
 
-use grafeo_common::types::Value;
+use obrain_common::types::Value;
 
 use crate::output;
 use crate::{DataCommands, OutputFormat};
@@ -91,7 +91,7 @@ pub fn run(cmd: DataCommands, _format: OutputFormat, quiet: bool) -> Result<()> 
             let db = if path.exists() {
                 super::open_existing(&path)?
             } else {
-                grafeo_engine::GrafeoDB::open(&path)
+                obrain_engine::ObrainDB::open(&path)
                     .with_context(|| format!("Failed to create database at {}", path.display()))?
             };
 
@@ -131,14 +131,14 @@ pub fn run(cmd: DataCommands, _format: OutputFormat, quiet: bool) -> Result<()> 
                         let source = record
                             .get("source")
                             .and_then(|v| v.as_u64())
-                            .map(grafeo_common::types::NodeId)
+                            .map(obrain_common::types::NodeId)
                             .ok_or_else(|| {
                                 anyhow::anyhow!("Missing 'source' on line {}", line_num + 1)
                             })?;
                         let target = record
                             .get("target")
                             .and_then(|v| v.as_u64())
-                            .map(grafeo_common::types::NodeId)
+                            .map(obrain_common::types::NodeId)
                             .ok_or_else(|| {
                                 anyhow::anyhow!("Missing 'target' on line {}", line_num + 1)
                             })?;
@@ -186,8 +186,8 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    fn create_test_db(dir: &std::path::Path) -> grafeo_engine::GrafeoDB {
-        let db = grafeo_engine::GrafeoDB::open(dir).expect("create db");
+    fn create_test_db(dir: &std::path::Path) -> obrain_engine::ObrainDB {
+        let db = obrain_engine::ObrainDB::open(dir).expect("create db");
         let n1 = db.create_node(&["Person"]);
         let n2 = db.create_node(&["Company"]);
         db.set_node_property(n1, "name", Value::from("Alix"));
@@ -201,9 +201,9 @@ mod tests {
     #[test]
     fn test_dump_and_load_roundtrip() {
         let temp = TempDir::new().unwrap();
-        let db_path = temp.path().join("source.grafeo");
+        let db_path = temp.path().join("source.obrain");
         let dump_path = temp.path().join("dump.jsonl");
-        let target_path = temp.path().join("target.grafeo");
+        let target_path = temp.path().join("target.obrain");
 
         let db = create_test_db(&db_path);
         drop(db);
@@ -237,7 +237,7 @@ mod tests {
         .expect("load should succeed");
 
         // Verify loaded data
-        let loaded = grafeo_engine::GrafeoDB::open(&target_path).unwrap();
+        let loaded = obrain_engine::ObrainDB::open(&target_path).unwrap();
         let info = loaded.info();
         assert_eq!(info.node_count, 2);
         assert_eq!(info.edge_count, 1);
@@ -246,7 +246,7 @@ mod tests {
     #[test]
     fn test_dump_explicit_json_format() {
         let temp = TempDir::new().unwrap();
-        let db_path = temp.path().join("test.grafeo");
+        let db_path = temp.path().join("test.obrain");
         let dump_path = temp.path().join("dump.json");
 
         // Create and drop the database so the CLI can reopen it
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn test_dump_invalid_format_rejected() {
         let temp = TempDir::new().unwrap();
-        let db_path = temp.path().join("test.grafeo");
+        let db_path = temp.path().join("test.obrain");
         let dump_path = temp.path().join("dump.parquet");
 
         let _db = create_test_db(&db_path);
@@ -294,7 +294,7 @@ mod tests {
     fn test_load_invalid_json_fails() {
         let temp = TempDir::new().unwrap();
         let input_path = temp.path().join("bad.jsonl");
-        let db_path = temp.path().join("target.grafeo");
+        let db_path = temp.path().join("target.obrain");
 
         std::fs::write(&input_path, "not valid json\n").unwrap();
 
@@ -316,7 +316,7 @@ mod tests {
     fn test_load_unknown_type_fails() {
         let temp = TempDir::new().unwrap();
         let input_path = temp.path().join("unknown.jsonl");
-        let db_path = temp.path().join("target.grafeo");
+        let db_path = temp.path().join("target.obrain");
 
         std::fs::write(&input_path, "{\"type\": \"widget\"}\n").unwrap();
 
@@ -338,7 +338,7 @@ mod tests {
     fn test_load_skips_empty_lines() {
         let temp = TempDir::new().unwrap();
         let input_path = temp.path().join("sparse.jsonl");
-        let db_path = temp.path().join("target.grafeo");
+        let db_path = temp.path().join("target.obrain");
 
         let content = "\n{\"type\":\"node\",\"labels\":[\"A\"],\"properties\":{}}\n\n";
         std::fs::write(&input_path, content).unwrap();
@@ -353,7 +353,7 @@ mod tests {
         )
         .expect("should handle empty lines");
 
-        let db = grafeo_engine::GrafeoDB::open(&db_path).unwrap();
+        let db = obrain_engine::ObrainDB::open(&db_path).unwrap();
         assert_eq!(db.info().node_count, 1);
     }
 
@@ -361,7 +361,7 @@ mod tests {
     fn test_load_edge_missing_source_fails() {
         let temp = TempDir::new().unwrap();
         let input_path = temp.path().join("bad_edge.jsonl");
-        let db_path = temp.path().join("target.grafeo");
+        let db_path = temp.path().join("target.obrain");
 
         let content = "{\"type\":\"edge\",\"target\":1,\"edge_type\":\"KNOWS\"}\n";
         std::fs::write(&input_path, content).unwrap();

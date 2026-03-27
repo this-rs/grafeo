@@ -8,7 +8,7 @@ use crate::execution::chunk::DataChunk;
 use crate::execution::operators::OperatorError;
 use crate::execution::pipeline::Source;
 use crate::execution::vector::ValueVector;
-use grafeo_common::types::Value;
+use obrain_common::types::Value;
 use std::sync::Arc;
 
 /// Trait for sources that support parallel partitioning.
@@ -601,7 +601,7 @@ impl Source for PartitionedTripleScanSource {
 // ---------------------------------------------------------------------------
 
 use crate::graph::GraphStore;
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 
 /// Parallel source for scanning nodes from the LPG store.
 ///
@@ -612,8 +612,8 @@ use grafeo_common::types::NodeId;
 /// # Example
 ///
 /// ```rust
-/// use grafeo_core::execution::parallel::{ParallelNodeScanSource, ParallelSource};
-/// use grafeo_core::graph::lpg::LpgStore;
+/// use obrain_core::execution::parallel::{ParallelNodeScanSource, ParallelSource};
+/// use obrain_core::graph::lpg::LpgStore;
 /// use std::sync::Arc;
 ///
 /// let store = Arc::new(LpgStore::new().unwrap());
@@ -684,7 +684,7 @@ impl Source for ParallelNodeScanSource {
         let slice = &self.node_ids[self.position..end];
 
         // Create a NodeId vector
-        let mut vector = ValueVector::with_type(grafeo_common::types::LogicalType::Node);
+        let mut vector = ValueVector::with_type(obrain_common::types::LogicalType::Node);
         for &id in slice {
             vector.push_node_id(id);
         }
@@ -751,7 +751,7 @@ impl Source for PartitionedNodeScanSource {
         let slice = &self.node_ids[self.position..end];
 
         // Create a NodeId vector
-        let mut vector = ValueVector::with_type(grafeo_common::types::LogicalType::Node);
+        let mut vector = ValueVector::with_type(obrain_common::types::LogicalType::Node);
         for &id in slice {
             vector.push_node_id(id);
         }

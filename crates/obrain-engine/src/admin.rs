@@ -260,7 +260,7 @@ pub struct CompactionStats {
 /// Metadata for dump files.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DumpMetadata {
-    /// Grafeo version that created the dump.
+    /// Obrain version that created the dump.
     pub version: String,
     /// Database mode.
     pub mode: DatabaseMode,
@@ -281,9 +281,9 @@ pub struct DumpMetadata {
 ///
 /// Provides a uniform interface for introspection, validation, and
 /// maintenance operations. Used by the CLI, REST API, and bindings
-/// to inspect and manage a Grafeo database.
+/// to inspect and manage a Obrain database.
 ///
-/// Implemented by [`GrafeoDB`](crate::GrafeoDB).
+/// Implemented by [`ObrainDB`](crate::ObrainDB).
 pub trait AdminService {
     /// Returns high-level database information (counts, mode, persistence).
     fn info(&self) -> DatabaseInfo;
@@ -305,7 +305,7 @@ pub trait AdminService {
     /// # Errors
     ///
     /// Returns an error if the checkpoint fails.
-    fn wal_checkpoint(&self) -> grafeo_common::utils::error::Result<()>;
+    fn wal_checkpoint(&self) -> obrain_common::utils::error::Result<()>;
 }
 
 #[cfg(test)]

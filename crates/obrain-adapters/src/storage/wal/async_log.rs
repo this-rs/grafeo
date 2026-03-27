@@ -1,8 +1,8 @@
 //! Async WAL implementation using tokio for non-blocking I/O.
 
 use super::{DurabilityMode, WalConfig, WalRecord};
-use grafeo_common::types::{EpochId, TransactionId};
-use grafeo_common::utils::error::{Error, Result};
+use obrain_common::types::{EpochId, TransactionId};
+use obrain_common::utils::error::{Error, Result};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -444,7 +444,7 @@ impl Drop for AsyncWalManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grafeo_common::types::NodeId;
+    use obrain_common::types::NodeId;
     use tempfile::tempdir;
 
     #[tokio::test]

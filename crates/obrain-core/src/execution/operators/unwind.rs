@@ -2,7 +2,7 @@
 
 use super::{Operator, OperatorResult};
 use crate::execution::chunk::{DataChunk, DataChunkBuilder};
-use grafeo_common::types::{LogicalType, Value};
+use obrain_common::types::{LogicalType, Value};
 
 /// Unwind operator that expands a list column into individual rows.
 ///

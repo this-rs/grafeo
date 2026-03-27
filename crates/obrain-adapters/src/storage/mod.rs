@@ -9,17 +9,17 @@
 //! so you can recover after crashes without losing committed transactions.
 //! The WAL module requires filesystem I/O and is gated behind the `wal` feature.
 //!
-//! The [`mod@file`] module implements a single-file `.grafeo` format with
-//! dual-header crash safety and sidecar WAL. Gated behind `grafeo-file`.
+//! The [`mod@file`] module implements a single-file `.obrain` format with
+//! dual-header crash safety and sidecar WAL. Gated behind `obrain-file`.
 
-#[cfg(feature = "grafeo-file")]
+#[cfg(feature = "obrain-file")]
 pub mod file;
 pub mod memory;
 #[cfg(feature = "wal")]
 pub mod wal;
 
-#[cfg(feature = "grafeo-file")]
-pub use file::GrafeoFileManager;
+#[cfg(feature = "obrain-file")]
+pub use file::ObrainFileManager;
 pub use memory::MemoryBackend;
 #[cfg(feature = "wal")]
 pub use wal::WalManager;

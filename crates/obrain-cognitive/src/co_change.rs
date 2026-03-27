@@ -11,8 +11,8 @@
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use grafeo_common::types::{EdgeId, NodeId};
-use grafeo_reactive::{MutationEvent, MutationListener};
+use obrain_common::types::{EdgeId, NodeId};
+use obrain_reactive::{MutationEvent, MutationListener};
 use smallvec::SmallVec;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -150,7 +150,7 @@ const CO_CHANGED_EDGE_TYPE: &str = "CO_CHANGED";
 
 /// Thread-safe store for co-change relations between nodes.
 ///
-/// When a backing [`GraphStoreMut`](grafeo_core::graph::GraphStoreMut) is
+/// When a backing [`GraphStoreMut`](obrain_core::graph::GraphStoreMut) is
 /// provided, co-change counts are persisted as edge properties on
 /// `CO_CHANGED`-typed edges (write-through).
 pub struct CoChangeStore {
@@ -178,7 +178,7 @@ impl CoChangeStore {
     /// Creates a new co-change store with write-through persistence.
     pub fn with_graph_store(
         config: CoChangeConfig,
-        graph_store: Arc<dyn grafeo_core::graph::GraphStoreMut>,
+        graph_store: Arc<dyn obrain_core::graph::GraphStoreMut>,
     ) -> Self {
         Self {
             relations: DashMap::new(),

@@ -14,7 +14,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use grafeo_core::testing::crash::{with_crash_at, CrashResult};
+//! use obrain_core::testing::crash::{with_crash_at, CrashResult};
 //!
 //! for point in 1..20 {
 //!     let result = with_crash_at(point, || {

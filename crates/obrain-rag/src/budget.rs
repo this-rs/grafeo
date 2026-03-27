@@ -102,7 +102,7 @@ pub fn select_within_budget<'a>(
 mod tests {
     use super::*;
     use crate::traits::RetrievalSource;
-    use grafeo_common::types::NodeId;
+    use obrain_common::types::NodeId;
     use std::collections::HashMap;
 
     fn make_node_with_content(id: u64, score: f64, content: &str) -> RetrievedNode {

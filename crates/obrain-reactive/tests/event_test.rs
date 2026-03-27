@@ -1,8 +1,8 @@
 //! Comprehensive tests for event types: MutationEvent, MutationBatch,
 //! NodeSnapshot, EdgeSnapshot, EntityRef.
 
-use grafeo_common::types::{EdgeId, NodeId, PropertyKey, Value};
-use grafeo_reactive::{EdgeSnapshot, MutationBatch, MutationEvent, NodeSnapshot};
+use obrain_common::types::{EdgeId, NodeId, PropertyKey, Value};
+use obrain_reactive::{EdgeSnapshot, MutationBatch, MutationEvent, NodeSnapshot};
 
 // --- Helpers ---
 

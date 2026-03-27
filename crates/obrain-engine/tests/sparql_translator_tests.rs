@@ -2,7 +2,7 @@
 
 #[cfg(feature = "sparql")]
 mod tests {
-    use grafeo_engine::query::translators::sparql::translate;
+    use obrain_engine::query::translators::sparql::translate;
 
     #[test]
     fn test_translate_simple_select() {
@@ -170,11 +170,11 @@ mod tests {
 
 #[cfg(all(feature = "sparql", feature = "rdf"))]
 mod explain_integration {
-    use grafeo_engine::GrafeoDB;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn test_sparql_explain_returns_plan() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         db.execute_sparql(
             r#"INSERT DATA { <http://example.org/alix> <http://xmlns.com/foaf/0.1/name> "Alix" }"#,
         )

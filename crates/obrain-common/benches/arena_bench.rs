@@ -4,10 +4,10 @@ use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 
-use grafeo_common::memory::arena::Arena;
-use grafeo_common::memory::bump::BumpAllocator;
-use grafeo_common::memory::pool::ObjectPool;
-use grafeo_common::types::EpochId;
+use obrain_common::memory::arena::Arena;
+use obrain_common::memory::bump::BumpAllocator;
+use obrain_common::memory::pool::ObjectPool;
+use obrain_common::types::EpochId;
 
 fn bench_epoch_arena_allocate(c: &mut Criterion) {
     c.bench_function("epoch_arena_allocate_1000", |b| {

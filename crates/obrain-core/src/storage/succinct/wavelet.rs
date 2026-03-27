@@ -22,7 +22,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use grafeo_core::storage::succinct::WaveletTree;
+//! use obrain_core::storage::succinct::WaveletTree;
 //!
 //! // Index a sequence of predicate IDs
 //! let predicates = vec![0, 1, 0, 2, 1, 0, 2, 2];

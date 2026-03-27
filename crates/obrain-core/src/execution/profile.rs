@@ -94,7 +94,7 @@ mod tests {
     use super::*;
     use crate::execution::chunk::DataChunk;
     use crate::execution::vector::ValueVector;
-    use grafeo_common::types::LogicalType;
+    use obrain_common::types::LogicalType;
 
     /// A mock operator that yields a fixed number of chunks, each with `rows_per_chunk` rows.
     struct MockOperator {
@@ -119,7 +119,7 @@ mod tests {
             self.chunks_remaining -= 1;
             let mut col = ValueVector::with_capacity(LogicalType::Int64, self.rows_per_chunk);
             for i in 0..self.rows_per_chunk {
-                col.push(grafeo_common::types::Value::Int64(i as i64));
+                col.push(obrain_common::types::Value::Int64(i as i64));
             }
             let chunk = DataChunk::new(vec![col]);
             Ok(Some(chunk))

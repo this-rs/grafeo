@@ -6,11 +6,11 @@
 //! 3. Query history returns events in chronological order
 //! 4. DERIVED_FROM edges link consolidated nodes to sources
 
-use grafeo_cognitive::provenance::{
+use obrain_cognitive::provenance::{
     CognitiveEvent, CognitiveEventType, EDGE_DERIVED_FROM, EDGE_HAS_COGNITIVE_EVENT,
     ProvenanceRecorder,
 };
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 
 fn node(id: u64) -> NodeId {
     NodeId(id)

@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use dashmap::DashMap;
-use grafeo_common::types::EdgeId;
+use obrain_common::types::EdgeId;
 
 use crate::engram::traits::EdgeAnnotator;
 
@@ -505,7 +505,7 @@ impl crate::engram::traits::QueryObserver for StigmergicQueryListener {
 // StigmergicMutationListener — MutationListener adapter
 // ---------------------------------------------------------------------------
 
-/// A [`MutationListener`](grafeo_reactive::MutationListener) that deposits
+/// A [`MutationListener`](obrain_reactive::MutationListener) that deposits
 /// `pheromone_mutation` on edges involved in mutation events.
 ///
 /// Reacts to `EdgeCreated`, `EdgeUpdated`, and `EdgeDeleted` events.
@@ -542,22 +542,22 @@ impl StigmergicMutationListener {
 }
 
 #[async_trait::async_trait]
-impl grafeo_reactive::MutationListener for StigmergicMutationListener {
+impl obrain_reactive::MutationListener for StigmergicMutationListener {
     fn name(&self) -> &str {
         "stigmergic-mutation-listener"
     }
 
-    async fn on_event(&self, event: &grafeo_reactive::MutationEvent) {
+    async fn on_event(&self, event: &obrain_reactive::MutationEvent) {
         match event {
-            grafeo_reactive::MutationEvent::EdgeCreated { edge } => {
+            obrain_reactive::MutationEvent::EdgeCreated { edge } => {
                 self.engine
                     .deposit(edge.id, TrailType::Mutation, self.deposit_delta);
             }
-            grafeo_reactive::MutationEvent::EdgeUpdated { after, .. } => {
+            obrain_reactive::MutationEvent::EdgeUpdated { after, .. } => {
                 self.engine
                     .deposit(after.id, TrailType::Mutation, self.deposit_delta);
             }
-            grafeo_reactive::MutationEvent::EdgeDeleted { edge } => {
+            obrain_reactive::MutationEvent::EdgeDeleted { edge } => {
                 self.engine
                     .deposit(edge.id, TrailType::Mutation, self.deposit_delta);
             }
@@ -566,7 +566,7 @@ impl grafeo_reactive::MutationListener for StigmergicMutationListener {
         }
     }
 
-    async fn on_batch(&self, events: &[grafeo_reactive::MutationEvent]) {
+    async fn on_batch(&self, events: &[obrain_reactive::MutationEvent]) {
         for event in events {
             self.on_event(event).await;
         }
@@ -965,16 +965,16 @@ mod tests {
 
     #[tokio::test]
     async fn stigmergic_mutation_listener_on_edge_created() {
-        use grafeo_reactive::MutationListener;
+        use obrain_reactive::MutationListener;
 
         let engine = make_engine();
         let listener = StigmergicMutationListener::new(Arc::clone(&engine));
 
-        let event = grafeo_reactive::MutationEvent::EdgeCreated {
-            edge: grafeo_reactive::EdgeSnapshot {
+        let event = obrain_reactive::MutationEvent::EdgeCreated {
+            edge: obrain_reactive::EdgeSnapshot {
                 id: EdgeId::new(42),
-                src: grafeo_common::types::NodeId(1),
-                dst: grafeo_common::types::NodeId(2),
+                src: obrain_common::types::NodeId(1),
+                dst: obrain_common::types::NodeId(2),
                 edge_type: arcstr::literal!("KNOWS"),
                 properties: vec![],
             },
@@ -988,20 +988,20 @@ mod tests {
 
     #[tokio::test]
     async fn stigmergic_mutation_listener_on_edge_updated() {
-        use grafeo_reactive::MutationListener;
+        use obrain_reactive::MutationListener;
 
         let engine = make_engine();
         let listener = StigmergicMutationListener::new(Arc::clone(&engine));
 
-        let snapshot = grafeo_reactive::EdgeSnapshot {
+        let snapshot = obrain_reactive::EdgeSnapshot {
             id: EdgeId::new(7),
-            src: grafeo_common::types::NodeId(1),
-            dst: grafeo_common::types::NodeId(2),
+            src: obrain_common::types::NodeId(1),
+            dst: obrain_common::types::NodeId(2),
             edge_type: arcstr::literal!("FOLLOWS"),
             properties: vec![],
         };
 
-        let event = grafeo_reactive::MutationEvent::EdgeUpdated {
+        let event = obrain_reactive::MutationEvent::EdgeUpdated {
             before: snapshot.clone(),
             after: snapshot,
         };
@@ -1012,14 +1012,14 @@ mod tests {
 
     #[tokio::test]
     async fn stigmergic_mutation_listener_ignores_node_events() {
-        use grafeo_reactive::MutationListener;
+        use obrain_reactive::MutationListener;
 
         let engine = make_engine();
         let listener = StigmergicMutationListener::new(Arc::clone(&engine));
 
-        let event = grafeo_reactive::MutationEvent::NodeCreated {
-            node: grafeo_reactive::NodeSnapshot {
-                id: grafeo_common::types::NodeId(1),
+        let event = obrain_reactive::MutationEvent::NodeCreated {
+            node: obrain_reactive::NodeSnapshot {
+                id: obrain_common::types::NodeId(1),
                 labels: smallvec::smallvec![],
                 properties: vec![],
             },
@@ -1032,16 +1032,16 @@ mod tests {
 
     #[tokio::test]
     async fn stigmergic_mutation_listener_batch_deposits() {
-        use grafeo_reactive::MutationListener;
+        use obrain_reactive::MutationListener;
 
         let engine = make_engine();
         let listener = StigmergicMutationListener::new(Arc::clone(&engine));
 
-        let make_edge_event = |id: u64| grafeo_reactive::MutationEvent::EdgeCreated {
-            edge: grafeo_reactive::EdgeSnapshot {
+        let make_edge_event = |id: u64| obrain_reactive::MutationEvent::EdgeCreated {
+            edge: obrain_reactive::EdgeSnapshot {
                 id: EdgeId::new(id),
-                src: grafeo_common::types::NodeId(1),
-                dst: grafeo_common::types::NodeId(2),
+                src: obrain_common::types::NodeId(1),
+                dst: obrain_common::types::NodeId(2),
                 edge_type: arcstr::literal!("REL"),
                 properties: vec![],
             },

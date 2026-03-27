@@ -14,7 +14,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use grafeo_core::execution::parallel::fold::{parallel_count, parallel_sum};
+//! use obrain_core::execution::parallel::fold::{parallel_count, parallel_sum};
 //! use rayon::prelude::*;
 //!
 //! let numbers: Vec<i32> = (0..1000).collect();
@@ -47,7 +47,7 @@ pub trait Mergeable: Send + Default {
 /// # Example
 ///
 /// ```no_run
-/// use grafeo_core::execution::parallel::fold::fold_reduce;
+/// use obrain_core::execution::parallel::fold::fold_reduce;
 /// use rayon::prelude::*;
 ///
 /// let items = vec![1, 2, 3, 4, 5];
@@ -90,7 +90,7 @@ where
 /// # Example
 ///
 /// ```no_run
-/// use grafeo_core::execution::parallel::fold::parallel_count;
+/// use obrain_core::execution::parallel::fold::parallel_count;
 /// use rayon::prelude::*;
 ///
 /// let numbers: Vec<i32> = (0..1000).collect();
@@ -113,7 +113,7 @@ where
 /// # Example
 ///
 /// ```no_run
-/// use grafeo_core::execution::parallel::fold::parallel_sum;
+/// use obrain_core::execution::parallel::fold::parallel_sum;
 /// use rayon::prelude::*;
 ///
 /// let items = vec![(1, "a"), (2, "b"), (3, "c")];
@@ -214,7 +214,7 @@ where
 /// # Example
 ///
 /// ```no_run
-/// use grafeo_core::execution::parallel::fold::parallel_try_collect;
+/// use obrain_core::execution::parallel::fold::parallel_try_collect;
 /// use rayon::prelude::*;
 ///
 /// let items = vec!["1", "two", "3", "four"];
@@ -309,7 +309,7 @@ where
 /// # Example
 ///
 /// ```no_run
-/// use grafeo_core::execution::parallel::fold::parallel_partition;
+/// use obrain_core::execution::parallel::fold::parallel_partition;
 /// use rayon::prelude::*;
 ///
 /// let items = vec![(1, "a"), (2, "b"), (1, "c"), (2, "d")];

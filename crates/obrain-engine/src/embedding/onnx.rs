@@ -1,6 +1,6 @@
 //! ONNX Runtime embedding model implementation.
 
-use grafeo_common::utils::error::{Error, Result};
+use obrain_common::utils::error::{Error, Result};
 use ort::session::Session;
 use parking_lot::Mutex;
 use std::path::Path;

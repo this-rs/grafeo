@@ -7,8 +7,8 @@
 //! Built lazily on-demand. You won't interact with this directly unless you're
 //! implementing custom join algorithms.
 
-use grafeo_common::types::{EdgeId, NodeId};
-use grafeo_common::utils::hash::FxHashMap;
+use obrain_common::types::{EdgeId, NodeId};
+use obrain_common::utils::hash::FxHashMap;
 use smallvec::SmallVec;
 
 /// A trie node in the edge trie.

@@ -1,6 +1,6 @@
 //! Labeled Property Graph (LPG) storage.
 //!
-//! This is Grafeo's primary graph model - the same model used by Neo4j,
+//! This is Obrain's primary graph model - the same model used by Neo4j,
 //! TigerGraph, and most modern graph databases. If you're used to working
 //! with nodes, relationships, and properties, you're in the right place.
 //!

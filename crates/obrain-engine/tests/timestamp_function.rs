@@ -3,8 +3,8 @@
 //! `timestamp()` follows Neo4j semantics: returns the current time as
 //! milliseconds since the Unix epoch, typed as `Int64`.
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -24,7 +24,7 @@ fn current_millis() -> i64 {
 
 #[test]
 fn test_timestamp_return_basic() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let result = session.execute("RETURN timestamp() AS ts").unwrap();
 
@@ -42,7 +42,7 @@ fn test_timestamp_return_basic() {
 #[test]
 fn test_timestamp_return_reasonable_value() {
     let before = current_millis();
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let result = session.execute("RETURN timestamp() AS ts").unwrap();
     let after = current_millis();
@@ -67,7 +67,7 @@ fn test_timestamp_return_reasonable_value() {
 
 #[test]
 fn test_timestamp_in_set_clause() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.execute("CREATE (:T {id: 'x'})").unwrap();
     session
@@ -90,7 +90,7 @@ fn test_timestamp_in_set_clause() {
 
 #[test]
 fn test_timestamp_in_on_create_set() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("MERGE (n:T {id: 'y'}) ON CREATE SET n.created = timestamp()")
@@ -112,7 +112,7 @@ fn test_timestamp_in_on_create_set() {
 
 #[test]
 fn test_timestamp_in_on_match_set() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     // First create the node
     session.execute("CREATE (:T {id: 'y'})").unwrap();
@@ -137,7 +137,7 @@ fn test_timestamp_in_on_match_set() {
 
 #[test]
 fn test_timestamp_multiple_calls_close() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let result = session
         .execute("RETURN timestamp() AS t1, timestamp() AS t2")
@@ -162,7 +162,7 @@ fn test_timestamp_multiple_calls_close() {
 
 #[test]
 fn test_timestamp_in_where_clause() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.execute("CREATE (:T {id: 'w'})").unwrap();
 
@@ -181,7 +181,7 @@ fn test_timestamp_in_where_clause() {
 
 #[test]
 fn test_timestamp_arithmetic() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let result = session
         .execute("RETURN timestamp() - timestamp() AS diff")
@@ -205,7 +205,7 @@ fn test_timestamp_arithmetic() {
 
 #[test]
 fn test_timestamp_with_alias() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let result = session
         .execute("RETURN timestamp() AS t1, timestamp() AS t2")
@@ -222,7 +222,7 @@ fn test_timestamp_with_alias() {
 
 #[test]
 fn test_timestamp_no_args_only() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     // timestamp() with no args should work
     let result = session.execute("RETURN timestamp() AS ts").unwrap();
@@ -235,7 +235,7 @@ fn test_timestamp_no_args_only() {
 
 #[test]
 fn test_timestamp_stored_and_retrieved() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.execute("CREATE (:Ev {ts: timestamp()})").unwrap();
 
@@ -259,7 +259,7 @@ fn test_timestamp_stored_and_retrieved() {
 
 #[test]
 fn test_timestamp_vs_now_different_types() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let result = session
         .execute("RETURN timestamp() AS ts, now() AS n")
@@ -284,7 +284,7 @@ fn test_timestamp_vs_now_different_types() {
 
 #[test]
 fn test_timestamp_in_case_expression() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let result = session
         .execute("RETURN CASE WHEN true THEN timestamp() ELSE 0 END AS ts")
@@ -303,7 +303,7 @@ fn test_timestamp_in_case_expression() {
 
 #[test]
 fn test_timestamp_in_list() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let result = session
         .execute("RETURN [timestamp(), timestamp()] AS ts_list")
@@ -332,7 +332,7 @@ fn test_timestamp_in_list() {
 
 #[test]
 fn test_timestamp_in_cypher_where_clause() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.execute("CREATE (:TW {ts: 0})").unwrap();
 
@@ -353,7 +353,7 @@ fn test_timestamp_in_cypher_where_clause() {
 
 #[test]
 fn test_timestamp_via_execute_cypher() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let result = session.execute_cypher("RETURN timestamp() AS ts").unwrap();
     assert_eq!(result.rows.len(), 1);
@@ -369,7 +369,7 @@ fn test_timestamp_via_execute_cypher() {
 
 #[test]
 fn test_timestamp_in_cypher_set() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.execute_cypher("CREATE (:CTS {id: 1})").unwrap();
     session

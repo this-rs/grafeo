@@ -4,8 +4,8 @@
 //! invalid queries, double-commit, transaction state violations,
 //! and other edge cases that should produce clear errors rather than panics.
 
-use grafeo_common::types::{EdgeId, NodeId, Value};
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::{EdgeId, NodeId, Value};
+use obrain_engine::ObrainDB;
 
 // ============================================================================
 // Entity Not Found
@@ -13,19 +13,19 @@ use grafeo_engine::GrafeoDB;
 
 #[test]
 fn test_get_nonexistent_node() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     assert!(db.get_node(NodeId::new(999)).is_none());
 }
 
 #[test]
 fn test_get_nonexistent_edge() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     assert!(db.get_edge(EdgeId::new(999)).is_none());
 }
 
 #[test]
 fn test_set_property_on_nonexistent_node() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     // Setting a property on a missing node should not panic
     db.set_node_property(NodeId::new(999), "key", Value::Int64(1));
     // Node still doesn't exist
@@ -34,32 +34,32 @@ fn test_set_property_on_nonexistent_node() {
 
 #[test]
 fn test_delete_nonexistent_node() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     assert!(!db.delete_node(NodeId::new(999)));
 }
 
 #[test]
 fn test_delete_nonexistent_edge() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     assert!(!db.delete_edge(EdgeId::new(999)));
 }
 
 #[test]
 fn test_get_labels_nonexistent_node() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     assert!(db.get_node_labels(NodeId::new(999)).is_none());
 }
 
 #[test]
 fn test_add_label_nonexistent_node() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     // Should not panic - returns false since node doesn't exist
     assert!(!db.add_node_label(NodeId::new(999), "Label"));
 }
 
 #[test]
 fn test_remove_label_nonexistent_node() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     assert!(!db.remove_node_label(NodeId::new(999), "Label"));
 }
 
@@ -69,7 +69,7 @@ fn test_remove_label_nonexistent_node() {
 
 #[test]
 fn test_query_syntax_error() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let result = session.execute("THIS IS NOT VALID GQL");
@@ -83,7 +83,7 @@ fn test_query_syntax_error() {
 
 #[test]
 fn test_query_empty_string() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let result = session.execute("");
@@ -92,7 +92,7 @@ fn test_query_empty_string() {
 
 #[test]
 fn test_query_unclosed_parenthesis() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let result = session.execute("MATCH (n:Person RETURN n");
@@ -101,7 +101,7 @@ fn test_query_unclosed_parenthesis() {
 
 #[test]
 fn test_query_undefined_variable() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // Reference a variable that was never matched
@@ -111,7 +111,7 @@ fn test_query_undefined_variable() {
 
 #[test]
 fn test_query_return_without_match() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // RETURN without MATCH is valid for constants
@@ -126,7 +126,7 @@ fn test_query_return_without_match() {
 
 #[test]
 fn test_commit_without_begin() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     let result = session.commit();
@@ -135,7 +135,7 @@ fn test_commit_without_begin() {
 
 #[test]
 fn test_rollback_without_begin() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     let result = session.rollback();
@@ -144,7 +144,7 @@ fn test_rollback_without_begin() {
 
 #[test]
 fn test_double_begin_creates_nested_transaction() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session.begin_transaction().unwrap();
@@ -157,7 +157,7 @@ fn test_double_begin_creates_nested_transaction() {
 
 #[test]
 fn test_begin_after_commit_succeeds() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session.begin_transaction().unwrap();
@@ -171,7 +171,7 @@ fn test_begin_after_commit_succeeds() {
 
 #[test]
 fn test_begin_after_rollback_succeeds() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session.begin_transaction().unwrap();
@@ -189,7 +189,7 @@ fn test_begin_after_rollback_succeeds() {
 
 #[test]
 fn test_query_empty_database() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let result = session.execute("MATCH (n) RETURN n").unwrap();
@@ -202,7 +202,7 @@ fn test_query_empty_database() {
 
 #[test]
 fn test_count_on_empty_database() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let result = session.execute("MATCH (n) RETURN COUNT(n) AS cnt").unwrap();
@@ -215,17 +215,17 @@ fn test_count_on_empty_database() {
 
 #[test]
 fn test_validate_empty_database() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let result = db.validate();
     assert!(result.is_valid(), "Empty database should be valid");
 }
 
 #[test]
 fn test_schema_empty_database() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let schema = db.schema();
     match schema {
-        grafeo_engine::SchemaInfo::Lpg(lpg) => {
+        obrain_engine::SchemaInfo::Lpg(lpg) => {
             assert!(lpg.labels.is_empty(), "No labels in empty db");
             assert!(lpg.edge_types.is_empty(), "No edge types in empty db");
         }
@@ -235,7 +235,7 @@ fn test_schema_empty_database() {
 
 #[test]
 fn test_info_empty_database() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let info = db.info();
     assert_eq!(info.node_count, 0);
     assert_eq!(info.edge_count, 0);
@@ -248,7 +248,7 @@ fn test_info_empty_database() {
 
 #[test]
 fn test_property_with_null_value() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let n = db.create_node(&["Test"]);
     db.set_node_property(n, "key", Value::Null);
 
@@ -271,7 +271,7 @@ fn test_property_with_null_value() {
 
 #[test]
 fn test_property_with_empty_string() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let n = db.create_node(&["Test"]);
     db.set_node_property(n, "key", Value::String("".into()));
 
@@ -285,7 +285,7 @@ fn test_property_with_empty_string() {
 
 #[test]
 fn test_node_with_no_labels() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let n = db.create_node(&[]);
 
     let node = db.get_node(n);
@@ -295,7 +295,7 @@ fn test_node_with_no_labels() {
 
 #[test]
 fn test_node_with_many_labels() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let labels: Vec<&str> = (0..10)
         .map(|i| match i {
             0 => "A",
@@ -318,7 +318,7 @@ fn test_node_with_many_labels() {
 
 #[test]
 fn test_self_referencing_edge() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let n = db.create_node(&["Node"]);
     let e = db.create_edge(n, n, "SELF");
 
@@ -333,7 +333,7 @@ fn test_self_referencing_edge() {
 
 #[test]
 fn test_gql_syntax_error_has_position_info() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // Syntax errors from the parser should produce positioned error messages,
@@ -356,11 +356,11 @@ fn test_gql_syntax_error_has_position_info() {
 
 #[test]
 fn test_translator_errors_not_internal() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
-    // Various translator errors should NOT produce GRAFEO-X internal errors.
-    // They should be query errors (GRAFEO-Q*).
+    // Various translator errors should NOT produce OBRAIN-X internal errors.
+    // They should be query errors (OBRAIN-Q*).
     let test_queries = [
         "MATCH (n:Person) RETURN x.name", // undefined variable
     ];
@@ -370,7 +370,7 @@ fn test_translator_errors_not_internal() {
         if let Err(err) = result {
             let err_str = err.to_string();
             assert!(
-                !err_str.contains("GRAFEO-X"),
+                !err_str.contains("OBRAIN-X"),
                 "Query '{}' should NOT produce an internal error, got: {}",
                 query,
                 err_str
@@ -381,9 +381,9 @@ fn test_translator_errors_not_internal() {
 
 #[test]
 fn test_gql_unknown_procedure_error_code() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
-    let result = session.execute("CALL grafeo.nonexistent()");
+    let result = session.execute("CALL obrain.nonexistent()");
     assert!(result.is_err());
     let err_str = result.unwrap_err().to_string();
     assert!(
@@ -395,9 +395,9 @@ fn test_gql_unknown_procedure_error_code() {
 
 #[test]
 fn test_gql_yield_nonexistent_column_error() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
-    let result = session.execute("CALL grafeo.pagerank() YIELD nonexistent_column");
+    let result = session.execute("CALL obrain.pagerank() YIELD nonexistent_column");
     assert!(result.is_err());
     let err_str = result.unwrap_err().to_string();
     assert!(
@@ -410,7 +410,7 @@ fn test_gql_yield_nonexistent_column_error() {
 #[test]
 #[cfg(feature = "cypher")]
 fn test_cypher_pattern_comprehension_works() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // Pattern comprehension is now supported after planner refactor
@@ -425,7 +425,7 @@ fn test_cypher_pattern_comprehension_works() {
 #[test]
 #[cfg(feature = "graphql")]
 fn test_graphql_range_filter_end_to_end() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     // Create test data
     for i in 0..5 {
         let n = db.create_node(&["Person"]);
@@ -456,7 +456,7 @@ fn test_graphql_range_filter_end_to_end() {
 
 #[test]
 fn test_insert_and_match_special_characters_in_properties() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -469,7 +469,7 @@ fn test_insert_and_match_special_characters_in_properties() {
 
 #[test]
 fn test_match_with_multiple_labels() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let n = db.create_node(&["Person", "Employee"]);
     db.set_node_property(n, "name", Value::String("Alix".into()));
 
@@ -480,7 +480,7 @@ fn test_match_with_multiple_labels() {
 
 #[test]
 fn test_in_operator_with_empty_list() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     db.create_node(&["Person"]);
@@ -501,7 +501,7 @@ fn test_in_operator_with_empty_list() {
 
 #[test]
 fn test_gql_error_shows_line_and_column() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // Missing closing paren: genuine syntax error
@@ -527,7 +527,7 @@ fn test_gql_error_shows_line_and_column() {
 
 #[test]
 fn test_gql_multiline_error_position() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // RETURN is a typo: genuine syntax error on line 3
@@ -545,7 +545,7 @@ fn test_gql_multiline_error_position() {
 #[test]
 #[cfg(feature = "cypher")]
 fn test_cypher_error_shows_position() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // Missing closing paren: genuine syntax error
@@ -565,7 +565,7 @@ fn test_cypher_error_shows_position() {
 #[test]
 #[cfg(feature = "sparql")]
 fn test_sparql_error_shows_position() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // Missing closing brace: genuine syntax error
@@ -581,7 +581,7 @@ fn test_sparql_error_shows_position() {
 #[test]
 #[cfg(feature = "sql-pgq")]
 fn test_sql_pgq_error_shows_position() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let result = session.execute_sql("SELECT * FROM GRAPH_TABLE(g MATCH (n) COLUMNS (n.name))");
@@ -599,7 +599,7 @@ fn test_sql_pgq_error_shows_position() {
 
 #[test]
 fn test_whitespace_only_query() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let result = session.execute("   \t\n  ");
     assert!(result.is_err(), "whitespace-only query should error");
@@ -607,7 +607,7 @@ fn test_whitespace_only_query() {
 
 #[test]
 fn test_null_byte_in_query() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let result = session.execute("MATCH (n\0:Person) RETURN n");
     // Should error or handle gracefully, not panic
@@ -616,7 +616,7 @@ fn test_null_byte_in_query() {
 
 #[test]
 fn test_deeply_nested_parentheses() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     // 50 levels of nested parens in WHERE clause
     let mut query = String::from("MATCH (n:Person) WHERE ");
@@ -634,7 +634,7 @@ fn test_deeply_nested_parentheses() {
 
 #[test]
 fn test_very_long_identifier() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let long_label = "A".repeat(10_000);
     let query = format!("MATCH (n:{long_label}) RETURN n");
@@ -644,7 +644,7 @@ fn test_very_long_identifier() {
 
 #[test]
 fn test_unclosed_string_literal() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let result = session.execute("MATCH (n:Person) WHERE n.name = 'unclosed RETURN n");
     assert!(result.is_err(), "unclosed string literal should error");
@@ -652,7 +652,7 @@ fn test_unclosed_string_literal() {
 
 #[test]
 fn test_mismatched_brackets_in_edge() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let result = session.execute("MATCH (a)-[:KNOWS->(b) RETURN a");
     assert!(result.is_err(), "mismatched brackets should error");
@@ -660,7 +660,7 @@ fn test_mismatched_brackets_in_edge() {
 
 #[test]
 fn test_binary_garbage_input() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let garbage = String::from_utf8_lossy(&[0xFF, 0xFE, 0x00, 0x01, 0x80, 0x90]).to_string();
     let result = session.execute(&garbage);
@@ -673,7 +673,7 @@ fn test_binary_garbage_input() {
 
 #[test]
 fn test_gql_error_names_unexpected_token() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     // Use a genuinely invalid query: RETURN without MATCH is not valid GQL
     let result = session.execute("MATCH (n:Person) RETURNING n");
@@ -688,7 +688,7 @@ fn test_gql_error_names_unexpected_token() {
 
 #[test]
 fn test_gql_error_includes_line_and_column() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let result = session.execute("MATCH (n:Person)\nWHERE n.age >\nRETURN n");
     assert!(result.is_err());
@@ -702,7 +702,7 @@ fn test_gql_error_includes_line_and_column() {
 
 #[test]
 fn test_gql_error_includes_caret_marker() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let result = session.execute("MATCH (n:Person) WHERE n. RETURN n");
     assert!(result.is_err());
@@ -717,7 +717,7 @@ fn test_gql_error_includes_caret_marker() {
 #[test]
 #[cfg(feature = "sparql")]
 fn test_sparql_error_includes_position() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     // Use genuinely invalid SPARQL syntax
     let result = session.execute_sparql("GRAB ?s WHERE { ?s ?p ?o }");
@@ -732,7 +732,7 @@ fn test_sparql_error_includes_position() {
 #[test]
 #[cfg(feature = "cypher")]
 fn test_cypher_error_names_bad_token() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let result = session.execute_cypher("MTCH (n) RETURN n");
     assert!(result.is_err());

@@ -3,13 +3,13 @@
 //! Measures retrieve latency for 100, 500, and 1000 engrams.
 //! Target: < 50ms for 1000 engrams.
 //!
-//! Run with: cargo bench -p grafeo-cognitive --features hopfield -- hopfield
+//! Run with: cargo bench -p obrain-cognitive --features hopfield -- hopfield
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use grafeo_cognitive::engram::{
+use obrain_cognitive::engram::{
     Engram, EngramStore, PatternMatrix, SpectralEncoder, hopfield_retrieve,
 };
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 
 const DIM: usize = 64;
 

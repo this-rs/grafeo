@@ -3,10 +3,10 @@
 //! Targets: catalog/mod.rs (36.75%), session.rs DDL paths, parser.rs schema syntax
 //!
 //! ```bash
-//! cargo test -p grafeo-engine --test coverage_schema_ddl
+//! cargo test -p obrain-engine --test coverage_schema_ddl
 //! ```
 
-use grafeo_engine::GrafeoDB;
+use obrain_engine::ObrainDB;
 
 // ---------------------------------------------------------------------------
 // CREATE / DROP NODE TYPE
@@ -14,7 +14,7 @@ use grafeo_engine::GrafeoDB;
 
 #[test]
 fn test_create_node_type_and_drop() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE NODE TYPE Vehicle (make STRING NOT NULL, year INTEGER)")
@@ -27,7 +27,7 @@ fn test_create_node_type_and_drop() {
 
 #[test]
 fn test_create_node_type_duplicate_fails() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE NODE TYPE Gadget (name STRING)")
@@ -38,7 +38,7 @@ fn test_create_node_type_duplicate_fails() {
 
 #[test]
 fn test_create_or_replace_node_type() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE NODE TYPE Widget (name STRING)")
@@ -50,7 +50,7 @@ fn test_create_or_replace_node_type() {
 
 #[test]
 fn test_drop_nonexistent_node_type_fails() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let result = session.execute("DROP NODE TYPE Nonexistent");
     let err = result.unwrap_err().to_string();
@@ -66,7 +66,7 @@ fn test_drop_nonexistent_node_type_fails() {
 
 #[test]
 fn test_create_edge_type_and_drop() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE EDGE TYPE SUPPLIES (quantity INTEGER)")
@@ -76,7 +76,7 @@ fn test_create_edge_type_and_drop() {
 
 #[test]
 fn test_create_or_replace_edge_type() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE EDGE TYPE RATES (stars INTEGER)")
@@ -92,7 +92,7 @@ fn test_create_or_replace_edge_type() {
 
 #[test]
 fn test_alter_node_type_add_and_drop_property() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE NODE TYPE Sensor (id INTEGER NOT NULL)")
@@ -111,7 +111,7 @@ fn test_alter_node_type_add_and_drop_property() {
 
 #[test]
 fn test_alter_edge_type_add_and_drop_property() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE EDGE TYPE MONITORS (interval INTEGER)")
@@ -130,7 +130,7 @@ fn test_alter_edge_type_add_and_drop_property() {
 
 #[test]
 fn test_alter_graph_type_add_drop_members() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE NODE TYPE Device (serial STRING)")
@@ -153,7 +153,7 @@ fn test_alter_graph_type_add_drop_members() {
 
 #[test]
 fn test_drop_graph_type() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE GRAPH TYPE temp_type (NODE TYPE Temp (v INTEGER))")
@@ -170,7 +170,7 @@ fn test_drop_graph_type() {
 
 #[test]
 fn test_create_and_drop_schema_namespace() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.execute("CREATE SCHEMA analytics").unwrap();
     session.execute("DROP SCHEMA analytics").unwrap();
@@ -178,7 +178,7 @@ fn test_create_and_drop_schema_namespace() {
 
 #[test]
 fn test_create_duplicate_schema_fails() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.execute("CREATE SCHEMA reporting").unwrap();
     let dup = session.execute("CREATE SCHEMA reporting");
@@ -195,7 +195,7 @@ fn test_create_duplicate_schema_fails() {
 
 #[test]
 fn test_create_and_drop_procedure() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute(
@@ -209,7 +209,7 @@ fn test_create_and_drop_procedure() {
 
 #[test]
 fn test_create_or_replace_procedure() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute(
@@ -227,7 +227,7 @@ fn test_create_or_replace_procedure() {
 
 #[test]
 fn test_node_type_with_not_null_property() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE NODE TYPE Account (owner STRING NOT NULL, balance INTEGER)")
@@ -242,7 +242,7 @@ fn test_node_type_with_not_null_property() {
 
 #[test]
 fn test_not_null_constraint_rejects_missing_property() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE NODE TYPE Account (owner STRING NOT NULL, balance INTEGER)")
@@ -259,7 +259,7 @@ fn test_not_null_constraint_rejects_missing_property() {
 
 #[test]
 fn test_not_null_constraint_allows_all_properties_present() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("CREATE NODE TYPE Invoice (number INTEGER NOT NULL, total FLOAT NOT NULL)")
@@ -280,7 +280,7 @@ fn test_not_null_constraint_allows_all_properties_present() {
 
 #[test]
 fn test_full_schema_lifecycle() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // Create types

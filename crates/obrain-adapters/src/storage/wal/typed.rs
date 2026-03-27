@@ -9,9 +9,9 @@
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
-use grafeo_common::types::EpochId;
-use grafeo_common::types::TransactionId;
-use grafeo_common::utils::error::{Error, Result};
+use obrain_common::types::EpochId;
+use obrain_common::types::TransactionId;
+use obrain_common::utils::error::{Error, Result};
 
 use super::WalRecord;
 use super::log::{CheckpointMetadata, DurabilityMode, WalConfig, WalManager};
@@ -27,10 +27,10 @@ use super::record::WalEntry;
 /// # Example
 ///
 /// ```no_run
-/// use grafeo_adapters::storage::wal::{LpgWal, WalRecord};
-/// use grafeo_common::types::NodeId;
+/// use obrain_adapters::storage::wal::{LpgWal, WalRecord};
+/// use obrain_common::types::NodeId;
 ///
-/// # fn main() -> grafeo_common::utils::error::Result<()> {
+/// # fn main() -> obrain_common::utils::error::Result<()> {
 /// let wal = LpgWal::open("wal_dir")?;
 /// wal.log(&WalRecord::CreateNode {
 ///     id: NodeId::new(1),
@@ -202,7 +202,7 @@ pub type LpgWal = TypedWal<WalRecord>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grafeo_common::types::NodeId;
+    use obrain_common::types::NodeId;
     use tempfile::tempdir;
 
     #[test]

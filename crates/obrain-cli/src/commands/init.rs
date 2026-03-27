@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use grafeo_engine::{Config, GrafeoDB, GraphModel};
+use obrain_engine::{Config, ObrainDB, GraphModel};
 
 use crate::output::{self, Format};
 use crate::{GraphMode, OutputFormat};
@@ -23,7 +23,7 @@ pub fn run(path: &Path, mode: GraphMode, format: OutputFormat, quiet: bool) -> R
     };
 
     let config = Config::persistent(path).with_graph_model(graph_model);
-    let db = GrafeoDB::with_config(config)
+    let db = ObrainDB::with_config(config)
         .with_context(|| format!("Failed to create database at {}", path.display()))?;
 
     let info = db.info();

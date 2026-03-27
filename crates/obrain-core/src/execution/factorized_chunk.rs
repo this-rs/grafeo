@@ -232,7 +232,7 @@ impl FactorizedChunk {
     /// # Example
     ///
     /// ```no_run
-    /// # use grafeo_core::execution::factorized_chunk::FactorizedChunk;
+    /// # use obrain_core::execution::factorized_chunk::FactorizedChunk;
     /// # let mut chunk = FactorizedChunk::empty();
     /// let mults = chunk.path_multiplicities_cached();
     /// let sum = chunk.sum_deepest(0);
@@ -452,7 +452,7 @@ impl FactorizedChunk {
     #[must_use]
     pub fn filter_deepest<F>(&self, column_idx: usize, predicate: F) -> Option<Self>
     where
-        F: Fn(&grafeo_common::types::Value) -> bool,
+        F: Fn(&obrain_common::types::Value) -> bool,
     {
         if self.levels.is_empty() {
             return None;
@@ -546,7 +546,7 @@ impl FactorizedChunk {
     #[must_use]
     pub fn filter_deepest_multi<F>(&self, predicate: F) -> Option<Self>
     where
-        F: Fn(&[grafeo_common::types::Value]) -> bool,
+        F: Fn(&[obrain_common::types::Value]) -> bool,
     {
         if self.levels.is_empty() {
             return None;
@@ -577,7 +577,7 @@ impl FactorizedChunk {
 
         let mut new_multiplicities: Vec<usize> = vec![0; parent_count];
         let mut new_offsets: Vec<u32> = vec![0];
-        let mut row_values: Vec<grafeo_common::types::Value> = Vec::with_capacity(col_count);
+        let mut row_values: Vec<obrain_common::types::Value> = Vec::with_capacity(col_count);
 
         for parent_idx in 0..parent_count {
             let (start, end) = first_col.range_for_parent(parent_idx);
@@ -744,8 +744,8 @@ impl FactorizedChunk {
             if let Some(value) = col.get_physical(phys_idx) {
                 // Try to convert to f64
                 let num_value = match &value {
-                    grafeo_common::types::Value::Int64(v) => *v as f64,
-                    grafeo_common::types::Value::Float64(v) => *v,
+                    obrain_common::types::Value::Int64(v) => *v as f64,
+                    obrain_common::types::Value::Float64(v) => *v,
                     _ => continue, // Skip non-numeric values
                 };
                 sum += num_value * (*mult as f64);
@@ -789,7 +789,7 @@ impl FactorizedChunk {
     ///
     /// The minimum value, or None if the column doesn't exist or is empty.
     #[must_use]
-    pub fn min_deepest(&self, column_idx: usize) -> Option<grafeo_common::types::Value> {
+    pub fn min_deepest(&self, column_idx: usize) -> Option<obrain_common::types::Value> {
         if self.levels.is_empty() {
             return None;
         }
@@ -798,7 +798,7 @@ impl FactorizedChunk {
         let deepest = &self.levels[deepest_idx];
         let col = deepest.column(column_idx)?;
 
-        let mut min_value: Option<grafeo_common::types::Value> = None;
+        let mut min_value: Option<obrain_common::types::Value> = None;
 
         for phys_idx in 0..col.physical_len() {
             if let Some(value) = col.get_physical(phys_idx) {
@@ -831,7 +831,7 @@ impl FactorizedChunk {
     ///
     /// The maximum value, or None if the column doesn't exist or is empty.
     #[must_use]
-    pub fn max_deepest(&self, column_idx: usize) -> Option<grafeo_common::types::Value> {
+    pub fn max_deepest(&self, column_idx: usize) -> Option<obrain_common::types::Value> {
         if self.levels.is_empty() {
             return None;
         }
@@ -840,7 +840,7 @@ impl FactorizedChunk {
         let deepest = &self.levels[deepest_idx];
         let col = deepest.column(column_idx)?;
 
-        let mut max_value: Option<grafeo_common::types::Value> = None;
+        let mut max_value: Option<obrain_common::types::Value> = None;
 
         for phys_idx in 0..col.physical_len() {
             if let Some(value) = col.get_physical(phys_idx) {
@@ -867,8 +867,8 @@ impl FactorizedChunk {
     /// - Numeric types are compared by value
     /// - Strings are compared lexicographically
     /// - Other types use debug string comparison as fallback
-    fn value_less_than(a: &grafeo_common::types::Value, b: &grafeo_common::types::Value) -> bool {
-        use grafeo_common::types::Value;
+    fn value_less_than(a: &obrain_common::types::Value, b: &obrain_common::types::Value) -> bool {
+        use obrain_common::types::Value;
 
         match (a, b) {
             // Null handling
@@ -1182,7 +1182,7 @@ impl From<FactorizedChunk> for ChunkVariant {
 
 #[cfg(test)]
 mod tests {
-    use grafeo_common::types::{LogicalType, NodeId, Value};
+    use obrain_common::types::{LogicalType, NodeId, Value};
 
     use super::*;
 

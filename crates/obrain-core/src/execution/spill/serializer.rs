@@ -7,7 +7,7 @@
 //! - Compact representation
 
 use arcstr::ArcStr;
-use grafeo_common::types::Value;
+use obrain_common::types::Value;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::sync::Arc;
@@ -199,7 +199,7 @@ pub fn deserialize_value<R: Read + ?Sized>(r: &mut R) -> std::io::Result<Value> 
             r.read_exact(&mut buf)?;
             let micros = i64::from_le_bytes(buf);
             Ok(Value::Timestamp(
-                grafeo_common::types::Timestamp::from_micros(micros),
+                obrain_common::types::Timestamp::from_micros(micros),
             ))
         }
         TAG_LIST => {
@@ -229,7 +229,7 @@ pub fn deserialize_value<R: Read + ?Sized>(r: &mut R) -> std::io::Result<Value> 
                 })?;
                 // Read value
                 let val = deserialize_value(r)?;
-                map.insert(grafeo_common::types::PropertyKey::new(key_str), val);
+                map.insert(obrain_common::types::PropertyKey::new(key_str), val);
             }
             Ok(Value::Map(Arc::new(map)))
         }
@@ -248,7 +248,7 @@ pub fn deserialize_value<R: Read + ?Sized>(r: &mut R) -> std::io::Result<Value> 
         TAG_DATE => {
             let mut buf = [0u8; 4];
             r.read_exact(&mut buf)?;
-            Ok(Value::Date(grafeo_common::types::Date::from_days(
+            Ok(Value::Date(obrain_common::types::Date::from_days(
                 i32::from_le_bytes(buf),
             )))
         }
@@ -259,7 +259,7 @@ pub fn deserialize_value<R: Read + ?Sized>(r: &mut R) -> std::io::Result<Value> 
             let mut offset_buf = [0u8; 4];
             r.read_exact(&mut offset_buf)?;
             let offset = i32::from_le_bytes(offset_buf);
-            let time = grafeo_common::types::Time::from_nanos(nanos).ok_or_else(|| {
+            let time = obrain_common::types::Time::from_nanos(nanos).ok_or_else(|| {
                 std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid time nanos")
             })?;
             if offset == i32::MIN {
@@ -276,7 +276,7 @@ pub fn deserialize_value<R: Read + ?Sized>(r: &mut R) -> std::io::Result<Value> 
             let days = i64::from_le_bytes(buf);
             r.read_exact(&mut buf)?;
             let nanos = i64::from_le_bytes(buf);
-            Ok(Value::Duration(grafeo_common::types::Duration::new(
+            Ok(Value::Duration(obrain_common::types::Duration::new(
                 months, days, nanos,
             )))
         }
@@ -288,8 +288,8 @@ pub fn deserialize_value<R: Read + ?Sized>(r: &mut R) -> std::io::Result<Value> 
             r.read_exact(&mut offset_buf)?;
             let offset = i32::from_le_bytes(offset_buf);
             Ok(Value::ZonedDatetime(
-                grafeo_common::types::ZonedDatetime::from_timestamp_offset(
-                    grafeo_common::types::Timestamp::from_micros(micros),
+                obrain_common::types::ZonedDatetime::from_timestamp_offset(
+                    obrain_common::types::Timestamp::from_micros(micros),
                     offset,
                 ),
             ))
@@ -451,7 +451,7 @@ mod tests {
 
     #[test]
     fn test_serialize_timestamp() {
-        let ts = grafeo_common::types::Timestamp::from_micros(1234567890);
+        let ts = obrain_common::types::Timestamp::from_micros(1234567890);
         let result = roundtrip_value(Value::Timestamp(ts));
         assert_eq!(result.as_timestamp(), Some(ts));
     }
@@ -484,11 +484,11 @@ mod tests {
     fn test_serialize_map() {
         let mut map = BTreeMap::new();
         map.insert(
-            grafeo_common::types::PropertyKey::new("name"),
+            obrain_common::types::PropertyKey::new("name"),
             Value::String(ArcStr::from("Alix")),
         );
         map.insert(
-            grafeo_common::types::PropertyKey::new("age"),
+            obrain_common::types::PropertyKey::new("age"),
             Value::Int64(30),
         );
 

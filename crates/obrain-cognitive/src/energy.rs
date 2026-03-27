@@ -9,8 +9,8 @@
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use grafeo_common::types::NodeId;
-use grafeo_reactive::{MutationEvent, MutationListener};
+use obrain_common::types::NodeId;
+use obrain_reactive::{MutationEvent, MutationListener};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -175,7 +175,7 @@ impl NodeEnergy {
 /// Thread-safe store for node energy states.
 ///
 /// Uses `DashMap` for concurrent read/write without global locks.
-/// When a backing [`GraphStoreMut`](grafeo_core::graph::GraphStoreMut) is
+/// When a backing [`GraphStoreMut`](obrain_core::graph::GraphStoreMut) is
 /// provided, every write is also persisted as a node property (write-through).
 /// On read, if the node is not in the hot cache, the store attempts to load
 /// the value lazily from the graph property.
@@ -207,7 +207,7 @@ impl EnergyStore {
     /// Creates a new energy store with write-through persistence.
     pub fn with_graph_store(
         config: EnergyConfig,
-        graph_store: Arc<dyn grafeo_core::graph::GraphStoreMut>,
+        graph_store: Arc<dyn obrain_core::graph::GraphStoreMut>,
     ) -> Self {
         Self {
             nodes: DashMap::new(),

@@ -7,9 +7,9 @@
 
 use std::sync::Arc;
 
-use grafeo_cognitive::energy::EnergyStore;
-use grafeo_cognitive::synapse::SynapseStore;
-use grafeo_common::types::NodeId;
+use obrain_cognitive::energy::EnergyStore;
+use obrain_cognitive::synapse::SynapseStore;
+use obrain_common::types::NodeId;
 
 use crate::config::RagConfig;
 use crate::error::RagResult;
@@ -189,18 +189,18 @@ mod tests {
             nodes_included: 3,
             node_ids: vec![NodeId(1), NodeId(2), NodeId(3)],
             node_texts: vec![
-                (NodeId(1), vec!["Grafeo database".into()]),
+                (NodeId(1), vec!["Obrain database".into()]),
                 (NodeId(2), vec!["WAL recovery".into()]),
                 (NodeId(3), vec!["hello".into()]),
             ],
         };
 
-        let response = "The Grafeo database uses WAL recovery for durability.";
+        let response = "The Obrain database uses WAL recovery for durability.";
         let mentioned = feedback.find_mentioned_nodes(&context, response, &context.node_texts);
 
         assert!(
             mentioned.contains(&NodeId(1)),
-            "Should find 'Grafeo database'"
+            "Should find 'Obrain database'"
         );
         assert!(mentioned.contains(&NodeId(2)), "Should find 'WAL recovery'");
         assert!(
@@ -236,17 +236,17 @@ mod tests {
             estimated_tokens: 0,
             nodes_included: 1,
             node_ids: vec![NodeId(1)],
-            node_texts: vec![(NodeId(1), vec!["GRAFEO".into()])],
+            node_texts: vec![(NodeId(1), vec!["OBRAIN".into()])],
         };
 
-        let response = "grafeo is great";
+        let response = "obrain is great";
         let mentioned = feedback.find_mentioned_nodes(&context, response, &context.node_texts);
         assert_eq!(mentioned.len(), 1);
     }
 
     #[test]
     fn feedback_with_energy_store() {
-        use grafeo_cognitive::energy::{EnergyConfig, EnergyStore};
+        use obrain_cognitive::energy::{EnergyConfig, EnergyStore};
 
         let energy_store = Arc::new(EnergyStore::new(EnergyConfig::default()));
         let feedback = CognitiveFeedback::new(None, Some(Arc::clone(&energy_store)));
@@ -257,14 +257,14 @@ mod tests {
             nodes_included: 2,
             node_ids: vec![NodeId(1), NodeId(2)],
             node_texts: vec![
-                (NodeId(1), vec!["Grafeo database".into()]),
+                (NodeId(1), vec!["Obrain database".into()]),
                 (NodeId(2), vec!["WAL recovery".into()]),
             ],
         };
         let config = RagConfig::default();
 
         let stats = feedback
-            .feedback(&context, "Grafeo database is great", &config)
+            .feedback(&context, "Obrain database is great", &config)
             .unwrap();
         assert_eq!(stats.nodes_boosted, 2);
         // Node 1 mentioned → full boost, Node 2 not mentioned → reduced boost
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn feedback_with_synapse_store() {
-        use grafeo_cognitive::synapse::{SynapseConfig, SynapseStore};
+        use obrain_cognitive::synapse::{SynapseConfig, SynapseStore};
 
         let synapse_store = Arc::new(SynapseStore::new(SynapseConfig::default()));
         let feedback = CognitiveFeedback::new(Some(Arc::clone(&synapse_store)), None);
@@ -286,7 +286,7 @@ mod tests {
             nodes_included: 3,
             node_ids: vec![NodeId(1), NodeId(2), NodeId(3)],
             node_texts: vec![
-                (NodeId(1), vec!["Grafeo database".into()]),
+                (NodeId(1), vec!["Obrain database".into()]),
                 (NodeId(2), vec!["WAL recovery".into()]),
                 (NodeId(3), vec!["some note".into()]),
             ],
@@ -295,7 +295,7 @@ mod tests {
 
         // Response mentions nodes 1 and 2 → synapse only between them
         let stats = feedback
-            .feedback(&context, "Grafeo database uses WAL recovery", &config)
+            .feedback(&context, "Obrain database uses WAL recovery", &config)
             .unwrap();
         assert_eq!(stats.synapses_reinforced, 1); // 1 pair: (1,2)
 
@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn feedback_fallback_reinforces_all_when_no_mentions() {
-        use grafeo_cognitive::synapse::{SynapseConfig, SynapseStore};
+        use obrain_cognitive::synapse::{SynapseConfig, SynapseStore};
 
         let synapse_store = Arc::new(SynapseStore::new(SynapseConfig::default()));
         let feedback = CognitiveFeedback::new(Some(Arc::clone(&synapse_store)), None);

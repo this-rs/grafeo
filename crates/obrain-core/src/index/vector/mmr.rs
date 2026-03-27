@@ -20,11 +20,11 @@
 //! Reordering Documents and Producing Summaries" (1998).
 
 use super::{DistanceMetric, compute_distance};
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 
 /// Converts a distance value to a similarity value for the MMR formula.
 ///
-/// All Grafeo distance functions return lower-is-better values.
+/// All Obrain distance functions return lower-is-better values.
 /// The MMR formula needs higher-is-better similarities.
 #[inline]
 fn distance_to_similarity(distance: f32, metric: DistanceMetric) -> f32 {

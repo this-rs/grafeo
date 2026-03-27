@@ -12,10 +12,10 @@ use parking_lot::RwLock;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use grafeo_common::types::NodeId;
-use grafeo_engine::database::GrafeoDB;
+use obrain_common::types::NodeId;
+use obrain_engine::database::ObrainDB;
 
-use crate::error::PyGrafeoError;
+use crate::error::PyObrainError;
 
 /// Solve classic OR problems on your graph.
 ///
@@ -37,12 +37,12 @@ use crate::error::PyGrafeoError;
 /// ```
 #[pyclass(name = "SolvORAdapter")]
 pub struct PySolvORAdapter {
-    db: Arc<RwLock<GrafeoDB>>,
+    db: Arc<RwLock<ObrainDB>>,
 }
 
 impl PySolvORAdapter {
     /// Creates a new solvOR adapter for the given database.
-    pub fn new(db: Arc<RwLock<GrafeoDB>>) -> Self {
+    pub fn new(db: Arc<RwLock<ObrainDB>>) -> Self {
         Self { db }
     }
 }
@@ -73,7 +73,7 @@ impl PySolvORAdapter {
         method: &str,
         py: Python<'_>,
     ) -> PyResult<Py<PyAny>> {
-        use grafeo_adapters::plugins::algorithms;
+        use obrain_adapters::plugins::algorithms;
 
         let db = self.db.read();
         let store = db.store();
@@ -88,7 +88,7 @@ impl PySolvORAdapter {
             "bellman_ford" => {
                 let bf_result = algorithms::bellman_ford(&**store, NodeId::new(source), weight);
                 if bf_result.has_negative_cycle {
-                    return Err(PyGrafeoError::InvalidArgument(
+                    return Err(PyObrainError::InvalidArgument(
                         "Graph contains negative cycle".into(),
                     )
                     .into());
@@ -113,7 +113,7 @@ impl PySolvORAdapter {
                 )
             }
             _ => {
-                return Err(PyGrafeoError::InvalidArgument(format!(
+                return Err(PyObrainError::InvalidArgument(format!(
                     "Unknown method: {}. Use 'dijkstra', 'bellman_ford', or 'astar'",
                     method
                 ))
@@ -145,7 +145,7 @@ impl PySolvORAdapter {
         weight: Option<&str>,
         py: Python<'_>,
     ) -> PyResult<Py<PyAny>> {
-        use grafeo_adapters::plugins::algorithms;
+        use obrain_adapters::plugins::algorithms;
 
         let db = self.db.read();
         let store = db.store();
@@ -190,7 +190,7 @@ impl PySolvORAdapter {
         capacity: Option<&str>,
         py: Python<'_>,
     ) -> PyResult<Py<PyAny>> {
-        use grafeo_adapters::plugins::algorithms;
+        use obrain_adapters::plugins::algorithms;
 
         let db = self.db.read();
         let store = db.store();
@@ -210,7 +210,7 @@ impl PySolvORAdapter {
                 Ok(dict.into_any().unbind())
             }
             None => {
-                Err(PyGrafeoError::InvalidArgument("Invalid source or sink node".into()).into())
+                Err(PyObrainError::InvalidArgument("Invalid source or sink node".into()).into())
             }
         }
     }
@@ -235,7 +235,7 @@ impl PySolvORAdapter {
         cost: Option<&str>,
         py: Python<'_>,
     ) -> PyResult<Py<PyAny>> {
-        use grafeo_adapters::plugins::algorithms;
+        use obrain_adapters::plugins::algorithms;
 
         let db = self.db.read();
         let store = db.store();
@@ -262,7 +262,7 @@ impl PySolvORAdapter {
                 Ok(dict.into_any().unbind())
             }
             None => {
-                Err(PyGrafeoError::InvalidArgument("Invalid source or sink node".into()).into())
+                Err(PyObrainError::InvalidArgument("Invalid source or sink node".into()).into())
             }
         }
     }
@@ -287,7 +287,7 @@ impl PySolvORAdapter {
         method: &str,
         py: Python<'_>,
     ) -> PyResult<Py<PyAny>> {
-        use grafeo_adapters::plugins::algorithms;
+        use obrain_adapters::plugins::algorithms;
 
         let db = self.db.read();
         let store = db.store();
@@ -296,7 +296,7 @@ impl PySolvORAdapter {
             "kruskal" => algorithms::kruskal(&**store, weight),
             "prim" => algorithms::prim(&**store, weight, None),
             _ => {
-                return Err(PyGrafeoError::InvalidArgument(format!(
+                return Err(PyObrainError::InvalidArgument(format!(
                     "Unknown method: {}. Use 'kruskal' or 'prim'",
                     method
                 ))
@@ -326,7 +326,7 @@ impl PySolvORAdapter {
     /// Returns:
     ///     Dict mapping node ID to component ID.
     fn connected_components(&self) -> PyResult<HashMap<u64, u64>> {
-        use grafeo_adapters::plugins::algorithms;
+        use obrain_adapters::plugins::algorithms;
 
         let db = self.db.read();
         let store = db.store();
@@ -339,7 +339,7 @@ impl PySolvORAdapter {
     /// Returns:
     ///     Dict mapping node ID to SCC ID.
     fn strongly_connected_components(&self) -> PyResult<HashMap<u64, u64>> {
-        use grafeo_adapters::plugins::algorithms;
+        use obrain_adapters::plugins::algorithms;
 
         let db = self.db.read();
         let store = db.store();
@@ -352,7 +352,7 @@ impl PySolvORAdapter {
     /// Returns:
     ///     List of node IDs in topological order, or None if graph has cycle.
     fn topological_sort(&self) -> PyResult<Option<Vec<u64>>> {
-        use grafeo_adapters::plugins::algorithms;
+        use obrain_adapters::plugins::algorithms;
 
         let db = self.db.read();
         let store = db.store();
@@ -374,7 +374,7 @@ impl PySolvORAdapter {
     ///     Dict mapping node ID to PageRank score.
     #[pyo3(signature = (damping=0.85, max_iter=100, tol=1e-6))]
     fn pagerank(&self, damping: f64, max_iter: usize, tol: f64) -> PyResult<HashMap<u64, f64>> {
-        use grafeo_adapters::plugins::algorithms;
+        use obrain_adapters::plugins::algorithms;
 
         let db = self.db.read();
         let store = db.store();
@@ -391,7 +391,7 @@ impl PySolvORAdapter {
     ///     Dict mapping node ID to betweenness score.
     #[pyo3(signature = (normalized=true))]
     fn betweenness_centrality(&self, normalized: bool) -> PyResult<HashMap<u64, f64>> {
-        use grafeo_adapters::plugins::algorithms;
+        use obrain_adapters::plugins::algorithms;
 
         let db = self.db.read();
         let store = db.store();
@@ -412,7 +412,7 @@ impl PySolvORAdapter {
     ///     Dict with 'communities', 'modularity', and 'num_communities' keys.
     #[pyo3(signature = (resolution=1.0))]
     fn louvain(&self, resolution: f64, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        use grafeo_adapters::plugins::algorithms;
+        use obrain_adapters::plugins::algorithms;
 
         let db = self.db.read();
         let store = db.store();
@@ -441,7 +441,7 @@ impl PySolvORAdapter {
     /// Returns:
     ///     List of node IDs that are articulation points.
     fn articulation_points(&self) -> PyResult<Vec<u64>> {
-        use grafeo_adapters::plugins::algorithms;
+        use obrain_adapters::plugins::algorithms;
 
         let db = self.db.read();
         let store = db.store();
@@ -454,7 +454,7 @@ impl PySolvORAdapter {
     /// Returns:
     ///     List of (source, target) tuples representing bridges.
     fn bridges(&self) -> PyResult<Vec<(u64, u64)>> {
-        use grafeo_adapters::plugins::algorithms;
+        use obrain_adapters::plugins::algorithms;
 
         let db = self.db.read();
         let store = db.store();
@@ -467,7 +467,7 @@ impl PySolvORAdapter {
     /// Returns:
     ///     Dict with 'nodes', 'edges', 'density', and 'components' keys.
     fn graph_stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        use grafeo_adapters::plugins::algorithms;
+        use obrain_adapters::plugins::algorithms;
 
         let db = self.db.read();
         let store = db.store();

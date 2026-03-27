@@ -5,7 +5,7 @@
 #[allow(clippy::wildcard_imports)]
 use super::ast::*;
 use super::lexer::{Lexer, Token, TokenKind};
-use grafeo_common::utils::error::{QueryError, QueryErrorKind, Result};
+use obrain_common::utils::error::{QueryError, QueryErrorKind, Result};
 
 /// Unescapes backslash-escaped characters in a string literal.
 fn unescape_string(s: &str) -> String {
@@ -288,7 +288,7 @@ impl<'a> Parser<'a> {
             procedure_name: name_parts,
             arguments,
             yield_items,
-            span: Some(grafeo_common::utils::error::SourceSpan::new(
+            span: Some(obrain_common::utils::error::SourceSpan::new(
                 span_start,
                 self.current.span.start,
                 1,
@@ -2482,7 +2482,7 @@ impl<'a> Parser<'a> {
         Ok(props)
     }
 
-    fn error(&self, message: &str) -> grafeo_common::utils::error::Error {
+    fn error(&self, message: &str) -> obrain_common::utils::error::Error {
         QueryError::new(QueryErrorKind::Syntax, message)
             .with_span(self.current.span)
             .with_source(self.source.to_string())

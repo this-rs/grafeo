@@ -1,6 +1,6 @@
 """Algorithm tests for the RDF GraphQL context.
 
-NOTE: Algorithms in Grafeo operate on the LPG (Labeled Property Graph) store,
+NOTE: Algorithms in Obrain operate on the LPG (Labeled Property Graph) store,
 not directly on RDF triples. This is because graph algorithms need efficient
 adjacency traversal which the LPG store provides.
 
@@ -13,17 +13,17 @@ import random
 
 from tests.bases.test_algorithms import BaseAlgorithmsTest
 
-# Try to import grafeo
+# Try to import obrain
 try:
-    from grafeo import GrafeoDB
+    from obrain import ObrainDB
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
 import pytest
 
-pytestmark = pytest.mark.skipif(not GRAFEO_AVAILABLE, reason="Grafeo Python bindings not installed")
+pytestmark = pytest.mark.skipif(not OBRAIN_AVAILABLE, reason="Obrain Python bindings not installed")
 
 
 class TestRDFGraphQLAlgorithms(BaseAlgorithmsTest):
@@ -61,9 +61,9 @@ class TestRDFGraphQLAlgorithmVerification:
 
     def setup_method(self):
         """Create a fresh database."""
-        if not GRAFEO_AVAILABLE:
-            pytest.skip("grafeo not installed")
-        self.db = GrafeoDB()
+        if not OBRAIN_AVAILABLE:
+            pytest.skip("obrain not installed")
+        self.db = ObrainDB()
 
     def test_verify_bfs_reachability(self):
         """Verify BFS results on RDF graph."""

@@ -17,8 +17,8 @@
 //! ```
 //! # #[cfg(feature = "text-index")]
 //! # {
-//! use grafeo_core::index::text::{InvertedIndex, BM25Config};
-//! use grafeo_common::types::NodeId;
+//! use obrain_core::index::text::{InvertedIndex, BM25Config};
+//! use obrain_common::types::NodeId;
 //!
 //! let mut index = InvertedIndex::new(BM25Config::default());
 //! index.insert(NodeId::new(1), "the quick brown fox");

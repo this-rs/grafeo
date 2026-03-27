@@ -6,7 +6,7 @@
 //! or identify contextually relevant subgraphs.
 
 use crate::synapse::SynapseStore;
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 

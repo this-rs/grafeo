@@ -13,7 +13,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use grafeo_core::storage::RunLengthEncoding;
+//! use obrain_core::storage::RunLengthEncoding;
 //!
 //! // Compress data with many repeated values
 //! let values = vec![1, 1, 1, 2, 2, 3, 3, 3, 3, 3];
@@ -72,7 +72,7 @@ impl RunLengthEncoding {
     ///
     /// # Example
     /// ```no_run
-    /// # use grafeo_core::storage::runlength::RunLengthEncoding;
+    /// # use obrain_core::storage::runlength::RunLengthEncoding;
     /// let values = vec![1, 1, 1, 2, 2, 3];
     /// let encoded = RunLengthEncoding::encode(&values);
     /// // Results in 3 runs: (1, 3), (2, 2), (3, 1)

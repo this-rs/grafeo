@@ -6,15 +6,15 @@ Note: SPARQL mutations operate on RDF triples, not LPG nodes/edges.
 
 import pytest
 
-# Try to import grafeo
+# Try to import obrain
 try:
-    from grafeo import GrafeoDB  # noqa: F401
+    from obrain import ObrainDB  # noqa: F401
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
-pytestmark = pytest.mark.skipif(not GRAFEO_AVAILABLE, reason="Grafeo Python bindings not installed")
+pytestmark = pytest.mark.skipif(not OBRAIN_AVAILABLE, reason="Obrain Python bindings not installed")
 
 
 class TestSPARQLMutations:

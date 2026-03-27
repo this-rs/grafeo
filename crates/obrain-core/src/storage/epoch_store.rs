@@ -33,8 +33,8 @@
 //! # Usage
 //!
 //! ```
-//! use grafeo_core::storage::EpochStore;
-//! use grafeo_common::types::EpochId;
+//! use obrain_core::storage::EpochStore;
+//! use obrain_common::types::EpochId;
 //!
 //! let store = EpochStore::new();
 //!
@@ -53,7 +53,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use grafeo_common::types::EpochId;
+use obrain_common::types::EpochId;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
@@ -644,7 +644,7 @@ pub struct EpochStoreStats {
 
 #[cfg(test)]
 mod tests {
-    use grafeo_common::types::{EdgeId, NodeId};
+    use obrain_common::types::{EdgeId, NodeId};
 
     use super::*;
     use crate::graph::lpg::{EdgeFlags, NodeFlags};

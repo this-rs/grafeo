@@ -1,6 +1,6 @@
 //! GQL Abstract Syntax Tree.
 
-use grafeo_common::utils::error::SourceSpan;
+use obrain_common::utils::error::SourceSpan;
 
 /// A GQL statement.
 #[derive(Debug, Clone)]
@@ -149,7 +149,7 @@ pub enum CompositeOp {
 /// ```
 #[derive(Debug, Clone)]
 pub struct CallStatement {
-    /// Qualified procedure name, e.g. `["grafeo", "pagerank"]`.
+    /// Qualified procedure name, e.g. `["obrain", "pagerank"]`.
     pub procedure_name: Vec<String>,
     /// Positional arguments passed to the procedure.
     pub arguments: Vec<Expression>,

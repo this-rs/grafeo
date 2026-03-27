@@ -2,9 +2,9 @@
 
 #![cfg(feature = "co-change")]
 
-use grafeo_cognitive::{CoChangeConfig, CoChangeDetector, CoChangeRelation, CoChangeStore};
-use grafeo_common::types::NodeId;
-use grafeo_reactive::{MutationEvent, MutationListener, NodeSnapshot};
+use obrain_cognitive::{CoChangeConfig, CoChangeDetector, CoChangeRelation, CoChangeStore};
+use obrain_common::types::NodeId;
+use obrain_reactive::{MutationEvent, MutationListener, NodeSnapshot};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 

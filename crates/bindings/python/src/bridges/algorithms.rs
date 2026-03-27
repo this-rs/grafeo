@@ -11,12 +11,12 @@ use parking_lot::RwLock;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use grafeo_adapters::plugins::algorithms;
-use grafeo_common::types::NodeId;
-use grafeo_common::types::Value;
-use grafeo_engine::database::GrafeoDB;
+use obrain_adapters::plugins::algorithms;
+use obrain_common::types::NodeId;
+use obrain_common::types::Value;
+use obrain_engine::database::ObrainDB;
 
-use crate::error::PyGrafeoError;
+use crate::error::PyObrainError;
 
 /// Run graph algorithms at Rust speed from Python.
 ///
@@ -25,12 +25,12 @@ use crate::error::PyGrafeoError;
 /// as Python dicts and lists.
 #[pyclass(name = "Algorithms")]
 pub struct PyAlgorithms {
-    db: Arc<RwLock<GrafeoDB>>,
+    db: Arc<RwLock<ObrainDB>>,
 }
 
 impl PyAlgorithms {
     /// Creates a new algorithms interface for the given database.
-    pub fn new(db: Arc<RwLock<GrafeoDB>>) -> Self {
+    pub fn new(db: Arc<RwLock<ObrainDB>>) -> Self {
         Self { db }
     }
 }
@@ -226,14 +226,14 @@ impl PyAlgorithms {
             let candidates = store.find_nodes_by_property("name", &Value::from(source));
             match candidates.len() {
                 0 => {
-                    return Err(PyGrafeoError::InvalidArgument(format!(
+                    return Err(PyObrainError::InvalidArgument(format!(
                         "No node found with name '{source}'"
                     ))
                     .into());
                 }
                 1 => candidates[0],
                 _ => {
-                    return Err(PyGrafeoError::InvalidArgument(format!(
+                    return Err(PyObrainError::InvalidArgument(format!(
                         "Multiple nodes found with name '{source}', use node ID instead"
                     ))
                     .into());
@@ -621,7 +621,7 @@ impl PyAlgorithms {
                 Ok(dict.into_any().unbind())
             }
             None => {
-                Err(PyGrafeoError::InvalidArgument("Invalid source or sink node".into()).into())
+                Err(PyObrainError::InvalidArgument("Invalid source or sink node".into()).into())
             }
         }
     }
@@ -670,7 +670,7 @@ impl PyAlgorithms {
                 Ok(dict.into_any().unbind())
             }
             None => {
-                Err(PyGrafeoError::InvalidArgument("Invalid source or sink node".into()).into())
+                Err(PyObrainError::InvalidArgument("Invalid source or sink node".into()).into())
             }
         }
     }

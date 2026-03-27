@@ -14,7 +14,7 @@ impl super::Planner {
         let (input_op, input_columns): (Box<dyn Operator>, Vec<String>) =
             if matches!(ret.input.as_ref(), LogicalOperator::Empty) {
                 let single_row_op: Box<dyn Operator> = Box::new(
-                    grafeo_core::execution::operators::single_row::SingleRowOperator::new(),
+                    obrain_core::execution::operators::single_row::SingleRowOperator::new(),
                 );
                 (single_row_op, Vec::new())
             } else {
@@ -351,7 +351,7 @@ impl super::Planner {
             if matches!(project.input.as_ref(), LogicalOperator::Empty) {
                 // Create a single-row operator for projecting literals
                 let single_row_op: Box<dyn Operator> = Box::new(
-                    grafeo_core::execution::operators::single_row::SingleRowOperator::new(),
+                    obrain_core::execution::operators::single_row::SingleRowOperator::new(),
                 );
                 (single_row_op, Vec::new())
             } else {
@@ -596,7 +596,7 @@ impl super::Planner {
                 }
             }
 
-            // Detect cognitive UDF calls (e.g., grafeo.energy(n)) and project them
+            // Detect cognitive UDF calls (e.g., obrain.energy(n)) and project them
             #[cfg(feature = "cognitive")]
             if let LogicalExpression::FunctionCall { name, .. } = &key.expression {
                 let col_name = name.replace('.', "_");
@@ -651,7 +651,7 @@ impl super::Planner {
             );
         }
 
-        // Project cognitive UDF expressions (e.g., grafeo.energy(n)) as extra columns
+        // Project cognitive UDF expressions (e.g., obrain.energy(n)) as extra columns
         #[cfg(feature = "cognitive")]
         if !cognitive_projections.is_empty() {
             let mut projections = Vec::new();

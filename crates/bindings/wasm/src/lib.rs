@@ -1,9 +1,9 @@
-//! WebAssembly bindings for Grafeo graph database.
+//! WebAssembly bindings for Obrain graph database.
 //!
-//! Use Grafeo from JavaScript in the browser, Deno, or Cloudflare Workers.
+//! Use Obrain from JavaScript in the browser, Deno, or Cloudflare Workers.
 //!
 //! ```js
-//! import init, { Database } from '@grafeo-db/wasm';
+//! import init, { Database } from '@obrain-db/wasm';
 //!
 //! await init();
 //! const db = new Database();
@@ -24,18 +24,18 @@ use std::collections::HashMap;
 use js_sys::Array;
 use wasm_bindgen::prelude::*;
 
-use grafeo_bindings_common::json::{json_params_to_map, json_to_value};
-use grafeo_common::types::{PropertyKey, Value};
-use grafeo_engine::GrafeoDB;
+use obrain_bindings_common::json::{json_params_to_map, json_to_value};
+use obrain_common::types::{PropertyKey, Value};
+use obrain_engine::ObrainDB;
 
-/// A Grafeo graph database instance running in WebAssembly.
+/// A Obrain graph database instance running in WebAssembly.
 ///
 /// All data is held in memory within the WASM heap. For persistence,
 /// use `exportSnapshot()` / `importSnapshot()` with IndexedDB or
-/// the higher-level `@grafeo-db/web` package.
+/// the higher-level `@obrain-db/web` package.
 #[wasm_bindgen]
 pub struct Database {
-    inner: GrafeoDB,
+    inner: ObrainDB,
 }
 
 #[wasm_bindgen]
@@ -45,7 +45,7 @@ impl Database {
     pub fn new() -> Result<Database, JsError> {
         utils::set_panic_hook();
         Ok(Database {
-            inner: GrafeoDB::new_in_memory(),
+            inner: ObrainDB::new_in_memory(),
         })
     }
 
@@ -174,7 +174,7 @@ impl Database {
     #[wasm_bindgen(js_name = "importSnapshot")]
     pub fn import_snapshot(data: &[u8]) -> Result<Database, JsError> {
         utils::set_panic_hook();
-        let inner = GrafeoDB::import_snapshot(data).map_err(|e| JsError::new(&e.to_string()))?;
+        let inner = ObrainDB::import_snapshot(data).map_err(|e| JsError::new(&e.to_string()))?;
         Ok(Database { inner })
     }
 
@@ -743,7 +743,7 @@ impl Database {
     #[cfg(feature = "rdf")]
     #[wasm_bindgen(js_name = "importRdf")]
     pub fn import_rdf(&self, data: JsValue) -> Result<JsValue, JsError> {
-        use grafeo_core::graph::rdf::Term;
+        use obrain_core::graph::rdf::Term;
 
         let import: RdfImport = serde_wasm_bindgen::from_value(data)
             .map_err(|e| JsError::new(&format!("Invalid RDF data: {e}")))?;
@@ -767,7 +767,7 @@ impl Database {
                     }
                 }
             };
-            grafeo_core::graph::rdf::Triple::new(subject, predicate, object)
+            obrain_core::graph::rdf::Triple::new(subject, predicate, object)
         });
 
         let inserted = self.inner.batch_insert_rdf(triples);
@@ -900,7 +900,7 @@ impl Database {
         Ok(count)
     }
 
-    /// Returns the Grafeo version.
+    /// Returns the Obrain version.
     pub fn version() -> String {
         env!("CARGO_PKG_VERSION").to_string()
     }
@@ -915,7 +915,7 @@ impl Database {
     ///
     /// Converts an optional JS params object to the internal
     /// `HashMap<String, Value>` representation and delegates to
-    /// `GrafeoDB::execute_language`.
+    /// `ObrainDB::execute_language`.
     fn execute_language_impl(
         &self,
         query: &str,
@@ -988,7 +988,7 @@ struct MmrSearchOptions {
 
 /// Converts a `Vec<(NodeId, f32)>` to a JS array of `{id, distance}` objects.
 #[cfg(feature = "vector-index")]
-fn vector_results_to_js(results: &[(grafeo_common::types::NodeId, f32)]) -> JsValue {
+fn vector_results_to_js(results: &[(obrain_common::types::NodeId, f32)]) -> JsValue {
     let arr = Array::new_with_length(results.len() as u32);
     for (i, (id, distance)) in results.iter().enumerate() {
         let obj = js_sys::Object::new();
@@ -1052,7 +1052,7 @@ fn json_to_node_id(
     val: &serde_json::Value,
     col_name: &str,
     row_idx: usize,
-) -> Result<grafeo_common::types::NodeId, JsError> {
+) -> Result<obrain_common::types::NodeId, JsError> {
     let n = val
         .as_u64()
         .or_else(|| val.as_f64().map(|f| f as u64))
@@ -1061,7 +1061,7 @@ fn json_to_node_id(
                 "rows[{row_idx}].{col_name}: expected a non-negative integer, got {val}"
             ))
         })?;
-    Ok(grafeo_common::types::NodeId::new(n))
+    Ok(obrain_common::types::NodeId::new(n))
 }
 
 /// LPG batch import payload.
@@ -1129,11 +1129,11 @@ enum RdfObjectSpec {
 /// Converts a string to an RDF [`Term`]: blank node if prefixed with `_:`,
 /// IRI otherwise.
 #[cfg(feature = "rdf")]
-fn string_to_rdf_term(s: &str) -> grafeo_core::graph::rdf::Term {
+fn string_to_rdf_term(s: &str) -> obrain_core::graph::rdf::Term {
     if let Some(id) = s.strip_prefix("_:") {
-        grafeo_core::graph::rdf::Term::blank(id)
+        obrain_core::graph::rdf::Term::blank(id)
     } else {
-        grafeo_core::graph::rdf::Term::iri(s)
+        obrain_core::graph::rdf::Term::iri(s)
     }
 }
 
@@ -1205,9 +1205,9 @@ mod tests {
 
         #[test]
         fn create_vector_index_and_search() {
-            use grafeo_common::types::{PropertyKey, Value};
+            use obrain_common::types::{PropertyKey, Value};
 
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             // Create index first, then insert nodes with Value::Vector
             db.create_vector_index("Doc", "embedding", Some(3), Some("cosine"), None, None)
                 .unwrap();
@@ -1233,9 +1233,9 @@ mod tests {
 
         #[test]
         fn mmr_search_returns_diverse_results() {
-            use grafeo_common::types::{PropertyKey, Value};
+            use obrain_common::types::{PropertyKey, Value};
 
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             db.create_vector_index("Doc", "embedding", Some(3), Some("cosine"), None, None)
                 .unwrap();
 
@@ -1396,7 +1396,7 @@ mod tests {
 
     #[test]
     fn memory_usage_returns_hierarchical_breakdown() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         db.create_node_with_props(
             &["Person"],
             vec![
@@ -1413,7 +1413,7 @@ mod tests {
 
     #[test]
     fn memory_usage_empty_db() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let usage = db.memory_usage();
         // Even an empty DB has some baseline allocation
         assert_eq!(usage.store.nodes_bytes, 0);
@@ -1422,7 +1422,7 @@ mod tests {
 
     #[test]
     fn memory_usage_serializes_to_json() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let usage = db.memory_usage();
         let json = serde_json::to_value(&usage).unwrap();
         assert!(json.get("total_bytes").is_some());
@@ -1485,14 +1485,14 @@ mod tests {
     fn json_to_node_id_integer() {
         let val = json!(42);
         let id = json_to_node_id(&val, "source", 0).unwrap();
-        assert_eq!(id, grafeo_common::types::NodeId::new(42));
+        assert_eq!(id, obrain_common::types::NodeId::new(42));
     }
 
     #[test]
     fn json_to_node_id_float_truncates() {
         let val = json!(7.0);
         let id = json_to_node_id(&val, "target", 0).unwrap();
-        assert_eq!(id, grafeo_common::types::NodeId::new(7));
+        assert_eq!(id, obrain_common::types::NodeId::new(7));
     }
 
     #[test]
@@ -1507,7 +1507,7 @@ mod tests {
 
     #[test]
     fn import_rows_nodes_basic() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let rows: Vec<serde_json::Map<String, serde_json::Value>> = serde_json::from_value(json!([
             { "name": "Alix", "age": 30 },
             { "name": "Gus", "age": 25 }
@@ -1534,7 +1534,7 @@ mod tests {
 
     #[test]
     fn import_rows_edges_basic() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let alix = db.create_node_with_props(
             &["Person"],
             vec![(PropertyKey::new("name"), Value::from("Alix"))],
@@ -1565,7 +1565,7 @@ mod tests {
 
     #[test]
     fn import_rows_null_values_filtered() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let rows: Vec<serde_json::Map<String, serde_json::Value>> = serde_json::from_value(json!([
             { "name": "Alix", "nickname": null, "age": 30 }
         ]))
@@ -1590,7 +1590,7 @@ mod tests {
 
     #[test]
     fn import_rows_large_batch() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let rows: Vec<serde_json::Map<String, serde_json::Value>> = (0..500)
             .map(|i| {
                 let mut map = serde_json::Map::new();
@@ -1614,7 +1614,7 @@ mod tests {
 
     #[test]
     fn import_lpg_creates_nodes_and_edges() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let input: LpgImport = serde_json::from_value(json!({
             "nodes": [
                 { "labels": ["Person"], "properties": { "name": "Alix", "age": 30 } },
@@ -1668,7 +1668,7 @@ mod tests {
 
     #[test]
     fn import_lpg_empty_dataset() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let input: LpgImport = serde_json::from_value(json!({ "nodes": [] })).unwrap();
         assert!(input.nodes.is_empty());
         assert!(input.edges.is_empty());
@@ -1677,7 +1677,7 @@ mod tests {
 
     #[test]
     fn import_lpg_nodes_without_properties() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let node_spec: LpgNodeSpec = serde_json::from_value(json!({ "labels": ["Tag"] })).unwrap();
         let labels: Vec<&str> = node_spec.labels.iter().map(String::as_str).collect();
         db.create_node(&labels);
@@ -1686,7 +1686,7 @@ mod tests {
 
     #[test]
     fn import_lpg_self_loop() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let id = db.create_node(&["Node"]);
         db.create_edge(id, id, "SELF_REF");
         assert_eq!(db.edge_count(), 1);
@@ -1700,7 +1700,7 @@ mod tests {
 
     #[test]
     fn import_lpg_multiple_edges_between_same_nodes() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let alix = db.create_node_with_props(
             &["Person"],
             vec![(PropertyKey::new("name"), Value::from("Alix"))],
@@ -1718,7 +1718,7 @@ mod tests {
 
     #[test]
     fn import_lpg_large_batch() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let mut nodes = Vec::new();
         for i in 0..500 {
             nodes.push(json!({
@@ -1747,7 +1747,7 @@ mod tests {
 
     #[test]
     fn import_lpg_edge_with_properties() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let a = db.create_node(&["A"]);
         let b = db.create_node(&["B"]);
         db.create_edge_with_props(
@@ -1903,9 +1903,9 @@ mod tests {
 
         #[test]
         fn batch_insert_rdf_basic() {
-            use grafeo_core::graph::rdf::{Term, Triple};
+            use obrain_core::graph::rdf::{Term, Triple};
 
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let triples = vec![
                 Triple::new(
                     Term::iri("http://example.org/Alix"),
@@ -1925,9 +1925,9 @@ mod tests {
 
         #[test]
         fn batch_insert_rdf_deduplicates() {
-            use grafeo_core::graph::rdf::{Term, Triple};
+            use obrain_core::graph::rdf::{Term, Triple};
 
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let triple = Triple::new(
                 Term::iri("http://example.org/Alix"),
                 Term::iri("http://example.org/name"),
@@ -1943,16 +1943,16 @@ mod tests {
 
         #[test]
         fn batch_insert_rdf_empty() {
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let inserted = db.batch_insert_rdf(Vec::new());
             assert_eq!(inserted, 0);
         }
 
         #[test]
         fn batch_insert_rdf_blank_nodes() {
-            use grafeo_core::graph::rdf::{Term, Triple};
+            use obrain_core::graph::rdf::{Term, Triple};
 
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let triples = vec![
                 Triple::new(
                     Term::blank("b1"),
@@ -1972,9 +1972,9 @@ mod tests {
 
         #[test]
         fn batch_insert_rdf_typed_and_lang_literals() {
-            use grafeo_core::graph::rdf::{Term, Triple};
+            use obrain_core::graph::rdf::{Term, Triple};
 
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let triples = vec![
                 Triple::new(
                     Term::iri("http://example.org/Alix"),
@@ -1994,9 +1994,9 @@ mod tests {
 
         #[test]
         fn batch_insert_rdf_large_batch() {
-            use grafeo_core::graph::rdf::{Term, Triple};
+            use obrain_core::graph::rdf::{Term, Triple};
 
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let triples: Vec<Triple> = (0..1000)
                 .map(|i| {
                     Triple::new(
@@ -2013,9 +2013,9 @@ mod tests {
 
         #[test]
         fn batch_insert_rdf_mixed_duplicates_in_same_batch() {
-            use grafeo_core::graph::rdf::{Term, Triple};
+            use obrain_core::graph::rdf::{Term, Triple};
 
-            let db = GrafeoDB::new_in_memory();
+            let db = ObrainDB::new_in_memory();
             let triple = Triple::new(
                 Term::iri("http://example.org/a"),
                 Term::iri("http://example.org/b"),

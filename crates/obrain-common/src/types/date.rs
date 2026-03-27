@@ -12,7 +12,7 @@ use std::fmt;
 /// # Examples
 ///
 /// ```
-/// use grafeo_common::types::Date;
+/// use obrain_common::types::Date;
 ///
 /// let d = Date::from_ymd(2024, 3, 15).unwrap();
 /// assert_eq!(d.year(), 2024);

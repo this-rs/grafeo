@@ -5,7 +5,7 @@ use super::{Operator, OperatorError, OperatorResult};
 use crate::execution::DataChunk;
 use crate::graph::GraphStore;
 use crate::graph::lpg::{Edge, Node};
-use grafeo_common::types::{EpochId, LogicalType, PropertyKey, TransactionId, Value};
+use obrain_common::types::{EpochId, LogicalType, PropertyKey, TransactionId, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
@@ -430,7 +430,7 @@ mod tests {
     use super::*;
     use crate::execution::chunk::DataChunkBuilder;
     use crate::graph::lpg::LpgStore;
-    use grafeo_common::types::Value;
+    use obrain_common::types::Value;
 
     struct MockScanOperator {
         chunks: Vec<DataChunk>,
@@ -735,7 +735,7 @@ mod tests {
 
     #[test]
     fn test_project_resolve_missing_entity() {
-        use grafeo_common::types::NodeId;
+        use obrain_common::types::NodeId;
 
         let store = LpgStore::new().unwrap();
 

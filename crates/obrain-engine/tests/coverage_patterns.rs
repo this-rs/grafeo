@@ -3,15 +3,15 @@
 //! Targets: pattern.rs (76.07%), expression.rs paths
 //!
 //! ```bash
-//! cargo test -p grafeo-engine --test coverage_patterns
+//! cargo test -p obrain-engine --test coverage_patterns
 //! ```
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 /// Creates a chain graph: 5 nodes (A-E), 4 LINK edges, 1 SHORTCUT edge.
-fn chain_graph() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn chain_graph() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let na = session.create_node_with_props(&["Node"], [("name", Value::String("A".into()))]);
@@ -187,7 +187,7 @@ fn test_undirected_edge() {
 
 #[test]
 fn test_merge_on_create_and_on_match() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -222,7 +222,7 @@ fn test_merge_on_create_and_on_match() {
 
 #[test]
 fn test_merge_edge_pattern() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session.create_node_with_props(&["City"], [("name", Value::String("Amsterdam".into()))]);
@@ -266,7 +266,7 @@ fn test_path_length() {
 
 #[test]
 fn test_edge_property_filter() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let a = session.create_node_with_props(&["Person"], [("name", Value::String("Alix".into()))]);
     let b = session.create_node_with_props(&["Person"], [("name", Value::String("Gus".into()))]);
@@ -319,7 +319,7 @@ fn test_path_with_intermediate_filter() {
 
 #[test]
 fn test_delete_node() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.create_node_with_props(&["Temp"], [("x", Value::Int64(1))]);
     session.execute("MATCH (t:Temp) DETACH DELETE t").unwrap();
@@ -335,7 +335,7 @@ fn test_delete_node() {
 
 #[test]
 fn test_set_multiple_properties() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     session.create_node_with_props(&["Item"], [("name", Value::String("widget".into()))]);
     session

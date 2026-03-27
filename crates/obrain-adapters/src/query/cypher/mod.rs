@@ -13,7 +13,7 @@ pub use ast::*;
 pub use lexer::Lexer;
 pub use parser::Parser;
 
-use grafeo_common::utils::error::Result;
+use obrain_common::utils::error::Result;
 
 /// Parses a Cypher query string into an AST.
 ///

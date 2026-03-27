@@ -8,8 +8,8 @@
 //! This module defines the [`CognitiveStore`] trait that captures the
 //! write-through contract shared across all cognitive subsystems.
 
-use grafeo_common::types::{NodeId, Value};
-use grafeo_core::graph::GraphStoreMut;
+use obrain_common::types::{NodeId, Value};
+use obrain_core::graph::GraphStoreMut;
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
@@ -84,7 +84,7 @@ pub trait CognitiveStore<S: GraphStoreMut + ?Sized = dyn GraphStoreMut>: Send + 
 /// Reads a `Float64` node property from the graph store, returning `None`
 /// if the node or property doesn't exist.
 pub fn load_node_f64(store: &dyn GraphStoreMut, node_id: NodeId, key: &str) -> Option<f64> {
-    let pk = grafeo_common::types::PropertyKey::from(key);
+    let pk = obrain_common::types::PropertyKey::from(key);
     store
         .get_node_property(node_id, &pk)
         .and_then(|v| v.as_float64())
@@ -98,10 +98,10 @@ pub fn persist_node_f64(store: &dyn GraphStoreMut, node_id: NodeId, key: &str, v
 /// Reads a `Float64` edge property from the graph store.
 pub fn load_edge_f64(
     store: &dyn GraphStoreMut,
-    edge_id: grafeo_common::types::EdgeId,
+    edge_id: obrain_common::types::EdgeId,
     key: &str,
 ) -> Option<f64> {
-    let pk = grafeo_common::types::PropertyKey::from(key);
+    let pk = obrain_common::types::PropertyKey::from(key);
     store
         .get_edge_property(edge_id, &pk)
         .and_then(|v| v.as_float64())
@@ -110,7 +110,7 @@ pub fn load_edge_f64(
 /// Persists a `Float64` edge property to the graph store.
 pub fn persist_edge_f64(
     store: &dyn GraphStoreMut,
-    edge_id: grafeo_common::types::EdgeId,
+    edge_id: obrain_common::types::EdgeId,
     key: &str,
     value: f64,
 ) {

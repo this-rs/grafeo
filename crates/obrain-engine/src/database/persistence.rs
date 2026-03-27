@@ -1,16 +1,16 @@
-//! Persistence, snapshots, and data export for GrafeoDB.
+//! Persistence, snapshots, and data export for ObrainDB.
 
 #[cfg(feature = "wal")]
 use std::path::Path;
 
-use grafeo_common::types::{EdgeId, EpochId, NodeId, Value};
-use grafeo_common::utils::error::{Error, Result};
+use obrain_common::types::{EdgeId, EpochId, NodeId, Value};
+use obrain_common::utils::error::{Error, Result};
 use hashbrown::HashSet;
 
 use crate::config::Config;
 
 #[cfg(feature = "wal")]
-use grafeo_adapters::storage::wal::WalRecord;
+use obrain_adapters::storage::wal::WalRecord;
 
 use crate::catalog::{
     EdgeTypeDefinition, GraphTypeDefinition, NodeTypeDefinition, ProcedureDefinition,
@@ -60,7 +60,7 @@ struct SnapshotVectorIndex {
     label: String,
     property: String,
     dimensions: usize,
-    metric: grafeo_core::index::vector::DistanceMetric,
+    metric: obrain_core::index::vector::DistanceMetric,
     m: usize,
     ef_construction: usize,
 }
@@ -117,7 +117,7 @@ struct SnapshotEdge {
 ///
 /// With `temporal`: stores full property version history.
 /// Without: wraps each current value as a single-entry version list at epoch 0.
-fn collect_snapshot_nodes(store: &grafeo_core::graph::lpg::LpgStore) -> Vec<SnapshotNode> {
+fn collect_snapshot_nodes(store: &obrain_core::graph::lpg::LpgStore) -> Vec<SnapshotNode> {
     store
         .all_nodes()
         .map(|n| {
@@ -148,7 +148,7 @@ fn collect_snapshot_nodes(store: &grafeo_core::graph::lpg::LpgStore) -> Vec<Snap
 ///
 /// With `temporal`: stores full property version history.
 /// Without: wraps each current value as a single-entry version list at epoch 0.
-fn collect_snapshot_edges(store: &grafeo_core::graph::lpg::LpgStore) -> Vec<SnapshotEdge> {
+fn collect_snapshot_edges(store: &obrain_core::graph::lpg::LpgStore) -> Vec<SnapshotEdge> {
     store
         .all_edges()
         .map(|e| {
@@ -182,7 +182,7 @@ fn collect_snapshot_edges(store: &grafeo_core::graph::lpg::LpgStore) -> Vec<Snap
 /// With `temporal`: replays all `(epoch, value)` entries into version logs.
 /// Without: reads the latest value from each property's version list.
 fn populate_store_from_snapshot(
-    store: &grafeo_core::graph::lpg::LpgStore,
+    store: &obrain_core::graph::lpg::LpgStore,
     nodes: Vec<SnapshotNode>,
     edges: Vec<SnapshotEdge>,
 ) -> Result<()> {
@@ -253,7 +253,7 @@ fn validate_snapshot_data(nodes: &[SnapshotNode], edges: &[SnapshotEdge]) -> Res
 
 /// Collects all triples from an RDF store into snapshot format.
 #[cfg(feature = "rdf")]
-fn collect_rdf_triples(store: &grafeo_core::graph::rdf::RdfStore) -> Vec<SnapshotTriple> {
+fn collect_rdf_triples(store: &obrain_core::graph::rdf::RdfStore) -> Vec<SnapshotTriple> {
     store
         .triples()
         .into_iter()
@@ -267,8 +267,8 @@ fn collect_rdf_triples(store: &grafeo_core::graph::rdf::RdfStore) -> Vec<Snapsho
 
 /// Populates an RDF store from snapshot triples.
 #[cfg(feature = "rdf")]
-fn populate_rdf_store(store: &grafeo_core::graph::rdf::RdfStore, triples: &[SnapshotTriple]) {
-    use grafeo_core::graph::rdf::{Term, Triple};
+fn populate_rdf_store(store: &obrain_core::graph::rdf::RdfStore, triples: &[SnapshotTriple]) {
+    use obrain_core::graph::rdf::{Term, Triple};
     for triple in triples {
         if let (Some(s), Some(p), Some(o)) = (
             Term::from_ntriples(&triple.subject),
@@ -285,19 +285,19 @@ fn populate_rdf_store(store: &grafeo_core::graph::rdf::RdfStore, triples: &[Snap
 // =========================================================================
 
 /// Decodes snapshot bytes and populates a store and catalog.
-#[cfg(feature = "grafeo-file")]
+#[cfg(feature = "obrain-file")]
 pub(super) fn load_snapshot_into_store(
-    store: &std::sync::Arc<grafeo_core::graph::lpg::LpgStore>,
+    store: &std::sync::Arc<obrain_core::graph::lpg::LpgStore>,
     catalog: &std::sync::Arc<crate::catalog::Catalog>,
-    #[cfg(feature = "rdf")] rdf_store: &std::sync::Arc<grafeo_core::graph::rdf::RdfStore>,
+    #[cfg(feature = "rdf")] rdf_store: &std::sync::Arc<obrain_core::graph::rdf::RdfStore>,
     data: &[u8],
-) -> grafeo_common::utils::error::Result<()> {
-    use grafeo_common::utils::error::Error;
+) -> obrain_common::utils::error::Result<()> {
+    use obrain_common::utils::error::Error;
 
     let config = bincode::config::standard();
     let (snapshot, _) =
         bincode::serde::decode_from_slice::<Snapshot, _>(data, config).map_err(|e| {
-            Error::Serialization(format!("failed to decode snapshot from .grafeo file: {e}"))
+            Error::Serialization(format!("failed to decode snapshot from .obrain file: {e}"))
         })?;
 
     populate_store_from_snapshot_ref(store, &snapshot.nodes, &snapshot.edges)?;
@@ -335,12 +335,12 @@ pub(super) fn load_snapshot_into_store(
 }
 
 /// Populates a store from snapshot refs (borrowed, for single-file loading).
-#[cfg(feature = "grafeo-file")]
+#[cfg(feature = "obrain-file")]
 fn populate_store_from_snapshot_ref(
-    store: &grafeo_core::graph::lpg::LpgStore,
+    store: &obrain_core::graph::lpg::LpgStore,
     nodes: &[SnapshotNode],
     edges: &[SnapshotEdge],
-) -> grafeo_common::utils::error::Result<()> {
+) -> obrain_common::utils::error::Result<()> {
     for node in nodes {
         let label_refs: Vec<&str> = node.labels.iter().map(|s| s.as_str()).collect();
         store.create_node_with_id(node.id, &label_refs)?;
@@ -412,7 +412,7 @@ fn collect_schema(catalog: &std::sync::Arc<crate::catalog::Catalog>) -> Snapshot
 ///
 /// Must be called after all nodes/edges have been populated, since index
 /// creation scans existing data.
-fn restore_indexes_from_snapshot(db: &super::GrafeoDB, indexes: &SnapshotIndexes) {
+fn restore_indexes_from_snapshot(db: &super::ObrainDB, indexes: &SnapshotIndexes) {
     for name in &indexes.property_indexes {
         db.store.create_property_index(name);
     }
@@ -448,7 +448,7 @@ fn restore_indexes_from_snapshot(db: &super::GrafeoDB, indexes: &SnapshotIndexes
 }
 
 /// Collects index metadata from a store into snapshot format.
-fn collect_index_metadata(store: &grafeo_core::graph::lpg::LpgStore) -> SnapshotIndexes {
+fn collect_index_metadata(store: &obrain_core::graph::lpg::LpgStore) -> SnapshotIndexes {
     let property_indexes = store.property_index_keys();
 
     #[cfg(feature = "vector-index")]
@@ -493,14 +493,14 @@ fn collect_index_metadata(store: &grafeo_core::graph::lpg::LpgStore) -> Snapshot
     }
 }
 
-impl super::GrafeoDB {
+impl super::ObrainDB {
     // =========================================================================
     // ADMIN API: Persistence Control
     // =========================================================================
 
     /// Saves the database to a file path.
     ///
-    /// - If the path ends in `.grafeo`: creates a single-file database
+    /// - If the path ends in `.obrain`: creates a single-file database
     /// - Otherwise: creates a WAL directory-backed database at the path
     /// - If in-memory: creates a new persistent database at path
     /// - If file-backed: creates a copy at the new path
@@ -516,10 +516,10 @@ impl super::GrafeoDB {
     pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
 
-        // Single-file format: export snapshot directly to a .grafeo file
-        #[cfg(feature = "grafeo-file")]
-        if path.extension().is_some_and(|ext| ext == "grafeo") {
-            return self.save_as_grafeo_file(path);
+        // Single-file format: export snapshot directly to a .obrain file
+        #[cfg(feature = "obrain-file")]
+        if path.extension().is_some_and(|ext| ext == "obrain") {
+            return self.save_as_obrain_file(path);
         }
 
         // Create target database with WAL enabled
@@ -683,10 +683,10 @@ impl super::GrafeoDB {
     /// Returns a new database that is completely independent, including
     /// all named graph data.
     /// Useful for:
-    /// Saves the database to a single `.grafeo` file.
-    #[cfg(feature = "grafeo-file")]
-    fn save_as_grafeo_file(&self, path: &Path) -> Result<()> {
-        use grafeo_adapters::storage::file::GrafeoFileManager;
+    /// Saves the database to a single `.obrain` file.
+    #[cfg(feature = "obrain-file")]
+    fn save_as_obrain_file(&self, path: &Path) -> Result<()> {
+        use obrain_adapters::storage::file::ObrainFileManager;
 
         let snapshot_data = self.export_snapshot()?;
         let epoch = self.store.current_epoch();
@@ -697,7 +697,7 @@ impl super::GrafeoDB {
         let node_count = self.store.node_count() as u64;
         let edge_count = self.store.edge_count() as u64;
 
-        let fm = GrafeoFileManager::create(path)?;
+        let fm = ObrainFileManager::create(path)?;
         fm.write_snapshot(
             &snapshot_data,
             epoch.0,
@@ -1073,30 +1073,30 @@ impl super::GrafeoDB {
     /// Returns an iterator over all nodes in the database.
     ///
     /// Useful for dump/export operations.
-    pub fn iter_nodes(&self) -> impl Iterator<Item = grafeo_core::graph::lpg::Node> + '_ {
+    pub fn iter_nodes(&self) -> impl Iterator<Item = obrain_core::graph::lpg::Node> + '_ {
         self.store.all_nodes()
     }
 
     /// Returns an iterator over all edges in the database.
     ///
     /// Useful for dump/export operations.
-    pub fn iter_edges(&self) -> impl Iterator<Item = grafeo_core::graph::lpg::Edge> + '_ {
+    pub fn iter_edges(&self) -> impl Iterator<Item = obrain_core::graph::lpg::Edge> + '_ {
         self.store.all_edges()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use grafeo_common::types::{EdgeId, NodeId, Value};
+    use obrain_common::types::{EdgeId, NodeId, Value};
 
-    use super::super::GrafeoDB;
+    use super::super::ObrainDB;
     use super::{
         SNAPSHOT_VERSION, Snapshot, SnapshotEdge, SnapshotIndexes, SnapshotNode, SnapshotSchema,
     };
 
     #[test]
     fn test_restore_snapshot_basic() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         // Populate
@@ -1121,7 +1121,7 @@ mod tests {
 
     #[test]
     fn test_restore_snapshot_validation_failure() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
@@ -1136,7 +1136,7 @@ mod tests {
 
     #[test]
     fn test_restore_snapshot_empty_db() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
 
         // Export empty snapshot, then populate, then restore to empty
         let empty_snapshot = db.export_snapshot().unwrap();
@@ -1151,7 +1151,7 @@ mod tests {
 
     #[test]
     fn test_restore_snapshot_with_edges() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
@@ -1178,7 +1178,7 @@ mod tests {
 
     #[test]
     fn test_restore_snapshot_preserves_sessions() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
@@ -1197,7 +1197,7 @@ mod tests {
 
     #[test]
     fn test_export_import_roundtrip() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         session
@@ -1205,7 +1205,7 @@ mod tests {
             .unwrap();
 
         let snapshot = db.export_snapshot().unwrap();
-        let db2 = GrafeoDB::import_snapshot(&snapshot).unwrap();
+        let db2 = ObrainDB::import_snapshot(&snapshot).unwrap();
         let session2 = db2.session();
 
         let result = session2.execute("MATCH (n:Person) RETURN n.name").unwrap();
@@ -1216,7 +1216,7 @@ mod tests {
 
     #[test]
     fn test_to_memory_empty() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let copy = db.to_memory().unwrap();
         assert_eq!(copy.store.node_count(), 0);
         assert_eq!(copy.store.edge_count(), 0);
@@ -1224,7 +1224,7 @@ mod tests {
 
     #[test]
     fn test_to_memory_copies_nodes_and_properties() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:Person {name: 'Alix', age: 30})")
@@ -1247,7 +1247,7 @@ mod tests {
 
     #[test]
     fn test_to_memory_copies_edges_and_properties() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let a = db.create_node(&["Person"]);
         db.set_node_property(a, "name", "Alix".into());
         let b = db.create_node(&["Person"]);
@@ -1266,7 +1266,7 @@ mod tests {
 
     #[test]
     fn test_to_memory_is_independent() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
@@ -1282,13 +1282,13 @@ mod tests {
 
     #[test]
     fn test_iter_nodes_empty() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         assert_eq!(db.iter_nodes().count(), 0);
     }
 
     #[test]
     fn test_iter_nodes_returns_all() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let id1 = db.create_node(&["Person"]);
         db.set_node_property(id1, "name", "Alix".into());
         let id2 = db.create_node(&["Animal"]);
@@ -1308,13 +1308,13 @@ mod tests {
 
     #[test]
     fn test_iter_edges_empty() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         assert_eq!(db.iter_edges().count(), 0);
     }
 
     #[test]
     fn test_iter_edges_returns_all() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let a = db.create_node(&["A"]);
         let b = db.create_node(&["B"]);
         let c = db.create_node(&["C"]);
@@ -1348,7 +1348,7 @@ mod tests {
 
     #[test]
     fn test_restore_rejects_unsupported_version() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
@@ -1365,7 +1365,7 @@ mod tests {
 
     #[test]
     fn test_restore_rejects_duplicate_node_ids() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 
@@ -1395,7 +1395,7 @@ mod tests {
 
     #[test]
     fn test_restore_rejects_duplicate_edge_ids() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
 
         let bytes = make_snapshot(
             SNAPSHOT_VERSION,
@@ -1437,7 +1437,7 @@ mod tests {
 
     #[test]
     fn test_restore_rejects_dangling_source() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
 
         let bytes = make_snapshot(
             SNAPSHOT_VERSION,
@@ -1463,7 +1463,7 @@ mod tests {
 
     #[test]
     fn test_restore_rejects_dangling_destination() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
 
         let bytes = make_snapshot(
             SNAPSHOT_VERSION,
@@ -1491,7 +1491,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_roundtrip_property_index() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         session
@@ -1501,7 +1501,7 @@ mod tests {
         assert!(db.has_property_index("email"));
 
         let snapshot = db.export_snapshot().unwrap();
-        let db2 = GrafeoDB::import_snapshot(&snapshot).unwrap();
+        let db2 = ObrainDB::import_snapshot(&snapshot).unwrap();
 
         assert!(db2.has_property_index("email"));
 
@@ -1515,7 +1515,7 @@ mod tests {
     fn test_snapshot_roundtrip_vector_index() {
         use std::sync::Arc;
 
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
 
         let n1 = db.create_node(&["Doc"]);
         db.set_node_property(
@@ -1534,7 +1534,7 @@ mod tests {
             .unwrap();
 
         let snapshot = db.export_snapshot().unwrap();
-        let db2 = GrafeoDB::import_snapshot(&snapshot).unwrap();
+        let db2 = ObrainDB::import_snapshot(&snapshot).unwrap();
 
         // Vector search should work on the restored database
         let results = db2
@@ -1548,7 +1548,7 @@ mod tests {
     #[cfg(feature = "text-index")]
     #[test]
     fn test_snapshot_roundtrip_text_index() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
 
         let n1 = db.create_node(&["Article"]);
         db.set_node_property(n1, "body", Value::String("rust graph database".into()));
@@ -1558,7 +1558,7 @@ mod tests {
         db.create_text_index("Article", "body").unwrap();
 
         let snapshot = db.export_snapshot().unwrap();
-        let db2 = GrafeoDB::import_snapshot(&snapshot).unwrap();
+        let db2 = ObrainDB::import_snapshot(&snapshot).unwrap();
 
         // Text search should work on the restored database
         let results = db2
@@ -1570,7 +1570,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_roundtrip_property_index_via_restore() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         session

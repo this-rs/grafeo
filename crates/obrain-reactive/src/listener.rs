@@ -12,7 +12,7 @@ use async_trait::async_trait;
 /// # Example
 ///
 /// ```rust,no_run
-/// use grafeo_reactive::{MutationListener, MutationEvent};
+/// use obrain_reactive::{MutationListener, MutationEvent};
 /// use async_trait::async_trait;
 ///
 /// struct EnergyListener;

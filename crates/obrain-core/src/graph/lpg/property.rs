@@ -29,11 +29,11 @@ use crate::storage::{
 #[cfg(not(feature = "temporal"))]
 use arcstr::ArcStr;
 #[cfg(feature = "temporal")]
-use grafeo_common::temporal::VersionLog;
+use obrain_common::temporal::VersionLog;
 #[cfg(feature = "temporal")]
-use grafeo_common::types::EpochId;
-use grafeo_common::types::{EdgeId, NodeId, PropertyKey, Value};
-use grafeo_common::utils::hash::FxHashMap;
+use obrain_common::types::EpochId;
+use obrain_common::types::{EdgeId, NodeId, PropertyKey, Value};
+use obrain_common::utils::hash::FxHashMap;
 use parking_lot::RwLock;
 use std::cmp::Ordering;
 use std::hash::Hash;
@@ -127,8 +127,8 @@ impl EntityId for EdgeId {
 /// ```
 /// # #[cfg(not(feature = "temporal"))]
 /// # {
-/// use grafeo_core::graph::lpg::PropertyStorage;
-/// use grafeo_common::types::{NodeId, PropertyKey};
+/// use obrain_core::graph::lpg::PropertyStorage;
+/// use obrain_common::types::{NodeId, PropertyKey};
 ///
 /// let storage = PropertyStorage::new();
 /// let alix = NodeId::new(1);
@@ -319,9 +319,9 @@ impl<Id: EntityId> PropertyStorage<Id> {
     /// # Example
     ///
     /// ```
-    /// use grafeo_core::graph::lpg::PropertyStorage;
-    /// use grafeo_common::types::{PropertyKey, Value};
-    /// use grafeo_common::NodeId;
+    /// use obrain_core::graph::lpg::PropertyStorage;
+    /// use obrain_common::types::{PropertyKey, Value};
+    /// use obrain_common::NodeId;
     ///
     /// let storage: PropertyStorage<NodeId> = PropertyStorage::new();
     /// let key = PropertyKey::new("age");
@@ -346,9 +346,9 @@ impl<Id: EntityId> PropertyStorage<Id> {
     /// # Example
     ///
     /// ```
-    /// use grafeo_core::graph::lpg::PropertyStorage;
-    /// use grafeo_common::types::{PropertyKey, Value};
-    /// use grafeo_common::NodeId;
+    /// use obrain_core::graph::lpg::PropertyStorage;
+    /// use obrain_common::types::{PropertyKey, Value};
+    /// use obrain_common::NodeId;
     ///
     /// let storage: PropertyStorage<NodeId> = PropertyStorage::new();
     /// let ids = vec![NodeId(1), NodeId(2)];
@@ -388,9 +388,9 @@ impl<Id: EntityId> PropertyStorage<Id> {
     /// # Example
     ///
     /// ```
-    /// use grafeo_core::graph::lpg::PropertyStorage;
-    /// use grafeo_common::types::{PropertyKey, Value};
-    /// use grafeo_common::NodeId;
+    /// use obrain_core::graph::lpg::PropertyStorage;
+    /// use obrain_common::types::{PropertyKey, Value};
+    /// use obrain_common::NodeId;
     ///
     /// let storage: PropertyStorage<NodeId> = PropertyStorage::new();
     /// let ids = vec![NodeId::new(1), NodeId::new(2)];

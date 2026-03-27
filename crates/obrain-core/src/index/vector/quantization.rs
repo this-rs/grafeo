@@ -12,7 +12,7 @@
 //! Converts f32 values to u8 by learning min/max ranges per dimension:
 //!
 //! ```
-//! use grafeo_core::index::vector::quantization::ScalarQuantizer;
+//! use obrain_core::index::vector::quantization::ScalarQuantizer;
 //!
 //! // Training vectors to learn min/max ranges
 //! let vectors = vec![
@@ -37,7 +37,7 @@
 //! Converts f32 values to bits (sign only), enabling hamming distance:
 //!
 //! ```
-//! use grafeo_core::index::vector::quantization::BinaryQuantizer;
+//! use obrain_core::index::vector::quantization::BinaryQuantizer;
 //!
 //! let v1 = vec![0.1f32, -0.5, 0.0, 0.9];
 //! let v2 = vec![0.2f32, -0.3, 0.1, 0.8];
@@ -142,7 +142,7 @@ impl QuantizationType {
 /// # Example
 ///
 /// ```
-/// use grafeo_core::index::vector::quantization::ScalarQuantizer;
+/// use obrain_core::index::vector::quantization::ScalarQuantizer;
 ///
 /// // Training vectors
 /// let vectors = vec![
@@ -406,7 +406,7 @@ impl ScalarQuantizer {
 /// # Example
 ///
 /// ```
-/// use grafeo_core::index::vector::quantization::BinaryQuantizer;
+/// use obrain_core::index::vector::quantization::BinaryQuantizer;
 ///
 /// let v1 = vec![0.5f32, -0.3, 0.0, 0.8, -0.1, 0.2, -0.4, 0.9];
 /// let v2 = vec![0.4f32, -0.2, 0.1, 0.7, -0.2, 0.3, -0.3, 0.8];
@@ -505,7 +505,7 @@ impl BinaryQuantizer {
 /// # Example
 ///
 /// ```
-/// use grafeo_core::index::vector::quantization::ProductQuantizer;
+/// use obrain_core::index::vector::quantization::ProductQuantizer;
 ///
 /// // Training vectors (16 dimensions, split into 4 subvectors)
 /// let vectors: Vec<Vec<f32>> = (0..50)

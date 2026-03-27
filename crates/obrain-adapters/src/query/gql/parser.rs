@@ -3,7 +3,7 @@
 #[allow(clippy::wildcard_imports)]
 use super::ast::*;
 use super::lexer::{Lexer, Token, TokenKind};
-use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result, SourceSpan};
+use obrain_common::utils::error::{Error, QueryError, QueryErrorKind, Result, SourceSpan};
 
 /// Unescapes backslash-escaped characters in a string literal.
 fn unescape_string(s: &str) -> String {

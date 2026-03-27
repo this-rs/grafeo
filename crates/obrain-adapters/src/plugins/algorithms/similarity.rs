@@ -13,13 +13,13 @@
 use std::collections::BinaryHeap;
 use std::sync::OnceLock;
 
-use grafeo_common::types::{NodeId, Value};
-use grafeo_common::utils::error::{Error, Result};
-use grafeo_common::utils::hash::FxHashSet;
-use grafeo_core::graph::Direction;
-use grafeo_core::graph::GraphStore;
+use obrain_common::types::{NodeId, Value};
+use obrain_common::utils::error::{Error, Result};
+use obrain_common::utils::hash::FxHashSet;
+use obrain_core::graph::Direction;
+use obrain_core::graph::GraphStore;
 #[cfg(test)]
-use grafeo_core::graph::lpg::LpgStore;
+use obrain_core::graph::lpg::LpgStore;
 
 use super::super::{AlgorithmResult, ParameterDef, ParameterType, Parameters};
 use super::traits::GraphAlgorithm;
@@ -85,7 +85,7 @@ fn neighbor_set(store: &dyn GraphStore, node: NodeId) -> FxHashSet<NodeId> {
 /// # Example
 ///
 /// ```ignore
-/// use grafeo_adapters::plugins::algorithms::jaccard;
+/// use obrain_adapters::plugins::algorithms::jaccard;
 /// let score = jaccard(&store, node_a, node_b);
 /// assert!(score >= 0.0 && score <= 1.0);
 /// ```
@@ -131,7 +131,7 @@ pub fn jaccard(store: &dyn GraphStore, u: NodeId, v: NodeId) -> f64 {
 /// # Example
 ///
 /// ```ignore
-/// use grafeo_adapters::plugins::algorithms::overlap_coefficient;
+/// use obrain_adapters::plugins::algorithms::overlap_coefficient;
 /// let score = overlap_coefficient(&store, node_a, node_b);
 /// assert!(score >= 0.0 && score <= 1.0);
 /// ```
@@ -176,7 +176,7 @@ pub fn overlap_coefficient(store: &dyn GraphStore, u: NodeId, v: NodeId) -> f64 
 /// # Example
 ///
 /// ```ignore
-/// use grafeo_adapters::plugins::algorithms::cosine_similarity;
+/// use obrain_adapters::plugins::algorithms::cosine_similarity;
 /// let score = cosine_similarity(&store, node_a, node_b);
 /// assert!(score >= 0.0 && score <= 1.0);
 /// ```
@@ -222,7 +222,7 @@ pub fn cosine_similarity(store: &dyn GraphStore, u: NodeId, v: NodeId) -> f64 {
 /// # Example
 ///
 /// ```ignore
-/// use grafeo_adapters::plugins::algorithms::adamic_adar;
+/// use obrain_adapters::plugins::algorithms::adamic_adar;
 /// let score = adamic_adar(&store, node_a, node_b);
 /// assert!(score >= 0.0);
 /// ```
@@ -269,7 +269,7 @@ pub fn adamic_adar(store: &dyn GraphStore, u: NodeId, v: NodeId) -> f64 {
 /// # Example
 ///
 /// ```ignore
-/// use grafeo_adapters::plugins::algorithms::resource_allocation;
+/// use obrain_adapters::plugins::algorithms::resource_allocation;
 /// let score = resource_allocation(&store, node_a, node_b);
 /// assert!(score >= 0.0);
 /// ```
@@ -357,7 +357,7 @@ impl SimilarityMetric {
 /// # Example
 ///
 /// ```ignore
-/// use grafeo_adapters::plugins::algorithms::{top_k_similar, SimilarityMetric};
+/// use obrain_adapters::plugins::algorithms::{top_k_similar, SimilarityMetric};
 /// let results = top_k_similar(&store, node_id, 5, SimilarityMetric::Jaccard);
 /// for r in &results {
 ///     println!("Node {:?} — score: {:.4}", r.node, r.score);
@@ -431,7 +431,7 @@ pub fn top_k_similar(
 
 /// Pairwise node similarity algorithm (Jaccard, Overlap, Cosine, Adamic-Adar, Resource Allocation).
 ///
-/// Implements the [`GraphAlgorithm`] trait for use via `CALL grafeo.similarity(node1, node2, metric)`.
+/// Implements the [`GraphAlgorithm`] trait for use via `CALL obrain.similarity(node1, node2, metric)`.
 ///
 /// # Parameters
 ///
@@ -536,7 +536,7 @@ impl GraphAlgorithm for NodeSimilarityAlgorithm {
 /// Top-K similar nodes algorithm.
 ///
 /// Implements the [`GraphAlgorithm`] trait for use via
-/// `CALL grafeo.similarity.topk(node, k, metric)`.
+/// `CALL obrain.similarity.topk(node, k, metric)`.
 ///
 /// # Parameters
 ///

@@ -1,10 +1,10 @@
-//! Admin, introspection, and diagnostic operations for GrafeoDB.
+//! Admin, introspection, and diagnostic operations for ObrainDB.
 
 use std::path::Path;
 
-use grafeo_common::utils::error::Result;
+use obrain_common::utils::error::Result;
 
-impl super::GrafeoDB {
+impl super::ObrainDB {
     // =========================================================================
     // ADMIN API: Counts
     // =========================================================================
@@ -83,7 +83,7 @@ impl super::GrafeoDB {
     #[must_use]
     pub fn memory_usage(&self) -> crate::memory_usage::MemoryUsage {
         use crate::memory_usage::{BufferManagerMemory, CacheMemory, MemoryUsage};
-        use grafeo_common::memory::MemoryRegion;
+        use obrain_common::memory::MemoryRegion;
 
         let (store, indexes, mvcc, string_pool) = self.store.memory_breakdown();
 
@@ -321,8 +321,8 @@ impl super::GrafeoDB {
             wal.sync()?;
         }
 
-        // For single-file format: flush snapshot to .grafeo file
-        #[cfg(feature = "grafeo-file")]
+        // For single-file format: flush snapshot to .obrain file
+        #[cfg(feature = "obrain-file")]
         if let Some(ref fm) = self.file_manager {
             self.checkpoint_to_file(fm)?;
         }
@@ -354,7 +354,7 @@ impl super::GrafeoDB {
     pub fn history_since(
         &self,
         entity_id: impl Into<crate::cdc::EntityId>,
-        since_epoch: grafeo_common::types::EpochId,
+        since_epoch: obrain_common::types::EpochId,
     ) -> Result<Vec<crate::cdc::ChangeEvent>> {
         Ok(self.cdc_log.history_since(entity_id.into(), since_epoch))
     }
@@ -363,8 +363,8 @@ impl super::GrafeoDB {
     #[cfg(feature = "cdc")]
     pub fn changes_between(
         &self,
-        start_epoch: grafeo_common::types::EpochId,
-        end_epoch: grafeo_common::types::EpochId,
+        start_epoch: obrain_common::types::EpochId,
+        end_epoch: obrain_common::types::EpochId,
     ) -> Result<Vec<crate::cdc::ChangeEvent>> {
         Ok(self.cdc_log.changes_between(start_epoch, end_epoch))
     }

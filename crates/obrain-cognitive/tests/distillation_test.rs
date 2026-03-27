@@ -5,14 +5,14 @@
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use grafeo_cognitive::distillation::{
+use obrain_cognitive::distillation::{
     ArtifactMetadata, DistillArtifact, DistillConfig, EnergySnapshot, SynapseSnapshot, distill,
     evaluate, inject,
 };
-use grafeo_cognitive::engine::CognitiveEngine;
-use grafeo_cognitive::{CognitiveConfig, CognitiveEngineBuilder};
-use grafeo_common::types::NodeId;
-use grafeo_reactive::{BatchConfig, MutationBus, Scheduler};
+use obrain_cognitive::engine::CognitiveEngine;
+use obrain_cognitive::{CognitiveConfig, CognitiveEngineBuilder};
+use obrain_common::types::NodeId;
+use obrain_reactive::{BatchConfig, MutationBus, Scheduler};
 
 // ---------------------------------------------------------------------------
 // Helpers

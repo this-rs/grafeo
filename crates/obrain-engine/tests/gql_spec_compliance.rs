@@ -3,12 +3,12 @@
 //! These tests validate features that were discovered to be fully working
 //! during codebase exploration, plus newly implemented features.
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 /// Creates 3 Person nodes (Alix age 30, Gus age 25, Vincent age 35) with 2 KNOWS edges.
-fn setup_db() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn setup_db() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.begin_transaction().unwrap();
     session
@@ -371,7 +371,7 @@ fn test_string_join() {
 
 #[test]
 fn test_set_map_merge() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.begin_transaction().unwrap();
     session
@@ -395,7 +395,7 @@ fn test_set_map_merge() {
 
 #[test]
 fn test_set_map_replace() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.begin_transaction().unwrap();
     session
@@ -525,7 +525,7 @@ fn test_coalesce_syntax() {
 // ISO: GA03
 #[test]
 fn test_order_by_nulls_first() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.begin_transaction().unwrap();
     session
@@ -549,7 +549,7 @@ fn test_order_by_nulls_first() {
 // ISO: GA03
 #[test]
 fn test_order_by_nulls_last() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.begin_transaction().unwrap();
     session
@@ -1087,7 +1087,7 @@ fn test_set_alternation_basic() {
 #[test]
 fn test_delete_variable() {
     // Baseline: DELETE with plain variable still works
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.begin_transaction().unwrap();
     session
@@ -1112,7 +1112,7 @@ fn test_delete_variable() {
 #[test]
 fn test_delete_edge_variable() {
     // DELETE an edge by variable
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.begin_transaction().unwrap();
     session.execute("INSERT (:A {val: 1})").unwrap();
@@ -1151,7 +1151,7 @@ fn test_delete_edge_variable() {
 #[test]
 fn test_delete_multiple_sequential() {
     // DELETE multiple nodes in separate statements
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.begin_transaction().unwrap();
     session.execute("INSERT (:X {val: 1})").unwrap();
@@ -1176,7 +1176,7 @@ fn test_delete_expression_property_access() {
     // GD04: DELETE with expression (property access resolving to a node)
     // This tests that the parser accepts expressions in DELETE position.
     // The expression `head(collect(m))` evaluates to a node value.
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.begin_transaction().unwrap();
     session.execute("INSERT (:Root {name: 'root'})").unwrap();
@@ -1567,7 +1567,7 @@ fn test_aggregate_order_by_alias() {
 #[test]
 fn test_create_graph_type_inline_iso_syntax() {
     // GG03: CREATE GRAPH TYPE with inline NODE TYPE / EDGE TYPE (ISO syntax)
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let result = session.execute(
@@ -1593,7 +1593,7 @@ fn test_create_graph_type_inline_iso_syntax() {
 #[test]
 fn test_create_graph_type_inline_multiple() {
     // GG03: Multiple inline types in one graph type definition
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let result = session.execute(
@@ -1615,7 +1615,7 @@ fn test_create_graph_type_inline_multiple() {
 #[test]
 fn test_create_graph_typed_with_inline_type() {
     // GG03: Create a graph type with inline defs, then bind a graph to it
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -1637,7 +1637,7 @@ fn test_create_graph_typed_with_inline_type() {
 #[test]
 fn test_create_graph_type_like_graph() {
     // GG04: CREATE GRAPH TYPE ... LIKE <graph>
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // Create a graph type and bind it to a graph
@@ -1669,7 +1669,7 @@ fn test_create_graph_type_like_graph() {
 #[test]
 fn test_create_graph_type_key_label_sets() {
     // GG21: Explicit key label sets in element type definitions
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let result = session.execute(
@@ -1692,7 +1692,7 @@ fn test_create_graph_type_key_label_sets() {
 #[test]
 fn test_create_graph_type_or_replace_inline() {
     // GG03 + OR REPLACE: Replace graph type with new inline types
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session
@@ -1717,7 +1717,7 @@ fn test_create_graph_type_or_replace_inline() {
 fn test_graph_type_inference_from_registered_types() {
     // GG22: Element type key label set inference
     // When using LIKE on a graph without a bound type, infer from registered types
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // Register some node/edge types
@@ -1740,10 +1740,10 @@ fn test_graph_type_inference_from_registered_types() {
 // GF11: Binary Set Functions (COVAR, CORR, REGR_*)
 // ---------------------------------------------------------------------------
 
-fn setup_scatter_db() -> GrafeoDB {
+fn setup_scatter_db() -> ObrainDB {
     // Creates nodes with (x, y) pairs for statistical testing.
     // Data: (1,2), (2,4), (3,6), (4,8), (5,10) -- perfect linear y = 2x
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.begin_transaction().unwrap();
     session.execute("INSERT (:Point {x: 1.0, y: 2.0})").unwrap();
@@ -1949,7 +1949,7 @@ fn test_regr_avgx_avgy() {
 #[test]
 fn test_binary_null_pair_skipping() {
     // When one value in a pair is NULL, the pair should be skipped entirely
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.begin_transaction().unwrap();
     session.execute("INSERT (:Point {x: 1.0, y: 2.0})").unwrap();
@@ -1975,7 +1975,7 @@ fn test_binary_null_pair_skipping() {
 #[test]
 fn test_binary_edge_case_empty() {
     // No matching rows: should return NULL
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     let result = session
         .execute("MATCH (p:Point) RETURN COVAR_SAMP(p.y, p.x) AS cov")
@@ -1997,7 +1997,7 @@ fn test_binary_edge_case_empty() {
 #[test]
 fn test_exists_correlated_outer_variable_reference() {
     // EXISTS with inner WHERE referencing an outer variable
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.begin_transaction().unwrap();
     session
@@ -2289,7 +2289,7 @@ fn test_db_labels_with_yield() {
 
 #[test]
 fn test_savepoint_basic() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session.begin_transaction().unwrap();
@@ -2316,7 +2316,7 @@ fn test_savepoint_basic() {
 
 #[test]
 fn test_savepoint_release() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session.begin_transaction().unwrap();
@@ -2338,7 +2338,7 @@ fn test_savepoint_release() {
 
 #[test]
 fn test_savepoint_not_found() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session.begin_transaction().unwrap();
@@ -2349,7 +2349,7 @@ fn test_savepoint_not_found() {
 
 #[test]
 fn test_savepoint_nested() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session.begin_transaction().unwrap();
@@ -2514,7 +2514,7 @@ fn test_is_not_typed_graph() {
 
 #[test]
 fn test_create_graph_like() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // Create a source graph
@@ -2530,7 +2530,7 @@ fn test_create_graph_like() {
 
 #[test]
 fn test_create_graph_as_copy_of() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     session.execute("CREATE GRAPH original").unwrap();
@@ -2543,7 +2543,7 @@ fn test_create_graph_as_copy_of() {
 
 #[test]
 fn test_create_graph_like_nonexistent_fails() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let result = session.execute("CREATE GRAPH g2 LIKE nonexistent");
@@ -2554,7 +2554,7 @@ fn test_create_graph_like_nonexistent_fails() {
 
 #[test]
 fn test_create_graph_any_graph() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // All variants of the ANY GRAPH open graph type syntax
@@ -2578,7 +2578,7 @@ fn test_create_graph_any_graph() {
 
 #[test]
 fn test_gqlstatus_success() {
-    use grafeo_common::utils::GqlStatus;
+    use obrain_common::utils::GqlStatus;
 
     let db = setup_db();
     let session = db.session();
@@ -2593,7 +2593,7 @@ fn test_gqlstatus_success() {
 
 #[test]
 fn test_gqlstatus_error_mapping() {
-    use grafeo_common::utils::GqlStatus;
+    use obrain_common::utils::GqlStatus;
 
     let db = setup_db();
     let session = db.session();
@@ -2611,7 +2611,7 @@ fn test_gqlstatus_error_mapping() {
 
 #[test]
 fn test_property_data_type_typed_list() {
-    use grafeo_engine::catalog::PropertyDataType;
+    use obrain_engine::catalog::PropertyDataType;
 
     // LIST<STRING> should parse from type name
     let t = PropertyDataType::from_type_name("LIST<STRING>");
@@ -2637,7 +2637,7 @@ fn test_property_data_type_typed_list() {
 
 #[test]
 fn test_property_data_type_node_edge() {
-    use grafeo_engine::catalog::PropertyDataType;
+    use obrain_engine::catalog::PropertyDataType;
 
     let node_type = PropertyDataType::from_type_name("NODE");
     assert_eq!(node_type.to_string(), "NODE");
@@ -2653,7 +2653,7 @@ fn test_property_data_type_node_edge() {
 
 #[test]
 fn test_nested_transaction_commit() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     // Outer transaction
@@ -2684,7 +2684,7 @@ fn test_nested_transaction_commit() {
 
 #[test]
 fn test_nested_transaction_rollback() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     // Outer transaction
@@ -2712,7 +2712,7 @@ fn test_nested_transaction_rollback() {
 
 #[test]
 fn test_nested_transaction_double_nesting() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session.begin_transaction().unwrap();
@@ -2861,7 +2861,7 @@ fn test_is_not_null_on_list() {
 
 #[test]
 fn test_percentile_cont_boundaries() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.begin_transaction().unwrap();
     session
@@ -2895,7 +2895,7 @@ fn test_percentile_cont_boundaries() {
 
 #[test]
 fn test_percentile_disc() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.begin_transaction().unwrap();
     session
@@ -2916,7 +2916,7 @@ fn test_percentile_disc() {
 
 #[test]
 fn test_stddev_single_value_returns_zero_or_null() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.begin_transaction().unwrap();
     session.execute("INSERT (:Val {x: 42})").unwrap();
@@ -2935,7 +2935,7 @@ fn test_stddev_single_value_returns_zero_or_null() {
 
 #[test]
 fn test_variance_empty_returns_null() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     // No Val nodes exist, so variance of empty set should be null
     let result = session
@@ -2972,7 +2972,7 @@ fn test_listagg_with_separator() {
 
 #[test]
 fn test_savepoint_without_transaction_fails() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
     // No active transaction, savepoint should fail
     let result = session.savepoint("sp1");
@@ -2981,7 +2981,7 @@ fn test_savepoint_without_transaction_fails() {
 
 #[test]
 fn test_rollback_to_nonexistent_savepoint_fails() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.begin_transaction().unwrap();
     let result = session.rollback_to_savepoint("nonexistent");
@@ -2991,7 +2991,7 @@ fn test_rollback_to_nonexistent_savepoint_fails() {
 
 #[test]
 fn test_release_nonexistent_savepoint_fails() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.begin_transaction().unwrap();
     let result = session.release_savepoint("nonexistent");
@@ -3001,7 +3001,7 @@ fn test_release_nonexistent_savepoint_fails() {
 
 #[test]
 fn test_savepoint_rollback_discards_mutations() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.begin_transaction().unwrap();
     session
@@ -3029,17 +3029,17 @@ fn test_savepoint_rollback_discards_mutations() {
 
 #[test]
 fn test_viewing_epoch_limits_visibility() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     // Verify viewing_epoch starts as None
     assert!(session.viewing_epoch().is_none());
 
     // Set and verify
-    session.set_viewing_epoch(grafeo_common::types::EpochId(1));
+    session.set_viewing_epoch(obrain_common::types::EpochId(1));
     assert_eq!(
         session.viewing_epoch(),
-        Some(grafeo_common::types::EpochId(1))
+        Some(obrain_common::types::EpochId(1))
     );
 
     // Clear and verify
@@ -3051,7 +3051,7 @@ fn test_viewing_epoch_limits_visibility() {
     session.execute("INSERT (:Marker {wave: 1})").unwrap();
     session.commit().unwrap();
 
-    session.set_viewing_epoch(grafeo_common::types::EpochId(1));
+    session.set_viewing_epoch(obrain_common::types::EpochId(1));
     // Query with viewing epoch set should not panic
     let result = session.execute("MATCH (m:Marker) RETURN count(m)").unwrap();
     assert!(!result.rows.is_empty());
@@ -3064,7 +3064,7 @@ fn test_viewing_epoch_limits_visibility() {
 
 #[test]
 fn test_delete_nonexistent_node_no_crash() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.begin_transaction().unwrap();
     // Deleting a node that doesn't exist should not panic
@@ -3075,7 +3075,7 @@ fn test_delete_nonexistent_node_no_crash() {
 
 #[test]
 fn test_remove_nonexistent_property_no_crash() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
     session.begin_transaction().unwrap();
     session.execute("INSERT (:Thing {name: 'test'})").unwrap();

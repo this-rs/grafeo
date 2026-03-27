@@ -15,8 +15,8 @@ use crate::query::plan::{
     BinaryOp, JoinOp, JoinType, LogicalExpression, LogicalOperator, LogicalPlan, ProjectOp,
     Projection, TripleComponent, TripleScanOp,
 };
-use grafeo_adapters::query::graphql::{self, ast};
-use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
+use obrain_adapters::query::graphql::{self, ast};
+use obrain_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
 use std::collections::HashMap;
 
 /// RDF namespace constants.

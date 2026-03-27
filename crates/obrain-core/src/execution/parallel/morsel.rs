@@ -3,7 +3,7 @@
 //! A morsel represents a chunk of work (rows) to be processed by a worker thread.
 //! Morsels are larger than DataChunks (64K vs 2K rows) to amortize scheduling overhead.
 
-use grafeo_common::memory::buffer::PressureLevel;
+use obrain_common::memory::buffer::PressureLevel;
 
 /// Default morsel size (64K rows).
 ///

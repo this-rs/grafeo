@@ -11,7 +11,7 @@ use indexmap::IndexMap;
 use std::collections::HashSet;
 
 use arcstr::ArcStr;
-use grafeo_common::types::{LogicalType, Value};
+use obrain_common::types::{LogicalType, Value};
 
 use super::accumulator::{AggregateExpr, AggregateFunction, HashableValue};
 use super::{Operator, OperatorError, OperatorResult};

@@ -1,6 +1,6 @@
 //! Structural Consolidation Engine — generic node merging via community detection.
 //!
-//! Uses Louvain/Leiden (from `grafeo-adapters`) to detect clusters of strongly
+//! Uses Louvain/Leiden (from `obrain-adapters`) to detect clusters of strongly
 //! connected nodes. Low-energy nodes within the same cluster are merged into a
 //! condensed node that inherits aggregated properties (max energy, union of
 //! labels, rewired synapses). `DERIVED_FROM` edges link condensed nodes back
@@ -12,9 +12,9 @@
 //! Applicable to any node type — not just Memory nodes — and configurable via
 //! an optional label filter.
 
-use grafeo_common::types::{EdgeId, NodeId, Value};
-use grafeo_common::utils::hash::FxHashMap;
-use grafeo_core::graph::{Direction, GraphStore, GraphStoreMut};
+use obrain_common::types::{EdgeId, NodeId, Value};
+use obrain_common::utils::hash::FxHashMap;
+use obrain_core::graph::{Direction, GraphStore, GraphStoreMut};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 // ---------------------------------------------------------------------------
@@ -147,7 +147,7 @@ impl ConsolidationEngine {
         energy_map: &FxHashMap<NodeId, f64>,
         pagerank_map: &FxHashMap<NodeId, f64>,
     ) -> ConsolidationResult {
-        use grafeo_adapters::plugins::algorithms::louvain;
+        use obrain_adapters::plugins::algorithms::louvain;
 
         // 1. Run Louvain community detection
         let louvain_result = louvain(store, self.config.louvain_resolution);
@@ -322,7 +322,7 @@ impl ConsolidationEngine {
         // Delete original nodes' non-DERIVED_FROM edges first
         // We collect edge IDs to delete to avoid mutating while iterating
         for &node_id in candidates {
-            let edges_to_delete: Vec<grafeo_common::types::EdgeId> = store
+            let edges_to_delete: Vec<obrain_common::types::EdgeId> = store
                 .edges_from(node_id, Direction::Outgoing)
                 .into_iter()
                 .map(|(_, eid)| eid)

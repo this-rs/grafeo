@@ -1,4 +1,4 @@
-//! Grafeo CLI - Command-line interface for Grafeo graph databases.
+//! Obrain CLI - Command-line interface for Obrain graph databases.
 //!
 //! Provides admin commands, single-shot query execution, and an interactive REPL.
 
@@ -18,22 +18,22 @@ use std::path::PathBuf;
 /// |------|---------|
 /// | 0 | Success |
 /// | 1 | General error (runtime, I/O, query) |
-/// | 2 | Validation failed (`grafeo validate`) |
+/// | 2 | Validation failed (`obrain validate`) |
 #[repr(u8)]
 enum ExitCode {
     /// Command completed normally.
     Success = 0,
     /// Runtime error, I/O failure, or query error.
     GeneralError = 1,
-    /// `grafeo validate` found integrity errors.
+    /// `obrain validate` found integrity errors.
     ValidationFailed = 2,
 }
 
-/// Grafeo graph database CLI.
+/// Obrain graph database CLI.
 ///
-/// Inspect, query, and maintain Grafeo graph databases from the command line.
+/// Inspect, query, and maintain Obrain graph databases from the command line.
 #[derive(Parser)]
-#[command(name = "grafeo")]
+#[command(name = "obrain")]
 #[command(author, version, about, long_about = None)]
 #[allow(clippy::struct_excessive_bools)]
 struct Cli {
@@ -368,7 +368,7 @@ fn main() {
             Ok(())
         }
         Commands::Completions { shell } => {
-            clap_complete::generate(shell, &mut Cli::command(), "grafeo", &mut std::io::stdout());
+            clap_complete::generate(shell, &mut Cli::command(), "obrain", &mut std::io::stdout());
             Ok(())
         }
     };

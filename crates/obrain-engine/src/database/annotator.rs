@@ -1,4 +1,4 @@
-//! EdgeAnnotator implementation for GrafeoDB.
+//! EdgeAnnotator implementation for ObrainDB.
 //!
 //! Stores f64 annotations on edges using a dedicated property namespace (`__ann:`).
 //! Annotations are persisted through the existing WAL and snapshot infrastructure
@@ -7,13 +7,13 @@
 //! This keeps the engine agnostic — it knows edges can carry f64 metadata,
 //! not that they're pheromones.
 
-use grafeo_cognitive::EdgeAnnotator;
-use grafeo_common::types::{EdgeId, Value};
+use obrain_cognitive::EdgeAnnotator;
+use obrain_common::types::{EdgeId, Value};
 
 /// Prefix for annotation properties. Keeps them separate from user properties.
 const ANNOTATION_PREFIX: &str = "__ann:";
 
-impl EdgeAnnotator for super::GrafeoDB {
+impl EdgeAnnotator for super::ObrainDB {
     /// Write an annotation on an edge. Persisted to WAL via `set_edge_property`.
     fn annotate(&self, edge: EdgeId, key: &str, value: f64) {
         let prop_key = format!("{ANNOTATION_PREFIX}{key}");
@@ -56,11 +56,11 @@ pub fn strip_annotation_prefix(key: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::GrafeoDB;
+    use crate::ObrainDB;
 
     #[test]
     fn test_edge_annotator_basic() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let a = db.create_node(&["A"]);
         let b = db.create_node(&["B"]);
         let edge = db.create_edge(a, b, "LINK");
@@ -89,7 +89,7 @@ mod tests {
 
     #[test]
     fn test_edge_annotator_nonexistent_edge() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         assert_eq!(db.get_annotation(EdgeId::new(999), "key"), None);
     }
 

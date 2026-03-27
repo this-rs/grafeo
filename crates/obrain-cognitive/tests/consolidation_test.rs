@@ -2,13 +2,13 @@
 
 #![cfg(feature = "consolidation")]
 
-use grafeo_cognitive::consolidation::{
+use obrain_cognitive::consolidation::{
     ConsolidationConfig, ConsolidationEngine, EDGE_DERIVED_FROM,
 };
-use grafeo_common::types::NodeId;
-use grafeo_common::utils::hash::FxHashMap;
-use grafeo_core::LpgStore;
-use grafeo_core::graph::Direction;
+use obrain_common::types::NodeId;
+use obrain_common::utils::hash::FxHashMap;
+use obrain_core::LpgStore;
+use obrain_core::graph::Direction;
 
 // ---------------------------------------------------------------------------
 // Helpers

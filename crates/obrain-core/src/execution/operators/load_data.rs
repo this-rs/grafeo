@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use super::{Operator, OperatorError, OperatorResult};
 use crate::execution::chunk::DataChunkBuilder;
-use grafeo_common::types::{ArcStr, LogicalType, PropertyKey, Value};
+use obrain_common::types::{ArcStr, LogicalType, PropertyKey, Value};
 
 /// File format for the load data operator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -403,7 +403,7 @@ fn parse_csv_row(line: &str, delimiter: u8) -> Vec<String> {
 // JSONL helpers
 // ============================================================================
 
-/// Converts a `serde_json::Value` to a `grafeo_common::types::Value`.
+/// Converts a `serde_json::Value` to a `obrain_common::types::Value`.
 #[cfg(feature = "jsonl-import")]
 fn json_to_value(json: &serde_json::Value) -> Value {
     match json {

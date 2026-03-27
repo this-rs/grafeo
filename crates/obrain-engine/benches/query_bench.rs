@@ -1,19 +1,19 @@
-//! End-to-end query benchmarks for the Grafeo engine.
+//! End-to-end query benchmarks for the Obrain engine.
 //!
 //! Measures full query execution time from query string to result,
 //! covering parsing, planning, optimization, and execution.
 //!
-//! Run with: cargo bench -p grafeo-engine
-//! RDF benchmarks require: cargo bench -p grafeo-engine --all-features
+//! Run with: cargo bench -p obrain-engine
+//! RDF benchmarks require: cargo bench -p obrain-engine --all-features
 
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 
-use grafeo_engine::GrafeoDB;
+use obrain_engine::ObrainDB;
 #[cfg(all(feature = "sparql", feature = "rdf"))]
 use {
-    grafeo_engine::{Config, GraphModel},
+    obrain_engine::{Config, GraphModel},
     std::fmt::Write,
 };
 
@@ -23,8 +23,8 @@ use {
 
 /// Sets up a small social graph for benchmarking.
 /// Returns the database instance ready for queries.
-fn setup_social_graph(node_count: usize, edge_multiplier: usize) -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn setup_social_graph(node_count: usize, edge_multiplier: usize) -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // Create Person nodes with properties
@@ -141,7 +141,7 @@ fn bench_fan_out_expand_1k(c: &mut Criterion) {
 }
 
 fn bench_insert_single_node(c: &mut Criterion) {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let mut counter = 0u64;
@@ -171,8 +171,8 @@ criterion_group!(
 // ============================================================================
 
 #[cfg(all(feature = "sparql", feature = "rdf"))]
-fn setup_rdf_social_graph(person_count: usize, edge_multiplier: usize) -> GrafeoDB {
-    let db = GrafeoDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
+fn setup_rdf_social_graph(person_count: usize, edge_multiplier: usize) -> ObrainDB {
+    let db = ObrainDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
     let session = db.session();
 
     // Batch insert persons with name and age
@@ -365,7 +365,7 @@ fn bench_rdf_filter(c: &mut Criterion) {
 /// Insert single triple.
 #[cfg(all(feature = "sparql", feature = "rdf"))]
 fn bench_rdf_insert_single(c: &mut Criterion) {
-    let db = GrafeoDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
+    let db = ObrainDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
     let session = db.session();
 
     let mut counter = 0u64;
@@ -387,8 +387,8 @@ fn bench_rdf_insert_single(c: &mut Criterion) {
 
 /// Sets up a 10K triple dataset with diverse predicates for join benchmarks.
 #[cfg(all(feature = "sparql", feature = "rdf"))]
-fn setup_rdf_join_dataset(person_count: usize) -> GrafeoDB {
-    let db = GrafeoDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
+fn setup_rdf_join_dataset(person_count: usize) -> ObrainDB {
+    let db = ObrainDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap();
     let session = db.session();
 
     let mut triples = String::from("INSERT DATA {\n");

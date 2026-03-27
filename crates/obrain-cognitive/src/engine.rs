@@ -29,8 +29,8 @@ use crate::fabric::{FabricListener, FabricStore};
 use crate::co_change::{CoChangeConfig, CoChangeDetector, CoChangeStore};
 
 use crate::tenant::TenantManager;
-use grafeo_core::graph::GraphStoreMut;
-use grafeo_reactive::Scheduler;
+use obrain_core::graph::GraphStoreMut;
+use obrain_reactive::Scheduler;
 
 // ---------------------------------------------------------------------------
 // CognitiveEngine trait
@@ -234,7 +234,7 @@ impl std::fmt::Debug for DefaultCognitiveEngine {
 /// Builder for [`DefaultCognitiveEngine`].
 ///
 /// Allows selective activation of cognitive subsystems. When [`build`](Self::build)
-/// is called, the corresponding [`MutationListener`](grafeo_reactive::MutationListener)s
+/// is called, the corresponding [`MutationListener`](obrain_reactive::MutationListener)s
 /// are registered with the provided [`Scheduler`].
 ///
 /// # Example

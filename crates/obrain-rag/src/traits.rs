@@ -7,7 +7,7 @@
 
 use crate::config::RagConfig;
 use crate::error::RagResult;
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 use std::collections::HashMap;
 
 /// A node retrieved by the RAG pipeline, with its activation score

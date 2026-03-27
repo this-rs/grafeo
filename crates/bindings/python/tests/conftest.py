@@ -1,4 +1,4 @@
-"""Root pytest fixtures for Grafeo Python tests.
+"""Root pytest fixtures for Obrain Python tests.
 
 This module provides common fixtures available to all test modules.
 """
@@ -15,13 +15,13 @@ import random  # noqa: E402
 
 import pytest  # noqa: E402
 
-# Try to import grafeo
+# Try to import obrain
 try:
-    import grafeo
+    import obrain
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
 
 # Import fixtures from fixtures module
@@ -40,10 +40,10 @@ except ImportError:
 
 @pytest.fixture
 def db():
-    """Create a fresh in-memory GrafeoDB instance."""
-    if not GRAFEO_AVAILABLE:
-        pytest.skip("grafeo not installed")
-    return grafeo.GrafeoDB()
+    """Create a fresh in-memory ObrainDB instance."""
+    if not OBRAIN_AVAILABLE:
+        pytest.skip("obrain not installed")
+    return obrain.ObrainDB()
 
 
 @pytest.fixture
@@ -77,8 +77,8 @@ def social_graph(db):
 
     Creates 50 Person nodes with KNOWS edges.
     """
-    if not GRAFEO_AVAILABLE:
-        pytest.skip("grafeo not installed")
+    if not OBRAIN_AVAILABLE:
+        pytest.skip("obrain not installed")
 
     try:
         return create_social_graph(db, size=50)
@@ -95,8 +95,8 @@ def pattern_graph(db):
 
     Creates Person and Company nodes with various relationships.
     """
-    if not GRAFEO_AVAILABLE:
-        pytest.skip("grafeo not installed")
+    if not OBRAIN_AVAILABLE:
+        pytest.skip("obrain not installed")
 
     # Create Person nodes
     alix = db.create_node(["Person"], {"name": "Alix", "age": 30, "city": "NYC"})

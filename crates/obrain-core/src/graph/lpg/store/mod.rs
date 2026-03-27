@@ -1,7 +1,7 @@
 //! The in-memory LPG graph store.
 //!
 //! This is where your nodes and edges actually live. Most users interact
-//! through [`GrafeoDB`](grafeo_engine::GrafeoDB), but algorithm implementers
+//! through [`ObrainDB`](obrain_engine::ObrainDB), but algorithm implementers
 //! sometimes need the raw [`LpgStore`] for direct adjacency traversal.
 //!
 //! Key features:
@@ -32,11 +32,11 @@ use crate::statistics::Statistics;
 use arcstr::ArcStr;
 use dashmap::DashMap;
 #[cfg(not(feature = "tiered-storage"))]
-use grafeo_common::mvcc::VersionChain;
-use grafeo_common::types::{
+use obrain_common::mvcc::VersionChain;
+use obrain_common::types::{
     EdgeId, EpochId, HashableValue, NodeId, PropertyKey, TransactionId, Value,
 };
-use grafeo_common::utils::hash::{FxHashMap, FxHashSet};
+use obrain_common::utils::hash::{FxHashMap, FxHashSet};
 use parking_lot::RwLock;
 use std::cmp::Ordering as CmpOrdering;
 use std::sync::Arc;
@@ -47,13 +47,13 @@ use crate::index::vector::HnswIndex;
 
 #[cfg(feature = "tiered-storage")]
 use crate::storage::EpochStore;
-use grafeo_common::memory::arena::AllocError;
+use obrain_common::memory::arena::AllocError;
 #[cfg(feature = "tiered-storage")]
-use grafeo_common::memory::arena::ArenaAllocator;
+use obrain_common::memory::arena::ArenaAllocator;
 #[cfg(feature = "tiered-storage")]
-use grafeo_common::mvcc::VersionIndex;
+use obrain_common::mvcc::VersionIndex;
 #[cfg(feature = "temporal")]
-use grafeo_common::temporal::VersionLog;
+use obrain_common::temporal::VersionLog;
 
 /// Undo entry for a property mutation within a transaction.
 ///
@@ -194,15 +194,15 @@ impl Default for LpgStoreConfig {
 /// Everything lives here: nodes, edges, properties, adjacency indexes, and
 /// version chains for MVCC. Concurrent reads never block each other.
 ///
-/// Most users should go through `GrafeoDB` (from the `grafeo_engine` crate) which
+/// Most users should go through `ObrainDB` (from the `obrain_engine` crate) which
 /// adds transaction management and query execution. Use `LpgStore` directly
 /// when you need raw performance for algorithm implementations.
 ///
 /// # Example
 ///
 /// ```
-/// use grafeo_core::graph::lpg::LpgStore;
-/// use grafeo_core::graph::Direction;
+/// use obrain_core::graph::lpg::LpgStore;
+/// use obrain_core::graph::Direction;
 ///
 /// let store = LpgStore::new().expect("arena allocation");
 ///
@@ -346,14 +346,14 @@ pub struct LpgStore {
 
     /// Vector indexes: "label:property" -> HNSW index.
     ///
-    /// Created via [`GrafeoDB::create_vector_index`](grafeo_engine::GrafeoDB::create_vector_index).
+    /// Created via [`ObrainDB::create_vector_index`](obrain_engine::ObrainDB::create_vector_index).
     /// Lock order: 7 (same level as property_indexes, disjoint keys)
     #[cfg(feature = "vector-index")]
     pub(super) vector_indexes: RwLock<FxHashMap<String, Arc<HnswIndex>>>,
 
     /// Text indexes: "label:property" -> inverted index with BM25 scoring.
     ///
-    /// Created via [`GrafeoDB::create_text_index`](grafeo_engine::GrafeoDB::create_text_index).
+    /// Created via [`ObrainDB::create_text_index`](obrain_engine::ObrainDB::create_text_index).
     /// Lock order: 7 (same level as property_indexes, disjoint keys)
     #[cfg(feature = "text-index")]
     pub(super) text_indexes:

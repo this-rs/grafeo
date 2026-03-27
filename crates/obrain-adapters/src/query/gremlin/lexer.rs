@@ -5,7 +5,7 @@
 use std::iter::Peekable;
 use std::str::Chars;
 
-use grafeo_common::utils::error::SourceSpan;
+use obrain_common::utils::error::SourceSpan;
 
 /// Token types for Gremlin.
 #[derive(Debug, Clone, PartialEq)]

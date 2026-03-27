@@ -3,14 +3,14 @@
 //! Demonstrates co-change detection on sensor events and stagnation
 //! alerting on inactive sensors using a cognitive graph model.
 //!
-//! Run with: `cargo run -p grafeo-examples --bin iot_stream`
+//! Run with: `cargo run -p obrain-examples --bin iot_stream`
 
-use grafeo::{GrafeoDB, NodeId};
+use obrain::{ObrainDB, NodeId};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== IoT Event Stream — Cognitive Graph Example ===\n");
 
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // ── Build sensor network ──────────────────────────────────────
@@ -196,7 +196,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n── Critical Sensors (Betweenness Centrality) ──");
 
-    let result = session.execute("CALL grafeo.betweenness_centrality()")?;
+    let result = session.execute("CALL obrain.betweenness_centrality()")?;
     let mut centrality: Vec<_> = result
         .iter()
         .map(|row| {
@@ -223,7 +223,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // clusters — useful for automated alert correlation.
 
     println!("\n── Sensor Communities (Louvain) ──");
-    let result = session.execute("CALL grafeo.louvain()")?;
+    let result = session.execute("CALL obrain.louvain()")?;
 
     let mut communities: std::collections::HashMap<i64, Vec<String>> =
         std::collections::HashMap::new();
@@ -294,7 +294,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Look up a sensor's ID by raw node ID from CALL procedure results.
-fn get_sensor_id(db: &GrafeoDB, raw_id: i64) -> String {
+fn get_sensor_id(db: &ObrainDB, raw_id: i64) -> String {
     let node_id = NodeId::from(raw_id as u64);
     db.get_node(node_id)
         .and_then(|n| {

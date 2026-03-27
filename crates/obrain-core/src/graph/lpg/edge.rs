@@ -4,7 +4,7 @@
 //! [`EdgeRecord`] is the compact storage format.
 
 use arcstr::ArcStr;
-use grafeo_common::types::{EdgeId, EpochId, NodeId, PropertyKey, PropertyMap, Value};
+use obrain_common::types::{EdgeId, EpochId, NodeId, PropertyKey, PropertyMap, Value};
 use serde::{Deserialize, Serialize};
 
 /// A relationship between two nodes, with a type and optional properties.
@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 /// # Example
 ///
 /// ```
-/// use grafeo_core::graph::lpg::Edge;
-/// use grafeo_common::types::{EdgeId, NodeId};
+/// use obrain_core::graph::lpg::Edge;
+/// use obrain_common::types::{EdgeId, NodeId};
 ///
 /// let mut works_at = Edge::new(
 ///     EdgeId::new(1),

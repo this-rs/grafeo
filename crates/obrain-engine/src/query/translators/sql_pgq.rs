@@ -14,9 +14,9 @@ use crate::query::plan::{
     ProcedureYield, PropertyGraphEdgeTable, PropertyGraphNodeTable, ReturnItem, SortKey, SortOrder,
     UnaryOp,
 };
-use grafeo_adapters::query::sql_pgq::{self, ast};
-use grafeo_common::types::Value;
-use grafeo_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
+use obrain_adapters::query::sql_pgq::{self, ast};
+use obrain_common::types::Value;
+use obrain_common::utils::error::{Error, QueryError, QueryErrorKind, Result};
 
 /// Translates a SQL/PGQ query string to a logical plan.
 pub fn translate(query: &str) -> Result<LogicalPlan> {
@@ -716,19 +716,19 @@ impl SqlPgqTranslator {
             ast::Literal::Integer(i) => Value::Int64(*i),
             ast::Literal::Float(f) => Value::Float64(*f),
             ast::Literal::String(s) => Value::from(s.as_str()),
-            ast::Literal::Date(s) => grafeo_common::types::Date::parse(s)
+            ast::Literal::Date(s) => obrain_common::types::Date::parse(s)
                 .map_or_else(|| Value::from(s.as_str()), Value::Date),
-            ast::Literal::Time(s) => grafeo_common::types::Time::parse(s)
+            ast::Literal::Time(s) => obrain_common::types::Time::parse(s)
                 .map_or_else(|| Value::from(s.as_str()), Value::Time),
-            ast::Literal::Duration(s) => grafeo_common::types::Duration::parse(s)
+            ast::Literal::Duration(s) => obrain_common::types::Duration::parse(s)
                 .map_or_else(|| Value::from(s.as_str()), Value::Duration),
             ast::Literal::Datetime(s) => {
                 if let Some(pos) = s.find('T') {
                     if let (Some(d), Some(t)) = (
-                        grafeo_common::types::Date::parse(&s[..pos]),
-                        grafeo_common::types::Time::parse(&s[pos + 1..]),
+                        obrain_common::types::Date::parse(&s[..pos]),
+                        obrain_common::types::Time::parse(&s[pos + 1..]),
                     ) {
-                        Value::Timestamp(grafeo_common::types::Timestamp::from_date_time(d, t))
+                        Value::Timestamp(obrain_common::types::Timestamp::from_date_time(d, t))
                     } else {
                         Value::from(s.as_str())
                     }
@@ -736,10 +736,10 @@ impl SqlPgqTranslator {
                     Value::from(s.as_str())
                 }
             }
-            ast::Literal::ZonedDatetime(s) => grafeo_common::types::ZonedDatetime::parse(s)
+            ast::Literal::ZonedDatetime(s) => obrain_common::types::ZonedDatetime::parse(s)
                 .map_or_else(|| Value::from(s.as_str()), Value::ZonedDatetime),
             ast::Literal::ZonedTime(s) => {
-                if let Some(t) = grafeo_common::types::Time::parse(s)
+                if let Some(t) = obrain_common::types::Time::parse(s)
                     && t.offset_seconds().is_some()
                 {
                     Value::Time(t)

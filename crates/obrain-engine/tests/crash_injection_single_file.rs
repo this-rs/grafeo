@@ -1,17 +1,17 @@
-//! Crash injection tests for the single-file `.grafeo` format.
+//! Crash injection tests for the single-file `.obrain` format.
 //!
 //! These tests simulate crashes at deterministic points during checkpoint and
 //! verify that the database recovers correctly on the next open.
 //!
-//! Requires both `grafeo-file` and `testing-crash-injection` features.
+//! Requires both `obrain-file` and `testing-crash-injection` features.
 
-#![cfg(all(feature = "grafeo-file", feature = "testing-crash-injection"))]
+#![cfg(all(feature = "obrain-file", feature = "testing-crash-injection"))]
 
 use std::panic::AssertUnwindSafe;
 
-use grafeo_common::types::Value;
-use grafeo_core::testing::crash::{CrashResult, with_crash_at};
-use grafeo_engine::{Config, GrafeoDB};
+use obrain_common::types::Value;
+use obrain_core::testing::crash::{CrashResult, with_crash_at};
+use obrain_engine::{Config, ObrainDB};
 
 /// Helper: extract sorted string values from column 0 of query result rows.
 fn extract_strings(rows: &[Vec<Value>]) -> Vec<String> {
@@ -44,11 +44,11 @@ fn crash_during_close_checkpoint_preserves_data_via_sidecar_wal() {
 
     for crash_point in 1..=8 {
         let dir = tempfile::TempDir::new().unwrap();
-        let path = dir.path().join("crash_test.grafeo");
+        let path = dir.path().join("crash_test.obrain");
 
         // Phase 1: Create and populate
         {
-            let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+            let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
             let session = db.session();
             session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
             session.execute("INSERT (:Person {name: 'Gus'})").unwrap();
@@ -74,14 +74,14 @@ fn crash_during_close_checkpoint_preserves_data_via_sidecar_wal() {
                 }
                 CrashResult::Completed(()) => {
                     // Close completed: the crash point was past all crash
-                    // injection calls. Data should be in the .grafeo file.
+                    // injection calls. Data should be in the .obrain file.
                 }
             }
         }
 
         // Phase 2: Reopen and verify data survived
         if path.exists() {
-            let db = GrafeoDB::open(&path).unwrap();
+            let db = ObrainDB::open(&path).unwrap();
             let session = db.session();
 
             let result = session.execute("MATCH (p:Person) RETURN p.name").unwrap();
@@ -111,10 +111,10 @@ fn crash_during_close_checkpoint_preserves_data_via_sidecar_wal() {
 fn crash_during_wal_checkpoint_leaves_db_usable() {
     for crash_point in 1..=8 {
         let dir = tempfile::TempDir::new().unwrap();
-        let path = dir.path().join("wal_crash.grafeo");
+        let path = dir.path().join("wal_crash.obrain");
 
         // Create and populate
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         let session = db.session();
         session
             .execute("INSERT (:City {name: 'Amsterdam'})")
@@ -142,7 +142,7 @@ fn crash_during_wal_checkpoint_leaves_db_usable() {
 
         // Reopen: data should survive via sidecar WAL replay
         if path.exists() {
-            let db2 = GrafeoDB::open(&path).unwrap();
+            let db2 = ObrainDB::open(&path).unwrap();
             let session2 = db2.session();
 
             let result = session2.execute("MATCH (c:City) RETURN c.name").unwrap();
@@ -165,11 +165,11 @@ fn crash_during_wal_checkpoint_leaves_db_usable() {
 #[test]
 fn crash_after_successful_checkpoint_with_new_writes() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("incremental.grafeo");
+    let path = dir.path().join("incremental.obrain");
 
     // Phase 1: Create, populate, and successfully checkpoint
     {
-        let db = GrafeoDB::with_config(Config::persistent(&path)).unwrap();
+        let db = ObrainDB::with_config(Config::persistent(&path)).unwrap();
         let session = db.session();
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
         db.wal_checkpoint().unwrap();
@@ -186,7 +186,7 @@ fn crash_after_successful_checkpoint_with_new_writes() {
 
     // Reopen: at minimum, pre-checkpoint data should survive.
     // If sidecar WAL was written before crash, post-checkpoint data may also survive.
-    let db = GrafeoDB::open(&path).unwrap();
+    let db = ObrainDB::open(&path).unwrap();
     let session = db.session();
 
     let result = session.execute("MATCH (p:Person) RETURN p.name").unwrap();
@@ -208,16 +208,16 @@ fn crash_after_successful_checkpoint_with_new_writes() {
 #[test]
 fn repeated_crash_recovery_cycles() {
     let dir = tempfile::TempDir::new().unwrap();
-    let path = dir.path().join("cycles.grafeo");
+    let path = dir.path().join("cycles.obrain");
 
     let people = ["Alix", "Gus", "Vincent", "Jules", "Mia"];
 
     for (i, name) in people.iter().enumerate() {
         // Open (or create on first iteration)
         let db = if i == 0 {
-            GrafeoDB::with_config(Config::persistent(&path)).unwrap()
+            ObrainDB::with_config(Config::persistent(&path)).unwrap()
         } else {
-            GrafeoDB::open(&path).unwrap()
+            ObrainDB::open(&path).unwrap()
         };
 
         let session = db.session();
@@ -237,7 +237,7 @@ fn repeated_crash_recovery_cycles() {
     }
 
     // Final verification
-    let db = GrafeoDB::open(&path).unwrap();
+    let db = ObrainDB::open(&path).unwrap();
     let count = db.node_count();
     // At minimum the cleanly-closed sessions' data should persist
     assert!(count >= 3, "expected at least 3 nodes, got {count}");

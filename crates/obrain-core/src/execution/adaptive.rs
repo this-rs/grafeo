@@ -28,7 +28,7 @@
 //! # Example
 //!
 //! ```rust
-//! use grafeo_core::execution::adaptive::{AdaptiveContext, CardinalityCheckpoint};
+//! use obrain_core::execution::adaptive::{AdaptiveContext, CardinalityCheckpoint};
 //!
 //! // Set up adaptive context with estimated cardinalities
 //! let mut ctx = AdaptiveContext::new();
@@ -1029,8 +1029,8 @@ use super::source::OperatorSource;
 /// # Example
 ///
 /// ```no_run
-/// # use grafeo_core::execution::adaptive::{AdaptiveContext, AdaptivePipelineExecutor};
-/// # use grafeo_core::execution::operators::Operator;
+/// # use obrain_core::execution::adaptive::{AdaptiveContext, AdaptivePipelineExecutor};
+/// # use obrain_core::execution::operators::Operator;
 /// # fn example(operator: Box<dyn Operator>, adaptive_context: AdaptiveContext) -> Result<(), Box<dyn std::error::Error>> {
 /// let executor = AdaptivePipelineExecutor::new(operator, adaptive_context);
 /// let (chunks, summary) = executor.execute()?;

@@ -1,8 +1,8 @@
-//! Integration tests for RDF support in grafeo-core.
+//! Integration tests for RDF support in obrain-core.
 
 #[cfg(feature = "rdf")]
 mod statistics_tests {
-    use grafeo_core::statistics::{RdfStatistics, RdfStatisticsCollector};
+    use obrain_core::statistics::{RdfStatistics, RdfStatisticsCollector};
 
     #[test]
     fn test_empty_statistics() {
@@ -93,9 +93,9 @@ mod statistics_tests {
 
 #[cfg(feature = "rdf")]
 mod parallel_tests {
-    use grafeo_common::types::Value;
-    use grafeo_core::execution::parallel::{Morsel, ParallelSource, ParallelTripleScanSource};
-    use grafeo_core::execution::pipeline::Source;
+    use obrain_common::types::Value;
+    use obrain_core::execution::parallel::{Morsel, ParallelSource, ParallelTripleScanSource};
+    use obrain_core::execution::pipeline::Source;
 
     #[test]
     fn test_parallel_triple_source_creation() {

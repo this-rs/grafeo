@@ -20,7 +20,7 @@ use crate::execution::factorized_chunk::FactorizedChunk;
 use crate::execution::vector::ValueVector;
 use crate::graph::Direction;
 use crate::graph::GraphStore;
-use grafeo_common::types::{EdgeId, EpochId, LogicalType, NodeId, TransactionId};
+use obrain_common::types::{EdgeId, EpochId, LogicalType, NodeId, TransactionId};
 
 /// Result type for factorized operations.
 pub type FactorizedResult = Result<Option<FactorizedChunk>, OperatorError>;

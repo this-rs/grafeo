@@ -4,7 +4,7 @@ use super::{Operator, OperatorError, OperatorResult};
 use crate::execution::DataChunk;
 use crate::graph::Direction;
 use crate::graph::GraphStore;
-use grafeo_common::types::{EdgeId, EpochId, LogicalType, NodeId, TransactionId};
+use obrain_common::types::{EdgeId, EpochId, LogicalType, NodeId, TransactionId};
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -80,7 +80,7 @@ struct InputRow {
 enum ColumnValue {
     NodeId(NodeId),
     EdgeId(EdgeId),
-    Value(grafeo_common::types::Value),
+    Value(obrain_common::types::Value),
 }
 
 /// A ready output row.
@@ -276,7 +276,7 @@ impl VariableLengthExpandOperator {
                     } else if let Some(val) = col.get_value(row_idx) {
                         ColumnValue::Value(val)
                     } else {
-                        ColumnValue::Value(grafeo_common::types::Value::Null)
+                        ColumnValue::Value(obrain_common::types::Value::Null)
                     };
                     columns.push(value);
                 }
@@ -550,7 +550,7 @@ impl Operator for VariableLengthExpandOperator {
             if self.output_path_length
                 && let Some(col) = chunk.column_mut(num_input_cols + 2)
             {
-                col.push_value(grafeo_common::types::Value::Int64(i64::from(
+                col.push_value(obrain_common::types::Value::Int64(i64::from(
                     out_row.path_length,
                 )));
             }
@@ -561,45 +561,45 @@ impl Operator for VariableLengthExpandOperator {
 
                 // Path nodes column
                 if let Some(col) = chunk.column_mut(base) {
-                    let nodes_list: Vec<grafeo_common::types::Value> = out_row
+                    let nodes_list: Vec<obrain_common::types::Value> = out_row
                         .path_nodes
                         .as_deref()
                         .unwrap_or(&[])
                         .iter()
-                        .map(|id| grafeo_common::types::Value::Int64(id.0 as i64))
+                        .map(|id| obrain_common::types::Value::Int64(id.0 as i64))
                         .collect();
-                    col.push_value(grafeo_common::types::Value::List(nodes_list.into()));
+                    col.push_value(obrain_common::types::Value::List(nodes_list.into()));
                 }
 
                 // Path edges column
                 if let Some(col) = chunk.column_mut(base + 1) {
-                    let edges_list: Vec<grafeo_common::types::Value> = out_row
+                    let edges_list: Vec<obrain_common::types::Value> = out_row
                         .path_edges
                         .as_deref()
                         .unwrap_or(&[])
                         .iter()
-                        .map(|id| grafeo_common::types::Value::Int64(id.0 as i64))
+                        .map(|id| obrain_common::types::Value::Int64(id.0 as i64))
                         .collect();
-                    col.push_value(grafeo_common::types::Value::List(edges_list.into()));
+                    col.push_value(obrain_common::types::Value::List(edges_list.into()));
                 }
 
                 // Value::Path column (first-class path value)
                 if let Some(col) = chunk.column_mut(base + 2) {
-                    let nodes: Vec<grafeo_common::types::Value> = out_row
+                    let nodes: Vec<obrain_common::types::Value> = out_row
                         .path_nodes
                         .as_deref()
                         .unwrap_or(&[])
                         .iter()
-                        .map(|id| grafeo_common::types::Value::Int64(id.0 as i64))
+                        .map(|id| obrain_common::types::Value::Int64(id.0 as i64))
                         .collect();
-                    let edges: Vec<grafeo_common::types::Value> = out_row
+                    let edges: Vec<obrain_common::types::Value> = out_row
                         .path_edges
                         .as_deref()
                         .unwrap_or(&[])
                         .iter()
-                        .map(|id| grafeo_common::types::Value::Int64(id.0 as i64))
+                        .map(|id| obrain_common::types::Value::Int64(id.0 as i64))
                         .collect();
-                    col.push_value(grafeo_common::types::Value::Path {
+                    col.push_value(obrain_common::types::Value::Path {
                         nodes: nodes.into(),
                         edges: edges.into(),
                     });

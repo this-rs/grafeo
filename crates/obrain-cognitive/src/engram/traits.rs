@@ -1,11 +1,11 @@
 //! Cognitive trait contract — the 5 traits that define the boundary between
 //! the graph engine and the cognitive layer.
 //!
-//! These traits follow Option C architecture: `grafeo-cognitive` is an independent
+//! These traits follow Option C architecture: `obrain-cognitive` is an independent
 //! crate that depends *only* on these traits, not on the engine internals.
 //! The engine provides implementations via wrapper types.
 
-use grafeo_common::types::{EdgeId, NodeId, Value};
+use obrain_common::types::{EdgeId, NodeId, Value};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -15,7 +15,7 @@ use std::time::Duration;
 
 /// Observer for query execution events.
 ///
-/// MutationObserver is already covered by `grafeo_reactive::MutationListener`.
+/// MutationObserver is already covered by `obrain_reactive::MutationListener`.
 /// This trait captures the *read* side: what queries are executed, what paths
 /// are traversed, enabling the cognitive layer to track query patterns.
 pub trait QueryObserver: Send + Sync {

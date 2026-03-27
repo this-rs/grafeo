@@ -1,12 +1,12 @@
 //! Built-in procedure registry for CALL statement execution.
 //!
 //! Maps procedure names to [`GraphAlgorithm`] implementations, enabling
-//! `CALL grafeo.pagerank({damping: 0.85}) YIELD nodeId, score` from any
+//! `CALL obrain.pagerank({damping: 0.85}) YIELD nodeId, score` from any
 //! supported query language (GQL, Cypher, SQL/PGQ).
 
 use std::sync::Arc;
 
-use grafeo_adapters::plugins::algorithms::{
+use obrain_adapters::plugins::algorithms::{
     ArticulationPointsAlgorithm, BellmanFordAlgorithm, BetweennessCentralityAlgorithm,
     BfsAlgorithm, BridgesAlgorithm, ClosenessCentralityAlgorithm, ClusteringCoefficientAlgorithm,
     ConnectedComponentsAlgorithm, DegreeCentralityAlgorithm, DfsAlgorithm, DijkstraAlgorithm,
@@ -16,9 +16,9 @@ use grafeo_adapters::plugins::algorithms::{
     PrimAlgorithm, ProjectionConfig, ProjectionRegistry, SsspAlgorithm,
     StronglyConnectedComponentsAlgorithm, TopKSimilarAlgorithm, TopologicalSortAlgorithm,
 };
-use grafeo_adapters::plugins::{AlgorithmResult, ParameterDef, Parameters};
-use grafeo_common::types::Value;
-use grafeo_common::utils::error::{Error, Result};
+use obrain_adapters::plugins::{AlgorithmResult, ParameterDef, Parameters};
+use obrain_common::types::Value;
+use obrain_common::utils::error::{Error, Result};
 use hashbrown::HashMap;
 
 use crate::query::plan::LogicalExpression;
@@ -95,8 +95,8 @@ impl BuiltinProcedures {
 
     /// Resolves a procedure name to its algorithm.
     ///
-    /// Strips `"grafeo."` prefix if present:
-    /// - `["grafeo", "pagerank"]` → looks up `"pagerank"`
+    /// Strips `"obrain."` prefix if present:
+    /// - `["obrain", "pagerank"]` → looks up `"pagerank"`
     /// - `["pagerank"]` → looks up `"pagerank"`
     pub fn get(&self, name: &[String]) -> Option<Arc<dyn GraphAlgorithm>> {
         let key = resolve_name(name);
@@ -109,7 +109,7 @@ impl BuiltinProcedures {
             .algorithms
             .values()
             .map(|algo| ProcedureInfo {
-                name: format!("grafeo.{}", algo.name()),
+                name: format!("obrain.{}", algo.name()),
                 description: algo.description().to_string(),
                 parameters: algo.parameters().to_vec(),
                 output_columns: output_columns_for(algo.as_ref()),
@@ -128,7 +128,7 @@ impl Default for BuiltinProcedures {
 
 /// Metadata about a registered procedure.
 pub struct ProcedureInfo {
-    /// Qualified name (e.g., `"grafeo.pagerank"`).
+    /// Qualified name (e.g., `"obrain.pagerank"`).
     pub name: String,
     /// Description of what the procedure does.
     pub description: String,
@@ -140,13 +140,13 @@ pub struct ProcedureInfo {
 
 /// Resolves a dotted procedure name to its lookup key.
 ///
-/// Strips the `"grafeo"` namespace prefix if present.
-/// Supports multi-level names like `["grafeo", "subgraph", "khop"]` → `"subgraph.khop"`.
+/// Strips the `"obrain"` namespace prefix if present.
+/// Supports multi-level names like `["obrain", "subgraph", "khop"]` → `"subgraph.khop"`.
 fn resolve_name(parts: &[String]) -> String {
     if parts.is_empty() {
         return String::new();
     }
-    if parts[0].eq_ignore_ascii_case("grafeo") && parts.len() > 1 {
+    if parts[0].eq_ignore_ascii_case("obrain") && parts.len() > 1 {
         parts[1..].join(".")
     } else {
         parts.join(".")
@@ -285,7 +285,7 @@ fn set_param_from_expression(params: &mut Parameters, name: &str, expr: &Logical
     }
 }
 
-/// Builds a `grafeo.procedures()` result listing all registered procedures.
+/// Builds a `obrain.procedures()` result listing all registered procedures.
 pub fn procedures_result(registry: &BuiltinProcedures) -> AlgorithmResult {
     let procedures = registry.list();
     let mut result = AlgorithmResult::new(vec![
@@ -337,9 +337,9 @@ pub fn projection_registry() -> &'static ProjectionRegistry {
 /// Checks if a procedure name matches a projection procedure and executes it.
 ///
 /// Handles:
-/// - `grafeo.projection.create(name, {node_labels: [...], edge_types: [...]})`
-/// - `grafeo.projection.drop(name)`
-/// - `grafeo.projection.list()`
+/// - `obrain.projection.create(name, {node_labels: [...], edge_types: [...]})`
+/// - `obrain.projection.drop(name)`
+/// - `obrain.projection.list()`
 ///
 /// Returns `Some(AlgorithmResult)` if the name matched, `None` otherwise.
 pub fn try_execute_projection_procedure(
@@ -347,15 +347,15 @@ pub fn try_execute_projection_procedure(
     arguments: &[LogicalExpression],
 ) -> Result<Option<AlgorithmResult>> {
     match resolved_name {
-        "grafeo.projection.create" | "projection.create" => {
+        "obrain.projection.create" | "projection.create" => {
             let result = execute_projection_create(arguments)?;
             Ok(Some(result))
         }
-        "grafeo.projection.drop" | "projection.drop" => {
+        "obrain.projection.drop" | "projection.drop" => {
             let result = execute_projection_drop(arguments)?;
             Ok(Some(result))
         }
-        "grafeo.projection.list" | "projection.list" => {
+        "obrain.projection.list" | "projection.list" => {
             let result = execute_projection_list();
             Ok(Some(result))
         }
@@ -363,7 +363,7 @@ pub fn try_execute_projection_procedure(
     }
 }
 
-/// `CALL grafeo.projection.create(name, {node_labels: [...], edge_types: [...]})`.
+/// `CALL obrain.projection.create(name, {node_labels: [...], edge_types: [...]})`.
 ///
 /// Creates a named projection in the global registry.
 fn execute_projection_create(arguments: &[LogicalExpression]) -> Result<AlgorithmResult> {
@@ -372,13 +372,13 @@ fn execute_projection_create(arguments: &[LogicalExpression]) -> Result<Algorith
         Some(LogicalExpression::Literal(Value::String(s))) => s.to_string(),
         Some(_) => {
             return Err(Error::Internal(
-                "grafeo.projection.create(): first argument must be a projection name (string)"
+                "obrain.projection.create(): first argument must be a projection name (string)"
                     .to_string(),
             ));
         }
         None => {
             return Err(Error::Internal(
-                "grafeo.projection.create(): requires at least 1 argument (name)".to_string(),
+                "obrain.projection.create(): requires at least 1 argument (name)".to_string(),
             ));
         }
     };
@@ -432,7 +432,7 @@ fn execute_projection_create(arguments: &[LogicalExpression]) -> Result<Algorith
     Ok(result)
 }
 
-/// `CALL grafeo.projection.drop(name)`.
+/// `CALL obrain.projection.drop(name)`.
 ///
 /// Removes a named projection from the global registry.
 fn execute_projection_drop(arguments: &[LogicalExpression]) -> Result<AlgorithmResult> {
@@ -440,13 +440,13 @@ fn execute_projection_drop(arguments: &[LogicalExpression]) -> Result<AlgorithmR
         Some(LogicalExpression::Literal(Value::String(s))) => s.to_string(),
         Some(_) => {
             return Err(Error::Internal(
-                "grafeo.projection.drop(): first argument must be a projection name (string)"
+                "obrain.projection.drop(): first argument must be a projection name (string)"
                     .to_string(),
             ));
         }
         None => {
             return Err(Error::Internal(
-                "grafeo.projection.drop(): requires 1 argument (name)".to_string(),
+                "obrain.projection.drop(): requires 1 argument (name)".to_string(),
             ));
         }
     };
@@ -462,7 +462,7 @@ fn execute_projection_drop(arguments: &[LogicalExpression]) -> Result<AlgorithmR
     Ok(result)
 }
 
-/// `CALL grafeo.projection.list()`.
+/// `CALL obrain.projection.list()`.
 ///
 /// Lists all named projections in the global registry.
 fn execute_projection_list() -> AlgorithmResult {
@@ -504,7 +504,7 @@ mod tests {
     #[test]
     fn test_resolve_with_namespace() {
         let registry = BuiltinProcedures::new();
-        let name = vec!["grafeo".to_string(), "pagerank".to_string()];
+        let name = vec!["obrain".to_string(), "pagerank".to_string()];
         assert!(registry.get(&name).is_some());
     }
 
@@ -518,7 +518,7 @@ mod tests {
     #[test]
     fn test_resolve_unknown() {
         let registry = BuiltinProcedures::new();
-        let name = vec!["grafeo".to_string(), "nonexistent".to_string()];
+        let name = vec!["obrain".to_string(), "nonexistent".to_string()];
         assert!(registry.get(&name).is_none());
     }
 
@@ -559,9 +559,9 @@ mod tests {
     #[test]
     fn test_khop_registered() {
         let registry = BuiltinProcedures::new();
-        // Resolve via dotted namespace: grafeo.subgraph.khop
+        // Resolve via dotted namespace: obrain.subgraph.khop
         let name = vec![
-            "grafeo".to_string(),
+            "obrain".to_string(),
             "subgraph".to_string(),
             "khop".to_string(),
         ];
@@ -577,17 +577,17 @@ mod tests {
         let algo = registry.get(&name);
         assert!(
             algo.is_some(),
-            "subgraph.khop should resolve without grafeo prefix"
+            "subgraph.khop should resolve without obrain prefix"
         );
     }
 
     #[test]
     fn test_khop_execute_via_registry() {
-        use grafeo_core::graph::lpg::LpgStore;
+        use obrain_core::graph::lpg::LpgStore;
 
         let registry = BuiltinProcedures::new();
         let name = vec![
-            "grafeo".to_string(),
+            "obrain".to_string(),
             "subgraph".to_string(),
             "khop".to_string(),
         ];
@@ -617,15 +617,15 @@ mod tests {
             list.len()
         );
         assert!(
-            list.iter().any(|p| p.name == "grafeo.subgraph.khop"),
-            "grafeo.subgraph.khop should be in the procedure list"
+            list.iter().any(|p| p.name == "obrain.subgraph.khop"),
+            "obrain.subgraph.khop should be in the procedure list"
         );
     }
 
     #[test]
     fn test_leiden_registered() {
         let registry = BuiltinProcedures::new();
-        let name = vec!["grafeo".to_string(), "leiden".to_string()];
+        let name = vec!["obrain".to_string(), "leiden".to_string()];
         let algo = registry.get(&name);
         assert!(algo.is_some(), "leiden should be registered");
         assert_eq!(algo.unwrap().name(), "leiden");
@@ -633,10 +633,10 @@ mod tests {
 
     #[test]
     fn test_leiden_execute_via_registry() {
-        use grafeo_core::graph::lpg::LpgStore;
+        use obrain_core::graph::lpg::LpgStore;
 
         let registry = BuiltinProcedures::new();
-        let name = vec!["grafeo".to_string(), "leiden".to_string()];
+        let name = vec!["obrain".to_string(), "leiden".to_string()];
         let algo = registry.get(&name).unwrap();
 
         let store = LpgStore::new().unwrap();
@@ -663,7 +663,7 @@ mod tests {
     #[test]
     fn test_leiden_output_columns() {
         let registry = BuiltinProcedures::new();
-        let name = vec!["grafeo".to_string(), "leiden".to_string()];
+        let name = vec!["obrain".to_string(), "leiden".to_string()];
         let algo = registry.get(&name).unwrap();
         let cols = output_columns_for(algo.as_ref());
         assert_eq!(cols, vec!["node_id", "community_id", "modularity"]);
@@ -680,7 +680,7 @@ mod tests {
     #[test]
     fn test_similarity_registered() {
         let registry = BuiltinProcedures::new();
-        let name = vec!["grafeo".to_string(), "similarity".to_string()];
+        let name = vec!["obrain".to_string(), "similarity".to_string()];
         let algo = registry.get(&name);
         assert!(algo.is_some(), "similarity should be registered");
         assert_eq!(algo.unwrap().name(), "similarity");
@@ -690,7 +690,7 @@ mod tests {
     fn test_similarity_topk_registered() {
         let registry = BuiltinProcedures::new();
         let name = vec![
-            "grafeo".to_string(),
+            "obrain".to_string(),
             "similarity".to_string(),
             "topk".to_string(),
         ];
@@ -701,10 +701,10 @@ mod tests {
 
     #[test]
     fn test_similarity_execute_via_registry() {
-        use grafeo_core::graph::lpg::LpgStore;
+        use obrain_core::graph::lpg::LpgStore;
 
         let registry = BuiltinProcedures::new();
-        let name = vec!["grafeo".to_string(), "similarity".to_string()];
+        let name = vec!["obrain".to_string(), "similarity".to_string()];
         let algo = registry.get(&name).unwrap();
 
         let store = LpgStore::new().unwrap();
@@ -733,11 +733,11 @@ mod tests {
 
     #[test]
     fn test_similarity_topk_execute_via_registry() {
-        use grafeo_core::graph::lpg::LpgStore;
+        use obrain_core::graph::lpg::LpgStore;
 
         let registry = BuiltinProcedures::new();
         let name = vec![
-            "grafeo".to_string(),
+            "obrain".to_string(),
             "similarity".to_string(),
             "topk".to_string(),
         ];
@@ -765,7 +765,7 @@ mod tests {
     #[test]
     fn test_similarity_output_columns() {
         let registry = BuiltinProcedures::new();
-        let name = vec!["grafeo".to_string(), "similarity".to_string()];
+        let name = vec!["obrain".to_string(), "similarity".to_string()];
         let algo = registry.get(&name).unwrap();
         let cols = output_columns_for(algo.as_ref());
         assert_eq!(cols, vec!["node1", "node2", "metric", "score"]);
@@ -775,7 +775,7 @@ mod tests {
     fn test_similarity_topk_output_columns() {
         let registry = BuiltinProcedures::new();
         let name = vec![
-            "grafeo".to_string(),
+            "obrain".to_string(),
             "similarity".to_string(),
             "topk".to_string(),
         ];
@@ -809,7 +809,7 @@ mod tests {
             ]),
         ];
 
-        let result = try_execute_projection_procedure("grafeo.projection.create", &args).unwrap();
+        let result = try_execute_projection_procedure("obrain.projection.create", &args).unwrap();
         assert!(result.is_some());
         let result = result.unwrap();
         assert_eq!(result.columns, vec!["name", "status"]);
@@ -831,7 +831,7 @@ mod tests {
         let _ = registry.create(ProjectionConfig::new("drop_test"));
 
         let args = vec![LogicalExpression::Literal(Value::from("drop_test"))];
-        let result = try_execute_projection_procedure("grafeo.projection.drop", &args).unwrap();
+        let result = try_execute_projection_procedure("obrain.projection.drop", &args).unwrap();
         assert!(result.is_some());
 
         // Should be gone
@@ -844,7 +844,7 @@ mod tests {
         let _ = registry.create(ProjectionConfig::new("list_test_a"));
         let _ = registry.create(ProjectionConfig::new("list_test_b"));
 
-        let result = try_execute_projection_procedure("grafeo.projection.list", &[]).unwrap();
+        let result = try_execute_projection_procedure("obrain.projection.list", &[]).unwrap();
         assert!(result.is_some());
         let result = result.unwrap();
         assert_eq!(result.columns, vec!["name", "node_labels", "edge_types"]);
@@ -857,19 +857,19 @@ mod tests {
 
     #[test]
     fn test_projection_procedure_no_match() {
-        let result = try_execute_projection_procedure("grafeo.something_else", &[]).unwrap();
+        let result = try_execute_projection_procedure("obrain.something_else", &[]).unwrap();
         assert!(result.is_none());
     }
 
     #[test]
     fn test_projection_create_missing_name() {
-        let result = try_execute_projection_procedure("grafeo.projection.create", &[]);
+        let result = try_execute_projection_procedure("obrain.projection.create", &[]);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_projection_drop_missing_name() {
-        let result = try_execute_projection_procedure("grafeo.projection.drop", &[]);
+        let result = try_execute_projection_procedure("obrain.projection.drop", &[]);
         assert!(result.is_err());
     }
 

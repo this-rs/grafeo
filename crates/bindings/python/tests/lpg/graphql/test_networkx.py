@@ -1,6 +1,6 @@
 """GraphQL implementation of NetworkX comparison tests.
 
-Compares Grafeo algorithm results against NetworkX to verify correctness.
+Compares Obrain algorithm results against NetworkX to verify correctness.
 Note: These tests use Python API only, they don't require GraphQL support.
 """
 
@@ -8,7 +8,7 @@ import random
 import time
 
 import pytest
-from grafeo import GrafeoDB
+from obrain import ObrainDB
 
 from tests.bases.test_networkx import (
     BaseNetworkXBenchmarkTest,
@@ -19,7 +19,7 @@ from tests.bases.test_networkx import (
 @pytest.fixture
 def db():
     """Create a fresh database instance (no GraphQL required)."""
-    return GrafeoDB()
+    return ObrainDB()
 
 
 class TestGraphQLNetworkXComparison(BaseNetworkXComparisonTest):
@@ -31,7 +31,7 @@ class TestGraphQLNetworkXComparison(BaseNetworkXComparisonTest):
 
     def create_db(self):
         """Create a fresh database instance."""
-        return GrafeoDB()
+        return ObrainDB()
 
     def setup_random_graph(
         self, db, n_nodes: int, n_edges: int, weighted: bool = True, seed: int = 42
@@ -93,7 +93,7 @@ class TestGraphQLNetworkXBenchmark(BaseNetworkXBenchmarkTest):
 
     def create_db(self):
         """Create a fresh database instance."""
-        return GrafeoDB()
+        return ObrainDB()
 
     def setup_random_graph(
         self, db, n_nodes: int, n_edges: int, weighted: bool = True, seed: int = 42
@@ -120,20 +120,20 @@ class TestGraphQLNetworkXBenchmark(BaseNetworkXBenchmarkTest):
 
         return {"node_ids": node_ids, "edges": edges}
 
-    def run_grafeo_pagerank(self, db) -> float:
-        """Run Grafeo PageRank and return execution time in ms."""
+    def run_obrain_pagerank(self, db) -> float:
+        """Run Obrain PageRank and return execution time in ms."""
         start = time.perf_counter()
         db.algorithms.pagerank(damping=0.85)
         return (time.perf_counter() - start) * 1000
 
-    def run_grafeo_dijkstra(self, db, source) -> float:
-        """Run Grafeo Dijkstra and return execution time in ms."""
+    def run_obrain_dijkstra(self, db, source) -> float:
+        """Run Obrain Dijkstra and return execution time in ms."""
         start = time.perf_counter()
         db.algorithms.dijkstra(source, weight="weight")
         return (time.perf_counter() - start) * 1000
 
-    def run_grafeo_bfs(self, db, start) -> float:
-        """Run Grafeo BFS and return execution time in ms."""
+    def run_obrain_bfs(self, db, start) -> float:
+        """Run Obrain BFS and return execution time in ms."""
         start_time = time.perf_counter()
         db.algorithms.bfs(start)
         return (time.perf_counter() - start_time) * 1000

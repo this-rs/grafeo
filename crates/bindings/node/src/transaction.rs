@@ -6,9 +6,9 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use parking_lot::RwLock;
 
-use grafeo_engine::database::GrafeoDB;
+use obrain_engine::database::ObrainDB;
 
-use crate::error::NodeGrafeoError;
+use crate::error::NodeObrainError;
 use crate::query::QueryResult;
 
 /// A database transaction with explicit commit/rollback.
@@ -22,8 +22,8 @@ use crate::query::QueryResult;
 /// ```
 #[napi]
 pub struct Transaction {
-    db: Arc<RwLock<GrafeoDB>>,
-    session: parking_lot::Mutex<Option<grafeo_engine::session::Session>>,
+    db: Arc<RwLock<ObrainDB>>,
+    session: parking_lot::Mutex<Option<obrain_engine::session::Session>>,
     committed: bool,
     rolled_back: bool,
 }
@@ -45,14 +45,14 @@ impl Transaction {
     #[napi]
     pub fn commit(&mut self) -> Result<()> {
         if self.committed {
-            return Err(NodeGrafeoError::Transaction("Already committed".into()).into());
+            return Err(NodeObrainError::Transaction("Already committed".into()).into());
         }
         if self.rolled_back {
-            return Err(NodeGrafeoError::Transaction("Already rolled back".into()).into());
+            return Err(NodeObrainError::Transaction("Already rolled back".into()).into());
         }
         let mut session_guard = self.session.lock();
         if let Some(ref mut session) = *session_guard {
-            session.commit().map_err(NodeGrafeoError::from)?;
+            session.commit().map_err(NodeObrainError::from)?;
         }
         self.committed = true;
         Ok(())
@@ -62,14 +62,14 @@ impl Transaction {
     #[napi]
     pub fn rollback(&mut self) -> Result<()> {
         if self.committed {
-            return Err(NodeGrafeoError::Transaction("Already committed".into()).into());
+            return Err(NodeObrainError::Transaction("Already committed".into()).into());
         }
         if self.rolled_back {
-            return Err(NodeGrafeoError::Transaction("Already rolled back".into()).into());
+            return Err(NodeObrainError::Transaction("Already rolled back".into()).into());
         }
         let mut session_guard = self.session.lock();
         if let Some(ref mut session) = *session_guard {
-            session.rollback().map_err(NodeGrafeoError::from)?;
+            session.rollback().map_err(NodeObrainError::from)?;
         }
         self.rolled_back = true;
         Ok(())
@@ -92,22 +92,22 @@ impl Transaction {
     ) -> Result<QueryResult> {
         if self.committed || self.rolled_back {
             return Err(
-                NodeGrafeoError::Transaction("Transaction is no longer active".into()).into(),
+                NodeObrainError::Transaction("Transaction is no longer active".into()).into(),
             );
         }
         let session_guard = self.session.lock();
         let session = session_guard.as_ref().ok_or_else(|| {
-            napi::Error::from(NodeGrafeoError::Transaction(
+            napi::Error::from(NodeObrainError::Transaction(
                 "Transaction is no longer active".into(),
             ))
         })?;
 
-        let param_map = grafeo_bindings_common::json::json_params_to_map(params)
-            .map_err(|msg| napi::Error::from(NodeGrafeoError::InvalidArgument(msg)))?;
+        let param_map = obrain_bindings_common::json::json_params_to_map(params)
+            .map_err(|msg| napi::Error::from(NodeObrainError::InvalidArgument(msg)))?;
 
         let result = session
             .execute_language(query, language, param_map)
-            .map_err(NodeGrafeoError::from)?;
+            .map_err(NodeObrainError::from)?;
 
         let db = self.db.read();
         let (nodes, edges) = crate::database::extract_entities(&result, &db);
@@ -122,16 +122,16 @@ impl Transaction {
         ))
     }
 
-    pub(crate) fn new(db: Arc<RwLock<GrafeoDB>>, isolation_level: Option<&str>) -> Result<Self> {
+    pub(crate) fn new(db: Arc<RwLock<ObrainDB>>, isolation_level: Option<&str>) -> Result<Self> {
         // Parse isolation level string
         let level = match isolation_level {
             Some("read_committed") => {
-                Some(grafeo_engine::transaction::IsolationLevel::ReadCommitted)
+                Some(obrain_engine::transaction::IsolationLevel::ReadCommitted)
             }
-            Some("serializable") => Some(grafeo_engine::transaction::IsolationLevel::Serializable),
+            Some("serializable") => Some(obrain_engine::transaction::IsolationLevel::Serializable),
             Some("snapshot") | None => None, // snapshot is the default
             Some(other) => {
-                return Err(NodeGrafeoError::InvalidArgument(format!(
+                return Err(NodeObrainError::InvalidArgument(format!(
                     "Unknown isolation level '{}'. Use 'read_committed', 'snapshot', or 'serializable'",
                     other
                 ))
@@ -148,9 +148,9 @@ impl Transaction {
         if let Some(level) = level {
             session
                 .begin_transaction_with_isolation(level)
-                .map_err(NodeGrafeoError::from)?;
+                .map_err(NodeObrainError::from)?;
         } else {
-            session.begin_transaction().map_err(NodeGrafeoError::from)?;
+            session.begin_transaction().map_err(NodeObrainError::from)?;
         }
 
         Ok(Self {

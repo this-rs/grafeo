@@ -1,6 +1,6 @@
 //! Core engram types — data model for the engram system.
 
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::time::SystemTime;

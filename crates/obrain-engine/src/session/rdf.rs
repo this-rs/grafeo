@@ -8,11 +8,11 @@ use std::sync::atomic::AtomicUsize;
 #[cfg(all(feature = "metrics", not(target_arch = "wasm32")))]
 use std::time::Instant;
 
-use grafeo_common::types::{TransactionId, Value};
-use grafeo_common::utils::error::Result;
-use grafeo_core::graph::GraphStoreMut;
-use grafeo_core::graph::lpg::LpgStore;
-use grafeo_core::graph::rdf::RdfStore;
+use obrain_common::types::{TransactionId, Value};
+use obrain_common::utils::error::Result;
+use obrain_core::graph::GraphStoreMut;
+use obrain_core::graph::lpg::LpgStore;
+use obrain_core::graph::rdf::RdfStore;
 
 use crate::database::QueryResult;
 

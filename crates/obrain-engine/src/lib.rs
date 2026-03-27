@@ -1,14 +1,14 @@
-//! # grafeo-engine
+//! # obrain-engine
 //!
-//! The engine behind Grafeo. You'll find everything here for creating databases,
+//! The engine behind Obrain. You'll find everything here for creating databases,
 //! running queries, and managing transactions.
 //!
-//! Most users should start with the main `grafeo` crate, which re-exports the
-//! key types. If you're here directly, [`GrafeoDB`] is your entry point.
+//! Most users should start with the main `obrain` crate, which re-exports the
+//! key types. If you're here directly, [`ObrainDB`] is your entry point.
 //!
 //! ## Modules
 //!
-//! - [`database`] - Create and manage databases with [`GrafeoDB`]
+//! - [`database`] - Create and manage databases with [`ObrainDB`]
 //! - [`session`] - Lightweight handles for concurrent access
 //! - [`config`] - Tune memory, threads, and durability settings
 //! - [`transaction`] - MVCC transaction management (snapshot isolation)
@@ -18,7 +18,7 @@
 
 #![deny(unsafe_code)]
 
-/// The version of the grafeo-engine crate (from Cargo.toml).
+/// The version of the obrain-engine crate (from Cargo.toml).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod admin;
@@ -49,8 +49,8 @@ pub use admin::{
 };
 pub use catalog::{Catalog, CatalogError, IndexDefinition, IndexType};
 pub use config::{AccessMode, Config, ConfigError, DurabilityMode, GraphModel};
-pub use database::GrafeoDB;
-pub use grafeo_core::graph::{GraphStore, GraphStoreMut};
+pub use database::ObrainDB;
+pub use obrain_core::graph::{GraphStore, GraphStoreMut};
 pub use memory_usage::MemoryUsage;
 #[cfg(feature = "metrics")]
 pub use metrics::{MetricsRegistry, MetricsSnapshot};

@@ -92,7 +92,7 @@ impl HistogramBucket {
 /// # Example
 ///
 /// ```no_run
-/// use grafeo_engine::query::optimizer::cardinality::EquiDepthHistogram;
+/// use obrain_engine::query::optimizer::cardinality::EquiDepthHistogram;
 ///
 /// // Build a histogram from sorted values
 /// let values = vec![1.0, 2.0, 3.0, 4.0, 5.0, 10.0, 20.0, 30.0, 40.0, 50.0];
@@ -558,7 +558,7 @@ pub struct CardinalityEstimator {
     /// Configurable selectivity defaults.
     selectivity_config: SelectivityConfig,
     /// RDF statistics for triple pattern cardinality estimation.
-    rdf_statistics: Option<grafeo_core::statistics::RdfStatistics>,
+    rdf_statistics: Option<obrain_core::statistics::RdfStatistics>,
 }
 
 impl CardinalityEstimator {
@@ -607,7 +607,7 @@ impl CardinalityEstimator {
     /// fanout from `EdgeTypeStatistics`. Falls back to defaults for any
     /// missing statistics.
     #[must_use]
-    pub fn from_statistics(stats: &grafeo_core::statistics::Statistics) -> Self {
+    pub fn from_statistics(stats: &obrain_core::statistics::Statistics) -> Self {
         let mut estimator = Self::new();
 
         // Use total node count as default for unlabeled scans
@@ -650,7 +650,7 @@ impl CardinalityEstimator {
     /// Uses triple pattern cardinality estimates for `TripleScan` operators
     /// and join selectivity from per-predicate statistics.
     #[must_use]
-    pub fn from_rdf_statistics(rdf_stats: grafeo_core::statistics::RdfStatistics) -> Self {
+    pub fn from_rdf_statistics(rdf_stats: obrain_core::statistics::RdfStatistics) -> Self {
         let mut estimator = Self::new();
         if rdf_stats.total_triples > 0 {
             estimator.default_row_count = rdf_stats.total_triples;
@@ -971,7 +971,7 @@ impl CardinalityEstimator {
             }
             LogicalExpression::Literal(value) => {
                 // Boolean literal
-                if let grafeo_common::types::Value::Bool(b) = value {
+                if let obrain_common::types::Value::Bool(b) = value {
                     if *b { 1.0 } else { 0.0 }
                 } else {
                     self.default_selectivity
@@ -1132,8 +1132,8 @@ impl CardinalityEstimator {
 
         // Extract numeric literal
         let value = match literal_expr {
-            LogicalExpression::Literal(grafeo_common::types::Value::Int64(n)) => *n as f64,
-            LogicalExpression::Literal(grafeo_common::types::Value::Float64(f)) => *f,
+            LogicalExpression::Literal(obrain_common::types::Value::Int64(n)) => *n as f64,
+            LogicalExpression::Literal(obrain_common::types::Value::Float64(f)) => *f,
             _ => return None,
         };
 
@@ -1181,7 +1181,7 @@ mod tests {
         DistinctOp, ExpandDirection, ExpandOp, FilterOp, JoinCondition, NodeScanOp, PathMode,
         ProjectOp, Projection, ReturnItem, ReturnOp, SkipOp, SortKey, SortOp, SortOrder,
     };
-    use grafeo_common::types::Value;
+    use obrain_common::types::Value;
 
     #[test]
     fn test_node_scan_with_stats() {

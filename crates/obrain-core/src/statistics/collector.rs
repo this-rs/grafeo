@@ -5,7 +5,7 @@
 //! The [`Statistics`] struct holds everything the optimizer needs.
 
 use super::histogram::Histogram;
-use grafeo_common::types::Value;
+use obrain_common::types::Value;
 use std::collections::HashMap;
 
 /// A property key identifier.

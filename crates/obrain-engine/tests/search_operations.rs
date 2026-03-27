@@ -7,7 +7,7 @@
 //! - mmr_search with filters
 //!
 //! ```bash
-//! cargo test -p grafeo-engine --features full --test search_operations
+//! cargo test -p obrain-engine --features full --test search_operations
 //! ```
 
 // ============================================================================
@@ -16,16 +16,16 @@
 
 #[cfg(feature = "vector-index")]
 mod vector {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
     use std::collections::HashMap;
 
     fn vec3(x: f32, y: f32, z: f32) -> Value {
         Value::Vector(vec![x, y, z].into())
     }
 
-    fn setup_vector_db() -> GrafeoDB {
-        let db = GrafeoDB::new_in_memory();
+    fn setup_vector_db() -> ObrainDB {
+        let db = ObrainDB::new_in_memory();
 
         let n1 = db.create_node(&["Doc"]);
         db.set_node_property(n1, "emb", vec3(1.0, 0.0, 0.0));
@@ -52,7 +52,7 @@ mod vector {
 
     #[test]
     fn test_vector_search_no_index_error() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let n = db.create_node(&["Doc"]);
         db.set_node_property(n, "emb", vec3(1.0, 0.0, 0.0));
 
@@ -180,11 +180,11 @@ mod vector {
 
 #[cfg(feature = "text-index")]
 mod text {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
-    fn setup_text_db() -> GrafeoDB {
-        let db = GrafeoDB::new_in_memory();
+    fn setup_text_db() -> ObrainDB {
+        let db = ObrainDB::new_in_memory();
 
         let n1 = db.create_node(&["Article"]);
         db.set_node_property(n1, "title", Value::String("Rust graph database".into()));
@@ -217,7 +217,7 @@ mod text {
 
     #[test]
     fn test_text_search_no_index_error() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let n = db.create_node(&["Article"]);
         db.set_node_property(n, "title", Value::String("test".into()));
 
@@ -284,15 +284,15 @@ mod text {
 
 #[cfg(feature = "hybrid-search")]
 mod hybrid {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     fn vec3(x: f32, y: f32, z: f32) -> Value {
         Value::Vector(vec![x, y, z].into())
     }
 
-    fn setup_hybrid_db() -> GrafeoDB {
-        let db = GrafeoDB::new_in_memory();
+    fn setup_hybrid_db() -> ObrainDB {
+        let db = ObrainDB::new_in_memory();
 
         let n1 = db.create_node(&["Doc"]);
         db.set_node_property(
@@ -359,7 +359,7 @@ mod hybrid {
         let top_props = db.get_node(top_node).expect("top node exists");
         let content = top_props
             .properties
-            .get(&grafeo_common::types::PropertyKey::new("content"))
+            .get(&obrain_common::types::PropertyKey::new("content"))
             .expect("has content");
         if let Value::String(s) = content {
             assert!(
@@ -412,8 +412,8 @@ mod hybrid {
 
 #[cfg(feature = "vector-index")]
 mod concurrent_vector {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     fn vec3(x: f32, y: f32, z: f32) -> Value {
         Value::Vector(vec![x, y, z].into())
@@ -421,7 +421,7 @@ mod concurrent_vector {
 
     #[test]
     fn test_concurrent_vector_read_during_write() {
-        let db = std::sync::Arc::new(GrafeoDB::new_in_memory());
+        let db = std::sync::Arc::new(ObrainDB::new_in_memory());
 
         // Seed initial data
         let n1 = db.create_node(&["Doc"]);
@@ -457,12 +457,12 @@ mod concurrent_vector {
 
 #[cfg(feature = "text-index")]
 mod concurrent_text {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn test_concurrent_text_read_during_write() {
-        let db = std::sync::Arc::new(GrafeoDB::new_in_memory());
+        let db = std::sync::Arc::new(ObrainDB::new_in_memory());
 
         let n1 = db.create_node(&["Doc"]);
         db.set_node_property(

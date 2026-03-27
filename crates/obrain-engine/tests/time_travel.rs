@@ -8,19 +8,19 @@
 //! a creation we need the creation to happen at epoch > 0 by committing
 //! a preliminary transaction first.
 
-use grafeo_common::types::{EpochId, Value};
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::{EpochId, Value};
+use obrain_engine::ObrainDB;
 
 // ---------------------------------------------------------------------------
 // Helper
 // ---------------------------------------------------------------------------
 
-fn setup_db() -> GrafeoDB {
-    GrafeoDB::new_in_memory()
+fn setup_db() -> ObrainDB {
+    ObrainDB::new_in_memory()
 }
 
 /// Advances the epoch by committing an empty transaction.
-fn bump_epoch(session: &mut grafeo_engine::Session) {
+fn bump_epoch(session: &mut obrain_engine::Session) {
     session.begin_transaction().unwrap();
     session.commit().unwrap();
 }
@@ -343,7 +343,7 @@ fn test_node_history_deleted() {
 #[test]
 fn test_node_history_nonexistent() {
     let db = setup_db();
-    use grafeo_common::types::NodeId;
+    use obrain_common::types::NodeId;
 
     let history = db.get_node_history(NodeId::new(9999));
     assert!(history.is_empty());
@@ -388,7 +388,7 @@ fn test_current_epoch_increments() {
 
 #[test]
 fn test_validity_ts_smoke() {
-    use grafeo_common::types::ValidityTs;
+    use obrain_common::types::ValidityTs;
 
     let ts1 = ValidityTs::new(100);
     let ts2 = ValidityTs::new(200);

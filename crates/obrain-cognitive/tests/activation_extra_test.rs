@@ -2,8 +2,8 @@
 
 #![cfg(feature = "synapse")]
 
-use grafeo_cognitive::activation::{ActivationSource, SpreadConfig, spread, spread_single};
-use grafeo_common::types::NodeId;
+use obrain_cognitive::activation::{ActivationSource, SpreadConfig, spread, spread_single};
+use obrain_common::types::NodeId;
 use std::collections::HashMap;
 
 struct MockGraph {

@@ -68,7 +68,7 @@ impl DistanceMetric {
     /// # Examples
     ///
     /// ```
-    /// use grafeo_core::index::vector::DistanceMetric;
+    /// use obrain_core::index::vector::DistanceMetric;
     ///
     /// assert_eq!(DistanceMetric::from_str("cosine"), Some(DistanceMetric::Cosine));
     /// assert_eq!(DistanceMetric::from_str("EUCLIDEAN"), Some(DistanceMetric::Euclidean));
@@ -98,7 +98,7 @@ impl DistanceMetric {
 /// # Examples
 ///
 /// ```
-/// use grafeo_core::index::vector::simd_support;
+/// use obrain_core::index::vector::simd_support;
 ///
 /// let support = simd_support();
 /// println!("Using SIMD: {}", support);
@@ -122,7 +122,7 @@ pub fn simd_support() -> &'static str {
 /// # Examples
 ///
 /// ```
-/// use grafeo_core::index::vector::{compute_distance, DistanceMetric};
+/// use obrain_core::index::vector::{compute_distance, DistanceMetric};
 ///
 /// let a = [1.0f32, 0.0, 0.0];
 /// let b = [0.0f32, 1.0, 0.0];

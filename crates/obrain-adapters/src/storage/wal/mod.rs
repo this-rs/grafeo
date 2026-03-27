@@ -17,10 +17,10 @@
 //! mode with an [`AdaptiveFlusher`]:
 //!
 //! ```no_run
-//! use grafeo_adapters::storage::wal::{WalManager, WalConfig, DurabilityMode, AdaptiveFlusher};
+//! use obrain_adapters::storage::wal::{WalManager, WalConfig, DurabilityMode, AdaptiveFlusher};
 //! use std::sync::Arc;
 //!
-//! # fn main() -> grafeo_common::utils::error::Result<()> {
+//! # fn main() -> obrain_common::utils::error::Result<()> {
 //! let config = WalConfig {
 //!     durability: DurabilityMode::Adaptive { target_interval_ms: 100 },
 //!     ..Default::default()

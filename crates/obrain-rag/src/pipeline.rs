@@ -96,7 +96,7 @@ mod tests {
         ContextBuilder, FeedbackSink, FeedbackStats, RagContext, RetrievalResult, RetrievalSource,
         RetrievedNode, Retriever,
     };
-    use grafeo_common::types::NodeId;
+    use obrain_common::types::NodeId;
     use std::collections::HashMap;
 
     /// Mock retriever that returns a fixed set of nodes.

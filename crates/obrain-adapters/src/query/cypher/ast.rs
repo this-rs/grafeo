@@ -3,7 +3,7 @@
 //! This AST represents the openCypher 9.0 query language.
 
 use crate::query::gql::ast as gql_ast;
-use grafeo_common::utils::error::SourceSpan;
+use obrain_common::utils::error::SourceSpan;
 
 /// A Cypher statement.
 #[derive(Debug, Clone)]
@@ -132,7 +132,7 @@ pub struct LoadCsvClause {
 /// ```
 #[derive(Debug, Clone)]
 pub struct CallClause {
-    /// Qualified procedure name, e.g. `["grafeo", "pagerank"]`.
+    /// Qualified procedure name, e.g. `["obrain", "pagerank"]`.
     pub procedure_name: Vec<String>,
     /// Positional arguments.
     pub arguments: Vec<Expression>,

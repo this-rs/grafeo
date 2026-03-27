@@ -5,27 +5,27 @@
 //!
 //! Run with all features:
 //! ```bash
-//! cargo test -p grafeo-engine --features full --test query_correctness
+//! cargo test -p obrain-engine --features full --test query_correctness
 //! ```
 //!
 //! Run for specific query language:
 //! ```bash
-//! cargo test -p grafeo-engine --features gql --test query_correctness -- gql
-//! cargo test -p grafeo-engine --features cypher --test query_correctness -- cypher
-//! cargo test -p grafeo-engine --features gremlin --test query_correctness -- gremlin
-//! cargo test -p grafeo-engine --features graphql --test query_correctness -- graphql
+//! cargo test -p obrain-engine --features gql --test query_correctness -- gql
+//! cargo test -p obrain-engine --features cypher --test query_correctness -- cypher
+//! cargo test -p obrain-engine --features gremlin --test query_correctness -- gremlin
+//! cargo test -p obrain-engine --features graphql --test query_correctness -- graphql
 //! ```
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 // ============================================================================
 // Test Fixtures
 // ============================================================================
 
 /// Creates 3 Person + 2 Company nodes, 3 KNOWS + 3 WORKS_AT edges.
-fn create_social_network() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn create_social_network() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // Create people
@@ -81,8 +81,8 @@ fn create_social_network() -> GrafeoDB {
 }
 
 /// Creates a simple chain graph: A -> B -> C -> D
-fn create_chain() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn create_chain() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let a = session.create_node_with_props(&["Node"], [("id", Value::String("A".into()))]);
@@ -98,8 +98,8 @@ fn create_chain() -> GrafeoDB {
 }
 
 /// Creates a star graph: Center connected to 5 spokes
-fn create_star() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn create_star() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let center = session.create_node_with_props(&["Hub"], [("id", Value::String("center".into()))]);
@@ -116,8 +116,8 @@ fn create_star() -> GrafeoDB {
 }
 
 /// Creates a graph with numeric data for aggregation tests.
-fn create_numeric_data() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn create_numeric_data() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // Create products with prices
@@ -144,8 +144,8 @@ fn create_numeric_data() -> GrafeoDB {
 }
 
 /// Creates a tree structure for hierarchical queries.
-fn create_tree() -> GrafeoDB {
-    let db = GrafeoDB::new_in_memory();
+fn create_tree() -> ObrainDB {
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     let root = session.create_node_with_props(
@@ -287,7 +287,7 @@ mod gql_basic_patterns {
 
     #[test]
     fn test_empty_result_set() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         let result = session.execute("MATCH (n:NonExistent) RETURN n").unwrap();
@@ -410,7 +410,7 @@ mod gql_aggregations {
 
     #[test]
     fn test_count_empty_result() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         let result = session
@@ -510,7 +510,7 @@ mod gql_mutations {
 
     #[test]
     fn test_insert_node() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         session
@@ -533,7 +533,7 @@ mod gql_mutations {
 
     #[test]
     fn test_insert_multiple_nodes() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
@@ -546,7 +546,7 @@ mod gql_mutations {
 
     #[test]
     fn test_transaction_commit() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let mut session = db.session();
 
         session.begin_transaction().unwrap();
@@ -623,7 +623,7 @@ mod cypher_tests {
 
     #[test]
     fn test_create_node() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         session
@@ -1013,8 +1013,8 @@ mod gql_direction_tests {
     /// Creates a simple directed graph for direction testing:
     /// A -[:FOLLOWS]-> B -[:FOLLOWS]-> C
     /// D -[:FOLLOWS]-> B (B has 2 incoming, 1 outgoing)
-    fn create_directed_graph() -> GrafeoDB {
-        let db = GrafeoDB::new_in_memory();
+    fn create_directed_graph() -> ObrainDB {
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         let a = session.create_node_with_props(&["User"], [("name", Value::String("A".into()))]);
@@ -1332,7 +1332,7 @@ mod cross_language_mutations {
     #[test]
     fn test_insert_read_consistency() {
         // Insert with GQL, read with Cypher
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         session
@@ -1349,7 +1349,7 @@ mod cross_language_mutations {
     #[test]
     fn test_create_read_consistency() {
         // Create with Cypher, read with GQL
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         session
@@ -1365,7 +1365,7 @@ mod cross_language_mutations {
 
     #[test]
     fn test_mixed_mutations() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
 
         // Insert with GQL
@@ -1389,8 +1389,8 @@ mod cross_language_mutations {
 mod gql_in_operator {
     use super::*;
 
-    fn setup_db() -> GrafeoDB {
-        let db = GrafeoDB::new_in_memory();
+    fn setup_db() -> ObrainDB {
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:Person {name: 'Alix', age: 30})")
@@ -1453,7 +1453,7 @@ mod gql_in_operator {
 
     #[test]
     fn test_string_with_escaped_quote() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute(r"INSERT (:Person {name: 'O\'Brien'})")
@@ -1473,8 +1473,8 @@ mod parameterized_queries {
     use super::*;
     use std::collections::HashMap;
 
-    fn setup_db() -> GrafeoDB {
-        let db = GrafeoDB::new_in_memory();
+    fn setup_db() -> ObrainDB {
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:Person {name: 'Alix', age: 30})")
@@ -1561,7 +1561,7 @@ mod parameterized_queries {
 }
 
 // ============================================================================
-// Language-specific execute methods on GrafeoDB
+// Language-specific execute methods on ObrainDB
 // ============================================================================
 
 #[cfg(feature = "gremlin")]
@@ -1662,7 +1662,7 @@ mod cypher_db_execute {
 
     #[test]
     fn test_cypher_multiple_match_with_create() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.create_node_with_props(
             &["Person"],
@@ -1697,7 +1697,7 @@ mod cypher_db_execute {
 
     #[test]
     fn test_cypher_merge_relationship() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.create_node_with_props(
             &["Person"],
@@ -1737,7 +1737,7 @@ mod cypher_db_execute {
 
     #[test]
     fn test_cypher_merge_relationship_with_properties() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.create_node_with_props(&["Person"], [("name", Value::String("Alix".into()))]);
         session.create_node_with_props(&["Person"], [("name", Value::String("Gus".into()))]);
@@ -1765,7 +1765,7 @@ mod cypher_db_execute {
 
     #[test]
     fn test_cypher_merge_relationship_then_set() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.create_node_with_props(&["Person"], [("name", Value::String("Alix".into()))]);
         session.create_node_with_props(&["Person"], [("name", Value::String("Gus".into()))]);
@@ -1785,7 +1785,7 @@ mod cypher_db_execute {
     #[test]
     fn test_cypher_multi_match_with_merge_and_set() {
         // This is the Deriva-style query pattern
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.create_node_with_props(&["Node"], [("id", Value::String("src".into()))]);
         session.create_node_with_props(&["Node"], [("id", Value::String("dst".into()))]);
@@ -1813,7 +1813,7 @@ mod cypher_db_execute {
 
     #[test]
     fn test_cypher_set_node_property() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         db.execute_cypher("CREATE (n:Person {name: 'Alix'})")
             .unwrap();
 
@@ -1830,7 +1830,7 @@ mod cypher_db_execute {
 
     #[test]
     fn test_cypher_set_labels() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         db.execute_cypher("CREATE (n:Person {name: 'Alix'})")
             .unwrap();
 
@@ -1850,7 +1850,7 @@ mod cypher_db_execute {
 
     #[test]
     fn test_cypher_delete_node() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         db.execute_cypher("CREATE (n:Temp {name: 'ToDelete'})")
             .unwrap();
 
@@ -1866,7 +1866,7 @@ mod cypher_db_execute {
 
     #[test]
     fn test_cypher_detach_delete_with_edges() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         db.execute_cypher("CREATE (a:Person {name: 'Alix'}), (b:Person {name: 'Gus'})")
             .unwrap();
         db.execute_cypher(
@@ -1889,7 +1889,7 @@ mod cypher_db_execute {
 
     #[test]
     fn test_cypher_remove_property() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         db.execute_cypher("CREATE (n:Person {name: 'Alix', age: 30})")
             .unwrap();
 
@@ -1906,7 +1906,7 @@ mod cypher_db_execute {
 
     #[test]
     fn test_cypher_remove_label() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         db.execute_cypher("CREATE (n:Person:Employee {name: 'Alix'})")
             .unwrap();
 
@@ -1926,7 +1926,7 @@ mod cypher_db_execute {
 
     #[test]
     fn test_cypher_return_count_gt_zero() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         db.execute_cypher("CREATE (n:Person {name: 'Alix'})")
             .unwrap();
         db.execute_cypher("CREATE (n:Person {name: 'Gus'})")
@@ -1942,7 +1942,7 @@ mod cypher_db_execute {
 
     #[test]
     fn test_cypher_return_count_gt_zero_empty() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
 
         let result = db
             .execute_cypher("MATCH (n:Ghost) RETURN count(n) > 0 AS exists")
@@ -1988,12 +1988,12 @@ mod sql_pgq_db_execute {
 
 #[cfg(feature = "gql")]
 mod profile_tests {
-    use grafeo_common::types::Value;
-    use grafeo_engine::GrafeoDB;
+    use obrain_common::types::Value;
+    use obrain_engine::ObrainDB;
 
     #[test]
     fn gql_profile_returns_single_profile_column() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session
             .execute("INSERT (:Person {name: 'Alix', age: 30})")
@@ -2042,7 +2042,7 @@ mod profile_tests {
 
     #[test]
     fn gql_profile_row_counts_are_accurate() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         for i in 0..5 {
             session
@@ -2069,7 +2069,7 @@ mod profile_tests {
     #[cfg(feature = "cypher")]
     #[test]
     fn cypher_profile_works() {
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
         let session = db.session();
         session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
 

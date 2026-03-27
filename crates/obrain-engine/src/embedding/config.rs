@@ -45,9 +45,9 @@ const BGE_SMALL_EN_V15: ModelSpec = ModelSpec {
 /// # Examples
 ///
 /// ```no_run
-/// use grafeo_engine::embedding::{EmbeddingModelConfig, OnnxEmbeddingModel};
+/// use obrain_engine::embedding::{EmbeddingModelConfig, OnnxEmbeddingModel};
 ///
-/// # fn main() -> grafeo_common::utils::error::Result<()> {
+/// # fn main() -> obrain_common::utils::error::Result<()> {
 /// // Preset: auto-downloads on first use
 /// let model = OnnxEmbeddingModel::from_config(EmbeddingModelConfig::MiniLmL6v2)?;
 ///
@@ -98,7 +98,7 @@ impl EmbeddingModelConfig {
     /// Returns a human-readable name for this model configuration.
     ///
     /// For preset models, returns the standard model name (e.g., `"all-MiniLM-L6-v2"`).
-    /// This name is used as the registry key in [`GrafeoDB::load_embedding_model()`](crate::GrafeoDB::load_embedding_model).
+    /// This name is used as the registry key in [`ObrainDB::load_embedding_model()`](crate::ObrainDB::load_embedding_model).
     #[must_use]
     pub fn display_name(&self) -> String {
         match self {
@@ -194,7 +194,7 @@ pub(crate) enum ResolveInfo<'a> {
 /// # Examples
 ///
 /// ```no_run
-/// use grafeo_engine::embedding::EmbeddingOptions;
+/// use obrain_engine::embedding::EmbeddingOptions;
 ///
 /// let options = EmbeddingOptions::new()
 ///     .with_batch_size(64)

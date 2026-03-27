@@ -2,12 +2,12 @@
 
 #![cfg(feature = "fabric")]
 
-use grafeo_cognitive::FabricListener;
-use grafeo_cognitive::fabric::{FabricScore, FabricStore};
+use obrain_cognitive::FabricListener;
+use obrain_cognitive::fabric::{FabricScore, FabricStore};
 #[cfg(feature = "gds-refresh")]
-use grafeo_cognitive::gds_refresh::{GdsRefreshConfig, GdsRefreshScheduler};
-use grafeo_common::types::NodeId;
-use grafeo_reactive::{MutationEvent, MutationListener, NodeSnapshot};
+use obrain_cognitive::gds_refresh::{GdsRefreshConfig, GdsRefreshScheduler};
+use obrain_common::types::NodeId;
+use obrain_reactive::{MutationEvent, MutationListener, NodeSnapshot};
 use smallvec::smallvec;
 use std::sync::Arc;
 
@@ -567,9 +567,9 @@ fn get_community_nodes_empty_for_unknown_community() {
 // FabricListener::on_event with edge events (line 431)
 // ---------------------------------------------------------------------------
 
-fn make_edge(id: u64, src: u64, dst: u64) -> grafeo_reactive::EdgeSnapshot {
-    grafeo_reactive::EdgeSnapshot {
-        id: grafeo_common::types::EdgeId::new(id),
+fn make_edge(id: u64, src: u64, dst: u64) -> obrain_reactive::EdgeSnapshot {
+    obrain_reactive::EdgeSnapshot {
+        id: obrain_common::types::EdgeId::new(id),
         src: NodeId(src),
         dst: NodeId(dst),
         edge_type: arcstr::literal!("KNOWS"),

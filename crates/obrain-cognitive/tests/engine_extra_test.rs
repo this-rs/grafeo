@@ -2,12 +2,12 @@
 
 #![cfg(feature = "cognitive-full")]
 
-use grafeo_cognitive::co_change::CoChangeConfig;
-use grafeo_cognitive::config::CognitiveConfig;
-use grafeo_cognitive::energy::EnergyConfig;
-use grafeo_cognitive::engine::{CognitiveEngine, CognitiveEngineBuilder};
-use grafeo_cognitive::synapse::SynapseConfig;
-use grafeo_reactive::{BatchConfig, MutationBus, Scheduler};
+use obrain_cognitive::co_change::CoChangeConfig;
+use obrain_cognitive::config::CognitiveConfig;
+use obrain_cognitive::energy::EnergyConfig;
+use obrain_cognitive::engine::{CognitiveEngine, CognitiveEngineBuilder};
+use obrain_cognitive::synapse::SynapseConfig;
+use obrain_reactive::{BatchConfig, MutationBus, Scheduler};
 use std::time::Duration;
 
 fn make_scheduler() -> (MutationBus, Scheduler) {
@@ -148,7 +148,7 @@ enabled = false
 #[test]
 fn engine_is_send_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
-    assert_send_sync::<grafeo_cognitive::DefaultCognitiveEngine>();
+    assert_send_sync::<obrain_cognitive::DefaultCognitiveEngine>();
 }
 
 // ---------------------------------------------------------------------------

@@ -12,8 +12,8 @@
 //! ```no_run
 //! # #[cfg(feature = "mmap")]
 //! # fn main() -> std::io::Result<()> {
-//! use grafeo_core::index::vector::storage::{MmapStorage, VectorStorage};
-//! use grafeo_common::types::NodeId;
+//! use obrain_core::index::vector::storage::{MmapStorage, VectorStorage};
+//! use obrain_common::types::NodeId;
 //!
 //! // Create memory-mapped storage for 384-dimensional vectors
 //! let storage = MmapStorage::create("vectors.bin", 384)?;
@@ -30,7 +30,7 @@
 //! # fn main() {}
 //! ```
 
-use grafeo_common::types::NodeId;
+use obrain_common::types::NodeId;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 #[cfg(feature = "mmap")]

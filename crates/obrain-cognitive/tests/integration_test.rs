@@ -6,9 +6,9 @@
 
 #[cfg(feature = "cognitive")]
 mod cognitive_integration {
-    use grafeo_cognitive::{CognitiveConfig, CognitiveEngine, CognitiveEngineBuilder};
-    use grafeo_common::types::NodeId;
-    use grafeo_reactive::{
+    use obrain_cognitive::{CognitiveConfig, CognitiveEngine, CognitiveEngineBuilder};
+    use obrain_common::types::NodeId;
+    use obrain_reactive::{
         BatchConfig, MutationBatch, MutationBus, MutationEvent, NodeSnapshot, Scheduler,
     };
     use smallvec::smallvec;
@@ -45,7 +45,7 @@ mod cognitive_integration {
 
         // Only energy, no synapses
         let engine = CognitiveEngineBuilder::new()
-            .with_energy(grafeo_cognitive::EnergyConfig::default())
+            .with_energy(obrain_cognitive::EnergyConfig::default())
             .build(&scheduler);
 
         assert_eq!(engine.active_subsystem_count(), 1);
@@ -191,8 +191,8 @@ enabled = false
 
     #[tokio::test]
     async fn write_through_energy_persists_and_reloads() {
-        use grafeo_cognitive::energy::{EnergyConfig, EnergyStore};
-        use grafeo_core::LpgStore;
+        use obrain_cognitive::energy::{EnergyConfig, EnergyStore};
+        use obrain_core::LpgStore;
 
         let lpg = std::sync::Arc::new(LpgStore::new().unwrap());
 
@@ -234,8 +234,8 @@ enabled = false
 
     #[tokio::test]
     async fn write_through_synapse_persists_and_reloads() {
-        use grafeo_cognitive::synapse::{SynapseConfig, SynapseStore};
-        use grafeo_core::LpgStore;
+        use obrain_cognitive::synapse::{SynapseConfig, SynapseStore};
+        use obrain_core::LpgStore;
 
         let lpg = std::sync::Arc::new(LpgStore::new().unwrap());
 
@@ -262,13 +262,13 @@ enabled = false
         // to be known. This is a design trade-off — full reload would need
         // scanning edges of type SYNAPSE. For now, verify the property was
         // written to the graph.
-        use grafeo_common::types::PropertyKey;
+        use obrain_common::types::PropertyKey;
         // The edge was created during reinforce
         let edges = lpg.edge_count();
         assert!(edges >= 1, "should have at least 1 synapse edge");
         // Verify the property exists on the edge
         let pk = PropertyKey::from("_cog_synapse_weight");
-        let edge_id = grafeo_common::types::EdgeId::new(0);
+        let edge_id = obrain_common::types::EdgeId::new(0);
         let val = lpg.get_edge_property(edge_id, &pk);
         assert!(
             val.is_some(),
@@ -285,8 +285,8 @@ enabled = false
 
     #[tokio::test]
     async fn write_through_engine_end_to_end() {
-        use grafeo_common::types::PropertyKey;
-        use grafeo_core::LpgStore;
+        use obrain_common::types::PropertyKey;
+        use obrain_core::LpgStore;
 
         let lpg = std::sync::Arc::new(LpgStore::new().unwrap());
 

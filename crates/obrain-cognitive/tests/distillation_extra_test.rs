@@ -8,7 +8,7 @@
 
 use std::time::SystemTime;
 
-use grafeo_cognitive::distillation::{
+use obrain_cognitive::distillation::{
     ArtifactMetadata, DistillArtifact, EnergySnapshot, EvaluateConfig, ParityReport,
     SynapseSnapshot, evaluate, evaluate_with_config,
 };

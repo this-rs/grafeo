@@ -14,7 +14,7 @@
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use grafeo_reactive::{MutationEvent, MutationListener};
+use obrain_reactive::{MutationEvent, MutationListener};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;

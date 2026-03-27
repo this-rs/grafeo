@@ -8,36 +8,36 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from grafeo import GrafeoDB
+from obrain import ObrainDB
 
 
-def _has_grafeo_file_support():
-    """Check if the grafeo-file format is supported by trying to create one."""
+def _has_obrain_file_support():
+    """Check if the obrain-file format is supported by trying to create one."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = str(Path(tmpdir) / "probe.grafeo")
-        db = GrafeoDB(path=db_path)
+        db_path = str(Path(tmpdir) / "probe.obrain")
+        db = ObrainDB(path=db_path)
         db.execute("INSERT (:Probe {x: 1})")
         db.close()
         return Path(db_path).is_file()
 
 
-_skip_no_grafeo_file = pytest.mark.skipif(
-    not _has_grafeo_file_support(),
-    reason="grafeo-file feature not enabled (need storage feature)",
+_skip_no_obrain_file = pytest.mark.skipif(
+    not _has_obrain_file_support(),
+    reason="obrain-file feature not enabled (need storage feature)",
 )
 
 
-@_skip_no_grafeo_file
-class TestGrafeoFilePersistence:
+@_skip_no_obrain_file
+class TestObrainFilePersistence:
     """Tests for .grafeo single-file format via Python bindings."""
 
     def test_create_and_reopen(self):
         """Data inserted in one session persists after close/reopen."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = str(Path(tmpdir) / "test.grafeo")
+            db_path = str(Path(tmpdir) / "test.obrain")
 
             # Create and populate
-            db = GrafeoDB(path=db_path)
+            db = ObrainDB(path=db_path)
             db.execute("INSERT (:Person {name: 'Alix', age: 30})")
             db.execute("INSERT (:Person {name: 'Gus', age: 25})")
             db.execute(
@@ -53,7 +53,7 @@ class TestGrafeoFilePersistence:
             assert not wal_path.exists(), "sidecar WAL should be cleaned up"
 
             # Reopen and verify
-            db2 = GrafeoDB.open(db_path)
+            db2 = ObrainDB.open(db_path)
             info2 = db2.info()
             assert info2["node_count"] == 2
             assert info2["edge_count"] == 1
@@ -65,17 +65,17 @@ class TestGrafeoFilePersistence:
 
             db2.close()
 
-    def test_save_as_grafeo_file(self):
+    def test_save_as_obrain_file(self):
         """In-memory DB saved as .grafeo file can be reopened."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = str(Path(tmpdir) / "saved.grafeo")
+            db_path = str(Path(tmpdir) / "saved.obrain")
 
-            db = GrafeoDB()
+            db = ObrainDB()
             db.execute("INSERT (:City {name: 'Amsterdam'})")
             db.execute("INSERT (:City {name: 'Berlin'})")
             db.save(db_path)
 
-            db2 = GrafeoDB.open(db_path)
+            db2 = ObrainDB.open(db_path)
             info = db2.info()
             assert info["node_count"] == 2
 
@@ -87,27 +87,27 @@ class TestGrafeoFilePersistence:
     def test_multiple_reopen_cycles(self):
         """Data accumulates correctly across multiple open/close cycles."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = str(Path(tmpdir) / "cycles.grafeo")
+            db_path = str(Path(tmpdir) / "cycles.obrain")
 
             # Cycle 1
-            db = GrafeoDB(path=db_path)
+            db = ObrainDB(path=db_path)
             db.execute("INSERT (:Person {name: 'Alix'})")
             db.close()
 
             # Cycle 2
-            db = GrafeoDB.open(db_path)
+            db = ObrainDB.open(db_path)
             assert db.info()["node_count"] == 1
             db.execute("INSERT (:Person {name: 'Gus'})")
             db.close()
 
             # Cycle 3
-            db = GrafeoDB.open(db_path)
+            db = ObrainDB.open(db_path)
             assert db.info()["node_count"] == 2
             db.execute("INSERT (:Person {name: 'Vincent'})")
             db.close()
 
             # Final check
-            db = GrafeoDB.open(db_path)
+            db = ObrainDB.open(db_path)
             assert db.info()["node_count"] == 3
             result = db.execute("MATCH (p:Person) RETURN p.name")
             names = sorted(row["p.name"] for row in result)
@@ -117,9 +117,9 @@ class TestGrafeoFilePersistence:
     def test_checkpoint_and_continued_writes(self):
         """Manual checkpoint followed by more writes all persist."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = str(Path(tmpdir) / "checkpoint.grafeo")
+            db_path = str(Path(tmpdir) / "checkpoint.obrain")
 
-            db = GrafeoDB(path=db_path)
+            db = ObrainDB(path=db_path)
 
             db.execute("INSERT (:Person {name: 'Alix'})")
             db.wal_checkpoint()
@@ -127,16 +127,16 @@ class TestGrafeoFilePersistence:
             db.execute("INSERT (:Person {name: 'Gus'})")
             db.close()
 
-            db2 = GrafeoDB.open(db_path)
+            db2 = ObrainDB.open(db_path)
             assert db2.info()["node_count"] == 2
             db2.close()
 
     def test_edges_with_properties_persist(self):
         """Edge properties survive close/reopen."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = str(Path(tmpdir) / "edge_props.grafeo")
+            db_path = str(Path(tmpdir) / "edge_props.obrain")
 
-            db = GrafeoDB(path=db_path)
+            db = ObrainDB(path=db_path)
             db.execute("INSERT (:Person {name: 'Alix'})")
             db.execute("INSERT (:Person {name: 'Gus'})")
             db.execute(
@@ -145,7 +145,7 @@ class TestGrafeoFilePersistence:
             )
             db.close()
 
-            db2 = GrafeoDB.open(db_path)
+            db2 = ObrainDB.open(db_path)
             result = db2.execute("MATCH ()-[e:KNOWS]->() RETURN e.since")
             assert len(result) == 1
             assert list(result)[0]["e.since"] == 2020
@@ -154,9 +154,9 @@ class TestGrafeoFilePersistence:
     def test_named_graphs_persist(self):
         """Named graphs survive close/reopen."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = str(Path(tmpdir) / "named.grafeo")
+            db_path = str(Path(tmpdir) / "named.obrain")
 
-            db = GrafeoDB(path=db_path)
+            db = ObrainDB(path=db_path)
             db.execute("CREATE GRAPH social")
             db.execute("USE GRAPH social")
             db.execute("INSERT (:Person {name: 'Alix'})")
@@ -164,7 +164,7 @@ class TestGrafeoFilePersistence:
             db.execute("INSERT (:Person {name: 'Gus'})")
             db.close()
 
-            db2 = GrafeoDB.open(db_path)
+            db2 = ObrainDB.open(db_path)
 
             # Default graph has Gus
             result = db2.execute("MATCH (p:Person) RETURN p.name")
@@ -179,9 +179,9 @@ class TestGrafeoFilePersistence:
     def test_file_is_single_file(self):
         """The .grafeo path should be a file, not a directory."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "single.grafeo"
+            db_path = Path(tmpdir) / "single.obrain"
 
-            db = GrafeoDB(path=str(db_path))
+            db = ObrainDB(path=str(db_path))
             db.execute("INSERT (:Node {x: 1})")
             db.close()
 

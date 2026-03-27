@@ -14,7 +14,7 @@ use std::fmt;
 /// # Examples
 ///
 /// ```
-/// use grafeo_common::types::NodeId;
+/// use obrain_common::types::NodeId;
 ///
 /// let id = NodeId::new(42);
 /// assert!(id.is_valid());
@@ -143,7 +143,7 @@ impl From<EdgeId> for u64 {
 /// Identifies a transaction for MVCC versioning.
 ///
 /// Each transaction gets a unique, monotonically increasing ID. This is how
-/// Grafeo knows which versions of data each transaction should see.
+/// Obrain knows which versions of data each transaction should see.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default)]
 #[repr(transparent)]
 pub struct TransactionId(pub u64);

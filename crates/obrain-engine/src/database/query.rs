@@ -1,10 +1,10 @@
-//! Query execution methods for GrafeoDB.
+//! Query execution methods for ObrainDB.
 
-use grafeo_common::utils::error::Result;
+use obrain_common::utils::error::Result;
 
 use super::{FromValue, QueryResult};
 
-impl super::GrafeoDB {
+impl super::ObrainDB {
     /// Executes a closure with a one-shot session, syncing graph context back
     /// to the database afterward. This ensures `USE GRAPH`, `SESSION SET GRAPH`,
     /// and `SESSION RESET` persist across one-shot `execute()` calls.
@@ -49,7 +49,7 @@ impl super::GrafeoDB {
     pub fn execute_at_epoch(
         &self,
         query: &str,
-        epoch: grafeo_common::types::EpochId,
+        epoch: obrain_common::types::EpochId,
     ) -> Result<QueryResult> {
         self.with_session(|s| s.execute_at_epoch(query, epoch))
     }
@@ -62,7 +62,7 @@ impl super::GrafeoDB {
     pub fn execute_with_params(
         &self,
         query: &str,
-        params: std::collections::HashMap<String, grafeo_common::types::Value>,
+        params: std::collections::HashMap<String, obrain_common::types::Value>,
     ) -> Result<QueryResult> {
         self.with_session(|s| s.execute_with_params(query, params))
     }
@@ -86,7 +86,7 @@ impl super::GrafeoDB {
     pub fn execute_cypher_with_params(
         &self,
         query: &str,
-        params: std::collections::HashMap<String, grafeo_common::types::Value>,
+        params: std::collections::HashMap<String, obrain_common::types::Value>,
     ) -> Result<QueryResult> {
         self.with_session(|s| s.execute_language(query, "cypher", Some(params)))
     }
@@ -110,7 +110,7 @@ impl super::GrafeoDB {
     pub fn execute_gremlin_with_params(
         &self,
         query: &str,
-        params: std::collections::HashMap<String, grafeo_common::types::Value>,
+        params: std::collections::HashMap<String, obrain_common::types::Value>,
     ) -> Result<QueryResult> {
         self.with_session(|s| s.execute_gremlin_with_params(query, params))
     }
@@ -134,7 +134,7 @@ impl super::GrafeoDB {
     pub fn execute_graphql_with_params(
         &self,
         query: &str,
-        params: std::collections::HashMap<String, grafeo_common::types::Value>,
+        params: std::collections::HashMap<String, obrain_common::types::Value>,
     ) -> Result<QueryResult> {
         self.with_session(|s| s.execute_graphql_with_params(query, params))
     }
@@ -158,7 +158,7 @@ impl super::GrafeoDB {
     pub fn execute_sql_with_params(
         &self,
         query: &str,
-        params: std::collections::HashMap<String, grafeo_common::types::Value>,
+        params: std::collections::HashMap<String, obrain_common::types::Value>,
     ) -> Result<QueryResult> {
         self.with_session(|s| s.execute_sql_with_params(query, params))
     }
@@ -176,7 +176,7 @@ impl super::GrafeoDB {
         &self,
         query: &str,
         language: &str,
-        params: Option<std::collections::HashMap<String, grafeo_common::types::Value>>,
+        params: Option<std::collections::HashMap<String, obrain_common::types::Value>>,
     ) -> Result<QueryResult> {
         self.with_session(|s| s.execute_language(query, language, params))
     }

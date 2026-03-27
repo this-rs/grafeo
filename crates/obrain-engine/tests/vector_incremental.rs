@@ -5,8 +5,8 @@
 
 #![cfg(feature = "vector-index")]
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 /// Helper: create a 3D vector value.
 fn vec3(x: f32, y: f32, z: f32) -> Value {
@@ -15,7 +15,7 @@ fn vec3(x: f32, y: f32, z: f32) -> Value {
 
 #[test]
 fn test_incremental_insert_via_set_property() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     // Create initial nodes and build index
     let n1 = db.create_node(&["Doc"]);
@@ -43,7 +43,7 @@ fn test_incremental_insert_via_set_property() {
 
 #[test]
 fn test_incremental_batch_create_after_index() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     // Create initial node and build index
     let n1 = db.create_node(&["Doc"]);
@@ -68,7 +68,7 @@ fn test_incremental_batch_create_after_index() {
 
 #[test]
 fn test_delete_removes_from_index() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     let n1 = db.create_node(&["Doc"]);
     db.set_node_property(n1, "emb", vec3(1.0, 0.0, 0.0));
@@ -98,7 +98,7 @@ fn test_delete_removes_from_index() {
 
 #[test]
 fn test_label_after_vector_triggers_index() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     // Build index on "Doc:emb" with an initial node
     let n1 = db.create_node(&["Doc"]);
@@ -127,7 +127,7 @@ fn test_label_after_vector_triggers_index() {
 
 #[test]
 fn test_drop_vector_index() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     let n1 = db.create_node(&["Doc"]);
     db.set_node_property(n1, "emb", vec3(1.0, 0.0, 0.0));
@@ -154,7 +154,7 @@ fn test_drop_vector_index() {
 
 #[test]
 fn test_rebuild_vector_index() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     let n1 = db.create_node(&["Doc"]);
     db.set_node_property(n1, "emb", vec3(1.0, 0.0, 0.0));
@@ -180,13 +180,13 @@ fn test_rebuild_vector_index() {
 
 #[test]
 fn test_rebuild_nonexistent_index_fails() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     assert!(db.rebuild_vector_index("Doc", "emb").is_err());
 }
 
 #[test]
 fn test_set_vector_without_index_is_noop() {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     // No vector index exists: setting a vector property should not crash
     let n1 = db.create_node(&["Doc"]);

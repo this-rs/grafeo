@@ -8,15 +8,15 @@
 
 #![cfg(feature = "temporal")]
 
-use grafeo_common::types::Value;
-use grafeo_engine::GrafeoDB;
+use obrain_common::types::Value;
+use obrain_engine::ObrainDB;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn setup_db() -> GrafeoDB {
-    GrafeoDB::new_in_memory()
+fn setup_db() -> ObrainDB {
+    ObrainDB::new_in_memory()
 }
 
 // ---------------------------------------------------------------------------
@@ -197,7 +197,7 @@ fn test_temporal_node_history_distinct_properties() {
     session.commit().unwrap();
 
     // get_node_history should return versions with distinct property snapshots
-    let history = db.get_node_history(grafeo_common::types::NodeId::new(0));
+    let history = db.get_node_history(obrain_common::types::NodeId::new(0));
     assert!(!history.is_empty(), "node should have history");
 }
 
@@ -267,12 +267,12 @@ fn test_temporal_snapshot_roundtrip() {
 
     // Export and import
     let snapshot = db.export_snapshot().unwrap();
-    let db2 = GrafeoDB::import_snapshot(&snapshot).unwrap();
+    let db2 = ObrainDB::import_snapshot(&snapshot).unwrap();
     let session2 = db2.session();
 
     // Current state preserved (via direct API since GQL match-pattern
     // property filtering with temporal snapshots is a known limitation)
-    let node = db2.get_node_at_epoch(grafeo_common::types::NodeId::new(0), db2.current_epoch());
+    let node = db2.get_node_at_epoch(obrain_common::types::NodeId::new(0), db2.current_epoch());
     assert!(node.is_some(), "node should exist after snapshot import");
     let status = node.unwrap().get_property("status").cloned();
     assert_eq!(status, Some(Value::String("degraded".into())));
@@ -311,7 +311,7 @@ fn test_temporal_snapshot_query_roundtrip() {
     session.commit().unwrap();
 
     let snapshot = db.export_snapshot().unwrap();
-    let db2 = GrafeoDB::import_snapshot(&snapshot).unwrap();
+    let db2 = ObrainDB::import_snapshot(&snapshot).unwrap();
     let session2 = db2.session();
 
     // This requires the planner's filter pushdown to use epoch-aware

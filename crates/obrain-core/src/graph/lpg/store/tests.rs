@@ -1,7 +1,7 @@
 use super::*;
 use crate::graph::Direction;
 use crate::graph::lpg::property::CompareOp;
-use grafeo_common::types::TransactionId;
+use obrain_common::types::TransactionId;
 
 #[test]
 fn test_create_node() {

@@ -6,12 +6,12 @@
 
 use std::sync::Arc;
 
-use grafeo_common::types::LogicalType;
+use obrain_common::types::LogicalType;
 use parking_lot::Mutex;
 
 use super::{DataChunk, Operator, OperatorResult};
 use crate::execution::vector::ValueVector;
-use grafeo_common::types::Value;
+use obrain_common::types::Value;
 
 /// Shared state between [`ApplyOperator`](super::ApplyOperator) and [`ParameterScanOperator`].
 ///

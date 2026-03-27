@@ -1,6 +1,6 @@
 //! Query language parsers - speak your preferred graph language.
 //!
-//! Grafeo speaks GQL natively (the new ISO standard), but we also understand
+//! Obrain speaks GQL natively (the new ISO standard), but we also understand
 //! Cypher, SPARQL, Gremlin, and GraphQL. Enable what you need via features.
 //!
 //! | Language | Standard | Feature flag | Notes |

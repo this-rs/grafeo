@@ -110,7 +110,7 @@ pub use cognitive_boost::{ActivationMap, BoostMode, CognitiveBoostOperator};
 
 use std::sync::Arc;
 
-use grafeo_common::types::{EdgeId, NodeId, TransactionId};
+use obrain_common::types::{EdgeId, NodeId, TransactionId};
 use thiserror::Error;
 
 use super::DataChunk;
@@ -119,9 +119,9 @@ use super::factorized_chunk::FactorizedChunk;
 
 /// Trait for recording write operations during query execution.
 ///
-/// This bridges `grafeo-core` mutation operators (which perform writes) with
-/// `grafeo-engine`'s `TransactionManager` (which tracks write sets for conflict
-/// detection). The trait lives in `grafeo-core` to avoid circular dependencies.
+/// This bridges `obrain-core` mutation operators (which perform writes) with
+/// `obrain-engine`'s `TransactionManager` (which tracks write sets for conflict
+/// detection). The trait lives in `obrain-core` to avoid circular dependencies.
 pub trait WriteTracker: Send + Sync {
     /// Records that a node was written (created, deleted, or modified).
     ///
@@ -161,7 +161,7 @@ pub type OperatorResult = Result<Option<DataChunk>, OperatorError>;
 /// # Example
 ///
 /// ```rust
-/// use grafeo_core::execution::operators::FactorizedData;
+/// use obrain_core::execution::operators::FactorizedData;
 ///
 /// fn process_data(data: &dyn FactorizedData) {
 ///     if data.is_factorized() {
@@ -295,7 +295,7 @@ pub trait Operator: Send + Sync {
 mod tests {
     use super::*;
     use crate::execution::vector::ValueVector;
-    use grafeo_common::types::LogicalType;
+    use obrain_common::types::LogicalType;
 
     fn create_test_chunk() -> DataChunk {
         let mut col = ValueVector::with_type(LogicalType::Int64);

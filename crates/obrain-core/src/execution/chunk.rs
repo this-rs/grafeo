@@ -6,8 +6,8 @@
 use super::selection::SelectionVector;
 use super::vector::ValueVector;
 use crate::index::ZoneMapEntry;
-use grafeo_common::types::LogicalType;
-use grafeo_common::utils::hash::FxHashMap;
+use obrain_common::types::LogicalType;
+use obrain_common::utils::hash::FxHashMap;
 
 /// Default chunk size (number of tuples).
 pub const DEFAULT_CHUNK_SIZE: usize = 2048;
@@ -41,9 +41,9 @@ pub struct ChunkZoneHints {
 /// # Example
 ///
 /// ```
-/// use grafeo_core::execution::DataChunk;
-/// use grafeo_core::execution::ValueVector;
-/// use grafeo_common::types::Value;
+/// use obrain_core::execution::DataChunk;
+/// use obrain_core::execution::ValueVector;
+/// use obrain_common::types::Value;
 ///
 /// // Create columns
 /// let names = ValueVector::from_values(&[Value::from("Alix"), Value::from("Gus")]);
@@ -635,8 +635,8 @@ mod tests {
         hints.column_hints.insert(
             0,
             crate::index::ZoneMapEntry::with_min_max(
-                grafeo_common::types::Value::Int64(10),
-                grafeo_common::types::Value::Int64(100),
+                obrain_common::types::Value::Int64(10),
+                obrain_common::types::Value::Int64(100),
                 0,
                 10,
             ),
@@ -675,8 +675,8 @@ mod tests {
         hints.column_hints.insert(
             0,
             crate::index::ZoneMapEntry::with_min_max(
-                grafeo_common::types::Value::Int64(1),
-                grafeo_common::types::Value::Int64(10),
+                obrain_common::types::Value::Int64(1),
+                obrain_common::types::Value::Int64(10),
                 0,
                 10,
             ),

@@ -3,7 +3,7 @@
 //! The union operator concatenates results from multiple input operators,
 //! producing all rows from each input in sequence.
 
-use grafeo_common::types::LogicalType;
+use obrain_common::types::LogicalType;
 
 use super::{Operator, OperatorResult};
 

@@ -6,7 +6,7 @@
 #[allow(clippy::wildcard_imports)]
 use super::ast::*;
 use super::lexer::{Lexer, Token, TokenKind};
-use grafeo_common::utils::error::{QueryError, QueryErrorKind, Result};
+use obrain_common::utils::error::{QueryError, QueryErrorKind, Result};
 
 /// Unescapes backslash-escaped characters in a string literal.
 fn unescape_string(s: &str) -> String {
@@ -184,7 +184,7 @@ impl<'a> Parser<'a> {
         let span_start = self.current.span.start;
         self.expect(TokenKind::Call)?;
 
-        // Parse dotted procedure name: grafeo.pagerank
+        // Parse dotted procedure name: obrain.pagerank
         let mut name_parts = vec![self.expect_identifier()?];
         while self.current.kind == TokenKind::Dot {
             self.advance();
@@ -266,7 +266,7 @@ impl<'a> Parser<'a> {
             yield_items,
             where_clause,
             return_clause,
-            span: Some(grafeo_common::utils::error::SourceSpan::new(
+            span: Some(obrain_common::utils::error::SourceSpan::new(
                 span_start,
                 self.current.span.start,
                 1,
@@ -1072,7 +1072,7 @@ impl<'a> Parser<'a> {
         )
     }
 
-    fn error(&self, message: &str) -> grafeo_common::utils::error::Error {
+    fn error(&self, message: &str) -> obrain_common::utils::error::Error {
         QueryError::new(QueryErrorKind::Syntax, message)
             .with_span(self.current.span)
             .with_source(self.source.to_string())
