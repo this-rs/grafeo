@@ -243,4 +243,95 @@ mod tests {
         let mentioned = feedback.find_mentioned_nodes(&context, response, &context.node_texts);
         assert_eq!(mentioned.len(), 1);
     }
+
+    #[test]
+    fn feedback_with_energy_store() {
+        use grafeo_cognitive::energy::{EnergyConfig, EnergyStore};
+
+        let energy_store = Arc::new(EnergyStore::new(EnergyConfig::default()));
+        let feedback = CognitiveFeedback::new(None, Some(Arc::clone(&energy_store)));
+
+        let context = RagContext {
+            text: "context".into(),
+            estimated_tokens: 10,
+            nodes_included: 2,
+            node_ids: vec![NodeId(1), NodeId(2)],
+            node_texts: vec![
+                (NodeId(1), vec!["Grafeo database".into()]),
+                (NodeId(2), vec!["WAL recovery".into()]),
+            ],
+        };
+        let config = RagConfig::default();
+
+        let stats = feedback
+            .feedback(&context, "Grafeo database is great", &config)
+            .unwrap();
+        assert_eq!(stats.nodes_boosted, 2);
+        // Node 1 mentioned → full boost, Node 2 not mentioned → reduced boost
+        let e1 = energy_store.get_energy(NodeId(1));
+        let e2 = energy_store.get_energy(NodeId(2));
+        assert!(e1 > e2, "Mentioned node should get higher energy boost");
+    }
+
+    #[test]
+    fn feedback_with_synapse_store() {
+        use grafeo_cognitive::synapse::{SynapseConfig, SynapseStore};
+
+        let synapse_store = Arc::new(SynapseStore::new(SynapseConfig::default()));
+        let feedback = CognitiveFeedback::new(Some(Arc::clone(&synapse_store)), None);
+
+        let context = RagContext {
+            text: "context".into(),
+            estimated_tokens: 10,
+            nodes_included: 3,
+            node_ids: vec![NodeId(1), NodeId(2), NodeId(3)],
+            node_texts: vec![
+                (NodeId(1), vec!["Grafeo database".into()]),
+                (NodeId(2), vec!["WAL recovery".into()]),
+                (NodeId(3), vec!["some note".into()]),
+            ],
+        };
+        let config = RagConfig::default();
+
+        // Response mentions nodes 1 and 2 → synapse only between them
+        let stats = feedback
+            .feedback(&context, "Grafeo database uses WAL recovery", &config)
+            .unwrap();
+        assert_eq!(stats.synapses_reinforced, 1); // 1 pair: (1,2)
+
+        // Check synapse exists
+        let synapse = synapse_store.get_synapse(NodeId(1), NodeId(2));
+        assert!(
+            synapse.is_some(),
+            "Synapse should exist between mentioned nodes"
+        );
+    }
+
+    #[test]
+    fn feedback_fallback_reinforces_all_when_no_mentions() {
+        use grafeo_cognitive::synapse::{SynapseConfig, SynapseStore};
+
+        let synapse_store = Arc::new(SynapseStore::new(SynapseConfig::default()));
+        let feedback = CognitiveFeedback::new(Some(Arc::clone(&synapse_store)), None);
+
+        let context = RagContext {
+            text: "context".into(),
+            estimated_tokens: 10,
+            nodes_included: 3,
+            node_ids: vec![NodeId(1), NodeId(2), NodeId(3)],
+            node_texts: vec![
+                (NodeId(1), vec!["aaaa".into()]), // too short, won't match
+                (NodeId(2), vec!["bbbb".into()]),
+                (NodeId(3), vec!["cccc".into()]),
+            ],
+        };
+        let config = RagConfig::default();
+
+        // Response doesn't mention any node text → fallback to all pairs
+        let stats = feedback
+            .feedback(&context, "completely unrelated response text here", &config)
+            .unwrap();
+        // 3 nodes → C(3,2) = 3 pairs
+        assert_eq!(stats.synapses_reinforced, 3);
+    }
 }

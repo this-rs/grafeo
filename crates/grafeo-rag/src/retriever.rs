@@ -1172,4 +1172,299 @@ mod tests {
         assert!(terms.contains(&"grafeo".to_string()));
         assert!(terms.contains(&"database".to_string()));
     }
+
+    // ── EngramRetriever integration tests ───────────────────────
+
+    /// Helper: build a small LpgStore with known nodes and edges.
+    fn make_test_graph() -> Arc<LpgStore> {
+        let store = LpgStore::new().unwrap();
+
+        let n1 = store.create_node_with_props(
+            &["Project"],
+            [
+                (
+                    "name".to_string(),
+                    grafeo_common::types::Value::from("Grafeo"),
+                ),
+                (
+                    "description".to_string(),
+                    grafeo_common::types::Value::from("A graph database engine"),
+                ),
+            ],
+        );
+
+        let n2 = store.create_node_with_props(
+            &["Note", "Gotcha"],
+            [
+                (
+                    "title".to_string(),
+                    grafeo_common::types::Value::from("WAL Bug"),
+                ),
+                (
+                    "content".to_string(),
+                    grafeo_common::types::Value::from("checkpoint.meta breaks recovery"),
+                ),
+            ],
+        );
+
+        let n3 = store.create_node_with_props(
+            &["Task"],
+            [(
+                "title".to_string(),
+                grafeo_common::types::Value::from("Fix WAL recovery"),
+            )],
+        );
+
+        // Create edges
+        store.create_edge(n1, n2, "HAS_NOTE");
+        store.create_edge(n2, n3, "BLOCKS");
+
+        Arc::new(store)
+    }
+
+    fn make_retriever(graph: Arc<LpgStore>) -> EngramRetriever {
+        let engram_store = Arc::new(EngramStore::new(None));
+        EngramRetriever::with_defaults(graph, engram_store, None)
+    }
+
+    #[test]
+    fn retriever_with_defaults_builds_index() {
+        let graph = make_test_graph();
+        let retriever = make_retriever(Arc::clone(&graph));
+
+        let (total, terms, labels) = retriever.index_stats();
+        assert_eq!(total, 3);
+        assert!(terms > 0, "Should have indexed some terms");
+        assert!(!labels.is_empty());
+    }
+
+    #[test]
+    fn retriever_new_lazy_starts_empty() {
+        let graph = make_test_graph();
+        let engram_store = Arc::new(EngramStore::new(None));
+        let retriever = EngramRetriever::new_lazy(Arc::clone(&graph), engram_store, None);
+
+        let (total, terms, _) = retriever.index_stats();
+        // stats() returns max(total_nodes, 1) to avoid division by zero
+        assert_eq!(total, 1); // empty index reports 1 (floor)
+        assert_eq!(terms, 0);
+    }
+
+    #[test]
+    fn retriever_index_node_incremental() {
+        let graph = make_test_graph();
+        let engram_store = Arc::new(EngramStore::new(None));
+        let retriever = EngramRetriever::new_lazy(Arc::clone(&graph), engram_store, None);
+
+        // Index just one node
+        let node_ids = graph.node_ids();
+        retriever.index_node(node_ids[0]);
+
+        let (total, _, _) = retriever.index_stats();
+        assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn retriever_index_nodes_batch() {
+        let graph = make_test_graph();
+        let engram_store = Arc::new(EngramStore::new(None));
+        let retriever = EngramRetriever::new_lazy(Arc::clone(&graph), engram_store, None);
+
+        let node_ids = graph.node_ids();
+        retriever.index_nodes(&node_ids);
+
+        let (total, _, _) = retriever.index_stats();
+        assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn retriever_remove_node_from_index() {
+        let graph = make_test_graph();
+        let retriever = make_retriever(Arc::clone(&graph));
+
+        let node_ids = graph.node_ids();
+        retriever.remove_node(node_ids[0]);
+
+        let (total, _, _) = retriever.index_stats();
+        assert_eq!(total, 2);
+    }
+
+    #[test]
+    fn retriever_reindex_rebuilds() {
+        let graph = make_test_graph();
+        let retriever = make_retriever(Arc::clone(&graph));
+
+        // Remove a node from index
+        let node_ids = graph.node_ids();
+        retriever.remove_node(node_ids[0]);
+        assert_eq!(retriever.index_stats().0, 2);
+
+        // Reindex should bring it back
+        retriever.reindex();
+        assert_eq!(retriever.index_stats().0, 3);
+    }
+
+    #[test]
+    fn retriever_text_to_cues_finds_nodes() {
+        let graph = make_test_graph();
+        let retriever = make_retriever(graph);
+
+        let cues = retriever.text_to_cues("Grafeo database", 10);
+        assert!(!cues.is_empty(), "Should find nodes matching 'Grafeo'");
+    }
+
+    #[test]
+    fn retriever_text_to_cues_no_match() {
+        let graph = make_test_graph();
+        let retriever = make_retriever(graph);
+
+        let cues = retriever.text_to_cues("zzzznonexistent", 10);
+        assert!(cues.is_empty());
+    }
+
+    #[test]
+    fn retriever_extract_node_content() {
+        let graph = make_test_graph();
+        let retriever = make_retriever(Arc::clone(&graph));
+
+        let node_ids = graph.node_ids();
+        let content = retriever.extract_node_content(node_ids[0]);
+        assert!(content.is_some());
+
+        let node = content.unwrap();
+        assert!(!node.labels.is_empty());
+        assert!(!node.properties.is_empty());
+    }
+
+    #[test]
+    fn retriever_extract_node_content_has_relations() {
+        let graph = make_test_graph();
+        let retriever = make_retriever(Arc::clone(&graph));
+
+        // First node (Project) has outgoing HAS_NOTE edge
+        let node_ids = graph.node_ids();
+        let content = retriever.extract_node_content(node_ids[0]).unwrap();
+
+        let has_rels =
+            !content.outgoing_relations.is_empty() || !content.incoming_relations.is_empty();
+        assert!(has_rels, "Node should have at least one relation");
+    }
+
+    #[test]
+    fn retriever_extract_nonexistent_node() {
+        let graph = make_test_graph();
+        let retriever = make_retriever(graph);
+
+        let content = retriever.extract_node_content(NodeId(99999));
+        assert!(content.is_none());
+    }
+
+    #[test]
+    fn retriever_retrieve_finds_text_matches() {
+        let graph = make_test_graph();
+        let retriever = make_retriever(graph);
+        let config = RagConfig::default();
+
+        let result = retriever.retrieve("WAL recovery checkpoint", &config);
+        assert!(result.is_ok());
+
+        let result = result.unwrap();
+        assert!(
+            !result.nodes.is_empty(),
+            "Should find nodes matching WAL query"
+        );
+    }
+
+    #[test]
+    fn retriever_retrieve_returns_properties() {
+        let graph = make_test_graph();
+        let retriever = make_retriever(graph);
+        let config = RagConfig::default();
+
+        let result = retriever.retrieve("Grafeo database", &config).unwrap();
+        assert!(!result.nodes.is_empty());
+
+        let node = &result.nodes[0];
+        assert!(
+            !node.properties.is_empty(),
+            "Retrieved nodes should have properties"
+        );
+        assert!(
+            !node.labels.is_empty(),
+            "Retrieved nodes should have labels"
+        );
+    }
+
+    #[test]
+    fn retriever_retrieve_no_match_returns_error() {
+        let graph = make_test_graph();
+        let retriever = make_retriever(graph);
+        let config = RagConfig::default();
+
+        let result = retriever.retrieve("xyznonexistent999", &config);
+        assert!(result.is_err(), "Should error on no matches");
+    }
+
+    #[test]
+    fn retriever_retrieve_respects_max_context_nodes() {
+        let graph = make_test_graph();
+        let retriever = make_retriever(graph);
+        let config = RagConfig {
+            max_context_nodes: 1,
+            ..RagConfig::default()
+        };
+
+        let result = retriever.retrieve("WAL Grafeo", &config).unwrap();
+        assert!(result.nodes.len() <= 1);
+    }
+
+    #[test]
+    fn retriever_new_with_full_components() {
+        let graph = make_test_graph();
+        let engram_store = Arc::new(EngramStore::new(None));
+        let vector_index = Arc::new(InMemoryVectorIndex::new());
+        let spectral = Arc::new(SpectralEncoder::new());
+        let synapse_store = Arc::new(SynapseStore::new(
+            grafeo_cognitive::synapse::SynapseConfig::default(),
+        ));
+
+        let retriever = EngramRetriever::new(
+            graph,
+            engram_store,
+            vector_index,
+            spectral,
+            Some(synapse_store),
+        );
+
+        let (total, _, _) = retriever.index_stats();
+        assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn retriever_retrieve_with_synapse_store() {
+        let graph = make_test_graph();
+        let engram_store = Arc::new(EngramStore::new(None));
+        let synapse_store = Arc::new(SynapseStore::new(
+            grafeo_cognitive::synapse::SynapseConfig::default(),
+        ));
+
+        let retriever =
+            EngramRetriever::with_defaults(Arc::clone(&graph), engram_store, Some(synapse_store));
+        let config = RagConfig::default();
+
+        // Should work even with synapse store (spreading activation path)
+        let result = retriever.retrieve("Grafeo", &config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn retriever_index_node_nonexistent_is_noop() {
+        let graph = make_test_graph();
+        let retriever = make_retriever(Arc::clone(&graph));
+
+        let before = retriever.index_stats().0;
+        retriever.index_node(NodeId(99999)); // doesn't exist in graph
+        let after = retriever.index_stats().0;
+        assert_eq!(before, after);
+    }
 }
