@@ -1378,6 +1378,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "grafeo-rag"
+version = "0.5.24"
+dependencies = [
+ "async-trait",
+ "grafeo",
+ "grafeo-cognitive",
+ "grafeo-common",
+ "grafeo-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "grafeo-reactive"
 version = "0.5.24"
 dependencies = [
