@@ -1,6 +1,6 @@
 ---
 title: Performance Baselines
-description: Measured performance characteristics of Grafeo operations.
+description: Measured performance characteristics of Obrain operations.
 tags:
   - performance
   - benchmarks
@@ -9,7 +9,7 @@ tags:
 
 # Performance Baselines
 
-Measured performance characteristics showing what to expect from Grafeo.
+Measured performance characteristics showing what to expect from Obrain.
 
 !!! note "Benchmark Environment"
     Unless otherwise noted, benchmarks were run on:
@@ -220,7 +220,7 @@ Results from the [LDBC Social Network Benchmark](https://ldbcouncil.org/benchmar
 
 | Database | SNB Interactive | Memory | Graph Analytics | Memory | ACID | Memory |
 |----------|---------------:|-------:|----------------:|-------:|-----:|-------:|
-| **Grafeo** | **2,904 ms** | 136 MB | **0.4 ms** | 43 MB | **40 ms** | 67 MB |
+| **Obrain** | **2,904 ms** | 136 MB | **0.4 ms** | 43 MB | **40 ms** | 67 MB |
 | LadybugDB | 5,333 ms | 4,890 MB | 225 ms | 250 MB | 128 ms | 4,914 MB |
 | FalkorDB Lite | 7,454 ms | 156 MB | 89 ms | 88 MB | 72 ms | 144 MB |
 
@@ -228,12 +228,12 @@ Results from the [LDBC Social Network Benchmark](https://ldbcouncil.org/benchmar
 
 | Database | SNB Interactive | Graph Analytics | ACID |
 |----------|---------------:|----------------:|-----:|
-| **Grafeo Server** | **730 ms** | **15 ms** | 198 ms |
+| **Obrain Server** | **730 ms** | **15 ms** | 198 ms |
 | Memgraph | 4,113 ms | 19 ms | **107 ms** |
 | Neo4j | 6,788 ms | 253 ms | 369 ms |
 | ArangoDB | 40,043 ms | 22,739 ms | 2,110 ms |
 
-Full results: [embedded](https://github.com/GrafeoDB/graph-bench/blob/main/RESULTS_EMBEDDED.md) | [server](https://github.com/GrafeoDB/graph-bench/blob/main/RESULTS_SERVER.md)
+Full results: [embedded](https://github.com/ObrainDB/graph-bench/blob/main/RESULTS_EMBEDDED.md) | [server](https://github.com/ObrainDB/graph-bench/blob/main/RESULTS_SERVER.md)
 
 ---
 
@@ -284,13 +284,13 @@ db.execute("MATCH (n:Person)-[:KNOWS*1..5]->(m) RETURN n, m LIMIT 1000")
 For large graphs, configure memory limits via GQL:
 
 ```python
-from grafeo import GrafeoDB
+from obrain import ObrainDB
 
-db = GrafeoDB()
+db = ObrainDB()
 
 # Set memory limit via database configuration
 db.execute("SET DATABASE OPTION memory_limit = 8589934592")   # 8GB
-db.execute("SET DATABASE OPTION spill_path = '/tmp/grafeo_spill'")
+db.execute("SET DATABASE OPTION spill_path = '/tmp/obrain_spill'")
 ```
 
 ---

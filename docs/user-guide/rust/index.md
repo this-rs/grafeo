@@ -1,19 +1,19 @@
 ---
 title: Rust API
-description: Using Grafeo from Rust.
+description: Using Obrain from Rust.
 ---
 
 # Rust API
 
-Grafeo is written in Rust and provides a native Rust API.
+Obrain is written in Rust and provides a native Rust API.
 
 ## Quick Start
 
 ```rust
-use grafeo::GrafeoDB;
+use obrain::ObrainDB;
 
-fn main() -> Result<(), grafeo_common::utils::error::Error> {
-    let db = GrafeoDB::new_in_memory();
+fn main() -> Result<(), obrain_common::utils::error::Error> {
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session.execute("INSERT (:Person {name: 'Alix'})")?;

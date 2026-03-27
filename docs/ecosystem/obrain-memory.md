@@ -1,42 +1,42 @@
 ---
-title: grafeo-memory
-description: AI memory layer for LLM applications, powered by GrafeoDB.
+title: obrain-memory
+description: AI memory layer for LLM applications, powered by ObrainDB.
 ---
 
-# grafeo-memory
+# obrain-memory
 
-AI memory layer for LLM applications. Extract facts, entities and relations from conversations and persist them in a GrafeoDB graph with vector embeddings for semantic search.
+AI memory layer for LLM applications. Extract facts, entities and relations from conversations and persist them in a ObrainDB graph with vector embeddings for semantic search.
 
-[:octicons-mark-github-16: GitHub](https://github.com/GrafeoDB/grafeo-memory){ .md-button }
-[:material-package-variant: PyPI](https://pypi.org/project/grafeo-memory/){ .md-button }
+[:octicons-mark-github-16: GitHub](https://github.com/ObrainDB/obrain-memory){ .md-button }
+[:material-package-variant: PyPI](https://pypi.org/project/obrain-memory/){ .md-button }
 
 ## Overview
 
-grafeo-memory provides a `MemoryManager` that orchestrates an **extract -> search -> reconcile -> execute** loop:
+obrain-memory provides a `MemoryManager` that orchestrates an **extract -> search -> reconcile -> execute** loop:
 
 1. **Extract** facts, entities and relations from text using an LLM
 2. **Search** existing memories for duplicates or conflicts
 3. **Reconcile** via LLM to decide ADD / UPDATE / DELETE / NONE
-4. **Execute** mutations against the GrafeoDB graph
+4. **Execute** mutations against the ObrainDB graph
 
 This keeps a persistent, deduplicated memory graph that grows and evolves over conversations.
 
 ## Installation
 
 ```bash
-uv add grafeo-memory[openai]     # OpenAI
-uv add grafeo-memory[mistral]    # Mistral
-uv add grafeo-memory[anthropic]  # Anthropic
-uv add grafeo-memory[all]        # all providers
+uv add obrain-memory[openai]     # OpenAI
+uv add obrain-memory[mistral]    # Mistral
+uv add obrain-memory[anthropic]  # Anthropic
+uv add obrain-memory[all]        # all providers
 ```
 
 Or with pip:
 
 ```bash
-pip install grafeo-memory[openai]
+pip install obrain-memory[openai]
 ```
 
-Requires Python 3.12+, grafeo >= 0.5.1 and pydantic-ai.
+Requires Python 3.12+, obrain >= 0.5.1 and pydantic-ai.
 
 ## Quick Start
 
@@ -44,7 +44,7 @@ Requires Python 3.12+, grafeo >= 0.5.1 and pydantic-ai.
 
 ```python
 from openai import OpenAI
-from grafeo_memory import MemoryManager, MemoryConfig, OpenAIEmbedder
+from obrain_memory import MemoryManager, MemoryConfig, OpenAIEmbedder
 
 embedder = OpenAIEmbedder(OpenAI())
 config = MemoryConfig(db_path="./memory.db", user_id="alix")
@@ -70,7 +70,7 @@ with MemoryManager("openai:gpt-4o-mini", config, embedder=embedder) as memory:
 
 ```python
 from mistralai import Mistral
-from grafeo_memory import MemoryManager, MemoryConfig, MistralEmbedder
+from obrain_memory import MemoryManager, MemoryConfig, MistralEmbedder
 
 embedder = MistralEmbedder(Mistral())
 config = MemoryConfig(db_path="./memory.db", user_id="alix")
@@ -95,7 +95,7 @@ with MemoryManager("mistral:mistral-small-latest", config, embedder=embedder) as
 - **Procedural memory**: separate memory type for instructions, preferences and rules
 - **Episodic memory**: memory type for interaction events and reasoning context
 - **Persistent or in-memory** storage modes
-- **Built-in MCP server**: expose the memory API to AI agents via `grafeo-memory-mcp`
+- **Built-in MCP server**: expose the memory API to AI agents via `obrain-memory-mcp`
 - **OpenTelemetry**: opt-in instrumentation for tracing LLM calls
 
 ### Graph Structure
@@ -179,11 +179,11 @@ MemoryConfig(
 
 ## MCP Server
 
-grafeo-memory includes a built-in MCP server that exposes the memory API to AI agents. Unlike [grafeo-mcp](grafeo-mcp.md) which wraps the raw database, `grafeo-memory-mcp` wraps the high-level memory operations (extract, reconcile, search, summarize).
+obrain-memory includes a built-in MCP server that exposes the memory API to AI agents. Unlike [obrain-mcp](obrain-mcp.md) which wraps the raw database, `obrain-memory-mcp` wraps the high-level memory operations (extract, reconcile, search, summarize).
 
 ```bash
-uv add grafeo-memory[mcp]
-# or: pip install grafeo-memory[mcp]
+uv add obrain-memory[mcp]
+# or: pip install obrain-memory[mcp]
 ```
 
 Add to Claude Desktop config:
@@ -191,11 +191,11 @@ Add to Claude Desktop config:
 ```json
 {
   "mcpServers": {
-    "grafeo-memory": {
-      "command": "grafeo-memory-mcp",
+    "obrain-memory": {
+      "command": "obrain-memory-mcp",
       "env": {
-        "GRAFEO_MEMORY_MODEL": "openai:gpt-4o-mini",
-        "GRAFEO_MEMORY_DB": "./memory.db"
+        "OBRAIN_MEMORY_MODEL": "openai:gpt-4o-mini",
+        "OBRAIN_MEMORY_DB": "./memory.db"
       }
     }
   }
@@ -214,7 +214,7 @@ Add to Claude Desktop config:
 ## Requirements
 
 - Python 3.12+
-- grafeo >= 0.5.1
+- obrain >= 0.5.1
 - pydantic-ai-slim
 
 ## License

@@ -1,6 +1,6 @@
 ---
 title: Persistent Storage
-description: Using Grafeo with durable storage.
+description: Using Obrain with durable storage.
 tags:
   - persistence
   - storage
@@ -15,17 +15,17 @@ Persistent mode stores data durably on disk.
 === "Python"
 
     ```python
-    import grafeo
+    import obrain
 
-    db = grafeo.GrafeoDB(path="my_graph.db")
+    db = obrain.ObrainDB(path="my_graph.db")
     ```
 
 === "Rust"
 
     ```rust
-    use grafeo::GrafeoDB;
+    use obrain::ObrainDB;
 
-    let db = GrafeoDB::new("my_graph.db")?;
+    let db = ObrainDB::new("my_graph.db")?;
     ```
 
 ## File Structure
@@ -46,7 +46,7 @@ my_graph.db/
 ## Configuration
 
 ```python
-db = grafeo.GrafeoDB(
+db = obrain.ObrainDB(
     path="my_graph.db",
     # Sync mode: 'full' (default), 'normal', 'off'
     sync_mode='full'
@@ -63,11 +63,11 @@ db = grafeo.GrafeoDB(
 
 ```python
 # First session
-db = grafeo.GrafeoDB(path="my_graph.db")
+db = obrain.ObrainDB(path="my_graph.db")
 db.execute("INSERT (:Person {name: 'Alix'})")
 
 # Later session - data persists
-db = grafeo.GrafeoDB(path="my_graph.db")
+db = obrain.ObrainDB(path="my_graph.db")
 result = db.execute("MATCH (p:Person) RETURN p.name")
 # Returns 'Alix'
 ```

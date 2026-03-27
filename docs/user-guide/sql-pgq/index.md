@@ -152,13 +152,13 @@ SQL/PGQ also supports `CALL` statements for invoking built-in graph algorithms:
 
 ```sql
 -- Run PageRank
-CALL grafeo.pagerank()
+CALL obrain.pagerank()
 
 -- With parameters and column selection
-CALL grafeo.pagerank({damping: 0.85}) YIELD node_id, score AS rank
+CALL obrain.pagerank({damping: 0.85}) YIELD node_id, score AS rank
 
 -- List all available procedures
-CALL grafeo.procedures()
+CALL obrain.procedures()
 ```
 
 See [Algorithms](../../algorithms/index.md) for the full list of available procedures.

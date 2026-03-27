@@ -1,43 +1,43 @@
 ---
-title: grafeo-langchain
-description: LangChain integration for GrafeoDB with graph store, vector store and Graph RAG retrieval.
+title: obrain-langchain
+description: LangChain integration for ObrainDB with graph store, vector store and Graph RAG retrieval.
 ---
 
-# grafeo-langchain
+# obrain-langchain
 
-LangChain integration that provides graph store and vector store implementations backed by GrafeoDB. Build knowledge graphs and Graph RAG pipelines with no servers or Docker required.
+LangChain integration that provides graph store and vector store implementations backed by ObrainDB. Build knowledge graphs and Graph RAG pipelines with no servers or Docker required.
 
-[:octicons-mark-github-16: GitHub](https://github.com/GrafeoDB/grafeo-langchain){ .md-button }
-[:material-package-variant: PyPI](https://pypi.org/project/grafeo-langchain/){ .md-button }
+[:octicons-mark-github-16: GitHub](https://github.com/ObrainDB/obrain-langchain){ .md-button }
+[:material-package-variant: PyPI](https://pypi.org/project/obrain-langchain/){ .md-button }
 
 ## Overview
 
-grafeo-langchain provides two main components:
+obrain-langchain provides two main components:
 
-- **GrafeoGraphStore** - Store and query LLM-extracted knowledge graph triples
-- **GrafeoGraphVectorStore** - Combined vector + graph store with Graph RAG retrieval
+- **ObrainGraphStore** - Store and query LLM-extracted knowledge graph triples
+- **ObrainGraphVectorStore** - Combined vector + graph store with Graph RAG retrieval
 
-Both use GrafeoDB's embedded database directly - no intermediate servers needed.
+Both use ObrainDB's embedded database directly - no intermediate servers needed.
 
 ## Installation
 
 ```bash
-uv add grafeo-langchain
+uv add obrain-langchain
 # or
-pip install grafeo-langchain
+pip install obrain-langchain
 ```
 
-Requires Python 3.12+ and grafeo >= 0.4.
+Requires Python 3.12+ and obrain >= 0.4.
 
 ## Quick Start
 
 ### Knowledge Graph Store
 
 ```python
-from grafeo_langchain import GrafeoGraphStore
+from obrain_langchain import ObrainGraphStore
 from langchain_core.documents import Document
 
-store = GrafeoGraphStore()
+store = ObrainGraphStore()
 
 # Add knowledge graph triples
 store.upsert_triplet(("Alix", "KNOWS", "Gus"))
@@ -50,10 +50,10 @@ result = store.query("MATCH (a)-[:KNOWS]->(b) RETURN a, b")
 ### Graph Vector Store (Graph RAG)
 
 ```python
-from grafeo_langchain import GrafeoGraphVectorStore
+from obrain_langchain import ObrainGraphVectorStore
 from langchain_openai import OpenAIEmbeddings
 
-store = GrafeoGraphVectorStore(
+store = ObrainGraphVectorStore(
     embedding=OpenAIEmbeddings(),
     db_path="./my-graph.db",
 )
@@ -75,14 +75,14 @@ results = store.mmr_traversal_search("engineer", k=5, depth=2)
 
 ## Features
 
-### GrafeoGraphStore
+### ObrainGraphStore
 
-- Stores LLM-extracted triples as native Grafeo graph elements
+- Stores LLM-extracted triples as native Obrain graph elements
 - Supports GQL and Cypher query languages
 - Schema introspection and refresh
 - Graph document ingestion with optional source linking
 
-### GrafeoGraphVectorStore
+### ObrainGraphVectorStore
 
 - LangChain `VectorStore` interface with graph traversal
 - Native HNSW vector search with configurable embeddings
@@ -95,7 +95,7 @@ results = store.mmr_traversal_search("engineer", k=5, depth=2)
 ## Requirements
 
 - Python 3.12+
-- grafeo >= 0.4
+- obrain >= 0.4
 - langchain-core
 
 ## License

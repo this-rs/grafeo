@@ -8,7 +8,7 @@ tags:
 
 # Query Optimization
 
-Grafeo uses cost-based optimization to select efficient query plans.
+Obrain uses cost-based optimization to select efficient query plans.
 
 ## Optimizer Pipeline
 
@@ -67,7 +67,7 @@ selectivity = (high - low) / (max - min)
 output_rows = (rows_a * rows_b) / max(distinct_a, distinct_b)
 ```
 
-Statistics are collected automatically by the query engine during graph operations. Grafeo tracks per-label and per-property statistics for cardinality estimation.
+Statistics are collected automatically by the query engine during graph operations. Obrain tracks per-label and per-property statistics for cardinality estimation.
 
 ## Join Ordering (DPccp)
 

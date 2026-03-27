@@ -1,11 +1,11 @@
 ---
 title: First Graph
-description: Build a first graph application with Grafeo.
+description: Build a first graph application with Obrain.
 ---
 
 # First Graph
 
-This tutorial walks through building a simple social network graph to cover the fundamentals of Grafeo.
+This tutorial walks through building a simple social network graph to cover the fundamentals of Obrain.
 
 ## What This Builds
 
@@ -21,18 +21,18 @@ A social network with:
 === "Python"
 
     ```python
-    import grafeo
+    import obrain
 
     # Create a persistent database
-    db = grafeo.GrafeoDB("social_network.db")
+    db = obrain.ObrainDB("social_network.db")
     ```
 
 === "Rust"
 
     ```rust
-    use grafeo::GrafeoDB;
+    use obrain::ObrainDB;
 
-    let db = GrafeoDB::new("social_network.db")?;
+    let db = ObrainDB::new("social_network.db")?;
     ```
 
 ## Step 2: Add People
@@ -161,7 +161,7 @@ A social network with:
         })
         INSERT (:Post {
             id: 2,
-            content: 'Learning Grafeo is fun!',
+            content: 'Learning Obrain is fun!',
             created_at: '2024-01-16'
         })
         INSERT (:Post {

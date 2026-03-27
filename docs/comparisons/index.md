@@ -5,7 +5,7 @@ description: Compare query languages and data models.
 
 # Language Comparisons
 
-Grafeo supports multiple query paradigms. This section compares the languages and data models.
+Obrain supports multiple query paradigms. This section compares the languages and data models.
 
 ## Query Languages
 

@@ -15,9 +15,9 @@ Find clusters and communities within graphs.
 Fast modularity-based community detection.
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 algs = db.algorithms()
 
 communities = algs.louvain()

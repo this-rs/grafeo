@@ -1,28 +1,28 @@
 ---
-title: grafeo-mcp
-description: Model Context Protocol server for exposing GrafeoDB to AI agents.
+title: obrain-mcp
+description: Model Context Protocol server for exposing ObrainDB to AI agents.
 ---
 
-# grafeo-mcp
+# obrain-mcp
 
-A [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that exposes GrafeoDB to AI agents. Zero infrastructure required - the server embeds the database directly.
+A [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that exposes ObrainDB to AI agents. Zero infrastructure required - the server embeds the database directly.
 
-[:octicons-mark-github-16: GitHub](https://github.com/GrafeoDB/grafeo-mcp){ .md-button }
-[:material-package-variant: PyPI](https://pypi.org/project/grafeo-mcp/){ .md-button }
+[:octicons-mark-github-16: GitHub](https://github.com/ObrainDB/obrain-mcp){ .md-button }
+[:material-package-variant: PyPI](https://pypi.org/project/obrain-mcp/){ .md-button }
 
 ## Overview
 
-grafeo-mcp lets AI agents (Claude, Copilot, etc.) query and manipulate a Grafeo graph database through the MCP standard. It runs as a standalone executable with no separate database server needed.
+obrain-mcp lets AI agents (Claude, Copilot, etc.) query and manipulate a Obrain graph database through the MCP standard. It runs as a standalone executable with no separate database server needed.
 
 ## Installation
 
 ```bash
-uv tool install grafeo-mcp
+uv tool install obrain-mcp
 # or
-pip install grafeo-mcp
+pip install obrain-mcp
 ```
 
-Requires Python 3.12+ and grafeo >= 0.4.4.
+Requires Python 3.12+ and obrain >= 0.4.4.
 
 ## Quick Start
 
@@ -33,8 +33,8 @@ Add to `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "grafeo": {
-      "command": "grafeo-mcp"
+    "obrain": {
+      "command": "obrain-mcp"
     }
   }
 }
@@ -43,12 +43,12 @@ Add to `claude_desktop_config.json`:
 ### With persistent storage
 
 ```bash
-GRAFEO_DB_PATH=./my-graph.db grafeo-mcp
+OBRAIN_DB_PATH=./my-graph.db obrain-mcp
 ```
 
 ## MCP Tools
 
-grafeo-mcp exposes 16 tools organized in 4 categories:
+obrain-mcp exposes 16 tools organized in 4 categories:
 
 ### Query
 
@@ -88,7 +88,7 @@ grafeo-mcp exposes 16 tools organized in 4 categories:
 
 | Environment Variable | Default | Description |
 |----------------------|---------|-------------|
-| `GRAFEO_DB_PATH` | *(in-memory)* | Path to persistent database file |
+| `OBRAIN_DB_PATH` | *(in-memory)* | Path to persistent database file |
 
 ## Transport
 
@@ -97,12 +97,12 @@ Supports stdio (default), SSE and streamable HTTP transports.
 ## Requirements
 
 - Python 3.12+
-- grafeo >= 0.4.4
+- obrain >= 0.4.4
 - mcp >= 1.20
 
 ## See Also
 
-- **[grafeo-memory](grafeo-memory.md)** includes a built-in MCP server (`grafeo-memory-mcp`) that wraps the high-level memory API - extract, reconcile, search, summarize. If you need AI memory management rather than raw graph access, use that instead.
+- **[obrain-memory](obrain-memory.md)** includes a built-in MCP server (`obrain-memory-mcp`) that wraps the high-level memory API - extract, reconcile, search, summarize. If you need AI memory management rather than raw graph access, use that instead.
 
 ## License
 

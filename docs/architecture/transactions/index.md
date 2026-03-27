@@ -8,7 +8,7 @@ tags:
 
 # Transactions
 
-Grafeo provides ACID transactions with MVCC (Multi-Version Concurrency Control).
+Obrain provides ACID transactions with MVCC (Multi-Version Concurrency Control).
 
 ## Why MVCC with Snapshot Isolation?
 

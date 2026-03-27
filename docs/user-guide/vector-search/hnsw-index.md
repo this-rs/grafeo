@@ -36,9 +36,9 @@ CREATE VECTOR INDEX document_embeddings ON :Document(embedding)
 ### Python API
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Create index with default settings
 db.create_vector_index(

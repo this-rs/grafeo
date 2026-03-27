@@ -1,7 +1,7 @@
-"""Grafeo CLI launcher.
+"""Obrain CLI launcher.
 
-Thin wrapper that finds and runs the grafeo binary bundled with this package.
-Install with: pip install grafeo-cli
+Thin wrapper that finds and runs the obrain binary bundled with this package.
+Install with: pip install obrain-cli
 """
 
 from __future__ import annotations
@@ -15,16 +15,16 @@ from pathlib import Path
 __version__ = "0.4.4"
 
 # GitHub release download URL template
-_GITHUB_RELEASE = "https://github.com/GrafeoDB/grafeo/releases/download"
+_GITHUB_RELEASE = "https://github.com/ObrainDB/obrain/releases/download"
 
 
 def _binary_name() -> str:
     """Return the platform-specific binary name."""
-    return "grafeo.exe" if platform.system() == "Windows" else "grafeo"
+    return "obrain.exe" if platform.system() == "Windows" else "obrain"
 
 
 def _find_binary() -> Path | None:
-    """Find the grafeo binary.
+    """Find the obrain binary.
 
     Search order:
     1. Bundled with this package (wheel data)
@@ -48,7 +48,7 @@ def _find_binary() -> Path | None:
     # 3. On system PATH
     from shutil import which
 
-    on_path = which("grafeo")
+    on_path = which("obrain")
     if on_path:
         return Path(on_path)
 
@@ -56,18 +56,18 @@ def _find_binary() -> Path | None:
 
 
 def main() -> None:
-    """Run the grafeo CLI binary, forwarding all arguments."""
+    """Run the obrain CLI binary, forwarding all arguments."""
     binary = _find_binary()
 
     if binary is None:
         print(
-            "error: grafeo binary not found.\n"
+            "error: obrain binary not found.\n"
             "\n"
-            "The grafeo-cli package is a thin launcher for the Grafeo CLI binary.\n"
+            "The obrain-cli package is a thin launcher for the Obrain CLI binary.\n"
             "Install the binary via one of:\n"
             f"  - Download from {_GITHUB_RELEASE}/v{__version__}/\n"
-            "  - cargo install grafeo-cli\n"
-            "  - Place the 'grafeo' binary on your PATH\n",
+            "  - cargo install obrain-cli\n"
+            "  - Place the 'obrain' binary on your PATH\n",
             file=sys.stderr,
         )
         sys.exit(1)

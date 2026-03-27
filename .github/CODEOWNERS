@@ -2,10 +2,10 @@
 * @StevenBtw
 
 # Rust crates
-/crates/grafeo-common/ @StevenBtw
-/crates/grafeo-core/ @StevenBtw
-/crates/grafeo-adapters/ @StevenBtw
-/crates/grafeo-engine/ @StevenBtw
+/crates/obrain-common/ @StevenBtw
+/crates/obrain-core/ @StevenBtw
+/crates/obrain-adapters/ @StevenBtw
+/crates/obrain-engine/ @StevenBtw
 
 # Python bindings
 /crates/bindings/python/ @StevenBtw

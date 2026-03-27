@@ -9,7 +9,7 @@ tags:
 
 # Getting Started with Vector Search
 
-This guide covers the fundamentals of storing and querying vector embeddings in Grafeo.
+This guide covers the fundamentals of storing and querying vector embeddings in Obrain.
 
 ## Storing Vectors
 
@@ -32,9 +32,9 @@ SET d.embedding = [0.15, -0.32, 0.58, 0.75, -0.88]
 ### From Python
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Using parameters (recommended for real embeddings)
 embedding = get_embedding_from_model("Machine Learning Basics")  # Your embedding model
@@ -46,7 +46,7 @@ db.execute(
 
 ## Distance Functions
 
-Grafeo supports four distance metrics for vector similarity:
+Obrain supports four distance metrics for vector similarity:
 
 ### Cosine Similarity
 

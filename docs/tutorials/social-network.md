@@ -1,6 +1,6 @@
 ---
 title: Social Network Graph
-description: Build a social network graph with Grafeo.
+description: Build a social network graph with Obrain.
 tags:
   - tutorial
   - beginner
@@ -19,15 +19,15 @@ This tutorial builds a social network with users, friendships, posts and likes.
 
 ## Prerequisites
 
-- Grafeo installed ([Installation Guide](../getting-started/installation.md))
+- Obrain installed ([Installation Guide](../getting-started/installation.md))
 - Basic understanding of graphs
 
 ## Setup
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 ```
 
 ## Step 1: Create Users
@@ -97,7 +97,7 @@ db.execute("""
     })
     INSERT (:Post {
         id: 2,
-        content: 'Just discovered Grafeo - amazing graph database!',
+        content: 'Just discovered Obrain - amazing graph database!',
         created: '2023-04-01'
     })
     INSERT (:Post {

@@ -172,9 +172,9 @@ g.V().has('name', 'Alix').out('KNOWS').out('KNOWS').path()
 ## Python Example
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Create data
 db.execute("INSERT (:Person {name: 'Alix', age: 30, city: 'Utrecht'})")

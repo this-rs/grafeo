@@ -1,12 +1,12 @@
 ---
-title: grafeo.Edge
+title: obrain.Edge
 description: Edge class reference.
 tags:
   - api
   - python
 ---
 
-# grafeo.Edge
+# obrain.Edge
 
 Represents a graph edge.
 

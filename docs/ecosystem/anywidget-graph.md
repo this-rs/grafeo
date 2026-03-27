@@ -2,14 +2,14 @@
 
 Interactive graph visualization for Python notebooks.
 
-[:octicons-mark-github-16: GitHub](https://github.com/GrafeoDB/anywidget-graph){ .md-button }
+[:octicons-mark-github-16: GitHub](https://github.com/ObrainDB/anywidget-graph){ .md-button }
 [:simple-pypi: PyPI](https://pypi.org/project/anywidget-graph/){ .md-button }
 
 ## Overview
 
 anywidget-graph provides interactive graph visualization powered by **Sigma.js**. Built on the [anywidget](https://anywidget.dev/) framework, it works universally across Jupyter, Marimo, VS Code, Colab and Databricks.
 
-- **Backend-agnostic**: Grafeo, Neo4j, NetworkX, pandas or raw dicts
+- **Backend-agnostic**: Obrain, Neo4j, NetworkX, pandas or raw dicts
 - **Interactive**: Pan, zoom, click, drag, pin, expand neighbors, box select
 - **Customizable**: Colors, sizes, layouts, dark mode
 - **Exportable**: HTML, JSON
@@ -25,7 +25,7 @@ Optional extras:
 ```bash
 uv add "anywidget-graph[networkx]"   # NetworkX support
 uv add "anywidget-graph[pandas]"     # pandas support
-uv add "anywidget-graph[grafeo]"     # Grafeo backend
+uv add "anywidget-graph[obrain]"     # Obrain backend
 uv add "anywidget-graph[cosmosdb]"   # CosmosDB / Gremlin support
 ```
 
@@ -237,12 +237,12 @@ graph = Graph(
 
 ## Database Backends
 
-### Grafeo (default)
+### Obrain (default)
 
 ```python
-import grafeo
-db = grafeo.GrafeoDB()
-graph = Graph(database_backend="grafeo", grafeo_db=db)
+import obrain
+db = obrain.ObrainDB()
+graph = Graph(database_backend="obrain", obrain_db=db)
 ```
 
 ### Neo4j (browser-side)

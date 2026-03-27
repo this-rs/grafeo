@@ -1,44 +1,44 @@
 ---
-title: grafeo-llamaindex
-description: LlamaIndex integration for GrafeoDB with PropertyGraphStore, vector search and knowledge graphs.
+title: obrain-llamaindex
+description: LlamaIndex integration for ObrainDB with PropertyGraphStore, vector search and knowledge graphs.
 ---
 
-# grafeo-llamaindex
+# obrain-llamaindex
 
-LlamaIndex integration that implements the `PropertyGraphStore` interface backed by GrafeoDB. Build knowledge graphs from documents and query them with structured and vector search.
+LlamaIndex integration that implements the `PropertyGraphStore` interface backed by ObrainDB. Build knowledge graphs from documents and query them with structured and vector search.
 
-[:octicons-mark-github-16: GitHub](https://github.com/GrafeoDB/grafeo-llamaindex){ .md-button }
-[:material-package-variant: PyPI](https://pypi.org/project/grafeo-llamaindex/){ .md-button }
+[:octicons-mark-github-16: GitHub](https://github.com/ObrainDB/obrain-llamaindex){ .md-button }
+[:material-package-variant: PyPI](https://pypi.org/project/obrain-llamaindex/){ .md-button }
 
 ## Overview
 
-grafeo-llamaindex provides `GrafeoPropertyGraphStore`, a full implementation of LlamaIndex's PropertyGraphStore interface. It supports:
+obrain-llamaindex provides `ObrainPropertyGraphStore`, a full implementation of LlamaIndex's PropertyGraphStore interface. It supports:
 
 - Structured queries (GQL, Cypher, Gremlin, GraphQL, SPARQL, SQL/PGQ)
 - Vector similarity search via native HNSW indexes
 - Knowledge graph construction from documents
 - 30+ built-in graph algorithms
 
-All backed by GrafeoDB's embedded database - no servers or Docker required.
+All backed by ObrainDB's embedded database - no servers or Docker required.
 
 ## Installation
 
 ```bash
-uv add grafeo-llamaindex
+uv add obrain-llamaindex
 # or
-pip install grafeo-llamaindex
+pip install obrain-llamaindex
 ```
 
-Requires Python 3.12+, grafeo >= 0.4.4 and llama-index-core >= 0.14.
+Requires Python 3.12+, obrain >= 0.4.4 and llama-index-core >= 0.14.
 
 ## Quick Start
 
 ### Basic Usage
 
 ```python
-from grafeo_llamaindex import GrafeoPropertyGraphStore
+from obrain_llamaindex import ObrainPropertyGraphStore
 
-store = GrafeoPropertyGraphStore(db_path="./my-graph.db")
+store = ObrainPropertyGraphStore(db_path="./my-graph.db")
 
 # Insert nodes and relationships
 from llama_index.core.graph_stores.types import EntityNode, Relation
@@ -63,7 +63,7 @@ result = store.structured_query(
 ### Vector Search
 
 ```python
-store = GrafeoPropertyGraphStore(
+store = ObrainPropertyGraphStore(
     db_path="./my-graph.db",
     embedding_dimensions=384,
     distance_metric="cosine",
@@ -94,7 +94,7 @@ response = query_engine.query("What does Alix do?")
 
 ## PropertyGraphStore Interface
 
-grafeo-llamaindex implements all 8 abstract methods:
+obrain-llamaindex implements all 8 abstract methods:
 
 | Method | Description |
 |--------|-------------|
@@ -125,7 +125,7 @@ Access 30+ built-in algorithms via `store.client.algorithms`:
 ## Requirements
 
 - Python 3.12+
-- grafeo >= 0.4.4
+- obrain >= 0.4.4
 - llama-index-core >= 0.14, < 1
 
 ## License

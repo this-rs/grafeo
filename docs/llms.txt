@@ -1,8 +1,8 @@
-# Grafeo
+# Obrain
 
 > A high-performance, embeddable graph database with a Rust core and no required C dependencies. Optional allocators (jemalloc/mimalloc) and TLS use C libraries for performance.
 
-Grafeo is designed for applications that need graph database capabilities without external dependencies. It can be embedded directly into Python, Node.js, Go, Rust, C or WebAssembly applications.
+Obrain is designed for applications that need graph database capabilities without external dependencies. It can be embedded directly into Python, Node.js, Go, Rust, C or WebAssembly applications.
 
 ## Key Features
 
@@ -20,7 +20,7 @@ Grafeo is designed for applications that need graph database capabilities withou
 
 ## Data Models
 
-Grafeo supports two graph data models:
+Obrain supports two graph data models:
 
 1. **LPG (Labeled Property Graph)**: Nodes with labels and properties, edges with types and properties
 2. **RDF (Resource Description Framework)**: Subject-predicate-object triples with SPO/POS/OSP indexes
@@ -40,35 +40,35 @@ Grafeo supports two graph data models:
 
 Python:
 ```bash
-uv add grafeo
-# or: pip install grafeo
+uv add obrain
+# or: pip install obrain
 ```
 
 Node.js:
 ```bash
-npm install @grafeo-db/js
+npm install @obrain-db/js
 ```
 
 Go:
 ```bash
-go get github.com/GrafeoDB/grafeo/crates/bindings/go
+go get github.com/ObrainDB/obrain/crates/bindings/go
 ```
 
 Rust:
 ```bash
-cargo add grafeo
+cargo add obrain
 ```
 
 WebAssembly:
 ```bash
-npm install @grafeo-db/wasm
+npm install @obrain-db/wasm
 ```
 
 CLI:
 ```bash
-cargo install grafeo-cli
-# or: pip install grafeo-cli
-# or: npm install -g @grafeo-db/cli
+cargo install obrain-cli
+# or: pip install obrain-cli
+# or: npm install -g @obrain-db/cli
 ```
 
 ## Feature Groups (Rust)
@@ -83,11 +83,11 @@ cargo install grafeo-cli
 ## Quick Start (Python)
 
 ```python
-import grafeo
+import obrain
 
 # Create database (in-memory or persistent)
-db = grafeo.GrafeoDB()  # in-memory
-db = grafeo.GrafeoDB(path="my_graph.db")  # persistent
+db = obrain.ObrainDB()  # in-memory
+db = obrain.ObrainDB(path="my_graph.db")  # persistent
 
 # Insert nodes
 db.execute("""
@@ -114,9 +114,9 @@ for row in result:
 ## Quick Start (Node.js)
 
 ```javascript
-const { GrafeoDB } = require('@grafeo-db/js');
+const { ObrainDB } = require('@obrain-db/js');
 
-const db = await GrafeoDB.create();
+const db = await ObrainDB.create();
 
 await db.execute(`
     INSERT (:Person {name: 'Alice', age: 30})
@@ -133,10 +133,10 @@ console.log(result.rows);
 ## Quick Start (Rust)
 
 ```rust
-use grafeo::GrafeoDB;
+use obrain::ObrainDB;
 
-fn main() -> Result<(), grafeo_common::utils::error::Error> {
-    let db = GrafeoDB::new_in_memory();
+fn main() -> Result<(), obrain_common::utils::error::Error> {
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session.execute(r#"
@@ -157,7 +157,7 @@ fn main() -> Result<(), grafeo_common::utils::error::Error> {
 
 ## Vector Search
 
-Grafeo has first-class vector support for AI/ML workloads:
+Obrain has first-class vector support for AI/ML workloads:
 
 ```python
 # Create nodes with embeddings
@@ -195,7 +195,7 @@ Features:
 ### Database
 
 ```python
-grafeo.GrafeoDB(
+obrain.ObrainDB(
     path: str | None = None     # None for in-memory
 )
 ```
@@ -283,15 +283,15 @@ SELECT * FROM GRAPH_TABLE (
 
 ### Crate Structure
 
-- **grafeo-common**: Foundation types, memory allocators, hashing utilities
-- **grafeo-core**: LPG/RDF storage, indexes (hash, trie, adjacency, HNSW, BM25), execution engine
-- **grafeo-adapters**: Parsers (GQL, Cypher, Gremlin, GraphQL, SPARQL, SQL/PGQ), storage backends
-- **grafeo-engine**: Database facade, sessions, transaction management
-- **grafeo-cli**: Command-line interface with interactive shell
-- **grafeo-python** (`crates/bindings/python`): Python bindings via PyO3
-- **grafeo-node** (`crates/bindings/node`): Node.js/TypeScript bindings via napi-rs
-- **grafeo-c** (`crates/bindings/c`): C FFI layer
-- **grafeo-wasm** (`crates/bindings/wasm`): WebAssembly bindings via wasm-bindgen
+- **obrain-common**: Foundation types, memory allocators, hashing utilities
+- **obrain-core**: LPG/RDF storage, indexes (hash, trie, adjacency, HNSW, BM25), execution engine
+- **obrain-adapters**: Parsers (GQL, Cypher, Gremlin, GraphQL, SPARQL, SQL/PGQ), storage backends
+- **obrain-engine**: Database facade, sessions, transaction management
+- **obrain-cli**: Command-line interface with interactive shell
+- **obrain-python** (`crates/bindings/python`): Python bindings via PyO3
+- **obrain-node** (`crates/bindings/node`): Node.js/TypeScript bindings via napi-rs
+- **obrain-c** (`crates/bindings/c`): C FFI layer
+- **obrain-wasm** (`crates/bindings/wasm`): WebAssembly bindings via wasm-bindgen
 
 ### Query Processing Pipeline
 
@@ -311,28 +311,28 @@ SELECT * FROM GRAPH_TABLE (
 
 ## Ecosystem
 
-- **[grafeo-server](https://github.com/GrafeoDB/grafeo-server)** - HTTP server with REST API and web UI
-- **[grafeo-web](https://github.com/GrafeoDB/grafeo-web)** - Browser-based Grafeo via WebAssembly
-- **[grafeo-langchain](https://github.com/GrafeoDB/grafeo-langchain)** - LangChain integration
-- **[grafeo-llamaindex](https://github.com/GrafeoDB/grafeo-llamaindex)** - LlamaIndex integration
-- **[grafeo-mcp](https://github.com/GrafeoDB/grafeo-mcp)** - Model Context Protocol server
-- **[grafeo-memory](https://github.com/GrafeoDB/grafeo-memory)** - AI memory layer for LLM applications
-- **[graph-bench](https://github.com/GrafeoDB/graph-bench)** - Benchmark suite
-- **[anywidget-graph](https://github.com/GrafeoDB/anywidget-graph)** - Interactive graph visualization widget
-- **[anywidget-vector](https://github.com/GrafeoDB/anywidget-vector)** - Interactive vector visualization widget
+- **[obrain-server](https://github.com/ObrainDB/obrain-server)** - HTTP server with REST API and web UI
+- **[obrain-web](https://github.com/ObrainDB/obrain-web)** - Browser-based Obrain via WebAssembly
+- **[obrain-langchain](https://github.com/ObrainDB/obrain-langchain)** - LangChain integration
+- **[obrain-llamaindex](https://github.com/ObrainDB/obrain-llamaindex)** - LlamaIndex integration
+- **[obrain-mcp](https://github.com/ObrainDB/obrain-mcp)** - Model Context Protocol server
+- **[obrain-memory](https://github.com/ObrainDB/obrain-memory)** - AI memory layer for LLM applications
+- **[graph-bench](https://github.com/ObrainDB/graph-bench)** - Benchmark suite
+- **[anywidget-graph](https://github.com/ObrainDB/anywidget-graph)** - Interactive graph visualization widget
+- **[anywidget-vector](https://github.com/ObrainDB/anywidget-vector)** - Interactive vector visualization widget
 
 ## Documentation
 
-Full documentation: https://grafeo.dev
+Full documentation: https://obrain.dev
 
-- Getting Started: https://grafeo.dev/getting-started/
-- User Guide: https://grafeo.dev/user-guide/
-- API Reference: https://grafeo.dev/api/
-- Architecture: https://grafeo.dev/architecture/
+- Getting Started: https://obrain.dev/getting-started/
+- User Guide: https://obrain.dev/user-guide/
+- API Reference: https://obrain.dev/api/
+- Architecture: https://obrain.dev/architecture/
 
 ## Source Code
 
-Repository: https://github.com/GrafeoDB/grafeo
+Repository: https://github.com/ObrainDB/obrain
 
 ## License
 

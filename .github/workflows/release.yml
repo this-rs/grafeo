@@ -40,27 +40,27 @@ jobs:
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
             rid: linux-x64
-            native_lib: libgrafeo_c.so
+            native_lib: libobrain_c.so
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             archive: tar.gz
             rid: linux-arm64
-            native_lib: libgrafeo_c.so
+            native_lib: libobrain_c.so
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             archive: zip
             rid: win-x64
-            native_lib: grafeo_c.dll
+            native_lib: obrain_c.dll
           - os: macos-latest
             target: x86_64-apple-darwin
             archive: tar.gz
             rid: osx-x64
-            native_lib: libgrafeo_c.dylib
+            native_lib: libobrain_c.dylib
           - os: macos-latest
             target: aarch64-apple-darwin
             archive: tar.gz
             rid: osx-arm64
-            native_lib: libgrafeo_c.dylib
+            native_lib: libobrain_c.dylib
     steps:
       - uses: actions/checkout@v4
 
@@ -76,18 +76,18 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Build release binaries
-        run: cargo build --release --workspace --target ${{ matrix.target }} --exclude grafeo-python
+        run: cargo build --release --workspace --target ${{ matrix.target }} --exclude obrain-python
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
       - name: Package (Unix)
         if: matrix.archive == 'tar.gz'
         run: |
-          STAGING="grafeo-${{ github.ref_name }}-${{ matrix.target }}"
+          STAGING="obrain-${{ github.ref_name }}-${{ matrix.target }}"
           mkdir -p "$STAGING"
-          cp target/${{ matrix.target }}/release/grafeo "$STAGING/" || true
-          cp target/${{ matrix.target }}/release/libgrafeo_c.so "$STAGING/" || true
-          cp target/${{ matrix.target }}/release/libgrafeo_c.dylib "$STAGING/" || true
+          cp target/${{ matrix.target }}/release/obrain "$STAGING/" || true
+          cp target/${{ matrix.target }}/release/libobrain_c.so "$STAGING/" || true
+          cp target/${{ matrix.target }}/release/libobrain_c.dylib "$STAGING/" || true
           cp LICENSE README.md "$STAGING/"
           tar czvf "${STAGING}.tar.gz" "$STAGING"
 
@@ -95,25 +95,25 @@ jobs:
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          $staging = "grafeo-${{ github.ref_name }}-${{ matrix.target }}"
+          $staging = "obrain-${{ github.ref_name }}-${{ matrix.target }}"
           New-Item -ItemType Directory -Force -Path $staging
-          Copy-Item target/${{ matrix.target }}/release/grafeo.exe $staging/ -ErrorAction SilentlyContinue
-          Copy-Item target/${{ matrix.target }}/release/grafeo_c.dll $staging/ -ErrorAction SilentlyContinue
+          Copy-Item target/${{ matrix.target }}/release/obrain.exe $staging/ -ErrorAction SilentlyContinue
+          Copy-Item target/${{ matrix.target }}/release/obrain_c.dll $staging/ -ErrorAction SilentlyContinue
           Copy-Item LICENSE, README.md $staging/
           Compress-Archive -Path $staging -DestinationPath "${staging}.zip"
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2
         with:
-          files: ./grafeo-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}
+          files: ./obrain-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}
 
       - name: Upload CLI binary artifact
         uses: actions/upload-artifact@v7
         with:
-          name: grafeo-cli-${{ matrix.target }}
+          name: obrain-cli-${{ matrix.target }}
           path: |
-            target/${{ matrix.target }}/release/grafeo
-            target/${{ matrix.target }}/release/grafeo.exe
+            target/${{ matrix.target }}/release/obrain
+            target/${{ matrix.target }}/release/obrain.exe
           if-no-files-found: ignore
 
       - name: Upload native library for NuGet
@@ -142,7 +142,7 @@ jobs:
             sha256sum "$f" >> ../checksums.txt
           done
           # Also checksum the CLI binaries
-          find . -name 'grafeo' -o -name 'grafeo.exe' | sort | while read -r f; do
+          find . -name 'obrain' -o -name 'obrain.exe' | sort | while read -r f; do
             sha256sum "$f" >> ../checksums.txt
           done
           cat ../checksums.txt
@@ -178,12 +178,12 @@ jobs:
             sleep 30
           }
 
-          publish_crate grafeo-common
-          publish_crate grafeo-core
-          publish_crate grafeo-adapters
-          publish_crate grafeo-engine
-          publish_crate grafeo
-          publish_crate grafeo-cli
+          publish_crate obrain-common
+          publish_crate obrain-core
+          publish_crate obrain-adapters
+          publish_crate obrain-engine
+          publish_crate obrain
+          publish_crate obrain-cli
 
   # Tag Go module (subdirectory modules need prefixed tags)
   tag-go-module:
@@ -209,7 +209,7 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME}"
           # Go proxy requires uppercase letters escaped as !lowercase
-          ESCAPED=$(echo "github.com/GrafeoDB/grafeo/crates/bindings/go" | sed 's/[A-Z]/!\L&/g')
+          ESCAPED=$(echo "github.com/ObrainDB/obrain/crates/bindings/go" | sed 's/[A-Z]/!\L&/g')
           curl -sf "https://proxy.golang.org/${ESCAPED}/@v/${VERSION}.info" || echo "Go proxy fetch pending"
 
   # Build Node.js native modules for each platform
@@ -278,7 +278,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: node-bindings-${{ matrix.target }}
-          path: crates/bindings/node/grafeo.*.node
+          path: crates/bindings/node/obrain.*.node
           if-no-files-found: error
 
   # Publish Node.js platform packages and main package to npm
@@ -312,7 +312,7 @@ jobs:
           echo "=== Downloaded artifacts ==="
           ls -la artifacts/
           # Copy .node files to cwd where napi artifacts expects them
-          cp artifacts/grafeo.*.node .
+          cp artifacts/obrain.*.node .
           npx napi artifacts --npm-dir npm
           echo "=== Platform packages ==="
           find npm -name '*.node' -ls
@@ -329,7 +329,7 @@ jobs:
             fi
           done
 
-      - name: Publish @grafeo-db/js
+      - name: Publish @obrain-db/js
         working-directory: crates/bindings/node
         run: npm publish --access public --ignore-scripts
         env:
@@ -367,7 +367,7 @@ jobs:
           # Copy our maintained package.json over the generated one.
           cp crates/bindings/wasm/package.json crates/bindings/wasm/pkg/package.json
 
-      - name: Publish @grafeo-db/wasm
+      - name: Publish @obrain-db/wasm
         working-directory: crates/bindings/wasm/pkg
         run: npm publish --access public
         env:
@@ -402,7 +402,7 @@ jobs:
       - name: Fix WASM lite package metadata
         run: cp crates/bindings/wasm/package-lite.json crates/bindings/wasm/pkg-lite/package.json
 
-      - name: Publish @grafeo-db/wasm-lite
+      - name: Publish @obrain-db/wasm-lite
         working-directory: crates/bindings/wasm/pkg-lite
         run: npm publish --access public
         env:
@@ -422,27 +422,27 @@ jobs:
             npm_platform: linux-x64
             os: linux
             cpu: x64
-            binary: grafeo
+            binary: obrain
           - target: aarch64-unknown-linux-gnu
             npm_platform: linux-arm64
             os: linux
             cpu: arm64
-            binary: grafeo
+            binary: obrain
           - target: x86_64-apple-darwin
             npm_platform: darwin-x64
             os: darwin
             cpu: x64
-            binary: grafeo
+            binary: obrain
           - target: aarch64-apple-darwin
             npm_platform: darwin-arm64
             os: darwin
             cpu: arm64
-            binary: grafeo
+            binary: obrain
           - target: x86_64-pc-windows-msvc
             npm_platform: win32-x64
             os: win32
             cpu: x64
-            binary: grafeo.exe
+            binary: obrain.exe
     steps:
       - uses: actions/checkout@v4
 
@@ -455,7 +455,7 @@ jobs:
       - name: Download CLI binary
         uses: actions/download-artifact@v8
         with:
-          name: grafeo-cli-${{ matrix.target }}
+          name: obrain-cli-${{ matrix.target }}
           path: platform-pkg/
 
       - name: Create platform package
@@ -464,13 +464,13 @@ jobs:
           cd platform-pkg
           cat > package.json << EOF
           {
-            "name": "@grafeo-db/cli-${{ matrix.npm_platform }}",
+            "name": "@obrain-db/cli-${{ matrix.npm_platform }}",
             "version": "${VERSION}",
-            "description": "Grafeo CLI binary for ${{ matrix.npm_platform }}",
+            "description": "Obrain CLI binary for ${{ matrix.npm_platform }}",
             "license": "AGPL-3.0-or-later",
             "repository": {
               "type": "git",
-              "url": "https://github.com/GrafeoDB/grafeo"
+              "url": "https://github.com/ObrainDB/obrain"
             },
             "os": ["${{ matrix.os }}"],
             "cpu": ["${{ matrix.cpu }}"],
@@ -489,7 +489,7 @@ jobs:
 
   # Publish main CLI npm launcher (after platform packages)
   publish-cli-npm-launcher:
-    name: Publish @grafeo-db/cli
+    name: Publish @obrain-db/cli
     runs-on: ubuntu-latest
     needs: publish-cli-npm
     steps:
@@ -502,7 +502,7 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Publish launcher package
-        working-directory: packages/grafeo-cli-npm
+        working-directory: packages/obrain-cli-npm
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -530,7 +530,7 @@ jobs:
 
       - name: Arrange native libraries into runtimes layout
         run: |
-          CSHARP_DIR="crates/bindings/csharp/src/Grafeo"
+          CSHARP_DIR="crates/bindings/csharp/src/Obrain"
           for rid_dir in native-libs/native-*/; do
             rid=$(basename "$rid_dir" | sed 's/native-//')
             mkdir -p "$CSHARP_DIR/runtimes/$rid/native"
@@ -540,7 +540,7 @@ jobs:
           find "$CSHARP_DIR/runtimes" -type f -ls
 
       - name: Pack NuGet package
-        working-directory: crates/bindings/csharp/src/Grafeo
+        working-directory: crates/bindings/csharp/src/Obrain
         run: dotnet pack -c Release -o ../../nupkg
 
       - name: Publish to NuGet

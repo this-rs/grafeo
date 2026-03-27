@@ -23,9 +23,9 @@ This tutorial uses the principle: "Users who bought X also bought Y" implemented
 ## Setup
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 ```
 
 ## Create the Data Model

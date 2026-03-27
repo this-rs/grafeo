@@ -5,11 +5,11 @@ description: Query graph data using GraphQL syntax.
 
 # GraphQL Query Language
 
-GraphQL is a query language for APIs developed by Facebook. Grafeo supports GraphQL as an optional query language, enabling queries against graph data using familiar GraphQL syntax.
+GraphQL is a query language for APIs developed by Facebook. Obrain supports GraphQL as an optional query language, enabling queries against graph data using familiar GraphQL syntax.
 
 ## Overview
 
-GraphQL provides a schema-driven approach to querying data. In Grafeo, node labels map to GraphQL types, and relationships map to nested fields.
+GraphQL provides a schema-driven approach to querying data. In Obrain, node labels map to GraphQL types, and relationships map to nested fields.
 
 ## Enabling GraphQL
 
@@ -18,13 +18,13 @@ GraphQL support is optional and requires a feature flag:
 === "Rust"
 
     ```bash
-    cargo add grafeo-engine --features graphql
+    cargo add obrain-engine --features graphql
     ```
 
 === "Python"
 
     ```bash
-    uv add grafeo[graphql]
+    uv add obrain[graphql]
     ```
 
 ## Quick Reference
@@ -287,9 +287,9 @@ mutation {
 ### Mutation Examples in Python
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Create a node with GraphQL
 result = db.execute_graphql('''
@@ -322,9 +322,9 @@ mutation {
 ## Python Usage
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Create some data using GQL
 db.execute("INSERT (:Person {name: 'Alix', age: 30})")
@@ -354,9 +354,9 @@ for row in result:
 ## Rust Usage
 
 ```rust
-use grafeo_engine::GrafeoDB;
+use obrain_engine::ObrainDB;
 
-let db = GrafeoDB::new_in_memory();
+let db = ObrainDB::new_in_memory();
 
 // Create data
 db.execute("INSERT (:Person {name: 'Alix'})").unwrap();

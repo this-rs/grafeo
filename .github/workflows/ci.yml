@@ -72,7 +72,7 @@ jobs:
 
       # Verify Rust examples compile (all feature profiles)
       - name: Build examples
-        run: cargo build -p grafeo-examples --bins --features full
+        run: cargo build -p obrain-examples --bins --features full
 
       # Validate that all // ISO: annotations in tests reference valid
       # feature IDs from docs/user-guide/gql/conformance.md.
@@ -157,11 +157,11 @@ jobs:
       - name: Setup Miri sysroot
         run: cargo +$NIGHTLY miri setup
 
-      # Full profile: tests grafeo-common with all features under Miri to
+      # Full profile: tests obrain-common with all features under Miri to
       # verify no undefined behavior in the foundation crate (allocators,
       # hashing, MVCC types) regardless of which features are active.
-      - name: Run Miri on grafeo-common
-        run: cargo +$NIGHTLY miri test --all-features -p grafeo-common
+      - name: Run Miri on obrain-common
+        run: cargo +$NIGHTLY miri test --all-features -p obrain-common
         env:
           MIRIFLAGS: "-Zmiri-strict-provenance"
 
@@ -204,8 +204,8 @@ jobs:
           verbose: true
 
   # Python tests
-  # Default profile: maturin builds grafeo-python with its crate-level default
-  # features, which pull in "full" (all languages + AI) via grafeo-engine.
+  # Default profile: maturin builds obrain-python with its crate-level default
+  # features, which pull in "full" (all languages + AI) via obrain-engine.
   python-test:
     name: Python Test (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
@@ -257,8 +257,8 @@ jobs:
         run: pytest crates/bindings/python/tests/ -v --ignore=crates/bindings/python/tests/benchmark_phases.py
 
   # Node.js tests
-  # Default profile: napi-rs builds grafeo-node with its crate-level default
-  # features, which pull in "full" (all languages + AI) via grafeo-engine.
+  # Default profile: napi-rs builds obrain-node with its crate-level default
+  # features, which pull in "full" (all languages + AI) via obrain-engine.
   node-test:
     name: Node.js Test (${{ matrix.os }}, Node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
@@ -303,7 +303,7 @@ jobs:
         run: npm test
 
   # Go tests
-  # Default profile: grafeo-c is built with --features full explicitly (see
+  # Default profile: obrain-c is built with --features full explicitly (see
   # the "Build shared library" step), so the Go FFI tests the full API surface.
   go-test:
     name: Go Test (${{ matrix.os }})
@@ -340,30 +340,30 @@ jobs:
       # parsers and AI features so the C FFI exposes the complete API surface.
       # Go bindings call through this shared library.
       - name: Build shared library
-        run: cargo build --release -p grafeo-c --features full
+        run: cargo build --release -p obrain-c --features full
 
       - name: Copy library and run tests (Linux)
         if: runner.os == 'Linux'
         working-directory: crates/bindings/go
         run: |
-          cp ../../../target/release/libgrafeo_c.so .
-          CGO_ENABLED=1 CGO_LDFLAGS="-L. -lgrafeo_c -lm -ldl -lpthread" LD_LIBRARY_PATH=. go test -v ./...
+          cp ../../../target/release/libobrain_c.so .
+          CGO_ENABLED=1 CGO_LDFLAGS="-L. -lobrain_c -lm -ldl -lpthread" LD_LIBRARY_PATH=. go test -v ./...
 
       - name: Copy library and run tests (macOS)
         if: runner.os == 'macOS'
         working-directory: crates/bindings/go
         run: |
-          cp ../../../target/release/libgrafeo_c.dylib .
-          CGO_ENABLED=1 CGO_LDFLAGS="-L. -lgrafeo_c -lm -ldl -lpthread -framework Security" DYLD_LIBRARY_PATH=. go test -v ./...
+          cp ../../../target/release/libobrain_c.dylib .
+          CGO_ENABLED=1 CGO_LDFLAGS="-L. -lobrain_c -lm -ldl -lpthread -framework Security" DYLD_LIBRARY_PATH=. go test -v ./...
 
       - name: Copy library and run tests (Windows)
         if: runner.os == 'Windows'
         working-directory: crates/bindings/go
         shell: bash
         run: |
-          cp ../../../target/release/grafeo_c.dll .
-          cp ../../../target/release/grafeo_c.dll.lib .
-          CGO_ENABLED=1 CGO_LDFLAGS="-L. -lgrafeo_c -lws2_32 -lbcrypt -lntdll -luserenv" go test -v ./...
+          cp ../../../target/release/obrain_c.dll .
+          cp ../../../target/release/obrain_c.dll.lib .
+          CGO_ENABLED=1 CGO_LDFLAGS="-L. -lobrain_c -lws2_32 -lbcrypt -lntdll -luserenv" go test -v ./...
 
   csharp-test:
     name: C# Test (${{ matrix.os }})
@@ -398,19 +398,19 @@ jobs:
       # Full profile: builds with all language parsers and AI features so the
       # C FFI exposes the complete API surface for the C# bindings.
       - name: Build shared library
-        run: cargo build --release -p grafeo-c --features full
+        run: cargo build --release -p obrain-c --features full
 
       - name: Copy library (Linux)
         if: runner.os == 'Linux'
-        run: cp target/release/libgrafeo_c.so crates/bindings/csharp/tests/Grafeo.Tests/
+        run: cp target/release/libobrain_c.so crates/bindings/csharp/tests/Obrain.Tests/
 
       - name: Copy library (macOS)
         if: runner.os == 'macOS'
-        run: cp target/release/libgrafeo_c.dylib crates/bindings/csharp/tests/Grafeo.Tests/
+        run: cp target/release/libobrain_c.dylib crates/bindings/csharp/tests/Obrain.Tests/
 
       - name: Copy library (Windows)
         if: runner.os == 'Windows'
-        run: copy target\release\grafeo_c.dll crates\bindings\csharp\tests\Grafeo.Tests\
+        run: copy target\release\obrain_c.dll crates\bindings\csharp\tests\Obrain.Tests\
 
       - name: Restore
         run: dotnet restore
@@ -424,11 +424,11 @@ jobs:
         run: dotnet test --no-build --configuration Release --verbosity normal
         working-directory: crates/bindings/csharp
         env:
-          LD_LIBRARY_PATH: ${{ github.workspace }}/crates/bindings/csharp/tests/Grafeo.Tests
-          DYLD_LIBRARY_PATH: ${{ github.workspace }}/crates/bindings/csharp/tests/Grafeo.Tests
+          LD_LIBRARY_PATH: ${{ github.workspace }}/crates/bindings/csharp/tests/Obrain.Tests
+          DYLD_LIBRARY_PATH: ${{ github.workspace }}/crates/bindings/csharp/tests/Obrain.Tests
 
   # Dart tests
-  # Default profile: grafeo-c is built with --features full explicitly,
+  # Default profile: obrain-c is built with --features full explicitly,
   # so the Dart FFI tests exercise the complete C API surface.
   dart-test:
     name: Dart Test (${{ matrix.os }})
@@ -461,19 +461,19 @@ jobs:
             ${{ runner.os }}-cargo-dart-
 
       - name: Build shared library
-        run: cargo build --release -p grafeo-c --features full
+        run: cargo build --release -p obrain-c --features full
 
       - name: Copy library (Linux)
         if: runner.os == 'Linux'
-        run: cp target/release/libgrafeo_c.so crates/bindings/dart/
+        run: cp target/release/libobrain_c.so crates/bindings/dart/
 
       - name: Copy library (macOS)
         if: runner.os == 'macOS'
-        run: cp target/release/libgrafeo_c.dylib crates/bindings/dart/
+        run: cp target/release/libobrain_c.dylib crates/bindings/dart/
 
       - name: Copy library (Windows)
         if: runner.os == 'Windows'
-        run: copy target\release\grafeo_c.dll crates\bindings\dart\
+        run: copy target\release\obrain_c.dll crates\bindings\dart\
 
       - name: Install dependencies
         working-directory: crates/bindings/dart
@@ -523,14 +523,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-wasm-
 
-      # WASM profile: delegates to build-wasm.sh which compiles grafeo-wasm
+      # WASM profile: delegates to build-wasm.sh which compiles obrain-wasm
       # with only the gql feature (no threads, no native allocators).
       - name: Build WASM
         run: bash scripts/build-wasm.sh
 
       - name: Check gzip size
         run: |
-          SIZE=$(gzip -c crates/bindings/wasm/pkg/grafeo_wasm_bg.wasm | wc -c)
+          SIZE=$(gzip -c crates/bindings/wasm/pkg/obrain_wasm_bg.wasm | wc -c)
           echo "WASM gzip size: $SIZE bytes ($(( SIZE / 1024 )) KB)"
           if [ "$SIZE" -gt 409600 ]; then echo "::warning::WASM exceeds 400KB gzip target"; fi
 
@@ -587,8 +587,8 @@ jobs:
             --bench query_bench \
             -- --save-baseline base --noplot
           # Cognitive bench may not exist on the base commit (new crate)
-          if [ -f crates/grafeo-cognitive/benches/cognitive_bench.rs ]; then
-            cargo bench -p grafeo-cognitive --features cognitive \
+          if [ -f crates/obrain-cognitive/benches/cognitive_bench.rs ]; then
+            cargo bench -p obrain-cognitive --features cognitive \
               --bench cognitive_bench \
               -- --save-baseline base --noplot
           fi
@@ -603,8 +603,8 @@ jobs:
             --bench index_bench \
             --bench query_bench \
             -- --save-baseline pr --noplot
-          if [ -f crates/grafeo-cognitive/benches/cognitive_bench.rs ]; then
-            cargo bench -p grafeo-cognitive --features cognitive \
+          if [ -f crates/obrain-cognitive/benches/cognitive_bench.rs ]; then
+            cargo bench -p obrain-cognitive --features cognitive \
               --bench cognitive_bench \
               -- --save-baseline pr --noplot
           fi

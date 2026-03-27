@@ -1,6 +1,6 @@
 ---
 title: Crate Structure
-description: The crates that make up Grafeo.
+description: The crates that make up Obrain.
 tags:
   - architecture
   - crates
@@ -8,25 +8,25 @@ tags:
 
 # Crate Structure
 
-Grafeo is organized into core library crates and language binding crates.
+Obrain is organized into core library crates and language binding crates.
 
 ## Dependency Graph
 
 ```mermaid
 graph BT
-    COMMON[grafeo-common]
-    CORE[grafeo-core]
-    ADAPTERS[grafeo-adapters]
-    ENGINE[grafeo-engine]
-    GRAFEO[grafeo]
-    PYTHON[grafeo-python]
-    NODE[grafeo-node]
-    CFFI[grafeo-c]
-    WASM[grafeo-wasm]
-    CSHARP[grafeo-csharp]
-    DART[grafeo-dart]
-    COMMON_BIND[grafeo-bindings-common]
-    CLI[grafeo-cli]
+    COMMON[obrain-common]
+    CORE[obrain-core]
+    ADAPTERS[obrain-adapters]
+    ENGINE[obrain-engine]
+    OBRAIN[obrain]
+    PYTHON[obrain-python]
+    NODE[obrain-node]
+    CFFI[obrain-c]
+    WASM[obrain-wasm]
+    CSHARP[obrain-csharp]
+    DART[obrain-dart]
+    COMMON_BIND[obrain-bindings-common]
+    CLI[obrain-cli]
 
     CORE --> COMMON
     ADAPTERS --> COMMON
@@ -34,7 +34,7 @@ graph BT
     ENGINE --> COMMON
     ENGINE --> CORE
     ENGINE --> ADAPTERS
-    GRAFEO --> ENGINE
+    OBRAIN --> ENGINE
     COMMON_BIND --> ENGINE
     PYTHON --> COMMON_BIND
     NODE --> COMMON_BIND
@@ -45,21 +45,21 @@ graph BT
     CLI --> ENGINE
 ```
 
-## grafeo
+## obrain
 
 Top-level facade crate that re-exports the public API.
 
 | Module | Purpose |
 |--------|---------|
-| `lib.rs` | Re-exports from grafeo-engine |
+| `lib.rs` | Re-exports from obrain-engine |
 
 ```rust
-use grafeo::GrafeoDB;
+use obrain::ObrainDB;
 
-let db = GrafeoDB::new_in_memory();
+let db = ObrainDB::new_in_memory();
 ```
 
-## grafeo-common
+## obrain-common
 
 Foundation types and utilities.
 
@@ -70,11 +70,11 @@ Foundation types and utilities.
 | `utils/` | Hashing, error types |
 
 ```rust
-use grafeo_common::types::{NodeId, Value};
-use grafeo_common::memory::Arena;
+use obrain_common::types::{NodeId, Value};
+use obrain_common::memory::Arena;
 ```
 
-## grafeo-core
+## obrain-core
 
 Core data structures and execution engine.
 
@@ -85,12 +85,12 @@ Core data structures and execution engine.
 | `execution/` | DataChunk, operators, pipelines |
 
 ```rust
-use grafeo_core::graph::LpgStore;
-use grafeo_core::index::HashIndex;
-use grafeo_core::execution::DataChunk;
+use obrain_core::graph::LpgStore;
+use obrain_core::index::HashIndex;
+use obrain_core::execution::DataChunk;
 ```
 
-## grafeo-adapters
+## obrain-adapters
 
 External interfaces and adapters.
 
@@ -102,56 +102,56 @@ External interfaces and adapters.
 | `plugins/` | Plugin system |
 
 ```rust
-use grafeo_adapters::query::gql::Parser;
-use grafeo_adapters::storage::wal::WalManager;
+use obrain_adapters::query::gql::Parser;
+use obrain_adapters::storage::wal::WalManager;
 ```
 
-## grafeo-engine
+## obrain-engine
 
 Database facade and coordination.
 
 | Module | Purpose |
 |--------|---------|
-| `database.rs` | GrafeoDB struct, lifecycle |
+| `database.rs` | ObrainDB struct, lifecycle |
 | `session.rs` | Session management |
 | `query/` | Query processor, planner, optimizer |
 | `transaction/` | Transaction manager, MVCC |
 
 ```rust
-use grafeo_engine::{GrafeoDB, Session, Config};
+use obrain_engine::{ObrainDB, Session, Config};
 ```
 
-## grafeo-python
+## obrain-python
 
 Python bindings via PyO3. Located at `crates/bindings/python`.
 
 | Module | Purpose |
 |--------|---------|
-| `database.rs` | PyGrafeoDB class |
+| `database.rs` | PyObrainDB class |
 | `query.rs` | Query execution |
 | `types.rs` | Type conversions |
 
 ```python
-import grafeo
-db = grafeo.GrafeoDB()
+import obrain
+db = obrain.ObrainDB()
 ```
 
-## grafeo-node
+## obrain-node
 
 Node.js/TypeScript bindings via napi-rs. Located at `crates/bindings/node`.
 
 | Module | Purpose |
 |--------|---------|
-| `database.rs` | JsGrafeoDB class |
+| `database.rs` | JsObrainDB class |
 | `query.rs` | Query execution and result conversion |
 | `types.rs` | JavaScript ↔ Rust type conversions |
 
 ```javascript
-const { GrafeoDB } = require('@grafeo-db/js');
-const db = await GrafeoDB.create();
+const { ObrainDB } = require('@obrain-db/js');
+const db = await ObrainDB.create();
 ```
 
-## grafeo-c
+## obrain-c
 
 C FFI layer for cross-language interop. Located at `crates/bindings/c`.
 
@@ -162,19 +162,19 @@ C FFI layer for cross-language interop. Located at `crates/bindings/c`.
 
 Also used by Go (CGO), C# (P/Invoke) and Dart (dart:ffi) bindings.
 
-## grafeo-csharp
+## obrain-csharp
 
 C# / .NET 8 bindings via source-generated P/Invoke. Located at `crates/bindings/csharp`.
 
-Wraps grafeo-c with a .NET-native API including `GrafeoDB`, typed CRUD, transactions, vector search and `SafeHandle`-based resource management.
+Wraps obrain-c with a .NET-native API including `ObrainDB`, typed CRUD, transactions, vector search and `SafeHandle`-based resource management.
 
-## grafeo-dart
+## obrain-dart
 
 Dart bindings via dart:ffi. Located at `crates/bindings/dart`.
 
-Wraps grafeo-c with `NativeFinalizer` for automatic resource cleanup, sealed exception hierarchy and `late final` cached FFI lookups.
+Wraps obrain-c with `NativeFinalizer` for automatic resource cleanup, sealed exception hierarchy and `late final` cached FFI lookups.
 
-## grafeo-bindings-common
+## obrain-bindings-common
 
 Shared library for all language bindings. Located at `crates/bindings/common`.
 
@@ -184,7 +184,7 @@ Shared library for all language bindings. Located at `crates/bindings/common`.
 | `errors.rs` | Error classification |
 | `json.rs` | JSON to/from Value conversion |
 
-## grafeo-wasm
+## obrain-wasm
 
 WebAssembly bindings via wasm-bindgen. Located at `crates/bindings/wasm`.
 
@@ -194,12 +194,12 @@ WebAssembly bindings via wasm-bindgen. Located at `crates/bindings/wasm`.
 | `types.rs` | JavaScript ↔ WASM type conversions |
 
 ```javascript
-import init, { Database } from '@grafeo-db/wasm';
+import init, { Database } from '@obrain-db/wasm';
 await init();
 const db = new Database();
 ```
 
-## grafeo-cli
+## obrain-cli
 
 Command-line interface for database administration.
 
@@ -209,8 +209,8 @@ Command-line interface for database administration.
 | `output.rs` | Output formatting (table, JSON) |
 
 ```bash
-grafeo info ./mydb
-grafeo stats ./mydb --format json
+obrain info ./mydb
+obrain stats ./mydb --format json
 ```
 
 ## Crate Guidelines

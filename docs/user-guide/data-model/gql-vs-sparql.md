@@ -11,8 +11,8 @@ tags:
 
 Comparing the ISO standard GQL with W3C standard SPARQL.
 
-!!! info "Grafeo Query Language"
-    Grafeo uses **GQL** as its query language. **SPARQL is not supported**. This guide is for users familiar with SPARQL/RDF who want to understand how GQL differs and how to accomplish similar tasks in Grafeo.
+!!! info "Obrain Query Language"
+    Obrain uses **GQL** as its query language. **SPARQL is not supported**. This guide is for users familiar with SPARQL/RDF who want to understand how GQL differs and how to accomplish similar tasks in Obrain.
 
 ## Overview
 

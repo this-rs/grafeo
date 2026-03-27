@@ -1,5 +1,5 @@
 ---
-title: Grafeo - High-Performance Graph Database
+title: Obrain - High-Performance Graph Database
 description: A high-performance, embeddable graph database with a Rust core and no required C dependencies. Python, Node.js, Go, C, C#, Dart and WebAssembly bindings. GQL (ISO standard) query language.
 hide:
   - navigation
@@ -14,20 +14,20 @@ hide:
 
 <div class="hero" markdown>
 
-# **Grafeo**
+# **Obrain**
 
 ### A fast, lean, embeddable graph database built in Rust
 
 [Get Started](getting-started/index.md){ .md-button .md-button--primary }
-[View on GitHub](https://github.com/GrafeoDB/grafeo){ .md-button }
+[View on GitHub](https://github.com/ObrainDB/obrain){ .md-button }
 
 </div>
 
-[![Grafeo Playground](assets/playground.png)](https://grafeo.ai)
+[![Obrain Playground](assets/playground.png)](https://obrain.ai)
 
 ---
 
-## Why Grafeo?
+## Why Obrain?
 
 <div class="grid cards" markdown>
 
@@ -77,7 +77,7 @@ hide:
 
     ---
 
-    Python (PyO3), Node.js/TypeScript (napi-rs), Go (CGO), C (FFI), C# (.NET 8 P/Invoke), Dart (dart:ffi) and WebAssembly (wasm-bindgen). Use Grafeo from the language of choice.
+    Python (PyO3), Node.js/TypeScript (napi-rs), Go (CGO), C (FFI), C# (.NET 8 P/Invoke), Dart (dart:ffi) and WebAssembly (wasm-bindgen). Use Obrain from the language of choice.
 
 -   :material-puzzle:{ .lg .middle } **Ecosystem**
 
@@ -94,14 +94,14 @@ hide:
 === "Python"
 
     ```bash
-    uv add grafeo
+    uv add obrain
     ```
 
     ```python
-    import grafeo
+    import obrain
 
     # Create an in-memory database
-    db = grafeo.GrafeoDB()
+    db = obrain.ObrainDB()
 
     # Create nodes and edges
     db.execute("""
@@ -127,15 +127,15 @@ hide:
 === "Rust"
 
     ```bash
-    cargo add grafeo
+    cargo add obrain
     ```
 
     ```rust
-    use grafeo::GrafeoDB;
+    use obrain::ObrainDB;
 
-    fn main() -> Result<(), grafeo_common::utils::error::Error> {
+    fn main() -> Result<(), obrain_common::utils::error::Error> {
         // Create an in-memory database
-        let db = GrafeoDB::new_in_memory();
+        let db = ObrainDB::new_in_memory();
 
         // Create a session and execute queries
         let mut session = db.session();
@@ -170,7 +170,7 @@ hide:
 
 ### Dual Data Model Support
 
-Grafeo supports both major graph data models with optimized storage for each:
+Obrain supports both major graph data models with optimized storage for each:
 
 === "LPG (Labeled Property Graph)"
 
@@ -259,31 +259,31 @@ Choose the query language that fits the project:
 === "Python"
 
     ```bash
-    uv add grafeo
+    uv add obrain
     ```
 
 === "Node.js"
 
     ```bash
-    npm install @grafeo-db/js
+    npm install @obrain-db/js
     ```
 
 === "Go"
 
     ```bash
-    go get github.com/GrafeoDB/grafeo/crates/bindings/go
+    go get github.com/ObrainDB/obrain/crates/bindings/go
     ```
 
 === "Rust"
 
     ```bash
-    cargo add grafeo
+    cargo add obrain
     ```
 
 === "C#"
 
     ```bash
-    dotnet add package GrafeoDB
+    dotnet add package ObrainDB
     ```
 
 === "Dart"
@@ -291,17 +291,17 @@ Choose the query language that fits the project:
     ```yaml
     # pubspec.yaml
     dependencies:
-      grafeo: ^0.5.21
+      obrain: ^0.5.21
     ```
 
 === "WASM"
 
     ```bash
-    npm install @grafeo-db/wasm
+    npm install @obrain-db/wasm
     ```
 
 ---
 
 ## License
 
-Grafeo is licensed under the [Apache-2.0 License](https://github.com/GrafeoDB/grafeo/blob/main/LICENSE).
+Obrain is licensed under the [Apache-2.0 License](https://github.com/ObrainDB/obrain/blob/main/LICENSE).

@@ -1,11 +1,11 @@
 ---
 title: Storage Model
-description: How Grafeo stores graph data.
+description: How Obrain stores graph data.
 ---
 
 # Storage Model
 
-Grafeo uses a hybrid storage model optimized for graph workloads.
+Obrain uses a hybrid storage model optimized for graph workloads.
 
 ## Overview
 

@@ -117,9 +117,9 @@ g.V().has('name', 'Alix').outE('KNOWS').has('since', P.gt(2020)).inV()
 ## Python Example
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Create a social graph
 db.execute("INSERT (:Person {name: 'Alix', age: 30})")

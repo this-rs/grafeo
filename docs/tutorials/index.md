@@ -1,11 +1,11 @@
 ---
 title: Tutorials
-description: Real-world tutorials and examples for Grafeo.
+description: Real-world tutorials and examples for Obrain.
 ---
 
 # Tutorials
 
-Learn Grafeo through practical, real-world examples.
+Learn Obrain through practical, real-world examples.
 
 ## Available Tutorials
 

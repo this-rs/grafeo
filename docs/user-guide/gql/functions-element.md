@@ -1,6 +1,6 @@
 ---
 title: Element and Path Functions
-description: GQL functions for inspecting graph elements, paths and lists in Grafeo.
+description: GQL functions for inspecting graph elements, paths and lists in Obrain.
 tags:
   - gql
   - functions

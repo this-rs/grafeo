@@ -1,35 +1,35 @@
 ---
-title: grafeo-web
-description: Grafeo graph database in the browser via WebAssembly with IndexedDB persistence and framework integrations.
+title: obrain-web
+description: Obrain graph database in the browser via WebAssembly with IndexedDB persistence and framework integrations.
 ---
 
-# grafeo-web
+# obrain-web
 
-Grafeo graph database running entirely in the browser via WebAssembly. Zero backend, data stays on the client, with optional IndexedDB persistence across sessions.
+Obrain graph database running entirely in the browser via WebAssembly. Zero backend, data stays on the client, with optional IndexedDB persistence across sessions.
 
-[:octicons-mark-github-16: GitHub](https://github.com/GrafeoDB/grafeo-web){ .md-button }
-[:material-package-variant: npm](https://www.npmjs.com/package/@grafeo-db/web){ .md-button }
+[:octicons-mark-github-16: GitHub](https://github.com/ObrainDB/obrain-web){ .md-button }
+[:material-package-variant: npm](https://www.npmjs.com/package/@obrain-db/web){ .md-button }
 
 ## Overview
 
-`@grafeo-db/web` wraps the Grafeo WASM binary in a TypeScript SDK with persistence, Web Worker support and framework-specific hooks. It supports all major query languages (GQL, Cypher, SPARQL, Gremlin, GraphQL, SQL/PGQ) and provides a consistent API across React, Vue and Svelte.
+`@obrain-db/web` wraps the Obrain WASM binary in a TypeScript SDK with persistence, Web Worker support and framework-specific hooks. It supports all major query languages (GQL, Cypher, SPARQL, Gremlin, GraphQL, SQL/PGQ) and provides a consistent API across React, Vue and Svelte.
 
 ## Installation
 
 ```bash
-npm install @grafeo-db/web
+npm install @obrain-db/web
 ```
 
 ## Quick Start
 
 ```typescript
-import { GrafeoDB } from '@grafeo-db/web';
+import { ObrainDB } from '@obrain-db/web';
 
 // In-memory database
-const db = await GrafeoDB.create();
+const db = await ObrainDB.create();
 
 // Or persist to IndexedDB
-const db = await GrafeoDB.create({ persist: 'my-database' });
+const db = await ObrainDB.create({ persist: 'my-database' });
 
 // Create data
 await db.execute(`INSERT (:Person {name: 'Alix', age: 30})`);
@@ -51,7 +51,7 @@ await db.close();
 
 ## Multi-Language Queries
 
-All six query languages supported by the Grafeo engine are available:
+All six query languages supported by the Obrain engine are available:
 
 ```typescript
 // GQL (default)
@@ -68,12 +68,12 @@ Supported values: `gql`, `cypher`, `sparql`, `gremlin`, `graphql`, `sql`.
 
 ## API
 
-### `GrafeoDB`
+### `ObrainDB`
 
 | Method | Description |
 |--------|-------------|
-| `GrafeoDB.create(options?)` | Create a database instance |
-| `GrafeoDB.version()` | Get the WASM engine version |
+| `ObrainDB.create(options?)` | Create a database instance |
+| `ObrainDB.version()` | Get the WASM engine version |
 | `db.execute(query, options?)` | Execute a query, returns `Record<string, unknown>[]` |
 | `db.executeRaw(query)` | Execute a query, returns columns + rows + timing |
 | `db.nodeCount()` | Number of nodes |
@@ -101,11 +101,11 @@ Data persists to IndexedDB automatically when `persist` is set. Persistence only
 
 ```typescript
 // First visit
-const db = await GrafeoDB.create({ persist: 'my-app' });
+const db = await ObrainDB.create({ persist: 'my-app' });
 await db.execute(`INSERT (:User {name: 'Alix'})`);
 
 // Later visit, data is still there
-const db = await GrafeoDB.create({ persist: 'my-app' });
+const db = await ObrainDB.create({ persist: 'my-app' });
 const result = await db.execute(`MATCH (u:User) RETURN u.name`);
 // -> [{ 'u.name': 'Alix' }]
 ```
@@ -118,7 +118,7 @@ console.log(`Using ${stats.bytesUsed} of ${stats.quota} bytes`);
 
 // Export / import
 const snapshot = await db.export();
-const db2 = await GrafeoDB.create();
+const db2 = await ObrainDB.create();
 await db2.import(snapshot);
 ```
 
@@ -127,7 +127,7 @@ await db2.import(snapshot);
 For large databases or complex queries, run in a Web Worker to keep the UI thread responsive:
 
 ```typescript
-const db = await GrafeoDB.create({
+const db = await ObrainDB.create({
   worker: true,
   persist: 'large-database',
 });
@@ -138,10 +138,10 @@ const db = await GrafeoDB.create({
 ### React
 
 ```tsx
-import { useGrafeo, useQuery } from '@grafeo-db/web/react';
+import { useObrain, useQuery } from '@obrain-db/web/react';
 
 function App() {
-  const { db, loading, error } = useGrafeo({ persist: 'my-app' });
+  const { db, loading, error } = useObrain({ persist: 'my-app' });
   if (loading) return <div>Loading...</div>;
   if (error) return <div>Error: {error.message}</div>;
   return <PersonList db={db} />;
@@ -165,9 +165,9 @@ function PersonList({ db }) {
 
 ```vue
 <script setup>
-import { useGrafeo, useQuery } from '@grafeo-db/web/vue';
+import { useObrain, useQuery } from '@obrain-db/web/vue';
 
-const { db, loading, error } = useGrafeo({ persist: 'my-app' });
+const { db, loading, error } = useObrain({ persist: 'my-app' });
 const { data } = useQuery(db, `MATCH (p:Person) RETURN p.name`);
 </script>
 ```
@@ -176,8 +176,8 @@ const { data } = useQuery(db, `MATCH (p:Person) RETURN p.name`);
 
 ```svelte
 <script>
-  import { createGrafeo } from '@grafeo-db/web/svelte';
-  const { db, loading, error } = createGrafeo({ persist: 'my-app' });
+  import { createObrain } from '@obrain-db/web/svelte';
+  const { db, loading, error } = createObrain({ persist: 'my-app' });
 </script>
 
 {#if $loading}Loading...{/if}
@@ -189,9 +189,9 @@ const { data } = useQuery(db, `MATCH (p:Person) RETURN p.name`);
 A smaller build with GQL support only:
 
 ```typescript
-import { GrafeoDB } from '@grafeo-db/web/lite';
+import { ObrainDB } from '@obrain-db/web/lite';
 
-const db = await GrafeoDB.create();
+const db = await ObrainDB.create();
 await db.execute(`MATCH (n) RETURN n`);
 ```
 
@@ -214,16 +214,16 @@ Requires WebAssembly, IndexedDB and Web Workers.
 | Memory       | ~256 MB (WASM heap)            |
 | Concurrency  | Single writer, multiple readers |
 
-For larger datasets, use [Grafeo](https://github.com/GrafeoDB/grafeo) server-side or via [grafeo-server](grafeo-server.md).
+For larger datasets, use [Obrain](https://github.com/ObrainDB/obrain) server-side or via [obrain-server](obrain-server.md).
 
 ## When to Use
 
 | Scenario | Recommendation |
 |----------|----------------|
-| Offline-first web apps | grafeo-web |
-| Prototyping without a backend | grafeo-web |
-| Multi-client access over HTTP | [grafeo-server](grafeo-server.md) |
-| Embedded in Python / Rust | [grafeo](https://github.com/GrafeoDB/grafeo) (library) |
+| Offline-first web apps | obrain-web |
+| Prototyping without a backend | obrain-web |
+| Multi-client access over HTTP | [obrain-server](obrain-server.md) |
+| Embedded in Python / Rust | [obrain](https://github.com/ObrainDB/obrain) (library) |
 
 ## License
 

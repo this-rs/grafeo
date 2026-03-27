@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Grafeo CLI launcher for npm.
+ * Obrain CLI launcher for npm.
  *
  * Resolves the platform-specific binary from optional dependencies
  * and spawns it with all arguments forwarded.
@@ -16,11 +16,11 @@ const { platform, arch } = require("os");
 
 /** Map of Node.js platform/arch to package names and binary paths. */
 const PLATFORMS = {
-  "linux-x64": { pkg: "@grafeo-db/cli-linux-x64", bin: "grafeo" },
-  "linux-arm64": { pkg: "@grafeo-db/cli-linux-arm64", bin: "grafeo" },
-  "darwin-x64": { pkg: "@grafeo-db/cli-darwin-x64", bin: "grafeo" },
-  "darwin-arm64": { pkg: "@grafeo-db/cli-darwin-arm64", bin: "grafeo" },
-  "win32-x64": { pkg: "@grafeo-db/cli-win32-x64", bin: "grafeo.exe" },
+  "linux-x64": { pkg: "@obrain-db/cli-linux-x64", bin: "obrain" },
+  "linux-arm64": { pkg: "@obrain-db/cli-linux-arm64", bin: "obrain" },
+  "darwin-x64": { pkg: "@obrain-db/cli-darwin-x64", bin: "obrain" },
+  "darwin-arm64": { pkg: "@obrain-db/cli-darwin-arm64", bin: "obrain" },
+  "win32-x64": { pkg: "@obrain-db/cli-win32-x64", bin: "obrain.exe" },
 };
 
 function findBinary() {
@@ -31,7 +31,7 @@ function findBinary() {
     console.error(
       `error: unsupported platform ${key}\n` +
         `Supported: ${Object.keys(PLATFORMS).join(", ")}\n` +
-        "Install the binary manually: cargo install grafeo-cli"
+        "Install the binary manually: cargo install obrain-cli"
     );
     process.exit(1);
   }
@@ -71,11 +71,11 @@ try {
 
   if (error.code === "ENOENT") {
     console.error(
-      `error: grafeo binary not found.\n\n` +
+      `error: obrain binary not found.\n\n` +
         `Install via one of:\n` +
-        `  npm install @grafeo-db/cli\n` +
-        `  cargo install grafeo-cli\n` +
-        `  Download from https://github.com/GrafeoDB/grafeo/releases\n`
+        `  npm install @obrain-db/cli\n` +
+        `  cargo install obrain-cli\n` +
+        `  Download from https://github.com/ObrainDB/obrain/releases\n`
     );
     process.exit(1);
   }

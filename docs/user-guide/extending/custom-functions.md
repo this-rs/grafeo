@@ -15,9 +15,9 @@ Add user-defined functions (UDFs) to extend GQL.
 ### In Rust
 
 ```rust
-use grafeo::{GrafeoDB, Value};
+use obrain::{ObrainDB, Value};
 
-let db = GrafeoDB::new_in_memory()?;
+let db = ObrainDB::new_in_memory()?;
 
 // Register a scalar function
 db.register_function("double", |args| {
@@ -31,9 +31,9 @@ db.register_function("double", |args| {
 ### In Python
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Register a Python function
 @db.register_function("greet")

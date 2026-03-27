@@ -38,7 +38,7 @@ pub trait StorageBackend: Send + Sync {
 ## Custom Backend Example
 
 ```rust
-use grafeo_adapters::storage::StorageBackend;
+use obrain_adapters::storage::StorageBackend;
 
 pub struct RedisBackend {
     client: redis::Client,
@@ -81,7 +81,7 @@ impl StorageBackend for RedisBackend {
 ## Using Custom Backend
 
 ```rust
-use grafeo::{GrafeoDB, Config};
+use obrain::{ObrainDB, Config};
 
 let backend = Box::new(RedisBackend::new("redis://localhost")?);
 
@@ -89,7 +89,7 @@ let config = Config::builder()
     .storage_backend(backend)
     .build()?;
 
-let db = GrafeoDB::with_config(config)?;
+let db = ObrainDB::with_config(config)?;
 ```
 
 ## Backend Requirements

@@ -9,7 +9,7 @@ tags:
 
 # WAL Recovery
 
-Grafeo uses Write-Ahead Logging (WAL) to ensure durability and enable crash recovery.
+Obrain uses Write-Ahead Logging (WAL) to ensure durability and enable crash recovery.
 
 ## How WAL Works
 
@@ -22,14 +22,14 @@ Grafeo uses Write-Ahead Logging (WAL) to ensure durability and enable crash reco
 
 When opening a database after a crash:
 
-1. Grafeo detects incomplete transactions in the WAL
+1. Obrain detects incomplete transactions in the WAL
 2. Committed transactions are replayed
 3. Uncommitted transactions are rolled back
 4. Database is restored to a consistent state
 
 ```python
 # Recovery happens automatically on open
-db = grafeo.GrafeoDB(path="my_graph.db")
+db = obrain.ObrainDB(path="my_graph.db")
 # Database is now in a consistent state
 ```
 

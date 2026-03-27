@@ -13,7 +13,7 @@ Sessions provide transactional access to the database.
 ## Creating Sessions
 
 ```rust
-let db = GrafeoDB::new_in_memory()?;
+let db = ObrainDB::new_in_memory()?;
 
 // Create a session
 let session = db.session()?;
@@ -65,7 +65,7 @@ session.transaction(|tx| {
 ## Multiple Sessions
 
 ```rust
-let db = GrafeoDB::new_in_memory()?;
+let db = ObrainDB::new_in_memory()?;
 
 // Each session has isolated transactions
 let session1 = db.session()?;

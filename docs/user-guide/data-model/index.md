@@ -1,11 +1,11 @@
 ---
 title: Data Model
-description: Understanding the Labeled Property Graph model in Grafeo.
+description: Understanding the Labeled Property Graph model in Obrain.
 ---
 
 # Data Model
 
-Grafeo implements the **Labeled Property Graph (LPG)** model, the most widely used data model for graph databases.
+Obrain implements the **Labeled Property Graph (LPG)** model, the most widely used data model for graph databases.
 
 ## Overview
 

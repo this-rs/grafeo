@@ -264,12 +264,12 @@ def cmd_dialect(
 
     dialect = {
         "dialect": {
-            "name": "GrafeoDB",
+            "name": "ObrainDB",
             "version": version,
             "language": "GQL",
             "standard": "ISO/IEC 39075:2024",
-            "homepage": "https://grafeo.dev",
-            "repository": "https://github.com/GrafeoDB/grafeo",
+            "homepage": "https://obrain.dev",
+            "repository": "https://github.com/ObrainDB/obrain",
         },
         "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "summary": {
@@ -347,7 +347,7 @@ def main() -> None:
     project_root = script_dir.parent
 
     conformance_path = project_root / "docs" / "user-guide" / "gql" / "conformance.md"
-    test_dir = project_root / "crates" / "grafeo-engine" / "tests"
+    test_dir = project_root / "crates" / "obrain-engine" / "tests"
     cargo_toml = project_root / "Cargo.toml"
 
     if not conformance_path.exists():

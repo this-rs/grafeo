@@ -8,7 +8,7 @@ tags:
 
 # Transactions
 
-Grafeo supports ACID transactions with snapshot isolation.
+Obrain supports ACID transactions with snapshot isolation.
 
 ## Auto-Commit Mode
 
@@ -97,7 +97,7 @@ with db.begin_transaction() as tx:
 
 ## Snapshot Isolation
 
-Grafeo uses snapshot isolation by default. Each transaction sees a consistent snapshot of the database at the time it started:
+Obrain uses snapshot isolation by default. Each transaction sees a consistent snapshot of the database at the time it started:
 
 ```python
 # Transaction 1 begins

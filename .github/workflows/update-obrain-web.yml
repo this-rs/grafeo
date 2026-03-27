@@ -1,4 +1,4 @@
-name: Update grafeo-web
+name: Update obrain-web
 
 on:
   release:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Grafeo version (e.g. 0.5.12)'
+        description: 'Obrain version (e.g. 0.5.12)'
         required: true
         type: string
 
@@ -14,8 +14,8 @@ permissions:
   contents: read
 
 jobs:
-  update-grafeo-web:
-    name: Create grafeo-web update PR
+  update-obrain-web:
+    name: Create obrain-web update PR
     runs-on: ubuntu-latest
     steps:
       - name: Extract version
@@ -29,54 +29,54 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
-      - name: Wait for @grafeo-db/wasm to be available on npm
+      - name: Wait for @obrain-db/wasm to be available on npm
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          echo "Waiting for @grafeo-db/wasm@${VERSION} on npm..."
+          echo "Waiting for @obrain-db/wasm@${VERSION} on npm..."
           for i in $(seq 1 30); do
-            if npm view "@grafeo-db/wasm@${VERSION}" version 2>/dev/null; then
+            if npm view "@obrain-db/wasm@${VERSION}" version 2>/dev/null; then
               echo "Package available"
               exit 0
             fi
             echo "Attempt $i/30: not yet available, waiting 30s..."
             sleep 30
           done
-          echo "::error::@grafeo-db/wasm@${VERSION} not found on npm after 15 minutes"
+          echo "::error::@obrain-db/wasm@${VERSION} not found on npm after 15 minutes"
           exit 1
 
-      - name: Wait for @grafeo-db/wasm-lite to be available on npm
+      - name: Wait for @obrain-db/wasm-lite to be available on npm
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          echo "Waiting for @grafeo-db/wasm-lite@${VERSION} on npm..."
+          echo "Waiting for @obrain-db/wasm-lite@${VERSION} on npm..."
           for i in $(seq 1 30); do
-            if npm view "@grafeo-db/wasm-lite@${VERSION}" version 2>/dev/null; then
+            if npm view "@obrain-db/wasm-lite@${VERSION}" version 2>/dev/null; then
               echo "Package available"
               exit 0
             fi
             echo "Attempt $i/30: not yet available, waiting 30s..."
             sleep 30
           done
-          echo "::error::@grafeo-db/wasm-lite@${VERSION} not found on npm after 15 minutes"
+          echo "::error::@obrain-db/wasm-lite@${VERSION} not found on npm after 15 minutes"
           exit 1
 
-      - name: Extract changelog from grafeo release
+      - name: Extract changelog from obrain release
         id: changelog
         env:
-          GH_TOKEN: ${{ secrets.GRAFEO_WEB_TOKEN }}
+          GH_TOKEN: ${{ secrets.OBRAIN_WEB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          BODY=$(gh api "repos/GrafeoDB/grafeo/releases/tags/v${VERSION}" --jq '.body // empty' 2>/dev/null || echo "")
+          BODY=$(gh api "repos/ObrainDB/obrain/releases/tags/v${VERSION}" --jq '.body // empty' 2>/dev/null || echo "")
           if [ -z "$BODY" ]; then
-            BODY="_Align with Grafeo Core ${VERSION}_"
+            BODY="_Align with Obrain Core ${VERSION}_"
           fi
           # Write to file for multiline safety
           echo "$BODY" > /tmp/changelog-body.txt
 
-      - name: Checkout grafeo-web
+      - name: Checkout obrain-web
         uses: actions/checkout@v4
         with:
-          repository: GrafeoDB/grafeo-web
-          token: ${{ secrets.GRAFEO_WEB_TOKEN }}
+          repository: ObrainDB/obrain-web
+          token: ${{ secrets.OBRAIN_WEB_TOKEN }}
           ref: main
 
       - name: Setup Node.js
@@ -94,21 +94,21 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           npm version "$VERSION" --no-git-tag-version
 
-      - name: Update @grafeo-db/wasm dependency
+      - name: Update @obrain-db/wasm dependency
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          npm install "@grafeo-db/wasm@${VERSION}" --save
+          npm install "@obrain-db/wasm@${VERSION}" --save
 
-      - name: Update @grafeo-db/wasm-lite dependency
+      - name: Update @obrain-db/wasm-lite dependency
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          npm install "@grafeo-db/wasm-lite@${VERSION}" --save
+          npm install "@obrain-db/wasm-lite@${VERSION}" --save
 
       - name: Add changelog entry
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           DATE="${{ steps.version.outputs.date }}"
-          ENTRY="## [${VERSION}] - ${DATE}\n\n_Align with Grafeo Core ${VERSION}_\n\n### Changed\n\n- **\\\`@grafeo-db/wasm\\\`**: updated to ${VERSION}\n- **\\\`@grafeo-db/wasm-lite\\\`**: updated to ${VERSION}\n"
+          ENTRY="## [${VERSION}] - ${DATE}\n\n_Align with Obrain Core ${VERSION}_\n\n### Changed\n\n- **\\\`@obrain-db/wasm\\\`**: updated to ${VERSION}\n- **\\\`@obrain-db/wasm-lite\\\`**: updated to ${VERSION}\n"
           sed -i "/^All notable changes/a\\\\n${ENTRY}" CHANGELOG.md
 
       - name: Run typecheck
@@ -124,40 +124,40 @@ jobs:
 
       - name: Create pull request
         env:
-          GH_TOKEN: ${{ secrets.GRAFEO_WEB_TOKEN }}
+          GH_TOKEN: ${{ secrets.OBRAIN_WEB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           BRANCH="auto/wasm-${VERSION}"
           git checkout -b "$BRANCH"
           git add package.json package-lock.json CHANGELOG.md
-          git commit -m "chore: update to Grafeo ${VERSION}"
+          git commit -m "chore: update to Obrain ${VERSION}"
           git push origin "$BRANCH"
 
           cat > /tmp/pr-body.md <<EOF
           ## Summary
 
-          Automated update triggered by [Grafeo v${VERSION}](https://github.com/GrafeoDB/grafeo/releases/tag/v${VERSION}).
+          Automated update triggered by [Obrain v${VERSION}](https://github.com/ObrainDB/obrain/releases/tag/v${VERSION}).
 
           - Bumped \`package.json\` version to ${VERSION}
-          - Updated \`@grafeo-db/wasm\` to ${VERSION}
-          - Updated \`@grafeo-db/wasm-lite\` to ${VERSION}
+          - Updated \`@obrain-db/wasm\` to ${VERSION}
+          - Updated \`@obrain-db/wasm-lite\` to ${VERSION}
           - Added changelog entry
           - Typecheck and tests passed before PR creation
 
-          ## Grafeo Release Notes
+          ## Obrain Release Notes
 
           $(cat /tmp/changelog-body.txt)
 
           ## Checklist
 
           - [ ] Review changelog entry (add new API surface if applicable)
-          - [ ] Verify tests pass in grafeo-web CI
+          - [ ] Verify tests pass in obrain-web CI
           - [ ] Merge when ready (release is created automatically)
           EOF
 
           gh pr create \
-            --repo GrafeoDB/grafeo-web \
+            --repo ObrainDB/obrain-web \
             --base main \
             --head "$BRANCH" \
-            --title "Update to Grafeo ${VERSION}" \
+            --title "Update to Obrain ${VERSION}" \
             --body-file /tmp/pr-body.md

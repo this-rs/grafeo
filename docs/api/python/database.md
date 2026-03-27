@@ -1,19 +1,19 @@
 ---
-title: grafeo.GrafeoDB
+title: obrain.ObrainDB
 description: Database class reference.
 tags:
   - api
   - python
 ---
 
-# grafeo.GrafeoDB
+# obrain.ObrainDB
 
 The main database class.
 
 ## Constructor
 
 ```python
-GrafeoDB(
+ObrainDB(
     path: Optional[str] = None
 )
 ```
@@ -28,10 +28,10 @@ GrafeoDB(
 
 ```python
 # In-memory database
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Persistent database
-db = grafeo.GrafeoDB("my_graph.db")
+db = obrain.ObrainDB("my_graph.db")
 ```
 
 ## Query Methods
@@ -165,9 +165,9 @@ def validate(self) -> bool
 ## Example
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Execute queries
 db.execute("INSERT (:Person {name: 'Alix', age: 30})")

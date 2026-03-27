@@ -87,13 +87,13 @@ fi
 
 # Add marker for idempotent comment updates
 echo "" >> "$BODY_FILE"
-echo "<!-- grafeo-bench-comparison -->" >> "$BODY_FILE"
+echo "<!-- obrain-bench-comparison -->" >> "$BODY_FILE"
 
 # Post or update PR comment
 REPO="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY must be set}"
 
 COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-  --jq '.[] | select(.body | contains("<!-- grafeo-bench-comparison -->")) | .id' \
+  --jq '.[] | select(.body | contains("<!-- obrain-bench-comparison -->")) | .id' \
   | head -1) || true
 
 BODY=$(cat "$BODY_FILE")

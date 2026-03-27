@@ -1,6 +1,6 @@
 # Project Information
-site_name: Grafeo
-site_url: https://grafeo.dev
+site_name: Obrain
+site_url: https://obrain.dev
 site_author: S.T. Grond
 site_description: >-
   A high-performance, embeddable graph database with a Rust core and no required
@@ -9,8 +9,8 @@ site_description: >-
   ACID transactions, and extensible storage backends.
 
 # Repository
-repo_name: GrafeoDB/grafeo
-repo_url: https://github.com/GrafeoDB/grafeo
+repo_name: ObrainDB/obrain
+repo_url: https://github.com/ObrainDB/obrain
 edit_uri: edit/main/docs/
 
 # Copyright
@@ -155,19 +155,19 @@ extra_javascript:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/GrafeoDB/grafeo
+      link: https://github.com/ObrainDB/obrain
       name: GitHub
     - icon: fontawesome/brands/python
-      link: https://pypi.org/project/grafeo/
+      link: https://pypi.org/project/obrain/
       name: PyPI
     - icon: fontawesome/brands/npm
-      link: https://www.npmjs.com/package/@grafeo-db/js
+      link: https://www.npmjs.com/package/@obrain-db/js
       name: npm
     - icon: simple/go
-      link: https://pkg.go.dev/github.com/GrafeoDB/grafeo/crates/bindings/go
+      link: https://pkg.go.dev/github.com/ObrainDB/obrain/crates/bindings/go
       name: Go
     - icon: simple/rust
-      link: https://crates.io/crates/grafeo
+      link: https://crates.io/crates/obrain
       name: crates.io
 
   version:
@@ -273,7 +273,7 @@ nav:
       - In-Memory Mode: user-guide/persistence/in-memory.md
       - Persistent Storage: user-guide/persistence/persistent.md
       - WAL Recovery: user-guide/persistence/wal.md
-    - Extending Grafeo:
+    - Extending Obrain:
       - user-guide/extending/index.md
       - Plugins: user-guide/extending/plugins.md
       - Storage Backends: user-guide/extending/storage-backends.md
@@ -315,17 +315,17 @@ nav:
     - api/index.md
     - Python API:
       - api/python/index.md
-      - grafeo.Database: api/python/database.md
-      - grafeo.Node: api/python/node.md
-      - grafeo.Edge: api/python/edge.md
-      - grafeo.QueryResult: api/python/result.md
-      - grafeo.Transaction: api/python/transaction.md
+      - obrain.Database: api/python/database.md
+      - obrain.Node: api/python/node.md
+      - obrain.Edge: api/python/edge.md
+      - obrain.QueryResult: api/python/result.md
+      - obrain.Transaction: api/python/transaction.md
     - Rust API:
       - api/rust/index.md
-      - grafeo-common: api/rust/common.md
-      - grafeo-core: api/rust/core.md
-      - grafeo-adapters: api/rust/adapters.md
-      - grafeo-engine: api/rust/engine.md
+      - obrain-common: api/rust/common.md
+      - obrain-core: api/rust/core.md
+      - obrain-adapters: api/rust/adapters.md
+      - obrain-engine: api/rust/engine.md
     - Node.js API:
       - api/node/index.md
     - Go API:
@@ -357,12 +357,12 @@ nav:
     - Pull Requests: contributing/pull-requests.md
     - Ecosystem:
       - ecosystem/index.md
-      - grafeo-server: ecosystem/grafeo-server.md
-      - grafeo-web: ecosystem/grafeo-web.md
-      - grafeo-langchain: ecosystem/grafeo-langchain.md
-      - grafeo-llamaindex: ecosystem/grafeo-llamaindex.md
-      - grafeo-mcp: ecosystem/grafeo-mcp.md
-      - grafeo-memory: ecosystem/grafeo-memory.md
+      - obrain-server: ecosystem/obrain-server.md
+      - obrain-web: ecosystem/obrain-web.md
+      - obrain-langchain: ecosystem/obrain-langchain.md
+      - obrain-llamaindex: ecosystem/obrain-llamaindex.md
+      - obrain-mcp: ecosystem/obrain-mcp.md
+      - obrain-memory: ecosystem/obrain-memory.md
       - graph-bench: ecosystem/graph-bench.md
       - anywidget-vector: ecosystem/anywidget-vector.md
       - anywidget-graph: ecosystem/anywidget-graph.md

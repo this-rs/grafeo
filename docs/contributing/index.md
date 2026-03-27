@@ -1,11 +1,11 @@
 ---
 title: Contributing
-description: How to contribute to Grafeo.
+description: How to contribute to Obrain.
 ---
 
 # Contributing
 
-Thank you for your interest in contributing to Grafeo!
+Thank you for your interest in contributing to Obrain!
 
 ## Getting Started
 

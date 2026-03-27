@@ -204,22 +204,22 @@ This guide compares SPARQL (W3C standard for RDF) with GQL (ISO standard for pro
 - Relationships have **properties** (weights, timestamps)
 - Prefer **ASCII-art style** query patterns
 
-## Grafeo Support
+## Obrain Support
 
-Grafeo supports both query languages:
+Obrain supports both query languages:
 
 ```toml
 # Enable both features
 [dependencies]
-grafeo = { version = "0.5", features = ["gql", "sparql"] }
+obrain = { version = "0.5", features = ["gql", "sparql"] }
 ```
 
 === "SPARQL Query"
 
     ```python
-    import grafeo
+    import obrain
 
-    db = grafeo.GrafeoDB()
+    db = obrain.ObrainDB()
 
     # SPARQL query
     result = db.execute_sparql("""
@@ -232,9 +232,9 @@ grafeo = { version = "0.5", features = ["gql", "sparql"] }
 === "GQL Query"
 
     ```python
-    import grafeo
+    import obrain
 
-    db = grafeo.GrafeoDB()
+    db = obrain.ObrainDB()
 
     # GQL query
     result = db.execute("""

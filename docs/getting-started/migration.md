@@ -1,6 +1,6 @@
 ---
 title: Migration Guide
-description: Migrating to Grafeo from Neo4j, DGraph and other graph databases.
+description: Migrating to Obrain from Neo4j, DGraph and other graph databases.
 tags:
   - migration
   - neo4j
@@ -9,13 +9,13 @@ tags:
 
 # Migration Guide
 
-How to migrate an existing graph database to Grafeo.
+How to migrate an existing graph database to Obrain.
 
 ---
 
 ## Migrating from Neo4j
 
-Grafeo supports Cypher queries, making migration from Neo4j straightforward.
+Obrain supports Cypher queries, making migration from Neo4j straightforward.
 
 ### Step 1: Export Data from Neo4j
 
@@ -35,16 +35,16 @@ CALL apoc.export.csv.query(
 )
 ```
 
-### Step 2: Import into Grafeo
+### Step 2: Import into Obrain
 
 ```python
 import csv
 import json
-from grafeo import GrafeoDB
+from obrain import ObrainDB
 
-db = GrafeoDB("./migrated_db")
+db = ObrainDB("./migrated_db")
 
-# Map old Neo4j IDs to new Grafeo IDs
+# Map old Neo4j IDs to new Obrain IDs
 id_map = {}
 
 # Import nodes
@@ -83,7 +83,7 @@ Most Cypher queries work unchanged:
     RETURN p.name, friend.name
     ```
 
-=== "Grafeo (Cypher)"
+=== "Obrain (Cypher)"
     ```python
     result = db.execute_cypher("""
         MATCH (p:Person)-[:KNOWS]->(friend)
@@ -92,7 +92,7 @@ Most Cypher queries work unchanged:
     """)
     ```
 
-=== "Grafeo (GQL)"
+=== "Obrain (GQL)"
     ```python
     result = db.execute("""
         MATCH (p:Person)-[:KNOWS]->(friend)
@@ -103,9 +103,9 @@ Most Cypher queries work unchanged:
 
 ### Cypher Compatibility Notes
 
-Grafeo supports openCypher 9.0 with these differences:
+Obrain supports openCypher 9.0 with these differences:
 
-| Feature | Neo4j | Grafeo |
+| Feature | Neo4j | Obrain |
 |---------|-------|--------|
 | `MATCH` | Supported | Supported |
 | `WHERE` | Supported | Supported |
@@ -123,7 +123,7 @@ Grafeo supports openCypher 9.0 with these differences:
 
 ### Replacing APOC with Python
 
-Neo4j's APOC library provides utility functions. In Grafeo, use Python:
+Neo4j's APOC library provides utility functions. In Obrain, use Python:
 
 === "Neo4j APOC"
     ```cypher
@@ -131,7 +131,7 @@ Neo4j's APOC library provides utility functions. In Grafeo, use Python:
     RETURN value
     ```
 
-=== "Grafeo + Python"
+=== "Obrain + Python"
     ```python
     text = "a,b,c"
     values = text.split(",")
@@ -141,7 +141,7 @@ Neo4j's APOC library provides utility functions. In Grafeo, use Python:
 
 ### Replacing GDS with Built-in Algorithms
 
-Neo4j's Graph Data Science library is replaced by Grafeo's built-in algorithms:
+Neo4j's Graph Data Science library is replaced by Obrain's built-in algorithms:
 
 === "Neo4j GDS"
     ```cypher
@@ -151,7 +151,7 @@ Neo4j's Graph Data Science library is replaced by Grafeo's built-in algorithms:
     ORDER BY score DESC
     ```
 
-=== "Grafeo"
+=== "Obrain"
     ```python
     # PageRank is built-in
     scores = db.algorithms().pagerank()
@@ -179,9 +179,9 @@ dgraph export --format=json -o ./export
 
 ```python
 import json
-from grafeo import GrafeoDB
+from obrain import ObrainDB
 
-db = GrafeoDB("./migrated_db")
+db = ObrainDB("./migrated_db")
 
 with open("export/g01.json") as f:
     data = json.load(f)
@@ -234,7 +234,7 @@ for item in data:
     }
     ```
 
-=== "Grafeo GQL"
+=== "Obrain GQL"
     ```python
     result = db.execute("""
         MATCH (p:Person)-[:knows]->(friend)
@@ -251,15 +251,15 @@ For existing NetworkX graphs:
 
 ```python
 import networkx as nx
-from grafeo import GrafeoDB
+from obrain import ObrainDB
 
 # Your existing NetworkX graph
 G = nx.read_graphml("graph.graphml")
 
-# Create Grafeo database
-db = GrafeoDB("./migrated_db")
+# Create Obrain database
+db = ObrainDB("./migrated_db")
 
-# Map NetworkX node IDs to Grafeo IDs
+# Map NetworkX node IDs to Obrain IDs
 id_map = {}
 
 # Import nodes
@@ -279,7 +279,7 @@ print(f"Imported {db.node_count} nodes and {db.edge_count} edges")
 The reverse direction is also possible:
 
 ```python
-# Convert Grafeo to NetworkX for visualization
+# Convert Obrain to NetworkX for visualization
 nx_adapter = db.as_networkx()
 G = nx_adapter.to_networkx()
 
@@ -292,14 +292,14 @@ plt.show()
 
 ## Migrating from RDF/SPARQL Stores
 
-Grafeo supports RDF with SPARQL queries.
+Obrain supports RDF with SPARQL queries.
 
 ### From Turtle/N-Triples Files
 
 ```python
-from grafeo import GrafeoDB
+from obrain import ObrainDB
 
-db = GrafeoDB("./rdf_db")
+db = ObrainDB("./rdf_db")
 
 # Parse and insert triples
 with open("data.ttl") as f:
@@ -329,7 +329,7 @@ for line in content.strip().split("\n"):
     }
     ```
 
-=== "Grafeo SPARQL"
+=== "Obrain SPARQL"
     ```python
     result = db.execute_sparql("""
         PREFIX foaf: <http://xmlns.com/foaf/0.1/>
@@ -346,7 +346,7 @@ for line in content.strip().split("\n"):
 
 ## Data Type Mapping
 
-| Source Type | Grafeo Type |
+| Source Type | Obrain Type |
 |-------------|-------------|
 | Integer/Long | `Int64` |
 | Float/Double | `Float64` |
@@ -364,12 +364,12 @@ for line in content.strip().split("\n"):
 
 After migration, there may be performance differences:
 
-| Operation | Neo4j | Grafeo | Notes |
+| Operation | Neo4j | Obrain | Notes |
 |-----------|-------|--------|-------|
 | Point lookup | Fast | Fast | Both use hash indexes |
 | Label scan | Fast | Fast | Both have label indexes |
 | Pattern matching | Fast | Fast | Both optimize MATCH |
-| Aggregations | Moderate | Fast | Grafeo uses vectorized execution |
+| Aggregations | Moderate | Fast | Obrain uses vectorized execution |
 | PageRank (1M nodes) | ~5s (GDS) | ~1s | Built-in algorithms |
 | Vector similarity | Requires plugin | Native | HNSW built-in |
 

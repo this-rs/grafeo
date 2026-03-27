@@ -1,11 +1,11 @@
 ---
 title: Getting Started
-description: Get up and running with Grafeo in minutes.
+description: Get up and running with Obrain in minutes.
 ---
 
 # Getting Started
 
-Welcome to Grafeo! This guide covers getting started with the high-performance graph database.
+Welcome to Obrain! This guide covers getting started with the high-performance graph database.
 
 ## Choose a Path
 
@@ -15,7 +15,7 @@ Welcome to Grafeo! This guide covers getting started with the high-performance g
 
     ---
 
-    Install Grafeo for Python, Node.js, Go, C#, Dart, Rust or WebAssembly.
+    Install Obrain for Python, Node.js, Go, C#, Dart, Rust or WebAssembly.
 
     [:octicons-arrow-right-24: Installation Guide](installation.md)
 

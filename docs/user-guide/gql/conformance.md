@@ -1,9 +1,9 @@
 # GQL Conformance (ISO/IEC 39075:2024)
 
-This document maps Grafeo's GQL implementation against the ISO/IEC 39075:2024 standard,
+This document maps Obrain's GQL implementation against the ISO/IEC 39075:2024 standard,
 declaring which features are supported, partially supported or not yet implemented.
 
-Grafeo targets **minimum conformance** plus a broad set of optional features.
+Obrain targets **minimum conformance** plus a broad set of optional features.
 
 A machine-readable version of this compliance matrix is available as
 [`gql-dialect.json`](../../gql-dialect.json) for tool integration (e.g. [GraphGlot](https://graphglot.com/)).
@@ -469,11 +469,11 @@ GQL uses three-valued logic where comparisons involving NULL produce UNKNOWN (no
    preserved as first-class predicate AST nodes. Semantics are equivalent.
 
 2. **KEEP clause representation**: The standard specifies `KEEP <path pattern prefix>` wrapping
-   all patterns. Grafeo implements KEEP as a per-pattern match mode flag, which is simpler but
+   all patterns. Obrain implements KEEP as a per-pattern match mode flag, which is simpler but
    semantically equivalent.
 
 3. **Variable scope validation**: The standard defines degree-of-exposure categories (unconditional
-   singleton, conditional singleton, etc.) at parse time. Grafeo defers variable scope validation
+   singleton, conditional singleton, etc.) at parse time. Obrain defers variable scope validation
    to execution time.
 
 4. **Simplified path patterns**: The `-/:Label/->` shorthand is desugared to `-[:Label]->` at parse

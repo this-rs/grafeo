@@ -13,7 +13,7 @@ This guide covers querying graph relationships using nested field selections in 
 
 ## Nested Selections
 
-In Grafeo, nested fields in a GraphQL query map to edge traversals. The field name corresponds to the edge type:
+In Obrain, nested fields in a GraphQL query map to edge traversals. The field name corresponds to the edge type:
 
 ```graphql
 {
@@ -101,9 +101,9 @@ Query different relationship types in the same query:
 ## Python Example
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Create a social graph
 db.execute("INSERT (:Person {name: 'Alix', age: 30})")
@@ -139,9 +139,9 @@ for row in result:
 ## Rust Example
 
 ```rust
-use grafeo_engine::GrafeoDB;
+use obrain_engine::ObrainDB;
 
-let db = GrafeoDB::new_in_memory();
+let db = ObrainDB::new_in_memory();
 
 // Create data
 db.execute("INSERT (:Person {name: 'Alix'})").unwrap();

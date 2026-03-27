@@ -1,6 +1,6 @@
 ---
 title: In-Memory Mode
-description: Using Grafeo with in-memory storage.
+description: Using Obrain with in-memory storage.
 tags:
   - persistence
   - in-memory
@@ -15,18 +15,18 @@ In-memory mode provides the fastest performance by keeping all data in RAM.
 === "Python"
 
     ```python
-    import grafeo
+    import obrain
 
     # Default is in-memory
-    db = grafeo.GrafeoDB()
+    db = obrain.ObrainDB()
     ```
 
 === "Rust"
 
     ```rust
-    use grafeo::GrafeoDB;
+    use obrain::ObrainDB;
 
-    let db = GrafeoDB::new_in_memory()?;
+    let db = ObrainDB::new_in_memory()?;
     ```
 
 ## Characteristics
@@ -47,7 +47,7 @@ In-memory mode provides the fastest performance by keeping all data in RAM.
 
 ```python
 # Set memory limit for in-memory database
-db = grafeo.GrafeoDB(
+db = obrain.ObrainDB(
     memory_limit=1 * 1024 * 1024 * 1024  # 1 GB
 )
 ```

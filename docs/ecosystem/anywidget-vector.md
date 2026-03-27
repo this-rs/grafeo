@@ -2,7 +2,7 @@
 
 Interactive 3D vector visualization for Python notebooks.
 
-[:octicons-mark-github-16: GitHub](https://github.com/GrafeoDB/anywidget-vector){ .md-button }
+[:octicons-mark-github-16: GitHub](https://github.com/ObrainDB/anywidget-vector){ .md-button }
 [:simple-pypi: PyPI](https://pypi.org/project/anywidget-vector/){ .md-button }
 
 ## Overview
@@ -306,7 +306,7 @@ Configure a backend for interactive querying:
 ```python
 widget.set_backend("chroma", client=collection)
 widget.set_backend("lancedb", client=table)
-widget.set_backend("grafeo", client=db)
+widget.set_backend("obrain", client=db)
 ```
 
 ## Export

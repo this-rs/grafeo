@@ -1,19 +1,19 @@
 ---
 title: Python API
-description: Using Grafeo from Python.
+description: Using Obrain from Python.
 ---
 
 # Python API
 
-Grafeo provides first-class Python support through the `grafeo` package.
+Obrain provides first-class Python support through the `obrain` package.
 
 ## Quick Start
 
 ```python
-import grafeo
+import obrain
 
 # Create a database
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Execute queries
 db.execute("INSERT (:Person {name: 'Alix'})")

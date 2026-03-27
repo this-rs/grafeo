@@ -191,14 +191,14 @@ This guide compares GraphQL (the API query language) with GQL (ISO/IEC 39075 gra
 | Mutations | `createX`/`deleteX` | INSERT, SET, DELETE |
 | Joins | Nesting only | Arbitrary patterns |
 
-## Using Both in Grafeo
+## Using Both in Obrain
 
-Grafeo supports both languages, allowing different use cases:
+Obrain supports both languages, allowing different use cases:
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Create data with GQL (full control)
 db.execute("INSERT (:Person {name: 'Alix', age: 30})")

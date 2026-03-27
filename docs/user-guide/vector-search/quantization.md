@@ -9,7 +9,7 @@ tags:
 
 # Vector Quantization
 
-Quantization compresses vectors to reduce memory usage while maintaining search quality. Grafeo supports three quantization methods with different compression-recall tradeoffs.
+Quantization compresses vectors to reduce memory usage while maintaining search quality. Obrain supports three quantization methods with different compression-recall tradeoffs.
 
 ## Overview
 
@@ -32,7 +32,7 @@ Scalar quantization converts each f32 (4 bytes) to u8 (1 byte), achieving 4x com
 ### Usage
 
 ```python
-from grafeo import ScalarQuantizer
+from obrain import ScalarQuantizer
 
 # Train on sample vectors
 vectors = [doc.embedding for doc in documents[:1000]]
@@ -67,7 +67,7 @@ Binary quantization converts each f32 to a single bit, achieving 32x compression
 ### Usage
 
 ```python
-from grafeo import BinaryQuantizer
+from obrain import BinaryQuantizer
 
 # Quantize (no training needed)
 binary_vec = BinaryQuantizer.quantize(embedding)  # Returns List[int] (packed u64)
@@ -114,7 +114,7 @@ compression_ratio = (dimensions * 4) / num_subvectors
 ### Usage
 
 ```python
-from grafeo import ProductQuantizer
+from obrain import ProductQuantizer
 
 # Training vectors (should be representative sample)
 training_vectors = [doc.embedding for doc in sample_docs]

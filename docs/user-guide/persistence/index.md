@@ -1,11 +1,11 @@
 ---
 title: Persistence
-description: Storage modes and data durability in Grafeo.
+description: Storage modes and data durability in Obrain.
 ---
 
 # Persistence
 
-Grafeo supports multiple storage modes for different use cases.
+Obrain supports multiple storage modes for different use cases.
 
 ## Storage Modes
 

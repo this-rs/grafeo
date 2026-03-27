@@ -1,12 +1,12 @@
 ---
-title: GrafeoDB
-description: GrafeoDB class reference for Node.js.
+title: ObrainDB
+description: ObrainDB class reference for Node.js.
 tags:
   - api
   - nodejs
 ---
 
-# GrafeoDB
+# ObrainDB
 
 The main database class. All query methods return `Promise<QueryResult>`.
 
@@ -14,13 +14,13 @@ The main database class. All query methods return `Promise<QueryResult>`.
 
 ```typescript
 // In-memory database
-const db = GrafeoDB.create();
+const db = ObrainDB.create();
 
 // Persistent database
-const db = GrafeoDB.create('./my_graph.db');
+const db = ObrainDB.create('./my_graph.db');
 
 // Open existing database
-const db = GrafeoDB.open('./my_graph.db');
+const db = ObrainDB.open('./my_graph.db');
 ```
 
 ### Parameters
@@ -511,7 +511,7 @@ schema(): object
 
 ### version()
 
-Returns the Grafeo engine version string.
+Returns the Obrain engine version string.
 
 ```typescript
 version(): string

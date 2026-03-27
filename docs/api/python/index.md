@@ -5,20 +5,20 @@ description: Python API reference.
 
 # Python API Reference
 
-Complete reference for the `grafeo` Python package.
+Complete reference for the `obrain` Python package.
 
 ## Installation
 
 ```bash
-uv add grafeo
+uv add obrain
 ```
 
 ## Quick Start
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 db.execute("INSERT (:Person {name: 'Alix'})")
 ```
 

@@ -1,36 +1,36 @@
 ---
 title: Quick Start
-description: Get up and running with Grafeo in minutes.
+description: Get up and running with Obrain in minutes.
 ---
 
 # Quick Start
 
-This guide covers getting up and running with Grafeo in just a few minutes.
+This guide covers getting up and running with Obrain in just a few minutes.
 
 ## Create a Database
 
 === "Python"
 
     ```python
-    import grafeo
+    import obrain
 
     # Create an in-memory database
-    db = grafeo.GrafeoDB()
+    db = obrain.ObrainDB()
 
     # Or create a persistent database
-    db = grafeo.GrafeoDB("my_graph.db")
+    db = obrain.ObrainDB("my_graph.db")
     ```
 
 === "Rust"
 
     ```rust
-    use grafeo::GrafeoDB;
+    use obrain::ObrainDB;
 
     // Create an in-memory database
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     // Or create a persistent database
-    let db = GrafeoDB::open("my_graph.db")?;
+    let db = ObrainDB::open("my_graph.db")?;
     ```
 
 ## Add Data

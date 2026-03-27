@@ -1,21 +1,21 @@
 ---
 title: Go API
-description: API reference for the Grafeo Go bindings.
+description: API reference for the Obrain Go bindings.
 ---
 
 # Go API
 
-Go bindings for Grafeo via CGO. Requires the `grafeo-c` shared library.
+Go bindings for Obrain via CGO. Requires the `obrain-c` shared library.
 
 ```bash
-go get github.com/GrafeoDB/grafeo/crates/bindings/go
+go get github.com/ObrainDB/obrain/crates/bindings/go
 ```
 
 ## Requirements
 
 - Go 1.22+
 - CGO enabled (`CGO_ENABLED=1`)
-- The `grafeo-c` shared library (`libgrafeo_c.so` / `libgrafeo_c.dylib` / `grafeo_c.dll`)
+- The `obrain-c` shared library (`libobrain_c.so` / `libobrain_c.dylib` / `obrain_c.dll`)
 
 ## Quick Start
 
@@ -26,11 +26,11 @@ import (
     "fmt"
     "log"
 
-    grafeo "github.com/GrafeoDB/grafeo/crates/bindings/go"
+    obrain "github.com/ObrainDB/obrain/crates/bindings/go"
 )
 
 func main() {
-    db, err := grafeo.OpenInMemory()
+    db, err := obrain.OpenInMemory()
     if err != nil {
         log.Fatal(err)
     }
@@ -52,8 +52,8 @@ func main() {
 ## Database
 
 ```go
-db, err := grafeo.OpenInMemory()       // in-memory
-db, err := grafeo.Open("./path")       // persistent
+db, err := obrain.OpenInMemory()       // in-memory
+db, err := obrain.Open("./path")       // persistent
 defer db.Close()
 
 db.NodeCount()   // number of nodes
@@ -106,7 +106,7 @@ results, err := db.VectorSearch("Doc", "emb", queryVec, 10)
 
 // With options
 results, err := db.VectorSearch("Doc", "emb", queryVec, 10,
-    grafeo.WithEf(100))
+    obrain.WithEf(100))
 
 // MMR search
 results, err := db.MmrSearch("Doc", "emb", queryVec, 5, -1, 0.5, -1)
@@ -115,10 +115,10 @@ results, err := db.MmrSearch("Doc", "emb", queryVec, 5, -1, 0.5, -1)
 ## Building the Shared Library
 
 ```bash
-cargo build --release -p grafeo-c --features full
+cargo build --release -p obrain-c --features full
 ```
 
 ## Links
 
-- [pkg.go.dev](https://pkg.go.dev/github.com/GrafeoDB/grafeo/crates/bindings/go)
-- [GitHub](https://github.com/GrafeoDB/grafeo/tree/main/crates/bindings/go)
+- [pkg.go.dev](https://pkg.go.dev/github.com/ObrainDB/obrain/crates/bindings/go)
+- [GitHub](https://github.com/ObrainDB/obrain/tree/main/crates/bindings/go)

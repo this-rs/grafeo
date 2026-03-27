@@ -1,6 +1,6 @@
 ---
 title: API Reference
-description: Complete API reference for Grafeo.
+description: Complete API reference for Obrain.
 ---
 
 # API Reference
@@ -9,21 +9,21 @@ Complete API documentation for all supported languages.
 
 ## Python API
 
-The Python API provides a Pythonic interface to Grafeo.
+The Python API provides a Pythonic interface to Obrain.
 
 - [Python Overview](python/index.md)
-- [grafeo.GrafeoDB](python/database.md)
-- [grafeo.Node](python/node.md)
-- [grafeo.Edge](python/edge.md)
-- [grafeo.QueryResult](python/result.md)
-- [grafeo.Transaction](python/transaction.md)
+- [obrain.ObrainDB](python/database.md)
+- [obrain.Node](python/node.md)
+- [obrain.Edge](python/edge.md)
+- [obrain.QueryResult](python/result.md)
+- [obrain.Transaction](python/transaction.md)
 
 ## Node.js / TypeScript API
 
 Native bindings via napi-rs with full TypeScript definitions.
 
 - [Node.js Overview](node/index.md)
-- [GrafeoDB](node/database.md)
+- [ObrainDB](node/database.md)
 - [QueryResult](node/query.md)
 - [Transaction](node/transaction.md)
 - [JsNode](node/node.md)
@@ -33,7 +33,7 @@ Native bindings via napi-rs with full TypeScript definitions.
 
 CGO bindings for cloud-native applications.
 
-- **Package**: [`github.com/GrafeoDB/grafeo/crates/bindings/go`](https://pkg.go.dev/github.com/GrafeoDB/grafeo/crates/bindings/go)
+- **Package**: [`github.com/ObrainDB/obrain/crates/bindings/go`](https://pkg.go.dev/github.com/ObrainDB/obrain/crates/bindings/go)
 - Node/edge CRUD, property management, label operations
 - ACID transactions, vector search, batch operations
 
@@ -41,7 +41,7 @@ CGO bindings for cloud-native applications.
 
 Full-featured .NET 8 bindings via source-generated P/Invoke.
 
-- **Package**: `GrafeoDB` (NuGet)
+- **Package**: `ObrainDB` (NuGet)
 - GQL + multi-language queries (sync and async), ACID transactions
 - Typed node/edge CRUD, vector search (k-NN + MMR), temporal type support
 - `SafeHandle`-based resource management
@@ -50,27 +50,27 @@ Full-featured .NET 8 bindings via source-generated P/Invoke.
 
 Dart FFI bindings wrapping the C layer.
 
-- **Package**: [`grafeo`](https://pub.dev/packages/grafeo)
+- **Package**: [`obrain`](https://pub.dev/packages/obrain)
 - GQL query execution with parameterized queries, ACID transactions
 - Typed node/edge CRUD, vector search, `NativeFinalizer` resource management
 
 ## WebAssembly API
 
-Run Grafeo in the browser, Deno or Cloudflare Workers.
+Run Obrain in the browser, Deno or Cloudflare Workers.
 
-- **Package**: [`@grafeo-db/wasm`](https://www.npmjs.com/package/@grafeo-db/wasm)
+- **Package**: [`@obrain-db/wasm`](https://www.npmjs.com/package/@obrain-db/wasm)
 - In-memory only, all query languages supported
 - 660 KB gzipped binary
 
 ## Rust API
 
-The Rust API provides direct access to Grafeo internals.
+The Rust API provides direct access to Obrain internals.
 
 - [Rust Overview](rust/index.md)
-- [grafeo-common](rust/common.md)
-- [grafeo-core](rust/core.md)
-- [grafeo-adapters](rust/adapters.md)
-- [grafeo-engine](rust/engine.md)
+- [obrain-common](rust/common.md)
+- [obrain-core](rust/core.md)
+- [obrain-adapters](rust/adapters.md)
+- [obrain-engine](rust/engine.md)
 
 ## API Stability
 
@@ -82,5 +82,5 @@ The Rust API provides direct access to Grafeo internals.
 | C# / .NET | Stable |
 | Dart | Stable |
 | WebAssembly | Stable |
-| Rust (grafeo-engine) | Stable |
+| Rust (obrain-engine) | Stable |
 | Rust (internal crates) | Unstable |
