@@ -458,6 +458,125 @@ mod tests {
     }
 
     #[test]
+    fn node_without_name_uses_score_header() {
+        let result = RetrievalResult {
+            nodes: vec![RetrievedNode {
+                node_id: NodeId(1),
+                labels: vec!["Orphan".into()],
+                properties: [("data".into(), "some value".into())].into_iter().collect(),
+                score: 0.5,
+                source: RetrievalSource::SpreadingActivation {
+                    depth: 0,
+                    activation: 0.5,
+                },
+                outgoing_relations: vec![],
+                incoming_relations: vec![],
+            }],
+            engrams_matched: 1,
+            nodes_activated: 1,
+        };
+        let config = RagConfig::default();
+        let builder = GraphContextBuilder::new();
+        let ctx = builder.build(&result, &config).unwrap();
+        // No name/title → header should just show score
+        assert!(ctx.text.contains("(score: 0.50)"));
+    }
+
+    #[test]
+    fn multi_label_node_shows_all_labels() {
+        let result = RetrievalResult {
+            nodes: vec![RetrievedNode {
+                node_id: NodeId(1),
+                labels: vec!["Note".into(), "Gotcha".into()],
+                properties: [("title".into(), "Bug fix".into())].into_iter().collect(),
+                score: 0.8,
+                source: RetrievalSource::EngramRecall {
+                    engram_id: 1,
+                    confidence: 0.8,
+                },
+                outgoing_relations: vec![],
+                incoming_relations: vec![],
+            }],
+            engrams_matched: 1,
+            nodes_activated: 1,
+        };
+        let config = RagConfig::default();
+        let builder = GraphContextBuilder::new();
+        let ctx = builder.build(&result, &config).unwrap();
+        assert!(
+            ctx.text.contains("Note, Gotcha"),
+            "Multi-label nodes should show all labels"
+        );
+    }
+
+    #[test]
+    fn incoming_relations_with_overflow() {
+        let incoming: Vec<(String, NodeId)> = (0..15)
+            .map(|i| ("USED_BY".into(), NodeId(100 + i)))
+            .collect();
+        let result = RetrievalResult {
+            nodes: vec![RetrievedNode {
+                node_id: NodeId(1),
+                labels: vec!["Module".into()],
+                properties: [("name".into(), "core".into())].into_iter().collect(),
+                score: 0.9,
+                source: RetrievalSource::EngramRecall {
+                    engram_id: 1,
+                    confidence: 0.9,
+                },
+                outgoing_relations: vec![],
+                incoming_relations: incoming,
+            }],
+            engrams_matched: 1,
+            nodes_activated: 1,
+        };
+        let config = RagConfig {
+            include_relations: true,
+            max_relations_display: 5,
+            ..RagConfig::default()
+        };
+        let builder = GraphContextBuilder::new();
+        let ctx = builder.build(&result, &config).unwrap();
+        assert!(
+            ctx.text.contains("more"),
+            "Should show truncation indicator"
+        );
+    }
+
+    #[test]
+    fn labels_disabled_uses_other_group() {
+        let result = make_result(2);
+        let config = RagConfig {
+            include_labels: false,
+            ..RagConfig::default()
+        };
+        let builder = GraphContextBuilder::new();
+        let ctx = builder.build(&result, &config).unwrap();
+        assert!(ctx.text.contains("## Other"));
+    }
+
+    #[test]
+    fn node_texts_populated_for_feedback() {
+        let result = make_mixed_result();
+        let config = RagConfig::default();
+        let builder = GraphContextBuilder::new();
+        let ctx = builder.build(&result, &config).unwrap();
+        assert!(
+            !ctx.node_texts.is_empty(),
+            "node_texts should be populated for feedback"
+        );
+        // "Grafeo" (6 chars > 3) should be in node_texts
+        let grafeo_texts = ctx.node_texts.iter().find(|(id, _)| *id == NodeId(1));
+        assert!(grafeo_texts.is_some());
+    }
+
+    #[test]
+    fn estimate_text_tokens_basic() {
+        let tokens = estimate_text_tokens("hello world", 4.0);
+        assert_eq!(tokens, 3); // ceil(11/4.0) = 3
+    }
+
+    #[test]
     fn resolves_relation_names() {
         let result = make_mixed_result();
         let config = RagConfig {

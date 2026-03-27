@@ -196,3 +196,181 @@ impl Default for RagConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_is_valid() {
+        let config = RagConfig::default();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn fast_preset_values() {
+        let fast = RagConfig::fast();
+        assert_eq!(fast.max_engrams, 5);
+        assert_eq!(fast.activation_depth, 1);
+        assert_eq!(fast.token_budget, 1000);
+        assert_eq!(fast.max_context_nodes, 10);
+        assert!(fast.validate().is_ok());
+    }
+
+    #[test]
+    fn balanced_is_default() {
+        let balanced = RagConfig::balanced();
+        let default = RagConfig::default();
+        assert_eq!(balanced.max_engrams, default.max_engrams);
+        assert_eq!(balanced.token_budget, default.token_budget);
+    }
+
+    #[test]
+    fn thorough_preset_values() {
+        let thorough = RagConfig::thorough();
+        assert_eq!(thorough.max_engrams, 30);
+        assert_eq!(thorough.activation_depth, 3);
+        assert_eq!(thorough.token_budget, 4000);
+        assert_eq!(thorough.max_context_nodes, 50);
+        assert!(thorough.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_bad_decay() {
+        let config = RagConfig {
+            activation_decay: 0.0,
+            ..RagConfig::default()
+        };
+        assert!(config.validate().is_err());
+
+        let config = RagConfig {
+            activation_decay: 1.0,
+            ..RagConfig::default()
+        };
+        assert!(config.validate().is_err());
+
+        let config = RagConfig {
+            activation_decay: -0.5,
+            ..RagConfig::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_zero_budget() {
+        let config = RagConfig {
+            token_budget: 0,
+            ..RagConfig::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_zero_context_nodes() {
+        let config = RagConfig {
+            max_context_nodes: 0,
+            ..RagConfig::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_zero_engrams() {
+        let config = RagConfig {
+            max_engrams: 0,
+            ..RagConfig::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_zero_chars_per_token() {
+        let config = RagConfig {
+            chars_per_token: 0.0,
+            ..RagConfig::default()
+        };
+        assert!(config.validate().is_err());
+
+        let config = RagConfig {
+            chars_per_token: -1.0,
+            ..RagConfig::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn preset_name_detects_fast() {
+        let config = RagConfig::fast();
+        assert_eq!(config.preset_name(), "fast");
+    }
+
+    #[test]
+    fn preset_name_detects_thorough() {
+        let config = RagConfig::thorough();
+        assert_eq!(config.preset_name(), "thorough");
+    }
+
+    #[test]
+    fn preset_name_detects_balanced() {
+        let config = RagConfig::default();
+        assert_eq!(config.preset_name(), "balanced");
+    }
+
+    #[test]
+    fn preset_name_custom_is_balanced() {
+        // Custom config that doesn't match any preset → falls through to "balanced"
+        let config = RagConfig {
+            max_engrams: 42,
+            activation_depth: 7,
+            token_budget: 9999,
+            ..RagConfig::default()
+        };
+        assert_eq!(config.preset_name(), "balanced");
+    }
+
+    #[test]
+    fn default_noise_properties_include_common_ids() {
+        let noise = default_noise_properties();
+        assert!(noise.contains(&"id".to_string()));
+        assert!(noise.contains(&"uuid".to_string()));
+        assert!(noise.contains(&"created_at".to_string()));
+        assert!(noise.contains(&"_id".to_string()));
+    }
+
+    #[test]
+    fn serde_roundtrip() {
+        let config = RagConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: RagConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.max_engrams, config.max_engrams);
+        assert_eq!(deserialized.token_budget, config.token_budget);
+        assert_eq!(
+            deserialized.noise_properties.len(),
+            config.noise_properties.len()
+        );
+    }
+
+    #[test]
+    fn serde_defaults_applied_when_missing() {
+        // JSON without noise_properties and max_relations_display
+        let json = r#"{
+            "max_engrams": 10,
+            "min_recall_confidence": 0.1,
+            "direct_recall_weight": 0.6,
+            "activation_depth": 2,
+            "activation_decay": 0.5,
+            "min_activation_energy": 0.01,
+            "max_activated_nodes": 500,
+            "token_budget": 2000,
+            "chars_per_token": 4.0,
+            "max_context_nodes": 30,
+            "include_relations": true,
+            "include_labels": true,
+            "feedback_reinforce_amount": 0.3,
+            "feedback_energy_boost": 0.5
+        }"#;
+        let config: RagConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.noise_properties.len(), 6);
+        assert_eq!(config.max_relations_display, 10);
+    }
+}

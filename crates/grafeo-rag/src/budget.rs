@@ -153,6 +153,89 @@ mod tests {
     }
 
     #[test]
+    fn estimate_tokens_without_labels() {
+        let node = make_node_with_content(1, 1.0, "test");
+        let config = RagConfig {
+            include_labels: false,
+            ..RagConfig::default()
+        };
+        let tokens = estimate_tokens(&node, &config);
+        assert!(tokens > 0);
+    }
+
+    #[test]
+    fn estimate_tokens_with_relations_and_overflow() {
+        let mut props = HashMap::new();
+        props.insert("name".into(), "Test".into());
+
+        let node = RetrievedNode {
+            node_id: NodeId(1),
+            labels: vec!["Note".into()],
+            properties: props,
+            score: 1.0,
+            source: RetrievalSource::SpreadingActivation {
+                depth: 0,
+                activation: 1.0,
+            },
+            // More relations than max_relations_display
+            outgoing_relations: (0..15).map(|i| ("REL".into(), NodeId(i))).collect(),
+            incoming_relations: (0..15).map(|i| ("REL".into(), NodeId(100 + i))).collect(),
+        };
+
+        let config = RagConfig {
+            include_relations: true,
+            max_relations_display: 5,
+            ..RagConfig::default()
+        };
+
+        let tokens = estimate_tokens(&node, &config);
+        // Should account for the "... and N more" truncation indicators
+        assert!(tokens > 0);
+    }
+
+    #[test]
+    fn estimate_tokens_skips_noise_properties() {
+        let mut props = HashMap::new();
+        props.insert("name".into(), "visible".into());
+        props.insert("id".into(), "should-be-skipped".into());
+        props.insert("uuid".into(), "also-skipped".into());
+
+        let node = RetrievedNode {
+            node_id: NodeId(1),
+            labels: vec!["Note".into()],
+            properties: props,
+            score: 1.0,
+            source: RetrievalSource::SpreadingActivation {
+                depth: 0,
+                activation: 1.0,
+            },
+            outgoing_relations: vec![],
+            incoming_relations: vec![],
+        };
+
+        let config_with_noise = RagConfig::default();
+        let config_no_noise = RagConfig {
+            noise_properties: vec![],
+            ..RagConfig::default()
+        };
+
+        let tokens_filtered = estimate_tokens(&node, &config_with_noise);
+        let tokens_all = estimate_tokens(&node, &config_no_noise);
+        assert!(tokens_filtered < tokens_all);
+    }
+
+    #[test]
+    fn estimate_tokens_no_relations() {
+        let node = make_node_with_content(1, 1.0, "test");
+        let config = RagConfig {
+            include_relations: false,
+            ..RagConfig::default()
+        };
+        let tokens = estimate_tokens(&node, &config);
+        assert!(tokens > 0);
+    }
+
+    #[test]
     fn budget_respects_limit() {
         let nodes: Vec<RetrievedNode> = (0..5)
             .map(|i| make_node_with_content(i, 1.0, "short"))

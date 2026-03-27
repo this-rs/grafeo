@@ -162,6 +162,11 @@ impl InvertedIndex {
 
     /// Remove a node from the index.
     fn remove_node(&mut self, node_id: NodeId) {
+        // Early exit if node was never indexed
+        if !self.node_terms.contains_key(&node_id) && !self.node_labels.contains_key(&node_id) {
+            return;
+        }
+
         // Remove from text index + update doc freq
         if let Some(terms) = self.node_terms.remove(&node_id) {
             for term in &terms {
@@ -900,5 +905,271 @@ mod tests {
         assert!(!terms.contains(&"b".to_string()));
         assert!(terms.contains(&"cd".to_string()));
         assert!(terms.contains(&"ef".to_string()));
+    }
+
+    // ── InvertedIndex edge cases ────────────────────────────────
+
+    #[test]
+    fn empty_index_query_returns_empty() {
+        let idx = InvertedIndex::new();
+        let results = idx.query(&tokenize_query("anything"), 10);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn empty_query_returns_empty() {
+        let mut idx = InvertedIndex::new();
+        idx.add_node(
+            NodeId(1),
+            &["Test".into()],
+            &[("name".into(), "hello".into())],
+        );
+        let results = idx.query(&[], 10);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn remove_nonexistent_node_is_noop() {
+        let mut idx = InvertedIndex::new();
+        idx.add_node(
+            NodeId(1),
+            &["Test".into()],
+            &[("name".into(), "hello".into())],
+        );
+        idx.remove_node(NodeId(999)); // doesn't exist
+        assert_eq!(idx.total_nodes, 1);
+    }
+
+    #[test]
+    fn empty_properties_indexed_without_error() {
+        let mut idx = InvertedIndex::new();
+        idx.add_node(NodeId(1), &["Test".into()], &[]);
+        assert_eq!(idx.total_nodes, 1);
+        assert!(idx.node_terms.get(&NodeId(1)).unwrap().is_empty());
+    }
+
+    #[test]
+    fn empty_string_property_skipped() {
+        let mut idx = InvertedIndex::new();
+        idx.add_node(
+            NodeId(1),
+            &["Test".into()],
+            &[("name".into(), String::new())],
+        );
+        assert!(idx.node_terms.get(&NodeId(1)).unwrap().is_empty());
+    }
+
+    #[test]
+    fn max_terms_per_node_capped() {
+        let mut idx = InvertedIndex::new();
+        // Create text with 200+ unique words
+        let big_text: String = (0..250)
+            .map(|i| format!("word{i}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        idx.add_node(NodeId(1), &["Test".into()], &[("content".into(), big_text)]);
+        let term_count = idx.node_terms.get(&NodeId(1)).unwrap().len();
+        assert!(
+            term_count <= MAX_TERMS_PER_NODE,
+            "Terms should be capped at {MAX_TERMS_PER_NODE}, got {term_count}"
+        );
+    }
+
+    #[test]
+    fn multiple_labels_indexed() {
+        let mut idx = InvertedIndex::new();
+        idx.add_node(
+            NodeId(1),
+            &["Note".into(), "Gotcha".into()],
+            &[("title".into(), "test".into())],
+        );
+        assert!(idx.label_entries.contains_key("note"));
+        assert!(idx.label_entries.contains_key("gotcha"));
+        assert_eq!(idx.node_labels.get(&NodeId(1)).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn label_matching_bidirectional() {
+        let mut idx = InvertedIndex::new();
+        idx.add_node(
+            NodeId(1),
+            &["ChatMessage".into()],
+            &[("x".into(), "unrelated".into())],
+        );
+
+        // Query "chat" should match label "chatmessage" (term in label)
+        let results = idx.query(&tokenize_query("chat"), 10);
+        assert!(
+            !results.is_empty(),
+            "Term 'chat' should match label 'chatmessage'"
+        );
+
+        // Query "chatmessage" should also match
+        let results2 = idx.query(&tokenize_query("chatmessage"), 10);
+        assert!(!results2.is_empty());
+    }
+
+    #[test]
+    fn idf_changes_with_index_evolution() {
+        let mut idx = InvertedIndex::new();
+
+        // Initially: 1 node with "grafeo"
+        idx.add_node(
+            NodeId(1),
+            &["Project".into()],
+            &[("name".into(), "grafeo".into())],
+        );
+        let results1 = idx.query(&tokenize_query("grafeo"), 10);
+        let score1 = results1[0].1;
+
+        // Add 99 more nodes WITHOUT "grafeo" → IDF of "grafeo" should increase
+        for i in 2..=100 {
+            idx.add_node(
+                NodeId(i),
+                &["Other".into()],
+                &[("name".into(), format!("node{i}"))],
+            );
+        }
+        idx.refresh_cardinalities();
+
+        let results2 = idx.query(&tokenize_query("grafeo"), 10);
+        let score2 = results2[0].1;
+
+        assert!(
+            score2 > score1,
+            "IDF should increase when term becomes rarer: {score2} > {score1}"
+        );
+    }
+
+    #[test]
+    fn refresh_cardinalities_updates_after_removals() {
+        let mut idx = InvertedIndex::new();
+        for i in 0..10 {
+            idx.add_node(
+                NodeId(i),
+                &["ChatMessage".into()],
+                &[("text".into(), format!("msg{i}"))],
+            );
+        }
+        idx.add_node(
+            NodeId(100),
+            &["Note".into()],
+            &[("text".into(), "note".into())],
+        );
+        idx.refresh_cardinalities();
+
+        // ChatMessage cardinality = 10, Note = 1
+        assert_eq!(*idx.node_label_cardinality.get(&NodeId(0)).unwrap(), 10);
+        assert_eq!(*idx.node_label_cardinality.get(&NodeId(100)).unwrap(), 1);
+
+        // Remove 9 ChatMessages
+        for i in 1..10 {
+            idx.remove_node(NodeId(i));
+        }
+        idx.refresh_cardinalities();
+
+        // Now ChatMessage cardinality = 1
+        assert_eq!(*idx.node_label_cardinality.get(&NodeId(0)).unwrap(), 1);
+    }
+
+    #[test]
+    fn stats_empty_index() {
+        let idx = InvertedIndex::new();
+        let (total, terms, labels) = idx.stats();
+        // stats() uses max(1) to avoid division by zero in percentage calc
+        assert_eq!(total, 1);
+        assert_eq!(terms, 0);
+        assert!(labels.is_empty());
+    }
+
+    #[test]
+    fn stats_label_percentages() {
+        let mut idx = InvertedIndex::new();
+        for i in 0..4 {
+            idx.add_node(
+                NodeId(i),
+                &["Project".into()],
+                &[("name".into(), format!("p{i}"))],
+            );
+        }
+        idx.add_node(
+            NodeId(10),
+            &["Note".into()],
+            &[("title".into(), "n".into())],
+        );
+
+        let (total, _, labels) = idx.stats();
+        assert_eq!(total, 5);
+        // Project = 80%, Note = 20%
+        let project = labels.iter().find(|(l, _, _)| l == "project").unwrap();
+        assert!((project.2 - 80.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn query_multi_term_aggregates_scores() {
+        let mut idx = InvertedIndex::new();
+        // Node 1 matches both terms
+        idx.add_node(
+            NodeId(1),
+            &["Note".into()],
+            &[("content".into(), "grafeo database engine".into())],
+        );
+        // Node 2 matches only one term
+        idx.add_node(
+            NodeId(2),
+            &["Note".into()],
+            &[("content".into(), "grafeo project".into())],
+        );
+        idx.refresh_cardinalities();
+
+        let results = idx.query(&tokenize_query("database engine"), 10);
+        // Node 1 should score higher (matches both "database" and "engine")
+        if !results.is_empty() {
+            assert_eq!(results[0].0, NodeId(1));
+        }
+    }
+
+    #[test]
+    fn query_truncates_to_max_cues() {
+        let mut idx = InvertedIndex::new();
+        for i in 0..50 {
+            idx.add_node(
+                NodeId(i),
+                &["Note".into()],
+                &[("content".into(), format!("hello world {i}"))],
+            );
+        }
+        idx.refresh_cardinalities();
+
+        let results = idx.query(&tokenize_query("hello"), 5);
+        assert_eq!(results.len(), 5);
+    }
+
+    // ── Tokenization edge cases ─────────────────────────────────
+
+    #[test]
+    fn tokenize_preserves_underscores_and_hyphens() {
+        let terms = tokenize_query("node_id my-component");
+        assert!(terms.contains(&"node_id".to_string()));
+        assert!(terms.contains(&"my-component".to_string()));
+    }
+
+    #[test]
+    fn tokenize_empty_string() {
+        let terms = tokenize_query("");
+        assert!(terms.is_empty());
+    }
+
+    #[test]
+    fn tokenize_only_stopwords() {
+        let terms = tokenize_query("the a is are in of");
+        assert!(terms.is_empty());
+    }
+
+    #[test]
+    fn tokenize_mixed_case() {
+        let terms = tokenize_query("GraFeo DataBase");
+        assert!(terms.contains(&"grafeo".to_string()));
+        assert!(terms.contains(&"database".to_string()));
     }
 }

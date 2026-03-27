@@ -160,4 +160,87 @@ mod tests {
         assert_eq!(stats.synapses_reinforced, 0);
         assert_eq!(stats.nodes_boosted, 0);
     }
+
+    #[test]
+    fn feedback_empty_node_ids_is_noop() {
+        let feedback = CognitiveFeedback::new(None, None);
+        let context = RagContext {
+            text: "context".into(),
+            estimated_tokens: 5,
+            nodes_included: 0,
+            node_ids: vec![],
+            node_texts: vec![],
+        };
+        let config = RagConfig::default();
+
+        let stats = feedback
+            .feedback(&context, "some response", &config)
+            .unwrap();
+        assert_eq!(stats.synapses_reinforced, 0);
+        assert_eq!(stats.nodes_boosted, 0);
+    }
+
+    #[test]
+    fn find_mentioned_nodes_detects_text_matches() {
+        let feedback = CognitiveFeedback::new(None, None);
+        let context = RagContext {
+            text: String::new(),
+            estimated_tokens: 0,
+            nodes_included: 3,
+            node_ids: vec![NodeId(1), NodeId(2), NodeId(3)],
+            node_texts: vec![
+                (NodeId(1), vec!["Grafeo database".into()]),
+                (NodeId(2), vec!["WAL recovery".into()]),
+                (NodeId(3), vec!["hello".into()]),
+            ],
+        };
+
+        let response = "The Grafeo database uses WAL recovery for durability.";
+        let mentioned = feedback.find_mentioned_nodes(&context, response, &context.node_texts);
+
+        assert!(
+            mentioned.contains(&NodeId(1)),
+            "Should find 'Grafeo database'"
+        );
+        assert!(mentioned.contains(&NodeId(2)), "Should find 'WAL recovery'");
+        assert!(
+            !mentioned.contains(&NodeId(3)),
+            "Short text 'hello' should not match"
+        );
+    }
+
+    #[test]
+    fn find_mentioned_nodes_ignores_short_text() {
+        let feedback = CognitiveFeedback::new(None, None);
+        let context = RagContext {
+            text: String::new(),
+            estimated_tokens: 0,
+            nodes_included: 2,
+            node_ids: vec![NodeId(1), NodeId(2)],
+            node_texts: vec![
+                (NodeId(1), vec!["abc".into()]), // 3 chars, at threshold
+                (NodeId(2), vec!["ab".into()]),  // 2 chars, below threshold
+            ],
+        };
+
+        let response = "abc ab test";
+        let mentioned = feedback.find_mentioned_nodes(&context, response, &context.node_texts);
+        assert!(mentioned.is_empty(), "Short texts should be ignored");
+    }
+
+    #[test]
+    fn find_mentioned_nodes_case_insensitive() {
+        let feedback = CognitiveFeedback::new(None, None);
+        let context = RagContext {
+            text: String::new(),
+            estimated_tokens: 0,
+            nodes_included: 1,
+            node_ids: vec![NodeId(1)],
+            node_texts: vec![(NodeId(1), vec!["GRAFEO".into()])],
+        };
+
+        let response = "grafeo is great";
+        let mentioned = feedback.find_mentioned_nodes(&context, response, &context.node_texts);
+        assert_eq!(mentioned.len(), 1);
+    }
 }
