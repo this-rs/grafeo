@@ -9,6 +9,7 @@
 
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;
+use std::time::Instant;
 
 use grafeo::GrafeoDB;
 use grafeo_cognitive::engram::EngramStore;
@@ -147,15 +148,17 @@ fn run_query(pipeline: &RagPipeline, query: &str, trace: bool) {
 
     eprintln!("[rag] Retrieving...\n");
 
+    let t0 = Instant::now();
     match pipeline.query(query) {
         Ok(context) => {
+            let elapsed = t0.elapsed();
             if context.text.is_empty() {
                 eprintln!("[rag] No relevant content found for this query.");
             } else {
                 println!("{}", context.text);
                 eprintln!(
-                    "[rag] Context: {} nodes, ~{} tokens",
-                    context.nodes_included, context.estimated_tokens
+                    "[rag] Context: {} nodes, ~{} tokens ({:.1}ms)",
+                    context.nodes_included, context.estimated_tokens, elapsed.as_secs_f64() * 1000.0
                 );
             }
         }
