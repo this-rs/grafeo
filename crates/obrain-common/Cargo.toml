@@ -1,12 +1,12 @@
 [package]
-name = "grafeo-common"
+name = "obrain-common"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Common types, memory allocators, and utilities for Grafeo"
+description = "Common types, memory allocators, and utilities for Obrain"
 
 [dependencies]
 # Error handling

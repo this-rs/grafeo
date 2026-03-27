@@ -1,16 +1,16 @@
 [package]
-name = "grafeo-adapters"
+name = "obrain-adapters"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Storage, query language, and plugin adapters for Grafeo"
+description = "Storage, query language, and plugin adapters for Obrain"
 
 [dependencies]
-grafeo-common.workspace = true
-grafeo-core.workspace = true
+obrain-common.workspace = true
+obrain-core.workspace = true
 
 # String types
 arcstr.workspace = true
@@ -30,7 +30,7 @@ byteorder.workspace = true
 # Checksums (optional - used by WAL)
 crc32fast = { workspace = true, optional = true }
 
-# File locking (optional - used by .grafeo single-file format)
+# File locking (optional - used by .obrain single-file format)
 fs2 = { workspace = true, optional = true }
 
 # Serialization
@@ -61,17 +61,17 @@ sparql = []                   # SPARQL parser (W3C SPARQL 1.1)
 gremlin = []                  # Gremlin parser (Apache TinkerPop)
 graphql = []                  # GraphQL parser (spec-compliant)
 sql-pgq = ["gql"]             # SQL/PGQ parser (SQL:2023 GRAPH_TABLE)
-rdf = ["grafeo-core/rdf"]    # RDF graph model support
+rdf = ["obrain-core/rdf"]    # RDF graph model support
 wal = ["memmap2", "crc32fast", "tokio", "crossbeam"]  # Write-ahead log storage (requires filesystem)
-grafeo-file = ["wal", "fs2"]  # Single-file .grafeo format with sidecar WAL
-parallel = ["rayon", "grafeo-core/parallel"]  # Parallel algorithms (rayon)
+obrain-file = ["wal", "fs2"]  # Single-file .obrain format with sidecar WAL
+parallel = ["rayon", "obrain-core/parallel"]  # Parallel algorithms (rayon)
 algos = []  # Graph algorithm plugin (SSSP, PageRank, centrality, community detection, etc.)
 # Convenience groups
 languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]  # All query language parsers
-full = ["languages", "rdf", "wal", "grafeo-file", "parallel", "algos"]
+full = ["languages", "rdf", "wal", "obrain-file", "parallel", "algos"]
 
 # Testing utilities (zero overhead when disabled)
-testing-crash-injection = ["grafeo-core/testing-crash-injection"]  # Crash injection for recovery testing
+testing-crash-injection = ["obrain-core/testing-crash-injection"]  # Crash injection for recovery testing
 
 [[bench]]
 name = "gds_bench"

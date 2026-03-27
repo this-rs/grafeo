@@ -1,5 +1,5 @@
 [package]
-name = "grafeo-examples"
+name = "obrain-examples"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,7 +7,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
-grafeo = { path = "../../crates/grafeo", default-features = false, features = ["embedded"] }
+obrain = { path = "../../crates/obrain", default-features = false, features = ["embedded"] }
 
 [[bin]]
 name = "basic"
@@ -53,5 +53,5 @@ required-features = ["full"]
 
 [features]
 default = []
-storage = ["grafeo/storage"]
-full = ["grafeo/full"]
+storage = ["obrain/storage"]
+full = ["obrain/full"]

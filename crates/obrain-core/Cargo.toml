@@ -1,15 +1,15 @@
 [package]
-name = "grafeo-core"
+name = "obrain-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Core graph models, indexes, and execution primitives for Grafeo"
+description = "Core graph models, indexes, and execution primitives for Obrain"
 
 [dependencies]
-grafeo-common.workspace = true
+obrain-common.workspace = true
 
 # Error handling
 thiserror.workspace = true
@@ -63,8 +63,8 @@ parallel = ["rayon", "crossbeam"]  # Morsel-driven parallelism (rayon, crossbeam
 spill = ["tokio"]                  # Disk spilling for out-of-core execution
 mmap = []                          # File-backed vector storage (MmapStorage)
 rdf = []  # Enable RDF graph model
-tiered-storage = ["grafeo-common/tiered-storage", "bincode"]  # Enable tiered hot/cold storage
-temporal = ["grafeo-common/temporal"]  # Enable append-only versioned properties
+tiered-storage = ["obrain-common/tiered-storage", "bincode"]  # Enable tiered hot/cold storage
+temporal = ["obrain-common/temporal"]  # Enable append-only versioned properties
 succinct-indexes = []  # Enable succinct data structures (rank/select bitvectors, Elias-Fano, wavelet trees)
 ring-index = ["succinct-indexes", "rdf"]  # Ring Index for RDF (3x space reduction, requires succinct-indexes and rdf)
 vector-index = ["ordered-float", "rand"]  # HNSW vector index for approximate nearest neighbor search

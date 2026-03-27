@@ -23,21 +23,21 @@ version = "0.0.1"
 edition = "2024"
 rust-version = "1.91.1"
 license = "Apache-2.0"
-repository = "https://github.com/GrafeoDB/grafeo"
+repository = "https://github.com/this-rs/obrain"
 authors = ["S.T. Grond"]
 description = "A high-performance, embeddable graph database with support for LPG RDF and all major graph query languages."
 
 [workspace.dependencies]
 # Internal crates (default-features = false to allow per-crate control)
-grafeo-common = { path = "crates/obrain-common", version = "0.0.1" }
-grafeo-core = { path = "crates/obrain-core", version = "0.0.1", default-features = false }
-grafeo-adapters = { path = "crates/obrain-adapters", version = "0.0.1", default-features = false }
-grafeo-engine = { path = "crates/obrain-engine", version = "0.0.1", default-features = false }
-grafeo = { path = "crates/obrain", version = "0.0.1" }
-grafeo-reactive = { path = "crates/obrain-reactive", version = "0.0.1" }
-grafeo-cognitive = { path = "crates/obrain-cognitive", version = "0.0.1", default-features = false }
-grafeo-rag = { path = "crates/obrain-rag", version = "0.0.1", default-features = false }
-grafeo-bindings-common = { path = "crates/bindings/common", version = "0.0.1", default-features = false }
+obrain-common = { path = "crates/obrain-common", version = "0.0.1" }
+obrain-core = { path = "crates/obrain-core", version = "0.0.1", default-features = false }
+obrain-adapters = { path = "crates/obrain-adapters", version = "0.0.1", default-features = false }
+obrain-engine = { path = "crates/obrain-engine", version = "0.0.1", default-features = false }
+obrain = { path = "crates/obrain", version = "0.0.1" }
+obrain-reactive = { path = "crates/obrain-reactive", version = "0.0.1" }
+obrain-cognitive = { path = "crates/obrain-cognitive", version = "0.0.1", default-features = false }
+obrain-rag = { path = "crates/obrain-rag", version = "0.0.1", default-features = false }
+obrain-bindings-common = { path = "crates/bindings/common", version = "0.0.1", default-features = false }
 
 # Error handling
 thiserror = "2.0"

@@ -1,34 +1,34 @@
 [package]
-name = "grafeo-rag"
+name = "obrain-rag"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Graph-Augmented Retrieval via Engrams — schema-agnostic RAG for Grafeo"
+description = "Graph-Augmented Retrieval via Engrams — schema-agnostic RAG for Obrain"
 
 [features]
 default = ["cognitive"]
 
 # Core retrieval (engram recall + spreading activation)
 cognitive = [
-    "grafeo-cognitive/engram",
-    "grafeo-cognitive/hopfield",
-    "grafeo-cognitive/energy",
-    "grafeo-cognitive/synapse",
+    "obrain-cognitive/engram",
+    "obrain-cognitive/hopfield",
+    "obrain-cognitive/energy",
+    "obrain-cognitive/synapse",
 ]
 
 # Full cognitive (adds fabric scoring to ranking)
 cognitive-full = [
     "cognitive",
-    "grafeo-cognitive/cognitive-fabric",
+    "obrain-cognitive/cognitive-fabric",
 ]
 
 [dependencies]
-grafeo-common.workspace = true
-grafeo-core = { workspace = true, default-features = false }
-grafeo-cognitive = { workspace = true, default-features = false }
+obrain-common.workspace = true
+obrain-core = { workspace = true, default-features = false }
+obrain-cognitive = { workspace = true, default-features = false }
 
 # Async
 tokio = { version = "1", features = ["sync"] }
@@ -47,7 +47,7 @@ tracing.workspace = true
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 tempfile.workspace = true
-grafeo = { workspace = true, features = ["embedded", "storage"] }
+obrain = { workspace = true, features = ["embedded", "storage"] }
 
 [[example]]
 name = "rag_demo"

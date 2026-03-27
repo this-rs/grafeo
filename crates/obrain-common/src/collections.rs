@@ -1,4 +1,4 @@
-//! Standard collection type aliases for Grafeo.
+//! Standard collection type aliases for Obrain.
 //!
 //! Use these instead of direct HashMap/HashSet to allow future optimization
 //! and ensure consistent hashing across the codebase.
@@ -7,22 +7,22 @@
 //!
 //! | Type | Use Case |
 //! |------|----------|
-//! | [`GrafeoMap`] | Single-threaded hash map |
-//! | [`GrafeoSet`] | Single-threaded hash set |
-//! | [`GrafeoConcurrentMap`] | Multi-threaded hash map |
-//! | [`GrafeoConcurrentSet`] | Multi-threaded hash set |
-//! | [`GrafeoIndexMap`] | Insertion-order preserving map |
-//! | [`GrafeoIndexSet`] | Insertion-order preserving set |
+//! | [`ObrainMap`] | Single-threaded hash map |
+//! | [`ObrainSet`] | Single-threaded hash set |
+//! | [`ObrainConcurrentMap`] | Multi-threaded hash map |
+//! | [`ObrainConcurrentSet`] | Multi-threaded hash set |
+//! | [`ObrainIndexMap`] | Insertion-order preserving map |
+//! | [`ObrainIndexSet`] | Insertion-order preserving set |
 //!
 //! # Example
 //!
 //! ```rust
-//! use grafeo_common::collections::{GrafeoMap, GrafeoSet};
+//! use obrain_common::collections::{ObrainMap, ObrainSet};
 //!
-//! let mut map: GrafeoMap<String, i32> = GrafeoMap::default();
+//! let mut map: ObrainMap<String, i32> = ObrainMap::default();
 //! map.insert("key".to_string(), 42);
 //!
-//! let mut set: GrafeoSet<i32> = GrafeoSet::default();
+//! let mut set: ObrainSet<i32> = ObrainSet::default();
 //! set.insert(1);
 //! ```
 
@@ -32,88 +32,88 @@ use crate::utils::hash::FxBuildHasher;
 ///
 /// FxHash is optimized for small keys and provides excellent performance
 /// for integer and string keys common in graph databases.
-pub type GrafeoMap<K, V> = hashbrown::HashMap<K, V, FxBuildHasher>;
+pub type ObrainMap<K, V> = hashbrown::HashMap<K, V, FxBuildHasher>;
 
 /// Standard HashSet with FxHash.
-pub type GrafeoSet<T> = hashbrown::HashSet<T, FxBuildHasher>;
+pub type ObrainSet<T> = hashbrown::HashSet<T, FxBuildHasher>;
 
 /// Concurrent HashMap for multi-threaded access.
 ///
 /// Uses fine-grained locking for high concurrent throughput.
 /// Prefer this over `Arc<Mutex<HashMap>>` for shared mutable state.
-pub type GrafeoConcurrentMap<K, V> = dashmap::DashMap<K, V, FxBuildHasher>;
+pub type ObrainConcurrentMap<K, V> = dashmap::DashMap<K, V, FxBuildHasher>;
 
 /// Concurrent HashSet for multi-threaded access.
-pub type GrafeoConcurrentSet<T> = dashmap::DashSet<T, FxBuildHasher>;
+pub type ObrainConcurrentSet<T> = dashmap::DashSet<T, FxBuildHasher>;
 
 /// Ordered map preserving insertion order.
 ///
 /// Useful when iteration order matters (e.g., property serialization).
-pub type GrafeoIndexMap<K, V> = indexmap::IndexMap<K, V, FxBuildHasher>;
+pub type ObrainIndexMap<K, V> = indexmap::IndexMap<K, V, FxBuildHasher>;
 
 /// Ordered set preserving insertion order.
-pub type GrafeoIndexSet<T> = indexmap::IndexSet<T, FxBuildHasher>;
+pub type ObrainIndexSet<T> = indexmap::IndexSet<T, FxBuildHasher>;
 
-/// Create a new empty [`GrafeoMap`].
+/// Create a new empty [`ObrainMap`].
 #[inline]
 #[must_use]
-pub fn grafeo_map<K, V>() -> GrafeoMap<K, V> {
-    GrafeoMap::with_hasher(FxBuildHasher::default())
+pub fn obrain_map<K, V>() -> ObrainMap<K, V> {
+    ObrainMap::with_hasher(FxBuildHasher::default())
 }
 
-/// Create a new [`GrafeoMap`] with the specified capacity.
+/// Create a new [`ObrainMap`] with the specified capacity.
 #[inline]
 #[must_use]
-pub fn grafeo_map_with_capacity<K, V>(capacity: usize) -> GrafeoMap<K, V> {
-    GrafeoMap::with_capacity_and_hasher(capacity, FxBuildHasher::default())
+pub fn obrain_map_with_capacity<K, V>(capacity: usize) -> ObrainMap<K, V> {
+    ObrainMap::with_capacity_and_hasher(capacity, FxBuildHasher::default())
 }
 
-/// Create a new empty [`GrafeoSet`].
+/// Create a new empty [`ObrainSet`].
 #[inline]
 #[must_use]
-pub fn grafeo_set<T>() -> GrafeoSet<T> {
-    GrafeoSet::with_hasher(FxBuildHasher::default())
+pub fn obrain_set<T>() -> ObrainSet<T> {
+    ObrainSet::with_hasher(FxBuildHasher::default())
 }
 
-/// Create a new [`GrafeoSet`] with the specified capacity.
+/// Create a new [`ObrainSet`] with the specified capacity.
 #[inline]
 #[must_use]
-pub fn grafeo_set_with_capacity<T>(capacity: usize) -> GrafeoSet<T> {
-    GrafeoSet::with_capacity_and_hasher(capacity, FxBuildHasher::default())
+pub fn obrain_set_with_capacity<T>(capacity: usize) -> ObrainSet<T> {
+    ObrainSet::with_capacity_and_hasher(capacity, FxBuildHasher::default())
 }
 
-/// Create a new empty [`GrafeoConcurrentMap`].
+/// Create a new empty [`ObrainConcurrentMap`].
 #[inline]
 #[must_use]
-pub fn grafeo_concurrent_map<K, V>() -> GrafeoConcurrentMap<K, V>
+pub fn obrain_concurrent_map<K, V>() -> ObrainConcurrentMap<K, V>
 where
     K: Eq + std::hash::Hash,
 {
-    GrafeoConcurrentMap::with_hasher(FxBuildHasher::default())
+    ObrainConcurrentMap::with_hasher(FxBuildHasher::default())
 }
 
-/// Create a new [`GrafeoConcurrentMap`] with the specified capacity.
+/// Create a new [`ObrainConcurrentMap`] with the specified capacity.
 #[inline]
 #[must_use]
-pub fn grafeo_concurrent_map_with_capacity<K, V>(capacity: usize) -> GrafeoConcurrentMap<K, V>
+pub fn obrain_concurrent_map_with_capacity<K, V>(capacity: usize) -> ObrainConcurrentMap<K, V>
 where
     K: Eq + std::hash::Hash,
 {
-    GrafeoConcurrentMap::with_capacity_and_hasher(capacity, FxBuildHasher::default())
+    ObrainConcurrentMap::with_capacity_and_hasher(capacity, FxBuildHasher::default())
 }
 
-/// Create a new empty [`GrafeoIndexMap`].
+/// Create a new empty [`ObrainIndexMap`].
 #[inline]
 #[must_use]
-pub fn grafeo_index_map<K, V>() -> GrafeoIndexMap<K, V> {
-    GrafeoIndexMap::with_hasher(FxBuildHasher::default())
+pub fn obrain_index_map<K, V>() -> ObrainIndexMap<K, V> {
+    ObrainIndexMap::with_hasher(FxBuildHasher::default())
 }
 
-/// Create a new [`GrafeoIndexMap`] with the specified capacity.
+/// Create a new [`ObrainIndexMap`] with the specified capacity.
 #[inline]
 #[must_use]
-pub fn grafeo_index_map_with_capacity<K, V>(capacity: usize) -> GrafeoIndexMap<K, V> {
-    GrafeoIndexMap::with_capacity_and_hasher(capacity, FxBuildHasher::default())
+pub fn obrain_index_map_with_capacity<K, V>(capacity: usize) -> ObrainIndexMap<K, V> {
+    ObrainIndexMap::with_capacity_and_hasher(capacity, FxBuildHasher::default())
 }
 
 #[cfg(test)]
@@ -121,15 +121,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_grafeo_map() {
-        let mut map = grafeo_map::<String, i32>();
+    fn test_obrain_map() {
+        let mut map = obrain_map::<String, i32>();
         map.insert("key".to_string(), 42);
         assert_eq!(map.get("key"), Some(&42));
     }
 
     #[test]
-    fn test_grafeo_set() {
-        let mut set = grafeo_set::<i32>();
+    fn test_obrain_set() {
+        let mut set = obrain_set::<i32>();
         set.insert(1);
         set.insert(2);
         assert!(set.contains(&1));
@@ -137,15 +137,15 @@ mod tests {
     }
 
     #[test]
-    fn test_grafeo_concurrent_map() {
-        let map = grafeo_concurrent_map::<String, i32>();
+    fn test_obrain_concurrent_map() {
+        let map = obrain_concurrent_map::<String, i32>();
         map.insert("key".to_string(), 42);
         assert_eq!(*map.get("key").unwrap(), 42);
     }
 
     #[test]
-    fn test_grafeo_index_map_preserves_order() {
-        let mut map = grafeo_index_map::<&str, i32>();
+    fn test_obrain_index_map_preserves_order() {
+        let mut map = obrain_index_map::<&str, i32>();
         map.insert("c", 3);
         map.insert("a", 1);
         map.insert("b", 2);

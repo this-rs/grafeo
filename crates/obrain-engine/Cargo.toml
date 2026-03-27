@@ -1,17 +1,17 @@
 [package]
-name = "grafeo-engine"
+name = "obrain-engine"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Query engine and database management for Grafeo"
+description = "Query engine and database management for Obrain"
 
 [dependencies]
-grafeo-common.workspace = true
-grafeo-core = { workspace = true, default-features = false }
-grafeo-adapters = { workspace = true, default-features = false }
+obrain-common.workspace = true
+obrain-core = { workspace = true, default-features = false }
+obrain-adapters = { workspace = true, default-features = false }
 
 # Error handling
 thiserror.workspace = true
@@ -45,8 +45,8 @@ sha2 = { workspace = true, optional = true }
 tracing.workspace = true
 
 # Cognitive subsystems (optional)
-grafeo-reactive = { workspace = true, optional = true }
-grafeo-cognitive = { workspace = true, optional = true, default-features = false }
+obrain-reactive = { workspace = true, optional = true }
+obrain-cognitive = { workspace = true, optional = true, default-features = false }
 
 # Embedding (optional, for ONNX embedding generation)
 ort = { version = "2.0.0-rc.12", optional = true, default-features = false, features = ["std", "ndarray", "load-dynamic", "api-24"] }
@@ -61,52 +61,52 @@ tokio.workspace = true
 
 [features]
 default = ["gql", "parallel", "wal", "spill", "mmap", "regex"]
-regex = ["dep:regex", "grafeo-core/regex"]
-regex-lite = ["dep:regex-lite", "grafeo-core/regex-lite"]
-gql = ["grafeo-adapters/gql"]
-cypher = ["grafeo-adapters/cypher"]
-sparql = ["grafeo-adapters/sparql"]
-gremlin = ["grafeo-adapters/gremlin"]
-graphql = ["grafeo-adapters/graphql"]
-sql-pgq = ["grafeo-adapters/sql-pgq"]  # SQL/PGQ (SQL:2023 GRAPH_TABLE)
-rdf = ["grafeo-core/rdf", "grafeo-adapters/rdf", "md5", "sha1", "sha2"]  # RDF graph model and planner
-parallel = ["rayon", "crossbeam", "grafeo-core/parallel", "grafeo-adapters/parallel"]  # Parallel execution
-algos = ["grafeo-adapters/algos"]  # Graph algorithm plugin (SSSP, PageRank, etc.)
-wal = ["grafeo-adapters/wal"]  # Write-ahead log storage
-grafeo-file = ["grafeo-adapters/grafeo-file"]  # Single-file .grafeo format
-spill = ["grafeo-core/spill"]  # Disk spilling for out-of-core execution
-mmap = ["grafeo-core/mmap"]  # File-backed vector storage
-temporal = ["grafeo-core/temporal"]  # Append-only versioned properties
+regex = ["dep:regex", "obrain-core/regex"]
+regex-lite = ["dep:regex-lite", "obrain-core/regex-lite"]
+gql = ["obrain-adapters/gql"]
+cypher = ["obrain-adapters/cypher"]
+sparql = ["obrain-adapters/sparql"]
+gremlin = ["obrain-adapters/gremlin"]
+graphql = ["obrain-adapters/graphql"]
+sql-pgq = ["obrain-adapters/sql-pgq"]  # SQL/PGQ (SQL:2023 GRAPH_TABLE)
+rdf = ["obrain-core/rdf", "obrain-adapters/rdf", "md5", "sha1", "sha2"]  # RDF graph model and planner
+parallel = ["rayon", "crossbeam", "obrain-core/parallel", "obrain-adapters/parallel"]  # Parallel execution
+algos = ["obrain-adapters/algos"]  # Graph algorithm plugin (SSSP, PageRank, etc.)
+wal = ["obrain-adapters/wal"]  # Write-ahead log storage
+obrain-file = ["obrain-adapters/obrain-file"]  # Single-file .obrain format
+spill = ["obrain-core/spill"]  # Disk spilling for out-of-core execution
+mmap = ["obrain-core/mmap"]  # File-backed vector storage
+temporal = ["obrain-core/temporal"]  # Append-only versioned properties
 # Convenience groups
 languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]  # All query language parsers
 ai = ["vector-index", "text-index", "hybrid-search", "cdc"]  # All AI/RAG features
-storage = ["wal", "grafeo-file", "spill", "mmap"]  # Persistent storage (WAL, single-file, disk spill, mmap)
+storage = ["wal", "obrain-file", "spill", "mmap"]  # Persistent storage (WAL, single-file, disk spill, mmap)
 
 # Named profiles (ecosystem-aligned)
 embedded = ["gql", "ai", "algos", "parallel", "regex", "jsonl-import"]  # Python libs, MCP, in-process
-browser = ["gql", "regex-lite"]  # WASM / grafeo-web
-server = ["full", "metrics"]  # grafeo-server
+browser = ["gql", "regex-lite"]  # WASM / obrain-web
+server = ["full", "metrics"]  # obrain-server
 full = ["languages", "ai", "rdf", "parallel", "algos", "storage", "jsonl-import", "parquet-import"]
 
 # Data import
-jsonl-import = ["grafeo-core/jsonl-import"]  # JSON Lines file import
-parquet-import = ["grafeo-core/parquet-import"]  # Apache Parquet file import
+jsonl-import = ["obrain-core/jsonl-import"]  # JSON Lines file import
+parquet-import = ["obrain-core/parquet-import"]  # Apache Parquet file import
 
 # Search & AI features
-vector-index = ["grafeo-core/vector-index"]  # HNSW vector index for k-NN search
-text-index = ["grafeo-core/text-index"]  # BM25 inverted index for full-text search
-hybrid-search = ["grafeo-core/hybrid-search", "text-index", "vector-index"]  # Combined text + vector search
+vector-index = ["obrain-core/vector-index"]  # HNSW vector index for k-NN search
+text-index = ["obrain-core/text-index"]  # BM25 inverted index for full-text search
+hybrid-search = ["obrain-core/hybrid-search", "text-index", "vector-index"]  # Combined text + vector search
 cdc = []  # Change data capture with history API
-reactive = []  # Reactive mutation event bus (post-commit hook for grafeo-reactive)
-cognitive = ["reactive", "dep:grafeo-reactive", "dep:grafeo-cognitive", "grafeo-cognitive/cognitive"]  # Cognitive engine (energy + synapses)
-cognitive-fabric = ["cognitive", "grafeo-cognitive/cognitive-fabric"]  # + fabric, co-change, GDS
-cognitive-full = ["cognitive", "grafeo-cognitive/cognitive-full"]  # All cognitive subsystems
-cognitive-engram = ["cognitive", "grafeo-cognitive/engram"]  # Engram subsystem (Layer 0: Hebbian + FSRS)
+reactive = []  # Reactive mutation event bus (post-commit hook for obrain-reactive)
+cognitive = ["reactive", "dep:obrain-reactive", "dep:obrain-cognitive", "obrain-cognitive/cognitive"]  # Cognitive engine (energy + synapses)
+cognitive-fabric = ["cognitive", "obrain-cognitive/cognitive-fabric"]  # + fabric, co-change, GDS
+cognitive-full = ["cognitive", "obrain-cognitive/cognitive-full"]  # All cognitive subsystems
+cognitive-engram = ["cognitive", "obrain-cognitive/engram"]  # Engram subsystem (Layer 0: Hebbian + FSRS)
 metrics = []  # Lock-free query, transaction, and session metrics
 embed = ["ort", "tokenizers", "hf-hub"]  # ONNX embedding generation (opt-in, adds ~17MB)
 
 # Testing utilities (zero overhead when disabled)
-testing-crash-injection = ["grafeo-core/testing-crash-injection"]  # Crash injection for recovery testing
+testing-crash-injection = ["obrain-core/testing-crash-injection"]  # Crash injection for recovery testing
 
 [lints]
 workspace = true

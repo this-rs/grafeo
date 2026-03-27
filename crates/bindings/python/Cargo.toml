@@ -1,23 +1,23 @@
 [package]
-name = "grafeo-python"
+name = "obrain-python"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Python bindings for Grafeo graph database"
+description = "Python bindings for Obrain graph database"
 
 [lib]
-name = "grafeo"
+name = "obrain"
 crate-type = ["cdylib"]
 doc = false
 
 [dependencies]
-grafeo-engine = { path = "../../grafeo-engine" }
-grafeo-core = { path = "../../grafeo-core" }
-grafeo-common = { path = "../../grafeo-common" }
-grafeo-adapters = { path = "../../grafeo-adapters" }
-grafeo-bindings-common = { path = "../common" }
-grafeo-cognitive = { path = "../../grafeo-cognitive", optional = true, default-features = false }
+obrain-engine = { path = "../../obrain-engine" }
+obrain-core = { path = "../../obrain-core" }
+obrain-common = { path = "../../obrain-common" }
+obrain-adapters = { path = "../../obrain-adapters" }
+obrain-bindings-common = { path = "../common" }
+obrain-cognitive = { path = "../../obrain-cognitive", optional = true, default-features = false }
 
 pyo3 = { workspace = true, features = ["extension-module"] }
 pyo3-async-runtimes = { workspace = true }
@@ -27,27 +27,27 @@ tokio = { workspace = true }
 
 [features]
 default = ["embedded"]
-gql = ["grafeo-engine/gql"]
-cypher = ["grafeo-engine/cypher"]
-sparql = ["grafeo-engine/sparql", "grafeo-engine/rdf"]
-gremlin = ["grafeo-engine/gremlin"]
-graphql = ["grafeo-engine/graphql"]
-sql-pgq = ["grafeo-engine/sql-pgq"]
-vector-index = ["grafeo-engine/vector-index"]
-text-index = ["grafeo-engine/text-index"]
-hybrid-search = ["grafeo-engine/hybrid-search"]
-cdc = ["grafeo-engine/cdc"]
-embed = ["grafeo-engine/embed"]
-algos = ["grafeo-engine/algos"]
-rdf = ["grafeo-engine/rdf"]
+gql = ["obrain-engine/gql"]
+cypher = ["obrain-engine/cypher"]
+sparql = ["obrain-engine/sparql", "obrain-engine/rdf"]
+gremlin = ["obrain-engine/gremlin"]
+graphql = ["obrain-engine/graphql"]
+sql-pgq = ["obrain-engine/sql-pgq"]
+vector-index = ["obrain-engine/vector-index"]
+text-index = ["obrain-engine/text-index"]
+hybrid-search = ["obrain-engine/hybrid-search"]
+cdc = ["obrain-engine/cdc"]
+embed = ["obrain-engine/embed"]
+algos = ["obrain-engine/algos"]
+rdf = ["obrain-engine/rdf"]
 languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]
 ai = ["vector-index", "text-index", "hybrid-search", "cdc"]
-storage = ["grafeo-engine/storage"]
-cognitive = ["dep:grafeo-cognitive", "grafeo-cognitive/cognitive", "grafeo-cognitive/scar", "grafeo-cognitive/fabric", "algos"]
-cognitive-fabric = ["cognitive", "grafeo-cognitive/cognitive-fabric"]
-cognitive-full = ["cognitive", "grafeo-cognitive/cognitive-full"]
+storage = ["obrain-engine/storage"]
+cognitive = ["dep:obrain-cognitive", "obrain-cognitive/cognitive", "obrain-cognitive/scar", "obrain-cognitive/fabric", "algos"]
+cognitive-fabric = ["cognitive", "obrain-cognitive/cognitive-fabric"]
+cognitive-full = ["cognitive", "obrain-cognitive/cognitive-full"]
 # Named profiles
-embedded = ["gql", "ai", "algos", "grafeo-engine/parallel", "grafeo-engine/regex"]
+embedded = ["gql", "ai", "algos", "obrain-engine/parallel", "obrain-engine/regex"]
 full = ["languages", "ai", "algos", "rdf"]
 
 [lints]

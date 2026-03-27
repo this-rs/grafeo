@@ -1,21 +1,21 @@
 [package]
-name = "grafeo-cli"
+name = "obrain-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Command-line interface for Grafeo graph database"
+description = "Command-line interface for Obrain graph database"
 
 [[bin]]
-name = "grafeo"
+name = "obrain"
 path = "src/main.rs"
 doc = false
 
 [dependencies]
-grafeo-engine = { workspace = true, features = ["storage", "parallel", "regex"] }
-grafeo-common = { workspace = true }
+obrain-engine = { workspace = true, features = ["storage", "parallel", "regex"] }
+obrain-common = { workspace = true }
 
 # CLI
 clap = { version = "4", features = ["derive"] }
@@ -43,25 +43,25 @@ tracing-subscriber.workspace = true
 
 [features]
 default = ["gql"]
-gql = ["grafeo-engine/gql"]
-cypher = ["grafeo-engine/cypher"]
-sparql = ["grafeo-engine/sparql"]
-gremlin = ["grafeo-engine/gremlin"]
-graphql = ["grafeo-engine/graphql"]
-sql-pgq = ["grafeo-engine/sql-pgq"]
-rdf = ["grafeo-engine/rdf"]
-algos = ["grafeo-engine/algos"]
-vector-index = ["grafeo-engine/vector-index"]
-text-index = ["grafeo-engine/text-index"]
-hybrid-search = ["grafeo-engine/hybrid-search"]
-cdc = ["grafeo-engine/cdc"]
+gql = ["obrain-engine/gql"]
+cypher = ["obrain-engine/cypher"]
+sparql = ["obrain-engine/sparql"]
+gremlin = ["obrain-engine/gremlin"]
+graphql = ["obrain-engine/graphql"]
+sql-pgq = ["obrain-engine/sql-pgq"]
+rdf = ["obrain-engine/rdf"]
+algos = ["obrain-engine/algos"]
+vector-index = ["obrain-engine/vector-index"]
+text-index = ["obrain-engine/text-index"]
+hybrid-search = ["obrain-engine/hybrid-search"]
+cdc = ["obrain-engine/cdc"]
 languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]
 ai = ["vector-index", "text-index", "hybrid-search", "cdc"]
-storage = ["grafeo-engine/storage"]
+storage = ["obrain-engine/storage"]
 # Named profiles
-embedded = ["gql", "ai", "algos", "grafeo-engine/parallel", "grafeo-engine/regex"]
-reactive = ["grafeo-engine/reactive"]
-parallel = ["grafeo-engine/parallel"]
+embedded = ["gql", "ai", "algos", "obrain-engine/parallel", "obrain-engine/regex"]
+reactive = ["obrain-engine/reactive"]
+parallel = ["obrain-engine/parallel"]
 full = ["languages", "ai", "algos", "rdf", "storage", "parallel", "reactive"]
 
 [dev-dependencies]

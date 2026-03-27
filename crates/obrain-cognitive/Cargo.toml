@@ -1,12 +1,12 @@
 [package]
-name = "grafeo-cognitive"
+name = "obrain-cognitive"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Cognitive features for Grafeo — energy, synapses, activation, fabric, memory"
+description = "Cognitive features for Obrain — energy, synapses, activation, fabric, memory"
 
 [features]
 default = []
@@ -16,7 +16,7 @@ energy = []
 synapse = []
 fabric = []
 co-change = []
-gds-refresh = ["fabric", "dep:grafeo-adapters"]
+gds-refresh = ["fabric", "dep:obrain-adapters"]
 
 # Engram subsystem (Layer 0: Hebbian + FSRS)
 engram = []
@@ -51,10 +51,10 @@ cognitive-fabric = ["cognitive", "fabric", "co-change", "gds-refresh"]
 cognitive-full = ["cognitive-fabric", "scar", "memory", "stagnation", "fingerprint", "distillation", "episodic", "consolidation"]
 
 [dependencies]
-grafeo-common.workspace = true
-grafeo-core = { workspace = true, default-features = false }
-grafeo-reactive.workspace = true
-grafeo-adapters = { workspace = true, optional = true, default-features = false, features = ["algos"] }
+obrain-common.workspace = true
+obrain-core = { workspace = true, default-features = false }
+obrain-reactive.workspace = true
+obrain-adapters = { workspace = true, optional = true, default-features = false, features = ["algos"] }
 
 # Async runtime — only sync feature for all targets (WASM-compatible).
 # NOTE: we don't use `workspace = true` because the workspace tokio

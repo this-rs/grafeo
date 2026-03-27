@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use parking_lot::{Mutex, RwLock};
 
-use grafeo_common::collections::{GrafeoConcurrentMap, grafeo_concurrent_map};
+use grafeo_common::collections::{ObrainConcurrentMap, obrain_concurrent_map};
 use grafeo_common::types::{EdgeTypeId, IndexId, LabelId, PropertyKeyId, Value};
 
 /// The database's schema dictionary - maps names to compact internal IDs.
@@ -642,7 +642,7 @@ impl Default for Catalog {
 /// readers never block each other. A separate `Mutex` serializes the rare
 /// create path to keep `id_to_name` consistent.
 struct LabelCatalog {
-    name_to_id: GrafeoConcurrentMap<Arc<str>, LabelId>,
+    name_to_id: ObrainConcurrentMap<Arc<str>, LabelId>,
     id_to_name: RwLock<Vec<Arc<str>>>,
     next_id: AtomicU32,
     create_lock: Mutex<()>,
@@ -651,7 +651,7 @@ struct LabelCatalog {
 impl LabelCatalog {
     fn new() -> Self {
         Self {
-            name_to_id: grafeo_concurrent_map(),
+            name_to_id: obrain_concurrent_map(),
             id_to_name: RwLock::new(Vec::new()),
             next_id: AtomicU32::new(0),
             create_lock: Mutex::new(()),
@@ -698,7 +698,7 @@ impl LabelCatalog {
 
 /// Bidirectional mapping between property key names and IDs.
 struct PropertyCatalog {
-    name_to_id: GrafeoConcurrentMap<Arc<str>, PropertyKeyId>,
+    name_to_id: ObrainConcurrentMap<Arc<str>, PropertyKeyId>,
     id_to_name: RwLock<Vec<Arc<str>>>,
     next_id: AtomicU32,
     create_lock: Mutex<()>,
@@ -707,7 +707,7 @@ struct PropertyCatalog {
 impl PropertyCatalog {
     fn new() -> Self {
         Self {
-            name_to_id: grafeo_concurrent_map(),
+            name_to_id: obrain_concurrent_map(),
             id_to_name: RwLock::new(Vec::new()),
             next_id: AtomicU32::new(0),
             create_lock: Mutex::new(()),
@@ -754,7 +754,7 @@ impl PropertyCatalog {
 
 /// Bidirectional mapping between edge type names and IDs.
 struct EdgeTypeCatalog {
-    name_to_id: GrafeoConcurrentMap<Arc<str>, EdgeTypeId>,
+    name_to_id: ObrainConcurrentMap<Arc<str>, EdgeTypeId>,
     id_to_name: RwLock<Vec<Arc<str>>>,
     next_id: AtomicU32,
     create_lock: Mutex<()>,
@@ -763,7 +763,7 @@ struct EdgeTypeCatalog {
 impl EdgeTypeCatalog {
     fn new() -> Self {
         Self {
-            name_to_id: grafeo_concurrent_map(),
+            name_to_id: obrain_concurrent_map(),
             id_to_name: RwLock::new(Vec::new()),
             next_id: AtomicU32::new(0),
             create_lock: Mutex::new(()),
