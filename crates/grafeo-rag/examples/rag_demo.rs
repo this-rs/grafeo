@@ -1,10 +1,13 @@
-//! Minimal RAG demo — queries a GrafeoDB and produces augmented context.
+//! RAG demo — queries a GrafeoDB and produces augmented context.
 //!
 //! Usage:
 //!   cargo run -p grafeo-rag --example rag_demo -- --db /path/to/db --query "your question"
+//!   cargo run -p grafeo-rag --example rag_demo -- --db /path/to/db   (interactive mode)
 //!
+//! Without --query, enters interactive REPL mode.
 //! Without --db, creates an in-memory demo database.
 
+use std::io::{self, BufRead, Write};
 use std::sync::Arc;
 
 use grafeo::GrafeoDB;
@@ -17,7 +20,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     let mut db_path: Option<String> = None;
-    let mut query = String::from("What projects exist?");
+    let mut query: Option<String> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -31,18 +34,19 @@ fn main() {
             "--query" | "-q" => {
                 i += 1;
                 if i < args.len() {
-                    query = args[i].clone();
+                    query = Some(args[i].clone());
                 }
             }
             "--help" | "-h" => {
                 eprintln!("Usage: rag_demo [--db <path>] [--query <text>]");
-                eprintln!("  --db <path>   Path to a GrafeoDB directory");
-                eprintln!("  --query <text> Query to search for (default: \"What projects exist?\")");
+                eprintln!("  --db <path>    Path to a GrafeoDB directory");
+                eprintln!("  --query <text>  Single query mode");
+                eprintln!("  (no --query)    Interactive REPL mode");
                 return;
             }
             _ => {
                 // Treat unknown args as query text
-                query = args[i..].join(" ");
+                query = Some(args[i..].join(" "));
                 break;
             }
         }
@@ -104,10 +108,24 @@ fn main() {
 
     let pipeline = RagPipeline::new(retriever, context_builder, None, config);
 
+    match query {
+        Some(q) => {
+            // Single query mode
+            run_query(&pipeline, &q);
+        }
+        None => {
+            // Interactive REPL mode
+            interactive_loop(&pipeline);
+        }
+    }
+}
+
+/// Execute a single query and print results.
+fn run_query(pipeline: &RagPipeline, query: &str) {
     eprintln!("[rag] Query: \"{}\"", query);
     eprintln!("[rag] Retrieving...\n");
 
-    match pipeline.query(&query) {
+    match pipeline.query(query) {
         Ok(context) => {
             if context.text.is_empty() {
                 eprintln!("[rag] No relevant content found for this query.");
@@ -122,6 +140,58 @@ fn main() {
         Err(e) => {
             eprintln!("[rag] Retrieval error: {}", e);
         }
+    }
+}
+
+/// Interactive REPL — read queries from stdin, display RAG context.
+fn interactive_loop(pipeline: &RagPipeline) {
+    eprintln!("[rag] Interactive mode — type a query, press Enter.");
+    eprintln!("[rag] Commands: /quit or /exit to leave, /help for help.\n");
+
+    let stdin = io::stdin();
+    let mut reader = stdin.lock();
+
+    loop {
+        // Prompt
+        eprint!("rag> ");
+        io::stderr().flush().ok();
+
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => {
+                // EOF (Ctrl-D)
+                eprintln!("\n[rag] Bye!");
+                break;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("[rag] Read error: {}", e);
+                break;
+            }
+        }
+
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // Handle commands
+        match trimmed {
+            "/quit" | "/exit" | "/q" => {
+                eprintln!("[rag] Bye!");
+                break;
+            }
+            "/help" | "/h" => {
+                eprintln!("  Type any question to search the graph.");
+                eprintln!("  /quit or /exit  — leave");
+                eprintln!("  /help           — this message\n");
+                continue;
+            }
+            _ => {}
+        }
+
+        run_query(pipeline, trimmed);
+        println!(); // blank line between results
     }
 }
 
