@@ -8,7 +8,7 @@ description: API reference for the Obrain Go bindings.
 Go bindings for Obrain via CGO. Requires the `obrain-c` shared library.
 
 ```bash
-go get github.com/ObrainDB/obrain/crates/bindings/go
+go get github.com/this-rs/obrain/crates/bindings/go
 ```
 
 ## Requirements
@@ -26,7 +26,7 @@ import (
     "fmt"
     "log"
 
-    obrain "github.com/ObrainDB/obrain/crates/bindings/go"
+    obrain "github.com/this-rs/obrain/crates/bindings/go"
 )
 
 func main() {
@@ -120,5 +120,5 @@ cargo build --release -p obrain-c --features full
 
 ## Links
 
-- [pkg.go.dev](https://pkg.go.dev/github.com/ObrainDB/obrain/crates/bindings/go)
-- [GitHub](https://github.com/ObrainDB/obrain/tree/main/crates/bindings/go)
+- [pkg.go.dev](https://pkg.go.dev/github.com/this-rs/obrain/crates/bindings/go)
+- [GitHub](https://github.com/this-rs/obrain/tree/main/crates/bindings/go)

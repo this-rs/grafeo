@@ -33,7 +33,7 @@ Native bindings via napi-rs with full TypeScript definitions.
 
 CGO bindings for cloud-native applications.
 
-- **Package**: [`github.com/ObrainDB/obrain/crates/bindings/go`](https://pkg.go.dev/github.com/ObrainDB/obrain/crates/bindings/go)
+- **Package**: [`github.com/this-rs/obrain/crates/bindings/go`](https://pkg.go.dev/github.com/this-rs/obrain/crates/bindings/go)
 - Node/edge CRUD, property management, label operations
 - ACID transactions, vector search, batch operations
 

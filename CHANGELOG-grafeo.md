@@ -49,7 +49,7 @@ All notable changes to Obrain, for future reference (and enjoyment).
 - **Plan cache bindings**: `clear_plan_cache()` exposed in Python, Node.js, C, and WASM bindings
 - **RDF bulk load**: `RdfStore::bulk_load()` builds all indexes in a single pass with pre-sized HashMaps and computes statistics during the same traversal; `RdfStore::load_ntriples()` parses N-Triples documents with full term support (IRIs, blank nodes, typed/language-tagged literals)
 - **SPARQL EXPLAIN**: `EXPLAIN SELECT ...` prefix returns the optimized logical plan tree without executing the query, showing operator types and estimated cardinalities
-- **GQL conformance tracking**: `// ISO:` test annotations linking spec compliance tests to ISO/IEC 39075:2024 feature IDs; `scripts/gql-conformance.py` generates coverage reports and a machine-readable `docs/gql-dialect.json` dialect file for tools like GraphGlot (inspired by [community feedback](https://github.com/orgs/ObrainDB/discussions/122))
+- **GQL conformance tracking**: `// ISO:` test annotations linking spec compliance tests to ISO/IEC 39075:2024 feature IDs; `scripts/gql-conformance.py` generates coverage reports and a machine-readable `docs/gql-dialect.json` dialect file for tools like GraphGlot (inspired by [community feedback](https://github.com/orgs/GrafeoDB/discussions/122))
 - **GQL binary set functions** (GF11): `COVAR_SAMP`, `COVAR_POP`, `CORR`, `REGR_SLOPE`, `REGR_INTERCEPT`, `REGR_R2`, `REGR_COUNT`, `REGR_SXX`, `REGR_SYY`, `REGR_SXY`, `REGR_AVGX`, `REGR_AVGY` aggregate functions for statistical analysis
 
 ### Changed
@@ -122,7 +122,7 @@ GQL translator refactor, new methods, GQL improvements and fixes
 
 ### Fixed
 
-- **Named graph data isolation** ([#133](https://github.com/ObrainDB/obrain/issues/133)): `USE GRAPH`, `SESSION SET SCHEMA` and `SESSION SET GRAPH` now correctly route all queries and mutations to the selected named graph instead of always using the default store; query cache keys include the active graph name to prevent cross-graph cache hits; dropping the active graph resets the session to default
+- **Named graph data isolation** ([#133](https://github.com/GrafeoDB/grafeo/issues/133)): `USE GRAPH`, `SESSION SET SCHEMA` and `SESSION SET GRAPH` now correctly route all queries and mutations to the selected named graph instead of always using the default store; query cache keys include the active graph name to prevent cross-graph cache hits; dropping the active graph resets the session to default
 - **OPTIONAL MATCH WHERE pushdown**: right-side predicates are now correctly pushed into the join instead of filtering out NULL rows, with dedicated cost/cardinality estimation for LeftJoin
 - **Cypher COUNT(expr) NULL skipping**: `COUNT(expr)` now correctly skips NULLs (using `CountNonNull`), matching `COUNT(*)` which counts all rows
 - **Vector validity bitmap fix**: consecutive NULL pushes to the same column no longer silently drop null bits, fixing incorrect empty-string results in SPARQL OPTIONAL and RDF left joins
@@ -164,7 +164,7 @@ Query language compliance improvements, expanded test coverage and Deriva compat
 - **Label mutation rollback**: `SET n:Label` and `REMOVE n:Label` changes are correctly undone on `ROLLBACK`
 - **MERGE ON MATCH SET rollback**: properties updated via `MERGE ... ON MATCH SET` are correctly restored on `ROLLBACK`
 - **Savepoint partial rollback**: `ROLLBACK TO SAVEPOINT` now undoes property and label mutations made after the savepoint while preserving earlier changes
-- **NPM package missing native binaries** ([#128](https://github.com/ObrainDB/obrain/issues/128)): `@obrain-db/js` now publishes per-platform packages (`@obrain-db/js-darwin-arm64`, `@obrain-db/js-linux-x64-gnu`, etc.) as `optionalDependencies`, so `npm install` and `bun install` pull the correct native binary automatically
+- **NPM package missing native binaries** ([#128](https://github.com/GrafeoDB/grafeo/issues/128)): `@grafeo-db/js` now publishes per-platform packages (`@grafeo-db/js-darwin-arm64`, `@grafeo-db/js-linux-x64-gnu`, etc.) as `optionalDependencies`, so `npm install` and `bun install` pull the correct native binary automatically
 
 ## [0.5.17] - 2026-03-09
 
@@ -547,7 +547,7 @@ Go and C bindings. Obrain now embeds in pretty much any language.
 
 ### Added
 
-- **Go bindings** (`github.com/ObrainDB/obrain`): full CRUD, multi-language queries, ACID transactions, vector search, batch operations, admin APIs
+- **Go bindings** (`github.com/GrafeoDB/grafeo`): full CRUD, multi-language queries, ACID transactions, vector search, batch operations, admin APIs
 - **C FFI layer** (`obrain-c`): C-compatible ABI for embedding Obrain in any language
 
 ## [0.4.0] - 2026-02-07
@@ -556,7 +556,7 @@ Node.js/TypeScript bindings, Python vector search and transaction isolation.
 
 ### Added
 
-- **Node.js/TypeScript bindings** (`@obrain-db/js`): full CRUD, async queries across all 5 languages, transactions, native type mapping, TypeScript definitions
+- **Node.js/TypeScript bindings** (`@grafeo-db/js`): full CRUD, async queries across all 5 languages, transactions, native type mapping, TypeScript definitions
 - **Python vector support**: pass `list[float]` directly, `obrain.vector()`, distance functions in GQL, HNSW indexes, k-NN search
 - **Python transaction isolation**: `"read_committed"`, `"snapshot"` or `"serializable"` per transaction
 - **Batch vector APIs**: `batch_create_nodes()` and `batch_vector_search()` for Python and Node.js

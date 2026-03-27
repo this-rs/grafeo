@@ -128,7 +128,7 @@ results = db.vector_search("Document", "embedding", query_vector, k=10)
 ## Links
 
 - [Documentation](https://obrain.dev)
-- [GitHub](https://github.com/ObrainDB/obrain)
+- [GitHub](https://github.com/this-rs/obrain)
 - [npm Package](https://www.npmjs.com/package/@obrain-db/js)
 - [WASM Package](https://www.npmjs.com/package/@obrain-db/wasm)
 

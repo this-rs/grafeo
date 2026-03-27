@@ -209,7 +209,7 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME}"
           # Go proxy requires uppercase letters escaped as !lowercase
-          ESCAPED=$(echo "github.com/ObrainDB/obrain/crates/bindings/go" | sed 's/[A-Z]/!\L&/g')
+          ESCAPED=$(echo "github.com/this-rs/obrain/crates/bindings/go" | sed 's/[A-Z]/!\L&/g')
           curl -sf "https://proxy.golang.org/${ESCAPED}/@v/${VERSION}.info" || echo "Go proxy fetch pending"
 
   # Build Node.js native modules for each platform
@@ -470,7 +470,7 @@ jobs:
             "license": "AGPL-3.0-or-later",
             "repository": {
               "type": "git",
-              "url": "https://github.com/ObrainDB/obrain"
+              "url": "https://github.com/this-rs/obrain"
             },
             "os": ["${{ matrix.os }}"],
             "cpu": ["${{ matrix.cpu }}"],

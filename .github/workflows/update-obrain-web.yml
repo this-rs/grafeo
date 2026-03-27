@@ -65,7 +65,7 @@ jobs:
           GH_TOKEN: ${{ secrets.OBRAIN_WEB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          BODY=$(gh api "repos/ObrainDB/obrain/releases/tags/v${VERSION}" --jq '.body // empty' 2>/dev/null || echo "")
+          BODY=$(gh api "repos/this-rs/obrain/releases/tags/v${VERSION}" --jq '.body // empty' 2>/dev/null || echo "")
           if [ -z "$BODY" ]; then
             BODY="_Align with Obrain Core ${VERSION}_"
           fi
@@ -75,7 +75,7 @@ jobs:
       - name: Checkout obrain-web
         uses: actions/checkout@v4
         with:
-          repository: ObrainDB/obrain-web
+          repository: this-rs/obrain-web
           token: ${{ secrets.OBRAIN_WEB_TOKEN }}
           ref: main
 
@@ -136,7 +136,7 @@ jobs:
           cat > /tmp/pr-body.md <<EOF
           ## Summary
 
-          Automated update triggered by [Obrain v${VERSION}](https://github.com/ObrainDB/obrain/releases/tag/v${VERSION}).
+          Automated update triggered by [Obrain v${VERSION}](https://github.com/this-rs/obrain/releases/tag/v${VERSION}).
 
           - Bumped \`package.json\` version to ${VERSION}
           - Updated \`@obrain-db/wasm\` to ${VERSION}
@@ -156,7 +156,7 @@ jobs:
           EOF
 
           gh pr create \
-            --repo ObrainDB/obrain-web \
+            --repo this-rs/obrain-web \
             --base main \
             --head "$BRANCH" \
             --title "Update to Obrain ${VERSION}" \

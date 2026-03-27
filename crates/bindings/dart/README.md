@@ -96,7 +96,7 @@ void main() {
 
 ```bash
 # Clone and build the native library
-git clone https://github.com/ObrainDB/obrain.git
+git clone https://github.com/this-rs/obrain.git
 cd obrain
 cargo build --release -p obrain-c
 

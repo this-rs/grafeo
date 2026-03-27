@@ -127,5 +127,5 @@ if (!r) {
 
 ## Links
 
-- [GitHub](https://github.com/ObrainDB/obrain/tree/main/crates/bindings/c)
-- [Go bindings](https://github.com/ObrainDB/obrain/tree/main/crates/bindings/go) (built on this library)
+- [GitHub](https://github.com/this-rs/obrain/tree/main/crates/bindings/c)
+- [Go bindings](https://github.com/this-rs/obrain/tree/main/crates/bindings/go) (built on this library)

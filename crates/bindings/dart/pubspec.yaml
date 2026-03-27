@@ -3,8 +3,8 @@ version: 0.5.24
 description: >-
   High-performance embeddable graph database with GQL support.
   Dart bindings for obrain-c via dart:ffi.
-repository: https://github.com/ObrainDB/obrain/tree/main/crates/bindings/dart
-issue_tracker: https://github.com/ObrainDB/obrain/issues
+repository: https://github.com/this-rs/obrain/tree/main/crates/bindings/dart
+issue_tracker: https://github.com/this-rs/obrain/issues
 homepage: https://obrain.dev
 
 environment:

@@ -5,7 +5,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ObrainDB/obrain",
+    "url": "https://github.com/this-rs/obrain",
     "directory": "packages/obrain-cli-npm"
   },
   "homepage": "https://obrain.dev",

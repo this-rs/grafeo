@@ -7,7 +7,7 @@ description: Obrain graph database in the browser via WebAssembly with IndexedDB
 
 Obrain graph database running entirely in the browser via WebAssembly. Zero backend, data stays on the client, with optional IndexedDB persistence across sessions.
 
-[:octicons-mark-github-16: GitHub](https://github.com/ObrainDB/obrain-web){ .md-button }
+[:octicons-mark-github-16: GitHub](https://github.com/this-rs/obrain-web){ .md-button }
 [:material-package-variant: npm](https://www.npmjs.com/package/@obrain-db/web){ .md-button }
 
 ## Overview
@@ -214,7 +214,7 @@ Requires WebAssembly, IndexedDB and Web Workers.
 | Memory       | ~256 MB (WASM heap)            |
 | Concurrency  | Single writer, multiple readers |
 
-For larger datasets, use [Obrain](https://github.com/ObrainDB/obrain) server-side or via [obrain-server](obrain-server.md).
+For larger datasets, use [Obrain](https://github.com/this-rs/obrain) server-side or via [obrain-server](obrain-server.md).
 
 ## When to Use
 
@@ -223,7 +223,7 @@ For larger datasets, use [Obrain](https://github.com/ObrainDB/obrain) server-sid
 | Offline-first web apps | obrain-web |
 | Prototyping without a backend | obrain-web |
 | Multi-client access over HTTP | [obrain-server](obrain-server.md) |
-| Embedded in Python / Rust | [obrain](https://github.com/ObrainDB/obrain) (library) |
+| Embedded in Python / Rust | [obrain](https://github.com/this-rs/obrain) (library) |
 
 ## License
 

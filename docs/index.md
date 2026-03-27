@@ -19,7 +19,7 @@ hide:
 ### A fast, lean, embeddable graph database built in Rust
 
 [Get Started](getting-started/index.md){ .md-button .md-button--primary }
-[View on GitHub](https://github.com/ObrainDB/obrain){ .md-button }
+[View on GitHub](https://github.com/this-rs/obrain){ .md-button }
 
 </div>
 
@@ -271,7 +271,7 @@ Choose the query language that fits the project:
 === "Go"
 
     ```bash
-    go get github.com/ObrainDB/obrain/crates/bindings/go
+    go get github.com/this-rs/obrain/crates/bindings/go
     ```
 
 === "Rust"
@@ -304,4 +304,4 @@ Choose the query language that fits the project:
 
 ## License
 
-Obrain is licensed under the [Apache-2.0 License](https://github.com/ObrainDB/obrain/blob/main/LICENSE).
+Obrain is licensed under the [Apache-2.0 License](https://github.com/this-rs/obrain/blob/main/LICENSE).

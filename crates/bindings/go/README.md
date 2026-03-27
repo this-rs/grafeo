@@ -11,7 +11,7 @@ Go bindings for [Obrain](https://obrain.dev), a high-performance, embeddable gra
 ## Installation
 
 ```bash
-go get github.com/ObrainDB/obrain/crates/bindings/go
+go get github.com/this-rs/obrain/crates/bindings/go
 ```
 
 ## Quick Start
@@ -23,7 +23,7 @@ import (
     "fmt"
     "log"
 
-    obrain "github.com/ObrainDB/obrain/crates/bindings/go"
+    obrain "github.com/this-rs/obrain/crates/bindings/go"
 )
 
 func main() {
@@ -72,6 +72,6 @@ cargo build --release -p obrain-c --features full
 ## Links
 
 - [Documentation](https://obrain.dev)
-- [GitHub](https://github.com/ObrainDB/obrain)
+- [GitHub](https://github.com/this-rs/obrain)
 - [Python Package](https://pypi.org/project/obrain/)
 - [npm Package](https://www.npmjs.com/package/@obrain-db/js)

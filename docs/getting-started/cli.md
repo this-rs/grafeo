@@ -40,7 +40,7 @@ Install via any of these methods: they all provide the same CLI:
 === "Download"
 
     Pre-built binaries for all platforms are attached to every
-    [GitHub release](https://github.com/ObrainDB/obrain/releases).
+    [GitHub release](https://github.com/this-rs/obrain/releases).
 
 Verify the installation:
 

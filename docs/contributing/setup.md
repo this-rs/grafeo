@@ -17,7 +17,7 @@ tags:
 ## Clone Repository
 
 ```bash
-git clone https://github.com/ObrainDB/obrain.git
+git clone https://github.com/this-rs/obrain.git
 cd obrain
 ```
 

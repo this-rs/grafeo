@@ -1,6 +1,6 @@
-[![CI](https://github.com/ObrainDB/obrain/actions/workflows/ci.yml/badge.svg)](https://github.com/ObrainDB/obrain/actions/workflows/ci.yml)
-[![Docs](https://github.com/ObrainDB/obrain/actions/workflows/docs.yml/badge.svg)](https://github.com/ObrainDB/obrain/actions/workflows/docs.yml)
-[![codecov](https://codecov.io/gh/ObrainDB/obrain/graph/badge.svg)](https://codecov.io/gh/ObrainDB/obrain)
+[![CI](https://github.com/this-rs/obrain/actions/workflows/ci.yml/badge.svg)](https://github.com/this-rs/obrain/actions/workflows/ci.yml)
+[![Docs](https://github.com/this-rs/obrain/actions/workflows/docs.yml/badge.svg)](https://github.com/this-rs/obrain/actions/workflows/docs.yml)
+[![codecov](https://codecov.io/gh/this-rs/obrain/graph/badge.svg)](https://codecov.io/gh/this-rs/obrain)
 [![Crates.io](https://img.shields.io/crates/v/obrain.svg)](https://crates.io/crates/obrain)
 [![PyPI](https://img.shields.io/pypi/v/obrain.svg)](https://pypi.org/project/obrain/)
 [![npm](https://img.shields.io/npm/v/@obrain-db/js.svg)](https://www.npmjs.com/package/@obrain-db/js)
@@ -8,7 +8,7 @@
 [![NuGet](https://img.shields.io/nuget/v/Obrain.svg)](https://www.nuget.org/packages/Obrain)
 [![pub.dev](https://img.shields.io/pub/v/obrain.svg)](https://pub.dev/packages/obrain)
 [![Web](https://img.shields.io/npm/v/@obrain-db/web.svg?label=web)](https://www.npmjs.com/package/@obrain-db/web)
-[![Go](https://img.shields.io/badge/go-1.22%2B-00ADD8)](https://pkg.go.dev/github.com/ObrainDB/obrain/crates/bindings/go)
+[![Go](https://img.shields.io/badge/go-1.22%2B-00ADD8)](https://pkg.go.dev/github.com/this-rs/obrain/crates/bindings/go)
 [![Docker](https://img.shields.io/docker/v/obrain/obrain-server?label=server)](https://hub.docker.com/r/obrain/obrain-server)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![MSRV](https://img.shields.io/badge/MSRV-1.91.1-blue)](https://www.rust-lang.org)
@@ -20,7 +20,7 @@ Obrain is a **cognitive graph database** — a high-performance graph engine wit
 
 This means your graph isn't just data — it's a living system that remembers what matters, forgets what doesn't, and surfaces insights automatically.
 
-On the [LDBC Social Network Benchmark](https://github.com/ObrainDB/graph-bench), Obrain is the fastest tested graph database in both embedded and server configurations, while using a fraction of the memory.
+On the [LDBC Social Network Benchmark](https://github.com/this-rs/graph-bench), Obrain is the fastest tested graph database in both embedded and server configurations, while using a fraction of the memory.
 
 [![Obrain Playground](docs/assets/playground.png)](https://obrain.ai)
 
@@ -325,7 +325,7 @@ The MCP server lets LLM agents:
 - Access cognitive features (energy, synapses, spreading activation)
 - Inspect schema, stats, and graph structure
 
-See [obrain-mcp](https://github.com/ObrainDB/obrain-mcp) for configuration and usage.
+See [obrain-mcp](https://github.com/this-rs/obrain-mcp) for configuration and usage.
 
 ## Architecture
 
@@ -417,7 +417,7 @@ Cognitive stores updated → risk recalculated
 
 ### Benchmarks
 
-Tested with the [LDBC Social Network Benchmark](https://ldbcouncil.org/benchmarks/snb/) via [graph-bench](https://github.com/ObrainDB/graph-bench):
+Tested with the [LDBC Social Network Benchmark](https://ldbcouncil.org/benchmarks/snb/) via [graph-bench](https://github.com/this-rs/graph-bench):
 
 **Embedded** (SF0.1, in-process):
 
@@ -436,7 +436,7 @@ Tested with the [LDBC Social Network Benchmark](https://ldbcouncil.org/benchmark
 | Neo4j | 6,788 ms | 253 ms |
 | ArangoDB | 40,043 ms | 22,739 ms |
 
-Full results: [embedded](https://github.com/ObrainDB/graph-bench/blob/main/RESULTS_EMBEDDED.md) | [server](https://github.com/ObrainDB/graph-bench/blob/main/RESULTS_SERVER.md)
+Full results: [embedded](https://github.com/this-rs/graph-bench/blob/main/RESULTS_EMBEDDED.md) | [server](https://github.com/this-rs/graph-bench/blob/main/RESULTS_SERVER.md)
 
 ## Installation
 
@@ -480,7 +480,7 @@ npm install @obrain-db/js
 ### Go
 
 ```bash
-go get github.com/ObrainDB/obrain/crates/bindings/go
+go get github.com/this-rs/obrain/crates/bindings/go
 ```
 
 ### WebAssembly
@@ -521,19 +521,19 @@ Standalone examples demonstrating cognitive graph database use cases:
 
 | Project | Description |
 |---------|-------------|
-| [**obrain-server**](https://github.com/ObrainDB/obrain-server) | HTTP server & web UI: REST API, transactions, single binary (~40MB Docker image) |
-| [**obrain-web**](https://github.com/ObrainDB/obrain-web) | Browser-based Obrain via WebAssembly with IndexedDB persistence |
-| [**gwp**](https://github.com/ObrainDB/gql-wire-protocol) | GQL Wire Protocol: gRPC wire protocol for GQL (ISO/IEC 39075) with client bindings in 5 languages |
-| [**boltr**](https://github.com/ObrainDB/boltr) | Bolt Wire Protocol: pure Rust Bolt v5.x implementation for Neo4j driver compatibility |
-| [**obrain-langchain**](https://github.com/ObrainDB/obrain-langchain) | LangChain integration: graph store, vector store, Graph RAG retrieval |
-| [**obrain-llamaindex**](https://github.com/ObrainDB/obrain-llamaindex) | LlamaIndex integration: PropertyGraphStore, vector search, knowledge graphs |
-| [**obrain-mcp**](https://github.com/ObrainDB/obrain-mcp) | Model Context Protocol server: expose Obrain as tools for LLM agents |
-| [**obrain-memory**](https://github.com/ObrainDB/obrain-memory) | AI memory layer for LLM applications: fact extraction, deduplication, semantic search |
-| [**anywidget-graph**](https://github.com/ObrainDB/anywidget-graph) | Interactive graph visualization for Python notebooks (Marimo, Jupyter, VS Code, Colab) |
-| [**anywidget-vector**](https://github.com/ObrainDB/anywidget-vector) | 3D vector/embedding visualization for Python notebooks |
+| [**obrain-server**](https://github.com/this-rs/obrain-server) | HTTP server & web UI: REST API, transactions, single binary (~40MB Docker image) |
+| [**obrain-web**](https://github.com/this-rs/obrain-web) | Browser-based Obrain via WebAssembly with IndexedDB persistence |
+| [**gwp**](https://github.com/this-rs/gql-wire-protocol) | GQL Wire Protocol: gRPC wire protocol for GQL (ISO/IEC 39075) with client bindings in 5 languages |
+| [**boltr**](https://github.com/this-rs/boltr) | Bolt Wire Protocol: pure Rust Bolt v5.x implementation for Neo4j driver compatibility |
+| [**obrain-langchain**](https://github.com/this-rs/obrain-langchain) | LangChain integration: graph store, vector store, Graph RAG retrieval |
+| [**obrain-llamaindex**](https://github.com/this-rs/obrain-llamaindex) | LlamaIndex integration: PropertyGraphStore, vector search, knowledge graphs |
+| [**obrain-mcp**](https://github.com/this-rs/obrain-mcp) | Model Context Protocol server: expose Obrain as tools for LLM agents |
+| [**obrain-memory**](https://github.com/this-rs/obrain-memory) | AI memory layer for LLM applications: fact extraction, deduplication, semantic search |
+| [**anywidget-graph**](https://github.com/this-rs/anywidget-graph) | Interactive graph visualization for Python notebooks (Marimo, Jupyter, VS Code, Colab) |
+| [**anywidget-vector**](https://github.com/this-rs/anywidget-vector) | 3D vector/embedding visualization for Python notebooks |
 | [**playground**](https://obrain.ai) | Interactive browser playground: query in 6 languages, visualize graphs, explore schemas |
-| [**graph-bench**](https://github.com/ObrainDB/graph-bench) | Benchmark suite comparing graph databases across 25+ benchmarks |
-| [**ann-benchmarks**](https://github.com/ObrainDB/ann-benchmarks) | Fork of ann-benchmarks with a Obrain HNSW adapter for vector search benchmarking |
+| [**graph-bench**](https://github.com/this-rs/graph-bench) | Benchmark suite comparing graph databases across 25+ benchmarks |
+| [**ann-benchmarks**](https://github.com/this-rs/ann-benchmarks) | Fork of ann-benchmarks with a Obrain HNSW adapter for vector search benchmarking |
 
 ## Documentation
 

@@ -44,7 +44,7 @@ The beta series focuses on correctness, completeness and real-world durability. 
 
 **Bindings**: C#/.NET 8, Dart/Flutter (community contribution), C FFI layer shared by Go, and C#.
 
-**Ecosystem**: [obrain-server](https://github.com/ObrainDB/obrain-server), [obrain-web](https://github.com/ObrainDB/obrain-web), [obrain-mcp](https://github.com/ObrainDB/obrain-mcp), [obrain-memory](https://github.com/ObrainDB/obrain-memory), [obrain-langchain](https://github.com/ObrainDB/obrain-langchain), [obrain-llamaindex](https://github.com/ObrainDB/obrain-llamaindex).
+**Ecosystem**: [obrain-server](https://github.com/this-rs/obrain-server), [obrain-web](https://github.com/this-rs/obrain-web), [obrain-mcp](https://github.com/this-rs/obrain-mcp), [obrain-memory](https://github.com/this-rs/obrain-memory), [obrain-langchain](https://github.com/this-rs/obrain-langchain), [obrain-llamaindex](https://github.com/this-rs/obrain-llamaindex).
 
 ### What's left in 0.5
 
@@ -88,7 +88,7 @@ Not scheduled, but on the radar:
 
 ## Contributing
 
-Interested in contributing? Check the [GitHub Issues](https://github.com/ObrainDB/obrain/issues) or join the [Discussions](https://github.com/orgs/ObrainDB/discussions).
+Interested in contributing? Check the [GitHub Issues](https://github.com/this-rs/obrain/issues) or join the [Discussions](https://github.com/orgs/this-rs/discussions).
 
 ---
 

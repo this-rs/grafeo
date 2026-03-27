@@ -2,7 +2,7 @@
 
 Interactive graph visualization for Python notebooks.
 
-[:octicons-mark-github-16: GitHub](https://github.com/ObrainDB/anywidget-graph){ .md-button }
+[:octicons-mark-github-16: GitHub](https://github.com/this-rs/anywidget-graph){ .md-button }
 [:simple-pypi: PyPI](https://pypi.org/project/anywidget-graph/){ .md-button }
 
 ## Overview

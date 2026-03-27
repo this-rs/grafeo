@@ -2,7 +2,7 @@
 
 Standalone HTTP server and web UI for the Obrain graph database.
 
-[:octicons-mark-github-16: GitHub](https://github.com/ObrainDB/obrain-server){ .md-button }
+[:octicons-mark-github-16: GitHub](https://github.com/this-rs/obrain-server){ .md-button }
 [:material-docker: Docker Hub](https://hub.docker.com/r/obrain/obrain-server){ .md-button }
 
 ## Overview
@@ -248,7 +248,7 @@ cargo build --release --no-default-features --features "gwp,bolt,gql,cypher,stor
 cargo build --release --features auth
 ```
 
-See the [obrain-server README](https://github.com/ObrainDB/obrain-server#feature-flags) for the complete feature flag reference.
+See the [obrain-server README](https://github.com/this-rs/obrain-server#feature-flags) for the complete feature flag reference.
 
 ## Wire Protocols
 
@@ -256,7 +256,7 @@ obrain-server supports two binary wire protocols for high-performance client-ser
 
 ### GWP (GQL Wire Protocol)
 
-[:octicons-mark-github-16: GitHub](https://github.com/ObrainDB/gql-wire-protocol){ .md-button }
+[:octicons-mark-github-16: GitHub](https://github.com/this-rs/gql-wire-protocol){ .md-button }
 [:material-package-variant: crates.io](https://crates.io/crates/gwp){ .md-button }
 
 A pure Rust gRPC wire protocol for [GQL (ISO/IEC 39075)](https://www.iso.org/standard/76120.html), the international standard query language for property graphs. GWP is the primary wire protocol for obrain-server, available on port 7688 by default.
@@ -278,14 +278,14 @@ A pure Rust gRPC wire protocol for [GQL (ISO/IEC 39075)](https://www.iso.org/sta
 | Rust | [gwp](https://crates.io/crates/gwp) | `cargo add gwp` |
 | Python | [gwp-py](https://pypi.org/project/gwp-py/) | `uv add gwp-py` |
 | JavaScript | [gwp-js](https://www.npmjs.com/package/gwp-js) | `npm install gwp-js` |
-| Go | [gwp/go](https://github.com/ObrainDB/gql-wire-protocol) | `go get github.com/ObrainDB/gwp/go` |
+| Go | [gwp/go](https://github.com/this-rs/gql-wire-protocol) | `go get github.com/this-rs/gwp/go` |
 | Java | [dev.obrain:gwp](https://central.sonatype.com/) | Maven Central |
 
 **Status:** v0.1.6, active development. The type system and service architecture are stable. Recent work has focused on aligning the catalog hierarchy (catalog > schema > graph) with the GQL specification.
 
 ### BOLTR (Bolt Wire Protocol)
 
-[:octicons-mark-github-16: GitHub](https://github.com/ObrainDB/boltr){ .md-button }
+[:octicons-mark-github-16: GitHub](https://github.com/this-rs/boltr){ .md-button }
 [:material-package-variant: crates.io](https://crates.io/crates/boltr){ .md-button }
 
 A pure Rust implementation of the [Bolt v5.x wire protocol](https://neo4j.com/docs/bolt/current/), the binary protocol used by Neo4j for client-server communication. BOLTR enables compatibility with existing Neo4j drivers and tooling.
@@ -320,7 +320,7 @@ A pure Rust implementation of the [Bolt v5.x wire protocol](https://neo4j.com/do
 | Use Case | Recommendation |
 |----------|----------------|
 | Multi-client access over HTTP | obrain-server |
-| Embedded in an application | [obrain](https://github.com/ObrainDB/obrain) (library) |
+| Embedded in an application | [obrain](https://github.com/this-rs/obrain) (library) |
 | Browser-only, no backend | [obrain-web](obrain-web.md) (WASM) |
 | Lightweight sidecar / CI | obrain-server **gwp** or **bolt** tier |
 | Production with security | obrain-server **full** variant |

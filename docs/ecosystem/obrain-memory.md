@@ -7,7 +7,7 @@ description: AI memory layer for LLM applications, powered by ObrainDB.
 
 AI memory layer for LLM applications. Extract facts, entities and relations from conversations and persist them in a ObrainDB graph with vector embeddings for semantic search.
 
-[:octicons-mark-github-16: GitHub](https://github.com/ObrainDB/obrain-memory){ .md-button }
+[:octicons-mark-github-16: GitHub](https://github.com/this-rs/obrain-memory){ .md-button }
 [:material-package-variant: PyPI](https://pypi.org/project/obrain-memory/){ .md-button }
 
 ## Overview

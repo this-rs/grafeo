@@ -2,7 +2,7 @@
 
 Interactive 3D vector visualization for Python notebooks.
 
-[:octicons-mark-github-16: GitHub](https://github.com/ObrainDB/anywidget-vector){ .md-button }
+[:octicons-mark-github-16: GitHub](https://github.com/this-rs/anywidget-vector){ .md-button }
 [:simple-pypi: PyPI](https://pypi.org/project/anywidget-vector/){ .md-button }
 
 ## Overview

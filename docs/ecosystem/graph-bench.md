@@ -2,7 +2,7 @@
 
 Comprehensive benchmark suite for comparing graph database performance.
 
-[:octicons-mark-github-16: GitHub](https://github.com/ObrainDB/graph-bench){ .md-button }
+[:octicons-mark-github-16: GitHub](https://github.com/this-rs/graph-bench){ .md-button }
 
 ## Overview
 

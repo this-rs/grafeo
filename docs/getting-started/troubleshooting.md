@@ -27,7 +27,7 @@ Solutions to common issues encountered when using Obrain.
 2. **Build from source** - If no pre-built wheel exists for the platform:
    ```bash
    uv add maturin  # or: pip install maturin
-   git clone https://github.com/ObrainDB/obrain
+   git clone https://github.com/this-rs/obrain
    cd obrain/crates/bindings/python
    maturin develop --release
    ```
@@ -320,7 +320,7 @@ Or configure automatic checkpointing via `wal_checkpoint()` intervals.
 If an issue persists:
 
 1. **Check the documentation** at [obrain.dev](https://obrain.dev)
-2. **Search existing issues** at [GitHub Issues](https://github.com/ObrainDB/obrain/issues)
+2. **Search existing issues** at [GitHub Issues](https://github.com/this-rs/obrain/issues)
 3. **Open a new issue** with:
    - Obrain version (`uv pip show obrain` or `pip show obrain`)
    - Python version (`python --version`)

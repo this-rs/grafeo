@@ -23,7 +23,7 @@ If no binary is found, install it separately:
 cargo install obrain-cli
 
 # Or download from GitHub releases
-# https://github.com/ObrainDB/obrain/releases
+# https://github.com/this-rs/obrain/releases
 ```
 
 ## Usage
@@ -50,7 +50,7 @@ obrain completions bash > ~/.local/share/bash-completion/completions/obrain
 ## Links
 
 - [Documentation](https://obrain.dev)
-- [GitHub](https://github.com/ObrainDB/obrain)
+- [GitHub](https://github.com/this-rs/obrain)
 - [Obrain Python Library](https://pypi.org/project/obrain/) (the database engine, not this CLI tool)
 
 ## License

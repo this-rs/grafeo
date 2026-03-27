@@ -27,8 +27,8 @@ classifiers = [
 [project.urls]
 Homepage = "https://obrain.dev"
 Documentation = "https://obrain.dev/user-guide/cli"
-Repository = "https://github.com/ObrainDB/obrain"
-Issues = "https://github.com/ObrainDB/obrain/issues"
+Repository = "https://github.com/this-rs/obrain"
+Issues = "https://github.com/this-rs/obrain/issues"
 
 [project.scripts]
 obrain = "obrain_cli:main"

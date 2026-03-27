@@ -16,14 +16,14 @@ We're building a modern graph database ecosystem in Rust, and we'd love your hel
 
 | Area | Skills | Projects |
 |------|--------|----------|
-| **Core Database** | Rust, database internals | [obrain](https://github.com/ObrainDB/obrain) |
+| **Core Database** | Rust, database internals | [obrain](https://github.com/this-rs/obrain) |
 | **Query Languages** | Parsing, compilers | GQL, Cypher, SPARQL, Gremlin, GraphQL support |
 | **Graph Algorithms** | Algorithms, math | PageRank, community detection, centrality |
-| **Python Bindings** | Rust + Python, PyO3 | [obrain](https://github.com/ObrainDB/obrain) |
-| **Browser Runtime** | TypeScript, WebAssembly | [obrain-web](https://github.com/ObrainDB/obrain-web) |
-| **Visualization** | Three.js, Sigma.js | [anywidget-graph](https://github.com/ObrainDB/anywidget-graph), [anywidget-vector](https://github.com/ObrainDB/anywidget-vector) |
-| **Server** | Rust, Axum, REST APIs | [obrain-server](https://github.com/ObrainDB/obrain-server) |
-| **Benchmarking** | Python, data analysis | [graph-bench](https://github.com/ObrainDB/graph-bench) |
+| **Python Bindings** | Rust + Python, PyO3 | [obrain](https://github.com/this-rs/obrain) |
+| **Browser Runtime** | TypeScript, WebAssembly | [obrain-web](https://github.com/this-rs/obrain-web) |
+| **Visualization** | Three.js, Sigma.js | [anywidget-graph](https://github.com/this-rs/anywidget-graph), [anywidget-vector](https://github.com/this-rs/anywidget-vector) |
+| **Server** | Rust, Axum, REST APIs | [obrain-server](https://github.com/this-rs/obrain-server) |
+| **Benchmarking** | Python, data analysis | [graph-bench](https://github.com/this-rs/graph-bench) |
 
 ### Non-Code Contributions
 
@@ -87,7 +87,7 @@ We aim to respond within a few days. Be patient with us, and we'll be patient wi
 
 Thank you to everyone who has contributed to Obrain!
 
-- **CorvusYe** ([@CorvusYe](https://github.com/CorvusYe)): Dart bindings ([#138](https://github.com/ObrainDB/obrain/pull/138)), single-file `.obrain` format feature request ([#139](https://github.com/ObrainDB/obrain/issues/139))
+- **CorvusYe** ([@CorvusYe](https://github.com/CorvusYe)): Dart bindings ([#138](https://github.com/this-rs/obrain/pull/138)), single-file `.obrain` format feature request ([#139](https://github.com/this-rs/obrain/issues/139))
 
 ## Recognition
 

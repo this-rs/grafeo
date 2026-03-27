@@ -233,7 +233,7 @@ Results from the [LDBC Social Network Benchmark](https://ldbcouncil.org/benchmar
 | Neo4j | 6,788 ms | 253 ms | 369 ms |
 | ArangoDB | 40,043 ms | 22,739 ms | 2,110 ms |
 
-Full results: [embedded](https://github.com/ObrainDB/graph-bench/blob/main/RESULTS_EMBEDDED.md) | [server](https://github.com/ObrainDB/graph-bench/blob/main/RESULTS_SERVER.md)
+Full results: [embedded](https://github.com/this-rs/graph-bench/blob/main/RESULTS_EMBEDDED.md) | [server](https://github.com/this-rs/graph-bench/blob/main/RESULTS_SERVER.md)
 
 ---
 

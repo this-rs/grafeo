@@ -1,6 +1,6 @@
 # @obrain-db/wasm
 
-Low-level WebAssembly binary for [Obrain](https://github.com/ObrainDB/obrain), a high-performance graph database.
+Low-level WebAssembly binary for [Obrain](https://github.com/this-rs/obrain), a high-performance graph database.
 
 ## Which Package Do You Need?
 
@@ -72,8 +72,8 @@ const result = db.execute(`MATCH (n:Person) RETURN n.name`);
 ## Links
 
 - [Documentation](https://obrain.dev)
-- [GitHub](https://github.com/ObrainDB/obrain)
-- [Roadmap](https://github.com/ObrainDB/obrain/blob/main/docs/roadmap.md)
+- [GitHub](https://github.com/this-rs/obrain)
+- [Roadmap](https://github.com/this-rs/obrain/blob/main/docs/roadmap.md)
 
 ## License
 

@@ -72,4 +72,4 @@ await db.executeSql(query, params?);      // SQL/PGQ
 ## Links
 
 - [npm package](https://www.npmjs.com/package/@obrain-db/js)
-- [GitHub](https://github.com/ObrainDB/obrain/tree/main/crates/bindings/node)
+- [GitHub](https://github.com/this-rs/obrain/tree/main/crates/bindings/node)

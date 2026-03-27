@@ -5,7 +5,7 @@ Thanks for wanting to help out! Here's what you need to know.
 ## Setup
 
 ```bash
-git clone https://github.com/ObrainDB/obrain.git
+git clone https://github.com/this-rs/obrain.git
 cd obrain
 cargo build --workspace
 ```
@@ -85,22 +85,22 @@ npm test
 
 ## Ecosystem Projects
 
-These companion projects live in separate repositories under the [ObrainDB](https://github.com/ObrainDB) organization:
+These companion projects live in separate repositories under the [this-rs](https://github.com/this-rs) organization:
 
 | Project | Description |
 | ------- | ----------- |
-| [obrain-server](https://github.com/ObrainDB/obrain-server) | HTTP server & web UI |
-| [obrain-web](https://github.com/ObrainDB/obrain-web) | Browser-based Obrain (WASM) |
-| [gwp](https://github.com/ObrainDB/gql-wire-protocol) | GQL Wire Protocol (gRPC) |
-| [boltr](https://github.com/ObrainDB/boltr) | Bolt v5.x Wire Protocol |
-| [obrain-memory](https://github.com/ObrainDB/obrain-memory) | AI memory layer for LLM applications |
-| [obrain-langchain](https://github.com/ObrainDB/obrain-langchain) | LangChain graph + vector store |
-| [obrain-llamaindex](https://github.com/ObrainDB/obrain-llamaindex) | LlamaIndex PropertyGraphStore |
-| [obrain-mcp](https://github.com/ObrainDB/obrain-mcp) | MCP server for LLM agents |
-| [anywidget-graph](https://github.com/ObrainDB/anywidget-graph) | Graph visualization widget |
-| [anywidget-vector](https://github.com/ObrainDB/anywidget-vector) | Vector visualization widget |
-| [graph-bench](https://github.com/ObrainDB/graph-bench) | Benchmark suite |
-| [ann-benchmarks](https://github.com/ObrainDB/ann-benchmarks) | Vector search benchmarking |
+| [obrain-server](https://github.com/this-rs/obrain-server) | HTTP server & web UI |
+| [obrain-web](https://github.com/this-rs/obrain-web) | Browser-based Obrain (WASM) |
+| [gwp](https://github.com/this-rs/gql-wire-protocol) | GQL Wire Protocol (gRPC) |
+| [boltr](https://github.com/this-rs/boltr) | Bolt v5.x Wire Protocol |
+| [obrain-memory](https://github.com/this-rs/obrain-memory) | AI memory layer for LLM applications |
+| [obrain-langchain](https://github.com/this-rs/obrain-langchain) | LangChain graph + vector store |
+| [obrain-llamaindex](https://github.com/this-rs/obrain-llamaindex) | LlamaIndex PropertyGraphStore |
+| [obrain-mcp](https://github.com/this-rs/obrain-mcp) | MCP server for LLM agents |
+| [anywidget-graph](https://github.com/this-rs/anywidget-graph) | Graph visualization widget |
+| [anywidget-vector](https://github.com/this-rs/anywidget-vector) | Vector visualization widget |
+| [graph-bench](https://github.com/this-rs/graph-bench) | Benchmark suite |
+| [ann-benchmarks](https://github.com/this-rs/ann-benchmarks) | Vector search benchmarking |
 
 ## Pre-commit Hooks (Optional)
 
@@ -113,8 +113,8 @@ This runs format, lint and license checks automatically before each commit.
 
 ## Links
 
-- [Repository](https://github.com/ObrainDB/obrain)
-- [Issues](https://github.com/ObrainDB/obrain/issues)
+- [Repository](https://github.com/this-rs/obrain)
+- [Issues](https://github.com/this-rs/obrain/issues)
 - [Documentation](https://obrain.dev)
 
 ## License

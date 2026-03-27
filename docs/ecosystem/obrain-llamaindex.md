@@ -7,7 +7,7 @@ description: LlamaIndex integration for ObrainDB with PropertyGraphStore, vector
 
 LlamaIndex integration that implements the `PropertyGraphStore` interface backed by ObrainDB. Build knowledge graphs from documents and query them with structured and vector search.
 
-[:octicons-mark-github-16: GitHub](https://github.com/ObrainDB/obrain-llamaindex){ .md-button }
+[:octicons-mark-github-16: GitHub](https://github.com/this-rs/obrain-llamaindex){ .md-button }
 [:material-package-variant: PyPI](https://pypi.org/project/obrain-llamaindex/){ .md-button }
 
 ## Overview

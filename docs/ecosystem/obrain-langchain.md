@@ -7,7 +7,7 @@ description: LangChain integration for ObrainDB with graph store, vector store a
 
 LangChain integration that provides graph store and vector store implementations backed by ObrainDB. Build knowledge graphs and Graph RAG pipelines with no servers or Docker required.
 
-[:octicons-mark-github-16: GitHub](https://github.com/ObrainDB/obrain-langchain){ .md-button }
+[:octicons-mark-github-16: GitHub](https://github.com/this-rs/obrain-langchain){ .md-button }
 [:material-package-variant: PyPI](https://pypi.org/project/obrain-langchain/){ .md-button }
 
 ## Overview

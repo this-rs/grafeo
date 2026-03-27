@@ -179,4 +179,4 @@ The `full` feature enables all languages. The default npm package includes only 
 ## Links
 
 - [npm package](https://www.npmjs.com/package/@obrain-db/wasm)
-- [GitHub](https://github.com/ObrainDB/obrain/tree/main/crates/bindings/wasm)
+- [GitHub](https://github.com/this-rs/obrain/tree/main/crates/bindings/wasm)

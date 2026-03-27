@@ -9,8 +9,8 @@ site_description: >-
   ACID transactions, and extensible storage backends.
 
 # Repository
-repo_name: ObrainDB/obrain
-repo_url: https://github.com/ObrainDB/obrain
+repo_name: this-rs/obrain
+repo_url: https://github.com/this-rs/obrain
 edit_uri: edit/main/docs/
 
 # Copyright
@@ -155,7 +155,7 @@ extra_javascript:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/ObrainDB/obrain
+      link: https://github.com/this-rs/obrain
       name: GitHub
     - icon: fontawesome/brands/python
       link: https://pypi.org/project/obrain/
@@ -164,7 +164,7 @@ extra:
       link: https://www.npmjs.com/package/@obrain-db/js
       name: npm
     - icon: simple/go
-      link: https://pkg.go.dev/github.com/ObrainDB/obrain/crates/bindings/go
+      link: https://pkg.go.dev/github.com/this-rs/obrain/crates/bindings/go
       name: Go
     - icon: simple/rust
       link: https://crates.io/crates/obrain

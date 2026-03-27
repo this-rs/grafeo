@@ -50,13 +50,13 @@ cargo install obrain-cli
 uv add obrain-cli
 
 # Direct download
-# https://github.com/ObrainDB/obrain/releases
+# https://github.com/this-rs/obrain/releases
 ```
 
 ## Links
 
 - [Documentation](https://obrain.dev)
-- [GitHub](https://github.com/ObrainDB/obrain)
+- [GitHub](https://github.com/this-rs/obrain)
 
 ## License
 

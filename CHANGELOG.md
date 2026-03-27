@@ -2,7 +2,7 @@
 
 All notable changes to Obrain will be documented in this file.
 
-This project was forked from [ObrainDB/obrain](https://github.com/ObrainDB/obrain) and rebranded as **Obrain** ([obrain.dev](https://obrain.dev)). The upstream Obrain changelog is preserved in `CHANGELOG-obrain.md` for historical reference.
+This project was forked from [this-rs/obrain](https://github.com/this-rs/obrain) and rebranded as **Obrain** ([obrain.dev](https://obrain.dev)). The upstream Obrain changelog is preserved in `CHANGELOG-grafeo.md` for historical reference.
 
 ## [0.0.1] - 2026-03-27
 

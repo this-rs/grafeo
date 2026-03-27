@@ -131,7 +131,7 @@ const results = await db.vectorSearch('Document', 'embedding', queryVector, 10);
 ## Links
 
 - [Documentation](https://obrain.dev)
-- [GitHub](https://github.com/ObrainDB/obrain)
+- [GitHub](https://github.com/this-rs/obrain)
 - [Python Package](https://pypi.org/project/obrain/)
 - [WASM Package](https://www.npmjs.com/package/@obrain-db/wasm)
 

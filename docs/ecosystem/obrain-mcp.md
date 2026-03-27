@@ -7,7 +7,7 @@ description: Model Context Protocol server for exposing ObrainDB to AI agents.
 
 A [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that exposes ObrainDB to AI agents. Zero infrastructure required - the server embeds the database directly.
 
-[:octicons-mark-github-16: GitHub](https://github.com/ObrainDB/obrain-mcp){ .md-button }
+[:octicons-mark-github-16: GitHub](https://github.com/this-rs/obrain-mcp){ .md-button }
 [:material-package-variant: PyPI](https://pypi.org/project/obrain-mcp/){ .md-button }
 
 ## Overview

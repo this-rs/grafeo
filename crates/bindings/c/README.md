@@ -148,10 +148,10 @@ if (obrain_execute(db, query, &result) != OBRAIN_OK) {
 ## Links
 
 - [Documentation](https://obrain.dev)
-- [GitHub](https://github.com/ObrainDB/obrain)
-- [Go Bindings](https://github.com/ObrainDB/obrain/tree/main/crates/bindings/go) (uses this library via CGO)
-- [C# Bindings](https://github.com/ObrainDB/obrain/tree/main/crates/bindings/csharp) (uses this library via P/Invoke)
-- [Dart Bindings](https://github.com/ObrainDB/obrain/tree/main/crates/bindings/dart) (uses this library via dart:ffi)
+- [GitHub](https://github.com/this-rs/obrain)
+- [Go Bindings](https://github.com/this-rs/obrain/tree/main/crates/bindings/go) (uses this library via CGO)
+- [C# Bindings](https://github.com/this-rs/obrain/tree/main/crates/bindings/csharp) (uses this library via P/Invoke)
+- [Dart Bindings](https://github.com/this-rs/obrain/tree/main/crates/bindings/dart) (uses this library via dart:ffi)
 
 ## License
 

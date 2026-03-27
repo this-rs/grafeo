@@ -65,7 +65,7 @@ await db.close();
 ## Go
 
 ```bash
-go get github.com/ObrainDB/obrain/crates/bindings/go
+go get github.com/this-rs/obrain/crates/bindings/go
 ```
 
 ### Verify Installation
@@ -75,7 +75,7 @@ package main
 
 import (
     "fmt"
-    obrain "github.com/ObrainDB/obrain/crates/bindings/go"
+    obrain "github.com/this-rs/obrain/crates/bindings/go"
 )
 
 func main() {
@@ -259,7 +259,7 @@ See the [obrain-server documentation](../ecosystem/obrain-server.md) for full AP
 ### Clone the Repository
 
 ```bash
-git clone https://github.com/ObrainDB/obrain.git
+git clone https://github.com/this-rs/obrain.git
 cd obrain
 ```
 

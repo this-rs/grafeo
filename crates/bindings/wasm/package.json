@@ -17,12 +17,12 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ObrainDB/obrain.git",
+    "url": "https://github.com/this-rs/obrain.git",
     "directory": "crates/bindings/wasm"
   },
   "homepage": "https://obrain.dev",
   "bugs": {
-    "url": "https://github.com/ObrainDB/obrain/issues"
+    "url": "https://github.com/this-rs/obrain/issues"
   },
   "main": "obrain_wasm.js",
   "types": "obrain_wasm.d.ts",
