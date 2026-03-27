@@ -14,7 +14,7 @@ use std::sync::Arc;
 use crate::config::RagConfig;
 use crate::error::RagResult;
 use crate::traits::{
-    ContextBuilder, FeedbackSink, FeedbackStats, RagContext, Retriever, RetrievalResult,
+    ContextBuilder, FeedbackSink, FeedbackStats, RagContext, RetrievalResult, Retriever,
 };
 
 /// The main RAG pipeline — query, build context, and provide feedback.
@@ -62,11 +62,7 @@ impl RagPipeline {
     ///
     /// Reinforces synapses between co-activated concepts and boosts
     /// energy of nodes that were included in the context.
-    pub fn feedback(
-        &self,
-        context: &RagContext,
-        response: &str,
-    ) -> RagResult<FeedbackStats> {
+    pub fn feedback(&self, context: &RagContext, response: &str) -> RagResult<FeedbackStats> {
         match &self.feedback_sink {
             Some(sink) => sink.feedback(context, response, &self.config),
             None => Ok(FeedbackStats::default()),

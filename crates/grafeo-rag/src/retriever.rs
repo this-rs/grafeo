@@ -501,10 +501,10 @@ impl EngramRetriever {
 
         let mut properties = HashMap::new();
         for (key, value) in node.properties.iter() {
-            if let Some(s) = value.as_str() {
-                if !s.is_empty() {
-                    properties.insert(key.as_str().to_string(), s.to_string());
-                }
+            if let Some(s) = value.as_str()
+                && !s.is_empty()
+            {
+                properties.insert(key.as_str().to_string(), s.to_string());
             }
         }
 
@@ -512,7 +512,6 @@ impl EngramRetriever {
         let outgoing: Vec<(String, NodeId)> = self
             .graph
             .edges_from(node_id, grafeo_core::graph::Direction::Outgoing)
-            .into_iter()
             .filter_map(|(target, edge_id)| {
                 let edge = self.graph.get_edge(edge_id)?;
                 Some((edge.edge_type.to_string(), target))
@@ -523,7 +522,6 @@ impl EngramRetriever {
         let incoming: Vec<(String, NodeId)> = self
             .graph
             .edges_from(node_id, grafeo_core::graph::Direction::Incoming)
-            .into_iter()
             .filter_map(|(source, edge_id)| {
                 let edge = self.graph.get_edge(edge_id)?;
                 Some((edge.edge_type.to_string(), source))
@@ -573,7 +571,9 @@ impl Retriever for EngramRetriever {
                     engram_id: result.engram_id.0,
                     confidence: result.confidence,
                 };
-                let entry = activated_nodes.entry(node_id).or_insert((0.0, source.clone()));
+                let entry = activated_nodes
+                    .entry(node_id)
+                    .or_insert((0.0, source.clone()));
                 if score > entry.0 {
                     *entry = (score, source);
                 }
@@ -659,10 +659,8 @@ impl Retriever for EngramRetriever {
         // Limit to max_context_nodes
         nodes.truncate(config.max_context_nodes);
 
-        if nodes.is_empty() && engrams_matched == 0 {
-            if cue_nodes.is_empty() {
-                return Err(RagError::NoEngramsFound(query.to_string()));
-            }
+        if nodes.is_empty() && engrams_matched == 0 && cue_nodes.is_empty() {
+            return Err(RagError::NoEngramsFound(query.to_string()));
         }
 
         Ok(RetrievalResult {
@@ -680,25 +678,20 @@ impl Retriever for EngramRetriever {
 /// Static stop word set — built once, reused across all queries.
 static STOP_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     [
-        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-        "have", "has", "had", "do", "does", "did", "will", "would", "could",
-        "should", "may", "might", "shall", "can", "need", "dare", "ought",
-        "used", "to", "of", "in", "for", "on", "with", "at", "by", "from",
-        "as", "into", "through", "during", "before", "after", "above", "below",
-        "between", "out", "off", "over", "under", "again", "further", "then",
-        "once", "and", "but", "or", "nor", "not", "so", "yet", "both",
-        "each", "few", "more", "most", "other", "some", "such", "no",
-        "than", "too", "very", "just", "about", "also", "this", "that",
-        "these", "those", "it", "its", "my", "your", "his", "her", "our",
-        "their", "what", "which", "who", "whom", "where", "when", "why", "how",
-        // French stop words
-        "le", "la", "les", "un", "une", "des", "du", "de", "et", "est",
-        "en", "que", "qui", "dans", "pour", "par", "sur", "avec", "ce",
-        "se", "son", "sa", "ses", "au", "aux", "ne", "pas", "plus",
-        "sont", "ont", "fait", "être", "avoir", "il", "elle", "nous",
-        "vous", "ils", "elles", "je", "tu", "on", "me", "te", "lui",
-        "leur", "y", "si", "ou", "mais", "donc", "car", "ni",
-        "quels", "quelles", "quel", "quelle", "comment", "combien",
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+        "do", "does", "did", "will", "would", "could", "should", "may", "might", "shall", "can",
+        "need", "dare", "ought", "used", "to", "of", "in", "for", "on", "with", "at", "by", "from",
+        "as", "into", "through", "during", "before", "after", "above", "below", "between", "out",
+        "off", "over", "under", "again", "further", "then", "once", "and", "but", "or", "nor",
+        "not", "so", "yet", "both", "each", "few", "more", "most", "other", "some", "such", "no",
+        "than", "too", "very", "just", "about", "also", "this", "that", "these", "those", "it",
+        "its", "my", "your", "his", "her", "our", "their", "what", "which", "who", "whom", "where",
+        "when", "why", "how", // French stop words
+        "le", "la", "les", "un", "une", "des", "du", "de", "et", "est", "en", "que", "qui", "dans",
+        "pour", "par", "sur", "avec", "ce", "se", "son", "sa", "ses", "au", "aux", "ne", "pas",
+        "plus", "sont", "ont", "fait", "être", "avoir", "il", "elle", "nous", "vous", "ils",
+        "elles", "je", "tu", "on", "me", "te", "lui", "leur", "y", "si", "ou", "mais", "donc",
+        "car", "ni", "quels", "quelles", "quel", "quelle", "comment", "combien",
     ]
     .into_iter()
     .collect()
@@ -831,7 +824,10 @@ mod tests {
         let n = 100.0_f64;
         let idf_rare = (n / 1.0).ln();
         let idf_common = (n / 90.0).ln();
-        assert!(idf_rare > idf_common * 10.0, "Rare terms should score much higher");
+        assert!(
+            idf_rare > idf_common * 10.0,
+            "Rare terms should score much higher"
+        );
     }
 
     #[test]
@@ -841,16 +837,32 @@ mod tests {
         let frac_01: f64 = 0.01;
         let dampening_01 = (1.0 + frac_01 * 10.0).ln().max(1.0);
 
-        assert!(dampening_90 > 2.0, "90% label should be heavily dampened: {}", dampening_90);
-        assert!(dampening_01 < 1.2, "1% label should barely be dampened: {}", dampening_01);
+        assert!(
+            dampening_90 > 2.0,
+            "90% label should be heavily dampened: {}",
+            dampening_90
+        );
+        assert!(
+            dampening_01 < 1.2,
+            "1% label should barely be dampened: {}",
+            dampening_01
+        );
         assert!(10.0 / dampening_90 < 10.0 / dampening_01);
     }
 
     #[test]
     fn index_stats_returns_distribution() {
         let mut idx = InvertedIndex::new();
-        idx.add_node(NodeId(1), &["Project".into()], &[("name".into(), "A".into())]);
-        idx.add_node(NodeId(2), &["Project".into()], &[("name".into(), "B".into())]);
+        idx.add_node(
+            NodeId(1),
+            &["Project".into()],
+            &[("name".into(), "A".into())],
+        );
+        idx.add_node(
+            NodeId(2),
+            &["Project".into()],
+            &[("name".into(), "B".into())],
+        );
         idx.add_node(NodeId(3), &["Note".into()], &[("title".into(), "C".into())]);
 
         let (total, _terms, labels) = idx.stats();

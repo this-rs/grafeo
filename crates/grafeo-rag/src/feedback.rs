@@ -137,7 +137,9 @@ mod tests {
         };
         let config = RagConfig::default();
 
-        let stats = feedback.feedback(&context, "some response", &config).unwrap();
+        let stats = feedback
+            .feedback(&context, "some response", &config)
+            .unwrap();
         assert_eq!(stats.synapses_reinforced, 0);
         assert_eq!(stats.nodes_boosted, 0);
     }

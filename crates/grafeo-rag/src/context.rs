@@ -122,8 +122,7 @@ impl ContextBuilder for GraphContextBuilder {
                         .properties
                         .get("name")
                         .or_else(|| node.properties.get("title"))
-                        .map(|s| s.as_str())
-                        .unwrap_or("");
+                        .map_or("", |s| s.as_str());
                     if display_name.is_empty() {
                         writeln!(text, "### (score: {:.2})", node.score).unwrap();
                     } else {
@@ -147,8 +146,7 @@ impl ContextBuilder for GraphContextBuilder {
                             .char_indices()
                             .take_while(|&(i, _)| i <= 500)
                             .last()
-                            .map(|(i, _)| i)
-                            .unwrap_or(0);
+                            .map_or(0, |(i, _)| i);
                         let omitted = val_str[truncate_at..].chars().count();
                         format!("{}… ({} chars omitted)", &val_str[..truncate_at], omitted)
                     } else {
@@ -168,10 +166,10 @@ impl ContextBuilder for GraphContextBuilder {
                             .iter()
                             .take(max_display)
                             .map(|(rel_type, target)| {
-                                let target_name = name_lookup
-                                    .get(target)
-                                    .map(|s| format!("\"{}\"", s))
-                                    .unwrap_or_else(|| format!("{}", target.0));
+                                let target_name = name_lookup.get(target).map_or_else(
+                                    || format!("{}", target.0),
+                                    |s| format!("\"{}\"", s),
+                                );
                                 format!("-[{rel_type}]→{target_name}")
                             })
                             .collect();
@@ -190,10 +188,10 @@ impl ContextBuilder for GraphContextBuilder {
                             .iter()
                             .take(max_display)
                             .map(|(rel_type, source)| {
-                                let source_name = name_lookup
-                                    .get(source)
-                                    .map(|s| format!("\"{}\"", s))
-                                    .unwrap_or_else(|| format!("{}", source.0));
+                                let source_name = name_lookup.get(source).map_or_else(
+                                    || format!("{}", source.0),
+                                    |s| format!("\"{}\"", s),
+                                );
                                 format!("{source_name}←[{rel_type}]-")
                             })
                             .collect();
@@ -228,19 +226,16 @@ impl ContextBuilder for GraphContextBuilder {
 /// Uses the first available "name" or "title" property as the display name.
 /// This allows relation targets that are also in the selected set to show
 /// human-readable names instead of raw IDs.
-fn build_name_lookup(
-    nodes: &[&RetrievedNode],
-) -> HashMap<grafeo_common::types::NodeId, String> {
+fn build_name_lookup(nodes: &[&RetrievedNode]) -> HashMap<grafeo_common::types::NodeId, String> {
     let mut lookup = HashMap::new();
     for node in nodes {
         if let Some(name) = node
             .properties
             .get("name")
             .or_else(|| node.properties.get("title"))
+            && !name.is_empty()
         {
-            if !name.is_empty() {
-                lookup.insert(node.node_id, name.clone());
-            }
+            lookup.insert(node.node_id, name.clone());
         }
     }
     lookup
@@ -292,22 +287,34 @@ mod tests {
             RetrievedNode {
                 node_id: NodeId(1),
                 labels: vec!["Project".into()],
-                properties: [("name".into(), "Grafeo".into()), ("id".into(), "123".into())]
-                    .into_iter()
-                    .collect(),
+                properties: [
+                    ("name".into(), "Grafeo".into()),
+                    ("id".into(), "123".into()),
+                ]
+                .into_iter()
+                .collect(),
                 score: 0.9,
-                source: RetrievalSource::EngramRecall { engram_id: 1, confidence: 0.9 },
+                source: RetrievalSource::EngramRecall {
+                    engram_id: 1,
+                    confidence: 0.9,
+                },
                 outgoing_relations: vec![("HAS_NOTE".into(), NodeId(2))],
                 incoming_relations: vec![],
             },
             RetrievedNode {
                 node_id: NodeId(2),
                 labels: vec!["Note".into()],
-                properties: [("title".into(), "WAL Bug".into()), ("uuid".into(), "abc".into())]
-                    .into_iter()
-                    .collect(),
+                properties: [
+                    ("title".into(), "WAL Bug".into()),
+                    ("uuid".into(), "abc".into()),
+                ]
+                .into_iter()
+                .collect(),
                 score: 0.7,
-                source: RetrievalSource::SpreadingActivation { depth: 1, activation: 0.7 },
+                source: RetrievalSource::SpreadingActivation {
+                    depth: 1,
+                    activation: 0.7,
+                },
                 outgoing_relations: vec![],
                 incoming_relations: vec![("HAS_NOTE".into(), NodeId(1))],
             },
@@ -400,8 +407,14 @@ mod tests {
         assert!(ctx.text.contains("across 2 types"));
 
         // Noise properties should be filtered
-        assert!(!ctx.text.contains("**id**: 123"), "id property should be filtered");
-        assert!(!ctx.text.contains("**uuid**: abc"), "uuid property should be filtered");
+        assert!(
+            !ctx.text.contains("**id**: 123"),
+            "id property should be filtered"
+        );
+        assert!(
+            !ctx.text.contains("**uuid**: abc"),
+            "uuid property should be filtered"
+        );
 
         // Real properties should be present
         assert!(ctx.text.contains("Grafeo"));
@@ -425,7 +438,10 @@ mod tests {
                 labels: vec!["Test".into()],
                 properties: props,
                 score: 1.0,
-                source: RetrievalSource::EngramRecall { engram_id: 1, confidence: 1.0 },
+                source: RetrievalSource::EngramRecall {
+                    engram_id: 1,
+                    confidence: 1.0,
+                },
                 outgoing_relations: vec![],
                 incoming_relations: vec![],
             }],

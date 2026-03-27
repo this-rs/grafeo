@@ -318,10 +318,7 @@ fn interactive_loop(
                 continue;
             }
             _ if trimmed.starts_with('/') => {
-                eprintln!(
-                    "[rag] Unknown command: {}. Type /help for help.\n",
-                    trimmed
-                );
+                eprintln!("[rag] Unknown command: {}. Type /help for help.\n", trimmed);
                 continue;
             }
             _ => {}

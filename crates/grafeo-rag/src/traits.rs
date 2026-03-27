@@ -121,8 +121,12 @@ pub trait FeedbackSink: Send + Sync {
     ///
     /// - `context`: the RAG context that was injected into the prompt
     /// - `response`: the LLM's response text
-    fn feedback(&self, context: &RagContext, response: &str, config: &RagConfig)
-        -> RagResult<FeedbackStats>;
+    fn feedback(
+        &self,
+        context: &RagContext,
+        response: &str,
+        config: &RagConfig,
+    ) -> RagResult<FeedbackStats>;
 }
 
 /// Statistics from a feedback operation.

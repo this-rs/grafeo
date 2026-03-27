@@ -69,10 +69,17 @@ pub struct RagConfig {
 }
 
 fn default_noise_properties() -> Vec<String> {
-    ["id", "uuid", "created_at", "updated_at", "modified_at", "_id"]
-        .iter()
-        .map(|s| (*s).to_string())
-        .collect()
+    [
+        "id",
+        "uuid",
+        "created_at",
+        "updated_at",
+        "modified_at",
+        "_id",
+    ]
+    .iter()
+    .map(|s| (*s).to_string())
+    .collect()
 }
 
 fn default_max_relations_display() -> usize {

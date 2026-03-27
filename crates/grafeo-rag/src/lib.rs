@@ -62,6 +62,6 @@ pub use feedback::CognitiveFeedback;
 pub use pipeline::RagPipeline;
 pub use retriever::EngramRetriever;
 pub use traits::{
-    ContextBuilder, FeedbackSink, FeedbackStats, RagContext, Retriever, RetrievalResult,
-    RetrievalSource, RetrievedNode,
+    ContextBuilder, FeedbackSink, FeedbackStats, RagContext, RetrievalResult, RetrievalSource,
+    RetrievedNode, Retriever,
 };

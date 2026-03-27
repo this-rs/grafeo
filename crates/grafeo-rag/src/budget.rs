@@ -24,7 +24,11 @@ pub fn estimate_tokens(node: &RetrievedNode, config: &RagConfig) -> usize {
     }
 
     // Properties: "- **key**: value\n" per property
-    let noise: Vec<String> = config.noise_properties.iter().map(|s| s.to_lowercase()).collect();
+    let noise: Vec<String> = config
+        .noise_properties
+        .iter()
+        .map(|s| s.to_lowercase())
+        .collect();
     for (key, value) in &node.properties {
         if noise.iter().any(|n| key.to_lowercase() == *n) {
             continue; // Skip noise properties in estimate too
@@ -35,8 +39,14 @@ pub fn estimate_tokens(node: &RetrievedNode, config: &RagConfig) -> usize {
 
     // Relations: "- _outgoing_: -[TYPE]→Name, ...\n"
     if config.include_relations {
-        let out_count = node.outgoing_relations.len().min(config.max_relations_display);
-        let in_count = node.incoming_relations.len().min(config.max_relations_display);
+        let out_count = node
+            .outgoing_relations
+            .len()
+            .min(config.max_relations_display);
+        let in_count = node
+            .incoming_relations
+            .len()
+            .min(config.max_relations_display);
         if out_count > 0 {
             chars += 16 + out_count * 25; // prefix + per-relation estimate
             if node.outgoing_relations.len() > config.max_relations_display {

@@ -85,10 +85,7 @@ pub fn rank_with_diversity(nodes: &mut Vec<RetrievedNode>) {
             let mut score = composite[j];
 
             // Apply redundancy penalty if this node's labels overlap with selected
-            let has_overlap = nodes[j]
-                .labels
-                .iter()
-                .any(|l| selected_labels.contains(l));
+            let has_overlap = nodes[j].labels.iter().any(|l| selected_labels.contains(l));
             if has_overlap {
                 score *= 1.0 - REDUNDANCY_PENALTY;
             }
