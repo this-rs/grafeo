@@ -579,6 +579,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Acknowledgments
 
+Obrain is a fork of [GrafeoDB](https://github.com/GrafeoDB/grafeo), the original embedded graph database. We build on its solid foundation — GQL/Cypher support, vectorized execution, ACID transactions — and extend it with a cognitive layer: semantic memory, neural knowledge graphs, and adaptive reasoning.
+
 Obrain's execution engine draws inspiration from:
 
 - [DuckDB](https://duckdb.org/), vectorized push-based execution, morsel-driven parallelism
