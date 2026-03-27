@@ -2,7 +2,7 @@
 //!
 //! Run with: `cargo run -p obrain-examples --bin vector_search`
 
-use obrain::{ObrainDB, NodeId, Value};
+use obrain::{NodeId, ObrainDB, Value};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = ObrainDB::new_in_memory();

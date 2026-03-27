@@ -770,7 +770,7 @@ fn to_memory_copies_named_graphs() {
 #[cfg(all(feature = "sparql", feature = "rdf"))]
 mod rdf_snapshots {
     use obrain_common::types::Value;
-    use obrain_engine::{Config, ObrainDB, GraphModel};
+    use obrain_engine::{Config, GraphModel, ObrainDB};
 
     fn rdf_db() -> ObrainDB {
         ObrainDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap()

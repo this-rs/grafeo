@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 
+use hashbrown::HashMap;
 use obrain_adapters::plugins::algorithms::{
     ArticulationPointsAlgorithm, BellmanFordAlgorithm, BetweennessCentralityAlgorithm,
     BfsAlgorithm, BridgesAlgorithm, ClosenessCentralityAlgorithm, ClusteringCoefficientAlgorithm,
@@ -19,7 +20,6 @@ use obrain_adapters::plugins::algorithms::{
 use obrain_adapters::plugins::{AlgorithmResult, ParameterDef, Parameters};
 use obrain_common::types::Value;
 use obrain_common::utils::error::{Error, Result};
-use hashbrown::HashMap;
 
 use crate::query::plan::LogicalExpression;
 

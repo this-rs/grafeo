@@ -2,7 +2,7 @@
 //!
 //! Run with: `cargo run -p obrain-examples --bin algorithms`
 
-use obrain::{ObrainDB, NodeId};
+use obrain::{NodeId, ObrainDB};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = ObrainDB::new_in_memory();

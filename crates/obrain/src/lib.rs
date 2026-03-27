@@ -66,8 +66,8 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 // Re-export the main database API
 pub use obrain_engine::{
-    AccessMode, Catalog, CatalogError, Config, ConfigError, DurabilityMode, ObrainDB, GraphModel,
-    GraphStore, GraphStoreMut, IndexDefinition, IndexType, Session, VERSION,
+    AccessMode, Catalog, CatalogError, Config, ConfigError, DurabilityMode, GraphModel, GraphStore,
+    GraphStoreMut, IndexDefinition, IndexType, ObrainDB, Session, VERSION,
 };
 
 // Re-export core types - you'll need these for working with IDs and values

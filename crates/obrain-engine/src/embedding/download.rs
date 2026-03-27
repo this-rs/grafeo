@@ -8,8 +8,8 @@
 
 use std::path::PathBuf;
 
-use obrain_common::utils::error::{Error, Result};
 use hf_hub::api::sync::Api;
+use obrain_common::utils::error::{Error, Result};
 
 use super::config::{EmbeddingModelConfig, ResolveInfo};
 

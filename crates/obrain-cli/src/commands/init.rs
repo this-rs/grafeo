@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use obrain_engine::{Config, ObrainDB, GraphModel};
+use obrain_engine::{Config, GraphModel, ObrainDB};
 
 use crate::output::{self, Format};
 use crate::{GraphMode, OutputFormat};

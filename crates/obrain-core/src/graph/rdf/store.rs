@@ -5,9 +5,9 @@
 
 use super::term::Term;
 use super::triple::{Triple, TriplePattern};
+use hashbrown::HashMap;
 use obrain_common::types::TransactionId;
 use obrain_common::utils::hash::FxHashSet;
-use hashbrown::HashMap;
 use parking_lot::RwLock;
 use std::sync::Arc;
 

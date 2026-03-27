@@ -5,7 +5,7 @@
 //!
 //! Run with: `cargo run -p obrain-examples --bin social_network`
 
-use obrain::{ObrainDB, NodeId};
+use obrain::{NodeId, ObrainDB};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Social Network — Cognitive Graph Example ===\n");

@@ -3,7 +3,7 @@
 //! Verifies GraphModel, DurabilityMode, Config::validate(), query routing,
 //! schema_constraints, and inspection API.
 
-use obrain_engine::{Config, ConfigError, DurabilityMode, ObrainDB, GraphModel};
+use obrain_engine::{Config, ConfigError, DurabilityMode, GraphModel, ObrainDB};
 
 // --- GraphModel routing tests ---
 

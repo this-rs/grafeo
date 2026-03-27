@@ -5,7 +5,7 @@
 //!
 //! Run with: `cargo run -p obrain-examples --bin iot_stream`
 
-use obrain::{ObrainDB, NodeId};
+use obrain::{NodeId, ObrainDB};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== IoT Event Stream — Cognitive Graph Example ===\n");

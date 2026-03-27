@@ -6,7 +6,7 @@
 
 #[cfg(all(feature = "sparql", feature = "rdf"))]
 mod tests {
-    use obrain_engine::{Config, ObrainDB, GraphModel};
+    use obrain_engine::{Config, GraphModel, ObrainDB};
 
     fn rdf_db() -> ObrainDB {
         ObrainDB::with_config(Config::in_memory().with_graph_model(GraphModel::Rdf)).unwrap()

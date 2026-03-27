@@ -22,8 +22,8 @@
 //! # }
 //! ```
 
-use obrain_common::types::{EdgeId, EpochId, NodeId, Value};
 use hashbrown::HashMap as HbHashMap;
+use obrain_common::types::{EdgeId, EpochId, NodeId, Value};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};

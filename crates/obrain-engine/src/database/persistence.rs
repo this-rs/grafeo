@@ -3,9 +3,9 @@
 #[cfg(feature = "wal")]
 use std::path::Path;
 
+use hashbrown::HashSet;
 use obrain_common::types::{EdgeId, EpochId, NodeId, Value};
 use obrain_common::utils::error::{Error, Result};
-use hashbrown::HashSet;
 
 use crate::config::Config;
 

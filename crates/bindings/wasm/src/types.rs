@@ -1,7 +1,7 @@
 //! Rust-to-JavaScript value conversions for WASM bindings.
 
-use obrain_common::types::Value;
 use js_sys::{Array, Float32Array, Object, Reflect, Uint8Array};
+use obrain_common::types::Value;
 use wasm_bindgen::prelude::*;
 
 /// Converts a Obrain [`Value`] to a JavaScript value.
