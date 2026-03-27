@@ -9,29 +9,50 @@ use crate::traits::RetrievedNode;
 
 /// Estimate the token count for a node's text representation.
 ///
-/// Uses a simple chars/token heuristic. More accurate estimation
-/// would require a tokenizer, but this is sufficient for budgeting.
+/// Accounts for markdown formatting overhead (headers, bullets, separators)
+/// on top of raw content characters. Uses chars/token heuristic.
 pub fn estimate_tokens(node: &RetrievedNode, config: &RagConfig) -> usize {
     let mut chars = 0usize;
 
-    // Labels line
+    // Section header: "### NodeName (score: X.XX)\n"
+    // or "## [Label] (score: X.XX)\n"
     if config.include_labels && !node.labels.is_empty() {
-        chars += node.labels.iter().map(|l| l.len() + 2).sum::<usize>() + 10;
+        // "### " + labels + " (score: X.XX)\n"
+        chars += 4 + node.labels.iter().map(|l| l.len() + 2).sum::<usize>() + 16;
+    } else {
+        chars += 25; // "### Node N (score: X.XX)\n"
     }
 
-    // Properties
+    // Properties: "- **key**: value\n" per property
+    let noise: Vec<String> = config.noise_properties.iter().map(|s| s.to_lowercase()).collect();
     for (key, value) in &node.properties {
-        chars += key.len() + value.len() + 4; // "key: value\n"
+        if noise.iter().any(|n| key.to_lowercase() == *n) {
+            continue; // Skip noise properties in estimate too
+        }
+        let val_len = value.len().min(500);
+        chars += 6 + key.len() + val_len + 1; // "- **" + key + "**: " + value + "\n"
     }
 
-    // Relations summary
+    // Relations: "- _outgoing_: -[TYPE]→Name, ...\n"
     if config.include_relations {
-        chars += node.outgoing_relations.len() * 30; // approximate
-        chars += node.incoming_relations.len() * 30;
+        let out_count = node.outgoing_relations.len().min(config.max_relations_display);
+        let in_count = node.incoming_relations.len().min(config.max_relations_display);
+        if out_count > 0 {
+            chars += 16 + out_count * 25; // prefix + per-relation estimate
+            if node.outgoing_relations.len() > config.max_relations_display {
+                chars += 25; // "... and N more outgoing\n"
+            }
+        }
+        if in_count > 0 {
+            chars += 16 + in_count * 25;
+            if node.incoming_relations.len() > config.max_relations_display {
+                chars += 25;
+            }
+        }
     }
 
-    // Section overhead (header, separators)
-    chars += 20;
+    // Trailing blank line between nodes
+    chars += 1;
 
     (chars as f64 / config.chars_per_token).ceil() as usize
 }

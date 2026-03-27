@@ -1,16 +1,17 @@
 //! Context builder — formats retrieved nodes into LLM-consumable text.
 //!
-//! The output is structured markdown with sections per concept, including
-//! labels, properties, and relation metadata. The builder handles ranking,
+//! The output is structured markdown grouped by label type, with properties,
+//! relation metadata, and noise filtering. The builder handles ranking,
 //! token budgeting, and formatting in a single pipeline.
 
+use std::collections::HashMap;
 use std::fmt::Write;
 
 use crate::budget::select_within_budget;
 use crate::config::RagConfig;
 use crate::error::RagResult;
 use crate::ranking::rank_with_diversity;
-use crate::traits::{ContextBuilder, RagContext, RetrievalResult};
+use crate::traits::{ContextBuilder, RagContext, RetrievalResult, RetrievedNode};
 
 /// Default context builder that produces structured markdown.
 pub struct GraphContextBuilder;
@@ -35,7 +36,7 @@ impl ContextBuilder for GraphContextBuilder {
         rank_with_diversity(&mut nodes);
 
         // Step 2: Select within budget
-        let (selected, estimated_tokens) = select_within_budget(&nodes, config);
+        let (selected, _estimated_tokens) = select_within_budget(&nodes, config);
 
         if selected.is_empty() {
             return Ok(RagContext {
@@ -46,66 +47,146 @@ impl ContextBuilder for GraphContextBuilder {
             });
         }
 
-        // Step 3: Format
-        let mut text = String::with_capacity(estimated_tokens * 4); // rough char estimate
+        // Build a name lookup for relation target nodes (best-effort)
+        let name_lookup = build_name_lookup(&selected);
+
+        // Collect noise property names (lowercased for comparison)
+        let noise: Vec<String> = config
+            .noise_properties
+            .iter()
+            .map(|s| s.to_lowercase())
+            .collect();
+
+        // Step 3: Group selected nodes by primary label
+        let mut label_groups: Vec<(String, Vec<&RetrievedNode>)> = Vec::new();
+        let mut label_order: HashMap<String, usize> = HashMap::new();
+
+        for node in &selected {
+            let primary_label = if config.include_labels && !node.labels.is_empty() {
+                node.labels[0].clone()
+            } else {
+                "Other".to_string()
+            };
+
+            if let Some(&idx) = label_order.get(&primary_label) {
+                label_groups[idx].1.push(node);
+            } else {
+                let idx = label_groups.len();
+                label_order.insert(primary_label.clone(), idx);
+                label_groups.push((primary_label, vec![node]));
+            }
+        }
+
+        // Step 4: Format grouped markdown
+        let mut text = String::with_capacity(4096);
         let mut node_ids = Vec::with_capacity(selected.len());
+
+        // Count distinct label types for the summary
+        let type_count = label_groups.len();
 
         writeln!(text, "# Graph Knowledge Context").unwrap();
         writeln!(
             text,
-            "_Retrieved {} relevant nodes from the knowledge graph._\n",
-            selected.len()
+            "_Retrieved {} nodes across {} types._\n",
+            selected.len(),
+            type_count
         )
         .unwrap();
 
-        for (i, node) in selected.iter().enumerate() {
-            node_ids.push(node.node_id);
+        for (label, group_nodes) in &label_groups {
+            // Section header per label group
+            writeln!(text, "## {label}\n").unwrap();
 
-            // Section header with labels
-            if config.include_labels && !node.labels.is_empty() {
-                let labels = node.labels.join(", ");
-                writeln!(text, "## [{labels}] (score: {:.2})", node.score).unwrap();
-            } else {
-                writeln!(text, "## Node {} (score: {:.2})", i + 1, node.score).unwrap();
-            }
+            for node in group_nodes {
+                node_ids.push(node.node_id);
 
-            // Properties
-            for (key, value) in &node.properties {
-                // Truncate very long values for readability
-                let val_str: &str = value.as_str();
-                let display_value = if val_str.len() > 500 {
-                    format!("{}...", &val_str[..500])
+                // Node sub-header with all labels and score
+                if node.labels.len() > 1 {
+                    let all_labels = node.labels.join(", ");
+                    writeln!(text, "### [{all_labels}] (score: {:.2})", node.score).unwrap();
                 } else {
-                    val_str.to_string()
-                };
-                writeln!(text, "- **{key}**: {display_value}").unwrap();
-            }
-
-            // Relations
-            if config.include_relations {
-                if !node.outgoing_relations.is_empty() {
-                    write!(text, "- _outgoing_: ").unwrap();
-                    let rels: Vec<String> = node
-                        .outgoing_relations
-                        .iter()
-                        .take(10) // Limit displayed relations
-                        .map(|(rel_type, target)| format!("-[{rel_type}]→{}", target.0))
-                        .collect();
-                    writeln!(text, "{}", rels.join(", ")).unwrap();
+                    // Try to use a "name" or "title" property as header
+                    let display_name = node
+                        .properties
+                        .get("name")
+                        .or_else(|| node.properties.get("title"))
+                        .map(|s| s.as_str())
+                        .unwrap_or("");
+                    if display_name.is_empty() {
+                        writeln!(text, "### (score: {:.2})", node.score).unwrap();
+                    } else {
+                        writeln!(text, "### {display_name} (score: {:.2})", node.score).unwrap();
+                    }
                 }
-                if !node.incoming_relations.is_empty() {
-                    write!(text, "- _incoming_: ").unwrap();
-                    let rels: Vec<String> = node
-                        .incoming_relations
-                        .iter()
-                        .take(10)
-                        .map(|(rel_type, source)| format!("{}←[{rel_type}]-", source.0))
-                        .collect();
-                    writeln!(text, "{}", rels.join(", ")).unwrap();
-                }
-            }
 
-            writeln!(text).unwrap();
+                // Properties (filtered for noise)
+                for (key, value) in &node.properties {
+                    if noise.iter().any(|n| key.to_lowercase() == *n) {
+                        continue;
+                    }
+                    let val_str: &str = value.as_str();
+                    if val_str.is_empty() {
+                        continue;
+                    }
+                    let display_value = if val_str.len() > 500 {
+                        format!("{}… ({} chars omitted)", &val_str[..500], val_str.len() - 500)
+                    } else {
+                        val_str.to_string()
+                    };
+                    writeln!(text, "- **{key}**: {display_value}").unwrap();
+                }
+
+                // Relations with resolved names
+                if config.include_relations {
+                    let max_display = config.max_relations_display;
+
+                    if !node.outgoing_relations.is_empty() {
+                        write!(text, "- _outgoing_: ").unwrap();
+                        let rels: Vec<String> = node
+                            .outgoing_relations
+                            .iter()
+                            .take(max_display)
+                            .map(|(rel_type, target)| {
+                                let target_name = name_lookup
+                                    .get(target)
+                                    .map(|s| format!("\"{}\"", s))
+                                    .unwrap_or_else(|| format!("{}", target.0));
+                                format!("-[{rel_type}]→{target_name}")
+                            })
+                            .collect();
+                        write!(text, "{}", rels.join(", ")).unwrap();
+                        let remaining = node.outgoing_relations.len().saturating_sub(max_display);
+                        if remaining > 0 {
+                            write!(text, " … and {remaining} more").unwrap();
+                        }
+                        writeln!(text).unwrap();
+                    }
+
+                    if !node.incoming_relations.is_empty() {
+                        write!(text, "- _incoming_: ").unwrap();
+                        let rels: Vec<String> = node
+                            .incoming_relations
+                            .iter()
+                            .take(max_display)
+                            .map(|(rel_type, source)| {
+                                let source_name = name_lookup
+                                    .get(source)
+                                    .map(|s| format!("\"{}\"", s))
+                                    .unwrap_or_else(|| format!("{}", source.0));
+                                format!("{source_name}←[{rel_type}]-")
+                            })
+                            .collect();
+                        write!(text, "{}", rels.join(", ")).unwrap();
+                        let remaining = node.incoming_relations.len().saturating_sub(max_display);
+                        if remaining > 0 {
+                            write!(text, " … and {remaining} more").unwrap();
+                        }
+                        writeln!(text).unwrap();
+                    }
+                }
+
+                writeln!(text).unwrap();
+            }
         }
 
         // Re-estimate tokens on the final formatted text
@@ -118,6 +199,29 @@ impl ContextBuilder for GraphContextBuilder {
             node_ids,
         })
     }
+}
+
+/// Build a NodeId → display name lookup from the selected nodes.
+///
+/// Uses the first available "name" or "title" property as the display name.
+/// This allows relation targets that are also in the selected set to show
+/// human-readable names instead of raw IDs.
+fn build_name_lookup(
+    nodes: &[&RetrievedNode],
+) -> HashMap<grafeo_common::types::NodeId, String> {
+    let mut lookup = HashMap::new();
+    for node in nodes {
+        if let Some(name) = node
+            .properties
+            .get("name")
+            .or_else(|| node.properties.get("title"))
+        {
+            if !name.is_empty() {
+                lookup.insert(node.node_id, name.clone());
+            }
+        }
+    }
+    lookup
 }
 
 /// Estimate tokens for a pre-formatted text string.
@@ -158,6 +262,39 @@ mod tests {
             nodes,
             engrams_matched: count,
             nodes_activated: count * 3,
+        }
+    }
+
+    fn make_mixed_result() -> RetrievalResult {
+        let nodes = vec![
+            RetrievedNode {
+                node_id: NodeId(1),
+                labels: vec!["Project".into()],
+                properties: [("name".into(), "Grafeo".into()), ("id".into(), "123".into())]
+                    .into_iter()
+                    .collect(),
+                score: 0.9,
+                source: RetrievalSource::EngramRecall { engram_id: 1, confidence: 0.9 },
+                outgoing_relations: vec![("HAS_NOTE".into(), NodeId(2))],
+                incoming_relations: vec![],
+            },
+            RetrievedNode {
+                node_id: NodeId(2),
+                labels: vec!["Note".into()],
+                properties: [("title".into(), "WAL Bug".into()), ("uuid".into(), "abc".into())]
+                    .into_iter()
+                    .collect(),
+                score: 0.7,
+                source: RetrievalSource::SpreadingActivation { depth: 1, activation: 0.7 },
+                outgoing_relations: vec![],
+                incoming_relations: vec![("HAS_NOTE".into(), NodeId(1))],
+            },
+        ];
+
+        RetrievalResult {
+            nodes,
+            engrams_matched: 1,
+            nodes_activated: 2,
         }
     }
 
@@ -222,7 +359,48 @@ mod tests {
         let builder = GraphContextBuilder::new();
 
         let ctx = builder.build(&result, &config).unwrap();
-        // Should have fewer nodes than the 50 available
         assert!(ctx.nodes_included < 50);
+    }
+
+    #[test]
+    fn groups_by_label_and_filters_noise() {
+        let result = make_mixed_result();
+        let config = RagConfig::default();
+        let builder = GraphContextBuilder::new();
+
+        let ctx = builder.build(&result, &config).unwrap();
+
+        // Should have label group headers
+        assert!(ctx.text.contains("## Project"));
+        assert!(ctx.text.contains("## Note"));
+
+        // Should show summary with type count
+        assert!(ctx.text.contains("across 2 types"));
+
+        // Noise properties should be filtered
+        assert!(!ctx.text.contains("**id**: 123"), "id property should be filtered");
+        assert!(!ctx.text.contains("**uuid**: abc"), "uuid property should be filtered");
+
+        // Real properties should be present
+        assert!(ctx.text.contains("Grafeo"));
+        assert!(ctx.text.contains("WAL Bug"));
+    }
+
+    #[test]
+    fn resolves_relation_names() {
+        let result = make_mixed_result();
+        let config = RagConfig {
+            include_relations: true,
+            ..RagConfig::default()
+        };
+        let builder = GraphContextBuilder::new();
+
+        let ctx = builder.build(&result, &config).unwrap();
+
+        // Relations should show resolved names when available
+        assert!(
+            ctx.text.contains("\"WAL Bug\"") || ctx.text.contains("\"Grafeo\""),
+            "Relations should show resolved node names"
+        );
     }
 }

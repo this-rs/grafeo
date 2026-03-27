@@ -48,12 +48,34 @@ pub struct RagConfig {
     /// Include node labels in the context output.
     pub include_labels: bool,
 
+    /// Property names to exclude from context output (noise filtering).
+    /// Properties whose name matches any of these strings (case-insensitive)
+    /// are hidden from the formatted context.
+    #[serde(default = "default_noise_properties")]
+    pub noise_properties: Vec<String>,
+
+    /// Maximum relations to display per direction (outgoing/incoming).
+    /// Excess relations show a "... and N more" indicator.
+    #[serde(default = "default_max_relations_display")]
+    pub max_relations_display: usize,
+
     // --- Feedback ---
     /// Hebbian reinforcement amount for synapses between co-activated concepts.
     pub feedback_reinforce_amount: f64,
 
     /// Energy boost amount for engrams whose content was used in the response.
     pub feedback_energy_boost: f64,
+}
+
+fn default_noise_properties() -> Vec<String> {
+    ["id", "uuid", "created_at", "updated_at", "modified_at", "_id"]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect()
+}
+
+fn default_max_relations_display() -> usize {
+    10
 }
 
 impl Default for RagConfig {
@@ -76,6 +98,8 @@ impl Default for RagConfig {
             max_context_nodes: 30,
             include_relations: true,
             include_labels: true,
+            noise_properties: default_noise_properties(),
+            max_relations_display: 10,
 
             // Feedback
             feedback_reinforce_amount: 0.3,
