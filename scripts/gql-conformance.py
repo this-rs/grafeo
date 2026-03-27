@@ -269,7 +269,7 @@ def cmd_dialect(
             "language": "GQL",
             "standard": "ISO/IEC 39075:2024",
             "homepage": "https://obrain.dev",
-            "repository": "https://github.com/ObrainDB/obrain",
+            "repository": "https://github.com/this-rs/obrain",
         },
         "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "summary": {

@@ -2,20 +2,20 @@
 
 All notable changes to Obrain will be documented in this file.
 
-This project was forked from [this-rs/obrain](https://github.com/this-rs/obrain) and rebranded as **Obrain** ([obrain.dev](https://obrain.dev)). The upstream Obrain changelog is preserved in `CHANGELOG-grafeo.md` for historical reference.
+This project was forked from [GrafeoDB/grafeo](https://github.com/GrafeoDB/grafeo) and rebranded as **Obrain** ([obrain.dev](https://obrain.dev)). The upstream Grafeo changelog is preserved in `CHANGELOG-grafeo.md` for historical reference.
 
 ## [0.0.1] - 2026-03-27
 
-### 🎉 Initial Release — Clean Break from Obrain
+### 🎉 Initial Release — Clean Break from Grafeo
 
-This is the first release of **Obrain**, a complete rebrand of the Obrain graph database.
+This is the first release of **Obrain**, a complete rebrand of the Grafeo graph database.
 
 ### Summary
 
-- Full rebrand: all references to "obrain" replaced with "obrain" across 15 crates, 7 language bindings, CI/CD, and documentation
-- New file extension: `.obrain` (replaces `.obrain`)
+- Full rebrand: all references to "grafeo" replaced with "obrain" across 15 crates, 7 language bindings, CI/CD, and documentation
+- New file extension: `.obrain` (replaces `.grafeo`)
 - New npm scope: `@obrain`
-- Version reset to `0.0.1` — clean break, no backward compatibility with previous Obrain releases
+- Version reset to `0.0.1` — clean break, no backward compatibility with previous Grafeo releases
 
 ### Inherited Features
 

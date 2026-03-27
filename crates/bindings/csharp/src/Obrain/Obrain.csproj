@@ -6,12 +6,12 @@
 
     <!-- NuGet metadata -->
     <PackageId>Obrain</PackageId>
-    <Version>0.5.24</Version>
+    <Version>0.0.1</Version>
     <Description>C# bindings for the Obrain graph database. Supports GQL queries, ACID transactions, and vector search.</Description>
-    <Authors>ObrainDB</Authors>
+    <Authors>this-rs</Authors>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageProjectUrl>https://obrain.dev</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/ObrainDB/obrain</RepositoryUrl>
+    <RepositoryUrl>https://github.com/this-rs/obrain</RepositoryUrl>
     <PackageTags>database;graph;gql;ffi;native</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>

@@ -15,7 +15,7 @@ from pathlib import Path
 __version__ = "0.4.4"
 
 # GitHub release download URL template
-_GITHUB_RELEASE = "https://github.com/ObrainDB/obrain/releases/download"
+_GITHUB_RELEASE = "https://github.com/this-rs/obrain/releases/download"
 
 
 def _binary_name() -> str:

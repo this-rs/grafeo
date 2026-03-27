@@ -75,7 +75,7 @@ try {
         `Install via one of:\n` +
         `  npm install @obrain-db/cli\n` +
         `  cargo install obrain-cli\n` +
-        `  Download from https://github.com/ObrainDB/obrain/releases\n`
+        `  Download from https://github.com/this-rs/obrain/releases\n`
     );
     process.exit(1);
   }
