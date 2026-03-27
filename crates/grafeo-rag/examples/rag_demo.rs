@@ -12,9 +12,7 @@ use std::sync::Arc;
 
 use grafeo::GrafeoDB;
 use grafeo_cognitive::engram::EngramStore;
-use grafeo_rag::{
-    EngramRetriever, GraphContextBuilder, RagConfig, RagPipeline,
-};
+use grafeo_rag::{EngramRetriever, GraphContextBuilder, RagConfig, RagPipeline};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -45,7 +43,6 @@ fn main() {
                 return;
             }
             _ => {
-                // Treat unknown args as query text
                 query = Some(args[i..].join(" "));
                 break;
             }
@@ -81,19 +78,15 @@ fn main() {
     };
 
     let store = Arc::clone(db.store());
-
-    // Print some stats
     let node_count = store.node_count();
     eprintln!("[rag] Graph: {} nodes", node_count);
 
-    // Create cognitive components
     let engram_store = Arc::new(EngramStore::new(None));
 
-    // Create the RAG pipeline
     let retriever = EngramRetriever::with_defaults(
         Arc::clone(&store),
         Arc::clone(&engram_store),
-        None, // No synapse store for demo
+        None,
     );
 
     let context_builder = GraphContextBuilder::new();
@@ -106,23 +99,52 @@ fn main() {
         ..RagConfig::default()
     };
 
-    let pipeline = RagPipeline::new(retriever, context_builder, None, config);
+    let mut pipeline = RagPipeline::new(retriever, context_builder, None, config);
 
     match query {
         Some(q) => {
-            // Single query mode
-            run_query(&pipeline, &q);
+            run_query(&pipeline, &q, false);
         }
         None => {
-            // Interactive REPL mode
-            interactive_loop(&pipeline);
+            interactive_loop(&mut pipeline, node_count);
         }
     }
 }
 
 /// Execute a single query and print results.
-fn run_query(pipeline: &RagPipeline, query: &str) {
+fn run_query(pipeline: &RagPipeline, query: &str, trace: bool) {
     eprintln!("[rag] Query: \"{}\"", query);
+
+    if trace {
+        // Trace mode: show retrieval details
+        match pipeline.retrieve(query) {
+            Ok(result) => {
+                eprintln!("[trace] Engrams matched: {}", result.engrams_matched);
+                eprintln!("[trace] Nodes activated: {}", result.nodes_activated);
+                eprintln!("[trace] Nodes retrieved: {}", result.nodes.len());
+                for (i, node) in result.nodes.iter().take(10).enumerate() {
+                    let labels = node.labels.join(",");
+                    let name = node
+                        .properties
+                        .get("name")
+                        .or_else(|| node.properties.get("title"))
+                        .map(|s| s.as_str())
+                        .unwrap_or("?");
+                    eprintln!(
+                        "[trace]   #{}: [{labels}] \"{name}\" score={:.3} src={:?}",
+                        i + 1,
+                        node.score,
+                        node.source
+                    );
+                }
+                eprintln!();
+            }
+            Err(e) => {
+                eprintln!("[trace] Retrieval error: {}", e);
+            }
+        }
+    }
+
     eprintln!("[rag] Retrieving...\n");
 
     match pipeline.query(query) {
@@ -144,22 +166,23 @@ fn run_query(pipeline: &RagPipeline, query: &str) {
 }
 
 /// Interactive REPL — read queries from stdin, display RAG context.
-fn interactive_loop(pipeline: &RagPipeline) {
+fn interactive_loop(pipeline: &mut RagPipeline, node_count: usize) {
+    let mut trace_mode = false;
+
     eprintln!("[rag] Interactive mode — type a query, press Enter.");
-    eprintln!("[rag] Commands: /quit or /exit to leave, /help for help.\n");
+    eprintln!("[rag] Commands: /help for all commands.\n");
 
     let stdin = io::stdin();
     let mut reader = stdin.lock();
 
     loop {
-        // Prompt
-        eprint!("rag> ");
+        let preset = pipeline.config().preset_name();
+        eprint!("rag({preset})> ");
         io::stderr().flush().ok();
 
         let mut line = String::new();
         match reader.read_line(&mut line) {
             Ok(0) => {
-                // EOF (Ctrl-D)
                 eprintln!("\n[rag] Bye!");
                 break;
             }
@@ -182,16 +205,74 @@ fn interactive_loop(pipeline: &RagPipeline) {
                 break;
             }
             "/help" | "/h" => {
-                eprintln!("  Type any question to search the graph.");
-                eprintln!("  /quit or /exit  — leave");
-                eprintln!("  /help           — this message\n");
+                eprintln!("  Type any question to search the graph.\n");
+                eprintln!("  /stats            — graph & pipeline stats");
+                eprintln!("  /config            — show current configuration");
+                eprintln!("  /config fast       — switch to fast preset");
+                eprintln!("  /config balanced   — switch to balanced preset (default)");
+                eprintln!("  /config thorough   — switch to thorough preset");
+                eprintln!("  /trace             — toggle trace mode (show cues & scores)");
+                eprintln!("  /quit or /exit     — leave\n");
+                continue;
+            }
+            "/stats" => {
+                let cfg = pipeline.config();
+                eprintln!("  Graph: {} nodes", node_count);
+                eprintln!("  Preset: {}", cfg.preset_name());
+                eprintln!("  Token budget: {}", cfg.token_budget);
+                eprintln!("  Max context nodes: {}", cfg.max_context_nodes);
+                eprintln!("  Trace mode: {}\n", if trace_mode { "ON" } else { "OFF" });
+                continue;
+            }
+            "/config" => {
+                let cfg = pipeline.config();
+                eprintln!("  preset: {}", cfg.preset_name());
+                eprintln!("  --- Recall ---");
+                eprintln!("  max_engrams: {}", cfg.max_engrams);
+                eprintln!("  min_recall_confidence: {}", cfg.min_recall_confidence);
+                eprintln!("  --- Activation ---");
+                eprintln!("  activation_depth: {}", cfg.activation_depth);
+                eprintln!("  activation_decay: {}", cfg.activation_decay);
+                eprintln!("  max_activated_nodes: {}", cfg.max_activated_nodes);
+                eprintln!("  --- Context ---");
+                eprintln!("  token_budget: {}", cfg.token_budget);
+                eprintln!("  max_context_nodes: {}", cfg.max_context_nodes);
+                eprintln!("  include_relations: {}", cfg.include_relations);
+                eprintln!("  noise_properties: {:?}\n", cfg.noise_properties);
+                continue;
+            }
+            "/config fast" => {
+                pipeline.set_config(RagConfig::fast());
+                eprintln!("[rag] Switched to fast preset (budget=1000, depth=1)\n");
+                continue;
+            }
+            "/config balanced" => {
+                pipeline.set_config(RagConfig::balanced());
+                eprintln!("[rag] Switched to balanced preset (budget=2000, depth=2)\n");
+                continue;
+            }
+            "/config thorough" => {
+                pipeline.set_config(RagConfig::thorough());
+                eprintln!("[rag] Switched to thorough preset (budget=4000, depth=3)\n");
+                continue;
+            }
+            "/trace" => {
+                trace_mode = !trace_mode;
+                eprintln!(
+                    "[rag] Trace mode: {}\n",
+                    if trace_mode { "ON" } else { "OFF" }
+                );
+                continue;
+            }
+            _ if trimmed.starts_with('/') => {
+                eprintln!("[rag] Unknown command: {}. Type /help for help.\n", trimmed);
                 continue;
             }
             _ => {}
         }
 
-        run_query(pipeline, trimmed);
-        println!(); // blank line between results
+        run_query(pipeline, trimmed, trace_mode);
+        println!();
     }
 }
 
@@ -200,7 +281,6 @@ fn create_demo_db() -> GrafeoDB {
     let db = GrafeoDB::new_in_memory();
     let session = db.session();
 
-    // Insert sample data
     let queries = [
         "INSERT (:Project {name: 'Grafeo', description: 'High-performance embeddable graph database'})",
         "INSERT (:Project {name: 'Project Orchestrator', description: 'MCP-based project management with cognitive features'})",
@@ -219,7 +299,6 @@ fn create_demo_db() -> GrafeoDB {
         }
     }
 
-    // Add some relationships
     let rel_queries = [
         "MATCH (p:Project {name: 'Grafeo'}), (n:Note {title: 'WAL Recovery Bug'}) INSERT (p)-[:HAS_NOTE]->(n)",
         "MATCH (p:Project {name: 'Project Orchestrator'}), (pl:Plan) INSERT (p)-[:HAS_PLAN]->(pl)",
@@ -235,4 +314,3 @@ fn create_demo_db() -> GrafeoDB {
 
     db
 }
-

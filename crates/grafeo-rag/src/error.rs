@@ -24,6 +24,10 @@ pub enum RagError {
         min_required: usize,
     },
 
+    /// Invalid configuration parameter.
+    #[error("config error: {0}")]
+    Config(String),
+
     /// Internal error.
     #[error("internal error: {0}")]
     Internal(String),

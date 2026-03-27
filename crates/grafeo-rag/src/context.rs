@@ -44,6 +44,7 @@ impl ContextBuilder for GraphContextBuilder {
                 estimated_tokens: 0,
                 nodes_included: 0,
                 node_ids: Vec::new(),
+                node_texts: Vec::new(),
             });
         }
 
@@ -80,6 +81,8 @@ impl ContextBuilder for GraphContextBuilder {
         // Step 4: Format grouped markdown
         let mut text = String::with_capacity(4096);
         let mut node_ids = Vec::with_capacity(selected.len());
+        let mut node_texts: Vec<(grafeo_common::types::NodeId, Vec<String>)> =
+            Vec::with_capacity(selected.len());
 
         // Count distinct label types for the summary
         let type_count = label_groups.len();
@@ -99,6 +102,15 @@ impl ContextBuilder for GraphContextBuilder {
 
             for node in group_nodes {
                 node_ids.push(node.node_id);
+
+                // Collect significant text values for feedback mention detection
+                let text_values: Vec<String> = node
+                    .properties
+                    .values()
+                    .filter(|v| v.len() > 3)
+                    .cloned()
+                    .collect();
+                node_texts.push((node.node_id, text_values));
 
                 // Node sub-header with all labels and score
                 if node.labels.len() > 1 {
@@ -197,6 +209,7 @@ impl ContextBuilder for GraphContextBuilder {
             estimated_tokens: final_tokens,
             nodes_included: node_ids.len(),
             node_ids,
+            node_texts,
         })
     }
 }

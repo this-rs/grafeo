@@ -86,6 +86,12 @@ pub struct RagContext {
 
     /// Node IDs included (for feedback tracking).
     pub node_ids: Vec<NodeId>,
+
+    /// Per-node text values for response-aware feedback.
+    /// Each entry is `(node_id, [text_values])` — the significant string
+    /// property values from that node. Used by `FeedbackSink` to detect
+    /// which nodes were actually mentioned in the LLM response.
+    pub node_texts: Vec<(NodeId, Vec<String>)>,
 }
 
 /// Retriever — finds relevant graph nodes given a text query.

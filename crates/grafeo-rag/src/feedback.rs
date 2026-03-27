@@ -77,21 +77,41 @@ impl FeedbackSink for CognitiveFeedback {
             return Ok(stats);
         }
 
-        // Boost energy for all nodes that were included in the context
+        // Find which nodes are actually mentioned in the LLM response
+        // using the pre-extracted text values from context building
+        let mentioned = self.find_mentioned_nodes(context, response, &context.node_texts);
+
+        // Boost energy: full boost for mentioned nodes, reduced for context-only
         if let Some(ref energy_store) = self.energy_store {
             for node_id in &context.node_ids {
-                energy_store.boost(*node_id, config.feedback_energy_boost);
+                let boost = if mentioned.contains(node_id) {
+                    config.feedback_energy_boost
+                } else {
+                    config.feedback_energy_boost * 0.3 // Reduced boost for unmentioned
+                };
+                energy_store.boost(*node_id, boost);
                 stats.nodes_boosted += 1;
             }
         }
 
-        // Reinforce synapses between all pairs of context nodes
-        // (they were co-activated in the same retrieval)
+        // Reinforce synapses only between nodes that were both mentioned
+        // in the response (response-aware Hebbian reinforcement).
+        // Falls back to all context pairs if no mentions detected.
         if let Some(ref synapse_store) = self.synapse_store {
-            let nodes = &context.node_ids;
-            for i in 0..nodes.len() {
-                for j in (i + 1)..nodes.len() {
-                    synapse_store.reinforce(nodes[i], nodes[j], config.feedback_reinforce_amount);
+            let reinforce_set = if mentioned.len() >= 2 {
+                &mentioned
+            } else {
+                // Fallback: reinforce all context pairs if we can't detect mentions
+                &context.node_ids
+            };
+
+            for i in 0..reinforce_set.len() {
+                for j in (i + 1)..reinforce_set.len() {
+                    synapse_store.reinforce(
+                        reinforce_set[i],
+                        reinforce_set[j],
+                        config.feedback_reinforce_amount,
+                    );
                     stats.synapses_reinforced += 1;
                 }
             }
@@ -113,6 +133,7 @@ mod tests {
             estimated_tokens: 10,
             nodes_included: 2,
             node_ids: vec![NodeId(1), NodeId(2)],
+            node_texts: vec![],
         };
         let config = RagConfig::default();
 
@@ -129,6 +150,7 @@ mod tests {
             estimated_tokens: 5,
             nodes_included: 1,
             node_ids: vec![NodeId(1)],
+            node_texts: vec![],
         };
         let config = RagConfig::default();
 

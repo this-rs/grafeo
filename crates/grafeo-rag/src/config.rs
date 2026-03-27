@@ -1,5 +1,6 @@
 //! Configuration for the RAG pipeline.
 
+use crate::error::{RagError, RagResult};
 use serde::{Deserialize, Serialize};
 
 /// Configuration for the RAG pipeline.
@@ -76,6 +77,87 @@ fn default_noise_properties() -> Vec<String> {
 
 fn default_max_relations_display() -> usize {
     10
+}
+
+impl RagConfig {
+    /// Fast preset — minimal recall, shallow activation, small budget.
+    /// Best for low-latency queries or resource-constrained environments.
+    pub fn fast() -> Self {
+        Self {
+            max_engrams: 5,
+            min_recall_confidence: 0.2,
+            activation_depth: 1,
+            activation_decay: 0.3,
+            max_activated_nodes: 100,
+            token_budget: 1000,
+            max_context_nodes: 10,
+            ..Self::default()
+        }
+    }
+
+    /// Balanced preset — the default configuration.
+    pub fn balanced() -> Self {
+        Self::default()
+    }
+
+    /// Thorough preset — deep recall, wider activation, large budget.
+    /// Best for complex queries where comprehensiveness matters more than speed.
+    pub fn thorough() -> Self {
+        Self {
+            max_engrams: 30,
+            min_recall_confidence: 0.05,
+            activation_depth: 3,
+            activation_decay: 0.6,
+            max_activated_nodes: 1000,
+            token_budget: 4000,
+            max_context_nodes: 50,
+            ..Self::default()
+        }
+    }
+
+    /// Validate configuration parameters.
+    ///
+    /// Returns an error if any parameter has an invalid value.
+    pub fn validate(&self) -> RagResult<()> {
+        if self.activation_decay <= 0.0 || self.activation_decay >= 1.0 {
+            return Err(RagError::Config(
+                "activation_decay must be in (0.0, 1.0)".into(),
+            ));
+        }
+        if self.token_budget == 0 {
+            return Err(RagError::Config("token_budget must be > 0".into()));
+        }
+        if self.max_context_nodes == 0 {
+            return Err(RagError::Config("max_context_nodes must be > 0".into()));
+        }
+        if self.max_engrams == 0 {
+            return Err(RagError::Config("max_engrams must be > 0".into()));
+        }
+        if self.chars_per_token <= 0.0 {
+            return Err(RagError::Config("chars_per_token must be > 0.0".into()));
+        }
+        Ok(())
+    }
+
+    /// Return the preset name if this config matches a known preset.
+    pub fn preset_name(&self) -> &'static str {
+        let fast = Self::fast();
+        let thorough = Self::thorough();
+
+        if self.max_engrams == fast.max_engrams
+            && self.activation_depth == fast.activation_depth
+            && self.token_budget == fast.token_budget
+        {
+            "fast"
+        } else if self.max_engrams == thorough.max_engrams
+            && self.activation_depth == thorough.activation_depth
+            && self.token_budget == thorough.token_budget
+        {
+            "thorough"
+        } else {
+            "balanced"
+        }
+    }
 }
 
 impl Default for RagConfig {
