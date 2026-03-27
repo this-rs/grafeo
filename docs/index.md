@@ -1,6 +1,6 @@
 ---
-title: Obrain - High-Performance Graph Database
-description: A high-performance, embeddable graph database with a Rust core and no required C dependencies. Python, Node.js, Go, C, C#, Dart and WebAssembly bindings. GQL (ISO standard) query language.
+title: Obrain - The Graph Database That Learns
+description: A cognitive graph database with engrams, Hebbian synapses, spreading activation, and 7 biomimetic layers. High-performance Rust core with Python, Node.js, Go, C, C#, Dart and WebAssembly bindings.
 hide:
   - navigation
   - toc
@@ -16,7 +16,9 @@ hide:
 
 # **Obrain**
 
-### A fast, lean, embeddable graph database built in Rust
+### The graph database that learns
+
+**Cognitive graph engine** — your data forms engrams, builds synapses, and surfaces insights through spreading activation. Built in Rust, embeddable everywhere.
 
 [Get Started](getting-started/index.md){ .md-button .md-button--primary }
 [View on GitHub](https://github.com/this-rs/obrain){ .md-button }
@@ -29,63 +31,60 @@ hide:
 
 ## Why Obrain?
 
+Traditional graph databases store nodes and edges, then wait for queries. Obrain goes further — it **thinks** about its own topology, continuously learning what matters.
+
 <div class="grid cards" markdown>
 
--   :material-lightning-bolt:{ .lg .middle } **High Performance**
+-   :material-brain:{ .lg .middle } **Cognitive Engrams**
 
     ---
 
-    Fastest graph database tested on the [LDBC Social Network Benchmark](ecosystem/graph-bench.md), both embedded and as a server, with a lower memory footprint than other in-memory databases. Built in Rust with vectorized execution, adaptive chunking and SIMD-optimized operations.
+    Every node carries **energy** that decays over time. Mutations boost activation; unused data fades naturally. Your graph remembers what matters and forgets what doesn't — like biological memory.
 
--   :material-database-search:{ .lg .middle } **Multi-Language Queries**
-
-    ---
-
-    GQL, Cypher, Gremlin, GraphQL, SPARQL and SQL/PGQ. Choose the query language that fits the project and expertise level.
-
--   :material-graph:{ .lg .middle } **LPG & RDF Support**
+-   :material-transit-connection-variant:{ .lg .middle } **Hebbian Synapses**
 
     ---
 
-    Dual data model support for both Labeled Property Graphs and RDF triples. Choose the model that fits the domain.
+    Edges strengthen when both endpoints are co-activated — "neurons that fire together wire together." Synapses compete, prune, and self-organize based on real usage patterns.
 
--   :material-vector-line:{ .lg .middle } **Vector Search**
-
-    ---
-
-    HNSW-based similarity search with quantization (Scalar, Binary, Product). Combine graph traversal with semantic similarity.
-
--   :material-memory:{ .lg .middle } **Embedded or Standalone**
+-   :material-scatter-plot:{ .lg .middle } **Spreading Activation**
 
     ---
 
-    Embed directly into applications with zero external dependencies, or run as a standalone server with REST API and web UI. From edge devices to production clusters.
+    Query one node and energy propagates through synapses via BFS, revealing related hot zones. Discover implicit connections your queries never explicitly asked for.
 
--   :fontawesome-brands-rust:{ .lg .middle } **Rust Core**
-
-    ---
-
-    Core database engine written in Rust with no required C dependencies. Optional allocators (jemalloc/mimalloc) and TLS use C libraries for performance. Memory-safe by design with fearless concurrency.
-
--   :material-shield-check:{ .lg .middle } **ACID Transactions**
+-   :material-layers-triple:{ .lg .middle } **7 Biomimetic Layers**
 
     ---
 
-    Full ACID compliance with MVCC-based snapshot isolation. Reliable transactions for production workloads.
+    Query languages → Query engine → Graph storage → Reactive pipeline → Cognitive layer → Index layer → Bindings. Each layer mirrors a biological information-processing stage.
 
--   :material-language-python:{ .lg .middle } **Multi-Language Bindings**
-
-    ---
-
-    Python (PyO3), Node.js/TypeScript (napi-rs), Go (CGO), C (FFI), C# (.NET 8 P/Invoke), Dart (dart:ffi) and WebAssembly (wasm-bindgen). Use Obrain from the language of choice.
-
--   :material-puzzle:{ .lg .middle } **Ecosystem**
+-   :material-shield-alert:{ .lg .middle } **Scars & Risk Fabric**
 
     ---
 
-    AI integrations (LangChain, LlamaIndex, MCP), interactive notebook widgets, browser-based graphs via WebAssembly, standalone server with web UI and benchmarking tools.
+    Failed transactions leave **scars** that decay but persist — the graph remembers past problems. The **knowledge fabric** scores every node for risk, staleness, and structural importance.
+
+-   :material-robot:{ .lg .middle } **RAG-Native**
+
+    ---
+
+    HNSW vector search, BM25 full-text, hybrid search with RRF fusion. Combined with cognitive scoring, Obrain is purpose-built for Retrieval-Augmented Generation pipelines.
 
 </div>
+
+---
+
+## Cognitive vs Traditional
+
+| Traditional Graph DB | Obrain (Cognitive Graph DB) |
+|---------------------|----------------------------|
+| Static storage | **Reactive** — mutations trigger cognitive updates |
+| Edges are inert | **Synapses** — edges strengthen with use, decay without it |
+| Nodes are passive | **Engrams** — nodes have activation energy that decays exponentially |
+| Manual analysis | **Fabric** — continuous risk, staleness, and centrality scoring |
+| No memory of errors | **Scars** — persistent memory of failures that influence risk |
+| Uniform importance | **Spreading activation** — query one node, discover related hot zones |
 
 ---
 
@@ -100,7 +99,7 @@ hide:
     ```python
     import obrain
 
-    # Create an in-memory database
+    # Create an in-memory cognitive database
     db = obrain.ObrainDB()
 
     # Create nodes and edges
@@ -134,7 +133,7 @@ hide:
     use obrain::ObrainDB;
 
     fn main() -> Result<(), obrain_common::utils::error::Error> {
-        // Create an in-memory database
+        // Create an in-memory cognitive database
         let db = ObrainDB::new_in_memory();
 
         // Create a session and execute queries
@@ -166,25 +165,65 @@ hide:
 
 ---
 
+## Graph Foundation
+
+Obrain's cognitive intelligence runs on top of a battle-tested graph engine:
+
+<div class="grid cards" markdown>
+
+-   :material-lightning-bolt:{ .lg .middle } **High Performance**
+
+    ---
+
+    Fastest graph database tested on the [LDBC Social Network Benchmark](ecosystem/graph-bench.md), both embedded and as a server, with a lower memory footprint than other in-memory databases.
+
+-   :material-database-search:{ .lg .middle } **Multi-Language Queries**
+
+    ---
+
+    GQL, Cypher, Gremlin, GraphQL, SPARQL and SQL/PGQ. Choose the query language that fits the project.
+
+-   :material-graph:{ .lg .middle } **LPG & RDF Support**
+
+    ---
+
+    Dual data model support for both Labeled Property Graphs and RDF triples. Choose the model that fits the domain.
+
+-   :material-vector-line:{ .lg .middle } **Vector Search**
+
+    ---
+
+    HNSW-based similarity search with quantization (Scalar, Binary, Product). Combine graph traversal with semantic similarity.
+
+-   :material-memory:{ .lg .middle } **Embedded or Standalone**
+
+    ---
+
+    Embed directly into applications with zero external dependencies, or run as a standalone server with REST API and web UI.
+
+-   :fontawesome-brands-rust:{ .lg .middle } **Rust Core**
+
+    ---
+
+    Core engine written in Rust with no required C dependencies. Memory-safe by design with fearless concurrency.
+
+-   :material-shield-check:{ .lg .middle } **ACID Transactions**
+
+    ---
+
+    Full ACID compliance with MVCC-based snapshot isolation. Reliable transactions for production workloads.
+
+-   :material-language-python:{ .lg .middle } **Multi-Language Bindings**
+
+    ---
+
+    Python (PyO3), Node.js/TypeScript (napi-rs), Go (CGO), C (FFI), C# (.NET 8 P/Invoke), Dart (dart:ffi) and WebAssembly (wasm-bindgen).
+
+</div>
+
+---
+
 ## Features
-
-### Dual Data Model Support
-
-Obrain supports both major graph data models with optimized storage for each:
-
-=== "LPG (Labeled Property Graph)"
-
-    - **Nodes** with labels and properties
-    - **Edges** with types and properties
-    - **Properties** supporting rich data types
-    - Ideal for social networks, knowledge graphs, application data
-
-=== "RDF (Resource Description Framework)"
-
-    - **Triples**: subject-predicate-object statements
-    - **SPO/POS/OSP indexes** for efficient querying
-    - W3C standard compliance
-    - Ideal for semantic web, linked data, ontologies
 
 ### Query Languages
 
@@ -199,53 +238,9 @@ Choose the query language that fits the project:
 | **SPARQL** | RDF | W3C standard for RDF queries |
 | **SQL/PGQ** | LPG | SQL:2023 GRAPH_TABLE for SQL-native graph queries |
 
-=== "GQL"
-
-    ```sql
-    MATCH (me:Person {name: 'Alix'})-[:KNOWS]->(friend)-[:KNOWS]->(fof)
-    WHERE fof <> me
-    RETURN DISTINCT fof.name
-    ```
-
-=== "Cypher"
-
-    ```cypher
-    MATCH (me:Person {name: 'Alix'})-[:KNOWS]->(friend)-[:KNOWS]->(fof)
-    WHERE fof <> me
-    RETURN DISTINCT fof.name
-    ```
-
-=== "Gremlin"
-
-    ```gremlin
-    g.V().has('name', 'Alix').out('KNOWS').out('KNOWS').
-      where(neq('me')).values('name').dedup()
-    ```
-
-=== "GraphQL"
-
-    ```graphql
-    {
-      Person(name: "Alix") {
-        friends { friends { name } }
-      }
-    }
-    ```
-
-=== "SPARQL"
-
-    ```sparql
-    SELECT DISTINCT ?fofName WHERE {
-      ?me foaf:name "Alix" .
-      ?me foaf:knows ?friend .
-      ?friend foaf:knows ?fof .
-      ?fof foaf:name ?fofName .
-      FILTER(?fof != ?me)
-    }
-    ```
-
 ### Architecture Highlights
 
+- **7 biomimetic layers**: Query → Engine → Storage → Reactive → Cognitive → Index → Bindings
 - **Push-based execution engine** with morsel-driven parallelism
 - **Columnar storage** with type-specific compression
 - **Cost-based query optimizer** with cardinality estimation

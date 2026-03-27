@@ -14,11 +14,15 @@
 [![MSRV](https://img.shields.io/badge/MSRV-1.91.1-blue)](https://www.rust-lang.org)
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org)
 
-# Obrain — Cognitive Graph Database
+# Obrain — The Graph Database That Learns
 
-Obrain is a **cognitive graph database** — a high-performance graph engine with built-in reactive intelligence. Beyond storing and querying graph data, Obrain continuously reasons about its own topology: nodes carry **energy** that decays over time, edges form **Hebbian synapses** that strengthen with co-activation, and a **knowledge fabric** scores every node for risk, staleness, and structural importance.
+Obrain is a **cognitive graph database** — a high-performance graph engine where data forms **engrams**, connections become **Hebbian synapses**, and queries trigger **spreading activation** across the topology.
 
-This means your graph isn't just data — it's a living system that remembers what matters, forgets what doesn't, and surfaces insights automatically.
+Built on **7 biomimetic layers** (Query → Engine → Storage → Reactive → Cognitive → Index → Bindings), Obrain continuously reasons about its own structure: nodes carry energy that decays like biological memory, edges strengthen through co-activation, and a knowledge fabric scores every node for risk, staleness, and structural importance.
+
+**Your graph isn't just data — it's a living system that remembers what matters, forgets what doesn't, and surfaces insights automatically.**
+
+> 🧠 Purpose-built for **RAG pipelines**, **AI agents**, and **knowledge management** — combine cognitive scoring with HNSW vector search, BM25 full-text, and hybrid retrieval.
 
 On the [LDBC Social Network Benchmark](https://github.com/this-rs/graph-bench), Obrain is the fastest tested graph database in both embedded and server configurations, while using a fraction of the memory.
 
@@ -26,7 +30,7 @@ On the [LDBC Social Network Benchmark](https://github.com/this-rs/graph-bench), 
 
 ## Overview
 
-Traditional graph databases store nodes and edges, then wait for you to ask questions. Obrain does more:
+Traditional graph databases store nodes and edges, then wait for you to ask questions. Obrain's cognitive engine does more — engrams, synapses, scars, and a knowledge fabric turn static data into a self-aware system:
 
 | Traditional Graph DB | Obrain (Cognitive Graph DB) |
 |---------------------|----------------------------|
@@ -125,6 +129,36 @@ const result = await db.execute(`
 console.log(result.rows);
 await db.close();
 ```
+
+## RAG with Cognitive Scoring
+
+Obrain combines vector search with cognitive awareness — retrieve not just semantically similar nodes, but the ones your graph considers **most alive and relevant**:
+
+```python
+import obrain
+
+db = obrain.ObrainDB()
+
+# Store documents with embeddings
+db.execute("""
+    INSERT (:Document {title: 'Graph Theory', embedding: [0.1, 0.8, 0.3, ...]})
+    INSERT (:Document {title: 'Neural Networks', embedding: [0.7, 0.2, 0.9, ...]})
+""")
+
+# Hybrid search: vector similarity + cognitive energy
+result = db.execute("""
+    CALL obrain.hybrid_search({
+        query_vector: [0.5, 0.6, 0.4, ...],
+        top_k: 10
+    })
+    YIELD node_id, score
+    MATCH (d:Document) WHERE ID(d) = node_id
+    RETURN d.title, score, obrain.energy(node_id) AS vitality
+    ORDER BY score * vitality DESC
+""")
+```
+
+Frequently accessed documents gain energy; stale ones fade. Combined with spreading activation, related concepts light up even when they don't match the query vector directly.
 
 ## Cognitive Primitives
 

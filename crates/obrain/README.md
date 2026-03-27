@@ -1,6 +1,17 @@
-A high-performance, embeddable graph database with a Rust core and no required C dependencies, supporting both **Labeled Property Graph (LPG)** and **RDF** data models. Optional allocators (jemalloc/mimalloc) and TLS use C libraries for performance.
+**Obrain** — The graph database that learns. A cognitive graph database with a Rust core: data forms **engrams** with decaying energy, connections become **Hebbian synapses** that strengthen through co-activation, and **spreading activation** surfaces insights across the topology.
 
-## Features
+Built on 7 biomimetic layers, Obrain supports both **Labeled Property Graph (LPG)** and **RDF** data models, with zero required C dependencies. Optional allocators (jemalloc/mimalloc) and TLS use C libraries for performance.
+
+## Cognitive Features
+
+- **Engrams**: Nodes carry activation energy that decays exponentially — the graph remembers what matters
+- **Hebbian Synapses**: Edges strengthen with co-activation, compete, and self-prune
+- **Spreading Activation**: Query one node, discover related hot zones via energy propagation
+- **Scars**: Failed transactions leave persistent memory that influences risk scoring
+- **Knowledge Fabric**: Continuous risk, staleness, and centrality scoring for every node
+- **RAG-native**: HNSW vector search + BM25 full-text + hybrid retrieval with cognitive scoring
+
+## Graph Foundation
 
 - **Dual data model support**: LPG and RDF with optimized storage for each
 - **Multi-language queries**: GQL, Cypher, Gremlin, GraphQL, SPARQL and SQL/PGQ
@@ -21,11 +32,6 @@ A high-performance, embeddable graph database with a Rust core and no required C
 | SQL/PGQ (SQL:2023) | ✅ | - | Default |
 
 Obrain uses a modular translator architecture where query languages are parsed into ASTs, then translated to a unified logical plan that executes against the appropriate storage backend (LPG or RDF).
-
-### Data Models
-
-- **LPG (Labeled Property Graph)**: Nodes with labels and properties, edges with types and properties. Ideal for social networks, knowledge graphs and application data.
-- **RDF (Resource Description Framework)**: Triple-based storage (subject-predicate-object) with SPO/POS/OSP indexes. Ideal for semantic web, linked data and ontology-based applications.
 
 ## Installation
 
