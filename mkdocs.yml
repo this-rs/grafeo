@@ -292,6 +292,14 @@ nav:
       - Fraud Detection: tutorials/examples/fraud-detection-example.md
       - NetworkX Integration: tutorials/examples/networkx-integration.md
 
+  - Cognitive Layer:
+    - Overview: cognitive/overview.md
+    - Energy & Decay: cognitive/energy.md
+    - Synapses & Activation: cognitive/synapses.md
+    - Engrams: cognitive/engrams.md
+    - Knowledge Fabric: cognitive/fabric.md
+    - RAG Pipeline: cognitive/rag.md
+
   - Architecture:
     - architecture/index.md
     - System Overview: architecture/overview.md
