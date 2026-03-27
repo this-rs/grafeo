@@ -5,6 +5,27 @@
 
 set -euo pipefail
 
+# ── SAFETY: block pushes and PRs to upstream (GrafeoDB/grafeo) ──────────
+# This is a fork. We NEVER push to the original repo.
+UPSTREAM_PATTERNS="GrafeoDB/grafeo|grafeodb/grafeo"
+REMOTE_URL="$1"
+
+if echo "$REMOTE_URL" | grep -qEi "$UPSTREAM_PATTERNS"; then
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║  ❌ BLOCKED: push to UPSTREAM repository detected!          ║"
+    echo "║                                                             ║"
+    echo "║  Remote: $REMOTE_URL"
+    echo "║                                                             ║"
+    echo "║  This is a fork (this-rs/grafeo → obrain).                  ║"
+    echo "║  NEVER push to GrafeoDB/grafeo — information leak risk.     ║"
+    echo "║                                                             ║"
+    echo "║  Use: git push origin <branch>                              ║"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo ""
+    exit 1
+fi
+
 echo "==> pre-push: checking formatting..."
 if ! cargo fmt --all -- --check 2>/dev/null; then
     echo ""
