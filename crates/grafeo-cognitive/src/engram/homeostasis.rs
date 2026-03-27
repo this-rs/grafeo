@@ -75,6 +75,8 @@ pub struct HomeostasisEngine {
     /// Ring buffer of recent recall outcomes (true = useful, false = not useful).
     recall_outcomes: Mutex<VecDeque<bool>>,
     /// Monotonic counter used as seed for anti-lock-in noise.
+    /// Used by `sweep()` which requires a pheromone `Engine`.
+    #[allow(dead_code)]
     sweep_counter: std::sync::atomic::AtomicU64,
 }
 

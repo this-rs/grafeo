@@ -147,8 +147,7 @@ fn run_query(pipeline: &RagPipeline, query: &str, trace: bool) {
                         .properties
                         .get("name")
                         .or_else(|| node.properties.get("title"))
-                        .map(|s| s.as_str())
-                        .unwrap_or("?");
+                        .map_or("?", |s| s.as_str());
                     eprintln!(
                         "[trace]   #{}: [{labels}] \"{name}\" score={:.3} src={:?}",
                         i + 1,
