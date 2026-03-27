@@ -1,7 +1,7 @@
-package grafeo
+package obrain
 
 /*
-#include "grafeo.h"
+#include "obrain.h"
 #include <stdlib.h>
 */
 import "C"
@@ -25,7 +25,7 @@ func (db *Database) CreateVectorIndex(label, property string, opts ...VectorInde
 		defer C.free(unsafe.Pointer(cMetric))
 	}
 
-	return statusToError(C.grafeo_create_vector_index(
+	return statusToError(C.obrain_create_vector_index(
 		db.handle, cLabel, cProp,
 		C.int32_t(cfg.dimensions), cMetric,
 		C.int32_t(cfg.m), C.int32_t(cfg.efConstruction),
@@ -48,13 +48,13 @@ func (db *Database) VectorSearch(label, property string, query []float32, k int,
 	var outDists *C.float
 	var outCount C.size_t
 
-	status := C.grafeo_vector_search(
+	status := C.obrain_vector_search(
 		db.handle, cLabel, cProp,
 		(*C.float)(unsafe.Pointer(&query[0])), C.size_t(len(query)),
 		C.size_t(k), C.int32_t(cfg.ef),
 		&outIDs, &outDists, &outCount,
 	)
-	if status != C.GRAFEO_OK {
+	if status != C.OBRAIN_OK {
 		return nil, statusToError(status)
 	}
 
@@ -62,7 +62,7 @@ func (db *Database) VectorSearch(label, property string, query []float32, k int,
 	if count == 0 {
 		return nil, nil
 	}
-	defer C.grafeo_free_vector_results(outIDs, outDists, outCount)
+	defer C.obrain_free_vector_results(outIDs, outDists, outCount)
 
 	results := make([]VectorResult, count)
 	ids := unsafe.Slice((*uint64)(unsafe.Pointer(outIDs)), count)
@@ -93,16 +93,16 @@ func (db *Database) BatchCreateNodes(label, property string, vectors [][]float32
 	defer C.free(unsafe.Pointer(cProp))
 
 	var outIDs *C.uint64_t
-	status := C.grafeo_batch_create_nodes(
+	status := C.obrain_batch_create_nodes(
 		db.handle, cLabel, cProp,
 		(*C.float)(unsafe.Pointer(&flat[0])),
 		C.size_t(len(vectors)), C.size_t(dims),
 		&outIDs,
 	)
-	if status != C.GRAFEO_OK {
+	if status != C.OBRAIN_OK {
 		return nil, statusToError(status)
 	}
-	defer C.grafeo_free_node_ids(outIDs, C.size_t(len(vectors)))
+	defer C.obrain_free_node_ids(outIDs, C.size_t(len(vectors)))
 
 	ids := make([]uint64, len(vectors))
 	raw := unsafe.Slice((*uint64)(unsafe.Pointer(outIDs)), len(vectors))

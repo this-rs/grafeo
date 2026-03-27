@@ -1,11 +1,11 @@
 using Xunit;
 
-namespace Grafeo.Tests;
+namespace Obrain.Tests;
 
 /// <summary>Node and edge CRUD operation tests.</summary>
 public sealed class CrudTests : IDisposable
 {
-    private readonly GrafeoDB _db = GrafeoDB.Memory();
+    private readonly ObrainDB _db = ObrainDB.Memory();
 
     public void Dispose() => _db.Dispose();
 

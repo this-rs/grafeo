@@ -1,11 +1,11 @@
-// Package grafeo provides Go bindings for the Grafeo graph database.
+// Package obrain provides Go bindings for the Obrain graph database.
 //
-// It uses CGO to link against the grafeo-c shared library, which provides
+// It uses CGO to link against the obrain-c shared library, which provides
 // a C-compatible FFI layer on top of the Rust engine.
 //
 // Quick start:
 //
-//	db, err := grafeo.OpenInMemory()
+//	db, err := obrain.OpenInMemory()
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
@@ -13,15 +13,15 @@
 //
 //	db.Execute(`CREATE (:Person {name: 'Alix', age: 30})`)
 //	result, _ := db.Execute(`MATCH (p:Person) RETURN p.name`)
-package grafeo
+package obrain
 
 /*
-#cgo LDFLAGS: -lgrafeo_c
+#cgo LDFLAGS: -lobrain_c
 #cgo linux LDFLAGS: -lm -ldl -lpthread
 #cgo darwin LDFLAGS: -lm -ldl -lpthread -framework Security
 #cgo windows LDFLAGS: -lws2_32 -lbcrypt -lntdll -luserenv
 
-#include "grafeo.h"
+#include "obrain.h"
 #include <stdlib.h>
 */
 import "C"
@@ -30,15 +30,15 @@ import (
 	"unsafe"
 )
 
-// Database is the primary handle to a Grafeo graph database.
+// Database is the primary handle to a Obrain graph database.
 // It is safe for concurrent use from multiple goroutines.
 type Database struct {
-	handle *C.GrafeoDatabase
+	handle *C.ObrainDatabase
 }
 
 // OpenInMemory creates a new in-memory database.
 func OpenInMemory() (*Database, error) {
-	h := C.grafeo_open_memory()
+	h := C.obrain_open_memory()
 	if h == nil {
 		return nil, lastError()
 	}
@@ -51,7 +51,7 @@ func OpenInMemory() (*Database, error) {
 func Open(path string) (*Database, error) {
 	cPath := C.CString(path)
 	defer C.free(unsafe.Pointer(cPath))
-	h := C.grafeo_open(cPath)
+	h := C.obrain_open(cPath)
 	if h == nil {
 		return nil, lastError()
 	}
@@ -65,8 +65,8 @@ func (db *Database) Close() error {
 	if db.handle == nil {
 		return nil
 	}
-	status := C.grafeo_close(db.handle)
-	C.grafeo_free_database(db.handle)
+	status := C.obrain_close(db.handle)
+	C.obrain_free_database(db.handle)
 	db.handle = nil
 	runtime.SetFinalizer(db, nil)
 	return statusToError(status)
@@ -75,8 +75,8 @@ func (db *Database) Close() error {
 // free is called by the Go runtime finalizer for leak prevention.
 func (db *Database) free() {
 	if db.handle != nil {
-		C.grafeo_close(db.handle)
-		C.grafeo_free_database(db.handle)
+		C.obrain_close(db.handle)
+		C.obrain_free_database(db.handle)
 		db.handle = nil
 	}
 }
@@ -85,11 +85,11 @@ func (db *Database) free() {
 func (db *Database) Execute(query string) (*QueryResult, error) {
 	cQuery := C.CString(query)
 	defer C.free(unsafe.Pointer(cQuery))
-	r := C.grafeo_execute(db.handle, cQuery)
+	r := C.obrain_execute(db.handle, cQuery)
 	if r == nil {
 		return nil, lastError()
 	}
-	defer C.grafeo_free_result(r)
+	defer C.obrain_free_result(r)
 	return parseResult(r)
 }
 
@@ -99,11 +99,11 @@ func (db *Database) ExecuteWithParams(query string, paramsJSON string) (*QueryRe
 	defer C.free(unsafe.Pointer(cQuery))
 	cParams := C.CString(paramsJSON)
 	defer C.free(unsafe.Pointer(cParams))
-	r := C.grafeo_execute_with_params(db.handle, cQuery, cParams)
+	r := C.obrain_execute_with_params(db.handle, cQuery, cParams)
 	if r == nil {
 		return nil, lastError()
 	}
-	defer C.grafeo_free_result(r)
+	defer C.obrain_free_result(r)
 	return parseResult(r)
 }
 
@@ -111,11 +111,11 @@ func (db *Database) ExecuteWithParams(query string, paramsJSON string) (*QueryRe
 func (db *Database) ExecuteCypher(query string) (*QueryResult, error) {
 	cQuery := C.CString(query)
 	defer C.free(unsafe.Pointer(cQuery))
-	r := C.grafeo_execute_cypher(db.handle, cQuery)
+	r := C.obrain_execute_cypher(db.handle, cQuery)
 	if r == nil {
 		return nil, lastError()
 	}
-	defer C.grafeo_free_result(r)
+	defer C.obrain_free_result(r)
 	return parseResult(r)
 }
 
@@ -123,11 +123,11 @@ func (db *Database) ExecuteCypher(query string) (*QueryResult, error) {
 func (db *Database) ExecuteGremlin(query string) (*QueryResult, error) {
 	cQuery := C.CString(query)
 	defer C.free(unsafe.Pointer(cQuery))
-	r := C.grafeo_execute_gremlin(db.handle, cQuery)
+	r := C.obrain_execute_gremlin(db.handle, cQuery)
 	if r == nil {
 		return nil, lastError()
 	}
-	defer C.grafeo_free_result(r)
+	defer C.obrain_free_result(r)
 	return parseResult(r)
 }
 
@@ -135,11 +135,11 @@ func (db *Database) ExecuteGremlin(query string) (*QueryResult, error) {
 func (db *Database) ExecuteGraphQL(query string) (*QueryResult, error) {
 	cQuery := C.CString(query)
 	defer C.free(unsafe.Pointer(cQuery))
-	r := C.grafeo_execute_graphql(db.handle, cQuery)
+	r := C.obrain_execute_graphql(db.handle, cQuery)
 	if r == nil {
 		return nil, lastError()
 	}
-	defer C.grafeo_free_result(r)
+	defer C.obrain_free_result(r)
 	return parseResult(r)
 }
 
@@ -147,11 +147,11 @@ func (db *Database) ExecuteGraphQL(query string) (*QueryResult, error) {
 func (db *Database) ExecuteSPARQL(query string) (*QueryResult, error) {
 	cQuery := C.CString(query)
 	defer C.free(unsafe.Pointer(cQuery))
-	r := C.grafeo_execute_sparql(db.handle, cQuery)
+	r := C.obrain_execute_sparql(db.handle, cQuery)
 	if r == nil {
 		return nil, lastError()
 	}
-	defer C.grafeo_free_result(r)
+	defer C.obrain_free_result(r)
 	return parseResult(r)
 }
 
@@ -159,11 +159,11 @@ func (db *Database) ExecuteSPARQL(query string) (*QueryResult, error) {
 func (db *Database) ExecuteSQL(query string) (*QueryResult, error) {
 	cQuery := C.CString(query)
 	defer C.free(unsafe.Pointer(cQuery))
-	r := C.grafeo_execute_sql(db.handle, cQuery)
+	r := C.obrain_execute_sql(db.handle, cQuery)
 	if r == nil {
 		return nil, lastError()
 	}
-	defer C.grafeo_free_result(r)
+	defer C.obrain_free_result(r)
 	return parseResult(r)
 }
 
@@ -174,7 +174,7 @@ func (db *Database) DropVectorIndex(label, property string) bool {
 	defer C.free(unsafe.Pointer(cLabel))
 	cProp := C.CString(property)
 	defer C.free(unsafe.Pointer(cProp))
-	return C.grafeo_drop_vector_index(db.handle, cLabel, cProp) != 0
+	return C.obrain_drop_vector_index(db.handle, cLabel, cProp) != 0
 }
 
 // RebuildVectorIndex drops and recreates a vector index, rescanning all
@@ -184,8 +184,8 @@ func (db *Database) RebuildVectorIndex(label, property string) error {
 	defer C.free(unsafe.Pointer(cLabel))
 	cProp := C.CString(property)
 	defer C.free(unsafe.Pointer(cProp))
-	status := C.grafeo_rebuild_vector_index(db.handle, cLabel, cProp)
-	if status != C.GRAFEO_OK {
+	status := C.obrain_rebuild_vector_index(db.handle, cLabel, cProp)
+	if status != C.OBRAIN_OK {
 		return lastError()
 	}
 	return nil
@@ -205,20 +205,20 @@ func (db *Database) MmrSearch(label, property string, query []float32, k int, fe
 	var outDists *C.float
 	var outCount C.size_t
 
-	status := C.grafeo_mmr_search(
+	status := C.obrain_mmr_search(
 		db.handle, cLabel, cProp,
 		(*C.float)(unsafe.Pointer(&query[0])), C.size_t(len(query)),
 		C.size_t(k), C.int32_t(fetchK), C.float(lambda), C.int32_t(ef),
 		&outIDs, &outDists, &outCount,
 	)
-	if status != C.GRAFEO_OK {
+	if status != C.OBRAIN_OK {
 		return nil, lastError()
 	}
 	count := int(outCount)
 	if count == 0 {
 		return nil, nil
 	}
-	defer C.grafeo_free_vector_results(outIDs, outDists, outCount)
+	defer C.obrain_free_vector_results(outIDs, outDists, outCount)
 
 	results := make([]VectorResult, count)
 	ids := unsafe.Slice((*uint64)(unsafe.Pointer(outIDs)), count)
@@ -231,15 +231,15 @@ func (db *Database) MmrSearch(label, property string, query []float32, k int, fe
 
 // NodeCount returns the number of nodes in the database.
 func (db *Database) NodeCount() int {
-	return int(C.grafeo_node_count(db.handle))
+	return int(C.obrain_node_count(db.handle))
 }
 
 // EdgeCount returns the number of edges in the database.
 func (db *Database) EdgeCount() int {
-	return int(C.grafeo_edge_count(db.handle))
+	return int(C.obrain_edge_count(db.handle))
 }
 
-// Version returns the Grafeo library version.
+// Version returns the Obrain library version.
 func Version() string {
-	return C.GoString(C.grafeo_version())
+	return C.GoString(C.obrain_version())
 }

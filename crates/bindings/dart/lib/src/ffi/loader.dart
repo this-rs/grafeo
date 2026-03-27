@@ -1,4 +1,4 @@
-/// Platform-specific native library loading for grafeo-c.
+/// Platform-specific native library loading for obrain-c.
 library;
 
 import 'dart:ffi';
@@ -26,11 +26,11 @@ DynamicLibrary _load(String? path) {
 
   final String libraryName;
   if (Platform.isWindows) {
-    libraryName = 'grafeo_c.dll';
+    libraryName = 'obrain_c.dll';
   } else if (Platform.isMacOS) {
-    libraryName = 'libgrafeo_c.dylib';
+    libraryName = 'libobrain_c.dylib';
   } else if (Platform.isLinux || Platform.isAndroid) {
-    libraryName = 'libgrafeo_c.so';
+    libraryName = 'libobrain_c.so';
   } else {
     throw UnsupportedError(
       'Unsupported platform: ${Platform.operatingSystem}',

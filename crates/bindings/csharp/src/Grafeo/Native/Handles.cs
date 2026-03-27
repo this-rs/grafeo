@@ -2,11 +2,11 @@
 
 using System.Runtime.InteropServices;
 
-namespace Grafeo.Native;
+namespace Obrain.Native;
 
 /// <summary>
-/// Safe handle wrapping a <c>GrafeoDatabase*</c>.
-/// Calls <c>grafeo_close</c> + <c>grafeo_free_database</c> on release.
+/// Safe handle wrapping a <c>ObrainDatabase*</c>.
+/// Calls <c>obrain_close</c> + <c>obrain_free_database</c> on release.
 /// </summary>
 internal sealed class DatabaseHandle : SafeHandle
 {
@@ -16,14 +16,14 @@ internal sealed class DatabaseHandle : SafeHandle
 
     protected override bool ReleaseHandle()
     {
-        NativeMethods.grafeo_close(handle);
-        NativeMethods.grafeo_free_database(handle);
+        NativeMethods.obrain_close(handle);
+        NativeMethods.obrain_free_database(handle);
         return true;
     }
 }
 
 /// <summary>
-/// Safe handle wrapping a <c>GrafeoTransaction*</c>.
+/// Safe handle wrapping a <c>ObrainTransaction*</c>.
 /// Auto-rolls back and frees on release.
 /// </summary>
 internal sealed class TransactionHandle : SafeHandle
@@ -35,14 +35,14 @@ internal sealed class TransactionHandle : SafeHandle
     protected override bool ReleaseHandle()
     {
         // The C side auto-rolls back if not committed, but be explicit.
-        NativeMethods.grafeo_rollback(handle);
-        NativeMethods.grafeo_free_transaction(handle);
+        NativeMethods.obrain_rollback(handle);
+        NativeMethods.obrain_free_transaction(handle);
         return true;
     }
 }
 
 /// <summary>
-/// Safe handle wrapping a <c>GrafeoResult*</c>.
+/// Safe handle wrapping a <c>ObrainResult*</c>.
 /// Frees the result on release.
 /// </summary>
 internal sealed class ResultHandle : SafeHandle
@@ -53,7 +53,7 @@ internal sealed class ResultHandle : SafeHandle
 
     protected override bool ReleaseHandle()
     {
-        NativeMethods.grafeo_free_result(handle);
+        NativeMethods.obrain_free_result(handle);
         return true;
     }
 }

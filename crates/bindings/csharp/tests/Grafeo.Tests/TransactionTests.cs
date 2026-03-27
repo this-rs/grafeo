@@ -1,11 +1,11 @@
 using Xunit;
 
-namespace Grafeo.Tests;
+namespace Obrain.Tests;
 
 /// <summary>ACID transaction lifecycle tests.</summary>
 public sealed class TransactionTests : IDisposable
 {
-    private readonly GrafeoDB _db = GrafeoDB.Memory();
+    private readonly ObrainDB _db = ObrainDB.Memory();
 
     public void Dispose() => _db.Dispose();
 

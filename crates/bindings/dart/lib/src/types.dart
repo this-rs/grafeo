@@ -1,16 +1,16 @@
-/// Data types for the Grafeo Dart binding.
+/// Data types for the Obrain Dart binding.
 library;
 
 import 'dart:ffi';
 
-/// Opaque pointer to a Grafeo database.
-typedef GrafeoDatabasePtr = Pointer<Void>;
+/// Opaque pointer to a Obrain database.
+typedef ObrainDatabasePtr = Pointer<Void>;
 
-/// Opaque pointer to a Grafeo query result.
-typedef GrafeoResultPtr = Pointer<Void>;
+/// Opaque pointer to a Obrain query result.
+typedef ObrainResultPtr = Pointer<Void>;
 
-/// Opaque pointer to a Grafeo transaction.
-typedef GrafeoTransactionPtr = Pointer<Void>;
+/// Opaque pointer to a Obrain transaction.
+typedef ObrainTransactionPtr = Pointer<Void>;
 
 /// Transaction isolation levels.
 enum IsolationLevel {

@@ -1,6 +1,6 @@
-/// The main GrafeoDB database class.
+/// The main ObrainDB database class.
 ///
-/// Wraps the grafeo-c shared library via FFI. Uses [NativeFinalizer] to
+/// Wraps the obrain-c shared library via FFI. Uses [NativeFinalizer] to
 /// prevent leaks if [close] is not called explicitly.
 library;
 
@@ -16,24 +16,24 @@ import 'transaction.dart';
 import 'types.dart';
 import 'value.dart';
 
-/// A Grafeo graph database instance.
+/// A Obrain graph database instance.
 ///
-/// Create with [GrafeoDB.memory] (in-memory) or [GrafeoDB.open] (persistent).
+/// Create with [ObrainDB.memory] (in-memory) or [ObrainDB.open] (persistent).
 /// Always call [close] when done, or rely on [NativeFinalizer] as a safety net.
-class GrafeoDB implements Finalizable {
-  final GrafeoBindings _bindings;
+class ObrainDB implements Finalizable {
+  final ObrainBindings _bindings;
   Pointer<Void> _handle;
   bool _closed = false;
 
   static NativeFinalizer? _finalizer;
 
-  GrafeoDB._(this._handle, this._bindings) {
-    // Lazily create a finalizer that calls grafeo_free_database on the handle.
-    // The Rust Drop impl for the inner Arc<RwLock<GrafeoDB>> flushes writes.
+  ObrainDB._(this._handle, this._bindings) {
+    // Lazily create a finalizer that calls obrain_free_database on the handle.
+    // The Rust Drop impl for the inner Arc<RwLock<ObrainDB>> flushes writes.
     _finalizer ??= NativeFinalizer(
       _bindings.library
           .lookup<NativeFunction<Void Function(Pointer<Void>)>>(
-            'grafeo_free_database',
+            'obrain_free_database',
           ),
     );
     _finalizer!.attach(this, _handle.cast(), detach: this);
@@ -44,23 +44,23 @@ class GrafeoDB implements Finalizable {
   // ===========================================================================
 
   /// Create a new in-memory database.
-  static GrafeoDB memory({String? libraryPath}) {
+  static ObrainDB memory({String? libraryPath}) {
     final lib = loadNativeLibrary(libraryPath);
-    final bindings = GrafeoBindings(lib);
-    final ptr = bindings.grafeoOpenMemory();
+    final bindings = ObrainBindings(lib);
+    final ptr = bindings.obrainOpenMemory();
     if (ptr == nullptr) throwLastError(bindings);
-    return GrafeoDB._(ptr, bindings);
+    return ObrainDB._(ptr, bindings);
   }
 
   /// Open a persistent database at [path].
-  static GrafeoDB open(String path, {String? libraryPath}) {
+  static ObrainDB open(String path, {String? libraryPath}) {
     final lib = loadNativeLibrary(libraryPath);
-    final bindings = GrafeoBindings(lib);
+    final bindings = ObrainBindings(lib);
     final pathPtr = path.toNativeUtf8(allocator: malloc);
     try {
-      final ptr = bindings.grafeoOpen(pathPtr);
+      final ptr = bindings.obrainOpen(pathPtr);
       if (ptr == nullptr) throwLastError(bindings);
-      return GrafeoDB._(ptr, bindings);
+      return ObrainDB._(ptr, bindings);
     } finally {
       malloc.free(pathPtr);
     }
@@ -73,28 +73,28 @@ class GrafeoDB implements Finalizable {
     if (_closed) return;
     _closed = true;
     _finalizer!.detach(this);
-    final status = _bindings.grafeoClose(_handle);
-    _bindings.grafeoFreeDatabase(_handle);
+    final status = _bindings.obrainClose(_handle);
+    _bindings.obrainFreeDatabase(_handle);
     _handle = nullptr;
-    if (status != GrafeoStatus.ok.code) {
+    if (status != ObrainStatus.ok.code) {
       throw classifyError(status, lastError(_bindings));
     }
   }
 
-  /// Returns the grafeo-c library version.
+  /// Returns the obrain-c library version.
   ///
   /// The C function returns a pointer to a static string that must NOT
   /// be freed (it lives in the binary's read-only data segment).
   static String version({String? libraryPath}) {
     final lib = loadNativeLibrary(libraryPath);
-    final bindings = GrafeoBindings(lib);
-    final ptr = bindings.grafeoVersion();
+    final bindings = ObrainBindings(lib);
+    final ptr = bindings.obrainVersion();
     return ptr.toDartString();
   }
 
   void _checkOpen() {
     if (_closed) {
-      throw DatabaseException('Database is closed', GrafeoStatus.database);
+      throw DatabaseException('Database is closed', ObrainStatus.database);
     }
   }
 
@@ -107,7 +107,7 @@ class GrafeoDB implements Finalizable {
     _checkOpen();
     final queryPtr = query.toNativeUtf8(allocator: malloc);
     try {
-      final resultPtr = _bindings.grafeoExecute(_handle, queryPtr);
+      final resultPtr = _bindings.obrainExecute(_handle, queryPtr);
       if (resultPtr == nullptr) throwLastError(_bindings);
       return _buildResult(resultPtr);
     } finally {
@@ -117,7 +117,7 @@ class GrafeoDB implements Finalizable {
 
   /// Execute a GQL query with parameters.
   ///
-  /// Parameters are JSON-encoded using the grafeo-bindings-common wire format.
+  /// Parameters are JSON-encoded using the obrain-bindings-common wire format.
   /// Temporal types (DateTime, Duration) are automatically encoded as
   /// `$timestamp_us`, `$duration`, etc.
   QueryResult executeWithParams(
@@ -129,7 +129,7 @@ class GrafeoDB implements Finalizable {
     final paramsJson = encodeParams(params);
     final paramsPtr = paramsJson.toNativeUtf8(allocator: malloc);
     try {
-      final resultPtr = _bindings.grafeoExecuteWithParams(
+      final resultPtr = _bindings.obrainExecuteWithParams(
         _handle,
         queryPtr,
         paramsPtr,
@@ -142,28 +142,28 @@ class GrafeoDB implements Finalizable {
     }
   }
 
-  /// Execute a Cypher query (requires `cypher` feature in grafeo-c).
+  /// Execute a Cypher query (requires `cypher` feature in obrain-c).
   QueryResult executeCypher(String query) => _executeLanguage(
     query,
-    _bindings.grafeoExecuteCypher,
+    _bindings.obrainExecuteCypher,
   );
 
-  /// Execute a Gremlin query (requires `gremlin` feature in grafeo-c).
+  /// Execute a Gremlin query (requires `gremlin` feature in obrain-c).
   QueryResult executeGremlin(String query) => _executeLanguage(
     query,
-    _bindings.grafeoExecuteGremlin,
+    _bindings.obrainExecuteGremlin,
   );
 
-  /// Execute a GraphQL query (requires `graphql` feature in grafeo-c).
+  /// Execute a GraphQL query (requires `graphql` feature in obrain-c).
   QueryResult executeGraphql(String query) => _executeLanguage(
     query,
-    _bindings.grafeoExecuteGraphql,
+    _bindings.obrainExecuteGraphql,
   );
 
-  /// Execute a SPARQL query (requires `sparql` feature in grafeo-c).
+  /// Execute a SPARQL query (requires `sparql` feature in obrain-c).
   QueryResult executeSparql(String query) => _executeLanguage(
     query,
-    _bindings.grafeoExecuteSparql,
+    _bindings.obrainExecuteSparql,
   );
 
   QueryResult _executeLanguage(
@@ -188,27 +188,27 @@ class GrafeoDB implements Finalizable {
   /// Get the number of nodes in the database (O(1), synchronous).
   int get nodeCount {
     _checkOpen();
-    return _bindings.grafeoNodeCount(_handle);
+    return _bindings.obrainNodeCount(_handle);
   }
 
   /// Get the number of edges in the database (O(1), synchronous).
   int get edgeCount {
     _checkOpen();
-    return _bindings.grafeoEdgeCount(_handle);
+    return _bindings.obrainEdgeCount(_handle);
   }
 
   /// Get database info as a parsed JSON map.
   ///
   /// The C function allocates a string that must be freed with
-  /// grafeo_free_string.
+  /// obrain_free_string.
   Map<String, dynamic> info() {
     _checkOpen();
-    final ptr = _bindings.grafeoInfo(_handle);
+    final ptr = _bindings.obrainInfo(_handle);
     if (ptr == nullptr) throwLastError(_bindings);
     try {
       return parseObject(ptr.toDartString());
     } finally {
-      _bindings.grafeoFreeString(ptr);
+      _bindings.obrainFreeString(ptr);
     }
   }
 
@@ -219,7 +219,7 @@ class GrafeoDB implements Finalizable {
   /// Begin a new transaction with the default isolation level.
   Transaction beginTransaction() {
     _checkOpen();
-    final txPtr = _bindings.grafeoBeginTransaction(_handle);
+    final txPtr = _bindings.obrainBeginTransaction(_handle);
     if (txPtr == nullptr) throwLastError(_bindings);
     return Transaction(txPtr, _bindings);
   }
@@ -227,7 +227,7 @@ class GrafeoDB implements Finalizable {
   /// Begin a transaction with a specific [isolationLevel].
   Transaction beginTransactionWithIsolation(IsolationLevel isolationLevel) {
     _checkOpen();
-    final txPtr = _bindings.grafeoBeginTransactionWithIsolation(
+    final txPtr = _bindings.obrainBeginTransactionWithIsolation(
       _handle,
       isolationLevel.code,
     );
@@ -249,7 +249,7 @@ class GrafeoDB implements Finalizable {
     final labelsPtr = labelsJson.toNativeUtf8(allocator: malloc);
     final propsPtr = propsJson.toNativeUtf8(allocator: malloc);
     try {
-      final id = _bindings.grafeoCreateNode(_handle, labelsPtr, propsPtr);
+      final id = _bindings.obrainCreateNode(_handle, labelsPtr, propsPtr);
       if (id == -1) throwLastError(_bindings); // C returns u64::MAX on error
       return id;
     } finally {
@@ -263,22 +263,22 @@ class GrafeoDB implements Finalizable {
     _checkOpen();
     final outPtr = malloc<Pointer<Void>>();
     try {
-      final status = _bindings.grafeoGetNode(_handle, id, outPtr);
-      if (status != GrafeoStatus.ok.code) throwStatus(_bindings, status);
+      final status = _bindings.obrainGetNode(_handle, id, outPtr);
+      if (status != ObrainStatus.ok.code) throwStatus(_bindings, status);
       final nodePtr = outPtr.value;
       try {
-        final nodeId = _bindings.grafeoNodeId(nodePtr);
+        final nodeId = _bindings.obrainNodeId(nodePtr);
         final labelsJson =
-            _bindings.grafeoNodeLabelsJson(nodePtr).toDartString();
+            _bindings.obrainNodeLabelsJson(nodePtr).toDartString();
         final propsJson =
-            _bindings.grafeoNodePropertiesJson(nodePtr).toDartString();
+            _bindings.obrainNodePropertiesJson(nodePtr).toDartString();
         return Node(
           nodeId,
           parseStringArray(labelsJson),
           parseObject(propsJson),
         );
       } finally {
-        _bindings.grafeoFreeNode(nodePtr);
+        _bindings.obrainFreeNode(nodePtr);
       }
     } finally {
       malloc.free(outPtr);
@@ -288,7 +288,7 @@ class GrafeoDB implements Finalizable {
   /// Delete a node by [id]. Returns true on success.
   bool deleteNode(int id) {
     _checkOpen();
-    final result = _bindings.grafeoDeleteNode(_handle, id);
+    final result = _bindings.obrainDeleteNode(_handle, id);
     if (result < 0) throwLastError(_bindings);
     return result == 1;
   }
@@ -300,13 +300,13 @@ class GrafeoDB implements Finalizable {
     final valueJson = encodeValue(value);
     final valuePtr = valueJson.toNativeUtf8(allocator: malloc);
     try {
-      final status = _bindings.grafeoSetNodeProperty(
+      final status = _bindings.obrainSetNodeProperty(
         _handle,
         id,
         keyPtr,
         valuePtr,
       );
-      if (status != GrafeoStatus.ok.code) throwStatus(_bindings, status);
+      if (status != ObrainStatus.ok.code) throwStatus(_bindings, status);
     } finally {
       malloc.free(keyPtr);
       malloc.free(valuePtr);
@@ -318,7 +318,7 @@ class GrafeoDB implements Finalizable {
     _checkOpen();
     final keyPtr = key.toNativeUtf8(allocator: malloc);
     try {
-      final result = _bindings.grafeoRemoveNodeProperty(_handle, id, keyPtr);
+      final result = _bindings.obrainRemoveNodeProperty(_handle, id, keyPtr);
       if (result < 0) throwLastError(_bindings);
     } finally {
       malloc.free(keyPtr);
@@ -330,7 +330,7 @@ class GrafeoDB implements Finalizable {
     _checkOpen();
     final labelPtr = label.toNativeUtf8(allocator: malloc);
     try {
-      final result = _bindings.grafeoAddNodeLabel(_handle, id, labelPtr);
+      final result = _bindings.obrainAddNodeLabel(_handle, id, labelPtr);
       if (result < 0) throwLastError(_bindings);
     } finally {
       malloc.free(labelPtr);
@@ -342,7 +342,7 @@ class GrafeoDB implements Finalizable {
     _checkOpen();
     final labelPtr = label.toNativeUtf8(allocator: malloc);
     try {
-      final result = _bindings.grafeoRemoveNodeLabel(_handle, id, labelPtr);
+      final result = _bindings.obrainRemoveNodeLabel(_handle, id, labelPtr);
       if (result < 0) throwLastError(_bindings);
     } finally {
       malloc.free(labelPtr);
@@ -368,7 +368,7 @@ class GrafeoDB implements Finalizable {
     );
     final propsPtr = propsJson.toNativeUtf8(allocator: malloc);
     try {
-      final id = _bindings.grafeoCreateEdge(
+      final id = _bindings.obrainCreateEdge(
         _handle,
         sourceId,
         targetId,
@@ -388,16 +388,16 @@ class GrafeoDB implements Finalizable {
     _checkOpen();
     final outPtr = malloc<Pointer<Void>>();
     try {
-      final status = _bindings.grafeoGetEdge(_handle, id, outPtr);
-      if (status != GrafeoStatus.ok.code) throwStatus(_bindings, status);
+      final status = _bindings.obrainGetEdge(_handle, id, outPtr);
+      if (status != ObrainStatus.ok.code) throwStatus(_bindings, status);
       final edgePtr = outPtr.value;
       try {
-        final edgeId = _bindings.grafeoEdgeId(edgePtr);
-        final sourceId = _bindings.grafeoEdgeSourceId(edgePtr);
-        final targetId = _bindings.grafeoEdgeTargetId(edgePtr);
-        final edgeType = _bindings.grafeoEdgeType(edgePtr).toDartString();
+        final edgeId = _bindings.obrainEdgeId(edgePtr);
+        final sourceId = _bindings.obrainEdgeSourceId(edgePtr);
+        final targetId = _bindings.obrainEdgeTargetId(edgePtr);
+        final edgeType = _bindings.obrainEdgeType(edgePtr).toDartString();
         final propsJson =
-            _bindings.grafeoEdgePropertiesJson(edgePtr).toDartString();
+            _bindings.obrainEdgePropertiesJson(edgePtr).toDartString();
         return Edge(
           edgeId,
           edgeType,
@@ -406,7 +406,7 @@ class GrafeoDB implements Finalizable {
           parseObject(propsJson),
         );
       } finally {
-        _bindings.grafeoFreeEdge(edgePtr);
+        _bindings.obrainFreeEdge(edgePtr);
       }
     } finally {
       malloc.free(outPtr);
@@ -416,7 +416,7 @@ class GrafeoDB implements Finalizable {
   /// Delete an edge by [id]. Returns true on success.
   bool deleteEdge(int id) {
     _checkOpen();
-    final result = _bindings.grafeoDeleteEdge(_handle, id);
+    final result = _bindings.obrainDeleteEdge(_handle, id);
     if (result < 0) throwLastError(_bindings);
     return result == 1;
   }
@@ -428,13 +428,13 @@ class GrafeoDB implements Finalizable {
     final valueJson = encodeValue(value);
     final valuePtr = valueJson.toNativeUtf8(allocator: malloc);
     try {
-      final status = _bindings.grafeoSetEdgeProperty(
+      final status = _bindings.obrainSetEdgeProperty(
         _handle,
         id,
         keyPtr,
         valuePtr,
       );
-      if (status != GrafeoStatus.ok.code) throwStatus(_bindings, status);
+      if (status != ObrainStatus.ok.code) throwStatus(_bindings, status);
     } finally {
       malloc.free(keyPtr);
       malloc.free(valuePtr);
@@ -446,7 +446,7 @@ class GrafeoDB implements Finalizable {
     _checkOpen();
     final keyPtr = key.toNativeUtf8(allocator: malloc);
     try {
-      final result = _bindings.grafeoRemoveEdgeProperty(_handle, id, keyPtr);
+      final result = _bindings.obrainRemoveEdgeProperty(_handle, id, keyPtr);
       if (result < 0) throwLastError(_bindings);
     } finally {
       malloc.free(keyPtr);
@@ -463,7 +463,7 @@ class GrafeoDB implements Finalizable {
     final labelPtr = label.toNativeUtf8(allocator: malloc);
     final propertyPtr = property.toNativeUtf8(allocator: malloc);
     try {
-      final result = _bindings.grafeoDropVectorIndex(
+      final result = _bindings.obrainDropVectorIndex(
         _handle,
         labelPtr,
         propertyPtr,
@@ -481,12 +481,12 @@ class GrafeoDB implements Finalizable {
     final labelPtr = label.toNativeUtf8(allocator: malloc);
     final propertyPtr = property.toNativeUtf8(allocator: malloc);
     try {
-      final status = _bindings.grafeoRebuildVectorIndex(
+      final status = _bindings.obrainRebuildVectorIndex(
         _handle,
         labelPtr,
         propertyPtr,
       );
-      if (status != GrafeoStatus.ok.code) throwStatus(_bindings, status);
+      if (status != ObrainStatus.ok.code) throwStatus(_bindings, status);
     } finally {
       malloc.free(labelPtr);
       malloc.free(propertyPtr);
@@ -515,7 +515,7 @@ class GrafeoDB implements Finalizable {
     final outCountPtr = malloc<IntPtr>();
 
     try {
-      final status = _bindings.grafeoMmrSearch(
+      final status = _bindings.obrainMmrSearch(
         _handle,
         labelPtr,
         propertyPtr,
@@ -529,7 +529,7 @@ class GrafeoDB implements Finalizable {
         outDistsPtr,
         outCountPtr,
       );
-      if (status != GrafeoStatus.ok.code) throwStatus(_bindings, status);
+      if (status != ObrainStatus.ok.code) throwStatus(_bindings, status);
 
       final count = outCountPtr.value;
       if (count == 0) return [];
@@ -540,7 +540,7 @@ class GrafeoDB implements Finalizable {
         for (var i = 0; i < count; i++) VectorResult(ids[i], dists[i]),
       ];
 
-      _bindings.grafeoFreeVectorResults(ids, dists, count);
+      _bindings.obrainFreeVectorResults(ids, dists, count);
       return results;
     } finally {
       malloc.free(labelPtr);
@@ -561,8 +561,8 @@ class GrafeoDB implements Finalizable {
     _checkOpen();
     final pathPtr = path.toNativeUtf8(allocator: malloc);
     try {
-      final status = _bindings.grafeoSave(_handle, pathPtr);
-      if (status != GrafeoStatus.ok.code) throwStatus(_bindings, status);
+      final status = _bindings.obrainSave(_handle, pathPtr);
+      if (status != ObrainStatus.ok.code) throwStatus(_bindings, status);
     } finally {
       malloc.free(pathPtr);
     }
@@ -571,8 +571,8 @@ class GrafeoDB implements Finalizable {
   /// Force a WAL checkpoint.
   void walCheckpoint() {
     _checkOpen();
-    final status = _bindings.grafeoWalCheckpoint(_handle);
-    if (status != GrafeoStatus.ok.code) throwStatus(_bindings, status);
+    final status = _bindings.obrainWalCheckpoint(_handle);
+    if (status != ObrainStatus.ok.code) throwStatus(_bindings, status);
   }
 
   // ===========================================================================
@@ -582,11 +582,11 @@ class GrafeoDB implements Finalizable {
   /// Extract a [QueryResult] from a native result pointer, then free it.
   QueryResult _buildResult(Pointer<Void> resultPtr) {
     try {
-      final jsonPtr = _bindings.grafeoResultJson(resultPtr);
+      final jsonPtr = _bindings.obrainResultJson(resultPtr);
       final jsonString = jsonPtr.toDartString();
       final executionTimeMs =
-          _bindings.grafeoResultExecutionTimeMs(resultPtr);
-      final rowsScanned = _bindings.grafeoResultRowsScanned(resultPtr);
+          _bindings.obrainResultExecutionTimeMs(resultPtr);
+      final rowsScanned = _bindings.obrainResultRowsScanned(resultPtr);
 
       final rows = parseRows(jsonString);
       final columns = extractColumns(rows);
@@ -601,7 +601,7 @@ class GrafeoDB implements Finalizable {
         rowsScanned: rowsScanned,
       );
     } finally {
-      _bindings.grafeoFreeResult(resultPtr);
+      _bindings.obrainFreeResult(resultPtr);
     }
   }
 

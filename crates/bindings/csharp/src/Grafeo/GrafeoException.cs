@@ -2,15 +2,15 @@
 
 using System.Runtime.InteropServices;
 
-using Grafeo.Native;
+using Obrain.Native;
 
-namespace Grafeo;
+namespace Obrain;
 
 /// <summary>
-/// Status codes returned by grafeo-c FFI functions.
-/// Values match the <c>GrafeoStatus</c> repr(C) enum in <c>error.rs</c>.
+/// Status codes returned by obrain-c FFI functions.
+/// Values match the <c>ObrainStatus</c> repr(C) enum in <c>error.rs</c>.
 /// </summary>
-public enum GrafeoStatus
+public enum ObrainStatus
 {
     Ok = 0,
     Database = 1,
@@ -24,26 +24,26 @@ public enum GrafeoStatus
     InvalidUtf8 = 9,
 }
 
-/// <summary>Base exception for all Grafeo errors.</summary>
-public class GrafeoException : Exception
+/// <summary>Base exception for all Obrain errors.</summary>
+public class ObrainException : Exception
 {
     /// <summary>The native status code that produced this error.</summary>
-    public GrafeoStatus Status { get; }
+    public ObrainStatus Status { get; }
 
-    public GrafeoException(string message, GrafeoStatus status)
+    public ObrainException(string message, ObrainStatus status)
         : base(message) => Status = status;
 
-    public GrafeoException(string message, GrafeoStatus status, Exception innerException)
+    public ObrainException(string message, ObrainStatus status, Exception innerException)
         : base(message, innerException) => Status = status;
 
     /// <summary>
     /// Retrieve the last error message from the native layer and return a
     /// typed exception.
     /// </summary>
-    internal static GrafeoException FromLastError(
-        GrafeoStatus fallbackStatus = GrafeoStatus.Database)
+    internal static ObrainException FromLastError(
+        ObrainStatus fallbackStatus = ObrainStatus.Database)
     {
-        var errorPtr = NativeMethods.grafeo_last_error();
+        var errorPtr = NativeMethods.obrain_last_error();
         var message = errorPtr != nint.Zero
             ? Marshal.PtrToStringUTF8(errorPtr) ?? "Unknown error"
             : "Unknown error";
@@ -52,43 +52,43 @@ public class GrafeoException : Exception
 
     /// <summary>
     /// Map a native status code to the appropriate exception subclass.
-    /// Mirrors <c>grafeo_bindings_common::error::classify_error</c>.
+    /// Mirrors <c>obrain_bindings_common::error::classify_error</c>.
     /// </summary>
-    internal static GrafeoException Classify(int statusCode, string message) =>
-        Classify((GrafeoStatus)statusCode, message);
+    internal static ObrainException Classify(int statusCode, string message) =>
+        Classify((ObrainStatus)statusCode, message);
 
-    internal static GrafeoException Classify(GrafeoStatus status, string message) =>
+    internal static ObrainException Classify(ObrainStatus status, string message) =>
         status switch
         {
-            GrafeoStatus.Query => new QueryException(message),
-            GrafeoStatus.Transaction => new TransactionException(message),
-            GrafeoStatus.Storage or GrafeoStatus.Io => new StorageException(message),
-            GrafeoStatus.Serialization => new SerializationException(message),
-            _ => new GrafeoException(message, status),
+            ObrainStatus.Query => new QueryException(message),
+            ObrainStatus.Transaction => new TransactionException(message),
+            ObrainStatus.Storage or ObrainStatus.Io => new StorageException(message),
+            ObrainStatus.Serialization => new SerializationException(message),
+            _ => new ObrainException(message, status),
         };
 
     /// <summary>
-    /// Throw if <paramref name="status"/> is not <see cref="GrafeoStatus.Ok"/>.
+    /// Throw if <paramref name="status"/> is not <see cref="ObrainStatus.Ok"/>.
     /// </summary>
     internal static void ThrowIfFailed(int status)
     {
-        if (status != (int)GrafeoStatus.Ok)
-            throw FromLastError((GrafeoStatus)status);
+        if (status != (int)ObrainStatus.Ok)
+            throw FromLastError((ObrainStatus)status);
     }
 }
 
 /// <summary>Query parsing or execution error.</summary>
 public sealed class QueryException(string message)
-    : GrafeoException(message, GrafeoStatus.Query);
+    : ObrainException(message, ObrainStatus.Query);
 
 /// <summary>Transaction lifecycle error (commit, rollback, isolation).</summary>
 public sealed class TransactionException(string message)
-    : GrafeoException(message, GrafeoStatus.Transaction);
+    : ObrainException(message, ObrainStatus.Transaction);
 
 /// <summary>Storage or I/O error (WAL, persistence, disk).</summary>
 public sealed class StorageException(string message)
-    : GrafeoException(message, GrafeoStatus.Storage);
+    : ObrainException(message, ObrainStatus.Storage);
 
 /// <summary>JSON or value serialization error.</summary>
 public sealed class SerializationException(string message)
-    : GrafeoException(message, GrafeoStatus.Serialization);
+    : ObrainException(message, ObrainStatus.Serialization);

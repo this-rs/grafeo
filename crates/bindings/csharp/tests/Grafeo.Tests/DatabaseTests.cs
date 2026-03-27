@@ -1,11 +1,11 @@
 using Xunit;
 
-namespace Grafeo.Tests;
+namespace Obrain.Tests;
 
 /// <summary>Database lifecycle, info, and admin tests.</summary>
 public sealed class DatabaseTests : IDisposable
 {
-    private readonly GrafeoDB _db = GrafeoDB.Memory();
+    private readonly ObrainDB _db = ObrainDB.Memory();
 
     public void Dispose() => _db.Dispose();
 
@@ -19,7 +19,7 @@ public sealed class DatabaseTests : IDisposable
     [Fact]
     public void DoubleDisposeIsNoOp()
     {
-        using var db = GrafeoDB.Memory();
+        using var db = ObrainDB.Memory();
         db.Dispose();
         db.Dispose(); // should not throw
     }
@@ -27,7 +27,7 @@ public sealed class DatabaseTests : IDisposable
     [Fact]
     public void ThrowsOnUseAfterDispose()
     {
-        var db = GrafeoDB.Memory();
+        var db = ObrainDB.Memory();
         db.Dispose();
         Assert.Throws<ObjectDisposedException>(() => db.Execute("RETURN 1"));
     }
@@ -35,7 +35,7 @@ public sealed class DatabaseTests : IDisposable
     [Fact]
     public void ReturnsVersion()
     {
-        var version = GrafeoDB.Version;
+        var version = ObrainDB.Version;
         Assert.NotNull(version);
         Assert.NotEqual("unknown", version);
         Assert.Contains('.', version); // semver: X.Y.Z

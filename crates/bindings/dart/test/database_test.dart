@@ -2,10 +2,10 @@ import 'package:obrain/obrain.dart';
 import 'package:test/test.dart';
 
 void main() {
-  late GrafeoDB db;
+  late ObrainDB db;
 
   setUp(() {
-    db = GrafeoDB.memory();
+    db = ObrainDB.memory();
   });
 
   tearDown(() {
@@ -14,7 +14,7 @@ void main() {
 
   group('lifecycle', () {
     test('version returns a non-empty string', () {
-      final v = GrafeoDB.version();
+      final v = ObrainDB.version();
       expect(v, isNotEmpty);
       expect(v, matches(RegExp(r'^\d+\.\d+\.\d+')));
     });
@@ -83,7 +83,7 @@ void main() {
     test('invalid query throws QueryException', () {
       expect(
         () => db.execute('THIS IS NOT VALID GQL'),
-        throwsA(isA<GrafeoException>()),
+        throwsA(isA<ObrainException>()),
       );
     });
 

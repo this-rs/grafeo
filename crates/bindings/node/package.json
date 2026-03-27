@@ -1,11 +1,11 @@
 {
-  "name": "@grafeo-db/js",
+  "name": "@obrain-db/js",
   "version": "0.5.24",
-  "description": "Node.js/TypeScript bindings for Grafeo - a high-performance embeddable graph database",
+  "description": "Node.js/TypeScript bindings for Obrain - a high-performance embeddable graph database",
   "main": "index.js",
   "types": "index.d.ts",
   "napi": {
-    "binaryName": "grafeo",
+    "binaryName": "obrain",
     "targets": [
       "x86_64-apple-darwin",
       "x86_64-pc-windows-msvc",
@@ -20,12 +20,12 @@
     "index.d.ts"
   ],
   "optionalDependencies": {
-    "@grafeo-db/js-darwin-x64": "0.5.24",
-    "@grafeo-db/js-win32-x64-msvc": "0.5.24",
-    "@grafeo-db/js-linux-x64-gnu": "0.5.24",
-    "@grafeo-db/js-darwin-arm64": "0.5.24",
-    "@grafeo-db/js-linux-arm64-gnu": "0.5.24",
-    "@grafeo-db/js-linux-arm64-musl": "0.5.24"
+    "@obrain-db/js-darwin-x64": "0.5.24",
+    "@obrain-db/js-win32-x64-msvc": "0.5.24",
+    "@obrain-db/js-linux-x64-gnu": "0.5.24",
+    "@obrain-db/js-darwin-arm64": "0.5.24",
+    "@obrain-db/js-linux-arm64-gnu": "0.5.24",
+    "@obrain-db/js-linux-arm64-musl": "0.5.24"
   },
   "keywords": [
     "graph",
@@ -42,12 +42,12 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/GrafeoDB/grafeo.git",
+    "url": "https://github.com/ObrainDB/obrain.git",
     "directory": "crates/bindings/node"
   },
-  "homepage": "https://grafeo.dev",
+  "homepage": "https://obrain.dev",
   "bugs": {
-    "url": "https://github.com/GrafeoDB/grafeo/issues"
+    "url": "https://github.com/ObrainDB/obrain/issues"
   },
   "engines": {
     "node": ">=20"

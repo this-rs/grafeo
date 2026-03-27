@@ -1,10 +1,10 @@
 // ignore_for_file: avoid_print
 
-import 'package:grafeo/grafeo.dart';
+import 'package:obrain/obrain.dart';
 
 void main() {
   // Open an in-memory database (no file I/O, great for quick experiments).
-  final db = GrafeoDB.memory();
+  final db = ObrainDB.memory();
 
   try {
     // Create two nodes and a relationship between them.

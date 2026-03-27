@@ -13,18 +13,18 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../src/Grafeo/Grafeo.csproj" />
+    <ProjectReference Include="../../src/Obrain/Obrain.csproj" />
   </ItemGroup>
 
   <!-- Copy native library to output directory for tests -->
   <ItemGroup>
-    <None Include="grafeo_c.dll" Condition="Exists('grafeo_c.dll')">
+    <None Include="obrain_c.dll" Condition="Exists('obrain_c.dll')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Include="libgrafeo_c.so" Condition="Exists('libgrafeo_c.so')">
+    <None Include="libobrain_c.so" Condition="Exists('libobrain_c.so')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Include="libgrafeo_c.dylib" Condition="Exists('libgrafeo_c.dylib')">
+    <None Include="libobrain_c.dylib" Condition="Exists('libobrain_c.dylib')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

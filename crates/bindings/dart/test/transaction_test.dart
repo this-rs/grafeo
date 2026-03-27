@@ -2,10 +2,10 @@ import 'package:obrain/obrain.dart';
 import 'package:test/test.dart';
 
 void main() {
-  late GrafeoDB db;
+  late ObrainDB db;
 
   setUp(() {
-    db = GrafeoDB.memory();
+    db = ObrainDB.memory();
   });
 
   tearDown(() {

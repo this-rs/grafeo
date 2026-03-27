@@ -1,13 +1,13 @@
 """
-NetworkX Integration with Grafeo
+NetworkX Integration with Obrain
 
-This example demonstrates seamless integration between Grafeo and NetworkX
+This example demonstrates seamless integration between Obrain and NetworkX
 for visualization and additional graph algorithms.
 
 Run with: marimo run networkx_integration.py
 
 Requirements:
-    pip install grafeo networkx matplotlib marimo
+    pip install obrain networkx matplotlib marimo
 """
 
 import marimo
@@ -23,23 +23,23 @@ def __():
     mo.md("""
     # NetworkX Integration
 
-    Grafeo provides seamless integration with NetworkX, the popular Python graph library.
+    Obrain provides seamless integration with NetworkX, the popular Python graph library.
     This enables:
 
     - **Visualization** with matplotlib
-    - **Additional algorithms** not in Grafeo
+    - **Additional algorithms** not in Obrain
     - **Interoperability** with the broader Python ecosystem
-    - **Two-way data flow** between Grafeo and NetworkX
+    - **Two-way data flow** between Obrain and NetworkX
     """)
     return (mo,)
 
 
 @app.cell
 def __():
-    from grafeo import GrafeoDB
+    from obrain import ObrainDB
 
     # Create a sample graph
-    db = GrafeoDB()
+    db = ObrainDB()
 
     # Build a small social network
     people = {}
@@ -75,7 +75,7 @@ def __():
         db.create_edge(people[p1].id, people[p2].id, "KNOWS")
 
     print(f"Created graph with {db.node_count} nodes and {db.edge_count} edges")
-    return GrafeoDB, connections, db, people
+    return ObrainDB, connections, db, people
 
 
 @app.cell
@@ -84,7 +84,7 @@ def __(db, mo):
     nx_adapter = db.as_networkx(directed=False)
 
     mo.md(f"""
-    ## Convert Grafeo to NetworkX
+    ## Convert Obrain to NetworkX
 
     Use `db.as_networkx()` to get a NetworkX-compatible adapter:
 
@@ -150,7 +150,7 @@ def __(G, db, mo, people):
     mo.md(f"""
     ## NetworkX Algorithms
 
-    Running algorithms from NetworkX on our Grafeo graph:
+    Running algorithms from NetworkX on our Obrain graph:
 
     ### Betweenness Centrality & Clustering
 
@@ -261,17 +261,17 @@ def __(mo):
     - **Right**: Nodes colored by betweenness centrality (darker = more central)
 
     This demonstrates how easy it is to use NetworkX's visualization
-    capabilities with data from Grafeo.
+    capabilities with data from Obrain.
     """)
     return ()
 
 
 @app.cell
 def __(db, mo, nx):
-    # Compare Grafeo vs NetworkX algorithm performance
+    # Compare Obrain vs NetworkX algorithm performance
 
-    # Grafeo's built-in algorithms
-    grafeo_pagerank = db.algorithms.pagerank(damping=0.85)
+    # Obrain's built-in algorithms
+    obrain_pagerank = db.algorithms.pagerank(damping=0.85)
 
     # NetworkX PageRank on converted graph
     G_new = db.as_networkx().to_networkx()
@@ -280,24 +280,24 @@ def __(db, mo, nx):
     mo.md("""
     ## Algorithm Comparison
 
-    Both Grafeo and NetworkX can compute PageRank:
+    Both Obrain and NetworkX can compute PageRank:
 
     ```python
-    # Grafeo (Rust-native, optimized)
-    grafeo_pr = db.algorithms.pagerank(damping=0.85)
+    # Obrain (Rust-native, optimized)
+    obrain_pr = db.algorithms.pagerank(damping=0.85)
 
     # NetworkX (Python)
     nx_pr = nx.pagerank(G, alpha=0.85)
     ```
 
-    For large graphs, Grafeo's Rust implementation is significantly faster,
+    For large graphs, Obrain's Rust implementation is significantly faster,
     but NetworkX provides many more algorithms for specialized analyses.
 
-    **Best practice:** Use Grafeo for common algorithms (PageRank, BFS, DFS,
+    **Best practice:** Use Obrain for common algorithms (PageRank, BFS, DFS,
     shortest paths) and NetworkX for specialized ones (community detection
     variants, centrality measures, motif finding).
     """)
-    return G_new, grafeo_pagerank, nx_pagerank
+    return G_new, obrain_pagerank, nx_pagerank
 
 
 @app.cell
@@ -307,12 +307,12 @@ def __(mo):
 
     | Use Case | Recommendation |
     |----------|----------------|
-    | Large graphs (1M+ nodes) | Grafeo algorithms |
+    | Large graphs (1M+ nodes) | Obrain algorithms |
     | Visualization | NetworkX + matplotlib |
     | Specialized algorithms | NetworkX |
-    | Graph storage/queries | Grafeo |
-    | Interactive exploration | Grafeo + anywidget-graph |
-    | Production applications | Grafeo (embedded, no server) |
+    | Graph storage/queries | Obrain |
+    | Interactive exploration | Obrain + anywidget-graph |
+    | Production applications | Obrain (embedded, no server) |
 
     The two libraries complement each other well!
     """)

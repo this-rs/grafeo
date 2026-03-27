@@ -1,18 +1,18 @@
-// Bidirectional conversion between C# types and Grafeo's JSON wire format.
-// Follows grafeo-bindings-common temporal markers ($timestamp_us, $date, etc.).
+// Bidirectional conversion between C# types and Obrain's JSON wire format.
+// Follows obrain-bindings-common temporal markers ($timestamp_us, $date, etc.).
 
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
-namespace Grafeo;
+namespace Obrain;
 
 /// <summary>
-/// Converts C# values to JSON for the grafeo-c wire format and parses
+/// Converts C# values to JSON for the obrain-c wire format and parses
 /// JSON results back into C# objects.
 /// </summary>
 internal static class ValueConverter
 {
-    /// <summary>Encode a parameter dictionary as a JSON string for grafeo-c.</summary>
+    /// <summary>Encode a parameter dictionary as a JSON string for obrain-c.</summary>
     internal static string EncodeParams(Dictionary<string, object?> parameters)
     {
         var obj = new JsonObject();
@@ -101,7 +101,7 @@ internal static class ValueConverter
     // JSON result parsing
     // =========================================================================
 
-    /// <summary>Parse a JSON array string (from grafeo_result_json) into rows.</summary>
+    /// <summary>Parse a JSON array string (from obrain_result_json) into rows.</summary>
     internal static IReadOnlyList<IReadOnlyDictionary<string, object?>> ParseRows(string json)
     {
         using var doc = JsonDocument.Parse(json);
@@ -190,7 +190,7 @@ internal static class ValueConverter
 
     private static object? ParseJsonObject(JsonElement element)
     {
-        // Check for temporal markers from grafeo-bindings-common
+        // Check for temporal markers from obrain-bindings-common
         if (element.TryGetProperty("$timestamp_us", out var tsElement))
         {
             var microseconds = tsElement.GetInt64();
@@ -225,7 +225,7 @@ internal static class ValueConverter
 
     /// <summary>
     /// Extract Node and Edge entities from query result rows.
-    /// Mirrors grafeo-bindings-common entity::extract_entities.
+    /// Mirrors obrain-bindings-common entity::extract_entities.
     /// </summary>
     internal static (IReadOnlyList<Node> Nodes, IReadOnlyList<Edge> Edges) ExtractEntities(
         IReadOnlyList<IReadOnlyDictionary<string, object?>> rows)

@@ -1,7 +1,7 @@
-package grafeo
+package obrain
 
 /*
-#include "grafeo.h"
+#include "obrain.h"
 #include <stdlib.h>
 */
 import "C"
@@ -14,14 +14,14 @@ import (
 func (db *Database) CreatePropertyIndex(property string) error {
 	cProp := C.CString(property)
 	defer C.free(unsafe.Pointer(cProp))
-	return statusToError(C.grafeo_create_property_index(db.handle, cProp))
+	return statusToError(C.obrain_create_property_index(db.handle, cProp))
 }
 
 // DropPropertyIndex drops a property index. Returns true if it existed.
 func (db *Database) DropPropertyIndex(property string) (bool, error) {
 	cProp := C.CString(property)
 	defer C.free(unsafe.Pointer(cProp))
-	result := int(C.grafeo_drop_property_index(db.handle, cProp))
+	result := int(C.obrain_drop_property_index(db.handle, cProp))
 	if result < 0 {
 		return false, lastError()
 	}
@@ -32,7 +32,7 @@ func (db *Database) DropPropertyIndex(property string) (bool, error) {
 func (db *Database) HasPropertyIndex(property string) bool {
 	cProp := C.CString(property)
 	defer C.free(unsafe.Pointer(cProp))
-	return int(C.grafeo_has_property_index(db.handle, cProp)) == 1
+	return int(C.obrain_has_property_index(db.handle, cProp)) == 1
 }
 
 // FindNodesByProperty finds nodes with a matching property value.
@@ -50,8 +50,8 @@ func (db *Database) FindNodesByProperty(property string, value any) ([]uint64, e
 	var outIDs *C.uint64_t
 	var outCount C.size_t
 
-	status := C.grafeo_find_nodes_by_property(db.handle, cProp, cValue, &outIDs, &outCount)
-	if status != C.GRAFEO_OK {
+	status := C.obrain_find_nodes_by_property(db.handle, cProp, cValue, &outIDs, &outCount)
+	if status != C.OBRAIN_OK {
 		return nil, statusToError(status)
 	}
 
@@ -59,7 +59,7 @@ func (db *Database) FindNodesByProperty(property string, value any) ([]uint64, e
 	if count == 0 {
 		return nil, nil
 	}
-	defer C.grafeo_free_node_ids(outIDs, outCount)
+	defer C.obrain_free_node_ids(outIDs, outCount)
 
 	ids := make([]uint64, count)
 	raw := unsafe.Slice((*uint64)(unsafe.Pointer(outIDs)), count)

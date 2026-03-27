@@ -4,24 +4,24 @@ import 'package:test/test.dart';
 void main() {
   group('status code mapping', () {
     test('ok maps to 0', () {
-      expect(GrafeoStatus.ok.code, equals(0));
+      expect(ObrainStatus.ok.code, equals(0));
     });
 
     test('query maps to 2', () {
-      expect(GrafeoStatus.query.code, equals(2));
+      expect(ObrainStatus.query.code, equals(2));
     });
 
     test('transaction maps to 3', () {
-      expect(GrafeoStatus.transaction.code, equals(3));
+      expect(ObrainStatus.transaction.code, equals(3));
     });
 
     test('fromCode with unknown value falls back to internal', () {
-      expect(GrafeoStatus.fromCode(99), equals(GrafeoStatus.internal));
+      expect(ObrainStatus.fromCode(99), equals(ObrainStatus.internal));
     });
 
     test('all status codes are unique', () {
-      final codes = GrafeoStatus.values.map((s) => s.code).toSet();
-      expect(codes.length, equals(GrafeoStatus.values.length));
+      final codes = ObrainStatus.values.map((s) => s.code).toSet();
+      expect(codes.length, equals(ObrainStatus.values.length));
     });
   });
 
@@ -30,7 +30,7 @@ void main() {
       final ex = classifyError(2, 'bad query');
       expect(ex, isA<QueryException>());
       expect(ex.message, equals('bad query'));
-      expect(ex.status, equals(GrafeoStatus.query));
+      expect(ex.status, equals(ObrainStatus.query));
     });
 
     test('classifyError returns TransactionException for status 3', () {
@@ -63,28 +63,28 @@ void main() {
       expect(ex, isA<DatabaseException>());
     });
 
-    test('GrafeoException toString includes type and message', () {
-      final ex = QueryException('syntax error near X', GrafeoStatus.query);
+    test('ObrainException toString includes type and message', () {
+      final ex = QueryException('syntax error near X', ObrainStatus.query);
       expect(ex.toString(), contains('QueryException'));
       expect(ex.toString(), contains('syntax error near X'));
     });
   });
 
   group('runtime error handling', () {
-    late GrafeoDB db;
+    late ObrainDB db;
 
     setUp(() {
-      db = GrafeoDB.memory();
+      db = ObrainDB.memory();
     });
 
     tearDown(() {
       db.close();
     });
 
-    test('invalid GQL throws GrafeoException', () {
+    test('invalid GQL throws ObrainException', () {
       expect(
         () => db.execute('NOT VALID GQL AT ALL'),
-        throwsA(isA<GrafeoException>()),
+        throwsA(isA<ObrainException>()),
       );
     });
 
@@ -92,7 +92,7 @@ void main() {
       try {
         db.execute('COMPLETELY INVALID');
         fail('Should have thrown');
-      } on GrafeoException catch (e) {
+      } on ObrainException catch (e) {
         expect(e.message, isNotEmpty);
       }
     });

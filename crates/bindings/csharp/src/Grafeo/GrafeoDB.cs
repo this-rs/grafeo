@@ -1,52 +1,52 @@
-// Primary database handle for the Grafeo graph database.
+// Primary database handle for the Obrain graph database.
 
 using System.Runtime.InteropServices;
 
-using Grafeo.Native;
+using Obrain.Native;
 
-namespace Grafeo;
+namespace Obrain;
 
 /// <summary>
-/// Primary handle to a Grafeo graph database.
+/// Primary handle to a Obrain graph database.
 /// Thread-safe: the underlying engine uses <c>Arc&lt;RwLock&gt;</c>.
 /// Implements <see cref="IDisposable"/> and <see cref="IAsyncDisposable"/>
 /// for deterministic cleanup via <c>using</c>/<c>await using</c>.
 /// </summary>
-public sealed class GrafeoDB : IDisposable, IAsyncDisposable
+public sealed class ObrainDB : IDisposable, IAsyncDisposable
 {
     private readonly DatabaseHandle _handle;
     private volatile bool _disposed;
 
-    private GrafeoDB(DatabaseHandle handle) => _handle = handle;
+    private ObrainDB(DatabaseHandle handle) => _handle = handle;
 
     // =========================================================================
     // Lifecycle
     // =========================================================================
 
     /// <summary>Create a new in-memory database.</summary>
-    public static GrafeoDB Memory()
+    public static ObrainDB Memory()
     {
-        var ptr = NativeMethods.grafeo_open_memory();
+        var ptr = NativeMethods.obrain_open_memory();
         if (ptr == nint.Zero)
-            throw GrafeoException.FromLastError();
+            throw ObrainException.FromLastError();
 
         var handle = new DatabaseHandle();
         Marshal.InitHandle(handle, ptr);
-        return new GrafeoDB(handle);
+        return new ObrainDB(handle);
     }
 
     /// <summary>Open or create a persistent database at <paramref name="path"/>.</summary>
-    public static GrafeoDB Open(string path)
+    public static ObrainDB Open(string path)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
 
-        var ptr = NativeMethods.grafeo_open(path);
+        var ptr = NativeMethods.obrain_open(path);
         if (ptr == nint.Zero)
-            throw GrafeoException.FromLastError();
+            throw ObrainException.FromLastError();
 
         var handle = new DatabaseHandle();
         Marshal.InitHandle(handle, ptr);
-        return new GrafeoDB(handle);
+        return new ObrainDB(handle);
     }
 
     /// <inheritdoc/>
@@ -72,9 +72,9 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
     public QueryResult Execute(string query)
     {
         ThrowIfDisposed();
-        var resultPtr = NativeMethods.grafeo_execute(Handle, query);
+        var resultPtr = NativeMethods.obrain_execute(Handle, query);
         if (resultPtr == nint.Zero)
-            throw GrafeoException.FromLastError(GrafeoStatus.Query);
+            throw ObrainException.FromLastError(ObrainStatus.Query);
         return BuildResult(resultPtr);
     }
 
@@ -86,9 +86,9 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
         return Task.Run(() =>
         {
             ct.ThrowIfCancellationRequested();
-            var resultPtr = NativeMethods.grafeo_execute(h, query);
+            var resultPtr = NativeMethods.obrain_execute(h, query);
             if (resultPtr == nint.Zero)
-                throw GrafeoException.FromLastError(GrafeoStatus.Query);
+                throw ObrainException.FromLastError(ObrainStatus.Query);
             return BuildResult(resultPtr);
         }, ct);
     }
@@ -98,9 +98,9 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
     {
         ThrowIfDisposed();
         var paramsJson = ValueConverter.EncodeParams(parameters);
-        var resultPtr = NativeMethods.grafeo_execute_with_params(Handle, query, paramsJson);
+        var resultPtr = NativeMethods.obrain_execute_with_params(Handle, query, paramsJson);
         if (resultPtr == nint.Zero)
-            throw GrafeoException.FromLastError(GrafeoStatus.Query);
+            throw ObrainException.FromLastError(ObrainStatus.Query);
         return BuildResult(resultPtr);
     }
 
@@ -116,9 +116,9 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
         return Task.Run(() =>
         {
             ct.ThrowIfCancellationRequested();
-            var resultPtr = NativeMethods.grafeo_execute_with_params(h, query, paramsJson);
+            var resultPtr = NativeMethods.obrain_execute_with_params(h, query, paramsJson);
             if (resultPtr == nint.Zero)
-                throw GrafeoException.FromLastError(GrafeoStatus.Query);
+                throw ObrainException.FromLastError(ObrainStatus.Query);
             return BuildResult(resultPtr);
         }, ct);
     }
@@ -127,71 +127,71 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
     public QueryResult ExecuteCypher(string query)
     {
         ThrowIfDisposed();
-        var resultPtr = NativeMethods.grafeo_execute_cypher(Handle, query);
+        var resultPtr = NativeMethods.obrain_execute_cypher(Handle, query);
         if (resultPtr == nint.Zero)
-            throw GrafeoException.FromLastError(GrafeoStatus.Query);
+            throw ObrainException.FromLastError(ObrainStatus.Query);
         return BuildResult(resultPtr);
     }
 
     /// <summary>Execute a Cypher query on the thread pool.</summary>
     public Task<QueryResult> ExecuteCypherAsync(string query, CancellationToken ct = default)
-        => ExecuteLanguageAsync(NativeMethods.grafeo_execute_cypher, query, ct);
+        => ExecuteLanguageAsync(NativeMethods.obrain_execute_cypher, query, ct);
 
     /// <summary>Execute a SPARQL query.</summary>
     public QueryResult ExecuteSparql(string query)
     {
         ThrowIfDisposed();
-        var resultPtr = NativeMethods.grafeo_execute_sparql(Handle, query);
+        var resultPtr = NativeMethods.obrain_execute_sparql(Handle, query);
         if (resultPtr == nint.Zero)
-            throw GrafeoException.FromLastError(GrafeoStatus.Query);
+            throw ObrainException.FromLastError(ObrainStatus.Query);
         return BuildResult(resultPtr);
     }
 
     /// <summary>Execute a SPARQL query on the thread pool.</summary>
     public Task<QueryResult> ExecuteSparqlAsync(string query, CancellationToken ct = default)
-        => ExecuteLanguageAsync(NativeMethods.grafeo_execute_sparql, query, ct);
+        => ExecuteLanguageAsync(NativeMethods.obrain_execute_sparql, query, ct);
 
     /// <summary>Execute a Gremlin query.</summary>
     public QueryResult ExecuteGremlin(string query)
     {
         ThrowIfDisposed();
-        var resultPtr = NativeMethods.grafeo_execute_gremlin(Handle, query);
+        var resultPtr = NativeMethods.obrain_execute_gremlin(Handle, query);
         if (resultPtr == nint.Zero)
-            throw GrafeoException.FromLastError(GrafeoStatus.Query);
+            throw ObrainException.FromLastError(ObrainStatus.Query);
         return BuildResult(resultPtr);
     }
 
     /// <summary>Execute a Gremlin query on the thread pool.</summary>
     public Task<QueryResult> ExecuteGremlinAsync(string query, CancellationToken ct = default)
-        => ExecuteLanguageAsync(NativeMethods.grafeo_execute_gremlin, query, ct);
+        => ExecuteLanguageAsync(NativeMethods.obrain_execute_gremlin, query, ct);
 
     /// <summary>Execute a GraphQL query.</summary>
     public QueryResult ExecuteGraphql(string query)
     {
         ThrowIfDisposed();
-        var resultPtr = NativeMethods.grafeo_execute_graphql(Handle, query);
+        var resultPtr = NativeMethods.obrain_execute_graphql(Handle, query);
         if (resultPtr == nint.Zero)
-            throw GrafeoException.FromLastError(GrafeoStatus.Query);
+            throw ObrainException.FromLastError(ObrainStatus.Query);
         return BuildResult(resultPtr);
     }
 
     /// <summary>Execute a GraphQL query on the thread pool.</summary>
     public Task<QueryResult> ExecuteGraphqlAsync(string query, CancellationToken ct = default)
-        => ExecuteLanguageAsync(NativeMethods.grafeo_execute_graphql, query, ct);
+        => ExecuteLanguageAsync(NativeMethods.obrain_execute_graphql, query, ct);
 
     /// <summary>Execute a SQL/PGQ query.</summary>
     public QueryResult ExecuteSql(string query)
     {
         ThrowIfDisposed();
-        var resultPtr = NativeMethods.grafeo_execute_sql(Handle, query);
+        var resultPtr = NativeMethods.obrain_execute_sql(Handle, query);
         if (resultPtr == nint.Zero)
-            throw GrafeoException.FromLastError(GrafeoStatus.Query);
+            throw ObrainException.FromLastError(ObrainStatus.Query);
         return BuildResult(resultPtr);
     }
 
     /// <summary>Execute a SQL/PGQ query on the thread pool.</summary>
     public Task<QueryResult> ExecuteSqlAsync(string query, CancellationToken ct = default)
-        => ExecuteLanguageAsync(NativeMethods.grafeo_execute_sql, query, ct);
+        => ExecuteLanguageAsync(NativeMethods.obrain_execute_sql, query, ct);
 
     // =========================================================================
     // Transactions
@@ -201,9 +201,9 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
     public Transaction BeginTransaction()
     {
         ThrowIfDisposed();
-        var txPtr = NativeMethods.grafeo_begin_transaction(Handle);
+        var txPtr = NativeMethods.obrain_begin_transaction(Handle);
         if (txPtr == nint.Zero)
-            throw GrafeoException.FromLastError(GrafeoStatus.Transaction);
+            throw ObrainException.FromLastError(ObrainStatus.Transaction);
         return new Transaction(txPtr);
     }
 
@@ -212,9 +212,9 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
     public Transaction BeginTransaction(string isolationLevel)
     {
         ThrowIfDisposed();
-        var txPtr = NativeMethods.grafeo_begin_transaction_with_isolation(Handle, isolationLevel);
+        var txPtr = NativeMethods.obrain_begin_transaction_with_isolation(Handle, isolationLevel);
         if (txPtr == nint.Zero)
-            throw GrafeoException.FromLastError(GrafeoStatus.Transaction);
+            throw ObrainException.FromLastError(ObrainStatus.Transaction);
         return new Transaction(txPtr);
     }
 
@@ -228,9 +228,9 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
         ThrowIfDisposed();
         var labelsJson = System.Text.Json.JsonSerializer.Serialize(labels);
         var propsJson = properties is not null ? ValueConverter.EncodeParams(properties) : null;
-        var id = NativeMethods.grafeo_create_node(Handle, labelsJson, propsJson);
+        var id = NativeMethods.obrain_create_node(Handle, labelsJson, propsJson);
         if (id == ulong.MaxValue)
-            throw GrafeoException.FromLastError();
+            throw ObrainException.FromLastError();
         return (long)id;
     }
 
@@ -238,8 +238,8 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
     public Node? GetNode(long id)
     {
         ThrowIfDisposed();
-        var status = NativeMethods.grafeo_get_node(Handle, (ulong)id, out var nodePtr);
-        if (status != (int)GrafeoStatus.Ok)
+        var status = NativeMethods.obrain_get_node(Handle, (ulong)id, out var nodePtr);
+        if (status != (int)ObrainStatus.Ok)
             return null;
         try
         {
@@ -247,7 +247,7 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
         }
         finally
         {
-            NativeMethods.grafeo_free_node(nodePtr);
+            NativeMethods.obrain_free_node(nodePtr);
         }
     }
 
@@ -255,7 +255,7 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
     public bool DeleteNode(long id)
     {
         ThrowIfDisposed();
-        return NativeMethods.grafeo_delete_node(Handle, (ulong)id) == 1;
+        return NativeMethods.obrain_delete_node(Handle, (ulong)id) == 1;
     }
 
     /// <summary>Set a property on a node.</summary>
@@ -263,29 +263,29 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
     {
         ThrowIfDisposed();
         var valueJson = ValueConverter.EncodeValue(value);
-        GrafeoException.ThrowIfFailed(
-            NativeMethods.grafeo_set_node_property(Handle, (ulong)id, key, valueJson));
+        ObrainException.ThrowIfFailed(
+            NativeMethods.obrain_set_node_property(Handle, (ulong)id, key, valueJson));
     }
 
     /// <summary>Remove a property from a node. Returns true if removed.</summary>
     public bool RemoveNodeProperty(long id, string key)
     {
         ThrowIfDisposed();
-        return NativeMethods.grafeo_remove_node_property(Handle, (ulong)id, key) == 1;
+        return NativeMethods.obrain_remove_node_property(Handle, (ulong)id, key) == 1;
     }
 
     /// <summary>Add a label to a node. Returns true if added.</summary>
     public bool AddNodeLabel(long id, string label)
     {
         ThrowIfDisposed();
-        return NativeMethods.grafeo_add_node_label(Handle, (ulong)id, label) == 1;
+        return NativeMethods.obrain_add_node_label(Handle, (ulong)id, label) == 1;
     }
 
     /// <summary>Remove a label from a node. Returns true if removed.</summary>
     public bool RemoveNodeLabel(long id, string label)
     {
         ThrowIfDisposed();
-        return NativeMethods.grafeo_remove_node_label(Handle, (ulong)id, label) == 1;
+        return NativeMethods.obrain_remove_node_label(Handle, (ulong)id, label) == 1;
     }
 
     // =========================================================================
@@ -301,10 +301,10 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
     {
         ThrowIfDisposed();
         var propsJson = properties is not null ? ValueConverter.EncodeParams(properties) : null;
-        var id = NativeMethods.grafeo_create_edge(
+        var id = NativeMethods.obrain_create_edge(
             Handle, (ulong)sourceId, (ulong)targetId, edgeType, propsJson);
         if (id == ulong.MaxValue)
-            throw GrafeoException.FromLastError();
+            throw ObrainException.FromLastError();
         return (long)id;
     }
 
@@ -312,8 +312,8 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
     public Edge? GetEdge(long id)
     {
         ThrowIfDisposed();
-        var status = NativeMethods.grafeo_get_edge(Handle, (ulong)id, out var edgePtr);
-        if (status != (int)GrafeoStatus.Ok)
+        var status = NativeMethods.obrain_get_edge(Handle, (ulong)id, out var edgePtr);
+        if (status != (int)ObrainStatus.Ok)
             return null;
         try
         {
@@ -321,7 +321,7 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
         }
         finally
         {
-            NativeMethods.grafeo_free_edge(edgePtr);
+            NativeMethods.obrain_free_edge(edgePtr);
         }
     }
 
@@ -329,7 +329,7 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
     public bool DeleteEdge(long id)
     {
         ThrowIfDisposed();
-        return NativeMethods.grafeo_delete_edge(Handle, (ulong)id) == 1;
+        return NativeMethods.obrain_delete_edge(Handle, (ulong)id) == 1;
     }
 
     /// <summary>Set a property on an edge.</summary>
@@ -337,15 +337,15 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
     {
         ThrowIfDisposed();
         var valueJson = ValueConverter.EncodeValue(value);
-        GrafeoException.ThrowIfFailed(
-            NativeMethods.grafeo_set_edge_property(Handle, (ulong)id, key, valueJson));
+        ObrainException.ThrowIfFailed(
+            NativeMethods.obrain_set_edge_property(Handle, (ulong)id, key, valueJson));
     }
 
     /// <summary>Remove a property from an edge. Returns true if removed.</summary>
     public bool RemoveEdgeProperty(long id, string key)
     {
         ThrowIfDisposed();
-        return NativeMethods.grafeo_remove_edge_property(Handle, (ulong)id, key) == 1;
+        return NativeMethods.obrain_remove_edge_property(Handle, (ulong)id, key) == 1;
     }
 
     // =========================================================================
@@ -358,7 +358,7 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
         get
         {
             ThrowIfDisposed();
-            return (long)NativeMethods.grafeo_node_count(Handle);
+            return (long)NativeMethods.obrain_node_count(Handle);
         }
     }
 
@@ -368,7 +368,7 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
         get
         {
             ThrowIfDisposed();
-            return (long)NativeMethods.grafeo_edge_count(Handle);
+            return (long)NativeMethods.obrain_edge_count(Handle);
         }
     }
 
@@ -376,9 +376,9 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
     public IReadOnlyDictionary<string, object?> Info()
     {
         ThrowIfDisposed();
-        var ptr = NativeMethods.grafeo_info(Handle);
+        var ptr = NativeMethods.obrain_info(Handle);
         if (ptr == nint.Zero)
-            throw GrafeoException.FromLastError();
+            throw ObrainException.FromLastError();
         try
         {
             var json = Marshal.PtrToStringUTF8(ptr)!;
@@ -386,16 +386,16 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
         }
         finally
         {
-            NativeMethods.grafeo_free_string(ptr);
+            NativeMethods.obrain_free_string(ptr);
         }
     }
 
-    /// <summary>Get the Grafeo library version string.</summary>
+    /// <summary>Get the Obrain library version string.</summary>
     public static string Version
     {
         get
         {
-            var ptr = NativeMethods.grafeo_version();
+            var ptr = NativeMethods.obrain_version();
             return Marshal.PtrToStringUTF8(ptr) ?? "unknown";
         }
     }
@@ -404,7 +404,7 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
     public void Save(string path)
     {
         ThrowIfDisposed();
-        GrafeoException.ThrowIfFailed(NativeMethods.grafeo_save(Handle, path));
+        ObrainException.ThrowIfFailed(NativeMethods.obrain_save(Handle, path));
     }
 
     // =========================================================================
@@ -415,16 +415,16 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
     public void DropVectorIndex(string label, string property)
     {
         ThrowIfDisposed();
-        GrafeoException.ThrowIfFailed(
-            NativeMethods.grafeo_drop_vector_index(Handle, label, property));
+        ObrainException.ThrowIfFailed(
+            NativeMethods.obrain_drop_vector_index(Handle, label, property));
     }
 
     /// <summary>Rebuild a vector index on the given label and property.</summary>
     public void RebuildVectorIndex(string label, string property)
     {
         ThrowIfDisposed();
-        GrafeoException.ThrowIfFailed(
-            NativeMethods.grafeo_rebuild_vector_index(Handle, label, property));
+        ObrainException.ThrowIfFailed(
+            NativeMethods.obrain_rebuild_vector_index(Handle, label, property));
     }
 
     /// <summary>Perform a vector similarity search.</summary>
@@ -437,12 +437,12 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
         {
             fixed (float* queryPtr = query)
             {
-                var status = NativeMethods.grafeo_vector_search(
+                var status = NativeMethods.obrain_vector_search(
                     Handle, label, property,
                     queryPtr, (nuint)query.Length, (nuint)k, ef,
                     out var idsPtr, out var distsPtr, out var count);
 
-                GrafeoException.ThrowIfFailed(status);
+                ObrainException.ThrowIfFailed(status);
                 return ReadVectorResults(idsPtr, distsPtr, count);
             }
         }
@@ -458,13 +458,13 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
         {
             fixed (float* queryPtr = query)
             {
-                var status = NativeMethods.grafeo_mmr_search(
+                var status = NativeMethods.obrain_mmr_search(
                     Handle, label, property,
                     queryPtr, (nuint)query.Length, (nuint)k,
                     fetchK, lambda, ef,
                     out var idsPtr, out var distsPtr, out var count);
 
-                GrafeoException.ThrowIfFailed(status);
+                ObrainException.ThrowIfFailed(status);
                 return ReadVectorResults(idsPtr, distsPtr, count);
             }
         }
@@ -486,7 +486,7 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
             ct.ThrowIfCancellationRequested();
             var resultPtr = nativeMethod(h, query);
             if (resultPtr == nint.Zero)
-                throw GrafeoException.FromLastError(GrafeoStatus.Query);
+                throw ObrainException.FromLastError(ObrainStatus.Query);
             return BuildResult(resultPtr);
         }, ct);
     }
@@ -511,10 +511,10 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
     {
         try
         {
-            var jsonPtr = NativeMethods.grafeo_result_json(resultPtr);
+            var jsonPtr = NativeMethods.obrain_result_json(resultPtr);
             var json = Marshal.PtrToStringUTF8(jsonPtr) ?? "[]";
-            var executionTimeMs = NativeMethods.grafeo_result_execution_time_ms(resultPtr);
-            var rowsScanned = (long)NativeMethods.grafeo_result_rows_scanned(resultPtr);
+            var executionTimeMs = NativeMethods.obrain_result_execution_time_ms(resultPtr);
+            var rowsScanned = (long)NativeMethods.obrain_result_rows_scanned(resultPtr);
 
             var rows = ValueConverter.ParseRows(json);
             var columns = ValueConverter.ExtractColumns(rows);
@@ -524,16 +524,16 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
         }
         finally
         {
-            NativeMethods.grafeo_free_result(resultPtr);
+            NativeMethods.obrain_free_result(resultPtr);
         }
     }
 
-    /// <summary>Read a node from a native GrafeoNode pointer.</summary>
+    /// <summary>Read a node from a native ObrainNode pointer.</summary>
     private static Node ReadNode(nint nodePtr)
     {
-        var id = (long)NativeMethods.grafeo_node_id(nodePtr);
-        var labelsJsonPtr = NativeMethods.grafeo_node_labels_json(nodePtr);
-        var propsJsonPtr = NativeMethods.grafeo_node_properties_json(nodePtr);
+        var id = (long)NativeMethods.obrain_node_id(nodePtr);
+        var labelsJsonPtr = NativeMethods.obrain_node_labels_json(nodePtr);
+        var propsJsonPtr = NativeMethods.obrain_node_properties_json(nodePtr);
 
         var labelsJson = Marshal.PtrToStringUTF8(labelsJsonPtr) ?? "[]";
         var propsJson = Marshal.PtrToStringUTF8(propsJsonPtr) ?? "{}";
@@ -543,14 +543,14 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
         return new Node(id, labels, properties);
     }
 
-    /// <summary>Read an edge from a native GrafeoEdge pointer.</summary>
+    /// <summary>Read an edge from a native ObrainEdge pointer.</summary>
     private static Edge ReadEdge(nint edgePtr)
     {
-        var id = (long)NativeMethods.grafeo_edge_id(edgePtr);
-        var sourceId = (long)NativeMethods.grafeo_edge_source_id(edgePtr);
-        var targetId = (long)NativeMethods.grafeo_edge_target_id(edgePtr);
-        var typePtr = NativeMethods.grafeo_edge_type(edgePtr);
-        var propsPtr = NativeMethods.grafeo_edge_properties_json(edgePtr);
+        var id = (long)NativeMethods.obrain_edge_id(edgePtr);
+        var sourceId = (long)NativeMethods.obrain_edge_source_id(edgePtr);
+        var targetId = (long)NativeMethods.obrain_edge_target_id(edgePtr);
+        var typePtr = NativeMethods.obrain_edge_type(edgePtr);
+        var propsPtr = NativeMethods.obrain_edge_properties_json(edgePtr);
 
         var edgeType = Marshal.PtrToStringUTF8(typePtr) ?? "";
         var propsJson = Marshal.PtrToStringUTF8(propsPtr) ?? "{}";
@@ -576,7 +576,7 @@ public sealed class GrafeoDB : IDisposable, IAsyncDisposable
                 results[i] = new VectorResult((long)ids[i], dists[i]);
             }
         }
-        NativeMethods.grafeo_free_vector_results(idsPtr, distsPtr, count);
+        NativeMethods.obrain_free_vector_results(idsPtr, distsPtr, count);
         return results;
     }
 }

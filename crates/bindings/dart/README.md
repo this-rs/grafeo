@@ -1,23 +1,23 @@
-# Grafeo Dart Bindings
+# Obrain Dart Bindings
 
-Dart FFI bindings for the [Grafeo](https://grafeo.dev) graph database. Wraps the `grafeo-c` shared library for native performance with a Dart-idiomatic API.
+Dart FFI bindings for the [Obrain](https://obrain.dev) graph database. Wraps the `obrain-c` shared library for native performance with a Dart-idiomatic API.
 
 ## Installation
 
 ```yaml
 dependencies:
-  grafeo: ^0.5.24
+  obrain: ^0.5.24
 ```
 
-You also need the `grafeo-c` native library for your platform. See [Building from Source](#building-from-source) below.
+You also need the `obrain-c` native library for your platform. See [Building from Source](#building-from-source) below.
 
 ## Quick Start
 
 ```dart
-import 'package:grafeo/grafeo.dart';
+import 'package:obrain/obrain.dart';
 
 void main() {
-  final db = GrafeoDB.memory();
+  final db = ObrainDB.memory();
 
   // Insert data
   db.execute("INSERT (:Person {name: 'Alix', age: 30})");
@@ -51,13 +51,13 @@ void main() {
 
 ## API Reference
 
-### GrafeoDB
+### ObrainDB
 
 | Method | Description |
 |--------|-------------|
-| `GrafeoDB.memory()` | Open an in-memory database |
-| `GrafeoDB.open(path)` | Open a persistent database |
-| `GrafeoDB.version()` | Get the library version string |
+| `ObrainDB.memory()` | Open an in-memory database |
+| `ObrainDB.open(path)` | Open a persistent database |
+| `ObrainDB.version()` | Get the library version string |
 | `execute(query)` | Execute a GQL query |
 | `executeWithParams(query, params)` | Execute with parameters |
 | `executeCypher(query)` | Execute a Cypher query |
@@ -96,14 +96,14 @@ void main() {
 
 ```bash
 # Clone and build the native library
-git clone https://github.com/GrafeoDB/grafeo.git
-cd grafeo
-cargo build --release -p grafeo-c
+git clone https://github.com/ObrainDB/obrain.git
+cd obrain
+cargo build --release -p obrain-c
 
 # Copy to the Dart package (or your project)
-# Linux:   cp target/release/libgrafeo_c.so crates/bindings/dart/
-# macOS:   cp target/release/libgrafeo_c.dylib crates/bindings/dart/
-# Windows: copy target\release\grafeo_c.dll crates\bindings\dart\
+# Linux:   cp target/release/libobrain_c.so crates/bindings/dart/
+# macOS:   cp target/release/libobrain_c.dylib crates/bindings/dart/
+# Windows: copy target\release\obrain_c.dll crates\bindings\dart\
 
 # Run tests
 cd crates/bindings/dart

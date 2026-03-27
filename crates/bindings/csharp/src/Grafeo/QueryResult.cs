@@ -1,6 +1,6 @@
 // Entity types returned by query execution and CRUD operations.
 
-namespace Grafeo;
+namespace Obrain;
 
 /// <summary>A graph node with labels and properties.</summary>
 /// <param name="Id">Unique node identifier.</param>

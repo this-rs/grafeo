@@ -1,20 +1,20 @@
-/* Grafeo C API
+/* Obrain C API
  *
- * Link against libgrafeo_c.so (Linux), libgrafeo_c.dylib (macOS),
- * or grafeo_c.dll (Windows).
+ * Link against libobrain_c.so (Linux), libobrain_c.dylib (macOS),
+ * or obrain_c.dll (Windows).
  *
  * Memory management:
- *   - Opaque pointers must be freed with their grafeo_free_* function.
- *   - Strings documented as "free with grafeo_free_string" are caller-owned.
+ *   - Opaque pointers must be freed with their obrain_free_* function.
+ *   - Strings documented as "free with obrain_free_string" are caller-owned.
  *   - Pointers documented as "valid until free" must NOT be freed separately.
  *
  * Error handling:
- *   - Functions return GrafeoStatus (0 = success).
- *   - On error, call grafeo_last_error() for a human-readable message.
+ *   - Functions return ObrainStatus (0 = success).
+ *   - On error, call obrain_last_error() for a human-readable message.
  */
 
-#ifndef GRAFEO_H
-#define GRAFEO_H
+#ifndef OBRAIN_H
+#define OBRAIN_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -26,133 +26,133 @@ extern "C" {
 /* ---- Status codes -------------------------------------------------------- */
 
 typedef enum {
-    GRAFEO_OK                  = 0,
-    GRAFEO_ERROR_DATABASE      = 1,
-    GRAFEO_ERROR_QUERY         = 2,
-    GRAFEO_ERROR_TRANSACTION   = 3,
-    GRAFEO_ERROR_STORAGE       = 4,
-    GRAFEO_ERROR_IO            = 5,
-    GRAFEO_ERROR_SERIALIZATION = 6,
-    GRAFEO_ERROR_INTERNAL      = 7,
-    GRAFEO_ERROR_NULL_POINTER  = 8,
-    GRAFEO_ERROR_INVALID_UTF8  = 9
-} GrafeoStatus;
+    OBRAIN_OK                  = 0,
+    OBRAIN_ERROR_DATABASE      = 1,
+    OBRAIN_ERROR_QUERY         = 2,
+    OBRAIN_ERROR_TRANSACTION   = 3,
+    OBRAIN_ERROR_STORAGE       = 4,
+    OBRAIN_ERROR_IO            = 5,
+    OBRAIN_ERROR_SERIALIZATION = 6,
+    OBRAIN_ERROR_INTERNAL      = 7,
+    OBRAIN_ERROR_NULL_POINTER  = 8,
+    OBRAIN_ERROR_INVALID_UTF8  = 9
+} ObrainStatus;
 
 /* ---- Opaque types -------------------------------------------------------- */
 
-typedef struct GrafeoDatabase    GrafeoDatabase;
-typedef struct GrafeoTransaction GrafeoTransaction;
-typedef struct GrafeoResult      GrafeoResult;
-typedef struct GrafeoNode        GrafeoNode;
-typedef struct GrafeoEdge        GrafeoEdge;
+typedef struct ObrainDatabase    ObrainDatabase;
+typedef struct ObrainTransaction ObrainTransaction;
+typedef struct ObrainResult      ObrainResult;
+typedef struct ObrainNode        ObrainNode;
+typedef struct ObrainEdge        ObrainEdge;
 
 /* ---- Error handling ------------------------------------------------------ */
 
-const char* grafeo_last_error(void);
-void        grafeo_clear_error(void);
+const char* obrain_last_error(void);
+void        obrain_clear_error(void);
 
 /* ---- Lifecycle ----------------------------------------------------------- */
 
-GrafeoDatabase* grafeo_open_memory(void);
-GrafeoDatabase* grafeo_open(const char* path);
-GrafeoDatabase* grafeo_open_read_only(const char* path);
-GrafeoStatus    grafeo_close(GrafeoDatabase* db);
-void            grafeo_free_database(GrafeoDatabase* db);
-const char*     grafeo_version(void);
+ObrainDatabase* obrain_open_memory(void);
+ObrainDatabase* obrain_open(const char* path);
+ObrainDatabase* obrain_open_read_only(const char* path);
+ObrainStatus    obrain_close(ObrainDatabase* db);
+void            obrain_free_database(ObrainDatabase* db);
+const char*     obrain_version(void);
 
 /* ---- Query execution ----------------------------------------------------- */
 
-GrafeoResult* grafeo_execute(GrafeoDatabase* db, const char* query);
-GrafeoResult* grafeo_execute_with_params(GrafeoDatabase* db, const char* query, const char* params_json);
-GrafeoResult* grafeo_execute_cypher(GrafeoDatabase* db, const char* query);
-GrafeoResult* grafeo_execute_gremlin(GrafeoDatabase* db, const char* query);
-GrafeoResult* grafeo_execute_graphql(GrafeoDatabase* db, const char* query);
-GrafeoResult* grafeo_execute_sparql(GrafeoDatabase* db, const char* query);
+ObrainResult* obrain_execute(ObrainDatabase* db, const char* query);
+ObrainResult* obrain_execute_with_params(ObrainDatabase* db, const char* query, const char* params_json);
+ObrainResult* obrain_execute_cypher(ObrainDatabase* db, const char* query);
+ObrainResult* obrain_execute_gremlin(ObrainDatabase* db, const char* query);
+ObrainResult* obrain_execute_graphql(ObrainDatabase* db, const char* query);
+ObrainResult* obrain_execute_sparql(ObrainDatabase* db, const char* query);
 
 /* ---- Result access ------------------------------------------------------- */
 
-const char* grafeo_result_json(const GrafeoResult* result);
-size_t      grafeo_result_row_count(const GrafeoResult* result);
-double      grafeo_result_execution_time_ms(const GrafeoResult* result);
-uint64_t    grafeo_result_rows_scanned(const GrafeoResult* result);
-void        grafeo_free_result(GrafeoResult* result);
+const char* obrain_result_json(const ObrainResult* result);
+size_t      obrain_result_row_count(const ObrainResult* result);
+double      obrain_result_execution_time_ms(const ObrainResult* result);
+uint64_t    obrain_result_rows_scanned(const ObrainResult* result);
+void        obrain_free_result(ObrainResult* result);
 
 /* ---- Node CRUD ----------------------------------------------------------- */
 
-uint64_t     grafeo_create_node(GrafeoDatabase* db, const char* labels_json, const char* properties_json);
-GrafeoStatus grafeo_get_node(GrafeoDatabase* db, uint64_t id, GrafeoNode** out);
-int32_t      grafeo_delete_node(GrafeoDatabase* db, uint64_t id);
-GrafeoStatus grafeo_set_node_property(GrafeoDatabase* db, uint64_t id, const char* key, const char* value_json);
-int32_t      grafeo_remove_node_property(GrafeoDatabase* db, uint64_t id, const char* key);
-int32_t      grafeo_add_node_label(GrafeoDatabase* db, uint64_t id, const char* label);
-int32_t      grafeo_remove_node_label(GrafeoDatabase* db, uint64_t id, const char* label);
-char*        grafeo_get_node_labels(GrafeoDatabase* db, uint64_t id);
+uint64_t     obrain_create_node(ObrainDatabase* db, const char* labels_json, const char* properties_json);
+ObrainStatus obrain_get_node(ObrainDatabase* db, uint64_t id, ObrainNode** out);
+int32_t      obrain_delete_node(ObrainDatabase* db, uint64_t id);
+ObrainStatus obrain_set_node_property(ObrainDatabase* db, uint64_t id, const char* key, const char* value_json);
+int32_t      obrain_remove_node_property(ObrainDatabase* db, uint64_t id, const char* key);
+int32_t      obrain_add_node_label(ObrainDatabase* db, uint64_t id, const char* label);
+int32_t      obrain_remove_node_label(ObrainDatabase* db, uint64_t id, const char* label);
+char*        obrain_get_node_labels(ObrainDatabase* db, uint64_t id);
 
-uint64_t    grafeo_node_id(const GrafeoNode* node);
-const char* grafeo_node_labels_json(const GrafeoNode* node);
-const char* grafeo_node_properties_json(const GrafeoNode* node);
-void        grafeo_free_node(GrafeoNode* node);
+uint64_t    obrain_node_id(const ObrainNode* node);
+const char* obrain_node_labels_json(const ObrainNode* node);
+const char* obrain_node_properties_json(const ObrainNode* node);
+void        obrain_free_node(ObrainNode* node);
 
 /* ---- Edge CRUD ----------------------------------------------------------- */
 
-uint64_t     grafeo_create_edge(GrafeoDatabase* db, uint64_t source_id, uint64_t target_id, const char* edge_type, const char* properties_json);
-GrafeoStatus grafeo_get_edge(GrafeoDatabase* db, uint64_t id, GrafeoEdge** out);
-int32_t      grafeo_delete_edge(GrafeoDatabase* db, uint64_t id);
-GrafeoStatus grafeo_set_edge_property(GrafeoDatabase* db, uint64_t id, const char* key, const char* value_json);
-int32_t      grafeo_remove_edge_property(GrafeoDatabase* db, uint64_t id, const char* key);
+uint64_t     obrain_create_edge(ObrainDatabase* db, uint64_t source_id, uint64_t target_id, const char* edge_type, const char* properties_json);
+ObrainStatus obrain_get_edge(ObrainDatabase* db, uint64_t id, ObrainEdge** out);
+int32_t      obrain_delete_edge(ObrainDatabase* db, uint64_t id);
+ObrainStatus obrain_set_edge_property(ObrainDatabase* db, uint64_t id, const char* key, const char* value_json);
+int32_t      obrain_remove_edge_property(ObrainDatabase* db, uint64_t id, const char* key);
 
-uint64_t    grafeo_edge_id(const GrafeoEdge* edge);
-uint64_t    grafeo_edge_source_id(const GrafeoEdge* edge);
-uint64_t    grafeo_edge_target_id(const GrafeoEdge* edge);
-const char* grafeo_edge_type(const GrafeoEdge* edge);
-const char* grafeo_edge_properties_json(const GrafeoEdge* edge);
-void        grafeo_free_edge(GrafeoEdge* edge);
+uint64_t    obrain_edge_id(const ObrainEdge* edge);
+uint64_t    obrain_edge_source_id(const ObrainEdge* edge);
+uint64_t    obrain_edge_target_id(const ObrainEdge* edge);
+const char* obrain_edge_type(const ObrainEdge* edge);
+const char* obrain_edge_properties_json(const ObrainEdge* edge);
+void        obrain_free_edge(ObrainEdge* edge);
 
 /* ---- Property indexes ---------------------------------------------------- */
 
-GrafeoStatus grafeo_create_property_index(GrafeoDatabase* db, const char* property);
-int32_t      grafeo_drop_property_index(GrafeoDatabase* db, const char* property);
-int32_t      grafeo_has_property_index(GrafeoDatabase* db, const char* property);
-GrafeoStatus grafeo_find_nodes_by_property(GrafeoDatabase* db, const char* property, const char* value_json, uint64_t** out_ids, size_t* out_count);
-void         grafeo_free_node_ids(uint64_t* ids, size_t count);
+ObrainStatus obrain_create_property_index(ObrainDatabase* db, const char* property);
+int32_t      obrain_drop_property_index(ObrainDatabase* db, const char* property);
+int32_t      obrain_has_property_index(ObrainDatabase* db, const char* property);
+ObrainStatus obrain_find_nodes_by_property(ObrainDatabase* db, const char* property, const char* value_json, uint64_t** out_ids, size_t* out_count);
+void         obrain_free_node_ids(uint64_t* ids, size_t count);
 
 /* ---- Vector operations --------------------------------------------------- */
 
-GrafeoStatus grafeo_create_vector_index(GrafeoDatabase* db, const char* label, const char* property, int32_t dimensions, const char* metric, int32_t m, int32_t ef_construction);
-int32_t      grafeo_drop_vector_index(GrafeoDatabase* db, const char* label, const char* property);
-GrafeoStatus grafeo_rebuild_vector_index(GrafeoDatabase* db, const char* label, const char* property);
-GrafeoStatus grafeo_vector_search(GrafeoDatabase* db, const char* label, const char* property, const float* query, size_t query_len, size_t k, int32_t ef, uint64_t** out_ids, float** out_distances, size_t* out_count);
-GrafeoStatus grafeo_mmr_search(GrafeoDatabase* db, const char* label, const char* property, const float* query, size_t query_len, size_t k, int32_t fetch_k, float lambda, int32_t ef, uint64_t** out_ids, float** out_distances, size_t* out_count);
-GrafeoStatus grafeo_batch_create_nodes(GrafeoDatabase* db, const char* label, const char* property, const float* vectors, size_t vector_count, size_t dimensions, uint64_t** out_ids);
-void         grafeo_free_vector_results(uint64_t* ids, float* distances, size_t count);
+ObrainStatus obrain_create_vector_index(ObrainDatabase* db, const char* label, const char* property, int32_t dimensions, const char* metric, int32_t m, int32_t ef_construction);
+int32_t      obrain_drop_vector_index(ObrainDatabase* db, const char* label, const char* property);
+ObrainStatus obrain_rebuild_vector_index(ObrainDatabase* db, const char* label, const char* property);
+ObrainStatus obrain_vector_search(ObrainDatabase* db, const char* label, const char* property, const float* query, size_t query_len, size_t k, int32_t ef, uint64_t** out_ids, float** out_distances, size_t* out_count);
+ObrainStatus obrain_mmr_search(ObrainDatabase* db, const char* label, const char* property, const float* query, size_t query_len, size_t k, int32_t fetch_k, float lambda, int32_t ef, uint64_t** out_ids, float** out_distances, size_t* out_count);
+ObrainStatus obrain_batch_create_nodes(ObrainDatabase* db, const char* label, const char* property, const float* vectors, size_t vector_count, size_t dimensions, uint64_t** out_ids);
+void         obrain_free_vector_results(uint64_t* ids, float* distances, size_t count);
 
 /* ---- Statistics ---------------------------------------------------------- */
 
-size_t grafeo_node_count(GrafeoDatabase* db);
-size_t grafeo_edge_count(GrafeoDatabase* db);
+size_t obrain_node_count(ObrainDatabase* db);
+size_t obrain_edge_count(ObrainDatabase* db);
 
 /* ---- Transactions -------------------------------------------------------- */
 
-GrafeoTransaction* grafeo_begin_transaction(GrafeoDatabase* db);
-GrafeoTransaction* grafeo_begin_transaction_with_isolation(GrafeoDatabase* db, int32_t isolation);
-GrafeoResult*      grafeo_transaction_execute(GrafeoTransaction* tx, const char* query);
-GrafeoResult*      grafeo_transaction_execute_with_params(GrafeoTransaction* tx, const char* query, const char* params_json);
-GrafeoStatus       grafeo_commit(GrafeoTransaction* tx);
-GrafeoStatus       grafeo_rollback(GrafeoTransaction* tx);
-void               grafeo_free_transaction(GrafeoTransaction* tx);
+ObrainTransaction* obrain_begin_transaction(ObrainDatabase* db);
+ObrainTransaction* obrain_begin_transaction_with_isolation(ObrainDatabase* db, int32_t isolation);
+ObrainResult*      obrain_transaction_execute(ObrainTransaction* tx, const char* query);
+ObrainResult*      obrain_transaction_execute_with_params(ObrainTransaction* tx, const char* query, const char* params_json);
+ObrainStatus       obrain_commit(ObrainTransaction* tx);
+ObrainStatus       obrain_rollback(ObrainTransaction* tx);
+void               obrain_free_transaction(ObrainTransaction* tx);
 
 /* ---- Admin --------------------------------------------------------------- */
 
-char*        grafeo_info(GrafeoDatabase* db);
-GrafeoStatus grafeo_save(GrafeoDatabase* db, const char* path);
-GrafeoStatus grafeo_wal_checkpoint(GrafeoDatabase* db);
+char*        obrain_info(ObrainDatabase* db);
+ObrainStatus obrain_save(ObrainDatabase* db, const char* path);
+ObrainStatus obrain_wal_checkpoint(ObrainDatabase* db);
 
 /* ---- Memory management --------------------------------------------------- */
 
-void grafeo_free_string(char* s);
+void obrain_free_string(char* s);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* GRAFEO_H */
+#endif /* OBRAIN_H */

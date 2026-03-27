@@ -20,7 +20,7 @@ A high-performance, embeddable graph database with a Rust core and no required C
 | SPARQL (W3C 1.1) | - | ✅ | Default |
 | SQL/PGQ (SQL:2023) | ✅ | - | Default |
 
-Grafeo uses a modular translator architecture where query languages are parsed into ASTs, then translated to a unified logical plan that executes against the appropriate storage backend (LPG or RDF).
+Obrain uses a modular translator architecture where query languages are parsed into ASTs, then translated to a unified logical plan that executes against the appropriate storage backend (LPG or RDF).
 
 ### Data Models
 
@@ -30,27 +30,27 @@ Grafeo uses a modular translator architecture where query languages are parsed i
 ## Installation
 
 ```bash
-cargo add grafeo
+cargo add obrain
 ```
 
 By default, the `embedded` profile is enabled: GQL, AI features (vector/text/hybrid search, CDC), graph algorithms and parallel execution. Customize with feature groups:
 
 ```bash
-cargo add grafeo                                             # Default (embedded profile)
-cargo add grafeo --no-default-features --features full       # All languages + AI + storage + RDF
-cargo add grafeo --no-default-features --features languages  # All languages, no AI
-cargo add grafeo --no-default-features --features gql,ai     # GQL + AI features
-cargo add grafeo --no-default-features --features gql        # Minimal: GQL only
-cargo add grafeo --features embed                            # Add ONNX embeddings (opt-in)
+cargo add obrain                                             # Default (embedded profile)
+cargo add obrain --no-default-features --features full       # All languages + AI + storage + RDF
+cargo add obrain --no-default-features --features languages  # All languages, no AI
+cargo add obrain --no-default-features --features gql,ai     # GQL + AI features
+cargo add obrain --no-default-features --features gql        # Minimal: GQL only
+cargo add obrain --features embed                            # Add ONNX embeddings (opt-in)
 ```
 
 ## Quick Start
 
 ```rust
-use grafeo::GrafeoDB;
+use obrain::ObrainDB;
 
-fn main() -> Result<(), grafeo_common::utils::error::Error> {
-    let db = GrafeoDB::new_in_memory();
+fn main() -> Result<(), obrain_common::utils::error::Error> {
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     // Create nodes

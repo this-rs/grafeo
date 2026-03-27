@@ -1,14 +1,14 @@
 """
-Vector Search with Grafeo and anywidget-vector
+Vector Search with Obrain and anywidget-vector
 
-This example demonstrates how to use Grafeo's vector search capabilities
+This example demonstrates how to use Obrain's vector search capabilities
 with the anywidget-vector package for 3D visualization of embeddings.
 
 Run with: marimo run vector_search.py
 Or convert to notebook: marimo export notebook vector_search.py
 
 Requirements:
-    pip install grafeo anywidget-vector marimo numpy
+    pip install obrain anywidget-vector marimo numpy
 """
 
 import marimo
@@ -22,10 +22,10 @@ def __():
     import marimo as mo
 
     mo.md("""
-    # Vector Search with Grafeo
+    # Vector Search with Obrain
 
     This notebook demonstrates vector similarity search using:
-    - **Grafeo**: Graph database with native vector support
+    - **Obrain**: Graph database with native vector support
     - **anywidget-vector**: 3D vector visualization widget
 
     We'll create embeddings for documents and find similar items!
@@ -79,10 +79,10 @@ def __():
 
 @app.cell
 def __(documents, embeddings):
-    from grafeo import GrafeoDB
+    from obrain import ObrainDB
 
     # Create database with vector support
-    db = GrafeoDB()
+    db = ObrainDB()
 
     # Create document nodes with embeddings
     doc_nodes = []
@@ -99,7 +99,7 @@ def __(documents, embeddings):
         doc_nodes.append(node)
 
     print(f"Created {len(doc_nodes)} document nodes with vector embeddings")
-    return GrafeoDB, db, doc_nodes
+    return ObrainDB, db, doc_nodes
 
 
 @app.cell

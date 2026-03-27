@@ -3,7 +3,7 @@ requires = ["maturin>=1.11.5"]
 build-backend = "maturin"
 
 [project]
-name = "grafeo"
+name = "obrain"
 version = "0.5.24"
 description = "A high-performance, embeddable graph database with Python bindings"
 readme = "README.md"
@@ -34,10 +34,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://grafeo.dev"
-Documentation = "https://grafeo.dev/user-guide/"
-Repository = "https://github.com/GrafeoDB/grafeo"
-Issues = "https://github.com/GrafeoDB/grafeo/issues"
+Homepage = "https://obrain.dev"
+Documentation = "https://obrain.dev/user-guide/"
+Repository = "https://github.com/ObrainDB/obrain"
+Issues = "https://github.com/ObrainDB/obrain/issues"
 
 [project.optional-dependencies]
 dev = [
@@ -50,7 +50,7 @@ dev = [
 [tool.maturin]
 features = ["pyo3/extension-module", "full"]
 python-source = "python"
-module-name = "grafeo"
+module-name = "obrain"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

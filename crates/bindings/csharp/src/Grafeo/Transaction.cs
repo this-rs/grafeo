@@ -2,9 +2,9 @@
 
 using System.Runtime.InteropServices;
 
-using Grafeo.Native;
+using Obrain.Native;
 
-namespace Grafeo;
+namespace Obrain;
 
 /// <summary>
 /// An ACID transaction. Auto-rolls back on <see cref="Dispose"/> if
@@ -35,9 +35,9 @@ public sealed class Transaction : IDisposable, IAsyncDisposable
     public QueryResult Execute(string query)
     {
         ThrowIfFinished();
-        var resultPtr = NativeMethods.grafeo_transaction_execute(Handle, query);
+        var resultPtr = NativeMethods.obrain_transaction_execute(Handle, query);
         if (resultPtr == nint.Zero)
-            throw GrafeoException.FromLastError(GrafeoStatus.Query);
+            throw ObrainException.FromLastError(ObrainStatus.Query);
         return BuildResult(resultPtr);
     }
 
@@ -49,9 +49,9 @@ public sealed class Transaction : IDisposable, IAsyncDisposable
         return Task.Run(() =>
         {
             ct.ThrowIfCancellationRequested();
-            var resultPtr = NativeMethods.grafeo_transaction_execute(h, query);
+            var resultPtr = NativeMethods.obrain_transaction_execute(h, query);
             if (resultPtr == nint.Zero)
-                throw GrafeoException.FromLastError(GrafeoStatus.Query);
+                throw ObrainException.FromLastError(ObrainStatus.Query);
             return BuildResult(resultPtr);
         }, ct);
     }
@@ -61,9 +61,9 @@ public sealed class Transaction : IDisposable, IAsyncDisposable
     {
         ThrowIfFinished();
         var paramsJson = ValueConverter.EncodeParams(parameters);
-        var resultPtr = NativeMethods.grafeo_transaction_execute_with_params(Handle, query, paramsJson);
+        var resultPtr = NativeMethods.obrain_transaction_execute_with_params(Handle, query, paramsJson);
         if (resultPtr == nint.Zero)
-            throw GrafeoException.FromLastError(GrafeoStatus.Query);
+            throw ObrainException.FromLastError(ObrainStatus.Query);
         return BuildResult(resultPtr);
     }
 
@@ -79,9 +79,9 @@ public sealed class Transaction : IDisposable, IAsyncDisposable
         return Task.Run(() =>
         {
             ct.ThrowIfCancellationRequested();
-            var resultPtr = NativeMethods.grafeo_transaction_execute_with_params(h, query, paramsJson);
+            var resultPtr = NativeMethods.obrain_transaction_execute_with_params(h, query, paramsJson);
             if (resultPtr == nint.Zero)
-                throw GrafeoException.FromLastError(GrafeoStatus.Query);
+                throw ObrainException.FromLastError(ObrainStatus.Query);
             return BuildResult(resultPtr);
         }, ct);
     }
@@ -96,9 +96,9 @@ public sealed class Transaction : IDisposable, IAsyncDisposable
         ThrowIfFinished();
         var h = Handle;
         _finished = true;
-        var status = NativeMethods.grafeo_commit(h);
-        if (status != (int)GrafeoStatus.Ok)
-            throw GrafeoException.FromLastError(GrafeoStatus.Transaction);
+        var status = NativeMethods.obrain_commit(h);
+        if (status != (int)ObrainStatus.Ok)
+            throw ObrainException.FromLastError(ObrainStatus.Transaction);
     }
 
     /// <summary>Roll back the transaction, discarding all changes.</summary>
@@ -107,9 +107,9 @@ public sealed class Transaction : IDisposable, IAsyncDisposable
         if (_finished) return;
         var h = Handle;
         _finished = true;
-        var status = NativeMethods.grafeo_rollback(h);
-        if (status != (int)GrafeoStatus.Ok)
-            throw GrafeoException.FromLastError(GrafeoStatus.Transaction);
+        var status = NativeMethods.obrain_rollback(h);
+        if (status != (int)ObrainStatus.Ok)
+            throw ObrainException.FromLastError(ObrainStatus.Transaction);
     }
 
     // =========================================================================
@@ -128,7 +128,7 @@ public sealed class Transaction : IDisposable, IAsyncDisposable
         {
             // Best-effort rollback; swallow errors during dispose.
             _finished = true;
-            NativeMethods.grafeo_rollback(_handle.DangerousGetHandle());
+            NativeMethods.obrain_rollback(_handle.DangerousGetHandle());
         }
         _handle.Dispose();
     }
@@ -164,10 +164,10 @@ public sealed class Transaction : IDisposable, IAsyncDisposable
     {
         try
         {
-            var jsonPtr = NativeMethods.grafeo_result_json(resultPtr);
+            var jsonPtr = NativeMethods.obrain_result_json(resultPtr);
             var json = Marshal.PtrToStringUTF8(jsonPtr) ?? "[]";
-            var executionTimeMs = NativeMethods.grafeo_result_execution_time_ms(resultPtr);
-            var rowsScanned = (long)NativeMethods.grafeo_result_rows_scanned(resultPtr);
+            var executionTimeMs = NativeMethods.obrain_result_execution_time_ms(resultPtr);
+            var rowsScanned = (long)NativeMethods.obrain_result_rows_scanned(resultPtr);
 
             var rows = ValueConverter.ParseRows(json);
             var columns = ValueConverter.ExtractColumns(rows);
@@ -177,7 +177,7 @@ public sealed class Transaction : IDisposable, IAsyncDisposable
         }
         finally
         {
-            NativeMethods.grafeo_free_result(resultPtr);
+            NativeMethods.obrain_free_result(resultPtr);
         }
     }
 }

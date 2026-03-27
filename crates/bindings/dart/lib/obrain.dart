@@ -1,14 +1,14 @@
-/// Dart bindings for the Grafeo graph database.
+/// Dart bindings for the Obrain graph database.
 ///
-/// Provides a native Dart API backed by the grafeo-c shared library via FFI.
+/// Provides a native Dart API backed by the obrain-c shared library via FFI.
 ///
 /// ## Quick Start
 ///
 /// ```dart
-/// import 'package:grafeo/grafeo.dart';
+/// import 'package:obrain/obrain.dart';
 ///
 /// void main() {
-///   final db = GrafeoDB.memory();
+///   final db = ObrainDB.memory();
 ///
 ///   db.execute("INSERT (:Person {name: 'Alix', age: 30})");
 ///   final result = db.execute(
