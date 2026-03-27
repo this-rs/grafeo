@@ -15,6 +15,13 @@ use grafeo::GrafeoDB;
 use grafeo_cognitive::engram::EngramStore;
 use grafeo_rag::{EngramRetriever, GraphContextBuilder, RagConfig, RagPipeline};
 
+/// Index stats captured at construction time for the /stats command.
+struct IndexInfo {
+    total_nodes: usize,
+    distinct_terms: usize,
+    label_distribution: Vec<(String, usize, f64)>,
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
@@ -90,6 +97,19 @@ fn main() {
         None,
     );
 
+    let (total_nodes, distinct_terms, label_distribution) = retriever.index_stats();
+    let index_info = IndexInfo {
+        total_nodes,
+        distinct_terms,
+        label_distribution,
+    };
+
+    eprintln!("[rag] Index: {} distinct terms across {} nodes", distinct_terms, total_nodes);
+    // Show top 5 labels with their cardinality
+    for (label, count, frac) in index_info.label_distribution.iter().take(5) {
+        eprintln!("[rag]   {:>6.1}%  {} ({})", frac, label, count);
+    }
+
     let context_builder = GraphContextBuilder::new();
 
     let config = RagConfig {
@@ -107,7 +127,7 @@ fn main() {
             run_query(&pipeline, &q, false);
         }
         None => {
-            interactive_loop(&mut pipeline, node_count);
+            interactive_loop(&mut pipeline, node_count, &index_info);
         }
     }
 }
@@ -169,7 +189,7 @@ fn run_query(pipeline: &RagPipeline, query: &str, trace: bool) {
 }
 
 /// Interactive REPL — read queries from stdin, display RAG context.
-fn interactive_loop(pipeline: &mut RagPipeline, node_count: usize) {
+fn interactive_loop(pipeline: &mut RagPipeline, node_count: usize, index_info: &IndexInfo) {
     let mut trace_mode = false;
 
     eprintln!("[rag] Interactive mode — type a query, press Enter.");
@@ -221,10 +241,17 @@ fn interactive_loop(pipeline: &mut RagPipeline, node_count: usize) {
             "/stats" => {
                 let cfg = pipeline.config();
                 eprintln!("  Graph: {} nodes", node_count);
+                eprintln!("  Index: {} distinct terms", index_info.distinct_terms);
                 eprintln!("  Preset: {}", cfg.preset_name());
                 eprintln!("  Token budget: {}", cfg.token_budget);
                 eprintln!("  Max context nodes: {}", cfg.max_context_nodes);
-                eprintln!("  Trace mode: {}\n", if trace_mode { "ON" } else { "OFF" });
+                eprintln!("  Trace mode: {}", if trace_mode { "ON" } else { "OFF" });
+                eprintln!("  --- Label distribution (dampening) ---");
+                for (label, count, frac) in index_info.label_distribution.iter().take(10) {
+                    let dampening = (1.0 + frac / 100.0 * 10.0).ln().max(1.0);
+                    eprintln!("    {:>6.1}%  {} ({}) → ÷{:.2}", frac, label, count, dampening);
+                }
+                eprintln!();
                 continue;
             }
             "/config" => {

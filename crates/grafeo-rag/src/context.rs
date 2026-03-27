@@ -141,7 +141,16 @@ impl ContextBuilder for GraphContextBuilder {
                         continue;
                     }
                     let display_value = if val_str.len() > 500 {
-                        format!("{}… ({} chars omitted)", &val_str[..500], val_str.len() - 500)
+                        // Find a char boundary at or before byte 500 to avoid
+                        // panicking on multi-byte UTF-8 characters.
+                        let truncate_at = val_str
+                            .char_indices()
+                            .take_while(|&(i, _)| i <= 500)
+                            .last()
+                            .map(|(i, _)| i)
+                            .unwrap_or(0);
+                        let omitted = val_str[truncate_at..].chars().count();
+                        format!("{}… ({} chars omitted)", &val_str[..truncate_at], omitted)
                     } else {
                         val_str.to_string()
                     };
@@ -397,6 +406,39 @@ mod tests {
         // Real properties should be present
         assert!(ctx.text.contains("Grafeo"));
         assert!(ctx.text.contains("WAL Bug"));
+    }
+
+    #[test]
+    fn truncation_handles_multibyte_utf8() {
+        // Regression test: truncating at byte 500 can land inside a
+        // multi-byte char (e.g. '─' = 3 bytes), causing a panic.
+        let mut long_text = "a".repeat(498);
+        long_text.push_str("─── suite du texte très long pour dépasser les 500 bytes");
+        assert!(long_text.len() > 500);
+
+        let mut props = HashMap::new();
+        props.insert("content".into(), long_text);
+
+        let result = RetrievalResult {
+            nodes: vec![RetrievedNode {
+                node_id: NodeId(1),
+                labels: vec!["Test".into()],
+                properties: props,
+                score: 1.0,
+                source: RetrievalSource::EngramRecall { engram_id: 1, confidence: 1.0 },
+                outgoing_relations: vec![],
+                incoming_relations: vec![],
+            }],
+            engrams_matched: 1,
+            nodes_activated: 1,
+        };
+
+        let config = RagConfig::default();
+        let builder = GraphContextBuilder::new();
+
+        // This should NOT panic
+        let ctx = builder.build(&result, &config).unwrap();
+        assert!(ctx.text.contains("chars omitted"));
     }
 
     #[test]
