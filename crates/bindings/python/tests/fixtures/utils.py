@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-# Check if grafeo is available
+# Check if obrain is available
 try:
     import obrain  # noqa: F401
 

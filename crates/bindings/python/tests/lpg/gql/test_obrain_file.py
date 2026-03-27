@@ -1,4 +1,4 @@
-"""End-to-end tests for the single-file .grafeo database format.
+"""End-to-end tests for the single-file .obrain database format.
 
 Tests persistence, checkpoint, and reopen through the Python binding layer.
 Requires the 'storage' feature to be enabled during build.
@@ -29,7 +29,7 @@ _skip_no_obrain_file = pytest.mark.skipif(
 
 @_skip_no_obrain_file
 class TestObrainFilePersistence:
-    """Tests for .grafeo single-file format via Python bindings."""
+    """Tests for .obrain single-file format via Python bindings."""
 
     def test_create_and_reopen(self):
         """Data inserted in one session persists after close/reopen."""
@@ -66,7 +66,7 @@ class TestObrainFilePersistence:
             db2.close()
 
     def test_save_as_obrain_file(self):
-        """In-memory DB saved as .grafeo file can be reopened."""
+        """In-memory DB saved as .obrain file can be reopened."""
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = str(Path(tmpdir) / "saved.obrain")
 
@@ -177,7 +177,7 @@ class TestObrainFilePersistence:
             db2.close()
 
     def test_file_is_single_file(self):
-        """The .grafeo path should be a file, not a directory."""
+        """The .obrain path should be a file, not a directory."""
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "single.obrain"
 

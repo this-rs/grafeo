@@ -86,7 +86,7 @@ class BaseSolvORComparisonTest(ABC):
         solvor_result = solvor_dijkstra(node_to_idx[source], node_to_idx[sink], neighbors)
 
         if obrain_result is not None and solvor_result.status.name == "OPTIMAL":
-            obrain_dist, grafeo_path = obrain_result
+            obrain_dist, obrain_path = obrain_result
             solvor_dist = solvor_result.objective
             assert abs(obrain_dist - solvor_dist) < 1e-6, (
                 f"Shortest path mismatch: Obrain={obrain_dist}, solvOR={solvor_dist}"
@@ -156,11 +156,11 @@ class BaseSolvORComparisonTest(ABC):
             "OPTIMAL",
             "FEASIBLE",
         ):
-            grafeo_weight = obrain_result.get("total_weight", 0)
+            obrain_weight = obrain_result.get("total_weight", 0)
             solvor_weight = solvor_result.objective
             # MST weights should match (allowing small float error)
-            assert abs(grafeo_weight - solvor_weight) < 1e-6, (
-                f"MST weight mismatch: Obrain={grafeo_weight}, solvOR={solvor_weight}"
+            assert abs(obrain_weight - solvor_weight) < 1e-6, (
+                f"MST weight mismatch: Obrain={obrain_weight}, solvOR={solvor_weight}"
             )
 
 

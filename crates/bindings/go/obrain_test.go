@@ -1,4 +1,4 @@
-package grafeo
+package obrain
 
 import (
 	"testing"

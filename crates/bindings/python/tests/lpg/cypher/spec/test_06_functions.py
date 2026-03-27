@@ -227,7 +227,7 @@ class TestStringFunctions:
     def test_replace(self, db):
         db.create_node(["N"], {"v": "hello world"})
         result = list(db.execute_cypher("MATCH (n:N) RETURN replace(n.v, 'world', 'obrain') AS r"))
-        assert result[0]["r"] == "hello grafeo"
+        assert result[0]["r"] == "hello obrain"
 
     def test_substring(self, db):
         db.create_node(["N"], {"v": "Amsterdam"})
