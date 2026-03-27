@@ -1,11 +1,11 @@
 ---
 title: GQL Query Language
-description: Learn the GQL query language for Grafeo.
+description: Learn the GQL query language for Obrain.
 ---
 
 # GQL Query Language
 
-GQL (Graph Query Language) is the ISO standard for querying property graphs (ISO/IEC 39075). Grafeo implements GQL as its primary query language.
+GQL (Graph Query Language) is the ISO standard for querying property graphs (ISO/IEC 39075). Obrain implements GQL as its primary query language.
 
 ## Overview
 

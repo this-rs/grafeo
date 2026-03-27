@@ -8,18 +8,18 @@ tags:
 
 # Database Operations
 
-Learn how to create and configure Grafeo databases in Python.
+Learn how to create and configure Obrain databases in Python.
 
 ## Creating a Database
 
 ```python
-import grafeo
+import obrain
 
 # In-memory database
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Persistent database
-db = grafeo.GrafeoDB("my_graph.db")
+db = obrain.ObrainDB("my_graph.db")
 ```
 
 ## Executing Queries
@@ -36,7 +36,7 @@ for row in result:
 
 ## Query Languages
 
-Grafeo supports multiple query languages:
+Obrain supports multiple query languages:
 
 ```python
 # GQL (default)
@@ -133,5 +133,5 @@ db.save("backup.db")
 memory_db = db.to_memory()
 
 # Load database as in-memory
-db = grafeo.GrafeoDB.open_in_memory("my_graph.db")
+db = obrain.ObrainDB.open_in_memory("my_graph.db")
 ```

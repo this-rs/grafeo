@@ -7,8 +7,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use grafeo_common::types::{EdgeId, NodeId, Value};
-use grafeo_engine::database::QueryResult;
+use obrain_common::types::{EdgeId, NodeId, Value};
+use obrain_engine::database::QueryResult;
 
 /// A node extracted from query results (language-agnostic).
 #[derive(Debug, Clone)]
@@ -122,8 +122,8 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
-    use grafeo_common::types::{PropertyKey, Value};
-    use grafeo_engine::database::QueryResult;
+    use obrain_common::types::{PropertyKey, Value};
+    use obrain_engine::database::QueryResult;
 
     use super::*;
 

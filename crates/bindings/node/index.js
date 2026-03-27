@@ -70,13 +70,13 @@ function requireNative() {
   } else if (process.platform === 'android') {
     if (process.arch === 'arm64') {
       try {
-        return require('./grafeo.android-arm64.node')
+        return require('./obrain.android-arm64.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@grafeo-db/js-android-arm64')
-        const bindingPackageVersion = require('@grafeo-db/js-android-arm64/package.json').version
+        const binding = require('@obrain-db/js-android-arm64')
+        const bindingPackageVersion = require('@obrain-db/js-android-arm64/package.json').version
         if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -86,13 +86,13 @@ function requireNative() {
       }
     } else if (process.arch === 'arm') {
       try {
-        return require('./grafeo.android-arm-eabi.node')
+        return require('./obrain.android-arm-eabi.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@grafeo-db/js-android-arm-eabi')
-        const bindingPackageVersion = require('@grafeo-db/js-android-arm-eabi/package.json').version
+        const binding = require('@obrain-db/js-android-arm-eabi')
+        const bindingPackageVersion = require('@obrain-db/js-android-arm-eabi/package.json').version
         if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -107,13 +107,13 @@ function requireNative() {
     if (process.arch === 'x64') {
       if (process.config?.variables?.shlib_suffix === 'dll.a' || process.config?.variables?.node_target_type === 'shared_library') {
         try {
-        return require('./grafeo.win32-x64-gnu.node')
+        return require('./obrain.win32-x64-gnu.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@grafeo-db/js-win32-x64-gnu')
-        const bindingPackageVersion = require('@grafeo-db/js-win32-x64-gnu/package.json').version
+        const binding = require('@obrain-db/js-win32-x64-gnu')
+        const bindingPackageVersion = require('@obrain-db/js-win32-x64-gnu/package.json').version
         if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -123,13 +123,13 @@ function requireNative() {
       }
       } else {
         try {
-        return require('./grafeo.win32-x64-msvc.node')
+        return require('./obrain.win32-x64-msvc.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@grafeo-db/js-win32-x64-msvc')
-        const bindingPackageVersion = require('@grafeo-db/js-win32-x64-msvc/package.json').version
+        const binding = require('@obrain-db/js-win32-x64-msvc')
+        const bindingPackageVersion = require('@obrain-db/js-win32-x64-msvc/package.json').version
         if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -140,13 +140,13 @@ function requireNative() {
       }
     } else if (process.arch === 'ia32') {
       try {
-        return require('./grafeo.win32-ia32-msvc.node')
+        return require('./obrain.win32-ia32-msvc.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@grafeo-db/js-win32-ia32-msvc')
-        const bindingPackageVersion = require('@grafeo-db/js-win32-ia32-msvc/package.json').version
+        const binding = require('@obrain-db/js-win32-ia32-msvc')
+        const bindingPackageVersion = require('@obrain-db/js-win32-ia32-msvc/package.json').version
         if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -156,13 +156,13 @@ function requireNative() {
       }
     } else if (process.arch === 'arm64') {
       try {
-        return require('./grafeo.win32-arm64-msvc.node')
+        return require('./obrain.win32-arm64-msvc.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@grafeo-db/js-win32-arm64-msvc')
-        const bindingPackageVersion = require('@grafeo-db/js-win32-arm64-msvc/package.json').version
+        const binding = require('@obrain-db/js-win32-arm64-msvc')
+        const bindingPackageVersion = require('@obrain-db/js-win32-arm64-msvc/package.json').version
         if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -175,13 +175,13 @@ function requireNative() {
     }
   } else if (process.platform === 'darwin') {
     try {
-      return require('./grafeo.darwin-universal.node')
+      return require('./obrain.darwin-universal.node')
     } catch (e) {
       loadErrors.push(e)
     }
     try {
-      const binding = require('@grafeo-db/js-darwin-universal')
-      const bindingPackageVersion = require('@grafeo-db/js-darwin-universal/package.json').version
+      const binding = require('@obrain-db/js-darwin-universal')
+      const bindingPackageVersion = require('@obrain-db/js-darwin-universal/package.json').version
       if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
         throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
       }
@@ -191,13 +191,13 @@ function requireNative() {
     }
     if (process.arch === 'x64') {
       try {
-        return require('./grafeo.darwin-x64.node')
+        return require('./obrain.darwin-x64.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@grafeo-db/js-darwin-x64')
-        const bindingPackageVersion = require('@grafeo-db/js-darwin-x64/package.json').version
+        const binding = require('@obrain-db/js-darwin-x64')
+        const bindingPackageVersion = require('@obrain-db/js-darwin-x64/package.json').version
         if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -207,13 +207,13 @@ function requireNative() {
       }
     } else if (process.arch === 'arm64') {
       try {
-        return require('./grafeo.darwin-arm64.node')
+        return require('./obrain.darwin-arm64.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@grafeo-db/js-darwin-arm64')
-        const bindingPackageVersion = require('@grafeo-db/js-darwin-arm64/package.json').version
+        const binding = require('@obrain-db/js-darwin-arm64')
+        const bindingPackageVersion = require('@obrain-db/js-darwin-arm64/package.json').version
         if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -227,13 +227,13 @@ function requireNative() {
   } else if (process.platform === 'freebsd') {
     if (process.arch === 'x64') {
       try {
-        return require('./grafeo.freebsd-x64.node')
+        return require('./obrain.freebsd-x64.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@grafeo-db/js-freebsd-x64')
-        const bindingPackageVersion = require('@grafeo-db/js-freebsd-x64/package.json').version
+        const binding = require('@obrain-db/js-freebsd-x64')
+        const bindingPackageVersion = require('@obrain-db/js-freebsd-x64/package.json').version
         if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -243,13 +243,13 @@ function requireNative() {
       }
     } else if (process.arch === 'arm64') {
       try {
-        return require('./grafeo.freebsd-arm64.node')
+        return require('./obrain.freebsd-arm64.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@grafeo-db/js-freebsd-arm64')
-        const bindingPackageVersion = require('@grafeo-db/js-freebsd-arm64/package.json').version
+        const binding = require('@obrain-db/js-freebsd-arm64')
+        const bindingPackageVersion = require('@obrain-db/js-freebsd-arm64/package.json').version
         if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -264,13 +264,13 @@ function requireNative() {
     if (process.arch === 'x64') {
       if (isMusl()) {
         try {
-          return require('./grafeo.linux-x64-musl.node')
+          return require('./obrain.linux-x64-musl.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@grafeo-db/js-linux-x64-musl')
-          const bindingPackageVersion = require('@grafeo-db/js-linux-x64-musl/package.json').version
+          const binding = require('@obrain-db/js-linux-x64-musl')
+          const bindingPackageVersion = require('@obrain-db/js-linux-x64-musl/package.json').version
           if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -280,13 +280,13 @@ function requireNative() {
         }
       } else {
         try {
-          return require('./grafeo.linux-x64-gnu.node')
+          return require('./obrain.linux-x64-gnu.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@grafeo-db/js-linux-x64-gnu')
-          const bindingPackageVersion = require('@grafeo-db/js-linux-x64-gnu/package.json').version
+          const binding = require('@obrain-db/js-linux-x64-gnu')
+          const bindingPackageVersion = require('@obrain-db/js-linux-x64-gnu/package.json').version
           if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -298,13 +298,13 @@ function requireNative() {
     } else if (process.arch === 'arm64') {
       if (isMusl()) {
         try {
-          return require('./grafeo.linux-arm64-musl.node')
+          return require('./obrain.linux-arm64-musl.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@grafeo-db/js-linux-arm64-musl')
-          const bindingPackageVersion = require('@grafeo-db/js-linux-arm64-musl/package.json').version
+          const binding = require('@obrain-db/js-linux-arm64-musl')
+          const bindingPackageVersion = require('@obrain-db/js-linux-arm64-musl/package.json').version
           if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -314,13 +314,13 @@ function requireNative() {
         }
       } else {
         try {
-          return require('./grafeo.linux-arm64-gnu.node')
+          return require('./obrain.linux-arm64-gnu.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@grafeo-db/js-linux-arm64-gnu')
-          const bindingPackageVersion = require('@grafeo-db/js-linux-arm64-gnu/package.json').version
+          const binding = require('@obrain-db/js-linux-arm64-gnu')
+          const bindingPackageVersion = require('@obrain-db/js-linux-arm64-gnu/package.json').version
           if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -332,13 +332,13 @@ function requireNative() {
     } else if (process.arch === 'arm') {
       if (isMusl()) {
         try {
-          return require('./grafeo.linux-arm-musleabihf.node')
+          return require('./obrain.linux-arm-musleabihf.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@grafeo-db/js-linux-arm-musleabihf')
-          const bindingPackageVersion = require('@grafeo-db/js-linux-arm-musleabihf/package.json').version
+          const binding = require('@obrain-db/js-linux-arm-musleabihf')
+          const bindingPackageVersion = require('@obrain-db/js-linux-arm-musleabihf/package.json').version
           if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -348,13 +348,13 @@ function requireNative() {
         }
       } else {
         try {
-          return require('./grafeo.linux-arm-gnueabihf.node')
+          return require('./obrain.linux-arm-gnueabihf.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@grafeo-db/js-linux-arm-gnueabihf')
-          const bindingPackageVersion = require('@grafeo-db/js-linux-arm-gnueabihf/package.json').version
+          const binding = require('@obrain-db/js-linux-arm-gnueabihf')
+          const bindingPackageVersion = require('@obrain-db/js-linux-arm-gnueabihf/package.json').version
           if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -366,13 +366,13 @@ function requireNative() {
     } else if (process.arch === 'loong64') {
       if (isMusl()) {
         try {
-          return require('./grafeo.linux-loong64-musl.node')
+          return require('./obrain.linux-loong64-musl.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@grafeo-db/js-linux-loong64-musl')
-          const bindingPackageVersion = require('@grafeo-db/js-linux-loong64-musl/package.json').version
+          const binding = require('@obrain-db/js-linux-loong64-musl')
+          const bindingPackageVersion = require('@obrain-db/js-linux-loong64-musl/package.json').version
           if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -382,13 +382,13 @@ function requireNative() {
         }
       } else {
         try {
-          return require('./grafeo.linux-loong64-gnu.node')
+          return require('./obrain.linux-loong64-gnu.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@grafeo-db/js-linux-loong64-gnu')
-          const bindingPackageVersion = require('@grafeo-db/js-linux-loong64-gnu/package.json').version
+          const binding = require('@obrain-db/js-linux-loong64-gnu')
+          const bindingPackageVersion = require('@obrain-db/js-linux-loong64-gnu/package.json').version
           if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -400,13 +400,13 @@ function requireNative() {
     } else if (process.arch === 'riscv64') {
       if (isMusl()) {
         try {
-          return require('./grafeo.linux-riscv64-musl.node')
+          return require('./obrain.linux-riscv64-musl.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@grafeo-db/js-linux-riscv64-musl')
-          const bindingPackageVersion = require('@grafeo-db/js-linux-riscv64-musl/package.json').version
+          const binding = require('@obrain-db/js-linux-riscv64-musl')
+          const bindingPackageVersion = require('@obrain-db/js-linux-riscv64-musl/package.json').version
           if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -416,13 +416,13 @@ function requireNative() {
         }
       } else {
         try {
-          return require('./grafeo.linux-riscv64-gnu.node')
+          return require('./obrain.linux-riscv64-gnu.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@grafeo-db/js-linux-riscv64-gnu')
-          const bindingPackageVersion = require('@grafeo-db/js-linux-riscv64-gnu/package.json').version
+          const binding = require('@obrain-db/js-linux-riscv64-gnu')
+          const bindingPackageVersion = require('@obrain-db/js-linux-riscv64-gnu/package.json').version
           if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -433,13 +433,13 @@ function requireNative() {
       }
     } else if (process.arch === 'ppc64') {
       try {
-        return require('./grafeo.linux-ppc64-gnu.node')
+        return require('./obrain.linux-ppc64-gnu.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@grafeo-db/js-linux-ppc64-gnu')
-        const bindingPackageVersion = require('@grafeo-db/js-linux-ppc64-gnu/package.json').version
+        const binding = require('@obrain-db/js-linux-ppc64-gnu')
+        const bindingPackageVersion = require('@obrain-db/js-linux-ppc64-gnu/package.json').version
         if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -449,13 +449,13 @@ function requireNative() {
       }
     } else if (process.arch === 's390x') {
       try {
-        return require('./grafeo.linux-s390x-gnu.node')
+        return require('./obrain.linux-s390x-gnu.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@grafeo-db/js-linux-s390x-gnu')
-        const bindingPackageVersion = require('@grafeo-db/js-linux-s390x-gnu/package.json').version
+        const binding = require('@obrain-db/js-linux-s390x-gnu')
+        const bindingPackageVersion = require('@obrain-db/js-linux-s390x-gnu/package.json').version
         if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -469,13 +469,13 @@ function requireNative() {
   } else if (process.platform === 'openharmony') {
     if (process.arch === 'arm64') {
       try {
-        return require('./grafeo.openharmony-arm64.node')
+        return require('./obrain.openharmony-arm64.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@grafeo-db/js-openharmony-arm64')
-        const bindingPackageVersion = require('@grafeo-db/js-openharmony-arm64/package.json').version
+        const binding = require('@obrain-db/js-openharmony-arm64')
+        const bindingPackageVersion = require('@obrain-db/js-openharmony-arm64/package.json').version
         if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -485,13 +485,13 @@ function requireNative() {
       }
     } else if (process.arch === 'x64') {
       try {
-        return require('./grafeo.openharmony-x64.node')
+        return require('./obrain.openharmony-x64.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@grafeo-db/js-openharmony-x64')
-        const bindingPackageVersion = require('@grafeo-db/js-openharmony-x64/package.json').version
+        const binding = require('@obrain-db/js-openharmony-x64')
+        const bindingPackageVersion = require('@obrain-db/js-openharmony-x64/package.json').version
         if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -501,13 +501,13 @@ function requireNative() {
       }
     } else if (process.arch === 'arm') {
       try {
-        return require('./grafeo.openharmony-arm.node')
+        return require('./obrain.openharmony-arm.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@grafeo-db/js-openharmony-arm')
-        const bindingPackageVersion = require('@grafeo-db/js-openharmony-arm/package.json').version
+        const binding = require('@obrain-db/js-openharmony-arm')
+        const bindingPackageVersion = require('@obrain-db/js-openharmony-arm/package.json').version
         if (bindingPackageVersion !== '0.5.24' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.5.24 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -529,7 +529,7 @@ if (!nativeBinding || process.env.NAPI_RS_FORCE_WASI) {
   let wasiBinding = null
   let wasiBindingError = null
   try {
-    wasiBinding = require('./grafeo.wasi.cjs')
+    wasiBinding = require('./obrain.wasi.cjs')
     nativeBinding = wasiBinding
   } catch (err) {
     if (process.env.NAPI_RS_FORCE_WASI) {
@@ -538,7 +538,7 @@ if (!nativeBinding || process.env.NAPI_RS_FORCE_WASI) {
   }
   if (!nativeBinding || process.env.NAPI_RS_FORCE_WASI) {
     try {
-      wasiBinding = require('@grafeo-db/js-wasm32-wasi')
+      wasiBinding = require('@obrain-db/js-wasm32-wasi')
       nativeBinding = wasiBinding
     } catch (err) {
       if (process.env.NAPI_RS_FORCE_WASI) {
@@ -576,8 +576,8 @@ if (!nativeBinding) {
 }
 
 module.exports = nativeBinding
-module.exports.GrafeoDB = nativeBinding.GrafeoDB
-module.exports.JsGrafeoDB = nativeBinding.JsGrafeoDB
+module.exports.ObrainDB = nativeBinding.ObrainDB
+module.exports.JsObrainDB = nativeBinding.JsObrainDB
 module.exports.JsEdge = nativeBinding.JsEdge
 module.exports.JsNode = nativeBinding.JsNode
 module.exports.QueryResult = nativeBinding.QueryResult

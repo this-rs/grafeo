@@ -1,6 +1,6 @@
 ---
 title: Rust Extensions
-description: Extending Grafeo with Rust code.
+description: Extending Obrain with Rust code.
 tags:
   - extending
   - rust
@@ -8,13 +8,13 @@ tags:
 
 # Rust Extensions
 
-Extend Grafeo with custom Rust code for maximum performance.
+Extend Obrain with custom Rust code for maximum performance.
 
 ## Why Rust Extensions?
 
 - **Performance** - Native speed for computationally intensive operations
 - **Type Safety** - Compile-time guarantees
-- **Direct Access** - Access to internal Grafeo APIs
+- **Direct Access** - Access to internal Obrain APIs
 - **Integration** - Use any Rust crate
 
 ## Creating an Extension Crate
@@ -23,23 +23,23 @@ Extend Grafeo with custom Rust code for maximum performance.
 
 ```toml
 [package]
-name = "my-grafeo-extension"
+name = "my-obrain-extension"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-grafeo-core = "0.5"
-grafeo-engine = "0.5"
+obrain-core = "0.5"
+obrain-engine = "0.5"
 ```
 
 ### Extension Code
 
 ```rust
-use grafeo_core::graph::LpgStore;
-use grafeo_engine::{GrafeoDB, Session};
+use obrain_core::graph::LpgStore;
+use obrain_engine::{ObrainDB, Session};
 
 /// Custom graph analysis function
-pub fn analyze_connectivity(db: &GrafeoDB) -> ConnectivityReport {
+pub fn analyze_connectivity(db: &ObrainDB) -> ConnectivityReport {
     let session = db.session().unwrap();
 
     // Access the underlying graph store
@@ -68,7 +68,7 @@ pub struct ConnectivityReport {
 ### Graph Store
 
 ```rust
-use grafeo_core::graph::lpg::LpgStore;
+use obrain_core::graph::lpg::LpgStore;
 
 fn process_graph(store: &LpgStore) {
     // Iterate over nodes
@@ -93,7 +93,7 @@ fn process_graph(store: &LpgStore) {
 ### Index Access
 
 ```rust
-use grafeo_core::index::HashIndex;
+use obrain_core::index::HashIndex;
 
 fn query_index(index: &HashIndex<String, NodeId>) {
     // Point lookup
@@ -108,7 +108,7 @@ fn query_index(index: &HashIndex<String, NodeId>) {
 ### Execution Engine
 
 ```rust
-use grafeo_core::execution::{DataChunk, Pipeline};
+use obrain_core::execution::{DataChunk, Pipeline};
 
 fn custom_operator(chunk: DataChunk) -> DataChunk {
     // Process data chunk
@@ -127,9 +127,9 @@ cargo build --release
 ### Use in Application
 
 ```rust
-use my_grafeo_extension::analyze_connectivity;
+use my_obrain_extension::analyze_connectivity;
 
-let db = GrafeoDB::new("my_graph.db")?;
+let db = ObrainDB::new("my_graph.db")?;
 let report = analyze_connectivity(&db);
 
 println!("Nodes: {}", report.nodes);
@@ -145,7 +145,7 @@ Use PyO3 to expose Rust extensions to Python:
 use pyo3::prelude::*;
 
 #[pyfunction]
-fn analyze_connectivity_py(db: &PyGrafeoDB) -> PyResult<PyDict> {
+fn analyze_connectivity_py(db: &PyObrainDB) -> PyResult<PyDict> {
     let report = analyze_connectivity(db.inner());
 
     let dict = PyDict::new(py);

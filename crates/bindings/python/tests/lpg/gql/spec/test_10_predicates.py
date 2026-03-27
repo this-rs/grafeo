@@ -151,7 +151,7 @@ class TestDirectedPredicates:
         b = db.create_node(["N"], {"name": "b"})
         db.create_edge(a.id, b.id, "REL")
         result = list(db.execute("MATCH (a)-[e]-(b) WHERE e IS NOT DIRECTED RETURN type(e) AS t"))
-        # All edges in Grafeo are directed, so this should be empty
+        # All edges in Obrain are directed, so this should be empty
         assert len(result) == 0
 
 

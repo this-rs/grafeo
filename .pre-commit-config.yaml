@@ -1,4 +1,4 @@
-# Pre-commit hooks for Grafeo
+# Pre-commit hooks for Obrain
 # Install: cargo install prek && prek install
 # Run manually: prek run --all-files
 # Docs: https://github.com/j178/prek

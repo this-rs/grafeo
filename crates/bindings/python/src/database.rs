@@ -1,6 +1,6 @@
-//! Your main entry point for using Grafeo from Python.
+//! Your main entry point for using Obrain from Python.
 //!
-//! [`PyGrafeoDB`] wraps the Rust database engine and gives you a Pythonic API.
+//! [`PyObrainDB`] wraps the Rust database engine and gives you a Pythonic API.
 //! Start here - create a database, run queries, and manage transactions.
 
 use std::collections::HashMap;
@@ -10,13 +10,13 @@ use parking_lot::RwLock;
 use pyo3::prelude::*;
 use pyo3_async_runtimes::tokio::future_into_py;
 
-use grafeo_common::types::{EdgeId, LogicalType, NodeId, Value};
-use grafeo_engine::config::Config;
-use grafeo_engine::database::{GrafeoDB, QueryResult};
+use obrain_common::types::{EdgeId, LogicalType, NodeId, Value};
+use obrain_engine::config::Config;
+use obrain_engine::database::{ObrainDB, QueryResult};
 
 #[cfg(feature = "algos")]
 use crate::bridges::{PyAlgorithms, PyNetworkXAdapter, PySolvORAdapter};
-use crate::error::PyGrafeoError;
+use crate::error::PyObrainError;
 use crate::graph::{PyEdge, PyNode};
 use crate::query::{PyQueryBuilder, PyQueryResult};
 use crate::types::PyValue;
@@ -155,10 +155,10 @@ impl AsyncQueryResultIter {
     }
 }
 
-/// Your connection to a Grafeo database.
+/// Your connection to a Obrain database.
 ///
-/// Create one with `GrafeoDB()` for in-memory storage (fast, temporary) or
-/// `GrafeoDB("path/to/db")` for persistent storage (survives restarts).
+/// Create one with `ObrainDB()` for in-memory storage (fast, temporary) or
+/// `ObrainDB("path/to/db")` for persistent storage (survives restarts).
 /// Then use [`execute()`](Self::execute) to run GQL queries.
 ///
 /// Unlike the Rust API (which uses `db.session()` for query execution),
@@ -170,12 +170,12 @@ impl AsyncQueryResultIter {
 ///     tx.execute("INSERT (:Person {name: 'Alix'})")
 ///     tx.commit()
 /// ```
-#[pyclass(name = "GrafeoDB")]
-pub struct PyGrafeoDB {
-    inner: Arc<RwLock<GrafeoDB>>,
+#[pyclass(name = "ObrainDB")]
+pub struct PyObrainDB {
+    inner: Arc<RwLock<ObrainDB>>,
 }
 
-impl PyGrafeoDB {
+impl PyObrainDB {
     /// Converts an optional Python dict of property filters to a Rust HashMap.
     fn convert_filters(
         filters: Option<&Bound<'_, pyo3::types::PyDict>>,
@@ -214,7 +214,7 @@ impl PyGrafeoDB {
         };
         let result = db
             .execute_language(query, language, param_map)
-            .map_err(PyGrafeoError::from)?;
+            .map_err(PyObrainError::from)?;
         let (nodes, edges) = extract_entities(&result, &db);
         Ok(PyQueryResult::with_metrics(
             result.columns,
@@ -228,12 +228,12 @@ impl PyGrafeoDB {
 }
 
 #[pymethods]
-impl PyGrafeoDB {
+impl PyObrainDB {
     /// Creates a database. Pass a path for persistence, or omit for in-memory.
     ///
     /// Examples:
-    ///     db = GrafeoDB()           # In-memory (fast, temporary)
-    ///     db = GrafeoDB("./mydb")   # Persistent (survives restarts)
+    ///     db = ObrainDB()           # In-memory (fast, temporary)
+    ///     db = ObrainDB("./mydb")   # Persistent (survives restarts)
     #[new]
     #[pyo3(signature = (path=None))]
     fn new(path: Option<String>) -> PyResult<Self> {
@@ -243,7 +243,7 @@ impl PyGrafeoDB {
             Config::in_memory()
         };
 
-        let db = GrafeoDB::with_config(config).map_err(PyGrafeoError::from)?;
+        let db = ObrainDB::with_config(config).map_err(PyObrainError::from)?;
 
         Ok(Self {
             inner: Arc::new(RwLock::new(db)),
@@ -254,7 +254,7 @@ impl PyGrafeoDB {
     #[staticmethod]
     fn open(path: String) -> PyResult<Self> {
         let config = Config::persistent(path);
-        let db = GrafeoDB::with_config(config).map_err(PyGrafeoError::from)?;
+        let db = ObrainDB::with_config(config).map_err(PyObrainError::from)?;
 
         Ok(Self {
             inner: Arc::new(RwLock::new(db)),
@@ -264,18 +264,18 @@ impl PyGrafeoDB {
     /// Open an existing database in read-only mode.
     ///
     /// Uses a shared file lock, so multiple processes can read the same
-    /// .grafeo file concurrently. Mutations will raise an error.
+    /// .obrain file concurrently. Mutations will raise an error.
     ///
     /// Args:
-    ///     path: Path to the .grafeo database file.
+    ///     path: Path to the .obrain database file.
     ///
     /// Examples:
-    ///     db = GrafeoDB.open_read_only("./my_graph.grafeo")
+    ///     db = ObrainDB.open_read_only("./my_graph.obrain")
     ///     result = db.execute("MATCH (n) RETURN n LIMIT 10")
     #[staticmethod]
     fn open_read_only(path: String) -> PyResult<Self> {
         let config = Config::read_only(path);
-        let db = GrafeoDB::with_config(config).map_err(PyGrafeoError::from)?;
+        let db = ObrainDB::with_config(config).map_err(PyObrainError::from)?;
 
         Ok(Self {
             inner: Arc::new(RwLock::new(db)),
@@ -330,10 +330,10 @@ impl PyGrafeoDB {
         let result = session
             .execute_at_epoch_with_params(
                 query,
-                grafeo_common::types::EpochId::new(epoch),
+                obrain_common::types::EpochId::new(epoch),
                 param_map,
             )
-            .map_err(PyGrafeoError::from)?;
+            .map_err(PyObrainError::from)?;
         let (nodes, edges) = extract_entities(&result, &db);
         Ok(PyQueryResult::with_metrics(
             result.columns,
@@ -381,7 +381,7 @@ impl PyGrafeoDB {
     /// Example:
     /// ```python
     /// async def main():
-    ///     db = GrafeoDB()
+    ///     db = ObrainDB()
     ///     result = await db.execute_async("MATCH (n:Person) RETURN n")
     ///     for row in result:
     ///         print(row)
@@ -422,8 +422,8 @@ impl PyGrafeoDB {
                 }
             })
             .await
-            .map_err(|e| PyGrafeoError::Database(e.to_string()))?
-            .map_err(PyGrafeoError::from)?;
+            .map_err(|e| PyObrainError::Database(e.to_string()))?
+            .map_err(PyObrainError::from)?;
 
             // Create PyQueryResult from the result
             // Note: We can't call extract_entities here because we don't have
@@ -493,13 +493,13 @@ impl PyGrafeoDB {
         let id = if let Some(p) = properties {
             // Convert properties
             let mut props: Vec<(
-                grafeo_common::types::PropertyKey,
-                grafeo_common::types::Value,
+                obrain_common::types::PropertyKey,
+                obrain_common::types::Value,
             )> = Vec::new();
             for (key, value) in p.iter() {
                 let key_str: String = key.extract()?;
                 let val = PyValue::from_py(&value)?;
-                props.push((grafeo_common::types::PropertyKey::new(key_str), val));
+                props.push((obrain_common::types::PropertyKey::new(key_str), val));
             }
             db.create_node_with_props(&label_refs, props)
         } else {
@@ -509,14 +509,14 @@ impl PyGrafeoDB {
         // Fetch the node back to get the full representation
         if let Some(node) = db.get_node(id) {
             let labels: Vec<String> = node.labels.iter().map(|s| s.to_string()).collect();
-            let properties: HashMap<String, grafeo_common::types::Value> = node
+            let properties: HashMap<String, obrain_common::types::Value> = node
                 .properties
                 .into_iter()
                 .map(|(k, v)| (k.as_str().to_string(), v))
                 .collect();
             Ok(PyNode::new(id, labels, properties))
         } else {
-            Err(PyGrafeoError::Database("Failed to create node".into()).into())
+            Err(PyObrainError::Database("Failed to create node".into()).into())
         }
     }
 
@@ -537,13 +537,13 @@ impl PyGrafeoDB {
         let id = if let Some(p) = properties {
             // Convert properties
             let mut props: Vec<(
-                grafeo_common::types::PropertyKey,
-                grafeo_common::types::Value,
+                obrain_common::types::PropertyKey,
+                obrain_common::types::Value,
             )> = Vec::new();
             for (key, value) in p.iter() {
                 let key_str: String = key.extract()?;
                 let val = PyValue::from_py(&value)?;
-                props.push((grafeo_common::types::PropertyKey::new(key_str), val));
+                props.push((obrain_common::types::PropertyKey::new(key_str), val));
             }
             db.create_edge_with_props(src, dst, &edge_type, props)
         } else {
@@ -552,7 +552,7 @@ impl PyGrafeoDB {
 
         // Fetch the edge back to get the full representation
         if let Some(edge) = db.get_edge(id) {
-            let properties: HashMap<String, grafeo_common::types::Value> = edge
+            let properties: HashMap<String, obrain_common::types::Value> = edge
                 .properties
                 .into_iter()
                 .map(|(k, v)| (k.as_str().to_string(), v))
@@ -565,7 +565,7 @@ impl PyGrafeoDB {
                 properties,
             ))
         } else {
-            Err(PyGrafeoError::Database("Failed to create edge".into()).into())
+            Err(PyObrainError::Database("Failed to create edge".into()).into())
         }
     }
 
@@ -576,7 +576,7 @@ impl PyGrafeoDB {
 
         if let Some(node) = db.get_node(node_id) {
             let labels: Vec<String> = node.labels.iter().map(|s| s.to_string()).collect();
-            let properties: HashMap<String, grafeo_common::types::Value> = node
+            let properties: HashMap<String, obrain_common::types::Value> = node
                 .properties
                 .into_iter()
                 .map(|(k, v)| (k.as_str().to_string(), v))
@@ -593,7 +593,7 @@ impl PyGrafeoDB {
         let edge_id = EdgeId(id);
 
         if let Some(edge) = db.get_edge(edge_id) {
-            let properties: HashMap<String, grafeo_common::types::Value> = edge
+            let properties: HashMap<String, obrain_common::types::Value> = edge
                 .properties
                 .into_iter()
                 .map(|(k, v)| (k.as_str().to_string(), v))
@@ -619,11 +619,11 @@ impl PyGrafeoDB {
     fn get_node_at_epoch(&self, id: u64, epoch: u64) -> PyResult<Option<PyNode>> {
         let db = self.inner.read();
         let node_id = NodeId(id);
-        let epoch_id = grafeo_common::types::EpochId::new(epoch);
+        let epoch_id = obrain_common::types::EpochId::new(epoch);
 
         if let Some(node) = db.get_node_at_epoch(node_id, epoch_id) {
             let labels: Vec<String> = node.labels.iter().map(|s| s.to_string()).collect();
-            let properties: HashMap<String, grafeo_common::types::Value> = node
+            let properties: HashMap<String, obrain_common::types::Value> = node
                 .properties
                 .into_iter()
                 .map(|(k, v)| (k.as_str().to_string(), v))
@@ -643,10 +643,10 @@ impl PyGrafeoDB {
     fn get_edge_at_epoch(&self, id: u64, epoch: u64) -> PyResult<Option<PyEdge>> {
         let db = self.inner.read();
         let edge_id = EdgeId(id);
-        let epoch_id = grafeo_common::types::EpochId::new(epoch);
+        let epoch_id = obrain_common::types::EpochId::new(epoch);
 
         if let Some(edge) = db.get_edge_at_epoch(edge_id, epoch_id) {
-            let properties: HashMap<String, grafeo_common::types::Value> = edge
+            let properties: HashMap<String, obrain_common::types::Value> = edge
                 .properties
                 .into_iter()
                 .map(|(k, v)| (k.as_str().to_string(), v))
@@ -676,7 +676,7 @@ impl PyGrafeoDB {
         let mut result = Vec::with_capacity(history.len());
         for (created, deleted, node) in history {
             let labels: Vec<String> = node.labels.iter().map(|s| s.to_string()).collect();
-            let properties: HashMap<String, grafeo_common::types::Value> = node
+            let properties: HashMap<String, obrain_common::types::Value> = node
                 .properties
                 .into_iter()
                 .map(|(k, v)| (k.as_str().to_string(), v))
@@ -700,7 +700,7 @@ impl PyGrafeoDB {
         let history = db.get_edge_history(edge_id);
         let mut result = Vec::with_capacity(history.len());
         for (created, deleted, edge) in history {
-            let properties: HashMap<String, grafeo_common::types::Value> = edge
+            let properties: HashMap<String, obrain_common::types::Value> = edge
                 .properties
                 .into_iter()
                 .map(|(k, v)| (k.as_str().to_string(), v))
@@ -818,7 +818,7 @@ impl PyGrafeoDB {
     ) -> PyResult<Vec<Option<Py<pyo3::prelude::PyAny>>>> {
         let db = self.inner.read();
         let ids: Vec<NodeId> = node_ids.into_iter().map(NodeId).collect();
-        let key = grafeo_common::types::PropertyKey::new(property);
+        let key = obrain_common::types::PropertyKey::new(property);
         let values = db.store().get_node_property_batch(&ids, &key);
 
         Ok(values
@@ -1324,12 +1324,12 @@ impl PyGrafeoDB {
         let fusion_method = match fusion {
             Some("weighted") => {
                 let w = weights.unwrap_or_else(|| vec![0.5, 0.5]);
-                Some(grafeo_core::index::text::FusionMethod::Weighted { weights: w })
+                Some(obrain_core::index::text::FusionMethod::Weighted { weights: w })
             }
-            Some("rrf") => Some(grafeo_core::index::text::FusionMethod::Rrf {
+            Some("rrf") => Some(obrain_core::index::text::FusionMethod::Rrf {
                 k: rrf_k.unwrap_or(60),
             }),
-            _ => rrf_k.map(|k_val| grafeo_core::index::text::FusionMethod::Rrf { k: k_val }),
+            _ => rrf_k.map(|k_val| obrain_core::index::text::FusionMethod::Rrf { k: k_val }),
         };
 
         let db = self.inner.read();
@@ -1373,7 +1373,7 @@ impl PyGrafeoDB {
         tokenizer_path: &str,
         batch_size: Option<usize>,
     ) -> PyResult<()> {
-        let mut model = grafeo_engine::embedding::OnnxEmbeddingModel::from_files(
+        let mut model = obrain_engine::embedding::OnnxEmbeddingModel::from_files(
             name,
             model_path,
             tokenizer_path,
@@ -1738,7 +1738,7 @@ impl PyGrafeoDB {
         let dict = pyo3::types::PyDict::new(py);
 
         match schema {
-            grafeo_engine::SchemaInfo::Lpg(lpg) => {
+            obrain_engine::SchemaInfo::Lpg(lpg) => {
                 let labels = pyo3::types::PyList::empty(py);
                 for label in lpg.labels {
                     let label_dict = pyo3::types::PyDict::new(py);
@@ -1759,7 +1759,7 @@ impl PyGrafeoDB {
 
                 dict.set_item("property_keys", lpg.property_keys)?;
             }
-            grafeo_engine::SchemaInfo::Rdf(rdf) => {
+            obrain_engine::SchemaInfo::Rdf(rdf) => {
                 let predicates = pyo3::types::PyList::empty(py);
                 for pred in rdf.predicates {
                     let pred_dict = pyo3::types::PyDict::new(py);
@@ -1835,7 +1835,7 @@ impl PyGrafeoDB {
     ///     db.wal_checkpoint()
     fn wal_checkpoint(&self) -> PyResult<()> {
         let db = self.inner.read();
-        db.wal_checkpoint().map_err(PyGrafeoError::from)?;
+        db.wal_checkpoint().map_err(PyObrainError::from)?;
         Ok(())
     }
 
@@ -1847,12 +1847,12 @@ impl PyGrafeoDB {
     /// The original database remains unchanged.
     ///
     /// Example:
-    ///     db = GrafeoDB()  # in-memory
+    ///     db = ObrainDB()  # in-memory
     ///     db.create_node(["Person"], {"name": "Alix"})
     ///     db.save("./mydb")  # save to file
     fn save(&self, path: String) -> PyResult<()> {
         let db = self.inner.read();
-        db.save(path).map_err(PyGrafeoError::from)?;
+        db.save(path).map_err(PyObrainError::from)?;
         Ok(())
     }
 
@@ -1862,12 +1862,12 @@ impl PyGrafeoDB {
     /// Changes to the copy do not affect the original.
     ///
     /// Example:
-    ///     file_db = GrafeoDB("./production.db")
+    ///     file_db = ObrainDB("./production.db")
     ///     test_db = file_db.to_memory()  # safe copy
     ///     test_db.create_node(...)  # doesn't affect production
     fn to_memory(&self) -> PyResult<Self> {
         let db = self.inner.read();
-        let new_db = db.to_memory().map_err(PyGrafeoError::from)?;
+        let new_db = db.to_memory().map_err(PyObrainError::from)?;
 
         Ok(Self {
             inner: Arc::new(RwLock::new(new_db)),
@@ -1880,11 +1880,11 @@ impl PyGrafeoDB {
     /// Changes will NOT be written back to the file.
     ///
     /// Example:
-    ///     db = GrafeoDB.open_in_memory("./mydb")
+    ///     db = ObrainDB.open_in_memory("./mydb")
     ///     db.create_node(...)  # doesn't affect file
     #[staticmethod]
     fn open_in_memory(path: String) -> PyResult<Self> {
-        let db = grafeo_engine::GrafeoDB::open_in_memory(path).map_err(PyGrafeoError::from)?;
+        let db = obrain_engine::ObrainDB::open_in_memory(path).map_err(PyObrainError::from)?;
 
         Ok(Self {
             inner: Arc::new(RwLock::new(db)),
@@ -1924,7 +1924,7 @@ impl PyGrafeoDB {
     /// Close the database.
     fn close(&self) -> PyResult<()> {
         let db = self.inner.read();
-        db.close().map_err(PyGrafeoError::from)?;
+        db.close().map_err(PyObrainError::from)?;
         Ok(())
     }
 
@@ -1953,7 +1953,7 @@ impl PyGrafeoDB {
     /// Example:
     ///     nx_adapter = db.as_networkx()
     ///     G = nx_adapter.to_networkx()  # Convert to NetworkX graph
-    ///     pr = nx_adapter.pagerank()    # Use native Grafeo algorithms
+    ///     pr = nx_adapter.pagerank()    # Use native Obrain algorithms
     #[cfg(feature = "algos")]
     #[pyo3(signature = (directed=true))]
     fn as_networkx(&self, directed: bool) -> PyNetworkXAdapter {
@@ -2067,7 +2067,7 @@ impl PyGrafeoDB {
                     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?,
             )?;
             for (i, key) in prop_keys.iter().enumerate() {
-                let prop_key = grafeo_common::types::PropertyKey::new(key.clone());
+                let prop_key = obrain_common::types::PropertyKey::new(key.clone());
                 match node.properties.get(&prop_key) {
                     Some(v) => prop_columns[i].append(PyValue::to_py(v, py))?,
                     None => prop_columns[i].append(py.None())?,
@@ -2139,7 +2139,7 @@ impl PyGrafeoDB {
             let edge_type: &str = edge.edge_type.as_ref();
             types.append(edge_type)?;
             for (i, key) in prop_keys.iter().enumerate() {
-                let prop_key = grafeo_common::types::PropertyKey::new(key.clone());
+                let prop_key = obrain_common::types::PropertyKey::new(key.clone());
                 match edge.properties.get(&prop_key) {
                     Some(v) => prop_columns[i].append(PyValue::to_py(v, py))?,
                     None => prop_columns[i].append(py.None())?,
@@ -2227,15 +2227,15 @@ impl PyGrafeoDB {
 
                 for row in &rows {
                     let props: Vec<(
-                        grafeo_common::types::PropertyKey,
-                        grafeo_common::types::Value,
+                        obrain_common::types::PropertyKey,
+                        obrain_common::types::Value,
                     )> = columns
                         .iter()
                         .zip(row.iter())
                         .filter(|(_, v)| !v.is_null())
                         .map(|(col, val)| {
                             (
-                                grafeo_common::types::PropertyKey::new(col.clone()),
+                                obrain_common::types::PropertyKey::new(col.clone()),
                                 val.clone(),
                             )
                         })
@@ -2268,8 +2268,8 @@ impl PyGrafeoDB {
                     let dst_id = value_to_node_id(&row[target_idx], target)?;
 
                     let props: Vec<(
-                        grafeo_common::types::PropertyKey,
-                        grafeo_common::types::Value,
+                        obrain_common::types::PropertyKey,
+                        obrain_common::types::Value,
                     )> = columns
                         .iter()
                         .zip(row.iter())
@@ -2279,7 +2279,7 @@ impl PyGrafeoDB {
                         })
                         .map(|(_, (col, val))| {
                             (
-                                grafeo_common::types::PropertyKey::new(col.clone()),
+                                obrain_common::types::PropertyKey::new(col.clone()),
                                 val.clone(),
                             )
                         })
@@ -2300,7 +2300,7 @@ impl PyGrafeoDB {
     }
 
     fn __repr__(&self) -> String {
-        "GrafeoDB()".to_string()
+        "ObrainDB()".to_string()
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -2329,7 +2329,7 @@ impl PyGrafeoDB {
         node_id: u64,
     ) -> PyResult<Vec<std::collections::HashMap<String, pyo3::Py<pyo3::PyAny>>>> {
         let db = self.inner.read();
-        let id = grafeo_common::types::NodeId::new(node_id);
+        let id = obrain_common::types::NodeId::new(node_id);
         let events = db
             .history(id)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
@@ -2348,7 +2348,7 @@ impl PyGrafeoDB {
         edge_id: u64,
     ) -> PyResult<Vec<std::collections::HashMap<String, pyo3::Py<pyo3::PyAny>>>> {
         let db = self.inner.read();
-        let id = grafeo_common::types::EdgeId::new(edge_id);
+        let id = obrain_common::types::EdgeId::new(edge_id);
         let events = db
             .history(id)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
@@ -2368,9 +2368,9 @@ impl PyGrafeoDB {
         since_epoch: u64,
     ) -> PyResult<Vec<std::collections::HashMap<String, pyo3::Py<pyo3::PyAny>>>> {
         let db = self.inner.read();
-        let id = grafeo_common::types::NodeId::new(node_id);
+        let id = obrain_common::types::NodeId::new(node_id);
         let events = db
-            .history_since(id, grafeo_common::types::EpochId(since_epoch))
+            .history_since(id, obrain_common::types::EpochId(since_epoch))
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
         pyo3::Python::attach(|py| {
             Ok(events
@@ -2390,8 +2390,8 @@ impl PyGrafeoDB {
         let db = self.inner.read();
         let events = db
             .changes_between(
-                grafeo_common::types::EpochId(start_epoch),
-                grafeo_common::types::EpochId(end_epoch),
+                obrain_common::types::EpochId(start_epoch),
+                obrain_common::types::EpochId(end_epoch),
             )
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
         pyo3::Python::attach(|py| {
@@ -2418,8 +2418,8 @@ impl PyGrafeoDB {
 /// Other connections see a consistent snapshot while you work.
 #[pyclass(name = "Transaction")]
 pub struct PyTransaction {
-    db: Arc<RwLock<GrafeoDB>>,
-    session: parking_lot::Mutex<Option<grafeo_engine::session::Session>>,
+    db: Arc<RwLock<ObrainDB>>,
+    session: parking_lot::Mutex<Option<obrain_engine::session::Session>>,
     committed: bool,
     rolled_back: bool,
     isolation_level_name: String,
@@ -2458,7 +2458,7 @@ impl PyTransaction {
         };
         let result = session
             .execute_language(query, language, param_map)
-            .map_err(PyGrafeoError::from)?;
+            .map_err(PyObrainError::from)?;
         let (nodes, edges) = extract_entities(&result, &db);
         Ok(PyQueryResult::with_metrics(
             result.columns,
@@ -2471,15 +2471,15 @@ impl PyTransaction {
     }
 
     /// Create a new transaction with an optional isolation level.
-    fn new(db: Arc<RwLock<GrafeoDB>>, isolation_level: Option<&str>) -> PyResult<Self> {
+    fn new(db: Arc<RwLock<ObrainDB>>, isolation_level: Option<&str>) -> PyResult<Self> {
         // Parse isolation level string
         let (level, level_name) = match isolation_level {
             Some("read_committed") => (
-                Some(grafeo_engine::transaction::IsolationLevel::ReadCommitted),
+                Some(obrain_engine::transaction::IsolationLevel::ReadCommitted),
                 "read_committed",
             ),
             Some("serializable") => (
-                Some(grafeo_engine::transaction::IsolationLevel::Serializable),
+                Some(obrain_engine::transaction::IsolationLevel::Serializable),
                 "serializable",
             ),
             Some("snapshot") | None => (None, "snapshot"),
@@ -2501,9 +2501,9 @@ impl PyTransaction {
         if let Some(level) = level {
             session
                 .begin_transaction_with_isolation(level)
-                .map_err(PyGrafeoError::from)?;
+                .map_err(PyObrainError::from)?;
         } else {
-            session.begin_transaction().map_err(PyGrafeoError::from)?;
+            session.begin_transaction().map_err(PyObrainError::from)?;
         }
 
         Ok(Self {
@@ -2539,7 +2539,7 @@ impl PyTransaction {
 
         let mut session_guard = self.session.lock();
         if let Some(ref mut session) = *session_guard {
-            session.commit().map_err(PyGrafeoError::from)?;
+            session.commit().map_err(PyObrainError::from)?;
         }
         *session_guard = None; // Drop the session
         self.committed = true;
@@ -2558,7 +2558,7 @@ impl PyTransaction {
 
         let mut session_guard = self.session.lock();
         if let Some(ref mut session) = *session_guard {
-            session.rollback().map_err(PyGrafeoError::from)?;
+            session.rollback().map_err(PyObrainError::from)?;
         }
         *session_guard = None; // Drop the session
         self.rolled_back = true;
@@ -2718,8 +2718,8 @@ impl PyDatabaseStats {
 }
 
 /// Pulls nodes and edges out of query results so Python can work with them.
-fn extract_entities(result: &QueryResult, _db: &GrafeoDB) -> (Vec<PyNode>, Vec<PyEdge>) {
-    let (raw_nodes, raw_edges) = grafeo_bindings_common::entity::extract_entities(result);
+fn extract_entities(result: &QueryResult, _db: &ObrainDB) -> (Vec<PyNode>, Vec<PyEdge>) {
+    let (raw_nodes, raw_edges) = obrain_bindings_common::entity::extract_entities(result);
     let nodes = raw_nodes
         .into_iter()
         .map(|n| PyNode::new(n.id, n.labels, n.properties))
@@ -2735,7 +2735,7 @@ fn extract_entities(result: &QueryResult, _db: &GrafeoDB) -> (Vec<PyNode>, Vec<P
 #[cfg(feature = "cdc")]
 fn change_event_to_dict(
     py: pyo3::Python<'_>,
-    event: &grafeo_engine::cdc::ChangeEvent,
+    event: &obrain_engine::cdc::ChangeEvent,
 ) -> std::collections::HashMap<String, pyo3::Py<pyo3::PyAny>> {
     use crate::types::PyValue;
     use pyo3::conversion::IntoPyObjectExt;
@@ -2765,9 +2765,9 @@ fn change_event_to_dict(
 
     // kind
     let kind = match event.kind {
-        grafeo_engine::cdc::ChangeKind::Create => "create",
-        grafeo_engine::cdc::ChangeKind::Update => "update",
-        grafeo_engine::cdc::ChangeKind::Delete => "delete",
+        obrain_engine::cdc::ChangeKind::Create => "create",
+        obrain_engine::cdc::ChangeKind::Update => "update",
+        obrain_engine::cdc::ChangeKind::Delete => "delete",
     };
     map.insert(
         "kind".to_string(),

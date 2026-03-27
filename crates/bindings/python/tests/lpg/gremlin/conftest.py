@@ -2,13 +2,13 @@
 
 import pytest
 
-# Try to import grafeo
+# Try to import obrain
 try:
-    from grafeo import GrafeoDB
+    from obrain import ObrainDB
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
 
 def has_gremlin_support(db):
@@ -24,14 +24,14 @@ def has_gremlin_support(db):
 
 @pytest.fixture
 def db():
-    """Create a fresh in-memory GrafeoDB instance.
+    """Create a fresh in-memory ObrainDB instance.
 
     This fixture requires Gremlin support.
     For tests using only Python API, use db_api fixture instead.
     """
-    if not GRAFEO_AVAILABLE:
-        pytest.skip("grafeo not installed")
-    database = GrafeoDB()
+    if not OBRAIN_AVAILABLE:
+        pytest.skip("obrain not installed")
+    database = ObrainDB()
     if not has_gremlin_support(database):
         pytest.skip("Gremlin support not available in this build")
     return database
@@ -39,14 +39,14 @@ def db():
 
 @pytest.fixture
 def db_api():
-    """Create a fresh in-memory GrafeoDB instance for Python API tests.
+    """Create a fresh in-memory ObrainDB instance for Python API tests.
 
     This fixture does NOT require Gremlin support - use for tests
     that only use db.create_node(), db.algorithms, etc.
     """
-    if not GRAFEO_AVAILABLE:
-        pytest.skip("grafeo not installed")
-    return GrafeoDB()
+    if not OBRAIN_AVAILABLE:
+        pytest.skip("obrain not installed")
+    return ObrainDB()
 
 
 @pytest.fixture

@@ -1,6 +1,6 @@
 # Roadmap
 
-Grafeo is a high-performance, embeddable graph database written in Rust. This roadmap shows where the project has been, where it is now and where it's going. Priorities may shift based on community feedback and real-world usage.
+Obrain is a high-performance, embeddable graph database written in Rust. This roadmap shows where the project has been, where it is now and where it's going. Priorities may shift based on community feedback and real-world usage.
 
 For detailed release notes, see the [CHANGELOG](changelog.md).
 
@@ -22,7 +22,7 @@ Added first-class vector support: `Value::Vector` type, HNSW approximate nearest
 
 ### 0.4: Developer Accessibility
 
-Expanded the binding surface: Node.js/TypeScript (napi-rs), Go (C FFI), WebAssembly (wasm-bindgen, 660 KB gzipped), SQL/PGQ (SQL:2023 GRAPH_TABLE). Shipped grafeo-cli with interactive shell, filtered/MMR vector search with incremental indexing. All public API items documented.
+Expanded the binding surface: Node.js/TypeScript (napi-rs), Go (C FFI), WebAssembly (wasm-bindgen, 660 KB gzipped), SQL/PGQ (SQL:2023 GRAPH_TABLE). Shipped obrain-cli with interactive shell, filtered/MMR vector search with incremental indexing. All public API items documented.
 
 ---
 
@@ -40,11 +40,11 @@ The beta series focuses on correctness, completeness and real-world durability. 
 
 **Transaction correctness**: MVCC dirty-read prevention, DELETE rollback with full undo log, write-write conflict detection, session auto-rollback, savepoints.
 
-**Persistence**: Single-file `.grafeo` format with dual-header crash safety, index metadata persistence (snapshot v4), read-only open mode with shared file lock for concurrent reader processes.
+**Persistence**: Single-file `.obrain` format with dual-header crash safety, index metadata persistence (snapshot v4), read-only open mode with shared file lock for concurrent reader processes.
 
 **Bindings**: C#/.NET 8, Dart/Flutter (community contribution), C FFI layer shared by Go, and C#.
 
-**Ecosystem**: [grafeo-server](https://github.com/GrafeoDB/grafeo-server), [grafeo-web](https://github.com/GrafeoDB/grafeo-web), [grafeo-mcp](https://github.com/GrafeoDB/grafeo-mcp), [grafeo-memory](https://github.com/GrafeoDB/grafeo-memory), [grafeo-langchain](https://github.com/GrafeoDB/grafeo-langchain), [grafeo-llamaindex](https://github.com/GrafeoDB/grafeo-llamaindex).
+**Ecosystem**: [obrain-server](https://github.com/this-rs/obrain-server), [obrain-web](https://github.com/this-rs/obrain-web), [obrain-mcp](https://github.com/this-rs/obrain-mcp), [obrain-memory](https://github.com/this-rs/obrain-memory), [obrain-langchain](https://github.com/this-rs/obrain-langchain), [obrain-llamaindex](https://github.com/this-rs/obrain-llamaindex).
 
 ### What's left in 0.5
 
@@ -64,7 +64,7 @@ The scope is intentionally narrow:
 - **Performance tuning** informed by actual workloads, not synthetic benchmarks
 - **API ergonomics** and documentation polish
 - **Binary size and compile time** optimization
-- **C FFI parity refactor**: expand grafeo-c to match Python/Node.js API surface, update downstream bindings
+- **C FFI parity refactor**: expand obrain-c to match Python/Node.js API surface, update downstream bindings
 
 The goal is confidence: if something works in 0.6, it works in 1.0.
 
@@ -88,7 +88,7 @@ Not scheduled, but on the radar:
 
 ## Contributing
 
-Interested in contributing? Check the [GitHub Issues](https://github.com/GrafeoDB/grafeo/issues) or join the [Discussions](https://github.com/orgs/GrafeoDB/discussions).
+Interested in contributing? Check the [GitHub Issues](https://github.com/this-rs/obrain/issues) or join the [Discussions](https://github.com/orgs/this-rs/discussions).
 
 ---
 

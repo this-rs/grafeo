@@ -1,7 +1,7 @@
-package grafeo
+package obrain
 
 /*
-#include "grafeo.h"
+#include "obrain.h"
 #include <stdlib.h>
 */
 import "C"
@@ -25,7 +25,7 @@ func (db *Database) CreateEdge(sourceID, targetID uint64, edgeType string, prope
 		defer C.free(unsafe.Pointer(cProps))
 	}
 
-	id := uint64(C.grafeo_create_edge(db.handle, C.uint64_t(sourceID), C.uint64_t(targetID), cType, cProps))
+	id := uint64(C.obrain_create_edge(db.handle, C.uint64_t(sourceID), C.uint64_t(targetID), cType, cProps))
 	if id == ^uint64(0) {
 		return nil, lastError()
 	}
@@ -44,20 +44,20 @@ func (db *Database) CreateEdge(sourceID, targetID uint64, edgeType string, prope
 
 // GetEdge retrieves an edge by ID. Returns nil if not found.
 func (db *Database) GetEdge(id uint64) (*Edge, error) {
-	var cEdge *C.GrafeoEdge
-	status := C.grafeo_get_edge(db.handle, C.uint64_t(id), &cEdge)
-	if status != C.GRAFEO_OK {
+	var cEdge *C.ObrainEdge
+	status := C.obrain_get_edge(db.handle, C.uint64_t(id), &cEdge)
+	if status != C.OBRAIN_OK {
 		return nil, statusToError(status)
 	}
-	defer C.grafeo_free_edge(cEdge)
+	defer C.obrain_free_edge(cEdge)
 
-	edgeID := uint64(C.grafeo_edge_id(cEdge))
-	srcID := uint64(C.grafeo_edge_source_id(cEdge))
-	dstID := uint64(C.grafeo_edge_target_id(cEdge))
-	edgeType := C.GoString(C.grafeo_edge_type(cEdge))
+	edgeID := uint64(C.obrain_edge_id(cEdge))
+	srcID := uint64(C.obrain_edge_source_id(cEdge))
+	dstID := uint64(C.obrain_edge_target_id(cEdge))
+	edgeType := C.GoString(C.obrain_edge_type(cEdge))
 
 	var props map[string]any
-	propsPtr := C.grafeo_edge_properties_json(cEdge)
+	propsPtr := C.obrain_edge_properties_json(cEdge)
 	if propsPtr != nil {
 		_ = json.Unmarshal([]byte(C.GoString(propsPtr)), &props)
 	}
@@ -76,7 +76,7 @@ func (db *Database) GetEdge(id uint64) (*Edge, error) {
 
 // DeleteEdge deletes an edge by ID. Returns true if the edge existed.
 func (db *Database) DeleteEdge(id uint64) (bool, error) {
-	result := int(C.grafeo_delete_edge(db.handle, C.uint64_t(id)))
+	result := int(C.obrain_delete_edge(db.handle, C.uint64_t(id)))
 	if result < 0 {
 		return false, lastError()
 	}
@@ -93,14 +93,14 @@ func (db *Database) SetEdgeProperty(id uint64, key string, value any) error {
 	}
 	cValue := C.CString(string(valueJSON))
 	defer C.free(unsafe.Pointer(cValue))
-	return statusToError(C.grafeo_set_edge_property(db.handle, C.uint64_t(id), cKey, cValue))
+	return statusToError(C.obrain_set_edge_property(db.handle, C.uint64_t(id), cKey, cValue))
 }
 
 // RemoveEdgeProperty removes a property from an edge.
 func (db *Database) RemoveEdgeProperty(id uint64, key string) (bool, error) {
 	cKey := C.CString(key)
 	defer C.free(unsafe.Pointer(cKey))
-	result := int(C.grafeo_remove_edge_property(db.handle, C.uint64_t(id), cKey))
+	result := int(C.obrain_remove_edge_property(db.handle, C.uint64_t(id), cKey))
 	if result < 0 {
 		return false, lastError()
 	}

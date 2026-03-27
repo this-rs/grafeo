@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "obrain-cli"
+version = "0.0.1"
+description = "Command-line interface for Obrain graph database"
+readme = "README.md"
+license = { text = "Apache-2.0"}
+requires-python = ">=3.9"
+authors = [
+    { name = "S.T. Grond" }
+]
+keywords = ["graph", "database", "gql", "cli", "obrain"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Rust",
+    "Topic :: Database",
+    "Topic :: Database :: Database Engines/Servers",
+]
+
+[project.urls]
+Homepage = "https://obrain.dev"
+Documentation = "https://obrain.dev/user-guide/cli"
+Repository = "https://github.com/this-rs/obrain"
+Issues = "https://github.com/this-rs/obrain/issues"
+
+[project.scripts]
+obrain = "obrain_cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["obrain_cli"]
+
+[tool.hatch.build.targets.wheel.shared-data]
+# Binary is placed alongside the Python package during wheel build

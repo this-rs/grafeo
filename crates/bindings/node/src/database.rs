@@ -1,6 +1,6 @@
-//! Main entry point for using Grafeo from Node.js.
+//! Main entry point for using Obrain from Node.js.
 //!
-//! [`JsGrafeoDB`] wraps the Rust database engine and gives you a JavaScript API.
+//! [`JsObrainDB`] wraps the Rust database engine and gives you a JavaScript API.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -10,17 +10,17 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use parking_lot::RwLock;
 
-use grafeo_common::types::{EdgeId, NodeId, Value};
-use grafeo_engine::config::Config;
-use grafeo_engine::database::{GrafeoDB, QueryResult as EngineQueryResult};
+use obrain_common::types::{EdgeId, NodeId, Value};
+use obrain_engine::config::Config;
+use obrain_engine::database::{ObrainDB, QueryResult as EngineQueryResult};
 
-use crate::error::NodeGrafeoError;
+use crate::error::NodeObrainError;
 use crate::graph::{JsEdge, JsNode};
 use crate::query::QueryResult;
 use crate::transaction::Transaction;
 use crate::types;
 
-/// Converts a serde_json filter map to a Grafeo filter map.
+/// Converts a serde_json filter map to a Obrain filter map.
 fn convert_json_filters(
     filters: Option<HashMap<String, serde_json::Value>>,
 ) -> Result<Option<HashMap<String, Value>>> {
@@ -29,8 +29,8 @@ fn convert_json_filters(
     };
     let mut result = HashMap::new();
     for (key, val) in &map {
-        let grafeo_val = json_to_value(val)?;
-        result.insert(key.clone(), grafeo_val);
+        let obrain_val = json_to_value(val)?;
+        result.insert(key.clone(), obrain_val);
     }
     Ok(Some(result))
 }
@@ -41,7 +41,7 @@ fn convert_json_filters(
 /// negative values, NaN, Infinity, and values beyond `Number.MAX_SAFE_INTEGER`.
 fn validate_node_id(id: f64) -> Result<NodeId> {
     if !(0.0..=9_007_199_254_740_991.0).contains(&id) {
-        return Err(NodeGrafeoError::InvalidArgument(format!("Invalid node ID: {id}")).into());
+        return Err(NodeObrainError::InvalidArgument(format!("Invalid node ID: {id}")).into());
     }
     Ok(NodeId(id as u64))
 }
@@ -49,19 +49,19 @@ fn validate_node_id(id: f64) -> Result<NodeId> {
 /// Validate a JavaScript number as a safe edge ID.
 fn validate_edge_id(id: f64) -> Result<EdgeId> {
     if !(0.0..=9_007_199_254_740_991.0).contains(&id) {
-        return Err(NodeGrafeoError::InvalidArgument(format!("Invalid edge ID: {id}")).into());
+        return Err(NodeObrainError::InvalidArgument(format!("Invalid edge ID: {id}")).into());
     }
     Ok(EdgeId(id as u64))
 }
 
-/// Your connection to a Grafeo database.
-#[napi(js_name = "GrafeoDB")]
-pub struct JsGrafeoDB {
-    inner: Arc<RwLock<GrafeoDB>>,
+/// Your connection to a Obrain database.
+#[napi(js_name = "ObrainDB")]
+pub struct JsObrainDB {
+    inner: Arc<RwLock<ObrainDB>>,
 }
 
 #[napi]
-impl JsGrafeoDB {
+impl JsObrainDB {
     /// Create a database. Pass a path for persistence, or omit for in-memory.
     #[napi(factory)]
     pub fn create(path: Option<String>) -> Result<Self> {
@@ -69,7 +69,7 @@ impl JsGrafeoDB {
             Some(p) => Config::persistent(p),
             None => Config::in_memory(),
         };
-        let db = GrafeoDB::with_config(config).map_err(NodeGrafeoError::from)?;
+        let db = ObrainDB::with_config(config).map_err(NodeObrainError::from)?;
         Ok(Self {
             inner: Arc::new(RwLock::new(db)),
         })
@@ -79,7 +79,7 @@ impl JsGrafeoDB {
     #[napi(factory)]
     pub fn open(path: String) -> Result<Self> {
         let config = Config::persistent(path);
-        let db = GrafeoDB::with_config(config).map_err(NodeGrafeoError::from)?;
+        let db = ObrainDB::with_config(config).map_err(NodeObrainError::from)?;
         Ok(Self {
             inner: Arc::new(RwLock::new(db)),
         })
@@ -88,11 +88,11 @@ impl JsGrafeoDB {
     /// Open an existing database in read-only mode.
     ///
     /// Uses a shared file lock, so multiple processes can read the same
-    /// .grafeo file concurrently. Mutations will throw an error.
+    /// .obrain file concurrently. Mutations will throw an error.
     #[napi(factory)]
     pub fn open_read_only(path: String) -> Result<Self> {
         let config = Config::read_only(path);
-        let db = GrafeoDB::with_config(config).map_err(NodeGrafeoError::from)?;
+        let db = ObrainDB::with_config(config).map_err(NodeObrainError::from)?;
         Ok(Self {
             inner: Arc::new(RwLock::new(db)),
         })
@@ -156,7 +156,7 @@ impl JsGrafeoDB {
                 let key_str = key.into_utf8()?.into_owned()?;
                 let value: Unknown<'_> = props_obj.get_named_property(&key_str)?;
                 let val = types::js_to_value(&env, value)?;
-                props.push((grafeo_common::types::PropertyKey::new(key_str), val));
+                props.push((obrain_common::types::PropertyKey::new(key_str), val));
             }
             db.create_node_with_props(&label_refs, props)
         } else {
@@ -189,7 +189,7 @@ impl JsGrafeoDB {
                 let key_str = key.into_utf8()?.into_owned()?;
                 let value: Unknown<'_> = props_obj.get_named_property(&key_str)?;
                 let val = types::js_to_value(&env, value)?;
-                props.push((grafeo_common::types::PropertyKey::new(key_str), val));
+                props.push((obrain_common::types::PropertyKey::new(key_str), val));
             }
             db.create_edge_with_props(src, dst, &edge_type, props)
         } else {
@@ -326,7 +326,7 @@ impl JsGrafeoDB {
                 m.map(|v| v as usize),
                 ef_construction.map(|v| v as usize),
             )
-            .map_err(NodeGrafeoError::from)
+            .map_err(NodeObrainError::from)
             .map_err(napi::Error::from)
         })
         .await
@@ -356,7 +356,7 @@ impl JsGrafeoDB {
         tokio::task::spawn_blocking(move || {
             let db = db.read();
             db.rebuild_vector_index(&label, &property)
-                .map_err(NodeGrafeoError::from)
+                .map_err(NodeObrainError::from)
                 .map_err(napi::Error::from)
         })
         .await
@@ -388,7 +388,7 @@ impl JsGrafeoDB {
                     ef.map(|v| v as usize),
                     filter_map.as_ref(),
                 )
-                .map_err(NodeGrafeoError::from)
+                .map_err(NodeObrainError::from)
                 .map_err(napi::Error::from)?;
             // Return as [[nodeId, distance], ...] since napi doesn't have tuples
             Ok(results
@@ -454,7 +454,7 @@ impl JsGrafeoDB {
                     ef.map(|v| v as usize),
                     filter_map.as_ref(),
                 )
-                .map_err(NodeGrafeoError::from)
+                .map_err(NodeObrainError::from)
                 .map_err(napi::Error::from)?;
             Ok(results
                 .into_iter()
@@ -501,7 +501,7 @@ impl JsGrafeoDB {
                     ef.map(|v| v as usize),
                     filter_map.as_ref(),
                 )
-                .map_err(NodeGrafeoError::from)
+                .map_err(NodeObrainError::from)
                 .map_err(napi::Error::from)?;
             Ok(results
                 .into_iter()
@@ -522,7 +522,7 @@ impl JsGrafeoDB {
         tokio::task::spawn_blocking(move || {
             let db = db.read();
             db.create_text_index(&label, &property)
-                .map_err(NodeGrafeoError::from)
+                .map_err(NodeObrainError::from)
                 .map_err(napi::Error::from)
         })
         .await
@@ -550,7 +550,7 @@ impl JsGrafeoDB {
         tokio::task::spawn_blocking(move || {
             let db = db.read();
             db.rebuild_text_index(&label, &property)
-                .map_err(NodeGrafeoError::from)
+                .map_err(NodeObrainError::from)
                 .map_err(napi::Error::from)
         })
         .await
@@ -574,7 +574,7 @@ impl JsGrafeoDB {
             let db = db.read();
             let results = db
                 .text_search(&label, &property, &query, k as usize)
-                .map_err(NodeGrafeoError::from)
+                .map_err(NodeObrainError::from)
                 .map_err(napi::Error::from)?;
             Ok(results
                 .into_iter()
@@ -607,7 +607,7 @@ impl JsGrafeoDB {
             let fusion_method = match fusion.as_deref() {
                 Some("weighted") => {
                     let w = weights.unwrap_or_else(|| vec![0.5, 0.5]);
-                    Some(grafeo_core::index::text::FusionMethod::Weighted { weights: w })
+                    Some(obrain_core::index::text::FusionMethod::Weighted { weights: w })
                 }
                 _ => None,
             };
@@ -626,7 +626,7 @@ impl JsGrafeoDB {
                     k as usize,
                     fusion_method,
                 )
-                .map_err(NodeGrafeoError::from)
+                .map_err(NodeObrainError::from)
                 .map_err(napi::Error::from)?;
             Ok(results
                 .into_iter()
@@ -682,7 +682,7 @@ impl JsGrafeoDB {
     pub fn info(&self) -> Result<serde_json::Value> {
         let db = self.inner.read();
         let info = db.info();
-        serde_json::to_value(&info).map_err(|e| NodeGrafeoError::Database(e.to_string()).into())
+        serde_json::to_value(&info).map_err(|e| NodeObrainError::Database(e.to_string()).into())
     }
 
     /// Returns schema information (labels, edge types, property keys) as a JSON object.
@@ -690,10 +690,10 @@ impl JsGrafeoDB {
     pub fn schema(&self) -> Result<serde_json::Value> {
         let db = self.inner.read();
         let schema = db.schema();
-        serde_json::to_value(&schema).map_err(|e| NodeGrafeoError::Database(e.to_string()).into())
+        serde_json::to_value(&schema).map_err(|e| NodeObrainError::Database(e.to_string()).into())
     }
 
-    /// Returns the Grafeo engine version string.
+    /// Returns the Obrain engine version string.
     #[napi]
     pub fn version(&self) -> String {
         env!("CARGO_PKG_VERSION").to_string()
@@ -714,7 +714,7 @@ impl JsGrafeoDB {
         self.inner
             .read()
             .close()
-            .map_err(NodeGrafeoError::from)
+            .map_err(NodeObrainError::from)
             .map_err(napi::Error::from)
     }
 
@@ -727,10 +727,10 @@ impl JsGrafeoDB {
         let db = self.inner.clone();
         tokio::task::spawn_blocking(move || {
             let db = db.read();
-            let id = grafeo_common::types::NodeId::new(node_id as u64);
+            let id = obrain_common::types::NodeId::new(node_id as u64);
             let events = db
                 .history(id)
-                .map_err(NodeGrafeoError::from)
+                .map_err(NodeObrainError::from)
                 .map_err(napi::Error::from)?;
             Ok(events.iter().map(change_event_to_json).collect())
         })
@@ -745,10 +745,10 @@ impl JsGrafeoDB {
         let db = self.inner.clone();
         tokio::task::spawn_blocking(move || {
             let db = db.read();
-            let id = grafeo_common::types::EdgeId::new(edge_id as u64);
+            let id = obrain_common::types::EdgeId::new(edge_id as u64);
             let events = db
                 .history(id)
-                .map_err(NodeGrafeoError::from)
+                .map_err(NodeObrainError::from)
                 .map_err(napi::Error::from)?;
             Ok(events.iter().map(change_event_to_json).collect())
         })
@@ -767,10 +767,10 @@ impl JsGrafeoDB {
         let db = self.inner.clone();
         tokio::task::spawn_blocking(move || {
             let db = db.read();
-            let id = grafeo_common::types::NodeId::new(node_id as u64);
+            let id = obrain_common::types::NodeId::new(node_id as u64);
             let events = db
-                .history_since(id, grafeo_common::types::EpochId(since_epoch as u64))
-                .map_err(NodeGrafeoError::from)
+                .history_since(id, obrain_common::types::EpochId(since_epoch as u64))
+                .map_err(NodeObrainError::from)
                 .map_err(napi::Error::from)?;
             Ok(events.iter().map(change_event_to_json).collect())
         })
@@ -791,10 +791,10 @@ impl JsGrafeoDB {
             let db = db.read();
             let events = db
                 .changes_between(
-                    grafeo_common::types::EpochId(start_epoch as u64),
-                    grafeo_common::types::EpochId(end_epoch as u64),
+                    obrain_common::types::EpochId(start_epoch as u64),
+                    obrain_common::types::EpochId(end_epoch as u64),
                 )
-                .map_err(NodeGrafeoError::from)
+                .map_err(NodeObrainError::from)
                 .map_err(napi::Error::from)?;
             Ok(events.iter().map(change_event_to_json).collect())
         })
@@ -808,7 +808,7 @@ impl JsGrafeoDB {
 // method inside a `#[napi]` impl, so a per-method `#[cfg]` doesn't work.
 #[cfg(feature = "embed")]
 #[napi]
-impl JsGrafeoDB {
+impl JsObrainDB {
     /// Register an ONNX embedding model for text-to-vector conversion.
     ///
     /// Once registered, use embedText() and vectorSearchText() with the model name.
@@ -822,12 +822,12 @@ impl JsGrafeoDB {
     ) -> Result<()> {
         let db = self.inner.clone();
         tokio::task::spawn_blocking(move || {
-            let mut model = grafeo_engine::embedding::OnnxEmbeddingModel::from_files(
+            let mut model = obrain_engine::embedding::OnnxEmbeddingModel::from_files(
                 &name,
                 &model_path,
                 &tokenizer_path,
             )
-            .map_err(NodeGrafeoError::from)
+            .map_err(NodeObrainError::from)
             .map_err(napi::Error::from)?;
             if let Some(bs) = batch_size {
                 model = model.with_batch_size(bs as usize);
@@ -855,7 +855,7 @@ impl JsGrafeoDB {
             let text_refs: Vec<&str> = texts.iter().map(String::as_str).collect();
             let results = db
                 .embed_text(&model_name, &text_refs)
-                .map_err(NodeGrafeoError::from)
+                .map_err(NodeObrainError::from)
                 .map_err(napi::Error::from)?;
             // Convert f32 → f64 for JavaScript number compatibility
             Ok(results
@@ -893,7 +893,7 @@ impl JsGrafeoDB {
                     k as usize,
                     ef.map(|e| e as usize),
                 )
-                .map_err(NodeGrafeoError::from)
+                .map_err(NodeObrainError::from)
                 .map_err(napi::Error::from)?;
             Ok(results
                 .into_iter()
@@ -910,7 +910,7 @@ impl JsGrafeoDB {
 
 #[cfg(feature = "cypher")]
 #[napi]
-impl JsGrafeoDB {
+impl JsObrainDB {
     /// Execute a Cypher query.
     #[napi(js_name = "executeCypher")]
     pub async fn execute_cypher(
@@ -924,7 +924,7 @@ impl JsGrafeoDB {
 
 #[cfg(feature = "sql-pgq")]
 #[napi]
-impl JsGrafeoDB {
+impl JsObrainDB {
     /// Execute a SQL/PGQ query (SQL:2023 GRAPH_TABLE).
     #[napi(js_name = "executeSql")]
     pub async fn execute_sql(
@@ -938,7 +938,7 @@ impl JsGrafeoDB {
 
 #[cfg(feature = "gremlin")]
 #[napi]
-impl JsGrafeoDB {
+impl JsObrainDB {
     /// Execute a Gremlin query.
     #[napi(js_name = "executeGremlin")]
     pub async fn execute_gremlin(
@@ -952,7 +952,7 @@ impl JsGrafeoDB {
 
 #[cfg(feature = "graphql")]
 #[napi]
-impl JsGrafeoDB {
+impl JsObrainDB {
     /// Execute a GraphQL query.
     #[napi(js_name = "executeGraphql")]
     pub async fn execute_graphql(
@@ -966,7 +966,7 @@ impl JsGrafeoDB {
 
 #[cfg(feature = "sparql")]
 #[napi]
-impl JsGrafeoDB {
+impl JsObrainDB {
     /// Execute a SPARQL query against the RDF triple store.
     #[napi(js_name = "executeSparql")]
     pub async fn execute_sparql(
@@ -980,14 +980,14 @@ impl JsGrafeoDB {
 
 /// Execute a query in a given language with optional JSON params.
 fn execute_language_query(
-    db: &GrafeoDB,
+    db: &ObrainDB,
     query: &str,
     language: &str,
     params: Option<&serde_json::Value>,
 ) -> std::result::Result<EngineQueryResult, napi::Error> {
     let param_map = convert_json_params(params)?;
     db.execute_language(query, language, param_map)
-        .map_err(NodeGrafeoError::from)
+        .map_err(NodeObrainError::from)
         .map_err(napi::Error::from)
 }
 
@@ -995,17 +995,17 @@ fn execute_language_query(
 fn convert_json_params(
     params: Option<&serde_json::Value>,
 ) -> std::result::Result<Option<HashMap<String, Value>>, napi::Error> {
-    grafeo_bindings_common::json::json_params_to_map(params)
-        .map_err(|msg| NodeGrafeoError::InvalidArgument(msg).into())
+    obrain_bindings_common::json::json_params_to_map(params)
+        .map_err(|msg| NodeObrainError::InvalidArgument(msg).into())
 }
 
-/// Convert a serde_json::Value to a Grafeo Value.
+/// Convert a serde_json::Value to a Obrain Value.
 pub(crate) fn json_to_value(v: &serde_json::Value) -> std::result::Result<Value, napi::Error> {
-    Ok(grafeo_bindings_common::json::json_to_value(v))
+    Ok(obrain_bindings_common::json::json_to_value(v))
 }
 
 /// Fetch a node from the database and wrap it as JsNode.
-fn fetch_node(db: &GrafeoDB, id: NodeId) -> Result<JsNode> {
+fn fetch_node(db: &ObrainDB, id: NodeId) -> Result<JsNode> {
     db.get_node(id)
         .map(|node| {
             let labels: Vec<String> = node.labels.iter().map(|s| s.to_string()).collect();
@@ -1016,11 +1016,11 @@ fn fetch_node(db: &GrafeoDB, id: NodeId) -> Result<JsNode> {
                 .collect();
             JsNode::new(id, labels, properties)
         })
-        .ok_or_else(|| NodeGrafeoError::Database("Failed to fetch created node".into()).into())
+        .ok_or_else(|| NodeObrainError::Database("Failed to fetch created node".into()).into())
 }
 
 /// Fetch an edge from the database and wrap it as JsEdge.
-fn fetch_edge(db: &GrafeoDB, id: EdgeId) -> Result<JsEdge> {
+fn fetch_edge(db: &ObrainDB, id: EdgeId) -> Result<JsEdge> {
     db.get_edge(id)
         .map(|edge| {
             let properties = edge
@@ -1036,15 +1036,15 @@ fn fetch_edge(db: &GrafeoDB, id: EdgeId) -> Result<JsEdge> {
                 properties,
             )
         })
-        .ok_or_else(|| NodeGrafeoError::Database("Failed to fetch created edge".into()).into())
+        .ok_or_else(|| NodeObrainError::Database("Failed to fetch created edge".into()).into())
 }
 
 /// Extract nodes and edges from query results based on column types.
 pub(crate) fn extract_entities(
     result: &EngineQueryResult,
-    _db: &GrafeoDB,
+    _db: &ObrainDB,
 ) -> (Vec<JsNode>, Vec<JsEdge>) {
-    let (raw_nodes, raw_edges) = grafeo_bindings_common::entity::extract_entities(result);
+    let (raw_nodes, raw_edges) = obrain_bindings_common::entity::extract_entities(result);
     let nodes = raw_nodes
         .into_iter()
         .map(|n| JsNode::new(n.id, n.labels, n.properties))
@@ -1056,30 +1056,30 @@ pub(crate) fn extract_entities(
     (nodes, edges)
 }
 
-/// Convert a Grafeo Value to serde_json::Value.
-fn grafeo_value_to_json(v: &Value) -> serde_json::Value {
-    grafeo_bindings_common::json::value_to_json(v)
+/// Convert a Obrain Value to serde_json::Value.
+fn obrain_value_to_json(v: &Value) -> serde_json::Value {
+    obrain_bindings_common::json::value_to_json(v)
 }
 
 /// Convert a CDC ChangeEvent to a JSON object.
 #[cfg(feature = "cdc")]
-fn change_event_to_json(event: &grafeo_engine::cdc::ChangeEvent) -> serde_json::Value {
+fn change_event_to_json(event: &obrain_engine::cdc::ChangeEvent) -> serde_json::Value {
     let entity_type = if event.entity_id.is_node() {
         "node"
     } else {
         "edge"
     };
     let kind = match event.kind {
-        grafeo_engine::cdc::ChangeKind::Create => "create",
-        grafeo_engine::cdc::ChangeKind::Update => "update",
-        grafeo_engine::cdc::ChangeKind::Delete => "delete",
+        obrain_engine::cdc::ChangeKind::Create => "create",
+        obrain_engine::cdc::ChangeKind::Update => "update",
+        obrain_engine::cdc::ChangeKind::Delete => "delete",
     };
 
     let before = match &event.before {
         Some(props) => {
             let obj: serde_json::Map<String, serde_json::Value> = props
                 .iter()
-                .map(|(k, v)| (k.clone(), grafeo_value_to_json(v)))
+                .map(|(k, v)| (k.clone(), obrain_value_to_json(v)))
                 .collect();
             serde_json::Value::Object(obj)
         }
@@ -1090,7 +1090,7 @@ fn change_event_to_json(event: &grafeo_engine::cdc::ChangeEvent) -> serde_json::
         Some(props) => {
             let obj: serde_json::Map<String, serde_json::Value> = props
                 .iter()
-                .map(|(k, v)| (k.clone(), grafeo_value_to_json(v)))
+                .map(|(k, v)| (k.clone(), obrain_value_to_json(v)))
                 .collect();
             serde_json::Value::Object(obj)
         }

@@ -29,6 +29,7 @@ __pycache__/
 *.so
 *.pyd
 *.egg-info/
+*.dist-info/
 *.egg
 *.whl
 dist/

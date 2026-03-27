@@ -5,7 +5,7 @@
 #   .\scripts\build-wasm.ps1 -Features ai              # GQL + AI search
 #   .\scripts\build-wasm.ps1 -Features full            # all languages + AI
 #   .\scripts\build-wasm.ps1 -OutDir path\to\output    # custom output directory
-#   .\scripts\build-wasm.ps1 -Target bundler -Scope grafeo-db
+#   .\scripts\build-wasm.ps1 -Target bundler -Scope obrain-db
 #
 # Requirements: rustup target wasm32-unknown-unknown, wasm-bindgen-cli
 
@@ -26,7 +26,7 @@ $Profile = if ($Release) { "release" } else { "minimal-size" }
 Write-Host "Building WASM (profile: $Profile, target: $Target)"
 
 # Step 1: Cargo build
-$cargoArgs = @("build", "--target", "wasm32-unknown-unknown", "--profile", $Profile, "-p", "grafeo-wasm")
+$cargoArgs = @("build", "--target", "wasm32-unknown-unknown", "--profile", $Profile, "-p", "obrain-wasm")
 if ($Features) {
     $cargoArgs += "--features"
     $cargoArgs += $Features
@@ -36,7 +36,7 @@ Write-Host "  cargo build..."
 if ($LASTEXITCODE -ne 0) { throw "Cargo build failed" }
 
 # Determine output path
-$WasmFile = "target\wasm32-unknown-unknown\$Profile\grafeo_wasm.wasm"
+$WasmFile = "target\wasm32-unknown-unknown\$Profile\obrain_wasm.wasm"
 if (-not (Test-Path $WasmFile)) {
     throw "Error: $WasmFile not found"
 }
@@ -49,7 +49,7 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "wasm-bindgen failed" }
 
 # Step 3: Report sizes
-$wasmPath = Join-Path $OutDir "grafeo_wasm_bg.wasm"
+$wasmPath = Join-Path $OutDir "obrain_wasm_bg.wasm"
 $rawSize = (Get-Item $wasmPath).Length
 $gzBytes = [System.IO.File]::ReadAllBytes($wasmPath)
 $ms = New-Object System.IO.MemoryStream

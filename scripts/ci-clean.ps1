@@ -27,7 +27,7 @@ Write-Host "========================================`n" -ForegroundColor Cyan
 Write-Host "Testing Python versions: $($pythonVersions -join ', ')" -ForegroundColor Cyan
 
 # Create temp directory for clean test
-$tempDir = Join-Path $env:TEMP "grafeo-ci-test-$(Get-Random)"
+$tempDir = Join-Path $env:TEMP "obrain-ci-test-$(Get-Random)"
 New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 Write-Host "Using temp directory: $tempDir`n" -ForegroundColor Gray
 

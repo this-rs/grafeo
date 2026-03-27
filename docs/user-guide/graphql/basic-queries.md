@@ -8,7 +8,7 @@ tags:
 
 # Basic Queries
 
-This guide covers the fundamentals of querying graph data with GraphQL in Grafeo.
+This guide covers the fundamentals of querying graph data with GraphQL in Obrain.
 
 ## Anonymous Queries
 
@@ -62,7 +62,7 @@ Select the specific properties to return:
 
 ## Type-to-Label Mapping
 
-The root field name maps to a node label in the graph. Grafeo automatically capitalizes the first letter:
+The root field name maps to a node label in the graph. Obrain automatically capitalizes the first letter:
 
 | GraphQL Root Field | Node Label |
 |-------------------|------------|
@@ -173,9 +173,9 @@ Combine filtering, ordering and pagination:
 ## Python Example
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Create data
 db.execute("INSERT (:Person {name: 'Alix', age: 30})")
@@ -206,9 +206,9 @@ result = db.execute_graphql("""
 ## Rust Example
 
 ```rust
-use grafeo_engine::GrafeoDB;
+use obrain_engine::ObrainDB;
 
-let db = GrafeoDB::new_in_memory();
+let db = ObrainDB::new_in_memory();
 db.execute("INSERT (:Person {name: 'Alix', age: 30})").unwrap();
 
 let result = db.execute_graphql(r#"

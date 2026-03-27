@@ -1,12 +1,12 @@
-# Contributing to Grafeo
+# Contributing to Obrain
 
 Thanks for wanting to help out! Here's what you need to know.
 
 ## Setup
 
 ```bash
-git clone https://github.com/GrafeoDB/grafeo.git
-cd grafeo
+git clone https://github.com/this-rs/obrain.git
+cd obrain
 cargo build --workspace
 ```
 
@@ -45,19 +45,19 @@ We use conventional commits: `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `pe
 
 | Crate | What it does |
 | ----- | ------------ |
-| `grafeo` | Top-level facade, re-exports public API |
-| `grafeo-common` | Foundation types, memory, utilities |
-| `grafeo-core` | Graph storage, indexes, execution |
-| `grafeo-adapters` | Query parsers (GQL, Cypher, Gremlin, GraphQL, SPARQL, SQL/PGQ) |
-| `grafeo-engine` | Database facade, sessions, transactions |
-| `grafeo-cli` | CLI with interactive shell |
-| `grafeo-bindings-common` | Shared library for all language bindings |
-| `grafeo-python` | Python bindings (PyO3) |
-| `grafeo-node` | Node.js/TypeScript bindings (napi-rs) |
-| `grafeo-c` | C FFI layer (also used by Go via CGO) |
-| `grafeo-wasm` | WebAssembly bindings (wasm-bindgen) |
-| `grafeo-csharp` | C# / .NET 8 bindings (P/Invoke, wraps grafeo-c) |
-| `grafeo-dart` | Dart bindings (dart:ffi, wraps grafeo-c) |
+| `obrain` | Top-level facade, re-exports public API |
+| `obrain-common` | Foundation types, memory, utilities |
+| `obrain-core` | Graph storage, indexes, execution |
+| `obrain-adapters` | Query parsers (GQL, Cypher, Gremlin, GraphQL, SPARQL, SQL/PGQ) |
+| `obrain-engine` | Database facade, sessions, transactions |
+| `obrain-cli` | CLI with interactive shell |
+| `obrain-bindings-common` | Shared library for all language bindings |
+| `obrain-python` | Python bindings (PyO3) |
+| `obrain-node` | Node.js/TypeScript bindings (napi-rs) |
+| `obrain-c` | C FFI layer (also used by Go via CGO) |
+| `obrain-wasm` | WebAssembly bindings (wasm-bindgen) |
+| `obrain-csharp` | C# / .NET 8 bindings (P/Invoke, wraps obrain-c) |
+| `obrain-dart` | Dart bindings (dart:ffi, wraps obrain-c) |
 
 ## Code Style
 
@@ -85,22 +85,22 @@ npm test
 
 ## Ecosystem Projects
 
-These companion projects live in separate repositories under the [GrafeoDB](https://github.com/GrafeoDB) organization:
+These companion projects live in separate repositories under the [this-rs](https://github.com/this-rs) organization:
 
 | Project | Description |
 | ------- | ----------- |
-| [grafeo-server](https://github.com/GrafeoDB/grafeo-server) | HTTP server & web UI |
-| [grafeo-web](https://github.com/GrafeoDB/grafeo-web) | Browser-based Grafeo (WASM) |
-| [gwp](https://github.com/GrafeoDB/gql-wire-protocol) | GQL Wire Protocol (gRPC) |
-| [boltr](https://github.com/GrafeoDB/boltr) | Bolt v5.x Wire Protocol |
-| [grafeo-memory](https://github.com/GrafeoDB/grafeo-memory) | AI memory layer for LLM applications |
-| [grafeo-langchain](https://github.com/GrafeoDB/grafeo-langchain) | LangChain graph + vector store |
-| [grafeo-llamaindex](https://github.com/GrafeoDB/grafeo-llamaindex) | LlamaIndex PropertyGraphStore |
-| [grafeo-mcp](https://github.com/GrafeoDB/grafeo-mcp) | MCP server for LLM agents |
-| [anywidget-graph](https://github.com/GrafeoDB/anywidget-graph) | Graph visualization widget |
-| [anywidget-vector](https://github.com/GrafeoDB/anywidget-vector) | Vector visualization widget |
-| [graph-bench](https://github.com/GrafeoDB/graph-bench) | Benchmark suite |
-| [ann-benchmarks](https://github.com/GrafeoDB/ann-benchmarks) | Vector search benchmarking |
+| [obrain-server](https://github.com/this-rs/obrain-server) | HTTP server & web UI |
+| [obrain-web](https://github.com/this-rs/obrain-web) | Browser-based Obrain (WASM) |
+| [gwp](https://github.com/this-rs/gql-wire-protocol) | GQL Wire Protocol (gRPC) |
+| [boltr](https://github.com/this-rs/boltr) | Bolt v5.x Wire Protocol |
+| [obrain-memory](https://github.com/this-rs/obrain-memory) | AI memory layer for LLM applications |
+| [obrain-langchain](https://github.com/this-rs/obrain-langchain) | LangChain graph + vector store |
+| [obrain-llamaindex](https://github.com/this-rs/obrain-llamaindex) | LlamaIndex PropertyGraphStore |
+| [obrain-mcp](https://github.com/this-rs/obrain-mcp) | MCP server for LLM agents |
+| [anywidget-graph](https://github.com/this-rs/anywidget-graph) | Graph visualization widget |
+| [anywidget-vector](https://github.com/this-rs/anywidget-vector) | Vector visualization widget |
+| [graph-bench](https://github.com/this-rs/graph-bench) | Benchmark suite |
+| [ann-benchmarks](https://github.com/this-rs/ann-benchmarks) | Vector search benchmarking |
 
 ## Pre-commit Hooks (Optional)
 
@@ -113,9 +113,9 @@ This runs format, lint and license checks automatically before each commit.
 
 ## Links
 
-- [Repository](https://github.com/GrafeoDB/grafeo)
-- [Issues](https://github.com/GrafeoDB/grafeo/issues)
-- [Documentation](https://grafeo.dev)
+- [Repository](https://github.com/this-rs/obrain)
+- [Issues](https://github.com/this-rs/obrain/issues)
+- [Documentation](https://obrain.dev)
 
 ## License
 

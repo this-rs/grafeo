@@ -1,27 +1,27 @@
-# @grafeo-db/wasm
+# @obrain-db/wasm
 
-Low-level WebAssembly binary for [Grafeo](https://github.com/GrafeoDB/grafeo), a high-performance graph database.
+Low-level WebAssembly binary for [Obrain](https://github.com/this-rs/obrain), a high-performance graph database.
 
 ## Which Package Do You Need?
 
 | Package | Use Case |
 |---------|----------|
-| [`@grafeo-db/web`](https://www.npmjs.com/package/@grafeo-db/web) | Browser apps with IndexedDB, Web Workers, React/Vue/Svelte (recommended) |
-| [`@grafeo-db/wasm`](https://www.npmjs.com/package/@grafeo-db/wasm) | Raw WASM binary for custom loaders or non-standard runtimes |
-| [`@grafeo-db/js`](https://www.npmjs.com/package/@grafeo-db/js) | Node.js native bindings (faster than WASM for server-side) |
+| [`@obrain-db/web`](https://www.npmjs.com/package/@obrain-db/web) | Browser apps with IndexedDB, Web Workers, React/Vue/Svelte (recommended) |
+| [`@obrain-db/wasm`](https://www.npmjs.com/package/@obrain-db/wasm) | Raw WASM binary for custom loaders or non-standard runtimes |
+| [`@obrain-db/js`](https://www.npmjs.com/package/@obrain-db/js) | Node.js native bindings (faster than WASM for server-side) |
 
-**Most users should use `@grafeo-db/web`** - it wraps this package and adds browser-specific features.
+**Most users should use `@obrain-db/web`** - it wraps this package and adds browser-specific features.
 
 ## Installation
 
 ```bash
-npm install @grafeo-db/wasm
+npm install @obrain-db/wasm
 ```
 
 ## Usage
 
 ```typescript
-import init, { Database } from '@grafeo-db/wasm';
+import init, { Database } from '@obrain-db/wasm';
 
 // Initialize the WASM module
 await init();
@@ -46,10 +46,10 @@ const result = db.execute(`MATCH (n:Person) RETURN n.name`);
 ## Package Contents
 
 ```
-@grafeo-db/wasm/
-├── grafeo_wasm_bg.wasm    # WebAssembly binary
-├── grafeo_wasm.js         # JavaScript loader
-├── grafeo_wasm.d.ts       # TypeScript definitions
+@obrain-db/wasm/
+├── obrain_wasm_bg.wasm    # WebAssembly binary
+├── obrain_wasm.js         # JavaScript loader
+├── obrain_wasm.d.ts       # TypeScript definitions
 └── package.json
 ```
 
@@ -67,13 +67,13 @@ const result = db.execute(`MATCH (n:Person) RETURN n.name`);
 | Browser (Chrome, Firefox, Safari, Edge) | Supported |
 | Deno | Supported |
 | Cloudflare Workers | Untested |
-| Node.js | Use `@grafeo-db/js` instead |
+| Node.js | Use `@obrain-db/js` instead |
 
 ## Links
 
-- [Documentation](https://grafeo.dev)
-- [GitHub](https://github.com/GrafeoDB/grafeo)
-- [Roadmap](https://github.com/GrafeoDB/grafeo/blob/main/docs/roadmap.md)
+- [Documentation](https://obrain.dev)
+- [GitHub](https://github.com/this-rs/obrain)
+- [Roadmap](https://github.com/this-rs/obrain/blob/main/docs/roadmap.md)
 
 ## License
 

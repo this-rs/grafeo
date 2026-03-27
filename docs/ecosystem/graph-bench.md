@@ -2,7 +2,7 @@
 
 Comprehensive benchmark suite for comparing graph database performance.
 
-[:octicons-mark-github-16: GitHub](https://github.com/GrafeoDB/graph-bench){ .md-button }
+[:octicons-mark-github-16: GitHub](https://github.com/this-rs/graph-bench){ .md-button }
 
 ## Overview
 
@@ -12,7 +12,7 @@ graph-bench provides standardized, reproducible performance testing across multi
 
 | Type | Databases |
 |------|-----------|
-| **Embedded** | Grafeo (GQL), LadybugDB (Cypher) |
+| **Embedded** | Obrain (GQL), LadybugDB (Cypher) |
 | **Server** | Neo4j, Memgraph, ArangoDB, FalkorDB, NebulaGraph |
 
 ## Benchmark Categories
@@ -73,23 +73,23 @@ uv add graph-bench
 ### CLI
 
 ```bash
-# Run all benchmarks for Grafeo at small scale
-uv run graph-bench run -d grafeo -s small --verbose
+# Run all benchmarks for Obrain at small scale
+uv run graph-bench run -d obrain -s small --verbose
 
 # Run specific benchmark
-uv run graph-bench run -d grafeo -b traversal.bfs -s medium
+uv run graph-bench run -d obrain -b traversal.bfs -s medium
 
 # Compare multiple databases
-uv run graph-bench run -d grafeo,neo4j,duckdb -s small
+uv run graph-bench run -d obrain,neo4j,duckdb -s small
 ```
 
 ### Python API
 
 ```python
 from graph_bench import BenchmarkRunner
-from graph_bench.adapters import GrafeoAdapter
+from graph_bench.adapters import ObrainAdapter
 
-adapter = GrafeoAdapter()
+adapter = ObrainAdapter()
 runner = BenchmarkRunner(adapter, scale="small")
 results = runner.run_all()
 

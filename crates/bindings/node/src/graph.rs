@@ -6,7 +6,7 @@ use napi::bindgen_prelude::*;
 use napi::sys;
 use napi_derive::napi;
 
-use grafeo_common::types::{EdgeId, NodeId, Value};
+use obrain_common::types::{EdgeId, NodeId, Value};
 
 use crate::types;
 
@@ -160,7 +160,7 @@ impl JsEdge {
     }
 }
 
-/// Create a JS object from a Grafeo property map.
+/// Create a JS object from a Obrain property map.
 pub(crate) fn properties_to_object(
     env: sys::napi_env,
     properties: &HashMap<String, Value>,

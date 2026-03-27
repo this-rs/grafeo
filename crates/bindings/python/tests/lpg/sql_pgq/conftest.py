@@ -2,13 +2,13 @@
 
 import pytest
 
-# Try to import grafeo
+# Try to import obrain
 try:
-    from grafeo import GrafeoDB
+    from obrain import ObrainDB
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
 
 def has_sql_pgq_support(db):
@@ -24,13 +24,13 @@ def has_sql_pgq_support(db):
 
 @pytest.fixture
 def db():
-    """Create a fresh in-memory GrafeoDB instance.
+    """Create a fresh in-memory ObrainDB instance.
 
     This fixture requires SQL/PGQ support.
     """
-    if not GRAFEO_AVAILABLE:
-        pytest.skip("grafeo not installed")
-    database = GrafeoDB()
+    if not OBRAIN_AVAILABLE:
+        pytest.skip("obrain not installed")
+    database = ObrainDB()
     if not has_sql_pgq_support(database):
         pytest.skip("SQL/PGQ support not available in this build")
     return database

@@ -1,11 +1,11 @@
-name: grafeo
+name: obrain
 version: 0.5.24
 description: >-
   High-performance embeddable graph database with GQL support.
-  Dart bindings for grafeo-c via dart:ffi.
-repository: https://github.com/GrafeoDB/grafeo/tree/main/crates/bindings/dart
-issue_tracker: https://github.com/GrafeoDB/grafeo/issues
-homepage: https://grafeo.dev
+  Dart bindings for obrain-c via dart:ffi.
+repository: https://github.com/this-rs/obrain/tree/main/crates/bindings/dart
+issue_tracker: https://github.com/this-rs/obrain/issues
+homepage: https://obrain.dev
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

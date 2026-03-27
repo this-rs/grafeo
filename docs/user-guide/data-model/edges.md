@@ -1,6 +1,6 @@
 ---
 title: Edges and Types
-description: Working with edges and relationship types in Grafeo.
+description: Working with edges and relationship types in Obrain.
 tags:
   - data-model
   - edges

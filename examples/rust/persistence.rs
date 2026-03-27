@@ -1,14 +1,14 @@
 //! Persistence: WAL-backed storage and snapshot export/import.
 //!
-//! Run with: `cargo run -p grafeo-examples --bin persistence --features storage`
+//! Run with: `cargo run -p obrain-examples --bin persistence --features storage`
 
-use grafeo::{GrafeoDB, Value};
+use obrain::{ObrainDB, Value};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── Part 1: WAL-backed persistence ────────────────────────────
     // Create a persistent database that writes to disk via WAL
     // (write-ahead log). Data survives process restarts.
-    let temp_dir = std::env::temp_dir().join("grafeo_persistence_example");
+    let temp_dir = std::env::temp_dir().join("obrain_persistence_example");
 
     // Clean up from any previous run
     if temp_dir.exists() {
@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Creating persistent database at: {}", temp_dir.display());
 
     // Open creates the directory and WAL files automatically
-    let db = GrafeoDB::open(&temp_dir)?;
+    let db = ObrainDB::open(&temp_dir)?;
     let session = db.session();
 
     // Insert some data
@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Database closed\n");
 
     // Reopen the same path: data should still be there
-    let db2 = GrafeoDB::open(&temp_dir)?;
+    let db2 = ObrainDB::open(&temp_dir)?;
     let session2 = db2.session();
 
     let count: i64 = session2
@@ -65,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Useful for backups, replication, or transferring data.
     println!("\n--- Snapshot round-trip ---\n");
 
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let alix = db.create_node(&["Person"]);
     db.set_node_property(alix, "name", Value::from("Alix"));
     db.set_node_property(alix, "age", Value::from(30_i64));
@@ -87,7 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Snapshot size: {} bytes", snapshot.len());
 
     // Import into a fresh database
-    let restored = GrafeoDB::import_snapshot(&snapshot)?;
+    let restored = ObrainDB::import_snapshot(&snapshot)?;
     println!(
         "Restored: {} nodes, {} edges",
         restored.node_count(),

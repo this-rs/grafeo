@@ -1,19 +1,19 @@
 ---
-title: grafeo-adapters
+title: obrain-adapters
 description: Adapters crate.
 tags:
   - api
   - rust
 ---
 
-# grafeo-adapters
+# obrain-adapters
 
 Parsers, storage backends and plugins.
 
 ## GQL Parser
 
 ```rust
-use grafeo_adapters::query::gql;
+use obrain_adapters::query::gql;
 
 let ast = gql::parse("MATCH (n:Person) RETURN n")?;
 ```
@@ -21,8 +21,8 @@ let ast = gql::parse("MATCH (n:Person) RETURN n")?;
 ## Storage
 
 ```rust
-use grafeo_adapters::storage::MemoryBackend;
-use grafeo_adapters::storage::wal::WalManager;
+use obrain_adapters::storage::MemoryBackend;
+use obrain_adapters::storage::wal::WalManager;
 
 let backend = MemoryBackend::new();
 let wal = WalManager::open("path/to/wal")?;
@@ -31,7 +31,7 @@ let wal = WalManager::open("path/to/wal")?;
 ## Plugins
 
 ```rust
-use grafeo_adapters::plugins::{Plugin, PluginRegistry};
+use obrain_adapters::plugins::{Plugin, PluginRegistry};
 
 let registry = PluginRegistry::new();
 registry.register(MyPlugin::new())?;

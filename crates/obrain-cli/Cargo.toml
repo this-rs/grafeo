@@ -1,0 +1,71 @@
+[package]
+name = "obrain-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Command-line interface for Obrain graph database"
+
+[[bin]]
+name = "obrain"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+obrain-engine = { workspace = true, features = ["storage", "parallel", "regex"] }
+obrain-common = { workspace = true }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+
+# Output formatting
+comfy-table = "7"
+serde = { workspace = true }
+serde_json = "1"
+is-terminal = "0.4"
+
+# REPL
+rustyline = "17"
+
+# Progress bars
+indicatif = "0.18"
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Logging
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[features]
+default = ["gql"]
+gql = ["obrain-engine/gql"]
+cypher = ["obrain-engine/cypher"]
+sparql = ["obrain-engine/sparql"]
+gremlin = ["obrain-engine/gremlin"]
+graphql = ["obrain-engine/graphql"]
+sql-pgq = ["obrain-engine/sql-pgq"]
+rdf = ["obrain-engine/rdf"]
+algos = ["obrain-engine/algos"]
+vector-index = ["obrain-engine/vector-index"]
+text-index = ["obrain-engine/text-index"]
+hybrid-search = ["obrain-engine/hybrid-search"]
+cdc = ["obrain-engine/cdc"]
+languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]
+ai = ["vector-index", "text-index", "hybrid-search", "cdc"]
+storage = ["obrain-engine/storage"]
+# Named profiles
+embedded = ["gql", "ai", "algos", "obrain-engine/parallel", "obrain-engine/regex"]
+reactive = ["obrain-engine/reactive"]
+parallel = ["obrain-engine/parallel"]
+full = ["languages", "ai", "algos", "rdf", "storage", "parallel", "reactive"]
+
+[dev-dependencies]
+tempfile = "3.27"
+
+[lints]
+workspace = true

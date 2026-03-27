@@ -1,53 +1,53 @@
-# grafeo-c
+# obrain-c
 
-C FFI bindings for [Grafeo](https://grafeo.dev), a high-performance, embeddable graph database with a Rust core.
+C FFI bindings for [Obrain](https://obrain.dev), a high-performance, embeddable graph database with a Rust core.
 
 ## Building
 
 ```bash
-# From the Grafeo repository root:
-cargo build --release -p grafeo-c --features full
+# From the Obrain repository root:
+cargo build --release -p obrain-c --features full
 
 # Output:
-#   target/release/libgrafeo_c.so      (Linux)
-#   target/release/libgrafeo_c.dylib   (macOS)
-#   target/release/grafeo_c.dll        (Windows)
+#   target/release/libobrain_c.so      (Linux)
+#   target/release/libobrain_c.dylib   (macOS)
+#   target/release/obrain_c.dll        (Windows)
 ```
 
-The header file is at `crates/bindings/c/grafeo.h`.
+The header file is at `crates/bindings/c/obrain.h`.
 
 ## Quick Start
 
 ```c
-#include "grafeo.h"
+#include "obrain.h"
 #include <stdio.h>
 
 int main(void) {
     // Open an in-memory database
-    GrafeoDatabase *db = NULL;
-    if (grafeo_open_memory(&db) != GRAFEO_OK) {
-        fprintf(stderr, "Error: %s\n", grafeo_last_error());
+    ObrainDatabase *db = NULL;
+    if (obrain_open_memory(&db) != OBRAIN_OK) {
+        fprintf(stderr, "Error: %s\n", obrain_last_error());
         return 1;
     }
 
     // Create nodes
     uint64_t alix_id, gus_id;
     const char *labels[] = {"Person"};
-    grafeo_create_node(db, labels, 1, "{\"name\":\"Alix\",\"age\":30}", &alix_id);
-    grafeo_create_node(db, labels, 1, "{\"name\":\"Gus\",\"age\":25}", &gus_id);
+    obrain_create_node(db, labels, 1, "{\"name\":\"Alix\",\"age\":30}", &alix_id);
+    obrain_create_node(db, labels, 1, "{\"name\":\"Gus\",\"age\":25}", &gus_id);
 
     // Query with GQL
-    GrafeoResult *result = NULL;
-    grafeo_execute(db, "MATCH (p:Person) RETURN p.name, p.age", &result);
+    ObrainResult *result = NULL;
+    obrain_execute(db, "MATCH (p:Person) RETURN p.name, p.age", &result);
 
     char *json = NULL;
-    grafeo_result_json(result, &json);
+    obrain_result_json(result, &json);
     printf("%s\n", json);
 
     // Cleanup
-    grafeo_free_string(json);
-    grafeo_free_result(result);
-    grafeo_free_database(db);
+    obrain_free_string(json);
+    obrain_free_result(result);
+    obrain_free_database(db);
     return 0;
 }
 ```
@@ -55,7 +55,7 @@ int main(void) {
 Compile with:
 
 ```bash
-gcc -o example example.c -lgrafeo_c -L/path/to/target/release
+gcc -o example example.c -lobrain_c -L/path/to/target/release
 ```
 
 ## API Overview
@@ -63,78 +63,78 @@ gcc -o example example.c -lgrafeo_c -L/path/to/target/release
 ### Lifecycle
 
 ```c
-grafeo_open_memory(&db);      // in-memory database
-grafeo_open(path, &db);       // persistent database
-grafeo_close(db);             // flush and close
-grafeo_free_database(db);     // free handle
+obrain_open_memory(&db);      // in-memory database
+obrain_open(path, &db);       // persistent database
+obrain_close(db);             // flush and close
+obrain_free_database(db);     // free handle
 ```
 
 ### Query Execution
 
 ```c
-grafeo_execute(db, gql, &result);                       // GQL
-grafeo_execute_with_params(db, gql, params_json, &result); // GQL + params
-grafeo_execute_cypher(db, query, &result);               // Cypher
-grafeo_execute_gremlin(db, query, &result);              // Gremlin
-grafeo_execute_graphql(db, query, &result);              // GraphQL
-grafeo_execute_sparql(db, query, &result);               // SPARQL
+obrain_execute(db, gql, &result);                       // GQL
+obrain_execute_with_params(db, gql, params_json, &result); // GQL + params
+obrain_execute_cypher(db, query, &result);               // Cypher
+obrain_execute_gremlin(db, query, &result);              // Gremlin
+obrain_execute_graphql(db, query, &result);              // GraphQL
+obrain_execute_sparql(db, query, &result);               // SPARQL
 ```
 
 ### Results
 
 ```c
-grafeo_result_json(result, &json);            // full result as JSON
-grafeo_result_row_count(result, &count);      // number of rows
-grafeo_result_execution_time_ms(result, &ms); // execution time
-grafeo_free_result(result);
+obrain_result_json(result, &json);            // full result as JSON
+obrain_result_row_count(result, &count);      // number of rows
+obrain_result_execution_time_ms(result, &ms); // execution time
+obrain_free_result(result);
 ```
 
 ### Node & Edge CRUD
 
 ```c
-grafeo_create_node(db, labels, label_count, props_json, &id);
-grafeo_create_edge(db, source, target, type, props_json, &id);
-grafeo_get_node(db, id, &node);
-grafeo_get_edge(db, id, &edge);
-grafeo_delete_node(db, id);
-grafeo_delete_edge(db, id);
-grafeo_set_node_property(db, id, key, value_json);
-grafeo_set_edge_property(db, id, key, value_json);
+obrain_create_node(db, labels, label_count, props_json, &id);
+obrain_create_edge(db, source, target, type, props_json, &id);
+obrain_get_node(db, id, &node);
+obrain_get_edge(db, id, &edge);
+obrain_delete_node(db, id);
+obrain_delete_edge(db, id);
+obrain_set_node_property(db, id, key, value_json);
+obrain_set_edge_property(db, id, key, value_json);
 ```
 
 ### Transactions
 
 ```c
-GrafeoTransaction *tx = NULL;
-grafeo_begin_transaction(db, &tx);
-grafeo_transaction_execute(tx, "INSERT (:Person {name: 'Harm'})", &result);
-grafeo_commit(tx);   // or grafeo_rollback(tx)
+ObrainTransaction *tx = NULL;
+obrain_begin_transaction(db, &tx);
+obrain_transaction_execute(tx, "INSERT (:Person {name: 'Harm'})", &result);
+obrain_commit(tx);   // or obrain_rollback(tx)
 ```
 
 ### Vector Search
 
 ```c
-grafeo_create_vector_index(db, "Document", "embedding", 384, "cosine", 16, 200);
-grafeo_vector_search(db, "Document", "embedding", query_vec, dims, k, ef, &result);
-grafeo_batch_create_nodes(db, "Document", "embedding", vectors, count, dims, &ids);
+obrain_create_vector_index(db, "Document", "embedding", 384, "cosine", 16, 200);
+obrain_vector_search(db, "Document", "embedding", query_vec, dims, k, ef, &result);
+obrain_batch_create_nodes(db, "Document", "embedding", vectors, count, dims, &ids);
 ```
 
 ### Error Handling
 
-All functions return `GrafeoStatus`. On error, call `grafeo_last_error()`:
+All functions return `ObrainStatus`. On error, call `obrain_last_error()`:
 
 ```c
-if (grafeo_execute(db, query, &result) != GRAFEO_OK) {
-    fprintf(stderr, "Error: %s\n", grafeo_last_error());
-    grafeo_clear_error();
+if (obrain_execute(db, query, &result) != OBRAIN_OK) {
+    fprintf(stderr, "Error: %s\n", obrain_last_error());
+    obrain_clear_error();
 }
 ```
 
 ### Memory Management
 
-- Opaque pointers (`GrafeoDatabase*`, `GrafeoResult*`, etc.) must be freed with their `grafeo_free_*` function
-- Strings returned via `char**` out-params are caller-owned: free with `grafeo_free_string()`
-- Pointers accessed via getters (e.g. `grafeo_edge_type()`) are valid until the parent is freed
+- Opaque pointers (`ObrainDatabase*`, `ObrainResult*`, etc.) must be freed with their `obrain_free_*` function
+- Strings returned via `char**` out-params are caller-owned: free with `obrain_free_string()`
+- Pointers accessed via getters (e.g. `obrain_edge_type()`) are valid until the parent is freed
 
 ## Features
 
@@ -147,11 +147,11 @@ if (grafeo_execute(db, query, &result) != GRAFEO_OK) {
 
 ## Links
 
-- [Documentation](https://grafeo.dev)
-- [GitHub](https://github.com/GrafeoDB/grafeo)
-- [Go Bindings](https://github.com/GrafeoDB/grafeo/tree/main/crates/bindings/go) (uses this library via CGO)
-- [C# Bindings](https://github.com/GrafeoDB/grafeo/tree/main/crates/bindings/csharp) (uses this library via P/Invoke)
-- [Dart Bindings](https://github.com/GrafeoDB/grafeo/tree/main/crates/bindings/dart) (uses this library via dart:ffi)
+- [Documentation](https://obrain.dev)
+- [GitHub](https://github.com/this-rs/obrain)
+- [Go Bindings](https://github.com/this-rs/obrain/tree/main/crates/bindings/go) (uses this library via CGO)
+- [C# Bindings](https://github.com/this-rs/obrain/tree/main/crates/bindings/csharp) (uses this library via P/Invoke)
+- [Dart Bindings](https://github.com/this-rs/obrain/tree/main/crates/bindings/dart) (uses this library via dart:ffi)
 
 ## License
 

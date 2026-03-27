@@ -11,8 +11,8 @@ wheels = [
 ]
 
 [[package]]
-name = "grafeo"
-version = "0.5.24"
+name = "obrain"
+version = "0.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "solvor" },

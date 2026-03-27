@@ -18,9 +18,9 @@ Measure similarity between nodes or graphs.
 For advanced similarity measures, use the NetworkX integration:
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Convert to NetworkX graph
 nx_adapter = db.as_networkx(directed=False)

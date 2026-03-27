@@ -1,12 +1,12 @@
 ---
-title: grafeo.QueryResult
+title: obrain.QueryResult
 description: QueryResult class reference.
 tags:
   - api
   - python
 ---
 
-# grafeo.QueryResult
+# obrain.QueryResult
 
 Query result iterator.
 

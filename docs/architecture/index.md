@@ -1,15 +1,15 @@
 ---
 title: Architecture
-description: Grafeo system architecture and internals.
+description: Obrain system architecture and internals.
 ---
 
 # Architecture
 
-Understand how Grafeo is designed and implemented.
+Understand how Obrain is designed and implemented.
 
 ## Overview
 
-Grafeo is built as a modular system with clear separation of concerns:
+Obrain is built as a modular system with clear separation of concerns:
 
 ```mermaid
 graph TB
@@ -21,26 +21,26 @@ graph TB
         CC[C/Go/C#/Dart FFI]
     end
 
-    subgraph "grafeo-engine"
+    subgraph "obrain-engine"
         DB[Database]
         SESS[Session Manager]
         QP[Query Processor]
         TXN[Transaction Manager]
     end
 
-    subgraph "grafeo-adapters"
+    subgraph "obrain-adapters"
         GQL[GQL Parser]
         WAL[WAL Storage]
         PLUG[Plugins]
     end
 
-    subgraph "grafeo-core"
+    subgraph "obrain-core"
         LPG[LPG Store]
         IDX[Indexes]
         EXEC[Execution Engine]
     end
 
-    subgraph "grafeo-common"
+    subgraph "obrain-common"
         TYPES[Types]
         MEM[Memory]
         UTIL[Utilities]

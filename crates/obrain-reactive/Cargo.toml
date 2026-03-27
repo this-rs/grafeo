@@ -1,0 +1,57 @@
+[package]
+name = "obrain-reactive"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Reactive event substrate for Obrain — MutationBus, listeners, and InstrumentedStore"
+
+[dependencies]
+obrain-common.workspace = true
+obrain-core = { workspace = true, default-features = false }
+
+# Async runtime — only sync feature for all targets (works on WASM).
+# NOTE: we don't use `workspace = true` because the workspace tokio
+# includes rt-multi-thread/fs which are unsupported on wasm32.
+tokio = { version = "1", features = ["sync"] }
+
+# Error handling
+thiserror.workspace = true
+
+# Async traits (for dyn MutationListener)
+async-trait.workspace = true
+
+# Tracing
+tracing.workspace = true
+
+# Concurrency
+parking_lot.workspace = true
+
+# Data structures
+arcstr.workspace = true
+smallvec.workspace = true
+
+# Portable Instant (std::time::Instant panics on wasm32-unknown-unknown)
+web-time = "1"
+
+# Native-only: full tokio runtime for the async scheduler
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+criterion.workspace = true
+
+[features]
+default = []
+# Propagate temporal feature from obrain-core so cfg(feature = "temporal") works in tests.
+temporal = ["obrain-core/temporal"]
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "bus_bench"
+harness = false

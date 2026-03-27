@@ -1,6 +1,6 @@
 ---
 title: Command-Line Interface
-description: Grafeo CLI for querying, inspecting and maintaining graph databases.
+description: Obrain CLI for querying, inspecting and maintaining graph databases.
 tags:
   - getting-started
   - cli
@@ -9,7 +9,7 @@ tags:
 
 # Command-Line Interface
 
-Grafeo ships a single Rust CLI binary (`grafeo`) for querying, inspecting and maintaining databases. It includes an interactive REPL, admin commands and multiple output formats.
+Obrain ships a single Rust CLI binary (`obrain`) for querying, inspecting and maintaining databases. It includes an interactive REPL, admin commands and multiple output formats.
 
 ## Installation
 
@@ -18,48 +18,48 @@ Install via any of these methods: they all provide the same CLI:
 === "Cargo (Recommended)"
 
     ```bash
-    cargo install grafeo-cli
+    cargo install obrain-cli
     ```
 
 === "pip / uv"
 
     ```bash
-    uv add grafeo-cli
+    uv add obrain-cli
     # or
-    pip install grafeo-cli
+    pip install obrain-cli
     ```
 
 === "npm"
 
     ```bash
-    npm install -g @grafeo-db/cli
+    npm install -g @obrain-db/cli
     # or one-shot:
-    npx @grafeo-db/cli --version
+    npx @obrain-db/cli --version
     ```
 
 === "Download"
 
     Pre-built binaries for all platforms are attached to every
-    [GitHub release](https://github.com/GrafeoDB/grafeo/releases).
+    [GitHub release](https://github.com/this-rs/obrain/releases).
 
 Verify the installation:
 
 ```bash
-grafeo version
+obrain version
 ```
 
 ## Quick Start
 
 ```bash
 # Create a new database
-grafeo init ./mydb
+obrain init ./mydb
 
 # Run a query
-grafeo query ./mydb "INSERT (:Person {name: 'Alix', age: 30})"
-grafeo query ./mydb "MATCH (n:Person) RETURN n.name, n.age"
+obrain query ./mydb "INSERT (:Person {name: 'Alix', age: 30})"
+obrain query ./mydb "MATCH (n:Person) RETURN n.name, n.age"
 
 # Launch the interactive shell
-grafeo shell ./mydb
+obrain shell ./mydb
 ```
 
 ## Commands
@@ -68,39 +68,39 @@ grafeo shell ./mydb
 
 ```bash
 # Inline query
-grafeo query ./mydb "MATCH (n) RETURN n LIMIT 10"
+obrain query ./mydb "MATCH (n) RETURN n LIMIT 10"
 
 # From a file
-grafeo query ./mydb --file query.gql
+obrain query ./mydb --file query.gql
 
 # From stdin
-echo "MATCH (n) RETURN count(n)" | grafeo query ./mydb --stdin
+echo "MATCH (n) RETURN count(n)" | obrain query ./mydb --stdin
 
 # With parameters
-grafeo query ./mydb "MATCH (n {name: \$name}) RETURN n" -p name=Alix
+obrain query ./mydb "MATCH (n {name: \$name}) RETURN n" -p name=Alix
 
 # Choose query language (default: gql)
-grafeo query ./mydb "MATCH (n) RETURN n" --lang cypher
-grafeo query ./mydb "SELECT * FROM GRAPH_TABLE ..." --lang sql
+obrain query ./mydb "MATCH (n) RETURN n" --lang cypher
+obrain query ./mydb "SELECT * FROM GRAPH_TABLE ..." --lang sql
 
 # Show execution time
-grafeo query ./mydb "MATCH (n) RETURN n" --timing
+obrain query ./mydb "MATCH (n) RETURN n" --timing
 
 # Truncate wide columns
-grafeo query ./mydb "MATCH (n) RETURN n" --max-width 40
+obrain query ./mydb "MATCH (n) RETURN n" --max-width 40
 ```
 
 ### Interactive Shell (REPL)
 
 ```bash
-grafeo shell ./mydb
+obrain shell ./mydb
 ```
 
 ```
-Grafeo 0.5.10 - Lpg mode, 42 nodes, 87 edges
+Obrain 0.5.10 - Lpg mode, 42 nodes, 87 edges
 Type :help for commands, :quit to exit.
 
-grafeo> MATCH (n:Person) RETURN n.name, n.age
+obrain> MATCH (n:Person) RETURN n.name, n.age
 ┌──────────┬───────┐
 │ n.name   │ n.age │
 ├──────────┼───────┤
@@ -109,10 +109,10 @@ grafeo> MATCH (n:Person) RETURN n.name, n.age
 └──────────┴───────┘
 2 rows (0.8ms)
 
-grafeo> :begin
+obrain> :begin
 Transaction started.
-grafeo[tx]> INSERT (:Person {name: 'Harm', age: 45})
-grafeo[tx]> :commit
+obrain[tx]> INSERT (:Person {name: 'Harm', age: 45})
+obrain[tx]> :commit
 Transaction committed.
 ```
 
@@ -137,78 +137,78 @@ Transaction keywords (`BEGIN`, `COMMIT`, `ROLLBACK`) also work as plain text.
 
 ```bash
 # Create an LPG database (default)
-grafeo init ./mydb
+obrain init ./mydb
 
 # Create an RDF database
-grafeo init ./mydb --mode rdf
+obrain init ./mydb --mode rdf
 ```
 
 ### Inspection
 
 ```bash
 # Overview: counts, size, mode
-grafeo info ./mydb
+obrain info ./mydb
 
 # Detailed statistics
-grafeo stats ./mydb
+obrain stats ./mydb
 
 # Schema: labels, edge types, property keys
-grafeo schema ./mydb
+obrain schema ./mydb
 
 # Integrity check (exit code 2 on failure)
-grafeo validate ./mydb
+obrain validate ./mydb
 ```
 
 ### Index Management
 
 ```bash
-grafeo index list ./mydb
-grafeo index stats ./mydb
+obrain index list ./mydb
+obrain index stats ./mydb
 ```
 
 ### Backup & Restore
 
 ```bash
-grafeo backup create ./mydb -o backup.grafeo
-grafeo backup restore backup.grafeo ./restored --force
+obrain backup create ./mydb -o backup.obrain
+obrain backup restore backup.obrain ./restored --force
 ```
 
 ### Data Export & Import
 
 ```bash
-grafeo data dump ./mydb -o ./export/
-grafeo data load ./export/ ./newdb
+obrain data dump ./mydb -o ./export/
+obrain data load ./export/ ./newdb
 ```
 
 ### WAL Management
 
 ```bash
-grafeo wal status ./mydb
-grafeo wal checkpoint ./mydb
+obrain wal status ./mydb
+obrain wal checkpoint ./mydb
 ```
 
 ### Compaction
 
 ```bash
-grafeo compact ./mydb
-grafeo compact ./mydb --dry-run
+obrain compact ./mydb
+obrain compact ./mydb --dry-run
 ```
 
 ### Shell Completions
 
 ```bash
 # Generate completions for your shell
-grafeo completions bash > ~/.local/share/bash-completion/completions/grafeo
-grafeo completions zsh > ~/.zfunc/_grafeo
-grafeo completions fish > ~/.config/fish/completions/grafeo.fish
-grafeo completions powershell >> $PROFILE
+obrain completions bash > ~/.local/share/bash-completion/completions/obrain
+obrain completions zsh > ~/.zfunc/_obrain
+obrain completions fish > ~/.config/fish/completions/obrain.fish
+obrain completions powershell >> $PROFILE
 ```
 
 ### Version & Build Info
 
 ```bash
-$ grafeo version
-grafeo 0.5.10
+$ obrain version
+obrain 0.5.10
 
 Build:
   rustc:    1.91.1
@@ -217,8 +217,8 @@ Build:
   features: gql, cypher, sparql, sql-pgq
 
 Paths:
-  config:   /home/user/.config/grafeo
-  history:  /home/user/.config/grafeo/history
+  config:   /home/user/.config/obrain
+  history:  /home/user/.config/obrain/history
 ```
 
 ## Output Formats
@@ -227,12 +227,12 @@ All commands support multiple output formats:
 
 ```bash
 # Auto-detect: table on TTY, JSON when piped
-grafeo info ./mydb
+obrain info ./mydb
 
 # Explicit format
-grafeo info ./mydb --format table
-grafeo info ./mydb --format json
-grafeo info ./mydb --format csv
+obrain info ./mydb --format table
+obrain info ./mydb --format json
+obrain info ./mydb --format csv
 ```
 
 ## Global Options
@@ -253,37 +253,37 @@ grafeo info ./mydb --format csv
 |------|---------|
 | 0 | Success |
 | 1 | General error (runtime, I/O, query) |
-| 2 | Validation failed (`grafeo validate` found errors) |
+| 2 | Validation failed (`obrain validate` found errors) |
 
 ## Python API Equivalents
 
 The Python API provides the same functionality programmatically:
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB("./mydb")
+db = obrain.ObrainDB("./mydb")
 
-# Equivalent to: grafeo info ./mydb
+# Equivalent to: obrain info ./mydb
 print(db.info())
 
-# Equivalent to: grafeo stats ./mydb
+# Equivalent to: obrain stats ./mydb
 print(db.detailed_stats())
 
-# Equivalent to: grafeo schema ./mydb
+# Equivalent to: obrain schema ./mydb
 print(db.schema())
 
-# Equivalent to: grafeo validate ./mydb
+# Equivalent to: obrain validate ./mydb
 print(db.validate())
 
-# Equivalent to: grafeo query ./mydb "MATCH (n) RETURN n"
+# Equivalent to: obrain query ./mydb "MATCH (n) RETURN n"
 result = db.execute("MATCH (n) RETURN n")
 ```
 
 ## Migrating from the Python CLI
 
 !!! note "Python CLI removed in 0.4.4"
-    The `grafeo[cli]` Python CLI (Click-based) has been removed. Install the Rust binary
-    instead via `cargo install grafeo-cli`, `pip install grafeo-cli`, or
-    `npm install -g @grafeo-db/cli`. All previous commands are available with the same
+    The `obrain[cli]` Python CLI (Click-based) has been removed. Install the Rust binary
+    instead via `cargo install obrain-cli`, `pip install obrain-cli`, or
+    `npm install -g @obrain-db/cli`. All previous commands are available with the same
     syntax, plus new features: `query`, `shell`, `init`, CSV output and shell completions.

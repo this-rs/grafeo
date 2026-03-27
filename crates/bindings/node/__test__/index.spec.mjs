@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { GrafeoDB, version, simdSupport } from '../index.js'
+import { ObrainDB, version, simdSupport } from '../index.js'
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
 /** Create a fresh in-memory database with some seed data. */
 function seedDb() {
-  const db = GrafeoDB.create()
+  const db = ObrainDB.create()
   // People
   const alix = db.createNode(['Person'], { name: 'Alix', age: 30 })
   const gus = db.createNode(['Person'], { name: 'Gus', age: 25 })
@@ -37,7 +37,7 @@ describe('module exports', () => {
 
 describe('database lifecycle', () => {
   it('should create in-memory database', () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     expect(db.nodeCount()).toBe(0)
     expect(db.edgeCount()).toBe(0)
     db.close()
@@ -47,16 +47,16 @@ describe('database lifecycle', () => {
     const fs = await import('fs')
     const os = await import('os')
     const path = await import('path')
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grafeo-test-'))
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'obrain-test-'))
     const dbPath = path.join(dir, 'test.db')
 
-    const db = GrafeoDB.create(dbPath)
+    const db = ObrainDB.create(dbPath)
     db.createNode(['Test'], { val: 42 })
     expect(db.nodeCount()).toBe(1)
     db.close()
 
     // Reopen
-    const db2 = GrafeoDB.open(dbPath)
+    const db2 = ObrainDB.open(dbPath)
     expect(db2.nodeCount()).toBe(1)
     db2.close()
 
@@ -65,7 +65,7 @@ describe('database lifecycle', () => {
   })
 
   it('should close without error', () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     expect(() => db.close()).not.toThrow()
   })
 })
@@ -76,7 +76,7 @@ describe('node CRUD', () => {
   let db
 
   beforeEach(() => {
-    db = GrafeoDB.create()
+    db = ObrainDB.create()
   })
 
   it('should create a node with labels', () => {
@@ -140,7 +140,7 @@ describe('edge CRUD', () => {
   let db, alix, gus
 
   beforeEach(() => {
-    db = GrafeoDB.create()
+    db = ObrainDB.create()
     alix = db.createNode(['Person'], { name: 'Alix' })
     gus = db.createNode(['Person'], { name: 'Gus' })
   })
@@ -191,7 +191,7 @@ describe('properties', () => {
   let db
 
   beforeEach(() => {
-    db = GrafeoDB.create()
+    db = ObrainDB.create()
   })
 
   it('should set and get node property', () => {
@@ -249,7 +249,7 @@ describe('properties', () => {
 
 describe('GQL queries', () => {
   it('should execute INSERT and MATCH', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     await db.execute("INSERT (:Person {name: 'Alix', age: 30})")
     await db.execute("INSERT (:Person {name: 'Gus', age: 25})")
     const result = await db.execute('MATCH (p:Person) RETURN p.name, p.age')
@@ -264,7 +264,7 @@ describe('GQL queries', () => {
   })
 
   it('should execute with parameters', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     await db.execute("INSERT (:Person {name: 'Alix', age: 30})")
     await db.execute("INSERT (:Person {name: 'Gus', age: 25})")
     const result = await db.execute(
@@ -278,14 +278,14 @@ describe('GQL queries', () => {
   })
 
   it('should return scalar value', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     await db.execute("INSERT (:Person {name: 'Alix'})")
     const result = await db.execute('MATCH (p:Person) RETURN p.name')
     expect(result.scalar()).toBe('Alix')
   })
 
   it('should return execution time', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     const result = await db.execute('MATCH (n) RETURN n')
     expect(result.executionTimeMs).not.toBeNull()
     expect(result.executionTimeMs).toBeGreaterThanOrEqual(0)
@@ -301,7 +301,7 @@ describe('GQL queries', () => {
   })
 
   it('should return rows as arrays', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     await db.execute("INSERT (:Person {name: 'Alix'})")
     const result = await db.execute('MATCH (p:Person) RETURN p.name')
     const rows = result.rows()
@@ -310,7 +310,7 @@ describe('GQL queries', () => {
   })
 
   it('should get row by index', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     await db.execute("INSERT (:Person {name: 'Alix'})")
     const result = await db.execute('MATCH (p:Person) RETURN p.name')
     const row = result.get(0)
@@ -318,7 +318,7 @@ describe('GQL queries', () => {
   })
 
   it('should throw on invalid query', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     await expect(db.execute('THIS IS NOT VALID')).rejects.toThrow()
   })
 })
@@ -348,7 +348,7 @@ describe('aggregations', () => {
 
 describe('transactions', () => {
   it('should commit transaction', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     const tx = db.beginTransaction()
     expect(tx.isActive).toBe(true)
 
@@ -360,7 +360,7 @@ describe('transactions', () => {
   })
 
   it('should rollback transaction', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     const tx = db.beginTransaction()
     await tx.execute("INSERT (:Person {name: 'Alix'})")
     tx.rollback()
@@ -370,7 +370,7 @@ describe('transactions', () => {
   })
 
   it('should error on double commit', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     const tx = db.beginTransaction()
     await tx.execute("INSERT (:Person {name: 'Alix'})")
     tx.commit()
@@ -378,14 +378,14 @@ describe('transactions', () => {
   })
 
   it('should error on commit after rollback', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     const tx = db.beginTransaction()
     tx.rollback()
     expect(() => tx.commit()).toThrow(/Already rolled back/)
   })
 
   it('should execute multiple operations', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     const tx = db.beginTransaction()
     await tx.execute("INSERT (:Person {name: 'Alix'})")
     await tx.execute("INSERT (:Person {name: 'Gus'})")
@@ -396,7 +396,7 @@ describe('transactions', () => {
   })
 
   it('should execute with parameters in transaction', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     await db.execute("INSERT (:Person {name: 'Alix', age: 30})")
     await db.execute("INSERT (:Person {name: 'Gus', age: 25})")
 
@@ -459,7 +459,7 @@ describe('QueryResult metadata', () => {
   })
 
   it('should return empty nodes/edges for scalar queries', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     await db.execute("INSERT (:Person {name: 'Alix'})")
     const result = await db.execute('MATCH (p:Person) RETURN p.name')
     expect(result.nodes().length).toBe(0)
@@ -473,7 +473,7 @@ describe('advanced type round-trips', () => {
   let db
 
   beforeEach(() => {
-    db = GrafeoDB.create()
+    db = ObrainDB.create()
   })
 
   it('should round-trip array/list values', () => {
@@ -563,14 +563,14 @@ describe('advanced type round-trips', () => {
 
 describe('Cypher queries', () => {
   it('should execute Cypher CREATE and MATCH', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     await db.executeCypher("CREATE (a:Person {name: 'Alix'})")
     const result = await db.executeCypher('MATCH (p:Person) RETURN p.name')
     expect(result.scalar()).toBe('Alix')
   })
 
   it('should execute Cypher with parameters', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     await db.executeCypher("CREATE (:Person {name: 'Alix', age: 30})")
     await db.executeCypher("CREATE (:Person {name: 'Gus', age: 25})")
     const result = await db.executeCypher(
@@ -586,7 +586,7 @@ describe('Cypher queries', () => {
 
 describe('Gremlin queries', () => {
   it('should execute basic Gremlin traversal', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     await db.execute("INSERT (:Person {name: 'Alix'})")
     await db.execute("INSERT (:Person {name: 'Gus'})")
     const result = await db.executeGremlin(
@@ -600,7 +600,7 @@ describe('Gremlin queries', () => {
 
 describe('SPARQL queries', () => {
   it('should execute basic SPARQL SELECT', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     // SPARQL works against the RDF triple store
     const result = await db.executeSparql('SELECT ?x WHERE { ?x ?y ?z }')
     // Empty triple store returns 0 rows
@@ -612,7 +612,7 @@ describe('SPARQL queries', () => {
 
 describe('transaction edge cases', () => {
   it('should error on execute after commit', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     const tx = db.beginTransaction()
     await tx.execute("INSERT (:Person {name: 'Alix'})")
     tx.commit()
@@ -622,7 +622,7 @@ describe('transaction edge cases', () => {
   })
 
   it('should error on execute after rollback', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     const tx = db.beginTransaction()
     tx.rollback()
     await expect(
@@ -631,14 +631,14 @@ describe('transaction edge cases', () => {
   })
 
   it('should error on double rollback', () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     const tx = db.beginTransaction()
     tx.rollback()
     expect(() => tx.rollback()).toThrow(/Already rolled back/)
   })
 
   it('should error on rollback after commit', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     const tx = db.beginTransaction()
     await tx.execute("INSERT (:Person {name: 'Alix'})")
     tx.commit()
@@ -650,19 +650,19 @@ describe('transaction edge cases', () => {
 
 describe('error handling', () => {
   it('should throw on out-of-range row index', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     const result = await db.execute('MATCH (n) RETURN n')
     expect(() => result.get(999)).toThrow()
   })
 
   it('should throw on scalar with no rows', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     const result = await db.execute('MATCH (n:NonExistent) RETURN n')
     expect(() => result.scalar()).toThrow()
   })
 
   it('should throw on invalid params type', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     // Passing a non-object as params
     await expect(
       db.execute('MATCH (n) RETURN n', 'not-an-object')
@@ -684,7 +684,7 @@ describe('database counts', () => {
 
 describe('vector operations', () => {
   it('should create vector index and search', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     await db.batchCreateNodes('Doc', 'embedding', [
       [1, 0, 0],
       [0, 1, 0],
@@ -702,7 +702,7 @@ describe('vector operations', () => {
   })
 
   it('should search with explicit ef parameter', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     await db.batchCreateNodes('Doc', 'embedding', [
       [1, 0, 0],
       [0, 1, 0],
@@ -715,7 +715,7 @@ describe('vector operations', () => {
   })
 
   it('should create vector index with HNSW tuning params', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     await db.batchCreateNodes('Doc', 'embedding', [[1, 0, 0]])
 
     // Pass m and ef_construction
@@ -725,7 +725,7 @@ describe('vector operations', () => {
   })
 
   it('should create vector index with euclidean metric', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     await db.batchCreateNodes('Doc', 'embedding', [
       [1, 0, 0],
       [0, 1, 0],
@@ -739,7 +739,7 @@ describe('vector operations', () => {
   })
 
   it('should batch create nodes with vectors', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     const vectors = [
       [1, 0, 0],
       [0, 1, 0],
@@ -753,13 +753,13 @@ describe('vector operations', () => {
   })
 
   it('should batch create empty list', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     const ids = await db.batchCreateNodes('Doc', 'embedding', [])
     expect(ids.length).toBe(0)
   })
 
   it('should batch vector search', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     const vectors = [
       [1, 0, 0],
       [0, 1, 0],
@@ -782,7 +782,7 @@ describe('vector operations', () => {
   })
 
   it('should batch search closest match correctly', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     await db.batchCreateNodes('Doc', 'embedding', [
       [1, 0, 0],
       [0, 1, 0],
@@ -805,7 +805,7 @@ describe('vector operations', () => {
   })
 
   it('should batch search with explicit ef', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     await db.batchCreateNodes('Doc', 'embedding', [
       [1, 0, 0],
       [0, 1, 0],
@@ -824,7 +824,7 @@ describe('vector operations', () => {
   })
 
   it('should error on vector search without index', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     db.createNode(['Doc'], { embedding: new Float32Array([1, 0, 0]) })
     await expect(
       db.vectorSearch('Doc', 'embedding', [1, 0, 0], 1)
@@ -836,7 +836,7 @@ describe('vector operations', () => {
 
 describe('GraphQL queries', () => {
   it('should execute basic GraphQL query', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     await db.execute("INSERT (:Person {name: 'Alix', age: 30})")
     await db.execute("INSERT (:Person {name: 'Gus', age: 25})")
     const result = await db.executeGraphql('{ Person { name } }')
@@ -848,7 +848,7 @@ describe('GraphQL queries', () => {
 
 describe('text search', () => {
   it('should create text index and search', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     db.createNode(['Article'], { title: 'Rust graph database engine' })
     db.createNode(['Article'], { title: 'Python machine learning' })
     db.createNode(['Article'], { title: 'Rust systems programming' })
@@ -859,7 +859,7 @@ describe('text search', () => {
   })
 
   it('should return empty for no matches', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     db.createNode(['Article'], { title: 'Rust graph database' })
     await db.createTextIndex('Article', 'title')
 
@@ -868,7 +868,7 @@ describe('text search', () => {
   })
 
   it('should error without text index', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     db.createNode(['Article'], { title: 'test' })
     await expect(
       db.textSearch('Article', 'title', 'test', 10)
@@ -876,7 +876,7 @@ describe('text search', () => {
   })
 
   it('should find new nodes after mutation', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     db.createNode(['Article'], { title: 'Rust graph' })
     await db.createTextIndex('Article', 'title')
 
@@ -891,7 +891,7 @@ describe('text search', () => {
 
 describe('hybrid search', () => {
   it('should combine text and vector search', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     db.createNode(['Doc'], {
       content: 'Rust graph database',
       emb: new Float32Array([1, 0, 0]),
@@ -915,7 +915,7 @@ describe('hybrid search', () => {
   })
 
   it('should work with text only (no vector query)', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     db.createNode(['Doc'], {
       content: 'Rust graph database',
       emb: new Float32Array([1, 0, 0]),
@@ -939,7 +939,7 @@ describe('hybrid search', () => {
 
 describe('CDC operations', () => {
   it('should track node creation history', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     const node = db.createNode(['Person'], { name: 'Alix' })
 
     const history = await db.nodeHistory(node.id)
@@ -947,7 +947,7 @@ describe('CDC operations', () => {
   })
 
   it('should track node update history', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     const node = db.createNode(['Person'], { name: 'Alix' })
     db.setNodeProperty(node.id, 'age', 30)
 
@@ -956,7 +956,7 @@ describe('CDC operations', () => {
   })
 
   it('should track edge creation history', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     const a = db.createNode(['N'])
     const b = db.createNode(['N'])
     const edge = db.createEdge(a.id, b.id, 'R')
@@ -966,7 +966,7 @@ describe('CDC operations', () => {
   })
 
   it('should return changes between epochs', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     db.createNode(['Person'], { name: 'Alix' })
     db.createNode(['Person'], { name: 'Gus' })
 
@@ -975,7 +975,7 @@ describe('CDC operations', () => {
   })
 
   it('should return empty history for nonexistent node', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     const history = await db.nodeHistory(9999)
     expect(history.length).toBe(0)
   })
@@ -987,7 +987,7 @@ describe('label management', () => {
   let db
 
   beforeEach(() => {
-    db = GrafeoDB.create()
+    db = ObrainDB.create()
   })
 
   it('should add a label to an existing node', () => {
@@ -1032,7 +1032,7 @@ describe('property removal', () => {
   let db
 
   beforeEach(() => {
-    db = GrafeoDB.create()
+    db = ObrainDB.create()
   })
 
   it('should remove a node property', () => {
@@ -1066,7 +1066,7 @@ describe('property removal', () => {
 
 describe('SPARQL with parameters', () => {
   it('should execute SPARQL with params argument', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     // Even if params aren't used in this query, the API should accept them
     const result = await db.executeSparql(
       'SELECT ?x WHERE { ?x ?y ?z }',
@@ -1076,7 +1076,7 @@ describe('SPARQL with parameters', () => {
   })
 
   it('should execute SPARQL without params (backward compat)', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     const result = await db.executeSparql('SELECT ?x WHERE { ?x ?y ?z }')
     expect(result.length).toBe(0)
   })
@@ -1086,7 +1086,7 @@ describe('SPARQL with parameters', () => {
 
 describe('SQL/PGQ queries', () => {
   it('should execute basic SQL/PGQ query', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     await db.execute("INSERT (:Person {name: 'Alix', age: 30})")
     const result = await db.executeSql(
       "SELECT * FROM GRAPH_TABLE (MATCH (p:Person) COLUMNS (p.name AS name))"
@@ -1096,7 +1096,7 @@ describe('SQL/PGQ queries', () => {
   })
 
   it('should execute SQL/PGQ relationship query', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     await db.execute("INSERT (:Person {name: 'Alix', age: 30})")
     await db.execute("INSERT (:Person {name: 'Gus', age: 25})")
     await db.execute(
@@ -1119,7 +1119,7 @@ describe('admin operations', () => {
   })
 
   it('should close database without error', () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     db.createNode(['Person'], { name: 'Test' })
     expect(() => db.close()).not.toThrow()
   })
@@ -1141,7 +1141,7 @@ describe('admin operations', () => {
   })
 
   it('should return version string', () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     const ver = db.version()
     expect(ver).toMatch(/^\d+\.\d+\.\d+$/)
   })
@@ -1153,7 +1153,7 @@ describe('ID validation', () => {
   let db
 
   beforeEach(() => {
-    db = GrafeoDB.create()
+    db = ObrainDB.create()
   })
 
   it('should reject negative node ID', () => {
@@ -1177,8 +1177,8 @@ describe('ID validation', () => {
 
 describe('concurrent instances', () => {
   it('should support multiple independent databases', async () => {
-    const db1 = GrafeoDB.create()
-    const db2 = GrafeoDB.create()
+    const db1 = ObrainDB.create()
+    const db2 = ObrainDB.create()
 
     db1.createNode(['A'], { val: 1 })
     db2.createNode(['B'], { val: 2 })
@@ -1197,7 +1197,7 @@ describe('concurrent instances', () => {
 
 describe('mutation via queries', () => {
   it('should DELETE nodes via query', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     await db.execute("INSERT (:Person {name: 'Alix'})")
     await db.execute("INSERT (:Person {name: 'Gus'})")
     expect(db.nodeCount()).toBe(2)
@@ -1207,7 +1207,7 @@ describe('mutation via queries', () => {
   })
 
   it('should SET properties via query', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     await db.execute("INSERT (:Person {name: 'Alix', age: 30})")
     await db.execute("MATCH (p:Person) WHERE p.name = 'Alix' SET p.age = 31")
 
@@ -1218,7 +1218,7 @@ describe('mutation via queries', () => {
   })
 
   it('should INSERT edges via query', async () => {
-    const db = GrafeoDB.create()
+    const db = ObrainDB.create()
     await db.execute("INSERT (:Person {name: 'Alix'})")
     await db.execute("INSERT (:Person {name: 'Gus'})")
     await db.execute(

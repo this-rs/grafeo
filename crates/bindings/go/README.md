@@ -1,17 +1,17 @@
-# grafeo
+# obrain
 
-Go bindings for [Grafeo](https://grafeo.dev), a high-performance, embeddable graph database with a Rust core and no required C dependencies.
+Go bindings for [Obrain](https://obrain.dev), a high-performance, embeddable graph database with a Rust core and no required C dependencies.
 
 ## Requirements
 
 - Go 1.22+
 - CGO enabled (`CGO_ENABLED=1`)
-- The `grafeo-c` shared library (`libgrafeo_c.so` / `libgrafeo_c.dylib` / `grafeo_c.dll`)
+- The `obrain-c` shared library (`libobrain_c.so` / `libobrain_c.dylib` / `obrain_c.dll`)
 
 ## Installation
 
 ```bash
-go get github.com/GrafeoDB/grafeo/crates/bindings/go
+go get github.com/this-rs/obrain/crates/bindings/go
 ```
 
 ## Quick Start
@@ -23,11 +23,11 @@ import (
     "fmt"
     "log"
 
-    grafeo "github.com/GrafeoDB/grafeo/crates/bindings/go"
+    obrain "github.com/this-rs/obrain/crates/bindings/go"
 )
 
 func main() {
-    db, err := grafeo.OpenInMemory()
+    db, err := obrain.OpenInMemory()
     if err != nil {
         log.Fatal(err)
     }
@@ -60,18 +60,18 @@ func main() {
 ## Building the Shared Library
 
 ```bash
-# From the Grafeo repository root:
-cargo build --release -p grafeo-c --features full
+# From the Obrain repository root:
+cargo build --release -p obrain-c --features full
 
 # The library is at:
-#   target/release/libgrafeo_c.so      (Linux)
-#   target/release/libgrafeo_c.dylib   (macOS)
-#   target/release/grafeo_c.dll        (Windows)
+#   target/release/libobrain_c.so      (Linux)
+#   target/release/libobrain_c.dylib   (macOS)
+#   target/release/obrain_c.dll        (Windows)
 ```
 
 ## Links
 
-- [Documentation](https://grafeo.dev)
-- [GitHub](https://github.com/GrafeoDB/grafeo)
-- [Python Package](https://pypi.org/project/grafeo/)
-- [npm Package](https://www.npmjs.com/package/@grafeo-db/js)
+- [Documentation](https://obrain.dev)
+- [GitHub](https://github.com/this-rs/obrain)
+- [Python Package](https://pypi.org/project/obrain/)
+- [npm Package](https://www.npmjs.com/package/@obrain-db/js)

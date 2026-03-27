@@ -2,21 +2,21 @@
 
 import pytest
 
-# Try to import grafeo
+# Try to import obrain
 try:
-    from grafeo import GrafeoDB
+    from obrain import ObrainDB
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
 
 @pytest.fixture
 def db():
-    """Create a fresh in-memory GrafeoDB instance."""
-    if not GRAFEO_AVAILABLE:
-        pytest.skip("grafeo not installed")
-    return GrafeoDB()
+    """Create a fresh in-memory ObrainDB instance."""
+    if not OBRAIN_AVAILABLE:
+        pytest.skip("obrain not installed")
+    return ObrainDB()
 
 
 @pytest.fixture

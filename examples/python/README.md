@@ -1,14 +1,14 @@
-# Grafeo Examples
+# Obrain Examples
 
-Interactive examples demonstrating Grafeo's capabilities.
+Interactive examples demonstrating Obrain's capabilities.
 
 ## Quick Start
 
 Install dependencies:
 
 ```bash
-uv add grafeo anywidget-graph anywidget-vector marimo numpy networkx
-# or: pip install grafeo anywidget-graph anywidget-vector marimo numpy networkx
+uv add obrain anywidget-graph anywidget-vector marimo numpy networkx
+# or: pip install obrain anywidget-graph anywidget-vector marimo numpy networkx
 ```
 
 Run an example:
@@ -51,7 +51,7 @@ Graph-based fraud detection patterns. Demonstrates:
 ### NetworkX Integration (`networkx_integration.py`)
 
 Seamless integration with NetworkX. Demonstrates:
-- Converting Grafeo graphs to NetworkX
+- Converting Obrain graphs to NetworkX
 - Using NetworkX algorithms
 - Visualization with matplotlib
 - Bidirectional data flow
@@ -75,7 +75,7 @@ jupyter lab
 
 | Package | Version | Purpose |
 |---------|---------|---------|
-| grafeo | >=0.5.0 | Graph database |
+| obrain | >=0.5.0 | Graph database |
 | anywidget-graph | >=0.2.0 | Graph visualization |
 | anywidget-vector | >=0.2.0 | Vector visualization |
 | marimo | >=0.19.0 | Interactive notebooks |
@@ -85,6 +85,6 @@ jupyter lab
 
 ## Learn More
 
-- [Grafeo Documentation](https://grafeo.dev)
-- [Tutorials](https://grafeo.dev/tutorials/)
-- [API Reference](https://grafeo.dev/api/)
+- [Obrain Documentation](https://obrain.dev)
+- [Tutorials](https://obrain.dev/tutorials/)
+- [API Reference](https://obrain.dev/api/)

@@ -1,11 +1,11 @@
-//! Node.js/TypeScript bindings for Grafeo graph database.
+//! Node.js/TypeScript bindings for Obrain graph database.
 //!
-//! Use Grafeo from JavaScript with native Rust performance.
+//! Use Obrain from JavaScript with native Rust performance.
 //!
 //! ```js
-//! const { GrafeoDB } = require('@grafeo-db/js');
+//! const { ObrainDB } = require('@obrain-db/js');
 //!
-//! const db = GrafeoDB.create();
+//! const db = ObrainDB.create();
 //! await db.execute("INSERT (:Person {name: 'Alix'})");
 //! const result = await db.execute("MATCH (p:Person) RETURN p.name");
 //! console.log(result.toArray());
@@ -27,10 +27,10 @@ mod types;
 /// Returns the active SIMD instruction set for vector operations.
 #[napi]
 pub fn simd_support() -> String {
-    grafeo_core::index::vector::simd_support().to_string()
+    obrain_core::index::vector::simd_support().to_string()
 }
 
-/// Returns the Grafeo version.
+/// Returns the Obrain version.
 #[napi]
 pub fn version() -> String {
     env!("CARGO_PKG_VERSION").to_string()

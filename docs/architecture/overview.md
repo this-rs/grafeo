@@ -7,7 +7,7 @@ tags:
 
 # System Overview
 
-Grafeo is designed as a high-performance, embeddable graph database.
+Obrain is designed as a high-performance, embeddable graph database.
 
 ## Design Goals
 

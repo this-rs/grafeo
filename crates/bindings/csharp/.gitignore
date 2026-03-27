@@ -6,7 +6,7 @@ obj/
 *.nupkg
 TestResults/
 
-# Native libraries (built from grafeo-c, not checked in)
-grafeo_c.dll
-libgrafeo_c.so
-libgrafeo_c.dylib
+# Native libraries (built from obrain-c, not checked in)
+obrain_c.dll
+libobrain_c.so
+libobrain_c.dylib

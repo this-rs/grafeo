@@ -1,6 +1,6 @@
 ---
 title: Code Style
-description: Coding standards for Grafeo.
+description: Coding standards for Obrain.
 tags:
   - contributing
 ---

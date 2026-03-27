@@ -1,6 +1,6 @@
 ---
 title: NetworkX Integration
-description: Convert Grafeo graphs to NetworkX for algorithms and matplotlib visualization.
+description: Convert Obrain graphs to NetworkX for algorithms and matplotlib visualization.
 tags:
   - example
   - networkx
@@ -9,7 +9,7 @@ tags:
 
 # NetworkX Integration
 
-Convert a Grafeo graph to NetworkX, run centrality and clustering algorithms, compare performance and visualize with matplotlib.
+Convert a Obrain graph to NetworkX, run centrality and clustering algorithms, compare performance and visualize with matplotlib.
 
 !!! tip "Run it locally"
 
@@ -17,14 +17,14 @@ Convert a Grafeo graph to NetworkX, run centrality and clustering algorithms, co
     marimo run examples/networkx_integration.py
     ```
 
-    **Requirements:** `grafeo`, `networkx`, `matplotlib`, `marimo`
+    **Requirements:** `obrain`, `networkx`, `matplotlib`, `marimo`
 
 ## Build the Graph
 
 ```python
-from grafeo import GrafeoDB
+from obrain import ObrainDB
 
-db = GrafeoDB()
+db = ObrainDB()
 
 people = {}
 for name, age, city in [
@@ -146,34 +146,34 @@ The left plot shows the basic network layout. The right plot colors nodes by bet
 
 ## Algorithm Comparison
 
-Both Grafeo and NetworkX can compute PageRank:
+Both Obrain and NetworkX can compute PageRank:
 
 ```python
-# Grafeo (Rust-native)
-grafeo_pr = db.algorithms.pagerank(damping=0.85)
+# Obrain (Rust-native)
+obrain_pr = db.algorithms.pagerank(damping=0.85)
 
 # NetworkX (Python)
 G_new = db.as_networkx().to_networkx()
 nx_pr = nx.pagerank(G_new, alpha=0.85)
 ```
 
-For large graphs, Grafeo's Rust implementation is significantly faster. NetworkX provides more specialized algorithms.
+For large graphs, Obrain's Rust implementation is significantly faster. NetworkX provides more specialized algorithms.
 
 ## When to Use Each
 
 | Use Case | Recommendation |
 |----------|----------------|
-| Large graphs (1M+ nodes) | Grafeo algorithms |
+| Large graphs (1M+ nodes) | Obrain algorithms |
 | Visualization | NetworkX + matplotlib |
 | Specialized algorithms | NetworkX |
-| Graph storage and queries | Grafeo |
-| Interactive exploration | Grafeo + anywidget-graph |
-| Production applications | Grafeo (embedded, no server) |
+| Graph storage and queries | Obrain |
+| Interactive exploration | Obrain + anywidget-graph |
+| Production applications | Obrain (embedded, no server) |
 
 The two libraries complement each other well.
 
 ## Next Steps
 
 - [Graph Visualization example](graph-visualization.md) for interactive visualization with anywidget-graph
-- [Algorithms reference](../../algorithms/index.md) for Grafeo's built-in algorithms
+- [Algorithms reference](../../algorithms/index.md) for Obrain's built-in algorithms
 - [Python API](../../user-guide/python/index.md) for the full Python binding

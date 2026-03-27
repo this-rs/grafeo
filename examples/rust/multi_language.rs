@@ -1,11 +1,11 @@
 //! Multi-language queries: same data, different query languages.
 //!
-//! Run with: `cargo run -p grafeo-examples --bin multi_language --features full`
+//! Run with: `cargo run -p obrain-examples --bin multi_language --features full`
 
-use grafeo::GrafeoDB;
+use obrain::ObrainDB;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let session = db.session();
 
     // ── Build a movie database ────────────────────────────────────

@@ -1,0 +1,111 @@
+[package]
+name = "obrain-cognitive"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Cognitive features for Obrain — energy, synapses, activation, fabric, memory"
+
+[features]
+default = []
+
+# Individual subsystem features
+energy = []
+synapse = []
+fabric = []
+co-change = []
+gds-refresh = ["fabric", "dep:obrain-adapters"]
+
+# Engram subsystem (Layer 0: Hebbian + FSRS)
+engram = []
+
+# Stigmergy (Layer 2: diffuse memory on edges)
+stigmergy = []
+
+# Modern Hopfield + Predictive Coding (Layers 3+4)
+hopfield = ["engram"]
+
+# Immune system (Layer 1: anomaly detection via shape space)
+immune = []
+
+# Epigenetic layer (Layer 5: cross-instance transgenerational memory)
+epigenetic = ["dep:serde_json"]
+
+# Future subsystems
+scar = []
+memory = ["energy"]
+stagnation = []
+fingerprint = []
+distillation = ["energy", "synapse", "fingerprint", "dep:serde_json", "dep:bincode"]
+episodic = []
+consolidation = ["energy", "fabric", "gds-refresh"]
+
+# Convenience feature groups (3 progressive levels)
+# Level 1: minimum viable cognitive — energy + synapses
+cognitive = ["energy", "synapse"]
+# Level 2: + fabric scoring, co-change detection, GDS refresh
+cognitive-fabric = ["cognitive", "fabric", "co-change", "gds-refresh"]
+# Level 3: all cognitive subsystems
+cognitive-full = ["cognitive-fabric", "scar", "memory", "stagnation", "fingerprint", "distillation", "episodic", "consolidation"]
+
+[dependencies]
+obrain-common.workspace = true
+obrain-core = { workspace = true, default-features = false }
+obrain-reactive.workspace = true
+obrain-adapters = { workspace = true, optional = true, default-features = false, features = ["algos"] }
+
+# Async runtime — only sync feature for all targets (WASM-compatible).
+# NOTE: we don't use `workspace = true` because the workspace tokio
+# includes rt-multi-thread/fs which are unsupported on wasm32.
+tokio = { version = "1", features = ["sync"] }
+async-trait.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# Concurrency
+parking_lot.workspace = true
+dashmap.workspace = true
+
+# Tracing
+tracing.workspace = true
+
+# Data structures
+smallvec.workspace = true
+
+# Serialization (for CognitiveConfig TOML support)
+serde.workspace = true
+serde_json = { workspace = true, optional = true }
+bincode = { workspace = true, optional = true }
+toml = "0.8"
+
+# Portable Instant (std::time::Instant panics on wasm32-unknown-unknown)
+web-time = "1"
+
+# Native-only: full tokio runtime for memory manager periodic sweep etc.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+arcstr.workspace = true
+serde_json.workspace = true
+bincode.workspace = true
+criterion.workspace = true
+smallvec.workspace = true
+proptest.workspace = true
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "cognitive_bench"
+harness = false
+required-features = ["cognitive"]
+
+[[bench]]
+name = "hopfield_bench"
+harness = false
+required-features = ["hopfield"]

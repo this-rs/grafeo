@@ -51,27 +51,27 @@ component_management:
         target: auto
         informational: true
   individual_components:
-    - component_id: grafeo-common
+    - component_id: obrain-common
       name: Common (types, allocators, hashing)
       paths:
         - crates/common/src/**
-    - component_id: grafeo-core
+    - component_id: obrain-core
       name: Core (storage, indexes, execution)
       paths:
         - crates/core/src/**
-    - component_id: grafeo-adapters
+    - component_id: obrain-adapters
       name: Adapters (parsers, algorithms, plugins)
       paths:
         - crates/adapters/src/**
-    - component_id: grafeo-engine
+    - component_id: obrain-engine
       name: Engine (database, sessions, transactions)
       paths:
         - crates/engine/src/**
-    - component_id: grafeo-reactive
+    - component_id: obrain-reactive
       name: Reactive (event bus, scheduler, instrumented store)
       paths:
-        - crates/grafeo-reactive/src/**
-    - component_id: grafeo-cognitive
+        - crates/obrain-reactive/src/**
+    - component_id: obrain-cognitive
       name: Cognitive (energy, synapses, fabric, memory, episodic)
       paths:
-        - crates/grafeo-cognitive/src/**
+        - crates/obrain-cognitive/src/**

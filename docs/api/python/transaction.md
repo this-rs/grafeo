@@ -1,12 +1,12 @@
 ---
-title: grafeo.Transaction
+title: obrain.Transaction
 description: Transaction class reference.
 tags:
   - api
   - python
 ---
 
-# grafeo.Transaction
+# obrain.Transaction
 
 Transaction management.
 

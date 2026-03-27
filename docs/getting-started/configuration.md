@@ -1,11 +1,11 @@
 ---
 title: Configuration
-description: Configure Grafeo for different use cases.
+description: Configure Obrain for different use cases.
 ---
 
 # Configuration
 
-Grafeo can be configured for different use cases, from small embedded applications to high-performance server deployments.
+Obrain can be configured for different use cases, from small embedded applications to high-performance server deployments.
 
 ## Database Modes
 
@@ -16,18 +16,18 @@ For temporary data or maximum performance:
 === "Python"
 
     ```python
-    import grafeo
+    import obrain
 
     # In-memory database (default)
-    db = grafeo.GrafeoDB()
+    db = obrain.ObrainDB()
     ```
 
 === "Rust"
 
     ```rust
-    use grafeo::GrafeoDB;
+    use obrain::ObrainDB;
 
-    let db = GrafeoDB::new_in_memory()?;
+    let db = ObrainDB::new_in_memory()?;
     ```
 
 !!! note "Data Persistence"
@@ -40,18 +40,18 @@ For durable storage:
 === "Python"
 
     ```python
-    import grafeo
+    import obrain
 
     # Persistent database
-    db = grafeo.GrafeoDB(path="my_graph.db")
+    db = obrain.ObrainDB(path="my_graph.db")
     ```
 
 === "Rust"
 
     ```rust
-    use grafeo::GrafeoDB;
+    use obrain::ObrainDB;
 
-    let db = GrafeoDB::new("my_graph.db")?;
+    let db = ObrainDB::new("my_graph.db")?;
     ```
 
 ## Configuration Options
@@ -63,7 +63,7 @@ Control the maximum memory usage:
 === "Python"
 
     ```python
-    db = grafeo.GrafeoDB(
+    db = obrain.ObrainDB(
         path="my_graph.db",
         memory_limit=4 * 1024 * 1024 * 1024  # 4 GB
     )
@@ -72,13 +72,13 @@ Control the maximum memory usage:
 === "Rust"
 
     ```rust
-    use grafeo::{GrafeoDB, Config};
+    use obrain::{ObrainDB, Config};
 
     let config = Config::builder()
         .memory_limit(4 * 1024 * 1024 * 1024)  // 4 GB
         .build()?;
 
-    let db = GrafeoDB::with_config(config)?;
+    let db = ObrainDB::with_config(config)?;
     ```
 
 ### Thread Pool Size
@@ -88,7 +88,7 @@ Configure parallelism:
 === "Python"
 
     ```python
-    db = grafeo.GrafeoDB(
+    db = obrain.ObrainDB(
         path="my_graph.db",
         threads=8
     )
@@ -97,17 +97,17 @@ Configure parallelism:
 === "Rust"
 
     ```rust
-    use grafeo::{GrafeoDB, Config};
+    use obrain::{ObrainDB, Config};
 
     let config = Config::builder()
         .threads(8)
         .build()?;
 
-    let db = GrafeoDB::with_config(config)?;
+    let db = ObrainDB::with_config(config)?;
     ```
 
 !!! tip "Default Thread Count"
-    By default, Grafeo uses the number of available CPU cores.
+    By default, Obrain uses the number of available CPU cores.
 
 ## Configuration Reference
 
@@ -120,20 +120,20 @@ Configure parallelism:
 
 ## Environment Variables
 
-Grafeo can also be configured via environment variables:
+Obrain can also be configured via environment variables:
 
 | Variable | Description |
 |----------|-------------|
-| `GRAFEO_MEMORY_LIMIT` | Maximum memory in bytes |
-| `GRAFEO_THREADS` | Number of worker threads |
-| `GRAFEO_LOG_LEVEL` | Logging level (error, warn, info, debug, trace) |
+| `OBRAIN_MEMORY_LIMIT` | Maximum memory in bytes |
+| `OBRAIN_THREADS` | Number of worker threads |
+| `OBRAIN_LOG_LEVEL` | Logging level (error, warn, info, debug, trace) |
 
 ## Performance Tuning
 
 ### For High-Throughput Workloads
 
 ```python
-db = grafeo.GrafeoDB(
+db = obrain.ObrainDB(
     path="high_throughput.db",
     memory_limit=8 * 1024 * 1024 * 1024,  # 8 GB
     threads=16
@@ -143,7 +143,7 @@ db = grafeo.GrafeoDB(
 ### For Low-Memory Environments
 
 ```python
-db = grafeo.GrafeoDB(
+db = obrain.ObrainDB(
     path="embedded.db",
     memory_limit=256 * 1024 * 1024,  # 256 MB
     threads=2
@@ -154,7 +154,7 @@ db = grafeo.GrafeoDB(
 
 ```python
 # Multiple read replicas can be opened read-only
-db = grafeo.GrafeoDB(
+db = obrain.ObrainDB(
     path="replica.db",
     read_only=True
 )
@@ -162,5 +162,5 @@ db = grafeo.GrafeoDB(
 
 ## Next Steps
 
-- [User Guide](../user-guide/index.md) - Learn more about using Grafeo
-- [Architecture](../architecture/index.md) - Understand how Grafeo works
+- [User Guide](../user-guide/index.md) - Learn more about using Obrain
+- [Architecture](../architecture/index.md) - Understand how Obrain works

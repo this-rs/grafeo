@@ -15,9 +15,9 @@ Algorithms for finding paths between nodes.
 Find the shortest path between two nodes.
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 algs = db.algorithms()
 
 path = algs.shortest_path(source=1, target=100)
@@ -92,7 +92,7 @@ for node_id, distance in results:
 ### GQL / Cypher / SQL/PGQ
 
 ```sql
-CALL grafeo.sssp('Alix', 'cost') YIELD node_id, distance
+CALL obrain.sssp('Alix', 'cost') YIELD node_id, distance
 ```
 
 ## Algorithm Complexity

@@ -1,7 +1,7 @@
-package grafeo
+package obrain
 
 /*
-#include "grafeo.h"
+#include "obrain.h"
 */
 import "C"
 import (
@@ -98,9 +98,9 @@ func WithEf(ef int) SearchOption {
 	return func(c *searchConfig) { c.ef = int32(ef) }
 }
 
-// parseResult converts a C GrafeoResult into a Go QueryResult.
-func parseResult(r *C.GrafeoResult) (*QueryResult, error) {
-	jsonPtr := C.grafeo_result_json(r)
+// parseResult converts a C ObrainResult into a Go QueryResult.
+func parseResult(r *C.ObrainResult) (*QueryResult, error) {
+	jsonPtr := C.obrain_result_json(r)
 	if jsonPtr == nil {
 		return &QueryResult{}, nil
 	}
@@ -127,7 +127,7 @@ func parseResult(r *C.GrafeoResult) (*QueryResult, error) {
 	return &QueryResult{
 		Columns:         columns,
 		Rows:            rows,
-		ExecutionTimeMs: float64(C.grafeo_result_execution_time_ms(r)),
-		RowsScanned:     uint64(C.grafeo_result_rows_scanned(r)),
+		ExecutionTimeMs: float64(C.obrain_result_execution_time_ms(r)),
+		RowsScanned:     uint64(C.obrain_result_rows_scanned(r)),
 	}, nil
 }

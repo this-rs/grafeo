@@ -4,20 +4,20 @@ import pytest
 
 from tests.bases.test_advanced_queries import BaseAdvancedQueriesTest
 
-# Try to import grafeo
+# Try to import obrain
 try:
-    from grafeo import GrafeoDB
+    from obrain import ObrainDB
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
 
 @pytest.fixture
 def db():
-    if not GRAFEO_AVAILABLE:
-        pytest.skip("grafeo not installed")
-    return GrafeoDB()
+    if not OBRAIN_AVAILABLE:
+        pytest.skip("obrain not installed")
+    return ObrainDB()
 
 
 class TestGQLAdvancedQueries(BaseAdvancedQueriesTest):

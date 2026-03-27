@@ -6,26 +6,26 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 
-use grafeo_common::types::{PropertyKey, PropertyMap, Value};
-use grafeo_engine::database::GrafeoDB;
+use obrain_common::types::{PropertyKey, PropertyMap, Value};
+use obrain_engine::database::ObrainDB;
 
 // ---------------------------------------------------------------------------
 // Opaque handle types
 // ---------------------------------------------------------------------------
 
-/// Opaque database handle. Created by `grafeo_open*`, freed by `grafeo_free_database`.
-pub struct GrafeoDatabase {
-    pub(crate) inner: Arc<RwLock<GrafeoDB>>,
+/// Opaque database handle. Created by `obrain_open*`, freed by `obrain_free_database`.
+pub struct ObrainDatabase {
+    pub(crate) inner: Arc<RwLock<ObrainDB>>,
 }
 
-/// Opaque transaction handle. Created by `grafeo_begin_transaction*`, freed by `grafeo_free_transaction`.
-pub struct GrafeoTransaction {
-    pub(crate) session: parking_lot::Mutex<Option<grafeo_engine::session::Session>>,
+/// Opaque transaction handle. Created by `obrain_begin_transaction*`, freed by `obrain_free_transaction`.
+pub struct ObrainTransaction {
+    pub(crate) session: parking_lot::Mutex<Option<obrain_engine::session::Session>>,
     pub(crate) committed: bool,
     pub(crate) rolled_back: bool,
 }
 
-impl Drop for GrafeoTransaction {
+impl Drop for ObrainTransaction {
     fn drop(&mut self) {
         // Auto-rollback if not explicitly committed or rolled back.
         if !self.committed && !self.rolled_back {
@@ -38,7 +38,7 @@ impl Drop for GrafeoTransaction {
 }
 
 /// Query result. Holds JSON-serialized rows and metadata.
-pub struct GrafeoResult {
+pub struct ObrainResult {
     pub(crate) json: CString,
     pub(crate) row_count: usize,
     pub(crate) execution_time_ms: f64,
@@ -46,14 +46,14 @@ pub struct GrafeoResult {
 }
 
 /// Structured node returned by CRUD operations.
-pub struct GrafeoNode {
+pub struct ObrainNode {
     pub(crate) id: u64,
     pub(crate) labels_json: CString,
     pub(crate) properties_json: CString,
 }
 
 /// Structured edge returned by CRUD operations.
-pub struct GrafeoEdge {
+pub struct ObrainEdge {
     pub(crate) id: u64,
     pub(crate) source_id: u64,
     pub(crate) target_id: u64,
@@ -65,14 +65,14 @@ pub struct GrafeoEdge {
 // Value ↔ JSON conversion
 // ---------------------------------------------------------------------------
 
-/// Convert a Grafeo `Value` to a `serde_json::Value`.
+/// Convert a Obrain `Value` to a `serde_json::Value`.
 pub fn value_to_json(v: &Value) -> serde_json::Value {
-    grafeo_bindings_common::json::value_to_json(v)
+    obrain_bindings_common::json::value_to_json(v)
 }
 
-/// Convert a `serde_json::Value` to a Grafeo `Value`.
+/// Convert a `serde_json::Value` to a Obrain `Value`.
 pub fn json_to_value(v: &serde_json::Value) -> Value {
-    grafeo_bindings_common::json::json_to_value(v)
+    obrain_bindings_common::json::json_to_value(v)
 }
 
 /// Serialize a [`PropertyMap`] to a JSON `CString`.

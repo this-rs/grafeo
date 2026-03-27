@@ -1,11 +1,11 @@
 ---
 title: Installation
-description: Install Grafeo for Python, Node.js, Go, C#, Dart, Rust or WebAssembly.
+description: Install Obrain for Python, Node.js, Go, C#, Dart, Rust or WebAssembly.
 ---
 
 # Installation
 
-Grafeo supports Python, Node.js/TypeScript, Go, C#, Dart, Rust and WebAssembly. Choose the installation method for the preferred language.
+Obrain supports Python, Node.js/TypeScript, Go, C#, Dart, Rust and WebAssembly. Choose the installation method for the preferred language.
 
 ## Python
 
@@ -14,26 +14,26 @@ Grafeo supports Python, Node.js/TypeScript, Go, C#, Dart, Rust and WebAssembly. 
 [uv](https://github.com/astral-sh/uv) is a fast Python package installer:
 
 ```bash
-uv add grafeo
+uv add obrain
 ```
 
 ### Using pip (alternative)
 
 ```bash
-pip install grafeo  # If uv is not available
+pip install obrain  # If uv is not available
 ```
 
 ### Verify Installation
 
 ```python
-import grafeo
+import obrain
 
 # Print version
-print(grafeo.__version__)
+print(obrain.__version__)
 
 # Create a test database
-db = grafeo.GrafeoDB()
-print("Grafeo installed successfully!")
+db = obrain.ObrainDB()
+print("Obrain installed successfully!")
 ```
 
 ### Platform Support
@@ -49,23 +49,23 @@ print("Grafeo installed successfully!")
 ## Node.js / TypeScript
 
 ```bash
-npm install @grafeo-db/js
+npm install @obrain-db/js
 ```
 
 ### Verify Installation
 
 ```js
-const { GrafeoDB } = require('@grafeo-db/js');
+const { ObrainDB } = require('@obrain-db/js');
 
-const db = await GrafeoDB.create();
-console.log('Grafeo installed successfully!');
+const db = await ObrainDB.create();
+console.log('Obrain installed successfully!');
 await db.close();
 ```
 
 ## Go
 
 ```bash
-go get github.com/GrafeoDB/grafeo/crates/bindings/go
+go get github.com/this-rs/obrain/crates/bindings/go
 ```
 
 ### Verify Installation
@@ -75,45 +75,45 @@ package main
 
 import (
     "fmt"
-    grafeo "github.com/GrafeoDB/grafeo/crates/bindings/go"
+    obrain "github.com/this-rs/obrain/crates/bindings/go"
 )
 
 func main() {
-    db, _ := grafeo.OpenInMemory()
+    db, _ := obrain.OpenInMemory()
     defer db.Close()
-    fmt.Println("Grafeo installed successfully!")
+    fmt.Println("Obrain installed successfully!")
 }
 ```
 
 ## WebAssembly
 
 ```bash
-npm install @grafeo-db/wasm
+npm install @obrain-db/wasm
 ```
 
 ### Verify Installation
 
 ```js
-import init, { Database } from '@grafeo-db/wasm';
+import init, { Database } from '@obrain-db/wasm';
 
 await init();
 const db = new Database();
-console.log('Grafeo WASM installed successfully!');
+console.log('Obrain WASM installed successfully!');
 ```
 
 ## C# / .NET
 
 ```bash
-dotnet add package GrafeoDB
+dotnet add package ObrainDB
 ```
 
 ### Verify Installation
 
 ```csharp
-using Grafeo;
+using Obrain;
 
-var db = new GrafeoDB();
-Console.WriteLine("Grafeo installed successfully!");
+var db = new ObrainDB();
+Console.WriteLine("Obrain installed successfully!");
 ```
 
 ## Dart
@@ -122,17 +122,17 @@ Add to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  grafeo: ^0.5.21
+  obrain: ^0.5.21
 ```
 
 ### Verify Installation
 
 ```dart
-import 'package:grafeo/grafeo.dart';
+import 'package:obrain/obrain.dart';
 
 void main() {
-  final db = GrafeoDB.memory();
-  print('Grafeo installed successfully!');
+  final db = ObrainDB.memory();
+  print('Obrain installed successfully!');
   db.close();
 }
 ```
@@ -141,17 +141,17 @@ void main() {
 
 ### Using Cargo
 
-Add Grafeo to the project:
+Add Obrain to the project:
 
 ```bash
-cargo add grafeo
+cargo add obrain
 ```
 
 Or add it manually to `Cargo.toml`:
 
 ```toml
 [dependencies]
-grafeo = "0.5"
+obrain = "0.5"
 ```
 
 ### Feature Flags
@@ -161,22 +161,22 @@ The `embedded` profile is enabled by default: GQL, AI features (vector/text/hybr
 ```toml
 [dependencies]
 # Default (embedded profile): GQL + AI + algorithms + parallel
-grafeo = "0.5"
+obrain = "0.5"
 
 # All languages + AI + storage + RDF
-grafeo = { version = "0.5", default-features = false, features = ["full"] }
+obrain = { version = "0.5", default-features = false, features = ["full"] }
 
 # Only query languages, no AI features
-grafeo = { version = "0.5", default-features = false, features = ["languages"] }
+obrain = { version = "0.5", default-features = false, features = ["languages"] }
 
 # GQL with AI features
-grafeo = { version = "0.5", default-features = false, features = ["gql", "ai"] }
+obrain = { version = "0.5", default-features = false, features = ["gql", "ai"] }
 
 # Minimal: GQL only
-grafeo = { version = "0.5", default-features = false, features = ["gql"] }
+obrain = { version = "0.5", default-features = false, features = ["gql"] }
 
 # With ONNX embedding generation (opt-in, not in full)
-grafeo = { version = "0.5", features = ["embed"] }
+obrain = { version = "0.5", features = ["embed"] }
 ```
 
 #### Feature Groups
@@ -188,7 +188,7 @@ grafeo = { version = "0.5", features = ["embed"] }
 | `server` / `full` | embedded + languages + storage + rdf + cdc | Everything except embed |
 | `languages` | gql, cypher, sparql, gremlin, graphql, sql-pgq | All query language parsers |
 | `ai` | vector-index, text-index, hybrid-search, cdc | AI/RAG search + change tracking |
-| `storage` | wal, spill, mmap, grafeo-file | Persistence backends |
+| `storage` | wal, spill, mmap, obrain-file | Persistence backends |
 | `algos` | graph algorithms | SSSP, PageRank, centrality, community detection |
 | `embed` | ort, tokenizers | ONNX embedding generation (opt-in, ~17MB) |
 
@@ -215,52 +215,52 @@ grafeo = { version = "0.5", features = ["embed"] }
 ### Verify Installation
 
 ```rust
-use grafeo::GrafeoDB;
+use obrain::ObrainDB;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let db = GrafeoDB::new_in_memory();
-    println!("Grafeo installed successfully!");
+    let db = ObrainDB::new_in_memory();
+    println!("Obrain installed successfully!");
     Ok(())
 }
 ```
 
-## Grafeo Server (Docker)
+## Obrain Server (Docker)
 
-For a standalone database server accessible via REST API, use [grafeo-server](../ecosystem/grafeo-server.md):
+For a standalone database server accessible via REST API, use [obrain-server](../ecosystem/obrain-server.md):
 
 ```bash
 # Standard: all query languages, AI/search, web UI
-docker run -p 7474:7474 grafeo/grafeo-server
+docker run -p 7474:7474 obrain/obrain-server
 ```
 
 Three image variants are available:
 
 | Variant | Tag | Description |
 |---------|-----|-------------|
-| **lite** | `grafeo-server:lite` | GQL only, no UI, smallest footprint |
-| **standard** | `grafeo-server:latest` | All languages + AI/search + web UI |
-| **full** | `grafeo-server:full` | Everything + auth + TLS + ONNX embed |
+| **lite** | `obrain-server:lite` | GQL only, no UI, smallest footprint |
+| **standard** | `obrain-server:latest` | All languages + AI/search + web UI |
+| **full** | `obrain-server:full` | Everything + auth + TLS + ONNX embed |
 
 ```bash
 # Lite: minimal, GQL only
-docker run -p 7474:7474 grafeo/grafeo-server:lite
+docker run -p 7474:7474 obrain/obrain-server:lite
 
 # Full: production with auth and TLS
-docker run -p 7474:7474 grafeo/grafeo-server:full \
+docker run -p 7474:7474 obrain/obrain-server:full \
   --auth-token my-secret --data-dir /data
 ```
 
 Server at `http://localhost:7474`. Web UI (standard/full) at `http://localhost:7474/studio/`.
 
-See the [grafeo-server documentation](../ecosystem/grafeo-server.md) for full API reference and configuration.
+See the [obrain-server documentation](../ecosystem/obrain-server.md) for full API reference and configuration.
 
 ## Building from Source
 
 ### Clone the Repository
 
 ```bash
-git clone https://github.com/GrafeoDB/grafeo.git
-cd grafeo
+git clone https://github.com/this-rs/obrain.git
+cd obrain
 ```
 
 ### Build Rust Crates
@@ -293,4 +293,4 @@ wasm-pack build crates/bindings/wasm --target web --release
 
 ## Next Steps
 
-With Grafeo installed, continue to the [Quick Start](quickstart.md) guide.
+With Obrain installed, continue to the [Quick Start](quickstart.md) guide.

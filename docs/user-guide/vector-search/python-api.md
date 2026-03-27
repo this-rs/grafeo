@@ -16,7 +16,7 @@ Complete reference for vector search operations from Python.
 ### QuantizationType
 
 ```python
-from grafeo import QuantizationType
+from obrain import QuantizationType
 
 # No quantization (full f32 precision)
 qt_none = QuantizationType.none()
@@ -41,7 +41,7 @@ print(qt_scalar.requires_training)  # True
 ### Training
 
 ```python
-from grafeo import ScalarQuantizer
+from obrain import ScalarQuantizer
 
 # Train from vectors (learns min/max per dimension)
 vectors = [
@@ -93,7 +93,7 @@ print(quantizer.max_values)   # [0.7, 0.8, 0.9]
 ### Training
 
 ```python
-from grafeo import ProductQuantizer
+from obrain import ProductQuantizer
 
 # Training vectors (representative sample of your data)
 vectors = load_training_vectors()  # List of List[float]
@@ -172,7 +172,7 @@ print(quantizer.compression_ratio)  # 192 (384*4/8)
 Binary quantization is stateless (no training required).
 
 ```python
-from grafeo import BinaryQuantizer
+from obrain import BinaryQuantizer
 
 # Quantize (sign-based: 1 if value > 0, else 0)
 embedding = [0.1, -0.2, 0.3, -0.4]
@@ -192,9 +192,9 @@ bytes_needed = BinaryQuantizer.bytes_needed(384)  # 48 bytes (384/8)
 Distance functions are available in the GQL query language, not as standalone Python functions:
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Use distance functions in queries
 result = db.execute("""
@@ -213,11 +213,11 @@ Available GQL distance functions: `cosine_similarity`, `cosine_distance`,
 ## Complete Example
 
 ```python
-import grafeo
-from grafeo import ProductQuantizer
+import obrain
+from obrain import ProductQuantizer
 
 # Setup database
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Load embeddings from your ML model
 def get_embedding(text: str) -> list[float]:
@@ -267,10 +267,10 @@ for row in result:
 Check available SIMD acceleration:
 
 ```python
-import grafeo
+import obrain
 
 # Returns a string identifying the active SIMD instruction set
-simd = grafeo.simd_support()
+simd = obrain.simd_support()
 print(simd)  # One of: "avx2", "sse", "neon" or "scalar"
 ```
 

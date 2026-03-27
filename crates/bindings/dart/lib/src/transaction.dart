@@ -1,4 +1,4 @@
-/// ACID transaction support for Grafeo.
+/// ACID transaction support for Obrain.
 ///
 /// Uses [NativeFinalizer] to auto-rollback (via Rust Drop) if neither
 /// [commit] nor [rollback] is called.
@@ -13,13 +13,13 @@ import 'ffi/bindings.dart';
 import 'types.dart';
 import 'value.dart';
 
-/// An ACID transaction on a Grafeo database.
+/// An ACID transaction on a Obrain database.
 ///
-/// Obtain via [GrafeoDB.beginTransaction]. Must be explicitly committed
+/// Obtain via [ObrainDB.beginTransaction]. Must be explicitly committed
 /// or rolled back. If dropped without either, the Rust Drop impl
 /// performs an automatic rollback.
 class Transaction implements Finalizable {
-  final GrafeoBindings _bindings;
+  final ObrainBindings _bindings;
   Pointer<Void> _handle;
   bool _finished = false;
 
@@ -27,12 +27,12 @@ class Transaction implements Finalizable {
 
   /// Create a transaction wrapper around a native handle.
   ///
-  /// Typically called by [GrafeoDB.beginTransaction], not directly.
+  /// Typically called by [ObrainDB.beginTransaction], not directly.
   Transaction(this._handle, this._bindings) {
     _finalizer ??= NativeFinalizer(
       _bindings.library
           .lookup<NativeFunction<Void Function(Pointer<Void>)>>(
-            'grafeo_free_transaction',
+            'obrain_free_transaction',
           ),
     );
     _finalizer!.attach(this, _handle.cast(), detach: this);
@@ -42,7 +42,7 @@ class Transaction implements Finalizable {
     if (_finished) {
       throw TransactionException(
         'Transaction already finished',
-        GrafeoStatus.transaction,
+        ObrainStatus.transaction,
       );
     }
   }
@@ -52,7 +52,7 @@ class Transaction implements Finalizable {
     _checkActive();
     final queryPtr = query.toNativeUtf8(allocator: malloc);
     try {
-      final resultPtr = _bindings.grafeoTransactionExecute(_handle, queryPtr);
+      final resultPtr = _bindings.obrainTransactionExecute(_handle, queryPtr);
       if (resultPtr == nullptr) throwLastError(_bindings);
       return _buildResult(resultPtr);
     } finally {
@@ -70,7 +70,7 @@ class Transaction implements Finalizable {
     final paramsJson = encodeParams(params);
     final paramsPtr = paramsJson.toNativeUtf8(allocator: malloc);
     try {
-      final resultPtr = _bindings.grafeoTransactionExecuteWithParams(
+      final resultPtr = _bindings.obrainTransactionExecuteWithParams(
         _handle,
         queryPtr,
         paramsPtr,
@@ -88,10 +88,10 @@ class Transaction implements Finalizable {
     _checkActive();
     _finished = true;
     _finalizer!.detach(this);
-    final status = _bindings.grafeoCommit(_handle);
-    _bindings.grafeoFreeTransaction(_handle);
+    final status = _bindings.obrainCommit(_handle);
+    _bindings.obrainFreeTransaction(_handle);
     _handle = nullptr;
-    if (status != GrafeoStatus.ok.code) {
+    if (status != ObrainStatus.ok.code) {
       throw classifyError(status, lastError(_bindings));
     }
   }
@@ -101,21 +101,21 @@ class Transaction implements Finalizable {
     _checkActive();
     _finished = true;
     _finalizer!.detach(this);
-    final status = _bindings.grafeoRollback(_handle);
-    _bindings.grafeoFreeTransaction(_handle);
+    final status = _bindings.obrainRollback(_handle);
+    _bindings.obrainFreeTransaction(_handle);
     _handle = nullptr;
-    if (status != GrafeoStatus.ok.code) {
+    if (status != ObrainStatus.ok.code) {
       throw classifyError(status, lastError(_bindings));
     }
   }
 
   QueryResult _buildResult(Pointer<Void> resultPtr) {
     try {
-      final jsonPtr = _bindings.grafeoResultJson(resultPtr);
+      final jsonPtr = _bindings.obrainResultJson(resultPtr);
       final jsonString = jsonPtr.toDartString();
       final executionTimeMs =
-          _bindings.grafeoResultExecutionTimeMs(resultPtr);
-      final rowsScanned = _bindings.grafeoResultRowsScanned(resultPtr);
+          _bindings.obrainResultExecutionTimeMs(resultPtr);
+      final rowsScanned = _bindings.obrainResultRowsScanned(resultPtr);
 
       final rows = parseRows(jsonString);
       final columns = extractColumns(rows);
@@ -130,7 +130,7 @@ class Transaction implements Finalizable {
         rowsScanned: rowsScanned,
       );
     } finally {
-      _bindings.grafeoFreeResult(resultPtr);
+      _bindings.obrainFreeResult(resultPtr);
     }
   }
 }

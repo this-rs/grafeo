@@ -1,11 +1,11 @@
 ---
 title: Cypher Query Language
-description: Learn the Cypher query language for Grafeo.
+description: Learn the Cypher query language for Obrain.
 ---
 
 # Cypher Query Language
 
-Cypher is a declarative graph query language originally developed by Neo4j. Grafeo fully supports Cypher alongside GQL.
+Cypher is a declarative graph query language originally developed by Neo4j. Obrain fully supports Cypher alongside GQL.
 
 ## Overview
 
@@ -22,7 +22,7 @@ Cypher uses ASCII-art style pattern matching to query and manipulate graph data.
 | Create | `CREATE (:Label {prop: value})` |
 | Update | `SET n.property = value` |
 | Delete | `DELETE n` |
-| Call procedure | `CALL grafeo.pagerank() YIELD score` |
+| Call procedure | `CALL obrain.pagerank() YIELD score` |
 
 ## Learn More
 

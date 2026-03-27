@@ -9,13 +9,13 @@ import time
 
 import pytest
 
-# Try to import grafeo
+# Try to import obrain
 try:
-    from grafeo import GrafeoDB
+    from obrain import ObrainDB
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
 
 class TestRDFGraphQLFilters:
@@ -23,7 +23,7 @@ class TestRDFGraphQLFilters:
 
     def setup_method(self):
         """Create a fresh database."""
-        self.db = GrafeoDB()
+        self.db = ObrainDB()
 
     def _execute_graphql(self, query: str):
         """Execute GraphQL query, skip if not supported."""

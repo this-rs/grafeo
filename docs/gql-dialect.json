@@ -1,11 +1,11 @@
 {
   "dialect": {
-    "name": "GrafeoDB",
+    "name": "ObrainDB",
     "version": "0.5.22",
     "language": "GQL",
     "standard": "ISO/IEC 39075:2024",
-    "homepage": "https://grafeo.dev",
-    "repository": "https://github.com/GrafeoDB/grafeo"
+    "homepage": "https://obrain.dev",
+    "repository": "https://github.com/this-rs/obrain"
   },
   "generated": "2026-03-14T15:38:27Z",
   "summary": {

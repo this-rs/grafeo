@@ -1,11 +1,11 @@
 ---
 title: SPARQL Query Language
-description: Learn the SPARQL query language for RDF data in Grafeo.
+description: Learn the SPARQL query language for RDF data in Obrain.
 ---
 
 # SPARQL Query Language
 
-SPARQL (SPARQL Protocol and RDF Query Language) is the W3C standard query language for RDF (Resource Description Framework) data. Grafeo implements SPARQL 1.1 for querying RDF graphs.
+SPARQL (SPARQL Protocol and RDF Query Language) is the W3C standard query language for RDF (Resource Description Framework) data. Obrain implements SPARQL 1.1 for querying RDF graphs.
 
 ## Overview
 
@@ -40,14 +40,14 @@ Example triples:
 
 ## Using SPARQL
 
-SPARQL is enabled by default in Grafeo:
+SPARQL is enabled by default in Obrain:
 
 === "Python"
 
     ```python
-    import grafeo
+    import obrain
 
-    db = grafeo.GrafeoDB()
+    db = obrain.ObrainDB()
 
     # Insert RDF triples
     db.execute_sparql("""
@@ -70,9 +70,9 @@ SPARQL is enabled by default in Grafeo:
 === "Rust"
 
     ```rust
-    use grafeo::GrafeoDB;
+    use obrain::ObrainDB;
 
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
     let mut session = db.session();
 
     session.execute_sparql(r#"

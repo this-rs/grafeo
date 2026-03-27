@@ -1,6 +1,6 @@
 ---
 title: Vector Search
-description: Vector similarity search with 3D visualization using Grafeo and anywidget-vector.
+description: Vector similarity search with 3D visualization using Obrain and anywidget-vector.
 tags:
   - example
   - vector-search
@@ -17,7 +17,7 @@ Store document embeddings, perform similarity search with filters and visualize 
     marimo run examples/vector_search.py
     ```
 
-    **Requirements:** `grafeo`, `anywidget-vector`, `marimo`, `numpy`
+    **Requirements:** `obrain`, `anywidget-vector`, `marimo`, `numpy`
 
 ## Generate Embeddings
 
@@ -25,7 +25,7 @@ In production you would use a model (OpenAI, sentence-transformers, etc.). Here 
 
 ```python
 import numpy as np
-from grafeo import GrafeoDB
+from obrain import ObrainDB
 
 np.random.seed(42)
 
@@ -55,10 +55,10 @@ for doc in documents:
     embeddings.append(embedding.tolist())
 ```
 
-## Store in Grafeo
+## Store in Obrain
 
 ```python
-db = GrafeoDB()
+db = ObrainDB()
 
 doc_nodes = []
 for doc, embedding in zip(documents, embeddings):

@@ -1,6 +1,6 @@
 ---
 title: Plugins
-description: Creating and using plugins in Grafeo.
+description: Creating and using plugins in Obrain.
 tags:
   - extending
   - plugins
@@ -8,11 +8,11 @@ tags:
 
 # Plugins
 
-Plugins extend Grafeo with custom functionality.
+Plugins extend Obrain with custom functionality.
 
 ## Plugin Architecture
 
-Grafeo uses a trait-based plugin system:
+Obrain uses a trait-based plugin system:
 
 ```rust
 pub trait Plugin: Send + Sync {
@@ -26,7 +26,7 @@ pub trait Plugin: Send + Sync {
 ## Creating a Plugin (Rust)
 
 ```rust
-use grafeo_adapters::plugins::{Plugin, PluginContext};
+use obrain_adapters::plugins::{Plugin, PluginContext};
 
 pub struct MyPlugin {
     name: String,
@@ -61,13 +61,13 @@ fn my_function_impl(args: &[Value]) -> Result<Value> {
 ## Loading Plugins
 
 ```rust
-use grafeo::{GrafeoDB, Config};
+use obrain::{ObrainDB, Config};
 
 let config = Config::builder()
     .plugin_dir("./plugins")
     .build()?;
 
-let db = GrafeoDB::with_config(config)?;
+let db = ObrainDB::with_config(config)?;
 ```
 
 ## Built-in Plugin Types

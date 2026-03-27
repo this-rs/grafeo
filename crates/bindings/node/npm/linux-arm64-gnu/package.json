@@ -1,5 +1,5 @@
 {
-  "name": "@grafeo-db/js-linux-arm64-gnu",
+  "name": "@obrain-db/js-linux-arm64-gnu",
   "version": "0.5.24",
   "os": [
     "linux"
@@ -10,17 +10,17 @@
   "libc": [
     "glibc"
   ],
-  "main": "grafeo.linux-arm64-gnu.node",
+  "main": "obrain.linux-arm64-gnu.node",
   "files": [
-    "grafeo.linux-arm64-gnu.node"
+    "obrain.linux-arm64-gnu.node"
   ],
-  "description": "Grafeo native binding for Linux arm64 (glibc)",
+  "description": "Obrain native binding for Linux arm64 (glibc)",
   "license": "Apache-2.0",
   "engines": {
     "node": ">=20"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/GrafeoDB/grafeo.git"
+    "url": "https://github.com/this-rs/obrain.git"
   }
 }

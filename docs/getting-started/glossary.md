@@ -1,6 +1,6 @@
 ---
 title: Glossary
-description: Definitions of key terms used in Grafeo documentation.
+description: Definitions of key terms used in Obrain documentation.
 tags:
   - glossary
   - terminology
@@ -9,7 +9,7 @@ tags:
 
 # Glossary
 
-Key terms and concepts used throughout Grafeo documentation.
+Key terms and concepts used throughout Obrain documentation.
 
 ---
 
@@ -37,26 +37,26 @@ A tag categorizing nodes. Nodes can have multiple labels (e.g., a node can be bo
 A key-value attribute on a node or edge. Keys are strings; values can be null, boolean, integer, float, string, list or map.
 
 ### LPG (Labeled Property Graph)
-The primary graph model in Grafeo where nodes have labels and both nodes and edges have properties. This is the model used by Neo4j, TigerGraph and most modern graph databases.
+The primary graph model in Obrain where nodes have labels and both nodes and edges have properties. This is the model used by Neo4j, TigerGraph and most modern graph databases.
 
 ### RDF (Resource Description Framework)
-An alternative graph model using subject-predicate-object triples. Used for semantic web and knowledge graphs. Grafeo supports RDF with the `rdf` feature flag.
+An alternative graph model using subject-predicate-object triples. Used for semantic web and knowledge graphs. Obrain supports RDF with the `rdf` feature flag.
 
 ---
 
 ## Query Language Terms
 
 ### GQL
-ISO/IEC 39075:2024 - the international standard for graph query languages. Grafeo uses GQL as its primary query language.
+ISO/IEC 39075:2024 - the international standard for graph query languages. Obrain uses GQL as its primary query language.
 
 ### Cypher
-A graph query language originally developed by Neo4j. Grafeo supports Cypher via the `cypher` feature flag.
+A graph query language originally developed by Neo4j. Obrain supports Cypher via the `cypher` feature flag.
 
 ### SPARQL
-W3C standard query language for RDF data. Grafeo supports SPARQL via the `sparql` feature flag.
+W3C standard query language for RDF data. Obrain supports SPARQL via the `sparql` feature flag.
 
 ### Gremlin
-Apache TinkerPop's graph traversal language. Grafeo supports Gremlin via the `gremlin` feature flag.
+Apache TinkerPop's graph traversal language. Obrain supports Gremlin via the `gremlin` feature flag.
 
 ### Pattern Matching
 Finding subgraphs that match a specified pattern:
@@ -70,19 +70,19 @@ This finds all pairs of people where one knows the other.
 ## Execution Engine Terms
 
 ### DataChunk
-A batch of rows (typically 2048) processed together for efficiency. Grafeo processes data in chunks rather than row-by-row to maximize CPU cache utilization.
+A batch of rows (typically 2048) processed together for efficiency. Obrain processes data in chunks rather than row-by-row to maximize CPU cache utilization.
 
 ### Morsel
 A unit of work in parallel query execution. The scheduler divides work into morsels that workers can steal from each other for load balancing.
 
 ### Vectorized Execution
-Processing multiple values at once using SIMD (Single Instruction Multiple Data) CPU instructions. Grafeo uses vectorized execution for operations like filtering and aggregation.
+Processing multiple values at once using SIMD (Single Instruction Multiple Data) CPU instructions. Obrain uses vectorized execution for operations like filtering and aggregation.
 
 ### Push-Based Execution
 An execution model where data flows from producers to consumers. Operators "push" results downstream rather than being "pulled" by upstream operators.
 
 ### Factorized Execution
-An optimization that avoids materializing Cartesian products in multi-hop traversals. Instead of expanding all paths, Grafeo represents them compactly and expands lazily.
+An optimization that avoids materializing Cartesian products in multi-hop traversals. Instead of expanding all paths, Obrain represents them compactly and expands lazily.
 
 ### Pipeline
 A sequence of operators processing data. For example: Scan -> Filter -> Project -> Aggregate.
@@ -95,7 +95,7 @@ Metadata storing min/max values for chunks. Enables skipping entire chunks when 
 ## Transaction Terms
 
 ### MVCC (Multi-Version Concurrency Control)
-Grafeo's approach to handling concurrent transactions. Each transaction sees a consistent snapshot; readers never block writers and vice versa.
+Obrain's approach to handling concurrent transactions. Each transaction sees a consistent snapshot; readers never block writers and vice versa.
 
 ### Epoch
 A logical timestamp representing a point in database history. Each committed transaction increments the epoch.
@@ -129,7 +129,7 @@ Specialized index for graph traversal. Stores outgoing/incoming edges per node f
 Tree structure for prefix matching and worst-case optimal joins (WCOJ).
 
 ### HNSW (Hierarchical Navigable Small World)
-Algorithm for approximate nearest neighbor search on vectors. Used by Grafeo's vector index.
+Algorithm for approximate nearest neighbor search on vectors. Used by Obrain's vector index.
 
 ### Ring Index
 Space-efficient RDF triple index using wavelet trees. Provides 3x compression over separate indexes.
@@ -170,7 +170,7 @@ Fast allocator that just increments a pointer. Used for temporary per-query allo
 Component managing memory allocation with pressure awareness. Can trigger spill-to-disk when memory is tight.
 
 ### Memory Pressure
-When allocated memory approaches limits. Grafeo responds by evicting cached data or spilling to disk.
+When allocated memory approaches limits. Obrain responds by evicting cached data or spilling to disk.
 
 ---
 
@@ -190,13 +190,13 @@ Bridge to external ecosystems like NetworkX or solvOR.
 ## Architecture Terms
 
 ### Crate
-Rust's term for a package/library. Grafeo is organized into multiple crates:
+Rust's term for a package/library. Obrain is organized into multiple crates:
 
-- **grafeo-common**: Foundation types
-- **grafeo-core**: Storage and execution
-- **grafeo-adapters**: Parsers and plugins
-- **grafeo-engine**: Database facade
-- **grafeo**: Public API
+- **obrain-common**: Foundation types
+- **obrain-core**: Storage and execution
+- **obrain-adapters**: Parsers and plugins
+- **obrain-engine**: Database facade
+- **obrain**: Public API
 
 ### Feature Flag
 Compile-time option enabling/disabling functionality:

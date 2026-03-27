@@ -1,24 +1,24 @@
 ---
 title: Node.js / TypeScript API
-description: API reference for the @grafeo-db/js package.
+description: API reference for the @obrain-db/js package.
 ---
 
 # Node.js / TypeScript API Reference
 
-Complete reference for the `@grafeo-db/js` package, native bindings for Grafeo via [napi-rs](https://napi.rs).
+Complete reference for the `@obrain-db/js` package, native bindings for Obrain via [napi-rs](https://napi.rs).
 
 ## Installation
 
 ```bash
-npm install @grafeo-db/js
+npm install @obrain-db/js
 ```
 
 ## Quick Start
 
 ```typescript
-import { GrafeoDB } from '@grafeo-db/js';
+import { ObrainDB } from '@obrain-db/js';
 
-const db = GrafeoDB.create();
+const db = ObrainDB.create();
 
 db.createNode(['Person'], { name: 'Alix', age: 30 });
 db.createNode(['Person'], { name: 'Gus', age: 25 });
@@ -34,7 +34,7 @@ db.close();
 
 | Class | Description |
 |-------|-------------|
-| [GrafeoDB](database.md) | Database connection, queries, CRUD, vector/text search |
+| [ObrainDB](database.md) | Database connection, queries, CRUD, vector/text search |
 | [QueryResult](query.md) | Query result with rows, columns, nodes, edges |
 | [Transaction](transaction.md) | ACID transaction management |
 | [JsNode](node.md) | Graph node with labels and properties |
@@ -55,7 +55,7 @@ await db.executeSql(query, params?);      // SQL/PGQ
 
 ## Type Mapping
 
-| JavaScript | Grafeo | Notes |
+| JavaScript | Obrain | Notes |
 |-----------|--------|-------|
 | `null` / `undefined` | Null | |
 | `boolean` | Bool | |
@@ -71,5 +71,5 @@ await db.executeSql(query, params?);      // SQL/PGQ
 
 ## Links
 
-- [npm package](https://www.npmjs.com/package/@grafeo-db/js)
-- [GitHub](https://github.com/GrafeoDB/grafeo/tree/main/crates/bindings/node)
+- [npm package](https://www.npmjs.com/package/@obrain-db/js)
+- [GitHub](https://github.com/this-rs/obrain/tree/main/crates/bindings/node)

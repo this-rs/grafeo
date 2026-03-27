@@ -1,14 +1,14 @@
 """
-Graph Visualization with Grafeo and anywidget-graph
+Graph Visualization with Obrain and anywidget-graph
 
-This example demonstrates how to visualize graph data using Grafeo's Python API
+This example demonstrates how to visualize graph data using Obrain's Python API
 and the anywidget-graph package for interactive visualization.
 
 Run with: marimo run graph_visualization.py
 Or convert to notebook: marimo export notebook graph_visualization.py
 
 Requirements:
-    pip install grafeo anywidget-graph marimo
+    pip install obrain anywidget-graph marimo
 """
 
 import marimo
@@ -22,10 +22,10 @@ def __():
     import marimo as mo
 
     mo.md("""
-    # Graph Visualization with Grafeo
+    # Graph Visualization with Obrain
 
     This notebook demonstrates interactive graph visualization using:
-    - **Grafeo**: High-performance graph database
+    - **Obrain**: High-performance graph database
     - **anywidget-graph**: Interactive graph widget for notebooks
 
     Let's build a social network and explore it visually!
@@ -35,10 +35,10 @@ def __():
 
 @app.cell
 def __():
-    from grafeo import GrafeoDB
+    from obrain import ObrainDB
 
     # Create an in-memory database
-    db = GrafeoDB()
+    db = ObrainDB()
 
     # Create some people
     alix = db.create_node(["Person"], {"name": "Alix", "age": 30, "city": "Utrecht"})
@@ -50,7 +50,7 @@ def __():
     eve = db.create_node(["Person"], {"name": "Eve", "age": 32, "city": "Leiden"})
 
     # Create some companies
-    acme = db.create_node(["Company"], {"name": "Grafeo", "industry": "Tech"})
+    acme = db.create_node(["Company"], {"name": "Obrain", "industry": "Tech"})
     globex = db.create_node(["Company"], {"name": "Big Bank", "industry": "Finance"})
 
     # Create relationships

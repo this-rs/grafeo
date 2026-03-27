@@ -1,13 +1,13 @@
 # Rust Examples
 
-Runnable examples demonstrating Grafeo's Rust API. Each example is self-contained and produces meaningful output.
+Runnable examples demonstrating Obrain's Rust API. Each example is self-contained and produces meaningful output.
 
 ## Running
 
-All examples are binary targets in the `grafeo-examples` crate:
+All examples are binary targets in the `obrain-examples` crate:
 
 ```bash
-cargo run -p grafeo-examples --bin <name>
+cargo run -p obrain-examples --bin <name>
 ```
 
 ## Examples
@@ -25,16 +25,16 @@ cargo run -p grafeo-examples --bin <name>
 Examples requiring extra features:
 
 ```bash
-cargo run -p grafeo-examples --bin persistence --features storage
-cargo run -p grafeo-examples --bin multi_language --features full
+cargo run -p obrain-examples --bin persistence --features storage
+cargo run -p obrain-examples --bin multi_language --features full
 ```
 
 ## Build all
 
 ```bash
 # Default feature examples
-cargo build -p grafeo-examples
+cargo build -p obrain-examples
 
 # All examples (including feature-gated ones)
-cargo build -p grafeo-examples --bins --features full
+cargo build -p obrain-examples --bins --features full
 ```

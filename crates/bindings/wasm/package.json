@@ -1,8 +1,8 @@
 {
-  "name": "@grafeo-db/wasm",
+  "name": "@obrain-db/wasm",
   "type": "module",
   "version": "0.5.24",
-  "description": "WebAssembly bindings for Grafeo - a high-performance embeddable graph database",
+  "description": "WebAssembly bindings for Obrain - a high-performance embeddable graph database",
   "keywords": [
     "graph",
     "database",
@@ -17,24 +17,24 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/GrafeoDB/grafeo.git",
+    "url": "https://github.com/this-rs/obrain.git",
     "directory": "crates/bindings/wasm"
   },
-  "homepage": "https://grafeo.dev",
+  "homepage": "https://obrain.dev",
   "bugs": {
-    "url": "https://github.com/GrafeoDB/grafeo/issues"
+    "url": "https://github.com/this-rs/obrain/issues"
   },
-  "main": "grafeo_wasm.js",
-  "types": "grafeo_wasm.d.ts",
+  "main": "obrain_wasm.js",
+  "types": "obrain_wasm.d.ts",
   "files": [
-    "grafeo_wasm.js",
-    "grafeo_wasm.d.ts",
-    "grafeo_wasm_bg.js",
-    "grafeo_wasm_bg.wasm",
-    "grafeo_wasm_bg.wasm.d.ts"
+    "obrain_wasm.js",
+    "obrain_wasm.d.ts",
+    "obrain_wasm_bg.js",
+    "obrain_wasm_bg.wasm",
+    "obrain_wasm_bg.wasm.d.ts"
   ],
   "sideEffects": [
-    "./grafeo_wasm.js",
+    "./obrain_wasm.js",
     "./snippets/*"
   ]
 }

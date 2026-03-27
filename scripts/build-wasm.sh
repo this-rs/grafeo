@@ -6,7 +6,7 @@
 #   ./scripts/build-wasm.sh --features ai              # GQL + AI search
 #   ./scripts/build-wasm.sh --features full            # all languages + AI
 #   ./scripts/build-wasm.sh --out-dir path/to/output   # custom output directory
-#   ./scripts/build-wasm.sh --target bundler --scope grafeo-db
+#   ./scripts/build-wasm.sh --target bundler --scope obrain-db
 #
 # Requirements: rustup target wasm32-unknown-unknown, wasm-bindgen-cli
 
@@ -38,19 +38,19 @@ fi
 echo "Building WASM (profile: ${PROFILE}, target: ${TARGET})"
 
 # Step 1: Cargo build
-CARGO_CMD="cargo build --target wasm32-unknown-unknown --profile ${PROFILE} -p grafeo-wasm"
+CARGO_CMD="cargo build --target wasm32-unknown-unknown --profile ${PROFILE} -p obrain-wasm"
 if [[ -n "$FEATURES" ]]; then
     CARGO_CMD="${CARGO_CMD} ${FEATURES}"
 fi
 echo "  cargo build..."
-eval "$CARGO_CMD" 2>&1 | grep -E "Compiling grafeo-wasm|Finished|warning:" || true
+eval "$CARGO_CMD" 2>&1 | grep -E "Compiling obrain-wasm|Finished|warning:" || true
 
 # Determine the output path (profile name maps to directory)
 PROFILE_DIR="${PROFILE}"
 if [[ "$PROFILE" == "release" ]]; then
     PROFILE_DIR="release"
 fi
-WASM_FILE="target/wasm32-unknown-unknown/${PROFILE_DIR}/grafeo_wasm.wasm"
+WASM_FILE="target/wasm32-unknown-unknown/${PROFILE_DIR}/obrain_wasm.wasm"
 
 if [[ ! -f "$WASM_FILE" ]]; then
     echo "Error: ${WASM_FILE} not found"
@@ -64,8 +64,8 @@ mkdir -p "$OUT_DIR"
 wasm-bindgen --target "$TARGET" --out-dir "$OUT_DIR" "$WASM_FILE"
 
 # Step 3: Report sizes
-RAW_SIZE=$(stat -c%s "$OUT_DIR/grafeo_wasm_bg.wasm" 2>/dev/null || stat -f%z "$OUT_DIR/grafeo_wasm_bg.wasm")
-GZ_SIZE=$(gzip -c "$OUT_DIR/grafeo_wasm_bg.wasm" | wc -c)
+RAW_SIZE=$(stat -c%s "$OUT_DIR/obrain_wasm_bg.wasm" 2>/dev/null || stat -f%z "$OUT_DIR/obrain_wasm_bg.wasm")
+GZ_SIZE=$(gzip -c "$OUT_DIR/obrain_wasm_bg.wasm" | wc -c)
 
 echo ""
 echo "Output: ${OUT_DIR}/"

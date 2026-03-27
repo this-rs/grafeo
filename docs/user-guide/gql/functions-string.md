@@ -1,6 +1,6 @@
 ---
 title: String Functions
-description: GQL string manipulation functions in Grafeo.
+description: GQL string manipulation functions in Obrain.
 tags:
   - gql
   - functions

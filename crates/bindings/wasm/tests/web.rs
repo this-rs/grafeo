@@ -6,7 +6,7 @@
 
 use wasm_bindgen_test::*;
 
-use grafeo_wasm::Database;
+use obrain_wasm::Database;
 
 #[wasm_bindgen_test]
 fn test_database_creation() {

@@ -1,24 +1,24 @@
-# grafeo
+# obrain
 
-Python bindings for [Grafeo](https://grafeo.dev), a high-performance, embeddable graph database with a Rust core.
+Python bindings for [Obrain](https://obrain.dev), a high-performance, embeddable graph database with a Rust core.
 
 ## Installation
 
 ```bash
-uv add grafeo
-# or: pip install grafeo
+uv add obrain
+# or: pip install obrain
 ```
 
 ## Quick Start
 
 ```python
-from grafeo import GrafeoDB
+from obrain import ObrainDB
 
 # In-memory database
-db = GrafeoDB()
+db = ObrainDB()
 
 # Or persistent
-# db = GrafeoDB("./my-graph")
+# db = ObrainDB("./my-graph")
 
 # Create nodes
 db.execute("INSERT (:Person {name: 'Alix', age: 30})")
@@ -36,9 +36,9 @@ for row in result:
 ### Database
 
 ```python
-db = GrafeoDB()              # in-memory
-db = GrafeoDB("./path")      # persistent
-db = GrafeoDB.open("./path") # open existing
+db = ObrainDB()              # in-memory
+db = ObrainDB("./path")      # persistent
+db = ObrainDB.open("./path") # open existing
 
 db.node_count   # number of nodes
 db.edge_count   # number of edges
@@ -80,7 +80,7 @@ with db.begin_transaction() as tx:
     tx.commit()
 
 # With isolation levels
-from grafeo import IsolationLevel
+from obrain import IsolationLevel
 with db.begin_transaction(IsolationLevel.SERIALIZABLE) as tx:
     tx.execute("MATCH (n:Person) SET n.verified = true")
     tx.commit()
@@ -127,10 +127,10 @@ results = db.vector_search("Document", "embedding", query_vector, k=10)
 
 ## Links
 
-- [Documentation](https://grafeo.dev)
-- [GitHub](https://github.com/GrafeoDB/grafeo)
-- [npm Package](https://www.npmjs.com/package/@grafeo-db/js)
-- [WASM Package](https://www.npmjs.com/package/@grafeo-db/wasm)
+- [Documentation](https://obrain.dev)
+- [GitHub](https://github.com/this-rs/obrain)
+- [npm Package](https://www.npmjs.com/package/@obrain-db/js)
+- [WASM Package](https://www.npmjs.com/package/@obrain-db/wasm)
 
 ## License
 

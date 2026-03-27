@@ -1,7 +1,7 @@
-package grafeo
+package obrain
 
 /*
-#include "grafeo.h"
+#include "obrain.h"
 #include <stdlib.h>
 */
 import "C"
@@ -22,11 +22,11 @@ type DatabaseInfo struct {
 
 // Info returns high-level database information.
 func (db *Database) Info() (*DatabaseInfo, error) {
-	cInfo := C.grafeo_info(db.handle)
+	cInfo := C.obrain_info(db.handle)
 	if cInfo == nil {
 		return nil, lastError()
 	}
-	defer C.grafeo_free_string(cInfo)
+	defer C.obrain_free_string(cInfo)
 
 	var info DatabaseInfo
 	if err := json.Unmarshal([]byte(C.GoString(cInfo)), &info); err != nil {
@@ -39,10 +39,10 @@ func (db *Database) Info() (*DatabaseInfo, error) {
 func (db *Database) Save(path string) error {
 	cPath := C.CString(path)
 	defer C.free(unsafe.Pointer(cPath))
-	return statusToError(C.grafeo_save(db.handle, cPath))
+	return statusToError(C.obrain_save(db.handle, cPath))
 }
 
 // WalCheckpoint triggers a WAL checkpoint.
 func (db *Database) WalCheckpoint() error {
-	return statusToError(C.grafeo_wal_checkpoint(db.handle))
+	return statusToError(C.obrain_wal_checkpoint(db.handle))
 }

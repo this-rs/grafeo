@@ -78,7 +78,7 @@ session.execute(r#"
 ## Parameterized Queries
 
 ```rust
-use grafeo::params;
+use obrain::params;
 
 let session = db.session()?;
 

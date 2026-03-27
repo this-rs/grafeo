@@ -133,9 +133,9 @@ Subject-Predicate-Object Triples:
     }
     ```
 
-## Grafeo Approach
+## Obrain Approach
 
-Grafeo primarily uses the **LPG model** because:
+Obrain primarily uses the **LPG model** because:
 
 1. **Developer Experience** - More intuitive for application developers
 2. **Performance** - Optimized storage and query execution
@@ -143,7 +143,7 @@ Grafeo primarily uses the **LPG model** because:
 4. **Rich Relationships** - First-class properties on edges
 
 !!! note "RDF Support Status"
-    Grafeo currently focuses on the **LPG model**. RDF support is planned for future releases. This comparison is provided for users evaluating which data model fits their needs.
+    Obrain currently focuses on the **LPG model**. RDF support is planned for future releases. This comparison is provided for users evaluating which data model fits their needs.
 
 ## Converting Between Models
 

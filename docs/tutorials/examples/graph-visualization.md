@@ -1,6 +1,6 @@
 ---
 title: Graph Visualization
-description: Interactive graph visualization with Grafeo and anywidget-graph.
+description: Interactive graph visualization with Obrain and anywidget-graph.
 tags:
   - example
   - visualization
@@ -17,14 +17,14 @@ Build a social network, query it, run graph algorithms and visualize everything 
     marimo run examples/graph_visualization.py
     ```
 
-    **Requirements:** `grafeo`, `anywidget-graph`, `marimo`
+    **Requirements:** `obrain`, `anywidget-graph`, `marimo`
 
 ## Create the Graph
 
 ```python
-from grafeo import GrafeoDB
+from obrain import ObrainDB
 
-db = GrafeoDB()
+db = ObrainDB()
 
 # Create people
 alix = db.create_node(["Person"], {"name": "Alix", "age": 30, "city": "Utrecht"})

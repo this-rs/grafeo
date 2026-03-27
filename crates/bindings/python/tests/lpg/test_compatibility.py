@@ -5,16 +5,16 @@ Verifies that GQL, Cypher, Gremlin, and GraphQL return consistent results.
 
 import pytest
 
-# Try to import grafeo
+# Try to import obrain
 try:
-    from grafeo import GrafeoDB
+    from obrain import ObrainDB
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
 
-pytestmark = pytest.mark.skipif(not GRAFEO_AVAILABLE, reason="Grafeo Python bindings not installed")
+pytestmark = pytest.mark.skipif(not OBRAIN_AVAILABLE, reason="Obrain Python bindings not installed")
 
 
 class TestCrossLanguageConsistency:
@@ -22,7 +22,7 @@ class TestCrossLanguageConsistency:
 
     def setup_method(self):
         """Create identical test data for comparison."""
-        self.db = GrafeoDB()
+        self.db = ObrainDB()
         self._setup_test_data()
 
     def _setup_test_data(self):
@@ -116,7 +116,7 @@ class TestQuerySyntaxEquivalence:
 
     def setup_method(self):
         """Create test data."""
-        self.db = GrafeoDB()
+        self.db = ObrainDB()
         self.a = self.db.create_node(["Node"], {"value": 1})
         self.b = self.db.create_node(["Node"], {"value": 2})
         self.c = self.db.create_node(["Node"], {"value": 3})

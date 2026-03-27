@@ -1,3 +1,3 @@
-module github.com/GrafeoDB/grafeo/crates/bindings/go
+module github.com/this-rs/obrain/crates/bindings/go
 
 go 1.22

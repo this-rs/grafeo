@@ -1,11 +1,11 @@
 ---
 title: Gremlin Query Language
-description: Learn the Gremlin traversal language for Grafeo.
+description: Learn the Gremlin traversal language for Obrain.
 ---
 
 # Gremlin Query Language
 
-Gremlin is a graph traversal language developed by Apache TinkerPop. Grafeo supports Gremlin as an optional query language via feature flag.
+Gremlin is a graph traversal language developed by Apache TinkerPop. Obrain supports Gremlin as an optional query language via feature flag.
 
 ## Overview
 
@@ -18,13 +18,13 @@ Gremlin support is optional and requires a feature flag:
 === "Rust"
 
     ```bash
-    cargo add grafeo-engine --features gremlin
+    cargo add obrain-engine --features gremlin
     ```
 
 === "Python"
 
     ```bash
-    uv add grafeo[gremlin]
+    uv add obrain[gremlin]
     ```
 
 ## Quick Reference
@@ -96,9 +96,9 @@ g.V().has('name', 'Alix').out('KNOWS').count()
 ## Python Usage
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Create some data
 db.execute("INSERT (:Person {name: 'Alix', age: 30})")
@@ -120,9 +120,9 @@ friends = db.execute_gremlin("g.V().has('name', 'Alix').out('KNOWS').values('nam
 ## Rust Usage
 
 ```rust
-use grafeo_engine::GrafeoDB;
+use obrain_engine::ObrainDB;
 
-let db = GrafeoDB::new_in_memory();
+let db = ObrainDB::new_in_memory();
 
 // Create data with GQL
 db.execute("INSERT (:Person {name: 'Alix'})").unwrap();

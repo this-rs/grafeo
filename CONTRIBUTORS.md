@@ -1,4 +1,4 @@
-# Join the GrafeoDB Community
+# Join the ObrainDB Community
 
 We're building a modern graph database ecosystem in Rust, and we'd love your help.
 
@@ -16,14 +16,14 @@ We're building a modern graph database ecosystem in Rust, and we'd love your hel
 
 | Area | Skills | Projects |
 |------|--------|----------|
-| **Core Database** | Rust, database internals | [grafeo](https://github.com/GrafeoDB/grafeo) |
+| **Core Database** | Rust, database internals | [obrain](https://github.com/this-rs/obrain) |
 | **Query Languages** | Parsing, compilers | GQL, Cypher, SPARQL, Gremlin, GraphQL support |
 | **Graph Algorithms** | Algorithms, math | PageRank, community detection, centrality |
-| **Python Bindings** | Rust + Python, PyO3 | [grafeo](https://github.com/GrafeoDB/grafeo) |
-| **Browser Runtime** | TypeScript, WebAssembly | [grafeo-web](https://github.com/GrafeoDB/grafeo-web) |
-| **Visualization** | Three.js, Sigma.js | [anywidget-graph](https://github.com/GrafeoDB/anywidget-graph), [anywidget-vector](https://github.com/GrafeoDB/anywidget-vector) |
-| **Server** | Rust, Axum, REST APIs | [grafeo-server](https://github.com/GrafeoDB/grafeo-server) |
-| **Benchmarking** | Python, data analysis | [graph-bench](https://github.com/GrafeoDB/graph-bench) |
+| **Python Bindings** | Rust + Python, PyO3 | [obrain](https://github.com/this-rs/obrain) |
+| **Browser Runtime** | TypeScript, WebAssembly | [obrain-web](https://github.com/this-rs/obrain-web) |
+| **Visualization** | Three.js, Sigma.js | [anywidget-graph](https://github.com/this-rs/anywidget-graph), [anywidget-vector](https://github.com/this-rs/anywidget-vector) |
+| **Server** | Rust, Axum, REST APIs | [obrain-server](https://github.com/this-rs/obrain-server) |
+| **Benchmarking** | Python, data analysis | [graph-bench](https://github.com/this-rs/graph-bench) |
 
 ### Non-Code Contributions
 
@@ -85,9 +85,9 @@ We aim to respond within a few days. Be patient with us, and we'll be patient wi
 
 ## Contributors
 
-Thank you to everyone who has contributed to Grafeo!
+Thank you to everyone who has contributed to Obrain!
 
-- **CorvusYe** ([@CorvusYe](https://github.com/CorvusYe)): Dart bindings ([#138](https://github.com/GrafeoDB/grafeo/pull/138)), single-file `.grafeo` format feature request ([#139](https://github.com/GrafeoDB/grafeo/issues/139))
+- **CorvusYe** ([@CorvusYe](https://github.com/CorvusYe)): Dart bindings ([#138](https://github.com/this-rs/obrain/pull/138)), single-file `.obrain` format feature request ([#139](https://github.com/this-rs/obrain/issues/139))
 
 ## Recognition
 

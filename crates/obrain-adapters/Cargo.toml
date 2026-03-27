@@ -1,0 +1,82 @@
+[package]
+name = "obrain-adapters"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Storage, query language, and plugin adapters for Obrain"
+
+[dependencies]
+obrain-common.workspace = true
+obrain-core.workspace = true
+
+# String types
+arcstr.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# Data structures
+smallvec.workspace = true
+hashbrown.workspace = true
+
+# Memory & I/O (optional - used by WAL)
+memmap2 = { workspace = true, optional = true }
+bytes.workspace = true
+byteorder.workspace = true
+
+# Checksums (optional - used by WAL)
+crc32fast = { workspace = true, optional = true }
+
+# File locking (optional - used by .obrain single-file format)
+fs2 = { workspace = true, optional = true }
+
+# Serialization
+serde.workspace = true
+bincode.workspace = true
+
+# Concurrency
+parking_lot.workspace = true
+crossbeam = { workspace = true, optional = true }
+rayon = { workspace = true, optional = true }
+
+# Async (optional - used by WAL async log)
+tokio = { workspace = true, optional = true }
+
+# Tracing
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+serde_json = "1"
+criterion.workspace = true
+
+[features]
+default = ["gql", "wal", "parallel"]
+gql = []                      # GQL parser (ISO/IEC 39075:2024)
+cypher = []                   # Cypher parser (openCypher 9.0)
+sparql = []                   # SPARQL parser (W3C SPARQL 1.1)
+gremlin = []                  # Gremlin parser (Apache TinkerPop)
+graphql = []                  # GraphQL parser (spec-compliant)
+sql-pgq = ["gql"]             # SQL/PGQ parser (SQL:2023 GRAPH_TABLE)
+rdf = ["obrain-core/rdf"]    # RDF graph model support
+wal = ["memmap2", "crc32fast", "tokio", "crossbeam"]  # Write-ahead log storage (requires filesystem)
+obrain-file = ["wal", "fs2"]  # Single-file .obrain format with sidecar WAL
+parallel = ["rayon", "obrain-core/parallel"]  # Parallel algorithms (rayon)
+algos = []  # Graph algorithm plugin (SSSP, PageRank, centrality, community detection, etc.)
+# Convenience groups
+languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]  # All query language parsers
+full = ["languages", "rdf", "wal", "obrain-file", "parallel", "algos"]
+
+# Testing utilities (zero overhead when disabled)
+testing-crash-injection = ["obrain-core/testing-crash-injection"]  # Crash injection for recovery testing
+
+[[bench]]
+name = "gds_bench"
+harness = false
+required-features = ["algos", "parallel"]
+
+[lints]
+workspace = true

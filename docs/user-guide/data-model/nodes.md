@@ -1,6 +1,6 @@
 ---
 title: Nodes and Labels
-description: Working with nodes and labels in Grafeo.
+description: Working with nodes and labels in Obrain.
 tags:
   - data-model
   - nodes

@@ -1,6 +1,6 @@
 ---
 title: Troubleshooting
-description: Common issues and solutions when using Grafeo.
+description: Common issues and solutions when using Obrain.
 tags:
   - troubleshooting
   - faq
@@ -9,17 +9,17 @@ tags:
 
 # Troubleshooting
 
-Solutions to common issues encountered when using Grafeo.
+Solutions to common issues encountered when using Obrain.
 
 ## Installation Issues
 
 ### Python wheel not found for my platform
 
-**Symptoms:** `uv add grafeo` or `pip install grafeo` fails with "no matching distribution found."
+**Symptoms:** `uv add obrain` or `pip install obrain` fails with "no matching distribution found."
 
 **Solutions:**
 
-1. **Check Python version** - Grafeo requires Python 3.12 or later:
+1. **Check Python version** - Obrain requires Python 3.12 or later:
    ```bash
    python --version  # Should be 3.12+
    ```
@@ -27,25 +27,25 @@ Solutions to common issues encountered when using Grafeo.
 2. **Build from source** - If no pre-built wheel exists for the platform:
    ```bash
    uv add maturin  # or: pip install maturin
-   git clone https://github.com/GrafeoDB/grafeo
-   cd grafeo/crates/bindings/python
+   git clone https://github.com/this-rs/obrain
+   cd obrain/crates/bindings/python
    maturin develop --release
    ```
 
 3. **Use conda** - Sometimes conda environments resolve better:
    ```bash
-   conda create -n grafeo python=3.12
-   conda activate grafeo
-   uv add grafeo  # or: pip install grafeo
+   conda create -n obrain python=3.12
+   conda activate obrain
+   uv add obrain  # or: pip install obrain
    ```
 
-### Import error: "module 'grafeo' has no attribute..."
+### Import error: "module 'obrain' has no attribute..."
 
 **Symptoms:** Import succeeds but classes are missing.
 
 **Solution:** Ensure the latest version is installed:
 ```bash
-uv add --upgrade grafeo  # or: pip install --upgrade grafeo
+uv add --upgrade obrain  # or: pip install --upgrade obrain
 ```
 
 ---
@@ -168,10 +168,10 @@ uv add --upgrade grafeo  # or: pip install --upgrade grafeo
    db.execute("MATCH (n) RETURN n LIMIT 100")
    ```
 
-4. **Check SIMD support** - Grafeo uses SIMD for vector operations:
+4. **Check SIMD support** - Obrain uses SIMD for vector operations:
    ```python
-   import grafeo
-   print(grafeo.simd_support())  # Should show "avx2", "sse", "neon" or "scalar"
+   import obrain
+   print(obrain.simd_support())  # Should show "avx2", "sse", "neon" or "scalar"
    ```
 
 ### Out of memory errors
@@ -199,10 +199,10 @@ uv add --upgrade grafeo  # or: pip install --upgrade grafeo
 2. **Use persistent storage** to enable spill-to-disk:
    ```python
    # In-memory (limited by RAM)
-   db = GrafeoDB()
+   db = ObrainDB()
 
    # Persistent (can spill to disk)
-   db = GrafeoDB("./mydb")
+   db = ObrainDB("./mydb")
    ```
 
 ---
@@ -275,7 +275,7 @@ def execute_with_retry(db, query, max_retries=3):
 
 2. **Use context manager**:
    ```python
-   with GrafeoDB("./mydb") as db:
+   with ObrainDB("./mydb") as db:
        # Database is automatically closed
        pass
    ```
@@ -319,10 +319,10 @@ Or configure automatic checkpointing via `wal_checkpoint()` intervals.
 
 If an issue persists:
 
-1. **Check the documentation** at [grafeo.dev](https://grafeo.dev)
-2. **Search existing issues** at [GitHub Issues](https://github.com/GrafeoDB/grafeo/issues)
+1. **Check the documentation** at [obrain.dev](https://obrain.dev)
+2. **Search existing issues** at [GitHub Issues](https://github.com/this-rs/obrain/issues)
 3. **Open a new issue** with:
-   - Grafeo version (`uv pip show grafeo` or `pip show grafeo`)
+   - Obrain version (`uv pip show obrain` or `pip show obrain`)
    - Python version (`python --version`)
    - Operating system
    - Minimal code to reproduce
@@ -332,9 +332,9 @@ If an issue persists:
 
 ## FAQ
 
-### Can I use Grafeo in production?
+### Can I use Obrain in production?
 
-Grafeo is currently at version 0.5.x (beta) and approaching production readiness. It's suitable for:
+Obrain is currently at version 0.5.x (beta) and approaching production readiness. It's suitable for:
 
 - Embedded analytics applications
 - Data science workflows
@@ -346,14 +346,14 @@ Grafeo is currently at version 0.5.x (beta) and approaching production readiness
 
 See the [Migration Guide](migration.md) for step-by-step instructions.
 
-### Does Grafeo support clustering?
+### Does Obrain support clustering?
 
-Not yet. Grafeo is currently single-node only. Distributed deployment is planned for future versions.
+Not yet. Obrain is currently single-node only. Distributed deployment is planned for future versions.
 
 ### What's the maximum graph size?
 
-Grafeo can handle graphs with billions of edges on a single machine, limited primarily by available RAM. With persistent storage, it can spill to disk for larger-than-memory workloads.
+Obrain can handle graphs with billions of edges on a single machine, limited primarily by available RAM. With persistent storage, it can spill to disk for larger-than-memory workloads.
 
-### Is Grafeo thread-safe?
+### Is Obrain thread-safe?
 
 Yes. The Python API uses internal locking to ensure thread safety. Multiple threads can query the same database concurrently.

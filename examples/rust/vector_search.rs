@@ -1,11 +1,11 @@
 //! Vector similarity search with HNSW indexes.
 //!
-//! Run with: `cargo run -p grafeo-examples --bin vector_search`
+//! Run with: `cargo run -p obrain-examples --bin vector_search`
 
-use grafeo::{GrafeoDB, NodeId, Value};
+use obrain::{NodeId, ObrainDB, Value};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     // ── Create documents with embeddings ──────────────────────────
     // In a real application, embeddings come from a model (e.g., OpenAI,
@@ -83,7 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Look up a document's title by its node ID.
-fn get_title(db: &GrafeoDB, node_id: NodeId) -> String {
+fn get_title(db: &ObrainDB, node_id: NodeId) -> String {
     db.get_node(node_id)
         .and_then(|n| {
             n.get_property("title")

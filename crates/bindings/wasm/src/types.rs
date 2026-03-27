@@ -1,10 +1,10 @@
 //! Rust-to-JavaScript value conversions for WASM bindings.
 
-use grafeo_common::types::Value;
 use js_sys::{Array, Float32Array, Object, Reflect, Uint8Array};
+use obrain_common::types::Value;
 use wasm_bindgen::prelude::*;
 
-/// Converts a Grafeo [`Value`] to a JavaScript value.
+/// Converts a Obrain [`Value`] to a JavaScript value.
 pub fn value_to_js(value: &Value) -> JsValue {
     match value {
         Value::Null => JsValue::NULL,

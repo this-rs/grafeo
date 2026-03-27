@@ -135,7 +135,7 @@ Inline fragments can also be used without a type condition for grouping with dir
 
 ## Directives
 
-Grafeo supports standard GraphQL directives:
+Obrain supports standard GraphQL directives:
 
 ### @include
 
@@ -166,9 +166,9 @@ query GetPerson($hideEmail: Boolean!) {
 ## Python Example
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Create data
 db.execute("INSERT (:Person {name: 'Alix', age: 30, city: 'Utrecht'})")

@@ -1,5 +1,5 @@
 """
-Performance benchmark for Grafeo optimization phases.
+Performance benchmark for Obrain optimization phases.
 
 This benchmark tests key operations:
 1. Node/Edge insertions
@@ -16,7 +16,7 @@ import statistics
 import time
 from contextlib import contextmanager
 
-import grafeo
+import obrain
 
 
 @contextmanager
@@ -46,7 +46,7 @@ def run_benchmark(node_count=100_000, edge_count=500_000, warmup=True):
     print(f"Nodes: {node_count:,}  Edges: {edge_count:,}")
     print("=" * 60)
 
-    db = grafeo.GrafeoDB()
+    db = obrain.ObrainDB()
 
     # ============================================================
     # 1. INSERTION BENCHMARK
@@ -260,7 +260,7 @@ def run_factorized_benchmark(node_count=1_000, avg_degree=15, warmup=True):
     print(f"Nodes: {node_count:,}  Avg Degree: {avg_degree}")
     print("=" * 60)
 
-    db = grafeo.GrafeoDB()
+    db = obrain.ObrainDB()
 
     # Create nodes
     edge_count = node_count * avg_degree

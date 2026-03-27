@@ -13,9 +13,9 @@ Compute statistics that describe the overall graph structure.
 ## Basic Metrics
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Basic counts via database methods
 print(f"Nodes: {db.node_count()}")

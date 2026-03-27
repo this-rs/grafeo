@@ -16,10 +16,10 @@ Algorithms for predicting missing or future edges.
 ## Using the NetworkX Adapter
 
 ```python
-import grafeo
+import obrain
 import networkx as nx
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Convert to NetworkX graph
 nx_adapter = db.as_networkx(directed=False)

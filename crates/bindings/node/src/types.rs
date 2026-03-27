@@ -1,6 +1,6 @@
-//! Converts between JavaScript and Grafeo value types.
+//! Converts between JavaScript and Obrain value types.
 //!
-//! | JavaScript type  | Grafeo type   | Notes                          |
+//! | JavaScript type  | Obrain type   | Notes                          |
 //! | ---------------- | ------------- | ------------------------------ |
 //! | `null/undefined` | `Null`        |                                |
 //! | `boolean`        | `Bool`        |                                |
@@ -20,9 +20,9 @@ use std::sync::Arc;
 use napi::bindgen_prelude::*;
 use napi::{JsDate, JsString, JsValue, ValueType, sys};
 
-use grafeo_common::types::{PropertyKey, Timestamp, Value};
+use obrain_common::types::{PropertyKey, Timestamp, Value};
 
-/// Converts a JavaScript value to a Grafeo Value.
+/// Converts a JavaScript value to a Obrain Value.
 pub fn js_to_value(env: &Env, val: Unknown<'_>) -> Result<Value> {
     #![allow(clippy::trivially_copy_pass_by_ref)] // Env refs are conventional in napi
     let value_type = val.get_type()?;
@@ -72,7 +72,7 @@ pub fn js_to_value(env: &Env, val: Unknown<'_>) -> Result<Value> {
     }
 }
 
-/// Converts a JavaScript object (Array, Buffer, Date, or plain object) to a Grafeo Value.
+/// Converts a JavaScript object (Array, Buffer, Date, or plain object) to a Obrain Value.
 fn js_object_to_value(env: &Env, obj: &Object<'_>) -> Result<Value> {
     if obj.is_array()? {
         let len = obj.get_array_length()?;
@@ -138,7 +138,7 @@ pub(crate) fn check_napi(status: sys::napi_status) -> Result<()> {
     }
 }
 
-/// Converts a Grafeo Value to a raw napi value (no lifetime constraints).
+/// Converts a Obrain Value to a raw napi value (no lifetime constraints).
 ///
 /// This uses the raw napi C API to avoid lifetime issues when returning
 /// JS values from `#[napi]` methods where `env` is taken by value.
@@ -276,7 +276,7 @@ pub fn value_to_napi(env: sys::napi_env, value: &Value) -> Result<sys::napi_valu
     }
 }
 
-/// Converts a Grafeo Value to a JavaScript Unknown value.
+/// Converts a Obrain Value to a JavaScript Unknown value.
 ///
 /// Uses `value_to_napi` internally and wraps the result as `Unknown`.
 /// The lifetime is unconstrained (from `from_raw_unchecked`), so this is

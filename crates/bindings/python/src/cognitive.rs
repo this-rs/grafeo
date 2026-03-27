@@ -1,4 +1,4 @@
-//! Expose Grafeo's cognitive features to Python.
+//! Expose Obrain's cognitive features to Python.
 //!
 //! Access via `db.cognitive` — provides energy tracking, Hebbian synapses,
 //! scar operations, and fabric scoring. Also exposes GDS algorithms
@@ -11,12 +11,12 @@ use parking_lot::RwLock;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use grafeo_common::types::NodeId;
-use grafeo_core::graph::Direction;
-use grafeo_engine::database::GrafeoDB;
+use obrain_common::types::NodeId;
+use obrain_core::graph::Direction;
+use obrain_engine::database::ObrainDB;
 
 #[allow(unused_imports)]
-use crate::error::PyGrafeoError;
+use crate::error::PyObrainError;
 
 // ---------------------------------------------------------------------------
 // CognitiveEngine — unified access to energy, synapse, scar, fabric
@@ -34,24 +34,24 @@ use crate::error::PyGrafeoError;
 #[pyclass(name = "CognitiveEngine")]
 pub struct PyCognitiveEngine {
     #[allow(dead_code)]
-    db: Arc<RwLock<GrafeoDB>>,
-    energy_store: Arc<grafeo_cognitive::EnergyStore>,
-    synapse_store: Arc<grafeo_cognitive::SynapseStore>,
-    scar_store: Arc<grafeo_cognitive::scar::ScarStore>,
-    fabric_store: Option<Arc<grafeo_cognitive::fabric::FabricStore>>,
+    db: Arc<RwLock<ObrainDB>>,
+    energy_store: Arc<obrain_cognitive::EnergyStore>,
+    synapse_store: Arc<obrain_cognitive::SynapseStore>,
+    scar_store: Arc<obrain_cognitive::scar::ScarStore>,
+    fabric_store: Option<Arc<obrain_cognitive::fabric::FabricStore>>,
 }
 
 impl PyCognitiveEngine {
     /// Creates a new CognitiveEngine wrapping standalone cognitive stores.
-    pub fn new(db: Arc<RwLock<GrafeoDB>>) -> Self {
-        let energy_store = Arc::new(grafeo_cognitive::EnergyStore::new(
-            grafeo_cognitive::EnergyConfig::default(),
+    pub fn new(db: Arc<RwLock<ObrainDB>>) -> Self {
+        let energy_store = Arc::new(obrain_cognitive::EnergyStore::new(
+            obrain_cognitive::EnergyConfig::default(),
         ));
-        let synapse_store = Arc::new(grafeo_cognitive::SynapseStore::new(
-            grafeo_cognitive::SynapseConfig::default(),
+        let synapse_store = Arc::new(obrain_cognitive::SynapseStore::new(
+            obrain_cognitive::SynapseConfig::default(),
         ));
-        let scar_store = Arc::new(grafeo_cognitive::scar::ScarStore::new(
-            grafeo_cognitive::scar::ScarConfig::default(),
+        let scar_store = Arc::new(obrain_cognitive::scar::ScarStore::new(
+            obrain_cognitive::scar::ScarConfig::default(),
         ));
 
         Self {
@@ -64,7 +64,7 @@ impl PyCognitiveEngine {
     }
 
     /// Returns a reference to the energy store (for CognitiveSearch).
-    pub fn energy_store(&self) -> &Arc<grafeo_cognitive::EnergyStore> {
+    pub fn energy_store(&self) -> &Arc<obrain_cognitive::EnergyStore> {
         &self.energy_store
     }
 }
@@ -215,10 +215,10 @@ impl PyCognitiveEngine {
     #[pyo3(signature = (node_id, intensity=1.0, reason="error"))]
     fn scar_add(&self, node_id: u64, intensity: f64, reason: &str) -> u64 {
         let scar_reason = match reason {
-            "rollback" => grafeo_cognitive::scar::ScarReason::Rollback,
-            "invalidation" => grafeo_cognitive::scar::ScarReason::Invalidation,
-            "error" => grafeo_cognitive::scar::ScarReason::Error(String::new()),
-            other => grafeo_cognitive::scar::ScarReason::Custom(other.to_string()),
+            "rollback" => obrain_cognitive::scar::ScarReason::Rollback,
+            "invalidation" => obrain_cognitive::scar::ScarReason::Invalidation,
+            "error" => obrain_cognitive::scar::ScarReason::Error(String::new()),
+            other => obrain_cognitive::scar::ScarReason::Custom(other.to_string()),
         };
         let id = self
             .scar_store
@@ -235,7 +235,7 @@ impl PyCognitiveEngine {
     ///     True if the scar was found and healed
     fn scar_heal(&self, scar_id: u64) -> bool {
         self.scar_store
-            .heal(grafeo_cognitive::scar::ScarId(scar_id))
+            .heal(obrain_cognitive::scar::ScarId(scar_id))
     }
 
     /// Get active scars for a node.
@@ -295,7 +295,7 @@ impl PyCognitiveEngine {
         let score = if let Some(ref fs) = self.fabric_store {
             fs.get_fabric_score(NodeId::new(node_id))
         } else {
-            grafeo_cognitive::fabric::FabricScore::default()
+            obrain_cognitive::fabric::FabricScore::default()
         };
         let dict = PyDict::new(py);
         dict.set_item("mutation_frequency", score.mutation_frequency)?;
@@ -329,11 +329,11 @@ impl PyCognitiveEngine {
 ///     communities = gds.louvain()
 #[pyclass(name = "GDS")]
 pub struct PyGDS {
-    db: Arc<RwLock<GrafeoDB>>,
+    db: Arc<RwLock<ObrainDB>>,
 }
 
 impl PyGDS {
-    pub fn new(db: Arc<RwLock<GrafeoDB>>) -> Self {
+    pub fn new(db: Arc<RwLock<ObrainDB>>) -> Self {
         Self { db }
     }
 }
@@ -358,7 +358,7 @@ impl PyGDS {
     ) -> PyResult<HashMap<u64, f64>> {
         let db = self.db.read();
         let store = db.store();
-        let result = grafeo_adapters::plugins::algorithms::pagerank(
+        let result = obrain_adapters::plugins::algorithms::pagerank(
             &**store,
             damping,
             max_iterations,
@@ -379,7 +379,7 @@ impl PyGDS {
     fn louvain(&self, resolution: f64, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let db = self.db.read();
         let store = db.store();
-        let result = grafeo_adapters::plugins::algorithms::louvain(&**store, resolution);
+        let result = obrain_adapters::plugins::algorithms::louvain(&**store, resolution);
 
         let communities: HashMap<u64, u64> = result
             .communities
@@ -408,7 +408,7 @@ impl PyGDS {
     fn leiden(&self, resolution: f64, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let db = self.db.read();
         let store = db.store();
-        let result = grafeo_adapters::plugins::algorithms::louvain(&**store, resolution);
+        let result = obrain_adapters::plugins::algorithms::louvain(&**store, resolution);
 
         let communities: HashMap<u64, u64> = result
             .communities
@@ -538,7 +538,7 @@ impl PyGDS {
         let db = self.db.read();
         let store = db.store();
         let result =
-            grafeo_adapters::plugins::algorithms::betweenness_centrality(&**store, normalized);
+            obrain_adapters::plugins::algorithms::betweenness_centrality(&**store, normalized);
         Ok(result.into_iter().map(|(n, s)| (n.0, s)).collect())
     }
 
@@ -560,14 +560,14 @@ impl PyGDS {
 ///     results = db.cognitive_search.search(weights={"energy": 0.5, "pagerank": 0.5})
 #[pyclass(name = "CognitiveSearch")]
 pub struct PyCognitiveSearch {
-    db: Arc<RwLock<GrafeoDB>>,
-    energy_store: Arc<grafeo_cognitive::EnergyStore>,
+    db: Arc<RwLock<ObrainDB>>,
+    energy_store: Arc<obrain_cognitive::EnergyStore>,
 }
 
 impl PyCognitiveSearch {
     pub fn new(
-        db: Arc<RwLock<GrafeoDB>>,
-        energy_store: Arc<grafeo_cognitive::EnergyStore>,
+        db: Arc<RwLock<ObrainDB>>,
+        energy_store: Arc<obrain_cognitive::EnergyStore>,
     ) -> Self {
         Self { db, energy_store }
     }
@@ -618,7 +618,7 @@ impl PyCognitiveSearch {
 
         // Compute PageRank if weight > 0
         let pagerank_scores: HashMap<u64, f64> = if w_pagerank > 0.0 {
-            grafeo_adapters::plugins::algorithms::pagerank(&**store, 0.85, 100, 1e-6)
+            obrain_adapters::plugins::algorithms::pagerank(&**store, 0.85, 100, 1e-6)
                 .into_iter()
                 .map(|(n, s)| (n.0, s))
                 .collect()

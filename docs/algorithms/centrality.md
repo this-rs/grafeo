@@ -15,9 +15,9 @@ Centrality algorithms identify the most important nodes in a graph.
 Measures node importance based on incoming links.
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 algs = db.algorithms()
 
 scores = algs.pagerank()

@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a bug in Grafeo
+description: Report a bug in Obrain
 title: "[Bug]: "
 labels: ["bug"]
 body:
@@ -20,7 +20,7 @@ body:
       description: Minimal code or steps to reproduce the issue.
       placeholder: |
         ```rust
-        let db = GrafeoDB::open("test")?;
+        let db = ObrainDB::open("test")?;
         // ...
         ```
     validations:
@@ -30,7 +30,7 @@ body:
     id: version
     attributes:
       label: Version
-      description: Grafeo version and language (Rust/Python/Node.js)
+      description: Obrain version and language (Rust/Python/Node.js)
       placeholder: "0.4.0, Python"
     validations:
       required: false

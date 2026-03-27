@@ -1,4 +1,4 @@
-//! Use Grafeo from Python with native Rust performance.
+//! Use Obrain from Python with native Rust performance.
 //!
 //! You get full access to the graph database through a Pythonic API - same
 //! query speed, same durability, with the convenience of Python's ecosystem.
@@ -6,10 +6,10 @@
 //! ## Quick Start
 //!
 //! ```python
-//! from grafeo import GrafeoDB
+//! from obrain import ObrainDB
 //!
 //! # Create an in-memory database (or pass a path for persistence)
-//! db = GrafeoDB()
+//! db = ObrainDB()
 //!
 //! # Create some people
 //! db.execute("INSERT (:Person {name: 'Alix', role: 'Engineer'})")
@@ -53,7 +53,7 @@ mod types;
 use bridges::{PyAlgorithms, PyNetworkXAdapter, PySolvORAdapter};
 #[cfg(feature = "cognitive")]
 use cognitive::{PyCognitiveEngine, PyCognitiveSearch, PyGDS};
-use database::{AsyncQueryResult, AsyncQueryResultIter, PyGrafeoDB};
+use database::{AsyncQueryResult, AsyncQueryResultIter, PyObrainDB};
 use graph::{PyEdge, PyNode};
 use query::PyQueryResult;
 use types::PyValue;
@@ -65,17 +65,17 @@ use types::PyValue;
 /// Returns one of: "avx2", "sse", "neon", or "scalar"
 ///
 /// Example:
-///     import grafeo
-///     print(f"SIMD support: {grafeo.simd_support()}")  # e.g., "avx2"
+///     import obrain
+///     print(f"SIMD support: {obrain.simd_support()}")  # e.g., "avx2"
 #[pyfunction]
 fn simd_support() -> &'static str {
-    grafeo_core::index::vector::simd_support()
+    obrain_core::index::vector::simd_support()
 }
 
-/// Grafeo Python module.
+/// Obrain Python module.
 #[pymodule]
-fn grafeo(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyGrafeoDB>()?;
+fn obrain(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyObrainDB>()?;
     m.add_class::<PyNode>()?;
     m.add_class::<PyEdge>()?;
     m.add_class::<PyQueryResult>()?;

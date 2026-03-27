@@ -36,6 +36,6 @@ migrate_working_dir/
 build/
 
 # ignore libs
-grafeo_*.dll
-libgrafeo_*.so
-libgrafeo_*.dylib
+obrain_*.dll
+libobrain_*.so
+libobrain_*.dylib

@@ -17,8 +17,8 @@ tags:
 ## Clone Repository
 
 ```bash
-git clone https://github.com/GrafeoDB/grafeo.git
-cd grafeo
+git clone https://github.com/this-rs/obrain.git
+cd obrain
 ```
 
 ## Build

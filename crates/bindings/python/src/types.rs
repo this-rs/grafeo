@@ -1,6 +1,6 @@
-//! Converts between Python and Grafeo value types automatically.
+//! Converts between Python and Obrain value types automatically.
 //!
-//! | Python type | Grafeo type | Notes |
+//! | Python type | Obrain type | Notes |
 //! | ----------- | ----------- | ----- |
 //! | `None` | `Null` | |
 //! | `bool` | `Bool` | |
@@ -19,11 +19,11 @@ use std::sync::Arc;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDateTime, PyDict, PyFloat, PyList};
 
-use grafeo_common::types::{PropertyKey, Timestamp, Value};
+use obrain_common::types::{PropertyKey, Timestamp, Value};
 
-use crate::error::{PyGrafeoError, PyGrafeoResult};
+use crate::error::{PyObrainError, PyObrainResult};
 
-/// Wraps a Grafeo value for explicit type handling.
+/// Wraps a Obrain value for explicit type handling.
 ///
 /// Usually you don't need this - Python types convert automatically. Use this
 /// when you need explicit control like `Value.null()` or type checking.
@@ -79,34 +79,34 @@ impl PyValue {
     }
 
     /// Get boolean value.
-    fn as_bool(&self) -> PyGrafeoResult<bool> {
+    fn as_bool(&self) -> PyObrainResult<bool> {
         match &self.inner {
             Value::Bool(v) => Ok(*v),
-            _ => Err(PyGrafeoError::Type("Value is not a boolean".into())),
+            _ => Err(PyObrainError::Type("Value is not a boolean".into())),
         }
     }
 
     /// Get integer value.
-    fn as_int(&self) -> PyGrafeoResult<i64> {
+    fn as_int(&self) -> PyObrainResult<i64> {
         match &self.inner {
             Value::Int64(v) => Ok(*v),
-            _ => Err(PyGrafeoError::Type("Value is not an integer".into())),
+            _ => Err(PyObrainError::Type("Value is not an integer".into())),
         }
     }
 
     /// Get float value.
-    fn as_float(&self) -> PyGrafeoResult<f64> {
+    fn as_float(&self) -> PyObrainResult<f64> {
         match &self.inner {
             Value::Float64(v) => Ok(*v),
-            _ => Err(PyGrafeoError::Type("Value is not a float".into())),
+            _ => Err(PyObrainError::Type("Value is not a float".into())),
         }
     }
 
     /// Get string value.
-    fn as_str(&self) -> PyGrafeoResult<String> {
+    fn as_str(&self) -> PyObrainResult<String> {
         match &self.inner {
             Value::String(v) => Ok(v.to_string()),
-            _ => Err(PyGrafeoError::Type("Value is not a string".into())),
+            _ => Err(PyObrainError::Type("Value is not a string".into())),
         }
     }
 
@@ -120,8 +120,8 @@ impl PyValue {
 }
 
 impl PyValue {
-    /// Converts a Python object to a Grafeo Value.
-    pub fn from_py(obj: &Bound<'_, PyAny>) -> PyGrafeoResult<Value> {
+    /// Converts a Python object to a Obrain Value.
+    pub fn from_py(obj: &Bound<'_, PyAny>) -> PyObrainResult<Value> {
         if obj.is_none() {
             return Ok(Value::Null);
         }
@@ -165,12 +165,12 @@ impl PyValue {
             // SAFETY: We just checked it's a PyDict instance
             let dict: &Bound<'_, PyDict> = obj
                 .cast()
-                .map_err(|e| PyGrafeoError::Type(format!("Cannot cast to dict: {}", e)))?;
+                .map_err(|e| PyObrainError::Type(format!("Cannot cast to dict: {}", e)))?;
             let mut map = BTreeMap::new();
             for (key, value) in dict.iter() {
                 let key_str: String = key
                     .extract()
-                    .map_err(|e| PyGrafeoError::Type(format!("Dict key must be string: {}", e)))?;
+                    .map_err(|e| PyObrainError::Type(format!("Dict key must be string: {}", e)))?;
                 map.insert(PropertyKey::new(key_str), Self::from_py(&value)?);
             }
             return Ok(Value::Map(Arc::new(map)));
@@ -180,7 +180,7 @@ impl PyValue {
         if obj.is_instance_of::<PyBytes>() {
             let bytes: &Bound<'_, PyBytes> = obj
                 .cast()
-                .map_err(|e| PyGrafeoError::Type(format!("Cannot cast to bytes: {}", e)))?;
+                .map_err(|e| PyObrainError::Type(format!("Cannot cast to bytes: {}", e)))?;
             let byte_slice: &[u8] = bytes.as_bytes();
             return Ok(Value::Bytes(byte_slice.into()));
         }
@@ -192,7 +192,7 @@ impl PyValue {
                 .call_method0("timestamp")
                 .and_then(|ts| ts.extract())
                 .map_err(|e| {
-                    PyGrafeoError::Type(format!("Failed to get datetime timestamp: {}", e))
+                    PyObrainError::Type(format!("Failed to get datetime timestamp: {}", e))
                 })?;
             // Convert to microseconds
             let micros = (timestamp * 1_000_000.0) as i64;
@@ -203,13 +203,13 @@ impl PyValue {
             .get_type()
             .name()
             .map_or_else(|_| "<unknown>".to_string(), |s| s.to_string());
-        Err(PyGrafeoError::Type(format!(
+        Err(PyObrainError::Type(format!(
             "Unsupported Python type: {}",
             type_name
         )))
     }
 
-    /// Converts a Grafeo Value to a Python object.
+    /// Converts a Obrain Value to a Python object.
     ///
     /// # Panics
     ///
@@ -381,8 +381,8 @@ impl From<PyValue> for Value {
 ///
 /// Use this for explicit vector construction:
 /// ```python
-/// import grafeo
-/// vec = grafeo.vector([0.1, 0.2, 0.3])
+/// import obrain
+/// vec = obrain.vector([0.1, 0.2, 0.3])
 /// db.create_node(['Doc'], {'embedding': vec})
 /// ```
 ///

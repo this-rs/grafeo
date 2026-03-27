@@ -9,13 +9,13 @@ import pytest
 
 from tests.bases.bench_storage import BaseBenchStorage
 
-# Try to import grafeo
+# Try to import obrain
 try:
-    from grafeo import GrafeoDB
+    from obrain import ObrainDB
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
 
 class BenchGQLStorage(BaseBenchStorage):
@@ -26,11 +26,11 @@ class BenchGQLStorage(BaseBenchStorage):
     # =========================================================================
 
     def create_single_node(self, db, labels: list[str], props: dict):
-        """Create a single node using GrafeoDB API."""
+        """Create a single node using ObrainDB API."""
         return db.create_node(labels, props)
 
     def create_edge(self, db, source_id, target_id, rel_type: str, props: dict):
-        """Create a single edge using GrafeoDB API."""
+        """Create a single edge using ObrainDB API."""
         return db.create_edge(source_id, target_id, rel_type, props)
 
     # =========================================================================
@@ -180,11 +180,11 @@ def bench_suite():
 @pytest.fixture
 def db_factory():
     """Factory for creating database instances."""
-    if not GRAFEO_AVAILABLE:
-        pytest.skip("Grafeo not installed")
+    if not OBRAIN_AVAILABLE:
+        pytest.skip("Obrain not installed")
 
     def create_db():
-        return GrafeoDB()
+        return ObrainDB()
 
     return create_db
 
@@ -245,8 +245,8 @@ class TestGQLStorageBenchmarks:
 
 def run_benchmarks():
     """Run all benchmarks when called directly."""
-    if not GRAFEO_AVAILABLE:
-        print("ERROR: Grafeo not installed")
+    if not OBRAIN_AVAILABLE:
+        print("ERROR: Obrain not installed")
         return
 
     print("=" * 80)
@@ -254,7 +254,7 @@ def run_benchmarks():
     print("=" * 80)
 
     suite = BenchGQLStorage(warmup_iterations=2, iterations=5)
-    suite.run_all(GrafeoDB, node_count=500, avg_edges=5)
+    suite.run_all(ObrainDB, node_count=500, avg_edges=5)
 
 
 if __name__ == "__main__":

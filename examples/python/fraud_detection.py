@@ -1,13 +1,13 @@
 """
 Fraud Detection with Graph Analysis
 
-This example demonstrates graph-based fraud detection using Grafeo.
+This example demonstrates graph-based fraud detection using Obrain.
 We'll build a transaction network and identify suspicious patterns.
 
 Run with: marimo run fraud_detection.py
 
 Requirements:
-    pip install grafeo anywidget-graph marimo
+    pip install obrain anywidget-graph marimo
 """
 
 import marimo
@@ -43,10 +43,10 @@ def __():
     import random
     from datetime import datetime, timedelta
 
-    from grafeo import GrafeoDB
+    from obrain import ObrainDB
 
     # Create database
-    db = GrafeoDB()
+    db = ObrainDB()
 
     # Seed for reproducibility
     random.seed(42)
@@ -85,7 +85,7 @@ def __():
         )
 
     print(f"Created {len(accounts)} accounts with legitimate transactions")
-    return GrafeoDB, accounts, datetime, db, random, timedelta
+    return ObrainDB, accounts, datetime, db, random, timedelta
 
 
 @app.cell

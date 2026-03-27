@@ -9,23 +9,23 @@ from typing import Any
 
 import pytest
 
-# Check if grafeo is available
+# Check if obrain is available
 try:
-    import grafeo  # noqa: F401
+    import obrain  # noqa: F401
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
 
-def skip_if_unavailable(feature_name: str = "grafeo"):
+def skip_if_unavailable(feature_name: str = "obrain"):
     """Decorator to skip tests if a feature is not available.
 
     Args:
         feature_name: Name of the feature to check
 
     Usage:
-        @skip_if_unavailable("grafeo")
+        @skip_if_unavailable("obrain")
         def test_something(self, db):
             ...
     """
@@ -33,7 +33,7 @@ def skip_if_unavailable(feature_name: str = "grafeo"):
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs):
-            if feature_name == "grafeo" and not GRAFEO_AVAILABLE:
+            if feature_name == "obrain" and not OBRAIN_AVAILABLE:
                 pytest.skip(f"{feature_name} not installed")
             return func(*args, **kwargs)
 

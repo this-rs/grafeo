@@ -1,0 +1,58 @@
+//! # obrain-engine
+//!
+//! The engine behind Obrain. You'll find everything here for creating databases,
+//! running queries, and managing transactions.
+//!
+//! Most users should start with the main `obrain` crate, which re-exports the
+//! key types. If you're here directly, [`ObrainDB`] is your entry point.
+//!
+//! ## Modules
+//!
+//! - [`database`] - Create and manage databases with [`ObrainDB`]
+//! - [`session`] - Lightweight handles for concurrent access
+//! - [`config`] - Tune memory, threads, and durability settings
+//! - [`transaction`] - MVCC transaction management (snapshot isolation)
+//! - [`query`] - The full query pipeline: parsing, planning, optimization, execution
+//! - [`catalog`] - Schema metadata: labels, property keys, indexes
+//! - [`admin`] - Admin API types for inspection, backup, and maintenance
+
+#![deny(unsafe_code)]
+
+/// The version of the obrain-engine crate (from Cargo.toml).
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub mod admin;
+pub mod catalog;
+#[cfg(feature = "cdc")]
+pub mod cdc;
+#[cfg(feature = "cognitive")]
+pub mod cognitive_procedures;
+#[cfg(feature = "cognitive")]
+pub mod cognitive_udfs;
+pub mod config;
+pub mod database;
+#[cfg(feature = "embed")]
+pub mod embedding;
+pub mod memory_usage;
+#[cfg(feature = "metrics")]
+pub mod metrics;
+#[cfg(feature = "algos")]
+pub mod procedures;
+pub mod query;
+pub mod session;
+pub mod transaction;
+
+pub use admin::{
+    AdminService, CompactionStats, DatabaseInfo, DatabaseMode, DatabaseStats, DumpFormat,
+    DumpMetadata, IndexInfo, LpgSchemaInfo, RdfSchemaInfo, SchemaInfo, ValidationError,
+    ValidationResult, ValidationWarning, WalStatus,
+};
+pub use catalog::{Catalog, CatalogError, IndexDefinition, IndexType};
+pub use config::{AccessMode, Config, ConfigError, DurabilityMode, GraphModel};
+pub use database::ObrainDB;
+pub use memory_usage::MemoryUsage;
+#[cfg(feature = "metrics")]
+pub use metrics::{MetricsRegistry, MetricsSnapshot};
+pub use obrain_core::graph::{GraphStore, GraphStoreMut};
+pub use session::Session;
+pub use transaction::{CommitInfo, PreparedCommit};

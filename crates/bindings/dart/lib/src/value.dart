@@ -1,6 +1,6 @@
-/// Bidirectional conversion between Dart types and Grafeo's JSON wire format.
+/// Bidirectional conversion between Dart types and Obrain's JSON wire format.
 ///
-/// Follows the `grafeo-bindings-common` temporal markers:
+/// Follows the `obrain-bindings-common` temporal markers:
 /// `$timestamp_us`, `$date`, `$time`, `$duration`.
 library;
 
@@ -10,10 +10,10 @@ import 'dart:typed_data';
 import 'types.dart';
 
 // =============================================================================
-// Encoding (Dart -> JSON for grafeo-c parameters)
+// Encoding (Dart -> JSON for obrain-c parameters)
 // =============================================================================
 
-/// Encode a parameter map as a JSON string for grafeo_execute_with_params.
+/// Encode a parameter map as a JSON string for obrain_execute_with_params.
 String encodeParams(Map<String, dynamic> params) {
   final encoded = <String, dynamic>{};
   for (final entry in params.entries) {
@@ -22,7 +22,7 @@ String encodeParams(Map<String, dynamic> params) {
   return jsonEncode(encoded);
 }
 
-/// Encode a single value for the grafeo-c JSON wire format.
+/// Encode a single value for the obrain-c JSON wire format.
 String encodeValue(dynamic value) => jsonEncode(_encodeValue(value));
 
 dynamic _encodeValue(dynamic value) {
@@ -57,10 +57,10 @@ String _formatIsoDuration(Duration d) {
 }
 
 // =============================================================================
-// Decoding (JSON from grafeo-c results -> Dart types)
+// Decoding (JSON from obrain-c results -> Dart types)
 // =============================================================================
 
-/// Parse the JSON array string returned by `grafeo_result_json` into rows.
+/// Parse the JSON array string returned by `obrain_result_json` into rows.
 ///
 /// Each row is a `Map<String, dynamic>` where temporal markers are
 /// automatically converted back to Dart types.
@@ -84,7 +84,7 @@ List<String> extractColumns(List<Map<String, dynamic>> rows) {
 
 /// Extract Node and Edge entities from query result rows.
 ///
-/// Mirrors `grafeo-bindings-common::entity::extract_entities`.
+/// Mirrors `obrain-bindings-common::entity::extract_entities`.
 (List<Node>, List<Edge>) extractEntities(List<Map<String, dynamic>> rows) {
   final nodeIds = <int>{};
   final edgeIds = <int>{};
@@ -150,7 +150,7 @@ dynamic _decodeValue(dynamic value) {
 }
 
 dynamic _decodeMap(Map m) {
-  // Check for temporal markers from grafeo-bindings-common
+  // Check for temporal markers from obrain-bindings-common
   if (m.containsKey(r'$timestamp_us')) {
     final us = m[r'$timestamp_us'];
     if (us is int) {

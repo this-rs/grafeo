@@ -7,19 +7,19 @@ cosine_similarity/distance functions, and create_vector_index().
 import pytest
 
 try:
-    import grafeo
+    import obrain
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
-pytestmark = pytest.mark.skipif(not GRAFEO_AVAILABLE, reason="Grafeo Python bindings not installed")
+pytestmark = pytest.mark.skipif(not OBRAIN_AVAILABLE, reason="Obrain Python bindings not installed")
 
 
 @pytest.fixture
 def db():
     """Create a fresh in-memory database with vector test data."""
-    db = grafeo.GrafeoDB()
+    db = obrain.ObrainDB()
     return db
 
 
@@ -185,26 +185,26 @@ class TestCosineSimilarity:
 
 
 class TestVectorFunction:
-    """Test the grafeo.vector() Python function."""
+    """Test the obrain.vector() Python function."""
 
     def test_vector_function_exists(self):
-        """grafeo.vector() should be available."""
-        assert hasattr(grafeo, "vector")
+        """obrain.vector() should be available."""
+        assert hasattr(obrain, "vector")
 
     def test_vector_function_returns_list(self):
-        """grafeo.vector() should return a list of floats."""
-        vec = grafeo.vector([1.0, 2.0, 3.0])
+        """obrain.vector() should return a list of floats."""
+        vec = obrain.vector([1.0, 2.0, 3.0])
         assert isinstance(vec, list)
         assert len(vec) == 3
 
     def test_vector_function_empty_raises(self):
-        """grafeo.vector([]) should raise ValueError."""
+        """obrain.vector([]) should raise ValueError."""
         with pytest.raises(ValueError):
-            grafeo.vector([])
+            obrain.vector([])
 
     def test_vector_as_property(self, db):
-        """grafeo.vector() result should be usable as a property value."""
-        vec = grafeo.vector([0.5, 0.5, 0.0])
+        """obrain.vector() result should be usable as a property value."""
+        vec = obrain.vector([0.5, 0.5, 0.0])
         db.create_node(["Test"], {"data": vec})
         result = db.execute("MATCH (n:Test) RETURN n.data AS d")
         rows = list(result)

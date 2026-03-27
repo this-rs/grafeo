@@ -5,16 +5,16 @@ Verifies that SPARQL and GraphQL return consistent results on RDF data.
 
 import pytest
 
-# Try to import grafeo
+# Try to import obrain
 try:
-    from grafeo import GrafeoDB
+    from obrain import ObrainDB
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
 
-pytestmark = pytest.mark.skipif(not GRAFEO_AVAILABLE, reason="Grafeo Python bindings not installed")
+pytestmark = pytest.mark.skipif(not OBRAIN_AVAILABLE, reason="Obrain Python bindings not installed")
 
 
 class TestRDFCrossLanguageConsistency:
@@ -22,7 +22,7 @@ class TestRDFCrossLanguageConsistency:
 
     def setup_method(self):
         """Create identical RDF test data."""
-        self.db = GrafeoDB()
+        self.db = ObrainDB()
         self._setup_test_data()
 
     def _setup_test_data(self):
@@ -97,7 +97,7 @@ class TestRDFTripleModelConsistency:
 
     def setup_method(self):
         """Create test data."""
-        self.db = GrafeoDB()
+        self.db = ObrainDB()
         self._setup_test_data()
 
     def _setup_test_data(self):

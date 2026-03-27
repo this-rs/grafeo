@@ -1,6 +1,6 @@
 ---
 title: Vector Search
-description: Semantic similarity search with vector embeddings in Grafeo.
+description: Semantic similarity search with vector embeddings in Obrain.
 tags:
   - vector-search
   - embeddings
@@ -9,7 +9,7 @@ tags:
 
 # Vector Search
 
-Grafeo provides first-class support for vector similarity search, enabling semantic search, recommendation systems and AI-powered applications.
+Obrain provides first-class support for vector similarity search, enabling semantic search, recommendation systems and AI-powered applications.
 
 ## Overview
 
@@ -40,9 +40,9 @@ Vector search finds nodes based on the semantic similarity of their embeddings r
 ## Quick Example
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Create nodes with embeddings
 db.execute("""
@@ -96,7 +96,7 @@ results = db.hybrid_search(
 Generate embeddings in-process with ONNX Runtime (requires the `embed` feature):
 
 ```python
-from grafeo import load_embedding_model, EmbeddingModelConfig
+from obrain import load_embedding_model, EmbeddingModelConfig
 
 model = load_embedding_model(EmbeddingModelConfig.MiniLM_L6_v2)
 vectors = model.embed(["graph databases are fast", "hello world"])

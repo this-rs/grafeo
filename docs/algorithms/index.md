@@ -1,11 +1,11 @@
 ---
 title: Graph Algorithms
-description: Built-in graph algorithms in Grafeo.
+description: Built-in graph algorithms in Obrain.
 ---
 
 # Graph Algorithms
 
-Grafeo includes a library of built-in graph algorithms for common analysis tasks, accessible via the `db.algorithms()` API.
+Obrain includes a library of built-in graph algorithms for common analysis tasks, accessible via the `db.algorithms()` API.
 
 ## Algorithm Categories
 
@@ -78,9 +78,9 @@ Grafeo includes a library of built-in graph algorithms for common analysis tasks
 Algorithms are accessed through the `db.algorithms()` method:
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Get the algorithms interface
 algs = db.algorithms()
@@ -143,19 +143,19 @@ All 22 algorithms are available via `CALL` statements in any supported query lan
 
 ```sql
 -- Run PageRank with default parameters
-CALL grafeo.pagerank()
+CALL obrain.pagerank()
 
 -- Run PageRank with custom parameters
-CALL grafeo.pagerank({damping: 0.85, max_iterations: 20})
+CALL obrain.pagerank({damping: 0.85, max_iterations: 20})
 
 -- Select specific columns with YIELD
-CALL grafeo.pagerank() YIELD node_id, score
+CALL obrain.pagerank() YIELD node_id, score
 
 -- Alias output columns
-CALL grafeo.pagerank() YIELD node_id AS id, score AS rank
+CALL obrain.pagerank() YIELD node_id AS id, score AS rank
 
 -- List all available procedures
-CALL grafeo.procedures()
+CALL obrain.procedures()
 ```
 
 Works the same way across all three languages:
@@ -163,48 +163,48 @@ Works the same way across all three languages:
 === "GQL"
 
     ```python
-    result = db.execute("CALL grafeo.pagerank()")
+    result = db.execute("CALL obrain.pagerank()")
     ```
 
 === "Cypher"
 
     ```python
-    result = db.execute_cypher("CALL grafeo.pagerank()")
+    result = db.execute_cypher("CALL obrain.pagerank()")
     ```
 
 === "SQL/PGQ"
 
     ```python
-    result = db.execute_sql("CALL grafeo.pagerank()")
+    result = db.execute_sql("CALL obrain.pagerank()")
     ```
 
 ### Available Procedures
 
 | Procedure | Category | Output Columns |
 |-----------|----------|----------------|
-| `grafeo.pagerank()` | Centrality | node_id, score |
-| `grafeo.betweenness_centrality()` | Centrality | node_id, centrality |
-| `grafeo.closeness_centrality()` | Centrality | node_id, centrality |
-| `grafeo.degree_centrality()` | Centrality | node_id, in_degree, out_degree, total_degree |
-| `grafeo.bfs(start)` | Traversal | node_id, depth |
-| `grafeo.dfs(start)` | Traversal | node_id, depth |
-| `grafeo.dijkstra(source)` | Shortest Path | node_id, distance |
-| `grafeo.bellman_ford(source)` | Shortest Path | node_id, distance, has_negative_cycle |
-| `grafeo.sssp(source, weight)` | Shortest Path | node_id, distance |
-| `grafeo.floyd_warshall()` | Shortest Path | source, target, distance |
-| `grafeo.connected_components()` | Components | node_id, component_id |
-| `grafeo.strongly_connected_components()` | Components | node_id, component_id |
-| `grafeo.topological_sort()` | Components | node_id, order |
-| `grafeo.louvain()` | Community | node_id, community_id, modularity |
-| `grafeo.label_propagation()` | Community | node_id, community_id |
-| `grafeo.clustering_coefficient()` | Clustering | node_id, coefficient, triangle_count |
-| `grafeo.kruskal()` | MST | source, target, weight |
-| `grafeo.prim()` | MST | source, target, weight |
-| `grafeo.max_flow(source, sink)` | Flow | source, target, flow, max_flow |
-| `grafeo.min_cost_max_flow(source, sink)` | Flow | source, target, flow, cost, max_flow |
-| `grafeo.articulation_points()` | Structure | node_id |
-| `grafeo.bridges()` | Structure | source, target |
-| `grafeo.k_core()` | Structure | node_id, core_number, max_core |
+| `obrain.pagerank()` | Centrality | node_id, score |
+| `obrain.betweenness_centrality()` | Centrality | node_id, centrality |
+| `obrain.closeness_centrality()` | Centrality | node_id, centrality |
+| `obrain.degree_centrality()` | Centrality | node_id, in_degree, out_degree, total_degree |
+| `obrain.bfs(start)` | Traversal | node_id, depth |
+| `obrain.dfs(start)` | Traversal | node_id, depth |
+| `obrain.dijkstra(source)` | Shortest Path | node_id, distance |
+| `obrain.bellman_ford(source)` | Shortest Path | node_id, distance, has_negative_cycle |
+| `obrain.sssp(source, weight)` | Shortest Path | node_id, distance |
+| `obrain.floyd_warshall()` | Shortest Path | source, target, distance |
+| `obrain.connected_components()` | Components | node_id, component_id |
+| `obrain.strongly_connected_components()` | Components | node_id, component_id |
+| `obrain.topological_sort()` | Components | node_id, order |
+| `obrain.louvain()` | Community | node_id, community_id, modularity |
+| `obrain.label_propagation()` | Community | node_id, community_id |
+| `obrain.clustering_coefficient()` | Clustering | node_id, coefficient, triangle_count |
+| `obrain.kruskal()` | MST | source, target, weight |
+| `obrain.prim()` | MST | source, target, weight |
+| `obrain.max_flow(source, sink)` | Flow | source, target, flow, max_flow |
+| `obrain.min_cost_max_flow(source, sink)` | Flow | source, target, flow, cost, max_flow |
+| `obrain.articulation_points()` | Structure | node_id |
+| `obrain.bridges()` | Structure | source, target |
+| `obrain.k_core()` | Structure | node_id, core_number, max_core |
 
 ## NetworkX Integration
 

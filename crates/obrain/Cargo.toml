@@ -1,0 +1,72 @@
+[package]
+name = "obrain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A high-performance, embeddable graph database with a Rust core and no required C dependencies"
+keywords = ["graph", "database", "gql", "knowledge-graph", "embedded"]
+categories = ["database-implementations", "data-structures"]
+
+[dependencies]
+obrain-engine.workspace = true
+obrain-core.workspace = true
+obrain-common.workspace = true
+obrain-adapters.workspace = true
+
+# Platform-optimized allocators (optional)
+[target.'cfg(all(not(target_os = "windows"), not(target_os = "openbsd"), not(target_env = "musl"), any(target_arch = "x86_64", target_arch = "aarch64")))'.dependencies]
+tikv-jemallocator = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+mimalloc = { workspace = true, optional = true }
+
+[features]
+default = ["embedded"]
+
+# Atomic query language features
+gql = ["obrain-engine/gql"]
+cypher = ["obrain-engine/cypher"]
+sparql = ["obrain-engine/sparql", "obrain-engine/rdf"]
+gremlin = ["obrain-engine/gremlin"]
+graphql = ["obrain-engine/graphql"]
+sql-pgq = ["obrain-engine/sql-pgq"]
+
+# Atomic search & AI features
+vector-index = ["obrain-engine/vector-index"]
+text-index = ["obrain-engine/text-index"]
+hybrid-search = ["obrain-engine/hybrid-search"]
+cdc = ["obrain-engine/cdc"]
+reactive = ["obrain-engine/reactive"]  # Reactive mutation event bus for cognitive features
+embed = ["obrain-engine/embed"]  # Opt-in ONNX embedding generation (~17MB)
+
+# Convenience groups
+languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]  # All query languages
+ai = ["vector-index", "text-index", "hybrid-search", "cdc"]  # All AI/RAG features
+storage = ["wal", "obrain-file", "spill", "mmap"]  # Persistent storage (WAL, single-file, disk spill, mmap)
+algos = ["obrain-engine/algos"]  # Graph algorithms (SSSP, PageRank, etc.)
+rdf = ["obrain-engine/rdf"]  # RDF triple store
+regex = ["obrain-engine/regex"]  # Full regex (default for non-WASM)
+regex-lite = ["obrain-engine/regex-lite"]  # Lightweight regex (for WASM)
+metrics = ["obrain-engine/metrics"]  # Lock-free query, transaction, and session metrics
+
+# Named profiles (ecosystem-aligned)
+embedded = ["gql", "ai", "algos", "parallel", "regex"]  # Python libs, MCP, in-process (default)
+browser = ["gql", "regex-lite"]  # WASM / obrain-web
+server = ["embedded", "languages", "storage", "rdf", "cdc"]  # obrain-server
+full = ["server"]  # Everything (except embed)
+
+# Platform capabilities
+parallel = ["obrain-engine/parallel"]
+wal = ["obrain-engine/wal"]
+spill = ["obrain-engine/spill"]
+mmap = ["obrain-engine/mmap"]
+temporal = ["obrain-engine/temporal"]  # Append-only versioned properties
+obrain-file = ["obrain-engine/obrain-file"]  # Single-file .obrain database format
+
+# Enable platform-optimized memory allocator (10-20% faster allocations)
+jemalloc = ["tikv-jemallocator"]
+mimalloc-allocator = ["mimalloc"]
+
+[lints]
+workspace = true

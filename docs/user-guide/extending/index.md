@@ -1,11 +1,11 @@
 ---
-title: Extending Grafeo
-description: How to extend and customize Grafeo.
+title: Extending Obrain
+description: How to extend and customize Obrain.
 ---
 
-# Extending Grafeo
+# Extending Obrain
 
-Grafeo is designed to be extensible. Learn how to add custom functionality.
+Obrain is designed to be extensible. Learn how to add custom functionality.
 
 ## Extension Points
 
@@ -39,7 +39,7 @@ Grafeo is designed to be extensible. Learn how to add custom functionality.
 
     ---
 
-    Extend Grafeo with Rust code.
+    Extend Obrain with Rust code.
 
     [:octicons-arrow-right-24: Rust Extensions](rust-extensions.md)
 

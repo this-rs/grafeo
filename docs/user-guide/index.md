@@ -1,13 +1,13 @@
 ---
 title: User Guide
-description: Comprehensive guide to using Grafeo.
+description: Comprehensive guide to using Obrain.
 ---
 
 # User Guide
 
-Welcome to the Grafeo User Guide. This section covers everything needed to use Grafeo effectively.
+Welcome to the Obrain User Guide. This section covers everything needed to use Obrain effectively.
 
-Grafeo supports both **Labeled Property Graph (LPG)** and **RDF** data models, with multiple query languages for each.
+Obrain supports both **Labeled Property Graph (LPG)** and **RDF** data models, with multiple query languages for each.
 
 ## Sections
 
@@ -73,7 +73,7 @@ Grafeo supports both **Labeled Property Graph (LPG)** and **RDF** data models, w
 
     ---
 
-    Use Grafeo from Python with the `grafeo` package.
+    Use Obrain from Python with the `obrain` package.
 
     [:octicons-arrow-right-24: Python Guide](python/index.md)
 
@@ -81,7 +81,7 @@ Grafeo supports both **Labeled Property Graph (LPG)** and **RDF** data models, w
 
     ---
 
-    Use Grafeo directly from Rust applications.
+    Use Obrain directly from Rust applications.
 
     [:octicons-arrow-right-24: Rust Guide](rust/index.md)
 

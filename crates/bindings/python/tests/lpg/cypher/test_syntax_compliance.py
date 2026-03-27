@@ -335,7 +335,7 @@ class TestCypherClauses:
         """Verify CALL procedure syntax (uses built-in if available)."""
         # Just verify the syntax parses, not the result
         try:
-            db.execute_cypher("CALL grafeo.schema.nodeLabels() YIELD label RETURN label")
+            db.execute_cypher("CALL obrain.schema.nodeLabels() YIELD label RETURN label")
         except Exception:
             pytest.skip("No built-in procedure available for testing")
 

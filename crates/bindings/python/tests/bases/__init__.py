@@ -1,4 +1,4 @@
-"""Abstract base test classes for Grafeo test suite.
+"""Abstract base test classes for Obrain test suite.
 
 This module contains base classes that define WHAT to test. Each language
 implementation inherits from these and provides HOW (the query syntax).

@@ -1,6 +1,6 @@
 ---
 title: Transactions and Sessions
-description: GQL transaction control and session configuration in Grafeo.
+description: GQL transaction control and session configuration in Obrain.
 tags:
   - gql
   - transactions

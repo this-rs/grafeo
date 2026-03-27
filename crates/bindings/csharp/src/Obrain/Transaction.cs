@@ -1,0 +1,183 @@
+// ACID transaction handle with auto-rollback on dispose.
+
+using System.Runtime.InteropServices;
+
+using Obrain.Native;
+
+namespace Obrain;
+
+/// <summary>
+/// An ACID transaction. Auto-rolls back on <see cref="Dispose"/> if
+/// <see cref="Commit"/> was not called, making it exception-safe:
+/// <code>
+/// using var tx = db.BeginTransaction();
+/// tx.Execute("INSERT (:Person {name: 'Alix'})");
+/// tx.Commit(); // if this line is not reached, the transaction rolls back
+/// </code>
+/// </summary>
+public sealed class Transaction : IDisposable, IAsyncDisposable
+{
+    private readonly TransactionHandle _handle;
+    private volatile bool _finished;
+    private volatile bool _disposed;
+
+    internal Transaction(nint ptr)
+    {
+        _handle = new TransactionHandle();
+        Marshal.InitHandle(_handle, ptr);
+    }
+
+    // =========================================================================
+    // Query Execution
+    // =========================================================================
+
+    /// <summary>Execute a GQL query within this transaction.</summary>
+    public QueryResult Execute(string query)
+    {
+        ThrowIfFinished();
+        var resultPtr = NativeMethods.obrain_transaction_execute(Handle, query);
+        if (resultPtr == nint.Zero)
+            throw ObrainException.FromLastError(ObrainStatus.Query);
+        return BuildResult(resultPtr);
+    }
+
+    /// <summary>Execute a GQL query within this transaction on the thread pool.</summary>
+    public Task<QueryResult> ExecuteAsync(string query, CancellationToken ct = default)
+    {
+        ThrowIfFinished();
+        var h = Handle;
+        return Task.Run(() =>
+        {
+            ct.ThrowIfCancellationRequested();
+            var resultPtr = NativeMethods.obrain_transaction_execute(h, query);
+            if (resultPtr == nint.Zero)
+                throw ObrainException.FromLastError(ObrainStatus.Query);
+            return BuildResult(resultPtr);
+        }, ct);
+    }
+
+    /// <summary>Execute a GQL query with parameters within this transaction.</summary>
+    public QueryResult ExecuteWithParams(string query, Dictionary<string, object?> parameters)
+    {
+        ThrowIfFinished();
+        var paramsJson = ValueConverter.EncodeParams(parameters);
+        var resultPtr = NativeMethods.obrain_transaction_execute_with_params(Handle, query, paramsJson);
+        if (resultPtr == nint.Zero)
+            throw ObrainException.FromLastError(ObrainStatus.Query);
+        return BuildResult(resultPtr);
+    }
+
+    /// <summary>Execute a GQL query with parameters within this transaction on the thread pool.</summary>
+    public Task<QueryResult> ExecuteWithParamsAsync(
+        string query,
+        Dictionary<string, object?> parameters,
+        CancellationToken ct = default)
+    {
+        ThrowIfFinished();
+        var paramsJson = ValueConverter.EncodeParams(parameters);
+        var h = Handle;
+        return Task.Run(() =>
+        {
+            ct.ThrowIfCancellationRequested();
+            var resultPtr = NativeMethods.obrain_transaction_execute_with_params(h, query, paramsJson);
+            if (resultPtr == nint.Zero)
+                throw ObrainException.FromLastError(ObrainStatus.Query);
+            return BuildResult(resultPtr);
+        }, ct);
+    }
+
+    // =========================================================================
+    // Commit / Rollback
+    // =========================================================================
+
+    /// <summary>Commit the transaction, making all changes permanent.</summary>
+    public void Commit()
+    {
+        ThrowIfFinished();
+        var h = Handle;
+        _finished = true;
+        var status = NativeMethods.obrain_commit(h);
+        if (status != (int)ObrainStatus.Ok)
+            throw ObrainException.FromLastError(ObrainStatus.Transaction);
+    }
+
+    /// <summary>Roll back the transaction, discarding all changes.</summary>
+    public void Rollback()
+    {
+        if (_finished) return;
+        var h = Handle;
+        _finished = true;
+        var status = NativeMethods.obrain_rollback(h);
+        if (status != (int)ObrainStatus.Ok)
+            throw ObrainException.FromLastError(ObrainStatus.Transaction);
+    }
+
+    // =========================================================================
+    // Dispose
+    // =========================================================================
+
+    /// <summary>
+    /// Dispose the transaction. If <see cref="Commit"/> was not called,
+    /// the transaction is automatically rolled back.
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        if (!_finished)
+        {
+            // Best-effort rollback; swallow errors during dispose.
+            _finished = true;
+            NativeMethods.obrain_rollback(_handle.DangerousGetHandle());
+        }
+        _handle.Dispose();
+    }
+
+    /// <inheritdoc/>
+    public ValueTask DisposeAsync()
+    {
+        Dispose();
+        return ValueTask.CompletedTask;
+    }
+
+    // =========================================================================
+    // Internals
+    // =========================================================================
+
+    private nint Handle
+    {
+        get
+        {
+            ThrowIfFinished();
+            return _handle.DangerousGetHandle();
+        }
+    }
+
+    private void ThrowIfFinished()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_finished)
+            throw new TransactionException("Transaction is already committed or rolled back");
+    }
+
+    private static QueryResult BuildResult(nint resultPtr)
+    {
+        try
+        {
+            var jsonPtr = NativeMethods.obrain_result_json(resultPtr);
+            var json = Marshal.PtrToStringUTF8(jsonPtr) ?? "[]";
+            var executionTimeMs = NativeMethods.obrain_result_execution_time_ms(resultPtr);
+            var rowsScanned = (long)NativeMethods.obrain_result_rows_scanned(resultPtr);
+
+            var rows = ValueConverter.ParseRows(json);
+            var columns = ValueConverter.ExtractColumns(rows);
+            var (nodes, edges) = ValueConverter.ExtractEntities(rows);
+
+            return new QueryResult(columns, rows, nodes, edges, executionTimeMs, rowsScanned);
+        }
+        finally
+        {
+            NativeMethods.obrain_free_result(resultPtr);
+        }
+    }
+}

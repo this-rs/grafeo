@@ -1,7 +1,7 @@
-package grafeo
+package obrain
 
 /*
-#include "grafeo.h"
+#include "obrain.h"
 #include <stdlib.h>
 */
 import "C"
@@ -29,7 +29,7 @@ func (db *Database) CreateNode(labels []string, properties map[string]any) (*Nod
 		defer C.free(unsafe.Pointer(cProps))
 	}
 
-	id := uint64(C.grafeo_create_node(db.handle, cLabels, cProps))
+	id := uint64(C.obrain_create_node(db.handle, cLabels, cProps))
 	if id == ^uint64(0) { // UINT64_MAX
 		return nil, lastError()
 	}
@@ -42,23 +42,23 @@ func (db *Database) CreateNode(labels []string, properties map[string]any) (*Nod
 
 // GetNode retrieves a node by ID. Returns nil if not found.
 func (db *Database) GetNode(id uint64) (*Node, error) {
-	var cNode *C.GrafeoNode
-	status := C.grafeo_get_node(db.handle, C.uint64_t(id), &cNode)
-	if status != C.GRAFEO_OK {
+	var cNode *C.ObrainNode
+	status := C.obrain_get_node(db.handle, C.uint64_t(id), &cNode)
+	if status != C.OBRAIN_OK {
 		return nil, statusToError(status)
 	}
-	defer C.grafeo_free_node(cNode)
+	defer C.obrain_free_node(cNode)
 
-	nodeID := uint64(C.grafeo_node_id(cNode))
+	nodeID := uint64(C.obrain_node_id(cNode))
 
 	var labels []string
-	labelsPtr := C.grafeo_node_labels_json(cNode)
+	labelsPtr := C.obrain_node_labels_json(cNode)
 	if labelsPtr != nil {
 		_ = json.Unmarshal([]byte(C.GoString(labelsPtr)), &labels)
 	}
 
 	var props map[string]any
-	propsPtr := C.grafeo_node_properties_json(cNode)
+	propsPtr := C.obrain_node_properties_json(cNode)
 	if propsPtr != nil {
 		_ = json.Unmarshal([]byte(C.GoString(propsPtr)), &props)
 	}
@@ -71,7 +71,7 @@ func (db *Database) GetNode(id uint64) (*Node, error) {
 
 // DeleteNode deletes a node by ID. Returns true if the node existed.
 func (db *Database) DeleteNode(id uint64) (bool, error) {
-	result := int(C.grafeo_delete_node(db.handle, C.uint64_t(id)))
+	result := int(C.obrain_delete_node(db.handle, C.uint64_t(id)))
 	if result < 0 {
 		return false, lastError()
 	}
@@ -88,14 +88,14 @@ func (db *Database) SetNodeProperty(id uint64, key string, value any) error {
 	}
 	cValue := C.CString(string(valueJSON))
 	defer C.free(unsafe.Pointer(cValue))
-	return statusToError(C.grafeo_set_node_property(db.handle, C.uint64_t(id), cKey, cValue))
+	return statusToError(C.obrain_set_node_property(db.handle, C.uint64_t(id), cKey, cValue))
 }
 
 // RemoveNodeProperty removes a property from a node.
 func (db *Database) RemoveNodeProperty(id uint64, key string) (bool, error) {
 	cKey := C.CString(key)
 	defer C.free(unsafe.Pointer(cKey))
-	result := int(C.grafeo_remove_node_property(db.handle, C.uint64_t(id), cKey))
+	result := int(C.obrain_remove_node_property(db.handle, C.uint64_t(id), cKey))
 	if result < 0 {
 		return false, lastError()
 	}
@@ -106,7 +106,7 @@ func (db *Database) RemoveNodeProperty(id uint64, key string) (bool, error) {
 func (db *Database) AddNodeLabel(id uint64, label string) (bool, error) {
 	cLabel := C.CString(label)
 	defer C.free(unsafe.Pointer(cLabel))
-	result := int(C.grafeo_add_node_label(db.handle, C.uint64_t(id), cLabel))
+	result := int(C.obrain_add_node_label(db.handle, C.uint64_t(id), cLabel))
 	if result < 0 {
 		return false, lastError()
 	}
@@ -117,7 +117,7 @@ func (db *Database) AddNodeLabel(id uint64, label string) (bool, error) {
 func (db *Database) RemoveNodeLabel(id uint64, label string) (bool, error) {
 	cLabel := C.CString(label)
 	defer C.free(unsafe.Pointer(cLabel))
-	result := int(C.grafeo_remove_node_label(db.handle, C.uint64_t(id), cLabel))
+	result := int(C.obrain_remove_node_label(db.handle, C.uint64_t(id), cLabel))
 	if result < 0 {
 		return false, lastError()
 	}
@@ -126,11 +126,11 @@ func (db *Database) RemoveNodeLabel(id uint64, label string) (bool, error) {
 
 // GetNodeLabels returns all labels for a node.
 func (db *Database) GetNodeLabels(id uint64) ([]string, error) {
-	cLabels := C.grafeo_get_node_labels(db.handle, C.uint64_t(id))
+	cLabels := C.obrain_get_node_labels(db.handle, C.uint64_t(id))
 	if cLabels == nil {
 		return nil, nil
 	}
-	defer C.grafeo_free_string(cLabels)
+	defer C.obrain_free_string(cLabels)
 	var labels []string
 	_ = json.Unmarshal([]byte(C.GoString(cLabels)), &labels)
 	return labels, nil

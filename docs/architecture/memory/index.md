@@ -8,7 +8,7 @@ tags:
 
 # Memory Management
 
-Grafeo manages memory through a unified buffer manager, arena allocators for query execution and transparent spill-to-disk for large operations.
+Obrain manages memory through a unified buffer manager, arena allocators for query execution and transparent spill-to-disk for large operations.
 
 ## Buffer Manager
 
@@ -51,8 +51,8 @@ Deallocation: Reset entire arena at once
 ```
 
 ```rust
-use grafeo_common::memory::Arena;
-use grafeo_common::types::EpochId;
+use obrain_common::memory::Arena;
+use obrain_common::types::EpochId;
 
 let arena = Arena::new(EpochId::INITIAL).unwrap();
 
@@ -74,11 +74,11 @@ Large operations can spill to disk when memory is exhausted. Spilling is trigger
 ### Configuration
 
 ```rust
-use grafeo_engine::Config;
+use obrain_engine::Config;
 
 let config = Config::default()
     .with_memory_limit(4 * 1024 * 1024 * 1024)  // 4 GB explicit limit
-    .with_spill_path("/tmp/grafeo-spill");       // Directory for spill files
+    .with_spill_path("/tmp/obrain-spill");       // Directory for spill files
 
-let db = GrafeoDB::with_config(config);
+let db = ObrainDB::with_config(config);
 ```

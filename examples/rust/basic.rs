@@ -1,12 +1,12 @@
-//! Basic Grafeo example: create a social graph and query it.
+//! Basic Obrain example: create a social graph and query it.
 //!
-//! Run with: `cargo run -p grafeo-examples --bin basic`
+//! Run with: `cargo run -p obrain-examples --bin basic`
 
-use grafeo::GrafeoDB;
+use obrain::ObrainDB;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create an in-memory database (no persistence, no setup required)
-    let db = GrafeoDB::new_in_memory();
+    let db = ObrainDB::new_in_memory();
 
     // Sessions are lightweight handles for executing queries.
     // You can create as many as you need.

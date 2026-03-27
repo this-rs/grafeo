@@ -1,6 +1,6 @@
 ---
 title: Properties
-description: Property types and values in Grafeo.
+description: Property types and values in Obrain.
 tags:
   - data-model
   - properties
@@ -8,7 +8,7 @@ tags:
 
 # Properties
 
-Properties are key-value pairs stored on nodes and edges. Grafeo supports a rich set of property types.
+Properties are key-value pairs stored on nodes and edges. Obrain supports a rich set of property types.
 
 ## Supported Types
 
@@ -95,7 +95,7 @@ RETURN p.name, coalesce(p.email, 'no email') AS email
 
 ## Temporal Properties
 
-Grafeo supports temporal types for dates, times and durations with ISO 8601 formatting.
+Obrain supports temporal types for dates, times and durations with ISO 8601 formatting.
 
 ### Creating Temporal Properties
 

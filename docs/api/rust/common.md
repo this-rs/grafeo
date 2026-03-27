@@ -1,19 +1,19 @@
 ---
-title: grafeo-common
+title: obrain-common
 description: Foundation types crate.
 tags:
   - api
   - rust
 ---
 
-# grafeo-common
+# obrain-common
 
 Foundation types, memory allocators and utilities.
 
 ## Types
 
 ```rust
-use grafeo_common::types::{NodeId, EdgeId, Value, LogicalType};
+use obrain_common::types::{NodeId, EdgeId, Value, LogicalType};
 ```
 
 ### NodeId / EdgeId
@@ -42,8 +42,8 @@ let t = LogicalType::List(Box::new(LogicalType::Int64));
 ## Memory
 
 ```rust
-use grafeo_common::memory::{Arena, ObjectPool};
-use grafeo_common::types::EpochId;
+use obrain_common::memory::{Arena, ObjectPool};
+use obrain_common::types::EpochId;
 
 let arena = Arena::new(EpochId(0));
 let data = arena.alloc_value(MyStruct::new());
@@ -52,7 +52,7 @@ let data = arena.alloc_value(MyStruct::new());
 ## Utilities
 
 ```rust
-use grafeo_common::utils::{FxHashMap, FxHashSet};
+use obrain_common::utils::{FxHashMap, FxHashSet};
 
 let map: FxHashMap<String, i64> = FxHashMap::default();
 ```

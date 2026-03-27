@@ -1,6 +1,6 @@
 ---
 title: Security Best Practices
-description: Security considerations for Grafeo deployments.
+description: Security considerations for Obrain deployments.
 tags:
   - security
   - best-practices
@@ -8,13 +8,13 @@ tags:
 
 # Security Best Practices
 
-Grafeo is an embedded database without built-in authentication. Security depends on how it is deployed and used.
+Obrain is an embedded database without built-in authentication. Security depends on how it is deployed and used.
 
 ---
 
-## Understanding Grafeo's Security Model
+## Understanding Obrain's Security Model
 
-Grafeo is designed as an **embedded library**, not a network-accessible server:
+Obrain is designed as an **embedded library**, not a network-accessible server:
 
 - **No authentication** - Anyone with access to the application can access the database
 - **No network protocol** - No TCP/HTTP ports to secure
@@ -129,7 +129,7 @@ import logging
 from datetime import datetime
 from functools import wraps
 
-logger = logging.getLogger("grafeo.audit")
+logger = logging.getLogger("obrain.audit")
 
 def audit_query(func):
     """Decorator to audit database queries."""
@@ -218,17 +218,17 @@ ssn = decrypt_value(node.properties["ssn_encrypted"])
 
 ## Network Security
 
-If exposing Grafeo through an API:
+If exposing Obrain through an API:
 
 ### 1. Add Authentication Layer
 
 ```python
 from flask import Flask, request, jsonify
 from functools import wraps
-from grafeo import GrafeoDB
+from obrain import ObrainDB
 
 app = Flask(__name__)
-db = GrafeoDB("./mydb")
+db = ObrainDB("./mydb")
 
 def require_api_key(f):
     @wraps(f)
@@ -327,7 +327,7 @@ Before deploying:
 To report a security vulnerability:
 
 1. **Do not** open a public GitHub issue
-2. Email security concerns to security@grafeo.dev
+2. Email security concerns to security@obrain.dev
 3. Include steps to reproduce
 4. Allow time for a fix before public disclosure
 

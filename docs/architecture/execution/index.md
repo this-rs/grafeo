@@ -8,7 +8,7 @@ tags:
 
 # Execution Engine
 
-Grafeo uses a push-based, vectorized execution engine.
+Obrain uses a push-based, vectorized execution engine.
 
 ## Why Push-Based?
 

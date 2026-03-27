@@ -1,5 +1,5 @@
 {
-  "name": "@grafeo-db/js-darwin-arm64",
+  "name": "@obrain-db/js-darwin-arm64",
   "version": "0.5.24",
   "os": [
     "darwin"
@@ -7,17 +7,17 @@
   "cpu": [
     "arm64"
   ],
-  "main": "grafeo.darwin-arm64.node",
+  "main": "obrain.darwin-arm64.node",
   "files": [
-    "grafeo.darwin-arm64.node"
+    "obrain.darwin-arm64.node"
   ],
-  "description": "Grafeo native binding for macOS arm64",
+  "description": "Obrain native binding for macOS arm64",
   "license": "Apache-2.0",
   "engines": {
     "node": ">=20"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/GrafeoDB/grafeo.git"
+    "url": "https://github.com/this-rs/obrain.git"
   }
 }

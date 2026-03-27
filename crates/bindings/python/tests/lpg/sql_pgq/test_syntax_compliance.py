@@ -9,16 +9,16 @@ Run with:
 
 import pytest
 
-# Try to import grafeo
+# Try to import obrain
 try:
-    from grafeo import GrafeoDB
+    from obrain import ObrainDB
 
-    GRAFEO_AVAILABLE = True
+    OBRAIN_AVAILABLE = True
 except ImportError:
-    GRAFEO_AVAILABLE = False
+    OBRAIN_AVAILABLE = False
 
 
-pytestmark = pytest.mark.skipif(not GRAFEO_AVAILABLE, reason="Grafeo Python bindings not installed")
+pytestmark = pytest.mark.skipif(not OBRAIN_AVAILABLE, reason="Obrain Python bindings not installed")
 
 
 class TestBasicNodeQueries:
@@ -26,7 +26,7 @@ class TestBasicNodeQueries:
 
     def setup_method(self):
         """Create a database with test data."""
-        self.db = GrafeoDB()
+        self.db = ObrainDB()
         self._setup_test_data()
 
     def _setup_test_data(self):
@@ -302,7 +302,7 @@ class TestVariableLengthPaths:
 
     def setup_method(self):
         """Create a chain graph: A -> B -> C -> D."""
-        self.db = GrafeoDB()
+        self.db = ObrainDB()
         a = self.db.create_node(["Person"], {"name": "A"})
         b = self.db.create_node(["Person"], {"name": "B"})
         c = self.db.create_node(["Person"], {"name": "C"})
@@ -355,7 +355,7 @@ class TestAggregatesInColumns:
 
     def setup_method(self):
         """Create a database with test data."""
-        self.db = GrafeoDB()
+        self.db = ObrainDB()
         self.db.create_node(["Person"], {"name": "Alix", "age": 30, "city": "NYC"})
         self.db.create_node(["Person"], {"name": "Gus", "age": 25, "city": "LA"})
         self.db.create_node(["Person"], {"name": "Vincent", "age": 35, "city": "NYC"})
@@ -389,7 +389,7 @@ class TestErrorHandling:
 
     def setup_method(self):
         """Create a database with test data."""
-        self.db = GrafeoDB()
+        self.db = ObrainDB()
         self.db.create_node(["Person"], {"name": "Alix", "age": 30})
 
     def _execute_sql(self, query: str):

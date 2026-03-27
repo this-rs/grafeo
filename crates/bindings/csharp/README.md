@@ -1,14 +1,14 @@
-# Grafeo C# Bindings
+# Obrain C# Bindings
 
-C# bindings for the [Grafeo](https://grafeo.dev) graph database.
+C# bindings for the [Obrain](https://obrain.dev) graph database.
 
 ## Quick Start
 
 ```csharp
-using Grafeo;
+using Obrain;
 
 // Create an in-memory database
-await using var db = GrafeoDB.Memory();
+await using var db = ObrainDB.Memory();
 
 // Execute a GQL query
 db.Execute("INSERT (:Person {name: 'Alix', age: 30})");
@@ -33,15 +33,15 @@ tx.Commit(); // rolls back automatically if not reached
 
 ## Building from Source
 
-1. Build the Grafeo C library:
+1. Build the Obrain C library:
    ```bash
-   cargo build --release -p grafeo-c
+   cargo build --release -p obrain-c
    ```
 
 2. Copy the native library to the test directory:
-   - Windows: `copy target\release\grafeo_c.dll crates\bindings\csharp\tests\Grafeo.Tests\`
-   - macOS: `cp target/release/libgrafeo_c.dylib crates/bindings/csharp/tests/Grafeo.Tests/`
-   - Linux: `cp target/release/libgrafeo_c.so crates/bindings/csharp/tests/Grafeo.Tests/`
+   - Windows: `copy target\release\obrain_c.dll crates\bindings\csharp\tests\Obrain.Tests\`
+   - macOS: `cp target/release/libobrain_c.dylib crates/bindings/csharp/tests/Obrain.Tests/`
+   - Linux: `cp target/release/libobrain_c.so crates/bindings/csharp/tests/Obrain.Tests/`
 
 3. Build and test:
    ```bash
@@ -53,7 +53,7 @@ tx.Commit(); // rolls back automatically if not reached
 ## Requirements
 
 - .NET 8.0 or later
-- `grafeo_c` native library (built from the `grafeo-c` crate)
+- `obrain_c` native library (built from the `obrain-c` crate)
 
 ## License
 

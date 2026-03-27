@@ -1,13 +1,13 @@
 """Gremlin implementation of solvOR plugin comparison tests.
 
-Compares Grafeo's as_solvor() plugin against standalone solvOR library.
+Compares Obrain's as_solvor() plugin against standalone solvOR library.
 Uses Python API for graph setup (Gremlin execution not required).
 """
 
 import random
 
 import pytest
-from grafeo import GrafeoDB
+from obrain import ObrainDB
 
 from tests.bases.test_solvor import (
     BaseSolvORBenchmarkTest,
@@ -18,19 +18,19 @@ from tests.bases.test_solvor import (
 @pytest.fixture
 def db():
     """Create a fresh database instance."""
-    return GrafeoDB()
+    return ObrainDB()
 
 
 class TestGremlinSolvORComparison(BaseSolvORComparisonTest):
     """Gremlin implementation of solvOR plugin comparison tests.
 
-    Tests Grafeo's as_solvor() plugin against standalone solvOR library.
+    Tests Obrain's as_solvor() plugin against standalone solvOR library.
     Graph setup uses Python API (Gremlin execution not required).
     """
 
     def create_db(self):
         """Create a fresh database instance."""
-        return GrafeoDB()
+        return ObrainDB()
 
     def setup_flow_network(self, db, n_nodes: int, n_edges: int, seed: int = 42) -> dict:
         """Set up a flow network using Python API."""
@@ -79,7 +79,7 @@ class TestGremlinSolvORBenchmark(BaseSolvORBenchmarkTest):
 
     def create_db(self):
         """Create a fresh database instance."""
-        return GrafeoDB()
+        return ObrainDB()
 
     def setup_flow_network(self, db, n_nodes: int, n_edges: int, seed: int = 42) -> dict:
         """Set up a flow network using Python API."""

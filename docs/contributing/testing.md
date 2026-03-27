@@ -14,7 +14,7 @@ tags:
 cargo test --all-features --workspace
 
 # Specific crate
-cargo test -p grafeo-core
+cargo test -p obrain-core
 
 # Single test with output
 cargo test test_name -- --nocapture
@@ -53,12 +53,12 @@ cargo tarpaulin --workspace --out Html
 
 | Crate | Target |
 |-------|--------|
-| grafeo-common | 95% |
-| grafeo-core | 90% |
-| grafeo-adapters | 85% |
-| grafeo-engine | 85% |
-| grafeo-python | 80% |
-| grafeo-node | 80% |
+| obrain-common | 95% |
+| obrain-core | 90% |
+| obrain-adapters | 85% |
+| obrain-engine | 85% |
+| obrain-python | 80% |
+| obrain-node | 80% |
 | Overall workspace | 82%+ |
 
 ## Test Categories

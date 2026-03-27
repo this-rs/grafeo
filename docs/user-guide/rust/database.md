@@ -8,41 +8,41 @@ tags:
 
 # Database Setup
 
-Learn how to create and configure Grafeo databases in Rust.
+Learn how to create and configure Obrain databases in Rust.
 
 ## Creating a Database
 
 ```rust
-use grafeo::GrafeoDB;
+use obrain::ObrainDB;
 
 // In-memory database
-let db = GrafeoDB::new_in_memory();
+let db = ObrainDB::new_in_memory();
 
 // Persistent database
-let db = GrafeoDB::open("my_graph.db")?;
+let db = ObrainDB::open("my_graph.db")?;
 ```
 
 ## Configuration
 
 ```rust
-use grafeo::{GrafeoDB, Config};
+use obrain::{ObrainDB, Config};
 
 let config = Config::builder()
     .memory_limit(4 * 1024 * 1024 * 1024)  // 4 GB
     .threads(8)
     .build()?;
 
-let db = GrafeoDB::with_config(config);
+let db = ObrainDB::with_config(config);
 ```
 
 ## Database Lifecycle
 
 ```rust
-use grafeo::GrafeoDB;
+use obrain::ObrainDB;
 
-fn main() -> Result<(), grafeo_common::utils::error::Error> {
+fn main() -> Result<(), obrain_common::utils::error::Error> {
     // Create database
-    let db = GrafeoDB::open("my_graph.db")?;
+    let db = ObrainDB::open("my_graph.db")?;
 
     // Use the database
     let mut session = db.session();
@@ -55,14 +55,14 @@ fn main() -> Result<(), grafeo_common::utils::error::Error> {
 
 ## Thread Safety
 
-`GrafeoDB` is `Send` and `Sync`, so it can be shared across threads:
+`ObrainDB` is `Send` and `Sync`, so it can be shared across threads:
 
 ```rust
-use grafeo::GrafeoDB;
+use obrain::ObrainDB;
 use std::sync::Arc;
 use std::thread;
 
-let db = Arc::new(GrafeoDB::new_in_memory());
+let db = Arc::new(ObrainDB::new_in_memory());
 
 let handles: Vec<_> = (0..4).map(|i| {
     let db = Arc::clone(&db);

@@ -190,13 +190,13 @@ class BaseAdminTest(ABC):
         self.setup_test_graph(db)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "test.grafeo"
+            db_path = Path(tmpdir) / "test.obrain"
             db.save(str(db_path))
 
             # Open the saved database
-            from grafeo import GrafeoDB
+            from obrain import ObrainDB
 
-            db2 = GrafeoDB.open(str(db_path))
+            db2 = ObrainDB.open(str(db_path))
 
             info = db2.info()
             assert info["node_count"] == 5
@@ -218,13 +218,13 @@ class BaseAdminTest(ABC):
         self.setup_test_graph(db)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "test.grafeo"
+            db_path = Path(tmpdir) / "test.obrain"
             db.save(str(db_path))
 
             # Open as in-memory copy
-            from grafeo import GrafeoDB
+            from obrain import ObrainDB
 
-            db2 = GrafeoDB.open_in_memory(str(db_path))
+            db2 = ObrainDB.open_in_memory(str(db_path))
 
             info = db2.info()
             assert info["node_count"] == 5

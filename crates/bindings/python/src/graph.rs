@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use pyo3::prelude::*;
 
-use grafeo_common::types::{EdgeId, NodeId, Value};
+use obrain_common::types::{EdgeId, NodeId, Value};
 
 use crate::types::PyValue;
 

@@ -1,20 +1,20 @@
 ---
 title: WebAssembly API
-description: API reference for the @grafeo-db/wasm package.
+description: API reference for the @obrain-db/wasm package.
 ---
 
 # WebAssembly API
 
-Run Grafeo in the browser, Deno or Cloudflare Workers. ~660 KB gzipped.
+Run Obrain in the browser, Deno or Cloudflare Workers. ~660 KB gzipped.
 
 ```bash
-npm install @grafeo-db/wasm
+npm install @obrain-db/wasm
 ```
 
 ## Quick Start
 
 ```javascript
-import init, { Database } from '@grafeo-db/wasm';
+import init, { Database } from '@obrain-db/wasm';
 
 await init();
 const db = new Database();
@@ -54,7 +54,7 @@ db.executeRawWithLanguage(query, language);  // raw result with language selecti
 db.nodeCount();   // number of nodes
 db.edgeCount();   // number of edges
 db.schema();      // database schema as JSON
-Database.version(); // Grafeo version string
+Database.version(); // Obrain version string
 ```
 
 ## Text Search
@@ -178,5 +178,5 @@ The `full` feature enables all languages. The default npm package includes only 
 
 ## Links
 
-- [npm package](https://www.npmjs.com/package/@grafeo-db/wasm)
-- [GitHub](https://github.com/GrafeoDB/grafeo/tree/main/crates/bindings/wasm)
+- [npm package](https://www.npmjs.com/package/@obrain-db/wasm)
+- [GitHub](https://github.com/this-rs/obrain/tree/main/crates/bindings/wasm)

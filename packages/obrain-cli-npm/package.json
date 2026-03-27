@@ -1,0 +1,37 @@
+{
+  "name": "@obrain-db/cli",
+  "version": "0.0.1",
+  "description": "Command-line interface for Obrain graph database",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/this-rs/obrain",
+    "directory": "packages/obrain-cli-npm"
+  },
+  "homepage": "https://obrain.dev",
+  "keywords": [
+    "obrain",
+    "graph",
+    "database",
+    "gql",
+    "cli"
+  ],
+  "bin": {
+    "obrain": "bin/obrain.js"
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "optionalDependencies": {
+    "@obrain-db/cli-linux-x64": "0.0.1",
+    "@obrain-db/cli-linux-arm64": "0.0.1",
+    "@obrain-db/cli-darwin-x64": "0.0.1",
+    "@obrain-db/cli-darwin-arm64": "0.0.1",
+    "@obrain-db/cli-win32-x64": "0.0.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,23 +1,23 @@
-# @grafeo-db/js
+# @obrain-db/js
 
-Node.js/TypeScript bindings for [Grafeo](https://grafeo.dev), a high-performance, embeddable graph database with a Rust core.
+Node.js/TypeScript bindings for [Obrain](https://obrain.dev), a high-performance, embeddable graph database with a Rust core.
 
 ## Installation
 
 ```bash
-npm install @grafeo-db/js
+npm install @obrain-db/js
 ```
 
 ## Quick Start
 
 ```typescript
-import { GrafeoDB } from '@grafeo-db/js';
+import { ObrainDB } from '@obrain-db/js';
 
 // In-memory database
-const db = GrafeoDB.create();
+const db = ObrainDB.create();
 
 // Or persistent
-// const db = GrafeoDB.create('./my-graph');
+// const db = ObrainDB.create('./my-graph');
 
 // Create nodes
 db.createNode(['Person'], { name: 'Alix', age: 30 });
@@ -39,9 +39,9 @@ db.close();
 
 ```typescript
 // Create / open
-const db = GrafeoDB.create();           // in-memory
-const db = GrafeoDB.create('./path');    // persistent
-const db = GrafeoDB.open('./path');      // open existing
+const db = ObrainDB.create();           // in-memory
+const db = ObrainDB.create('./path');    // persistent
+const db = ObrainDB.open('./path');      // open existing
 
 // Counts
 db.nodeCount();   // number of nodes
@@ -130,10 +130,10 @@ const results = await db.vectorSearch('Document', 'embedding', queryVector, 10);
 
 ## Links
 
-- [Documentation](https://grafeo.dev)
-- [GitHub](https://github.com/GrafeoDB/grafeo)
-- [Python Package](https://pypi.org/project/grafeo/)
-- [WASM Package](https://www.npmjs.com/package/@grafeo-db/wasm)
+- [Documentation](https://obrain.dev)
+- [GitHub](https://github.com/this-rs/obrain)
+- [Python Package](https://pypi.org/project/obrain/)
+- [WASM Package](https://www.npmjs.com/package/@obrain-db/wasm)
 
 ## License
 

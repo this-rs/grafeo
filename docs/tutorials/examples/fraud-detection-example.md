@@ -17,7 +17,7 @@ Model a transaction network, inject known fraud patterns, detect them with graph
     marimo run examples/fraud_detection.py
     ```
 
-    **Requirements:** `grafeo`, `anywidget-graph`, `marimo`
+    **Requirements:** `obrain`, `anywidget-graph`, `marimo`
 
 ## Build the Transaction Network
 
@@ -25,9 +25,9 @@ Create 50 legitimate accounts with 100 normal transactions:
 
 ```python
 import random
-from grafeo import GrafeoDB
+from obrain import ObrainDB
 
-db = GrafeoDB()
+db = ObrainDB()
 random.seed(42)
 
 # Legitimate accounts

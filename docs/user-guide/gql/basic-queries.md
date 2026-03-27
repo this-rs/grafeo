@@ -212,13 +212,13 @@ Use `CALL` to invoke a named procedure. `YIELD` selects which output fields to b
 
 ```sql
 -- Call a built-in algorithm
-CALL grafeo.pagerank() YIELD node, score
+CALL obrain.pagerank() YIELD node, score
 RETURN node.name, score
 ORDER BY score DESC
 LIMIT 10
 
 -- Filter yielded results
-CALL grafeo.pagerank() YIELD node, score
+CALL obrain.pagerank() YIELD node, score
 WHERE score > 0.5
 RETURN node.name, score
 ```

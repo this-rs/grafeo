@@ -1,6 +1,6 @@
 ---
 title: Interactive Examples
-description: Runnable marimo notebooks showcasing Grafeo features.
+description: Runnable marimo notebooks showcasing Obrain features.
 ---
 
 # Interactive Examples
@@ -12,7 +12,7 @@ These examples are [marimo](https://marimo.io/) notebooks you can run locally fo
 Install the dependencies, then launch any example:
 
 ```bash
-uv add grafeo anywidget-graph anywidget-vector marimo numpy networkx matplotlib
+uv add obrain anywidget-graph anywidget-vector marimo numpy networkx matplotlib
 ```
 
 ```bash
@@ -51,7 +51,7 @@ marimo run examples/graph_visualization.py
 
     ---
 
-    Convert Grafeo graphs to NetworkX, run centrality and clustering algorithms and visualize with matplotlib.
+    Convert Obrain graphs to NetworkX, run centrality and clustering algorithms and visualize with matplotlib.
 
     [:octicons-arrow-right-24: View Example](networkx-integration.md)
 

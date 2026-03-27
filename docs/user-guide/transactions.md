@@ -1,13 +1,13 @@
-# Transactions in Grafeo
+# Transactions in Obrain
 
-Grafeo provides ACID transactions with **Snapshot Isolation** semantics. This guide explains how transactions work, their guarantees and important limitations to be aware of.
+Obrain provides ACID transactions with **Snapshot Isolation** semantics. This guide explains how transactions work, their guarantees and important limitations to be aware of.
 
 ## Quick Start
 
 ```python
-from grafeo import GrafeoDB
+from obrain import ObrainDB
 
-db = GrafeoDB()
+db = ObrainDB()
 
 # Explicit transaction
 with db.begin_transaction() as tx:
@@ -21,7 +21,7 @@ db.execute("CREATE (n:Person {name: 'Vincent'})")  # Commits immediately
 
 ## Isolation Level: Snapshot Isolation
 
-Grafeo implements **Snapshot Isolation (SI)**, a widely-used isolation level that provides strong consistency while maintaining high concurrency.
+Obrain implements **Snapshot Isolation (SI)**, a widely-used isolation level that provides strong consistency while maintaining high concurrency.
 
 ### Guarantees
 
@@ -42,7 +42,7 @@ Grafeo implements **Snapshot Isolation (SI)**, a widely-used isolation level tha
 
 ## Write-Write Conflict Detection
 
-Grafeo automatically detects when two transactions try to modify the same entity:
+Obrain automatically detects when two transactions try to modify the same entity:
 
 ```python
 # Thread 1
@@ -313,7 +313,7 @@ session.release_savepoint("sp1")?;
 
 ## Garbage Collection
 
-Grafeo automatically garbage collects old transaction metadata and version chains:
+Obrain automatically garbage collects old transaction metadata and version chains:
 
 - Aborted transactions are cleaned up immediately
 - Committed transaction metadata is retained until no active transaction can see it

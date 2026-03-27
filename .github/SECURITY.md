@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-Grafeo is currently in active development (pre-1.0). Security updates are provided for the latest minor release only.
+Obrain is currently in active development (pre-1.0). Security updates are provided for the latest minor release only.
 
 | Version | Supported          |
 | ------- | ------------------ |
@@ -14,17 +14,17 @@ Grafeo is currently in active development (pre-1.0). Security updates are provid
 
 ## Security Model
 
-Grafeo is an **embeddable** graph database designed to run within your application process. It does not include:
+Obrain is an **embeddable** graph database designed to run within your application process. It does not include:
 
 - Network listeners or remote access protocols
 - Built-in authentication or authorization
 - Multi-tenant isolation
 
-**Security is the responsibility of the embedding application.** If you expose Grafeo through a network service, you must implement appropriate authentication, authorization and input validation in your application layer.
+**Security is the responsibility of the embedding application.** If you expose Obrain through a network service, you must implement appropriate authentication, authorization and input validation in your application layer.
 
 ### Query Injection
 
-Like SQL databases, Grafeo query languages (GQL, Cypher, SPARQL, etc.) can be vulnerable to injection attacks if user input is concatenated directly into queries. Always use parameterized queries when accepting user input:
+Like SQL databases, Obrain query languages (GQL, Cypher, SPARQL, etc.) can be vulnerable to injection attacks if user input is concatenated directly into queries. Always use parameterized queries when accepting user input:
 
 ```python
 # UNSAFE - vulnerable to injection
@@ -36,7 +36,7 @@ db.execute("MATCH (n:User {name: $name}) RETURN n", {"name": user_input})
 
 ### File System Access
 
-When using persistent storage (WAL, file-backed databases), Grafeo reads and writes to the file system. Ensure:
+When using persistent storage (WAL, file-backed databases), Obrain reads and writes to the file system. Ensure:
 
 - Database files are stored in directories with appropriate permissions
 - The application has minimal required file system access
@@ -48,7 +48,7 @@ We take security vulnerabilities seriously. If you discover a security issue, pl
 
 ### How to Report
 
-**For sensitive security issues**, please email: **<security@grafeo.dev>**
+**For sensitive security issues**, please email: **<security@obrain.dev>**
 
 Do NOT create a public GitHub issue for security vulnerabilities.
 
@@ -85,12 +85,12 @@ The following are **out of scope**:
 
 ## Security Best Practices
 
-When embedding Grafeo in your application:
+When embedding Obrain in your application:
 
 1. **Validate all user input** before constructing queries
 2. **Use parameterized queries** to prevent injection
 3. **Limit file system permissions** for database directories
-4. **Keep Grafeo updated** to the latest supported version
+4. **Keep Obrain updated** to the latest supported version
 5. **Review the `unsafe` code** if modifying core internals (we minimize unsafe usage)
 6. **Enable security audits** in your CI pipeline:
 
@@ -100,4 +100,4 @@ When embedding Grafeo in your application:
 
 ## Acknowledgments
 
-We thank the security researchers who help keep Grafeo safe. Contributors will be listed here (with permission) after vulnerabilities are patched.
+We thank the security researchers who help keep Obrain safe. Contributors will be listed here (with permission) after vulnerabilities are patched.

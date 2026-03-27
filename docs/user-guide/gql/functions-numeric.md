@@ -1,6 +1,6 @@
 ---
 title: Numeric Functions
-description: GQL numeric and mathematical functions in Grafeo.
+description: GQL numeric and mathematical functions in Obrain.
 tags:
   - gql
   - functions

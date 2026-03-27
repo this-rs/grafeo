@@ -123,12 +123,12 @@ This guide compares Gremlin (Apache TinkerPop) with GQL (ISO/IEC 39075) to help 
 
 ## Mixing Languages
 
-Grafeo allows both languages in the same database:
+Obrain allows both languages in the same database:
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 
 # Create data with GQL
 db.execute("INSERT (:Person {name: 'Alix'})")

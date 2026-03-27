@@ -1,16 +1,16 @@
 # Ecosystem
 
-The GrafeoDB ecosystem extends beyond the core database with AI/LLM integrations, visualization tools, benchmarking and browser support.
+The ObrainDB ecosystem extends beyond the core database with AI/LLM integrations, visualization tools, benchmarking and browser support.
 
 <div class="grid cards" markdown>
 
--   :material-server:{ .lg .middle } **grafeo-server**
+-   :material-server:{ .lg .middle } **obrain-server**
 
     ---
 
-    HTTP server & web UI for Grafeo: REST API, transactions, single binary (~40MB Docker image).
+    HTTP server & web UI for Obrain: REST API, transactions, single binary (~40MB Docker image).
 
-    [:octicons-arrow-right-24: Learn more](grafeo-server.md)
+    [:octicons-arrow-right-24: Learn more](obrain-server.md)
 
 -   :material-chart-line:{ .lg .middle } **graph-bench**
 
@@ -36,44 +36,44 @@ The GrafeoDB ecosystem extends beyond the core database with AI/LLM integrations
 
     [:octicons-arrow-right-24: Learn more](anywidget-graph.md)
 
--   :material-web:{ .lg .middle } **grafeo-web**
+-   :material-web:{ .lg .middle } **obrain-web**
 
     ---
 
-    Browser-based Grafeo via WebAssembly with IndexedDB persistence.
+    Browser-based Obrain via WebAssembly with IndexedDB persistence.
 
-    [:octicons-arrow-right-24: Learn more](grafeo-web.md)
+    [:octicons-arrow-right-24: Learn more](obrain-web.md)
 
--   :material-link-variant:{ .lg .middle } **grafeo-langchain**
+-   :material-link-variant:{ .lg .middle } **obrain-langchain**
 
     ---
 
-    LangChain integration for Grafeo: graph store, vector store and Graph RAG retrieval.
+    LangChain integration for Obrain: graph store, vector store and Graph RAG retrieval.
 
-    [:octicons-arrow-right-24: Learn more](grafeo-langchain.md)
+    [:octicons-arrow-right-24: Learn more](obrain-langchain.md)
 
--   :material-llama:{ .lg .middle } **grafeo-llamaindex**
+-   :material-llama:{ .lg .middle } **obrain-llamaindex**
 
     ---
 
     LlamaIndex integration: PropertyGraphStore, vector search and knowledge graph construction.
 
-    [:octicons-arrow-right-24: Learn more](grafeo-llamaindex.md)
+    [:octicons-arrow-right-24: Learn more](obrain-llamaindex.md)
 
--   :material-chip:{ .lg .middle } **grafeo-mcp**
+-   :material-chip:{ .lg .middle } **obrain-mcp**
 
     ---
 
     Model Context Protocol server: expose a graph database as tools for LLM agents.
 
-    [:octicons-arrow-right-24: Learn more](grafeo-mcp.md)
+    [:octicons-arrow-right-24: Learn more](obrain-mcp.md)
 
--   :material-brain:{ .lg .middle } **grafeo-memory**
+-   :material-brain:{ .lg .middle } **obrain-memory**
 
     ---
 
     AI memory layer for LLM applications: extract facts, deduplicate, semantic search, change history.
 
-    [:octicons-arrow-right-24: Learn more](grafeo-memory.md)
+    [:octicons-arrow-right-24: Learn more](obrain-memory.md)
 
 </div>

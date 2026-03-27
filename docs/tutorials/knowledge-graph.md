@@ -1,6 +1,6 @@
 ---
 title: Knowledge Graph
-description: Build a knowledge graph with Grafeo.
+description: Build a knowledge graph with Obrain.
 tags:
   - tutorial
   - intermediate
@@ -24,9 +24,9 @@ This tutorial builds a knowledge graph about movies, actors, directors and genre
 ## Setup
 
 ```python
-import grafeo
+import obrain
 
-db = grafeo.GrafeoDB()
+db = obrain.ObrainDB()
 ```
 
 ## Create the Knowledge Graph

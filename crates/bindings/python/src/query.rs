@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use pyo3::prelude::*;
 
-use grafeo_common::types::Value;
+use obrain_common::types::Value;
 
 use crate::graph::{PyEdge, PyNode};
 use crate::types::PyValue;
@@ -244,7 +244,7 @@ impl PyQueryResult {
     }
 
     fn __str__(&self) -> String {
-        grafeo_common::fmt::format_result_table(
+        obrain_common::fmt::format_result_table(
             &self.columns,
             &self.rows,
             self.execution_time_ms,
