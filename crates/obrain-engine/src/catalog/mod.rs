@@ -19,8 +19,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use parking_lot::{Mutex, RwLock};
 
-use grafeo_common::collections::{ObrainConcurrentMap, obrain_concurrent_map};
-use grafeo_common::types::{EdgeTypeId, IndexId, LabelId, PropertyKeyId, Value};
+use obrain_common::collections::{ObrainConcurrentMap, obrain_concurrent_map};
+use obrain_common::types::{EdgeTypeId, IndexId, LabelId, PropertyKeyId, Value};
 
 /// The database's schema dictionary - maps names to compact internal IDs.
 ///
@@ -1690,8 +1690,8 @@ impl std::error::Error for CatalogError {}
 
 // === Constraint Validator ===
 
-use grafeo_core::execution::operators::ConstraintValidator;
-use grafeo_core::execution::operators::OperatorError;
+use obrain_core::execution::operators::ConstraintValidator;
+use obrain_core::execution::operators::OperatorError;
 
 /// Validates schema constraints during mutation operations using the Catalog.
 ///
@@ -1702,7 +1702,7 @@ pub struct CatalogConstraintValidator {
     /// Optional graph name for graph-type-bound validation.
     graph_name: Option<String>,
     /// Optional graph store for UNIQUE constraint enforcement via index lookup.
-    store: Option<Arc<dyn grafeo_core::graph::GraphStoreMut>>,
+    store: Option<Arc<dyn obrain_core::graph::GraphStoreMut>>,
 }
 
 impl CatalogConstraintValidator {
@@ -1722,7 +1722,7 @@ impl CatalogConstraintValidator {
     }
 
     /// Attaches a graph store for UNIQUE constraint enforcement.
-    pub fn with_store(mut self, store: Arc<dyn grafeo_core::graph::GraphStoreMut>) -> Self {
+    pub fn with_store(mut self, store: Arc<dyn obrain_core::graph::GraphStoreMut>) -> Self {
         self.store = Some(store);
         self
     }
