@@ -10,7 +10,7 @@
 //! 4. **Node extraction**: extract text content from all activated nodes.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use grafeo_cognitive::activation::{SpreadConfig, SynapseActivationSource, spread};
 use grafeo_cognitive::engram::{
@@ -25,10 +25,23 @@ use crate::config::RagConfig;
 use crate::error::{RagError, RagResult};
 use crate::traits::{RetrievalResult, RetrievalSource, RetrievedNode, Retriever};
 
+/// An entry in the inverted text index: a node and its pre-computed
+/// relevance score for a given term.
+#[derive(Debug, Clone)]
+struct IndexEntry {
+    node_id: NodeId,
+    /// Pre-computed score: 1.0 + specificity (term_len / text_len).
+    score: f64,
+}
+
 /// Schema-agnostic retriever backed by Grafeo's cognitive layer.
 ///
 /// Uses engrams as the abstraction layer so it doesn't need to know
 /// the database schema. Any GrafeoDB with a cognitive engine will work.
+///
+/// At construction time, builds an inverted text index over all graph
+/// nodes so that query-time lookups are O(terms × matches) instead of
+/// O(N × properties).
 pub struct EngramRetriever {
     /// The graph store for reading nodes/properties.
     graph: Arc<LpgStore>,
@@ -44,10 +57,20 @@ pub struct EngramRetriever {
 
     /// Synapse store for spreading activation.
     synapse_store: Option<Arc<SynapseStore>>,
+
+    /// Inverted text index: term → [(node_id, score)].
+    /// Built once at construction, covers all string properties of all nodes.
+    text_index: HashMap<String, Vec<IndexEntry>>,
+
+    /// Label index: lowercase_label → [node_id].
+    /// Built once at construction for fast label matching.
+    label_index: HashMap<String, Vec<NodeId>>,
 }
 
 impl EngramRetriever {
     /// Create a new retriever from cognitive components.
+    ///
+    /// Builds the inverted text index at construction time.
     pub fn new(
         graph: Arc<LpgStore>,
         engram_store: Arc<EngramStore>,
@@ -55,12 +78,15 @@ impl EngramRetriever {
         spectral: Arc<SpectralEncoder>,
         synapse_store: Option<Arc<SynapseStore>>,
     ) -> Self {
+        let (text_index, label_index) = Self::build_index(&graph);
         Self {
             graph,
             engram_store,
             vector_index,
             spectral,
             synapse_store,
+            text_index,
+            label_index,
         }
     }
 
@@ -73,65 +99,99 @@ impl EngramRetriever {
         engram_store: Arc<EngramStore>,
         synapse_store: Option<Arc<SynapseStore>>,
     ) -> Self {
+        let (text_index, label_index) = Self::build_index(&graph);
         Self {
             graph,
             engram_store,
             vector_index: Arc::new(InMemoryVectorIndex::new()),
             spectral: Arc::new(SpectralEncoder::new()),
             synapse_store,
+            text_index,
+            label_index,
         }
     }
 
-    /// Convert a text query into cue NodeIds by scanning the graph for
-    /// nodes whose text properties contain query terms.
+    /// Build inverted text index and label index by scanning all graph nodes once.
     ///
-    /// This is the schema-agnostic entry point: we don't know which labels
-    /// or properties exist, so we scan all nodes and check all string properties.
+    /// Returns `(text_index, label_index)`.
+    /// - `text_index`: term → [(node_id, score)] for all string property values
+    /// - `label_index`: lowercase_label → [node_id]
+    fn build_index(graph: &LpgStore) -> (HashMap<String, Vec<IndexEntry>>, HashMap<String, Vec<NodeId>>) {
+        let node_ids = graph.node_ids();
+        let mut text_index: HashMap<String, Vec<IndexEntry>> = HashMap::new();
+        let mut label_index: HashMap<String, Vec<NodeId>> = HashMap::new();
+
+        for node_id in &node_ids {
+            if let Some(node) = graph.get_node(*node_id) {
+                // Index all string properties
+                for (_key, value) in node.properties.iter() {
+                    if let Some(text) = value.as_str() {
+                        if text.is_empty() {
+                            continue;
+                        }
+                        let text_len = text.len().max(1);
+                        let terms = tokenize_text(&text.to_lowercase());
+                        for term in &terms {
+                            let specificity = term.len() as f64 / text_len as f64;
+                            let score = 1.0 + specificity;
+                            text_index
+                                .entry(term.clone())
+                                .or_default()
+                                .push(IndexEntry {
+                                    node_id: *node_id,
+                                    score,
+                                });
+                        }
+                    }
+                }
+
+                // Index labels
+                for label in &node.labels {
+                    label_index
+                        .entry(label.to_lowercase())
+                        .or_default()
+                        .push(*node_id);
+                }
+            }
+        }
+
+        (text_index, label_index)
+    }
+
+    /// Convert a text query into cue NodeIds using the pre-built inverted index.
+    ///
+    /// This is the schema-agnostic entry point: the index was built at construction
+    /// time by scanning all nodes and all string properties. Query-time is
+    /// O(terms × matches_per_term) instead of O(N × properties).
     fn text_to_cues(&self, query: &str, max_cues: usize) -> Vec<(NodeId, f64)> {
         let terms = tokenize_query(query);
         if terms.is_empty() {
             return Vec::new();
         }
 
-        let node_ids = self.graph.node_ids();
-        let mut scored: Vec<(NodeId, f64)> = Vec::new();
+        // Aggregate scores from the inverted index
+        let mut node_scores: HashMap<NodeId, f64> = HashMap::new();
 
-        for node_id in &node_ids {
-            if let Some(node) = self.graph.get_node(*node_id) {
-                let mut node_score = 0.0f64;
-
-                // Check all string properties for term matches
-                for (_key, value) in node.properties.iter() {
-                    if let Some(text) = value.as_str() {
-                        let text_lower = text.to_lowercase();
-                        for term in &terms {
-                            if text_lower.contains(term.as_str()) {
-                                // Score by term length relative to text length
-                                // (longer matches are more specific)
-                                let specificity = term.len() as f64 / text_lower.len().max(1) as f64;
-                                node_score += 1.0 + specificity;
-                            }
-                        }
-                    }
+        for term in &terms {
+            // Exact term lookup in text_index
+            if let Some(entries) = self.text_index.get(term.as_str()) {
+                for entry in entries {
+                    *node_scores.entry(entry.node_id).or_default() += entry.score;
                 }
+            }
 
-                // Also check labels (bidirectional: term in label OR label in term)
-                for label in &node.labels {
-                    let label_lower = label.to_lowercase();
-                    for term in &terms {
-                        if label_lower.contains(term.as_str()) || term.contains(label_lower.as_str()) {
-                            node_score += 0.5;
-                        }
+            // Label matching (bidirectional: term in label OR label in term)
+            for (label, node_ids) in &self.label_index {
+                if label.contains(term.as_str()) || term.contains(label.as_str()) {
+                    for node_id in node_ids {
+                        *node_scores.entry(*node_id).or_default() += 0.5;
                     }
-                }
-
-                if node_score > 0.0 {
-                    scored.push((*node_id, node_score));
                 }
             }
         }
 
         // Sort by score descending, take top max_cues
+        let mut scored: Vec<(NodeId, f64)> = node_scores.into_iter().collect();
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         scored.truncate(max_cues);
         scored
@@ -320,11 +380,9 @@ impl Retriever for EngramRetriever {
     }
 }
 
-/// Tokenize a query string into lowercase search terms.
-///
-/// Filters out common stop words and very short terms.
-fn tokenize_query(query: &str) -> Vec<String> {
-    const STOP_WORDS: &[&str] = &[
+/// Static stop word set — built once, reused across all queries.
+static STOP_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+    [
         "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
         "have", "has", "had", "do", "does", "did", "will", "would", "could",
         "should", "may", "might", "shall", "can", "need", "dare", "ought",
@@ -344,16 +402,29 @@ fn tokenize_query(query: &str) -> Vec<String> {
         "vous", "ils", "elles", "je", "tu", "on", "me", "te", "lui",
         "leur", "y", "si", "ou", "mais", "donc", "car", "ni",
         "quels", "quelles", "quel", "quelle", "comment", "combien",
-    ];
+    ]
+    .into_iter()
+    .collect()
+});
 
-    let stop_set: HashSet<&str> = STOP_WORDS.iter().copied().collect();
-
-    query
-        .to_lowercase()
+/// Tokenize a text string into lowercase normalized terms.
+///
+/// Filters out common stop words (EN+FR) and very short terms (< 2 chars).
+/// Used for both query tokenization and index building.
+fn tokenize_text(text: &str) -> Vec<String> {
+    text.to_lowercase()
         .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
-        .filter(|w| w.len() >= 2 && !stop_set.contains(w))
+        .filter(|w| w.len() >= 2 && !STOP_WORDS.contains(w))
         .map(String::from)
         .collect()
+}
+
+/// Tokenize a query string into lowercase search terms.
+///
+/// Alias for `tokenize_text` — same logic for both indexing and querying
+/// ensures consistent matching.
+fn tokenize_query(query: &str) -> Vec<String> {
+    tokenize_text(query)
 }
 
 #[cfg(test)]

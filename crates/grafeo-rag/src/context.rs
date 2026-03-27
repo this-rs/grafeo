@@ -9,7 +9,7 @@ use std::fmt::Write;
 use crate::budget::select_within_budget;
 use crate::config::RagConfig;
 use crate::error::RagResult;
-use crate::ranking::rank_nodes;
+use crate::ranking::rank_with_diversity;
 use crate::traits::{ContextBuilder, RagContext, RetrievalResult};
 
 /// Default context builder that produces structured markdown.
@@ -30,9 +30,9 @@ impl Default for GraphContextBuilder {
 
 impl ContextBuilder for GraphContextBuilder {
     fn build(&self, result: &RetrievalResult, config: &RagConfig) -> RagResult<RagContext> {
-        // Step 1: Rank nodes
+        // Step 1: Rank nodes with diversity-aware composite scoring
         let mut nodes = result.nodes.clone();
-        rank_nodes(&mut nodes);
+        rank_with_diversity(&mut nodes);
 
         // Step 2: Select within budget
         let (selected, estimated_tokens) = select_within_budget(&nodes, config);
