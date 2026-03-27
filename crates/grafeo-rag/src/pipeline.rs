@@ -9,6 +9,8 @@
 //! pipeline.feedback(&context, &llm_response)?;
 //! ```
 
+use std::sync::Arc;
+
 use crate::config::RagConfig;
 use crate::error::RagResult;
 use crate::traits::{
@@ -17,7 +19,7 @@ use crate::traits::{
 
 /// The main RAG pipeline — query, build context, and provide feedback.
 pub struct RagPipeline {
-    retriever: Box<dyn Retriever>,
+    retriever: Arc<dyn Retriever>,
     context_builder: Box<dyn ContextBuilder>,
     feedback_sink: Option<Box<dyn FeedbackSink>>,
     config: RagConfig,
@@ -25,14 +27,18 @@ pub struct RagPipeline {
 
 impl RagPipeline {
     /// Create a new RAG pipeline with all components.
+    ///
+    /// The retriever is wrapped in `Arc` so the caller can keep a
+    /// reference to the concrete type (e.g. `EngramRetriever`) for
+    /// incremental index updates while the pipeline uses it for queries.
     pub fn new(
-        retriever: impl Retriever + 'static,
+        retriever: Arc<dyn Retriever>,
         context_builder: impl ContextBuilder + 'static,
         feedback_sink: Option<Box<dyn FeedbackSink>>,
         config: RagConfig,
     ) -> Self {
         Self {
-            retriever: Box::new(retriever),
+            retriever,
             context_builder: Box::new(context_builder),
             feedback_sink,
             config,

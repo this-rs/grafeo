@@ -10,7 +10,7 @@
 //! 4. **Node extraction**: extract text content from all activated nodes.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, RwLock};
 
 use grafeo_cognitive::activation::{SpreadConfig, SynapseActivationSource, spread};
 use grafeo_cognitive::engram::{
@@ -25,39 +25,286 @@ use crate::config::RagConfig;
 use crate::error::{RagError, RagResult};
 use crate::traits::{RetrievalResult, RetrievalSource, RetrievedNode, Retriever};
 
-/// An entry in the inverted text index: a node and its pre-computed
-/// relevance score for a given term.
+/// Maximum distinct terms to index per node.
+/// Prevents nodes with very long text from dominating the index.
+const MAX_TERMS_PER_NODE: usize = 100;
+
+/// An entry in the inverted text index: a node and its raw TF score.
+/// IDF is computed at query time so it stays correct as the index evolves.
 #[derive(Debug, Clone)]
 struct IndexEntry {
     node_id: NodeId,
-    /// Pre-computed score: TF-IDF weighted.
-    /// TF = 1.0 + specificity (term_len / text_len), then × IDF.
-    score: f64,
+    /// Raw TF score: 1.0 + specificity (term_len / text_len).
+    tf: f64,
 }
 
-/// Pre-computed statistics for label-based score dampening.
-/// Labels with many nodes are over-represented and should receive
-/// lower scores to avoid drowning out rarer, more structured content.
+/// Live inverted index with incremental update support.
+///
+/// Stores raw TF scores and document frequency counts. IDF is computed
+/// at query time: `idf(term) = ln(total_nodes / df(term))`.
+///
+/// The index supports `index_node()` and `remove_node()` for incremental
+/// updates without rebuilding from scratch.
 #[derive(Debug)]
-struct LabelStats {
-    /// Total number of nodes in the graph.
-    total_nodes: usize,
-    /// Per-label node count (lowercase label → count).
-    /// Kept for diagnostics (e.g. REPL /stats command).
-    #[allow(dead_code)]
+struct InvertedIndex {
+    /// term → [(node_id, tf_score)]
+    text_entries: HashMap<String, Vec<IndexEntry>>,
+
+    /// term → number of distinct nodes containing this term (for IDF).
+    term_doc_freq: HashMap<String, usize>,
+
+    /// lowercase_label → [node_id]
+    label_entries: HashMap<String, Vec<NodeId>>,
+
+    /// label → total node count for that label.
     label_counts: HashMap<String, usize>,
-    /// Per-node: the count of its most common label (for dampening lookup).
+
+    /// node → max label cardinality (for dampening lookup).
     node_label_cardinality: HashMap<NodeId, usize>,
+
+    /// Per-node: which terms this node contributed (for removal).
+    node_terms: HashMap<NodeId, Vec<String>>,
+
+    /// Per-node: which labels this node has (for removal).
+    node_labels: HashMap<NodeId, Vec<String>>,
+
+    /// Total indexed nodes.
+    total_nodes: usize,
 }
+
+impl InvertedIndex {
+    fn new() -> Self {
+        Self {
+            text_entries: HashMap::new(),
+            term_doc_freq: HashMap::new(),
+            label_entries: HashMap::new(),
+            label_counts: HashMap::new(),
+            node_label_cardinality: HashMap::new(),
+            node_terms: HashMap::new(),
+            node_labels: HashMap::new(),
+            total_nodes: 0,
+        }
+    }
+
+    /// Add a single node to the index.
+    ///
+    /// If the node is already indexed, it is first removed then re-added
+    /// (idempotent update).
+    fn add_node(&mut self, node_id: NodeId, labels: &[String], properties: &[(String, String)]) {
+        // Remove first if already present (idempotent update)
+        if self.node_terms.contains_key(&node_id) {
+            self.remove_node(node_id);
+        }
+
+        self.total_nodes += 1;
+
+        // Index text properties
+        let mut seen_terms: HashSet<String> = HashSet::new();
+        let mut stored_terms: Vec<String> = Vec::new();
+
+        for (_key, value) in properties {
+            if value.is_empty() {
+                continue;
+            }
+            let text_len = value.len().max(1);
+            let terms = tokenize_text(&value.to_lowercase());
+            for term in terms {
+                if seen_terms.contains(&term) {
+                    continue;
+                }
+                if seen_terms.len() >= MAX_TERMS_PER_NODE {
+                    break;
+                }
+                let specificity = term.len() as f64 / text_len as f64;
+                let tf = 1.0 + specificity;
+
+                self.text_entries
+                    .entry(term.clone())
+                    .or_default()
+                    .push(IndexEntry { node_id, tf });
+
+                // Update doc freq: only if this is the first time this node has this term
+                *self.term_doc_freq.entry(term.clone()).or_insert(0) += 1;
+
+                seen_terms.insert(term.clone());
+                stored_terms.push(term);
+            }
+            if seen_terms.len() >= MAX_TERMS_PER_NODE {
+                break;
+            }
+        }
+
+        // Index labels
+        let mut stored_labels: Vec<String> = Vec::new();
+        for label in labels {
+            let lower = label.to_lowercase();
+            self.label_entries
+                .entry(lower.clone())
+                .or_default()
+                .push(node_id);
+            *self.label_counts.entry(lower.clone()).or_insert(0) += 1;
+            stored_labels.push(lower);
+        }
+
+        // Compute cardinality for this node (max label count)
+        let max_card = stored_labels
+            .iter()
+            .filter_map(|l| self.label_counts.get(l))
+            .max()
+            .copied()
+            .unwrap_or(1);
+        self.node_label_cardinality.insert(node_id, max_card);
+
+        // Store reverse mappings for removal
+        self.node_terms.insert(node_id, stored_terms);
+        self.node_labels.insert(node_id, stored_labels);
+    }
+
+    /// Remove a node from the index.
+    fn remove_node(&mut self, node_id: NodeId) {
+        // Remove from text index + update doc freq
+        if let Some(terms) = self.node_terms.remove(&node_id) {
+            for term in &terms {
+                if let Some(entries) = self.text_entries.get_mut(term) {
+                    entries.retain(|e| e.node_id != node_id);
+                    if entries.is_empty() {
+                        self.text_entries.remove(term);
+                    }
+                }
+                if let Some(df) = self.term_doc_freq.get_mut(term) {
+                    *df = df.saturating_sub(1);
+                    if *df == 0 {
+                        self.term_doc_freq.remove(term);
+                    }
+                }
+            }
+        }
+
+        // Remove from label index + update counts
+        if let Some(labels) = self.node_labels.remove(&node_id) {
+            for label in &labels {
+                if let Some(node_ids) = self.label_entries.get_mut(label) {
+                    node_ids.retain(|id| *id != node_id);
+                    if node_ids.is_empty() {
+                        self.label_entries.remove(label);
+                    }
+                }
+                if let Some(count) = self.label_counts.get_mut(label) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        self.label_counts.remove(label);
+                    }
+                }
+            }
+        }
+
+        self.node_label_cardinality.remove(&node_id);
+        self.total_nodes = self.total_nodes.saturating_sub(1);
+    }
+
+    /// Refresh label cardinality for all nodes.
+    ///
+    /// Called after bulk operations to ensure dampening values are current.
+    fn refresh_cardinalities(&mut self) {
+        for (node_id, labels) in &self.node_labels {
+            let max_card = labels
+                .iter()
+                .filter_map(|l| self.label_counts.get(l))
+                .max()
+                .copied()
+                .unwrap_or(1);
+            self.node_label_cardinality.insert(*node_id, max_card);
+        }
+    }
+
+    /// Query the index: return scored nodes for given terms.
+    ///
+    /// Computes IDF on-the-fly from current doc freq counts, applies label
+    /// cardinality dampening, and returns the top `max_cues` results.
+    fn query(&self, terms: &[String], max_cues: usize) -> Vec<(NodeId, f64)> {
+        if terms.is_empty() || self.total_nodes == 0 {
+            return Vec::new();
+        }
+
+        let n = self.total_nodes as f64;
+        let mut node_scores: HashMap<NodeId, f64> = HashMap::new();
+
+        for term in terms {
+            // Text index lookup with on-the-fly IDF
+            if let Some(entries) = self.text_entries.get(term.as_str()) {
+                let df = self
+                    .term_doc_freq
+                    .get(term.as_str())
+                    .copied()
+                    .unwrap_or(1)
+                    .max(1) as f64;
+                let idf = (n / df).ln().max(0.1);
+
+                for entry in entries {
+                    *node_scores.entry(entry.node_id).or_default() += entry.tf * idf;
+                }
+            }
+
+            // Label matching (bidirectional: term in label OR label in term)
+            for (label, node_ids) in &self.label_entries {
+                if label.contains(term.as_str()) || term.contains(label.as_str()) {
+                    for node_id in node_ids {
+                        *node_scores.entry(*node_id).or_default() += 0.5;
+                    }
+                }
+            }
+        }
+
+        // Apply label cardinality dampening
+        let mut scored: Vec<(NodeId, f64)> = node_scores
+            .into_iter()
+            .map(|(node_id, raw_score)| {
+                let cardinality = self
+                    .node_label_cardinality
+                    .get(&node_id)
+                    .copied()
+                    .unwrap_or(1) as f64;
+                let label_fraction = cardinality / n;
+                let dampening = (1.0 + label_fraction * 10.0).ln().max(1.0);
+                (node_id, raw_score / dampening)
+            })
+            .collect();
+
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(max_cues);
+        scored
+    }
+
+    /// Return diagnostics: (total_nodes, distinct_terms, label_distribution).
+    fn stats(&self) -> (usize, usize, Vec<(String, usize, f64)>) {
+        let total = self.total_nodes.max(1);
+        let terms = self.text_entries.len();
+        let mut labels: Vec<(String, usize, f64)> = self
+            .label_counts
+            .iter()
+            .map(|(label, &count)| {
+                let frac = count as f64 / total as f64 * 100.0;
+                (label.clone(), count, frac)
+            })
+            .collect();
+        labels.sort_by(|a, b| b.1.cmp(&a.1));
+        (total, terms, labels)
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// EngramRetriever
+// ─────────────────────────────────────────────────────────────────
 
 /// Schema-agnostic retriever backed by Grafeo's cognitive layer.
 ///
 /// Uses engrams as the abstraction layer so it doesn't need to know
 /// the database schema. Any GrafeoDB with a cognitive engine will work.
 ///
-/// At construction time, builds an inverted text index over all graph
-/// nodes so that query-time lookups are O(terms × matches) instead of
-/// O(N × properties).
+/// The internal inverted index is behind a `RwLock` and supports
+/// incremental updates via `index_node()` / `remove_node()`.
+/// A server can subscribe to post-commit mutations and call these
+/// methods to keep the index always up-to-date.
 pub struct EngramRetriever {
     /// The graph store for reading nodes/properties.
     graph: Arc<LpgStore>,
@@ -74,23 +321,16 @@ pub struct EngramRetriever {
     /// Synapse store for spreading activation.
     synapse_store: Option<Arc<SynapseStore>>,
 
-    /// Inverted text index: term → [(node_id, score)].
-    /// Built once at construction, covers all string properties of all nodes.
-    /// Scores are TF-IDF weighted.
-    text_index: HashMap<String, Vec<IndexEntry>>,
-
-    /// Label index: lowercase_label → [node_id].
-    /// Built once at construction for fast label matching.
-    label_index: HashMap<String, Vec<NodeId>>,
-
-    /// Label statistics for cardinality-based score dampening.
-    label_stats: LabelStats,
+    /// Live inverted index (RwLock for concurrent read + incremental write).
+    index: RwLock<InvertedIndex>,
 }
 
 impl EngramRetriever {
     /// Create a new retriever from cognitive components.
     ///
-    /// Builds the inverted text index at construction time.
+    /// Builds the inverted text index at construction time by scanning
+    /// all graph nodes. For large graphs, consider `new_lazy()` +
+    /// incremental `index_node()` calls instead.
     pub fn new(
         graph: Arc<LpgStore>,
         engram_store: Arc<EngramStore>,
@@ -98,16 +338,14 @@ impl EngramRetriever {
         spectral: Arc<SpectralEncoder>,
         synapse_store: Option<Arc<SynapseStore>>,
     ) -> Self {
-        let (text_index, label_index, label_stats) = Self::build_index(&graph);
+        let index = Self::build_full_index(&graph);
         Self {
             graph,
             engram_store,
             vector_index,
             spectral,
             synapse_store,
-            text_index,
-            label_index,
-            label_stats,
+            index: RwLock::new(index),
         }
     }
 
@@ -120,243 +358,139 @@ impl EngramRetriever {
         engram_store: Arc<EngramStore>,
         synapse_store: Option<Arc<SynapseStore>>,
     ) -> Self {
-        let (text_index, label_index, label_stats) = Self::build_index(&graph);
+        let index = Self::build_full_index(&graph);
         Self {
             graph,
             engram_store,
             vector_index: Arc::new(InMemoryVectorIndex::new()),
             spectral: Arc::new(SpectralEncoder::new()),
             synapse_store,
-            text_index,
-            label_index,
-            label_stats,
+            index: RwLock::new(index),
         }
     }
 
-    /// Build inverted text index, label index, and label statistics.
+    /// Create a retriever with an **empty** index.
     ///
-    /// Returns `(text_index, label_index, label_stats)`.
-    ///
-    /// The index uses **TF-IDF scoring** and **per-node term normalization**:
-    /// - TF = 1.0 + specificity (term_len / text_len)
-    /// - IDF = ln(N / df) where df = number of distinct nodes containing the term
-    /// - Per-node normalization: each node's terms are capped so nodes with lots
-    ///   of text (e.g. chat messages) don't flood the index.
-    ///
-    /// Label stats enable **cardinality dampening** at query time:
-    /// labels with very many nodes get lower scores automatically,
-    /// without knowing the schema.
-    fn build_index(
-        graph: &LpgStore,
-    ) -> (
-        HashMap<String, Vec<IndexEntry>>,
-        HashMap<String, Vec<NodeId>>,
-        LabelStats,
-    ) {
+    /// No initial scan — the caller is responsible for populating the
+    /// index via `index_node()` calls (e.g. from a mutation stream).
+    /// This is the preferred constructor for server integration where
+    /// the index is built incrementally.
+    pub fn new_lazy(
+        graph: Arc<LpgStore>,
+        engram_store: Arc<EngramStore>,
+        synapse_store: Option<Arc<SynapseStore>>,
+    ) -> Self {
+        Self {
+            graph,
+            engram_store,
+            vector_index: Arc::new(InMemoryVectorIndex::new()),
+            spectral: Arc::new(SpectralEncoder::new()),
+            synapse_store,
+            index: RwLock::new(InvertedIndex::new()),
+        }
+    }
+
+    /// Build the full index by scanning all graph nodes.
+    fn build_full_index(graph: &LpgStore) -> InvertedIndex {
         let node_ids = graph.node_ids();
-        let total_nodes = node_ids.len().max(1);
-
-        // Phase 1: Collect raw TF scores and label info
-        // Also track document frequency (df) per term and term count per node.
-        let mut raw_index: HashMap<String, Vec<(NodeId, f64)>> = HashMap::new();
-        let mut term_doc_freq: HashMap<String, HashSet<NodeId>> = HashMap::new();
-        let mut label_index: HashMap<String, Vec<NodeId>> = HashMap::new();
-        let mut label_counts: HashMap<String, usize> = HashMap::new();
-        let mut node_label_cardinality: HashMap<NodeId, usize> = HashMap::new();
-
-        /// Maximum distinct terms to index per node.
-        /// Prevents nodes with very long text from dominating the index.
-        const MAX_TERMS_PER_NODE: usize = 100;
+        let mut index = InvertedIndex::new();
 
         for node_id in &node_ids {
             if let Some(node) = graph.get_node(*node_id) {
-                // Collect all terms for this node (across all properties),
-                // deduplicated, capped at MAX_TERMS_PER_NODE.
-                let mut node_terms: Vec<(String, f64)> = Vec::new();
-                let mut seen_terms: HashSet<String> = HashSet::new();
-
-                for (_key, value) in node.properties.iter() {
-                    if let Some(text) = value.as_str() {
-                        if text.is_empty() {
-                            continue;
-                        }
-                        let text_len = text.len().max(1);
-                        let terms = tokenize_text(&text.to_lowercase());
-                        for term in terms {
-                            if seen_terms.contains(&term) {
-                                continue;
-                            }
-                            if seen_terms.len() >= MAX_TERMS_PER_NODE {
-                                break;
-                            }
-                            let specificity = term.len() as f64 / text_len as f64;
-                            let tf = 1.0 + specificity;
-                            seen_terms.insert(term.clone());
-                            node_terms.push((term, tf));
-                        }
-                    }
-                    if seen_terms.len() >= MAX_TERMS_PER_NODE {
-                        break;
-                    }
-                }
-
-                // Register terms in raw index and document frequency
-                for (term, tf) in &node_terms {
-                    raw_index
-                        .entry(term.clone())
-                        .or_default()
-                        .push((*node_id, *tf));
-                    term_doc_freq
-                        .entry(term.clone())
-                        .or_default()
-                        .insert(*node_id);
-                }
-
-                // Index labels and track cardinality
-                let mut max_label_count = 0usize;
-                for label in &node.labels {
-                    let lower = label.to_lowercase();
-                    label_index.entry(lower.clone()).or_default().push(*node_id);
-                    let count = label_counts.entry(lower).or_insert(0);
-                    *count += 1;
-                    max_label_count = max_label_count.max(*count);
-                }
-                // We'll fix cardinality in a second pass after all counts are known.
-                // For now, store labels for the node.
-                let _ = node_label_cardinality.entry(*node_id);
-            }
-        }
-
-        // Phase 2: Compute node_label_cardinality using final label_counts
-        for node_id in &node_ids {
-            if let Some(node) = graph.get_node(*node_id) {
-                let max_card = node
-                    .labels
+                let labels: Vec<String> = node.labels.iter().map(|l| l.to_string()).collect();
+                let properties: Vec<(String, String)> = node
+                    .properties
                     .iter()
-                    .filter_map(|l| label_counts.get(&l.to_lowercase()))
-                    .max()
-                    .copied()
-                    .unwrap_or(1);
-                node_label_cardinality.insert(*node_id, max_card);
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.to_string(), s.to_string())))
+                    .collect();
+                index.add_node(*node_id, &labels, &properties);
             }
         }
 
-        // Phase 3: Apply IDF to build final text_index
-        let n = total_nodes as f64;
-        let mut text_index: HashMap<String, Vec<IndexEntry>> = HashMap::with_capacity(raw_index.len());
+        // After bulk load, refresh all cardinalities at once
+        // (individual add_node only sees partial label_counts)
+        index.refresh_cardinalities();
 
-        for (term, entries) in raw_index {
-            let df = term_doc_freq
-                .get(&term)
-                .map(|s| s.len())
-                .unwrap_or(1)
-                .max(1) as f64;
-            let idf = (n / df).ln().max(0.1); // Floor at 0.1 to avoid zeroing out
+        index
+    }
 
-            let index_entries: Vec<IndexEntry> = entries
-                .into_iter()
-                .map(|(node_id, tf)| IndexEntry {
-                    node_id,
-                    score: tf * idf,
-                })
+    // ── Incremental update API ──────────────────────────────────
+
+    /// Index a single node (by reading it from the graph store).
+    ///
+    /// If the node is already indexed, it is updated in-place.
+    /// Call this from a post-commit hook or mutation listener to keep
+    /// the index in sync with the graph.
+    pub fn index_node(&self, node_id: NodeId) {
+        if let Some(node) = self.graph.get_node(node_id) {
+            let labels: Vec<String> = node.labels.iter().map(|l| l.to_string()).collect();
+            let properties: Vec<(String, String)> = node
+                .properties
+                .iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.to_string(), s.to_string())))
                 .collect();
 
-            text_index.insert(term, index_entries);
+            let mut idx = self.index.write().unwrap();
+            idx.add_node(node_id, &labels, &properties);
         }
-
-        let label_stats = LabelStats {
-            total_nodes,
-            label_counts,
-            node_label_cardinality,
-        };
-
-        (text_index, label_index, label_stats)
     }
+
+    /// Remove a node from the index.
+    ///
+    /// Call this when a node is deleted from the graph.
+    pub fn remove_node(&self, node_id: NodeId) {
+        let mut idx = self.index.write().unwrap();
+        idx.remove_node(node_id);
+    }
+
+    /// Index multiple nodes at once (batch update).
+    ///
+    /// More efficient than calling `index_node()` in a loop because
+    /// it holds the write lock for the entire batch and refreshes
+    /// cardinalities once at the end.
+    pub fn index_nodes(&self, node_ids: &[NodeId]) {
+        let mut idx = self.index.write().unwrap();
+        for &node_id in node_ids {
+            if let Some(node) = self.graph.get_node(node_id) {
+                let labels: Vec<String> = node.labels.iter().map(|l| l.to_string()).collect();
+                let properties: Vec<(String, String)> = node
+                    .properties
+                    .iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.to_string(), s.to_string())))
+                    .collect();
+                idx.add_node(node_id, &labels, &properties);
+            }
+        }
+        idx.refresh_cardinalities();
+    }
+
+    /// Rebuild the entire index from the current graph state.
+    ///
+    /// Useful as a `/reindex` command or after major bulk operations.
+    pub fn reindex(&self) {
+        let new_index = Self::build_full_index(&self.graph);
+        let mut idx = self.index.write().unwrap();
+        *idx = new_index;
+    }
+
+    // ── Diagnostics ─────────────────────────────────────────────
 
     /// Return index statistics for diagnostics.
     ///
     /// Returns `(total_nodes, distinct_terms, label_distribution)` where
     /// `label_distribution` is a sorted vec of `(label, count, fraction%)`.
     pub fn index_stats(&self) -> (usize, usize, Vec<(String, usize, f64)>) {
-        let total = self.label_stats.total_nodes;
-        let terms = self.text_index.len();
-        let mut labels: Vec<(String, usize, f64)> = self
-            .label_stats
-            .label_counts
-            .iter()
-            .map(|(label, &count)| {
-                let frac = count as f64 / total.max(1) as f64 * 100.0;
-                (label.clone(), count, frac)
-            })
-            .collect();
-        labels.sort_by(|a, b| b.1.cmp(&a.1));
-        (total, terms, labels)
+        let idx = self.index.read().unwrap();
+        idx.stats()
     }
 
-    /// Convert a text query into cue NodeIds using the pre-built inverted index.
-    ///
-    /// This is the schema-agnostic entry point: the index was built at construction
-    /// time by scanning all nodes and all string properties. Query-time is
-    /// O(terms × matches_per_term) instead of O(N × properties).
-    ///
-    /// Applies **label cardinality dampening**: nodes whose label is very common
-    /// in the graph receive a score penalty. This prevents over-represented
-    /// node types (e.g. messages in a chat DB) from crowding out rarer,
-    /// more structured content — without needing to know the schema.
+    // ── Internal helpers ────────────────────────────────────────
+
+    /// Convert a text query into cue NodeIds using the inverted index.
     fn text_to_cues(&self, query: &str, max_cues: usize) -> Vec<(NodeId, f64)> {
         let terms = tokenize_query(query);
-        if terms.is_empty() {
-            return Vec::new();
-        }
-
-        // Aggregate TF-IDF scores from the inverted index
-        let mut node_scores: HashMap<NodeId, f64> = HashMap::new();
-
-        for term in &terms {
-            // Exact term lookup in text_index (scores are already TF-IDF weighted)
-            if let Some(entries) = self.text_index.get(term.as_str()) {
-                for entry in entries {
-                    *node_scores.entry(entry.node_id).or_default() += entry.score;
-                }
-            }
-
-            // Label matching (bidirectional: term in label OR label in term)
-            for (label, node_ids) in &self.label_index {
-                if label.contains(term.as_str()) || term.contains(label.as_str()) {
-                    for node_id in node_ids {
-                        *node_scores.entry(*node_id).or_default() += 0.5;
-                    }
-                }
-            }
-        }
-
-        // Apply label cardinality dampening:
-        // Nodes with very common labels get their score divided by
-        // ln(1 + label_fraction × 10). This is smooth and schema-agnostic:
-        //   - label with 1% of nodes → dampening ≈ 1.1× (negligible)
-        //   - label with 10% of nodes → dampening ≈ 1.7×
-        //   - label with 50% of nodes → dampening ≈ 2.8×
-        //   - label with 90% of nodes → dampening ≈ 3.4×
-        let total = self.label_stats.total_nodes as f64;
-        let mut scored: Vec<(NodeId, f64)> = node_scores
-            .into_iter()
-            .map(|(node_id, raw_score)| {
-                let cardinality = self
-                    .label_stats
-                    .node_label_cardinality
-                    .get(&node_id)
-                    .copied()
-                    .unwrap_or(1) as f64;
-                let label_fraction = cardinality / total;
-                let dampening = (1.0 + label_fraction * 10.0).ln().max(1.0);
-                (node_id, raw_score / dampening)
-            })
-            .collect();
-
-        // Sort by dampened score descending, take top max_cues
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        scored.truncate(max_cues);
-        scored
+        let idx = self.index.read().unwrap();
+        idx.query(&terms, max_cues)
     }
 
     /// Extract text content from a node in a schema-agnostic way.
@@ -367,7 +501,6 @@ impl EngramRetriever {
 
         let mut properties = HashMap::new();
         for (key, value) in node.properties.iter() {
-            // Include all string properties and string representations of others
             if let Some(s) = value.as_str() {
                 if !s.is_empty() {
                     properties.insert(key.as_str().to_string(), s.to_string());
@@ -456,7 +589,6 @@ impl Retriever for EngramRetriever {
                 .with_min_energy(config.min_activation_energy)
                 .with_max_activated_nodes(config.max_activated_nodes);
 
-            // Use the engram nodes as activation sources
             let sources: Vec<(NodeId, f64)> = activated_nodes
                 .iter()
                 .map(|(id, (score, _))| (*id, *score))
@@ -465,15 +597,16 @@ impl Retriever for EngramRetriever {
             if !sources.is_empty() {
                 let activation_map = spread(&sources, &source_activation, &spread_config);
 
-                // Add activated nodes that aren't already from direct recall
                 for (node_id, activation) in &activation_map {
-                    if !activated_nodes.contains_key(node_id) && *activation >= config.min_activation_energy {
+                    if !activated_nodes.contains_key(node_id)
+                        && *activation >= config.min_activation_energy
+                    {
                         activated_nodes.insert(
                             *node_id,
                             (
                                 *activation,
                                 RetrievalSource::SpreadingActivation {
-                                    depth: 1, // approximate
+                                    depth: 1,
                                     activation: *activation,
                                 },
                             ),
@@ -483,13 +616,13 @@ impl Retriever for EngramRetriever {
             }
         }
 
-        // Also add cue nodes themselves (direct text matches) if they're not already activated
+        // Also add cue nodes themselves (direct text matches)
         for (node_id, text_score) in &cue_nodes {
             if !activated_nodes.contains_key(node_id) {
                 activated_nodes.insert(
                     *node_id,
                     (
-                        *text_score * 0.5, // Discount direct text matches vs engram recall
+                        *text_score * 0.5,
                         RetrievalSource::SpreadingActivation {
                             depth: 0,
                             activation: *text_score,
@@ -527,8 +660,6 @@ impl Retriever for EngramRetriever {
         nodes.truncate(config.max_context_nodes);
 
         if nodes.is_empty() && engrams_matched == 0 {
-            // If we have cue nodes but no engrams, we still have useful results
-            // from text matching. Only error if truly nothing found.
             if cue_nodes.is_empty() {
                 return Err(RagError::NoEngramsFound(query.to_string()));
             }
@@ -541,6 +672,10 @@ impl Retriever for EngramRetriever {
         })
     }
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Tokenization
+// ─────────────────────────────────────────────────────────────────
 
 /// Static stop word set — built once, reused across all queries.
 static STOP_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
@@ -572,7 +707,6 @@ static STOP_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
 /// Tokenize a text string into lowercase normalized terms.
 ///
 /// Filters out common stop words (EN+FR) and very short terms (< 2 chars).
-/// Used for both query tokenization and index building.
 fn tokenize_text(text: &str) -> Vec<String> {
     text.to_lowercase()
         .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
@@ -582,47 +716,148 @@ fn tokenize_text(text: &str) -> Vec<String> {
 }
 
 /// Tokenize a query string into lowercase search terms.
-///
-/// Alias for `tokenize_text` — same logic for both indexing and querying
-/// ensures consistent matching.
 fn tokenize_query(query: &str) -> Vec<String> {
     tokenize_text(query)
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Tests
+// ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
+    fn inverted_index_add_and_query() {
+        let mut idx = InvertedIndex::new();
+        idx.add_node(
+            NodeId(1),
+            &["Project".to_string()],
+            &[
+                ("name".into(), "Grafeo".into()),
+                ("description".into(), "Graph database engine".into()),
+            ],
+        );
+        idx.add_node(
+            NodeId(2),
+            &["Note".to_string()],
+            &[("title".into(), "WAL bug in Grafeo".into())],
+        );
+
+        let results = idx.query(&tokenize_query("Grafeo"), 10);
+        assert!(!results.is_empty(), "Should find nodes matching 'Grafeo'");
+        // Both nodes mention "grafeo"
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn inverted_index_remove_node() {
+        let mut idx = InvertedIndex::new();
+        idx.add_node(
+            NodeId(1),
+            &["Project".to_string()],
+            &[("name".into(), "Grafeo".into())],
+        );
+        idx.add_node(
+            NodeId(2),
+            &["Note".to_string()],
+            &[("title".into(), "Other thing".into())],
+        );
+        assert_eq!(idx.total_nodes, 2);
+
+        idx.remove_node(NodeId(1));
+        assert_eq!(idx.total_nodes, 1);
+
+        let results = idx.query(&tokenize_query("Grafeo"), 10);
+        assert!(results.is_empty(), "Removed node should not appear");
+    }
+
+    #[test]
+    fn inverted_index_update_is_idempotent() {
+        let mut idx = InvertedIndex::new();
+        idx.add_node(
+            NodeId(1),
+            &["Project".to_string()],
+            &[("name".into(), "Grafeo".into())],
+        );
+        // Re-add same node with different content
+        idx.add_node(
+            NodeId(1),
+            &["Project".to_string()],
+            &[("name".into(), "Grafeo v2".into())],
+        );
+        assert_eq!(idx.total_nodes, 1, "Should still be 1 node after update");
+
+        let results = idx.query(&tokenize_query("Grafeo"), 10);
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn label_dampening_reduces_dominant_labels() {
+        let mut idx = InvertedIndex::new();
+
+        // Add 100 ChatMessage nodes with "hello"
+        for i in 0..100 {
+            idx.add_node(
+                NodeId(i),
+                &["ChatMessage".to_string()],
+                &[("content".into(), "hello world".into())],
+            );
+        }
+        // Add 1 Note node with "hello"
+        idx.add_node(
+            NodeId(200),
+            &["Note".to_string()],
+            &[("content".into(), "hello important note".into())],
+        );
+        idx.refresh_cardinalities();
+
+        let results = idx.query(&tokenize_query("hello"), 5);
+        assert!(!results.is_empty());
+
+        // The Note node should rank higher than any ChatMessage
+        // because ChatMessage has 100/101 ≈ 99% cardinality → heavy dampening
+        let top_node = results[0].0;
+        assert_eq!(
+            top_node,
+            NodeId(200),
+            "Note should rank above ChatMessages due to label dampening"
+        );
+    }
+
+    #[test]
     fn idf_dampens_common_terms() {
-        // Term appearing in 1 out of 100 docs should have higher IDF
-        // than term appearing in 90 out of 100 docs.
         let n = 100.0_f64;
-        let idf_rare = (n / 1.0).ln();    // ln(100) ≈ 4.6
-        let idf_common = (n / 90.0).ln();  // ln(1.11) ≈ 0.10
+        let idf_rare = (n / 1.0).ln();
+        let idf_common = (n / 90.0).ln();
         assert!(idf_rare > idf_common * 10.0, "Rare terms should score much higher");
     }
 
     #[test]
     fn label_dampening_formula() {
-        // Label with 90% of nodes → dampening ≈ 3.4
         let frac_90: f64 = 0.9;
         let dampening_90 = (1.0 + frac_90 * 10.0).ln().max(1.0);
-        // Label with 1% of nodes → dampening ≈ 1.1
         let frac_01: f64 = 0.01;
         let dampening_01 = (1.0 + frac_01 * 10.0).ln().max(1.0);
 
         assert!(dampening_90 > 2.0, "90% label should be heavily dampened: {}", dampening_90);
         assert!(dampening_01 < 1.2, "1% label should barely be dampened: {}", dampening_01);
-        // A score of 10.0 for a 90% label should be lower than 10.0 for a 1% label
         assert!(10.0 / dampening_90 < 10.0 / dampening_01);
     }
 
     #[test]
-    fn max_terms_per_node_caps_indexing() {
-        // Verify the MAX_TERMS_PER_NODE constant exists and is reasonable
-        // (tested indirectly via build_index behavior)
-        assert!(100 > 50, "MAX_TERMS_PER_NODE should cap long documents");
+    fn index_stats_returns_distribution() {
+        let mut idx = InvertedIndex::new();
+        idx.add_node(NodeId(1), &["Project".into()], &[("name".into(), "A".into())]);
+        idx.add_node(NodeId(2), &["Project".into()], &[("name".into(), "B".into())]);
+        idx.add_node(NodeId(3), &["Note".into()], &[("title".into(), "C".into())]);
+
+        let (total, _terms, labels) = idx.stats();
+        assert_eq!(total, 3);
+        assert_eq!(labels.len(), 2);
+        assert_eq!(labels[0].0, "project"); // Most common first
+        assert_eq!(labels[0].1, 2);
     }
 
     #[test]

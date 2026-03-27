@@ -15,13 +15,6 @@ use grafeo::GrafeoDB;
 use grafeo_cognitive::engram::EngramStore;
 use grafeo_rag::{EngramRetriever, GraphContextBuilder, RagConfig, RagPipeline};
 
-/// Index stats captured at construction time for the /stats command.
-struct IndexInfo {
-    total_nodes: usize,
-    distinct_terms: usize,
-    label_distribution: Vec<(String, usize, f64)>,
-}
-
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
@@ -91,22 +84,23 @@ fn main() {
 
     let engram_store = Arc::new(EngramStore::new(None));
 
-    let retriever = EngramRetriever::with_defaults(
+    let t0 = Instant::now();
+    let retriever = Arc::new(EngramRetriever::with_defaults(
         Arc::clone(&store),
         Arc::clone(&engram_store),
         None,
-    );
+    ));
+    let index_time = t0.elapsed();
 
     let (total_nodes, distinct_terms, label_distribution) = retriever.index_stats();
-    let index_info = IndexInfo {
-        total_nodes,
-        distinct_terms,
-        label_distribution,
-    };
 
-    eprintln!("[rag] Index: {} distinct terms across {} nodes", distinct_terms, total_nodes);
-    // Show top 5 labels with their cardinality
-    for (label, count, frac) in index_info.label_distribution.iter().take(5) {
+    eprintln!(
+        "[rag] Index: {} distinct terms across {} nodes ({:.0}ms)",
+        distinct_terms,
+        total_nodes,
+        index_time.as_secs_f64() * 1000.0
+    );
+    for (label, count, frac) in label_distribution.iter().take(5) {
         eprintln!("[rag]   {:>6.1}%  {} ({})", frac, label, count);
     }
 
@@ -120,14 +114,19 @@ fn main() {
         ..RagConfig::default()
     };
 
-    let mut pipeline = RagPipeline::new(retriever, context_builder, None, config);
+    let mut pipeline = RagPipeline::new(
+        Arc::clone(&retriever) as Arc<dyn grafeo_rag::traits::Retriever>,
+        context_builder,
+        None,
+        config,
+    );
 
     match query {
         Some(q) => {
             run_query(&pipeline, &q, false);
         }
         None => {
-            interactive_loop(&mut pipeline, node_count, &index_info);
+            interactive_loop(&mut pipeline, &retriever, node_count);
         }
     }
 }
@@ -137,7 +136,6 @@ fn run_query(pipeline: &RagPipeline, query: &str, trace: bool) {
     eprintln!("[rag] Query: \"{}\"", query);
 
     if trace {
-        // Trace mode: show retrieval details
         match pipeline.retrieve(query) {
             Ok(result) => {
                 eprintln!("[trace] Engrams matched: {}", result.engrams_matched);
@@ -178,7 +176,9 @@ fn run_query(pipeline: &RagPipeline, query: &str, trace: bool) {
                 println!("{}", context.text);
                 eprintln!(
                     "[rag] Context: {} nodes, ~{} tokens ({:.1}ms)",
-                    context.nodes_included, context.estimated_tokens, elapsed.as_secs_f64() * 1000.0
+                    context.nodes_included,
+                    context.estimated_tokens,
+                    elapsed.as_secs_f64() * 1000.0
                 );
             }
         }
@@ -189,7 +189,11 @@ fn run_query(pipeline: &RagPipeline, query: &str, trace: bool) {
 }
 
 /// Interactive REPL — read queries from stdin, display RAG context.
-fn interactive_loop(pipeline: &mut RagPipeline, node_count: usize, index_info: &IndexInfo) {
+fn interactive_loop(
+    pipeline: &mut RagPipeline,
+    retriever: &Arc<EngramRetriever>,
+    node_count: usize,
+) {
     let mut trace_mode = false;
 
     eprintln!("[rag] Interactive mode — type a query, press Enter.");
@@ -235,23 +239,42 @@ fn interactive_loop(pipeline: &mut RagPipeline, node_count: usize, index_info: &
                 eprintln!("  /config balanced   — switch to balanced preset (default)");
                 eprintln!("  /config thorough   — switch to thorough preset");
                 eprintln!("  /trace             — toggle trace mode (show cues & scores)");
+                eprintln!("  /reindex           — rebuild index from current graph state");
                 eprintln!("  /quit or /exit     — leave\n");
                 continue;
             }
             "/stats" => {
                 let cfg = pipeline.config();
+                let (total, terms, labels) = retriever.index_stats();
                 eprintln!("  Graph: {} nodes", node_count);
-                eprintln!("  Index: {} distinct terms", index_info.distinct_terms);
+                eprintln!("  Index: {} distinct terms, {} indexed nodes", terms, total);
                 eprintln!("  Preset: {}", cfg.preset_name());
                 eprintln!("  Token budget: {}", cfg.token_budget);
                 eprintln!("  Max context nodes: {}", cfg.max_context_nodes);
                 eprintln!("  Trace mode: {}", if trace_mode { "ON" } else { "OFF" });
                 eprintln!("  --- Label distribution (dampening) ---");
-                for (label, count, frac) in index_info.label_distribution.iter().take(10) {
+                for (label, count, frac) in labels.iter().take(10) {
                     let dampening = (1.0 + frac / 100.0 * 10.0).ln().max(1.0);
-                    eprintln!("    {:>6.1}%  {} ({}) → ÷{:.2}", frac, label, count, dampening);
+                    eprintln!(
+                        "    {:>6.1}%  {} ({}) → ÷{:.2}",
+                        frac, label, count, dampening
+                    );
                 }
                 eprintln!();
+                continue;
+            }
+            "/reindex" => {
+                eprintln!("[rag] Rebuilding index...");
+                let t0 = Instant::now();
+                retriever.reindex();
+                let elapsed = t0.elapsed();
+                let (total, terms, _) = retriever.index_stats();
+                eprintln!(
+                    "[rag] Reindexed: {} terms, {} nodes ({:.0}ms)\n",
+                    terms,
+                    total,
+                    elapsed.as_secs_f64() * 1000.0
+                );
                 continue;
             }
             "/config" => {
@@ -295,7 +318,10 @@ fn interactive_loop(pipeline: &mut RagPipeline, node_count: usize, index_info: &
                 continue;
             }
             _ if trimmed.starts_with('/') => {
-                eprintln!("[rag] Unknown command: {}. Type /help for help.\n", trimmed);
+                eprintln!(
+                    "[rag] Unknown command: {}. Type /help for help.\n",
+                    trimmed
+                );
                 continue;
             }
             _ => {}
