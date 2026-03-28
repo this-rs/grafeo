@@ -1,9 +1,18 @@
+[workspace]
+members = ["crates/*"]
+
 [package]
 name = "obrain-chat"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+think-filter = { path = "crates/think-filter" }
+llm-engine = { path = "crates/llm-engine" }
+graph-schema = { path = "crates/graph-schema" }
+kv-registry = { path = "crates/kv-registry" }
+persona = { path = "crates/persona" }
+retrieval = { path = "crates/retrieval" }
 obrain = { path = "/Users/triviere/projects/lab/grafeo/crates/obrain", default-features = false, features = ["embedded", "storage"] }
 obrain-engine = { path = "/Users/triviere/projects/lab/grafeo/crates/obrain-engine", default-features = false, features = ["wal", "gql"] }
 obrain-core = { path = "/Users/triviere/projects/lab/grafeo/crates/obrain-core" }
@@ -21,6 +30,3 @@ rustyline = { version = "15", features = ["derive"] }
 [features]
 default = []
 http = ["dep:reqwest"]
-
-[build-dependencies]
-bindgen = "0.71"

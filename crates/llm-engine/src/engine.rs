@@ -6,17 +6,7 @@
 //! All FFI calls are wrapped in safe methods. `catch_unwind` is used at FFI boundaries
 //! to prevent Rust panics from crossing into C code (which would be UB).
 
-#![allow(non_upper_case_globals)]
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
-#![allow(dead_code)]
-#![allow(clippy::missing_safety_doc)]
-
-// Generated bindings from build.rs + bindgen
-mod ffi {
-    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
-}
-
+use crate::ffi;
 use anyhow::{Result, bail};
 use std::ffi::CString;
 use std::panic::catch_unwind;

@@ -1,0 +1,11 @@
+[package]
+name = "kv-registry"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+obrain = { path = "/Users/triviere/projects/lab/grafeo/crates/obrain", default-features = false, features = ["embedded", "storage"] }
+obrain-common = { path = "/Users/triviere/projects/lab/grafeo/crates/obrain-common" }
+obrain-core = { path = "/Users/triviere/projects/lab/grafeo/crates/obrain-core" }
+graph-schema = { path = "../graph-schema" }
+anyhow = "1"

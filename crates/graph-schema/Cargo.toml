@@ -1,0 +1,9 @@
+[package]
+name = "graph-schema"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+obrain-core = { path = "/Users/triviere/projects/lab/grafeo/crates/obrain-core" }
+obrain-common = { path = "/Users/triviere/projects/lab/grafeo/crates/obrain-common" }
+think-filter = { path = "../think-filter" }

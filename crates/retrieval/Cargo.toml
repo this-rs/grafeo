@@ -1,0 +1,13 @@
+[package]
+name = "retrieval"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+llm-engine = { path = "../llm-engine" }
+graph-schema = { path = "../graph-schema" }
+kv-registry = { path = "../kv-registry" }
+think-filter = { path = "../think-filter" }
+obrain-common = { path = "/Users/triviere/projects/lab/grafeo/crates/obrain-common" }
+obrain-core = { path = "/Users/triviere/projects/lab/grafeo/crates/obrain-core" }
+anyhow = "1"
