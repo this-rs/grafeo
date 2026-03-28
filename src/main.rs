@@ -44,6 +44,8 @@ macro_rules! debug {
 
 #[cfg(feature = "http")]
 const DEFAULT_SERVER: &str = "http://localhost:8090";
+// Legacy constant — replaced by build_system_header() which is persona-aware.
+#[allow(dead_code)]
 const SYSTEM_HEADER: &str = "<|im_start|>system\nYou are a knowledge graph assistant. Below is structured data from a graph database. Each entry shows [Type] Name and its relations. Use ONLY this data to answer. Answer in the same language as the question. /no_think\n\n";
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -591,6 +593,17 @@ impl KvNodeRegistry {
     /// Get the KV position range for a node (if loaded).
     fn get_slot(&self, node_id: NodeId) -> Option<&KvSlot> {
         self.nodes.get(&node_id)
+    }
+
+    /// Update the system header text (e.g. when facts change mid-session).
+    /// In FFI mode, the KV cache positions 0..header_end are already encoded and
+    /// cannot be cheaply replaced. The updated text will be used for:
+    /// - HTTP mode: reconstruct_prompt() will use the new header
+    /// - FFI mode: the new header takes effect on next full session restart
+    /// Facts injected via the header ARE visible immediately because they were
+    /// also just encoded as conversation context by detect_facts.
+    fn update_header(&mut self, new_header: &str) {
+        self.header_text = new_header.to_string();
     }
 
     /// Reconstruct the full prompt prefix (header + all loaded nodes in order).
@@ -1184,15 +1197,15 @@ impl ConvFragments {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Conversation DB — stores Q&A history in obrain graph
+// Persona DB — stores conversations, facts and identity in obrain graph
 // ═══════════════════════════════════════════════════════════════════════════════
 
-struct ConversationDB {
+struct PersonaDB {
     db: ObrainDB,
     current_conv_id: NodeId,
 }
 
-impl ConversationDB {
+impl PersonaDB {
     /// Open or create conversation DB at given path.
     fn open(path: &str) -> Result<Self> {
         let db = ObrainDB::open(path)
@@ -1327,6 +1340,203 @@ impl ConversationDB {
                 .and_then(|v| v.as_str()).map(|s| s.to_string()))
             .unwrap_or_else(|| "(untitled)".to_string())
     }
+
+    // ── Fact management ──────────────────────────────────────────
+
+    /// Store a persistent fact (key-value pair).
+    /// If a fact with the same key already exists, it is deactivated and replaced.
+    fn add_fact(&self, key: &str, value: &str, source_turn: u32) -> NodeId {
+        // Deactivate existing fact with same key
+        let store = self.db.store();
+        for &nid in &store.nodes_by_label("Fact") {
+            if let Some(node) = store.get_node(nid) {
+                let k = node.properties.get(&PropertyKey::from("key"))
+                    .and_then(|v| v.as_str()).unwrap_or("");
+                let active = node.properties.get(&PropertyKey::from("active"))
+                    .and_then(|v| if let Value::Bool(b) = v { Some(*b) } else { None })
+                    .unwrap_or(true);
+                if k == key && active {
+                    self.db.set_node_property(nid, "active", Value::Bool(false));
+                }
+            }
+        }
+
+        let fact_id = self.db.create_node_with_props(&["Fact"], [
+            ("key", Value::String(key.to_string().into())),
+            ("value", Value::String(value.to_string().into())),
+            ("source_turn", Value::Int64(source_turn as i64)),
+            ("created_at", Value::String(Utc::now().to_rfc3339().into())),
+            ("active", Value::Bool(true)),
+        ]);
+        fact_id
+    }
+
+    /// Get all active facts as (key, value) pairs.
+    fn active_facts(&self) -> Vec<(String, String)> {
+        let store = self.db.store();
+        let mut facts = Vec::new();
+        for &nid in &store.nodes_by_label("Fact") {
+            if let Some(node) = store.get_node(nid) {
+                let active = node.properties.get(&PropertyKey::from("active"))
+                    .and_then(|v| if let Value::Bool(b) = v { Some(*b) } else { None })
+                    .unwrap_or(true);
+                if !active { continue; }
+                let key = node.properties.get(&PropertyKey::from("key"))
+                    .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let value = node.properties.get(&PropertyKey::from("value"))
+                    .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                facts.push((key, value));
+            }
+        }
+        facts
+    }
+
+    /// List all facts with details for /facts command.
+    fn list_facts(&self) -> Vec<(NodeId, String, String, i64, bool)> {
+        let store = self.db.store();
+        let mut facts = Vec::new();
+        for &nid in &store.nodes_by_label("Fact") {
+            if let Some(node) = store.get_node(nid) {
+                let key = node.properties.get(&PropertyKey::from("key"))
+                    .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let value = node.properties.get(&PropertyKey::from("value"))
+                    .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let turn = node.properties.get(&PropertyKey::from("source_turn"))
+                    .and_then(|v| if let Value::Int64(n) = v { Some(*n) } else { None })
+                    .unwrap_or(0);
+                let active = node.properties.get(&PropertyKey::from("active"))
+                    .and_then(|v| if let Value::Bool(b) = v { Some(*b) } else { None })
+                    .unwrap_or(true);
+                facts.push((nid, key, value, turn, active));
+            }
+        }
+        facts
+    }
+
+    /// Deactivate a fact by key.
+    fn forget_fact(&self, key: &str) -> bool {
+        let store = self.db.store();
+        let mut found = false;
+        for &nid in &store.nodes_by_label("Fact") {
+            if let Some(node) = store.get_node(nid) {
+                let k = node.properties.get(&PropertyKey::from("key"))
+                    .and_then(|v| v.as_str()).unwrap_or("");
+                let active = node.properties.get(&PropertyKey::from("active"))
+                    .and_then(|v| if let Value::Bool(b) = v { Some(*b) } else { None })
+                    .unwrap_or(true);
+                if k == key && active {
+                    self.db.set_node_property(nid, "active", Value::Bool(false));
+                    found = true;
+                }
+            }
+        }
+        found
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Fact detection — heuristic extraction of persistent facts from user messages
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Detect persistent facts in user message. Returns Vec<(key, value)>.
+fn detect_facts(msg: &str) -> Vec<(String, String)> {
+    let lower = msg.to_lowercase();
+    let mut facts = Vec::new();
+
+    // Patterns: "ton nom est X", "tu t'appelles X", "your name is X"
+    for prefix in &[
+        "ton nom est ", "tu t'appelles ", "tu es ", "appelle-toi ",
+        "your name is ", "you are ", "call yourself ",
+    ] {
+        if let Some(rest) = lower.strip_prefix(prefix) {
+            let value = rest.trim().trim_end_matches(|c: char| c == '.' || c == '!' || c == '?');
+            if !value.is_empty() && value.len() < 100 {
+                facts.push(("name".to_string(), value.to_string()));
+            }
+        }
+    }
+
+    // Patterns: "retiens que X", "rappelle-toi que X", "remember that X"
+    for prefix in &[
+        "retiens que ", "rappelle-toi que ", "rappelle toi que ",
+        "n'oublie pas que ", "remember that ", "don't forget that ",
+        "mémorise que ", "memorise que ",
+    ] {
+        if let Some(rest) = lower.strip_prefix(prefix) {
+            let value = rest.trim().trim_end_matches(|c: char| c == '.' || c == '!');
+            if !value.is_empty() && value.len() < 200 {
+                facts.push(("memory".to_string(), value.to_string()));
+            }
+        }
+    }
+
+    // Patterns: "réponds toujours en X", "always respond in X"
+    for prefix in &[
+        "réponds toujours en ", "reponds toujours en ",
+        "parle toujours en ", "always respond in ", "always answer in ",
+    ] {
+        if let Some(rest) = lower.strip_prefix(prefix) {
+            let value = rest.trim().trim_end_matches(|c: char| c == '.' || c == '!');
+            if !value.is_empty() && value.len() < 50 {
+                facts.push(("language".to_string(), value.to_string()));
+            }
+        }
+    }
+
+    // Infix patterns: "... ton nom est X ..."  "... tu es X ..."
+    if facts.is_empty() {
+        for (marker, key) in &[
+            ("ton nom est ", "name"), ("tu t'appelles ", "name"),
+            ("your name is ", "name"), ("tu es ", "identity"),
+        ] {
+            if let Some(pos) = lower.find(marker) {
+                let rest = &lower[pos + marker.len()..];
+                // Take until end of sentence or comma
+                let value: String = rest.chars()
+                    .take_while(|c| *c != '.' && *c != ',' && *c != '!' && *c != '?')
+                    .collect();
+                let value = value.trim().to_string();
+                if !value.is_empty() && value.len() < 100 {
+                    facts.push((key.to_string(), value));
+                }
+            }
+        }
+    }
+
+    facts
+}
+
+/// Build dynamic system header based on graph presence and persistent facts.
+fn build_system_header(has_graph: bool, facts: &[(String, String)]) -> String {
+    let mut header = String::from("<|im_start|>system\n");
+
+    // Identity from facts
+    let name = facts.iter().find(|(k, _)| k == "name").map(|(_, v)| v.as_str());
+    if let Some(name) = name {
+        header.push_str(&format!("You are {name}. "));
+    } else {
+        header.push_str("You are a helpful assistant. ");
+    }
+
+    if has_graph {
+        header.push_str("Below is structured data from a graph database. Each entry shows [Type] Name and its relations. Use ONLY this data to answer. ");
+    }
+
+    header.push_str("Answer in the same language as the question. /no_think\n");
+
+    // Inject other persistent facts
+    let other_facts: Vec<&(String, String)> = facts.iter()
+        .filter(|(k, _)| k != "name")
+        .collect();
+    if !other_facts.is_empty() {
+        header.push_str("\nKnown facts:\n");
+        for (key, value) in &other_facts {
+            header.push_str(&format!("- {key}: {value}\n"));
+        }
+    }
+
+    header.push('\n');
+    header
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1351,8 +1561,7 @@ fn main() -> Result<()> {
     let model_path = parse_arg("--model")
         .unwrap_or_else(|| "/Users/triviere/models/qwen3-8b-q8.gguf".to_string());
 
-    let db_path = parse_arg("--db")
-        .unwrap_or_else(|| "/tmp/neo4j2grafeo/grafeo.db".to_string());
+    let db_path: Option<String> = parse_arg("--db");
 
     let max_nodes: usize = parse_arg("--max-nodes")
         .and_then(|s| s.parse().ok())
@@ -1374,7 +1583,7 @@ fn main() -> Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(99);
 
-    let conv_path: Option<PathBuf> = parse_arg("--conv").map(PathBuf::from);
+    let persona_path: Option<PathBuf> = parse_arg("--persona").map(PathBuf::from);
 
     eprintln!("=== obrain-chat — Generic Graph LLM + Topological Mask (FFI) ===\n");
 
@@ -1388,84 +1597,119 @@ fn main() -> Result<()> {
     })?;
     eprintln!("  Model loaded: n_ctx={}", engine.n_ctx());
 
-    // ── Open database ────────────────────────────────────────────────
-    eprintln!("Opening database: {db_path}");
-    let ckpt = format!("{db_path}/wal/checkpoint.meta");
-    let _ = std::fs::remove_file(&ckpt);
+    // ── Open database (optional) ──────────────────────────────────────
+    let (db_holder, store, schema, banks): (
+        Option<ObrainDB>,
+        Option<Arc<LpgStore>>,
+        Option<GraphSchema>,
+        Vec<KvBank>,
+    ) = if let Some(ref db_path) = db_path {
+        eprintln!("Opening database: {db_path}");
+        let ckpt = format!("{db_path}/wal/checkpoint.meta");
+        let _ = std::fs::remove_file(&ckpt);
 
-    let db = ObrainDB::open(&db_path)
-        .context(format!("Failed to open DB at {db_path}"))?;
-    let store = Arc::clone(db.store());
-    eprintln!("  {} nodes, {} edges\n", store.node_count(), store.edge_count());
+        let db = ObrainDB::open(db_path)
+            .context(format!("Failed to open DB at {db_path}"))?;
+        let st = Arc::clone(db.store());
+        eprintln!("  {} nodes, {} edges\n", st.node_count(), st.edge_count());
 
-    // ── Schema introspection ─────────────────────────────────────────
-    debug!("Discovering schema...");
-    let schema = discover_schema(&store);
+        debug!("Discovering schema...");
+        let sch = discover_schema(&st);
+        debug!("\n{}", "=".repeat(60));
+        eprintln!("Ready. {} structural labels, {} hierarchy rules.",
+            sch.structural_labels.len(),
+            sch.parent_child.len());
 
-    debug!("\n{}", "=".repeat(60));
-    eprintln!("Ready. {} structural labels, {} hierarchy rules.",
-        schema.structural_labels.len(),
-        schema.parent_child.len());
-    // ── Discover or load KV Banks ──────────────────────────────────
-    let bank_cache_path = std::path::PathBuf::from(format!("{db_path}.banks"));
-    let nc = store.node_count();
-    let ec = store.edge_count();
-    let banks = match load_bank_cache(&bank_cache_path, nc, ec) {
-        Some(cached) => {
-            debug!("Loaded {} banks from cache ({})", cached.len(), bank_cache_path.display());
-            cached
-        }
-        None => {
-            debug!("Discovering banks...");
-            let banks = discover_banks(&store, &schema, 50);
-            save_bank_cache(&bank_cache_path, &banks, nc, ec);
-            debug!("  Saved bank cache to {}", bank_cache_path.display());
-            banks
-        }
-    };
-
-    // ── Conversation DB ────────────────────────────────────────────
-    let mut conv_db = if let Some(ref cp) = conv_path {
-        let cp_str = cp.to_str().unwrap_or("conv.db");
-        // Remove stale checkpoint if exists (same as main DB)
-        let ckpt_conv = format!("{cp_str}/wal/checkpoint.meta");
-        let _ = std::fs::remove_file(&ckpt_conv);
-        match ConversationDB::open(cp_str) {
-            Ok(cdb) => {
-                let convs = cdb.list_conversations();
-                debug!("Conversation DB: {} conversations (current: \"{}\")",
-                    convs.len(), cdb.current_title());
-                // Show recent context
-                let recent = cdb.recent_messages(4);
-                if !recent.is_empty() {
-                    debug!("  Recent context ({} messages):", recent.len());
-                    for (role, content) in &recent {
-                        let snippet: String = content.chars().take(80).collect();
-                        debug!("    {}: {}{}",
-                            role, snippet,
-                            if content.len() > 80 { "..." } else { "" });
-                    }
-                }
-                Some(cdb)
+        // Discover or load KV Banks
+        let bank_cache_path = std::path::PathBuf::from(format!("{db_path}.banks"));
+        let nc = st.node_count();
+        let ec = st.edge_count();
+        let bnks = match load_bank_cache(&bank_cache_path, nc, ec) {
+            Some(cached) => {
+                debug!("Loaded {} banks from cache ({})", cached.len(), bank_cache_path.display());
+                cached
             }
-            Err(e) => {
-                eprintln!("  Warning: could not open conversation DB: {e}");
-                None
+            None => {
+                debug!("Discovering banks...");
+                let discovered = discover_banks(&st, &sch, 50);
+                save_bank_cache(&bank_cache_path, &discovered, nc, ec);
+                debug!("  Saved bank cache to {}", bank_cache_path.display());
+                discovered
             }
-        }
+        };
+
+        (Some(db), Some(st), Some(sch), bnks)
     } else {
-        None
+        eprintln!("No database specified (use --db <path> for graph-augmented mode)\n");
+        (None, None, None, Vec::new())
+    };
+    let _ = &db_holder; // keep DB alive for the store Arc
+
+    // ── Conversation DB (auto-created if not specified) ──────────────
+    let persona_resolved_path: String = if let Some(ref cp) = persona_path {
+        cp.to_str().unwrap_or("conv.db").to_string()
+    } else if let Some(ref db_p) = db_path {
+        // Auto-create alongside the graph DB
+        format!("{db_p}.persona")
+    } else {
+        // No graph DB: use ~/.obrain-chat/conv.db
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let dir = format!("{home}/.obrain-chat");
+        let _ = std::fs::create_dir_all(&dir);
+        format!("{dir}/default.persona")
+    };
+    debug!("Persona DB path: {persona_resolved_path}");
+    // Remove stale checkpoint if exists
+    let ckpt_conv = format!("{persona_resolved_path}/wal/checkpoint.meta");
+    let _ = std::fs::remove_file(&ckpt_conv);
+    let mut persona_db = match PersonaDB::open(&persona_resolved_path) {
+        Ok(cdb) => {
+            let convs = cdb.list_conversations();
+            eprintln!("Persona: {} ({} conversations, current: \"{}\")",
+                persona_resolved_path, convs.len(), cdb.current_title());
+            let recent = cdb.recent_messages(4);
+            if !recent.is_empty() {
+                debug!("  Recent context ({} messages):", recent.len());
+                for (role, content) in &recent {
+                    let snippet: String = content.chars().take(80).collect();
+                    debug!("    {}: {}{}",
+                        role, snippet,
+                        if content.len() > 80 { "..." } else { "" });
+                }
+            }
+            Some(cdb)
+        }
+        Err(e) => {
+            eprintln!("  Warning: could not open persona DB: {e}");
+            None
+        }
     };
 
-    eprintln!("\nCommands: /quit, /schema, /kv, /banks, /history, /conversations, /new <title>\n");
+    if store.is_some() {
+        eprintln!("\nCommands: /quit, /schema, /kv, /banks, /history, /conversations, /new <title>\n");
+    } else {
+        eprintln!("\nCommands: /quit, /history, /conversations, /new <title>\n");
+    }
+
+    // ── Load persistent facts and build dynamic system header ──
+    let persona_facts: Vec<(String, String)> = persona_db.as_ref()
+        .map(|pdb| pdb.active_facts())
+        .unwrap_or_default();
+    if !persona_facts.is_empty() {
+        eprintln!("  Facts: {}", persona_facts.iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(", "));
+    }
+    let system_header = build_system_header(store.is_some(), &persona_facts);
+    debug!("System header:\n{system_header}");
 
     // ── Initialize KV Node Registry ─────────────────────────────
-    // Encode system header once at startup
-    let header_tokens_vec = engine.tokenize(SYSTEM_HEADER, false, true)?;
+    let header_tokens_vec = engine.tokenize(&system_header, false, true)?;
     let header_n = header_tokens_vec.len() as i32;
     let header_positions: Vec<i32> = (0..header_n).collect();
     engine.encode(&header_tokens_vec, &header_positions, 0)?;
-    let mut registry = KvNodeRegistry::new(SYSTEM_HEADER, header_n);
+    let mut registry = KvNodeRegistry::new(&system_header, header_n);
     let mut conv_frags = ConvFragments::new();
     debug!("KV Registry initialized: header={} tokens (encoded in KV)", header_n);
 
@@ -1489,9 +1733,44 @@ fn main() -> Result<()> {
             warmup_count, warmup_loaded, warmup_t0.elapsed().as_millis());
     }
 
+    // ── Restore conversation fragments from persona_db (T3) ──────────
+    if let Some(ref cdb) = persona_db {
+        let recent = cdb.recent_messages(20); // 20 messages = up to 10 Q/A pairs
+        if !recent.is_empty() {
+            let restore_t0 = Instant::now();
+            let mut restored = 0u32;
+            // Pair up consecutive (user, assistant) messages
+            let mut i = 0;
+            while i + 1 < recent.len() {
+                let (ref role_q, ref content_q) = recent[i];
+                let (ref role_a, ref content_a) = recent[i + 1];
+                if role_q == "user" && role_a == "assistant" {
+                    if let Err(e) = conv_frags.add_turn(
+                        content_q, content_a, &[],
+                        &mut registry, &engine, kv_capacity,
+                    ) {
+                        debug!("  Warning: could not restore conv fragment: {e}");
+                    } else {
+                        restored += 1;
+                    }
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            if restored > 0 {
+                debug!("  Restored {} conversation fragments in {:.0}ms",
+                    restored, restore_t0.elapsed().as_millis());
+            }
+        }
+    }
+
     // ── Interactive loop ─────────────────────────────────────────────
     let stdin = io::stdin();
     let mut lines = stdin.lock().lines();
+    let mut turn_count: u32 = 0;
+    #[allow(unused_assignments)]
+    let mut current_facts = persona_facts; // live-updated when facts change
 
     loop {
         print!("you> ");
@@ -1505,10 +1784,14 @@ fn main() -> Result<()> {
         if line.is_empty() { continue; }
         if line == "/quit" || line == "/exit" || line == "quit" { break; }
         if line == "/schema" {
-            eprintln!("  Structural: {:?}", schema.structural_labels);
-            eprintln!("  Noise: {:?}", schema.noise_labels);
-            for (parent, children) in &schema.parent_child {
-                eprintln!("  {} → {:?}", parent, children);
+            if let Some(ref sch) = schema {
+                eprintln!("  Structural: {:?}", sch.structural_labels);
+                eprintln!("  Noise: {:?}", sch.noise_labels);
+                for (parent, children) in &sch.parent_child {
+                    eprintln!("  {} → {:?}", parent, children);
+                }
+            } else {
+                eprintln!("  No graph loaded (use --db <path>)");
             }
             continue;
         }
@@ -1524,7 +1807,7 @@ fn main() -> Result<()> {
             continue;
         }
         if line == "/history" {
-            if let Some(ref cdb) = conv_db {
+            if let Some(ref cdb) = persona_db {
                 let msgs = cdb.recent_messages(20);
                 if msgs.is_empty() {
                     eprintln!("  (no messages in current conversation)");
@@ -1537,12 +1820,12 @@ fn main() -> Result<()> {
                     }
                 }
             } else {
-                eprintln!("  No conversation DB (use --conv <path>)");
+                eprintln!("  No persona DB (use --persona <path>)");
             }
             continue;
         }
         if line == "/conversations" || line == "/convs" {
-            if let Some(ref cdb) = conv_db {
+            if let Some(ref cdb) = persona_db {
                 let convs = cdb.list_conversations();
                 if convs.is_empty() {
                     eprintln!("  (no conversations)");
@@ -1553,22 +1836,22 @@ fn main() -> Result<()> {
                     }
                 }
             } else {
-                eprintln!("  No conversation DB (use --conv <path>)");
+                eprintln!("  No persona DB (use --persona <path>)");
             }
             continue;
         }
         if line.starts_with("/new ") {
-            if let Some(ref mut cdb) = conv_db {
+            if let Some(ref mut cdb) = persona_db {
                 let title = line.strip_prefix("/new ").unwrap().trim();
                 cdb.new_conversation(title);
                 eprintln!("  Created new conversation: \"{}\"", title);
             } else {
-                eprintln!("  No conversation DB (use --conv <path>)");
+                eprintln!("  No persona DB (use --persona <path>)");
             }
             continue;
         }
         if line.starts_with("/switch ") {
-            if let Some(ref mut cdb) = conv_db {
+            if let Some(ref mut cdb) = persona_db {
                 let id_str = line.strip_prefix("/switch ").unwrap().trim();
                 if let Ok(id_num) = id_str.parse::<u64>() {
                     if cdb.switch_to(NodeId(id_num)) {
@@ -1578,7 +1861,37 @@ fn main() -> Result<()> {
                     }
                 }
             } else {
-                eprintln!("  No conversation DB (use --conv <path>)");
+                eprintln!("  No persona DB (use --persona <path>)");
+            }
+            continue;
+        }
+        if line == "/facts" {
+            if let Some(ref pdb) = persona_db {
+                let facts = pdb.list_facts();
+                let active: Vec<_> = facts.iter().filter(|(_, _, _, _, a)| *a).collect();
+                if active.is_empty() {
+                    eprintln!("  (no facts stored)");
+                } else {
+                    eprintln!("  Persistent facts ({}):", active.len());
+                    for (nid, key, value, turn, _) in &active {
+                        eprintln!("    {} = {} (turn {}, id={})", key, value, turn, nid.0);
+                    }
+                }
+            } else {
+                eprintln!("  No persona DB (use --persona <path>)");
+            }
+            continue;
+        }
+        if line.starts_with("/forget ") {
+            if let Some(ref pdb) = persona_db {
+                let key = line.strip_prefix("/forget ").unwrap().trim();
+                if pdb.forget_fact(key) {
+                    eprintln!("  ✓ Forgot fact: {}", key);
+                } else {
+                    eprintln!("  No active fact with key '{}'", key);
+                }
+            } else {
+                eprintln!("  No persona DB (use --persona <path>)");
             }
             continue;
         }
@@ -1586,15 +1899,19 @@ fn main() -> Result<()> {
             registry.log_metrics();
             eprintln!("  Loaded nodes ({}):", registry.order.len());
             for nid in registry.order.iter().take(20) {
-                // Get label for display props lookup
-                let label: Option<String> = store.get_node(*nid)
-                    .and_then(|n| n.labels.first().map(|l| {
-                        let s: &str = l.as_ref();
-                        s.to_string()
-                    }));
-                let dp = label.as_deref()
-                    .and_then(|l| schema.display_props.get(l));
-                let name = get_node_name_generic(&store, *nid, dp);
+                let (label, name) = if let (Some(st), Some(sch)) = (&store, &schema) {
+                    let label: Option<String> = st.get_node(*nid)
+                        .and_then(|n| n.labels.first().map(|l| {
+                            let s: &str = l.as_ref();
+                            s.to_string()
+                        }));
+                    let dp = label.as_deref()
+                        .and_then(|l| sch.display_props.get(l));
+                    let name = get_node_name_generic(st, *nid, dp);
+                    (label, name)
+                } else {
+                    (None, String::new())
+                };
                 let label_str = label.as_deref().unwrap_or("?");
                 let slot = registry.get_slot(*nid);
                 if let Some(s) = slot {
@@ -1610,9 +1927,18 @@ fn main() -> Result<()> {
         }
 
         // Store user message in conversation DB
-        let user_msg_id = conv_db.as_ref().map(|cdb| cdb.add_message("user", &line));
+        let user_msg_id = persona_db.as_ref().map(|cdb| cdb.add_message("user", &line));
 
-        match query_with_registry(&engine, &store, &schema, &mut registry, &mut conv_frags, &banks, &line, max_nodes, token_budget, kv_capacity) {
+        // T6: Meta queries (identity, memory) bypass graph retrieval
+        let meta = is_meta_query(&line);
+        let (q_store, q_schema) = if meta {
+            debug!("  [Meta] Query is about identity/memory — skipping graph retrieval");
+            (None, None)
+        } else {
+            (store.as_ref(), schema.as_ref())
+        };
+
+        match query_with_registry(&engine, q_store, q_schema, &mut registry, &mut conv_frags, &banks, &line, max_nodes, token_budget, kv_capacity) {
             Ok((response, relevant_graph_nodes)) => {
                 // Response already streamed to stdout by engine.generate
                 let clean = strip_think_tags(&response);
@@ -1627,10 +1953,27 @@ fn main() -> Result<()> {
                 }
 
                 // Store full messages in conversation DB (for persistence across sessions)
-                if let Some(ref cdb) = conv_db {
+                if let Some(ref cdb) = persona_db {
                     let asst_id = cdb.add_message("assistant", &trimmed);
                     if let Some(uid) = user_msg_id {
                         cdb.link_reply(asst_id, uid);
+                    }
+                }
+
+                // Detect and store persistent facts from user input (T4)
+                turn_count += 1;
+                let detected = detect_facts(&line);
+                if !detected.is_empty() {
+                    if let Some(ref pdb) = persona_db {
+                        for (key, value) in &detected {
+                            pdb.add_fact(key, value, turn_count);
+                            eprintln!("  💾 Fact stored: {} = {}", key, value);
+                        }
+                        // Update live facts and rebuild header for next query
+                        current_facts = pdb.active_facts();
+                        let new_header = build_system_header(store.is_some(), &current_facts);
+                        registry.update_header(&new_header);
+                        debug!("  Header updated with {} facts", current_facts.len());
                     }
                 }
             },
@@ -1643,13 +1986,49 @@ fn main() -> Result<()> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Meta-query detection (T6 — Hybrid retrieval)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Detect if a query is about the system itself (identity, memory, facts).
+/// These queries should be answered from persona facts + conv history,
+/// NOT from the knowledge graph.
+fn is_meta_query(query: &str) -> bool {
+    let lower = query.to_lowercase();
+
+    // Identity questions
+    let identity_patterns = [
+        "qui es-tu", "qui es tu", "c'est quoi ton nom", "quel est ton nom",
+        "comment tu t'appelles", "comment t'appelles-tu",
+        "what is your name", "who are you", "what are you",
+        "tu es qui", "tu t'appelles comment",
+    ];
+    if identity_patterns.iter().any(|p| lower.contains(p)) {
+        return true;
+    }
+
+    // Memory / fact recall questions
+    let memory_patterns = [
+        "qu'est-ce que tu sais sur moi", "que sais-tu de moi", "que sais-tu sur moi",
+        "qu'est-ce que tu retiens", "que retiens-tu",
+        "what do you know about me", "what do you remember",
+        "tu te souviens", "te rappelles-tu", "te souviens-tu",
+        "do you remember",
+    ];
+    if memory_patterns.iter().any(|p| lower.contains(p)) {
+        return true;
+    }
+
+    false
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Registry-aware retrieval pipeline
 // ═══════════════════════════════════════════════════════════════════════════════
 
 fn query_with_registry(
     engine: &LlamaEngine,
-    store: &Arc<LpgStore>,
-    schema: &GraphSchema,
+    store: Option<&Arc<LpgStore>>,
+    schema: Option<&GraphSchema>,
     registry: &mut KvNodeRegistry,
     conv_frags: &mut ConvFragments,
     banks: &[KvBank],
@@ -1666,7 +2045,6 @@ fn query_with_registry(
     let mut bank_loaded = false;
     for bank in banks {
         let bank_name_lower = bank.name.to_lowercase();
-        // Check if any content term matches the bank name
         let terms: Vec<&str> = query_lower
             .split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
             .filter(|s| s.len() > 2)
@@ -1702,12 +2080,16 @@ fn query_with_registry(
         debug!("  Bank loading done in {}ms", t_start.elapsed().as_millis());
     }
 
-    // Run the generic retrieval to get scored nodes
+    // Run the generic retrieval to get scored nodes (only if graph is loaded)
     let (scored_nodes_for_query, adjacency, node_texts) =
-        retrieve_nodes(engine, store, schema, query, max_nodes, token_budget)?;
+        if let (Some(st), Some(sch)) = (store, schema) {
+            retrieve_nodes(engine, st, sch, query, max_nodes, token_budget)?
+        } else {
+            (Vec::new(), HashMap::new(), HashMap::new())
+        };
 
     if scored_nodes_for_query.is_empty() {
-        // No data found — generate a simple response without mask
+        // No graph data — generate from conversation context + system prompt
         let fallback_text = format!(
             "<|im_end|>\n<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n"
         );
