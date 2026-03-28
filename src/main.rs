@@ -20,7 +20,12 @@ use obrain_core::graph::{Direction, lpg::LpgStore};
 #[cfg(feature = "http")]
 use serde_json::json;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::{self, BufRead, Write};
+use std::io::{self, Write};
+#[cfg(feature = "http")]
+use std::io::BufRead;
+use rustyline::error::ReadlineError;
+use rustyline::history::{DefaultHistory, History};
+use rustyline::{Config, EditMode, Editor};
 #[cfg(feature = "http")]
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
@@ -35,6 +40,10 @@ use engine::EngineConfig;
 static DEBUG: AtomicBool = AtomicBool::new(false);
 /// Ξ(t) T3.6: SIGINT flag — set by Ctrl+C handler to trigger graceful shutdown.
 static SIGINT_RECEIVED: AtomicBool = AtomicBool::new(false);
+/// True while the LLM is generating tokens (Ctrl+C during generation = interrupt, not exit).
+static GENERATING: AtomicBool = AtomicBool::new(false);
+/// Set when generation was interrupted by Ctrl+C (negative reward signal).
+static GEN_INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
 /// Print to stderr only if --debug is enabled.
 macro_rules! debug {
@@ -43,6 +52,43 @@ macro_rules! debug {
             eprintln!($($arg)*);
         }
     };
+}
+
+/// Animated spinner displayed while waiting for the first token from the LLM.
+struct Spinner {
+    alive: Arc<AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Spinner {
+    fn start() -> Self {
+        let alive = Arc::new(AtomicBool::new(true));
+        let a = alive.clone();
+        let handle = std::thread::spawn(move || {
+            let frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+            let mut i = 0;
+            while a.load(Ordering::Relaxed) {
+                eprint!("\r\x1b[2K\x1b[90m{} réflexion...\x1b[0m", frames[i % frames.len()]);
+                let _ = io::stderr().flush();
+                i += 1;
+                std::thread::sleep(std::time::Duration::from_millis(80));
+            }
+            // Clear the spinner line
+            eprint!("\r\x1b[2K");
+            let _ = io::stderr().flush();
+        });
+        Self { alive, handle: Some(handle) }
+    }
+
+}
+
+impl Drop for Spinner {
+    fn drop(&mut self) {
+        self.alive.store(false, Ordering::Relaxed);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
 }
 
 #[cfg(feature = "http")]
@@ -1040,6 +1086,11 @@ impl ConvFragments {
         Self { fragments: Vec::new(), next_turn: 0 }
     }
 
+    /// Returns the NodeId of the last registered conversation fragment.
+    fn last_node_id(&self) -> Option<NodeId> {
+        self.fragments.last().map(|f| f.node_id)
+    }
+
     /// Create a concise fragment from a Q&A exchange and register it in the KV.
     fn add_turn(
         &mut self,
@@ -1302,6 +1353,37 @@ impl PersonaDB {
             .collect()
     }
 
+    /// Get all user prompts across all conversations, oldest first (for readline history).
+    fn user_history(&self) -> Vec<String> {
+        let store = self.db.store();
+        let mut prompts: Vec<(String, i64, String)> = Vec::new(); // (timestamp, order, content)
+
+        for &conv_id in &store.nodes_by_label("Conversation") {
+            for (target, _eid) in store.edges_from(conv_id, Direction::Outgoing).collect::<Vec<_>>() {
+                if let Some(node) = store.get_node(target) {
+                    let is_msg = node.labels.iter().any(|l| { let s: &str = l.as_ref(); s == "Message" });
+                    if !is_msg { continue; }
+                    let role = node.properties.get(&PropertyKey::from("role"))
+                        .and_then(|v| v.as_str()).unwrap_or("");
+                    if role != "user" { continue; }
+                    let content = node.properties.get(&PropertyKey::from("content"))
+                        .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    if content.is_empty() { continue; }
+                    let ts = node.properties.get(&PropertyKey::from("timestamp"))
+                        .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let order = node.properties.get(&PropertyKey::from("order"))
+                        .and_then(|v| if let Value::Int64(n) = v { Some(*n) } else { None })
+                        .unwrap_or(0);
+                    prompts.push((ts, order, content));
+                }
+            }
+        }
+
+        // Sort by timestamp then order (oldest first → added to history first)
+        prompts.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        prompts.into_iter().map(|(_, _, content)| content).collect()
+    }
+
     /// List all conversations in the DB.
     fn list_conversations(&self) -> Vec<(NodeId, String, String, usize)> {
         let store = self.db.store();
@@ -1503,8 +1585,8 @@ impl PersonaDB {
         response_text.hash(&mut rh);
         let response_hash = rh.finish();
 
-        // Truncate query for storage (keep first 200 chars)
-        let query_trunc: String = query.chars().take(200).collect();
+        // Truncate query for storage (keep first 500 chars for multi-line pastes)
+        let query_trunc: String = query.chars().take(500).collect();
 
         self.db.create_node_with_props(&["ConvTurn"], [
             ("query_hash", Value::Int64(query_hash as i64)),
@@ -2275,15 +2357,27 @@ fn build_system_header(has_graph: bool, facts: &[(String, String)]) -> String {
 
     header.push_str("Answer in the same language as the question. /no_think\n");
 
-    // Inject other persistent facts
+    // ── Memory system instructions ──
+    // Minimal and generic: the user teaches the model, not the prompt.
+    // The Ξ(t) system handles extraction, reinforcement and decay automatically.
+    header.push_str(r#"
+## Mémoire
+Tu as une mémoire persistante entre les sessions. Ce que tu sais est listé sous "Faits connus".
+Quand l'utilisateur te dit quelque chose sur lui ou te demande de retenir une information, confirme naturellement.
+Si un fait contredit un ancien, le nouveau le remplace. N'invente rien — utilise uniquement les faits listés.
+"#);
+
+    // Inject persistent facts
     let other_facts: Vec<&(String, String)> = facts.iter()
         .filter(|(k, _)| k != "name")
         .collect();
     if !other_facts.is_empty() {
-        header.push_str("\nKnown facts:\n");
+        header.push_str("\nFaits connus :\n");
         for (key, value) in &other_facts {
-            header.push_str(&format!("- {key}: {value}\n"));
+            header.push_str(&format!("- {key} : {value}\n"));
         }
+    } else if name.is_none() {
+        header.push_str("\nFaits connus : (aucun pour l'instant — l'utilisateur ne t'a encore rien dit)\n");
     }
 
     header.push('\n');
@@ -2305,10 +2399,24 @@ fn main() -> Result<()> {
     // First Ctrl+C: set flag (checked after current blocking stdin read completes).
     // Second Ctrl+C: force exit (stdin read is blocking, can't be interrupted).
     let _ = ctrlc::set_handler(|| {
+        if GENERATING.load(Ordering::SeqCst) {
+            // During generation: interrupt it (callback will check SIGINT and return false)
+            SIGINT_RECEIVED.store(true, Ordering::SeqCst);
+            // Don't print anything — the main thread handles the prompt after interruption
+            return;
+        }
         if SIGINT_RECEIVED.load(Ordering::SeqCst) {
-            // Second Ctrl+C — force exit
+            // Second Ctrl+C outside generation — force exit immediately.
+            // Use _exit() to skip C++ static destructors (atexit handlers).
+            // process::exit() calls exit() which triggers ggml-metal device cleanup
+            // that asserts on residual Metal resource sets.
             eprintln!("\n  [Ctrl+C] Force exit.");
-            std::process::exit(0);
+            unsafe {
+                unsafe extern "C" {
+                    fn _exit(status: i32) -> !;
+                }
+                _exit(0);
+            }
         }
         SIGINT_RECEIVED.store(true, Ordering::SeqCst);
         eprintln!("\n  [Ctrl+C] Press Enter or Ctrl+C again to exit.");
@@ -2536,8 +2644,23 @@ fn main() -> Result<()> {
     }
 
     // ── Interactive loop ─────────────────────────────────────────────
-    let stdin = io::stdin();
-    let mut lines = stdin.lock().lines();
+    // Rustyline: arrow keys, history (up/down), cursor movement, Ctrl+A/E, etc.
+    let rl_config = Config::builder()
+        .edit_mode(EditMode::Emacs)
+        .auto_add_history(true)
+        .max_history_size(1000)
+        .expect("valid history size")
+        .build();
+    let mut rl: Editor<(), DefaultHistory> = Editor::with_config(rl_config)?;
+
+    // Load readline history from PersonaDB (all past user prompts)
+    if let Some(ref pdb) = persona_db {
+        for prompt in pdb.user_history() {
+            let _ = rl.add_history_entry(&prompt);
+        }
+        debug!("  Loaded {} history entries from PersonaDB", rl.history().len());
+    }
+
     let mut turn_count: u32 = 0;
     #[allow(unused_assignments)]
     let mut current_facts = persona_facts; // live-updated when facts change
@@ -2562,18 +2685,59 @@ fn main() -> Result<()> {
     });
 
     loop {
-        print!("you> ");
-        io::stdout().flush()?;
-
-        // Ξ(t) T3.6: Check SIGINT before blocking on stdin
+        // Ξ(t) T3.6: Check SIGINT before blocking on input
         if SIGINT_RECEIVED.load(Ordering::Relaxed) { break; }
 
-        let line = match lines.next() {
-            Some(Ok(l)) => l,
-            _ => break,
+        let line = match rl.readline("you> ") {
+            Ok(l) => l,
+            Err(ReadlineError::Interrupted) => {
+                // Ctrl+C: same as SIGINT handler
+                if SIGINT_RECEIVED.load(Ordering::SeqCst) {
+                    eprintln!("\n  [Ctrl+C] Force exit.");
+                    unsafe {
+                        unsafe extern "C" { fn _exit(status: i32) -> !; }
+                        _exit(0);
+                    }
+                }
+                SIGINT_RECEIVED.store(true, Ordering::SeqCst);
+                eprintln!("  [Ctrl+C] Press Ctrl+C again to exit.");
+                continue;
+            }
+            Err(ReadlineError::Eof) => break, // Ctrl+D
+            Err(_) => break,
         };
         let line = line.trim().to_string();
         if line.is_empty() { continue; }
+
+        // Multi-line mode: start with """ to paste multi-line text.
+        // End with """ on its own line, or an empty line (double-Enter).
+        let line = if line == "\"\"\"" || line.starts_with("\"\"\"") {
+            let first_content = line.strip_prefix("\"\"\"").unwrap_or("").trim().to_string();
+            let mut buf = if first_content.is_empty() {
+                eprintln!("  (multi-line mode: paste your text, end with \"\"\" or empty line)");
+                Vec::new()
+            } else {
+                vec![first_content]
+            };
+            loop {
+                match rl.readline("...> ") {
+                    Ok(l) => {
+                        let trimmed = l.trim();
+                        if trimmed == "\"\"\"" || trimmed.is_empty() {
+                            break;
+                        }
+                        buf.push(l);
+                    }
+                    _ => break,
+                }
+            }
+            buf.join("\n")
+        } else {
+            line
+        };
+        let line = line.trim().to_string();
+        if line.is_empty() { continue; }
+
         if line == "/quit" || line == "/exit" || line == "quit"
             || SIGINT_RECEIVED.load(Ordering::SeqCst) { break; }
         if line == "/schema" {
@@ -2850,6 +3014,30 @@ fn main() -> Result<()> {
 
                 // Ξ(t) T3: Compute reward for PREVIOUS turn based on current user input
                 turn_count += 1;
+
+                // Ctrl+C interruption → negative reward for THIS turn (user rejected output)
+                let gen_was_interrupted = GEN_INTERRUPTED.swap(false, Ordering::SeqCst);
+                if gen_was_interrupted {
+                    if let (Some(rd), Some(pdb)) = (&mut reward_detector, &persona_db) {
+                        let interrupt_penalty = -0.5;
+                        if let Some(ct_id) = conv_frags.last_node_id() {
+                            rd.propagate_reward(pdb, ct_id, interrupt_penalty, &last_used_fact_ids);
+                        }
+                        debug!("  [Reward] turn #{}: {:.2} (Ctrl+C interruption — negative signal)",
+                            turn_count, interrupt_penalty);
+                        if let Some(ref mut gnn) = fact_gnn {
+                            let store = pdb.db.store();
+                            let scores = gnn.forward(
+                                &store,
+                                &fact_gnn::query_embedding(&line),
+                                &last_used_fact_ids,
+                                2,
+                            );
+                            gnn.update(&store, &last_used_fact_ids, &scores, interrupt_penalty);
+                        }
+                    }
+                }
+
                 if let (Some(rd), Some(pdb), Some(prev_ct)) =
                     (&mut reward_detector, &persona_db, last_conv_turn_id)
                 {
@@ -3001,6 +3189,7 @@ fn main() -> Result<()> {
         }
     }
 
+    // History is persisted via PersonaDB (add_message) — no file needed.
     eprintln!("Bye!");
     Ok(())
 }
@@ -3116,19 +3305,37 @@ fn query_with_registry(
         let tokens = engine.tokenize(&fallback_text, false, true)?;
         // seq_cp: let seq_id=1 see the system header on seq_id=0
         engine.seq_cp(0, 1, 0, -1);
-        print!("assistant> ");
-        io::stdout().flush()?;
+        let spinner = Spinner::start();
+        let spinner_alive = spinner.alive.clone();
         let mut filter = ThinkFilter::new();
+        let mut first_visible = true;
+        GENERATING.store(true, Ordering::SeqCst);
+        SIGINT_RECEIVED.store(false, Ordering::SeqCst);
         // Use 1024 tokens max (not 256) to avoid truncated/garbage responses.
         // The low max_tokens was causing the model to output short garbage in some cases.
         let (resp, _) = engine.generate(&tokens, registry.next_pos, 1024, 1, |piece| {
+            // Ctrl+C during generation → stop
+            if SIGINT_RECEIVED.load(Ordering::Relaxed) { return false; }
             let visible = filter.feed(piece);
             if !visible.is_empty() {
+                if first_visible {
+                    spinner_alive.store(false, Ordering::Relaxed);
+                    print!("assistant> ");
+                    let _ = io::stdout().flush();
+                    first_visible = false;
+                }
                 print!("{}", visible);
                 let _ = io::stdout().flush();
             }
             true
         })?;
+        drop(spinner); // stop spinner thread if still running
+        GENERATING.store(false, Ordering::SeqCst);
+        let interrupted = SIGINT_RECEIVED.swap(false, Ordering::SeqCst);
+        if interrupted {
+            GEN_INTERRUPTED.store(true, Ordering::SeqCst);
+            eprint!("\n\x1b[90m  (interrompu)\x1b[0m");
+        }
         let remaining = filter.flush();
         if !remaining.is_empty() { print!("{}", remaining); }
         println!("\n");
@@ -3644,17 +3851,34 @@ fn generate_with_mask(
         eprintln!("  ⚠ mask_size={} > {} — generating without mask.", sz, max_mask_positions);
         // Fallback: generate without topological mask (but still need seq_cp!)
         engine.seq_cp(0, 1, 0, -1);
-        print!("assistant> ");
-        io::stdout().flush()?;
+        let spinner = Spinner::start();
+        let spinner_alive = spinner.alive.clone();
         let mut filter = ThinkFilter::new();
+        let mut first_visible = true;
+        GENERATING.store(true, Ordering::SeqCst);
+        SIGINT_RECEIVED.store(false, Ordering::SeqCst);
         let (resp, _) = engine.generate(&query_tokens, q_start_real, n_predict, 1, |piece| {
+            if SIGINT_RECEIVED.load(Ordering::Relaxed) { return false; }
             let visible = filter.feed(piece);
             if !visible.is_empty() {
+                if first_visible {
+                    spinner_alive.store(false, Ordering::Relaxed);
+                    print!("assistant> ");
+                    let _ = io::stdout().flush();
+                    first_visible = false;
+                }
                 print!("{}", visible);
                 let _ = io::stdout().flush();
             }
             true
         })?;
+        drop(spinner);
+        GENERATING.store(false, Ordering::SeqCst);
+        let interrupted = SIGINT_RECEIVED.swap(false, Ordering::SeqCst);
+        if interrupted {
+            GEN_INTERRUPTED.store(true, Ordering::SeqCst);
+            eprint!("\n\x1b[90m  (interrompu)\x1b[0m");
+        }
         let remaining = filter.flush();
         if !remaining.is_empty() { print!("{}", remaining); }
         println!("\n");
@@ -3756,8 +3980,11 @@ fn generate_with_mask(
     // If the model hits max_tokens without EOG, clear the mask and continue
     // with default causal attention. The model already has the graph context
     // from the first round. seq_id=1 is kept alive between rounds.
-    print!("assistant> ");
-    io::stdout().flush()?;
+    let spinner = Spinner::start();
+    let spinner_alive = spinner.alive.clone();
+    let mut first_visible = true;
+    GENERATING.store(true, Ordering::SeqCst);
+    SIGINT_RECEIVED.store(false, Ordering::SeqCst);
 
     let mut filter = ThinkFilter::new();
     let mut full_response = String::new();
@@ -3768,8 +3995,15 @@ fn generate_with_mask(
         &query_tokens, q_start_real, n_predict, 1,
         true, // keep_seq=true in case we need continuation
         |piece| {
+            if SIGINT_RECEIVED.load(Ordering::Relaxed) { return false; }
             let visible = filter.feed(piece);
             if !visible.is_empty() {
+                if first_visible {
+                    spinner_alive.store(false, Ordering::Relaxed);
+                    print!("assistant> ");
+                    let _ = io::stdout().flush();
+                    first_visible = false;
+                }
                 print!("{}", visible);
                 let _ = io::stdout().flush();
             }
@@ -3781,11 +4015,14 @@ fn generate_with_mask(
     // Clear mask — either done or switching to causal for continuations
     engine.clear_attn_mask();
 
+    let was_interrupted = SIGINT_RECEIVED.load(Ordering::Relaxed);
+
     // Continuations: no mask, causal attention only
-    if !hit_eog {
+    if !hit_eog && !was_interrupted {
         let cont_token = engine.tokenize(" ", false, false)?;
 
         for cont in 1..=max_continuations {
+            if SIGINT_RECEIVED.load(Ordering::Relaxed) { break; }
             debug!("  [continuation {}/{}] hit max_tokens at pos={}, continuing...",
                 cont, max_continuations, next_pos);
 
@@ -3795,8 +4032,15 @@ fn generate_with_mask(
                 &cont_token, next_pos, n_predict, 1,
                 !is_last, // keep_seq alive unless last round
                 |piece| {
+                    if SIGINT_RECEIVED.load(Ordering::Relaxed) { return false; }
                     let visible = filter.feed(piece);
                     if !visible.is_empty() {
+                        if first_visible {
+                            spinner_alive.store(false, Ordering::Relaxed);
+                            print!("assistant> ");
+                            let _ = io::stdout().flush();
+                            first_visible = false;
+                        }
                         print!("{}", visible);
                         let _ = io::stdout().flush();
                     }
@@ -3820,11 +4064,21 @@ fn generate_with_mask(
             debug!("  [continuation] max reached, stopping (total ~{} chars)", full_response.len());
             // seq already cleaned by last generate_ex (keep_seq=false)
         }
+    } else if was_interrupted {
+        // Interrupted on round 0 — clean up seq_id=1
+        engine.clear_seq(1);
     } else {
         // Natural end on round 0 — clean up seq_id=1
         engine.clear_seq(1);
     }
 
+    drop(spinner);
+    GENERATING.store(false, Ordering::SeqCst);
+    let interrupted = SIGINT_RECEIVED.swap(false, Ordering::SeqCst);
+    if interrupted {
+        GEN_INTERRUPTED.store(true, Ordering::SeqCst);
+        eprint!("\n\x1b[90m  (interrompu)\x1b[0m");
+    }
     let remaining = filter.flush();
     if !remaining.is_empty() { print!("{}", remaining); }
     println!("\n");

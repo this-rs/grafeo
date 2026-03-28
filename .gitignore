@@ -1,4 +1,6 @@
 /target/
+/dist/
+/.zig/
 *.db
 *.db.banks/
 Cargo.lock
