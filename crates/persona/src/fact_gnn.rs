@@ -27,13 +27,13 @@ const NODE_TYPES: &[&str] = &["Fact", "ConvTurn", "Pattern"];
 
 /// A lightweight GNN operating directly on PersonaDB graph.
 pub struct FactGNN {
-    dim: usize,
+    pub dim: usize,
     /// W_message[edge_type] → DIM×DIM flattened (row-major)
-    w_message: HashMap<String, Vec<f32>>,
+    pub w_message: HashMap<String, Vec<f32>>,
     /// W_update[node_type] → DIM×DIM flattened (row-major)
-    w_update: HashMap<String, Vec<f32>>,
+    pub w_update: HashMap<String, Vec<f32>>,
     /// Number of gradient updates performed (for adaptive LR).
-    n_updates: u64,
+    pub n_updates: u64,
 }
 
 impl FactGNN {

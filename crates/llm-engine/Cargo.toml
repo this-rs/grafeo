@@ -1,0 +1,10 @@
+[package]
+name = "llm-engine"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+
+[build-dependencies]
+bindgen = "0.71"

@@ -1,0 +1,722 @@
+use anyhow::{Context, Result};
+use obrain::ObrainDB;
+use obrain_common::types::{NodeId, PropertyKey, Value};
+use obrain_core::graph::Direction;
+use chrono::Utc;
+use std::collections::{HashMap, HashSet};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Persona DB — stores conversations, facts and identity in obrain graph
+// ═══════════════════════════════════════════════════════════════════════════════
+
+pub struct PersonaDB {
+    pub db: ObrainDB,
+    pub current_conv_id: NodeId,
+}
+
+impl PersonaDB {
+    /// Open or create conversation DB at given path.
+    pub fn open(path: &str) -> Result<Self> {
+        let db = ObrainDB::open(path)
+            .context(format!("Failed to open conversation DB at {path}"))?;
+
+        // Find or create the current conversation
+        let conv_id = {
+            let store = db.store();
+            let convs = store.nodes_by_label("Conversation");
+            // Use the most recent one, or create a new one
+            let latest = convs.iter().filter_map(|&nid| {
+                let node = store.get_node(nid)?;
+                let ts = node.properties.get(&PropertyKey::from("created_at"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("1970-01-01");
+                Some((nid, ts.to_string()))
+            })
+            .max_by(|a, b| a.1.cmp(&b.1));
+
+            match latest {
+                Some((nid, _)) => nid,
+                None => Self::create_conv_node(&db, "Conversation 1"),
+            }
+        };
+
+        Ok(Self { db, current_conv_id: conv_id })
+    }
+
+    pub fn create_conv_node(db: &ObrainDB, title: &str) -> NodeId {
+        db.create_node_with_props(&["Conversation"], [
+            ("title", Value::String(title.to_string().into())),
+            ("created_at", Value::String(Utc::now().to_rfc3339().into())),
+        ])
+    }
+
+    /// Start a new conversation within the same DB.
+    pub fn new_conversation(&mut self, title: &str) {
+        self.current_conv_id = Self::create_conv_node(&self.db, title);
+    }
+
+    /// Add a message to the current conversation. Returns the message NodeId.
+    pub fn add_message(&self, role: &str, content: &str) -> NodeId {
+        let store = self.db.store();
+        let msg_count = store.edges_from(self.current_conv_id, Direction::Outgoing)
+            .count();
+
+        let msg_id = self.db.create_node_with_props(&["Message"], [
+            ("role", Value::String(role.to_string().into())),
+            ("content", Value::String(content.to_string().into())),
+            ("timestamp", Value::String(Utc::now().to_rfc3339().into())),
+            ("order", Value::Int64(msg_count as i64)),
+        ]);
+        self.db.create_edge(self.current_conv_id, msg_id, "HAS_MSG");
+        msg_id
+    }
+
+    /// Link a reply message to the message it's replying to.
+    pub fn link_reply(&self, reply_id: NodeId, parent_id: NodeId) {
+        self.db.create_edge(reply_id, parent_id, "REPLIES_TO");
+    }
+
+    /// Get recent messages from the current conversation (for context injection).
+    pub fn recent_messages(&self, limit: usize) -> Vec<(String, String)> {
+        let store = self.db.store();
+        let mut msgs: Vec<(i64, String, String)> = Vec::new();
+
+        for (target, _eid) in store.edges_from(self.current_conv_id, Direction::Outgoing).collect::<Vec<_>>() {
+            if let Some(node) = store.get_node(target) {
+                let has_msg_label = node.labels.iter().any(|l| {
+                    let s: &str = l.as_ref();
+                    s == "Message"
+                });
+                if !has_msg_label { continue; }
+
+                let role = node.properties.get(&PropertyKey::from("role"))
+                    .and_then(|v| v.as_str()).unwrap_or("user").to_string();
+                let content = node.properties.get(&PropertyKey::from("content"))
+                    .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let order = node.properties.get(&PropertyKey::from("order"))
+                    .and_then(|v| if let Value::Int64(n) = v { Some(*n) } else { None })
+                    .unwrap_or(0);
+                msgs.push((order, role, content));
+            }
+        }
+
+        msgs.sort_by_key(|(order, _, _)| *order);
+        msgs.into_iter()
+            .rev().take(limit).collect::<Vec<_>>()
+            .into_iter().rev()
+            .map(|(_, role, content)| (role, content))
+            .collect()
+    }
+
+    /// Get all user prompts across all conversations, oldest first (for readline history).
+    pub fn user_history(&self) -> Vec<String> {
+        let store = self.db.store();
+        let mut prompts: Vec<(String, i64, String)> = Vec::new(); // (timestamp, order, content)
+
+        for &conv_id in &store.nodes_by_label("Conversation") {
+            for (target, _eid) in store.edges_from(conv_id, Direction::Outgoing).collect::<Vec<_>>() {
+                if let Some(node) = store.get_node(target) {
+                    let is_msg = node.labels.iter().any(|l| { let s: &str = l.as_ref(); s == "Message" });
+                    if !is_msg { continue; }
+                    let role = node.properties.get(&PropertyKey::from("role"))
+                        .and_then(|v| v.as_str()).unwrap_or("");
+                    if role != "user" { continue; }
+                    let content = node.properties.get(&PropertyKey::from("content"))
+                        .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    if content.is_empty() { continue; }
+                    let ts = node.properties.get(&PropertyKey::from("timestamp"))
+                        .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let order = node.properties.get(&PropertyKey::from("order"))
+                        .and_then(|v| if let Value::Int64(n) = v { Some(*n) } else { None })
+                        .unwrap_or(0);
+                    prompts.push((ts, order, content));
+                }
+            }
+        }
+
+        // Sort by timestamp then order (oldest first → added to history first)
+        prompts.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        prompts.into_iter().map(|(_, _, content)| content).collect()
+    }
+
+    /// List all conversations in the DB.
+    pub fn list_conversations(&self) -> Vec<(NodeId, String, String, usize)> {
+        let store = self.db.store();
+        let convs = store.nodes_by_label("Conversation");
+        let mut result = Vec::new();
+
+        for &nid in &convs {
+            if let Some(node) = store.get_node(nid) {
+                let title = node.properties.get(&PropertyKey::from("title"))
+                    .and_then(|v| v.as_str()).unwrap_or("(untitled)").to_string();
+                let created = node.properties.get(&PropertyKey::from("created_at"))
+                    .and_then(|v| v.as_str()).unwrap_or("?").to_string();
+                let msg_count = store.edges_from(nid, Direction::Outgoing)
+                    .count();
+                result.push((nid, title, created, msg_count));
+            }
+        }
+
+        result.sort_by(|a, b| b.2.cmp(&a.2)); // newest first
+        result
+    }
+
+    /// Switch to an existing conversation by NodeId.
+    pub fn switch_to(&mut self, conv_id: NodeId) -> bool {
+        let store = self.db.store();
+        if store.get_node(conv_id).is_some() {
+            self.current_conv_id = conv_id;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get current conversation title.
+    pub fn current_title(&self) -> String {
+        let store = self.db.store();
+        store.get_node(self.current_conv_id)
+            .and_then(|n| n.properties.get(&PropertyKey::from("title"))
+                .and_then(|v| v.as_str()).map(|s| s.to_string()))
+            .unwrap_or_else(|| "(untitled)".to_string())
+    }
+
+    // ── Fact management (Ξ(t) T1 — enriched FactGraph) ────────────
+
+    /// Infer fact_type from the key name.
+    pub fn infer_fact_type(key: &str) -> &'static str {
+        match key {
+            "name" | "identity" | "nickname" | "surname" => "identity",
+            "language" | "preference" | "style" | "tone" => "preference",
+            "memory" | "remember" | "episodic" => "episodic",
+            _ => "rule",
+        }
+    }
+
+    /// Store a persistent fact with enriched properties (T1).
+    /// Deactivates existing fact with same key, creates CONTRADICTS edge.
+    /// If conv_turn_id is provided, creates EXTRACTED_FROM edge.
+    pub fn add_fact(&self, key: &str, value: &str, source_turn: u32, conv_turn_id: Option<NodeId>) -> NodeId {
+        let store = self.db.store();
+        let mut old_fact_id: Option<NodeId> = None;
+
+        // Deactivate existing fact with same key
+        for &nid in &store.nodes_by_label("Fact") {
+            if let Some(node) = store.get_node(nid) {
+                let k = node.properties.get(&PropertyKey::from("key"))
+                    .and_then(|v| v.as_str()).unwrap_or("");
+                let active = node.properties.get(&PropertyKey::from("active"))
+                    .and_then(|v| if let Value::Bool(b) = v { Some(*b) } else { None })
+                    .unwrap_or(true);
+                if k == key && active {
+                    self.db.set_node_property(nid, "active", Value::Bool(false));
+                    old_fact_id = Some(nid);
+                }
+            }
+        }
+
+        let fact_type = Self::infer_fact_type(key);
+        let fact_id = self.db.create_node_with_props(&["Fact"], [
+            ("key", Value::String(key.to_string().into())),
+            ("value", Value::String(value.to_string().into())),
+            ("fact_type", Value::String(fact_type.to_string().into())),
+            ("confidence", Value::Float64(0.8)),
+            ("energy", Value::Float64(1.0)),
+            ("source_turn", Value::Int64(source_turn as i64)),
+            ("created_at", Value::String(Utc::now().to_rfc3339().into())),
+            ("active", Value::Bool(true)),
+        ]);
+
+        // CONTRADICTS edge to old fact
+        if let Some(old_id) = old_fact_id {
+            self.db.create_edge(fact_id, old_id, "CONTRADICTS");
+        }
+
+        // EXTRACTED_FROM edge to the conversation turn that produced it
+        if let Some(ct_id) = conv_turn_id {
+            self.db.create_edge(fact_id, ct_id, "EXTRACTED_FROM");
+        }
+
+        fact_id
+    }
+
+    /// Get all active facts as (key, value) pairs.
+    pub fn active_facts(&self) -> Vec<(String, String)> {
+        let store = self.db.store();
+        let mut facts = Vec::new();
+        for &nid in &store.nodes_by_label("Fact") {
+            if let Some(node) = store.get_node(nid) {
+                let active = node.properties.get(&PropertyKey::from("active"))
+                    .and_then(|v| if let Value::Bool(b) = v { Some(*b) } else { None })
+                    .unwrap_or(true);
+                if !active { continue; }
+                let key = node.properties.get(&PropertyKey::from("key"))
+                    .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let value = node.properties.get(&PropertyKey::from("value"))
+                    .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                facts.push((key, value));
+            }
+        }
+        facts
+    }
+
+    /// Get active fact NodeIds (for USED_IN tracking).
+    pub fn active_fact_ids(&self) -> Vec<NodeId> {
+        let store = self.db.store();
+        let mut ids = Vec::new();
+        for &nid in &store.nodes_by_label("Fact") {
+            if let Some(node) = store.get_node(nid) {
+                let active = node.properties.get(&PropertyKey::from("active"))
+                    .and_then(|v| if let Value::Bool(b) = v { Some(*b) } else { None })
+                    .unwrap_or(true);
+                if active { ids.push(nid); }
+            }
+        }
+        ids
+    }
+
+    /// List all facts with details for /facts command.
+    pub fn list_facts(&self) -> Vec<(NodeId, String, String, i64, bool, f64, f64, String)> {
+        let store = self.db.store();
+        let mut facts = Vec::new();
+        for &nid in &store.nodes_by_label("Fact") {
+            if let Some(node) = store.get_node(nid) {
+                let key = node.properties.get(&PropertyKey::from("key"))
+                    .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let value = node.properties.get(&PropertyKey::from("value"))
+                    .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let turn = node.properties.get(&PropertyKey::from("source_turn"))
+                    .and_then(|v| if let Value::Int64(n) = v { Some(*n) } else { None })
+                    .unwrap_or(0);
+                let active = node.properties.get(&PropertyKey::from("active"))
+                    .and_then(|v| if let Value::Bool(b) = v { Some(*b) } else { None })
+                    .unwrap_or(true);
+                let confidence = node.properties.get(&PropertyKey::from("confidence"))
+                    .and_then(|v| if let Value::Float64(f) = v { Some(*f) } else { None })
+                    .unwrap_or(0.8);
+                let energy = node.properties.get(&PropertyKey::from("energy"))
+                    .and_then(|v| if let Value::Float64(f) = v { Some(*f) } else { None })
+                    .unwrap_or(1.0);
+                let fact_type = node.properties.get(&PropertyKey::from("fact_type"))
+                    .and_then(|v| v.as_str()).unwrap_or("rule").to_string();
+                facts.push((nid, key, value, turn, active, confidence, energy, fact_type));
+            }
+        }
+        facts
+    }
+
+    /// Deactivate a fact by key.
+    pub fn forget_fact(&self, key: &str) -> bool {
+        let store = self.db.store();
+        let mut found = false;
+        for &nid in &store.nodes_by_label("Fact") {
+            if let Some(node) = store.get_node(nid) {
+                let k = node.properties.get(&PropertyKey::from("key"))
+                    .and_then(|v| v.as_str()).unwrap_or("");
+                let active = node.properties.get(&PropertyKey::from("active"))
+                    .and_then(|v| if let Value::Bool(b) = v { Some(*b) } else { None })
+                    .unwrap_or(true);
+                if k == key && active {
+                    self.db.set_node_property(nid, "active", Value::Bool(false));
+                    found = true;
+                }
+            }
+        }
+        found
+    }
+
+    // ── ConvTurn management (Ξ(t) T1.2) ─────────────────────────
+
+    /// Create a :ConvTurn node for the current exchange.
+    pub fn create_conv_turn(&self, query: &str, response_text: &str, turn_number: u32) -> NodeId {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut qh = DefaultHasher::new();
+        query.hash(&mut qh);
+        let query_hash = qh.finish();
+
+        let mut rh = DefaultHasher::new();
+        response_text.hash(&mut rh);
+        let response_hash = rh.finish();
+
+        // Truncate query for storage (keep first 500 chars for multi-line pastes)
+        let query_trunc: String = query.chars().take(500).collect();
+
+        self.db.create_node_with_props(&["ConvTurn"], [
+            ("query_hash", Value::Int64(query_hash as i64)),
+            ("response_hash", Value::Int64(response_hash as i64)),
+            ("query_text", Value::String(query_trunc.into())),
+            ("reward", Value::Float64(0.0)),
+            ("timestamp", Value::String(Utc::now().to_rfc3339().into())),
+            ("turn_number", Value::Int64(turn_number as i64)),
+        ])
+    }
+
+    /// Link two consecutive ConvTurns with TEMPORAL_NEXT.
+    pub fn link_temporal(&self, from_turn: NodeId, to_turn: NodeId) {
+        self.db.create_edge(from_turn, to_turn, "TEMPORAL_NEXT");
+    }
+
+    /// Mark facts as USED_IN a ConvTurn (they were in the context sent to LLM).
+    pub fn mark_facts_used_in(&self, fact_ids: &[NodeId], conv_turn_id: NodeId) {
+        for &fid in fact_ids {
+            self.db.create_edge(fid, conv_turn_id, "USED_IN");
+        }
+    }
+
+    /// Link a ConvTurn to a node from the main graph (MENTIONS).
+    pub fn link_mentions(&self, conv_turn_id: NodeId, mentioned_nid: NodeId) {
+        self.db.create_edge(conv_turn_id, mentioned_nid, "MENTIONS");
+    }
+
+    /// Create REINFORCES edges between facts co-used in a high-reward turn.
+    /// Used by T3 (RewardDetector) when reward > 0.5.
+    pub fn create_reinforces(&self, fact_ids: &[NodeId], reward: f64) {
+        if reward <= 0.5 || fact_ids.len() < 2 { return; }
+        let store = self.db.store();
+        for i in 0..fact_ids.len() {
+            for j in (i + 1)..fact_ids.len() {
+                // Check if edge already exists
+                let already = store.edges_from(fact_ids[i], Direction::Outgoing)
+                    .any(|(target, _)| target == fact_ids[j]);
+                if !already {
+                    self.db.create_edge(fact_ids[i], fact_ids[j], "REINFORCES");
+                }
+            }
+        }
+    }
+
+    // ── Pattern management (Ξ(t) T1.3) ──────────────────────────
+
+    /// Seed default extraction patterns if none exist.
+    pub fn seed_default_patterns(&self) {
+        let store = self.db.store();
+        let existing = store.nodes_by_label("Pattern");
+        if !existing.is_empty() {
+            return;
+        }
+
+        let defaults = [
+            // Identity patterns (prefix match)
+            ("ton nom est ", "name", "identity"),
+            ("tu t'appelles ", "name", "identity"),
+            ("tu es ", "identity", "identity"),
+            ("appelle-toi ", "name", "identity"),
+            ("your name is ", "name", "identity"),
+            ("you are ", "identity", "identity"),
+            ("call yourself ", "name", "identity"),
+            // Memory patterns
+            ("retiens que ", "memory", "episodic"),
+            ("rappelle-toi que ", "memory", "episodic"),
+            ("rappelle toi que ", "memory", "episodic"),
+            ("n'oublie pas que ", "memory", "episodic"),
+            ("remember that ", "memory", "episodic"),
+            ("don't forget that ", "memory", "episodic"),
+            // Language/preference patterns
+            ("réponds toujours en ", "language", "preference"),
+            ("reponds toujours en ", "language", "preference"),
+            ("parle toujours en ", "language", "preference"),
+            ("always respond in ", "language", "preference"),
+            ("always answer in ", "language", "preference"),
+        ];
+
+        for (trigger, key_template, fact_type) in defaults {
+            self.db.create_node_with_props(&["Pattern"], [
+                ("trigger", Value::String(trigger.to_string().into())),
+                ("key_template", Value::String(key_template.to_string().into())),
+                ("fact_type", Value::String(fact_type.to_string().into())),
+                ("hit_count", Value::Int64(0)),
+                ("avg_reward", Value::Float64(0.0)),
+                ("auto_generated", Value::Bool(false)),
+                ("active", Value::Bool(true)),
+            ]);
+        }
+    }
+
+    // ── Migration (Ξ(t) T1.5) ───────────────────────────────────
+
+    /// Migrate old :Fact nodes (key/value/active only) to enriched format.
+    pub fn migrate_facts(&self) {
+        let store = self.db.store();
+        for &nid in &store.nodes_by_label("Fact") {
+            if let Some(node) = store.get_node(nid) {
+                // Check if already migrated (has fact_type)
+                if node.properties.contains_key(&PropertyKey::from("fact_type")) {
+                    continue;
+                }
+                let key = node.properties.get(&PropertyKey::from("key"))
+                    .and_then(|v| v.as_str()).unwrap_or("");
+                let fact_type = Self::infer_fact_type(key);
+                self.db.set_node_property(nid, "fact_type", Value::String(fact_type.to_string().into()));
+                self.db.set_node_property(nid, "confidence", Value::Float64(0.8));
+                self.db.set_node_property(nid, "energy", Value::Float64(1.0));
+            }
+        }
+    }
+
+    // ── Ξ(t) T5: Pattern Auto-Generation ────────────────────────
+
+    /// Extract n-grams (2 and 3 words) from text, lowercased, stopwords removed.
+    pub fn extract_ngrams(text: &str, max_n: usize) -> Vec<String> {
+        const STOPWORDS: &[&str] = &[
+            "le", "la", "les", "de", "du", "des", "un", "une", "est", "a", "et",
+            "en", "au", "aux", "que", "qui", "the", "is", "of", "a", "an", "and",
+            "in", "to", "it", "for", "on", "with", "at", "by", "i", "je", "tu",
+            "il", "elle", "nous", "vous", "ils", "me", "te", "se", "ce", "ça",
+        ];
+        let lower = text.to_lowercase();
+        let words: Vec<String> = lower
+            .split_whitespace()
+            .filter(|w| !STOPWORDS.contains(w) && w.len() > 1)
+            .map(|s| s.to_string())
+            .collect();
+
+        let mut ngrams = Vec::new();
+        for n in 2..=max_n.min(3) {
+            if words.len() >= n {
+                for window in words.windows(n) {
+                    ngrams.push(window.join(" "));
+                }
+            }
+        }
+        ngrams
+    }
+
+    /// Try to auto-generate new :Pattern nodes from frequent n-grams in ConvTurn queries.
+    /// Call every ~5 turns. Max 2 new patterns per call.
+    pub fn try_generate_patterns(&self) -> u32 {
+        let store = self.db.store();
+        let facts: Vec<NodeId> = store.nodes_by_label("Fact").iter()
+            .filter(|&&nid| {
+                store.get_node(nid)
+                    .and_then(|n| n.properties.get(&PropertyKey::from("confidence"))
+                        .and_then(|v| if let Value::Float64(f) = v { Some(*f > 0.7) } else { None }))
+                    .unwrap_or(false)
+            })
+            .copied()
+            .collect();
+
+        if facts.len() < 3 { return 0; }
+
+        // Collect query texts from ConvTurns that produced high-confidence facts
+        let mut query_texts: Vec<String> = Vec::new();
+        for &fid in &facts {
+            for (target, _) in store.edges_from(fid, Direction::Outgoing).collect::<Vec<_>>() {
+                if let Some(node) = store.get_node(target) {
+                    let is_conv = node.labels.iter().any(|l| { let s: &str = l.as_ref(); s == "ConvTurn" });
+                    if is_conv {
+                        if let Some(qt) = node.properties.get(&PropertyKey::from("query_text"))
+                            .and_then(|v| v.as_str())
+                        {
+                            query_texts.push(qt.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        if query_texts.len() < 3 { return 0; }
+
+        // Count n-grams across all query texts
+        let mut ngram_counts: HashMap<String, u32> = HashMap::new();
+        for qt in &query_texts {
+            let ngrams = Self::extract_ngrams(qt, 3);
+            for ng in ngrams {
+                *ngram_counts.entry(ng).or_insert(0) += 1;
+            }
+        }
+
+        // Get existing pattern triggers for dedup
+        let existing_triggers: HashSet<String> = store.nodes_by_label("Pattern").iter()
+            .filter_map(|&nid| {
+                store.get_node(nid)
+                    .and_then(|n| n.properties.get(&PropertyKey::from("trigger"))
+                        .and_then(|v| v.as_str().map(|s| s.to_string())))
+            })
+            .collect();
+
+        // Find frequent n-grams not already covered
+        let mut generated = 0u32;
+        let mut candidates: Vec<(String, u32)> = ngram_counts.into_iter()
+            .filter(|(ng, count)| *count >= 3 && !existing_triggers.iter().any(|t| t.contains(ng.as_str())))
+            .collect();
+        candidates.sort_by(|a, b| b.1.cmp(&a.1));
+
+        for (ngram, _count) in candidates.iter().take(2) {
+            let trigger = format!("{} ", ngram); // trailing space for prefix match
+            self.db.create_node_with_props(&["Pattern"], [
+                ("trigger", Value::String(trigger.clone().into())),
+                ("key_template", Value::String("memory".to_string().into())),
+                ("fact_type", Value::String("episodic".to_string().into())),
+                ("hit_count", Value::Int64(0)),
+                ("avg_reward", Value::Float64(0.0)),
+                ("auto_generated", Value::Bool(true)),
+                ("active", Value::Bool(true)),
+            ]);
+            generated += 1;
+        }
+
+        // Promote patterns: auto_generated=true, hit_count >= 5, avg_reward > 0.4
+        for &nid in &store.nodes_by_label("Pattern") {
+            if let Some(node) = store.get_node(nid) {
+                let auto = node.properties.get(&PropertyKey::from("auto_generated"))
+                    .and_then(|v| if let Value::Bool(b) = v { Some(*b) } else { None })
+                    .unwrap_or(false);
+                if !auto { continue; }
+                let hits = node.properties.get(&PropertyKey::from("hit_count"))
+                    .and_then(|v| if let Value::Int64(n) = v { Some(*n) } else { None })
+                    .unwrap_or(0);
+                let avg_r = node.properties.get(&PropertyKey::from("avg_reward"))
+                    .and_then(|v| if let Value::Float64(f) = v { Some(*f) } else { None })
+                    .unwrap_or(0.0);
+                if hits >= 5 && avg_r > 0.4 {
+                    self.db.set_node_property(nid, "auto_generated", Value::Bool(false));
+                }
+            }
+        }
+
+        generated
+    }
+
+    // ── Ξ(t) T5: Garbage Collection ─────────────────────────────
+
+    /// Garbage-collect dead patterns, low-energy facts, and old ConvTurns.
+    /// Call every ~20 turns.
+    pub fn gc_persona_graph(&self, current_turn: u32) {
+        let store = self.db.store();
+
+        // (1) Deactivate patterns with hit_count > 5 and avg_reward < 0.2
+        for &nid in &store.nodes_by_label("Pattern") {
+            if let Some(node) = store.get_node(nid) {
+                let active = node.properties.get(&PropertyKey::from("active"))
+                    .and_then(|v| if let Value::Bool(b) = v { Some(*b) } else { None })
+                    .unwrap_or(true);
+                if !active { continue; }
+                let hits = node.properties.get(&PropertyKey::from("hit_count"))
+                    .and_then(|v| if let Value::Int64(n) = v { Some(*n) } else { None })
+                    .unwrap_or(0);
+                let avg_r = node.properties.get(&PropertyKey::from("avg_reward"))
+                    .and_then(|v| if let Value::Float64(f) = v { Some(*f) } else { None })
+                    .unwrap_or(0.0);
+                if hits > 5 && avg_r < 0.2 {
+                    self.db.set_node_property(nid, "active", Value::Bool(false));
+                }
+            }
+        }
+
+        // (2) Deactivate facts with energy < 0.1 and no recent USED_IN
+        for &nid in &store.nodes_by_label("Fact") {
+            if let Some(node) = store.get_node(nid) {
+                let active = node.properties.get(&PropertyKey::from("active"))
+                    .and_then(|v| if let Value::Bool(b) = v { Some(*b) } else { None })
+                    .unwrap_or(true);
+                if !active { continue; }
+                let energy = node.properties.get(&PropertyKey::from("energy"))
+                    .and_then(|v| if let Value::Float64(f) = v { Some(*f) } else { None })
+                    .unwrap_or(1.0);
+                if energy >= 0.1 { continue; }
+
+                // Check if used recently (within last 50 turns)
+                let source_turn = node.properties.get(&PropertyKey::from("source_turn"))
+                    .and_then(|v| if let Value::Int64(n) = v { Some(*n as u32) } else { None })
+                    .unwrap_or(0);
+                if current_turn.saturating_sub(source_turn) > 50 {
+                    self.db.set_node_property(nid, "active", Value::Bool(false));
+                }
+            }
+        }
+
+        // (3) Clean old ConvTurns (> 1000 turns ago): we don't delete them
+        // but they'll naturally be excluded from BFS subgraph by hop limit
+        // (Mark as old — GNN will naturally ignore via BFS hop limit)
+    }
+
+    // ── Ξ(t) T5: Stats ──────────────────────────────────────────
+
+    /// Get Ξ(t) system metrics for /stats command.
+    pub fn xi_stats(&self) -> XiStats {
+        let store = self.db.store();
+
+        let all_facts = store.nodes_by_label("Fact");
+        let active_facts: Vec<_> = all_facts.iter().filter(|&&nid| {
+            store.get_node(nid)
+                .and_then(|n| n.properties.get(&PropertyKey::from("active"))
+                    .and_then(|v| if let Value::Bool(b) = v { Some(*b) } else { None }))
+                .unwrap_or(true)
+        }).collect();
+        let avg_energy: f64 = if active_facts.is_empty() { 0.0 } else {
+            active_facts.iter().map(|&&nid| {
+                store.get_node(nid)
+                    .and_then(|n| n.properties.get(&PropertyKey::from("energy"))
+                        .and_then(|v| if let Value::Float64(f) = v { Some(*f) } else { None }))
+                    .unwrap_or(1.0)
+            }).sum::<f64>() / active_facts.len() as f64
+        };
+        let avg_confidence: f64 = if active_facts.is_empty() { 0.0 } else {
+            active_facts.iter().map(|&&nid| {
+                store.get_node(nid)
+                    .and_then(|n| n.properties.get(&PropertyKey::from("confidence"))
+                        .and_then(|v| if let Value::Float64(f) = v { Some(*f) } else { None }))
+                    .unwrap_or(0.8)
+            }).sum::<f64>() / active_facts.len() as f64
+        };
+
+        let all_patterns = store.nodes_by_label("Pattern");
+        let active_patterns: Vec<_> = all_patterns.iter().filter(|&&nid| {
+            store.get_node(nid)
+                .and_then(|n| n.properties.get(&PropertyKey::from("active"))
+                    .and_then(|v| if let Value::Bool(b) = v { Some(*b) } else { None }))
+                .unwrap_or(true)
+        }).collect();
+        let auto_patterns = all_patterns.iter().filter(|&&nid| {
+            store.get_node(nid)
+                .and_then(|n| n.properties.get(&PropertyKey::from("auto_generated"))
+                    .and_then(|v| if let Value::Bool(b) = v { Some(*b) } else { None }))
+                .unwrap_or(false)
+        }).count();
+
+        let conv_turns = store.nodes_by_label("ConvTurn");
+        let rewards: Vec<f64> = conv_turns.iter().filter_map(|&nid| {
+            store.get_node(nid)
+                .and_then(|n| n.properties.get(&PropertyKey::from("reward"))
+                    .and_then(|v| if let Value::Float64(f) = v { Some(*f) } else { None }))
+        }).collect();
+        let avg_reward = if rewards.is_empty() { 0.0 } else {
+            // Average of last 20 rewards
+            let recent: Vec<_> = rewards.iter().rev().take(20).collect();
+            recent.iter().copied().sum::<f64>() / recent.len() as f64
+        };
+
+        XiStats {
+            facts_active: active_facts.len(),
+            facts_total: all_facts.len(),
+            avg_energy,
+            avg_confidence,
+            patterns_active: active_patterns.len(),
+            patterns_total: all_patterns.len(),
+            patterns_auto: auto_patterns,
+            conv_turns: conv_turns.len(),
+            avg_reward_recent: avg_reward,
+            reward_tokens: store.nodes_by_label("RewardToken").len(),
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// XiStats
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Ξ(t) system metrics.
+pub struct XiStats {
+    pub facts_active: usize,
+    pub facts_total: usize,
+    pub avg_energy: f64,
+    pub avg_confidence: f64,
+    pub patterns_active: usize,
+    pub patterns_total: usize,
+    pub patterns_auto: usize,
+    pub conv_turns: usize,
+    pub avg_reward_recent: f64,
+    pub reward_tokens: usize,
+}

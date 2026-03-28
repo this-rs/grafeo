@@ -93,11 +93,18 @@ fn main() {
             }
         }
         "linux" => {
-            if link_static {
-                // For fully static Linux binary, link stdc++ statically too
-                println!("cargo:rustc-link-lib=static=stdc++");
+            let host_os = env::consts::OS;
+            if host_os == "linux" {
+                // Native Linux build: link stdc++
+                if link_static {
+                    println!("cargo:rustc-link-lib=static=stdc++");
+                } else {
+                    println!("cargo:rustc-link-lib=stdc++");
+                }
             } else {
-                println!("cargo:rustc-link-lib=dylib=stdc++");
+                // Cross-compile from macOS via zig: llama.cpp was compiled with
+                // zig (libc++ ABI = std::__1::*), so link libc++ not stdc++.
+                println!("cargo:rustc-link-lib=c++");
             }
         }
         "windows" => {
