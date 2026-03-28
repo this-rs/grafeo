@@ -2931,8 +2931,11 @@ impl ThinkFilter {
                     }
                     // Discard accumulated thinking content (keep last 20 chars for partial match)
                     if self.buffer.len() > 100 {
-                        let keep = self.buffer.len() - 20;
-                        self.buffer = self.buffer[keep..].to_string();
+                        // Use char boundary to avoid panic on multi-byte UTF-8 (β, α, ₐ, etc.)
+                        let keep: String = self.buffer.chars()
+                            .rev().take(20).collect::<Vec<_>>()
+                            .into_iter().rev().collect();
+                        self.buffer = keep;
                     }
                     break;
                 }
