@@ -3113,7 +3113,9 @@ fn query_with_registry(
         print!("assistant> ");
         io::stdout().flush()?;
         let mut filter = ThinkFilter::new();
-        let (resp, _) = engine.generate(&tokens, registry.next_pos, 256, 1, |piece| {
+        // Use 1024 tokens max (not 256) to avoid truncated/garbage responses.
+        // The low max_tokens was causing the model to output short garbage in some cases.
+        let (resp, _) = engine.generate(&tokens, registry.next_pos, 1024, 1, |piece| {
             let visible = filter.feed(piece);
             if !visible.is_empty() {
                 print!("{}", visible);
@@ -3124,6 +3126,13 @@ fn query_with_registry(
         let remaining = filter.flush();
         if !remaining.is_empty() { print!("{}", remaining); }
         println!("\n");
+        // Sanity check: if response is suspiciously short and non-empty,
+        // it might be tokenizer garbage — log for debugging.
+        let clean_resp = resp.trim();
+        if !clean_resp.is_empty() && clean_resp.len() < 10 && !clean_resp.contains(' ') {
+            debug!("  ⚠ Suspicious short response: {:?} (len={}) — possible tokenizer artifact",
+                clean_resp, clean_resp.len());
+        }
         return Ok((resp, Vec::new()));
     }
 
