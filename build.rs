@@ -7,6 +7,10 @@ fn main() {
         .unwrap_or_else(|_| "/Users/triviere/projects/ia/llama.cpp".to_string());
     let llama_path = PathBuf::from(&llama_dir);
 
+    // Cross-compile aware: use CARGO_CFG_TARGET_* instead of #[cfg(...)]
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+
     // --- Link search paths ---
     let build_subdir = env::var("LLAMA_BUILD_DIR").unwrap_or_else(|_| "build".to_string());
     let lib_dir = llama_path.join(&build_subdir).join("bin");
@@ -25,16 +29,16 @@ fn main() {
     println!("cargo:rustc-link-lib=dylib=ggml-cpu");
 
     // ggml-metal only on aarch64 macOS (Metal not available on x86_64 macOS)
-    let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
-    if target_arch != "x86_64" {
+    if target_os == "macos" && target_arch != "x86_64" {
         println!("cargo:rustc-link-lib=dylib=ggml-metal");
     }
 
-    println!("cargo:rustc-link-lib=dylib=ggml-blas");
+    if target_os != "windows" {
+        println!("cargo:rustc-link-lib=dylib=ggml-blas");
+    }
 
     // macOS frameworks
-    #[cfg(target_os = "macos")]
-    {
+    if target_os == "macos" {
         println!("cargo:rustc-link-lib=framework=Foundation");
         println!("cargo:rustc-link-lib=framework=Accelerate");
         // Metal frameworks only when Metal backend is linked (not x86_64)
@@ -45,13 +49,16 @@ fn main() {
     }
 
     // C++ standard library
-    #[cfg(target_os = "macos")]
-    println!("cargo:rustc-link-lib=dylib=c++");
-    #[cfg(target_os = "linux")]
-    println!("cargo:rustc-link-lib=dylib=stdc++");
+    if target_os == "macos" {
+        println!("cargo:rustc-link-lib=dylib=c++");
+    } else if target_os == "linux" {
+        println!("cargo:rustc-link-lib=dylib=stdc++");
+    }
 
     // --- RPATH for runtime dylib resolution ---
-    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
+    if target_os != "windows" {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
+    }
 
     // --- Bindgen ---
     let header = llama_path.join("include/llama.h");
