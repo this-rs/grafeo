@@ -976,6 +976,7 @@ struct ContextNode {
     id: NodeId,
     token_start: i32,
     token_end: i32,
+    bank: u32, // 0=core, 1=relations, 2=2-hop, 3=background
 }
 
 struct QueryContext {
@@ -1794,6 +1795,13 @@ fn query_with_registry(
     let conv_provides_context = !conv_pulled_ids.is_empty();
 
     // Build QueryContext from registry positions (not from re-tokenization)
+    // Bank assignment: top 25% → bank 0 (core), next 25% → bank 1, etc.
+    let total_scored = scored_nodes_for_query.len();
+    let bank_for_idx = |idx: usize| -> u32 {
+        if total_scored == 0 { return 0; }
+        let ratio = idx as f32 / total_scored as f32;
+        if ratio < 0.25 { 0 } else if ratio < 0.50 { 1 } else if ratio < 0.75 { 2 } else { 3 }
+    };
     let mut ctx_nodes: Vec<ContextNode> = Vec::new();
     if vague_query && conv_provides_context {
         // Vague query + conv context: only include graph nodes that are also
@@ -1801,24 +1809,26 @@ fn query_with_registry(
         let pulled_set: HashSet<NodeId> = conv_pulled_ids.iter().copied().collect();
         debug!("  [Conv] Vague query detected — using {} fragment-referenced nodes instead of {} generic",
             conv_pulled_ids.len(), scored_nodes_for_query.len());
-        for cn in &scored_nodes_for_query {
+        for (idx, cn) in scored_nodes_for_query.iter().enumerate() {
             if pulled_set.contains(&cn.id) {
                 if let Some(slot) = registry.get_slot(cn.id) {
                     ctx_nodes.push(ContextNode {
                         id: cn.id,
                         token_start: slot.start,
                         token_end: slot.end,
+                        bank: bank_for_idx(idx),
                     });
                 }
             }
         }
     } else {
-        for cn in &scored_nodes_for_query {
+        for (idx, cn) in scored_nodes_for_query.iter().enumerate() {
             if let Some(slot) = registry.get_slot(cn.id) {
                 ctx_nodes.push(ContextNode {
                     id: cn.id,
                     token_start: slot.start,
                     token_end: slot.end,
+                    bank: bank_for_idx(idx),
                 });
             }
         }
@@ -1833,6 +1843,7 @@ fn query_with_registry(
                     id: gn,
                     token_start: slot.start,
                     token_end: slot.end,
+                    bank: 1, // conv-pulled graph nodes = relations tier
                 });
             }
         }
@@ -1845,6 +1856,7 @@ fn query_with_registry(
                 id: conv_nid,
                 token_start: slot.start,
                 token_end: slot.end,
+                bank: 2, // conversation fragments = 2-hop context tier
             });
         }
     }
@@ -2283,19 +2295,27 @@ fn generate_with_mask(
     }
 
     debug!("  Mask: {} nodes visible to query", ctx.nodes.len());
+    {
+        let bank_counts: [usize; 4] = [
+            ctx.nodes.iter().filter(|n| n.bank == 0).count(),
+            ctx.nodes.iter().filter(|n| n.bank == 1).count(),
+            ctx.nodes.iter().filter(|n| n.bank == 2).count(),
+            ctx.nodes.iter().filter(|n| n.bank == 3).count(),
+        ];
+        debug!("  Banks: core={} relations={} 2hop={} background={}", bank_counts[0], bank_counts[1], bank_counts[2], bank_counts[3]);
+    }
 
     // ── Set mask via FFI ──────────────────────────────────────────
     // Per-head masking: when enabled, different heads see different banks.
-    // TODO: enable via CLI flag (e.g. --perhead). For now, use broadcast mask.
-    let use_perhead = false;
+    // Enable via OBRAIN_PERHEAD=1 env var.
+    let use_perhead = std::env::var("OBRAIN_PERHEAD").map(|v| v == "1").unwrap_or(false);
     if use_perhead {
-        // Convert ContextNodes to mask_builder::NodePosition with bank assignment.
-        // TODO: ContextNode does not carry a bank id yet — assign bank 0 to all for now.
+        // Convert ContextNodes to mask_builder::NodePosition with bank from retrieval ranking.
         let mb_nodes: Vec<mask_builder::NodePosition> = ctx.nodes.iter().map(|n| {
             mask_builder::NodePosition {
                 pos_start: n.token_start,
                 pos_end: n.token_end,
-                bank: 0, // TODO: assign real bank from retrieval ranking
+                bank: n.bank,
             }
         }).collect();
         let config = mask_builder::default_bank_config();
@@ -2306,8 +2326,10 @@ fn generate_with_mask(
             engine.n_head(),
             &config,
         );
+        debug!("  Per-head mask: {} groups, {} positions, mask size {}", perhead.n_head_groups, perhead.positions.len(), perhead.mask.len());
         engine.set_attn_mask(&perhead.mask, &perhead.positions, perhead.n_head_groups)?;
     } else {
+        debug!("  Broadcast mask: {} positions", positions.len());
         engine.set_attn_mask(&mask, &positions, 0)?;
     }
 
