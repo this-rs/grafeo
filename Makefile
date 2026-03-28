@@ -78,11 +78,37 @@ LINUX_CMAKE_FLAGS := \
 LLAMA_TARGETS_LINUX := llama ggml ggml-base ggml-cpu
 LLAMA_TARGETS_MACOS := llama ggml ggml-base ggml-cpu ggml-metal ggml-blas
 
+# Compat build: SSE3 only (no AVX2/FMA), works on any x86_64 from ~2006+
+LLAMA_STATIC_LINUX_COMPAT := $(LLAMA_CPP_DIR)/build-linux-x64-compat-static
+OUT_LINUX_COMPAT := $(OUT_DIR)/x86_64-unknown-linux-gnu/$(PROFILE)/obrain-chat
+
+LINUX_COMPAT_CMAKE_FLAGS := \
+	-DCMAKE_SYSTEM_NAME=Linux \
+	-DCMAKE_SYSTEM_PROCESSOR=x86_64 \
+	-DCMAKE_C_COMPILER=$(ZIG_CC) \
+	-DCMAKE_CXX_COMPILER=$(ZIG_CXX) \
+	-DCMAKE_AR=$(ZIG_AR) \
+	-DCMAKE_RANLIB=true \
+	-DCMAKE_BUILD_TYPE=Release \
+	-DBUILD_SHARED_LIBS=OFF \
+	-DGGML_BLAS=OFF \
+	-DGGML_METAL=OFF \
+	-DGGML_CUDA=OFF \
+	-DGGML_OPENMP=OFF \
+	-DGGML_AVX=OFF \
+	-DGGML_AVX2=OFF \
+	-DGGML_FMA=OFF \
+	-DGGML_F16C=OFF \
+	-DLLAMA_BUILD_TESTS=OFF \
+	-DLLAMA_BUILD_EXAMPLES=OFF \
+	-DLLAMA_BUILD_SERVER=OFF \
+	-DLLAMA_CURL=OFF
+
 # =============================================
 #  Targets
 # =============================================
 
-.PHONY: all macos linux clean clean-all dist llama-static-macos llama-static-linux zig-wrappers info
+.PHONY: all macos linux linux-compat clean clean-all dist llama-static-macos llama-static-linux llama-static-linux-compat zig-wrappers info
 
 all: macos linux
 
@@ -98,6 +124,13 @@ linux: llama-static-linux zig-wrappers
 		cargo build $(CARGO_FLAGS) --target x86_64-unknown-linux-gnu
 	@echo "✓ $(OUT_LINUX) ($$(du -h $(OUT_LINUX) | cut -f1))"
 
+linux-compat: llama-static-linux-compat zig-wrappers
+	@echo "=== Building obrain-chat (Linux x86_64 SSE3 compat, static) ==="
+	LLAMA_CPP_DIR=$(LLAMA_CPP_DIR) LLAMA_STATIC=1 \
+		LLAMA_BUILD_DIR=$(LLAMA_STATIC_LINUX_COMPAT) \
+		cargo build $(CARGO_FLAGS) --target x86_64-unknown-linux-gnu
+	@echo "✓ $(OUT_LINUX_COMPAT) ($$(du -h $(OUT_LINUX_COMPAT) | cut -f1))"
+
 # --- Distribution ---
 dist: all
 	@mkdir -p $(DIST_DIR)
@@ -112,6 +145,22 @@ dist: all
 	@echo "CPU support:"
 	@echo "  macos-arm64 : Apple Silicon M1+ (NEON + Metal GPU)"
 	@echo "  linux-x64   : AMD64/Intel64 with AVX2+FMA (Zen/Haswell+, ~2013+)"
+
+dist-all: all linux-compat
+	@mkdir -p $(DIST_DIR)
+	cp $(OUT_MACOS) $(DIST_DIR)/obrain-chat-macos-arm64
+	cp $(OUT_LINUX) $(DIST_DIR)/obrain-chat-linux-x64
+	cp $(OUT_LINUX_COMPAT) $(DIST_DIR)/obrain-chat-linux-x64-compat
+	@echo ""
+	@echo "=== Distribution ==="
+	@ls -lh $(DIST_DIR)/
+	@echo ""
+	@file $(DIST_DIR)/*
+	@echo ""
+	@echo "CPU support:"
+	@echo "  macos-arm64        : Apple Silicon M1+ (NEON + Metal GPU)"
+	@echo "  linux-x64          : AMD64/Intel64 with AVX2+FMA (Zen/Haswell+, ~2013+)"
+	@echo "  linux-x64-compat   : AMD64/Intel64 SSE3 only (any x86_64, ~2006+)"
 
 info:
 	@echo "LLAMA_CPP_DIR = $(LLAMA_CPP_DIR)"
@@ -151,6 +200,14 @@ $(LLAMA_STATIC_LINUX)/src/libllama.a: zig-wrappers
 	cd $(LLAMA_CPP_DIR) && cmake --build build-linux-x64-static --config Release \
 		-j$(JOBS) --target $(LLAMA_TARGETS_LINUX)
 
+llama-static-linux-compat: $(LLAMA_STATIC_LINUX_COMPAT)/src/libllama.a
+
+$(LLAMA_STATIC_LINUX_COMPAT)/src/libllama.a: zig-wrappers
+	@echo "=== Building llama.cpp (Linux x86_64 static, SSE3 compat, via zig) ==="
+	cd $(LLAMA_CPP_DIR) && cmake -B build-linux-x64-compat-static $(LINUX_COMPAT_CMAKE_FLAGS)
+	cd $(LLAMA_CPP_DIR) && cmake --build build-linux-x64-compat-static --config Release \
+		-j$(JOBS) --target $(LLAMA_TARGETS_LINUX)
+
 # --- Zig cross-compile wrappers ---
 
 zig-wrappers: $(ZIG_CC)
@@ -167,4 +224,4 @@ clean:
 	cargo clean
 
 clean-all: clean
-	rm -rf $(LLAMA_STATIC_MACOS) $(LLAMA_STATIC_LINUX) $(ZIG_DIR) $(DIST_DIR)
+	rm -rf $(LLAMA_STATIC_MACOS) $(LLAMA_STATIC_LINUX) $(LLAMA_STATIC_LINUX_COMPAT) $(ZIG_DIR) $(DIST_DIR)

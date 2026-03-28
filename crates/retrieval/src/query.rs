@@ -75,11 +75,14 @@ pub fn query_with_registry(
 
     if scored_nodes_for_query.is_empty() {
         // No graph data — generate from conversation context + system prompt
+        // /no_think MUST be in the user message for Qwen3 to reliably suppress thinking.
+        // Placing it only in the system header gets "diluted" by graph context tokens.
         let fallback_text = format!(
-            "<|im_end|>\n<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n"
+            "<|im_end|>\n<|im_start|>user\n{query} /no_think<|im_end|>\n<|im_start|>assistant\n"
         );
         let tokens = engine.tokenize(&fallback_text, false, true)?;
-        // seq_cp: let seq_id=1 see the system header on seq_id=0
+        // Clean seq_id=1 from any previous generation residue, then copy context
+        engine.clear_seq(1);
         engine.seq_cp(0, 1, 0, -1);
         let mut filter = ThinkFilter::new();
         let mut first_visible = true;
@@ -115,6 +118,19 @@ pub fn query_with_registry(
         let remaining = filter.flush();
         if !remaining.is_empty() { print!("{}", remaining); }
         println!("\n");
+        // CRITICAL: clean seq_id=1 after fallback generation.
+        engine.clear_seq(1);
+        // Diagnostic: if the visible response was empty, the model produced only <think> content
+        if resp.trim().is_empty() {
+            eprintln!("  [debug] Fallback generation returned empty response");
+        } else if resp.contains("<think>") && !resp.contains("</think>") {
+            eprintln!("  [debug] Fallback response has unclosed <think> tag ({} chars)", resp.len());
+        } else if resp.starts_with("<think>") {
+            let visible = think_filter::strip_think_tags(&resp);
+            if visible.trim().is_empty() {
+                eprintln!("  [debug] Fallback response was ALL think content ({} chars raw)", resp.len());
+            }
+        }
         return Ok((resp, Vec::new()));
     }
 

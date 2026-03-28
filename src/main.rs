@@ -708,9 +708,14 @@ fn main() -> Result<()> {
         // T6: Meta queries (identity, memory) bypass graph retrieval
         let meta = is_meta_query(&line);
         let (q_store, q_schema) = if meta {
-            debug!("  [Meta] Query is about identity/memory — skipping graph retrieval");
+            eprintln!("  [path] meta query → fallback (no graph)");
             (None, None)
         } else {
+            if store.is_some() {
+                eprintln!("  [path] graph retrieval (store loaded)");
+            } else {
+                eprintln!("  [path] no graph loaded → fallback");
+            }
             (store.as_ref(), schema.as_ref())
         };
 
@@ -718,7 +723,25 @@ fn main() -> Result<()> {
             Ok((response, relevant_graph_nodes)) => {
                 // Response already streamed to stdout by engine.generate
                 let clean = strip_think_tags(&response);
-                let trimmed = clean.trim().to_string();
+                let mut trimmed = clean.trim().to_string();
+
+                // If the model wrapped the ENTIRE response in <think>...</think>,
+                // the ThinkFilter ate everything. Extract the think content as the
+                // actual response — Qwen3 sometimes ignores /no_think.
+                if trimmed.is_empty() && !response.is_empty() {
+                    let think_content = response
+                        .strip_prefix("<think>").unwrap_or(&response)
+                        .strip_suffix("</think>").unwrap_or(&response)
+                        .trim();
+                    if !think_content.is_empty() {
+                        // Show the response that was hidden by ThinkFilter
+                        print!("assistant> {}\n\n", think_content);
+                        trimmed = think_content.to_string();
+                        debug!("  [think-rescue] Recovered {} chars from think-only response", trimmed.len());
+                    } else {
+                        eprintln!("  ⚠ Response was completely empty (0 tokens generated)");
+                    }
+                }
 
                 // Register Q&A as a concise fragment in the KV cache
                 if let Err(e) = conv_frags.add_turn(

@@ -15,8 +15,10 @@ pub fn generate_with_mask(
     query: &str,
     ctl: &GenerationControl,
 ) -> Result<String> {
+    // /no_think MUST be in the user message for Qwen3 to reliably suppress thinking.
+    // Placing it only in the system header gets "diluted" by graph context tokens.
     let query_text = format!(
-        "<|im_end|>\n<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n"
+        "<|im_end|>\n<|im_start|>user\n{query} /no_think<|im_end|>\n<|im_start|>assistant\n"
     );
     let query_tokens = engine.tokenize(&query_text, false, true)?;
     let query_n = query_tokens.len() as i32;
@@ -66,6 +68,7 @@ pub fn generate_with_mask(
     if sz as i32 > max_mask_positions {
         eprintln!("  Warning: mask_size={} > {} — generating without mask.", sz, max_mask_positions);
         // Fallback: generate without topological mask (but still need seq_cp!)
+        engine.clear_seq(1);
         engine.seq_cp(0, 1, 0, -1);
         let mut filter = ThinkFilter::new();
         let mut first_visible = true;
@@ -170,6 +173,8 @@ pub fn generate_with_mask(
     // Without this, query tokens on seq_id=1 cannot attend to context
     // nodes encoded on seq_id=0. This was the root cause of the model
     // ignoring all graph context (hallucinating instead of using data).
+    // Clear first to remove any stale tokens from a previous generation.
+    engine.clear_seq(1);
     engine.seq_cp(0, 1, 0, -1);
 
     // ── Generate with streaming + auto-continuation ────────────────
@@ -275,6 +280,16 @@ pub fn generate_with_mask(
     let remaining = filter.flush();
     if !remaining.is_empty() { print!("{}", remaining); }
     println!("\n");
+
+    // Diagnostic: detect empty visible responses
+    if full_response.trim().is_empty() {
+        eprintln!("  [debug] generate_with_mask returned empty response");
+    } else if full_response.starts_with("<think>") {
+        let visible = think_filter::strip_think_tags(&full_response);
+        if visible.trim().is_empty() {
+            eprintln!("  [debug] Masked response was ALL think content ({} chars raw)", full_response.len());
+        }
+    }
 
     Ok(full_response)
 }
