@@ -2302,10 +2302,16 @@ fn parse_arg(flag: &str) -> Option<String> {
 
 fn main() -> Result<()> {
     // Ξ(t) T3.6: Capture Ctrl+C for graceful shutdown (same path as /quit)
+    // First Ctrl+C: set flag (checked after current blocking stdin read completes).
+    // Second Ctrl+C: force exit (stdin read is blocking, can't be interrupted).
     let _ = ctrlc::set_handler(|| {
+        if SIGINT_RECEIVED.load(Ordering::SeqCst) {
+            // Second Ctrl+C — force exit
+            eprintln!("\n  [Ctrl+C] Force exit.");
+            std::process::exit(0);
+        }
         SIGINT_RECEIVED.store(true, Ordering::SeqCst);
-        // Also print newline so prompt doesn't get messed up
-        eprintln!("\n  [Ctrl+C] Shutting down gracefully...");
+        eprintln!("\n  [Ctrl+C] Press Enter or Ctrl+C again to exit.");
     });
 
     // --debug flag (no value, just presence)
