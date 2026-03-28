@@ -8,18 +8,41 @@
 //!
 //! Schema-agnostic: works on ANY graph, not just the PO schema.
 
-use anyhow::{Context, Result, bail};
+mod engine;
+mod mask_builder;
+
+use anyhow::{Context, Result};
+use engine::LlamaEngine;
 use obrain::ObrainDB;
 use obrain_common::types::{NodeId, PropertyKey, Value};
 use obrain_core::graph::{Direction, lpg::LpgStore};
+#[cfg(feature = "http")]
 use serde_json::json;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, Write};
+#[cfg(feature = "http")]
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use chrono::Utc;
 
+use engine::EngineConfig;
+
+/// Global debug flag — set via --debug CLI arg.
+static DEBUG: AtomicBool = AtomicBool::new(false);
+
+/// Print to stderr only if --debug is enabled.
+macro_rules! debug {
+    ($($arg:tt)*) => {
+        if DEBUG.load(Ordering::Relaxed) {
+            eprintln!($($arg)*);
+        }
+    };
+}
+
+#[cfg(feature = "http")]
 const DEFAULT_SERVER: &str = "http://localhost:8090";
 const SYSTEM_HEADER: &str = "<|im_start|>system\nYou are a knowledge graph assistant. Below is structured data from a graph database. Each entry shows [Type] Name and its relations. Use ONLY this data to answer. Answer in the same language as the question. /no_think\n\n";
 
@@ -200,16 +223,16 @@ fn discover_schema(store: &LpgStore) -> GraphSchema {
 
     labels_with_importance.sort_by(|a, b| b.importance.partial_cmp(&a.importance).unwrap_or(std::cmp::Ordering::Equal));
 
-    eprintln!("  Schema discovered in {:.0}ms:", t0.elapsed().as_millis());
-    eprintln!("    {} labels ({} structural, {} noise)",
+    debug!("  Schema discovered in {:.0}ms:", t0.elapsed().as_millis());
+    debug!("    {} labels ({} structural, {} noise)",
         labels_with_importance.len(), structural_labels.len(), noise_labels.len());
     for info in labels_with_importance.iter().take(10) {
         let marker = if info.is_noise { " [noise]" } else { "" };
-        eprintln!("      {:>6} {:20} imp={:.3} deg={:.1}{}",
+        debug!("      {:>6} {:20} imp={:.3} deg={:.1}{}",
             info.count, info.label, info.importance, info.avg_degree, marker);
     }
     if let Some(top_parent) = parent_child.iter().next() {
-        eprintln!("    Hierarchy sample: {} → {:?}", top_parent.0,
+        debug!("    Hierarchy sample: {} → {:?}", top_parent.0,
             top_parent.1.iter().map(|(e, c)| format!("--{}--> {}", e, c)).collect::<Vec<_>>());
     }
 
@@ -373,35 +396,37 @@ fn extract_node_generic(store: &LpgStore, node_id: NodeId, schema: &GraphSchema)
             .unwrap_or_default()
     };
 
-    // Description
-    let desc = if let Some(dp) = dp {
-        if let Some(ref field) = dp.desc_field {
-            node.properties.get(&PropertyKey::from(field.as_str()))
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty() && s != &name)
-                .map(|s| {
-                    let first_line = s.lines()
-                        .map(|l| l.trim())
-                        .find(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with("---"))
-                        .unwrap_or(s);
-                    truncate(first_line, 150)
-                })
-                .unwrap_or_default()
-        } else { String::new() }
-    } else {
-        ["description", "content", "text", "message", "body", "rationale"].iter()
-            .filter_map(|&k| node.properties.get(&PropertyKey::from(k))
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty() && s != &name))
-            .next()
-            .map(|s| {
-                let first_line = s.lines()
-                    .map(|l| l.trim())
-                    .find(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with("---"))
-                    .unwrap_or(s);
-                truncate(first_line, 150)
-            })
-            .unwrap_or_default()
+    // Description — extract meaningful content lines (not just the first line)
+    let desc = {
+        let raw_desc = if let Some(dp) = dp {
+            if let Some(ref field) = dp.desc_field {
+                node.properties.get(&PropertyKey::from(field.as_str()))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty() && s != &name)
+                    .unwrap_or("")
+            } else { "" }
+        } else {
+            ["description", "content", "text", "message", "body", "rationale"].iter()
+                .filter_map(|&k| node.properties.get(&PropertyKey::from(k))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty() && s != &name))
+                .next()
+                .unwrap_or("")
+        };
+        if raw_desc.is_empty() {
+            String::new()
+        } else {
+            // Take up to 500 chars of meaningful content (skip markdown headers, separators)
+            let mut out = String::new();
+            for line in raw_desc.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() || trimmed.starts_with("---") { continue; }
+                if !out.is_empty() { out.push(' '); }
+                out.push_str(trimmed);
+                if out.len() >= 500 { break; }
+            }
+            truncate(&out, 500)
+        }
     };
 
     // Status
@@ -474,6 +499,7 @@ struct KvMetrics {
     total_queries: u64,
     cache_hits: u64,
     cache_misses: u64,
+    #[allow(dead_code)]
     encode_time_ms: u128,
 }
 
@@ -541,8 +567,13 @@ impl KvNodeRegistry {
         }
     }
 
-    /// Register newly encoded nodes in the KV.
-    fn register(&mut self, node_id: NodeId, text: &str, n_tokens: i32) {
+    /// Register and encode a node into the KV cache via FFI.
+    fn register(&mut self, node_id: NodeId, text: &str, engine: &LlamaEngine) -> Result<()> {
+        let tokens = engine.tokenize(text, false, true)?;
+        let n_tokens = tokens.len() as i32;
+        let positions: Vec<i32> = (self.next_pos..self.next_pos + n_tokens).collect();
+        engine.encode(&tokens, &positions, 0)?; // seq_id=0 = persistent context
+
         let slot = KvSlot {
             start: self.next_pos,
             end: self.next_pos + n_tokens,
@@ -554,6 +585,7 @@ impl KvNodeRegistry {
         self.nodes.insert(node_id, slot);
         self.order.push(node_id);
         self.metrics.cache_misses += 1;
+        Ok(())
     }
 
     /// Get the KV position range for a node (if loaded).
@@ -562,7 +594,8 @@ impl KvNodeRegistry {
     }
 
     /// Reconstruct the full prompt prefix (header + all loaded nodes in order).
-    /// This is what llama.cpp needs for `cache_prompt: true` matching.
+    /// Used in HTTP mode for `cache_prompt: true` matching.
+    #[cfg(feature = "http")]
     fn reconstruct_prompt(&self) -> String {
         let mut prompt = self.header_text.clone();
         for nid in &self.order {
@@ -583,7 +616,7 @@ impl KvNodeRegistry {
     fn log_metrics(&self) {
         let occupancy = self.next_pos;
         let n_nodes = self.nodes.len();
-        eprintln!("  KV: {} nodes, {} tokens, hit_rate={:.0}% (hits={}, misses={}, queries={})",
+        debug!("  KV: {} nodes, {} tokens, hit_rate={:.0}% (hits={}, misses={}, queries={})",
             n_nodes, occupancy,
             self.metrics.hit_rate() * 100.0,
             self.metrics.cache_hits, self.metrics.cache_misses,
@@ -592,14 +625,9 @@ impl KvNodeRegistry {
 
     /// Evict least-recently-used nodes to free up token capacity.
     ///
-    /// `tokens_needed` = how many tokens we need to free.
-    /// `protected` = node IDs that must NOT be evicted (current query's nodes).
-    ///
-    /// Strategy: sort by last_used ascending, evict oldest first.
-    /// After eviction, rebuild the position map (compact) since we use
-    /// `cache_prompt: true` which needs a contiguous prefix.
-    fn evict_lru(&mut self, tokens_needed: i32, protected: &HashSet<NodeId>) -> Vec<NodeId> {
-        // Sort nodes by last_used (ascending = oldest first)
+    /// FFI mode: positions are monotonic — no rebuild_positions().
+    /// Gaps from eviction are accepted. Full-recompact at 90% n_ctx.
+    fn evict_lru(&mut self, tokens_needed: i32, protected: &HashSet<NodeId>, engine: &LlamaEngine) -> Vec<NodeId> {
         let mut candidates: Vec<(NodeId, u64, i32)> = self.nodes.iter()
             .filter(|(id, _)| !protected.contains(id))
             .map(|(id, slot)| (*id, slot.last_used, slot.n_tokens))
@@ -611,51 +639,77 @@ impl KvNodeRegistry {
 
         for (nid, last_used, n_tokens) in &candidates {
             if freed >= tokens_needed { break; }
-            eprintln!("    evict: node {} (last_q={}, {} tokens)", nid.0, last_used, n_tokens);
+            debug!("    evict: node {} (last_q={}, {} tokens)", nid.0, last_used, n_tokens);
             evicted.push(*nid);
             freed += n_tokens;
         }
 
-        // Remove evicted nodes
+        // Remove from KV cache (FFI) + registry
         for nid in &evicted {
-            self.nodes.remove(nid);
+            if let Some(slot) = self.nodes.remove(nid) {
+                engine.evict(slot.start, slot.end);
+            }
         }
         self.order.retain(|id| !evicted.contains(id));
 
-        // Rebuild positions (compact — no gaps)
-        self.rebuild_positions();
+        // FFI: update next_pos to actual KV cache state (llama.cpp requires consecutive positions)
+        if !evicted.is_empty() {
+            self.next_pos = engine.seq_pos_max(0) + 1;
+        }
 
-        eprintln!("  Evicted {} nodes, freed ~{} tokens", evicted.len(), freed);
+        debug!("  Evicted {} nodes, freed ~{} tokens", evicted.len(), freed);
         evicted
     }
 
-    /// Rebuild all KV positions from scratch after eviction.
-    /// Keeps insertion order, reassigns contiguous positions.
-    /// The prompt will be reconstructed, and `cache_prompt: true`
-    /// will match the longest common prefix automatically.
-    fn rebuild_positions(&mut self) {
-        let mut pos = self.header_end;
-        for nid in &self.order {
-            if let Some(slot) = self.nodes.get_mut(nid) {
-                let n_tok = slot.n_tokens;
-                slot.start = pos;
-                slot.end = pos + n_tok;
-                pos += n_tok;
-            }
-        }
-        self.next_pos = pos;
-    }
-
     /// Ensure capacity for `needed_tokens` new tokens.
-    /// If over `max_kv_tokens`, evict LRU nodes.
-    fn ensure_capacity(&mut self, needed_tokens: i32, max_kv_tokens: i32, protected: &HashSet<NodeId>) {
-        let available = max_kv_tokens - self.next_pos;
+    /// If position space is near 90% of n_ctx, do a full recompact.
+    fn ensure_capacity(&mut self, needed_tokens: i32, max_kv_tokens: i32, protected: &HashSet<NodeId>, engine: &LlamaEngine) {
+        // Check if position space is nearly exhausted (full-recompact trigger)
+        let n_ctx = engine.n_ctx() as i32;
+        if self.next_pos + needed_tokens > (n_ctx as f64 * 0.9) as i32 {
+            eprintln!("  ⚠ Position space near limit ({}/{}), full recompact...", self.next_pos, n_ctx);
+            self.full_recompact(engine);
+        }
+
+        let total_tokens: i32 = self.nodes.values().map(|s| s.n_tokens).sum();
+        let available = max_kv_tokens - total_tokens;
         if available >= needed_tokens { return; }
 
         let to_free = needed_tokens - available;
-        eprintln!("  KV full: {} tokens used, need {} more (capacity {}), evicting...",
-            self.next_pos, needed_tokens, max_kv_tokens);
-        self.evict_lru(to_free, protected);
+        debug!("  KV full: {} tokens in cache, need {} more (budget {}), evicting...",
+            total_tokens, needed_tokens, max_kv_tokens);
+        self.evict_lru(to_free, protected, engine);
+    }
+
+    /// Full recompact: clear everything and re-encode from scratch.
+    /// Used when position space is nearly exhausted (gaps from evictions).
+    fn full_recompact(&mut self, engine: &LlamaEngine) {
+        debug!("  Full recompact: clearing KV and re-encoding {} nodes...", self.nodes.len());
+        engine.clear_kv();
+
+        // Re-encode header
+        if let Ok(tokens) = engine.tokenize(&self.header_text, false, true) {
+            let positions: Vec<i32> = (0..tokens.len() as i32).collect();
+            let _ = engine.encode(&tokens, &positions, 0);
+        }
+
+        // Re-encode all nodes with fresh contiguous positions
+        let mut pos = self.header_end;
+        for nid in &self.order {
+            if let Some(slot) = self.nodes.get_mut(nid) {
+                if let Ok(tokens) = engine.tokenize(&slot.text, false, true) {
+                    let n_tok = tokens.len() as i32;
+                    let positions: Vec<i32> = (pos..pos + n_tok).collect();
+                    let _ = engine.encode(&tokens, &positions, 0);
+                    slot.start = pos;
+                    slot.end = pos + n_tok;
+                    slot.n_tokens = n_tok;
+                    pos += n_tok;
+                }
+            }
+        }
+        self.next_pos = pos;
+        debug!("  Recompact done: {} nodes, next_pos={}", self.nodes.len(), self.next_pos);
     }
 }
 
@@ -904,10 +958,10 @@ fn discover_banks(
     // Sort banks by token count descending (richest first)
     banks.sort_by(|a, b| b.est_tokens.cmp(&a.est_tokens));
 
-    eprintln!("  Discovered {} banks in {:.0}ms (top label: {})",
+    debug!("  Discovered {} banks in {:.0}ms (top label: {})",
         banks.len(), t0.elapsed().as_millis(), top_label);
     for bank in banks.iter().take(8) {
-        eprintln!("    {} ({} nodes, ~{} tokens)",
+        debug!("    {} ({} nodes, ~{} tokens)",
             bank.name, bank.node_ids.len(), bank.est_tokens);
     }
 
@@ -926,11 +980,10 @@ struct ContextNode {
 
 struct QueryContext {
     nodes: Vec<ContextNode>,
+    #[allow(dead_code)] // Reserved for future Rule 2 (inter-node attention when re-encode is supported)
     adjacency: HashMap<NodeId, HashSet<NodeId>>,
-    prompt: String,
     total_tokens: i32,
     header_tokens: i32,
-    edge_count: usize,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -943,6 +996,7 @@ const CONV_NODE_BASE: u64 = 0xFFFF_0000_0000_0000;
 
 /// A conversation fragment — a concise Q&A summary stored as a KV node.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 struct ConvFragment {
     /// Virtual NodeId in the KV registry.
     node_id: NodeId,
@@ -976,8 +1030,7 @@ impl ConvFragments {
         answer: &str,
         related_nodes: &[NodeId],
         registry: &mut KvNodeRegistry,
-        client: &reqwest::blocking::Client,
-        server: &str,
+        engine: &LlamaEngine,
         kv_capacity: i32,
     ) -> Result<NodeId> {
         let turn = self.next_turn;
@@ -998,13 +1051,13 @@ impl ConvFragments {
         // Estimate tokens and ensure capacity
         let est_tokens = (kv_text.len() as f64 / 3.5) as i32 + 5;
         let protected: HashSet<NodeId> = related_nodes.iter().copied()
-            .chain(self.fragments.iter().map(|f| f.node_id)) // protect existing conv fragments
+            .chain(self.fragments.iter().map(|f| f.node_id))
             .collect();
-        registry.ensure_capacity(est_tokens, kv_capacity, &protected);
+        registry.ensure_capacity(est_tokens, kv_capacity, &protected, engine);
 
-        // Tokenize and register in the KV cache
-        let n_tokens = tokenize(client, server, &kv_text)?;
-        registry.register(node_id, &kv_text, n_tokens);
+        // Encode and register in the KV cache via FFI
+        let n_tokens = engine.token_count(&kv_text)? as i32;
+        registry.register(node_id, &kv_text, engine)?;
 
         let fragment = ConvFragment {
             node_id,
@@ -1015,7 +1068,7 @@ impl ConvFragments {
             turn,
         };
 
-        eprintln!("  [Conv] Registered turn {} as KV node {} ({} tokens)",
+        debug!("  [Conv] Registered turn {} as KV node {} ({} tokens)",
             turn + 1, node_id.0, n_tokens);
 
         self.fragments.push(fragment);
@@ -1121,7 +1174,7 @@ impl ConvFragments {
         }
 
         if !relevant_ids.is_empty() {
-            eprintln!("  [Conv] {} relevant fragments (of {})",
+            debug!("  [Conv] {} relevant fragments (of {})",
                 relevant_ids.len(), self.fragments.len());
         }
 
@@ -1279,46 +1332,60 @@ impl ConversationDB {
 // Main
 // ═══════════════════════════════════════════════════════════════════════════════
 
-fn main() -> Result<()> {
-    let server = std::env::args()
-        .position(|a| a == "--server")
+fn parse_arg(flag: &str) -> Option<String> {
+    std::env::args()
+        .position(|a| a == flag)
         .and_then(|i| std::env::args().nth(i + 1))
-        .unwrap_or_else(|| DEFAULT_SERVER.to_string());
+}
 
-    let db_path = std::env::args()
-        .position(|a| a == "--db")
-        .and_then(|i| std::env::args().nth(i + 1))
+fn main() -> Result<()> {
+    // --debug flag (no value, just presence)
+    let is_debug = std::env::args().any(|a| a == "--debug");
+    if is_debug {
+        DEBUG.store(true, Ordering::Relaxed);
+    }
+    // Control llama.cpp C-level log verbosity
+    engine::set_verbose(is_debug);
+
+    let model_path = parse_arg("--model")
+        .unwrap_or_else(|| "/Users/triviere/models/qwen3-8b-q8.gguf".to_string());
+
+    let db_path = parse_arg("--db")
         .unwrap_or_else(|| "/tmp/neo4j2grafeo/grafeo.db".to_string());
 
-    let max_nodes: usize = std::env::args()
-        .position(|a| a == "--max-nodes")
-        .and_then(|i| std::env::args().nth(i + 1))
+    let max_nodes: usize = parse_arg("--max-nodes")
         .and_then(|s| s.parse().ok())
         .unwrap_or(40);
 
-    let token_budget: i32 = std::env::args()
-        .position(|a| a == "--budget")
-        .and_then(|i| std::env::args().nth(i + 1))
+    let token_budget: i32 = parse_arg("--budget")
         .and_then(|s| s.parse().ok())
         .unwrap_or(1400);
 
-    let kv_capacity: i32 = std::env::args()
-        .position(|a| a == "--kv-capacity")
-        .and_then(|i| std::env::args().nth(i + 1))
+    let kv_capacity: i32 = parse_arg("--kv-capacity")
         .and_then(|s| s.parse().ok())
-        .unwrap_or(4096); // max tokens in KV node pool
+        .unwrap_or(4096);
 
-    let conv_path: Option<PathBuf> = std::env::args()
-        .position(|a| a == "--conv")
-        .and_then(|i| std::env::args().nth(i + 1))
-        .map(PathBuf::from);
+    let n_ctx: u32 = parse_arg("--n-ctx")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(32768);
 
-    eprintln!("=== obrain-chat — Generic Graph LLM + Topological Mask ===\n");
+    let n_gpu: i32 = parse_arg("--n-gpu")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(99);
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(300))
-        .build()?;
-    check_server(&client, &server)?;
+    let conv_path: Option<PathBuf> = parse_arg("--conv").map(PathBuf::from);
+
+    eprintln!("=== obrain-chat — Generic Graph LLM + Topological Mask (FFI) ===\n");
+
+    // ── Load LLM via FFI ────────────────────────────────────────
+    eprintln!("Loading model: {model_path}");
+    let engine = LlamaEngine::new(&EngineConfig {
+        model_path: model_path.clone(),
+        n_ctx,
+        n_gpu_layers: n_gpu,
+        ..EngineConfig::default()
+    })?;
+    eprintln!("  Model loaded: n_ctx={}", engine.n_ctx());
 
     // ── Open database ────────────────────────────────────────────────
     eprintln!("Opening database: {db_path}");
@@ -1331,10 +1398,10 @@ fn main() -> Result<()> {
     eprintln!("  {} nodes, {} edges\n", store.node_count(), store.edge_count());
 
     // ── Schema introspection ─────────────────────────────────────────
-    eprintln!("Discovering schema...");
+    debug!("Discovering schema...");
     let schema = discover_schema(&store);
 
-    eprintln!("\n{}", "=".repeat(60));
+    debug!("\n{}", "=".repeat(60));
     eprintln!("Ready. {} structural labels, {} hierarchy rules.",
         schema.structural_labels.len(),
         schema.parent_child.len());
@@ -1344,14 +1411,14 @@ fn main() -> Result<()> {
     let ec = store.edge_count();
     let banks = match load_bank_cache(&bank_cache_path, nc, ec) {
         Some(cached) => {
-            eprintln!("Loaded {} banks from cache ({})", cached.len(), bank_cache_path.display());
+            debug!("Loaded {} banks from cache ({})", cached.len(), bank_cache_path.display());
             cached
         }
         None => {
-            eprintln!("Discovering banks...");
+            debug!("Discovering banks...");
             let banks = discover_banks(&store, &schema, 50);
             save_bank_cache(&bank_cache_path, &banks, nc, ec);
-            eprintln!("  Saved bank cache to {}", bank_cache_path.display());
+            debug!("  Saved bank cache to {}", bank_cache_path.display());
             banks
         }
     };
@@ -1365,15 +1432,15 @@ fn main() -> Result<()> {
         match ConversationDB::open(cp_str) {
             Ok(cdb) => {
                 let convs = cdb.list_conversations();
-                eprintln!("Conversation DB: {} conversations (current: \"{}\")",
+                debug!("Conversation DB: {} conversations (current: \"{}\")",
                     convs.len(), cdb.current_title());
                 // Show recent context
                 let recent = cdb.recent_messages(4);
                 if !recent.is_empty() {
-                    eprintln!("  Recent context ({} messages):", recent.len());
+                    debug!("  Recent context ({} messages):", recent.len());
                     for (role, content) in &recent {
                         let snippet: String = content.chars().take(80).collect();
-                        eprintln!("    {}: {}{}",
+                        debug!("    {}: {}{}",
                             role, snippet,
                             if content.len() > 80 { "..." } else { "" });
                     }
@@ -1392,10 +1459,14 @@ fn main() -> Result<()> {
     eprintln!("\nCommands: /quit, /schema, /kv, /banks, /history, /conversations, /new <title>\n");
 
     // ── Initialize KV Node Registry ─────────────────────────────
-    let header_tokens = tokenize(&client, &server, SYSTEM_HEADER)?;
-    let mut registry = KvNodeRegistry::new(SYSTEM_HEADER, header_tokens);
+    // Encode system header once at startup
+    let header_tokens_vec = engine.tokenize(SYSTEM_HEADER, false, true)?;
+    let header_n = header_tokens_vec.len() as i32;
+    let header_positions: Vec<i32> = (0..header_n).collect();
+    engine.encode(&header_tokens_vec, &header_positions, 0)?;
+    let mut registry = KvNodeRegistry::new(SYSTEM_HEADER, header_n);
     let mut conv_frags = ConvFragments::new();
-    eprintln!("KV Registry initialized: header={} tokens", header_tokens);
+    debug!("KV Registry initialized: header={} tokens (encoded in KV)", header_n);
 
     // ── Warmup: pre-load top banks into KV ──────────────────────
     let warmup_count = 3.min(banks.len());
@@ -1404,17 +1475,16 @@ fn main() -> Result<()> {
         let mut warmup_loaded = 0;
         for bank in banks.iter().take(warmup_count) {
             let protected: HashSet<NodeId> = bank.node_ids.iter().copied().collect();
-            registry.ensure_capacity(bank.est_tokens, kv_capacity, &protected);
+            registry.ensure_capacity(bank.est_tokens, kv_capacity, &protected, &engine);
             for nid in &bank.node_ids {
                 if registry.get_slot(*nid).is_some() { continue; }
                 if let Some(text) = bank.texts.get(nid) {
-                    let n_tok = tokenize(&client, &server, text)?;
-                    registry.register(*nid, text, n_tok);
+                    registry.register(*nid, text, &engine)?;
                     warmup_loaded += 1;
                 }
             }
         }
-        eprintln!("  Warmup: pre-loaded {} banks ({} nodes) in {:.0}ms",
+        debug!("  Warmup: pre-loaded {} banks ({} nodes) in {:.0}ms",
             warmup_count, warmup_loaded, warmup_t0.elapsed().as_millis());
     }
 
@@ -1541,16 +1611,16 @@ fn main() -> Result<()> {
         // Store user message in conversation DB
         let user_msg_id = conv_db.as_ref().map(|cdb| cdb.add_message("user", &line));
 
-        match query_with_registry(&client, &server, &store, &schema, &mut registry, &mut conv_frags, &banks, &line, max_nodes, token_budget, kv_capacity) {
+        match query_with_registry(&engine, &store, &schema, &mut registry, &mut conv_frags, &banks, &line, max_nodes, token_budget, kv_capacity) {
             Ok((response, relevant_graph_nodes)) => {
-                // Response already streamed to stdout by complete_streaming/chat_complete
+                // Response already streamed to stdout by engine.generate
                 let clean = strip_think_tags(&response);
                 let trimmed = clean.trim().to_string();
 
                 // Register Q&A as a concise fragment in the KV cache
                 if let Err(e) = conv_frags.add_turn(
                     &line, &trimmed, &relevant_graph_nodes,
-                    &mut registry, &client, &server, kv_capacity,
+                    &mut registry, &engine, kv_capacity,
                 ) {
                     eprintln!("  Warning: could not register conv fragment: {e}");
                 }
@@ -1576,8 +1646,7 @@ fn main() -> Result<()> {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 fn query_with_registry(
-    client: &reqwest::blocking::Client,
-    server: &str,
+    engine: &LlamaEngine,
     store: &Arc<LpgStore>,
     schema: &GraphSchema,
     registry: &mut KvNodeRegistry,
@@ -1611,36 +1680,53 @@ fn query_with_registry(
                 .collect();
             if !missing.is_empty() {
                 let protected: HashSet<NodeId> = bank.node_ids.iter().copied().collect();
-                registry.ensure_capacity(bank.est_tokens, kv_capacity, &protected);
+                registry.ensure_capacity(bank.est_tokens, kv_capacity, &protected, engine);
 
-                eprintln!("  Loading bank '{}': {} nodes ({} new)",
+                debug!("  Loading bank '{}': {} nodes ({} new)",
                     bank.name, bank.node_ids.len(), missing.len());
                 for nid in &missing {
                     if let Some(text) = bank.texts.get(nid) {
-                        let n_tok = tokenize(client, server, text)?;
-                        registry.register(*nid, text, n_tok);
+                        registry.register(*nid, text, engine)?;
                     }
                 }
                 bank_loaded = true;
             } else {
-                eprintln!("  Bank '{}' already fully loaded in KV", bank.name);
+                debug!("  Bank '{}' already fully loaded in KV", bank.name);
                 registry.touch(&bank.node_ids);
                 bank_loaded = true;
             }
         }
     }
     if bank_loaded {
-        eprintln!("  Bank loading done in {}ms", t_start.elapsed().as_millis());
+        debug!("  Bank loading done in {}ms", t_start.elapsed().as_millis());
     }
 
     // Run the generic retrieval to get scored nodes
     let (scored_nodes_for_query, adjacency, node_texts) =
-        retrieve_nodes(client, server, store, schema, query, max_nodes, token_budget)?;
+        retrieve_nodes(engine, store, schema, query, max_nodes, token_budget)?;
 
     if scored_nodes_for_query.is_empty() {
-        let resp = chat_complete(client, server,
-            "No relevant data found in the knowledge graph for this query.",
-            query, 256)?;
+        // No data found — generate a simple response without mask
+        let fallback_text = format!(
+            "<|im_end|>\n<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n"
+        );
+        let tokens = engine.tokenize(&fallback_text, false, true)?;
+        // seq_cp: let seq_id=1 see the system header on seq_id=0
+        engine.seq_cp(0, 1, 0, -1);
+        print!("assistant> ");
+        io::stdout().flush()?;
+        let mut filter = ThinkFilter::new();
+        let (resp, _) = engine.generate(&tokens, registry.next_pos, 256, 1, |piece| {
+            let visible = filter.feed(piece);
+            if !visible.is_empty() {
+                print!("{}", visible);
+                let _ = io::stdout().flush();
+            }
+            true
+        })?;
+        let remaining = filter.flush();
+        if !remaining.is_empty() { print!("{}", remaining); }
+        println!("\n");
         return Ok((resp, Vec::new()));
     }
 
@@ -1657,21 +1743,20 @@ fn query_with_registry(
 
     // Evict LRU if needed (protect nodes used in current query)
     let protected: HashSet<NodeId> = needed_ids.iter().copied().collect();
-    registry.ensure_capacity(est_missing_tokens, kv_capacity, &protected);
+    registry.ensure_capacity(est_missing_tokens, kv_capacity, &protected, engine);
 
-    eprintln!("  KV: {} needed, {} cached, {} to encode (~{} tokens)",
+    debug!("  KV: {} needed, {} cached, {} to encode (~{} tokens)",
         needed_ids.len(), needed_ids.len() - missing.len(), missing.len(), est_missing_tokens);
 
-    // Encode missing nodes — append their text to the KV
+    // Encode missing nodes into KV via FFI
     for &nid in &missing {
         if let Some(text) = node_texts.get(&nid) {
-            let n_tok = tokenize(client, server, text)?;
-            registry.register(nid, text, n_tok);
+            registry.register(nid, text, engine)?;
         }
     }
 
     let encode_time = t_start.elapsed().as_millis();
-    eprintln!("  KV encode: {}ms", encode_time);
+    debug!("  KV encode: {}ms", encode_time);
 
     // ── Find relevant conversation fragments ──────────────────────
     let (conv_node_ids, conv_adjacency) = conv_frags.find_relevant(query, registry);
@@ -1694,7 +1779,7 @@ fn query_with_registry(
         }
     }
     if !conv_pulled_ids.is_empty() {
-        eprintln!("  [Conv] Pulled {} graph nodes from fragment references", conv_pulled_ids.len());
+        debug!("  [Conv] Pulled {} graph nodes from fragment references", conv_pulled_ids.len());
         registry.touch(&conv_pulled_ids);
     }
 
@@ -1714,7 +1799,7 @@ fn query_with_registry(
         // Vague query + conv context: only include graph nodes that are also
         // referenced by fragments (or already in fragment pull list)
         let pulled_set: HashSet<NodeId> = conv_pulled_ids.iter().copied().collect();
-        eprintln!("  [Conv] Vague query detected — using {} fragment-referenced nodes instead of {} generic",
+        debug!("  [Conv] Vague query detected — using {} fragment-referenced nodes instead of {} generic",
             conv_pulled_ids.len(), scored_nodes_for_query.len());
         for cn in &scored_nodes_for_query {
             if pulled_set.contains(&cn.id) {
@@ -1783,10 +1868,8 @@ fn query_with_registry(
     let ctx = QueryContext {
         total_tokens: registry.next_pos,
         header_tokens: registry.header_end,
-        prompt: registry.reconstruct_prompt(),
         nodes: ctx_nodes,
         adjacency: merged_adjacency,
-        edge_count: scored_nodes_for_query.len(),
     };
 
     registry.log_metrics();
@@ -1796,7 +1879,7 @@ fn query_with_registry(
         .map(|n| n.id)
         .collect();
 
-    let response = generate_with_mask(client, server, &ctx, query)?;
+    let response = generate_with_mask(engine, &ctx, query)?;
     Ok((response, relevant_graph_nodes))
 }
 
@@ -1811,8 +1894,7 @@ struct ScoredContextNode {
 /// - adjacency map for the mask
 /// - node_id → text for KV encoding
 fn retrieve_nodes(
-    _client: &reqwest::blocking::Client,
-    _server: &str,
+    _engine: &LlamaEngine,
     store: &Arc<LpgStore>,
     schema: &GraphSchema,
     query: &str,
@@ -1872,9 +1954,9 @@ fn retrieve_nodes(
         }
     }
 
-    eprintln!("  Terms: {:?}", terms);
-    eprintln!("  Matched labels: {:?}", target_labels);
-    eprintln!("  Content terms: {:?}", content_terms);
+    debug!("  Terms: {:?}", terms);
+    debug!("  Matched labels: {:?}", target_labels);
+    debug!("  Content terms: {:?}", content_terms);
 
     // ── Step 2: Fetch + score nodes by target labels ─────────────────
     let mut scored_nodes: Vec<(NodeId, f64)> = Vec::new();
@@ -1884,7 +1966,7 @@ fn retrieve_nodes(
         let info = schema.labels.iter().find(|l| l.label == *label);
         let importance = info.map_or(1.0, |i| i.importance);
 
-        eprintln!("    {} {} nodes (imp={:.2})", node_ids.len(), label, importance);
+        debug!("    {} {} nodes (imp={:.2})", node_ids.len(), label, importance);
 
         for nid in node_ids {
             let dp = schema.display_props.get(label.as_str());
@@ -1932,7 +2014,7 @@ fn retrieve_nodes(
     scored_nodes.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     scored_nodes.truncate(max_nodes * 2);
 
-    eprintln!("  Scored {} seed nodes", scored_nodes.len());
+    debug!("  Scored {} seed nodes", scored_nodes.len());
 
     if scored_nodes.is_empty() {
         return Ok((Vec::new(), HashMap::new(), HashMap::new()));
@@ -1970,7 +2052,7 @@ fn retrieve_nodes(
         }
     }
 
-    eprintln!("  BFS expanded to {} nodes", bfs_result.len());
+    debug!("  BFS expanded to {} nodes", bfs_result.len());
 
     // ── Step 4: Score, select, build prompt ──────────────────────────
     let mut scored: Vec<(NodeId, f64, String)> = bfs_result.iter()
@@ -1983,18 +2065,22 @@ fn retrieve_nodes(
     scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
     for (i, (_nid, score, text)) in scored.iter().take(10).enumerate() {
-        eprintln!("    [{i}] score={:.2} {}", score, truncate(text, 80));
+        debug!("    [{i}] score={:.2} {}", score, truncate(text, 80));
     }
 
     // ── Step 5: Build text blocks with inline children ─────────────
-    let mut shown_ids: HashSet<NodeId> = HashSet::new();
+    // child_inline_ids tracks nodes inlined as children (for dedup in children lists only).
+    // A node inlined as child can STILL be selected as a top-level node if it appears
+    // in scored[] — this ensures high-score nodes are never silently dropped.
+    let mut child_inline_ids: HashSet<NodeId> = HashSet::new();
     let mut selected: Vec<ScoredContextNode> = Vec::new();
     let mut node_texts: HashMap<NodeId, String> = HashMap::new();
     let mut est_tokens: i32 = 0; // budget tracking (header handled by registry)
 
     for (nid, score, base_text) in &scored {
         if selected.len() >= max_nodes { break; }
-        if shown_ids.contains(nid) { continue; }
+        // Skip only if already selected as top-level (not if merely inlined as child)
+        if node_texts.contains_key(nid) { continue; }
 
         // Inline children based on schema hierarchy
         let mut children: Vec<String> = Vec::new();
@@ -2014,7 +2100,7 @@ fn retrieve_nodes(
                             let cname = get_node_name_generic(store, target, child_dp);
                             if !cname.is_empty() {
                                 child_count += 1;
-                                if children.len() < max_children {
+                                if children.len() < max_children && !child_inline_ids.contains(&target) {
                                     let cstatus = child_dp
                                         .and_then(|d| d.status_field.as_deref())
                                         .and_then(|f| tnode.properties.get(&PropertyKey::from(f)))
@@ -2025,7 +2111,7 @@ fn retrieve_nodes(
                                     } else {
                                         children.push(format!("  - {}", truncate(&cname, 60)));
                                     }
-                                    shown_ids.insert(target);
+                                    child_inline_ids.insert(target);
                                 }
                             }
                         }
@@ -2046,13 +2132,12 @@ fn retrieve_nodes(
         let est = (text_block.len() as f64 / 3.5) as i32 + 10;
         if est_tokens + est > token_budget { break; }
 
-        shown_ids.insert(*nid);
         node_texts.insert(*nid, text_block);
         selected.push(ScoredContextNode { id: *nid, _score: *score });
         est_tokens += est;
     }
 
-    eprintln!("  Selected {} nodes for query", selected.len());
+    debug!("  Selected {} nodes for query", selected.len());
 
     // ── Step 6: Build adjacency among selected nodes ─────────────────
     let node_set: HashSet<NodeId> = selected.iter().map(|n| n.id).collect();
@@ -2076,25 +2161,27 @@ fn retrieve_nodes(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 fn generate_with_mask(
-    client: &reqwest::blocking::Client,
-    server: &str,
+    engine: &LlamaEngine,
     ctx: &QueryContext,
     query: &str,
 ) -> Result<String> {
-    // Conversation context is now in the KV cache as fragment nodes — no injection needed
     let query_text = format!(
         "<|im_end|>\n<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n"
     );
-    let query_tokens = tokenize(client, server, &query_text)?;
+    let query_tokens = engine.tokenize(&query_text, false, true)?;
+    let query_n = query_tokens.len() as i32;
 
     let n_predict: i32 = 1024;
-    let n_gen_mask: i32 = 32;
 
     // ── Build sparse position map ──────────────────────────────────
     // Only include positions that matter: header + relevant nodes + query + gen.
     // Positions from non-relevant nodes in the KV are excluded (Rule 3b).
+    // n_gen_mask MUST cover the full generation to prevent fallback to default
+    // causal attention (which would let the model see ALL KV including irrelevant nodes).
+    let n_gen_mask: i32 = n_predict;
+
     let mut positions: Vec<i32> = Vec::new();
-    let mut pos_remap: HashMap<i32, usize> = HashMap::new(); // real_pos → mask_index
+    let mut pos_remap: HashMap<i32, usize> = HashMap::new();
 
     // Header positions
     for p in 0..ctx.header_tokens {
@@ -2115,8 +2202,8 @@ fn generate_with_mask(
     }
 
     // Query + gen positions (appended AFTER all KV content)
-    let q_start_real = ctx.total_tokens; // real position after all KV
-    for offset in 0..(query_tokens + n_gen_mask) {
+    let q_start_real = ctx.total_tokens;
+    for offset in 0..(query_n + n_gen_mask) {
         let p = q_start_real + offset;
         let idx = positions.len();
         pos_remap.insert(p, idx);
@@ -2124,19 +2211,36 @@ fn generate_with_mask(
     }
 
     let sz = positions.len();
-    let max_mask_positions: i32 = 2000;
+    let max_mask_positions: i32 = 4000;
 
-    eprintln!("  Mask: {} sparse positions (of {} total KV), query={}, gen={}, {:.1}MB",
-        sz, ctx.total_tokens, query_tokens, n_gen_mask,
-        (sz * sz * 8) as f64 / 1_000_000.0);
+    debug!("  Mask: {} sparse positions (of {} total KV), query={}, gen={}, {:.1}MB",
+        sz, ctx.total_tokens, query_n, n_gen_mask,
+        (sz * sz * 4) as f64 / 1_000_000.0);
 
     if sz as i32 > max_mask_positions {
-        eprintln!("  ⚠ mask_size={} > {} — chat API fallback.", sz, max_mask_positions);
-        return chat_complete(client, server, &ctx.prompt, query, n_predict);
+        eprintln!("  ⚠ mask_size={} > {} — generating without mask.", sz, max_mask_positions);
+        // Fallback: generate without topological mask (but still need seq_cp!)
+        engine.seq_cp(0, 1, 0, -1);
+        print!("assistant> ");
+        io::stdout().flush()?;
+        let mut filter = ThinkFilter::new();
+        let (resp, _) = engine.generate(&query_tokens, q_start_real, n_predict, 1, |piece| {
+            let visible = filter.feed(piece);
+            if !visible.is_empty() {
+                print!("{}", visible);
+                let _ = io::stdout().flush();
+            }
+            true
+        })?;
+        let remaining = filter.flush();
+        if !remaining.is_empty() { print!("{}", remaining); }
+        println!("\n");
+        return Ok(resp);
     }
 
     // ── Compile attention mask (sparse) ──────────────────────────────
-    let mut mask = vec![-1e30f32; sz * sz];
+    // FFI: use f32::NEG_INFINITY (exact), not -1e30 (JSON workaround eliminated)
+    let mut mask = vec![f32::NEG_INFINITY; sz * sz];
 
     let allow = |m: &mut [f32], real_i: i32, real_j: i32, remap: &HashMap<i32, usize>, sz: usize| {
         if let (Some(&mi), Some(&mj)) = (remap.get(&real_i), remap.get(&real_j)) {
@@ -2148,85 +2252,169 @@ fn generate_with_mask(
 
     let h = ctx.header_tokens;
 
-    // Rule 0: System header — causal
+    // Note: Rules 1 & 2 (inter-node attention) were removed — they set mask entries
+    // for positions already in KV cache. The custom mask only affects tokens decoded
+    // AFTER set_attn_mask(), i.e. query+gen tokens. Node KV representations are fixed
+    // at encode() time with default causal attention.
+
+    // Rule 0: Header positions — causal among themselves
     for i in 0..h {
         for j in 0..=i {
             allow(&mut mask, i, j, &pos_remap, sz);
         }
     }
 
-    // Rule 1: Each node sees header + causal self
-    for node in &ctx.nodes {
-        for i in node.token_start..node.token_end {
-            for j in 0..h { allow(&mut mask, i, j, &pos_remap, sz); }
-            for j in node.token_start..=i { allow(&mut mask, i, j, &pos_remap, sz); }
-        }
-    }
-
-    // Rule 2: Connected nodes attend to each other
-    for ni in &ctx.nodes {
-        if let Some(visible) = ctx.adjacency.get(&ni.id) {
-            for nj in &ctx.nodes {
-                if nj.id == ni.id { continue; }
-                if visible.contains(&nj.id) {
-                    for i in ni.token_start..ni.token_end {
-                        for j in nj.token_start..nj.token_end {
-                            allow(&mut mask, i, j, &pos_remap, sz);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Rule 3: Query + gen tokens see header + relevant nodes + causal self
-    // Rule 3b (implicit): non-relevant KV positions are NOT in pos_remap → invisible
-    for offset in 0..(query_tokens + n_gen_mask) {
+    // Rule 1: Query + gen tokens see header + ALL relevant nodes + causal self
+    // Non-relevant KV positions are NOT in pos_remap → invisible (sparse exclusion)
+    for offset in 0..(query_n + n_gen_mask) {
         let i = q_start_real + offset;
         // See header
         for j in 0..h { allow(&mut mask, i, j, &pos_remap, sz); }
-        // See relevant nodes
+        // See all relevant node tokens
         for node in &ctx.nodes {
             for j in node.token_start..node.token_end {
                 allow(&mut mask, i, j, &pos_remap, sz);
             }
         }
-        // Causal within query+gen
+        // Causal self among query+gen tokens
         for prev in 0..=offset {
             allow(&mut mask, i, q_start_real + prev, &pos_remap, sz);
         }
     }
 
-    let connected = ctx.nodes.iter()
-        .filter(|n| ctx.adjacency.get(&n.id).map_or(0, |s| s.len()) > 1)
-        .count();
-    eprintln!("  Topology: {} connected, {} isolated",
-        connected, ctx.nodes.len() - connected);
+    debug!("  Mask: {} nodes visible to query", ctx.nodes.len());
 
-    set_attn_mask(client, server, &mask, &positions)?;
+    // ── Set mask via FFI ──────────────────────────────────────────
+    // Per-head masking: when enabled, different heads see different banks.
+    // TODO: enable via CLI flag (e.g. --perhead). For now, use broadcast mask.
+    let use_perhead = false;
+    if use_perhead {
+        // Convert ContextNodes to mask_builder::NodePosition with bank assignment.
+        // TODO: ContextNode does not carry a bank id yet — assign bank 0 to all for now.
+        let mb_nodes: Vec<mask_builder::NodePosition> = ctx.nodes.iter().map(|n| {
+            mask_builder::NodePosition {
+                pos_start: n.token_start,
+                pos_end: n.token_end,
+                bank: 0, // TODO: assign real bank from retrieval ranking
+            }
+        }).collect();
+        let config = mask_builder::default_bank_config();
+        let perhead = mask_builder::build_perhead_mask(
+            &mb_nodes,
+            ctx.header_tokens,
+            sz as i32,
+            engine.n_head(),
+            &config,
+        );
+        engine.set_attn_mask(&perhead.mask, &perhead.positions, perhead.n_head_groups)?;
+    } else {
+        engine.set_attn_mask(&mask, &positions, 0)?;
+    }
 
-    let full_prompt = format!("{}{}", ctx.prompt, query_text);
-    let response = complete_streaming(client, server, &full_prompt, n_predict)?;
+    // ── CRITICAL: Make seq_id=0 KV entries visible to seq_id=1 ──
+    // Without this, query tokens on seq_id=1 cannot attend to context
+    // nodes encoded on seq_id=0. This was the root cause of the model
+    // ignoring all graph context (hallucinating instead of using data).
+    engine.seq_cp(0, 1, 0, -1);
+    debug!("  seq_cp(0→1) for full buffer (0..-1)");
 
-    clear_attn_mask(client, server)?;
+    // ── Generate with streaming + auto-continuation ────────────────
+    // Round 0: generate with custom mask (graph-guided attention).
+    // If the model hits max_tokens without EOG, clear the mask and continue
+    // with default causal attention. The model already has the graph context
+    // from the first round. seq_id=1 is kept alive between rounds.
+    print!("assistant> ");
+    io::stdout().flush()?;
 
-    Ok(response)
+    let mut filter = ThinkFilter::new();
+    let mut full_response = String::new();
+    let max_continuations = 3;
+
+    // Round 0: with mask
+    let (chunk, mut hit_eog, mut next_pos) = engine.generate_ex(
+        &query_tokens, q_start_real, n_predict, 1,
+        true, // keep_seq=true in case we need continuation
+        |piece| {
+            let visible = filter.feed(piece);
+            if !visible.is_empty() {
+                print!("{}", visible);
+                let _ = io::stdout().flush();
+            }
+            true
+        }
+    )?;
+    full_response.push_str(&chunk);
+
+    // Clear mask — either done or switching to causal for continuations
+    engine.clear_attn_mask();
+
+    // Continuations: no mask, causal attention only
+    if !hit_eog {
+        let cont_token = engine.tokenize(" ", false, false)?;
+
+        for cont in 1..=max_continuations {
+            debug!("  [continuation {}/{}] hit max_tokens at pos={}, continuing...",
+                cont, max_continuations, next_pos);
+
+            let is_last = cont == max_continuations;
+
+            let (chunk, eog, end_pos) = engine.generate_ex(
+                &cont_token, next_pos, n_predict, 1,
+                !is_last, // keep_seq alive unless last round
+                |piece| {
+                    let visible = filter.feed(piece);
+                    if !visible.is_empty() {
+                        print!("{}", visible);
+                        let _ = io::stdout().flush();
+                    }
+                    true
+                }
+            )?;
+
+            next_pos = end_pos;
+            full_response.push_str(&chunk);
+            hit_eog = eog;
+
+            if eog {
+                // Natural end — clean up if seq was kept alive
+                if !is_last { engine.clear_seq(1); }
+                break;
+            }
+        }
+
+        // If we exhausted continuations without EOG, final cleanup
+        if !hit_eog {
+            debug!("  [continuation] max reached, stopping (total ~{} chars)", full_response.len());
+            // seq already cleaned by last generate_ex (keep_seq=false)
+        }
+    } else {
+        // Natural end on round 0 — clean up seq_id=1
+        engine.clear_seq(1);
+    }
+
+    let remaining = filter.flush();
+    if !remaining.is_empty() { print!("{}", remaining); }
+    println!("\n");
+
+    Ok(full_response)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// HTTP helpers
+// HTTP helpers (kept behind feature flag for backwards compatibility)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+#[cfg(feature = "http")]
 fn check_server(client: &reqwest::blocking::Client, server: &str) -> Result<()> {
     let resp = client.get(format!("{server}/health")).send()
         .context(format!("Cannot reach {server}"))?;
     if !resp.status().is_success() {
         bail!("Server unhealthy: {}", resp.status());
     }
-    eprintln!("Server: OK ({server})");
+    debug!("Server: OK ({server})");
     Ok(())
 }
 
+#[cfg(feature = "http")]
 fn tokenize(client: &reqwest::blocking::Client, server: &str, text: &str) -> Result<i32> {
     let resp = client
         .post(format!("{server}/tokenize"))
@@ -2236,9 +2424,10 @@ fn tokenize(client: &reqwest::blocking::Client, server: &str, text: &str) -> Res
     Ok(body["tokens"].as_array().context("no tokens")?.len() as i32)
 }
 
+#[cfg(feature = "http")]
 fn set_attn_mask(client: &reqwest::blocking::Client, server: &str, mask: &[f32], positions: &[i32]) -> Result<()> {
     let n_pos = positions.len();
-    eprintln!("  Sending mask: {} positions, {:.1}MB payload",
+    debug!("  Sending mask: {} positions, {:.1}MB payload",
         n_pos, (mask.len() * 8) as f64 / 1_000_000.0);
     let resp = client
         .post(format!("{server}/attn-mask"))
@@ -2253,6 +2442,7 @@ fn set_attn_mask(client: &reqwest::blocking::Client, server: &str, mask: &[f32],
     Ok(())
 }
 
+#[cfg(feature = "http")]
 fn clear_attn_mask(client: &reqwest::blocking::Client, server: &str) -> Result<()> {
     client.post(format!("{server}/attn-mask"))
         .json(&json!({ "mask": null }))
@@ -2409,6 +2599,7 @@ impl ThinkFilter {
     }
 }
 
+#[cfg(feature = "http")]
 /// Streaming completion via llama.cpp SSE endpoint.
 /// Prints tokens to stdout as they arrive, returns the full text.
 fn complete_streaming(client: &reqwest::blocking::Client, server: &str, prompt: &str, n_predict: i32) -> Result<String> {
@@ -2463,6 +2654,7 @@ fn complete_streaming(client: &reqwest::blocking::Client, server: &str, prompt: 
     Ok(full_text)
 }
 
+#[cfg(feature = "http")]
 /// Non-streaming completion (kept for internal use like tokenization tests).
 fn complete(client: &reqwest::blocking::Client, server: &str, prompt: &str, n_predict: i32) -> Result<String> {
     let resp = client
@@ -2481,6 +2673,7 @@ fn complete(client: &reqwest::blocking::Client, server: &str, prompt: &str, n_pr
     Ok(body["content"].as_str().unwrap_or("[no content]").to_string())
 }
 
+#[cfg(feature = "http")]
 /// Streaming chat completion via /v1/chat/completions (SSE).
 fn chat_complete(
     client: &reqwest::blocking::Client,
