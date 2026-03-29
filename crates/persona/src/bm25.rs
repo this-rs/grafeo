@@ -13,20 +13,17 @@ const B: f64 = 0.75;
 // ── Stop words (FR + EN, lightweight set) ───────────────────────────────────
 const STOP_WORDS: &[&str] = &[
     // French
-    "le", "la", "les", "de", "du", "des", "un", "une", "et", "en", "est", "que",
-    "qui", "dans", "pour", "pas", "sur", "ce", "il", "elle", "au", "aux", "son",
-    "sa", "ses", "par", "ne", "se", "ou", "mais", "avec", "plus", "tout", "bien",
-    "aussi", "comme", "ont", "mon", "ton", "nous", "vous", "ils", "elles", "leur",
-    "cette", "ces", "été", "être", "avoir", "fait", "faire", "dit", "car", "dont",
-    "très", "peut", "alors", "quand", "ça", "été",
-    // English
-    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have",
-    "has", "had", "do", "does", "did", "will", "would", "could", "should", "may",
-    "might", "shall", "can", "to", "of", "in", "for", "on", "with", "at", "by",
-    "from", "as", "or", "but", "if", "not", "no", "so", "up", "out", "about",
-    "into", "than", "then", "them", "they", "this", "that", "it", "its", "and",
-    "he", "she", "we", "you", "my", "your", "his", "her", "our", "all", "what",
-    "which", "who", "when", "how", "there", "where",
+    "le", "la", "les", "de", "du", "des", "un", "une", "et", "en", "est", "que", "qui", "dans",
+    "pour", "pas", "sur", "ce", "il", "elle", "au", "aux", "son", "sa", "ses", "par", "ne", "se",
+    "ou", "mais", "avec", "plus", "tout", "bien", "aussi", "comme", "ont", "mon", "ton", "nous",
+    "vous", "ils", "elles", "leur", "cette", "ces", "été", "être", "avoir", "fait", "faire", "dit",
+    "car", "dont", "très", "peut", "alors", "quand", "ça", "été", // English
+    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do",
+    "does", "did", "will", "would", "could", "should", "may", "might", "shall", "can", "to", "of",
+    "in", "for", "on", "with", "at", "by", "from", "as", "or", "but", "if", "not", "no", "so",
+    "up", "out", "about", "into", "than", "then", "them", "they", "this", "that", "it", "its",
+    "and", "he", "she", "we", "you", "my", "your", "his", "her", "our", "all", "what", "which",
+    "who", "when", "how", "there", "where",
 ];
 
 /// A single indexed document.
@@ -62,6 +59,12 @@ pub struct MessageIndex {
     contents: HashMap<NodeId, String>,
     /// Stop words set (built once).
     stop_words: std::collections::HashSet<&'static str>,
+}
+
+impl Default for MessageIndex {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MessageIndex {
@@ -184,7 +187,7 @@ impl MessageIndex {
             .filter(|s| {
                 // Keep tokens ≥ 3 bytes, OR shorter tokens containing non-ASCII
                 // (Greek letters like ζ, α, Ψ are important in math/science contexts)
-                s.len() > 2 || s.chars().any(|c| !c.is_ascii())
+                s.len() > 2 || !s.is_ascii()
             })
             .filter(|s| !self.stop_words.contains(s))
             .map(|s| s.to_string())
@@ -205,15 +208,27 @@ impl MessageIndex {
 mod tests {
     use super::*;
 
-    fn nid(n: u64) -> NodeId { NodeId(n) }
+    fn nid(n: u64) -> NodeId {
+        NodeId(n)
+    }
 
     #[test]
     fn test_basic_search() {
         let mut idx = MessageIndex::new();
-        idx.add(nid(1), nid(100), "user", "J'habite à Paris et j'aime le Rust");
+        idx.add(
+            nid(1),
+            nid(100),
+            "user",
+            "J'habite à Paris et j'aime le Rust",
+        );
         idx.add(nid(2), nid(100), "assistant", "Paris est une belle ville");
         idx.add(nid(3), nid(100), "user", "Mon chat s'appelle Minou");
-        idx.add(nid(4), nid(101), "user", "Je programme en Rust depuis 3 ans");
+        idx.add(
+            nid(4),
+            nid(101),
+            "user",
+            "Je programme en Rust depuis 3 ans",
+        );
 
         let results = idx.search("Rust", 10);
         assert_eq!(results.len(), 2);
@@ -228,8 +243,18 @@ mod tests {
     #[test]
     fn test_cross_conversation() {
         let mut idx = MessageIndex::new();
-        idx.add(nid(1), nid(100), "user", "Mon projet Obrain utilise llama.cpp");
-        idx.add(nid(2), nid(200), "user", "Comment compiler llama.cpp sur macOS");
+        idx.add(
+            nid(1),
+            nid(100),
+            "user",
+            "Mon projet Obrain utilise llama.cpp",
+        );
+        idx.add(
+            nid(2),
+            nid(200),
+            "user",
+            "Comment compiler llama.cpp sur macOS",
+        );
 
         let results = idx.search("llama.cpp", 10);
         assert_eq!(results.len(), 2);
@@ -260,10 +285,20 @@ mod tests {
         let mut idx = MessageIndex::new();
         // Add many docs mentioning "code"
         for i in 0..20 {
-            idx.add(nid(i), nid(100), "user", &format!("I write code every day #{i}"));
+            idx.add(
+                nid(i),
+                nid(100),
+                "user",
+                &format!("I write code every day #{i}"),
+            );
         }
         // Add one doc mentioning "quantum"
-        idx.add(nid(100), nid(100), "user", "Quantum computing is fascinating code");
+        idx.add(
+            nid(100),
+            nid(100),
+            "user",
+            "Quantum computing is fascinating code",
+        );
 
         let results = idx.search("quantum code", 5);
         // The doc with "quantum" should rank first (rare term = high IDF)

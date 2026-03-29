@@ -13,19 +13,19 @@
 mod http;
 
 use anyhow::{Context, Result};
-use llm_engine::{LlamaEngine, EngineConfig, set_verbose};
-use think_filter::strip_think_tags;
+use llm_engine::{EngineConfig, LlamaEngine, set_verbose};
 use obrain::ObrainDB;
 use obrain_common::types::{NodeId, PropertyKey, Value};
 use obrain_core::graph::lpg::LpgStore;
-use std::collections::HashSet;
 use rustyline::error::ReadlineError;
 use rustyline::history::{DefaultHistory, History};
 use rustyline::{Config, EditMode, Editor};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
+use think_filter::strip_think_tags;
 
 /// Global debug flag — set via --debug CLI arg.
 static DEBUG: AtomicBool = AtomicBool::new(false);
@@ -40,10 +40,14 @@ macro_rules! debug {
 }
 
 use graph_schema::{GraphSchema, discover_schema, get_node_name_generic};
-use kv_registry::{KvNodeRegistry, KvBank, ConvFragments, load_bank_cache, save_bank_cache, discover_banks};
-use retrieval::{Engine, GenerationControl, OutputMode, is_meta_query, query_with_registry, GnnContext};
+use kv_registry::{
+    ConvFragments, KvBank, KvNodeRegistry, discover_banks, load_bank_cache, save_bank_cache,
+};
+use retrieval::{
+    Engine, GenerationControl, GnnContext, OutputMode, is_meta_query, query_with_registry,
+};
 
-use persona::{PersonaDB, RewardDetector, detect_facts_from_graph, detect_facts};
+use persona::{PersonaDB, RewardDetector, detect_facts, detect_facts_from_graph};
 
 /// Build dynamic system header based on graph presence and persistent facts.
 /// Score persona facts via GNN. Returns (key, value, score) with score=1.0 as fallback.
@@ -56,31 +60,44 @@ fn score_persona_facts(
         let store = pdb.db.store();
         let fact_ids = pdb.active_fact_ids();
         if fact_ids.is_empty() {
-            return facts.iter().map(|(k, v)| (k.clone(), v.clone(), 1.0)).collect();
+            return facts
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone(), 1.0))
+                .collect();
         }
         let query_embed = persona::fact_gnn::query_embedding("context");
         let scores = gnn.score_facts(&store, &query_embed, &fact_ids, 2);
         let score_map: std::collections::HashMap<_, _> = scores.into_iter().collect();
 
         // Build a map from fact key → NodeId for matching
-        let key_to_nid: std::collections::HashMap<String, obrain_common::types::NodeId> = fact_ids.iter()
+        let key_to_nid: std::collections::HashMap<String, obrain_common::types::NodeId> = fact_ids
+            .iter()
             .filter_map(|&fid| {
-                store.get_node(fid)
-                    .and_then(|n| n.properties.get(&obrain_common::types::PropertyKey::from("key"))
+                store.get_node(fid).and_then(|n| {
+                    n.properties
+                        .get(&obrain_common::types::PropertyKey::from("key"))
                         .and_then(|v| v.as_str())
-                        .map(|k| (k.to_string(), fid)))
+                        .map(|k| (k.to_string(), fid))
+                })
             })
             .collect();
 
-        facts.iter().map(|(k, v)| {
-            let s = key_to_nid.get(k)
-                .and_then(|nid| score_map.get(nid))
-                .copied()
-                .unwrap_or(1.0);
-            (k.clone(), v.clone(), s)
-        }).collect()
+        facts
+            .iter()
+            .map(|(k, v)| {
+                let s = key_to_nid
+                    .get(k)
+                    .and_then(|nid| score_map.get(nid))
+                    .copied()
+                    .unwrap_or(1.0);
+                (k.clone(), v.clone(), s)
+            })
+            .collect()
     } else {
-        facts.iter().map(|(k, v)| (k.clone(), v.clone(), 1.0)).collect()
+        facts
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone(), 1.0))
+            .collect()
     }
 }
 
@@ -93,7 +110,10 @@ fn build_system_header(has_graph: bool, scored_facts: &[(String, String, f32)]) 
     let mut header = String::from("<|im_start|>system\n");
 
     // Identity from facts
-    let name = scored_facts.iter().find(|(k, _, _)| k == "name").map(|(_, v, _)| v.as_str());
+    let name = scored_facts
+        .iter()
+        .find(|(k, _, _)| k == "name")
+        .map(|(_, v, _)| v.as_str());
     if let Some(name) = name {
         header.push_str(&format!("You are {name}. "));
     } else {
@@ -115,7 +135,8 @@ Si un fait contredit un ancien, le nouveau le remplace. N'invente rien — utili
 "#);
 
     // Inject persistent facts — sorted by GNN score, budget-capped
-    let mut other_facts: Vec<&(String, String, f32)> = scored_facts.iter()
+    let mut other_facts: Vec<&(String, String, f32)> = scored_facts
+        .iter()
         .filter(|(k, _, _)| k != "name")
         .collect();
     // Already sorted by caller, but ensure desc order
@@ -123,7 +144,8 @@ Si un fait contredit un ancien, le nouveau le remplace. N'invente rien — utili
 
     // Apply threshold: omit low-score facts when we have plenty
     let threshold = if other_facts.len() > 10 { 0.1 } else { 0.0 };
-    let other_facts: Vec<&&(String, String, f32)> = other_facts.iter()
+    let other_facts: Vec<&&(String, String, f32)> = other_facts
+        .iter()
         .filter(|(_, _, s)| *s >= threshold)
         .collect();
 
@@ -132,12 +154,16 @@ Si un fait contredit un ancien, le nouveau le remplace. N'invente rien — utili
         let mut budget = 2000usize; // ~500 tokens at ~4 chars/token
         for (key, value, _score) in other_facts.iter().map(|f| (&f.0, &f.1, f.2)) {
             let line = format!("- {key} : {value}\n");
-            if line.len() > budget { break; }
+            if line.len() > budget {
+                break;
+            }
             budget -= line.len();
             header.push_str(&line);
         }
     } else if name.is_none() {
-        header.push_str("\nFaits connus : (aucun pour l'instant — l'utilisateur ne t'a encore rien dit)\n");
+        header.push_str(
+            "\nFaits connus : (aucun pour l'instant — l'utilisateur ne t'a encore rien dit)\n",
+        );
     }
 
     header.push('\n');
@@ -168,7 +194,9 @@ Utilise ces souvenirs pour personnaliser tes réponses. Si un souvenir contredit
         let mut budget = 2000usize;
         for (_nid, text, _energy) in memories {
             let line = format!("- {text}\n");
-            if line.len() > budget { break; }
+            if line.len() > budget {
+                break;
+            }
             budget -= line.len();
             header.push_str(&line);
         }
@@ -255,12 +283,13 @@ fn main() -> Result<()> {
 
     let persona_path: Option<PathBuf> = parse_arg("--persona").map(PathBuf::from);
 
-    let http_addr: Option<std::net::SocketAddr> = parse_arg("--http")
-        .map(|s| s.parse().expect("Invalid --http address (expected host:port, e.g. 127.0.0.1:8080)"));
+    let http_addr: Option<std::net::SocketAddr> = parse_arg("--http").map(|s| {
+        s.parse()
+            .expect("Invalid --http address (expected host:port, e.g. 127.0.0.1:8080)")
+    });
 
     // --profile-heads N: run N queries in profiling mode, export head_profile.json, then exit
-    let profile_heads: Option<usize> = parse_arg("--profile-heads")
-        .and_then(|s| s.parse().ok());
+    let profile_heads: Option<usize> = parse_arg("--profile-heads").and_then(|s| s.parse().ok());
 
     // --head-router: enable Phase B per-head α-routing via REINFORCE
     let use_head_router = std::env::args().any(|a| a == "--head-router");
@@ -274,8 +303,8 @@ fn main() -> Result<()> {
     // "gqa" (default): groups by KV heads — natural for GQA models, best recall-per-MB
     // "full": each query head routes independently — max specialization potential,
     //         more memory (~5× for GQA models), may benefit from larger GPU/Apple Silicon
-    let head_router_granularity: String = parse_arg("--head-router-granularity")
-        .unwrap_or_else(|| "gqa".to_string());
+    let head_router_granularity: String =
+        parse_arg("--head-router-granularity").unwrap_or_else(|| "gqa".to_string());
 
     // Phase C: embedding injection
     let embd_injection_ratio: f32 = parse_arg("--embd-injection-ratio")
@@ -317,8 +346,7 @@ fn main() -> Result<()> {
             eprintln!("Opening database: {db_path}");
             let ckpt = format!("{db_path}/wal/checkpoint.meta");
             let _ = std::fs::remove_file(&ckpt);
-            let db = ObrainDB::open(db_path)
-                .context(format!("Failed to open DB at {db_path}"))?;
+            let db = ObrainDB::open(db_path).context(format!("Failed to open DB at {db_path}"))?;
             let st = Arc::clone(db.store());
             eprintln!("  {} nodes, {} edges", st.node_count(), st.edge_count());
             let sch = graph_schema::discover_schema(&st);
@@ -366,8 +394,14 @@ fn main() -> Result<()> {
         };
 
         // Build system header + init registry
-        let persona_facts: Vec<(String, String, f32)> = persona_db.as_ref()
-            .map(|pdb| pdb.active_facts().into_iter().map(|(k, v)| (k, v, 1.0)).collect())
+        let persona_facts: Vec<(String, String, f32)> = persona_db
+            .as_ref()
+            .map(|pdb| {
+                pdb.active_facts()
+                    .into_iter()
+                    .map(|(k, v)| (k, v, 1.0))
+                    .collect()
+            })
             .unwrap_or_default();
         let system_header = build_system_header(store.is_some(), &persona_facts);
         let header_tokens_vec = engine.tokenize(&system_header, false, true)?;
@@ -383,7 +417,9 @@ fn main() -> Result<()> {
             let protected: HashSet<NodeId> = bank.node_ids.iter().copied().collect();
             registry.ensure_capacity(bank.est_tokens, kv_capacity, &protected, &engine);
             for nid in &bank.node_ids {
-                if registry.get_slot(*nid).is_some() { continue; }
+                if registry.get_slot(*nid).is_some() {
+                    continue;
+                }
                 if let Some(text) = bank.texts.get(nid) {
                     registry.register(*nid, text, &engine)?;
                 }
@@ -414,7 +450,10 @@ fn main() -> Result<()> {
             }
         }
 
-        eprintln!("  Registry: {} tokens encoded, {} banks warmed up", registry.next_pos, warmup_count);
+        eprintln!(
+            "  Registry: {} tokens encoded, {} banks warmed up",
+            registry.next_pos, warmup_count
+        );
 
         // Spawn actor with all resources
         let actor = server::actor::ActorHandle::spawn(server::actor::ActorConfig {
@@ -463,8 +502,11 @@ fn main() -> Result<()> {
         let profiler = llm_engine::HeadProfiler::new(0, 0);
         let handle = profiler.handle();
         let eng = Engine(LlamaEngine::new_with_profiler(&engine_config, handle)?);
-        eprintln!("  Profiling mode: capturing attention patterns (n_heads={}, n_layers={})",
-            eng.n_heads(), eng.n_layers());
+        eprintln!(
+            "  Profiling mode: capturing attention patterns (n_heads={}, n_layers={})",
+            eng.n_heads(),
+            eng.n_layers()
+        );
         head_profiler = Some(profiler);
         eng
     } else {
@@ -483,30 +525,47 @@ fn main() -> Result<()> {
         let ckpt = format!("{db_path}/wal/checkpoint.meta");
         let _ = std::fs::remove_file(&ckpt);
 
-        let db = ObrainDB::open(db_path)
-            .context(format!("Failed to open DB at {db_path}"))?;
+        let db = ObrainDB::open(db_path).context(format!("Failed to open DB at {db_path}"))?;
         let st = Arc::clone(db.store());
         eprintln!("  {} nodes, {} edges\n", st.node_count(), st.edge_count());
 
         debug!("Discovering schema...");
         let t0_schema = Instant::now();
         let sch = discover_schema(&st);
-        debug!("  Schema discovered in {:.0}ms:", t0_schema.elapsed().as_millis());
-        debug!("    {} labels ({} structural, {} noise)",
-            sch.labels.len(), sch.structural_labels.len(), sch.noise_labels.len());
+        debug!(
+            "  Schema discovered in {:.0}ms:",
+            t0_schema.elapsed().as_millis()
+        );
+        debug!(
+            "    {} labels ({} structural, {} noise)",
+            sch.labels.len(),
+            sch.structural_labels.len(),
+            sch.noise_labels.len()
+        );
         for info in sch.labels.iter().take(10) {
             let marker = if info.is_noise { " [noise]" } else { "" };
-            debug!("      {:>6} {:20} imp={:.3} deg={:.1}{}",
-                info.count, info.label, info.importance, info.avg_degree, marker);
+            debug!(
+                "      {:>6} {:20} imp={:.3} deg={:.1}{}",
+                info.count, info.label, info.importance, info.avg_degree, marker
+            );
         }
         if let Some(top_parent) = sch.parent_child.iter().next() {
-            debug!("    Hierarchy sample: {} → {:?}", top_parent.0,
-                top_parent.1.iter().map(|(e, c)| format!("--{}--> {}", e, c)).collect::<Vec<_>>());
+            debug!(
+                "    Hierarchy sample: {} → {:?}",
+                top_parent.0,
+                top_parent
+                    .1
+                    .iter()
+                    .map(|(e, c)| format!("--{}--> {}", e, c))
+                    .collect::<Vec<_>>()
+            );
         }
         debug!("\n{}", "=".repeat(60));
-        eprintln!("Ready. {} structural labels, {} hierarchy rules.",
+        eprintln!(
+            "Ready. {} structural labels, {} hierarchy rules.",
             sch.structural_labels.len(),
-            sch.parent_child.len());
+            sch.parent_child.len()
+        );
 
         // Discover or load KV Banks
         let bank_cache_path = std::path::PathBuf::from(format!("{db_path}.banks"));
@@ -514,7 +573,11 @@ fn main() -> Result<()> {
         let ec = st.edge_count();
         let bnks = match load_bank_cache(&bank_cache_path, nc, ec) {
             Some(cached) => {
-                debug!("Loaded {} banks from cache ({})", cached.len(), bank_cache_path.display());
+                debug!(
+                    "Loaded {} banks from cache ({})",
+                    cached.len(),
+                    bank_cache_path.display()
+                );
                 cached
             }
             None => {
@@ -553,16 +616,23 @@ fn main() -> Result<()> {
     let mut persona_db = match PersonaDB::open(&persona_resolved_path) {
         Ok(cdb) => {
             let convs = cdb.list_conversations();
-            eprintln!("Persona: {} ({} conversations, current: \"{}\")",
-                persona_resolved_path, convs.len(), cdb.current_title());
+            eprintln!(
+                "Persona: {} ({} conversations, current: \"{}\")",
+                persona_resolved_path,
+                convs.len(),
+                cdb.current_title()
+            );
             let recent = cdb.recent_messages(4);
             if !recent.is_empty() {
                 debug!("  Recent context ({} messages):", recent.len());
                 for (role, content) in &recent {
                     let snippet: String = content.chars().take(80).collect();
-                    debug!("    {}: {}{}",
-                        role, snippet,
-                        if content.len() > 80 { "..." } else { "" });
+                    debug!(
+                        "    {}: {}{}",
+                        role,
+                        snippet,
+                        if content.len() > 80 { "..." } else { "" }
+                    );
                 }
             }
             // Ξ(t) T1: migrate old facts + seed patterns + reward tokens at startup
@@ -578,7 +648,9 @@ fn main() -> Result<()> {
     };
 
     if store.is_some() {
-        eprintln!("\nCommands: /quit, /schema, /kv, /banks, /history, /conversations, /new <title>");
+        eprintln!(
+            "\nCommands: /quit, /schema, /kv, /banks, /history, /conversations, /new <title>"
+        );
         eprintln!("  Ξ(t): /facts, /patterns, /stats, /addpattern <trigger>|<key>|<type>\n");
     } else {
         eprintln!("\nCommands: /quit, /history, /conversations, /new <title>");
@@ -586,17 +658,23 @@ fn main() -> Result<()> {
     }
 
     // ── Load persistent facts and build dynamic system header ──
-    let persona_facts: Vec<(String, String)> = persona_db.as_ref()
+    let persona_facts: Vec<(String, String)> = persona_db
+        .as_ref()
         .map(|pdb| pdb.active_facts())
         .unwrap_or_default();
     if !persona_facts.is_empty() {
-        eprintln!("  Facts: {}", persona_facts.iter()
-            .map(|(k, v)| format!("{k}={v}"))
-            .collect::<Vec<_>>()
-            .join(", "));
+        eprintln!(
+            "  Facts: {}",
+            persona_facts
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     }
     // At startup, GNN not yet initialized — use unscored facts (score=1.0)
-    let scored_facts: Vec<(String, String, f32)> = persona_facts.iter()
+    let scored_facts: Vec<(String, String, f32)> = persona_facts
+        .iter()
         .map(|(k, v)| (k.clone(), v.clone(), 1.0))
         .collect();
     let system_header = build_system_header(store.is_some(), &scored_facts);
@@ -614,23 +692,31 @@ fn main() -> Result<()> {
     } else {
         None // Phase D round tracking only relevant with embedding injection
     };
-    debug!("KV Registry initialized: header={} tokens (encoded in KV)", header_n);
+    debug!(
+        "KV Registry initialized: header={} tokens (encoded in KV)",
+        header_n
+    );
 
     // ── Phase D: compute Hilbert layout if enabled ──────────────
     if hilbert_enabled {
         if let Some(ref st) = store {
             let hilbert_t0 = Instant::now();
             let node_ids = st.node_ids();
-            let mut adjacency: std::collections::HashMap<NodeId, std::collections::HashSet<NodeId>> = std::collections::HashMap::new();
+            let mut adjacency: std::collections::HashMap<
+                NodeId,
+                std::collections::HashSet<NodeId>,
+            > = std::collections::HashMap::new();
             for &nid in &node_ids {
                 use obrain_core::graph::Direction;
-                let neighbors: std::collections::HashSet<NodeId> = st.edges_from(nid, Direction::Outgoing)
+                let neighbors: std::collections::HashSet<NodeId> = st
+                    .edges_from(nid, Direction::Outgoing)
                     .map(|(target, _)| target)
                     .collect();
                 adjacency.insert(nid, neighbors);
             }
             // Also add reverse edges for undirected spectral embedding
-            let adj_snapshot: Vec<(NodeId, Vec<NodeId>)> = adjacency.iter()
+            let adj_snapshot: Vec<(NodeId, Vec<NodeId>)> = adjacency
+                .iter()
                 .map(|(&k, v)| (k, v.iter().copied().collect::<Vec<_>>()))
                 .collect();
             for (src, targets) in adj_snapshot {
@@ -639,8 +725,12 @@ fn main() -> Result<()> {
                 }
             }
             let layout = kv_registry::HilbertLayout::compute(&adjacency, header_n as u32);
-            eprintln!("  Hilbert layout: {} nodes, order={}, computed in {:.0}ms",
-                layout.len(), layout.order, hilbert_t0.elapsed().as_millis());
+            eprintln!(
+                "  Hilbert layout: {} nodes, order={}, computed in {:.0}ms",
+                layout.len(),
+                layout.order,
+                hilbert_t0.elapsed().as_millis()
+            );
             registry.set_hilbert_layout(layout);
         } else {
             eprintln!("  --hilbert ignored: no database loaded");
@@ -656,15 +746,21 @@ fn main() -> Result<()> {
             let protected: HashSet<NodeId> = bank.node_ids.iter().copied().collect();
             registry.ensure_capacity(bank.est_tokens, kv_capacity, &protected, &engine);
             for nid in &bank.node_ids {
-                if registry.get_slot(*nid).is_some() { continue; }
+                if registry.get_slot(*nid).is_some() {
+                    continue;
+                }
                 if let Some(text) = bank.texts.get(nid) {
                     registry.register(*nid, text, &engine)?;
                     warmup_loaded += 1;
                 }
             }
         }
-        debug!("  Warmup: pre-loaded {} banks ({} nodes) in {:.0}ms",
-            warmup_count, warmup_loaded, warmup_t0.elapsed().as_millis());
+        debug!(
+            "  Warmup: pre-loaded {} banks ({} nodes) in {:.0}ms",
+            warmup_count,
+            warmup_loaded,
+            warmup_t0.elapsed().as_millis()
+        );
     }
 
     // ── Restore conversation fragments from persona_db (T3) ──────────
@@ -705,10 +801,8 @@ fn main() -> Result<()> {
 
             // Restore HOT tier (KV-encoded)
             for (q, a) in hot_pairs {
-                if let Err(e) = conv_frags.add_turn(
-                    q, a, &[],
-                    &mut registry, &engine, kv_capacity,
-                ) {
+                if let Err(e) = conv_frags.add_turn(q, a, &[], &mut registry, &engine, kv_capacity)
+                {
                     debug!("  Warning: could not restore conv fragment: {e}");
                 } else {
                     hot_restored += 1;
@@ -716,8 +810,12 @@ fn main() -> Result<()> {
             }
 
             if hot_restored > 0 || warm_seeded > 0 {
-                debug!("  Restored {} HOT + {} WARM conversation fragments in {:.0}ms",
-                    hot_restored, warm_seeded, restore_t0.elapsed().as_millis());
+                debug!(
+                    "  Restored {} HOT + {} WARM conversation fragments in {:.0}ms",
+                    hot_restored,
+                    warm_seeded,
+                    restore_t0.elapsed().as_millis()
+                );
             }
         }
     }
@@ -737,7 +835,10 @@ fn main() -> Result<()> {
         for prompt in pdb.user_history() {
             let _ = rl.add_history_entry(&prompt);
         }
-        debug!("  Loaded {} history entries from PersonaDB", rl.history().len());
+        debug!(
+            "  Loaded {} history entries from PersonaDB",
+            rl.history().len()
+        );
     }
 
     let mut turn_count: u32 = 0;
@@ -749,7 +850,10 @@ fn main() -> Result<()> {
 
     // ── Profile-heads mode: capture attention patterns and export ───
     if let (Some(n_profile_queries), Some(profiler)) = (profile_heads, &mut head_profiler) {
-        eprintln!("\n  [profile-heads] Running {} profiling queries...", n_profile_queries);
+        eprintln!(
+            "\n  [profile-heads] Running {} profiling queries...",
+            n_profile_queries
+        );
 
         // Profile queries — cover diverse topics to get varied attention patterns
         let profile_queries = vec![
@@ -783,7 +887,10 @@ fn main() -> Result<()> {
             for pos in 0..n_positions as i32 {
                 bank_map.insert(pos, 0);
             }
-            eprintln!("  [profile-heads] No graph banks, all {} positions assigned to bank 0", n_positions);
+            eprintln!(
+                "  [profile-heads] No graph banks, all {} positions assigned to bank 0",
+                n_positions
+            );
         }
 
         for (i, query) in profile_queries.iter().take(n_profile_queries).enumerate() {
@@ -810,9 +917,11 @@ fn main() -> Result<()> {
         let out_path = "/tmp/head_profile.json";
         std::fs::write(out_path, &json)?;
 
-        eprintln!("\n  [profile-heads] Profiled {} queries, {} snapshots collected",
+        eprintln!(
+            "\n  [profile-heads] Profiled {} queries, {} snapshots collected",
             profiler.n_queries(),
-            profiler.n_queries()); // simplified
+            profiler.n_queries()
+        ); // simplified
         eprintln!("  [profile-heads] Exported to {}", out_path);
         eprintln!("  [profile-heads] {} clusters identified", n_clusters);
 
@@ -820,7 +929,8 @@ fn main() -> Result<()> {
     }
 
     // Ξ(t) T3: Initialize RewardDetector
-    let mut reward_detector: Option<RewardDetector> = persona_db.as_ref()
+    let mut reward_detector: Option<RewardDetector> = persona_db
+        .as_ref()
         .map(|pdb| RewardDetector::new(pdb, &engine));
 
     // Ξ(t) T4: Initialize FactGNN
@@ -828,10 +938,16 @@ fn main() -> Result<()> {
         let mut gnn = persona::fact_gnn::FactGNN::new();
         let store = pdb.db.store();
         if gnn.load_weights(&store) {
-            debug!("  [GNN] Loaded persisted weights ({} updates, lr={:.4})",
-                gnn.n_updates(), gnn.learning_rate());
+            debug!(
+                "  [GNN] Loaded persisted weights ({} updates, lr={:.4})",
+                gnn.n_updates(),
+                gnn.learning_rate()
+            );
         } else {
-            debug!("  [GNN] Fresh Xavier-initialized weights (dim={})", gnn.dim());
+            debug!(
+                "  [GNN] Fresh Xavier-initialized weights (dim={})",
+                gnn.dim()
+            );
         }
         gnn
     });
@@ -842,11 +958,15 @@ fn main() -> Result<()> {
         let mut pnet = persona::PersistNet::new(n_embd);
         let store = pdb.db.store();
         if pnet.load_weights(&store) {
-            debug!("  [PersistNet] Loaded weights ({} updates, {} turns, n_embd={})",
-                pnet.n_updates, pnet.total_turns, pnet.n_embd);
+            debug!(
+                "  [PersistNet] Loaded weights ({} updates, {} turns, n_embd={})",
+                pnet.n_updates, pnet.total_turns, pnet.n_embd
+            );
         } else {
-            debug!("  [PersistNet] Fresh init (n_embd={}, cold start for {} turns)",
-                n_embd, 20);
+            debug!(
+                "  [PersistNet] Fresh init (n_embd={}, cold start for {} turns)",
+                n_embd, 20
+            );
         }
         pnet
     });
@@ -858,13 +978,17 @@ fn main() -> Result<()> {
 
     // Cache for PersistNet: (projected_embedding, persist_score) from last forward
     let mut last_persist_result: Option<(Vec<f32>, f32)> = None;
+    #[allow(unused_assignments)]
     let mut last_avg_entropy: Option<f32> = None;
     // B3: Per-head ablation reward from previous turn (for deferred HeadRouter update)
     let mut last_ablation_reward: Option<retrieval::AblationReward> = None;
     // Track previous assistant response for persisting corrections on positive reward
+    #[allow(unused_assignments)]
     let mut last_assistant_response = String::new();
     // Track :Message NodeIds for reward propagation to PersonaDB messages
+    #[allow(unused_assignments)]
     let mut last_user_msg_id: Option<NodeId> = None;
+    #[allow(unused_assignments)]
     let mut last_asst_msg_id: Option<NodeId> = None;
 
     // Ξ(t) Phase B: HeadRouter for per-head topology routing
@@ -873,14 +997,32 @@ fn main() -> Result<()> {
     let mut head_router: Option<llm_engine::HeadRouter> = if use_head_router {
         let n_head = engine.n_heads() as usize;
         let n_head_kv = engine.n_heads_kv() as usize;
-        let router_heads = if head_router_granularity == "gqa" { n_head_kv } else { n_head };
-        let mask_mem_per_pos2 = router_heads * 4; // bytes per position² element
-        eprintln!("  [Phase B] HeadRouter enabled: granularity={}, router_heads={} (n_head={}, n_kv={}), lr={}, warmup={}",
-            head_router_granularity, router_heads, n_head, n_head_kv, head_router_lr, head_router_warmup);
-        eprintln!("  [Phase B] Mask memory: {:.0}MB per 1000 positions (budget allows ~{} pos)",
+        let router_heads = if head_router_granularity == "gqa" {
+            n_head_kv
+        } else {
+            n_head
+        };
+        let _mask_mem_per_pos2 = router_heads * 4; // bytes per position² element
+        eprintln!(
+            "  [Phase B] HeadRouter enabled: granularity={}, router_heads={} (n_head={}, n_kv={}), lr={}, warmup={}",
+            head_router_granularity,
+            router_heads,
+            n_head,
+            n_head_kv,
+            head_router_lr,
+            head_router_warmup
+        );
+        eprintln!(
+            "  [Phase B] Mask memory: {:.0}MB per 1000 positions (budget allows ~{} pos)",
             (router_heads as f64 * 1000.0 * 1000.0 * 4.0) / 1e6,
-            ((100.0 * 1024.0 * 1024.0 / (4.0 * router_heads as f64)) as f64).sqrt() as i32);
-        Some(llm_engine::HeadRouter::new(router_heads, llm_engine::N_BANKS, head_router_lr, head_router_warmup))
+            ((100.0 * 1024.0 * 1024.0 / (4.0 * router_heads as f64)) as f64).sqrt() as i32
+        );
+        Some(llm_engine::HeadRouter::new(
+            router_heads,
+            llm_engine::N_BANKS,
+            head_router_lr,
+            head_router_warmup,
+        ))
     } else {
         None
     };
@@ -895,8 +1037,11 @@ fn main() -> Result<()> {
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
-        eprintln!("  [Phase C] Embedding injection enabled: ratio={:.0}%, model={}",
-            embd_injection_ratio * 100.0, model_name);
+        eprintln!(
+            "  [Phase C] Embedding injection enabled: ratio={:.0}%, model={}",
+            embd_injection_ratio * 100.0,
+            model_name
+        );
         let mut cache = retrieval::NodeEmbeddingCache::new(engine.n_embd(), &model_name);
 
         // Determine weights path from persona dir
@@ -917,9 +1062,14 @@ fn main() -> Result<()> {
         let gnn_embeds: std::collections::HashMap<obrain_common::types::NodeId, Vec<f32>> =
             if let (Some(gnn), Some(pdb)) = (&fact_gnn, &persona_db) {
                 let store = pdb.db.store();
-                let node_ids: Vec<obrain_common::types::NodeId> = node_texts.iter().map(|(nid, _)| *nid).collect();
+                let node_ids: Vec<obrain_common::types::NodeId> =
+                    node_texts.iter().map(|(nid, _)| *nid).collect();
                 let embeds = gnn.get_node_embeddings(&store, &node_ids, 2);
-                eprintln!("  [Phase C] GNN embeddings: {} nodes (dim={})", embeds.len(), gnn.dim());
+                eprintln!(
+                    "  [Phase C] GNN embeddings: {} nodes (dim={})",
+                    embeds.len(),
+                    gnn.dim()
+                );
                 embeds.into_iter().map(|(k, v)| (k, v.to_vec())).collect()
             } else {
                 std::collections::HashMap::new()
@@ -949,7 +1099,9 @@ fn main() -> Result<()> {
                 let node_set: std::collections::HashSet<obrain_common::types::NodeId> =
                     node_texts.iter().map(|(nid, _)| *nid).collect();
                 for &(nid, _) in &node_texts {
-                    for (target, _eid) in st.edges_from(nid, Direction::Outgoing).collect::<Vec<_>>() {
+                    for (target, _eid) in
+                        st.edges_from(nid, Direction::Outgoing).collect::<Vec<_>>()
+                    {
                         if node_set.contains(&target) {
                             edges.push((nid, target));
                         }
@@ -959,13 +1111,22 @@ fn main() -> Result<()> {
             });
         if let Some(ref edges) = graph_edges {
             if !edges.is_empty() {
-                eprintln!("  [Phase C] C6 contrastive: {} edges extracted from graph", edges.len());
+                eprintln!(
+                    "  [Phase C] C6 contrastive: {} edges extracted from graph",
+                    edges.len()
+                );
             }
         }
 
         if has_gnn && !node_texts.is_empty() {
             // P1 + C6: Initial training with GNN fusion data + contrastive loss
-            match tmgr.initial_training(&mut pnet, &engine, &node_texts, &gnn_embeds, graph_edges.as_deref()) {
+            match tmgr.initial_training(
+                &mut pnet,
+                &engine,
+                &node_texts,
+                &gnn_embeds,
+                graph_edges.as_deref(),
+            ) {
                 Ok(n) if n > 0 => {
                     eprintln!("  [Phase C] ProjectionNet trained on {} samples", n);
                 }
@@ -979,22 +1140,38 @@ fn main() -> Result<()> {
                 gnn_embeddings: gnn_embeds,
                 projection_net: &pnet,
             };
-            match retrieval::compute_node_embeddings_with_fusion(&engine, &mut cache, &node_texts, false, Some(&fctx)) {
-                Ok(n) => eprintln!("  [Phase C] Pre-computed {} fused node embeddings in {:.1}s",
-                    n, t0.elapsed().as_secs_f32()),
+            match retrieval::compute_node_embeddings_with_fusion(
+                &engine,
+                &mut cache,
+                &node_texts,
+                false,
+                Some(&fctx),
+            ) {
+                Ok(n) => eprintln!(
+                    "  [Phase C] Pre-computed {} fused node embeddings in {:.1}s",
+                    n,
+                    t0.elapsed().as_secs_f32()
+                ),
                 Err(e) => eprintln!("  ⚠ [Phase C] Fused embedding computation failed: {}", e),
             }
         } else if !node_texts.is_empty() {
             // No GNN — text-only embeddings (fallback)
             let t0 = std::time::Instant::now();
             match retrieval::compute_node_embeddings(&engine, &mut cache, &node_texts, false) {
-                Ok(n) => eprintln!("  [Phase C] Pre-computed {} text-only node embeddings in {:.1}s",
-                    n, t0.elapsed().as_secs_f32()),
+                Ok(n) => eprintln!(
+                    "  [Phase C] Pre-computed {} text-only node embeddings in {:.1}s",
+                    n,
+                    t0.elapsed().as_secs_f32()
+                ),
                 Err(e) => eprintln!("  ⚠ [Phase C] Text embedding computation failed: {}", e),
             }
         }
 
-        (Some(cache), if has_gnn { Some(pnet) } else { None }, Some(tmgr))
+        (
+            Some(cache),
+            if has_gnn { Some(pnet) } else { None },
+            Some(tmgr),
+        )
     } else {
         (None, None, None)
     };
@@ -1004,12 +1181,17 @@ fn main() -> Result<()> {
         let scored = score_persona_facts(&current_facts, &fact_gnn, &persona_db);
         let new_header = build_system_header(store.is_some(), &scored);
         registry.update_header(&new_header);
-        debug!("  [GNN] Header rescored with {} facts after GNN init", scored.len());
+        debug!(
+            "  [GNN] Header rescored with {} facts after GNN init",
+            scored.len()
+        );
     }
 
     loop {
         // Ξ(t) T3.6: Check SIGINT before blocking on input
-        if gen_ctl.sigint_received.load(Ordering::Relaxed) { break; }
+        if gen_ctl.sigint_received.load(Ordering::Relaxed) {
+            break;
+        }
 
         let line = match rl.readline("you> ") {
             Ok(l) => l,
@@ -1018,7 +1200,9 @@ fn main() -> Result<()> {
                 if gen_ctl.sigint_received.load(Ordering::SeqCst) {
                     eprintln!("\n  [Ctrl+C] Force exit.");
                     unsafe {
-                        unsafe extern "C" { fn _exit(status: i32) -> !; }
+                        unsafe extern "C" {
+                            fn _exit(status: i32) -> !;
+                        }
                         _exit(0);
                     }
                 }
@@ -1030,7 +1214,9 @@ fn main() -> Result<()> {
             Err(_) => break,
         };
         let line = line.trim().to_string();
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
 
         // Multi-line mode: start with """ to paste multi-line text.
         // End with """ on its own line, or an empty line (double-Enter).
@@ -1059,10 +1245,17 @@ fn main() -> Result<()> {
             line
         };
         let line = line.trim().to_string();
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
 
-        if line == "/quit" || line == "/exit" || line == "quit"
-            || gen_ctl.sigint_received.load(Ordering::SeqCst) { break; }
+        if line == "/quit"
+            || line == "/exit"
+            || line == "quit"
+            || gen_ctl.sigint_received.load(Ordering::SeqCst)
+        {
+            break;
+        }
         if line == "/schema" {
             if let Some(ref sch) = schema {
                 eprintln!("  Structural: {:?}", sch.structural_labels);
@@ -1077,12 +1270,20 @@ fn main() -> Result<()> {
         }
         if line == "/banks" {
             for (i, bank) in banks.iter().enumerate() {
-                let loaded = bank.node_ids.iter()
+                let loaded = bank
+                    .node_ids
+                    .iter()
                     .filter(|nid| registry.get_slot(**nid).is_some())
                     .count();
-                eprintln!("  [{}] {} ({} nodes, ~{} tok, {}/{} in KV)",
-                    i, bank.name, bank.node_ids.len(), bank.est_tokens,
-                    loaded, bank.node_ids.len());
+                eprintln!(
+                    "  [{}] {} ({} nodes, ~{} tok, {}/{} in KV)",
+                    i,
+                    bank.name,
+                    bank.node_ids.len(),
+                    bank.est_tokens,
+                    loaded,
+                    bank.node_ids.len()
+                );
             }
             continue;
         }
@@ -1095,8 +1296,12 @@ fn main() -> Result<()> {
                     eprintln!("  History ({} messages):", msgs.len());
                     for (role, content) in &msgs {
                         let snippet: String = content.chars().take(120).collect();
-                        eprintln!("  {}: {}{}", role, snippet,
-                            if content.len() > 120 { "..." } else { "" });
+                        eprintln!(
+                            "  {}: {}{}",
+                            role,
+                            snippet,
+                            if content.len() > 120 { "..." } else { "" }
+                        );
                     }
                 }
             } else {
@@ -1115,19 +1320,55 @@ fn main() -> Result<()> {
                     let mut items: Vec<(String, i64, f64, bool, bool)> = Vec::new();
                     for &nid in &patterns {
                         if let Some(node) = store.get_node(nid) {
-                            let trigger = node.properties.get(&PropertyKey::from("trigger"))
-                                .and_then(|v| v.as_str()).unwrap_or("?").to_string();
-                            let hits = node.properties.get(&PropertyKey::from("hit_count"))
-                                .and_then(|v| if let Value::Int64(n) = v { Some(*n) } else { None })
+                            let trigger = node
+                                .properties
+                                .get(&PropertyKey::from("trigger"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?")
+                                .to_string();
+                            let hits = node
+                                .properties
+                                .get(&PropertyKey::from("hit_count"))
+                                .and_then(|v| {
+                                    if let Value::Int64(n) = v {
+                                        Some(*n)
+                                    } else {
+                                        None
+                                    }
+                                })
                                 .unwrap_or(0);
-                            let avg_r = node.properties.get(&PropertyKey::from("avg_reward"))
-                                .and_then(|v| if let Value::Float64(f) = v { Some(*f) } else { None })
+                            let avg_r = node
+                                .properties
+                                .get(&PropertyKey::from("avg_reward"))
+                                .and_then(|v| {
+                                    if let Value::Float64(f) = v {
+                                        Some(*f)
+                                    } else {
+                                        None
+                                    }
+                                })
                                 .unwrap_or(0.0);
-                            let auto = node.properties.get(&PropertyKey::from("auto_generated"))
-                                .and_then(|v| if let Value::Bool(b) = v { Some(*b) } else { None })
+                            let auto = node
+                                .properties
+                                .get(&PropertyKey::from("auto_generated"))
+                                .and_then(|v| {
+                                    if let Value::Bool(b) = v {
+                                        Some(*b)
+                                    } else {
+                                        None
+                                    }
+                                })
                                 .unwrap_or(false);
-                            let active = node.properties.get(&PropertyKey::from("active"))
-                                .and_then(|v| if let Value::Bool(b) = v { Some(*b) } else { None })
+                            let active = node
+                                .properties
+                                .get(&PropertyKey::from("active"))
+                                .and_then(|v| {
+                                    if let Value::Bool(b) = v {
+                                        Some(*b)
+                                    } else {
+                                        None
+                                    }
+                                })
                                 .unwrap_or(true);
                             items.push((trigger, hits, avg_r, auto, active));
                         }
@@ -1137,7 +1378,9 @@ fn main() -> Result<()> {
                     for (trigger, hits, avg_r, auto, active) in &items {
                         let tag = if *auto { " [auto]" } else { "" };
                         let status = if *active { "" } else { " [OFF]" };
-                        eprintln!("    \"{trigger}\" → hits={hits}, avg_reward={avg_r:.2}{tag}{status}");
+                        eprintln!(
+                            "    \"{trigger}\" → hits={hits}, avg_reward={avg_r:.2}{tag}{status}"
+                        );
                     }
                 }
             } else {
@@ -1156,15 +1399,18 @@ fn main() -> Result<()> {
                     let trigger = parts[0].trim();
                     let key_tmpl = parts[1].trim();
                     let fact_type = parts[2].trim();
-                    pdb.db.create_node_with_props(&["Pattern"], [
-                        ("trigger", Value::String(trigger.to_string().into())),
-                        ("key_template", Value::String(key_tmpl.to_string().into())),
-                        ("fact_type", Value::String(fact_type.to_string().into())),
-                        ("hit_count", Value::Int64(0)),
-                        ("avg_reward", Value::Float64(0.0)),
-                        ("auto_generated", Value::Bool(false)),
-                        ("active", Value::Bool(true)),
-                    ]);
+                    pdb.db.create_node_with_props(
+                        &["Pattern"],
+                        [
+                            ("trigger", Value::String(trigger.to_string().into())),
+                            ("key_template", Value::String(key_tmpl.to_string().into())),
+                            ("fact_type", Value::String(fact_type.to_string().into())),
+                            ("hit_count", Value::Int64(0)),
+                            ("avg_reward", Value::Float64(0.0)),
+                            ("auto_generated", Value::Bool(false)),
+                            ("active", Value::Bool(true)),
+                        ],
+                    );
                     eprintln!("  ✅ Pattern added: \"{trigger}\" → {key_tmpl} ({fact_type})");
                 } else {
                     eprintln!("  Usage: /addpattern trigger text|key_template|fact_type");
@@ -1182,17 +1428,25 @@ fn main() -> Result<()> {
                 eprintln!("  ╔══════════════════════════════════════╗");
                 eprintln!("  ║        Ξ(t) System Metrics           ║");
                 eprintln!("  ╠══════════════════════════════════════╣");
-                eprintln!("  ║ Facts:    {}/{} active (avg_e={:.2}, avg_c={:.2})",
-                    s.facts_active, s.facts_total, s.avg_energy, s.avg_confidence);
-                eprintln!("  ║ Patterns: {}/{} active ({} auto-generated)",
-                    s.patterns_active, s.patterns_total, s.patterns_auto);
+                eprintln!(
+                    "  ║ Facts:    {}/{} active (avg_e={:.2}, avg_c={:.2})",
+                    s.facts_active, s.facts_total, s.avg_energy, s.avg_confidence
+                );
+                eprintln!(
+                    "  ║ Patterns: {}/{} active ({} auto-generated)",
+                    s.patterns_active, s.patterns_total, s.patterns_auto
+                );
                 eprintln!("  ║ ConvTurns: {}", s.conv_turns);
                 eprintln!("  ║ Reward:   {:.3} (last 20 avg)", s.avg_reward_recent);
                 eprintln!("  ║ MaskQual: {:.3} (last 20 avg)", s.avg_mask_reward);
                 eprintln!("  ║ RewardTokens: {} loaded", s.reward_tokens);
                 if let Some(ref gnn) = fact_gnn {
-                    eprintln!("  ║ GNN:     dim={}, updates={}, lr={:.4}",
-                        gnn.dim(), gnn.n_updates(), gnn.learning_rate());
+                    eprintln!(
+                        "  ║ GNN:     dim={}, updates={}, lr={:.4}",
+                        gnn.dim(),
+                        gnn.n_updates(),
+                        gnn.learning_rate()
+                    );
                 }
                 eprintln!("  ╚══════════════════════════════════════╝");
             } else {
@@ -1207,8 +1461,19 @@ fn main() -> Result<()> {
                     eprintln!("  (no conversations)");
                 } else {
                     for (nid, title, created, msg_count) in &convs {
-                        let marker = if *nid == cdb.current_conv_id { " ←" } else { "" };
-                        eprintln!("  [{}] {} ({} msgs, {}){}", nid.0, title, msg_count, &created[..10.min(created.len())], marker);
+                        let marker = if *nid == cdb.current_conv_id {
+                            " ←"
+                        } else {
+                            ""
+                        };
+                        eprintln!(
+                            "  [{}] {} ({} msgs, {}){}",
+                            nid.0,
+                            title,
+                            msg_count,
+                            &created[..10.min(created.len())],
+                            marker
+                        );
                     }
                 }
             } else {
@@ -1250,7 +1515,10 @@ fn main() -> Result<()> {
                 } else {
                     eprintln!("  Persistent facts ({}):", active.len());
                     for (nid, key, value, turn, _, confidence, energy, fact_type) in &active {
-                        eprintln!("    [{fact_type}] {key} = {value} (turn {turn}, conf={confidence:.2}, energy={energy:.2}, id={})", nid.0);
+                        eprintln!(
+                            "    [{fact_type}] {key} = {value} (turn {turn}, conf={confidence:.2}, energy={energy:.2}, id={})",
+                            nid.0
+                        );
                     }
                 }
             } else {
@@ -1272,21 +1540,25 @@ fn main() -> Result<()> {
             continue;
         }
         if line == "/kv" {
-            debug!("  KV: {} nodes, {} tokens, hit_rate={:.0}% (hits={}, misses={}, queries={})",
-                registry.nodes.len(), registry.next_pos,
+            debug!(
+                "  KV: {} nodes, {} tokens, hit_rate={:.0}% (hits={}, misses={}, queries={})",
+                registry.nodes.len(),
+                registry.next_pos,
                 registry.metrics.hit_rate() * 100.0,
-                registry.metrics.cache_hits, registry.metrics.cache_misses,
-                registry.metrics.total_queries);
+                registry.metrics.cache_hits,
+                registry.metrics.cache_misses,
+                registry.metrics.total_queries
+            );
             eprintln!("  Loaded nodes ({}):", registry.order.len());
             for nid in registry.order.iter().take(20) {
                 let (label, name) = if let (Some(st), Some(sch)) = (&store, &schema) {
-                    let label: Option<String> = st.get_node(*nid)
-                        .and_then(|n| n.labels.first().map(|l| {
+                    let label: Option<String> = st.get_node(*nid).and_then(|n| {
+                        n.labels.first().map(|l| {
                             let s: &str = l.as_ref();
                             s.to_string()
-                        }));
-                    let dp = label.as_deref()
-                        .and_then(|l| sch.display_props.get(l));
+                        })
+                    });
+                    let dp = label.as_deref().and_then(|l| sch.display_props.get(l));
                     let name = get_node_name_generic(st, *nid, dp);
                     (label, name)
                 } else {
@@ -1295,9 +1567,15 @@ fn main() -> Result<()> {
                 let label_str = label.as_deref().unwrap_or("?");
                 let slot = registry.get_slot(*nid);
                 if let Some(s) = slot {
-                    eprintln!("    {} [{}-{}] last_q={} [{}] {}",
-                        nid.0, s.start, s.end, s.last_used, label_str,
-                        if name.is_empty() { "(unnamed)" } else { &name });
+                    eprintln!(
+                        "    {} [{}-{}] last_q={} [{}] {}",
+                        nid.0,
+                        s.start,
+                        s.end,
+                        s.last_used,
+                        label_str,
+                        if name.is_empty() { "(unnamed)" } else { &name }
+                    );
                 }
             }
             if registry.order.len() > 20 {
@@ -1307,7 +1585,9 @@ fn main() -> Result<()> {
         }
 
         // Store user message in conversation DB
-        let user_msg_id = persona_db.as_ref().map(|cdb| cdb.add_message("user", &line));
+        let user_msg_id = persona_db
+            .as_ref()
+            .map(|cdb| cdb.add_message("user", &line));
 
         // T6: Meta queries (identity, memory) bypass graph retrieval
         let meta = is_meta_query(&line);
@@ -1328,22 +1608,29 @@ fn main() -> Result<()> {
             // PersistNet mode: use :Memory nodes
             if let Some(ref pdb) = persona_db {
                 let memories = pdb.active_memories();
-                let new_top5: Vec<String> = memories.iter()
+                let new_top5: Vec<String> = memories
+                    .iter()
                     .take(5)
                     .map(|(nid, _, _)| format!("{}", nid.0))
                     .collect();
                 if new_top5 != prev_header_top5 && !new_top5.is_empty() {
                     let new_header = build_memory_header(store.is_some(), &memories);
                     registry.update_header(&new_header);
-                    registry.full_recompact::<fn(&[f32], &[i32], i32) -> anyhow::Result<usize>>(&engine, None, None);
-                    debug!("  [T6] Header rebuilt: memories changed {:?} → {:?}", prev_header_top5, new_top5);
+                    registry.full_recompact::<fn(&[f32], &[i32], i32) -> anyhow::Result<usize>>(
+                        &engine, None, None,
+                    );
+                    debug!(
+                        "  [T6] Header rebuilt: memories changed {:?} → {:?}",
+                        prev_header_top5, new_top5
+                    );
                     prev_header_top5 = new_top5;
                 }
             }
         } else {
             // Legacy mode: use :Fact nodes with GNN scoring
             let scored = score_persona_facts(&current_facts, &fact_gnn, &persona_db);
-            let new_top5: Vec<String> = scored.iter()
+            let new_top5: Vec<String> = scored
+                .iter()
                 .filter(|(k, _, _)| k != "name")
                 .take(5)
                 .map(|(k, _, _)| k.clone())
@@ -1351,15 +1638,23 @@ fn main() -> Result<()> {
             if new_top5 != prev_header_top5 && !new_top5.is_empty() {
                 let new_header = build_system_header(store.is_some(), &scored);
                 registry.update_header(&new_header);
-                registry.full_recompact::<fn(&[f32], &[i32], i32) -> anyhow::Result<usize>>(&engine, None, None);
-                debug!("  [T6] Header rebuilt: top-5 changed {:?} → {:?}", prev_header_top5, new_top5);
+                registry.full_recompact::<fn(&[f32], &[i32], i32) -> anyhow::Result<usize>>(
+                    &engine, None, None,
+                );
+                debug!(
+                    "  [T6] Header rebuilt: top-5 changed {:?} → {:?}",
+                    prev_header_top5, new_top5
+                );
                 prev_header_top5 = new_top5;
             }
         }
 
         // Ξ(t) T2: Build GNN context for composite E(t) scoring
         let gnn_ctx = if let (Some(gnn), Some(pdb)) = (&fact_gnn, &persona_db) {
-            Some(GnnContext { gnn, persona_store: &*pdb.db.store() })
+            Some(GnnContext {
+                gnn,
+                persona_store: &*pdb.db.store(),
+            })
         } else {
             None
         };
@@ -1369,17 +1664,44 @@ fn main() -> Result<()> {
             round_tracker.as_ref().map(|rt| rt.coactivation().clone());
         let coact_ref = coactivation_snapshot.as_ref();
 
-        let cold_ref: Option<&dyn kv_registry::ColdSearch> = persona_db.as_ref().map(|p| p as &dyn kv_registry::ColdSearch);
-        match query_with_registry(&engine, q_store, q_schema, &mut registry, &mut conv_frags, &banks, &line, max_nodes, token_budget, kv_capacity, &gen_ctl, &OutputMode::Stdout, gnn_ctx.as_ref(), head_router.as_ref(), embd_cache.as_ref(), embd_injection_ratio, round_tracker.as_mut(), coact_ref, cold_ref) {
+        let cold_ref: Option<&dyn kv_registry::ColdSearch> = persona_db
+            .as_ref()
+            .map(|p| p as &dyn kv_registry::ColdSearch);
+        match query_with_registry(
+            &engine,
+            q_store,
+            q_schema,
+            &mut registry,
+            &mut conv_frags,
+            &banks,
+            &line,
+            max_nodes,
+            token_budget,
+            kv_capacity,
+            &gen_ctl,
+            &OutputMode::Stdout,
+            gnn_ctx.as_ref(),
+            head_router.as_ref(),
+            embd_cache.as_ref(),
+            embd_injection_ratio,
+            round_tracker.as_mut(),
+            coact_ref,
+            cold_ref,
+        ) {
             Ok((response, relevant_graph_nodes, avg_entropy, ablation_reward)) => {
                 // Ξ(t) T5: Store entropy signal for next turn's reward computation
                 last_avg_entropy = avg_entropy;
 
                 // Ξ(t) Phase B/B3: Log ablation reward + backward into HeadRouter
                 if let Some(ref abl) = ablation_reward {
-                    eprintln!("  [B3] head_contribution_entropy={:.3}, bank_contributions={:?}",
+                    eprintln!(
+                        "  [B3] head_contribution_entropy={:.3}, bank_contributions={:?}",
                         abl.head_contribution_entropy,
-                        abl.bank_contributions.iter().map(|c| format!("{c:.4}")).collect::<Vec<_>>());
+                        abl.bank_contributions
+                            .iter()
+                            .map(|c| format!("{c:.4}"))
+                            .collect::<Vec<_>>()
+                    );
                     // Backward: update HeadRouter α-weights with per-head reward signal
                     if let Some(ref mut router) = head_router {
                         let visibility = router.forward();
@@ -1403,14 +1725,19 @@ fn main() -> Result<()> {
                 // actual response — Qwen3 sometimes ignores /no_think.
                 if trimmed.is_empty() && !response.is_empty() {
                     let think_content = response
-                        .strip_prefix("<think>").unwrap_or(&response)
-                        .strip_suffix("</think>").unwrap_or(&response)
+                        .strip_prefix("<think>")
+                        .unwrap_or(&response)
+                        .strip_suffix("</think>")
+                        .unwrap_or(&response)
                         .trim();
                     if !think_content.is_empty() {
                         // Show the response that was hidden by ThinkFilter
                         print!("assistant> {}\n\n", think_content);
                         trimmed = think_content.to_string();
-                        debug!("  [think-rescue] Recovered {} chars from think-only response", trimmed.len());
+                        debug!(
+                            "  [think-rescue] Recovered {} chars from think-only response",
+                            trimmed.len()
+                        );
                     } else {
                         eprintln!("  ⚠ Response was completely empty (0 tokens generated)");
                     }
@@ -1418,8 +1745,12 @@ fn main() -> Result<()> {
 
                 // Register Q&A as a concise fragment in the KV cache
                 if let Err(e) = conv_frags.add_turn(
-                    &line, &trimmed, &relevant_graph_nodes,
-                    &mut registry, &engine, kv_capacity,
+                    &line,
+                    &trimmed,
+                    &relevant_graph_nodes,
+                    &mut registry,
+                    &engine,
+                    kv_capacity,
                 ) {
                     eprintln!("  Warning: could not register conv fragment: {e}");
                 }
@@ -1448,8 +1779,10 @@ fn main() -> Result<()> {
                         if let Some(ct_id) = conv_frags.last_node_id() {
                             rd.propagate_reward(pdb, ct_id, interrupt_penalty, &last_used_fact_ids);
                         }
-                        debug!("  [Reward] turn #{}: {:.2} (Ctrl+C interruption — negative signal)",
-                            turn_count, interrupt_penalty);
+                        debug!(
+                            "  [Reward] turn #{}: {:.2} (Ctrl+C interruption — negative signal)",
+                            turn_count, interrupt_penalty
+                        );
                         if let Some(ref mut gnn) = fact_gnn {
                             let store = pdb.db.store();
                             let scores = gnn.forward(
@@ -1461,10 +1794,14 @@ fn main() -> Result<()> {
                             gnn.update(&store, &last_used_fact_ids, &scores, interrupt_penalty);
                         }
                         // PersistNet REINFORCE: interrupt = negative signal for previous persist decision
-                        if let (Some(pnet), Some((proj, prev_score))) = (&mut persist_net, &last_persist_result) {
+                        if let (Some(pnet), Some((proj, prev_score))) =
+                            (&mut persist_net, &last_persist_result)
+                        {
                             pnet.update(proj, *prev_score, interrupt_penalty);
-                            debug!("  [PersistNet] REINFORCE (interrupt): reward={:.2}, score={:.2}, updates={}",
-                                interrupt_penalty, prev_score, pnet.n_updates);
+                            debug!(
+                                "  [PersistNet] REINFORCE (interrupt): reward={:.2}, score={:.2}, updates={}",
+                                interrupt_penalty, prev_score, pnet.n_updates
+                            );
                         }
                         // HeadRouter REINFORCE: interrupt = negative signal
                         if let Some(ref mut router) = head_router {
@@ -1482,16 +1819,33 @@ fn main() -> Result<()> {
                     let signals = rd.compute_reward(
                         &user_tokens,
                         turn_count,
-                        if facts_for_reward.is_empty() { None } else { Some(&facts_for_reward) },
-                        if trimmed.is_empty() { None } else { Some(&trimmed) },
+                        if facts_for_reward.is_empty() {
+                            None
+                        } else {
+                            Some(&facts_for_reward)
+                        },
+                        if trimmed.is_empty() {
+                            None
+                        } else {
+                            Some(&trimmed)
+                        },
                         last_avg_entropy, // Ξ(t) T5: entropy signal from previous turn's generation
                     );
                     let reward = signals.reward;
                     if reward.abs() > 0.01 {
-                        rd.propagate_reward_ex(pdb, prev_ct, reward, &last_used_fact_ids,
-                            Some(signals.factual_signal));
-                        debug!("  [Reward] turn #{}: {:.2} (mask_quality={:.2})",
-                            turn_count - 1, reward, signals.factual_signal);
+                        rd.propagate_reward_ex(
+                            pdb,
+                            prev_ct,
+                            reward,
+                            &last_used_fact_ids,
+                            Some(signals.factual_signal),
+                        );
+                        debug!(
+                            "  [Reward] turn #{}: {:.2} (mask_quality={:.2})",
+                            turn_count - 1,
+                            reward,
+                            signals.factual_signal
+                        );
 
                         // Ξ(t) T4+T5: GNN online update with mask-quality-weighted reward.
                         // The factual_signal measures whether the topology mask guided
@@ -1509,15 +1863,25 @@ fn main() -> Result<()> {
                             // 60% mask quality + 40% composite reward
                             let gnn_reward = 0.6 * signals.factual_signal + 0.4 * reward;
                             gnn.update(&store, &last_used_fact_ids, &scores, gnn_reward);
-                            debug!("  [GNN] update #{}, lr={:.4}, gnn_reward={:.2} (mask={:.2}, composite={:.2})",
-                                gnn.n_updates(), gnn.learning_rate(), gnn_reward, signals.factual_signal, reward);
+                            debug!(
+                                "  [GNN] update #{}, lr={:.4}, gnn_reward={:.2} (mask={:.2}, composite={:.2})",
+                                gnn.n_updates(),
+                                gnn.learning_rate(),
+                                gnn_reward,
+                                signals.factual_signal,
+                                reward
+                            );
                         }
 
                         // Ξ(t) PersistNet REINFORCE: propagate reward to previous persist decision
-                        if let (Some(pnet), Some((proj, prev_score))) = (&mut persist_net, &last_persist_result) {
+                        if let (Some(pnet), Some((proj, prev_score))) =
+                            (&mut persist_net, &last_persist_result)
+                        {
                             pnet.update(proj, *prev_score, reward);
-                            debug!("  [PersistNet] REINFORCE: reward={:.2}, prev_score={:.2}, updates={}",
-                                reward, prev_score, pnet.n_updates);
+                            debug!(
+                                "  [PersistNet] REINFORCE: reward={:.2}, prev_score={:.2}, updates={}",
+                                reward, prev_score, pnet.n_updates
+                            );
                         }
 
                         // Ξ(t) Phase B/B3: HeadRouter REINFORCE update (deferred)
@@ -1525,19 +1889,26 @@ fn main() -> Result<()> {
                         if let Some(ref mut router) = head_router {
                             if let Some(ref abl) = last_ablation_reward {
                                 // B3: per-head reward scaled by user feedback reward
-                                let scaled: Vec<f32> = abl.per_head_rewards.iter()
+                                let scaled: Vec<f32> = abl
+                                    .per_head_rewards
+                                    .iter()
                                     .map(|&r| r * reward.signum()) // scale direction by user reward
                                     .collect();
                                 let visibility = router.forward();
                                 router.backward(&scaled, &visibility);
-                                debug!("  [HeadRouter B3] deferred update #{}, user_reward={:.2}, head_entropy={:.3}",
-                                    router.n_updates, reward, abl.head_contribution_entropy);
+                                debug!(
+                                    "  [HeadRouter B3] deferred update #{}, user_reward={:.2}, head_entropy={:.3}",
+                                    router.n_updates, reward, abl.head_contribution_entropy
+                                );
                             } else {
                                 router.backward_uniform(reward);
                             }
                             if router.n_updates % 10 == 0 && router.n_updates > 0 {
-                                debug!("  [HeadRouter] update #{}, specialization_entropy={:.3}",
-                                    router.n_updates, router.specialization_entropy());
+                                debug!(
+                                    "  [HeadRouter] update #{}, specialization_entropy={:.3}",
+                                    router.n_updates,
+                                    router.specialization_entropy()
+                                );
                             }
                         }
 
@@ -1553,7 +1924,8 @@ fn main() -> Result<()> {
                         // Persist the CORRECTED assistant response when user gives positive feedback.
                         // This closes the main learning gap: PersistNet only persists user messages,
                         // but the correction (assistant's improved answer) is what matters for recall.
-                        if reward > 0.3 && !last_assistant_response.is_empty()
+                        if reward > 0.3
+                            && !last_assistant_response.is_empty()
                             && last_assistant_response.len() > 20
                         {
                             if let Some(pdb2) = &persona_db {
@@ -1563,8 +1935,12 @@ fn main() -> Result<()> {
                                     turn_count.saturating_sub(1),
                                     last_conv_turn_id,
                                 );
-                                debug!("  🧠 Assistant correction persisted (reward={:.2}, id={}, len={})",
-                                    reward, mem_id.0, last_assistant_response.len());
+                                debug!(
+                                    "  🧠 Assistant correction persisted (reward={:.2}, id={}, len={})",
+                                    reward,
+                                    mem_id.0,
+                                    last_assistant_response.len()
+                                );
                             }
                         }
 
@@ -1577,8 +1953,12 @@ fn main() -> Result<()> {
                             if let Some(aid) = last_asst_msg_id {
                                 pdb2.set_message_reward(aid, reward as f64);
                             }
-                            debug!("  [Reward→Message] propagated {:.2} to user={:?}, asst={:?}",
-                                reward, last_user_msg_id.map(|n| n.0), last_asst_msg_id.map(|n| n.0));
+                            debug!(
+                                "  [Reward→Message] propagated {:.2} to user={:?}, asst={:?}",
+                                reward,
+                                last_user_msg_id.map(|n| n.0),
+                                last_asst_msg_id.map(|n| n.0)
+                            );
                         }
                     }
                 }
@@ -1615,11 +1995,17 @@ fn main() -> Result<()> {
                             let (score, proj) = pnet.forward(&hash_emb);
                             pnet.update(&proj, score, -0.3); // moderate negative signal
                             pdb.deactivate_memory(*mem_id);
-                            debug!("  [PersistNet] Stale memory deactivated: id={}, text='{}'",
-                                mem_id.0, text.chars().take(50).collect::<String>());
+                            debug!(
+                                "  [PersistNet] Stale memory deactivated: id={}, text='{}'",
+                                mem_id.0,
+                                text.chars().take(50).collect::<String>()
+                            );
                         }
                         if !stale.is_empty() {
-                            debug!("  [PersistNet] Audited: {} stale memories deactivated", stale.len());
+                            debug!(
+                                "  [PersistNet] Audited: {} stale memories deactivated",
+                                stale.len()
+                            );
                         }
                     }
                 }
@@ -1650,21 +2036,46 @@ fn main() -> Result<()> {
                     // Ξ(t) Phase B/B3: Persist per-head ablation reward on ConvTurn
                     if let Some(ref abl) = ablation_reward {
                         // Store per_head_rewards as JSON string (JSONB-like property)
-                        let rewards_json = format!("[{}]",
-                            abl.per_head_rewards.iter().map(|r| format!("{r:.6}")).collect::<Vec<_>>().join(","));
-                        pdb.db.set_node_property(ct_id, "mask_reward_per_head",
-                            Value::String(rewards_json.into()));
-                        pdb.db.set_node_property(ct_id, "head_contribution_entropy",
-                            Value::Float64(abl.head_contribution_entropy as f64));
+                        let rewards_json = format!(
+                            "[{}]",
+                            abl.per_head_rewards
+                                .iter()
+                                .map(|r| format!("{r:.6}"))
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        );
+                        pdb.db.set_node_property(
+                            ct_id,
+                            "mask_reward_per_head",
+                            Value::String(rewards_json.into()),
+                        );
+                        pdb.db.set_node_property(
+                            ct_id,
+                            "head_contribution_entropy",
+                            Value::Float64(abl.head_contribution_entropy as f64),
+                        );
                         // Also store bank_contributions for retrospective analysis
-                        let banks_json = format!("[{}]",
-                            abl.bank_contributions.iter().map(|c| format!("{c:.6}")).collect::<Vec<_>>().join(","));
-                        pdb.db.set_node_property(ct_id, "bank_contributions",
-                            Value::String(banks_json.into()));
+                        let banks_json = format!(
+                            "[{}]",
+                            abl.bank_contributions
+                                .iter()
+                                .map(|c| format!("{c:.6}"))
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        );
+                        pdb.db.set_node_property(
+                            ct_id,
+                            "bank_contributions",
+                            Value::String(banks_json.into()),
+                        );
                     }
 
-                    debug!("  [Ξ] ConvTurn #{} created, {} facts USED_IN, {} graph MENTIONS",
-                        turn_count, used_fact_ids.len(), relevant_graph_nodes.len());
+                    debug!(
+                        "  [Ξ] ConvTurn #{} created, {} facts USED_IN, {} graph MENTIONS",
+                        turn_count,
+                        used_fact_ids.len(),
+                        relevant_graph_nodes.len()
+                    );
 
                     last_used_fact_ids = used_fact_ids;
                     Some(ct_id)
@@ -1691,7 +2102,10 @@ fn main() -> Result<()> {
 
                     if pnet.should_persist(persist_score) {
                         let mem_id = pdb.add_memory(&line, persist_score, turn_count, conv_turn_id);
-                        eprintln!("  🧠 Memory persisted (score={:.2}, id={})", persist_score, mem_id.0);
+                        eprintln!(
+                            "  🧠 Memory persisted (score={:.2}, id={})",
+                            persist_score, mem_id.0
+                        );
 
                         // Update header with memories
                         let memories = pdb.active_memories();
@@ -1699,7 +2113,10 @@ fn main() -> Result<()> {
                         registry.update_header(&memory_header);
                         debug!("  Header updated with {} memories", memories.len());
                     } else {
-                        debug!("  [PersistNet] skip (score={:.2} < threshold)", persist_score);
+                        debug!(
+                            "  [PersistNet] skip (score={:.2} < threshold)",
+                            persist_score
+                        );
                     }
 
                     last_persist_result = Some((projected, persist_score));
@@ -1710,13 +2127,20 @@ fn main() -> Result<()> {
                         for m in &matches {
                             let fact_id = pdb.add_fact(&m.key, &m.value, turn_count, conv_turn_id);
                             pdb.db.create_edge(m.pattern_nid, fact_id, "EXTRACTS");
-                            eprintln!("  💾 Fact stored: {} = {} (pattern={})", m.key, m.value, m.pattern_nid.0);
+                            eprintln!(
+                                "  💾 Fact stored: {} = {} (pattern={})",
+                                m.key, m.value, m.pattern_nid.0
+                            );
                         }
                         current_facts = pdb.active_facts();
                         let scored = score_persona_facts(&current_facts, &fact_gnn, &persona_db);
                         let new_header = build_system_header(store.is_some(), &scored);
                         registry.update_header(&new_header);
-                        debug!("  Header updated with {} facts ({} scored)", current_facts.len(), scored.len());
+                        debug!(
+                            "  Header updated with {} facts ({} scored)",
+                            current_facts.len(),
+                            scored.len()
+                        );
                     }
                 } else {
                     // No PersonaDB — use legacy hardcoded detection
@@ -1743,7 +2167,7 @@ fn main() -> Result<()> {
                         pdb.gc_persona_graph(turn_count);
                     }
                 }
-            },
+            }
             Err(e) => eprintln!("  Error: {e}\n"),
         }
     }
@@ -1751,56 +2175,102 @@ fn main() -> Result<()> {
     // Ξ(t) T4: Save GNN weights at session end
     if let (Some(gnn), Some(pdb)) = (&fact_gnn, &persona_db) {
         gnn.save_weights(&pdb.db);
-        debug!("  [GNN] Weights saved at session end ({} updates)", gnn.n_updates());
+        debug!(
+            "  [GNN] Weights saved at session end ({} updates)",
+            gnn.n_updates()
+        );
     }
 
     // Save ProjectionNet weights at session end (Phase C)
     if let (Some(tmgr), Some(pnet)) = (&training_manager, &projection_net) {
         tmgr.save_weights(pnet);
-        debug!("  [ProjectionNet] Weights saved at session end ({} updates, {} samples)",
-            pnet.n_updates(), tmgr.n_samples());
+        debug!(
+            "  [ProjectionNet] Weights saved at session end ({} updates, {} samples)",
+            pnet.n_updates(),
+            tmgr.n_samples()
+        );
     }
 
     // Save PersistNet weights at session end
     if let (Some(pnet), Some(pdb)) = (&persist_net, &persona_db) {
         pnet.save_weights(&pdb.db);
-        debug!("  [PersistNet] Weights saved ({} updates, {} turns)", pnet.n_updates, pnet.total_turns);
+        debug!(
+            "  [PersistNet] Weights saved ({} updates, {} turns)",
+            pnet.n_updates, pnet.total_turns
+        );
     }
 
     // Ξ(t) T3.6: Contextual end-of-session signal
     if let (Some(pdb), Some(prev_ct)) = (&persona_db, last_conv_turn_id) {
         let store = pdb.db.store();
-        let last_reward = store.get_node(prev_ct)
-            .and_then(|n| n.properties.get(&PropertyKey::from("reward"))
-                .and_then(|v| if let Value::Float64(f) = v { Some(*f as f32) } else { None }))
+        let last_reward = store
+            .get_node(prev_ct)
+            .and_then(|n| {
+                n.properties
+                    .get(&PropertyKey::from("reward"))
+                    .and_then(|v| {
+                        if let Value::Float64(f) = v {
+                            Some(*f as f32)
+                        } else {
+                            None
+                        }
+                    })
+            })
             .unwrap_or(0.0);
 
         if last_reward > 0.3 {
             // Session ended on a satisfied note — bonus to recent facts
-            debug!("  [Session] ended: satisfied (last_reward={:.2}, turns={})", last_reward, turn_count);
+            debug!(
+                "  [Session] ended: satisfied (last_reward={:.2}, turns={})",
+                last_reward, turn_count
+            );
             for &fid in &last_used_fact_ids {
                 if let Some(node) = store.get_node(fid) {
-                    let energy = node.properties.get(&PropertyKey::from("energy"))
-                        .and_then(|v| if let Value::Float64(f) = v { Some(*f) } else { None })
+                    let energy = node
+                        .properties
+                        .get(&PropertyKey::from("energy"))
+                        .and_then(|v| {
+                            if let Value::Float64(f) = v {
+                                Some(*f)
+                            } else {
+                                None
+                            }
+                        })
                         .unwrap_or(1.0);
                     let new_energy = (energy + 0.1).min(2.0);
-                    pdb.db.set_node_property(fid, "energy", Value::Float64(new_energy));
+                    pdb.db
+                        .set_node_property(fid, "energy", Value::Float64(new_energy));
                 }
             }
         } else if last_reward < -0.2 {
             // Session ended frustrated — penalty on last turn's facts
-            debug!("  [Session] ended: frustrated (last_reward={:.2}, turns={})", last_reward, turn_count);
+            debug!(
+                "  [Session] ended: frustrated (last_reward={:.2}, turns={})",
+                last_reward, turn_count
+            );
             for &fid in &last_used_fact_ids {
                 if let Some(node) = store.get_node(fid) {
-                    let energy = node.properties.get(&PropertyKey::from("energy"))
-                        .and_then(|v| if let Value::Float64(f) = v { Some(*f) } else { None })
+                    let energy = node
+                        .properties
+                        .get(&PropertyKey::from("energy"))
+                        .and_then(|v| {
+                            if let Value::Float64(f) = v {
+                                Some(*f)
+                            } else {
+                                None
+                            }
+                        })
                         .unwrap_or(1.0);
                     let new_energy = (energy - 0.2).max(0.0);
-                    pdb.db.set_node_property(fid, "energy", Value::Float64(new_energy));
+                    pdb.db
+                        .set_node_property(fid, "energy", Value::Float64(new_energy));
                 }
             }
         } else {
-            debug!("  [Session] ended: neutral (last_reward={:.2}, turns={})", last_reward, turn_count);
+            debug!(
+                "  [Session] ended: neutral (last_reward={:.2}, turns={})",
+                last_reward, turn_count
+            );
         }
     }
 
@@ -1808,5 +2278,3 @@ fn main() -> Result<()> {
     eprintln!("Bye!");
     Ok(())
 }
-
-
