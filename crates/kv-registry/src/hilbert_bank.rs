@@ -306,6 +306,83 @@ impl BankManager {
             .filter_map(|nid| self.node_to_bank.get(nid).copied())
             .collect()
     }
+
+    /// E5: Re-segment banks from new communities (e.g., after Hilbert re-layout).
+    ///
+    /// Nodes currently loaded in the KV cache (`loaded_nodes`) keep their bank
+    /// assignment until they are evicted. Only unloaded nodes migrate to their
+    /// new community-based bank.
+    ///
+    /// Returns the number of nodes that changed bank assignment.
+    pub fn resegment(
+        &mut self,
+        new_layout: &HilbertLayout,
+        new_communities: &HashMap<NodeId, usize>,
+        loaded_nodes: &HashSet<NodeId>,
+    ) -> usize {
+        // Build the new bank structure from new communities
+        let new_mgr = Self::from_communities(new_layout, new_communities);
+
+        // Track which loaded nodes stay in their original bank
+        let mut migrated = 0usize;
+
+        // For each node, decide: keep old assignment (if loaded) or use new
+        let mut final_node_to_bank = HashMap::new();
+
+        for (&nid, &new_bank_idx) in &new_mgr.node_to_bank {
+            if loaded_nodes.contains(&nid) {
+                // Keep old assignment if it exists
+                if let Some(&old_bank_idx) = self.node_to_bank.get(&nid) {
+                    final_node_to_bank.insert(nid, old_bank_idx);
+                    continue;
+                }
+            }
+            // Use new assignment
+            if self.node_to_bank.get(&nid) != Some(&new_bank_idx) {
+                migrated += 1;
+            }
+            final_node_to_bank.insert(nid, new_bank_idx);
+        }
+
+        // Replace banks with new structure, preserving loaded status for banks
+        // that still exist (same index, same name)
+        let old_loaded: HashMap<String, (bool, f32, u32)> = self.banks.iter()
+            .map(|b| (b.name.clone(), (b.loaded, b.importance, b.activation_count)))
+            .collect();
+
+        self.banks = new_mgr.banks;
+        self.node_to_bank = final_node_to_bank;
+
+        // Restore loaded status for banks that match by name
+        for bank in &mut self.banks {
+            if let Some(&(loaded, importance, activation_count)) = old_loaded.get(&bank.name) {
+                bank.loaded = loaded;
+                bank.importance = importance;
+                bank.activation_count = activation_count;
+            }
+        }
+
+        // Rebuild node_ids in each bank from the final assignment
+        for bank in &mut self.banks {
+            bank.node_ids.clear();
+        }
+        for (&nid, &bank_idx) in &self.node_to_bank {
+            if let Some(bank) = self.banks.get_mut(bank_idx) {
+                bank.node_ids.push(nid);
+            }
+        }
+        // Sort node_ids within each bank for determinism
+        for bank in &mut self.banks {
+            bank.node_ids.sort_by_key(|n| n.0);
+        }
+
+        if migrated > 0 {
+            eprintln!("  [E5] bank resegment: {} nodes migrated, {} banks",
+                migrated, self.banks.len());
+        }
+
+        migrated
+    }
 }
 
 #[cfg(test)]
@@ -410,6 +487,35 @@ mod tests {
         assert!(relevant.contains(&0));
         assert!(relevant.contains(&1));
         assert!(relevant.contains(&2));
+    }
+
+    #[test]
+    fn test_resegment_preserves_loaded() {
+        let (layout, communities) = make_test_layout();
+        let mut mgr = BankManager::from_communities(&layout, &communities);
+
+        // Mark bank 0 as loaded
+        mgr.banks[0].loaded = true;
+        mgr.banks[0].importance = 0.9;
+
+        // Loaded nodes = bank 0's nodes
+        let loaded: HashSet<NodeId> = mgr.banks[0].node_ids.iter().copied().collect();
+
+        // New communities: shift node 3 from community 1 → community 0
+        let mut new_communities = communities.clone();
+        new_communities.insert(NodeId(3), 0);
+
+        // Resegment
+        let migrated = mgr.resegment(&layout, &new_communities, &loaded);
+
+        // Loaded nodes (bank 0) should keep their bank assignment
+        for &nid in &loaded {
+            assert_eq!(mgr.bank_for_node(nid), Some(0),
+                "Loaded node {:?} should stay in bank 0", nid);
+        }
+
+        // Node 3 was unloaded → should have migrated
+        assert!(migrated > 0, "At least one node should have migrated");
     }
 
     #[test]

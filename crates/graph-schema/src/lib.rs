@@ -7,6 +7,17 @@ use obrain_core::graph::{Direction, lpg::LpgStore};
 use std::collections::{HashMap, HashSet};
 use think_filter::truncate;
 
+/// Controls how much property detail is rendered for a node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextBudget {
+    /// All non-internal properties (for scoring and Alpha tier).
+    Full,
+    /// Name + top 3 properties (for Beta tier).
+    Compact,
+    /// Name only (for Gamma tier labels).
+    Minimal,
+}
+
 /// Display properties discovered for a label.
 #[derive(Debug, Clone)]
 pub struct DisplayProps {
@@ -306,7 +317,70 @@ pub fn get_node_name_generic(store: &LpgStore, node_id: NodeId, props: Option<&D
         .unwrap_or_default()
 }
 
+/// Backward-compatible wrapper: extracts node text with [`TextBudget::Full`].
 pub fn extract_node_generic(store: &LpgStore, node_id: NodeId, schema: &GraphSchema) -> (String, String, String) {
+    extract_node_with_budget(store, node_id, schema, TextBudget::Full)
+}
+
+/// Returns true if `key` is an internal/infrastructure property that should be
+/// excluded from user-facing rendering.
+fn is_internal_key(key: &str) -> bool {
+    matches!(key, "id" | "hash" | "project_id" | "workspace_id")
+        || key.starts_with("embedding_")
+        || key.starts_with("cc_")
+        || key.ends_with("_fingerprint")
+        || key.ends_with("_dna")
+}
+
+/// Collect non-internal, non-name/desc properties, sorted alphabetically.
+/// Each value is truncated to 50 chars. Returns at most `limit` entries
+/// (0 = unlimited).
+fn collect_extra_props(
+    node: &obrain_core::graph::lpg::Node,
+    name_key: Option<&str>,
+    desc_key: Option<&str>,
+    limit: usize,
+) -> Vec<(String, String)> {
+    let mut props: Vec<(String, String)> = Vec::new();
+    for (key, val) in node.properties.iter() {
+        let ks: &str = key.as_ref();
+        if is_internal_key(ks) { continue; }
+        // Skip name and description keys (already rendered separately)
+        if let Some(nk) = name_key { if ks == nk { continue; } }
+        if let Some(dk) = desc_key { if ks == dk { continue; } }
+        // Also skip the common fallback keys that might have been used as name/desc
+        if matches!(ks, "name" | "title" | "label" | "description" | "content"
+                      | "text" | "message" | "body" | "rationale" | "summary"
+                      | "status" | "state" | "phase" | "path" | "display_name") {
+            continue;
+        }
+        // Prefer the raw string value (no quotes); fall back to Display for non-strings.
+        let raw = match val.as_str() {
+            Some(s) => s.to_string(),
+            None => {
+                let d = val.to_string();
+                if d == "NULL" { continue; }
+                d
+            }
+        };
+        if raw.is_empty() { continue; }
+        let val_str = truncate(&raw, 50);
+        props.push((ks.to_string(), val_str));
+    }
+    props.sort_by(|a, b| a.0.cmp(&b.0));
+    if limit > 0 && props.len() > limit {
+        props.truncate(limit);
+    }
+    props
+}
+
+/// Extract node text with a specific [`TextBudget`].
+pub fn extract_node_with_budget(
+    store: &LpgStore,
+    node_id: NodeId,
+    schema: &GraphSchema,
+    budget: TextBudget,
+) -> (String, String, String) {
     let empty = (String::new(), String::new(), String::new());
     let node = match store.get_node(node_id) {
         Some(n) => n,
@@ -318,43 +392,70 @@ pub fn extract_node_generic(store: &LpgStore, node_id: NodeId, schema: &GraphSch
     let dp = schema.display_props.get(&primary_label);
 
     // Name
-    let name = if let Some(dp) = dp {
+    let (name, name_key_used) = if let Some(dp) = dp {
         if let Some(ref field) = dp.name_field {
-            node.properties.get(&PropertyKey::from(field.as_str()))
+            let val = node.properties.get(&PropertyKey::from(field.as_str()))
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .map(|s| truncate(s, 80))
-                .unwrap_or_default()
-        } else { String::new() }
+                .unwrap_or_default();
+            (val, Some(field.as_str()))
+        } else { (String::new(), None) }
     } else {
-        ["name", "title"].iter()
-            .filter_map(|&k| node.properties.get(&PropertyKey::from(k))
+        let mut found = None;
+        for &k in &["name", "title"] {
+            if let Some(v) = node.properties.get(&PropertyKey::from(k))
                 .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty()))
-            .next()
-            .map(|s| truncate(s, 80))
-            .unwrap_or_default()
+                .filter(|s| !s.is_empty())
+            {
+                found = Some((truncate(v, 80), k));
+                break;
+            }
+        }
+        match found {
+            Some((val, key)) => (val, Some(key)),
+            None => (String::new(), None),
+        }
     };
 
+    // For Minimal budget, return just [Labels] Name
+    if budget == TextBudget::Minimal {
+        let summary = name.clone();
+        if name.is_empty() {
+            return empty;
+        }
+        let text = format!("[{}] {}", labels, name);
+        return (text, labels, summary);
+    }
+
     // Description
-    let desc = {
-        let raw_desc = if let Some(dp) = dp {
+    let (desc, desc_key_used) = {
+        let (raw_desc, dk) = if let Some(dp) = dp {
             if let Some(ref field) = dp.desc_field {
-                node.properties.get(&PropertyKey::from(field.as_str()))
+                let v = node.properties.get(&PropertyKey::from(field.as_str()))
                     .and_then(|v| v.as_str())
                     .filter(|s| !s.is_empty() && s != &name)
-                    .unwrap_or("")
-            } else { "" }
+                    .unwrap_or("");
+                (v, Some(field.as_str()))
+            } else { ("", None) }
         } else {
-            ["description", "content", "text", "message", "body", "rationale"].iter()
-                .filter_map(|&k| node.properties.get(&PropertyKey::from(k))
+            let mut found = None;
+            for &k in &["description", "content", "text", "message", "body", "rationale"] {
+                if let Some(v) = node.properties.get(&PropertyKey::from(k))
                     .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty() && s != &name))
-                .next()
-                .unwrap_or("")
+                    .filter(|s| !s.is_empty() && s != &name)
+                {
+                    found = Some((v, k));
+                    break;
+                }
+            }
+            match found {
+                Some((v, k)) => (v, Some(k)),
+                None => ("", None),
+            }
         };
         if raw_desc.is_empty() {
-            String::new()
+            (String::new(), dk)
         } else {
             let mut out = String::new();
             for line in raw_desc.lines() {
@@ -364,7 +465,7 @@ pub fn extract_node_generic(store: &LpgStore, node_id: NodeId, schema: &GraphSch
                 out.push_str(trimmed);
                 if out.len() >= 500 { break; }
             }
-            truncate(&out, 500)
+            (truncate(&out, 500), dk)
         }
     };
 
@@ -388,9 +489,7 @@ pub fn extract_node_generic(store: &LpgStore, node_id: NodeId, schema: &GraphSch
         for (key, val) in node.properties.iter() {
             if let Some(s) = val.as_str() {
                 let ks = key.as_ref() as &str;
-                if ks.starts_with("cc_") || ks == "hash" || ks == "embedding_model"
-                    || ks.ends_with("_fingerprint") || ks.ends_with("_dna")
-                    || ks == "project_id" || ks == "workspace_id" || ks == "id" { continue; }
+                if is_internal_key(ks) || ks == "embedding_model" { continue; }
                 if !s.is_empty() && s.len() > 2 && s.len() < 500 {
                     let text = format!("[{}] {}: {}", labels, ks, truncate(s, 150));
                     return (text, labels, truncate(s, 60));
@@ -400,17 +499,199 @@ pub fn extract_node_generic(store: &LpgStore, node_id: NodeId, schema: &GraphSch
         return empty;
     }
 
+    // Collect extra properties for Full/Compact budgets
+    let prop_limit = match budget {
+        TextBudget::Full => 0,     // unlimited
+        TextBudget::Compact => 3,
+        TextBudget::Minimal => 0,  // unreachable, handled above
+    };
+    let extra = collect_extra_props(&node, name_key_used, desc_key_used, prop_limit);
+    let props_suffix = if extra.is_empty() {
+        String::new()
+    } else {
+        let parts: Vec<String> = extra.iter()
+            .map(|(k, v)| format!("{}: {}", k, v))
+            .collect();
+        format!(" | {}", parts.join(" | "))
+    };
+
     let text = if !desc.is_empty() {
         if !status.is_empty() {
-            format!("[{}] {} — {} ({})", labels, name, desc, status)
+            format!("[{}] {} — {} ({}){}", labels, name, desc, status, props_suffix)
         } else {
-            format!("[{}] {} — {}", labels, name, desc)
+            format!("[{}] {} — {}{}", labels, name, desc, props_suffix)
         }
     } else if !status.is_empty() {
-        format!("[{}] {} ({})", labels, name, status)
+        format!("[{}] {} ({}){}", labels, name, status, props_suffix)
+    } else if !props_suffix.is_empty() {
+        format!("[{}] {}{}", labels, name, props_suffix)
     } else {
         format!("[{}] {}", labels, name)
     };
 
     (text, labels, summary)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use obrain_common::types::Value;
+
+    /// Helper: create a store with a single node that has the given properties.
+    /// Returns (store, node_id).
+    fn make_store_with_node(label: &str, props: &[(&str, &str)]) -> (LpgStore, NodeId) {
+        let store = LpgStore::new().expect("store");
+        let nid = store.create_node(&[label]);
+        for &(k, v) in props {
+            store.set_node_property(nid, k, Value::String(v.into()));
+        }
+        (store, nid)
+    }
+
+    #[test]
+    fn full_budget_renders_all_non_internal_props() {
+        let (store, nid) = make_store_with_node("Task", &[
+            ("name", "Fix login bug"),
+            ("description", "Users cannot log in"),
+            ("priority", "high"),
+            ("assigned_to", "alice"),
+            ("due_date", "2026-04-01"),
+            ("category", "backend"),
+            ("severity", "critical"),
+            ("sprint", "S42"),
+            // internal keys that must be excluded
+            ("id", "12345"),
+            ("hash", "abc123"),
+            ("cc_version", "3"),
+        ]);
+        let schema = discover_schema(&store);
+        let (text, _labels, _summary) = extract_node_with_budget(&store, nid, &schema, TextBudget::Full);
+
+        // Should contain extra props alphabetically
+        assert!(text.contains("assigned_to: alice"), "missing assigned_to: {text}");
+        assert!(text.contains("category: backend"), "missing category: {text}");
+        assert!(text.contains("due_date: 2026-04-01"), "missing due_date: {text}");
+        assert!(text.contains("priority: high"), "missing priority: {text}");
+        assert!(text.contains("severity: critical"), "missing severity: {text}");
+        assert!(text.contains("sprint: S42"), "missing sprint: {text}");
+
+        // Internal keys must NOT appear
+        assert!(!text.contains("id: 12345"), "internal id leaked: {text}");
+        assert!(!text.contains("hash: abc123"), "internal hash leaked: {text}");
+        assert!(!text.contains("cc_version"), "internal cc_ leaked: {text}");
+    }
+
+    #[test]
+    fn compact_budget_renders_only_3_props() {
+        let (store, nid) = make_store_with_node("Task", &[
+            ("name", "Fix login bug"),
+            ("description", "Users cannot log in"),
+            ("priority", "high"),
+            ("assigned_to", "alice"),
+            ("due_date", "2026-04-01"),
+            ("category", "backend"),
+            ("severity", "critical"),
+            ("sprint", "S42"),
+        ]);
+        let schema = discover_schema(&store);
+        let (text, _, _) = extract_node_with_budget(&store, nid, &schema, TextBudget::Compact);
+
+        // Count pipes: [Labels] Name — Desc | p1 | p2 | p3
+        // The description separator uses " — " not " | "
+        // Extra props are separated by " | " — there should be exactly 3 extra
+        let after_desc = text.splitn(2, " — ").nth(1).unwrap_or("");
+        let pipe_count = after_desc.matches(" | ").count();
+        assert_eq!(pipe_count, 3, "compact should have exactly 3 extra props, got {pipe_count}: {text}");
+
+        // First 3 alphabetically: assigned_to, category, due_date
+        assert!(text.contains("assigned_to: alice"), "missing 1st: {text}");
+        assert!(text.contains("category: backend"), "missing 2nd: {text}");
+        assert!(text.contains("due_date: 2026-04-01"), "missing 3rd: {text}");
+        // 4th+ should not appear
+        assert!(!text.contains("priority:"), "4th prop leaked: {text}");
+        assert!(!text.contains("severity:"), "5th prop leaked: {text}");
+    }
+
+    #[test]
+    fn minimal_budget_renders_only_name() {
+        let (store, nid) = make_store_with_node("Task", &[
+            ("name", "Fix login bug"),
+            ("description", "Users cannot log in"),
+            ("priority", "high"),
+            ("assigned_to", "alice"),
+        ]);
+        let schema = discover_schema(&store);
+        let (text, labels, _) = extract_node_with_budget(&store, nid, &schema, TextBudget::Minimal);
+
+        assert_eq!(text, format!("[{}] Fix login bug", labels));
+        assert!(!text.contains("Users cannot log in"), "desc in minimal: {text}");
+        assert!(!text.contains("priority"), "props in minimal: {text}");
+    }
+
+    #[test]
+    fn internal_keys_are_excluded() {
+        let (store, nid) = make_store_with_node("Item", &[
+            ("name", "Test item"),
+            ("id", "id-001"),
+            ("hash", "deadbeef"),
+            ("embedding_ada", "vector-data"),
+            ("cc_score", "0.9"),
+            ("content_fingerprint", "fp123"),
+            ("graph_dna", "dna-abc"),
+            ("project_id", "proj-1"),
+            ("workspace_id", "ws-1"),
+            ("visible_prop", "yes"),
+        ]);
+        let schema = discover_schema(&store);
+        let (text, _, _) = extract_node_with_budget(&store, nid, &schema, TextBudget::Full);
+
+        assert!(text.contains("visible_prop: yes"), "visible prop missing: {text}");
+        assert!(!text.contains("id-001"), "id leaked: {text}");
+        assert!(!text.contains("deadbeef"), "hash leaked: {text}");
+        assert!(!text.contains("vector-data"), "embedding_ leaked: {text}");
+        assert!(!text.contains("cc_score"), "cc_ leaked: {text}");
+        assert!(!text.contains("fp123"), "fingerprint leaked: {text}");
+        assert!(!text.contains("dna-abc"), "_dna leaked: {text}");
+        assert!(!text.contains("proj-1"), "project_id leaked: {text}");
+        assert!(!text.contains("ws-1"), "workspace_id leaked: {text}");
+    }
+
+    #[test]
+    fn long_property_values_are_truncated_at_50_chars() {
+        let long_val = "a".repeat(80);
+        let (store, nid) = make_store_with_node("Doc", &[
+            ("name", "My Document"),
+            ("long_field", &long_val),
+        ]);
+        let schema = discover_schema(&store);
+        let (text, _, _) = extract_node_with_budget(&store, nid, &schema, TextBudget::Full);
+
+        // The truncated value should be at most 50 chars + "..."
+        if let Some(idx) = text.find("long_field: ") {
+            let after = &text[idx + "long_field: ".len()..];
+            let val_end = after.find(" | ").unwrap_or(after.len());
+            let rendered_val = &after[..val_end];
+            assert!(rendered_val.chars().count() <= 53, // 50 + "..." (3 chars)
+                "value not truncated: len={}, val='{rendered_val}'", rendered_val.chars().count());
+            assert!(rendered_val.contains("..."), "no truncation marker: {rendered_val}");
+        } else {
+            panic!("long_field not found in output: {text}");
+        }
+    }
+
+    #[test]
+    fn backward_compat_wrapper_uses_full_budget() {
+        let (store, nid) = make_store_with_node("Task", &[
+            ("name", "Test"),
+            ("visible_prop", "yes"),
+        ]);
+        let schema = discover_schema(&store);
+        let via_wrapper = extract_node_generic(&store, nid, &schema);
+        let via_explicit = extract_node_with_budget(&store, nid, &schema, TextBudget::Full);
+        assert_eq!(via_wrapper, via_explicit);
+    }
 }

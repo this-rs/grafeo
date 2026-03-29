@@ -299,6 +299,8 @@ impl ActorHandle {
             None, // head_router — server path, no HeadRouter yet
             None, // embd_cache — server path, no embedding cache yet
             0.0,  // embd_injection_ratio — disabled
+            None, // round_tracker — server path, no Phase D yet
+            None, // coactivation — server path, no E3 yet
         )?;
 
         let clean = strip_think_tags(&raw_response);

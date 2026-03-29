@@ -15,7 +15,8 @@ use crate::control::{GenerationControl, OutputMode, Spinner};
 use crate::node_embedding::{NodeEmbeddingCache, compute_text_embedding};
 use crate::scoring::{retrieve_nodes, get_micro_tag};
 use crate::generation::{generate_with_mask, compute_ablation_reward, AblationReward};
-use crate::round_tracker::{RoundTracker, DemotionType};
+use crate::round_tracker::{RoundTracker, DemotionType, CoactivationMap};
+use kv_registry::{HilbertLayout, build_fused_adjacency};
 
 /// Optional GNN scoring context for composite E(t) decision.
 pub struct GnnContext<'a> {
@@ -41,6 +42,7 @@ pub fn query_with_registry(
     embd_cache: Option<&NodeEmbeddingCache>,
     embd_injection_ratio: f32,
     mut round_tracker: Option<&mut RoundTracker>,
+    coactivation: Option<&CoactivationMap>,
 ) -> Result<(String, Vec<NodeId>, Option<f32>, Option<AblationReward>)> {
     registry.begin_query();
     let t_start = Instant::now();
@@ -82,7 +84,7 @@ pub fn query_with_registry(
     // Run the generic retrieval to get scored nodes (only if graph is loaded)
     let (mut scored_nodes_for_query, adjacency, node_texts) =
         if let (Some(st), Some(sch)) = (store, schema) {
-            retrieve_nodes(engine, st, sch, query, max_nodes, token_budget, embd_cache)?
+            retrieve_nodes(engine, st, sch, query, max_nodes, token_budget, embd_cache, coactivation)?
         } else {
             (Vec::new(), HashMap::new(), HashMap::new())
         };
@@ -523,4 +525,47 @@ pub fn query_with_registry(
     }
 
     Ok((response, relevant_graph_nodes, avg_entropy, ablation))
+}
+
+/// E4: Periodic Hilbert re-layout trigger.
+///
+/// Should be called after each round. Checks if `round_count % relayout_interval == 0`
+/// and if there are co-activations to fuse. If so, recomputes the Hilbert layout
+/// by fusing static graph edges with learned co-activations.
+///
+/// - `frozen_nodes`: nodes currently in the KV cache (keep their positions)
+/// - Returns the number of nodes that got new positions, or 0 if no re-layout needed.
+pub fn maybe_relayout(
+    round_count: u64,
+    relayout_interval: u64,
+    layout: &mut HilbertLayout,
+    db_adjacency: &HashMap<NodeId, std::collections::HashSet<NodeId>>,
+    coactivation: &CoactivationMap,
+    frozen_nodes: &std::collections::HashSet<NodeId>,
+    base_position: u32,
+    beta: f32,
+) -> usize {
+    if relayout_interval == 0 || round_count == 0 || round_count % relayout_interval != 0 {
+        return 0;
+    }
+    if coactivation.is_empty() {
+        return 0;
+    }
+
+    // Convert CoactivationMap to the format expected by build_fused_adjacency
+    let coact_pairs: Vec<((NodeId, NodeId), f32)> = coactivation
+        .iter()
+        .map(|(&pair, entry)| (pair, entry.decay_score))
+        .collect();
+
+    let (weighted_adj, node_ids) = build_fused_adjacency(db_adjacency, &coact_pairs, beta);
+
+    let updated = layout.update_from_fused(&weighted_adj, &node_ids, base_position, frozen_nodes);
+
+    if updated > 0 {
+        eprintln!("  [E4] Hilbert re-layout: {} nodes, {} co-activation edges fused, {} positions updated",
+            node_ids.len(), coact_pairs.len(), updated);
+    }
+
+    updated
 }

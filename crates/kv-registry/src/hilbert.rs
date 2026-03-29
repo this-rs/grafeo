@@ -143,10 +143,89 @@ pub fn optimal_order(n: usize) -> u32 {
     order
 }
 
-// ── HilbertLayout ───────────────────────────────────────────────
+// ── Weighted Adjacency & Fusion (E4) ─────────────────────────────
 
 use obrain_common::types::NodeId;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+/// Weighted adjacency list: for each node, list of (neighbor_idx, weight).
+pub type WeightedAdjacencyList = Vec<Vec<(usize, f64)>>;
+
+/// Build a fused adjacency matrix from static graph edges + co-activation data.
+///
+/// - `db_adjacency`: graph edges from `--db` (read-only), weight = 1.0 each
+/// - `coactivations`: learned co-activation pairs from agent state
+/// - `beta`: relative weight of co-activation edges (e.g., 0.5)
+///
+/// Returns (WeightedAdjacencyList, node_ids) where node_ids maps dense index → NodeId.
+/// With `beta=0` or empty coactivations, the result is equivalent to the static graph.
+pub fn build_fused_adjacency(
+    db_adjacency: &HashMap<NodeId, HashSet<NodeId>>,
+    coactivations: &[((NodeId, NodeId), f32)], // (pair, decay_score)
+    beta: f32,
+) -> (WeightedAdjacencyList, Vec<NodeId>) {
+    // Collect all node IDs from both sources
+    let mut all_nodes: HashSet<NodeId> = HashSet::new();
+    for (&nid, neighbors) in db_adjacency {
+        all_nodes.insert(nid);
+        for &n in neighbors {
+            all_nodes.insert(n);
+        }
+    }
+    for &((a, b), _) in coactivations {
+        all_nodes.insert(a);
+        all_nodes.insert(b);
+    }
+
+    let node_ids: Vec<NodeId> = {
+        let mut v: Vec<NodeId> = all_nodes.into_iter().collect();
+        v.sort_by_key(|n| n.0);
+        v
+    };
+    let id_to_idx: HashMap<NodeId, usize> = node_ids.iter().enumerate()
+        .map(|(i, &nid)| (nid, i))
+        .collect();
+
+    let n = node_ids.len();
+    // Use a map to accumulate weights (since coactivation may overlap with static edges)
+    let mut weight_map: HashMap<(usize, usize), f64> = HashMap::new();
+
+    // Static edges (weight = 1.0)
+    for (&nid, neighbors) in db_adjacency {
+        if let Some(&i) = id_to_idx.get(&nid) {
+            for &neighbor in neighbors {
+                if let Some(&j) = id_to_idx.get(&neighbor) {
+                    if i != j {
+                        *weight_map.entry((i, j)).or_insert(0.0) += 1.0;
+                    }
+                }
+            }
+        }
+    }
+
+    // Co-activation edges (weight = beta * decay_score)
+    if beta > 0.0 {
+        for &((a, b), score) in coactivations {
+            if let (Some(&i), Some(&j)) = (id_to_idx.get(&a), id_to_idx.get(&b)) {
+                if i != j {
+                    let w = beta as f64 * score as f64;
+                    *weight_map.entry((i, j)).or_insert(0.0) += w;
+                    *weight_map.entry((j, i)).or_insert(0.0) += w;
+                }
+            }
+        }
+    }
+
+    // Build adjacency list
+    let mut adj: WeightedAdjacencyList = vec![Vec::new(); n];
+    for (&(i, j), &w) in &weight_map {
+        adj[i].push((j, w));
+    }
+
+    (adj, node_ids)
+}
+
+// ── HilbertLayout ───────────────────────────────────────────────
 
 /// Complete Hilbert layout mapping: NodeId → KV position.
 ///
@@ -216,6 +295,81 @@ impl HilbertLayout {
         Self { positions, order, coords_2d }
     }
 
+    /// Compute a Hilbert layout from a weighted adjacency list (E4).
+    ///
+    /// Same as `compute()` but uses weighted spectral embedding.
+    /// `weighted_adj` and `node_ids` come from `build_fused_adjacency()`.
+    pub fn compute_weighted(
+        weighted_adj: &WeightedAdjacencyList,
+        node_ids: &[NodeId],
+        base_position: u32,
+    ) -> Self {
+        if weighted_adj.is_empty() || node_ids.is_empty() {
+            return Self {
+                positions: HashMap::new(),
+                order: 1,
+                coords_2d: HashMap::new(),
+            };
+        }
+
+        let coords = spectral_embedding_2d_weighted(weighted_adj);
+        let hilbert_positions = assign_hilbert_positions(&coords);
+        let order = optimal_order(node_ids.len());
+
+        let mut positions = HashMap::with_capacity(node_ids.len());
+        let mut coords_2d = HashMap::with_capacity(node_ids.len());
+
+        for (idx, &nid) in node_ids.iter().enumerate() {
+            positions.insert(nid, base_position + hilbert_positions[idx]);
+            coords_2d.insert(nid, coords[idx]);
+        }
+
+        Self { positions, order, coords_2d }
+    }
+
+    /// Non-disruptive re-layout from fused adjacency (E4).
+    ///
+    /// Recomputes positions from the weighted graph, but only updates positions
+    /// for nodes NOT in `frozen_nodes`. Frozen nodes keep their current position.
+    /// This ensures KV cache entries remain valid.
+    ///
+    /// Returns the number of nodes that got new positions.
+    pub fn update_from_fused(
+        &mut self,
+        weighted_adj: &WeightedAdjacencyList,
+        node_ids: &[NodeId],
+        base_position: u32,
+        frozen_nodes: &HashSet<NodeId>,
+    ) -> usize {
+        let new_layout = Self::compute_weighted(weighted_adj, node_ids, base_position);
+        let mut updated = 0;
+
+        for (&nid, &new_pos) in &new_layout.positions {
+            if frozen_nodes.contains(&nid) {
+                continue; // Keep existing position
+            }
+            self.positions.insert(nid, new_pos);
+            if let Some(coords) = new_layout.coords_2d.get(&nid) {
+                self.coords_2d.insert(nid, *coords);
+            }
+            updated += 1;
+        }
+
+        // Add any new nodes not previously in layout
+        for (&nid, &new_pos) in &new_layout.positions {
+            if !self.positions.contains_key(&nid) {
+                self.positions.insert(nid, new_pos);
+                if let Some(coords) = new_layout.coords_2d.get(&nid) {
+                    self.coords_2d.insert(nid, *coords);
+                }
+                updated += 1;
+            }
+        }
+
+        self.order = new_layout.order;
+        updated
+    }
+
     /// Get the KV position for a node.
     pub fn get_position(&self, node_id: NodeId) -> Option<u32> {
         self.positions.get(&node_id).copied()
@@ -262,17 +416,33 @@ pub type AdjacencyList = Vec<Vec<usize>>;
 ///
 /// For disconnected graphs or single-node graphs, returns (0.5, 0.5) for all.
 pub fn spectral_embedding_2d(adjacency: &AdjacencyList) -> Vec<(f32, f32)> {
+    // Convert unweighted → weighted (all edges weight 1.0)
+    let weighted: WeightedAdjacencyList = adjacency.iter()
+        .map(|neighbors| neighbors.iter().map(|&j| (j, 1.0)).collect())
+        .collect();
+    spectral_embedding_2d_weighted(&weighted)
+}
+
+/// Compute 2D spectral embedding from a weighted adjacency list (E4).
+///
+/// Uses the weighted normalized Laplacian: L_norm = I - D^{-1/2} W D^{-1/2}
+/// where D_ii = Σ_j W_ij (weighted degree).
+///
+/// With uniform weights = 1.0, this is identical to the unweighted version.
+pub fn spectral_embedding_2d_weighted(adjacency: &WeightedAdjacencyList) -> Vec<(f32, f32)> {
     let n = adjacency.len();
     if n <= 2 {
         return vec![(0.5, 0.5); n];
     }
 
-    // Compute degree vector
-    let degrees: Vec<f64> = adjacency.iter().map(|neighbors| neighbors.len() as f64).collect();
+    // Compute weighted degree vector: D_ii = Σ_j W_ij
+    let degrees: Vec<f64> = adjacency.iter()
+        .map(|neighbors| neighbors.iter().map(|&(_, w)| w).sum::<f64>())
+        .collect();
 
     // Check for isolated nodes
     let min_deg = degrees.iter().cloned().fold(f64::INFINITY, f64::min);
-    if min_deg < 1.0 {
+    if min_deg < 1e-10 {
         // Graph has isolated nodes — fall back to uniform
         return vec![(0.5, 0.5); n];
     }
@@ -280,27 +450,19 @@ pub fn spectral_embedding_2d(adjacency: &AdjacencyList) -> Vec<(f32, f32)> {
     // D^{-1/2}
     let d_inv_sqrt: Vec<f64> = degrees.iter().map(|&d| 1.0 / d.sqrt()).collect();
 
-    // We want the 2 smallest non-trivial eigenvectors of L_norm = I - D^{-1/2} A D^{-1/2}.
-    // Equivalently, the 2 largest eigenvectors of M = D^{-1/2} A D^{-1/2} (since L = I - M).
-    // We use power iteration on M with deflation.
-
-    // Matrix-vector product: M * v = D^{-1/2} A D^{-1/2} v
+    // Matrix-vector product: M * v = D^{-1/2} W D^{-1/2} v
     let matvec = |v: &[f64]| -> Vec<f64> {
         let mut result = vec![0.0f64; n];
-        // First: w = D^{-1/2} v
-        // Then: y = A w
-        // Then: result = D^{-1/2} y
         for i in 0..n {
             let wi = d_inv_sqrt[i] * v[i]; // D^{-1/2} v
-            for &j in &adjacency[i] {
-                result[j] += d_inv_sqrt[j] * wi; // D^{-1/2} (A (D^{-1/2} v))
+            for &(j, w) in &adjacency[i] {
+                result[j] += d_inv_sqrt[j] * wi * w; // D^{-1/2} (W (D^{-1/2} v))
             }
         }
         result
     };
 
-    // The largest eigenvector of M is the trivial one: D^{1/2} * 1 (proportional to sqrt(degrees)).
-    // We find it first, then deflate to get Fiedler.
+    // The largest eigenvector of M is the trivial one: D^{1/2} * 1
     let trivial: Vec<f64> = degrees.iter().map(|&d| d.sqrt()).collect();
     let trivial_norm = vec_norm(&trivial);
     let trivial_unit: Vec<f64> = trivial.iter().map(|&x| x / trivial_norm).collect();
@@ -651,6 +813,102 @@ mod tests {
     fn test_hilbert_layout_empty() {
         let layout = HilbertLayout::compute(&HashMap::new(), 0);
         assert!(layout.is_empty());
+    }
+
+    // ── E4: Weighted spectral + fused adjacency tests ───────────
+
+    #[test]
+    fn test_build_fused_adjacency_static_only() {
+        // With beta=0, fused adjacency = static adjacency
+        let mut db_adj: HashMap<NodeId, HashSet<NodeId>> = HashMap::new();
+        db_adj.entry(NodeId(0)).or_default().insert(NodeId(1));
+        db_adj.entry(NodeId(1)).or_default().insert(NodeId(0));
+        db_adj.entry(NodeId(1)).or_default().insert(NodeId(2));
+        db_adj.entry(NodeId(2)).or_default().insert(NodeId(1));
+
+        let (weighted, node_ids) = build_fused_adjacency(&db_adj, &[], 0.0);
+        assert_eq!(node_ids.len(), 3);
+        assert_eq!(weighted.len(), 3);
+
+        // All weights should be 1.0 (static only)
+        for neighbors in &weighted {
+            for &(_, w) in neighbors {
+                assert!((w - 1.0).abs() < 0.001, "weight should be 1.0, got {w}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_build_fused_adjacency_with_coactivation() {
+        let mut db_adj: HashMap<NodeId, HashSet<NodeId>> = HashMap::new();
+        db_adj.entry(NodeId(0)).or_default().insert(NodeId(1));
+        db_adj.entry(NodeId(1)).or_default().insert(NodeId(0));
+
+        // Co-activation: (0, 2) with score 3.0 — a NEW edge not in static graph
+        let coact = vec![((NodeId(0), NodeId(2)), 3.0f32)];
+
+        let (weighted, node_ids) = build_fused_adjacency(&db_adj, &coact, 0.5);
+        // Should have 3 nodes now (0, 1, 2)
+        assert_eq!(node_ids.len(), 3);
+
+        // Find node 2's index
+        let idx_2 = node_ids.iter().position(|&n| n == NodeId(2)).unwrap();
+        // Node 2 should have edges from co-activation
+        assert!(!weighted[idx_2].is_empty(), "Node 2 should have co-activation edges");
+    }
+
+    #[test]
+    fn test_weighted_spectral_uniform_equals_unweighted() {
+        // With uniform weights, weighted spectral = unweighted spectral
+        let adj: AdjacencyList = vec![
+            vec![1, 2], vec![0, 2, 3], vec![0, 1], vec![1],
+        ];
+        let coords_unw = spectral_embedding_2d(&adj);
+
+        let weighted: WeightedAdjacencyList = adj.iter()
+            .map(|neighbors| neighbors.iter().map(|&j| (j, 1.0)).collect())
+            .collect();
+        let coords_w = spectral_embedding_2d_weighted(&weighted);
+
+        assert_eq!(coords_unw.len(), coords_w.len());
+        for (a, b) in coords_unw.iter().zip(coords_w.iter()) {
+            assert!((a.0 - b.0).abs() < 0.01, "x mismatch: {} vs {}", a.0, b.0);
+            assert!((a.1 - b.1).abs() < 0.01, "y mismatch: {} vs {}", a.1, b.1);
+        }
+    }
+
+    #[test]
+    fn test_non_disruptive_relayout() {
+        // Initial layout
+        let mut adj: HashMap<NodeId, HashSet<NodeId>> = HashMap::new();
+        for i in 0..4 {
+            for j in 0..4 {
+                if i != j {
+                    adj.entry(NodeId(i)).or_default().insert(NodeId(j));
+                }
+            }
+        }
+        let mut layout = HilbertLayout::compute(&adj, 10);
+
+        // Record initial positions
+        let pos0_before = layout.get_position(NodeId(0)).unwrap();
+        let pos1_before = layout.get_position(NodeId(1)).unwrap();
+
+        // Freeze nodes 0 and 1 (they're "in KV cache")
+        let mut frozen = HashSet::new();
+        frozen.insert(NodeId(0));
+        frozen.insert(NodeId(1));
+
+        // Re-layout with fused adjacency (add co-activation between 2 and 3)
+        let coact = vec![((NodeId(2), NodeId(3)), 5.0f32)];
+        let (weighted, node_ids) = build_fused_adjacency(&adj, &coact, 1.0);
+        layout.update_from_fused(&weighted, &node_ids, 10, &frozen);
+
+        // Frozen nodes keep their positions
+        assert_eq!(layout.get_position(NodeId(0)).unwrap(), pos0_before,
+            "Frozen node 0 should keep position");
+        assert_eq!(layout.get_position(NodeId(1)).unwrap(), pos1_before,
+            "Frozen node 1 should keep position");
     }
 
     #[test]
