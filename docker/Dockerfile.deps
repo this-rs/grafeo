@@ -1,0 +1,152 @@
+# obrain-chat — llama.cpp dependency builder
+#
+# Builds llama.cpp static libraries for a given backend variant.
+# Designed to be lightweight: no Rust, just cmake + backend SDK.
+#
+# Usage:
+#   docker build -f docker/Dockerfile.deps \
+#     --build-arg VARIANT=cpu-avx2 \
+#     --output type=local,dest=deps/linux-cpu-avx2 \
+#     /path/to/llama.cpp
+#
+# Variants:
+#   cpu-avx2   — AVX2+FMA (AMD Zen / Intel Haswell+, ~2013+)
+#   cpu-compat — SSE3 only (any x86_64, ~2006+)
+#   cuda       — NVIDIA GPU (requires nvidia/cuda base)
+#   vulkan     — Universal GPU via Vulkan (NVIDIA/AMD/Intel)
+#   sycl       — Intel GPU via oneAPI/SYCL (Arc, Data Center GPU Max/Flex)
+
+ARG VARIANT=cpu-avx2
+
+# ──────────────────────────────────────────────
+# CPU base (shared by cpu-avx2, cpu-compat, vulkan)
+# ──────────────────────────────────────────────
+FROM ubuntu:22.04 AS cpu-base
+ENV DEBIAN_FRONTEND=noninteractive
+# Ubuntu 22.04 (glibc 2.35) for broader compatibility.
+# clang + libc++ so the ABI matches zig's linker when cross-linking from macOS.
+# GCC/libstdc++ objects have symbols that zig's lld cannot resolve.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential clang libc++-dev libc++abi-dev cmake ninja-build \
+    && rm -rf /var/lib/apt/lists/*
+ENV CC=clang
+ENV CXX=clang++
+ENV CXXFLAGS="-stdlib=libc++"
+
+# ──────────────────────────────────────────────
+# CPU AVX2
+# ──────────────────────────────────────────────
+FROM cpu-base AS deps-cpu-avx2
+COPY . /src
+RUN cmake -B /src/build -S /src -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DGGML_BLAS=OFF -DGGML_METAL=OFF -DGGML_CUDA=OFF -DGGML_VULKAN=OFF \
+    -DGGML_OPENMP=OFF \
+    -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON \
+    -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
+    -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF
+RUN cmake --build /src/build --config Release \
+    --target llama ggml ggml-base ggml-cpu
+RUN mkdir /out && find /src/build -name '*.a' -exec cp {} /out/ \;
+
+# ──────────────────────────────────────────────
+# CPU Compat (SSE3 only)
+# ──────────────────────────────────────────────
+FROM cpu-base AS deps-cpu-compat
+COPY . /src
+RUN cmake -B /src/build -S /src -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DGGML_BLAS=OFF -DGGML_METAL=OFF -DGGML_CUDA=OFF -DGGML_VULKAN=OFF \
+    -DGGML_OPENMP=OFF \
+    -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF \
+    -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
+    -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF
+RUN cmake --build /src/build --config Release \
+    --target llama ggml ggml-base ggml-cpu
+RUN mkdir /out && find /src/build -name '*.a' -exec cp {} /out/ \;
+
+# ──────────────────────────────────────────────
+# CUDA (NVIDIA)
+# ──────────────────────────────────────────────
+FROM nvidia/cuda:12.8.1-devel-ubuntu22.04 AS deps-cuda
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential clang libc++-dev libc++abi-dev cmake ninja-build \
+    && rm -rf /var/lib/apt/lists/*
+ENV CC=clang
+ENV CXX=clang++
+ENV CXXFLAGS="-stdlib=libc++"
+COPY . /src
+RUN cmake -B /src/build -S /src -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DGGML_METAL=OFF -DGGML_CUDA=ON -DGGML_VULKAN=OFF \
+    -DGGML_OPENMP=OFF \
+    -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON \
+    -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
+    -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF
+RUN cmake --build /src/build --config Release \
+    --target llama ggml ggml-base ggml-cpu ggml-cuda
+RUN mkdir /out && find /src/build -name '*.a' -exec cp {} /out/ \; \
+    && echo "cuda" > /out/.backend
+
+# ──────────────────────────────────────────────
+# Vulkan (Universal GPU)
+# Uses Ubuntu 24.04 because llama.cpp HEAD requires Vulkan SDK 1.3.280+
+# (VK_EXT_pipeline_robustness), not available in Ubuntu 22.04's SDK.
+# ──────────────────────────────────────────────
+FROM ubuntu:24.04 AS deps-vulkan
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential clang libc++-dev libc++abi-dev cmake ninja-build \
+    libvulkan-dev glslang-tools glslc \
+    && rm -rf /var/lib/apt/lists/*
+ENV CC=clang
+ENV CXX=clang++
+ENV CXXFLAGS="-stdlib=libc++"
+COPY . /src
+RUN cmake -B /src/build -S /src -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DGGML_METAL=OFF -DGGML_CUDA=OFF -DGGML_VULKAN=ON \
+    -DGGML_OPENMP=OFF \
+    -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON \
+    -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
+    -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF
+RUN cmake --build /src/build --config Release \
+    --target llama ggml ggml-base ggml-cpu ggml-vulkan
+RUN mkdir /out && find /src/build -name '*.a' -exec cp {} /out/ \; \
+    && echo "vulkan" > /out/.backend
+
+# ──────────────────────────────────────────────
+# SYCL (Intel GPU via oneAPI)
+# ──────────────────────────────────────────────
+FROM intel/oneapi-basekit:2025.3.1-0-devel-ubuntu24.04 AS deps-sycl
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake ninja-build \
+    && rm -rf /var/lib/apt/lists/*
+COPY . /src
+RUN cmake -B /src/build -S /src -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DGGML_METAL=OFF -DGGML_CUDA=OFF -DGGML_VULKAN=OFF -DGGML_SYCL=ON \
+    -DCMAKE_C_COMPILER=icx \
+    -DCMAKE_CXX_COMPILER=icpx \
+    -DGGML_OPENMP=OFF \
+    -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON \
+    -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
+    -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF
+RUN cmake --build /src/build --config Release \
+    --target llama ggml ggml-base ggml-cpu ggml-sycl
+RUN mkdir /out && find /src/build -name '*.a' -exec cp {} /out/ \; \
+    && echo "sycl" > /out/.backend
+
+# ──────────────────────────────────────────────
+# Output stage (selected variant)
+# ──────────────────────────────────────────────
+FROM deps-${VARIANT} AS selected
+FROM scratch AS output
+COPY --from=selected /out/ /

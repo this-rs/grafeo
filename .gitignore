@@ -1,5 +1,6 @@
 /target/
 /dist/
+/deps/
 /.zig/
 *.db
 *.db.banks/

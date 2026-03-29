@@ -23,18 +23,32 @@ fn main() {
     };
 
     let build_dir = if let Ok(dir) = env::var("LLAMA_BUILD_DIR") {
-        llama_path.join(dir)
+        let p = PathBuf::from(&dir);
+        if p.is_absolute() {
+            p
+        } else {
+            llama_path.join(dir)
+        }
     } else {
         llama_path.join(default_build_subdir)
     };
 
     // Static libs are in ggml/src/ and src/, dynamic in bin/
     if link_static {
-        // Add all subdirs where .a files live
-        for sub in &["src", "ggml/src", "ggml/src/ggml-metal", "ggml/src/ggml-blas", "ggml/src/ggml-cpu"] {
-            let p = build_dir.join(sub);
-            if p.exists() {
-                println!("cargo:rustc-link-search=native={}", p.display());
+        // Flat layout (deps/ directory from Docker builds): .a files at root
+        if build_dir.join("libllama.a").exists() {
+            println!("cargo:rustc-link-search=native={}", build_dir.display());
+        } else {
+            // Nested layout (cmake build tree): .a files in src/, ggml/src/, etc.
+            for sub in &[
+                "src", "ggml/src", "ggml/src/ggml-metal", "ggml/src/ggml-blas",
+                "ggml/src/ggml-cpu", "ggml/src/ggml-cuda", "ggml/src/ggml-vulkan",
+                "ggml/src/ggml-sycl",
+            ] {
+                let p = build_dir.join(sub);
+                if p.exists() {
+                    println!("cargo:rustc-link-search=native={}", p.display());
+                }
             }
         }
     } else {
@@ -70,6 +84,58 @@ fn main() {
         println!("cargo:rustc-link-lib={}=ggml-blas", link_kind);
     }
 
+    // CUDA (NVIDIA GPU, opt-in via LLAMA_CUDA=1)
+    if env::var("LLAMA_CUDA").is_ok() {
+        println!("cargo:rustc-link-lib={}=ggml-cuda", link_kind);
+        // CUDA runtime libraries
+        println!("cargo:rustc-link-lib=dylib=cuda");
+        println!("cargo:rustc-link-lib=dylib=cudart");
+        println!("cargo:rustc-link-lib=dylib=cublas");
+        println!("cargo:rustc-link-lib=dylib=cublasLt");
+        // Standard CUDA lib paths
+        for cuda_path in &["/usr/local/cuda/lib64", "/usr/lib/x86_64-linux-gnu"] {
+            let p = PathBuf::from(cuda_path);
+            if p.exists() {
+                println!("cargo:rustc-link-search=native={}", p.display());
+            }
+        }
+    }
+
+    // Vulkan (universal GPU, opt-in via LLAMA_VULKAN=1)
+    if env::var("LLAMA_VULKAN").is_ok() {
+        println!("cargo:rustc-link-lib={}=ggml-vulkan", link_kind);
+        println!("cargo:rustc-link-lib=dylib=vulkan");
+    }
+
+    // SYCL (Intel GPU via oneAPI, opt-in via LLAMA_SYCL=1)
+    if env::var("LLAMA_SYCL").is_ok() {
+        println!("cargo:rustc-link-lib={}=ggml-sycl", link_kind);
+        println!("cargo:rustc-link-lib=dylib=sycl");
+        println!("cargo:rustc-link-lib=dylib=OpenCL");
+        println!("cargo:rustc-link-lib=dylib=mkl_core");
+        println!("cargo:rustc-link-lib=dylib=mkl_sycl_blas");
+        println!("cargo:rustc-link-lib=dylib=mkl_intel_ilp64");
+        println!("cargo:rustc-link-lib=dylib=mkl_tbb_thread");
+        // Intel compiler runtime: SVML (vectorized math) + irc (fast memcpy/memset)
+        // Required when llama.cpp is compiled with icpx (Intel oneAPI C++ compiler)
+        println!("cargo:rustc-link-lib=dylib=svml");
+        println!("cargo:rustc-link-lib=dylib=irc");
+        println!("cargo:rustc-link-lib=dylib=imf");
+        // oneDNN (Deep Neural Network Library) — used by ggml-sycl for matmul ops
+        println!("cargo:rustc-link-lib=dylib=dnnl");
+        // oneAPI lib paths
+        for sycl_path in &[
+            "/opt/intel/oneapi/compiler/latest/lib",
+            "/opt/intel/oneapi/mkl/latest/lib",
+            "/opt/intel/oneapi/tbb/latest/lib",
+        ] {
+            let p = PathBuf::from(sycl_path);
+            if p.exists() {
+                println!("cargo:rustc-link-search=native={}", p.display());
+            }
+        }
+    }
+
     // --- System libraries ---
 
     // macOS frameworks
@@ -94,9 +160,16 @@ fn main() {
         }
         "linux" => {
             let host_os = env::consts::OS;
-            if host_os == "linux" {
-                // Native Linux build: link stdc++
-                if link_static {
+            if env::var("LLAMA_LIBCXX").is_ok() {
+                // llama.cpp compiled with clang -stdlib=libc++ (Docker full builds
+                // for CPU/Vulkan/CUDA variants). Symbols are std::__1::* (libc++ ABI).
+                println!("cargo:rustc-link-lib=c++");
+            } else if host_os == "linux" {
+                // Native Linux build with libstdc++ ABI (e.g. SYCL via icpx).
+                // Force dynamic stdc++ when LLAMA_STDCPP_DYNAMIC=1 (Docker full builds
+                // on Ubuntu 24.04+ where libstdc++.a may not be available)
+                let force_dynamic = env::var("LLAMA_STDCPP_DYNAMIC").is_ok();
+                if link_static && !force_dynamic {
                     println!("cargo:rustc-link-lib=static=stdc++");
                 } else {
                     println!("cargo:rustc-link-lib=stdc++");
@@ -185,6 +258,11 @@ fn main() {
     println!("cargo:rerun-if-env-changed=LLAMA_LIB_DIR");
     println!("cargo:rerun-if-env-changed=LLAMA_STATIC");
     println!("cargo:rerun-if-env-changed=LLAMA_BLAS");
+    println!("cargo:rerun-if-env-changed=LLAMA_CUDA");
+    println!("cargo:rerun-if-env-changed=LLAMA_VULKAN");
+    println!("cargo:rerun-if-env-changed=LLAMA_SYCL");
+    println!("cargo:rerun-if-env-changed=LLAMA_STDCPP_DYNAMIC");
+    println!("cargo:rerun-if-env-changed=LLAMA_LIBCXX");
     println!("cargo:rerun-if-env-changed=MINGW_SYSROOT");
 }
 

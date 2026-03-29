@@ -1,0 +1,233 @@
+# obrain-chat — Full Linux build via Docker
+#
+# Parameterized multi-target build for llama.cpp static libraries + Rust binary.
+# Each variant produces a self-contained Linux x86_64 binary.
+#
+# Build args:
+#   VARIANT    cpu-avx2 | cpu-compat | cuda | vulkan | sycl  (default: cpu-avx2)
+#
+# Usage (libs only — via Dockerfile.deps):
+#   docker build -f docker/Dockerfile.deps --build-arg VARIANT=sycl \
+#     --output type=local,dest=deps/linux-sycl /path/to/llama.cpp
+#
+# Usage (full binary):
+#   docker build --platform linux/amd64 -f docker/Dockerfile.linux \
+#     --build-arg VARIANT=sycl \
+#     --build-context llama=/path/to/llama.cpp \
+#     --build-context grafeo=/path/to/grafeo \
+#     --output type=local,dest=dist .
+#
+# The binary is dynamically linked to the variant's runtime libs:
+#   cpu-*   → no extra runtime deps
+#   cuda    → NVIDIA driver + CUDA runtime
+#   vulkan  → Vulkan loader (libvulkan.so)
+#   sycl    → Intel oneAPI runtime (libsycl.so, MKL, etc.)
+
+ARG VARIANT=cpu-avx2
+
+# ============================================================
+# Stage 1a: Base — common build tools (CPU / Vulkan)
+# ============================================================
+FROM ubuntu:22.04 AS base
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential clang libclang-dev libc++-dev libc++abi-dev cmake ninja-build \
+    git ca-certificates pkg-config libssl-dev curl \
+    && rm -rf /var/lib/apt/lists/*
+ENV CC=clang
+ENV CXX=clang++
+ENV CXXFLAGS="-stdlib=libc++"
+
+# Install Rust (stable)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- -y --default-toolchain stable --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+WORKDIR /build
+
+# ============================================================
+# Stage 2a: CPU AVX2 — AMD Zen / Intel Haswell+ (~2013+)
+# ============================================================
+FROM base AS build-cpu-avx2
+ENV LLAMA_LIBCXX=1
+COPY --from=llama . /build/llama.cpp
+RUN cmake -B /build/llama.cpp/build-linux -S /build/llama.cpp -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DGGML_BLAS=OFF -DGGML_METAL=OFF -DGGML_CUDA=OFF -DGGML_VULKAN=OFF \
+    -DGGML_OPENMP=OFF \
+    -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON \
+    -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
+    -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF \
+    && cmake --build /build/llama.cpp/build-linux --config Release \
+       --target llama ggml ggml-base ggml-cpu
+ENV LLAMA_BACKEND_FLAGS=""
+
+# ============================================================
+# Stage 2b: CPU Compat — SSE3 only (any x86_64 from ~2006+)
+# ============================================================
+FROM base AS build-cpu-compat
+ENV LLAMA_LIBCXX=1
+COPY --from=llama . /build/llama.cpp
+RUN cmake -B /build/llama.cpp/build-linux -S /build/llama.cpp -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DGGML_BLAS=OFF -DGGML_METAL=OFF -DGGML_CUDA=OFF -DGGML_VULKAN=OFF \
+    -DGGML_OPENMP=OFF \
+    -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF \
+    -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
+    -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF \
+    && cmake --build /build/llama.cpp/build-linux --config Release \
+       --target llama ggml ggml-base ggml-cpu
+ENV LLAMA_BACKEND_FLAGS=""
+
+# ============================================================
+# Stage 2c: CUDA — NVIDIA GPU (compute capability 6.0+)
+# ============================================================
+FROM nvidia/cuda:12.8.1-devel-ubuntu22.04 AS build-cuda
+ENV DEBIAN_FRONTEND=noninteractive
+# CUDA: nvcc compiles .cu files with libstdc++ (GCC ABI), NOT libc++.
+# All C++ code must use libstdc++ to avoid mixed-ABI link errors.
+# clang is used as the C/C++ compiler but WITHOUT -stdlib=libc++
+# (defaults to libstdc++ on Ubuntu). libclang-dev needed by bindgen.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential clang libclang-dev cmake ninja-build \
+    git ca-certificates pkg-config libssl-dev curl \
+    && rm -rf /var/lib/apt/lists/*
+ENV CC=clang
+ENV CXX=clang++
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- -y --default-toolchain stable --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}"
+WORKDIR /build
+COPY --from=llama . /build/llama.cpp
+RUN cmake -B /build/llama.cpp/build-linux -S /build/llama.cpp -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DGGML_METAL=OFF -DGGML_CUDA=ON -DGGML_VULKAN=OFF \
+    -DGGML_OPENMP=OFF \
+    -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON \
+    -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
+    -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF \
+    && cmake --build /build/llama.cpp/build-linux --config Release \
+       --target llama ggml ggml-base ggml-cpu ggml-cuda
+ENV LLAMA_BACKEND_FLAGS="LLAMA_CUDA=1"
+
+# ============================================================
+# Stage 2d: Vulkan — Universal GPU (NVIDIA/AMD/Intel)
+# Uses Ubuntu 24.04 for Vulkan SDK 1.3.280+ (VK_EXT_pipeline_robustness)
+# ============================================================
+FROM ubuntu:24.04 AS build-vulkan
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential clang libclang-dev libc++-dev libc++abi-dev cmake ninja-build \
+    git ca-certificates pkg-config libssl-dev curl \
+    libvulkan-dev glslang-tools glslc \
+    && rm -rf /var/lib/apt/lists/*
+ENV CC=clang
+ENV CXX=clang++
+ENV CXXFLAGS="-stdlib=libc++"
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- -y --default-toolchain stable --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}"
+ENV LLAMA_LIBCXX=1
+WORKDIR /build
+COPY --from=llama . /build/llama.cpp
+RUN cmake -B /build/llama.cpp/build-linux -S /build/llama.cpp -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DGGML_METAL=OFF -DGGML_CUDA=OFF -DGGML_VULKAN=ON \
+    -DGGML_OPENMP=OFF \
+    -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON \
+    -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
+    -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF \
+    && cmake --build /build/llama.cpp/build-linux --config Release \
+       --target llama ggml ggml-base ggml-cpu ggml-vulkan
+ENV LLAMA_BACKEND_FLAGS="LLAMA_VULKAN=1"
+
+# ============================================================
+# Stage 2e: SYCL — Intel GPU via oneAPI (Arc, Data Center GPU)
+# ============================================================
+FROM intel/oneapi-basekit:2025.3.1-0-devel-ubuntu24.04 AS build-sycl
+ENV DEBIAN_FRONTEND=noninteractive
+# clang + libclang-dev needed by bindgen (Rust FFI code generator)
+# build-essential provides cc linker + libstdc++.a for static linking
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake ninja-build git ca-certificates pkg-config libssl-dev curl \
+    clang libclang-dev \
+    && rm -rf /var/lib/apt/lists/*
+# Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- -y --default-toolchain stable --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}"
+WORKDIR /build
+COPY --from=llama . /build/llama.cpp
+RUN cmake -B /build/llama.cpp/build-linux -S /build/llama.cpp -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DGGML_METAL=OFF -DGGML_CUDA=OFF -DGGML_VULKAN=OFF -DGGML_SYCL=ON \
+    -DCMAKE_C_COMPILER=icx \
+    -DCMAKE_CXX_COMPILER=icpx \
+    -DGGML_OPENMP=OFF \
+    -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON \
+    -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
+    -DLLAMA_BUILD_SERVER=OFF -DLLAMA_CURL=OFF \
+    && cmake --build /build/llama.cpp/build-linux --config Release \
+       --target llama ggml ggml-base ggml-cpu ggml-sycl
+ENV LLAMA_BACKEND_FLAGS="LLAMA_SYCL=1"
+
+# ============================================================
+# Stage 3: Rust binary build (selected variant)
+# ============================================================
+FROM build-${VARIANT} AS rust-build
+
+# Copy obrain-chat source
+COPY Cargo.toml Cargo.lock /build/obrain-chat/
+COPY crates /build/obrain-chat/crates
+COPY src /build/obrain-chat/src
+
+# Copy grafeo dependency crates (passed via --build-context grafeo=...)
+# Only copy crates/ and root Cargo.toml (workspace root needed for edition.workspace = true)
+# Avoids sending 14GB target/ dir
+COPY --from=grafeo Cargo.toml /build/grafeo/Cargo.toml
+COPY --from=grafeo Cargo.lock /build/grafeo/Cargo.lock
+COPY --from=grafeo crates /build/grafeo/crates
+
+# Patch ALL Cargo.toml: rewrite absolute grafeo paths to /build/grafeo/crates/
+RUN find /build/obrain-chat -name 'Cargo.toml' -exec \
+    sed -i 's|/Users/triviere/projects/lab/grafeo/crates/|/build/grafeo/crates/|g' {} +
+
+WORKDIR /build/obrain-chat
+
+# Override .cargo/config.toml for native Linux build (no zig cross-linker)
+RUN mkdir -p .cargo && printf '[build]\ntarget = "x86_64-unknown-linux-gnu"\n\n[target.x86_64-unknown-linux-gnu]\nlinker = "cc"\n' > .cargo/config.toml
+
+# Flatten llama.cpp static libs for build.rs detection
+RUN mkdir -p /build/llama-libs && \
+    find /build/llama.cpp/build-linux -name '*.a' -exec cp {} /build/llama-libs/ \;
+
+# Build the Rust binary with the correct backend flags
+# Note: ENV vars like LLAMA_BACKEND_FLAGS cannot be inlined as "VAR=val command"
+# because /bin/sh treats expanded text as a command, not an assignment.
+# We use export + eval instead.
+RUN export LLAMA_CPP_DIR=/build/llama.cpp && \
+    export LLAMA_BUILD_DIR=/build/llama-libs && \
+    export LLAMA_STATIC=1 && \
+    export LLAMA_STDCPP_DYNAMIC=1 && \
+    if [ -n "${LLAMA_LIBCXX}" ]; then export LLAMA_LIBCXX=1; fi && \
+    if [ -n "${LLAMA_BACKEND_FLAGS}" ]; then export ${LLAMA_BACKEND_FLAGS}; fi && \
+    cargo build --release
+
+RUN cp target/x86_64-unknown-linux-gnu/release/obrain-chat /build/obrain-chat-linux \
+    || cp target/release/obrain-chat /build/obrain-chat-linux
+
+# ============================================================
+# Stage 4: Minimal output (just the binary)
+# ============================================================
+FROM scratch AS output
+COPY --from=rust-build /build/obrain-chat-linux /obrain-chat
