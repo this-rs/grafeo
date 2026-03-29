@@ -357,7 +357,7 @@ pub fn query_with_registry(
     }
 
     // ── Find relevant conversation fragments ──────────────────────
-    let (conv_node_ids, conv_adjacency) = conv_frags.find_relevant(query, registry);
+    let (conv_node_ids, conv_adjacency) = conv_frags.find_relevant(query, registry, engine, kv_capacity);
 
     // Pull in graph nodes referenced by relevant conv fragments
     // (enables "donne plus de details" to re-surface Elun nodes from the last turn)

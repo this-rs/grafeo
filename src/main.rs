@@ -389,19 +389,27 @@ fn main() -> Result<()> {
             }
         }
 
-        // Restore conversation fragments
+        // Restore conversation fragments (3-tier: WARM archive + HOT in KV)
         if let Some(ref cdb) = persona_db {
-            let recent = cdb.recent_messages(20);
+            let all_recent = cdb.recent_messages(400);
+            let mut pairs: Vec<(&str, &str)> = Vec::new();
             let mut i = 0;
-            while i + 1 < recent.len() {
-                let (ref role_q, ref content_q) = recent[i];
-                let (ref role_a, ref content_a) = recent[i + 1];
+            while i + 1 < all_recent.len() {
+                let (ref role_q, ref content_q) = all_recent[i];
+                let (ref role_a, ref content_a) = all_recent[i + 1];
                 if role_q == "user" && role_a == "assistant" {
-                    let _ = conv_frags.add_turn(content_q, content_a, &[], &mut registry, &engine, kv_capacity);
+                    pairs.push((content_q.as_str(), content_a.as_str()));
                     i += 2;
                 } else {
                     i += 1;
                 }
+            }
+            let hot_count = 10.min(pairs.len());
+            for (q, a) in &pairs[..pairs.len() - hot_count] {
+                conv_frags.seed_warm(q, a, &[]);
+            }
+            for (q, a) in &pairs[pairs.len() - hot_count..] {
+                let _ = conv_frags.add_turn(q, a, &[], &mut registry, &engine, kv_capacity);
             }
         }
 
@@ -659,33 +667,56 @@ fn main() -> Result<()> {
     }
 
     // ── Restore conversation fragments from persona_db (T3) ──────────
+    // Load up to 400 messages (200 Q/A pairs) into the 3-tier system:
+    //   - Oldest go into WARM tier (in-memory, searchable, promotable)
+    //   - Most recent 20 go into HOT tier (KV-cache resident)
     if let Some(ref cdb) = persona_db {
-        let recent = cdb.recent_messages(20); // 20 messages = up to 10 Q/A pairs
-        if !recent.is_empty() {
+        let all_recent = cdb.recent_messages(400); // 400 messages = up to 200 Q/A pairs
+        if !all_recent.is_empty() {
             let restore_t0 = Instant::now();
-            let mut restored = 0u32;
-            // Pair up consecutive (user, assistant) messages
+            let mut hot_restored = 0u32;
+            let mut warm_seeded = 0u32;
+
+            // Pair up Q/A messages
+            let mut pairs: Vec<(&str, &str)> = Vec::new();
             let mut i = 0;
-            while i + 1 < recent.len() {
-                let (ref role_q, ref content_q) = recent[i];
-                let (ref role_a, ref content_a) = recent[i + 1];
+            while i + 1 < all_recent.len() {
+                let (ref role_q, ref content_q) = all_recent[i];
+                let (ref role_a, ref content_a) = all_recent[i + 1];
                 if role_q == "user" && role_a == "assistant" {
-                    if let Err(e) = conv_frags.add_turn(
-                        content_q, content_a, &[],
-                        &mut registry, &engine, kv_capacity,
-                    ) {
-                        debug!("  Warning: could not restore conv fragment: {e}");
-                    } else {
-                        restored += 1;
-                    }
+                    pairs.push((content_q.as_str(), content_a.as_str()));
                     i += 2;
                 } else {
                     i += 1;
                 }
             }
-            if restored > 0 {
-                debug!("  Restored {} conversation fragments in {:.0}ms",
-                    restored, restore_t0.elapsed().as_millis());
+
+            // Split: older pairs → WARM, newest 10 → HOT
+            let hot_count = 10.min(pairs.len());
+            let warm_pairs = &pairs[..pairs.len() - hot_count];
+            let hot_pairs = &pairs[pairs.len() - hot_count..];
+
+            // Seed WARM tier (no KV encoding, just in-memory index)
+            for (q, a) in warm_pairs {
+                conv_frags.seed_warm(q, a, &[]);
+                warm_seeded += 1;
+            }
+
+            // Restore HOT tier (KV-encoded)
+            for (q, a) in hot_pairs {
+                if let Err(e) = conv_frags.add_turn(
+                    q, a, &[],
+                    &mut registry, &engine, kv_capacity,
+                ) {
+                    debug!("  Warning: could not restore conv fragment: {e}");
+                } else {
+                    hot_restored += 1;
+                }
+            }
+
+            if hot_restored > 0 || warm_seeded > 0 {
+                debug!("  Restored {} HOT + {} WARM conversation fragments in {:.0}ms",
+                    hot_restored, warm_seeded, restore_t0.elapsed().as_millis());
             }
         }
     }
