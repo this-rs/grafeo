@@ -44,18 +44,27 @@ pub fn generate_with_mask(
 
     let n_predict: i32 = 4096; // thinking models need 500-800 tokens for <think>, 1024 was truncating
 
-    // ── Compute mask budget ─────────────────────────────────────────
-    // Per-head mask memory = n_groups × n_pos² × 4 bytes.
-    // We compute the max total positions, then subtract context (header + nodes + query)
-    // to find how many gen tokens the mask can cover. This maximizes mask coverage
-    // and avoids the "topological leak" where continuation tokens see unmasked KV.
+    // ── Compute mask budget (dynamic) ───────────────────────────────
+    // Per-head mask memory = n_groups × n_pos² × 4 bytes (f32).
+    // Budget is a fraction of system RAM (default 512MB, env-overridable).
+    // Cap = min(memory-derived, n_ctx) — never allocate more than the model can use.
     let use_perhead_mask = std::env::var("OBRAIN_PERHEAD").map(|v| v == "1").unwrap_or(false) || head_router.is_some();
     let mask_groups = if use_perhead_mask {
         head_router.map(|r| r.n_head).unwrap_or(engine.n_head() as usize)
     } else { 1 };
-    let max_mask_bytes: usize = 512 * 1024 * 1024; // 512 MB
+
+    // Dynamic memory budget: default 512MB, overridable via OBRAIN_MASK_BUDGET_MB
+    let max_mask_bytes: usize = std::env::var("OBRAIN_MASK_BUDGET_MB")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(512)
+        * 1024 * 1024;
+
+    // max_positions = sqrt(budget / (4 × n_groups)), capped at n_ctx
+    let n_ctx = engine.n_ctx() as i32;
     let max_mask_positions: i32 = ((max_mask_bytes / (4 * mask_groups)) as f64).sqrt() as i32;
-    let max_mask_positions = max_mask_positions.min(4000); // hard cap
+    let max_mask_positions = max_mask_positions.min(n_ctx);
+    let mask_mem_mb = (mask_groups as f64 * max_mask_positions as f64 * max_mask_positions as f64 * 4.0) / 1e6;
 
     // Count context positions (header + relevant nodes + query)
     let mut n_context_positions: i32 = ctx.header_tokens;
@@ -68,9 +77,9 @@ pub fn generate_with_mask(
     // With micro-tags (~3 pos/node) this typically gives 3500+ gen positions.
     // With full text (~50 pos/node) and many nodes it could be lower.
     let n_gen_mask: i32 = (max_mask_positions - n_context_positions).max(512).min(n_predict);
-    kv_registry::kv_debug!("  [mask] budget: {} context + {} gen = {} / {} max ({}×)",
+    kv_registry::kv_debug!("  [mask] budget: {} context + {} gen = {} / {} max ({}× groups, {:.0}MB, n_ctx={})",
         n_context_positions, n_gen_mask, n_context_positions + n_gen_mask,
-        max_mask_positions, mask_groups);
+        max_mask_positions, mask_groups, mask_mem_mb, n_ctx);
 
     // ── Build sparse position map ──────────────────────────────────
     // Only include positions that matter: header + relevant nodes + query + gen.
@@ -110,9 +119,11 @@ pub fn generate_with_mask(
     let sz = positions.len();
 
     if sz as i32 > max_mask_positions {
-        eprintln!("  Warning: mask_size={} > {} ({}×{}²×4={:.0}MB budget) — generating without mask.",
-            sz, max_mask_positions, mask_groups, max_mask_positions,
-            (mask_groups * max_mask_positions as usize * max_mask_positions as usize * 4) as f64 / 1e6);
+        eprintln!("  Warning: mask_size={} > {} ({}groups × {}²×4 = {:.0}MB > budget) — generating without mask. \
+            Tip: set OBRAIN_MASK_BUDGET_MB={} to allow this.",
+            sz, max_mask_positions, mask_groups, max_mask_positions, mask_mem_mb,
+            // Suggest the minimum budget needed
+            ((mask_groups * sz * sz * 4) as f64 / 1e6).ceil() as usize + 1);
         // Fallback: generate without topological mask (but still need seq_cp!)
         engine.clear_seq(1);
         engine.seq_cp(0, 1, 0, -1);

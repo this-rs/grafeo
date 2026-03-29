@@ -164,6 +164,21 @@ impl PersonaDB {
         self.db.create_edge(reply_id, parent_id, "REPLIES_TO");
     }
 
+    /// Store reward score on a :Message node.
+    /// Called when the reward for turn N is computed at turn N+1.
+    /// This allows BM25 search to boost validated corrections (reward+) and demote bad answers (reward-).
+    pub fn set_message_reward(&self, msg_id: NodeId, reward: f64) {
+        self.db.set_node_property(msg_id, "reward", Value::Float64(reward));
+    }
+
+    /// Read the reward stored on a :Message node (if any).
+    pub fn get_message_reward(&self, msg_id: NodeId) -> Option<f64> {
+        let store = self.db.store();
+        store.get_node(msg_id)
+            .and_then(|n| n.properties.get(&PropertyKey::from("reward"))
+                .and_then(|v| if let Value::Float64(f) = v { Some(*f) } else { None }))
+    }
+
     /// Get recent messages from the current conversation (for context injection).
     pub fn recent_messages(&self, limit: usize) -> Vec<(String, String)> {
         let store = self.db.store();
@@ -998,12 +1013,27 @@ pub struct XiStats {
 }
 
 // ── ColdSearch trait implementation for PersonaDB ──────────────────────
+
+/// Adjust a BM25 score by the reward stored on the :Message node.
+/// Uses exponential scaling: reward=+0.8 → ×2.0, reward=-0.5 → ×0.5
+/// This gives enough dynamic range to override BM25 text matching
+/// when the quality signal is strong.
+fn reward_adjusted_score(base_score: f64, reward: Option<f64>) -> f64 {
+    match reward {
+        // exp(reward) gives: -0.5→×0.61, -0.3→×0.74, 0→×1.0, +0.5→×1.65, +0.7→×2.01, +0.9→×2.46
+        Some(r) => base_score * (r.clamp(-1.0, 1.0)).exp(),
+        None => base_score,
+    }
+}
+
 impl ColdSearch for PersonaDB {
     fn search(&self, query: &str, limit: usize) -> Vec<ColdHit> {
         let store = self.db.store();
-        self.search_messages(query, limit)
+        let mut results: Vec<ColdHit> = self.search_messages(query, limit * 2) // fetch more, re-rank
             .into_iter()
             .map(|hit| {
+                let reward = self.get_message_reward(hit.node_id);
+                let adjusted_score = reward_adjusted_score(hit.score, reward);
                 let conv_title = store.get_node(hit.conv_id)
                     .and_then(|n| n.properties.get(&PropertyKey::from("title"))
                         .and_then(|v| v.as_str())
@@ -1013,21 +1043,28 @@ impl ColdSearch for PersonaDB {
                     content: hit.content,
                     conv_id: hit.conv_id,
                     conv_title,
-                    score: hit.score,
+                    score: adjusted_score,
                 }
             })
-            .collect()
+            .collect();
+        // Re-sort by adjusted score and truncate
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.truncate(limit);
+        results
     }
 
     fn search_pairs(&self, query: &str, limit: usize) -> Vec<(ColdHit, Option<ColdHit>)> {
         let store = self.db.store();
-        let hits = self.search_messages(query, limit);
+        let hits = self.search_messages(query, limit * 2);
         let mut seen_nodes: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
 
-        hits.into_iter()
+        let mut pairs: Vec<(ColdHit, Option<ColdHit>)> = hits.into_iter()
             .filter_map(|hit| {
                 if seen_nodes.contains(&hit.node_id) { return None; }
                 seen_nodes.insert(hit.node_id);
+
+                let reward = self.get_message_reward(hit.node_id);
+                let adjusted_score = reward_adjusted_score(hit.score, reward);
 
                 let conv_title = store.get_node(hit.conv_id)
                     .and_then(|n| n.properties.get(&PropertyKey::from("title"))
@@ -1039,7 +1076,7 @@ impl ColdSearch for PersonaDB {
                     content: hit.content.clone(),
                     conv_id: hit.conv_id,
                     conv_title: conv_title.clone(),
-                    score: hit.score,
+                    score: adjusted_score,
                 };
 
                 // Find adjacent message to form a Q/A pair:
@@ -1050,17 +1087,23 @@ impl ColdSearch for PersonaDB {
                     .and_then(|(adj_nid, adj_role, adj_content)| {
                         if seen_nodes.contains(&adj_nid) { return None; }
                         seen_nodes.insert(adj_nid);
+                        let adj_reward = self.get_message_reward(adj_nid);
+                        let adj_score = reward_adjusted_score(adjusted_score * 0.8, adj_reward);
                         Some(ColdHit {
                             role: adj_role,
                             content: adj_content,
                             conv_id: hit.conv_id,
                             conv_title: conv_title.clone(),
-                            score: hit.score * 0.8, // slightly lower score for adjacent
+                            score: adj_score,
                         })
                     });
 
                 Some((primary, adjacent))
             })
-            .collect()
+            .collect();
+        // Re-sort by primary adjusted score and truncate
+        pairs.sort_by(|a, b| b.0.score.partial_cmp(&a.0.score).unwrap_or(std::cmp::Ordering::Equal));
+        pairs.truncate(limit);
+        pairs
     }
 }

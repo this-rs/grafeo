@@ -861,6 +861,11 @@ fn main() -> Result<()> {
     let mut last_avg_entropy: Option<f32> = None;
     // B3: Per-head ablation reward from previous turn (for deferred HeadRouter update)
     let mut last_ablation_reward: Option<retrieval::AblationReward> = None;
+    // Track previous assistant response for persisting corrections on positive reward
+    let mut last_assistant_response = String::new();
+    // Track :Message NodeIds for reward propagation to PersonaDB messages
+    let mut last_user_msg_id: Option<NodeId> = None;
+    let mut last_asst_msg_id: Option<NodeId> = None;
 
     // Ξ(t) Phase B: HeadRouter for per-head topology routing
     // Granularity: "full" = n_head (each query head routes independently, max specialization)
@@ -1425,7 +1430,12 @@ fn main() -> Result<()> {
                     if let Some(uid) = user_msg_id {
                         cdb.link_reply(asst_id, uid);
                     }
+                    last_asst_msg_id = Some(asst_id);
                 }
+                last_user_msg_id = user_msg_id;
+
+                // Track assistant response for potential correction persistence (Fix #1)
+                last_assistant_response = trimmed.clone();
 
                 // Ξ(t) T3: Compute reward for PREVIOUS turn based on current user input
                 turn_count += 1;
@@ -1538,6 +1548,37 @@ fn main() -> Result<()> {
                                     pdb2.mark_memory_useful(mem_id, turn_count);
                                 }
                             }
+                        }
+
+                        // Persist the CORRECTED assistant response when user gives positive feedback.
+                        // This closes the main learning gap: PersistNet only persists user messages,
+                        // but the correction (assistant's improved answer) is what matters for recall.
+                        if reward > 0.3 && !last_assistant_response.is_empty()
+                            && last_assistant_response.len() > 20
+                        {
+                            if let Some(pdb2) = &persona_db {
+                                let mem_id = pdb2.add_memory(
+                                    &format!("[correction] {}", last_assistant_response),
+                                    reward as f32,
+                                    turn_count.saturating_sub(1),
+                                    last_conv_turn_id,
+                                );
+                                debug!("  🧠 Assistant correction persisted (reward={:.2}, id={}, len={})",
+                                    reward, mem_id.0, last_assistant_response.len());
+                            }
+                        }
+
+                        // Propagate reward to :Message nodes in PersonaDB (Fix #3)
+                        // This allows BM25 COLD search to boost validated corrections
+                        if let Some(pdb2) = &persona_db {
+                            if let Some(uid) = last_user_msg_id {
+                                pdb2.set_message_reward(uid, reward as f64);
+                            }
+                            if let Some(aid) = last_asst_msg_id {
+                                pdb2.set_message_reward(aid, reward as f64);
+                            }
+                            debug!("  [Reward→Message] propagated {:.2} to user={:?}, asst={:?}",
+                                reward, last_user_msg_id.map(|n| n.0), last_asst_msg_id.map(|n| n.0));
                         }
                     }
                 }

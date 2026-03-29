@@ -181,7 +181,11 @@ impl MessageIndex {
     fn tokenize(&self, text: &str) -> Vec<String> {
         text.to_lowercase()
             .split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_' && c != '\'')
-            .filter(|s| s.len() > 2)
+            .filter(|s| {
+                // Keep tokens ≥ 3 bytes, OR shorter tokens containing non-ASCII
+                // (Greek letters like ζ, α, Ψ are important in math/science contexts)
+                s.len() > 2 || s.chars().any(|c| !c.is_ascii())
+            })
             .filter(|s| !self.stop_words.contains(s))
             .map(|s| s.to_string())
             .collect()
