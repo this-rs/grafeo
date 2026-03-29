@@ -41,15 +41,39 @@ pub fn generate_with_mask(
 
     let n_predict: i32 = 4096; // thinking models need 500-800 tokens for <think>, 1024 was truncating
 
+    // ── Compute mask budget ─────────────────────────────────────────
+    // Per-head mask memory = n_groups × n_pos² × 4 bytes.
+    // We compute the max total positions, then subtract context (header + nodes + query)
+    // to find how many gen tokens the mask can cover. This maximizes mask coverage
+    // and avoids the "topological leak" where continuation tokens see unmasked KV.
+    let use_perhead_mask = std::env::var("OBRAIN_PERHEAD").map(|v| v == "1").unwrap_or(false) || head_router.is_some();
+    let mask_groups = if use_perhead_mask {
+        head_router.map(|r| r.n_head).unwrap_or(engine.n_head() as usize)
+    } else { 1 };
+    let max_mask_bytes: usize = 512 * 1024 * 1024; // 512 MB
+    let max_mask_positions: i32 = ((max_mask_bytes / (4 * mask_groups)) as f64).sqrt() as i32;
+    let max_mask_positions = max_mask_positions.min(4000); // hard cap
+
+    // Count context positions (header + relevant nodes + query)
+    let mut n_context_positions: i32 = ctx.header_tokens;
+    for node in &ctx.nodes {
+        n_context_positions += node.token_end - node.token_start;
+    }
+    n_context_positions += query_n;
+
+    // n_gen_mask = remaining budget after context, capped at n_predict
+    // With micro-tags (~3 pos/node) this typically gives 3500+ gen positions.
+    // With full text (~50 pos/node) and many nodes it could be lower.
+    let n_gen_mask: i32 = (max_mask_positions - n_context_positions).max(512).min(n_predict);
+    eprintln!("  [mask] budget: {} context + {} gen = {} / {} max ({}×)",
+        n_context_positions, n_gen_mask, n_context_positions + n_gen_mask,
+        max_mask_positions, mask_groups);
+
     // ── Build sparse position map ──────────────────────────────────
     // Only include positions that matter: header + relevant nodes + query + gen.
     // Positions from non-relevant nodes in the KV are excluded (Rule 3b).
-    // n_gen_mask covers the topological mask portion. If the model generates
-    // beyond this, the overflow handler (line ~237) clears the mask and continues
-    // with default causal attention. Keep this small enough to fit within
-    // max_mask_positions budget (4000 total including header+nodes+query).
-    let n_gen_mask: i32 = 1024; // mask covers first 1024 gen tokens, overflow continues without mask
-
+    // n_gen_mask now covers as many gen tokens as the memory budget allows,
+    // eliminating the "topological leak" where continuation tokens bypass the mask.
     let mut positions: Vec<i32> = Vec::new();
     let mut pos_remap: HashMap<i32, usize> = HashMap::new();
 
@@ -81,17 +105,6 @@ pub fn generate_with_mask(
     }
 
     let sz = positions.len();
-    // Dynamic mask position limit based on memory budget.
-    // Per-head mask memory = n_groups × n_pos² × 4 bytes.
-    // Budget scales with available memory — 512MB is reasonable for 128GB machines,
-    // and trivial next to multi-GB model weights.
-    let use_perhead_mask = std::env::var("OBRAIN_PERHEAD").map(|v| v == "1").unwrap_or(false) || head_router.is_some();
-    let mask_groups = if use_perhead_mask {
-        head_router.map(|r| r.n_head).unwrap_or(engine.n_head() as usize)
-    } else { 1 };
-    let max_mask_bytes: usize = 512 * 1024 * 1024; // 512 MB — fine for modern GPUs/Apple Silicon
-    let max_mask_positions: i32 = ((max_mask_bytes / (4 * mask_groups)) as f64).sqrt() as i32;
-    let max_mask_positions = max_mask_positions.min(4000); // hard cap at 4000
 
     if sz as i32 > max_mask_positions {
         eprintln!("  Warning: mask_size={} > {} ({}×{}²×4={:.0}MB budget) — generating without mask.",
@@ -284,12 +297,16 @@ pub fn generate_with_mask(
     drop(spinner);
     full_response.push_str(&chunk);
 
-    // Clear mask — either done or switching to causal for continuations
-    engine.clear_attn_mask();
+    // NOTE: Do NOT clear_attn_mask() here. The mask stays active during continuations
+    // so that tokens beyond n_gen_mask still respect the topology (they'll be outside
+    // the mask's position range and fall through to causal, but non-relevant KV entries
+    // remain excluded from the sparse position map). The mask is cleared in cleanup below.
 
     let was_interrupted = ctl.sigint_received.load(Ordering::Relaxed);
 
-    // Continuations: no mask, causal attention only
+    // Continuations: mask still set but gen tokens beyond n_gen_mask use causal fallback.
+    // The sparse position map already excludes non-relevant nodes, so even without
+    // explicit mask coverage, those KV entries are not in the position set.
     if !hit_eog && !was_interrupted {
         let cont_token = engine.tokenize(" ", false, false)?;
 
@@ -347,6 +364,11 @@ pub fn generate_with_mask(
         // Natural end on round 0 — clean up seq_id=1
         engine.clear_seq(1);
     }
+
+    // Clear the topology mask now that generation is complete.
+    // This must happen AFTER all continuations so they benefit from
+    // the sparse position exclusion (non-relevant nodes stay invisible).
+    engine.clear_attn_mask();
 
     ctl.generating.store(false, Ordering::SeqCst);
     let interrupted = ctl.sigint_received.swap(false, Ordering::SeqCst);
