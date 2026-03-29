@@ -68,7 +68,7 @@ pub fn generate_with_mask(
     // With micro-tags (~3 pos/node) this typically gives 3500+ gen positions.
     // With full text (~50 pos/node) and many nodes it could be lower.
     let n_gen_mask: i32 = (max_mask_positions - n_context_positions).max(512).min(n_predict);
-    eprintln!("  [mask] budget: {} context + {} gen = {} / {} max ({}×)",
+    kv_registry::kv_debug!("  [mask] budget: {} context + {} gen = {} / {} max ({}×)",
         n_context_positions, n_gen_mask, n_context_positions + n_gen_mask,
         max_mask_positions, mask_groups);
 

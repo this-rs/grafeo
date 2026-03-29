@@ -223,6 +223,7 @@ fn main() -> Result<()> {
     let is_debug = std::env::args().any(|a| a == "--debug");
     if is_debug {
         DEBUG.store(true, Ordering::Relaxed);
+        kv_registry::set_debug(true);
     }
     // Control llama.cpp C-level log verbosity
     set_verbose(is_debug);
@@ -1306,13 +1307,13 @@ fn main() -> Result<()> {
         // T6: Meta queries (identity, memory) bypass graph retrieval
         let meta = is_meta_query(&line);
         let (q_store, q_schema) = if meta {
-            eprintln!("  [path] meta query → fallback (no graph)");
+            debug!("  [path] meta query → fallback (no graph)");
             (None, None)
         } else {
             if store.is_some() {
-                eprintln!("  [path] graph retrieval (store loaded)");
+                debug!("  [path] graph retrieval (store loaded)");
             } else {
-                eprintln!("  [path] no graph loaded → fallback");
+                debug!("  [path] no graph loaded → fallback");
             }
             (store.as_ref(), schema.as_ref())
         };

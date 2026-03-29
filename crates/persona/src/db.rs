@@ -78,7 +78,7 @@ impl PersonaDB {
         }
 
         if count > 0 {
-            eprintln!("[PersonaDB] BM25 index built: {} messages across {} conversations",
+            kv_registry::kv_debug!("[PersonaDB] BM25 index built: {} messages across {} conversations",
                 count, convs.len());
         }
     }

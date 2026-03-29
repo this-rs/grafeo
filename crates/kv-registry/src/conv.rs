@@ -116,7 +116,7 @@ impl ConvFragments {
         while self.fragments.len() >= self.max_fragments {
             let evicted = self.fragments.remove(0);
             registry.unregister(evicted.node_id);
-            eprintln!(
+            kv_debug!(
                 "[Conv] HOT→WARM: Q{} (node {:?}) — {} hot, {} warm",
                 evicted.turn + 1, evicted.node_id,
                 self.fragments.len(), self.archived.len() + 1,
@@ -127,7 +127,7 @@ impl ConvFragments {
         // Cap WARM tier (oldest drop to COLD = PersonaDB only)
         while self.archived.len() > MAX_WARM_FRAGMENTS {
             let dropped = self.archived.remove(0);
-            eprintln!(
+            kv_debug!(
                 "[Conv] WARM→COLD: Q{} — only in PersonaDB now",
                 dropped.turn + 1,
             );
@@ -334,7 +334,7 @@ impl ConvFragments {
                     turn,
                 };
 
-                eprintln!(
+                kv_debug!(
                     "[Conv] COLD→HOT: promoting '{}' (BM25 score {:.2})",
                     &hit.content.chars().take(60).collect::<String>(), hit.score,
                 );
@@ -369,7 +369,7 @@ impl ConvFragments {
         conv_adjacency: &mut HashMap<NodeId, HashSet<NodeId>>,
         source: &str,
     ) {
-        eprintln!(
+        kv_debug!(
             "[Conv] {}→HOT: promoting Q{} '{}' (matched query)",
             source, frag.turn + 1, &frag.question.chars().take(50).collect::<String>(),
         );

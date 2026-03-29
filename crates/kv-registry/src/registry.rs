@@ -499,7 +499,7 @@ impl KvNodeRegistry {
             // become "orphaned" but will be reclaimed on next full_recompact.
             // This is safe: the tokens at those positions will still be in
             // the physical KV cache but won't be referenced by any node.
-            eprintln!("[Registry] unregistered node {:?} ({} tokens at pos {}..{})",
+            kv_debug!("[Registry] unregistered node {:?} ({} tokens at pos {}..{})",
                 node_id, slot.n_tokens, slot.start, slot.end);
         }
     }
@@ -543,7 +543,7 @@ impl KvNodeRegistry {
         // Check if position space is nearly exhausted (full-recompact trigger)
         let n_ctx = engine.n_ctx() as i32;
         if self.next_pos + needed_tokens > (n_ctx as f64 * 0.9) as i32 {
-            eprintln!("  ⚠ Position space near limit ({}/{}), full recompact...", self.next_pos, n_ctx);
+            kv_debug!("  ⚠ Position space near limit ({}/{}), full recompact...", self.next_pos, n_ctx);
             self.full_recompact::<fn(&[f32], &[i32], i32) -> Result<usize>>(engine, None, None);
         }
 
