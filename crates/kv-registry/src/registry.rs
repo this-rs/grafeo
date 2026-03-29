@@ -197,14 +197,18 @@ impl KvNodeRegistry {
     pub fn full_recompact(&mut self, engine: &dyn Tokenizer) {
         engine.clear_kv();
 
-        // Re-encode header
+        // Re-encode header (may have changed size since last build)
+        let mut pos = 0i32;
         if let Ok(tokens) = engine.tokenize(&self.header_text, false, true) {
-            let positions: Vec<i32> = (0..tokens.len() as i32).collect();
+            let n_tok = tokens.len() as i32;
+            let positions: Vec<i32> = (0..n_tok).collect();
             let _ = engine.encode(&tokens, &positions, 0);
+            pos = n_tok;
         }
+        // Update header_end to reflect actual new header size
+        self.header_end = pos;
 
         // Re-encode all nodes with fresh contiguous positions
-        let mut pos = self.header_end;
         for nid in &self.order {
             if let Some(slot) = self.nodes.get_mut(nid) {
                 if let Ok(tokens) = engine.tokenize(&slot.text, false, true) {

@@ -404,7 +404,18 @@ impl PersonaDB {
         }
 
         let defaults = [
-            // Identity patterns (prefix match)
+            // Identity patterns — 1st person (most common in conversation!)
+            ("je m'appelle ", "name", "identity"),
+            ("je m appelle ", "name", "identity"),
+            ("mon nom est ", "name", "identity"),
+            ("mon nom c'est ", "name", "identity"),
+            ("mon prénom est ", "name", "identity"),
+            ("mon prénom c'est ", "name", "identity"),
+            ("my name is ", "name", "identity"),
+            ("i'm ", "identity", "identity"),
+            ("i am ", "identity", "identity"),
+            ("je suis ", "identity", "identity"),
+            // Identity patterns — 2nd person (commands)
             ("ton nom est ", "name", "identity"),
             ("tu t'appelles ", "name", "identity"),
             ("tu es ", "identity", "identity"),
@@ -412,6 +423,33 @@ impl PersonaDB {
             ("your name is ", "name", "identity"),
             ("you are ", "identity", "identity"),
             ("call yourself ", "name", "identity"),
+            // Location patterns
+            ("j'habite à ", "city", "preference"),
+            ("j'habite a ", "city", "preference"),
+            ("j'habite en ", "country", "preference"),
+            ("je vis à ", "city", "preference"),
+            ("je vis a ", "city", "preference"),
+            ("je vis en ", "country", "preference"),
+            ("i live in ", "city", "preference"),
+            // Preference patterns
+            ("ma couleur préférée est ", "preference_color", "preference"),
+            ("ma couleur préférée c'est ", "preference_color", "preference"),
+            ("ma couleur preferee est ", "preference_color", "preference"),
+            ("ma couleur preferee c'est ", "preference_color", "preference"),
+            ("my favorite color is ", "preference_color", "preference"),
+            ("j'aime ", "preference", "preference"),
+            ("j'adore ", "preference", "preference"),
+            ("je préfère ", "preference", "preference"),
+            ("je deteste ", "dislike", "preference"),
+            ("je déteste ", "dislike", "preference"),
+            ("i like ", "preference", "preference"),
+            ("i love ", "preference", "preference"),
+            ("i hate ", "dislike", "preference"),
+            // Work/occupation
+            ("je travaille ", "work", "identity"),
+            ("je suis étudiant ", "occupation", "identity"),
+            ("je suis étudiante ", "occupation", "identity"),
+            ("i work ", "work", "identity"),
             // Memory patterns
             ("retiens que ", "memory", "episodic"),
             ("rappelle-toi que ", "memory", "episodic"),

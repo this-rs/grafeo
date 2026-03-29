@@ -12,6 +12,24 @@ pub struct PatternMatch {
     pub value: String,
 }
 
+/// Truncate value at natural sentence boundaries (conjunctions, punctuation).
+/// "thomas et j'habite à lyon" → "thomas"
+fn truncate_at_boundary(s: &str) -> String {
+    let s = s.trim();
+    // Split at conjunctions and punctuation
+    let boundaries = [" et ", " and ", " mais ", " but ", ", ", ". ", "! ", "? "];
+    let mut end = s.len();
+    for b in &boundaries {
+        if let Some(pos) = s.find(b) {
+            if pos < end && pos > 0 {
+                end = pos;
+            }
+        }
+    }
+    let value = &s[..end];
+    value.trim().trim_end_matches(|c: char| c == '.' || c == '!' || c == '?' || c == ',').to_string()
+}
+
 /// Ξ(t) T2: Detect facts from :Pattern nodes in the graph.
 /// Each :Pattern has a trigger (prefix match on lowercased input).
 /// Returns matches with pattern provenance for EXTRACTS edges and hit_count updates.
@@ -43,31 +61,33 @@ pub fn detect_facts_from_graph(pdb: &PersonaDB, msg: &str) -> Vec<PatternMatch> 
         if trigger.is_empty() { continue; }
 
         // Prefix match
+        let mut this_matched = false;
         if let Some(rest) = lower.strip_prefix(trigger.as_str()) {
-            let value = rest.trim().trim_end_matches(|c: char| c == '.' || c == '!' || c == '?');
+            let value = truncate_at_boundary(rest);
             if !value.is_empty() && value.len() < 200 {
                 matches.push(PatternMatch {
                     pattern_nid: nid,
                     key: key_template.clone(),
-                    value: value.to_string(),
+                    value,
                 });
+                this_matched = true;
             }
         }
 
-        // Infix match (fallback for "... trigger ..." patterns)
-        if matches.is_empty() {
+        // Infix match (fallback if THIS pattern didn't match as prefix)
+        if !this_matched {
             if let Some(pos) = lower.find(trigger.as_str()) {
-                let rest = &lower[pos + trigger.len()..];
-                let value: String = rest.chars()
-                    .take_while(|c| *c != '.' && *c != ',' && *c != '!' && *c != '?')
-                    .collect();
-                let value = value.trim().to_string();
-                if !value.is_empty() && value.len() < 200 {
-                    matches.push(PatternMatch {
-                        pattern_nid: nid,
-                        key: key_template,
-                        value,
-                    });
+                // Skip if this infix position is at the start (would have been caught by prefix)
+                if pos > 0 {
+                    let rest = &lower[pos + trigger.len()..];
+                    let value = truncate_at_boundary(rest);
+                    if !value.is_empty() && value.len() < 200 {
+                        matches.push(PatternMatch {
+                            pattern_nid: nid,
+                            key: key_template,
+                            value,
+                        });
+                    }
                 }
             }
         }
@@ -90,14 +110,29 @@ pub fn detect_facts(msg: &str) -> Vec<(String, String)> {
     let lower = msg.to_lowercase();
     let mut facts = Vec::new();
 
-    for prefix in &[
-        "ton nom est ", "tu t'appelles ", "tu es ", "appelle-toi ",
-        "your name is ", "you are ", "call yourself ",
+    for (prefix, key) in &[
+        // 1st person (most common)
+        ("je m'appelle ", "name"), ("je m appelle ", "name"),
+        ("mon nom est ", "name"), ("mon nom c'est ", "name"),
+        ("my name is ", "name"), ("je suis ", "identity"),
+        ("i am ", "identity"), ("i'm ", "identity"),
+        // 2nd person (commands)
+        ("ton nom est ", "name"), ("tu t'appelles ", "name"),
+        ("tu es ", "identity"), ("appelle-toi ", "name"),
+        ("your name is ", "name"), ("you are ", "identity"),
+        ("call yourself ", "name"),
+        // Location
+        ("j'habite à ", "city"), ("j'habite a ", "city"),
+        ("je vis à ", "city"), ("je vis a ", "city"),
+        ("i live in ", "city"),
     ] {
         if let Some(rest) = lower.strip_prefix(prefix) {
-            let value = rest.trim().trim_end_matches(|c: char| c == '.' || c == '!' || c == '?');
+            let value = rest.trim().trim_end_matches(|c: char| c == '.' || c == '!' || c == '?' || c == ',');
             if !value.is_empty() && value.len() < 100 {
-                facts.push(("name".to_string(), value.to_string()));
+                // For "je suis X et Y", only take up to first "et"/"and"
+                let value = value.split(" et ").next().unwrap_or(value).trim();
+                let value = value.split(" and ").next().unwrap_or(value).trim();
+                facts.push((key.to_string(), value.to_string()));
             }
         }
     }
