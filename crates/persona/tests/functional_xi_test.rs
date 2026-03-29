@@ -42,7 +42,7 @@ fn t4_reward_signal1_token_polarity() {
 
     // Turn 1 is always 0.0 (no previous turn to evaluate)
     let r = rd.compute_reward(&[100, 300], 1, None, None, None);
-    assert_eq!(r, 0.0, "turn 1 should always be 0.0");
+    assert_eq!(r.reward, 0.0, "turn 1 should always be 0.0");
 
     // Turn 2 with positive polarity tokens → positive reward
     let r = rd.compute_reward(&[100], 2, None, None, None);
@@ -50,11 +50,11 @@ fn t4_reward_signal1_token_polarity() {
     // reward = 0.30 * 0.5 + 0.20 * 0 + 0.10 * engagement + 0.25 * 0 + 0.15 * 0
     // engagement = 0.02 * min(2, 20) = 0.04
     // = 0.15 + 0.0 + 0.004 + 0 + 0 = 0.154
-    assert!(r > 0.1, "positive polarity tokens should produce positive reward, got {r}");
+    assert!(r.reward > 0.1, "positive polarity tokens should produce positive reward, got {r}");
 
     // Turn 3 with negative polarity tokens → negative reward
     let r = rd.compute_reward(&[200], 3, None, None, None);
-    assert!(r < 0.0, "negative polarity tokens should produce negative reward, got {r}");
+    assert!(r.reward < 0.0, "negative polarity tokens should produce negative reward, got {r}");
 }
 
 #[test]
@@ -68,12 +68,12 @@ fn t4_reward_signal2_reformulation_detection() {
     let r = rd.compute_reward(&[1, 2, 3, 4, 5], 2, None, None, None);
     // reformulation_penalty = -0.3
     // reward = 0.30*0 + 0.20*(-0.3) + 0.10*0.04 + 0.25*0 + 0.15*0 = -0.056
-    assert!(r < 0.0, "reformulation should produce negative reward, got {r}");
+    assert!(r.reward < 0.0, "reformulation should produce negative reward, got {r}");
 
     // Turn 3: completely different tokens → no reformulation
     let r = rd.compute_reward(&[100, 200, 300, 400, 500], 3, None, None, None);
     // No polarity, no reformulation → small positive from engagement
-    assert!(r >= 0.0, "different tokens = no reformulation penalty, got {r}");
+    assert!(r.reward >= 0.0, "different tokens = no reformulation penalty, got {r}");
 }
 
 #[test]
@@ -154,7 +154,7 @@ fn t4_reward_all_5_signals_combined() {
     );
 
     // All 5 signals should contribute positively
-    assert!(r > 0.1, "all positive signals should produce high reward: {r}");
+    assert!(r.reward > 0.1, "all positive signals should produce high reward: {r}");
     eprintln!("  T4 combined reward = {r:.4}");
 }
 

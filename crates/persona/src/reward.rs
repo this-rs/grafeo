@@ -7,6 +7,23 @@ use std::collections::{HashMap, HashSet};
 // Ξ(t) T3 — RewardDetector: implicit token-level reward signals
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// Decomposed reward signals — allows callers to inspect individual components.
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub struct RewardSignals {
+    /// Composite reward [-1.0, +1.0] (weighted sum of all signals)
+    pub reward: f32,
+    /// Factual success signal: did the response use injected facts?
+    /// This is the "mask quality" indicator — positive means the topology mask
+    /// guided attention to relevant facts that the model actually used.
+    pub factual_signal: f32,
+}
+
+impl std::fmt::Display for RewardSignals {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RewardSignals(reward={:.4}, factual={:.4})", self.reward, self.factual_signal)
+    }
+}
+
 /// Token-level reward detector. Computes reward [-1.0, +1.0] from user's response
 /// to evaluate the quality of the previous LLM answer. Zero LLM decode overhead.
 pub struct RewardDetector {
@@ -117,10 +134,10 @@ impl RewardDetector {
         injected_facts: Option<&[(String, String)]>,
         response_text: Option<&str>,
         avg_entropy: Option<f32>,
-    ) -> f32 {
+    ) -> RewardSignals {
         if turn_count <= 1 {
             self.prev_query_tokens = user_tokens.to_vec();
-            return 0.0;
+            return RewardSignals { reward: 0.0, factual_signal: 0.0 };
         }
 
         // (1) Token polarity signal
@@ -186,7 +203,7 @@ impl RewardDetector {
             + 0.15 * entropy_signal
         ).clamp(-1.0, 1.0);
 
-        reward
+        RewardSignals { reward, factual_signal }
     }
 
     /// Cosine similarity between two bags of token IDs.
@@ -218,8 +235,25 @@ impl RewardDetector {
     /// - Adjust energy of :Fact nodes that were USED_IN that turn
     /// - Update avg_reward of :Pattern nodes that EXTRACTS used facts
     pub fn propagate_reward(&self, pdb: &PersonaDB, conv_turn_id: NodeId, reward: f32, used_fact_ids: &[NodeId]) {
+        self.propagate_reward_ex(pdb, conv_turn_id, reward, used_fact_ids, None);
+    }
+
+    /// Extended propagation with optional mask_reward (factual_signal from RewardSignals).
+    /// Stores mask_reward on ConvTurn for retrospective analysis of mask quality.
+    pub fn propagate_reward_ex(
+        &self,
+        pdb: &PersonaDB,
+        conv_turn_id: NodeId,
+        reward: f32,
+        used_fact_ids: &[NodeId],
+        mask_reward: Option<f32>,
+    ) {
         // (1) Set reward on the ConvTurn
         pdb.db.set_node_property(conv_turn_id, "reward", Value::Float64(reward as f64));
+        // (1b) Store mask quality signal separately for A/B analysis
+        if let Some(mr) = mask_reward {
+            pdb.db.set_node_property(conv_turn_id, "mask_reward", Value::Float64(mr as f64));
+        }
 
         let store = pdb.db.store();
 
