@@ -205,7 +205,18 @@ RUN find /build/obrain-chat -name 'Cargo.toml' -exec \
 WORKDIR /build/obrain-chat
 
 # Override .cargo/config.toml for native Linux build (no zig cross-linker)
-RUN mkdir -p .cargo && printf '[build]\ntarget = "x86_64-unknown-linux-gnu"\n\n[target.x86_64-unknown-linux-gnu]\nlinker = "cc"\n' > .cargo/config.toml
+# SYCL variant uses icpx-sycl wrapper as linker. The wrapper only passes -fsycl
+# when linking the FINAL binary (detected by presence of -lggml-sycl in args),
+# not for build scripts. -fsycl triggers sycl-post-link to embed SPIR-V device
+# code. Without it, kernels are silently missing at runtime.
+RUN mkdir -p .cargo && \
+    if command -v icpx >/dev/null 2>&1 && [ "${LLAMA_BACKEND_FLAGS}" = "LLAMA_SYCL=1" ]; then \
+        printf '#!/bin/sh\necho "ICPX-SYCL: $*" >> /tmp/icpx-sycl.log\ncase "$*" in\n  *ggml-sycl*|*ggml_sycl*) exec icpx -fsycl "$@" ;;\n  *) exec icpx "$@" ;;\nesac\n' > /usr/local/bin/icpx-sycl && \
+        chmod +x /usr/local/bin/icpx-sycl && \
+        printf '[build]\ntarget = "x86_64-unknown-linux-gnu"\n\n[target.x86_64-unknown-linux-gnu]\nlinker = "icpx-sycl"\nrustflags = [\n  "-C", "link-arg=-Wl,--no-as-needed",\n  "-C", "link-arg=-Wl,-rpath,/opt/intel/oneapi/compiler/latest/lib",\n  "-C", "link-arg=-Wl,-rpath,/opt/intel/oneapi/mkl/latest/lib",\n  "-C", "link-arg=-Wl,-rpath,/opt/intel/oneapi/tbb/latest/lib",\n  "-C", "link-arg=-Wl,-rpath,/opt/intel/oneapi/dnnl/latest/lib",\n]\n' > .cargo/config.toml; \
+    else \
+        printf '[build]\ntarget = "x86_64-unknown-linux-gnu"\n\n[target.x86_64-unknown-linux-gnu]\nlinker = "cc"\n' > .cargo/config.toml; \
+    fi
 
 # Flatten llama.cpp static libs for build.rs detection
 RUN mkdir -p /build/llama-libs && \
@@ -221,7 +232,10 @@ RUN export LLAMA_CPP_DIR=/build/llama.cpp && \
     export LLAMA_STDCPP_DYNAMIC=1 && \
     if [ -n "${LLAMA_LIBCXX}" ]; then export LLAMA_LIBCXX=1; fi && \
     if [ -n "${LLAMA_BACKEND_FLAGS}" ]; then export ${LLAMA_BACKEND_FLAGS}; fi && \
-    cargo build --release
+    cargo build --release && \
+    echo "=== icpx-sycl invocations ===" && \
+    grep -c "ggml.sycl\|ggml-sycl" /tmp/icpx-sycl.log 2>/dev/null || true && \
+    grep "obrain-chat" /tmp/icpx-sycl.log 2>/dev/null | tail -1 | tr ' ' '\n' | grep -iE "ggml|sycl|rlib" | head -20 || true
 
 RUN cp target/x86_64-unknown-linux-gnu/release/obrain-chat /build/obrain-chat-linux \
     || cp target/release/obrain-chat /build/obrain-chat-linux

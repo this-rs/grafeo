@@ -41,8 +41,13 @@ fn main() {
         } else {
             // Nested layout (cmake build tree): .a files in src/, ggml/src/, etc.
             for sub in &[
-                "src", "ggml/src", "ggml/src/ggml-metal", "ggml/src/ggml-blas",
-                "ggml/src/ggml-cpu", "ggml/src/ggml-cuda", "ggml/src/ggml-vulkan",
+                "src",
+                "ggml/src",
+                "ggml/src/ggml-metal",
+                "ggml/src/ggml-blas",
+                "ggml/src/ggml-cpu",
+                "ggml/src/ggml-cuda",
+                "ggml/src/ggml-vulkan",
                 "ggml/src/ggml-sycl",
             ] {
                 let p = build_dir.join(sub);
@@ -112,10 +117,17 @@ fn main() {
         println!("cargo:rustc-link-lib={}=ggml-sycl", link_kind);
         println!("cargo:rustc-link-lib=dylib=sycl");
         println!("cargo:rustc-link-lib=dylib=OpenCL");
+        // MKL libraries: mkl_sycl_blas depends transitively on mkl_core and tbb.
+        // Without --no-as-needed, the linker strips transitive deps from NEEDED
+        // (our Rust code doesn't call mkl_core symbols directly), causing
+        // "undefined symbol: mkl_serv_strnlen_s" at runtime.
+        println!("cargo:rustc-link-arg=-Wl,--no-as-needed");
         println!("cargo:rustc-link-lib=dylib=mkl_core");
         println!("cargo:rustc-link-lib=dylib=mkl_sycl_blas");
         println!("cargo:rustc-link-lib=dylib=mkl_intel_ilp64");
         println!("cargo:rustc-link-lib=dylib=mkl_tbb_thread");
+        println!("cargo:rustc-link-lib=dylib=tbb");
+        println!("cargo:rustc-link-arg=-Wl,--as-needed");
         // Intel compiler runtime: SVML (vectorized math) + irc (fast memcpy/memset)
         // Required when llama.cpp is compiled with icpx (Intel oneAPI C++ compiler)
         println!("cargo:rustc-link-lib=dylib=svml");
@@ -123,11 +135,24 @@ fn main() {
         println!("cargo:rustc-link-lib=dylib=imf");
         // oneDNN (Deep Neural Network Library) — used by ggml-sycl for matmul ops
         println!("cargo:rustc-link-lib=dylib=dnnl");
-        // oneAPI lib paths
+        // Note: -fsycl is passed via the linker wrapper script (icpx-sycl in Docker),
+        // NOT via rustc-link-arg. It must be a driver flag before any objects.
+        // Embed RUNPATH so the runtime linker can find oneAPI libs without
+        // requiring the user to manually set LD_LIBRARY_PATH or source setvars.sh.
+        for rpath in &[
+            "/opt/intel/oneapi/compiler/latest/lib",
+            "/opt/intel/oneapi/mkl/latest/lib",
+            "/opt/intel/oneapi/tbb/latest/lib",
+            "/opt/intel/oneapi/dnnl/latest/lib",
+        ] {
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", rpath);
+        }
+        // oneAPI lib paths (link-time search)
         for sycl_path in &[
             "/opt/intel/oneapi/compiler/latest/lib",
             "/opt/intel/oneapi/mkl/latest/lib",
             "/opt/intel/oneapi/tbb/latest/lib",
+            "/opt/intel/oneapi/dnnl/latest/lib",
         ] {
             let p = PathBuf::from(sycl_path);
             if p.exists() {
