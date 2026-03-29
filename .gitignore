@@ -5,3 +5,8 @@
 *.db
 *.db.banks/
 Cargo.lock
+
+# Benchmark results (generated)
+tests/*_results.json
+tests/c5_decision.json
+.DS_Store
