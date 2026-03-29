@@ -26,6 +26,16 @@ pub struct ColdHit {
 pub trait ColdSearch {
     /// Search all messages across all conversations. Returns up to `limit` hits.
     fn search(&self, query: &str, limit: usize) -> Vec<ColdHit>;
+
+    /// Search and return Q/A pairs: for each hit, include the adjacent message
+    /// (user→assistant pair or assistant→user pair).
+    /// Default implementation falls back to single-message search.
+    fn search_pairs(&self, query: &str, limit: usize) -> Vec<(ColdHit, Option<ColdHit>)> {
+        self.search(query, limit)
+            .into_iter()
+            .map(|h| (h, None))
+            .collect()
+    }
 }
 
 /// Conversation fragments live in NodeId space 0xFFFF_0000_0000_xxxx
@@ -288,59 +298,71 @@ impl ConvFragments {
 
         // ── Search COLD tier (PersonaDB BM25) → promote matches ──
         if let Some(cold_search) = cold {
-            let cold_hits = cold_search.search(query, 5);
-            // Collect questions already in HOT (for dedup)
-            let hot_questions: HashSet<String> = self.fragments.iter()
+            let cold_pairs = cold_search.search_pairs(query, 5);
+            // Collect fragment texts already in HOT/WARM (for substring dedup)
+            let hot_texts: Vec<String> = self.fragments.iter()
                 .map(|f| f.question.to_lowercase())
                 .collect();
-            let warm_questions: HashSet<String> = self.archived.iter()
+            let warm_texts: Vec<String> = self.archived.iter()
                 .map(|f| f.question.to_lowercase())
                 .collect();
 
             let mut cold_promoted = 0u32;
-            const MAX_COLD_PROMOTE: u32 = 2;
+            const MAX_COLD_PROMOTE: u32 = 3;
 
-            for hit in cold_hits {
+            for (primary, adjacent) in &cold_pairs {
                 if cold_promoted >= MAX_COLD_PROMOTE { break; }
-                // Only promote user messages (Q&A pairs reconstructed from user content)
-                if hit.role != "user" { continue; }
-                // Skip if score too low
-                if hit.score < 0.5 { continue; }
+                if primary.score < 0.3 { continue; }
 
-                // Dedup: skip if question already in HOT or WARM
-                let content_lower = hit.content.to_lowercase();
-                if hot_questions.contains(&content_lower) || warm_questions.contains(&content_lower) {
-                    continue;
+                // Collect both hits to promote (primary + optional adjacent)
+                let mut hits_to_promote: Vec<&ColdHit> = vec![primary];
+                if let Some(adj) = adjacent {
+                    hits_to_promote.push(adj);
                 }
 
-                // Build a ConvFragment from the COLD hit
-                let turn = self.next_turn;
-                self.next_turn += 1;
-                let node_id = NodeId(CONV_NODE_BASE + turn as u64);
-                let summary = Self::summarize_answer(&hit.content, 200);
-                let kv_text = if let Some(ref title) = hit.conv_title {
-                    format!("[Souvenir — {}] {}\n", title, summary)
-                } else {
-                    format!("[Souvenir] {}\n", summary)
-                };
-                let terms = Self::extract_terms(&hit.content, "");
+                for hit in hits_to_promote {
+                    if cold_promoted >= MAX_COLD_PROMOTE { break; }
 
-                let frag = ConvFragment {
-                    node_id,
-                    question: hit.content.clone(),
-                    terms,
-                    kv_text,
-                    related_graph_nodes: vec![],
-                    turn,
-                };
+                    // Substring dedup against HOT/WARM
+                    let content_lower = hit.content.to_lowercase();
+                    let content_short: String = content_lower.chars().take(80).collect();
+                    let already_in = hot_texts.iter().chain(warm_texts.iter()).any(|q| {
+                        let q_short: String = q.chars().take(80).collect();
+                        content_short == q_short
+                    });
+                    if already_in { continue; }
 
-                kv_debug!(
-                    "[Conv] COLD→HOT: promoting '{}' (BM25 score {:.2})",
-                    &hit.content.chars().take(60).collect::<String>(), hit.score,
-                );
+                    // Build a ConvFragment from the COLD hit
+                    let turn = self.next_turn;
+                    self.next_turn += 1;
+                    let node_id = NodeId(CONV_NODE_BASE + turn as u64);
+                    let summary = Self::summarize_answer(&hit.content, 300);
+                    let prefix = match (hit.role.as_str(), &hit.conv_title) {
+                        ("assistant", Some(title)) => format!("[Souvenir — {}] Réponse: ", title),
+                        ("assistant", None) => "[Souvenir] Réponse: ".to_string(),
+                        (_, Some(title)) => format!("[Souvenir — {}] ", title),
+                        (_, None) => "[Souvenir] ".to_string(),
+                    };
+                    let kv_text = format!("{}{}\n", prefix, summary);
+                    let terms = Self::extract_terms(&hit.content, "");
 
-                self.promote_to_hot(frag, registry, engine, kv_capacity, &mut relevant_ids, &mut conv_adjacency, "COLD");
-                cold_promoted += 1;
+                    let frag = ConvFragment {
+                        node_id,
+                        question: hit.content.clone(),
+                        terms,
+                        kv_text,
+                        related_graph_nodes: vec![],
+                        turn,
+                    };
+
+                    kv_debug!(
+                        "[Conv] COLD→HOT: promoting {} '{}' (BM25 score {:.2})",
+                        hit.role, &hit.content.chars().take(60).collect::<String>(), hit.score,
+                    );
+
+                    self.promote_to_hot(frag, registry, engine, kv_capacity, &mut relevant_ids, &mut conv_adjacency, "COLD");
+                    cold_promoted += 1;
+                }
             }
         }
 

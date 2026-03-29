@@ -129,6 +129,36 @@ impl PersonaDB {
         self.msg_index.borrow().len()
     }
 
+    /// Find the adjacent message (by order ±1) in the same conversation.
+    /// Returns (role, content) if found.
+    pub fn adjacent_message(&self, conv_id: NodeId, msg_node_id: NodeId, direction: i64) -> Option<(NodeId, String, String)> {
+        let store = self.db.store();
+        // Get the order of the source message
+        let src_order = store.get_node(msg_node_id)?
+            .properties.get(&PropertyKey::from("order"))
+            .and_then(|v| if let Value::Int64(n) = v { Some(*n) } else { None })?;
+        let target_order = src_order + direction;
+
+        // Search through conversation messages for the target order
+        for (target, _eid) in store.edges_from(conv_id, Direction::Outgoing).collect::<Vec<_>>() {
+            if let Some(node) = store.get_node(target) {
+                let is_msg = node.labels.iter().any(|l| { let s: &str = l.as_ref(); s == "Message" });
+                if !is_msg { continue; }
+                let order = node.properties.get(&PropertyKey::from("order"))
+                    .and_then(|v| if let Value::Int64(n) = v { Some(*n) } else { None })
+                    .unwrap_or(-1);
+                if order == target_order {
+                    let role = node.properties.get(&PropertyKey::from("role"))
+                        .and_then(|v| v.as_str()).unwrap_or("user").to_string();
+                    let content = node.properties.get(&PropertyKey::from("content"))
+                        .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    return Some((target, role, content));
+                }
+            }
+        }
+        None
+    }
+
     /// Link a reply message to the message it's replying to.
     pub fn link_reply(&self, reply_id: NodeId, parent_id: NodeId) {
         self.db.create_edge(reply_id, parent_id, "REPLIES_TO");
@@ -974,7 +1004,6 @@ impl ColdSearch for PersonaDB {
         self.search_messages(query, limit)
             .into_iter()
             .map(|hit| {
-                // Resolve conversation title for cross-conversation context
                 let conv_title = store.get_node(hit.conv_id)
                     .and_then(|n| n.properties.get(&PropertyKey::from("title"))
                         .and_then(|v| v.as_str())
@@ -986,6 +1015,51 @@ impl ColdSearch for PersonaDB {
                     conv_title,
                     score: hit.score,
                 }
+            })
+            .collect()
+    }
+
+    fn search_pairs(&self, query: &str, limit: usize) -> Vec<(ColdHit, Option<ColdHit>)> {
+        let store = self.db.store();
+        let hits = self.search_messages(query, limit);
+        let mut seen_nodes: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+
+        hits.into_iter()
+            .filter_map(|hit| {
+                if seen_nodes.contains(&hit.node_id) { return None; }
+                seen_nodes.insert(hit.node_id);
+
+                let conv_title = store.get_node(hit.conv_id)
+                    .and_then(|n| n.properties.get(&PropertyKey::from("title"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()));
+
+                let primary = ColdHit {
+                    role: hit.role.clone(),
+                    content: hit.content.clone(),
+                    conv_id: hit.conv_id,
+                    conv_title: conv_title.clone(),
+                    score: hit.score,
+                };
+
+                // Find adjacent message to form a Q/A pair:
+                // If hit is "user", look for next (assistant reply)
+                // If hit is "assistant", look for prev (user question)
+                let direction = if hit.role == "user" { 1 } else { -1 };
+                let adjacent = self.adjacent_message(hit.conv_id, hit.node_id, direction)
+                    .and_then(|(adj_nid, adj_role, adj_content)| {
+                        if seen_nodes.contains(&adj_nid) { return None; }
+                        seen_nodes.insert(adj_nid);
+                        Some(ColdHit {
+                            role: adj_role,
+                            content: adj_content,
+                            conv_id: hit.conv_id,
+                            conv_title: conv_title.clone(),
+                            score: hit.score * 0.8, // slightly lower score for adjacent
+                        })
+                    });
+
+                Some((primary, adjacent))
             })
             .collect()
     }
