@@ -162,8 +162,33 @@ fn main() {
             let host_os = env::consts::OS;
             if env::var("LLAMA_LIBCXX").is_ok() {
                 // llama.cpp compiled with clang -stdlib=libc++ (Docker full builds
-                // for CPU/Vulkan/CUDA variants). Symbols are std::__1::* (libc++ ABI).
-                println!("cargo:rustc-link-lib=c++");
+                // for CPU/Vulkan variants). Symbols are std::__1::* (libc++ ABI).
+                if link_static {
+                    // Static link libc++ so the binary doesn't need libc++.so at runtime.
+                    // We must link the full LLVM C++ runtime chain: libc++ → libc++abi → libunwind.
+                    // Use -Bstatic/-Bdynamic linker flags to force static archives even when
+                    // .so files exist in the same search paths (ld prefers .so by default).
+                    for libcxx_path in &[
+                        "/usr/lib/x86_64-linux-gnu",
+                        "/usr/lib/llvm-18/lib",
+                        "/usr/lib/llvm-17/lib",
+                        "/usr/lib/llvm-16/lib",
+                        "/usr/lib/llvm-14/lib",
+                    ] {
+                        let p = PathBuf::from(libcxx_path);
+                        if p.exists() {
+                            println!("cargo:rustc-link-search=native={}", p.display());
+                        }
+                    }
+                    // Force static linking for the entire LLVM C++ runtime group
+                    println!("cargo:rustc-link-arg=-Wl,-Bstatic");
+                    println!("cargo:rustc-link-arg=-lc++");
+                    println!("cargo:rustc-link-arg=-lc++abi");
+                    println!("cargo:rustc-link-arg=-lunwind");
+                    println!("cargo:rustc-link-arg=-Wl,-Bdynamic");
+                } else {
+                    println!("cargo:rustc-link-lib=c++");
+                }
             } else if host_os == "linux" {
                 // Native Linux build with libstdc++ ABI (e.g. SYCL via icpx).
                 // Force dynamic stdc++ when LLAMA_STDCPP_DYNAMIC=1 (Docker full builds
