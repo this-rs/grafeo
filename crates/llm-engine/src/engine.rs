@@ -97,6 +97,9 @@ pub struct LlamaEngine {
     ctx: *mut ffi::llama_context,
     sampler: *mut ffi::llama_sampler,
     n_ctx: u32,
+    /// If set, the profiler handle keeps the Arc alive for the eval callback.
+    /// The raw pointer was passed to llama.cpp as cb_eval_user_data.
+    _profiler_handle: Option<crate::profiler::ProfilerHandle>,
 }
 
 // SAFETY: The llama.cpp pointers are only accessed through &self/&mut self,
@@ -205,6 +208,80 @@ impl LlamaEngine {
             ctx,
             sampler,
             n_ctx: actual_n_ctx,
+            _profiler_handle: None,
+        })
+    }
+
+    /// Load a model with an eval callback for head profiling.
+    ///
+    /// The profiler's eval callback captures "kq_soft_max" tensors during inference,
+    /// allowing analysis of per-head attention distribution across topology banks.
+    ///
+    /// **Important**: Flash attention must be disabled (it's already disabled by default)
+    /// because Flash Attention fuses the KQ computation and doesn't emit individual
+    /// "kq_soft_max" tensors to the eval callback.
+    pub fn new_with_profiler(config: &EngineConfig, profiler_handle: crate::profiler::ProfilerHandle) -> Result<Self> {
+        ensure_backend();
+
+        let c_path = CString::new(config.model_path.as_str())
+            .map_err(|_| anyhow::anyhow!("model path contains null byte"))?;
+
+        let model = unsafe {
+            let mut params = ffi::llama_model_default_params();
+            params.n_gpu_layers = config.n_gpu_layers;
+            ffi::llama_model_load_from_file(c_path.as_ptr(), params)
+        };
+        if model.is_null() {
+            bail!("Failed to load model from '{}'", config.model_path);
+        }
+
+        // Get raw pointer to the Mutex<ProfilerState> inside the Arc.
+        // The Arc stays alive via _profiler_handle in the struct.
+        let raw_handle = std::sync::Arc::as_ptr(&profiler_handle) as *mut std::os::raw::c_void;
+
+        let ctx = unsafe {
+            let mut params = ffi::llama_context_default_params();
+            params.n_ctx = config.n_ctx;
+            params.n_batch = config.n_batch;
+            params.flash_attn_type = ffi::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_DISABLED;
+            params.n_seq_max = 2;
+
+            // Set eval callback for head profiling
+            params.cb_eval = Some(crate::profiler::profiler_eval_callback);
+            params.cb_eval_user_data = raw_handle;
+
+            ffi::llama_init_from_model(model, params)
+        };
+        if ctx.is_null() {
+            unsafe { ffi::llama_model_free(model) };
+            bail!("Failed to create context with profiler (n_ctx={})", config.n_ctx);
+        }
+
+        let sampler = unsafe {
+            let sparams = ffi::llama_sampler_chain_default_params();
+            let chain = ffi::llama_sampler_chain_init(sparams);
+            if chain.is_null() {
+                ffi::llama_free(ctx);
+                ffi::llama_model_free(model);
+                bail!("Failed to create sampler chain");
+            }
+            ffi::llama_sampler_chain_add(chain, ffi::llama_sampler_init_penalties(
+                config.penalty_last_n, config.penalty_repeat, 0.0, 0.0));
+            ffi::llama_sampler_chain_add(chain, ffi::llama_sampler_init_temp(config.temperature));
+            ffi::llama_sampler_chain_add(chain, ffi::llama_sampler_init_top_p(config.top_p, 1));
+            ffi::llama_sampler_chain_add(chain, ffi::llama_sampler_init_min_p(config.min_p, 1));
+            ffi::llama_sampler_chain_add(chain, ffi::llama_sampler_init_dist(ffi::LLAMA_DEFAULT_SEED));
+            chain
+        };
+
+        let actual_n_ctx = unsafe { ffi::llama_n_ctx(ctx) };
+
+        Ok(Self {
+            model,
+            ctx,
+            sampler,
+            n_ctx: actual_n_ctx,
+            _profiler_handle: Some(profiler_handle),
         })
     }
 
@@ -229,6 +306,16 @@ impl LlamaEngine {
     /// Get the raw sampler pointer.
     pub fn sampler_ptr(&self) -> *mut ffi::llama_sampler {
         self.sampler
+    }
+
+    /// Get number of attention heads in the model.
+    pub fn n_heads(&self) -> u32 {
+        unsafe { ffi::llama_model_n_head(self.model) as u32 }
+    }
+
+    /// Get number of layers in the model.
+    pub fn n_layers(&self) -> u32 {
+        unsafe { ffi::llama_model_n_layer(self.model) as u32 }
     }
 
     /// Get the memory handle for KV cache operations.

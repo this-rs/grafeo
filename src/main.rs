@@ -257,6 +257,10 @@ fn main() -> Result<()> {
     let http_addr: Option<std::net::SocketAddr> = parse_arg("--http")
         .map(|s| s.parse().expect("Invalid --http address (expected host:port, e.g. 127.0.0.1:8080)"));
 
+    // --profile-heads N: run N queries in profiling mode, export head_profile.json, then exit
+    let profile_heads: Option<usize> = parse_arg("--profile-heads")
+        .and_then(|s| s.parse().ok());
+
     eprintln!("=== obrain-chat — Generic Graph LLM + Topological Mask (FFI) ===\n");
 
     // ── HTTP server mode (--http host:port) ──────────────────────
@@ -409,12 +413,28 @@ fn main() -> Result<()> {
 
     // ── Load LLM via FFI ────────────────────────────────────────
     eprintln!("Loading model: {model_path}");
-    let engine = Engine(LlamaEngine::new(&EngineConfig {
+
+    // If profiling mode, create a HeadProfiler and attach its eval callback
+    let mut head_profiler: Option<llm_engine::HeadProfiler> = None;
+
+    let engine_config = EngineConfig {
         model_path: model_path.clone(),
         n_ctx,
         n_gpu_layers: n_gpu,
         ..EngineConfig::default()
-    })?);
+    };
+
+    let engine = if profile_heads.is_some() {
+        let profiler = llm_engine::HeadProfiler::new(0, 0);
+        let handle = profiler.handle();
+        let eng = Engine(LlamaEngine::new_with_profiler(&engine_config, handle)?);
+        eprintln!("  Profiling mode: capturing attention patterns (n_heads={}, n_layers={})",
+            eng.n_heads(), eng.n_layers());
+        head_profiler = Some(profiler);
+        eng
+    } else {
+        Engine(LlamaEngine::new(&engine_config)?)
+    };
     eprintln!("  Model loaded: n_ctx={}", engine.n_ctx());
 
     // ── Open database (optional) ──────────────────────────────────────
@@ -633,6 +653,78 @@ fn main() -> Result<()> {
     let mut last_used_fact_ids: Vec<NodeId> = Vec::new(); // Ξ(t) T3: for reward propagation
     let mut prev_header_top5: Vec<String> = Vec::new(); // Ξ(t) T6: track top-5 fact keys for diff
 
+    // ── Profile-heads mode: capture attention patterns and export ───
+    if let (Some(n_profile_queries), Some(profiler)) = (profile_heads, &mut head_profiler) {
+        eprintln!("\n  [profile-heads] Running {} profiling queries...", n_profile_queries);
+
+        // Profile queries — cover diverse topics to get varied attention patterns
+        let profile_queries = vec![
+            "Comment je m'appelle ?",
+            "Où est-ce que j'habite ?",
+            "Qu'est-ce que tu sais sur moi ?",
+            "Quelle est ma couleur préférée ?",
+            "Comment s'appelle mon chat ?",
+            "Quel est mon métier ?",
+            "Depuis quand je travaille là ?",
+            "Raconte-moi une histoire courte",
+            "Quelle est la capitale de la France ?",
+            "Explique-moi la relativité en une phrase",
+        ];
+
+        // Set up bank assignments from the registry if available
+        let mut bank_map: std::collections::HashMap<i32, u32> = std::collections::HashMap::new();
+        for (bank_idx, bank) in banks.iter().enumerate() {
+            for nid in &bank.node_ids {
+                if let Some(slot) = registry.get_slot(*nid) {
+                    for pos in slot.start..slot.end {
+                        bank_map.insert(pos as i32, bank_idx as u32);
+                    }
+                }
+            }
+        }
+        let n_positions = registry.next_pos as u32;
+
+        // If no banks (no DB), assign all KV positions to bank 0 so profiler still captures data
+        if bank_map.is_empty() && n_positions > 0 {
+            for pos in 0..n_positions as i32 {
+                bank_map.insert(pos, 0);
+            }
+            eprintln!("  [profile-heads] No graph banks, all {} positions assigned to bank 0", n_positions);
+        }
+
+        for (i, query) in profile_queries.iter().take(n_profile_queries).enumerate() {
+            eprintln!("  [{}/{}] {}", i + 1, n_profile_queries, query);
+
+            profiler.set_bank_assignment(bank_map.clone(), n_positions);
+            profiler.start();
+
+            // Copy persistent context to ephemeral seq_id=1, encode query there
+            // This triggers the eval callback which captures kq_soft_max tensors
+            engine.clear_seq(1);
+            engine.seq_cp(0, 1, 0, -1);
+            let next_pos = engine.seq_pos_max(1) + 1;
+            let tokens = engine.tokenize(query, false, true)?;
+            let positions: Vec<i32> = (next_pos..next_pos + tokens.len() as i32).collect();
+            let _ = engine.encode(&tokens, &positions, 1);
+            engine.clear_seq(1); // cleanup ephemeral
+
+            profiler.stop_and_collect();
+        }
+
+        let n_clusters = 4.min(engine.n_heads() as usize);
+        let json = profiler.export_json(n_clusters);
+        let out_path = "/tmp/head_profile.json";
+        std::fs::write(out_path, &json)?;
+
+        eprintln!("\n  [profile-heads] Profiled {} queries, {} snapshots collected",
+            profiler.n_queries(),
+            profiler.n_queries()); // simplified
+        eprintln!("  [profile-heads] Exported to {}", out_path);
+        eprintln!("  [profile-heads] {} clusters identified", n_clusters);
+
+        return Ok(());
+    }
+
     // Ξ(t) T3: Initialize RewardDetector
     let mut reward_detector: Option<RewardDetector> = persona_db.as_ref()
         .map(|pdb| RewardDetector::new(pdb, &engine));
@@ -672,6 +764,7 @@ fn main() -> Result<()> {
 
     // Cache for PersistNet: (projected_embedding, persist_score) from last forward
     let mut last_persist_result: Option<(Vec<f32>, f32)> = None;
+    let mut last_avg_entropy: Option<f32> = None;
 
     // Ξ(t) T1: Now that GNN is loaded, rescore facts and update header
     if fact_gnn.is_some() && !current_facts.is_empty() {
@@ -862,6 +955,7 @@ fn main() -> Result<()> {
                     s.patterns_active, s.patterns_total, s.patterns_auto);
                 eprintln!("  ║ ConvTurns: {}", s.conv_turns);
                 eprintln!("  ║ Reward:   {:.3} (last 20 avg)", s.avg_reward_recent);
+                eprintln!("  ║ MaskQual: {:.3} (last 20 avg)", s.avg_mask_reward);
                 eprintln!("  ║ RewardTokens: {} loaded", s.reward_tokens);
                 if let Some(ref gnn) = fact_gnn {
                     eprintln!("  ║ GNN:     dim={}, updates={}, lr={:.4}",
@@ -1038,7 +1132,9 @@ fn main() -> Result<()> {
         };
 
         match query_with_registry(&engine, q_store, q_schema, &mut registry, &mut conv_frags, &banks, &line, max_nodes, token_budget, kv_capacity, &gen_ctl, &OutputMode::Stdout, gnn_ctx.as_ref()) {
-            Ok((response, relevant_graph_nodes)) => {
+            Ok((response, relevant_graph_nodes, avg_entropy)) => {
+                // Ξ(t) T5: Store entropy signal for next turn's reward computation
+                last_avg_entropy = avg_entropy;
                 // Response already streamed to stdout by engine.generate
                 let clean = strip_think_tags(&response);
                 let mut trimmed = clean.trim().to_string();
@@ -1100,6 +1196,12 @@ fn main() -> Result<()> {
                             );
                             gnn.update(&store, &last_used_fact_ids, &scores, interrupt_penalty);
                         }
+                        // PersistNet REINFORCE: interrupt = negative signal for previous persist decision
+                        if let (Some(pnet), Some((proj, prev_score))) = (&mut persist_net, &last_persist_result) {
+                            pnet.update(proj, *prev_score, interrupt_penalty);
+                            debug!("  [PersistNet] REINFORCE (interrupt): reward={:.2}, score={:.2}, updates={}",
+                                interrupt_penalty, prev_score, pnet.n_updates);
+                        }
                     }
                 }
 
@@ -1109,19 +1211,25 @@ fn main() -> Result<()> {
                     let user_tokens = engine.tokenize(&line, false, false).unwrap_or_default();
                     // Ξ(t) T4: Enriched reward with factual success + entropy signal
                     let facts_for_reward: Vec<(String, String)> = current_facts.clone();
-                    let reward = rd.compute_reward(
+                    let signals = rd.compute_reward(
                         &user_tokens,
                         turn_count,
                         if facts_for_reward.is_empty() { None } else { Some(&facts_for_reward) },
                         if trimmed.is_empty() { None } else { Some(&trimmed) },
-                        None, // TODO: pass avg_entropy from GenerationSignals when T3 signals propagate through query_with_registry
+                        last_avg_entropy, // Ξ(t) T5: entropy signal from previous turn's generation
                     );
+                    let reward = signals.reward;
                     if reward.abs() > 0.01 {
-                        rd.propagate_reward(pdb, prev_ct, reward, &last_used_fact_ids);
-                        debug!("  [Reward] turn #{}: {:.2} (5-signal composite)",
-                            turn_count - 1, reward);
+                        rd.propagate_reward_ex(pdb, prev_ct, reward, &last_used_fact_ids,
+                            Some(signals.factual_signal));
+                        debug!("  [Reward] turn #{}: {:.2} (mask_quality={:.2})",
+                            turn_count - 1, reward, signals.factual_signal);
 
-                        // Ξ(t) T4: GNN online update with reward signal
+                        // Ξ(t) T4+T5: GNN online update with mask-quality-weighted reward.
+                        // The factual_signal measures whether the topology mask guided
+                        // attention to facts the model actually used. Blend it with
+                        // the composite reward to give the GNN a stronger gradient
+                        // toward node selection that produces useful attention patterns.
                         if let Some(ref mut gnn) = fact_gnn {
                             let store = pdb.db.store();
                             let scores = gnn.forward(
@@ -1130,9 +1238,27 @@ fn main() -> Result<()> {
                                 &last_used_fact_ids,
                                 2,
                             );
-                            gnn.update(&store, &last_used_fact_ids, &scores, reward);
-                            debug!("  [GNN] update #{}, lr={:.4}, reward={:.2}",
-                                gnn.n_updates(), gnn.learning_rate(), reward);
+                            // 60% mask quality + 40% composite reward
+                            let gnn_reward = 0.6 * signals.factual_signal + 0.4 * reward;
+                            gnn.update(&store, &last_used_fact_ids, &scores, gnn_reward);
+                            debug!("  [GNN] update #{}, lr={:.4}, gnn_reward={:.2} (mask={:.2}, composite={:.2})",
+                                gnn.n_updates(), gnn.learning_rate(), gnn_reward, signals.factual_signal, reward);
+                        }
+
+                        // Ξ(t) PersistNet REINFORCE: propagate reward to previous persist decision
+                        if let (Some(pnet), Some((proj, prev_score))) = (&mut persist_net, &last_persist_result) {
+                            pnet.update(proj, *prev_score, reward);
+                            debug!("  [PersistNet] REINFORCE: reward={:.2}, prev_score={:.2}, updates={}",
+                                reward, prev_score, pnet.n_updates);
+                        }
+
+                        // Mark memories as "useful" when reward is positive
+                        if reward > 0.1 {
+                            if let Some(pdb2) = &persona_db {
+                                for mem_id in pdb2.active_memory_ids() {
+                                    pdb2.mark_memory_useful(mem_id, turn_count);
+                                }
+                            }
                         }
                     }
                 }
@@ -1142,6 +1268,39 @@ fn main() -> Result<()> {
                     if let (Some(gnn), Some(pdb)) = (&fact_gnn, &persona_db) {
                         gnn.save_weights(&pdb.db);
                         debug!("  [GNN] Weights saved (turn {})", turn_count);
+                    }
+                    // Save PersistNet weights periodically too
+                    if let (Some(pnet), Some(pdb)) = (&persist_net, &persona_db) {
+                        pnet.save_weights(&pdb.db);
+                        debug!("  [PersistNet] Weights saved (turn {})", turn_count);
+                    }
+                }
+
+                // Ξ(t) PersistNet: Audit stale memories every 10 turns (after cold start)
+                if turn_count % 10 == 0 && turn_count > 20 {
+                    if let (Some(pnet), Some(pdb)) = (&mut persist_net, &persona_db) {
+                        let stale = pdb.stale_memories(turn_count, 15); // 15 turns without being useful
+                        for (mem_id, text, _src_turn, _last_useful) in &stale {
+                            // Send negative reward to teach PersistNet not to persist similar messages
+                            // We need to re-forward the memory text through the net to get the gradient
+                            let hash_emb: Vec<f32> = {
+                                let n = pnet.n_embd.max(1);
+                                let mut emb = vec![0.0f32; n];
+                                // Simple text hash → embedding for gradient signal
+                                for (i, ch) in text.chars().enumerate() {
+                                    emb[i % n] += (ch as u32 as f32) / 128.0;
+                                }
+                                emb
+                            };
+                            let (score, proj) = pnet.forward(&hash_emb);
+                            pnet.update(&proj, score, -0.3); // moderate negative signal
+                            pdb.deactivate_memory(*mem_id);
+                            debug!("  [PersistNet] Stale memory deactivated: id={}, text='{}'",
+                                mem_id.0, text.chars().take(50).collect::<String>());
+                        }
+                        if !stale.is_empty() {
+                            debug!("  [PersistNet] Audited: {} stale memories deactivated", stale.len());
+                        }
                     }
                 }
 

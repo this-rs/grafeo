@@ -16,7 +16,9 @@ pub mod ffi {
 
 mod engine;
 pub mod mask_builder;
+pub mod profiler;
 pub mod signals;
 
 pub use engine::{LlamaEngine, EngineConfig, set_verbose};
+pub use profiler::{HeadProfiler, HeadProfile, HeadSnapshot, ProfilerHandle, profiler_eval_callback, N_BANKS};
 pub use signals::{StepSignals, GenerationSignals, compute_entropy_top_k};
