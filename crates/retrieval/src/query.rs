@@ -13,7 +13,7 @@ use std::time::Instant;
 use crate::engine::Engine;
 use crate::control::{GenerationControl, OutputMode, Spinner};
 use crate::scoring::retrieve_nodes;
-use crate::generation::generate_with_mask;
+use crate::generation::{generate_with_mask, compute_ablation_reward, AblationReward};
 
 /// Optional GNN scoring context for composite E(t) decision.
 pub struct GnnContext<'a> {
@@ -36,7 +36,7 @@ pub fn query_with_registry(
     output: &OutputMode,
     gnn_ctx: Option<&GnnContext>,
     head_router: Option<&llm_engine::HeadRouter>,
-) -> Result<(String, Vec<NodeId>, Option<f32>)> {
+) -> Result<(String, Vec<NodeId>, Option<f32>, Option<AblationReward>)> {
     registry.begin_query();
     let t_start = Instant::now();
 
@@ -188,7 +188,7 @@ pub fn query_with_registry(
                 eprintln!("  [debug] Fallback response was ALL think content ({} chars raw)", resp.len());
             }
         }
-        return Ok((resp, Vec::new(), None));
+        return Ok((resp, Vec::new(), None, None));
     }
 
     // Identify which nodes need to be loaded into KV
@@ -342,6 +342,33 @@ pub fn query_with_registry(
         .map(|n| n.id)
         .collect();
 
-    let (response, avg_entropy) = generate_with_mask(engine, &ctx, query, ctl, output, head_router)?;
-    Ok((response, relevant_graph_nodes, avg_entropy))
+    let (response, avg_entropy, first_token_id, first_step_logits) =
+        generate_with_mask(engine, &ctx, query, ctl, output, head_router)?;
+
+    // Ξ(t) Phase B/B3: Compute per-head ablation reward if HeadRouter is active
+    let ablation = if let (Some(router), Some(ftid)) = (head_router, first_token_id) {
+        let query_text = format!(
+            "<|im_end|>\n<|im_start|>user\n{query} /no_think<|im_end|>\n<|im_start|>assistant\n"
+        );
+        match engine.tokenize(&query_text, false, true) {
+            Ok(qtokens) => {
+                match compute_ablation_reward(
+                    engine, &ctx, &qtokens, ftid,
+                    first_step_logits.as_deref(),
+                    router,
+                ) {
+                    Ok(abl) => Some(abl),
+                    Err(e) => {
+                        eprintln!("  [B3] Ablation reward failed: {e}");
+                        None
+                    }
+                }
+            }
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+
+    Ok((response, relevant_graph_nodes, avg_entropy, ablation))
 }

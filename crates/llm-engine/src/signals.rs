@@ -29,6 +29,11 @@ pub struct GenerationSignals {
     pub max_entropy: f32,
     /// Number of steps with entropy > HIGH_ENTROPY_THRESHOLD.
     pub high_entropy_count: u32,
+    /// Token ID of the first generated token (for ablation reward).
+    pub first_token_id: Option<i32>,
+    /// Full logits at step 0 (for ablation reward log-prob computation).
+    /// Only populated when ablation is needed. Clone is expensive (~512KB for 128K vocab).
+    pub first_step_logits: Option<Vec<f32>>,
 }
 
 /// Entropy above this threshold indicates high uncertainty.
@@ -43,6 +48,8 @@ impl GenerationSignals {
                 avg_entropy: 0.0,
                 max_entropy: 0.0,
                 high_entropy_count: 0,
+                first_token_id: None,
+                first_step_logits: None,
             };
         }
         let sum: f32 = steps.iter().map(|s| s.entropy).sum();
@@ -52,6 +59,8 @@ impl GenerationSignals {
             avg_entropy: sum / steps.len() as f32,
             max_entropy: max,
             high_entropy_count: high,
+            first_token_id: None,
+            first_step_logits: None,
             steps,
         }
     }
@@ -63,6 +72,8 @@ impl GenerationSignals {
             avg_entropy: 0.0,
             max_entropy: 0.0,
             high_entropy_count: 0,
+            first_token_id: None,
+            first_step_logits: None,
         }
     }
 }

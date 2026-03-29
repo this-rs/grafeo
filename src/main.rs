@@ -1151,9 +1151,22 @@ fn main() -> Result<()> {
         };
 
         match query_with_registry(&engine, q_store, q_schema, &mut registry, &mut conv_frags, &banks, &line, max_nodes, token_budget, kv_capacity, &gen_ctl, &OutputMode::Stdout, gnn_ctx.as_ref(), head_router.as_ref()) {
-            Ok((response, relevant_graph_nodes, avg_entropy)) => {
+            Ok((response, relevant_graph_nodes, avg_entropy, ablation_reward)) => {
                 // Ξ(t) T5: Store entropy signal for next turn's reward computation
                 last_avg_entropy = avg_entropy;
+
+                // Ξ(t) Phase B/B3: Log ablation reward + backward into HeadRouter
+                if let Some(ref abl) = ablation_reward {
+                    eprintln!("  [B3] head_contribution_entropy={:.3}, bank_contributions={:?}",
+                        abl.head_contribution_entropy,
+                        abl.bank_contributions.iter().map(|c| format!("{c:.4}")).collect::<Vec<_>>());
+                    // Backward: update HeadRouter α-weights with per-head reward signal
+                    if let Some(ref mut router) = head_router {
+                        let visibility = router.forward();
+                        router.backward(&abl.per_head_rewards, &visibility);
+                        eprintln!("  [B3] HeadRouter updated (n_updates={})", router.n_updates);
+                    }
+                }
                 // Response already streamed to stdout by engine.generate
                 let clean = strip_think_tags(&response);
                 let mut trimmed = clean.trim().to_string();
@@ -1275,11 +1288,21 @@ fn main() -> Result<()> {
                                 reward, prev_score, pnet.n_updates);
                         }
 
-                        // Ξ(t) Phase B: HeadRouter REINFORCE update
+                        // Ξ(t) Phase B/B3: HeadRouter REINFORCE update
+                        // Use per-head ablation reward when available (B3), else uniform
                         if let Some(ref mut router) = head_router {
-                            router.backward_uniform(reward);
+                            if let Some(ref abl) = ablation_reward {
+                                // B3: per-head reward from log-prob ablation
+                                let visibility = router.forward();
+                                router.backward(&abl.per_head_rewards, &visibility);
+                                debug!("  [HeadRouter B3] per-head update #{}, head_entropy={:.3}, bank_contrib={:?}",
+                                    router.n_updates, abl.head_contribution_entropy,
+                                    abl.bank_contributions);
+                            } else {
+                                router.backward_uniform(reward);
+                            }
                             if router.n_updates % 10 == 0 && router.n_updates > 0 {
-                                debug!("  [HeadRouter] update #{}, entropy={:.3}",
+                                debug!("  [HeadRouter] update #{}, specialization_entropy={:.3}",
                                     router.n_updates, router.specialization_entropy());
                             }
                         }
@@ -1357,6 +1380,22 @@ fn main() -> Result<()> {
                     // MENTIONS edges: link to graph nodes retrieved for this query
                     for &gn in &relevant_graph_nodes {
                         pdb.link_mentions(ct_id, gn);
+                    }
+
+                    // Ξ(t) Phase B/B3: Persist per-head ablation reward on ConvTurn
+                    if let Some(ref abl) = ablation_reward {
+                        // Store per_head_rewards as JSON string (JSONB-like property)
+                        let rewards_json = format!("[{}]",
+                            abl.per_head_rewards.iter().map(|r| format!("{r:.6}")).collect::<Vec<_>>().join(","));
+                        pdb.db.set_node_property(ct_id, "mask_reward_per_head",
+                            Value::String(rewards_json.into()));
+                        pdb.db.set_node_property(ct_id, "head_contribution_entropy",
+                            Value::Float64(abl.head_contribution_entropy as f64));
+                        // Also store bank_contributions for retrospective analysis
+                        let banks_json = format!("[{}]",
+                            abl.bank_contributions.iter().map(|c| format!("{c:.6}")).collect::<Vec<_>>().join(","));
+                        pdb.db.set_node_property(ct_id, "bank_contributions",
+                            Value::String(banks_json.into()));
                     }
 
                     debug!("  [Ξ] ConvTurn #{} created, {} facts USED_IN, {} graph MENTIONS",
