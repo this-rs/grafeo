@@ -1363,7 +1363,8 @@ fn main() -> Result<()> {
             round_tracker.as_ref().map(|rt| rt.coactivation().clone());
         let coact_ref = coactivation_snapshot.as_ref();
 
-        match query_with_registry(&engine, q_store, q_schema, &mut registry, &mut conv_frags, &banks, &line, max_nodes, token_budget, kv_capacity, &gen_ctl, &OutputMode::Stdout, gnn_ctx.as_ref(), head_router.as_ref(), embd_cache.as_ref(), embd_injection_ratio, round_tracker.as_mut(), coact_ref) {
+        let cold_ref: Option<&dyn kv_registry::ColdSearch> = persona_db.as_ref().map(|p| p as &dyn kv_registry::ColdSearch);
+        match query_with_registry(&engine, q_store, q_schema, &mut registry, &mut conv_frags, &banks, &line, max_nodes, token_budget, kv_capacity, &gen_ctl, &OutputMode::Stdout, gnn_ctx.as_ref(), head_router.as_ref(), embd_cache.as_ref(), embd_injection_ratio, round_tracker.as_mut(), coact_ref, cold_ref) {
             Ok((response, relevant_graph_nodes, avg_entropy, ablation_reward)) => {
                 // Ξ(t) T5: Store entropy signal for next turn's reward computation
                 last_avg_entropy = avg_entropy;

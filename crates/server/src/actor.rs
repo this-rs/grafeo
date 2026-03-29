@@ -301,6 +301,7 @@ impl ActorHandle {
             0.0,  // embd_injection_ratio — disabled
             None, // round_tracker — server path, no Phase D yet
             None, // coactivation — server path, no E3 yet
+            persona_db.as_ref().map(|p| p as &dyn kv_registry::ColdSearch),
         )?;
 
         let clean = strip_think_tags(&raw_response);

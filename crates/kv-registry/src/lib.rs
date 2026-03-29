@@ -16,4 +16,4 @@ pub use hilbert::{HilbertLayout, WeightedAdjacencyList, build_fused_adjacency, s
 pub use hilbert_bank::{HilbertBank, BankManager};
 pub use banks::{KvBank, load_bank_cache, save_bank_cache, discover_banks};
 pub use context::{ContextNode, QueryContext};
-pub use conv::{ConvFragments, ConvFragment, CONV_NODE_BASE};
+pub use conv::{ConvFragments, ConvFragment, CONV_NODE_BASE, ColdSearch, ColdHit};

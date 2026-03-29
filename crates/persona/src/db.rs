@@ -3,7 +3,11 @@ use obrain::ObrainDB;
 use obrain_common::types::{NodeId, PropertyKey, Value};
 use obrain_core::graph::Direction;
 use chrono::Utc;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+
+use crate::bm25::{MessageIndex, MessageHit};
+use kv_registry::{ColdSearch, ColdHit};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Persona DB — stores conversations, facts and identity in obrain graph
@@ -12,6 +16,9 @@ use std::collections::{HashMap, HashSet};
 pub struct PersonaDB {
     pub db: ObrainDB,
     pub current_conv_id: NodeId,
+    /// BM25 index over all :Message nodes (cross-conversation search).
+    /// Behind RefCell to allow indexing from &self methods (single-threaded).
+    msg_index: RefCell<MessageIndex>,
 }
 
 impl PersonaDB {
@@ -40,7 +47,40 @@ impl PersonaDB {
             }
         };
 
-        Ok(Self { db, current_conv_id: conv_id })
+        let persona = Self { db, current_conv_id: conv_id, msg_index: RefCell::new(MessageIndex::new()) };
+        persona.rebuild_message_index();
+        Ok(persona)
+    }
+
+    /// Build (or rebuild) the BM25 index from all :Message nodes across all conversations.
+    fn rebuild_message_index(&self) {
+        let store = self.db.store();
+        let convs = store.nodes_by_label("Conversation");
+        let mut count = 0u32;
+        let mut idx = self.msg_index.borrow_mut();
+
+        for &conv_id in &convs {
+            for (target, _eid) in store.edges_from(conv_id, Direction::Outgoing).collect::<Vec<_>>() {
+                if let Some(node) = store.get_node(target) {
+                    let is_msg = node.labels.iter().any(|l| { let s: &str = l.as_ref(); s == "Message" });
+                    if !is_msg { continue; }
+
+                    let role = node.properties.get(&PropertyKey::from("role"))
+                        .and_then(|v| v.as_str()).unwrap_or("user");
+                    let content = node.properties.get(&PropertyKey::from("content"))
+                        .and_then(|v| v.as_str()).unwrap_or("");
+                    if content.is_empty() { continue; }
+
+                    idx.add(target, conv_id, role, content);
+                    count += 1;
+                }
+            }
+        }
+
+        if count > 0 {
+            eprintln!("[PersonaDB] BM25 index built: {} messages across {} conversations",
+                count, convs.len());
+        }
     }
 
     pub fn create_conv_node(db: &ObrainDB, title: &str) -> NodeId {
@@ -56,6 +96,7 @@ impl PersonaDB {
     }
 
     /// Add a message to the current conversation. Returns the message NodeId.
+    /// Also indexes the message content in the BM25 index for cross-conversation search.
     pub fn add_message(&self, role: &str, content: &str) -> NodeId {
         let store = self.db.store();
         let msg_count = store.edges_from(self.current_conv_id, Direction::Outgoing)
@@ -68,7 +109,24 @@ impl PersonaDB {
             ("order", Value::Int64(msg_count as i64)),
         ]);
         self.db.create_edge(self.current_conv_id, msg_id, "HAS_MSG");
+
+        // Incremental BM25 indexing
+        if !content.is_empty() {
+            self.msg_index.borrow_mut().add(msg_id, self.current_conv_id, role, content);
+        }
+
         msg_id
+    }
+
+    /// Search all messages across all conversations using BM25 scoring.
+    /// Returns up to `limit` hits sorted by relevance score descending.
+    pub fn search_messages(&self, query: &str, limit: usize) -> Vec<MessageHit> {
+        self.msg_index.borrow().search(query, limit)
+    }
+
+    /// Number of messages in the BM25 index (for diagnostics).
+    pub fn indexed_message_count(&self) -> usize {
+        self.msg_index.borrow().len()
     }
 
     /// Link a reply message to the message it's replying to.
@@ -907,4 +965,28 @@ pub struct XiStats {
     pub reward_tokens: usize,
     /// Average mask_reward over last 20 turns (topology mask quality signal)
     pub avg_mask_reward: f64,
+}
+
+// ── ColdSearch trait implementation for PersonaDB ──────────────────────
+impl ColdSearch for PersonaDB {
+    fn search(&self, query: &str, limit: usize) -> Vec<ColdHit> {
+        let store = self.db.store();
+        self.search_messages(query, limit)
+            .into_iter()
+            .map(|hit| {
+                // Resolve conversation title for cross-conversation context
+                let conv_title = store.get_node(hit.conv_id)
+                    .and_then(|n| n.properties.get(&PropertyKey::from("title"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()));
+                ColdHit {
+                    role: hit.role,
+                    content: hit.content,
+                    conv_id: hit.conv_id,
+                    conv_title,
+                    score: hit.score,
+                }
+            })
+            .collect()
+    }
 }

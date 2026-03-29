@@ -3,13 +3,30 @@
 //! **HOT** (KV cache): max `max_fragments` fragments, model sees them via attention.
 //! **WARM** (in-memory archive): evicted fragments with terms + text, searchable.
 //!   When a query matches a WARM fragment, it's promoted back to HOT (re-encoded in KV).
-//! **COLD** (PersonaDB): all messages stored permanently. Loaded into WARM at startup.
+//! **COLD** (PersonaDB via BM25): all messages stored permanently, searchable cross-conversation.
 
 use anyhow::Result;
 use obrain_common::types::NodeId;
 use std::collections::{HashMap, HashSet};
 
 use crate::{Tokenizer, KvNodeRegistry};
+
+/// A search hit from the COLD tier (PersonaDB BM25).
+#[derive(Debug, Clone)]
+pub struct ColdHit {
+    pub role: String,
+    pub content: String,
+    pub conv_id: NodeId,
+    pub conv_title: Option<String>,
+    pub score: f64,
+}
+
+/// Trait for searching the COLD tier (PersonaDB).
+/// Implemented by the caller to avoid coupling kv-registry → persona.
+pub trait ColdSearch {
+    /// Search all messages across all conversations. Returns up to `limit` hits.
+    fn search(&self, query: &str, limit: usize) -> Vec<ColdHit>;
+}
 
 /// Conversation fragments live in NodeId space 0xFFFF_0000_0000_xxxx
 /// to avoid collision with graph NodeIds.
@@ -207,14 +224,26 @@ impl ConvFragments {
     }
 
     /// Find conversation fragments relevant to a query.
-    /// Searches HOT tier first, then WARM tier. WARM matches are promoted to HOT
-    /// (re-encoded into KV cache).
+    /// Searches HOT tier first, then WARM tier, then COLD tier (BM25).
+    /// WARM and COLD matches are promoted to HOT (re-encoded into KV cache).
     pub fn find_relevant(
         &mut self,
         query: &str,
         registry: &mut KvNodeRegistry,
         engine: &dyn Tokenizer,
         kv_capacity: i32,
+    ) -> (Vec<NodeId>, HashMap<NodeId, HashSet<NodeId>>) {
+        self.find_relevant_with_cold(query, registry, engine, kv_capacity, None)
+    }
+
+    /// Find relevant fragments with optional COLD tier BM25 search.
+    pub fn find_relevant_with_cold(
+        &mut self,
+        query: &str,
+        registry: &mut KvNodeRegistry,
+        engine: &dyn Tokenizer,
+        kv_capacity: i32,
+        cold: Option<&dyn ColdSearch>,
     ) -> (Vec<NodeId>, HashMap<NodeId, HashSet<NodeId>>) {
         let meaningful_terms = Self::query_terms(query);
         let stop_words = Self::stop_words();
@@ -252,29 +281,66 @@ impl ConvFragments {
         for (idx, _score) in &promote_indices {
             promoted.push(self.archived.remove(*idx));
         }
-        // Promote: re-encode into KV cache
+        // Promote WARM → HOT: re-encode into KV cache
         for frag in promoted {
-            eprintln!(
-                "[Conv] WARM→HOT: promoting Q{} '{}' (matched query)",
-                frag.turn + 1, &frag.question.chars().take(50).collect::<String>(),
-            );
-            // Make room if needed
-            while self.fragments.len() >= self.max_fragments {
-                let evicted = self.fragments.remove(0);
-                registry.unregister(evicted.node_id);
-                self.archived.push(evicted);
-            }
-            // Re-encode
-            let est_tokens = (frag.kv_text.len() as f64 / 3.5) as i32 + 5;
-            let protected: HashSet<NodeId> = self.fragments.iter().map(|f| f.node_id).collect();
-            registry.ensure_capacity(est_tokens, kv_capacity, &protected, engine);
-            if let Ok(_) = registry.register(frag.node_id, &frag.kv_text, engine) {
-                relevant_ids.push(frag.node_id);
-                Self::add_adjacency(&mut conv_adjacency, &frag);
-                self.fragments.push(frag);
-            } else {
-                // Re-encode failed (KV full even after eviction), put back in archive
-                self.archived.push(frag);
+            self.promote_to_hot(frag, registry, engine, kv_capacity, &mut relevant_ids, &mut conv_adjacency, "WARM");
+        }
+
+        // ── Search COLD tier (PersonaDB BM25) → promote matches ──
+        if let Some(cold_search) = cold {
+            let cold_hits = cold_search.search(query, 5);
+            // Collect questions already in HOT (for dedup)
+            let hot_questions: HashSet<String> = self.fragments.iter()
+                .map(|f| f.question.to_lowercase())
+                .collect();
+            let warm_questions: HashSet<String> = self.archived.iter()
+                .map(|f| f.question.to_lowercase())
+                .collect();
+
+            let mut cold_promoted = 0u32;
+            const MAX_COLD_PROMOTE: u32 = 2;
+
+            for hit in cold_hits {
+                if cold_promoted >= MAX_COLD_PROMOTE { break; }
+                // Only promote user messages (Q&A pairs reconstructed from user content)
+                if hit.role != "user" { continue; }
+                // Skip if score too low
+                if hit.score < 0.5 { continue; }
+
+                // Dedup: skip if question already in HOT or WARM
+                let content_lower = hit.content.to_lowercase();
+                if hot_questions.contains(&content_lower) || warm_questions.contains(&content_lower) {
+                    continue;
+                }
+
+                // Build a ConvFragment from the COLD hit
+                let turn = self.next_turn;
+                self.next_turn += 1;
+                let node_id = NodeId(CONV_NODE_BASE + turn as u64);
+                let summary = Self::summarize_answer(&hit.content, 200);
+                let kv_text = if let Some(ref title) = hit.conv_title {
+                    format!("[Souvenir — {}] {}\n", title, summary)
+                } else {
+                    format!("[Souvenir] {}\n", summary)
+                };
+                let terms = Self::extract_terms(&hit.content, "");
+
+                let frag = ConvFragment {
+                    node_id,
+                    question: hit.content.clone(),
+                    terms,
+                    kv_text,
+                    related_graph_nodes: vec![],
+                    turn,
+                };
+
+                eprintln!(
+                    "[Conv] COLD→HOT: promoting '{}' (BM25 score {:.2})",
+                    &hit.content.chars().take(60).collect::<String>(), hit.score,
+                );
+
+                self.promote_to_hot(frag, registry, engine, kv_capacity, &mut relevant_ids, &mut conv_adjacency, "COLD");
+                cold_promoted += 1;
             }
         }
 
@@ -290,6 +356,41 @@ impl ConvFragments {
         }
 
         (relevant_ids, conv_adjacency)
+    }
+
+    /// Promote a fragment to HOT tier (encode into KV cache).
+    fn promote_to_hot(
+        &mut self,
+        frag: ConvFragment,
+        registry: &mut KvNodeRegistry,
+        engine: &dyn Tokenizer,
+        kv_capacity: i32,
+        relevant_ids: &mut Vec<NodeId>,
+        conv_adjacency: &mut HashMap<NodeId, HashSet<NodeId>>,
+        source: &str,
+    ) {
+        eprintln!(
+            "[Conv] {}→HOT: promoting Q{} '{}' (matched query)",
+            source, frag.turn + 1, &frag.question.chars().take(50).collect::<String>(),
+        );
+        // Make room if needed
+        while self.fragments.len() >= self.max_fragments {
+            let evicted = self.fragments.remove(0);
+            registry.unregister(evicted.node_id);
+            self.archived.push(evicted);
+        }
+        // Re-encode
+        let est_tokens = (frag.kv_text.len() as f64 / 3.5) as i32 + 5;
+        let protected: HashSet<NodeId> = self.fragments.iter().map(|f| f.node_id).collect();
+        registry.ensure_capacity(est_tokens, kv_capacity, &protected, engine);
+        if let Ok(_) = registry.register(frag.node_id, &frag.kv_text, engine) {
+            relevant_ids.push(frag.node_id);
+            Self::add_adjacency(conv_adjacency, &frag);
+            self.fragments.push(frag);
+        } else {
+            // Re-encode failed (KV full even after eviction), put back in archive
+            self.archived.push(frag);
+        }
     }
 
     /// Compute match score for a fragment against query terms.

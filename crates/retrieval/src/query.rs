@@ -1,6 +1,6 @@
 use anyhow::Result;
 use graph_schema::GraphSchema;
-use kv_registry::{Tokenizer, KvNodeRegistry, KvBank, ConvFragments, ContextNode, QueryContext};
+use kv_registry::{Tokenizer, KvNodeRegistry, KvBank, ConvFragments, ContextNode, QueryContext, ColdSearch};
 use think_filter::ThinkFilter;
 use obrain_common::types::NodeId;
 use obrain_core::graph::lpg::LpgStore;
@@ -43,6 +43,7 @@ pub fn query_with_registry(
     embd_injection_ratio: f32,
     mut round_tracker: Option<&mut RoundTracker>,
     coactivation: Option<&CoactivationMap>,
+    cold_search: Option<&dyn ColdSearch>,
 ) -> Result<(String, Vec<NodeId>, Option<f32>, Option<AblationReward>)> {
     registry.begin_query();
     let t_start = Instant::now();
@@ -357,7 +358,7 @@ pub fn query_with_registry(
     }
 
     // ── Find relevant conversation fragments ──────────────────────
-    let (conv_node_ids, conv_adjacency) = conv_frags.find_relevant(query, registry, engine, kv_capacity);
+    let (conv_node_ids, conv_adjacency) = conv_frags.find_relevant_with_cold(query, registry, engine, kv_capacity, cold_search);
 
     // Pull in graph nodes referenced by relevant conv fragments
     // (enables "donne plus de details" to re-surface Elun nodes from the last turn)
