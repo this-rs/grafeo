@@ -20,6 +20,9 @@ pub struct AblationReward {
     pub per_head_rewards: Vec<f32>,
     /// Head contribution entropy: low = few heads dominate, high = uniform.
     pub head_contribution_entropy: f32,
+    /// Per-node reward: each node gets its bank's contribution.
+    /// Phase D: used by RoundTracker for tier promotion/demotion.
+    pub node_rewards: std::collections::HashMap<obrain_common::types::NodeId, f32>,
 }
 
 /// Returns (response_text, avg_entropy) where avg_entropy is from GenerationSignals.
@@ -438,6 +441,7 @@ pub fn compute_ablation_reward(
             bank_contributions: vec![0.0; n_bank],
             per_head_rewards: vec![0.0; n_head],
             head_contribution_entropy: (n_head as f32).ln(),
+            node_rewards: std::collections::HashMap::new(),
         });
     };
 
@@ -575,10 +579,20 @@ pub fn compute_ablation_reward(
         }
     };
 
+    // Phase D: map bank contributions to individual nodes
+    let mut node_rewards = std::collections::HashMap::new();
+    for node in &ctx.nodes {
+        let b = node.bank as usize;
+        if b < bank_contributions.len() {
+            node_rewards.insert(node.id, bank_contributions[b]);
+        }
+    }
+
     Ok(AblationReward {
         bank_contributions,
         per_head_rewards,
         head_contribution_entropy,
+        node_rewards,
     })
 }
 

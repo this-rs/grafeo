@@ -8,6 +8,7 @@ pub mod training;
 mod scoring;
 mod query;
 mod generation;
+pub mod round_tracker;
 
 pub use engine::Engine;
 pub use control::{GenerationControl, OutputMode, Spinner};
@@ -19,3 +20,4 @@ pub use training::{TrainingManager, TrainingConfig, weights_path_for_persona};
 pub use scoring::{ScoredContextNode, retrieve_nodes, get_micro_tag};
 pub use query::{query_with_registry, GnnContext};
 pub use generation::{generate_with_mask, AblationReward};
+pub use round_tracker::{RoundTracker, DemotionType};

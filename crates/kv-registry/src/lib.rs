@@ -6,10 +6,14 @@ pub mod registry;
 pub mod banks;
 pub mod context;
 pub mod conv;
+pub mod hilbert;
+pub mod hilbert_bank;
 
 // Re-exports for convenience
 pub use tokenizer::Tokenizer;
-pub use registry::{KvNodeRegistry, KvSlot, KvSlotMode, KvMetrics};
+pub use registry::{KvNodeRegistry, KvSlot, KvSlotMode, KvMetrics, KvTier, TierBudget};
+pub use hilbert::HilbertLayout;
+pub use hilbert_bank::{HilbertBank, BankManager};
 pub use banks::{KvBank, load_bank_cache, save_bank_cache, discover_banks};
 pub use context::{ContextNode, QueryContext};
 pub use conv::{ConvFragments, ConvFragment, CONV_NODE_BASE};

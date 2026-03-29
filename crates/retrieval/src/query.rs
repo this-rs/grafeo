@@ -12,9 +12,10 @@ use std::time::Instant;
 
 use crate::engine::Engine;
 use crate::control::{GenerationControl, OutputMode, Spinner};
-use crate::node_embedding::NodeEmbeddingCache;
+use crate::node_embedding::{NodeEmbeddingCache, compute_text_embedding};
 use crate::scoring::{retrieve_nodes, get_micro_tag};
 use crate::generation::{generate_with_mask, compute_ablation_reward, AblationReward};
+use crate::round_tracker::{RoundTracker, DemotionType};
 
 /// Optional GNN scoring context for composite E(t) decision.
 pub struct GnnContext<'a> {
@@ -39,6 +40,7 @@ pub fn query_with_registry(
     head_router: Option<&llm_engine::HeadRouter>,
     embd_cache: Option<&NodeEmbeddingCache>,
     embd_injection_ratio: f32,
+    mut round_tracker: Option<&mut RoundTracker>,
 ) -> Result<(String, Vec<NodeId>, Option<f32>, Option<AblationReward>)> {
     registry.begin_query();
     let t_start = Instant::now();
@@ -277,6 +279,81 @@ pub fn query_with_registry(
 
     let _encode_time = t_start.elapsed().as_millis();
 
+    // ── Phase D: Round-based tier promotion/demotion ──────────────
+    if let Some(tracker) = round_tracker.as_deref_mut() {
+        // D3.4: Apply reward adjustments from previous round to current scores
+        let adjustments = tracker.get_reward_adjustments();
+        if !adjustments.is_empty() {
+            for node in &mut scored_nodes_for_query {
+                if let Some(&reward) = adjustments.get(&node.id) {
+                    node._score *= 1.0 + 0.3 * reward as f64;
+                }
+            }
+            // Re-sort after adjustment
+            scored_nodes_for_query.sort_by(|a, b|
+                b._score.partial_cmp(&a._score).unwrap_or(std::cmp::Ordering::Equal));
+        }
+
+        // Compute query embedding for domain shift detection
+        let query_embd = compute_text_embedding(engine, query)
+            .unwrap_or_default();
+
+        // Record this round
+        let scored_pairs: Vec<(NodeId, f64)> = scored_nodes_for_query.iter()
+            .map(|n| (n.id, n._score))
+            .collect();
+        tracker.record_round(&scored_pairs, query_embd, registry);
+
+        // Get demotions (decay + domain shift)
+        let demotions = tracker.get_demotions(registry);
+        let mut n_demoted = 0u32;
+        for (nid, dtype) in &demotions {
+            let result = match dtype {
+                DemotionType::AlphaToBeta => registry.demote_to_beta(*nid, engine),
+                DemotionType::BetaToGamma | DemotionType::AlphaToGamma => {
+                    registry.demote_to_gamma(*nid, engine)
+                }
+            };
+            if result.is_ok() { n_demoted += 1; }
+        }
+
+        // Get promotions (candidates → Alpha)
+        let to_promote = tracker.get_promotions(&scored_pairs, registry);
+        let mut n_promoted = 0u32;
+        let mut promoted_nids: Vec<NodeId> = Vec::new();
+        for nid in to_promote {
+            if !registry.tier_budget.can_promote() { break; }
+            // Get micro-tag for promotion
+            let tag = match (store, schema) {
+                (Some(st), Some(sch)) => get_micro_tag(st, sch, nid, 80),
+                _ => continue,
+            };
+            if registry.promote_to_alpha(nid, &tag, engine).is_ok() {
+                n_promoted += 1;
+                promoted_nids.push(nid);
+            }
+        }
+
+        // D6: log rescoring candidates
+        if n_promoted > 0 {
+            if gnn_ctx.is_some() || embd_cache.is_some() {
+                let fact_scores = tracker.get_fact_scores();
+                let n_with_facts = promoted_nids.iter()
+                    .filter(|nid| fact_scores.contains_key(nid))
+                    .count();
+                eprintln!("  [D6] {} promoted nodes pending rescore ({} with fact_scores)",
+                    n_promoted, n_with_facts);
+            }
+        }
+
+        if n_demoted > 0 || n_promoted > 0 {
+            let (a, b, g) = registry.tier_distribution();
+            let shift = if tracker.detect_domain_shift(0.3) { " [DOMAIN SHIFT]" } else { "" };
+            eprintln!("  [D2] round {}: +{} promoted, -{} demoted (Α={} Β={} Γ={}){}",
+                tracker.current_round(), n_promoted, n_demoted, a, b, g, shift);
+        }
+    }
+
     // ── Find relevant conversation fragments ──────────────────────
     let (conv_node_ids, conv_adjacency) = conv_frags.find_relevant(query, registry);
 
@@ -431,6 +508,19 @@ pub fn query_with_registry(
     } else {
         None
     };
+
+    // Phase D3: Feed ablation reward back to round tracker for tier adjustments
+    if let (Some(abl), Some(tracker)) = (&ablation, round_tracker.as_deref_mut()) {
+        if !abl.node_rewards.is_empty() {
+            let (n_accel_demote, n_preempt_promote) = tracker.reward_feedback(
+                &abl.node_rewards, &ctx.adjacency, registry, engine,
+            );
+            if n_accel_demote > 0 || n_preempt_promote > 0 {
+                eprintln!("  [D3] reward feedback: {} accelerated demotes, {} preemptive promotes",
+                    n_accel_demote, n_preempt_promote);
+            }
+        }
+    }
 
     Ok((response, relevant_graph_nodes, avg_entropy, ablation))
 }

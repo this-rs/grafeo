@@ -284,6 +284,9 @@ fn main() -> Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(100); // queries before full injection (for soft-mixing schedule)
 
+    // Phase D: Hilbert layout for topology-aware KV positioning
+    let hilbert_enabled: bool = std::env::args().any(|a| a == "--hilbert");
+
     eprintln!("=== obrain-chat — Generic Graph LLM + Topological Mask (FFI) ===\n");
 
     // ── HTTP server mode (--http host:port) ──────────────────────
@@ -597,7 +600,43 @@ fn main() -> Result<()> {
     engine.encode(&header_tokens_vec, &header_positions, 0)?;
     let mut registry = KvNodeRegistry::new(&system_header, header_n);
     let mut conv_frags = ConvFragments::new();
+    let mut round_tracker: Option<retrieval::RoundTracker> = if embd_injection_ratio > 0.0 {
+        Some(retrieval::RoundTracker::new())
+    } else {
+        None // Phase D round tracking only relevant with embedding injection
+    };
     debug!("KV Registry initialized: header={} tokens (encoded in KV)", header_n);
+
+    // ── Phase D: compute Hilbert layout if enabled ──────────────
+    if hilbert_enabled {
+        if let Some(ref st) = store {
+            let hilbert_t0 = Instant::now();
+            let node_ids = st.node_ids();
+            let mut adjacency: std::collections::HashMap<NodeId, std::collections::HashSet<NodeId>> = std::collections::HashMap::new();
+            for &nid in &node_ids {
+                use obrain_core::graph::Direction;
+                let neighbors: std::collections::HashSet<NodeId> = st.edges_from(nid, Direction::Outgoing)
+                    .map(|(target, _)| target)
+                    .collect();
+                adjacency.insert(nid, neighbors);
+            }
+            // Also add reverse edges for undirected spectral embedding
+            let adj_snapshot: Vec<(NodeId, Vec<NodeId>)> = adjacency.iter()
+                .map(|(&k, v)| (k, v.iter().copied().collect::<Vec<_>>()))
+                .collect();
+            for (src, targets) in adj_snapshot {
+                for tgt in targets {
+                    adjacency.entry(tgt).or_default().insert(src);
+                }
+            }
+            let layout = kv_registry::HilbertLayout::compute(&adjacency, header_n as u32);
+            eprintln!("  Hilbert layout: {} nodes, order={}, computed in {:.0}ms",
+                layout.len(), layout.order, hilbert_t0.elapsed().as_millis());
+            registry.set_hilbert_layout(layout);
+        } else {
+            eprintln!("  --hilbert ignored: no database loaded");
+        }
+    }
 
     // ── Warmup: pre-load top banks into KV ──────────────────────
     let warmup_count = 3.min(banks.len());
@@ -1259,7 +1298,7 @@ fn main() -> Result<()> {
                 if new_top5 != prev_header_top5 && !new_top5.is_empty() {
                     let new_header = build_memory_header(store.is_some(), &memories);
                     registry.update_header(&new_header);
-                    registry.full_recompact(&engine);
+                    registry.full_recompact::<fn(&[f32], &[i32], i32) -> anyhow::Result<usize>>(&engine, None, None);
                     debug!("  [T6] Header rebuilt: memories changed {:?} → {:?}", prev_header_top5, new_top5);
                     prev_header_top5 = new_top5;
                 }
@@ -1275,7 +1314,7 @@ fn main() -> Result<()> {
             if new_top5 != prev_header_top5 && !new_top5.is_empty() {
                 let new_header = build_system_header(store.is_some(), &scored);
                 registry.update_header(&new_header);
-                registry.full_recompact(&engine);
+                registry.full_recompact::<fn(&[f32], &[i32], i32) -> anyhow::Result<usize>>(&engine, None, None);
                 debug!("  [T6] Header rebuilt: top-5 changed {:?} → {:?}", prev_header_top5, new_top5);
                 prev_header_top5 = new_top5;
             }
@@ -1288,7 +1327,7 @@ fn main() -> Result<()> {
             None
         };
 
-        match query_with_registry(&engine, q_store, q_schema, &mut registry, &mut conv_frags, &banks, &line, max_nodes, token_budget, kv_capacity, &gen_ctl, &OutputMode::Stdout, gnn_ctx.as_ref(), head_router.as_ref(), embd_cache.as_ref(), embd_injection_ratio) {
+        match query_with_registry(&engine, q_store, q_schema, &mut registry, &mut conv_frags, &banks, &line, max_nodes, token_budget, kv_capacity, &gen_ctl, &OutputMode::Stdout, gnn_ctx.as_ref(), head_router.as_ref(), embd_cache.as_ref(), embd_injection_ratio, round_tracker.as_mut()) {
             Ok((response, relevant_graph_nodes, avg_entropy, ablation_reward)) => {
                 // Ξ(t) T5: Store entropy signal for next turn's reward computation
                 last_avg_entropy = avg_entropy;

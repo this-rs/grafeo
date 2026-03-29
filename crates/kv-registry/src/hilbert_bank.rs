@@ -1,0 +1,433 @@
+//! Hilbert Bank Manager — segments of the Hilbert curve as loadable/evictable units.
+//!
+//! Each bank corresponds to a contiguous range on the Hilbert curve,
+//! representing a topologically coherent group of graph nodes.
+//! Banks can be loaded (encode embeddings in tier Γ) and evicted (seq_rm) as blocks.
+
+use crate::hilbert::HilbertLayout;
+use crate::registry::KvNodeRegistry;
+use crate::Tokenizer;
+use anyhow::Result;
+use obrain_common::types::NodeId;
+use std::collections::{HashMap, HashSet};
+
+/// A segment of the Hilbert curve containing topologically related nodes.
+#[derive(Debug, Clone)]
+pub struct HilbertBank {
+    /// Unique bank ID (0-based).
+    pub id: usize,
+    /// Human-readable name (e.g., community label or "bank_0").
+    pub name: String,
+    /// Hilbert position range [start, end) — contiguous on the curve.
+    pub hilbert_start: u32,
+    pub hilbert_end: u32,
+    /// Node IDs in this bank, sorted by Hilbert position.
+    pub node_ids: Vec<NodeId>,
+    /// Whether this bank is currently loaded in the KV cache.
+    pub loaded: bool,
+    /// Bank importance score (updated by ablation reward feedback).
+    pub importance: f32,
+    /// Cumulative activation count across rounds.
+    pub activation_count: u32,
+}
+
+impl HilbertBank {
+    /// Number of nodes in this bank.
+    pub fn len(&self) -> usize {
+        self.node_ids.len()
+    }
+
+    /// Whether the bank is empty.
+    pub fn is_empty(&self) -> bool {
+        self.node_ids.is_empty()
+    }
+
+    /// Width of the Hilbert range.
+    pub fn range_width(&self) -> u32 {
+        self.hilbert_end.saturating_sub(self.hilbert_start)
+    }
+}
+
+/// Manager for Hilbert-segmented banks.
+#[derive(Debug)]
+pub struct BankManager {
+    /// All banks, indexed by bank ID.
+    pub banks: Vec<HilbertBank>,
+    /// Reverse map: NodeId → bank index.
+    pub node_to_bank: HashMap<NodeId, usize>,
+}
+
+impl BankManager {
+    /// Segment a HilbertLayout into banks based on community assignments.
+    ///
+    /// `communities`: maps NodeId → community_id (e.g., from Louvain clustering).
+    /// Nodes in the same community form a bank.
+    /// Nodes without a community assignment go into a "misc" bank.
+    pub fn from_communities(
+        layout: &HilbertLayout,
+        communities: &HashMap<NodeId, usize>,
+    ) -> Self {
+        // Group nodes by community
+        let mut community_nodes: HashMap<usize, Vec<(NodeId, u32)>> = HashMap::new();
+        let mut orphan_nodes: Vec<(NodeId, u32)> = Vec::new();
+
+        for (&nid, &pos) in &layout.positions {
+            if let Some(&comm) = communities.get(&nid) {
+                community_nodes.entry(comm).or_default().push((nid, pos));
+            } else {
+                orphan_nodes.push((nid, pos));
+            }
+        }
+
+        let mut banks = Vec::new();
+        let mut node_to_bank = HashMap::new();
+
+        // Sort communities by their minimum Hilbert position for deterministic ordering
+        let mut comm_ids: Vec<usize> = community_nodes.keys().copied().collect();
+        comm_ids.sort_by_key(|&c| {
+            community_nodes[&c].iter().map(|&(_, p)| p).min().unwrap_or(0)
+        });
+
+        for comm_id in comm_ids {
+            let mut nodes = community_nodes.remove(&comm_id).unwrap();
+            nodes.sort_by_key(|&(_, pos)| pos);
+
+            let hilbert_start = nodes.first().map(|&(_, p)| p).unwrap_or(0);
+            let hilbert_end = nodes.last().map(|&(_, p)| p + 1).unwrap_or(0);
+
+            let bank_idx = banks.len();
+            let node_ids: Vec<NodeId> = nodes.iter().map(|&(nid, _)| nid).collect();
+            for &nid in &node_ids {
+                node_to_bank.insert(nid, bank_idx);
+            }
+
+            banks.push(HilbertBank {
+                id: bank_idx,
+                name: format!("community_{comm_id}"),
+                hilbert_start,
+                hilbert_end,
+                node_ids,
+                loaded: false,
+                importance: 0.0,
+                activation_count: 0,
+            });
+        }
+
+        // Orphan bank (if any)
+        if !orphan_nodes.is_empty() {
+            orphan_nodes.sort_by_key(|&(_, pos)| pos);
+            let hilbert_start = orphan_nodes.first().map(|&(_, p)| p).unwrap_or(0);
+            let hilbert_end = orphan_nodes.last().map(|&(_, p)| p + 1).unwrap_or(0);
+
+            let bank_idx = banks.len();
+            let node_ids: Vec<NodeId> = orphan_nodes.iter().map(|&(nid, _)| nid).collect();
+            for &nid in &node_ids {
+                node_to_bank.insert(nid, bank_idx);
+            }
+
+            banks.push(HilbertBank {
+                id: bank_idx,
+                name: "misc".to_string(),
+                hilbert_start,
+                hilbert_end,
+                node_ids,
+                loaded: false,
+                importance: 0.0,
+                activation_count: 0,
+            });
+        }
+
+        Self { banks, node_to_bank }
+    }
+
+    /// Segment a HilbertLayout into banks of fixed size (when no community info).
+    ///
+    /// `chunk_size`: max nodes per bank.
+    pub fn from_chunks(layout: &HilbertLayout, chunk_size: usize) -> Self {
+        let sorted = layout.nodes_by_position();
+        let chunk_size = chunk_size.max(1);
+
+        let mut banks = Vec::new();
+        let mut node_to_bank = HashMap::new();
+
+        for (idx, chunk) in sorted.chunks(chunk_size).enumerate() {
+            let hilbert_start = chunk.first().map(|&(_, p)| p).unwrap_or(0);
+            let hilbert_end = chunk.last().map(|&(_, p)| p + 1).unwrap_or(0);
+            let node_ids: Vec<NodeId> = chunk.iter().map(|&(nid, _)| nid).collect();
+
+            for &nid in &node_ids {
+                node_to_bank.insert(nid, idx);
+            }
+
+            banks.push(HilbertBank {
+                id: idx,
+                name: format!("bank_{idx}"),
+                hilbert_start,
+                hilbert_end,
+                node_ids,
+                loaded: false,
+                importance: 0.0,
+                activation_count: 0,
+            });
+        }
+
+        Self { banks, node_to_bank }
+    }
+
+    /// Load a bank: encode all its nodes as embeddings (tier Γ) into the KV cache.
+    ///
+    /// `get_embedding`: provides the embedding vector for a NodeId.
+    /// `get_text`: provides the text label for a NodeId (stored in KvSlot.text).
+    /// `encode_embd_fn`: the FFI function to inject embeddings into KV.
+    pub fn load_bank<F>(
+        &mut self,
+        bank_id: usize,
+        registry: &mut KvNodeRegistry,
+        get_embedding: &dyn Fn(NodeId) -> Option<Vec<f32>>,
+        get_text: &dyn Fn(NodeId) -> String,
+        encode_embd_fn: &F,
+    ) -> Result<usize>
+    where
+        F: Fn(&[f32], &[i32], i32) -> Result<usize>,
+    {
+        let bank = self.banks.get_mut(bank_id)
+            .ok_or_else(|| anyhow::anyhow!("load_bank: bank {bank_id} not found"))?;
+
+        if bank.loaded {
+            return Ok(0); // Already loaded
+        }
+
+        let mut loaded = 0usize;
+        for &nid in &bank.node_ids.clone() {
+            if registry.get_slot(nid).is_some() {
+                continue; // Already in KV
+            }
+            if let Some(embd) = get_embedding(nid) {
+                let text = get_text(nid);
+                // Use a closure that calls the shared encode_embd_fn
+                let embd_clone = embd.clone();
+                registry.register_embedding(nid, &text, &embd_clone, |e, p, s| {
+                    encode_embd_fn(e, p, s)
+                })?;
+                loaded += 1;
+            }
+        }
+
+        let bank = &mut self.banks[bank_id];
+        bank.loaded = true;
+        eprintln!("  [D5] loaded bank '{}': {} nodes at positions [{}, {}]",
+            bank.name, loaded, bank.hilbert_start, bank.hilbert_end);
+
+        Ok(loaded)
+    }
+
+    /// Evict a bank: remove all its nodes from the KV cache.
+    pub fn evict_bank(
+        &mut self,
+        bank_id: usize,
+        registry: &mut KvNodeRegistry,
+        engine: &dyn Tokenizer,
+    ) -> Result<usize> {
+        let bank = self.banks.get(bank_id)
+            .ok_or_else(|| anyhow::anyhow!("evict_bank: bank {bank_id} not found"))?;
+
+        if !bank.loaded {
+            return Ok(0);
+        }
+
+        let mut evicted = 0usize;
+        let node_ids = bank.node_ids.clone();
+        for &nid in &node_ids {
+            if let Some(slot) = registry.nodes.remove(&nid) {
+                engine.evict(slot.start, slot.end);
+                evicted += 1;
+            }
+        }
+        registry.order.retain(|id| !node_ids.contains(id));
+
+        // Update next_pos to reflect KV state
+        if evicted > 0 {
+            registry.next_pos = engine.seq_pos_max(0) + 1;
+        }
+
+        let bank = &mut self.banks[bank_id];
+        bank.loaded = false;
+        eprintln!("  [D5] evicted bank '{}': {} nodes freed", bank.name, evicted);
+
+        Ok(evicted)
+    }
+
+    /// Update bank importance from ablation rewards.
+    ///
+    /// `bank_rewards`: maps bank_index → Δ_logprob reward.
+    /// `decay`: exponential moving average decay (e.g., 0.7).
+    pub fn update_importance(&mut self, bank_rewards: &HashMap<usize, f32>, decay: f32) {
+        for (bank_idx, &reward) in bank_rewards {
+            if let Some(bank) = self.banks.get_mut(*bank_idx) {
+                bank.importance = decay * bank.importance + (1.0 - decay) * reward;
+                bank.activation_count += 1;
+            }
+        }
+    }
+
+    /// Get banks sorted by importance (lowest first — candidates for eviction).
+    pub fn eviction_candidates(&self) -> Vec<usize> {
+        let mut loaded: Vec<(usize, f32)> = self.banks.iter()
+            .filter(|b| b.loaded)
+            .map(|b| (b.id, b.importance))
+            .collect();
+        loaded.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        loaded.into_iter().map(|(id, _)| id).collect()
+    }
+
+    /// Get the bank containing a given node.
+    pub fn bank_for_node(&self, node_id: NodeId) -> Option<usize> {
+        self.node_to_bank.get(&node_id).copied()
+    }
+
+    /// Number of banks.
+    pub fn len(&self) -> usize {
+        self.banks.len()
+    }
+
+    /// Number of loaded banks.
+    pub fn loaded_count(&self) -> usize {
+        self.banks.iter().filter(|b| b.loaded).count()
+    }
+
+    /// Total nodes across all banks.
+    pub fn total_nodes(&self) -> usize {
+        self.banks.iter().map(|b| b.len()).sum()
+    }
+
+    /// Get bank IDs relevant for a set of node IDs (for selective loading).
+    pub fn banks_for_nodes(&self, node_ids: &[NodeId]) -> HashSet<usize> {
+        node_ids.iter()
+            .filter_map(|nid| self.node_to_bank.get(nid).copied())
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_test_layout() -> (HilbertLayout, HashMap<NodeId, usize>) {
+        // 9 nodes, 3 communities of 3
+        let mut positions = HashMap::new();
+        let mut coords_2d = HashMap::new();
+        let mut communities = HashMap::new();
+
+        for i in 0u64..9 {
+            let nid = NodeId(i);
+            positions.insert(nid, i as u32 + 10); // base_pos=10
+            coords_2d.insert(nid, (0.0, 0.0));
+            communities.insert(nid, (i / 3) as usize); // 3 communities of 3
+        }
+
+        let layout = HilbertLayout { positions, order: 2, coords_2d };
+        (layout, communities)
+    }
+
+    #[test]
+    fn test_from_communities() {
+        let (layout, communities) = make_test_layout();
+        let mgr = BankManager::from_communities(&layout, &communities);
+
+        assert_eq!(mgr.len(), 3);
+        assert_eq!(mgr.total_nodes(), 9);
+
+        // Each bank has 3 nodes
+        for bank in &mgr.banks {
+            assert_eq!(bank.len(), 3);
+            assert!(!bank.loaded);
+            assert_eq!(bank.importance, 0.0);
+        }
+
+        // Reverse map works
+        assert_eq!(mgr.bank_for_node(NodeId(0)), Some(0));
+        assert_eq!(mgr.bank_for_node(NodeId(4)), Some(1));
+        assert_eq!(mgr.bank_for_node(NodeId(8)), Some(2));
+        assert_eq!(mgr.bank_for_node(NodeId(99)), None);
+    }
+
+    #[test]
+    fn test_from_chunks() {
+        let (layout, _) = make_test_layout();
+        let mgr = BankManager::from_chunks(&layout, 4);
+
+        // 9 nodes / 4 = 3 banks (4, 4, 1)
+        assert_eq!(mgr.len(), 3);
+        assert_eq!(mgr.banks[0].len(), 4);
+        assert_eq!(mgr.banks[1].len(), 4);
+        assert_eq!(mgr.banks[2].len(), 1);
+    }
+
+    #[test]
+    fn test_eviction_candidates() {
+        let (layout, communities) = make_test_layout();
+        let mut mgr = BankManager::from_communities(&layout, &communities);
+
+        // Mark all as loaded with different importance
+        mgr.banks[0].loaded = true;
+        mgr.banks[0].importance = 0.8;
+        mgr.banks[1].loaded = true;
+        mgr.banks[1].importance = 0.2;
+        mgr.banks[2].loaded = true;
+        mgr.banks[2].importance = 0.5;
+
+        let candidates = mgr.eviction_candidates();
+        // Lowest importance first
+        assert_eq!(candidates, vec![1, 2, 0]);
+    }
+
+    #[test]
+    fn test_update_importance() {
+        let (layout, communities) = make_test_layout();
+        let mut mgr = BankManager::from_communities(&layout, &communities);
+
+        let mut rewards = HashMap::new();
+        rewards.insert(0, 0.5f32);
+        rewards.insert(1, -0.3f32);
+
+        mgr.update_importance(&rewards, 0.7);
+
+        // bank 0: 0.7 * 0.0 + 0.3 * 0.5 = 0.15
+        assert!((mgr.banks[0].importance - 0.15).abs() < 0.001);
+        // bank 1: 0.7 * 0.0 + 0.3 * (-0.3) = -0.09
+        assert!((mgr.banks[1].importance - (-0.09)).abs() < 0.001);
+        // bank 2: unchanged
+        assert_eq!(mgr.banks[2].importance, 0.0);
+    }
+
+    #[test]
+    fn test_banks_for_nodes() {
+        let (layout, communities) = make_test_layout();
+        let mgr = BankManager::from_communities(&layout, &communities);
+
+        let relevant = mgr.banks_for_nodes(&[NodeId(0), NodeId(5), NodeId(8)]);
+        assert_eq!(relevant.len(), 3); // All 3 communities
+        assert!(relevant.contains(&0));
+        assert!(relevant.contains(&1));
+        assert!(relevant.contains(&2));
+    }
+
+    #[test]
+    fn test_disjoint_hilbert_ranges() {
+        let (layout, communities) = make_test_layout();
+        let mgr = BankManager::from_communities(&layout, &communities);
+
+        // Banks should have non-overlapping ranges (since communities are Hilbert-sorted)
+        for i in 0..mgr.len() {
+            for j in (i + 1)..mgr.len() {
+                let a = &mgr.banks[i];
+                let b = &mgr.banks[j];
+                // They shouldn't overlap (start_a < end_b && start_b < end_a)
+                let overlap = a.hilbert_start < b.hilbert_end && b.hilbert_start < a.hilbert_end;
+                // In our test setup with sequential positions, communities are contiguous
+                assert!(!overlap, "Banks {} and {} overlap: [{},{}) vs [{},{})",
+                    i, j, a.hilbert_start, a.hilbert_end, b.hilbert_start, b.hilbert_end);
+            }
+        }
+    }
+}
