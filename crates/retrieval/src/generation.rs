@@ -9,13 +9,14 @@ use std::sync::atomic::Ordering;
 use crate::engine::Engine;
 use crate::control::{GenerationControl, OutputMode, Spinner};
 
+/// Returns (response_text, avg_entropy) where avg_entropy is from GenerationSignals.
 pub fn generate_with_mask(
     engine: &Engine,
     ctx: &QueryContext,
     query: &str,
     ctl: &GenerationControl,
     output: &OutputMode,
-) -> Result<String> {
+) -> Result<(String, Option<f32>)> {
     // /no_think MUST be in the user message for Qwen3 to reliably suppress thinking.
     // Placing it only in the system header gets "diluted" by graph context tokens.
     let query_text = format!(
@@ -81,7 +82,7 @@ pub fn generate_with_mask(
         ctl.generating.store(true, Ordering::SeqCst);
         ctl.sigint_received.store(false, Ordering::SeqCst);
         let output_ref = &output;
-        let (resp, _, _signals) = engine.generate(&query_tokens, q_start_real, n_predict, 1, |piece| {
+        let (resp, _, fallback_signals) = engine.generate(&query_tokens, q_start_real, n_predict, 1, |piece| {
             if ctl.sigint_received.load(Ordering::Relaxed) { return false; }
             let visible = filter.feed(piece);
             if !visible.is_empty() {
@@ -121,7 +122,7 @@ pub fn generate_with_mask(
             }
         }
         if matches!(output, OutputMode::Stdout) { println!("\n"); }
-        return Ok(resp);
+        return Ok((resp, Some(fallback_signals.avg_entropy)));
     }
 
     // ── Compile attention mask (sparse) ──────────────────────────────
@@ -164,10 +165,14 @@ pub fn generate_with_mask(
     }
 
     // ── Set mask via FFI ──────────────────────────────────────────
-    // Per-head masking: when enabled, different heads see different banks.
-    // Enable via OBRAIN_PERHEAD=1 env var.
+    // OBRAIN_NO_MASK=1: skip topology mask entirely (A/B baseline for benchmarking).
+    // OBRAIN_PERHEAD=1: per-head masking where different heads see different banks.
+    // Default: broadcast topology mask (all heads see the same sparse positions).
+    let no_mask = std::env::var("OBRAIN_NO_MASK").map(|v| v == "1").unwrap_or(false);
     let use_perhead = std::env::var("OBRAIN_PERHEAD").map(|v| v == "1").unwrap_or(false);
-    if use_perhead {
+    if no_mask {
+        eprintln!("  [A/B] Topology mask DISABLED (baseline mode)");
+    } else if use_perhead {
         // Convert ContextNodes to mask_builder::NodePosition with bank from retrieval ranking.
         let mb_nodes: Vec<mask_builder::NodePosition> = ctx.nodes.iter().map(|n| {
             mask_builder::NodePosition {
@@ -183,6 +188,7 @@ pub fn generate_with_mask(
             sz as i32,
             engine.n_head(),
             &config,
+            None, // Phase A: no HeadRouter, use fixed BankConfig ratios
         );
         engine.set_attn_mask(&perhead.mask, &perhead.positions, perhead.n_head_groups)?;
     } else {
@@ -217,7 +223,7 @@ pub fn generate_with_mask(
     let output_ref = &output;
 
     // Round 0: with mask
-    let (chunk, mut hit_eog, mut next_pos, _signals) = engine.generate_ex(
+    let (chunk, mut hit_eog, mut next_pos, gen_signals) = engine.generate_ex(
         &query_tokens, q_start_real, n_predict, 1,
         true, // keep_seq=true in case we need continuation
         |piece| {
@@ -338,5 +344,5 @@ pub fn generate_with_mask(
         }
     }
 
-    Ok(full_response)
+    Ok((full_response, Some(gen_signals.avg_entropy)))
 }

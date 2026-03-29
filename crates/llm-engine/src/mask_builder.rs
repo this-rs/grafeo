@@ -3,6 +3,8 @@
 //! Different attention heads can see different subsets of graph nodes,
 //! allowing the model to allocate head capacity based on node importance (bank).
 
+use crate::head_router::HeadRouter;
+
 /// Configuration for a single bank's head visibility.
 pub struct BankConfig {
     pub bank_id: u32,
@@ -49,7 +51,10 @@ pub struct PerHeadMask {
 /// - `header_tokens`: number of header/system positions (always visible to all heads)
 /// - `total_positions`: total number of sparse positions in the mask
 /// - `n_head`: number of attention heads in the model
-/// - `config`: bank visibility configuration
+/// - `config`: bank visibility configuration (used when `router` is None)
+/// - `router`: optional HeadRouter with learned α-weights. When provided,
+///   visibility is determined by `router.is_visible(h, bank)` instead of
+///   the fixed BankConfig ratios.
 ///
 /// # Mask layout
 /// `mask[head * n_pos * n_pos + row * n_pos + col]` where:
@@ -61,12 +66,13 @@ pub fn build_perhead_mask(
     total_positions: i32,
     n_head: i32,
     config: &[BankConfig],
+    router: Option<&HeadRouter>,
 ) -> PerHeadMask {
     let n_pos = total_positions as usize;
     let n_h = n_head as usize;
     let mut mask = vec![f32::NEG_INFINITY; n_h * n_pos * n_pos];
 
-    // Build a lookup from bank_id -> visibility_start_ratio
+    // Build a lookup from bank_id -> visibility_start_ratio (used when no router)
     let max_bank = config.iter().map(|c| c.bank_id).max().unwrap_or(0) as usize;
     let mut bank_ratio = vec![1.0f32; max_bank + 1]; // default: invisible
     for c in config {
@@ -84,11 +90,18 @@ pub fn build_perhead_mask(
             }
         }
 
-        // Node positions: visible if head_ratio >= bank's visibility_start_ratio
+        // Node positions: visible based on router α-weights or fixed BankConfig ratios
         for node in nodes {
             let bank = node.bank as usize;
-            let ratio = if bank < bank_ratio.len() { bank_ratio[bank] } else { 1.0 };
-            let visible = head_ratio >= ratio;
+
+            let visible = if let Some(r) = router {
+                // Phase B: learnable routing via HeadRouter
+                r.is_visible(h, bank)
+            } else {
+                // Phase A fallback: fixed ratio-based visibility
+                let ratio = if bank < bank_ratio.len() { bank_ratio[bank] } else { 1.0 };
+                head_ratio >= ratio
+            };
 
             if visible {
                 // Query/gen positions can see this node's positions
@@ -139,7 +152,7 @@ mod tests {
         let total_positions = 12; // 2 header + 4*2 node + 2 query
         let n_head = 8;
 
-        let result = build_perhead_mask(&nodes, header_tokens, total_positions, n_head, &config);
+        let result = build_perhead_mask(&nodes, header_tokens, total_positions, n_head, &config, None);
 
         // Shape: n_head * n_pos * n_pos
         assert_eq!(result.mask.len(), 8 * 12 * 12);
@@ -188,7 +201,7 @@ mod tests {
         let total_positions = 5;
         let n_head = 4;
 
-        let result = build_perhead_mask(&nodes, header_tokens, total_positions, n_head, &config);
+        let result = build_perhead_mask(&nodes, header_tokens, total_positions, n_head, &config, None);
 
         let n_pos = total_positions as usize;
         // All nodes are bank 0 (ratio 0.0), so all heads should see them
@@ -223,7 +236,7 @@ mod tests {
         let total_positions = 5;
         let n_head = 7; // not divisible by 3
 
-        let result = build_perhead_mask(&nodes, header_tokens, total_positions, n_head, &config);
+        let result = build_perhead_mask(&nodes, header_tokens, total_positions, n_head, &config, None);
 
         assert_eq!(result.mask.len(), 7 * 5 * 5);
         assert_eq!(result.n_head_groups, 7);
@@ -238,5 +251,46 @@ mod tests {
         // Head 5 (ratio=5/7=0.714): sees banks 0,1 (0.714 >= 0.33) and 2 (0.714 >= 0.66)
         let h5 = 5 * n_pos * n_pos;
         assert_eq!(result.mask[h5 + 4 * n_pos + 3], 0.0); // bank 2 pos 3 visible
+    }
+
+    /// Test 4: HeadRouter overrides BankConfig ratios
+    #[test]
+    fn test_head_router_overrides_bank_config() {
+        let nodes = vec![
+            NodePosition { pos_start: 2, pos_end: 4, bank: 0 },  // core
+            NodePosition { pos_start: 4, pos_end: 6, bank: 2 },  // 2-hop
+        ];
+        let config = default_bank_config();
+        let header_tokens = 2;
+        let total_positions = 8;
+        let n_head = 4;
+        let n_pos = total_positions as usize;
+
+        // Create a HeadRouter where head 0 explicitly blocks bank 2
+        let mut router = HeadRouter::new(4, 4, 0.01, 0);
+        router.alpha[0 * 4 + 0] = 5.0;  // head 0 sees bank 0 (α=5 → sigmoid≈1)
+        router.alpha[0 * 4 + 2] = -5.0; // head 0 blocks bank 2 (α=-5 → sigmoid≈0)
+
+        // Head 3 sees bank 2
+        router.alpha[3 * 4 + 0] = 5.0;
+        router.alpha[3 * 4 + 2] = 5.0;
+
+        let result = build_perhead_mask(&nodes, header_tokens, total_positions, n_head, &config, Some(&router));
+
+        // Head 0: bank 0 (pos 2-3) visible, bank 2 (pos 4-5) blocked
+        let h0 = 0 * n_pos * n_pos;
+        assert_eq!(result.mask[h0 + 3 * n_pos + 2], 0.0, "head 0 should see bank 0");
+        assert_eq!(result.mask[h0 + 5 * n_pos + 4], f32::NEG_INFINITY, "head 0 should block bank 2");
+
+        // Head 3: both visible
+        let h3 = 3 * n_pos * n_pos;
+        assert_eq!(result.mask[h3 + 3 * n_pos + 2], 0.0, "head 3 should see bank 0");
+        assert_eq!(result.mask[h3 + 5 * n_pos + 4], 0.0, "head 3 should see bank 2");
+
+        // Without router: verify Phase A behavior (head 0 ratio=0.0, sees bank 0 only)
+        let result_no_router = build_perhead_mask(&nodes, header_tokens, total_positions, n_head, &config, None);
+        let h0_nr = 0 * n_pos * n_pos;
+        assert_eq!(result_no_router.mask[h0_nr + 3 * n_pos + 2], 0.0, "no router: head 0 sees bank 0");
+        assert_eq!(result_no_router.mask[h0_nr + 5 * n_pos + 4], f32::NEG_INFINITY, "no router: head 0 blocks bank 2");
     }
 }
