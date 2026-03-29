@@ -39,14 +39,16 @@ pub fn generate_with_mask(
     let query_tokens = engine.tokenize(&query_text, false, true)?;
     let query_n = query_tokens.len() as i32;
 
-    let n_predict: i32 = 1024;
+    let n_predict: i32 = 4096; // thinking models need 500-800 tokens for <think>, 1024 was truncating
 
     // ── Build sparse position map ──────────────────────────────────
     // Only include positions that matter: header + relevant nodes + query + gen.
     // Positions from non-relevant nodes in the KV are excluded (Rule 3b).
-    // n_gen_mask MUST cover the full generation to prevent fallback to default
-    // causal attention (which would let the model see ALL KV including irrelevant nodes).
-    let n_gen_mask: i32 = n_predict;
+    // n_gen_mask covers the topological mask portion. If the model generates
+    // beyond this, the overflow handler (line ~237) clears the mask and continues
+    // with default causal attention. Keep this small enough to fit within
+    // max_mask_positions budget (4000 total including header+nodes+query).
+    let n_gen_mask: i32 = 1024; // mask covers first 1024 gen tokens, overflow continues without mask
 
     let mut positions: Vec<i32> = Vec::new();
     let mut pos_remap: HashMap<i32, usize> = HashMap::new();
@@ -79,10 +81,22 @@ pub fn generate_with_mask(
     }
 
     let sz = positions.len();
-    let max_mask_positions: i32 = 4000;
+    // Dynamic mask position limit based on memory budget.
+    // Per-head mask memory = n_groups × n_pos² × 4 bytes.
+    // Budget scales with available memory — 512MB is reasonable for 128GB machines,
+    // and trivial next to multi-GB model weights.
+    let use_perhead_mask = std::env::var("OBRAIN_PERHEAD").map(|v| v == "1").unwrap_or(false) || head_router.is_some();
+    let mask_groups = if use_perhead_mask {
+        head_router.map(|r| r.n_head).unwrap_or(engine.n_head() as usize)
+    } else { 1 };
+    let max_mask_bytes: usize = 512 * 1024 * 1024; // 512 MB — fine for modern GPUs/Apple Silicon
+    let max_mask_positions: i32 = ((max_mask_bytes / (4 * mask_groups)) as f64).sqrt() as i32;
+    let max_mask_positions = max_mask_positions.min(4000); // hard cap at 4000
 
     if sz as i32 > max_mask_positions {
-        eprintln!("  Warning: mask_size={} > {} — generating without mask.", sz, max_mask_positions);
+        eprintln!("  Warning: mask_size={} > {} ({}×{}²×4={:.0}MB budget) — generating without mask.",
+            sz, max_mask_positions, mask_groups, max_mask_positions,
+            (mask_groups * max_mask_positions as usize * max_mask_positions as usize * 4) as f64 / 1e6);
         // Fallback: generate without topological mask (but still need seq_cp!)
         engine.clear_seq(1);
         engine.seq_cp(0, 1, 0, -1);
@@ -196,11 +210,14 @@ pub fn generate_with_mask(
             }
         }).collect();
         let config = mask_builder::default_bank_config();
+        // n_head for the mask: use router's head count (reflects granularity setting),
+        // or fall back to full n_head when using OBRAIN_PERHEAD env without a router.
+        let mask_n_head = head_router.map(|r| r.n_head as i32).unwrap_or_else(|| engine.n_head());
         let perhead = mask_builder::build_perhead_mask(
             &mb_nodes,
             ctx.header_tokens,
             sz as i32,
-            engine.n_head(),
+            mask_n_head,
             &config,
             head_router, // Phase B: learned α-weights, or None for Phase A fixed ratios
         );

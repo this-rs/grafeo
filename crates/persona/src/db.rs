@@ -270,6 +270,7 @@ impl PersonaDB {
             ("token_cost", Value::Int64(token_cost)),
             ("utility", Value::Float64(0.5)),
             ("times_used", Value::Int64(0)),
+            ("last_useful_turn", Value::Int64(source_turn as i64)),
         ]);
 
         // Link to the conversation turn that produced it
@@ -315,6 +316,53 @@ impl PersonaDB {
             }
         }
         ids
+    }
+
+    /// Mark a memory as "useful" this turn (bump times_used + last_useful_turn).
+    pub fn mark_memory_useful(&self, mem_id: NodeId, current_turn: u32) {
+        let store = self.db.store();
+        if let Some(node) = store.get_node(mem_id) {
+            let times = node.properties.get(&PropertyKey::from("times_used"))
+                .and_then(|v| if let Value::Int64(n) = v { Some(*n) } else { None })
+                .unwrap_or(0);
+            self.db.set_node_property(mem_id, "times_used", Value::Int64(times + 1));
+            self.db.set_node_property(mem_id, "last_useful_turn", Value::Int64(current_turn as i64));
+        }
+    }
+
+    /// Audit stale memories: returns (NodeId, text, source_turn, last_useful_turn)
+    /// for memories that haven't been useful for `stale_threshold` turns.
+    pub fn stale_memories(&self, current_turn: u32, stale_threshold: u32) -> Vec<(NodeId, String, u32, u32)> {
+        let store = self.db.store();
+        let mut stale = Vec::new();
+        for &nid in &store.nodes_by_label("Memory") {
+            if let Some(node) = store.get_node(nid) {
+                let active = node.properties.get(&PropertyKey::from("active"))
+                    .and_then(|v| if let Value::Bool(b) = v { Some(*b) } else { None })
+                    .unwrap_or(true);
+                if !active { continue; }
+
+                let source_turn = node.properties.get(&PropertyKey::from("source_turn"))
+                    .and_then(|v| if let Value::Int64(n) = v { Some(*n as u32) } else { None })
+                    .unwrap_or(0);
+                let last_useful = node.properties.get(&PropertyKey::from("last_useful_turn"))
+                    .and_then(|v| if let Value::Int64(n) = v { Some(*n as u32) } else { None })
+                    .unwrap_or(source_turn);
+                let text = node.properties.get(&PropertyKey::from("text"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("").to_string();
+
+                if current_turn > last_useful + stale_threshold {
+                    stale.push((nid, text, source_turn, last_useful));
+                }
+            }
+        }
+        stale
+    }
+
+    /// Deactivate a memory (soft delete).
+    pub fn deactivate_memory(&self, mem_id: NodeId) {
+        self.db.set_node_property(mem_id, "active", Value::Bool(false));
     }
 
     /// Get all active facts as (key, value) pairs.
@@ -814,6 +862,17 @@ impl PersonaDB {
             recent.iter().copied().sum::<f64>() / recent.len() as f64
         };
 
+        // Mask quality: average of last 20 mask_reward values
+        let mask_rewards: Vec<f64> = conv_turns.iter().filter_map(|&nid| {
+            store.get_node(nid)
+                .and_then(|n| n.properties.get(&PropertyKey::from("mask_reward"))
+                    .and_then(|v| if let Value::Float64(f) = v { Some(*f) } else { None }))
+        }).collect();
+        let avg_mask_reward = if mask_rewards.is_empty() { 0.0 } else {
+            let recent: Vec<_> = mask_rewards.iter().rev().take(20).collect();
+            recent.iter().copied().sum::<f64>() / recent.len() as f64
+        };
+
         XiStats {
             facts_active: active_facts.len(),
             facts_total: all_facts.len(),
@@ -825,6 +884,7 @@ impl PersonaDB {
             conv_turns: conv_turns.len(),
             avg_reward_recent: avg_reward,
             reward_tokens: store.nodes_by_label("RewardToken").len(),
+            avg_mask_reward,
         }
     }
 }
@@ -845,4 +905,6 @@ pub struct XiStats {
     pub conv_turns: usize,
     pub avg_reward_recent: f64,
     pub reward_tokens: usize,
+    /// Average mask_reward over last 20 turns (topology mask quality signal)
+    pub avg_mask_reward: f64,
 }

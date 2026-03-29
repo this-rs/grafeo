@@ -32,3 +32,7 @@ rustyline = { version = "15", features = ["derive"] }
 [features]
 default = []
 http = ["dep:reqwest"]
+
+[[example]]
+name = "gen_test_graph"
+path = "tests/gen_test_graph.rs"

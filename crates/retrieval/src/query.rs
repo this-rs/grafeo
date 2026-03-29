@@ -12,7 +12,8 @@ use std::time::Instant;
 
 use crate::engine::Engine;
 use crate::control::{GenerationControl, OutputMode, Spinner};
-use crate::scoring::retrieve_nodes;
+use crate::node_embedding::NodeEmbeddingCache;
+use crate::scoring::{retrieve_nodes, get_micro_tag};
 use crate::generation::{generate_with_mask, compute_ablation_reward, AblationReward};
 
 /// Optional GNN scoring context for composite E(t) decision.
@@ -36,6 +37,8 @@ pub fn query_with_registry(
     output: &OutputMode,
     gnn_ctx: Option<&GnnContext>,
     head_router: Option<&llm_engine::HeadRouter>,
+    embd_cache: Option<&NodeEmbeddingCache>,
+    embd_injection_ratio: f32,
 ) -> Result<(String, Vec<NodeId>, Option<f32>, Option<AblationReward>)> {
     registry.begin_query();
     let t_start = Instant::now();
@@ -77,7 +80,7 @@ pub fn query_with_registry(
     // Run the generic retrieval to get scored nodes (only if graph is loaded)
     let (mut scored_nodes_for_query, adjacency, node_texts) =
         if let (Some(st), Some(sch)) = (store, schema) {
-            retrieve_nodes(engine, st, sch, query, max_nodes, token_budget)?
+            retrieve_nodes(engine, st, sch, query, max_nodes, token_budget, embd_cache)?
         } else {
             (Vec::new(), HashMap::new(), HashMap::new())
         };
@@ -131,10 +134,11 @@ pub fn query_with_registry(
         let spinner_alive = spinner.as_ref().map(|s| s.alive.clone());
         ctl.generating.store(true, Ordering::SeqCst);
         ctl.sigint_received.store(false, Ordering::SeqCst);
-        // Use 1024 tokens max (not 256) to avoid truncated/garbage responses.
-        // The low max_tokens was causing the model to output short garbage in some cases.
+        // Use 4096 tokens max — thinking models (Qwen3) consume 500-800 tokens
+        // in <think>...</think> for complex questions, leaving too little for the
+        // visible response at 1024. The previous 256 limit was catastrophic.
         let output_ref = &output;
-        let (resp, _, _signals) = engine.generate(&tokens, registry.next_pos, 1024, 1, |piece| {
+        let (resp, _, _signals) = engine.generate(&tokens, registry.next_pos, 4096, 1, |piece| {
             // Ctrl+C during generation → stop
             if ctl.sigint_received.load(Ordering::Relaxed) { return false; }
             let visible = filter.feed(piece);
@@ -206,11 +210,69 @@ pub fn query_with_registry(
     let protected: HashSet<NodeId> = needed_ids.iter().copied().collect();
     registry.ensure_capacity(est_missing_tokens, kv_capacity, &protected, engine);
 
-    // Encode missing nodes into KV via FFI
+    // Encode missing nodes into KV via FFI.
+    // Phase C: if embedding cache is available and injection_ratio > 0,
+    // inject some nodes via batch.embd (1 KV position) instead of text tokens (N positions).
+    let use_embd = embd_injection_ratio > 0.0 && embd_cache.is_some();
+    let mut embd_injected = 0u32;
+    let mut text_encoded = 0u32;
+
     for &nid in &missing {
         if let Some(text) = node_texts.get(&nid) {
+            // Decide: embedding injection or text encoding?
+            let should_inject = use_embd && {
+                // Deterministic per-node decision based on node ID hash
+                let hash = (nid.as_u64().wrapping_mul(2654435761) as u32) as f32 / u32::MAX as f32;
+                hash < embd_injection_ratio
+            };
+
+            if should_inject {
+                if let Some(cache) = embd_cache {
+                    if let Some(embd) = cache.get(nid) {
+                        let embd_vec = embd.to_vec();
+
+                        // Phase C7: embedding + micro-tags (if graph is available)
+                        let tag = match (store, schema) {
+                            (Some(st), Some(sch)) => Some(get_micro_tag(st, sch, nid, 80)),
+                            _ => None,
+                        };
+
+                        let inject_result = if let Some(ref tag_text) = tag {
+                            // C7 path: 1 embedding + tag tokens (~3 positions)
+                            registry.register_embedding_with_tags(
+                                nid, text, &embd_vec, tag_text,
+                                |e, p, s| engine.encode_embeddings(e, p, s),
+                                engine,
+                            )
+                        } else {
+                            // C4 fallback: pure embedding (1 position)
+                            registry.register_embedding(nid, text, &embd_vec, |e, p, s| {
+                                engine.encode_embeddings(e, p, s)
+                            })
+                        };
+
+                        match inject_result {
+                            Ok(()) => {
+                                embd_injected += 1;
+                                continue;
+                            }
+                            Err(e) => {
+                                eprintln!("  ⚠ embed injection failed for node {:?}: {}, fallback to text", nid, e);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Fallback: standard text encoding
             registry.register(nid, text, engine)?;
+            text_encoded += 1;
         }
+    }
+
+    if use_embd && (embd_injected > 0 || text_encoded > 0) {
+        eprintln!("  [C4] nodes: {} via embedding, {} via text (ratio={:.0}%)",
+            embd_injected, text_encoded, embd_injection_ratio * 100.0);
     }
 
     let _encode_time = t_start.elapsed().as_millis();

@@ -6,18 +6,31 @@ use std::collections::{HashMap, HashSet};
 
 use crate::Tokenizer;
 
-/// A slot in the KV cache occupied by one graph node's text.
+/// How a node was encoded into the KV cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KvSlotMode {
+    /// Encoded via token IDs (standard text encoding, N positions).
+    Token,
+    /// Injected via batch.embd (Phase C, 1 position per virtual token).
+    Embedding,
+    /// 1 embedding + N tag tokens (Phase C7: micro-tags, ~3 positions per node).
+    EmbeddingWithTags { n_tag_tokens: i32 },
+}
+
+/// A slot in the KV cache occupied by one graph node.
 #[derive(Debug, Clone)]
 pub struct KvSlot {
     /// Token position range [start, end) in the KV cache.
     pub start: i32,
     pub end: i32,
-    /// Number of tokens.
+    /// Number of tokens (or virtual tokens for embeddings).
     pub n_tokens: i32,
     /// When this slot was last used (query counter).
     pub last_used: u64,
     /// The text that was encoded for this node (needed to reconstruct prompt prefix).
     pub text: String,
+    /// How this node was encoded.
+    pub mode: KvSlotMode,
 }
 
 /// Metrics for KV cache usage.
@@ -93,7 +106,7 @@ impl KvNodeRegistry {
         }
     }
 
-    /// Register and encode a node into the KV cache.
+    /// Register and encode a node into the KV cache via text tokenization.
     pub fn register(&mut self, node_id: NodeId, text: &str, engine: &dyn Tokenizer) -> Result<()> {
         let tokens = engine.tokenize(text, false, true)?;
         let n_tokens = tokens.len() as i32;
@@ -106,8 +119,88 @@ impl KvNodeRegistry {
             n_tokens,
             last_used: self.query_counter,
             text: text.to_string(),
+            mode: KvSlotMode::Token,
         };
         self.next_pos += n_tokens;
+        self.nodes.insert(node_id, slot);
+        self.order.push(node_id);
+        self.metrics.cache_misses += 1;
+        Ok(())
+    }
+
+    /// Register a node into the KV cache via direct embedding injection (Phase C).
+    ///
+    /// The embedding occupies exactly 1 KV position (vs N tokens for text).
+    /// `encode_embd_fn` is called with (embedding, position, seq_id) to perform the
+    /// actual llama_decode with batch.embd. This avoids adding encode_embeddings to
+    /// the Tokenizer trait (which would break all implementors).
+    pub fn register_embedding<F>(
+        &mut self,
+        node_id: NodeId,
+        text: &str,
+        embedding: &[f32],
+        encode_embd_fn: F,
+    ) -> Result<()>
+    where
+        F: FnOnce(&[f32], &[i32], i32) -> Result<usize>,
+    {
+        let position = vec![self.next_pos];
+        encode_embd_fn(embedding, &position, 0)?; // seq_id=0 = persistent context
+
+        let slot = KvSlot {
+            start: self.next_pos,
+            end: self.next_pos + 1, // 1 virtual token
+            n_tokens: 1,
+            last_used: self.query_counter,
+            text: text.to_string(),
+            mode: KvSlotMode::Embedding,
+        };
+        self.next_pos += 1;
+        self.nodes.insert(node_id, slot);
+        self.order.push(node_id);
+        self.metrics.cache_misses += 1;
+        Ok(())
+    }
+
+    /// Register a node via embedding + micro-tag tokens (Phase C7).
+    ///
+    /// Encodes 1 embedding (position p) + N tag tokens (positions p+1..p+N).
+    /// Total KV cost: 1 + N positions (typically 3 for ":Label name [rel1, rel2]").
+    /// This is 17× compression vs full text (~50 tokens) while carrying type+relation info.
+    pub fn register_embedding_with_tags<F>(
+        &mut self,
+        node_id: NodeId,
+        text: &str,
+        embedding: &[f32],
+        tag_text: &str,
+        encode_embd_fn: F,
+        engine: &dyn Tokenizer,
+    ) -> Result<()>
+    where
+        F: FnOnce(&[f32], &[i32], i32) -> Result<usize>,
+    {
+        // Step 1: Inject the embedding at position p
+        let p = self.next_pos;
+        encode_embd_fn(embedding, &[p], 0)?; // seq_id=0 = persistent
+
+        // Step 2: Tokenize and encode the micro-tag at positions p+1..
+        let tag_tokens = engine.tokenize(tag_text, false, true)?;
+        let n_tag = tag_tokens.len() as i32;
+        if n_tag > 0 {
+            let tag_positions: Vec<i32> = ((p + 1)..=(p + n_tag)).collect();
+            engine.encode(&tag_tokens, &tag_positions, 0)?;
+        }
+
+        let total = 1 + n_tag;
+        let slot = KvSlot {
+            start: p,
+            end: p + total,
+            n_tokens: total,
+            last_used: self.query_counter,
+            text: text.to_string(),
+            mode: KvSlotMode::EmbeddingWithTags { n_tag_tokens: n_tag },
+        };
+        self.next_pos += total;
         self.nodes.insert(node_id, slot);
         self.order.push(node_id);
         self.metrics.cache_misses += 1;

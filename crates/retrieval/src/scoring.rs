@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use crate::engine::Engine;
+use crate::node_embedding::{NodeEmbeddingCache, compute_text_embedding};
 
 /// A scored node selected for the current query.
 pub struct ScoredContextNode {
@@ -21,12 +22,13 @@ pub struct ScoredContextNode {
 /// - adjacency map for the mask
 /// - node_id → text for KV encoding
 pub fn retrieve_nodes(
-    _engine: &Engine,
+    engine: &Engine,
     store: &Arc<LpgStore>,
     schema: &GraphSchema,
     query: &str,
     max_nodes: usize,
     token_budget: i32,
+    embd_cache: Option<&NodeEmbeddingCache>,
 ) -> Result<(Vec<ScoredContextNode>, HashMap<NodeId, HashSet<NodeId>>, HashMap<NodeId, String>)> {
     let query_lower = query.to_lowercase();
     let terms: Vec<String> = query_lower
@@ -129,6 +131,52 @@ pub fn retrieve_nodes(
             }
 
             scored_nodes.push((nid, score));
+        }
+    }
+
+    // ── Step 2b: Cosine retrieval from embedding cache ─────────────
+    // If embeddings are available, compute cosine(query_embd, node_embd)
+    // for ALL cached nodes. This finds semantically relevant nodes even
+    // when the query has no keyword overlap with node names.
+    if let Some(cache) = embd_cache {
+        if !cache.is_empty() {
+            // Compute query embedding (uses seq_id=2, ~5ms)
+            let n_fuzzy_before = scored_nodes.len();
+            match compute_text_embedding(engine, query) {
+                Ok(query_embd) => {
+                    let lambda_cosine = 8.0f64; // scale cosine [0,1] to match fuzzy scores (~10)
+                    let cosine_threshold = 0.3f64; // min cosine to consider
+
+                    let existing: HashSet<NodeId> = scored_nodes.iter().map(|(nid, _)| *nid).collect();
+                    let mut n_cosine_boosted = 0usize;
+                    let mut n_cosine_new = 0usize;
+
+                    for (nid, node_embd) in cache.iter() {
+                        let cos = cosine_similarity(&query_embd, node_embd) as f64;
+                        if cos < cosine_threshold { continue; }
+
+                        let cosine_score = lambda_cosine * cos;
+
+                        if let Some(entry) = scored_nodes.iter_mut().find(|(id, _)| *id == nid) {
+                            // Merge: take max of fuzzy and cosine score
+                            if cosine_score > entry.1 {
+                                entry.1 = cosine_score;
+                                n_cosine_boosted += 1;
+                            }
+                        } else if !existing.contains(&nid) {
+                            // New node found only via cosine
+                            scored_nodes.push((nid, cosine_score));
+                            n_cosine_new += 1;
+                        }
+                    }
+
+                    eprintln!("  [C7] retrieval: {} fuzzy, +{} cosine-new, {} cosine-boosted (cache={})",
+                        n_fuzzy_before, n_cosine_new, n_cosine_boosted, cache.len());
+                }
+                Err(e) => {
+                    eprintln!("  [C7] cosine retrieval skipped: {}", e);
+                }
+            }
         }
     }
 
@@ -265,4 +313,71 @@ pub fn retrieve_nodes(
     }
 
     Ok((selected, adjacency, node_texts))
+}
+
+/// Generate a compact micro-tag for a graph node.
+///
+/// Format: `:{Label} {name} [→rel target, ←rel source, ...]`
+/// Example: `:Person Thomas Riviere [→habite Lyon, →connait Marc]`
+///
+/// The tag is truncated to `max_chars` to keep it under ~10 tokens.
+/// This provides type + key relationships context alongside the embedding.
+pub fn get_micro_tag(
+    store: &Arc<LpgStore>,
+    schema: &GraphSchema,
+    node_id: NodeId,
+    max_chars: usize,
+) -> String {
+    let primary_label = store.get_node(node_id)
+        .and_then(|n| n.labels.first().map(|l| l.to_string()))
+        .unwrap_or_default();
+
+    let dp = schema.display_props.get(primary_label.as_str());
+    let name = get_node_name_generic(store, node_id, dp);
+
+    // Collect outgoing relations: "→edge_type target_name"
+    let mut rels: Vec<String> = Vec::new();
+    for (target, eid) in store.edges_from(node_id, Direction::Outgoing).collect::<Vec<_>>() {
+        if rels.len() >= 4 { break; }
+        let etype = store.get_edge(eid)
+            .map(|e| { let s: &str = e.edge_type.as_ref(); s.to_string() })
+            .unwrap_or_default();
+        let target_label = store.get_node(target)
+            .and_then(|n| n.labels.first().map(|l| l.to_string()))
+            .unwrap_or_default();
+        let tdp = schema.display_props.get(target_label.as_str());
+        let tname = get_node_name_generic(store, target, tdp);
+        if !tname.is_empty() {
+            let tname_short: String = tname.chars().take(20).collect();
+            rels.push(format!("→{} {}", etype, tname_short));
+        }
+    }
+
+    let tag = if rels.is_empty() {
+        format!(":{} {}", primary_label, name)
+    } else {
+        format!(":{} {} [{}]", primary_label, name, rels.join(", "))
+    };
+
+    // Truncate by chars (UTF-8 safe)
+    if tag.chars().count() > max_chars {
+        tag.chars().take(max_chars).collect()
+    } else {
+        tag
+    }
+}
+
+/// Cosine similarity between two vectors. Returns 0.0 if either has zero norm.
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    debug_assert_eq!(a.len(), b.len(), "cosine_similarity: dimension mismatch");
+    let mut dot = 0.0f32;
+    let mut na = 0.0f32;
+    let mut nb = 0.0f32;
+    for (x, y) in a.iter().zip(b.iter()) {
+        dot += x * y;
+        na += x * x;
+        nb += y * y;
+    }
+    let denom = na.sqrt() * nb.sqrt();
+    if denom < 1e-12 { 0.0 } else { dot / denom }
 }

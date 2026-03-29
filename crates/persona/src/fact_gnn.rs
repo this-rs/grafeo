@@ -234,6 +234,73 @@ impl FactGNN {
         scores
     }
 
+    /// Get GNN embeddings (post message-passing) for given nodes.
+    ///
+    /// Runs 2 layers of message-passing on the subgraph around `center_nodes`,
+    /// then returns the final embeddings for the requested node IDs.
+    /// Nodes not found in the subgraph get a zero embedding.
+    pub fn get_node_embeddings(
+        &self,
+        store: &LpgStore,
+        center_nodes: &[NodeId],
+        hops: usize,
+    ) -> HashMap<NodeId, [f32; DIM]> {
+        let subgraph = Self::collect_subgraph(store, center_nodes, hops);
+        if subgraph.is_empty() { return HashMap::new(); }
+
+        // Init embeddings
+        let mut embeddings: HashMap<NodeId, [f32; DIM]> = HashMap::new();
+        for &nid in &subgraph {
+            embeddings.insert(nid, Self::init_embedding(store, nid));
+        }
+
+        // Two rounds of message passing (same as forward)
+        for _layer in 0..2 {
+            let mut new_embeddings: HashMap<NodeId, [f32; DIM]> = HashMap::new();
+
+            for &nid in &subgraph {
+                let mut h = embeddings[&nid];
+
+                for (target, eid) in store.edges_from(nid, Direction::Outgoing).collect::<Vec<_>>() {
+                    if !subgraph.contains(&target) { continue; }
+                    let edge_type = Self::get_edge_label(store, nid, target, eid);
+                    if let Some(w) = self.w_message.get(&edge_type) {
+                        let h_neighbor = &embeddings[&target];
+                        let msg = mat_vec_mul(w, h_neighbor);
+                        for i in 0..DIM { h[i] += relu(msg[i]); }
+                    }
+                }
+
+                for (source, eid) in store.edges_from(nid, Direction::Incoming).collect::<Vec<_>>() {
+                    if !subgraph.contains(&source) { continue; }
+                    let edge_type = Self::get_edge_label(store, source, nid, eid);
+                    if let Some(w) = self.w_message.get(&edge_type) {
+                        let h_neighbor = &embeddings[&source];
+                        let msg = mat_vec_mul(w, h_neighbor);
+                        for i in 0..DIM { h[i] += relu(msg[i]); }
+                    }
+                }
+
+                let label = store.get_node(nid)
+                    .and_then(|n| n.labels.first().map(|l| { let s: &str = l.as_ref(); s.to_string() }))
+                    .unwrap_or_default();
+                if let Some(w) = self.w_update.get(&label) {
+                    let updated = mat_vec_mul(w, &h);
+                    for i in 0..DIM { h[i] = relu(updated[i]); }
+                }
+
+                let norm = h.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-8);
+                for i in 0..DIM { h[i] /= norm; }
+
+                new_embeddings.insert(nid, h);
+            }
+
+            embeddings = new_embeddings;
+        }
+
+        embeddings
+    }
+
     /// Online REINFORCE update: adjust weights based on reward signal.
     pub fn update(
         &mut self,

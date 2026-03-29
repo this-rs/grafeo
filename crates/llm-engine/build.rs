@@ -164,10 +164,9 @@ fn main() {
                 // llama.cpp compiled with clang -stdlib=libc++ (Docker full builds
                 // for CPU/Vulkan variants). Symbols are std::__1::* (libc++ ABI).
                 if link_static {
-                    // Static link libc++ so the binary doesn't need libc++.so at runtime.
-                    // We must link the full LLVM C++ runtime chain: libc++ → libc++abi → libunwind.
-                    // Use -Bstatic/-Bdynamic linker flags to force static archives even when
-                    // .so files exist in the same search paths (ld prefers .so by default).
+                    // Static link the full LLVM C++ runtime chain:
+                    //   libc++ → libc++abi → libunwind (+ libpthread, libdl, libm for unwind)
+                    // All three must be static to avoid libc++.so dependency on target.
                     for libcxx_path in &[
                         "/usr/lib/x86_64-linux-gnu",
                         "/usr/lib/llvm-18/lib",
@@ -176,16 +175,13 @@ fn main() {
                         "/usr/lib/llvm-14/lib",
                     ] {
                         let p = PathBuf::from(libcxx_path);
-                        if p.exists() {
+                        if p.join("libc++.a").exists() || p.join("libc++abi.a").exists() {
                             println!("cargo:rustc-link-search=native={}", p.display());
                         }
                     }
-                    // Force static linking for the entire LLVM C++ runtime group
-                    println!("cargo:rustc-link-arg=-Wl,-Bstatic");
-                    println!("cargo:rustc-link-arg=-lc++");
-                    println!("cargo:rustc-link-arg=-lc++abi");
-                    println!("cargo:rustc-link-arg=-lunwind");
-                    println!("cargo:rustc-link-arg=-Wl,-Bdynamic");
+                    println!("cargo:rustc-link-lib=static=c++");
+                    println!("cargo:rustc-link-lib=static=c++abi");
+                    println!("cargo:rustc-link-lib=static=unwind");
                 } else {
                     println!("cargo:rustc-link-lib=c++");
                 }

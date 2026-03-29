@@ -7,6 +7,6 @@ pub mod fact_gnn;
 pub mod persist_net;
 
 pub use db::{PersonaDB, XiStats};
-pub use reward::RewardDetector;
+pub use reward::{RewardDetector, RewardSignals};
 pub use facts::{PatternMatch, detect_facts_from_graph, detect_facts};
 pub use persist_net::PersistNet;

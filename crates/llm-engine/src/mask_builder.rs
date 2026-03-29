@@ -79,18 +79,25 @@ pub fn build_perhead_mask(
         bank_ratio[c.bank_id as usize] = c.visibility_start_ratio;
     }
 
+    // Determine where query/gen positions start (after all nodes)
+    let query_start = nodes.iter()
+        .map(|n| n.pos_end)
+        .max()
+        .unwrap_or(header_tokens) as usize;
+
     for h in 0..n_h {
         let head_ratio = h as f32 / n_head as f32;
         let head_offset = h * n_pos * n_pos;
 
-        // Header positions (0..header_tokens): causal among themselves, visible to all heads
-        for i in 0..header_tokens as usize {
-            for j in 0..=i {
-                mask[head_offset + i * n_pos + j] = 0.0;
+        // 1. Header positions (0..header_tokens): visible to ALL downstream rows (causal).
+        //    The system prompt must always be attended to by nodes, query, and gen tokens.
+        for col in 0..header_tokens as usize {
+            for row in col..n_pos {
+                mask[head_offset + row * n_pos + col] = 0.0;
             }
         }
 
-        // Node positions: visible based on router α-weights or fixed BankConfig ratios
+        // 2. Node positions: visible based on router α-weights or fixed BankConfig ratios
         for node in nodes {
             let bank = node.bank as usize;
 
@@ -104,12 +111,10 @@ pub fn build_perhead_mask(
             };
 
             if visible {
-                // Query/gen positions can see this node's positions
-                // We mark node positions as visible from any row that comes at or after them (causal)
+                // Mark node positions as visible from any row at or after them (causal)
                 for pos in node.pos_start..node.pos_end {
                     let col = pos as usize;
                     if col >= n_pos { continue; }
-                    // All rows at or after this column can attend to it
                     for row in col..n_pos {
                         mask[head_offset + row * n_pos + col] = 0.0;
                     }
@@ -117,11 +122,14 @@ pub fn build_perhead_mask(
             }
         }
 
-        // Self-attention on query/gen positions (positions after all nodes):
-        // These start after header + node positions. They always see themselves causally.
-        // Already handled by the causal node visibility above, but ensure
-        // query positions that are beyond all nodes have causal self-attention.
-        // The caller arranges positions so query/gen come after nodes.
+        // 3. Query/gen positions: causal self-attention (always see previous query/gen tokens).
+        //    These start after the last node and must always attend to each other causally,
+        //    regardless of bank routing. Without this, autoregressive generation breaks.
+        for col in query_start..n_pos {
+            for row in col..n_pos {
+                mask[head_offset + row * n_pos + col] = 0.0;
+            }
+        }
     }
 
     // Collect position IDs (0..total_positions for sparse mask)

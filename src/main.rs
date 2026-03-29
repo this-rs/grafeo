@@ -269,6 +269,20 @@ fn main() -> Result<()> {
     let head_router_warmup: u32 = parse_arg("--head-router-warmup")
         .and_then(|s| s.parse().ok())
         .unwrap_or(50);
+    // --head-router-granularity: "full" (n_head) or "gqa" (n_head_kv, default)
+    // "gqa" (default): groups by KV heads — natural for GQA models, best recall-per-MB
+    // "full": each query head routes independently — max specialization potential,
+    //         more memory (~5× for GQA models), may benefit from larger GPU/Apple Silicon
+    let head_router_granularity: String = parse_arg("--head-router-granularity")
+        .unwrap_or_else(|| "gqa".to_string());
+
+    // Phase C: embedding injection
+    let embd_injection_ratio: f32 = parse_arg("--embd-injection-ratio")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.0); // 0.0 = disabled, 1.0 = inject all nodes via embeddings
+    let _embd_warmup: u32 = parse_arg("--embd-warmup")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(100); // queries before full injection (for soft-mixing schedule)
 
     eprintln!("=== obrain-chat — Generic Graph LLM + Topological Mask (FFI) ===\n");
 
@@ -774,15 +788,139 @@ fn main() -> Result<()> {
     // Cache for PersistNet: (projected_embedding, persist_score) from last forward
     let mut last_persist_result: Option<(Vec<f32>, f32)> = None;
     let mut last_avg_entropy: Option<f32> = None;
+    // B3: Per-head ablation reward from previous turn (for deferred HeadRouter update)
+    let mut last_ablation_reward: Option<retrieval::AblationReward> = None;
 
     // Ξ(t) Phase B: HeadRouter for per-head topology routing
+    // Granularity: "full" = n_head (each query head routes independently, max specialization)
+    //              "gqa" = n_head_kv (GQA groups share routing, less memory)
     let mut head_router: Option<llm_engine::HeadRouter> = if use_head_router {
         let n_head = engine.n_heads() as usize;
-        eprintln!("  [Phase B] HeadRouter enabled: n_head={}, lr={}, warmup={}",
-            n_head, head_router_lr, head_router_warmup);
-        Some(llm_engine::HeadRouter::new(n_head, llm_engine::N_BANKS, head_router_lr, head_router_warmup))
+        let n_head_kv = engine.n_heads_kv() as usize;
+        let router_heads = if head_router_granularity == "gqa" { n_head_kv } else { n_head };
+        let mask_mem_per_pos2 = router_heads * 4; // bytes per position² element
+        eprintln!("  [Phase B] HeadRouter enabled: granularity={}, router_heads={} (n_head={}, n_kv={}), lr={}, warmup={}",
+            head_router_granularity, router_heads, n_head, n_head_kv, head_router_lr, head_router_warmup);
+        eprintln!("  [Phase B] Mask memory: {:.0}MB per 1000 positions (budget allows ~{} pos)",
+            (router_heads as f64 * 1000.0 * 1000.0 * 4.0) / 1e6,
+            ((100.0 * 1024.0 * 1024.0 / (4.0 * router_heads as f64)) as f64).sqrt() as i32);
+        Some(llm_engine::HeadRouter::new(router_heads, llm_engine::N_BANKS, head_router_lr, head_router_warmup))
     } else {
         None
+    };
+
+    // Phase C: NodeEmbeddingCache + ProjectionNet training pipeline
+    let (embd_cache, mut projection_net, mut training_manager): (
+        Option<retrieval::NodeEmbeddingCache>,
+        Option<retrieval::ProjectionNet>,
+        Option<retrieval::TrainingManager>,
+    ) = if embd_injection_ratio > 0.0 {
+        let model_name = std::path::Path::new(&model_path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        eprintln!("  [Phase C] Embedding injection enabled: ratio={:.0}%, model={}",
+            embd_injection_ratio * 100.0, model_name);
+        let mut cache = retrieval::NodeEmbeddingCache::new(engine.n_embd(), &model_name);
+
+        // Determine weights path from persona dir
+        let weights_path = parse_arg("--persona")
+            .map(|p| retrieval::weights_path_for_persona(std::path::Path::new(&p)));
+
+        // Collect node texts from banks
+        let mut node_texts: Vec<(obrain_common::types::NodeId, String)> = Vec::new();
+        for bank in &banks {
+            for (nid, text) in &bank.texts {
+                if !cache.has(*nid) {
+                    node_texts.push((*nid, text.clone()));
+                }
+            }
+        }
+
+        // Get GNN embeddings if available
+        let gnn_embeds: std::collections::HashMap<obrain_common::types::NodeId, Vec<f32>> =
+            if let (Some(gnn), Some(pdb)) = (&fact_gnn, &persona_db) {
+                let store = pdb.db.store();
+                let node_ids: Vec<obrain_common::types::NodeId> = node_texts.iter().map(|(nid, _)| *nid).collect();
+                let embeds = gnn.get_node_embeddings(&store, &node_ids, 2);
+                eprintln!("  [Phase C] GNN embeddings: {} nodes (dim={})", embeds.len(), gnn.dim());
+                embeds.into_iter().map(|(k, v)| (k, v.to_vec())).collect()
+            } else {
+                std::collections::HashMap::new()
+            };
+
+        let has_gnn = !gnn_embeds.is_empty();
+        let gnn_dim = fact_gnn.as_ref().map(|g| g.dim()).unwrap_or(64);
+
+        // P1: Create and train ProjectionNet (or load from disk)
+        let mut pnet = retrieval::ProjectionNet::new(engine.n_embd(), gnn_dim);
+        let mut tmgr = retrieval::TrainingManager::new(retrieval::TrainingConfig {
+            initial_epochs: 30, // C6: contrastive plateaus ~epoch 20, 30 is sufficient
+            lr: 0.001,
+            lambda_cosine: 0.1,
+            min_samples: 5,
+            online_epochs: 5,
+            online_interval: 10,
+            weights_path: weights_path.clone(),
+            contrastive: Some(retrieval::ContrastiveConfig::default()),
+        });
+
+        // C6: Extract graph edges for contrastive training
+        let graph_edges: Option<Vec<(obrain_common::types::NodeId, obrain_common::types::NodeId)>> =
+            store.as_ref().map(|st| {
+                use obrain_core::graph::Direction;
+                let mut edges = Vec::new();
+                let node_set: std::collections::HashSet<obrain_common::types::NodeId> =
+                    node_texts.iter().map(|(nid, _)| *nid).collect();
+                for &(nid, _) in &node_texts {
+                    for (target, _eid) in st.edges_from(nid, Direction::Outgoing).collect::<Vec<_>>() {
+                        if node_set.contains(&target) {
+                            edges.push((nid, target));
+                        }
+                    }
+                }
+                edges
+            });
+        if let Some(ref edges) = graph_edges {
+            if !edges.is_empty() {
+                eprintln!("  [Phase C] C6 contrastive: {} edges extracted from graph", edges.len());
+            }
+        }
+
+        if has_gnn && !node_texts.is_empty() {
+            // P1 + C6: Initial training with GNN fusion data + contrastive loss
+            match tmgr.initial_training(&mut pnet, &engine, &node_texts, &gnn_embeds, graph_edges.as_deref()) {
+                Ok(n) if n > 0 => {
+                    eprintln!("  [Phase C] ProjectionNet trained on {} samples", n);
+                }
+                Ok(_) => {} // loaded from disk or skipped
+                Err(e) => eprintln!("  ⚠ [Phase C] ProjectionNet training failed: {}", e),
+            }
+
+            // Now compute fused embeddings using the trained ProjectionNet
+            let t0 = std::time::Instant::now();
+            let fctx = retrieval::FusionContext {
+                gnn_embeddings: gnn_embeds,
+                projection_net: &pnet,
+            };
+            match retrieval::compute_node_embeddings_with_fusion(&engine, &mut cache, &node_texts, false, Some(&fctx)) {
+                Ok(n) => eprintln!("  [Phase C] Pre-computed {} fused node embeddings in {:.1}s",
+                    n, t0.elapsed().as_secs_f32()),
+                Err(e) => eprintln!("  ⚠ [Phase C] Fused embedding computation failed: {}", e),
+            }
+        } else if !node_texts.is_empty() {
+            // No GNN — text-only embeddings (fallback)
+            let t0 = std::time::Instant::now();
+            match retrieval::compute_node_embeddings(&engine, &mut cache, &node_texts, false) {
+                Ok(n) => eprintln!("  [Phase C] Pre-computed {} text-only node embeddings in {:.1}s",
+                    n, t0.elapsed().as_secs_f32()),
+                Err(e) => eprintln!("  ⚠ [Phase C] Text embedding computation failed: {}", e),
+            }
+        }
+
+        (Some(cache), if has_gnn { Some(pnet) } else { None }, Some(tmgr))
+    } else {
+        (None, None, None)
     };
 
     // Ξ(t) T1: Now that GNN is loaded, rescore facts and update header
@@ -1150,7 +1288,7 @@ fn main() -> Result<()> {
             None
         };
 
-        match query_with_registry(&engine, q_store, q_schema, &mut registry, &mut conv_frags, &banks, &line, max_nodes, token_budget, kv_capacity, &gen_ctl, &OutputMode::Stdout, gnn_ctx.as_ref(), head_router.as_ref()) {
+        match query_with_registry(&engine, q_store, q_schema, &mut registry, &mut conv_frags, &banks, &line, max_nodes, token_budget, kv_capacity, &gen_ctl, &OutputMode::Stdout, gnn_ctx.as_ref(), head_router.as_ref(), embd_cache.as_ref(), embd_injection_ratio) {
             Ok((response, relevant_graph_nodes, avg_entropy, ablation_reward)) => {
                 // Ξ(t) T5: Store entropy signal for next turn's reward computation
                 last_avg_entropy = avg_entropy;
@@ -1167,6 +1305,13 @@ fn main() -> Result<()> {
                         eprintln!("  [B3] HeadRouter updated (n_updates={})", router.n_updates);
                     }
                 }
+                // P2: Online ProjectionNet refinement
+                if let (Some(tmgr), Some(pnet)) = (&mut training_manager, &mut projection_net) {
+                    // No new samples to add here (would need text_h computation per query node,
+                    // which is expensive). Just trigger periodic retraining on accumulated data.
+                    tmgr.on_query(pnet, &[]);
+                }
+
                 // Response already streamed to stdout by engine.generate
                 let clean = strip_think_tags(&response);
                 let mut trimmed = clean.trim().to_string();
@@ -1288,16 +1433,18 @@ fn main() -> Result<()> {
                                 reward, prev_score, pnet.n_updates);
                         }
 
-                        // Ξ(t) Phase B/B3: HeadRouter REINFORCE update
-                        // Use per-head ablation reward when available (B3), else uniform
+                        // Ξ(t) Phase B/B3: HeadRouter REINFORCE update (deferred)
+                        // Use per-head ablation reward from PREVIOUS turn (when reward is known)
                         if let Some(ref mut router) = head_router {
-                            if let Some(ref abl) = ablation_reward {
-                                // B3: per-head reward from log-prob ablation
+                            if let Some(ref abl) = last_ablation_reward {
+                                // B3: per-head reward scaled by user feedback reward
+                                let scaled: Vec<f32> = abl.per_head_rewards.iter()
+                                    .map(|&r| r * reward.signum()) // scale direction by user reward
+                                    .collect();
                                 let visibility = router.forward();
-                                router.backward(&abl.per_head_rewards, &visibility);
-                                debug!("  [HeadRouter B3] per-head update #{}, head_entropy={:.3}, bank_contrib={:?}",
-                                    router.n_updates, abl.head_contribution_entropy,
-                                    abl.bank_contributions);
+                                router.backward(&scaled, &visibility);
+                                debug!("  [HeadRouter B3] deferred update #{}, user_reward={:.2}, head_entropy={:.3}",
+                                    router.n_updates, reward, abl.head_contribution_entropy);
                             } else {
                                 router.backward_uniform(reward);
                             }
@@ -1463,6 +1610,9 @@ fn main() -> Result<()> {
                     }
                 }
 
+                // B3: Store ablation reward for deferred backward at next turn
+                last_ablation_reward = ablation_reward;
+
                 // Ξ(t) T5: Periodic pattern auto-generation and garbage collection
                 if let Some(ref pdb) = persona_db {
                     if turn_count % 5 == 0 {
@@ -1484,6 +1634,13 @@ fn main() -> Result<()> {
     if let (Some(gnn), Some(pdb)) = (&fact_gnn, &persona_db) {
         gnn.save_weights(&pdb.db);
         debug!("  [GNN] Weights saved at session end ({} updates)", gnn.n_updates());
+    }
+
+    // Save ProjectionNet weights at session end (Phase C)
+    if let (Some(tmgr), Some(pnet)) = (&training_manager, &projection_net) {
+        tmgr.save_weights(pnet);
+        debug!("  [ProjectionNet] Weights saved at session end ({} updates, {} samples)",
+            pnet.n_updates(), tmgr.n_samples());
     }
 
     // Save PersistNet weights at session end

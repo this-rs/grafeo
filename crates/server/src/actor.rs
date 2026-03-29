@@ -297,6 +297,8 @@ impl ActorHandle {
             query, max_nodes, token_budget, kv_capacity, gen_ctl, &output,
             None, // gnn_ctx — server path, no GNN yet
             None, // head_router — server path, no HeadRouter yet
+            None, // embd_cache — server path, no embedding cache yet
+            0.0,  // embd_injection_ratio — disabled
         )?;
 
         let clean = strip_think_tags(&raw_response);
