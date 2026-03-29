@@ -7,13 +7,14 @@ use std::io::{self, Write};
 use std::sync::atomic::Ordering;
 
 use crate::engine::Engine;
-use crate::control::{GenerationControl, Spinner};
+use crate::control::{GenerationControl, OutputMode, Spinner};
 
 pub fn generate_with_mask(
     engine: &Engine,
     ctx: &QueryContext,
     query: &str,
     ctl: &GenerationControl,
+    output: &OutputMode,
 ) -> Result<String> {
     // /no_think MUST be in the user message for Qwen3 to reliably suppress thinking.
     // Placing it only in the system header gets "diluted" by graph context tokens.
@@ -72,22 +73,34 @@ pub fn generate_with_mask(
         engine.seq_cp(0, 1, 0, -1);
         let mut filter = ThinkFilter::new();
         let mut first_visible = true;
-        let spinner = Spinner::start();
-        let spinner_alive = spinner.alive.clone();
+        let spinner = match output {
+            OutputMode::Stdout => Some(Spinner::start()),
+            OutputMode::Channel(_) => None,
+        };
+        let spinner_alive = spinner.as_ref().map(|s| s.alive.clone());
         ctl.generating.store(true, Ordering::SeqCst);
         ctl.sigint_received.store(false, Ordering::SeqCst);
+        let output_ref = &output;
         let (resp, _) = engine.generate(&query_tokens, q_start_real, n_predict, 1, |piece| {
             if ctl.sigint_received.load(Ordering::Relaxed) { return false; }
             let visible = filter.feed(piece);
             if !visible.is_empty() {
-                if first_visible {
-                    spinner_alive.store(false, Ordering::Relaxed);
-                    print!("assistant> ");
-                    let _ = io::stdout().flush();
-                    first_visible = false;
+                match output_ref {
+                    OutputMode::Stdout => {
+                        if first_visible {
+                            if let Some(ref a) = spinner_alive { a.store(false, Ordering::Relaxed); }
+                            print!("assistant> ");
+                            let _ = io::stdout().flush();
+                            first_visible = false;
+                        }
+                        print!("{}", visible);
+                        let _ = io::stdout().flush();
+                    }
+                    OutputMode::Channel(tx) => {
+                        first_visible = false;
+                        let _ = tx.send(visible);
+                    }
                 }
-                print!("{}", visible);
-                let _ = io::stdout().flush();
             }
             true
         })?;
@@ -96,11 +109,18 @@ pub fn generate_with_mask(
         let interrupted = ctl.sigint_received.swap(false, Ordering::SeqCst);
         if interrupted {
             ctl.gen_interrupted.store(true, Ordering::SeqCst);
-            eprint!("\n\x1b[90m  (interrompu)\x1b[0m");
+            if matches!(output, OutputMode::Stdout) {
+                eprint!("\n\x1b[90m  (interrompu)\x1b[0m");
+            }
         }
         let remaining = filter.flush();
-        if !remaining.is_empty() { print!("{}", remaining); }
-        println!("\n");
+        if !remaining.is_empty() {
+            match output {
+                OutputMode::Stdout => { print!("{}", remaining); }
+                OutputMode::Channel(tx) => { let _ = tx.send(remaining); }
+            }
+        }
+        if matches!(output, OutputMode::Stdout) { println!("\n"); }
         return Ok(resp);
     }
 
@@ -183,14 +203,18 @@ pub fn generate_with_mask(
     // with default causal attention. The model already has the graph context
     // from the first round. seq_id=1 is kept alive between rounds.
     let mut first_visible = true;
-    let spinner = Spinner::start();
-    let spinner_alive = spinner.alive.clone();
+    let spinner = match output {
+        OutputMode::Stdout => Some(Spinner::start()),
+        OutputMode::Channel(_) => None,
+    };
+    let spinner_alive = spinner.as_ref().map(|s| s.alive.clone());
     ctl.generating.store(true, Ordering::SeqCst);
     ctl.sigint_received.store(false, Ordering::SeqCst);
 
     let mut filter = ThinkFilter::new();
     let mut full_response = String::new();
     let max_continuations = 3;
+    let output_ref = &output;
 
     // Round 0: with mask
     let (chunk, mut hit_eog, mut next_pos) = engine.generate_ex(
@@ -200,14 +224,22 @@ pub fn generate_with_mask(
             if ctl.sigint_received.load(Ordering::Relaxed) { return false; }
             let visible = filter.feed(piece);
             if !visible.is_empty() {
-                if first_visible {
-                    spinner_alive.store(false, Ordering::Relaxed);
-                    print!("assistant> ");
-                    let _ = io::stdout().flush();
-                    first_visible = false;
+                match output_ref {
+                    OutputMode::Stdout => {
+                        if first_visible {
+                            if let Some(ref a) = spinner_alive { a.store(false, Ordering::Relaxed); }
+                            print!("assistant> ");
+                            let _ = io::stdout().flush();
+                            first_visible = false;
+                        }
+                        print!("{}", visible);
+                        let _ = io::stdout().flush();
+                    }
+                    OutputMode::Channel(tx) => {
+                        first_visible = false;
+                        let _ = tx.send(visible);
+                    }
                 }
-                print!("{}", visible);
-                let _ = io::stdout().flush();
             }
             true
         }
@@ -236,13 +268,21 @@ pub fn generate_with_mask(
                     if ctl.sigint_received.load(Ordering::Relaxed) { return false; }
                     let visible = filter.feed(piece);
                     if !visible.is_empty() {
-                        if first_visible {
-                            print!("assistant> ");
-                            let _ = io::stdout().flush();
-                            first_visible = false;
+                        match output_ref {
+                            OutputMode::Stdout => {
+                                if first_visible {
+                                    print!("assistant> ");
+                                    let _ = io::stdout().flush();
+                                    first_visible = false;
+                                }
+                                print!("{}", visible);
+                                let _ = io::stdout().flush();
+                            }
+                            OutputMode::Channel(tx) => {
+                                first_visible = false;
+                                let _ = tx.send(visible);
+                            }
                         }
-                        print!("{}", visible);
-                        let _ = io::stdout().flush();
                     }
                     true
                 }
@@ -275,11 +315,18 @@ pub fn generate_with_mask(
     let interrupted = ctl.sigint_received.swap(false, Ordering::SeqCst);
     if interrupted {
         ctl.gen_interrupted.store(true, Ordering::SeqCst);
-        eprint!("\n\x1b[90m  (interrompu)\x1b[0m");
+        if matches!(output, OutputMode::Stdout) {
+            eprint!("\n\x1b[90m  (interrompu)\x1b[0m");
+        }
     }
     let remaining = filter.flush();
-    if !remaining.is_empty() { print!("{}", remaining); }
-    println!("\n");
+    if !remaining.is_empty() {
+        match output {
+            OutputMode::Stdout => { print!("{}", remaining); }
+            OutputMode::Channel(tx) => { let _ = tx.send(remaining); }
+        }
+    }
+    if matches!(output, OutputMode::Stdout) { println!("\n"); }
 
     // Diagnostic: detect empty visible responses
     if full_response.trim().is_empty() {

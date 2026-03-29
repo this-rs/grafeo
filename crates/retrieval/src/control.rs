@@ -2,12 +2,25 @@ use std::io::{self, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
+use tokio::sync::mpsc;
 
 /// Control signals for generation — passed from the binary where the statics live.
 pub struct GenerationControl {
     pub generating: Arc<AtomicBool>,
     pub sigint_received: Arc<AtomicBool>,
     pub gen_interrupted: Arc<AtomicBool>,
+}
+
+/// Output mode: where visible tokens are sent during generation.
+///
+/// - `Stdout`: prints directly to stdout with spinner (REPL mode)
+/// - `Channel`: sends each visible token chunk to an mpsc sender (server mode)
+pub enum OutputMode {
+    /// REPL mode — print to stdout, show spinner while waiting for first token.
+    Stdout,
+    /// Server mode — send visible token fragments through a channel.
+    /// No spinner, no print. The receiver (SSE handler, etc.) consumes fragments.
+    Channel(mpsc::UnboundedSender<String>),
 }
 
 /// Animated spinner displayed while waiting for the first token from the LLM.

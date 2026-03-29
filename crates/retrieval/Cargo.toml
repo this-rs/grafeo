@@ -11,3 +11,4 @@ think-filter = { path = "../think-filter" }
 obrain-common = { path = "/Users/triviere/projects/lab/grafeo/crates/obrain-common" }
 obrain-core = { path = "/Users/triviere/projects/lab/grafeo/crates/obrain-core" }
 anyhow = "1"
+tokio = { version = "1", features = ["sync"] }

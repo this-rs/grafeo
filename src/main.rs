@@ -41,7 +41,7 @@ macro_rules! debug {
 
 use graph_schema::{GraphSchema, discover_schema, get_node_name_generic};
 use kv_registry::{KvNodeRegistry, KvBank, ConvFragments, load_bank_cache, save_bank_cache, discover_banks};
-use retrieval::{Engine, GenerationControl, is_meta_query, query_with_registry};
+use retrieval::{Engine, GenerationControl, OutputMode, is_meta_query, query_with_registry};
 
 use persona::{PersonaDB, RewardDetector, detect_facts_from_graph, detect_facts};
 
@@ -164,7 +164,157 @@ fn main() -> Result<()> {
 
     let persona_path: Option<PathBuf> = parse_arg("--persona").map(PathBuf::from);
 
+    let http_addr: Option<std::net::SocketAddr> = parse_arg("--http")
+        .map(|s| s.parse().expect("Invalid --http address (expected host:port, e.g. 127.0.0.1:8080)"));
+
     eprintln!("=== obrain-chat — Generic Graph LLM + Topological Mask (FFI) ===\n");
+
+    // ── HTTP server mode (--http host:port) ──────────────────────
+    if let Some(http_addr) = http_addr {
+        let model_name = std::path::Path::new(&model_path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "obrain".to_string());
+
+        // Load all resources (same as REPL path but hands them to the actor)
+        eprintln!("Loading model: {model_path}");
+        let engine = Engine(LlamaEngine::new(&EngineConfig {
+            model_path: model_path.clone(),
+            n_ctx,
+            n_gpu_layers: n_gpu,
+            ..EngineConfig::default()
+        })?);
+        eprintln!("  Model loaded: n_ctx={}", engine.n_ctx());
+
+        // Open database (optional)
+        let (_db_holder, store, schema, banks): (
+            Option<ObrainDB>,
+            Option<Arc<LpgStore>>,
+            Option<GraphSchema>,
+            Vec<kv_registry::KvBank>,
+        ) = if let Some(ref db_path) = db_path {
+            eprintln!("Opening database: {db_path}");
+            let ckpt = format!("{db_path}/wal/checkpoint.meta");
+            let _ = std::fs::remove_file(&ckpt);
+            let db = ObrainDB::open(db_path)
+                .context(format!("Failed to open DB at {db_path}"))?;
+            let st = Arc::clone(db.store());
+            eprintln!("  {} nodes, {} edges", st.node_count(), st.edge_count());
+            let sch = graph_schema::discover_schema(&st);
+            let bank_cache_path = std::path::PathBuf::from(format!("{db_path}.banks"));
+            let nc = st.node_count();
+            let ec = st.edge_count();
+            let bnks = match kv_registry::load_bank_cache(&bank_cache_path, nc, ec) {
+                Some(cached) => cached,
+                None => {
+                    let discovered = kv_registry::discover_banks(&st, &sch, 50);
+                    kv_registry::save_bank_cache(&bank_cache_path, &discovered, nc, ec);
+                    discovered
+                }
+            };
+            (Some(db), Some(st), Some(sch), bnks)
+        } else {
+            eprintln!("No database specified (use --db <path> for graph-augmented mode)");
+            (None, None, None, Vec::new())
+        };
+
+        // Persona DB
+        let persona_resolved_path: String = if let Some(ref cp) = persona_path {
+            cp.to_str().unwrap_or("conv.db").to_string()
+        } else if let Some(ref db_p) = db_path {
+            format!("{db_p}.persona")
+        } else {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+            let dir = format!("{home}/.obrain-chat");
+            let _ = std::fs::create_dir_all(&dir);
+            format!("{dir}/default.persona")
+        };
+        let ckpt_conv = format!("{persona_resolved_path}/wal/checkpoint.meta");
+        let _ = std::fs::remove_file(&ckpt_conv);
+        let persona_db = match persona::PersonaDB::open(&persona_resolved_path) {
+            Ok(cdb) => {
+                cdb.migrate_facts();
+                cdb.seed_default_patterns();
+                persona::RewardDetector::seed_default_reward_tokens(&cdb);
+                Some(cdb)
+            }
+            Err(e) => {
+                eprintln!("  Warning: could not open persona DB: {e}");
+                None
+            }
+        };
+
+        // Build system header + init registry
+        let persona_facts: Vec<(String, String)> = persona_db.as_ref()
+            .map(|pdb| pdb.active_facts())
+            .unwrap_or_default();
+        let system_header = build_system_header(store.is_some(), &persona_facts);
+        let header_tokens_vec = engine.tokenize(&system_header, false, true)?;
+        let header_n = header_tokens_vec.len() as i32;
+        let header_positions: Vec<i32> = (0..header_n).collect();
+        engine.encode(&header_tokens_vec, &header_positions, 0)?;
+        let mut registry = KvNodeRegistry::new(&system_header, header_n);
+        let mut conv_frags = ConvFragments::new();
+
+        // Warmup banks
+        let warmup_count = 3.min(banks.len());
+        for bank in banks.iter().take(warmup_count) {
+            let protected: HashSet<NodeId> = bank.node_ids.iter().copied().collect();
+            registry.ensure_capacity(bank.est_tokens, kv_capacity, &protected, &engine);
+            for nid in &bank.node_ids {
+                if registry.get_slot(*nid).is_some() { continue; }
+                if let Some(text) = bank.texts.get(nid) {
+                    registry.register(*nid, text, &engine)?;
+                }
+            }
+        }
+
+        // Restore conversation fragments
+        if let Some(ref cdb) = persona_db {
+            let recent = cdb.recent_messages(20);
+            let mut i = 0;
+            while i + 1 < recent.len() {
+                let (ref role_q, ref content_q) = recent[i];
+                let (ref role_a, ref content_a) = recent[i + 1];
+                if role_q == "user" && role_a == "assistant" {
+                    let _ = conv_frags.add_turn(content_q, content_a, &[], &mut registry, &engine, kv_capacity);
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+        }
+
+        eprintln!("  Registry: {} tokens encoded, {} banks warmed up", registry.next_pos, warmup_count);
+
+        // Spawn actor with all resources
+        let actor = server::actor::ActorHandle::spawn(server::actor::ActorConfig {
+            engine,
+            store,
+            schema,
+            banks,
+            registry,
+            conv_frags,
+            persona_db,
+            max_nodes,
+            token_budget,
+            kv_capacity,
+        });
+
+        let state = Arc::new(server::state::AppState {
+            actor,
+            model_name,
+            model_created: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            response_cache: server::routes_responses::new_response_cache(),
+        });
+
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(server::start_server(http_addr, state))?;
+        return Ok(());
+    }
 
     // ── Load LLM via FFI ────────────────────────────────────────
     eprintln!("Loading model: {model_path}");
@@ -719,7 +869,7 @@ fn main() -> Result<()> {
             (store.as_ref(), schema.as_ref())
         };
 
-        match query_with_registry(&engine, q_store, q_schema, &mut registry, &mut conv_frags, &banks, &line, max_nodes, token_budget, kv_capacity, &gen_ctl) {
+        match query_with_registry(&engine, q_store, q_schema, &mut registry, &mut conv_frags, &banks, &line, max_nodes, token_budget, kv_capacity, &gen_ctl, &OutputMode::Stdout) {
             Ok((response, relevant_graph_nodes)) => {
                 // Response already streamed to stdout by engine.generate
                 let clean = strip_think_tags(&response);

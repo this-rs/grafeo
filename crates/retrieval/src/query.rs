@@ -11,7 +11,7 @@ use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use crate::engine::Engine;
-use crate::control::{GenerationControl, Spinner};
+use crate::control::{GenerationControl, OutputMode, Spinner};
 use crate::scoring::retrieve_nodes;
 use crate::generation::generate_with_mask;
 
@@ -27,6 +27,7 @@ pub fn query_with_registry(
     token_budget: i32,
     kv_capacity: i32,
     ctl: &GenerationControl,
+    output: &OutputMode,
 ) -> Result<(String, Vec<NodeId>)> {
     registry.begin_query();
     let t_start = Instant::now();
@@ -86,25 +87,37 @@ pub fn query_with_registry(
         engine.seq_cp(0, 1, 0, -1);
         let mut filter = ThinkFilter::new();
         let mut first_visible = true;
-        let spinner = Spinner::start();
-        let spinner_alive = spinner.alive.clone();
+        let spinner = match output {
+            OutputMode::Stdout => Some(Spinner::start()),
+            OutputMode::Channel(_) => None,
+        };
+        let spinner_alive = spinner.as_ref().map(|s| s.alive.clone());
         ctl.generating.store(true, Ordering::SeqCst);
         ctl.sigint_received.store(false, Ordering::SeqCst);
         // Use 1024 tokens max (not 256) to avoid truncated/garbage responses.
         // The low max_tokens was causing the model to output short garbage in some cases.
+        let output_ref = &output;
         let (resp, _) = engine.generate(&tokens, registry.next_pos, 1024, 1, |piece| {
             // Ctrl+C during generation → stop
             if ctl.sigint_received.load(Ordering::Relaxed) { return false; }
             let visible = filter.feed(piece);
             if !visible.is_empty() {
-                if first_visible {
-                    spinner_alive.store(false, Ordering::Relaxed);
-                    print!("assistant> ");
-                    let _ = io::stdout().flush();
-                    first_visible = false;
+                match output_ref {
+                    OutputMode::Stdout => {
+                        if first_visible {
+                            if let Some(ref a) = spinner_alive { a.store(false, Ordering::Relaxed); }
+                            print!("assistant> ");
+                            let _ = io::stdout().flush();
+                            first_visible = false;
+                        }
+                        print!("{}", visible);
+                        let _ = io::stdout().flush();
+                    }
+                    OutputMode::Channel(tx) => {
+                        first_visible = false;
+                        let _ = tx.send(visible);
+                    }
                 }
-                print!("{}", visible);
-                let _ = io::stdout().flush();
             }
             true
         })?;
@@ -113,11 +126,18 @@ pub fn query_with_registry(
         let interrupted = ctl.sigint_received.swap(false, Ordering::SeqCst);
         if interrupted {
             ctl.gen_interrupted.store(true, Ordering::SeqCst);
-            eprint!("\n\x1b[90m  (interrompu)\x1b[0m");
+            if matches!(output, OutputMode::Stdout) {
+                eprint!("\n\x1b[90m  (interrompu)\x1b[0m");
+            }
         }
         let remaining = filter.flush();
-        if !remaining.is_empty() { print!("{}", remaining); }
-        println!("\n");
+        if !remaining.is_empty() {
+            match output {
+                OutputMode::Stdout => { print!("{}", remaining); }
+                OutputMode::Channel(tx) => { let _ = tx.send(remaining); }
+            }
+        }
+        if matches!(output, OutputMode::Stdout) { println!("\n"); }
         // CRITICAL: clean seq_id=1 after fallback generation.
         engine.clear_seq(1);
         // Diagnostic: if the visible response was empty, the model produced only <think> content
@@ -285,6 +305,6 @@ pub fn query_with_registry(
         .map(|n| n.id)
         .collect();
 
-    let response = generate_with_mask(engine, &ctx, query, ctl)?;
+    let response = generate_with_mask(engine, &ctx, query, ctl, output)?;
     Ok((response, relevant_graph_nodes))
 }
