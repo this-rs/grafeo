@@ -23,7 +23,7 @@ const EDGE_TYPES: &[&str] = &[
 ];
 
 /// Node types, each with its own update matrix.
-const NODE_TYPES: &[&str] = &["Fact", "ConvTurn", "Pattern"];
+const NODE_TYPES: &[&str] = &["Fact", "ConvTurn", "Pattern", "Memory"];
 
 /// A lightweight GNN operating directly on PersonaDB graph.
 pub struct FactGNN {
@@ -84,6 +84,13 @@ impl FactGNN {
                 let trigger = node.properties.get(&PropertyKey::from("trigger"))
                     .and_then(|v| v.as_str()).unwrap_or("");
                 format!("Pattern:{trigger}")
+            }
+            "Memory" => {
+                let text = node.properties.get(&PropertyKey::from("text"))
+                    .and_then(|v| v.as_str()).unwrap_or("");
+                // Use first 100 chars for embedding seed (enough for semantic fingerprint)
+                let truncated: String = text.chars().take(100).collect();
+                format!("Memory:{truncated}")
             }
             _ => format!("{label}:{}", nid.0),
         };
@@ -200,13 +207,16 @@ impl FactGNN {
             embeddings = new_embeddings;
         }
 
-        // 4. Readout: score = dot(query_embed, h_v) for :Fact nodes only
+        // 4. Readout: score = dot(query_embed, h_v) for :Fact and :Memory nodes
         let mut scores: Vec<(NodeId, f32)> = Vec::new();
         for &nid in &subgraph {
-            let is_fact = store.get_node(nid)
-                .map(|n| n.labels.iter().any(|l| { let s: &str = l.as_ref(); s == "Fact" }))
+            let is_scorable = store.get_node(nid)
+                .map(|n| n.labels.iter().any(|l| {
+                    let s: &str = l.as_ref();
+                    s == "Fact" || s == "Memory"
+                }))
                 .unwrap_or(false);
-            if !is_fact { continue; }
+            if !is_scorable { continue; }
 
             // Only active facts
             let active = store.get_node(nid)

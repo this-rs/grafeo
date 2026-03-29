@@ -246,6 +246,77 @@ impl PersonaDB {
         fact_id
     }
 
+    // ── :Memory nodes (neural persistence — replaces pattern-based :Fact) ──
+
+    /// Store a user message as a :Memory node (PersistNet decided to persist).
+    ///
+    /// Returns the NodeId of the created :Memory.
+    /// The memory stores the raw message text — no key/value extraction needed.
+    pub fn add_memory(
+        &self,
+        text: &str,
+        persist_score: f32,
+        source_turn: u32,
+        conv_turn_id: Option<NodeId>,
+    ) -> NodeId {
+        let token_cost = ((text.len() + 4) / 4).max(1) as i64;
+        let mem_id = self.db.create_node_with_props(&["Memory"], [
+            ("text", Value::String(text.to_string().into())),
+            ("persist_score", Value::Float64(persist_score as f64)),
+            ("energy", Value::Float64(1.0)),
+            ("source_turn", Value::Int64(source_turn as i64)),
+            ("created_at", Value::String(Utc::now().to_rfc3339().into())),
+            ("active", Value::Bool(true)),
+            ("token_cost", Value::Int64(token_cost)),
+            ("utility", Value::Float64(0.5)),
+            ("times_used", Value::Int64(0)),
+        ]);
+
+        // Link to the conversation turn that produced it
+        if let Some(ct_id) = conv_turn_id {
+            self.db.create_edge(mem_id, ct_id, "EXTRACTED_FROM");
+        }
+
+        mem_id
+    }
+
+    /// Get all active :Memory texts, sorted by energy descending.
+    pub fn active_memories(&self) -> Vec<(NodeId, String, f64)> {
+        let store = self.db.store();
+        let mut memories = Vec::new();
+        for &nid in &store.nodes_by_label("Memory") {
+            if let Some(node) = store.get_node(nid) {
+                let active = node.properties.get(&PropertyKey::from("active"))
+                    .and_then(|v| if let Value::Bool(b) = v { Some(*b) } else { None })
+                    .unwrap_or(true);
+                if !active { continue; }
+                let text = node.properties.get(&PropertyKey::from("text"))
+                    .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let energy = node.properties.get(&PropertyKey::from("energy"))
+                    .and_then(|v| if let Value::Float64(f) = v { Some(*f) } else { None })
+                    .unwrap_or(1.0);
+                memories.push((nid, text, energy));
+            }
+        }
+        memories.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+        memories
+    }
+
+    /// Get active :Memory NodeIds (for USED_IN tracking, same as facts).
+    pub fn active_memory_ids(&self) -> Vec<NodeId> {
+        let store = self.db.store();
+        let mut ids = Vec::new();
+        for &nid in &store.nodes_by_label("Memory") {
+            if let Some(node) = store.get_node(nid) {
+                let active = node.properties.get(&PropertyKey::from("active"))
+                    .and_then(|v| if let Value::Bool(b) = v { Some(*b) } else { None })
+                    .unwrap_or(true);
+                if active { ids.push(nid); }
+            }
+        }
+        ids
+    }
+
     /// Get all active facts as (key, value) pairs.
     pub fn active_facts(&self) -> Vec<(String, String)> {
         let store = self.db.store();

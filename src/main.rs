@@ -144,6 +144,42 @@ Si un fait contredit un ancien, le nouveau le remplace. N'invente rien — utili
     header
 }
 
+/// Build the system header using :Memory nodes (PersistNet mode).
+/// Memories are raw user messages, scored by GNN energy.
+fn build_memory_header(has_graph: bool, memories: &[(NodeId, String, f64)]) -> String {
+    let mut header = String::from("<|im_start|>system\n");
+
+    header.push_str("You are a helpful assistant. ");
+
+    if has_graph {
+        header.push_str("Below is structured data from a graph database. Each entry shows [Type] Name and its relations. Use ONLY this data to answer. ");
+    }
+
+    header.push_str("Answer in the same language as the question. /no_think\n");
+
+    header.push_str(r#"
+## Mémoire
+Tu as une mémoire persistante entre les sessions. Ce que tu sais sur l'utilisateur est listé ci-dessous.
+Utilise ces souvenirs pour personnaliser tes réponses. Si un souvenir contredit un autre, le plus récent prévaut.
+"#);
+
+    if !memories.is_empty() {
+        header.push_str("\nSouvenirs :\n");
+        let mut budget = 2000usize;
+        for (_nid, text, _energy) in memories {
+            let line = format!("- {text}\n");
+            if line.len() > budget { break; }
+            budget -= line.len();
+            header.push_str(&line);
+        }
+    } else {
+        header.push_str("\nSouvenirs : (aucun pour l'instant)\n");
+    }
+
+    header.push('\n');
+    header
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Main
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -614,6 +650,29 @@ fn main() -> Result<()> {
         gnn
     });
 
+    // Ξ(t) PersistNet: Initialize neural persistence classifier
+    let mut persist_net: Option<persona::PersistNet> = persona_db.as_ref().map(|pdb| {
+        let n_embd = engine.n_embd();
+        let mut pnet = persona::PersistNet::new(n_embd);
+        let store = pdb.db.store();
+        if pnet.load_weights(&store) {
+            debug!("  [PersistNet] Loaded weights ({} updates, {} turns, n_embd={})",
+                pnet.n_updates, pnet.total_turns, pnet.n_embd);
+        } else {
+            debug!("  [PersistNet] Fresh init (n_embd={}, cold start for {} turns)",
+                n_embd, 20);
+        }
+        pnet
+    });
+
+    // Enable embedding output for PersistNet (reads last-layer hidden state)
+    if persist_net.is_some() {
+        engine.set_embeddings(true);
+    }
+
+    // Cache for PersistNet: (projected_embedding, persist_score) from last forward
+    let mut last_persist_result: Option<(Vec<f32>, f32)> = None;
+
     // Ξ(t) T1: Now that GNN is loaded, rescore facts and update header
     if fact_gnn.is_some() && !current_facts.is_empty() {
         let scored = score_persona_facts(&current_facts, &fact_gnn, &persona_db);
@@ -937,8 +996,25 @@ fn main() -> Result<()> {
             (store.as_ref(), schema.as_ref())
         };
 
-        // Ξ(t) T6: Dynamic header — rescore facts per-query, rebuild if top-5 changed
-        {
+        // Ξ(t) T6: Dynamic header — rebuild if memories/facts changed
+        if persist_net.is_some() {
+            // PersistNet mode: use :Memory nodes
+            if let Some(ref pdb) = persona_db {
+                let memories = pdb.active_memories();
+                let new_top5: Vec<String> = memories.iter()
+                    .take(5)
+                    .map(|(nid, _, _)| format!("{}", nid.0))
+                    .collect();
+                if new_top5 != prev_header_top5 && !new_top5.is_empty() {
+                    let new_header = build_memory_header(store.is_some(), &memories);
+                    registry.update_header(&new_header);
+                    registry.full_recompact(&engine);
+                    debug!("  [T6] Header rebuilt: memories changed {:?} → {:?}", prev_header_top5, new_top5);
+                    prev_header_top5 = new_top5;
+                }
+            }
+        } else {
+            // Legacy mode: use :Fact nodes with GNN scoring
             let scored = score_persona_facts(&current_facts, &fact_gnn, &persona_db);
             let new_top5: Vec<String> = scored.iter()
                 .filter(|(k, _, _)| k != "name")
@@ -948,7 +1024,6 @@ fn main() -> Result<()> {
             if new_top5 != prev_header_top5 && !new_top5.is_empty() {
                 let new_header = build_system_header(store.is_some(), &scored);
                 registry.update_header(&new_header);
-                // Re-encode header into KV cache for coherence
                 registry.full_recompact(&engine);
                 debug!("  [T6] Header rebuilt: top-5 changed {:?} → {:?}", prev_header_top5, new_top5);
                 prev_header_top5 = new_top5;
@@ -1072,8 +1147,10 @@ fn main() -> Result<()> {
 
                 // Ξ(t) T1: Create :ConvTurn and wire edges
                 let conv_turn_id = if let Some(ref pdb) = persona_db {
-                    // Track which facts were USED_IN this turn (injected in header)
-                    let used_fact_ids = pdb.active_fact_ids();
+                    // Track which facts/memories were USED_IN this turn (injected in header)
+                    let mut used_fact_ids = pdb.active_fact_ids();
+                    // Also include :Memory nodes in USED_IN tracking
+                    used_fact_ids.extend(pdb.active_memory_ids());
 
                     // Create the ConvTurn node
                     let ct_id = pdb.create_conv_turn(&line, &trimmed, turn_count);
@@ -1102,13 +1179,41 @@ fn main() -> Result<()> {
                 };
                 last_conv_turn_id = conv_turn_id;
 
-                // Ξ(t) T2: Detect facts via :Pattern graph matching (or legacy fallback)
-                if let Some(ref pdb) = persona_db {
+                // Ξ(t) PersistNet: Neural persistence decision
+                // Extract LLM embedding of user message and decide if it should be persisted
+                if let (Some(pnet), Some(pdb)) = (&mut persist_net, &persona_db) {
+                    pnet.tick();
+
+                    // Get last-layer hidden state from the encode that just happened
+                    let embedding = engine.get_embedding(-1);
+                    let (persist_score, projected) = if !embedding.is_empty() {
+                        pnet.forward(embedding)
+                    } else {
+                        // Fallback: use hash embedding if LLM embedding unavailable
+                        let fake = vec![0.0f32; pnet.n_embd.max(1)];
+                        pnet.forward(&fake)
+                    };
+
+                    if pnet.should_persist(persist_score) {
+                        let mem_id = pdb.add_memory(&line, persist_score, turn_count, conv_turn_id);
+                        eprintln!("  🧠 Memory persisted (score={:.2}, id={})", persist_score, mem_id.0);
+
+                        // Update header with memories
+                        let memories = pdb.active_memories();
+                        let memory_header = build_memory_header(store.is_some(), &memories);
+                        registry.update_header(&memory_header);
+                        debug!("  Header updated with {} memories", memories.len());
+                    } else {
+                        debug!("  [PersistNet] skip (score={:.2} < threshold)", persist_score);
+                    }
+
+                    last_persist_result = Some((projected, persist_score));
+                } else if let Some(ref pdb) = persona_db {
+                    // Fallback: pattern-based detection when PersistNet unavailable
                     let matches = detect_facts_from_graph(pdb, &line);
                     if !matches.is_empty() {
                         for m in &matches {
                             let fact_id = pdb.add_fact(&m.key, &m.value, turn_count, conv_turn_id);
-                            // EXTRACTS edge: Pattern → Fact
                             pdb.db.create_edge(m.pattern_nid, fact_id, "EXTRACTS");
                             eprintln!("  💾 Fact stored: {} = {} (pattern={})", m.key, m.value, m.pattern_nid.0);
                         }
@@ -1149,6 +1254,12 @@ fn main() -> Result<()> {
     if let (Some(gnn), Some(pdb)) = (&fact_gnn, &persona_db) {
         gnn.save_weights(&pdb.db);
         debug!("  [GNN] Weights saved at session end ({} updates)", gnn.n_updates());
+    }
+
+    // Save PersistNet weights at session end
+    if let (Some(pnet), Some(pdb)) = (&persist_net, &persona_db) {
+        pnet.save_weights(&pdb.db);
+        debug!("  [PersistNet] Weights saved ({} updates, {} turns)", pnet.n_updates, pnet.total_turns);
     }
 
     // Ξ(t) T3.6: Contextual end-of-session signal

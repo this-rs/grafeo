@@ -529,6 +529,36 @@ impl LlamaEngine {
         unsafe { ffi::llama_sampler_reset(self.sampler); }
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Embeddings — for PersistNet and semantic representation
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Enable/disable embedding output from decode calls.
+    /// When enabled, `get_embedding()` returns the last-layer hidden state.
+    /// Must be called BEFORE the decode/encode that should produce embeddings.
+    pub fn set_embeddings(&self, enable: bool) {
+        unsafe { ffi::llama_set_embeddings(self.ctx, enable); }
+    }
+
+    /// Get the model's embedding dimension (n_embd).
+    pub fn n_embd(&self) -> usize {
+        unsafe { ffi::llama_model_n_embd(self.model) as usize }
+    }
+
+    /// Get the embedding (last-layer hidden state) for the ith token in the last batch.
+    /// Use idx=-1 for the last token. Returns empty slice if embeddings not enabled.
+    /// MUST be called after decode/encode and BEFORE the next one.
+    pub fn get_embedding(&self, idx: i32) -> &[f32] {
+        unsafe {
+            let ptr = ffi::llama_get_embeddings_ith(self.ctx, idx);
+            if ptr.is_null() {
+                return &[];
+            }
+            let n_embd = self.n_embd();
+            std::slice::from_raw_parts(ptr, n_embd)
+        }
+    }
+
     /// Get raw logits from the last decode for the batch item at index `idx`.
     /// Returns a slice of n_vocab floats. Use idx=-1 for the last token.
     /// MUST be called after llama_decode and BEFORE the next llama_decode.
