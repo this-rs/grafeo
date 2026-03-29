@@ -886,7 +886,7 @@ mod tests {
         let query_tokens = engine.tokenize(query, false, true).unwrap();
 
         let mut streamed: Vec<String> = Vec::new();
-        let (response, _hit_eog) = engine.generate(
+        let (response, _hit_eog, _signals) = engine.generate(
             &query_tokens,
             next_pos,
             64,
@@ -920,7 +920,7 @@ mod tests {
         let tokens = engine.tokenize(prompt, true, true).unwrap();
 
         let mut count = 0;
-        let (response, _) = engine.generate(
+        let (response, _, _signals) = engine.generate(
             &tokens, 0, 256, 1,
             |_| { count += 1; count < 5 },
         ).unwrap();

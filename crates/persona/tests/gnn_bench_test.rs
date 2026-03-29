@@ -72,7 +72,7 @@ fn bench_reward_propagation() {
 
     // Build a mock RewardDetector (we need a tokenizer mock)
     // Since we can't mock the tokenizer here, we test propagate_reward directly
-    let store = pdb.db.store();
+    let _store = pdb.db.store();
     let rd = RewardDetector {
         token_polarity: std::collections::HashMap::new(),
         prev_query_tokens: Vec::new(),

@@ -69,7 +69,7 @@ fn query_scenarios() -> Vec<(&'static str, Vec<&'static str>)> {
 #[test]
 fn test_gnn_learns_from_rewards() {
     let pdb = temp_persona_db();
-    let facts = seed_facts(&pdb);
+    let _facts = seed_facts(&pdb);
     let mut gnn = FactGNN::new();
 
     let store = pdb.db.store();

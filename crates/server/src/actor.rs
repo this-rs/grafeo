@@ -6,7 +6,7 @@ use graph_schema::GraphSchema;
 use kv_registry::{KvNodeRegistry, KvBank, ConvFragments};
 use obrain_common::types::NodeId;
 use obrain_core::graph::lpg::LpgStore;
-use retrieval::{Engine, GenerationControl, OutputMode, is_meta_query, query_with_registry, GnnContext};
+use retrieval::{Engine, GenerationControl, OutputMode, is_meta_query, query_with_registry};
 use think_filter::strip_think_tags;
 use persona::{PersonaDB, detect_facts_from_graph, fact_gnn::FactGNN};
 
