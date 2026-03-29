@@ -35,7 +35,8 @@ pub fn query_with_registry(
     ctl: &GenerationControl,
     output: &OutputMode,
     gnn_ctx: Option<&GnnContext>,
-) -> Result<(String, Vec<NodeId>)> {
+    head_router: Option<&llm_engine::HeadRouter>,
+) -> Result<(String, Vec<NodeId>, Option<f32>)> {
     registry.begin_query();
     let t_start = Instant::now();
 
@@ -187,7 +188,7 @@ pub fn query_with_registry(
                 eprintln!("  [debug] Fallback response was ALL think content ({} chars raw)", resp.len());
             }
         }
-        return Ok((resp, Vec::new()));
+        return Ok((resp, Vec::new(), None));
     }
 
     // Identify which nodes need to be loaded into KV
@@ -341,6 +342,6 @@ pub fn query_with_registry(
         .map(|n| n.id)
         .collect();
 
-    let response = generate_with_mask(engine, &ctx, query, ctl, output)?;
-    Ok((response, relevant_graph_nodes))
+    let (response, avg_entropy) = generate_with_mask(engine, &ctx, query, ctl, output, head_router)?;
+    Ok((response, relevant_graph_nodes, avg_entropy))
 }

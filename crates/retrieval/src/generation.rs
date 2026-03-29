@@ -16,6 +16,7 @@ pub fn generate_with_mask(
     query: &str,
     ctl: &GenerationControl,
     output: &OutputMode,
+    head_router: Option<&llm_engine::HeadRouter>,
 ) -> Result<(String, Option<f32>)> {
     // /no_think MUST be in the user message for Qwen3 to reliably suppress thinking.
     // Placing it only in the system header gets "diluted" by graph context tokens.
@@ -172,8 +173,8 @@ pub fn generate_with_mask(
     let use_perhead = std::env::var("OBRAIN_PERHEAD").map(|v| v == "1").unwrap_or(false);
     if no_mask {
         eprintln!("  [A/B] Topology mask DISABLED (baseline mode)");
-    } else if use_perhead {
-        // Convert ContextNodes to mask_builder::NodePosition with bank from retrieval ranking.
+    } else if use_perhead || head_router.is_some() {
+        // Phase B: per-head masking with HeadRouter (or Phase A per-head with OBRAIN_PERHEAD=1)
         let mb_nodes: Vec<mask_builder::NodePosition> = ctx.nodes.iter().map(|n| {
             mask_builder::NodePosition {
                 pos_start: n.token_start,
@@ -188,7 +189,7 @@ pub fn generate_with_mask(
             sz as i32,
             engine.n_head(),
             &config,
-            None, // Phase A: no HeadRouter, use fixed BankConfig ratios
+            head_router, // Phase B: learned α-weights, or None for Phase A fixed ratios
         );
         engine.set_attn_mask(&perhead.mask, &perhead.positions, perhead.n_head_groups)?;
     } else {

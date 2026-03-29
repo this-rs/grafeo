@@ -261,6 +261,15 @@ fn main() -> Result<()> {
     let profile_heads: Option<usize> = parse_arg("--profile-heads")
         .and_then(|s| s.parse().ok());
 
+    // --head-router: enable Phase B per-head α-routing via REINFORCE
+    let use_head_router = std::env::args().any(|a| a == "--head-router");
+    let head_router_lr: f32 = parse_arg("--head-router-lr")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.01);
+    let head_router_warmup: u32 = parse_arg("--head-router-warmup")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50);
+
     eprintln!("=== obrain-chat — Generic Graph LLM + Topological Mask (FFI) ===\n");
 
     // ── HTTP server mode (--http host:port) ──────────────────────
@@ -766,6 +775,16 @@ fn main() -> Result<()> {
     let mut last_persist_result: Option<(Vec<f32>, f32)> = None;
     let mut last_avg_entropy: Option<f32> = None;
 
+    // Ξ(t) Phase B: HeadRouter for per-head topology routing
+    let mut head_router: Option<llm_engine::HeadRouter> = if use_head_router {
+        let n_head = engine.n_heads() as usize;
+        eprintln!("  [Phase B] HeadRouter enabled: n_head={}, lr={}, warmup={}",
+            n_head, head_router_lr, head_router_warmup);
+        Some(llm_engine::HeadRouter::new(n_head, llm_engine::N_BANKS, head_router_lr, head_router_warmup))
+    } else {
+        None
+    };
+
     // Ξ(t) T1: Now that GNN is loaded, rescore facts and update header
     if fact_gnn.is_some() && !current_facts.is_empty() {
         let scored = score_persona_facts(&current_facts, &fact_gnn, &persona_db);
@@ -1131,7 +1150,7 @@ fn main() -> Result<()> {
             None
         };
 
-        match query_with_registry(&engine, q_store, q_schema, &mut registry, &mut conv_frags, &banks, &line, max_nodes, token_budget, kv_capacity, &gen_ctl, &OutputMode::Stdout, gnn_ctx.as_ref()) {
+        match query_with_registry(&engine, q_store, q_schema, &mut registry, &mut conv_frags, &banks, &line, max_nodes, token_budget, kv_capacity, &gen_ctl, &OutputMode::Stdout, gnn_ctx.as_ref(), head_router.as_ref()) {
             Ok((response, relevant_graph_nodes, avg_entropy)) => {
                 // Ξ(t) T5: Store entropy signal for next turn's reward computation
                 last_avg_entropy = avg_entropy;
@@ -1202,6 +1221,10 @@ fn main() -> Result<()> {
                             debug!("  [PersistNet] REINFORCE (interrupt): reward={:.2}, score={:.2}, updates={}",
                                 interrupt_penalty, prev_score, pnet.n_updates);
                         }
+                        // HeadRouter REINFORCE: interrupt = negative signal
+                        if let Some(ref mut router) = head_router {
+                            router.backward_uniform(interrupt_penalty);
+                        }
                     }
                 }
 
@@ -1250,6 +1273,15 @@ fn main() -> Result<()> {
                             pnet.update(proj, *prev_score, reward);
                             debug!("  [PersistNet] REINFORCE: reward={:.2}, prev_score={:.2}, updates={}",
                                 reward, prev_score, pnet.n_updates);
+                        }
+
+                        // Ξ(t) Phase B: HeadRouter REINFORCE update
+                        if let Some(ref mut router) = head_router {
+                            router.backward_uniform(reward);
+                            if router.n_updates % 10 == 0 && router.n_updates > 0 {
+                                debug!("  [HeadRouter] update #{}, entropy={:.3}",
+                                    router.n_updates, router.specialization_entropy());
+                            }
                         }
 
                         // Mark memories as "useful" when reward is positive
