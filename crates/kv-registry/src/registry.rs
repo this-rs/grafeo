@@ -486,6 +486,24 @@ impl KvNodeRegistry {
         self.tier_budget.reset();
     }
 
+    /// Remove a single node from the registry and KV cache.
+    /// Used by ConvFragments sliding window to evict oldest conversation turns.
+    /// Note: this creates position gaps; caller should trigger recompact if many
+    /// unregisters happen. For single removals the gap is acceptable — the next
+    /// ensure_capacity will recompact if positions get close to n_ctx.
+    pub fn unregister(&mut self, node_id: NodeId) {
+        if let Some(slot) = self.nodes.remove(&node_id) {
+            self.order.retain(|id| *id != node_id);
+            // We don't call engine.evict here because we don't have &engine.
+            // The slot is simply removed from bookkeeping. The KV positions
+            // become "orphaned" but will be reclaimed on next full_recompact.
+            // This is safe: the tokens at those positions will still be in
+            // the physical KV cache but won't be referenced by any node.
+            eprintln!("[Registry] unregistered node {:?} ({} tokens at pos {}..{})",
+                node_id, slot.n_tokens, slot.start, slot.end);
+        }
+    }
+
     /// Evict least-recently-used nodes to free up token capacity.
     pub fn evict_lru(&mut self, tokens_needed: i32, protected: &HashSet<NodeId>, engine: &dyn Tokenizer) -> Vec<NodeId> {
         let mut candidates: Vec<(NodeId, u64, i32)> = self.nodes.iter()

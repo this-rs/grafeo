@@ -28,15 +28,24 @@ pub struct ConvFragment {
     pub turn: u32,
 }
 
+/// Maximum conversation fragments kept in KV cache.
+/// Beyond this, oldest fragments are evicted (sliding window).
+const MAX_CONV_FRAGMENTS: usize = 10;
+
 /// Manages conversation fragments as KV-cache-resident nodes.
 pub struct ConvFragments {
     pub fragments: Vec<ConvFragment>,
     pub next_turn: u32,
+    pub max_fragments: usize,
 }
 
 impl ConvFragments {
     pub fn new() -> Self {
-        Self { fragments: Vec::new(), next_turn: 0 }
+        Self { fragments: Vec::new(), next_turn: 0, max_fragments: MAX_CONV_FRAGMENTS }
+    }
+
+    pub fn with_max_fragments(max: usize) -> Self {
+        Self { fragments: Vec::new(), next_turn: 0, max_fragments: max.max(3) }
     }
 
     /// Returns the NodeId of the last registered conversation fragment.
@@ -69,10 +78,23 @@ impl ConvFragments {
         let answer_summary = Self::summarize_answer(answer, 200);
         let kv_text = format!("[Conv Q{}] {}\n→ {}\n", turn + 1, question, answer_summary);
 
+        // ── Sliding window: evict oldest fragments beyond max ──
+        // Keep max_fragments - 1 to make room for the new one
+        while self.fragments.len() >= self.max_fragments {
+            let evicted = self.fragments.remove(0);
+            registry.unregister(evicted.node_id);
+            eprintln!(
+                "[Conv] evicted oldest fragment Q{} (node {:?}) — sliding window {}",
+                evicted.turn + 1, evicted.node_id, self.max_fragments
+            );
+        }
+
         // Estimate tokens and ensure capacity
+        // Only protect RECENT fragments (last 5), not ALL of them
         let est_tokens = (kv_text.len() as f64 / 3.5) as i32 + 5;
+        let recent_count = 5.min(self.fragments.len());
         let protected: HashSet<NodeId> = related_nodes.iter().copied()
-            .chain(self.fragments.iter().map(|f| f.node_id))
+            .chain(self.fragments[self.fragments.len() - recent_count..].iter().map(|f| f.node_id))
             .collect();
         registry.ensure_capacity(est_tokens, kv_capacity, &protected, engine);
 

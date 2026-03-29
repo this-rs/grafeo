@@ -374,6 +374,65 @@ fn collect_extra_props(
     props
 }
 
+/// Collect a compact summary of outgoing relations for a node.
+/// Format: " | → KNOWS: Marc Dupont, Alice Chen | → WORKS_ON: Obrain"
+/// Grouped by edge type, max `limit` edges total, target identified by name or first property.
+fn collect_outgoing_relations(store: &LpgStore, node_id: NodeId, node_name: &str, limit: usize) -> String {
+    let mut by_type: HashMap<String, Vec<String>> = HashMap::new();
+    let mut count = 0;
+
+    for (target_id, edge_id) in store.edges_from(node_id, Direction::Outgoing).collect::<Vec<_>>() {
+        if count >= limit { break; }
+        let etype = store.edge_type(edge_id)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "RELATED".to_string());
+
+        // Skip internal/noisy relation types
+        if etype.starts_with("__") || etype == "HAS_PROPERTY" { continue; }
+
+        // Get target node name
+        let target_name = if let Some(tnode) = store.get_node(target_id) {
+            let mut found = String::new();
+            for &k in &["name", "title", "label"] {
+                if let Some(v) = tnode.properties.get(&PropertyKey::from(k))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                {
+                    found = truncate(v, 40);
+                    break;
+                }
+            }
+            if found.is_empty() {
+                // Use first label as fallback
+                tnode.labels.first().map(|l| format!("({})", l)).unwrap_or_default()
+            } else {
+                found
+            }
+        } else {
+            continue;
+        };
+
+        // Skip self-references
+        if target_name == node_name { continue; }
+
+        by_type.entry(etype).or_default().push(target_name);
+        count += 1;
+    }
+
+    if by_type.is_empty() {
+        return String::new();
+    }
+
+    let mut parts: Vec<String> = Vec::new();
+    let mut types: Vec<String> = by_type.keys().cloned().collect();
+    types.sort();
+    for etype in types {
+        let targets = by_type.get(&etype).unwrap();
+        parts.push(format!("→{}: {}", etype, targets.join(", ")));
+    }
+    format!(" | {}", parts.join(" | "))
+}
+
 /// Extract node text with a specific [`TextBudget`].
 pub fn extract_node_with_budget(
     store: &LpgStore,
@@ -515,16 +574,25 @@ pub fn extract_node_with_budget(
         format!(" | {}", parts.join(" | "))
     };
 
+    // ── Outgoing relations summary (Full budget only) ──
+    let rel_suffix = if budget == TextBudget::Full {
+        collect_outgoing_relations(store, node_id, &name, 5)
+    } else {
+        String::new()
+    };
+
     let text = if !desc.is_empty() {
         if !status.is_empty() {
-            format!("[{}] {} — {} ({}){}", labels, name, desc, status, props_suffix)
+            format!("[{}] {} — {} ({}){}{}", labels, name, desc, status, props_suffix, rel_suffix)
         } else {
-            format!("[{}] {} — {}{}", labels, name, desc, props_suffix)
+            format!("[{}] {} — {}{}{}", labels, name, desc, props_suffix, rel_suffix)
         }
     } else if !status.is_empty() {
-        format!("[{}] {} ({}){}", labels, name, status, props_suffix)
+        format!("[{}] {} ({}){}{}", labels, name, status, props_suffix, rel_suffix)
     } else if !props_suffix.is_empty() {
-        format!("[{}] {}{}", labels, name, props_suffix)
+        format!("[{}] {}{}{}", labels, name, props_suffix, rel_suffix)
+    } else if !rel_suffix.is_empty() {
+        format!("[{}] {}{}", labels, name, rel_suffix)
     } else {
         format!("[{}] {}", labels, name)
     };
