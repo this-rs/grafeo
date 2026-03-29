@@ -99,13 +99,26 @@ impl RewardDetector {
 
     /// Compute reward [-1.0, +1.0] for the previous turn based on the current user input.
     ///
-    /// Signals:
-    /// 1. Token overlap with reward tokens (weighted by polarity from graph)
-    /// 2. Reformulation detection (cosine > 0.85 on token bags → user is rephrasing = bad)
-    /// 3. Engagement bonus (longer sessions → small positive signal)
-    pub fn compute_reward(&mut self, user_tokens: &[i32], turn_count: u32) -> f32 {
+    /// Signals (5 total, weighted):
+    /// 1. Token polarity (0.30) — overlap with reward tokens from graph
+    /// 2. Reformulation (0.20) — cosine > 0.85 on token bags → user is rephrasing = bad
+    /// 3. Engagement (0.10) — longer sessions → small positive signal
+    /// 4. Factual success (0.25) — did the response use injected facts?
+    /// 5. Entropy signal (0.15) — low entropy = confident generation = good context
+    ///
+    /// New optional params (None = backward compatible):
+    /// - `injected_facts`: the (key, value) facts that were in the header
+    /// - `response_text`: the LLM response text (for fact matching)
+    /// - `avg_entropy`: average entropy from GenerationSignals (passed as f32 to avoid coupling)
+    pub fn compute_reward(
+        &mut self,
+        user_tokens: &[i32],
+        turn_count: u32,
+        injected_facts: Option<&[(String, String)]>,
+        response_text: Option<&str>,
+        avg_entropy: Option<f32>,
+    ) -> f32 {
         if turn_count <= 1 {
-            // First turn: no previous response to evaluate
             self.prev_query_tokens = user_tokens.to_vec();
             return 0.0;
         }
@@ -125,7 +138,7 @@ impl RewardDetector {
             0.0
         };
 
-        // (2) Reformulation detection: cosine on bag-of-tokens (no LLM decode)
+        // (2) Reformulation detection
         let reformulation_penalty = if !self.prev_query_tokens.is_empty() && !user_tokens.is_empty() {
             let cos = Self::bag_cosine(user_tokens, &self.prev_query_tokens);
             if cos > 0.85 { -0.3 } else { 0.0 }
@@ -133,13 +146,46 @@ impl RewardDetector {
             0.0
         };
 
-        // (3) Engagement bonus: longer sessions are mildly positive
+        // (3) Engagement bonus
         let engagement = 0.02 * (turn_count.min(20) as f32);
 
-        // Store current tokens for next turn's reformulation check
+        // (4) Factual success — did the response use injected facts?
+        let factual_signal = match (injected_facts, response_text) {
+            (Some(facts), Some(resp)) if !facts.is_empty() => {
+                let resp_lower = resp.to_lowercase();
+                let mut matches = 0u32;
+                for (_key, value) in facts {
+                    if value.len() >= 2 && resp_lower.contains(&value.to_lowercase()) {
+                        matches += 1;
+                    }
+                }
+                if matches > 0 {
+                    (0.15 * matches as f32).min(0.3) // cap at +0.3
+                } else {
+                    -0.1 // facts injected but none used
+                }
+            }
+            _ => 0.0, // no facts or no response → neutral
+        };
+
+        // (5) Entropy signal — low entropy = confident = good context
+        let entropy_signal = match avg_entropy {
+            Some(e) if e < 1.5 => 0.1,   // confident generation
+            Some(e) if e > 3.0 => -0.1,  // very uncertain
+            _ => 0.0,                     // neutral or not provided
+        };
+
         self.prev_query_tokens = user_tokens.to_vec();
 
-        let reward = (token_signal + reformulation_penalty + engagement).clamp(-1.0, 1.0);
+        // Weighted combination: 0.30 + 0.20 + 0.10 + 0.25 + 0.15 = 1.0
+        let reward = (
+            0.30 * token_signal
+            + 0.20 * reformulation_penalty
+            + 0.10 * engagement
+            + 0.25 * factual_signal
+            + 0.15 * entropy_signal
+        ).clamp(-1.0, 1.0);
+
         reward
     }
 
@@ -177,7 +223,7 @@ impl RewardDetector {
 
         let store = pdb.db.store();
 
-        // (2) Adjust energy of facts USED_IN this turn
+        // (2) Adjust energy + utility of facts USED_IN this turn
         for &fid in used_fact_ids {
             if let Some(node) = store.get_node(fid) {
                 let energy = node.properties.get(&PropertyKey::from("energy"))
@@ -185,6 +231,25 @@ impl RewardDetector {
                     .unwrap_or(1.0);
                 let new_energy = (energy + 0.1 * reward as f64).clamp(0.0, 2.0);
                 pdb.db.set_node_property(fid, "energy", Value::Float64(new_energy));
+
+                // Ξ(t) T5: Update utility (incremental mean) and cost_efficiency
+                let act_count = node.properties.get(&PropertyKey::from("activation_count"))
+                    .and_then(|v| if let Value::Int64(n) = v { Some(*n) } else { None })
+                    .unwrap_or(0);
+                let utility = node.properties.get(&PropertyKey::from("utility"))
+                    .and_then(|v| if let Value::Float64(f) = v { Some(*f) } else { None })
+                    .unwrap_or(0.5);
+                let token_cost = node.properties.get(&PropertyKey::from("token_cost"))
+                    .and_then(|v| if let Value::Int64(n) = v { Some(*n) } else { None })
+                    .unwrap_or(1).max(1);
+
+                let new_count = act_count + 1;
+                let new_utility = (utility * act_count as f64 + reward as f64) / new_count as f64;
+                let new_efficiency = new_utility / token_cost as f64;
+
+                pdb.db.set_node_property(fid, "activation_count", Value::Int64(new_count));
+                pdb.db.set_node_property(fid, "utility", Value::Float64(new_utility));
+                pdb.db.set_node_property(fid, "cost_efficiency", Value::Float64(new_efficiency));
             }
         }
 

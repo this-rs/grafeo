@@ -12,6 +12,8 @@ use crate::engine::Engine;
 pub struct ScoredContextNode {
     pub id: NodeId,
     pub _score: f64,
+    /// GNN-derived relevance score (None if GNN unavailable or untrained)
+    pub gnn_score: Option<f32>,
 }
 
 /// Retrieve and score nodes from the graph. Returns:
@@ -244,7 +246,7 @@ pub fn retrieve_nodes(
         if est_tokens + est > token_budget { break; }
 
         node_texts.insert(*nid, text_block);
-        selected.push(ScoredContextNode { id: *nid, _score: *score });
+        selected.push(ScoredContextNode { id: *nid, _score: *score, gnn_score: None });
         est_tokens += est;
     }
 

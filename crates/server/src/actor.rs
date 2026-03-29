@@ -6,9 +6,9 @@ use graph_schema::GraphSchema;
 use kv_registry::{KvNodeRegistry, KvBank, ConvFragments};
 use obrain_common::types::NodeId;
 use obrain_core::graph::lpg::LpgStore;
-use retrieval::{Engine, GenerationControl, OutputMode, is_meta_query, query_with_registry};
+use retrieval::{Engine, GenerationControl, OutputMode, is_meta_query, query_with_registry, GnnContext};
 use think_filter::strip_think_tags;
-use persona::{PersonaDB, detect_facts_from_graph};
+use persona::{PersonaDB, detect_facts_from_graph, fact_gnn::FactGNN};
 
 /// Result of a chat completion generation
 pub struct GenerateResult {
@@ -99,6 +99,7 @@ pub struct ActorConfig {
     pub registry: KvNodeRegistry,
     pub conv_frags: ConvFragments,
     pub persona_db: Option<PersonaDB>,
+    pub fact_gnn: Option<FactGNN>,
     pub max_nodes: usize,
     pub token_budget: i32,
     pub kv_capacity: i32,
@@ -124,6 +125,7 @@ impl ActorHandle {
                 mut registry,
                 mut conv_frags,
                 mut persona_db,
+                fact_gnn: _fact_gnn,
                 max_nodes,
                 token_budget,
                 kv_capacity,
@@ -289,9 +291,11 @@ impl ActorHandle {
 
         let prompt_tokens = registry.next_pos as u32;
 
+        // TODO: pass real GNN context when fact_gnn is stored in actor state
         let (raw_response, relevant_graph_nodes) = query_with_registry(
             engine, q_store, q_schema, registry, conv_frags, banks,
             query, max_nodes, token_budget, kv_capacity, gen_ctl, &output,
+            None, // gnn_ctx — server path, no GNN yet
         )?;
 
         let clean = strip_think_tags(&raw_response);

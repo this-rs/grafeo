@@ -216,6 +216,8 @@ impl PersonaDB {
         }
 
         let fact_type = Self::infer_fact_type(key);
+        // Ξ(t) T5: Estimate token cost naïvely: "- key : value\n" ≈ (len+6)/4 tokens
+        let token_cost = ((key.len() + value.len() + 6) / 4).max(1) as i64;
         let fact_id = self.db.create_node_with_props(&["Fact"], [
             ("key", Value::String(key.to_string().into())),
             ("value", Value::String(value.to_string().into())),
@@ -225,6 +227,10 @@ impl PersonaDB {
             ("source_turn", Value::Int64(source_turn as i64)),
             ("created_at", Value::String(Utc::now().to_rfc3339().into())),
             ("active", Value::Bool(true)),
+            ("token_cost", Value::Int64(token_cost)),
+            ("utility", Value::Float64(0.5)),
+            ("cost_efficiency", Value::Float64(0.5 / token_cost as f64)),
+            ("activation_count", Value::Int64(0)),
         ]);
 
         // CONTRADICTS edge to old fact
@@ -436,21 +442,32 @@ impl PersonaDB {
 
     // ── Migration (Ξ(t) T1.5) ───────────────────────────────────
 
-    /// Migrate old :Fact nodes (key/value/active only) to enriched format.
+    /// Migrate old :Fact nodes to enriched format (fact_type + cost tracking).
     pub fn migrate_facts(&self) {
         let store = self.db.store();
         for &nid in &store.nodes_by_label("Fact") {
             if let Some(node) = store.get_node(nid) {
-                // Check if already migrated (has fact_type)
-                if node.properties.contains_key(&PropertyKey::from("fact_type")) {
-                    continue;
-                }
                 let key = node.properties.get(&PropertyKey::from("key"))
                     .and_then(|v| v.as_str()).unwrap_or("");
-                let fact_type = Self::infer_fact_type(key);
-                self.db.set_node_property(nid, "fact_type", Value::String(fact_type.to_string().into()));
-                self.db.set_node_property(nid, "confidence", Value::Float64(0.8));
-                self.db.set_node_property(nid, "energy", Value::Float64(1.0));
+
+                // Migration 1: fact_type (T1.5)
+                if !node.properties.contains_key(&PropertyKey::from("fact_type")) {
+                    let fact_type = Self::infer_fact_type(key);
+                    self.db.set_node_property(nid, "fact_type", Value::String(fact_type.to_string().into()));
+                    self.db.set_node_property(nid, "confidence", Value::Float64(0.8));
+                    self.db.set_node_property(nid, "energy", Value::Float64(1.0));
+                }
+
+                // Migration 2: cost tracking (T5)
+                if !node.properties.contains_key(&PropertyKey::from("token_cost")) {
+                    let value = node.properties.get(&PropertyKey::from("value"))
+                        .and_then(|v| v.as_str()).unwrap_or("");
+                    let token_cost = ((key.len() + value.len() + 6) / 4).max(1) as i64;
+                    self.db.set_node_property(nid, "token_cost", Value::Int64(token_cost));
+                    self.db.set_node_property(nid, "utility", Value::Float64(0.5));
+                    self.db.set_node_property(nid, "cost_efficiency", Value::Float64(0.5 / token_cost as f64));
+                    self.db.set_node_property(nid, "activation_count", Value::Int64(0));
+                }
             }
         }
     }

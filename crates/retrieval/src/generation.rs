@@ -81,7 +81,7 @@ pub fn generate_with_mask(
         ctl.generating.store(true, Ordering::SeqCst);
         ctl.sigint_received.store(false, Ordering::SeqCst);
         let output_ref = &output;
-        let (resp, _) = engine.generate(&query_tokens, q_start_real, n_predict, 1, |piece| {
+        let (resp, _, _signals) = engine.generate(&query_tokens, q_start_real, n_predict, 1, |piece| {
             if ctl.sigint_received.load(Ordering::Relaxed) { return false; }
             let visible = filter.feed(piece);
             if !visible.is_empty() {
@@ -217,7 +217,7 @@ pub fn generate_with_mask(
     let output_ref = &output;
 
     // Round 0: with mask
-    let (chunk, mut hit_eog, mut next_pos) = engine.generate_ex(
+    let (chunk, mut hit_eog, mut next_pos, _signals) = engine.generate_ex(
         &query_tokens, q_start_real, n_predict, 1,
         true, // keep_seq=true in case we need continuation
         |piece| {
@@ -261,7 +261,7 @@ pub fn generate_with_mask(
 
             let is_last = cont == max_continuations;
 
-            let (chunk, eog, end_pos) = engine.generate_ex(
+            let (chunk, eog, end_pos, _cont_signals) = engine.generate_ex(
                 &cont_token, next_pos, n_predict, 1,
                 !is_last, // keep_seq alive unless last round
                 |piece| {

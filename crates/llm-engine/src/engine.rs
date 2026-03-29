@@ -7,6 +7,7 @@
 //! to prevent Rust panics from crossing into C code (which would be UB).
 
 use crate::ffi;
+use crate::signals::{StepSignals, GenerationSignals, compute_entropy_top_k};
 use anyhow::{Result, bail};
 use std::ffi::CString;
 use std::panic::catch_unwind;
@@ -528,6 +529,20 @@ impl LlamaEngine {
         unsafe { ffi::llama_sampler_reset(self.sampler); }
     }
 
+    /// Get raw logits from the last decode for the batch item at index `idx`.
+    /// Returns a slice of n_vocab floats. Use idx=-1 for the last token.
+    /// MUST be called after llama_decode and BEFORE the next llama_decode.
+    pub fn get_logits(&self, idx: i32) -> &[f32] {
+        unsafe {
+            let n_vocab = ffi::llama_vocab_n_tokens(self.vocab()) as usize;
+            let ptr = ffi::llama_get_logits_ith(self.ctx, idx);
+            if ptr.is_null() {
+                return &[];
+            }
+            std::slice::from_raw_parts(ptr, n_vocab)
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // Generation — streaming token-by-token
     // ═══════════════════════════════════════════════════════════════════════════
@@ -552,7 +567,7 @@ impl LlamaEngine {
         seq_id: ffi::llama_seq_id,
         keep_seq: bool,
         mut on_token: F,
-    ) -> Result<(String, bool, ffi::llama_pos)> {
+    ) -> Result<(String, bool, ffi::llama_pos, GenerationSignals)> {
         // Reset sampler state from previous generation
         self.sampler_reset();
 
@@ -570,8 +585,21 @@ impl LlamaEngine {
         // Buffer for incomplete UTF-8 sequences across token boundaries
         let mut utf8_buf: Vec<u8> = Vec::new();
         let mut hit_eog = false;
+        let mut step_signals: Vec<StepSignals> = Vec::new();
 
-        for _ in 0..max_tokens {
+        for step_idx in 0..max_tokens {
+            // Ξ(t) T3: Extract entropy from logits BEFORE sampling
+            let logits = self.get_logits(-1);
+            if !logits.is_empty() {
+                let (entropy, top1_prob, top_p_mass) = compute_entropy_top_k(logits, 256);
+                step_signals.push(StepSignals {
+                    entropy,
+                    top1_prob,
+                    top_p_mass,
+                    token_position: step_idx as u32,
+                });
+            }
+
             // Sample from logits of the last decoded token
             let token = self.sample();
 
@@ -636,10 +664,12 @@ impl LlamaEngine {
             self.clear_seq(seq_id);
         }
 
-        Ok((result, hit_eog, cur_pos))
+        let signals = GenerationSignals::from_steps(step_signals);
+        Ok((result, hit_eog, cur_pos, signals))
     }
 
     /// Convenience wrapper: generate with auto-cleanup (original API).
+    /// Returns (text, eog_reached).
     pub fn generate<F: FnMut(&str) -> bool>(
         &self,
         query_tokens: &[ffi::llama_token],
@@ -647,9 +677,9 @@ impl LlamaEngine {
         max_tokens: i32,
         seq_id: ffi::llama_seq_id,
         on_token: F,
-    ) -> Result<(String, bool)> {
-        let (text, eog, _) = self.generate_ex(query_tokens, start_pos, max_tokens, seq_id, false, on_token)?;
-        Ok((text, eog))
+    ) -> Result<(String, bool, GenerationSignals)> {
+        let (text, eog, _, signals) = self.generate_ex(query_tokens, start_pos, max_tokens, seq_id, false, on_token)?;
+        Ok((text, eog, signals))
     }
 }
 

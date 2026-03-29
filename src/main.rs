@@ -41,16 +41,59 @@ macro_rules! debug {
 
 use graph_schema::{GraphSchema, discover_schema, get_node_name_generic};
 use kv_registry::{KvNodeRegistry, KvBank, ConvFragments, load_bank_cache, save_bank_cache, discover_banks};
-use retrieval::{Engine, GenerationControl, OutputMode, is_meta_query, query_with_registry};
+use retrieval::{Engine, GenerationControl, OutputMode, is_meta_query, query_with_registry, GnnContext};
 
 use persona::{PersonaDB, RewardDetector, detect_facts_from_graph, detect_facts};
 
 /// Build dynamic system header based on graph presence and persistent facts.
-fn build_system_header(has_graph: bool, facts: &[(String, String)]) -> String {
+/// Score persona facts via GNN. Returns (key, value, score) with score=1.0 as fallback.
+fn score_persona_facts(
+    facts: &[(String, String)],
+    fact_gnn: &Option<persona::fact_gnn::FactGNN>,
+    persona_db: &Option<persona::PersonaDB>,
+) -> Vec<(String, String, f32)> {
+    if let (Some(gnn), Some(pdb)) = (fact_gnn, persona_db) {
+        let store = pdb.db.store();
+        let fact_ids = pdb.active_fact_ids();
+        if fact_ids.is_empty() {
+            return facts.iter().map(|(k, v)| (k.clone(), v.clone(), 1.0)).collect();
+        }
+        let query_embed = persona::fact_gnn::query_embedding("context");
+        let scores = gnn.score_facts(&store, &query_embed, &fact_ids, 2);
+        let score_map: std::collections::HashMap<_, _> = scores.into_iter().collect();
+
+        // Build a map from fact key → NodeId for matching
+        let key_to_nid: std::collections::HashMap<String, obrain_common::types::NodeId> = fact_ids.iter()
+            .filter_map(|&fid| {
+                store.get_node(fid)
+                    .and_then(|n| n.properties.get(&obrain_common::types::PropertyKey::from("key"))
+                        .and_then(|v| v.as_str())
+                        .map(|k| (k.to_string(), fid)))
+            })
+            .collect();
+
+        facts.iter().map(|(k, v)| {
+            let s = key_to_nid.get(k)
+                .and_then(|nid| score_map.get(nid))
+                .copied()
+                .unwrap_or(1.0);
+            (k.clone(), v.clone(), s)
+        }).collect()
+    } else {
+        facts.iter().map(|(k, v)| (k.clone(), v.clone(), 1.0)).collect()
+    }
+}
+
+/// Build the system header with GNN-scored facts.
+///
+/// `scored_facts`: Vec of (key, value, gnn_score). Score=1.0 means unscored (no GNN).
+/// Facts are injected sorted by score descending, with a ~500 token budget (~2000 chars).
+/// Facts with score < 0.1 are omitted when there are more than 10 active facts.
+fn build_system_header(has_graph: bool, scored_facts: &[(String, String, f32)]) -> String {
     let mut header = String::from("<|im_start|>system\n");
 
     // Identity from facts
-    let name = facts.iter().find(|(k, _)| k == "name").map(|(_, v)| v.as_str());
+    let name = scored_facts.iter().find(|(k, _, _)| k == "name").map(|(_, v, _)| v.as_str());
     if let Some(name) = name {
         header.push_str(&format!("You are {name}. "));
     } else {
@@ -64,8 +107,6 @@ fn build_system_header(has_graph: bool, facts: &[(String, String)]) -> String {
     header.push_str("Answer in the same language as the question. /no_think\n");
 
     // ── Memory system instructions ──
-    // Minimal and generic: the user teaches the model, not the prompt.
-    // The Ξ(t) system handles extraction, reinforcement and decay automatically.
     header.push_str(r#"
 ## Mémoire
 Tu as une mémoire persistante entre les sessions. Ce que tu sais est listé sous "Faits connus".
@@ -73,14 +114,27 @@ Quand l'utilisateur te dit quelque chose sur lui ou te demande de retenir une in
 Si un fait contredit un ancien, le nouveau le remplace. N'invente rien — utilise uniquement les faits listés.
 "#);
 
-    // Inject persistent facts
-    let other_facts: Vec<&(String, String)> = facts.iter()
-        .filter(|(k, _)| k != "name")
+    // Inject persistent facts — sorted by GNN score, budget-capped
+    let mut other_facts: Vec<&(String, String, f32)> = scored_facts.iter()
+        .filter(|(k, _, _)| k != "name")
         .collect();
+    // Already sorted by caller, but ensure desc order
+    other_facts.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Apply threshold: omit low-score facts when we have plenty
+    let threshold = if other_facts.len() > 10 { 0.1 } else { 0.0 };
+    let other_facts: Vec<&&(String, String, f32)> = other_facts.iter()
+        .filter(|(_, _, s)| *s >= threshold)
+        .collect();
+
     if !other_facts.is_empty() {
         header.push_str("\nFaits connus :\n");
-        for (key, value) in &other_facts {
-            header.push_str(&format!("- {key} : {value}\n"));
+        let mut budget = 2000usize; // ~500 tokens at ~4 chars/token
+        for (key, value, _score) in other_facts.iter().map(|f| (&f.0, &f.1, f.2)) {
+            let line = format!("- {key} : {value}\n");
+            if line.len() > budget { break; }
+            budget -= line.len();
+            header.push_str(&line);
         }
     } else if name.is_none() {
         header.push_str("\nFaits connus : (aucun pour l'instant — l'utilisateur ne t'a encore rien dit)\n");
@@ -245,8 +299,8 @@ fn main() -> Result<()> {
         };
 
         // Build system header + init registry
-        let persona_facts: Vec<(String, String)> = persona_db.as_ref()
-            .map(|pdb| pdb.active_facts())
+        let persona_facts: Vec<(String, String, f32)> = persona_db.as_ref()
+            .map(|pdb| pdb.active_facts().into_iter().map(|(k, v)| (k, v, 1.0)).collect())
             .unwrap_or_default();
         let system_header = build_system_header(store.is_some(), &persona_facts);
         let header_tokens_vec = engine.tokenize(&system_header, false, true)?;
@@ -296,6 +350,7 @@ fn main() -> Result<()> {
             registry,
             conv_frags,
             persona_db,
+            fact_gnn: None, // TODO: initialize GNN for server path too
             max_nodes,
             token_budget,
             kv_capacity,
@@ -449,7 +504,11 @@ fn main() -> Result<()> {
             .collect::<Vec<_>>()
             .join(", "));
     }
-    let system_header = build_system_header(store.is_some(), &persona_facts);
+    // At startup, GNN not yet initialized — use unscored facts (score=1.0)
+    let scored_facts: Vec<(String, String, f32)> = persona_facts.iter()
+        .map(|(k, v)| (k.clone(), v.clone(), 1.0))
+        .collect();
+    let system_header = build_system_header(store.is_some(), &scored_facts);
     debug!("System header:\n{system_header}");
 
     // ── Initialize KV Node Registry ─────────────────────────────
@@ -536,6 +595,7 @@ fn main() -> Result<()> {
     let mut current_facts = persona_facts; // live-updated when facts change
     let mut last_conv_turn_id: Option<NodeId> = None; // Ξ(t) T1: for TEMPORAL_NEXT chain
     let mut last_used_fact_ids: Vec<NodeId> = Vec::new(); // Ξ(t) T3: for reward propagation
+    let mut prev_header_top5: Vec<String> = Vec::new(); // Ξ(t) T6: track top-5 fact keys for diff
 
     // Ξ(t) T3: Initialize RewardDetector
     let mut reward_detector: Option<RewardDetector> = persona_db.as_ref()
@@ -553,6 +613,14 @@ fn main() -> Result<()> {
         }
         gnn
     });
+
+    // Ξ(t) T1: Now that GNN is loaded, rescore facts and update header
+    if fact_gnn.is_some() && !current_facts.is_empty() {
+        let scored = score_persona_facts(&current_facts, &fact_gnn, &persona_db);
+        let new_header = build_system_header(store.is_some(), &scored);
+        registry.update_header(&new_header);
+        debug!("  [GNN] Header rescored with {} facts after GNN init", scored.len());
+    }
 
     loop {
         // Ξ(t) T3.6: Check SIGINT before blocking on input
@@ -869,7 +937,32 @@ fn main() -> Result<()> {
             (store.as_ref(), schema.as_ref())
         };
 
-        match query_with_registry(&engine, q_store, q_schema, &mut registry, &mut conv_frags, &banks, &line, max_nodes, token_budget, kv_capacity, &gen_ctl, &OutputMode::Stdout) {
+        // Ξ(t) T6: Dynamic header — rescore facts per-query, rebuild if top-5 changed
+        {
+            let scored = score_persona_facts(&current_facts, &fact_gnn, &persona_db);
+            let new_top5: Vec<String> = scored.iter()
+                .filter(|(k, _, _)| k != "name")
+                .take(5)
+                .map(|(k, _, _)| k.clone())
+                .collect();
+            if new_top5 != prev_header_top5 && !new_top5.is_empty() {
+                let new_header = build_system_header(store.is_some(), &scored);
+                registry.update_header(&new_header);
+                // Re-encode header into KV cache for coherence
+                registry.full_recompact(&engine);
+                debug!("  [T6] Header rebuilt: top-5 changed {:?} → {:?}", prev_header_top5, new_top5);
+                prev_header_top5 = new_top5;
+            }
+        }
+
+        // Ξ(t) T2: Build GNN context for composite E(t) scoring
+        let gnn_ctx = if let (Some(gnn), Some(pdb)) = (&fact_gnn, &persona_db) {
+            Some(GnnContext { gnn, persona_store: &*pdb.db.store() })
+        } else {
+            None
+        };
+
+        match query_with_registry(&engine, q_store, q_schema, &mut registry, &mut conv_frags, &banks, &line, max_nodes, token_budget, kv_capacity, &gen_ctl, &OutputMode::Stdout, gnn_ctx.as_ref()) {
             Ok((response, relevant_graph_nodes)) => {
                 // Response already streamed to stdout by engine.generate
                 let clean = strip_think_tags(&response);
@@ -939,10 +1032,18 @@ fn main() -> Result<()> {
                     (&mut reward_detector, &persona_db, last_conv_turn_id)
                 {
                     let user_tokens = engine.tokenize(&line, false, false).unwrap_or_default();
-                    let reward = rd.compute_reward(&user_tokens, turn_count);
+                    // Ξ(t) T4: Enriched reward with factual success + entropy signal
+                    let facts_for_reward: Vec<(String, String)> = current_facts.clone();
+                    let reward = rd.compute_reward(
+                        &user_tokens,
+                        turn_count,
+                        if facts_for_reward.is_empty() { None } else { Some(&facts_for_reward) },
+                        if trimmed.is_empty() { None } else { Some(&trimmed) },
+                        None, // TODO: pass avg_entropy from GenerationSignals when T3 signals propagate through query_with_registry
+                    );
                     if reward.abs() > 0.01 {
                         rd.propagate_reward(pdb, prev_ct, reward, &last_used_fact_ids);
-                        debug!("  [Reward] turn #{}: {:.2} (token + reformulation + engagement)",
+                        debug!("  [Reward] turn #{}: {:.2} (5-signal composite)",
                             turn_count - 1, reward);
 
                         // Ξ(t) T4: GNN online update with reward signal
@@ -1012,9 +1113,10 @@ fn main() -> Result<()> {
                             eprintln!("  💾 Fact stored: {} = {} (pattern={})", m.key, m.value, m.pattern_nid.0);
                         }
                         current_facts = pdb.active_facts();
-                        let new_header = build_system_header(store.is_some(), &current_facts);
+                        let scored = score_persona_facts(&current_facts, &fact_gnn, &persona_db);
+                        let new_header = build_system_header(store.is_some(), &scored);
                         registry.update_header(&new_header);
-                        debug!("  Header updated with {} facts", current_facts.len());
+                        debug!("  Header updated with {} facts ({} scored)", current_facts.len(), scored.len());
                     }
                 } else {
                     // No PersonaDB — use legacy hardcoded detection

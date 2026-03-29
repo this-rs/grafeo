@@ -15,6 +15,12 @@ use crate::control::{GenerationControl, OutputMode, Spinner};
 use crate::scoring::retrieve_nodes;
 use crate::generation::generate_with_mask;
 
+/// Optional GNN scoring context for composite E(t) decision.
+pub struct GnnContext<'a> {
+    pub gnn: &'a persona::fact_gnn::FactGNN,
+    pub persona_store: &'a LpgStore,
+}
+
 pub fn query_with_registry(
     engine: &Engine,
     store: Option<&Arc<LpgStore>>,
@@ -28,6 +34,7 @@ pub fn query_with_registry(
     kv_capacity: i32,
     ctl: &GenerationControl,
     output: &OutputMode,
+    gnn_ctx: Option<&GnnContext>,
 ) -> Result<(String, Vec<NodeId>)> {
     registry.begin_query();
     let t_start = Instant::now();
@@ -67,12 +74,41 @@ pub fn query_with_registry(
     }
 
     // Run the generic retrieval to get scored nodes (only if graph is loaded)
-    let (scored_nodes_for_query, adjacency, node_texts) =
+    let (mut scored_nodes_for_query, adjacency, node_texts) =
         if let (Some(st), Some(sch)) = (store, schema) {
             retrieve_nodes(engine, st, sch, query, max_nodes, token_budget)?
         } else {
             (Vec::new(), HashMap::new(), HashMap::new())
         };
+
+    // Ξ(t) T2: Enrich with GNN composite score E(t) = α·graph + β·gnn - γ·cost
+    if let Some(ctx) = gnn_ctx {
+        if ctx.gnn.n_updates() >= 20 && !scored_nodes_for_query.is_empty() {
+            let data_nids: Vec<NodeId> = scored_nodes_for_query.iter().map(|n| n.id).collect();
+            let query_embed = persona::fact_gnn::query_embedding(query);
+            let gnn_scores = ctx.gnn.score_node_ids(ctx.persona_store, &query_embed, &data_nids);
+
+            // Normalize graph scores to [0, 1] range
+            let max_graph = scored_nodes_for_query.iter()
+                .map(|n| n._score)
+                .fold(f64::NEG_INFINITY, f64::max)
+                .max(1e-8);
+
+            for node in &mut scored_nodes_for_query {
+                let gnn_s = gnn_scores.get(&node.id).copied().unwrap_or(0.0);
+                node.gnn_score = Some(gnn_s);
+
+                // E(t) = 0.5·graph_norm + 0.35·gnn + 0.15·baseline
+                let graph_norm = node._score / max_graph;
+                let composite = 0.5 * graph_norm + 0.35 * gnn_s as f64 + 0.15;
+                node._score = composite;
+            }
+
+            // Re-sort by composite score
+            scored_nodes_for_query.sort_by(|a, b|
+                b._score.partial_cmp(&a._score).unwrap_or(std::cmp::Ordering::Equal));
+        }
+    }
 
     if scored_nodes_for_query.is_empty() {
         // No graph data — generate from conversation context + system prompt
@@ -97,7 +133,7 @@ pub fn query_with_registry(
         // Use 1024 tokens max (not 256) to avoid truncated/garbage responses.
         // The low max_tokens was causing the model to output short garbage in some cases.
         let output_ref = &output;
-        let (resp, _) = engine.generate(&tokens, registry.next_pos, 1024, 1, |piece| {
+        let (resp, _, _signals) = engine.generate(&tokens, registry.next_pos, 1024, 1, |piece| {
             // Ctrl+C during generation → stop
             if ctl.sigint_received.load(Ordering::Relaxed) { return false; }
             let visible = filter.feed(piece);

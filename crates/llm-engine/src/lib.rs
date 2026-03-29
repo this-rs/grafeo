@@ -16,5 +16,7 @@ pub mod ffi {
 
 mod engine;
 pub mod mask_builder;
+pub mod signals;
 
 pub use engine::{LlamaEngine, EngineConfig, set_verbose};
+pub use signals::{StepSignals, GenerationSignals, compute_entropy_top_k};

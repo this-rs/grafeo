@@ -357,6 +357,144 @@ impl FactGNN {
     pub fn dim(&self) -> usize {
         self.dim
     }
+
+    /// Score a specific set of fact NodeIds by relevance to query.
+    ///
+    /// Wrapper around `forward()` that filters results to only include
+    /// the given fact_ids. Facts not in the subgraph get score 0.0.
+    /// Returns Vec<(NodeId, f32)> sorted by score descending.
+    pub fn score_facts(
+        &self,
+        store: &LpgStore,
+        query_embed: &[f32; DIM],
+        fact_ids: &[NodeId],
+        hops: usize,
+    ) -> Vec<(NodeId, f32)> {
+        if fact_ids.is_empty() { return Vec::new(); }
+
+        // Run full forward pass centered on the fact nodes
+        let all_scores = self.forward(store, query_embed, fact_ids, hops);
+
+        // Filter to only requested fact_ids
+        let requested: HashSet<NodeId> = fact_ids.iter().copied().collect();
+        let mut result: Vec<(NodeId, f32)> = all_scores.into_iter()
+            .filter(|(nid, _)| requested.contains(nid))
+            .collect();
+
+        // Add missing facts with score 0.0 (not reached by subgraph)
+        let scored: HashSet<NodeId> = result.iter().map(|(nid, _)| *nid).collect();
+        for &fid in fact_ids {
+            if !scored.contains(&fid) {
+                result.push((fid, 0.0));
+            }
+        }
+
+        result.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        result
+    }
+
+    /// Score arbitrary data graph NodeIds via the MENTIONS bridge.
+    ///
+    /// Data graph nodes are not directly in the PersonaDB GNN subgraph.
+    /// But ConvTurns have MENTIONS edges pointing to data graph nodes.
+    /// A data node's score = max GNN score of ConvTurns that MENTION it.
+    ///
+    /// `persona_store`: the PersonaDB LpgStore (has ConvTurns, Facts, MENTIONS)
+    /// `data_node_ids`: NodeIds from the data graph to score
+    ///
+    /// Returns HashMap<NodeId, f32> for all requested nodes (0.0 if no MENTIONS).
+    pub fn score_node_ids(
+        &self,
+        persona_store: &LpgStore,
+        query_embed: &[f32; DIM],
+        data_node_ids: &[NodeId],
+    ) -> HashMap<NodeId, f32> {
+        if data_node_ids.is_empty() || self.n_updates < 20 {
+            // Not enough training data — return uniform scores
+            return data_node_ids.iter().map(|&nid| (nid, 1.0)).collect();
+        }
+
+        // Find ConvTurns that MENTION any of the data nodes
+        let data_set: HashSet<NodeId> = data_node_ids.iter().copied().collect();
+        let conv_turns = persona_store.nodes_by_label("ConvTurn");
+
+        // Build reverse map: data_node_id → Vec<ConvTurn NodeId>
+        let mut mentioned_by: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+        for &ct_id in &conv_turns {
+            for (target, eid) in persona_store.edges_from(ct_id, Direction::Outgoing).collect::<Vec<_>>() {
+                if let Some(edge) = persona_store.get_edge(eid) {
+                    let label: &str = edge.edge_type.as_ref();
+                    if label == "MENTIONS" && data_set.contains(&target) {
+                        mentioned_by.entry(target).or_default().push(ct_id);
+                    }
+                }
+            }
+        }
+
+        // Run GNN forward pass centered on all relevant ConvTurns
+        let all_ct_ids: Vec<NodeId> = mentioned_by.values().flatten().copied().collect();
+        if all_ct_ids.is_empty() {
+            return data_node_ids.iter().map(|&nid| (nid, 0.0)).collect();
+        }
+
+        // Get embeddings for ConvTurns via forward pass (2-hop sees Facts + Patterns)
+        let subgraph = Self::collect_subgraph(persona_store, &all_ct_ids, 2);
+        let mut embeddings: HashMap<NodeId, [f32; DIM]> = HashMap::new();
+        for &nid in &subgraph {
+            embeddings.insert(nid, Self::init_embedding(persona_store, nid));
+        }
+        // 2-layer message passing
+        for _layer in 0..2 {
+            let mut new_embeddings: HashMap<NodeId, [f32; DIM]> = HashMap::new();
+            for &nid in &subgraph {
+                let mut h = embeddings[&nid];
+                for (target, eid) in persona_store.edges_from(nid, Direction::Outgoing).collect::<Vec<_>>() {
+                    if !subgraph.contains(&target) { continue; }
+                    let edge_type = Self::get_edge_label(persona_store, nid, target, eid);
+                    if let Some(w) = self.w_message.get(&edge_type) {
+                        let h_neighbor = &embeddings[&target];
+                        let msg = mat_vec_mul(w, h_neighbor);
+                        for i in 0..DIM { h[i] += relu(msg[i]); }
+                    }
+                }
+                for (source, eid) in persona_store.edges_from(nid, Direction::Incoming).collect::<Vec<_>>() {
+                    if !subgraph.contains(&source) { continue; }
+                    let edge_type = Self::get_edge_label(persona_store, source, nid, eid);
+                    if let Some(w) = self.w_message.get(&edge_type) {
+                        let h_neighbor = &embeddings[&source];
+                        let msg = mat_vec_mul(w, h_neighbor);
+                        for i in 0..DIM { h[i] += relu(msg[i]); }
+                    }
+                }
+                let label = persona_store.get_node(nid)
+                    .and_then(|n| n.labels.first().map(|l| { let s: &str = l.as_ref(); s.to_string() }))
+                    .unwrap_or_default();
+                if let Some(w) = self.w_update.get(&label) {
+                    let updated = mat_vec_mul(w, &h);
+                    for i in 0..DIM { h[i] = relu(updated[i]); }
+                }
+                let norm = h.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-8);
+                for i in 0..DIM { h[i] /= norm; }
+                new_embeddings.insert(nid, h);
+            }
+            embeddings = new_embeddings;
+        }
+
+        // Score each data node = max dot(query, conv_turn_embedding) across its MENTIONS
+        let mut scores: HashMap<NodeId, f32> = HashMap::new();
+        for &data_nid in data_node_ids {
+            if let Some(ct_ids) = mentioned_by.get(&data_nid) {
+                let max_score = ct_ids.iter()
+                    .filter_map(|ct| embeddings.get(ct))
+                    .map(|h| (0..DIM).map(|i| query_embed[i] * h[i]).sum::<f32>())
+                    .fold(f32::NEG_INFINITY, f32::max);
+                scores.insert(data_nid, if max_score.is_finite() { max_score } else { 0.0 });
+            } else {
+                scores.insert(data_nid, 0.0);
+            }
+        }
+        scores
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
