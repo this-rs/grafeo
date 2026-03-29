@@ -1,0 +1,24 @@
+[package]
+name = "server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+chrono = "0.4"
+tokio-stream = "0.1"
+futures = "0.3"
+uuid = { version = "1", features = ["v4"] }
+retrieval = { path = "../retrieval" }
+llm-engine = { path = "../llm-engine" }
+kv-registry = { path = "../kv-registry" }
+persona = { path = "../persona" }
+graph-schema = { path = "../graph-schema" }
+think-filter = { path = "../think-filter" }
+obrain-common = { path = "/Users/triviere/projects/lab/grafeo/crates/obrain-common" }
+obrain-core = { path = "/Users/triviere/projects/lab/grafeo/crates/obrain-core" }
