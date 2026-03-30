@@ -1819,7 +1819,7 @@ fn main() -> Result<()> {
                     }
                 };
                 let snap = FactSnapshot::from_persona_db(pdb, Some(&tokenize_fn));
-                eprintln!(
+                debug!(
                     "  [IPTR] FactSnapshot: {} facts, {} edges",
                     snap.facts.len(),
                     snap.adjacency.values().map(|v| v.len()).sum::<usize>() / 2
@@ -1836,7 +1836,7 @@ fn main() -> Result<()> {
                 let sm = pdb.current_self_metrics();
                 // confidence: mask_reward_avg is in [-1,1], map to [0,1] via (x+1)/2
                 let confidence = ((sm.mask_reward_avg + 1.0) / 2.0).clamp(0.0, 1.0) as f32;
-                eprintln!(
+                debug!(
                     "  [StateBias] reward_avg={:.3}, confidence={:.3}",
                     sm.reward_avg, confidence
                 );
