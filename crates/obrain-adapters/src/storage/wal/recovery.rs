@@ -49,6 +49,9 @@ impl WalRecovery {
 
         let (metadata, _): (CheckpointMetadata, _) =
             bincode::serde::decode_from_slice(&data, bincode::config::standard())
+                .or_else(|_| {
+                    bincode::serde::decode_from_slice(&data, bincode::config::legacy())
+                })
                 .map_err(|e| Error::Serialization(e.to_string()))?;
 
         Ok(Some(metadata))
@@ -85,7 +88,12 @@ impl WalRecovery {
     ///
     /// Returns an error if recovery fails.
     pub fn recover_as<R: WalEntry>(&self) -> Result<Vec<R>> {
-        let checkpoint = self.read_checkpoint_metadata()?;
+        // Gracefully handle corrupted/truncated checkpoint metadata:
+        // fall back to full WAL replay (safe, just slower)
+        let checkpoint = self.read_checkpoint_metadata().unwrap_or_else(|e| {
+            tracing::warn!("Failed to read checkpoint metadata, replaying full WAL: {e}");
+            None
+        });
         self.recover_internal_as::<R>(checkpoint)
     }
 
@@ -177,7 +185,20 @@ impl WalRecovery {
             }
         }
 
-        // Uncommitted records in current_tx_records are discarded
+        // If there are uncommitted records remaining, include them as
+        // implicitly committed. This handles two cases:
+        // 1. The process crashed before committing (crash recovery)
+        // 2. The writer used auto-commit/fire-and-forget mode without
+        //    explicit transaction markers (common in embedded usage)
+        // Without this, all data written before the first TransactionCommit
+        // would be silently lost on recovery.
+        if !current_tx_records.is_empty() {
+            tracing::info!(
+                "Including {} uncommitted WAL records as implicitly committed",
+                current_tx_records.len()
+            );
+            committed_records.append(&mut current_tx_records);
+        }
 
         Ok(committed_records)
     }
@@ -282,9 +303,13 @@ impl WalRecovery {
             )));
         }
 
-        // Deserialize
+        // Deserialize — try standard (varint) first, fallback to legacy (fixint)
+        // for WALs written with older bincode configs
         let (record, _): (R, _) =
             bincode::serde::decode_from_slice(&data, bincode::config::standard())
+                .or_else(|_| {
+                    bincode::serde::decode_from_slice(&data, bincode::config::legacy())
+                })
                 .map_err(|e| Error::Serialization(e.to_string()))?;
 
         Ok(Some(record))
@@ -348,7 +373,37 @@ mod tests {
         let recovery = WalRecovery::new(dir.path());
         let records = recovery.recover().unwrap();
 
-        // Uncommitted records should be discarded
+        // Uncommitted records at end of WAL are included as implicitly committed
+        // (handles crash recovery and auto-commit/embedded usage)
+        assert_eq!(records.len(), 1);
+    }
+
+    #[test]
+    fn test_recovery_aborted_discarded() {
+        let dir = tempdir().unwrap();
+
+        // Write records then abort — these MUST be discarded
+        {
+            let wal = WalManager::open(dir.path()).unwrap();
+
+            wal.log(&WalRecord::CreateNode {
+                id: NodeId::new(1),
+                labels: vec!["Person".to_string()],
+            })
+            .unwrap();
+
+            wal.log(&WalRecord::TransactionAbort {
+                transaction_id: TransactionId::new(1),
+            })
+            .unwrap();
+
+            wal.sync().unwrap();
+        }
+
+        let recovery = WalRecovery::new(dir.path());
+        let records = recovery.recover().unwrap();
+
+        // Aborted records MUST be discarded
         assert_eq!(records.len(), 0);
     }
 

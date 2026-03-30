@@ -368,6 +368,9 @@ impl WalManager {
 
         let (metadata, _): (CheckpointMetadata, _) =
             bincode::serde::decode_from_slice(&data, bincode::config::standard())
+                .or_else(|_| {
+                    bincode::serde::decode_from_slice(&data, bincode::config::legacy())
+                })
                 .map_err(|e| Error::Serialization(e.to_string()))?;
 
         Ok(Some(metadata))

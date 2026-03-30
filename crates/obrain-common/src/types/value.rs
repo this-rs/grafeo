@@ -345,7 +345,8 @@ impl Value {
     ///
     /// Returns an error if the bytes do not represent a valid Value.
     pub fn deserialize(bytes: &[u8]) -> Result<Self, bincode::error::DecodeError> {
-        let (value, _) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())?;
+        let (value, _) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
+            .or_else(|_| bincode::serde::decode_from_slice(bytes, bincode::config::legacy()))?;
         Ok(value)
     }
 }
