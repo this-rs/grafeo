@@ -28,12 +28,16 @@ fn cleanup(suffix: &str) {
 // T4: Reward — 5-signal weighted combination
 // ═══════════════════════════════════════════════════════════════
 
-/// Helper: build a RewardDetector with known token_polarity map (no LlamaEngine needed).
+/// Helper: build a RewardDetector with known token polarities (no LlamaEngine needed).
+/// Uses obs=50 to exceed MIN_OBSERVATIONS (20) so polarities are considered reliable.
 fn mock_reward_detector(polarities: &[(i32, f32)]) -> RewardDetector {
-    RewardDetector {
-        token_polarity: polarities.iter().copied().collect(),
-        prev_query_history: Vec::new(),
-    }
+    let mut rd = RewardDetector::new();
+    let data: HashMap<i32, (f32, u32)> = polarities
+        .iter()
+        .map(|&(id, pol)| (id, (pol, 50)))
+        .collect();
+    rd.token_learner.import(data);
+    rd
 }
 
 #[test]
@@ -45,10 +49,11 @@ fn t4_reward_signal1_token_polarity() {
     ]);
 
     // Turn 1 is always 0.0 (no previous turn to evaluate)
-    let r = rd.compute_reward(&[100, 300], 1, None, None, None);
+    let r = rd.compute_reward(&[500, 600, 700], 1, None, None, None);
     assert_eq!(r.reward, 0.0, "turn 1 should always be 0.0");
 
     // Turn 2 with positive polarity tokens → positive reward
+    // (different tokens from turn 1 to avoid reformulation detection)
     let r = rd.compute_reward(&[100], 2, None, None, None);
     // token_signal = 0.8/1 = 0.8, clamped to 0.5
     // reward = 0.30 * 0.5 + 0.20 * 0 + 0.10 * engagement + 0.25 * 0 + 0.15 * 0
@@ -114,8 +119,8 @@ fn t4_reward_signal3_engagement_grows() {
 fn t4_reward_signal4_factual_success() {
     let mut rd = mock_reward_detector(&[]);
 
-    // Turn 1
-    rd.compute_reward(&[1], 1, None, None, None);
+    // Turn 1 — seed the history with distinct tokens
+    rd.compute_reward(&[500, 600], 1, None, None, None);
 
     // Facts in header + response contains the fact values
     let facts = vec![
@@ -124,12 +129,13 @@ fn t4_reward_signal4_factual_success() {
     ];
     let response = "Oui Alice, je sais que tu habites à Paris !";
 
-    let r_with = rd.compute_reward(&[1], 3, Some(&facts), Some(response), None);
+    // Turn 2 with distinct tokens (avoid reformulation detection)
+    let r_with = rd.compute_reward(&[10, 20, 30], 2, Some(&facts), Some(response), None);
 
     // Now with facts that DON'T appear in response
     let facts_miss = vec![("name".to_string(), "Bob".to_string())];
     let response_miss = "Bonjour, comment allez-vous ?";
-    let r_without = rd.compute_reward(&[2], 4, Some(&facts_miss), Some(response_miss), None);
+    let r_without = rd.compute_reward(&[40, 50, 60], 3, Some(&facts_miss), Some(response_miss), None);
 
     assert!(
         r_with > r_without,
@@ -270,10 +276,7 @@ fn t5_cost_tracking_updates_on_reward_propagation() {
     pdb.mark_facts_used_in(&[fid1, fid2], ct_id);
 
     // Build a mock RewardDetector and propagate positive reward
-    let rd = RewardDetector {
-        token_polarity: HashMap::new(),
-        prev_query_history: Vec::new(),
-    };
+    let rd = RewardDetector::new();
     rd.propagate_reward(&pdb, ct_id, 0.8, &[fid1, fid2]);
 
     // Verify fact properties were updated
@@ -582,10 +585,7 @@ fn t5_reinforces_edges_created_on_high_reward() {
 
     let ct = pdb.create_conv_turn("who?", "Alice from Paris", 1);
 
-    let rd = RewardDetector {
-        token_polarity: HashMap::new(),
-        prev_query_history: Vec::new(),
-    };
+    let rd = RewardDetector::new();
 
     // Low reward → NO REINFORCES
     rd.propagate_reward(&pdb, ct, 0.3, &[f1, f2]);
