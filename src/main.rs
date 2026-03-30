@@ -2395,8 +2395,15 @@ fn main() -> Result<()> {
                     }
 
                     last_persist_result = Some((projected, persist_score));
-                } else if let Some(ref pdb) = persona_db {
-                    // Fallback: pattern-based detection when PersistNet unavailable
+                }
+
+                // Pattern-based fact detection — runs ALWAYS when PersonaDB is available,
+                // independently of PersistNet (memories and facts are complementary).
+                // Note: only update header here if PersistNet is NOT active, because
+                // build_system_header (facts-only) and build_memory_header (memories-only)
+                // would overwrite each other. When PersistNet is active, facts are still
+                // stored in the DB but the header uses the memory-based version.
+                if let Some(ref pdb) = persona_db {
                     let matches = detect_facts_from_graph(pdb, &line);
                     if !matches.is_empty() {
                         for m in &matches {
@@ -2408,14 +2415,23 @@ fn main() -> Result<()> {
                             );
                         }
                         current_facts = pdb.active_facts();
-                        let scored = score_persona_facts(&current_facts, &fact_gnn, &persona_db);
-                        let new_header = build_system_header(store.is_some(), &scored);
-                        registry.update_header(&new_header);
-                        debug!(
-                            "  Header updated with {} facts ({} scored)",
-                            current_facts.len(),
-                            scored.len()
-                        );
+                        // Only rebuild header from facts if PersistNet didn't already set it
+                        // (PersistNet uses build_memory_header which includes memories)
+                        if persist_net.is_none() {
+                            let scored = score_persona_facts(&current_facts, &fact_gnn, &persona_db);
+                            let new_header = build_system_header(store.is_some(), &scored);
+                            registry.update_header(&new_header);
+                            debug!(
+                                "  Header updated with {} facts ({} scored)",
+                                current_facts.len(),
+                                scored.len()
+                            );
+                        } else {
+                            debug!(
+                                "  💾 {} facts stored (header managed by PersistNet)",
+                                matches.len()
+                            );
+                        }
                     }
                 } else {
                     // No PersonaDB — use legacy hardcoded detection
