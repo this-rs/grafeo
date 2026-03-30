@@ -1,24 +1,29 @@
-mod engine;
+pub mod attn_compiler;
+pub mod attn_dsl;
+pub mod contrastive;
 mod control;
+mod engine;
+mod generation;
 mod meta;
 pub mod node_embedding;
 pub mod projection_net;
-pub mod contrastive;
-pub mod training;
-mod scoring;
 mod query;
-mod generation;
 pub mod round_tracker;
+mod scoring;
+pub mod training;
 
-pub use engine::Engine;
-pub use control::{GenerationControl, OutputMode, Spinner};
-pub use meta::is_meta_query;
-pub use node_embedding::{NodeEmbeddingCache, compute_text_embedding, compute_node_embeddings, compute_node_embeddings_with_fusion, compute_fused_embedding, FusionContext};
-pub use projection_net::{ProjectionNet, soft_mix, alpha_schedule};
 pub use contrastive::{ContrastiveConfig, ContrastiveSample, GraphTopology};
-pub use training::{TrainingManager, TrainingConfig, weights_path_for_persona};
-pub use scoring::{ScoredContextNode, retrieve_nodes, get_micro_tag};
-pub use query::{query_with_registry, GnnContext, maybe_relayout};
-pub use generation::{generate_with_mask, AblationReward};
-pub use round_tracker::{RoundTracker, DemotionType, CoactivationMap};
-pub use scoring::{expand_by_affinity, compute_lambda};
+pub use control::{GenerationControl, OutputMode, Spinner};
+pub use engine::Engine;
+pub use generation::{AblationReward, generate_with_mask};
+pub use meta::is_meta_query;
+pub use node_embedding::{
+    FusionContext, NodeEmbeddingCache, compute_fused_embedding, compute_node_embeddings,
+    compute_node_embeddings_with_fusion, compute_text_embedding,
+};
+pub use projection_net::{ProjectionNet, alpha_schedule, soft_mix};
+pub use query::{GnnContext, maybe_relayout, query_with_registry};
+pub use round_tracker::{CoactivationMap, DemotionType, RoundTracker};
+pub use scoring::{ScoredContextNode, get_micro_tag, retrieve_nodes};
+pub use scoring::{compute_lambda, expand_by_affinity};
+pub use training::{TrainingConfig, TrainingManager, weights_path_for_persona};
