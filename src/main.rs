@@ -49,7 +49,9 @@ use retrieval::{
 
 use persona::{PersonaDB, RewardDetector, detect_facts, detect_facts_from_graph};
 use retrieval::attn_dsl::AttnOp;
-use retrieval::formula_selector::{FormulaCandidate, FormulaSelector, SelectedFormula};
+use retrieval::formula_selector::{
+    FormulaCandidate, FormulaSelector, SelectedFormula, dsl_to_natural_language,
+};
 
 /// Build dynamic system header based on graph presence and persistent facts.
 /// Score persona facts via GNN. Returns (key, value, score) with score=1.0 as fallback.
@@ -2273,10 +2275,12 @@ fn main() -> Result<()> {
 
                 // Phase 4: Update :Self introspective metrics
                 if let Some(ref pdb) = persona_db {
-                    let formula_name = selected_formula
+                    let (formula_name, formula_expl) = selected_formula
                         .as_ref()
-                        .map(|f| f.name.clone())
-                        .unwrap_or_else(|| "none".to_string());
+                        .map(|f| {
+                            (f.name.clone(), dsl_to_natural_language(&f.op))
+                        })
+                        .unwrap_or_else(|| ("none".to_string(), String::new()));
                     let head_top5: Vec<(usize, f32)> = head_router
                         .as_ref()
                         .map(|r| {
@@ -2300,7 +2304,7 @@ fn main() -> Result<()> {
                         mask_reward_avg: 0.0, // filled from reward signals when available
                         head_router_top5: head_top5,
                         formula_active_name: formula_name,
-                        formula_explanation: String::new(), // TS.2 will add NL explanation
+                        formula_explanation: formula_expl,
                         gnn_facts_active: last_used_fact_ids.len(),
                         learning_trend: if turn_count < 5 {
                             "cold_start".to_string()

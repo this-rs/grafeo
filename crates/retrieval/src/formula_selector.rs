@@ -233,6 +233,161 @@ fn pseudo_random(seed: u64) -> f64 {
     (z as f64) / (u64::MAX as f64)
 }
 
+// ─── Natural Language Explanation ────────────────────────────────────────────
+
+/// Translate an AttnOp formula into a human-readable description.
+///
+/// Used by :Self nodes so the model can describe its own attention strategy.
+pub fn dsl_to_natural_language(op: &AttnOp) -> String {
+    use crate::attn_dsl::*;
+    match op {
+        AttnOp::Identity => "Attention standard (pas de modification)".to_string(),
+        AttnOp::Mask { condition } => {
+            let cond = match condition {
+                MaskCondition::GraphDistanceAbove(d) => {
+                    format!("masque les tokens à plus de {} hops dans le graphe", d)
+                }
+                MaskCondition::EnergyBelow(t) => {
+                    format!("masque les connexions à énergie synaptique < {:.1}", t)
+                }
+                MaskCondition::NoPath => {
+                    "masque les paires de nœuds sans chemin".to_string()
+                }
+            };
+            format!("Filtre sélectif : {}", cond)
+        }
+        AttnOp::BiasAdd { source, weight } => {
+            let src = bias_source_nl(source);
+            if *weight > 0.0 {
+                format!("Amplifie l'attention via {} (×{:.1})", src, weight)
+            } else {
+                format!("Atténue l'attention via {} (×{:.1})", src, weight)
+            }
+        }
+        AttnOp::BiasScale { source, weight } => {
+            let src = bias_source_nl(source);
+            format!("Mise à l'échelle ×{:.1} basée sur {}", weight, src)
+        }
+        AttnOp::WarpQ { delta_source, alpha } => {
+            let src = delta_source_nl(delta_source);
+            format!(
+                "Déformation query via {} (α={:.1}) — modifie ce que le modèle cherche",
+                src, alpha
+            )
+        }
+        AttnOp::WarpK { delta_source, alpha } => {
+            let src = delta_source_nl(delta_source);
+            format!(
+                "Déformation key via {} (α={:.1}) — modifie ce qui est trouvé",
+                src, alpha
+            )
+        }
+        AttnOp::QueryDelegate {
+            entropy_threshold,
+            query_type,
+            max_inject_tokens,
+        } => {
+            let qt = query_type_nl(query_type);
+            format!(
+                "Délègue une sous-requête ({}) si entropie > {:.1} (max {} tokens)",
+                qt, entropy_threshold, max_inject_tokens
+            )
+        }
+        AttnOp::Sequence(ops) => {
+            if ops.len() == 1 {
+                dsl_to_natural_language(&ops[0])
+            } else {
+                let descs: Vec<String> = ops.iter().map(|o| dsl_to_natural_language(o)).collect();
+                format!("Séquence : {}", descs.join(" → "))
+            }
+        }
+        AttnOp::PerHead(mappings) => {
+            format!(
+                "Routage par tête : {} groupes avec stratégies différentes",
+                mappings.len()
+            )
+        }
+        AttnOp::Conditional {
+            condition,
+            then_op,
+            else_op,
+        } => {
+            let cond = runtime_cond_nl(condition);
+            format!(
+                "Si {} : {} ; sinon : {}",
+                cond,
+                dsl_to_natural_language(then_op),
+                dsl_to_natural_language(else_op)
+            )
+        }
+    }
+}
+
+fn bias_source_nl(source: &crate::attn_dsl::BiasSource) -> String {
+    use crate::attn_dsl::BiasSource;
+    match source {
+        BiasSource::GraphDistance { max_hops } => {
+            format!("distance graphe (max {} hops)", max_hops)
+        }
+        BiasSource::SynapseEnergy => "énergie synaptique".to_string(),
+        BiasSource::Coactivation => "fréquence de co-activation".to_string(),
+        BiasSource::TemporalDecay { half_life } => {
+            format!("décroissance temporelle (t½={:.0})", half_life)
+        }
+        BiasSource::GnnPairScore { layer } => {
+            format!("score GNN couche {}", layer)
+        }
+        BiasSource::Constant(v) => format!("constante {:.1}", v),
+        BiasSource::Product(a, b) => {
+            format!("{} × {}", bias_source_nl(a), bias_source_nl(b))
+        }
+    }
+}
+
+fn delta_source_nl(source: &crate::attn_dsl::DeltaSource) -> String {
+    use crate::attn_dsl::DeltaSource;
+    match source {
+        DeltaSource::GnnDelta => "GNN".to_string(),
+        DeltaSource::NeighborMean { edge_type, .. } => {
+            if let Some(et) = edge_type {
+                format!("moyenne voisins ({})", et)
+            } else {
+                "moyenne voisins".to_string()
+            }
+        }
+        DeltaSource::CausalChain { depth, decay } => {
+            format!("chaîne causale (profondeur={}, decay={:.1})", depth, decay)
+        }
+    }
+}
+
+fn query_type_nl(qt: &crate::attn_dsl::QueryType) -> String {
+    use crate::attn_dsl::QueryType;
+    match qt {
+        QueryType::Lookup => "lookup".to_string(),
+        QueryType::Neighbors { .. } => "voisins".to_string(),
+        QueryType::CausalTrace { .. } => "trace causale".to_string(),
+        QueryType::Compute => "calcul".to_string(),
+        QueryType::FreeformGQL => "requête GQL libre".to_string(),
+    }
+}
+
+fn runtime_cond_nl(cond: &crate::attn_dsl::RuntimeCondition) -> String {
+    use crate::attn_dsl::RuntimeCondition;
+    match cond {
+        RuntimeCondition::Uncertainty { threshold } => {
+            format!("incertitude > {:.1}", threshold)
+        }
+        RuntimeCondition::TokenCount { min, max } => {
+            format!("tokens dans [{}, {}]", min, max)
+        }
+        RuntimeCondition::ContextType(ct) => format!("contexte = '{}'", ct),
+        RuntimeCondition::GraphDensity { threshold } => {
+            format!("densité graphe > {:.2}", threshold)
+        }
+    }
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -464,5 +619,50 @@ mod tests {
             strong_count > 60,
             "strong should win >60% of the time, got {strong_count}%"
         );
+    }
+
+    #[test]
+    fn test_dsl_to_nl_identity() {
+        let nl = dsl_to_natural_language(&AttnOp::Identity);
+        assert!(nl.contains("standard"), "got: {nl}");
+    }
+
+    #[test]
+    fn test_dsl_to_nl_mask() {
+        use crate::attn_dsl::MaskCondition;
+        let op = AttnOp::Mask {
+            condition: MaskCondition::GraphDistanceAbove(3),
+        };
+        let nl = dsl_to_natural_language(&op);
+        assert!(nl.contains("3 hops"), "got: {nl}");
+    }
+
+    #[test]
+    fn test_dsl_to_nl_bias_add() {
+        use crate::attn_dsl::BiasSource;
+        let op = AttnOp::BiasAdd {
+            source: BiasSource::SynapseEnergy,
+            weight: -0.5,
+        };
+        let nl = dsl_to_natural_language(&op);
+        assert!(nl.contains("Atténue"), "got: {nl}");
+        assert!(nl.contains("synaptique"), "got: {nl}");
+    }
+
+    #[test]
+    fn test_dsl_to_nl_sequence() {
+        use crate::attn_dsl::{BiasSource, MaskCondition};
+        let op = AttnOp::Sequence(vec![
+            AttnOp::Mask {
+                condition: MaskCondition::GraphDistanceAbove(2),
+            },
+            AttnOp::BiasAdd {
+                source: BiasSource::SynapseEnergy,
+                weight: 0.5,
+            },
+        ]);
+        let nl = dsl_to_natural_language(&op);
+        assert!(nl.contains("Séquence"), "got: {nl}");
+        assert!(nl.contains("→"), "got: {nl}");
     }
 }

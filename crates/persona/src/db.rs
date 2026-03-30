@@ -1635,6 +1635,9 @@ fn reward_adjusted_score(base_score: f64, reward: Option<f64>) -> f64 {
     }
 }
 
+/// Maximum :Self nodes allowed in search results (anti-narcissisme).
+const MAX_SELF_IN_RESULTS: usize = 2;
+
 impl ColdSearch for PersonaDB {
     fn search(&self, query: &str, limit: usize) -> Vec<ColdHit> {
         let store = self.db.store();
@@ -1664,6 +1667,16 @@ impl ColdSearch for PersonaDB {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        // Cap :Self nodes to prevent narcissism (Phase 4)
+        let mut self_count = 0usize;
+        results.retain(|hit| {
+            if hit.role == "self" {
+                self_count += 1;
+                self_count <= MAX_SELF_IN_RESULTS
+            } else {
+                true
+            }
         });
         results.truncate(limit);
         results
