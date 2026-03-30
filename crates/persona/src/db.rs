@@ -1632,9 +1632,78 @@ impl PersonaDB {
             patterns_auto: auto_patterns,
             conv_turns: conv_turns.len(),
             avg_reward_recent: avg_reward,
-            reward_tokens: store.nodes_by_label("RewardToken").len(),
+            reward_tokens: store.nodes_by_label("RewardToken").len()
+                + store.nodes_by_label("LearnedToken").len(),
             avg_mask_reward,
         }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // T4 — Token Polarity Persistence (LearnedToken nodes)
+    // ═════════════════════════════════════════════════════════════════════════
+
+    /// Save learned token polarities as :LearnedToken nodes.
+    /// Performs upsert: updates existing nodes or creates new ones.
+    pub fn save_learned_tokens(&self, learner: &crate::reward::TokenPolarityLearner) {
+        let store = self.db.store();
+        // Build lookup: token_id → node_id for existing LearnedToken nodes
+        let existing: HashMap<i32, NodeId> = store
+            .nodes_by_label("LearnedToken")
+            .iter()
+            .filter_map(|&nid| {
+                let node = store.get_node(nid)?;
+                let tid = node
+                    .properties
+                    .get(&PropertyKey::from("token_id"))
+                    .and_then(|v| if let Value::Int64(i) = v { Some(*i as i32) } else { None })?;
+                Some((tid, nid))
+            })
+            .collect();
+        let _ = store;
+
+        for (&token_id, &(polarity, obs_count)) in learner.export() {
+            if let Some(&nid) = existing.get(&token_id) {
+                // Update existing
+                self.db.set_node_property(nid, "polarity", Value::Float64(polarity as f64));
+                self.db.set_node_property(nid, "obs_count", Value::Int64(obs_count as i64));
+            } else {
+                // Create new
+                let nid = self.db.create_node(&["LearnedToken"]);
+                self.db.set_node_property(nid, "token_id", Value::Int64(token_id as i64));
+                self.db.set_node_property(nid, "polarity", Value::Float64(polarity as f64));
+                self.db.set_node_property(nid, "obs_count", Value::Int64(obs_count as i64));
+            }
+        }
+    }
+
+    /// Load learned token polarities from :LearnedToken nodes into a learner.
+    pub fn load_learned_tokens(&self) -> crate::reward::TokenPolarityLearner {
+        let store = self.db.store();
+        let mut data: HashMap<i32, (f32, u32)> = HashMap::new();
+        for &nid in &store.nodes_by_label("LearnedToken") {
+            if let Some(node) = store.get_node(nid) {
+                let tid = node
+                    .properties
+                    .get(&PropertyKey::from("token_id"))
+                    .and_then(|v| if let Value::Int64(i) = v { Some(*i as i32) } else { None });
+                let pol = node
+                    .properties
+                    .get(&PropertyKey::from("polarity"))
+                    .and_then(|v| if let Value::Float64(f) = v { Some(*f as f32) } else { None });
+                let obs = node
+                    .properties
+                    .get(&PropertyKey::from("obs_count"))
+                    .and_then(|v| if let Value::Int64(i) = v { Some(*i as u32) } else { None });
+
+                if let (Some(tid), Some(pol), Some(obs)) = (tid, pol, obs) {
+                    data.insert(tid, (pol, obs));
+                }
+            }
+        }
+
+        let mut learner = crate::reward::TokenPolarityLearner::new();
+        learner.import(data);
+        learner
     }
 }
 
@@ -1699,6 +1768,37 @@ impl ColdSearch for PersonaDB {
                 }
             })
             .collect();
+        // Structural injection: always include :Self nodes regardless of BM25 match.
+        // Self nodes are system metadata (like the header), not memories to search.
+        // This ensures self-awareness queries always retrieve agent state. (Phase 4 M8)
+        {
+            let self_nodes = store.nodes_by_label("Self");
+            for &nid in &self_nodes {
+                if let Some(node) = store.get_node(nid) {
+                    let value = node
+                        .properties
+                        .get(&PropertyKey::from("value"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if value.is_empty() {
+                        continue;
+                    }
+                    // Skip if already in results (from BM25 match)
+                    let already_present = results.iter().any(|r| r.role == "self" && r.content == value);
+                    if already_present {
+                        continue;
+                    }
+                    results.push(ColdHit {
+                        role: "self".to_string(),
+                        content: value.to_string(),
+                        conv_id: nid, // Self nodes use themselves as conv_id
+                        conv_title: None,
+                        score: 1.0, // Guaranteed high score for COLD→HOT promotion
+                    });
+                }
+            }
+        }
+
         // Re-sort by adjusted score and truncate
         results.sort_by(|a, b| {
             b.score

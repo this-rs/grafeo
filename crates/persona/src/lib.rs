@@ -12,4 +12,4 @@ pub use bm25::{MessageHit, MessageIndex};
 pub use db::{PersonaDB, SelfMetrics, XiStats};
 pub use facts::{PatternMatch, detect_facts, detect_facts_from_graph};
 pub use persist_net::PersistNet;
-pub use reward::{RewardDetector, RewardSignals};
+pub use reward::{RewardDetector, RewardSignals, TokenPolarityLearner};

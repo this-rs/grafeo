@@ -227,21 +227,27 @@ macos: deps
 	LLAMA_CPP_DIR=$(LLAMA_CPP_DIR) LLAMA_STATIC=1 \
 		LLAMA_BUILD_DIR=$(abspath $(LLAMA_DEPS_MACOS)) \
 		cargo build $(CARGO_FLAGS)
-	@echo "✓ $(OUT_MACOS) ($$(du -h $(OUT_MACOS) | cut -f1))"
+	@mkdir -p $(DIST_DIR)
+	@cp $(OUT_MACOS) $(DIST_DIR)/obrain-chat-macos-arm64
+	@echo "✓ $(DIST_DIR)/obrain-chat-macos-arm64 ($$(du -h $(DIST_DIR)/obrain-chat-macos-arm64 | cut -f1))"
 
 linux: deps-docker-cpu-avx2 zig-wrappers
 	@echo "=== Building obrain-chat (Linux x86_64 AVX2, static) ==="
 	LLAMA_CPP_DIR=$(LLAMA_CPP_DIR) LLAMA_STATIC=1 \
 		LLAMA_BUILD_DIR=$(abspath $(LLAMA_DEPS_LINUX_AVX2)) \
 		cargo build $(CARGO_FLAGS) --target x86_64-unknown-linux-gnu
-	@echo "✓ $(OUT_LINUX) ($$(du -h $(OUT_LINUX) | cut -f1))"
+	@mkdir -p $(DIST_DIR)
+	@cp $(OUT_LINUX) $(DIST_DIR)/obrain-chat-linux-x64
+	@echo "✓ $(DIST_DIR)/obrain-chat-linux-x64 ($$(du -h $(DIST_DIR)/obrain-chat-linux-x64 | cut -f1))"
 
 linux-compat: deps-docker-cpu-compat zig-wrappers
 	@echo "=== Building obrain-chat (Linux x86_64 SSE3 compat, static) ==="
 	LLAMA_CPP_DIR=$(LLAMA_CPP_DIR) LLAMA_STATIC=1 \
 		LLAMA_BUILD_DIR=$(abspath $(LLAMA_DEPS_LINUX_COMPAT)) \
 		cargo build $(CARGO_FLAGS) --target x86_64-unknown-linux-gnu
-	@echo "✓ $(OUT_LINUX) ($$(du -h $(OUT_LINUX) | cut -f1))"
+	@mkdir -p $(DIST_DIR)
+	@cp $(OUT_LINUX) $(DIST_DIR)/obrain-chat-linux-x64-compat
+	@echo "✓ $(DIST_DIR)/obrain-chat-linux-x64-compat ($$(du -h $(DIST_DIR)/obrain-chat-linux-x64-compat | cut -f1))"
 
 # --- GPU binaries (full Docker builds) ---
 # These MUST build inside Docker because the GPU runtime libs

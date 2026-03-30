@@ -832,6 +832,8 @@ fn main() -> Result<()> {
     let mut last_conv_turn_id: Option<NodeId> = None; // Ξ(t) T1: for TEMPORAL_NEXT chain
     let mut last_used_fact_ids: Vec<NodeId> = Vec::new(); // Ξ(t) T3: for reward propagation
     let mut prev_header_top5: Vec<String> = Vec::new(); // Ξ(t) T6: track top-5 fact keys for diff
+    let mut reward_running_avg: f64 = 0.0; // EMA of composite reward for :Self metrics
+    let mut mask_reward_running_avg: f64 = 0.0; // EMA of factual_signal for :Self metrics
 
     // ── Profile-heads mode: capture attention patterns and export ───
     if let (Some(n_profile_queries), Some(profiler)) = (profile_heads, &mut head_profiler) {
@@ -913,10 +915,20 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Ξ(t) T3: Initialize RewardDetector
+    // Ξ(t) T3: Initialize RewardDetector (+ T4: load learned token polarities)
     let mut reward_detector: Option<RewardDetector> = persona_db
         .as_ref()
-        .map(|_pdb| RewardDetector::new());
+        .map(|pdb| {
+            let mut rd = RewardDetector::new();
+            // T4: Restore learned token polarities from PersonaDB
+            rd.token_learner = pdb.load_learned_tokens();
+            let n = rd.token_learner.tracked_count();
+            if n > 0 {
+                eprintln!("  [T4] Loaded {} learned token polarities ({} reliable)",
+                    n, rd.token_learner.reliable_count());
+            }
+            rd
+        });
 
     // Ξ(t) T4: Initialize FactGNN
     let mut fact_gnn: Option<persona::fact_gnn::FactGNN> = persona_db.as_ref().map(|pdb| {
@@ -1977,10 +1989,20 @@ fn main() -> Result<()> {
                     }
                 }
 
+                // T4: Always tokenize current input for prev_query_tokens tracking
+                // (even when last_conv_turn_id is None, i.e., turn 1)
+                let user_tokens_for_reward = engine.tokenize(&line, false, false).unwrap_or_default();
+                if let Some(rd) = &mut reward_detector {
+                    if last_conv_turn_id.is_none() && !user_tokens_for_reward.is_empty() {
+                        // Turn 1: no conv turn yet, but seed prev_query_tokens for turn 2 comparison
+                        rd.prev_query_tokens = user_tokens_for_reward.clone();
+                    }
+                }
+
                 if let (Some(rd), Some(pdb), Some(prev_ct)) =
                     (&mut reward_detector, &persona_db, last_conv_turn_id)
                 {
-                    let user_tokens = engine.tokenize(&line, false, false).unwrap_or_default();
+                    let user_tokens = user_tokens_for_reward;
                     // Ξ(t) T4: Enriched reward with factual success + entropy signal
                     let facts_for_reward: Vec<(String, String)> = current_facts.clone();
                     let signals = rd.compute_reward(
@@ -1999,26 +2021,33 @@ fn main() -> Result<()> {
                         last_avg_entropy, // Ξ(t) T5: entropy signal from previous turn's generation
                     );
                     let reward = signals.reward;
-                    if reward.abs() > 0.01 {
-                        rd.propagate_reward_ex(
-                            pdb,
-                            prev_ct,
-                            reward,
-                            &last_used_fact_ids,
-                            Some(signals.factual_signal),
-                        );
-                        debug!(
-                            "  [Reward] turn #{}: {:.2} (mask_quality={:.2})",
-                            turn_count - 1,
-                            reward,
-                            signals.factual_signal
-                        );
+                    // T4: observe user tokens for polarity learning (always, even if reward ≈ 0)
+                    rd.token_learner.observe(&user_tokens, reward);
 
-                        // Ξ(t) T4+T5: GNN online update with mask-quality-weighted reward.
-                        // The factual_signal measures whether the topology mask guided
-                        // attention to facts the model actually used. Blend it with
-                        // the composite reward to give the GNN a stronger gradient
-                        // toward node selection that produces useful attention patterns.
+                    // Update running averages for :Self metrics (EMA α=0.1)
+                    reward_running_avg = 0.9 * reward_running_avg + 0.1 * reward as f64;
+                    mask_reward_running_avg = 0.9 * mask_reward_running_avg + 0.1 * signals.factual_signal as f64;
+
+                    // Always propagate reward and log (no threshold — even small
+                    // engagement signals matter for convergence tracking, M1/M2/M7)
+                    rd.propagate_reward_ex(
+                        pdb,
+                        prev_ct,
+                        reward,
+                        &last_used_fact_ids,
+                        Some(signals.factual_signal),
+                    );
+                    debug!(
+                        "  [Reward] turn #{}: {:.2} (mask_quality={:.2}, polarity_tokens={})",
+                        turn_count - 1,
+                        reward,
+                        signals.factual_signal,
+                        rd.token_learner.reliable_count()
+                    );
+
+                    // Ξ(t) T4+T5: GNN online update with mask-quality-weighted reward.
+                    // Guard: skip GNN gradient updates on micro-rewards to avoid noise.
+                    if reward.abs() > 0.005 {
                         if let Some(ref mut gnn) = fact_gnn {
                             let store = pdb.db.store();
                             let scores = gnn.forward(
@@ -2039,185 +2068,185 @@ fn main() -> Result<()> {
                                 reward
                             );
                         }
+                    }
 
-                        // Ξ(t) PersistNet REINFORCE: propagate reward to previous persist decision
-                        if let (Some(pnet), Some((proj, prev_score))) =
-                            (&mut persist_net, &last_persist_result)
-                        {
-                            pnet.update(proj, *prev_score, reward);
-                            debug!(
-                                "  [PersistNet] REINFORCE: reward={:.2}, prev_score={:.2}, updates={}",
-                                reward, prev_score, pnet.n_updates
-                            );
-                        }
+                    // Ξ(t) PersistNet REINFORCE: propagate reward to previous persist decision
+                    if let (Some(pnet), Some((proj, prev_score))) =
+                        (&mut persist_net, &last_persist_result)
+                    {
+                        pnet.update(proj, *prev_score, reward);
+                        debug!(
+                            "  [PersistNet] REINFORCE: reward={:.2}, prev_score={:.2}, updates={}",
+                            reward, prev_score, pnet.n_updates
+                        );
+                    }
 
-                        // Ξ(t) Phase B/B3: HeadRouter REINFORCE update (deferred)
-                        // Use per-head ablation reward from PREVIOUS turn (when reward is known)
-                        if let Some(ref mut router) = head_router {
-                            if let Some(ref abl) = last_ablation_reward {
-                                // B3: per-head reward scaled by user feedback reward
-                                let scaled: Vec<f32> = abl
-                                    .per_head_rewards
-                                    .iter()
-                                    .map(|&r| r * reward.signum()) // scale direction by user reward
-                                    .collect();
-                                let visibility = router.forward();
-                                router.backward(&scaled, &visibility);
-                                debug!(
-                                    "  [HeadRouter B3] deferred update #{}, user_reward={:.2}, head_entropy={:.3}",
-                                    router.n_updates, reward, abl.head_contribution_entropy
-                                );
-                            } else {
-                                router.backward_uniform(reward);
-                            }
-                            if router.n_updates % 10 == 0 && router.n_updates > 0 {
-                                debug!(
-                                    "  [HeadRouter] update #{}, specialization_entropy={:.3}",
-                                    router.n_updates,
-                                    router.specialization_entropy()
-                                );
-                            }
-                        }
-
-                        // Phase 4 TP.2: Train self-embedding projector + HeadRouter self_alpha
-                        // Disabled by default (Phase 5) — superseded by state_kq_b.
-                        #[cfg(feature = "self_embed_proprio")]
-                        if !self_embed_positions.is_empty() {
-                            if let Some(ref mut proj) = self_projector {
-                                proj.train_step(reward);
-                                debug!(
-                                    "  [Proprio] projector trained: reward={:.2}, updates={}",
-                                    reward, proj.n_updates
-                                );
-                            }
-                            if let Some(ref mut router) = head_router {
-                                router.backward_self(reward);
-                                debug!(
-                                    "  [Proprio] HeadRouter self_alpha updated: reward={:.2}",
-                                    reward
-                                );
-                            }
-                        }
-
-                        // Phase 4 AFE: Propagate reward to the formula that was active
-                        if let (Some(fid), Some(pdb2)) =
-                            (last_formula_node_id, &persona_db)
-                        {
-                            pdb2.update_formula_reward(fid, reward as f64);
-                            debug!(
-                                "  [AFE] formula reward: id={:?}, reward={:.2}",
-                                fid, reward
-                            );
-                            // Homeostasis: check if mutation should be triggered
-                            let formulas = pdb2.list_formulas();
-                            let rewards: Vec<f64> = formulas
+                    // Ξ(t) Phase B/B3: HeadRouter REINFORCE update (deferred)
+                    // Use per-head ablation reward from PREVIOUS turn (when reward is known)
+                    if let Some(ref mut router) = head_router {
+                        if let Some(ref abl) = last_ablation_reward {
+                            // B3: per-head reward scaled by user feedback reward
+                            let scaled: Vec<f32> = abl
+                                .per_head_rewards
                                 .iter()
-                                .map(|f| f.avg_reward)
+                                .map(|&r| r * reward.signum()) // scale direction by user reward
                                 .collect();
-                            if retrieval::formula_evolution::should_mutate_burst(&rewards, 0.05) {
-                                // Find the active formula and mutate it
-                                if let Some(active) = formulas.iter().find(|f| f.id == fid) {
-                                    if let Ok(op) =
-                                        serde_json::from_str::<AttnOp>(&active.dsl_json)
-                                    {
-                                        let mut rng = retrieval::formula_evolution::Rng::new(
-                                            turn_count as u64,
+                            let visibility = router.forward();
+                            router.backward(&scaled, &visibility);
+                            debug!(
+                                "  [HeadRouter B3] deferred update #{}, user_reward={:.2}, head_entropy={:.3}",
+                                router.n_updates, reward, abl.head_contribution_entropy
+                            );
+                        } else {
+                            router.backward_uniform(reward);
+                        }
+                        if router.n_updates % 10 == 0 && router.n_updates > 0 {
+                            debug!(
+                                "  [HeadRouter] update #{}, specialization_entropy={:.3}",
+                                router.n_updates,
+                                router.specialization_entropy()
+                            );
+                        }
+                    }
+
+                    // Phase 4 TP.2: Train self-embedding projector + HeadRouter self_alpha
+                    // Disabled by default (Phase 5) — superseded by state_kq_b.
+                    #[cfg(feature = "self_embed_proprio")]
+                    if !self_embed_positions.is_empty() {
+                        if let Some(ref mut proj) = self_projector {
+                            proj.train_step(reward);
+                            debug!(
+                                "  [Proprio] projector trained: reward={:.2}, updates={}",
+                                reward, proj.n_updates
+                            );
+                        }
+                        if let Some(ref mut router) = head_router {
+                            router.backward_self(reward);
+                            debug!(
+                                "  [Proprio] HeadRouter self_alpha updated: reward={:.2}",
+                                reward
+                            );
+                        }
+                    }
+
+                    // Phase 4 AFE: Propagate reward to the formula that was active
+                    if let (Some(fid), Some(pdb2)) =
+                        (last_formula_node_id, &persona_db)
+                    {
+                        pdb2.update_formula_reward(fid, reward as f64);
+                        debug!(
+                            "  [AFE] formula reward: id={:?}, reward={:.2}",
+                            fid, reward
+                        );
+                        // Homeostasis: check if mutation should be triggered
+                        let formulas = pdb2.list_formulas();
+                        let rewards: Vec<f64> = formulas
+                            .iter()
+                            .map(|f| f.avg_reward)
+                            .collect();
+                        if retrieval::formula_evolution::should_mutate_burst(&rewards, 0.05) {
+                            // Find the active formula and mutate it
+                            if let Some(active) = formulas.iter().find(|f| f.id == fid) {
+                                if let Ok(op) =
+                                    serde_json::from_str::<AttnOp>(&active.dsl_json)
+                                {
+                                    let mut rng = retrieval::formula_evolution::Rng::new(
+                                        turn_count as u64,
+                                    );
+                                    let mutated =
+                                        retrieval::formula_evolution::mutate(&op, &mut rng);
+                                    if let Ok(json) = serde_json::to_string(&mutated.op) {
+                                        let affinity_refs: Vec<&str> = active
+                                            .context_affinity
+                                            .iter()
+                                            .map(|s| s.as_str())
+                                            .collect();
+                                        let child_id = pdb2.add_formula(
+                                            &format!("{}-m{}", active.name, active.generation + 1),
+                                            &json,
+                                            &affinity_refs,
+                                            active.generation + 1,
+                                            Some(fid),
                                         );
-                                        let mutated =
-                                            retrieval::formula_evolution::mutate(&op, &mut rng);
-                                        if let Ok(json) = serde_json::to_string(&mutated.op) {
-                                            let affinity_refs: Vec<&str> = active
-                                                .context_affinity
-                                                .iter()
-                                                .map(|s| s.as_str())
-                                                .collect();
-                                            let child_id = pdb2.add_formula(
-                                                &format!("{}-m{}", active.name, active.generation + 1),
-                                                &json,
-                                                &affinity_refs,
-                                                active.generation + 1,
-                                                Some(fid),
-                                            );
-                                            debug!(
-                                                "  [AFE] mutation triggered: {} -> {:?} ({:?})",
-                                                active.name, child_id, mutated.mutation_type
-                                            );
-                                        }
+                                        debug!(
+                                            "  [AFE] mutation triggered: {} -> {:?} ({:?})",
+                                            active.name, child_id, mutated.mutation_type
+                                        );
                                     }
                                 }
                             }
-                            // GC: cull dead formulas if population exceeded
-                            let gc_candidates: Vec<retrieval::formula_evolution::GcCandidate> =
-                                formulas
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(i, f)| retrieval::formula_evolution::GcCandidate {
-                                        index: i,
-                                        energy: f.energy,
-                                        activation_count: f.activation_count,
-                                        generation: f.generation,
-                                    })
-                                    .collect();
-                            let gc_targets =
-                                retrieval::formula_evolution::gc_candidates(
-                                    &gc_candidates, 0.05, 50, 50,
-                                );
-                            for idx in gc_targets {
-                                if let Some(f) = formulas.get(idx) {
-                                    pdb2.deactivate_formula(f.id);
-                                    debug!("  [AFE] GC deactivated: {}", f.name);
-                                }
+                        }
+                        // GC: cull dead formulas if population exceeded
+                        let gc_candidates: Vec<retrieval::formula_evolution::GcCandidate> =
+                            formulas
+                                .iter()
+                                .enumerate()
+                                .map(|(i, f)| retrieval::formula_evolution::GcCandidate {
+                                    index: i,
+                                    energy: f.energy,
+                                    activation_count: f.activation_count,
+                                    generation: f.generation,
+                                })
+                                .collect();
+                        let gc_targets =
+                            retrieval::formula_evolution::gc_candidates(
+                                &gc_candidates, 0.05, 50, 50,
+                            );
+                        for idx in gc_targets {
+                            if let Some(f) = formulas.get(idx) {
+                                pdb2.deactivate_formula(f.id);
+                                debug!("  [AFE] GC deactivated: {}", f.name);
                             }
                         }
+                    }
 
-                        // Mark memories as "useful" when reward is positive
-                        if reward > 0.1 {
-                            if let Some(pdb2) = &persona_db {
-                                for mem_id in pdb2.active_memory_ids() {
-                                    pdb2.mark_memory_useful(mem_id, turn_count);
-                                }
-                            }
-                        }
-
-                        // Persist the CORRECTED assistant response when user gives positive feedback.
-                        // This closes the main learning gap: PersistNet only persists user messages,
-                        // but the correction (assistant's improved answer) is what matters for recall.
-                        if reward > 0.3
-                            && !last_assistant_response.is_empty()
-                            && last_assistant_response.len() > 20
-                        {
-                            if let Some(pdb2) = &persona_db {
-                                let mem_id = pdb2.add_memory(
-                                    &format!("[correction] {}", last_assistant_response),
-                                    reward as f32,
-                                    turn_count.saturating_sub(1),
-                                    last_conv_turn_id,
-                                );
-                                debug!(
-                                    "  🧠 Assistant correction persisted (reward={:.2}, id={}, len={})",
-                                    reward,
-                                    mem_id.0,
-                                    last_assistant_response.len()
-                                );
-                            }
-                        }
-
-                        // Propagate reward to :Message nodes in PersonaDB (Fix #3)
-                        // This allows BM25 COLD search to boost validated corrections
+                    // Mark memories as "useful" when reward is positive
+                    if reward > 0.1 {
                         if let Some(pdb2) = &persona_db {
-                            if let Some(uid) = last_user_msg_id {
-                                pdb2.set_message_reward(uid, reward as f64);
+                            for mem_id in pdb2.active_memory_ids() {
+                                pdb2.mark_memory_useful(mem_id, turn_count);
                             }
-                            if let Some(aid) = last_asst_msg_id {
-                                pdb2.set_message_reward(aid, reward as f64);
-                            }
+                        }
+                    }
+
+                    // Persist the CORRECTED assistant response when user gives positive feedback.
+                    // This closes the main learning gap: PersistNet only persists user messages,
+                    // but the correction (assistant's improved answer) is what matters for recall.
+                    if reward > 0.3
+                        && !last_assistant_response.is_empty()
+                        && last_assistant_response.len() > 20
+                    {
+                        if let Some(pdb2) = &persona_db {
+                            let mem_id = pdb2.add_memory(
+                                &format!("[correction] {}", last_assistant_response),
+                                reward as f32,
+                                turn_count.saturating_sub(1),
+                                last_conv_turn_id,
+                            );
                             debug!(
-                                "  [Reward→Message] propagated {:.2} to user={:?}, asst={:?}",
+                                "  🧠 Assistant correction persisted (reward={:.2}, id={}, len={})",
                                 reward,
-                                last_user_msg_id.map(|n| n.0),
-                                last_asst_msg_id.map(|n| n.0)
+                                mem_id.0,
+                                last_assistant_response.len()
                             );
                         }
+                    }
+
+                    // Propagate reward to :Message nodes in PersonaDB (Fix #3)
+                    // This allows BM25 COLD search to boost validated corrections
+                    if let Some(pdb2) = &persona_db {
+                        if let Some(uid) = last_user_msg_id {
+                            pdb2.set_message_reward(uid, reward as f64);
+                        }
+                        if let Some(aid) = last_asst_msg_id {
+                            pdb2.set_message_reward(aid, reward as f64);
+                        }
+                        debug!(
+                            "  [Reward→Message] propagated {:.2} to user={:?}, asst={:?}",
+                            reward,
+                            last_user_msg_id.map(|n| n.0),
+                            last_asst_msg_id.map(|n| n.0)
+                        );
                     }
                 }
 
@@ -2412,8 +2441,8 @@ fn main() -> Result<()> {
                         })
                         .unwrap_or_default();
                     let metrics = persona::SelfMetrics {
-                        reward_avg: last_avg_entropy.unwrap_or(0.0) as f64,
-                        mask_reward_avg: 0.0, // filled from reward signals when available
+                        reward_avg: reward_running_avg,
+                        mask_reward_avg: mask_reward_running_avg,
                         head_router_top5: head_top5,
                         formula_active_name: formula_name,
                         formula_explanation: formula_expl,
@@ -2448,6 +2477,19 @@ fn main() -> Result<()> {
                 }
             }
             Err(e) => eprintln!("  Error: {e}\n"),
+        }
+    }
+
+    // Ξ(t) T4 (zero-seed): Save learned token polarities at session end
+    if let (Some(rd), Some(pdb)) = (&reward_detector, &persona_db) {
+        pdb.save_learned_tokens(&rd.token_learner);
+        let tracked = rd.token_learner.tracked_count();
+        let reliable = rd.token_learner.reliable_count();
+        if tracked > 0 {
+            debug!(
+                "  [T4] Token polarities saved ({} tracked, {} reliable)",
+                tracked, reliable
+            );
         }
     }
 

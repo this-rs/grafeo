@@ -9,7 +9,95 @@ use std::collections::{HashMap, HashSet};
 // Architecture: 100% language-agnostic. No hardcoded reward tokens.
 // All signals are structural (reformulation, engagement, factual success,
 // generation entropy). Works in any language from turn 1.
+//
+// T4 — Token Polarity Auto-Learning: after each turn, observe() accumulates
+// an EMA of structural reward per token_id. After ≥20 observations, discovered
+// polarities feed back as a 5th signal. This auto-discovers "merci" = positive,
+// "faux" = negative in any language.
 // ═══════════════════════════════════════════════════════════════════════════════
+
+/// Minimum observations before a token's polarity is considered reliable.
+const MIN_OBSERVATIONS: u32 = 20;
+
+/// EMA smoothing factor for token polarity updates.
+const EMA_ALPHA: f32 = 0.15;
+
+/// Token Polarity Auto-Learner.
+///
+/// Accumulates an exponential moving average (EMA) of structural reward per
+/// token_id. After `MIN_OBSERVATIONS` observations, the polarity is considered
+/// reliable and contributes to the composite reward.
+///
+/// Zero-seed: starts empty. Discovers language-specific reward tokens
+/// autonomously from conversation structure (e.g., "merci" → positive,
+/// "reformuler" → negative).
+pub struct TokenPolarityLearner {
+    /// token_id → (ema_polarity, observation_count)
+    polarities: HashMap<i32, (f32, u32)>,
+}
+
+impl TokenPolarityLearner {
+    pub fn new() -> Self {
+        TokenPolarityLearner {
+            polarities: HashMap::new(),
+        }
+    }
+
+    /// Observe a set of tokens with their associated structural reward.
+    /// Updates the EMA for each unique token in the input.
+    pub fn observe(&mut self, tokens: &[i32], reward: f32) {
+        // Deduplicate tokens to avoid over-counting repeated tokens in one turn
+        let unique: HashSet<i32> = tokens.iter().copied().collect();
+        for tid in unique {
+            let entry = self.polarities.entry(tid).or_insert((0.0, 0));
+            entry.1 += 1; // count
+            // EMA update: polarity = α * reward + (1-α) * polarity
+            entry.0 = EMA_ALPHA * reward + (1.0 - EMA_ALPHA) * entry.0;
+        }
+    }
+
+    /// Get the polarity signal for a set of tokens.
+    /// Returns the mean polarity of tokens that have ≥ MIN_OBSERVATIONS,
+    /// or None if no token has enough observations.
+    pub fn get_polarity(&self, tokens: &[i32]) -> Option<f32> {
+        let unique: HashSet<i32> = tokens.iter().copied().collect();
+        let mut sum = 0.0f32;
+        let mut count = 0u32;
+        for tid in unique {
+            if let Some(&(pol, obs)) = self.polarities.get(&tid) {
+                if obs >= MIN_OBSERVATIONS {
+                    sum += pol;
+                    count += 1;
+                }
+            }
+        }
+        if count > 0 {
+            Some(sum / count as f32)
+        } else {
+            None
+        }
+    }
+
+    /// Number of distinct tokens being tracked.
+    pub fn tracked_count(&self) -> usize {
+        self.polarities.len()
+    }
+
+    /// Number of tokens with enough observations to be reliable.
+    pub fn reliable_count(&self) -> usize {
+        self.polarities.values().filter(|(_, obs)| *obs >= MIN_OBSERVATIONS).count()
+    }
+
+    /// Export all polarities (for persistence).
+    pub fn export(&self) -> &HashMap<i32, (f32, u32)> {
+        &self.polarities
+    }
+
+    /// Import polarities (from persistence).
+    pub fn import(&mut self, data: HashMap<i32, (f32, u32)>) {
+        self.polarities = data;
+    }
+}
 
 /// Decomposed reward signals — allows callers to inspect individual components.
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
@@ -34,9 +122,14 @@ impl std::fmt::Display for RewardSignals {
 
 /// Structural reward detector. Computes reward [-1.0, +1.0] from conversation
 /// structure alone — no hardcoded token lists, works in any language.
+///
+/// Includes an optional token polarity learner (T4) that auto-discovers
+/// reward-associated tokens from structural signals.
 pub struct RewardDetector {
     /// Previous turn's token IDs for reformulation detection
     pub prev_query_tokens: Vec<i32>,
+    /// T4: Auto-learned token polarities from structural reward
+    pub token_learner: TokenPolarityLearner,
 }
 
 impl RewardDetector {
@@ -44,16 +137,18 @@ impl RewardDetector {
     pub fn new() -> Self {
         RewardDetector {
             prev_query_tokens: Vec::new(),
+            token_learner: TokenPolarityLearner::new(),
         }
     }
 
     /// Compute reward [-1.0, +1.0] for the previous turn based on the current user input.
     ///
-    /// Signals (4 total, weighted — all structural, zero lexical dependency):
+    /// Signals (5 total, weighted — all structural/learned, zero hardcoded lexical dependency):
     /// 1. Reformulation (0.30) — cosine > 0.85 on token bags → user is rephrasing = bad
     /// 2. Engagement (0.10) — longer sessions → small positive signal
-    /// 3. Factual success (0.35) — did the response use injected facts/memories?
+    /// 3. Factual success (0.20) — did the response use injected facts/memories?
     /// 4. Entropy signal (0.25) — low entropy = confident generation = good context
+    /// 5. Token polarity (0.15) — auto-learned EMA per token_id (T4, kicks in after ≥20 obs)
     ///
     /// Optional params (None = backward compatible):
     /// - `injected_facts`: the (key, value) facts that were in the header
@@ -113,13 +208,18 @@ impl RewardDetector {
             _ => 0.0,                   // neutral or not provided
         };
 
+        // (5) Token polarity — auto-learned from structural reward (T4)
+        let polarity_signal = self.token_learner.get_polarity(user_tokens).unwrap_or(0.0);
+
         self.prev_query_tokens = user_tokens.to_vec();
 
-        // Weighted combination: 0.30 + 0.10 + 0.35 + 0.25 = 1.0
+        // Weighted combination: 0.30 + 0.10 + 0.20 + 0.25 + 0.15 = 1.0
+        // Note: factual went from 0.35 to 0.20 when T4 polarity (0.15) was added
         let reward = (0.30 * reformulation_penalty
             + 0.10 * engagement
-            + 0.35 * factual_signal
-            + 0.25 * entropy_signal)
+            + 0.20 * factual_signal
+            + 0.25 * entropy_signal
+            + 0.15 * polarity_signal)
             .clamp(-1.0, 1.0);
 
         RewardSignals {
