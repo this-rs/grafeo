@@ -1,3 +1,21 @@
+//! # PersonaDB — Zero-Seed Cognitive Architecture
+//!
+//! A persona starts empty and learns everything from conversation structure:
+//!
+//! - **PersistNet**: Neural persistence (embedding → persist_score → memory).
+//!   Language-agnostic, uses LLM hidden states. Primary persistence mechanism.
+//!
+//! - **Formula Evolution**: Starts with F0-Identity only. Mutations explore
+//!   the AttnOp DSL space, structural reward selects winners. No handcrafted
+//!   attention formulas.
+//!
+//! - **Structural Reward**: 4 signals, zero lexical dependency:
+//!   reformulation detection, engagement, factual success, generation entropy.
+//!   Works in any language from turn 1.
+//!
+//! - **Existing facts/patterns**: Legacy data in DB remains accessible but
+//!   no new pattern-based facts are created in the default path.
+
 use anyhow::{Context, Result};
 use chrono::Utc;
 use obrain::ObrainDB;

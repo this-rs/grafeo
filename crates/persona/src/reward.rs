@@ -4,7 +4,11 @@ use obrain_core::graph::Direction;
 use std::collections::{HashMap, HashSet};
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Ξ(t) T3 — RewardDetector: implicit token-level reward signals
+// Ξ(t) T3 — RewardDetector: structural reward signals (zero-seed)
+//
+// Architecture: 100% language-agnostic. No hardcoded reward tokens.
+// All signals are structural (reformulation, engagement, factual success,
+// generation entropy). Works in any language from turn 1.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Decomposed reward signals — allows callers to inspect individual components.
@@ -28,160 +32,33 @@ impl std::fmt::Display for RewardSignals {
     }
 }
 
-/// Token-level reward detector. Computes reward [-1.0, +1.0] from user's response
-/// to evaluate the quality of the previous LLM answer. Zero LLM decode overhead.
+/// Structural reward detector. Computes reward [-1.0, +1.0] from conversation
+/// structure alone — no hardcoded token lists, works in any language.
 pub struct RewardDetector {
-    /// token_id → polarity (-1.0 to +1.0), loaded from :RewardToken nodes
-    pub token_polarity: HashMap<i32, f32>,
     /// Previous turn's token IDs for reformulation detection
     pub prev_query_tokens: Vec<i32>,
 }
 
 impl RewardDetector {
-    /// Seed default :RewardToken nodes if none exist in PersonaDB.
-    pub fn seed_default_reward_tokens(pdb: &PersonaDB) {
-        let store = pdb.db.store();
-        if !store.nodes_by_label("RewardToken").is_empty() {
-            return;
-        }
-
-        let defaults: &[(&str, f32, &str)] = &[
-            // French positive
-            ("merci", 0.8, "fr"),
-            ("oui", 0.3, "fr"),
-            ("parfait", 0.9, "fr"),
-            ("super", 0.7, "fr"),
-            ("exactement", 0.8, "fr"),
-            ("génial", 0.8, "fr"),
-            ("excellent", 0.9, "fr"),
-            ("bravo", 0.7, "fr"),
-            ("bien joué", 0.7, "fr"),
-            ("c'est ça", 0.6, "fr"),
-            ("top", 0.6, "fr"),
-            ("nickel", 0.7, "fr"),
-            // French negative
-            ("non", -0.3, "fr"),
-            ("faux", -0.7, "fr"),
-            ("incorrect", -0.8, "fr"),
-            ("pas ça", -0.6, "fr"),
-            ("c'est faux", -0.8, "fr"),
-            ("erreur", -0.6, "fr"),
-            ("nul", -0.5, "fr"),
-            ("mauvais", -0.5, "fr"),
-            // English positive
-            ("thanks", 0.8, "en"),
-            ("thank you", 0.9, "en"),
-            ("yes", 0.3, "en"),
-            ("perfect", 0.9, "en"),
-            ("great", 0.7, "en"),
-            ("excellent", 0.9, "en"),
-            ("exactly", 0.8, "en"),
-            ("correct", 0.6, "en"),
-            ("awesome", 0.7, "en"),
-            ("nice", 0.5, "en"),
-            ("good", 0.4, "en"),
-            // English negative
-            ("no", -0.3, "en"),
-            ("wrong", -0.7, "en"),
-            ("incorrect", -0.8, "en"),
-            ("bad", -0.5, "en"),
-            ("not right", -0.6, "en"),
-            ("terrible", -0.8, "en"),
-            // Spanish
-            ("gracias", 0.8, "es"),
-            ("sí", 0.3, "es"),
-            ("perfecto", 0.9, "es"),
-            ("excelente", 0.9, "es"),
-            ("no", -0.3, "es"),
-            ("mal", -0.5, "es"),
-            ("incorrecto", -0.8, "es"),
-            // German
-            ("danke", 0.8, "de"),
-            ("ja", 0.3, "de"),
-            ("perfekt", 0.9, "de"),
-            ("nein", -0.3, "de"),
-            ("falsch", -0.7, "de"),
-            // Portuguese
-            ("obrigado", 0.8, "pt"),
-            ("obrigada", 0.8, "pt"),
-            ("sim", 0.3, "pt"),
-            ("perfeito", 0.9, "pt"),
-            ("não", -0.3, "pt"),
-            ("errado", -0.7, "pt"),
-        ];
-
-        for &(word, polarity, lang) in defaults {
-            pdb.db.create_node_with_props(
-                &["RewardToken"],
-                [
-                    ("word", Value::String(word.to_string().into())),
-                    ("polarity", Value::Float64(polarity as f64)),
-                    ("lang", Value::String(lang.to_string().into())),
-                ],
-            );
-        }
-    }
-
-    /// Build RewardDetector by loading :RewardToken nodes and tokenizing them.
-    pub fn new(pdb: &PersonaDB, engine: &dyn kv_registry::Tokenizer) -> Self {
-        let store = pdb.db.store();
-        let mut token_polarity: HashMap<i32, f32> = HashMap::new();
-
-        for &nid in &store.nodes_by_label("RewardToken") {
-            if let Some(node) = store.get_node(nid) {
-                let word = node
-                    .properties
-                    .get(&PropertyKey::from("word"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let polarity = node
-                    .properties
-                    .get(&PropertyKey::from("polarity"))
-                    .and_then(|v| {
-                        if let Value::Float64(f) = v {
-                            Some(*f as f32)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(0.0);
-
-                if word.is_empty() {
-                    continue;
-                }
-
-                // Tokenize the word — each token ID gets the polarity
-                if let Ok(tokens) = engine.tokenize(word, false, false) {
-                    for &tid in &tokens {
-                        // If a token appears in multiple words, keep the strongest polarity
-                        let entry = token_polarity.entry(tid).or_insert(0.0);
-                        if polarity.abs() > entry.abs() {
-                            *entry = polarity;
-                        }
-                    }
-                }
-            }
-        }
-
+    /// Create a new RewardDetector. No seeds, no tokenizer needed.
+    pub fn new() -> Self {
         RewardDetector {
-            token_polarity,
             prev_query_tokens: Vec::new(),
         }
     }
 
     /// Compute reward [-1.0, +1.0] for the previous turn based on the current user input.
     ///
-    /// Signals (5 total, weighted):
-    /// 1. Token polarity (0.30) — overlap with reward tokens from graph
-    /// 2. Reformulation (0.20) — cosine > 0.85 on token bags → user is rephrasing = bad
-    /// 3. Engagement (0.10) — longer sessions → small positive signal
-    /// 4. Factual success (0.25) — did the response use injected facts?
-    /// 5. Entropy signal (0.15) — low entropy = confident generation = good context
+    /// Signals (4 total, weighted — all structural, zero lexical dependency):
+    /// 1. Reformulation (0.30) — cosine > 0.85 on token bags → user is rephrasing = bad
+    /// 2. Engagement (0.10) — longer sessions → small positive signal
+    /// 3. Factual success (0.35) — did the response use injected facts/memories?
+    /// 4. Entropy signal (0.25) — low entropy = confident generation = good context
     ///
-    /// New optional params (None = backward compatible):
+    /// Optional params (None = backward compatible):
     /// - `injected_facts`: the (key, value) facts that were in the header
     /// - `response_text`: the LLM response text (for fact matching)
-    /// - `avg_entropy`: average entropy from GenerationSignals (passed as f32 to avoid coupling)
+    /// - `avg_entropy`: average entropy from GenerationSignals
     pub fn compute_reward(
         &mut self,
         user_tokens: &[i32],
@@ -198,22 +75,7 @@ impl RewardDetector {
             };
         }
 
-        // (1) Token polarity signal
-        let mut polarity_sum: f32 = 0.0;
-        let mut polarity_count: u32 = 0;
-        for &tid in user_tokens {
-            if let Some(&pol) = self.token_polarity.get(&tid) {
-                polarity_sum += pol;
-                polarity_count += 1;
-            }
-        }
-        let token_signal = if polarity_count > 0 {
-            (polarity_sum / polarity_count.max(1) as f32).clamp(-0.5, 0.5)
-        } else {
-            0.0
-        };
-
-        // (2) Reformulation detection
+        // (1) Reformulation detection
         let reformulation_penalty = if !self.prev_query_tokens.is_empty() && !user_tokens.is_empty()
         {
             let cos = Self::bag_cosine(user_tokens, &self.prev_query_tokens);
@@ -222,10 +84,10 @@ impl RewardDetector {
             0.0
         };
 
-        // (3) Engagement bonus
+        // (2) Engagement bonus
         let engagement = 0.02 * (turn_count.min(20) as f32);
 
-        // (4) Factual success — did the response use injected facts?
+        // (3) Factual success — did the response use injected facts?
         let factual_signal = match (injected_facts, response_text) {
             (Some(facts), Some(resp)) if !facts.is_empty() => {
                 let resp_lower = resp.to_lowercase();
@@ -244,7 +106,7 @@ impl RewardDetector {
             _ => 0.0, // no facts or no response → neutral
         };
 
-        // (5) Entropy signal — low entropy = confident = good context
+        // (4) Entropy signal — low entropy = confident = good context
         let entropy_signal = match avg_entropy {
             Some(e) if e < 1.5 => 0.1,  // confident generation
             Some(e) if e > 3.0 => -0.1, // very uncertain
@@ -253,12 +115,11 @@ impl RewardDetector {
 
         self.prev_query_tokens = user_tokens.to_vec();
 
-        // Weighted combination: 0.30 + 0.20 + 0.10 + 0.25 + 0.15 = 1.0
-        let reward = (0.30 * token_signal
-            + 0.20 * reformulation_penalty
+        // Weighted combination: 0.30 + 0.10 + 0.35 + 0.25 = 1.0
+        let reward = (0.30 * reformulation_penalty
             + 0.10 * engagement
-            + 0.25 * factual_signal
-            + 0.15 * entropy_signal)
+            + 0.35 * factual_signal
+            + 0.25 * entropy_signal)
             .clamp(-1.0, 1.0);
 
         RewardSignals {

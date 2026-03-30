@@ -49,7 +49,7 @@ use retrieval::{
 use retrieval::iptr_graph::FactSnapshot;
 use retrieval::state_bias::StateMetrics;
 
-use persona::{PersonaDB, RewardDetector, detect_facts, detect_facts_from_graph};
+use persona::{PersonaDB, RewardDetector};
 use retrieval::attn_dsl::AttnOp;
 use retrieval::formula_selector::{
     FormulaCandidate, FormulaSelector, SelectedFormula, dsl_to_natural_language,
@@ -374,8 +374,7 @@ fn main() -> Result<()> {
         let persona_db = match persona::PersonaDB::open(&persona_resolved_path) {
             Ok(cdb) => {
                 cdb.migrate_facts();
-                cdb.seed_default_patterns();
-                persona::RewardDetector::seed_default_reward_tokens(&cdb);
+                // Zero-seed: no pattern seeding, PersistNet handles persistence
                 Some(cdb)
             }
             Err(e) => {
@@ -624,10 +623,8 @@ fn main() -> Result<()> {
                     );
                 }
             }
-            // Ξ(t) T1: migrate old facts + seed patterns + reward tokens at startup
+            // Ξ(t) T1: migrate old facts at startup (zero-seed: no patterns/reward tokens)
             cdb.migrate_facts();
-            cdb.seed_default_patterns();
-            RewardDetector::seed_default_reward_tokens(&cdb);
             Some(cdb)
         }
         Err(e) => {
@@ -831,8 +828,7 @@ fn main() -> Result<()> {
     }
 
     let mut turn_count: u32 = 0;
-    #[allow(unused_assignments)]
-    let mut current_facts = persona_facts; // live-updated when facts change
+    let current_facts = persona_facts; // existing facts from DB (zero-seed: no new pattern-based facts)
     let mut last_conv_turn_id: Option<NodeId> = None; // Ξ(t) T1: for TEMPORAL_NEXT chain
     let mut last_used_fact_ids: Vec<NodeId> = Vec::new(); // Ξ(t) T3: for reward propagation
     let mut prev_header_top5: Vec<String> = Vec::new(); // Ξ(t) T6: track top-5 fact keys for diff
@@ -920,7 +916,7 @@ fn main() -> Result<()> {
     // Ξ(t) T3: Initialize RewardDetector
     let mut reward_detector: Option<RewardDetector> = persona_db
         .as_ref()
-        .map(|pdb| RewardDetector::new(pdb, &engine));
+        .map(|_pdb| RewardDetector::new());
 
     // Ξ(t) T4: Initialize FactGNN
     let mut fact_gnn: Option<persona::fact_gnn::FactGNN> = persona_db.as_ref().map(|pdb| {
@@ -1353,7 +1349,7 @@ fn main() -> Result<()> {
                 let store = pdb.db.store();
                 let patterns = store.nodes_by_label("Pattern");
                 if patterns.is_empty() {
-                    eprintln!("  (no patterns — run seed_default_patterns)");
+                    eprintln!("  (no patterns — zero-seed mode, PersistNet handles persistence)");
                 } else {
                     let mut items: Vec<(String, i64, f64, bool, bool)> = Vec::new();
                     for &nid in &patterns {
@@ -2385,40 +2381,9 @@ fn main() -> Result<()> {
                     last_persist_result = Some((projected, persist_score));
                 }
 
-                // Pattern-based fact detection — runs ALWAYS when PersonaDB is available,
-                // independently of PersistNet (memories and facts are complementary).
-                if let Some(ref pdb) = persona_db {
-                    let matches = detect_facts_from_graph(pdb, &line);
-                    if !matches.is_empty() {
-                        for m in &matches {
-                            let fact_id = pdb.add_fact(&m.key, &m.value, turn_count, conv_turn_id);
-                            pdb.db.create_edge(m.pattern_nid, fact_id, "EXTRACTS");
-                            eprintln!(
-                                "  💾 Fact stored: {} = {} (pattern={})",
-                                m.key, m.value, m.pattern_nid.0
-                            );
-                        }
-                        current_facts = pdb.active_facts();
-                        // Rebuild unified header with both facts and memories
-                        let scored = score_persona_facts(&current_facts, &fact_gnn, &persona_db);
-                        let memories = pdb.active_memories();
-                        let new_header = build_unified_header(store.is_some(), &scored, &memories);
-                        registry.update_header(&new_header);
-                        debug!(
-                            "  Header updated with {} facts + {} memories",
-                            scored.len(),
-                            memories.len()
-                        );
-                    }
-                } else {
-                    // No PersonaDB — use legacy hardcoded detection
-                    let detected = detect_facts(&line);
-                    if !detected.is_empty() {
-                        for (key, value) in &detected {
-                            eprintln!("  💾 Fact detected (no DB): {} = {}", key, value);
-                        }
-                    }
-                }
+                // Zero-seed: PersistNet handles all persistence (above).
+                // Pattern-based fact detection removed — it required hardcoded
+                // language-specific triggers. Existing facts in DB remain accessible.
 
                 // Phase 4: Update :Self introspective metrics
                 if let Some(ref pdb) = persona_db {

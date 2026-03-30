@@ -313,8 +313,12 @@ pub fn mutate(op: &AttnOp, rng: &mut Rng) -> MutationResult {
 /// Returns `true` if the variance of recent rewards is below threshold,
 /// indicating the population should receive a mutation burst.
 pub fn should_mutate_burst(recent_rewards: &[f64], variance_threshold: f64) -> bool {
+    // Zero-seed: with ≤2 formulas, always trigger mutations to bootstrap diversity
+    if recent_rewards.len() <= 2 {
+        return true;
+    }
     if recent_rewards.len() < 5 {
-        return false; // not enough data
+        return false; // not enough data for variance estimation
     }
     let mean = recent_rewards.iter().sum::<f64>() / recent_rewards.len() as f64;
     let variance =

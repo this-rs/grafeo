@@ -1,8 +1,9 @@
 //! Attention formula management: seed formulas, CRUD, and evolution support.
 //!
+//! Zero-seed architecture: only F0-Identity is seeded. All other formulas
+//! emerge through mutation + selection by structural reward.
 //! Formulas are stored as `:AttnFormula` nodes in PersonaDB with their DSL
-//! serialized as JSON. This module defines the seed formulas and provides
-//! helpers for the formula lifecycle.
+//! serialized as JSON.
 
 use obrain_common::types::NodeId;
 
@@ -30,54 +31,26 @@ pub struct AttnFormulaNode {
     pub parent_id: Option<NodeId>,
 }
 
-/// The 6 seed formulas as JSON strings.
+/// Seed formula: Identity only.
 ///
-/// These are pre-serialized to avoid a dependency on `retrieval` from `persona`.
-/// The AttnOp enum lives in `retrieval::attn_dsl` — we serialize the seeds
-/// as known-good JSON that round-trips correctly.
+/// Zero-seed principle: the system starts with no attention overlay.
+/// The formula evolution mechanism (mutation + structural reward selection)
+/// discovers useful formulas autonomously. This works in any language
+/// and for any model architecture.
 pub fn seed_formulas() -> Vec<(&'static str, &'static str, Vec<&'static str>)> {
     vec![
         // F0: Identity — no modification to attention (baseline)
+        // All other formulas emerge through evolution.
         (
             "F0-Identity",
             r#""Identity""#,
             vec![],
         ),
-        // F1: GravityLinear — closer nodes in the graph get more attention
-        (
-            "F1-GravityLinear",
-            r#"{"BiasAdd":{"source":{"GraphDistance":{"max_hops":4}},"weight":1.0}}"#,
-            vec!["factual", "multi_hop"],
-        ),
-        // F2: RepulsionCompeting — mask far nodes + attenuate weak synapses
-        (
-            "F2-RepulsionCompeting",
-            r#"{"Sequence":[{"Mask":{"condition":{"GraphDistanceAbove":3}}},{"BiasAdd":{"source":"SynapseEnergy","weight":-0.5}}]}"#,
-            vec!["reasoning", "negation"],
-        ),
-        // F3: WarpGNN — use GNN hidden states to warp queries (placeholder until GNN)
-        (
-            "F3-WarpGNN",
-            r#"{"WarpQ":{"delta_source":"GnnDelta","alpha":0.5}}"#,
-            vec!["complex", "multi_hop"],
-        ),
-        // F4: PerHeadTopo — heads 0-15 see all, heads 16-31 only close nodes
-        (
-            "F4-PerHeadTopo",
-            r#"{"PerHead":[[[0,16],"Identity"],[[16,32],{"Mask":{"condition":{"GraphDistanceAbove":2}}}]]}"#,
-            vec!["structured", "factual"],
-        ),
-        // F5: QueryDelegateCompute — delegate to graph when uncertain
-        (
-            "F5-QueryDelegateCompute",
-            r#"{"QueryDelegate":{"entropy_threshold":1.5,"query_type":"Compute","max_inject_tokens":32}}"#,
-            vec!["math", "computation"],
-        ),
     ]
 }
 
 /// Number of seed formulas.
-pub const SEED_COUNT: usize = 6;
+pub const SEED_COUNT: usize = 1;
 
 /// Maximum population size before GC triggers.
 pub const MAX_POPULATION: usize = 50;
