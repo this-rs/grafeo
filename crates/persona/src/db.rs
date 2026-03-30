@@ -22,7 +22,7 @@ use obrain::ObrainDB;
 use obrain_common::types::{NodeId, PropertyKey, Value};
 use obrain_core::graph::Direction;
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::bm25::{MessageHit, MessageIndex};
 use kv_registry::{ColdHit, ColdSearch};
@@ -991,123 +991,8 @@ impl PersonaDB {
         }
     }
 
-    // ── Pattern management (Ξ(t) T1.3) ──────────────────────────
-
-    /// Seed default extraction patterns, adding any missing ones.
-    /// Unlike seed_formulas_if_empty, this is additive: it checks each trigger
-    /// individually so new patterns get added to existing DBs.
-    pub fn seed_default_patterns(&self) {
-        let store = self.db.store();
-        let existing = store.nodes_by_label("Pattern");
-
-        // Collect existing triggers for dedup
-        let existing_triggers: std::collections::HashSet<String> = existing
-            .iter()
-            .filter_map(|&nid| {
-                store.get_node(nid).and_then(|n| {
-                    n.properties
-                        .get(&PropertyKey::from("trigger"))
-                        .and_then(|v| v.as_str().map(|s| s.to_string()))
-                })
-            })
-            .collect();
-
-        let defaults = [
-            // Identity patterns — 1st person (most common in conversation!)
-            ("je m'appelle ", "name", "identity"),
-            ("je m appelle ", "name", "identity"),
-            ("mon nom est ", "name", "identity"),
-            ("mon nom c'est ", "name", "identity"),
-            ("mon prénom est ", "name", "identity"),
-            ("mon prénom c'est ", "name", "identity"),
-            ("my name is ", "name", "identity"),
-            ("i'm ", "identity", "identity"),
-            ("i am ", "identity", "identity"),
-            ("je suis ", "identity", "identity"),
-            // Identity patterns — 2nd person (commands)
-            ("ton nom est ", "name", "identity"),
-            ("tu t'appelles ", "name", "identity"),
-            ("tu es ", "identity", "identity"),
-            ("appelle-toi ", "name", "identity"),
-            ("your name is ", "name", "identity"),
-            ("you are ", "identity", "identity"),
-            ("call yourself ", "name", "identity"),
-            // Location patterns
-            ("j'habite à ", "city", "preference"),
-            ("j'habite a ", "city", "preference"),
-            ("j'habite en ", "country", "preference"),
-            ("je vis à ", "city", "preference"),
-            ("je vis a ", "city", "preference"),
-            ("je vis en ", "country", "preference"),
-            ("i live in ", "city", "preference"),
-            // Preference patterns
-            ("ma couleur préférée est ", "preference_color", "preference"),
-            (
-                "ma couleur préférée c'est ",
-                "preference_color",
-                "preference",
-            ),
-            ("ma couleur preferee est ", "preference_color", "preference"),
-            (
-                "ma couleur preferee c'est ",
-                "preference_color",
-                "preference",
-            ),
-            ("my favorite color is ", "preference_color", "preference"),
-            ("j'aime ", "preference", "preference"),
-            ("j'adore ", "preference", "preference"),
-            ("je préfère ", "preference", "preference"),
-            ("je deteste ", "dislike", "preference"),
-            ("je déteste ", "dislike", "preference"),
-            ("i like ", "preference", "preference"),
-            ("i love ", "preference", "preference"),
-            ("i hate ", "dislike", "preference"),
-            // Work/occupation
-            ("je travaille ", "work", "identity"),
-            ("je suis étudiant ", "occupation", "identity"),
-            ("je suis étudiante ", "occupation", "identity"),
-            ("i work ", "work", "identity"),
-            // Memory patterns
-            ("retiens que ", "memory", "episodic"),
-            ("rappelle-toi que ", "memory", "episodic"),
-            ("rappelle toi que ", "memory", "episodic"),
-            ("n'oublie pas que ", "memory", "episodic"),
-            ("remember that ", "memory", "episodic"),
-            ("don't forget that ", "memory", "episodic"),
-            // Language/preference patterns
-            ("réponds toujours en ", "language", "preference"),
-            ("reponds toujours en ", "language", "preference"),
-            ("parle toujours en ", "language", "preference"),
-            ("always respond in ", "language", "preference"),
-            ("always answer in ", "language", "preference"),
-        ];
-
-        let mut added = 0u32;
-        for (trigger, key_template, fact_type) in defaults {
-            if existing_triggers.contains(trigger) {
-                continue;
-            }
-            self.db.create_node_with_props(
-                &["Pattern"],
-                [
-                    ("trigger", Value::String(trigger.to_string().into())),
-                    (
-                        "key_template",
-                        Value::String(key_template.to_string().into()),
-                    ),
-                    ("fact_type", Value::String(fact_type.to_string().into())),
-                    ("hit_count", Value::Int64(0)),
-                    ("avg_reward", Value::Float64(0.0)),
-                    ("auto_generated", Value::Bool(false)),
-                    ("active", Value::Bool(true)),
-                ],
-            );
-            added += 1;
-        }
-        if added > 0 {
-            eprintln!("  [Persona] Seeded {} new patterns (total: {})", added, existing.len() + added as usize);
-        }
-    }
+    // Pattern management removed — PersistNet handles persistence neurally.
+    // See decision 4e25ec00 (PersistNet) and 7e4bf948 (zero-seed).
 
     // ── Migration (Ξ(t) T1.5) ───────────────────────────────────
 
@@ -1166,244 +1051,17 @@ impl PersonaDB {
         }
     }
 
-    // ── Ξ(t) T5: Pattern Auto-Generation ────────────────────────
-
-    /// Extract n-grams (2 and 3 words) from text, lowercased, stopwords removed.
-    pub fn extract_ngrams(text: &str, max_n: usize) -> Vec<String> {
-        const STOPWORDS: &[&str] = &[
-            "le", "la", "les", "de", "du", "des", "un", "une", "est", "a", "et", "en", "au", "aux",
-            "que", "qui", "the", "is", "of", "a", "an", "and", "in", "to", "it", "for", "on",
-            "with", "at", "by", "i", "je", "tu", "il", "elle", "nous", "vous", "ils", "me", "te",
-            "se", "ce", "ça",
-        ];
-        let lower = text.to_lowercase();
-        let words: Vec<String> = lower
-            .split_whitespace()
-            .filter(|w| !STOPWORDS.contains(w) && w.len() > 1)
-            .map(|s| s.to_string())
-            .collect();
-
-        let mut ngrams = Vec::new();
-        for n in 2..=max_n.min(3) {
-            if words.len() >= n {
-                for window in words.windows(n) {
-                    ngrams.push(window.join(" "));
-                }
-            }
-        }
-        ngrams
-    }
-
-    /// Try to auto-generate new :Pattern nodes from frequent n-grams in ConvTurn queries.
-    /// Call every ~5 turns. Max 2 new patterns per call.
-    pub fn try_generate_patterns(&self) -> u32 {
-        let store = self.db.store();
-        let facts: Vec<NodeId> = store
-            .nodes_by_label("Fact")
-            .iter()
-            .filter(|&&nid| {
-                store
-                    .get_node(nid)
-                    .and_then(|n| {
-                        n.properties
-                            .get(&PropertyKey::from("confidence"))
-                            .and_then(|v| {
-                                if let Value::Float64(f) = v {
-                                    Some(*f > 0.7)
-                                } else {
-                                    None
-                                }
-                            })
-                    })
-                    .unwrap_or(false)
-            })
-            .copied()
-            .collect();
-
-        if facts.len() < 3 {
-            return 0;
-        }
-
-        // Collect query texts from ConvTurns that produced high-confidence facts
-        let mut query_texts: Vec<String> = Vec::new();
-        for &fid in &facts {
-            for (target, _) in store
-                .edges_from(fid, Direction::Outgoing)
-                .collect::<Vec<_>>()
-            {
-                if let Some(node) = store.get_node(target) {
-                    let is_conv = node.labels.iter().any(|l| {
-                        let s: &str = l.as_ref();
-                        s == "ConvTurn"
-                    });
-                    if is_conv {
-                        if let Some(qt) = node
-                            .properties
-                            .get(&PropertyKey::from("query_text"))
-                            .and_then(|v| v.as_str())
-                        {
-                            query_texts.push(qt.to_string());
-                        }
-                    }
-                }
-            }
-        }
-
-        if query_texts.len() < 3 {
-            return 0;
-        }
-
-        // Count n-grams across all query texts
-        let mut ngram_counts: HashMap<String, u32> = HashMap::new();
-        for qt in &query_texts {
-            let ngrams = Self::extract_ngrams(qt, 3);
-            for ng in ngrams {
-                *ngram_counts.entry(ng).or_insert(0) += 1;
-            }
-        }
-
-        // Get existing pattern triggers for dedup
-        let existing_triggers: HashSet<String> = store
-            .nodes_by_label("Pattern")
-            .iter()
-            .filter_map(|&nid| {
-                store.get_node(nid).and_then(|n| {
-                    n.properties
-                        .get(&PropertyKey::from("trigger"))
-                        .and_then(|v| v.as_str().map(|s| s.to_string()))
-                })
-            })
-            .collect();
-
-        // Find frequent n-grams not already covered
-        let mut generated = 0u32;
-        let mut candidates: Vec<(String, u32)> = ngram_counts
-            .into_iter()
-            .filter(|(ng, count)| {
-                *count >= 3 && !existing_triggers.iter().any(|t| t.contains(ng.as_str()))
-            })
-            .collect();
-        candidates.sort_by(|a, b| b.1.cmp(&a.1));
-
-        for (ngram, _count) in candidates.iter().take(2) {
-            let trigger = format!("{} ", ngram); // trailing space for prefix match
-            self.db.create_node_with_props(
-                &["Pattern"],
-                [
-                    ("trigger", Value::String(trigger.clone().into())),
-                    ("key_template", Value::String("memory".to_string().into())),
-                    ("fact_type", Value::String("episodic".to_string().into())),
-                    ("hit_count", Value::Int64(0)),
-                    ("avg_reward", Value::Float64(0.0)),
-                    ("auto_generated", Value::Bool(true)),
-                    ("active", Value::Bool(true)),
-                ],
-            );
-            generated += 1;
-        }
-
-        // Promote patterns: auto_generated=true, hit_count >= 5, avg_reward > 0.4
-        for &nid in &store.nodes_by_label("Pattern") {
-            if let Some(node) = store.get_node(nid) {
-                let auto = node
-                    .properties
-                    .get(&PropertyKey::from("auto_generated"))
-                    .and_then(|v| {
-                        if let Value::Bool(b) = v {
-                            Some(*b)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(false);
-                if !auto {
-                    continue;
-                }
-                let hits = node
-                    .properties
-                    .get(&PropertyKey::from("hit_count"))
-                    .and_then(|v| {
-                        if let Value::Int64(n) = v {
-                            Some(*n)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(0);
-                let avg_r = node
-                    .properties
-                    .get(&PropertyKey::from("avg_reward"))
-                    .and_then(|v| {
-                        if let Value::Float64(f) = v {
-                            Some(*f)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(0.0);
-                if hits >= 5 && avg_r > 0.4 {
-                    self.db
-                        .set_node_property(nid, "auto_generated", Value::Bool(false));
-                }
-            }
-        }
-
-        generated
-    }
+    // Pattern Auto-Generation removed — PersistNet handles persistence neurally.
+    // See decision 4e25ec00 and 7e4bf948 (zero-seed architecture).
 
     // ── Ξ(t) T5: Garbage Collection ─────────────────────────────
 
-    /// Garbage-collect dead patterns, low-energy facts, and old ConvTurns.
+    /// Garbage-collect low-energy facts and old ConvTurns.
     /// Call every ~20 turns.
     pub fn gc_persona_graph(&self, current_turn: u32) {
         let store = self.db.store();
 
-        // (1) Deactivate patterns with hit_count > 5 and avg_reward < 0.2
-        for &nid in &store.nodes_by_label("Pattern") {
-            if let Some(node) = store.get_node(nid) {
-                let active = node
-                    .properties
-                    .get(&PropertyKey::from("active"))
-                    .and_then(|v| {
-                        if let Value::Bool(b) = v {
-                            Some(*b)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(true);
-                if !active {
-                    continue;
-                }
-                let hits = node
-                    .properties
-                    .get(&PropertyKey::from("hit_count"))
-                    .and_then(|v| {
-                        if let Value::Int64(n) = v {
-                            Some(*n)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(0);
-                let avg_r = node
-                    .properties
-                    .get(&PropertyKey::from("avg_reward"))
-                    .and_then(|v| {
-                        if let Value::Float64(f) = v {
-                            Some(*f)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(0.0);
-                if hits > 5 && avg_r < 0.2 {
-                    self.db.set_node_property(nid, "active", Value::Bool(false));
-                }
-            }
-        }
-
-        // (2) Deactivate facts with energy < 0.1 and no recent USED_IN
+        // (1) Deactivate facts with energy < 0.1 and no recent USED_IN
         for &nid in &store.nodes_by_label("Fact") {
             if let Some(node) = store.get_node(nid) {
                 let active = node
@@ -1533,46 +1191,6 @@ impl PersonaDB {
                 / active_facts.len() as f64
         };
 
-        let all_patterns = store.nodes_by_label("Pattern");
-        let active_patterns: Vec<_> = all_patterns
-            .iter()
-            .filter(|&&nid| {
-                store
-                    .get_node(nid)
-                    .and_then(|n| {
-                        n.properties
-                            .get(&PropertyKey::from("active"))
-                            .and_then(|v| {
-                                if let Value::Bool(b) = v {
-                                    Some(*b)
-                                } else {
-                                    None
-                                }
-                            })
-                    })
-                    .unwrap_or(true)
-            })
-            .collect();
-        let auto_patterns = all_patterns
-            .iter()
-            .filter(|&&nid| {
-                store
-                    .get_node(nid)
-                    .and_then(|n| {
-                        n.properties
-                            .get(&PropertyKey::from("auto_generated"))
-                            .and_then(|v| {
-                                if let Value::Bool(b) = v {
-                                    Some(*b)
-                                } else {
-                                    None
-                                }
-                            })
-                    })
-                    .unwrap_or(false)
-            })
-            .count();
-
         let conv_turns = store.nodes_by_label("ConvTurn");
         let rewards: Vec<f64> = conv_turns
             .iter()
@@ -1627,13 +1245,9 @@ impl PersonaDB {
             facts_total: all_facts.len(),
             avg_energy,
             avg_confidence,
-            patterns_active: active_patterns.len(),
-            patterns_total: all_patterns.len(),
-            patterns_auto: auto_patterns,
             conv_turns: conv_turns.len(),
             avg_reward_recent: avg_reward,
-            reward_tokens: store.nodes_by_label("RewardToken").len()
-                + store.nodes_by_label("LearnedToken").len(),
+            memories: store.nodes_by_label("Memory").len(),
             avg_mask_reward,
         }
     }
@@ -1717,12 +1331,10 @@ pub struct XiStats {
     pub facts_total: usize,
     pub avg_energy: f64,
     pub avg_confidence: f64,
-    pub patterns_active: usize,
-    pub patterns_total: usize,
-    pub patterns_auto: usize,
     pub conv_turns: usize,
     pub avg_reward_recent: f64,
-    pub reward_tokens: usize,
+    /// PersistNet :Memory nodes count
+    pub memories: usize,
     /// Average mask_reward over last 20 turns (topology mask quality signal)
     pub avg_mask_reward: f64,
 }
@@ -1768,36 +1380,9 @@ impl ColdSearch for PersonaDB {
                 }
             })
             .collect();
-        // Structural injection: always include :Self nodes regardless of BM25 match.
-        // Self nodes are system metadata (like the header), not memories to search.
-        // This ensures self-awareness queries always retrieve agent state. (Phase 4 M8)
-        {
-            let self_nodes = store.nodes_by_label("Self");
-            for &nid in &self_nodes {
-                if let Some(node) = store.get_node(nid) {
-                    let value = node
-                        .properties
-                        .get(&PropertyKey::from("value"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    if value.is_empty() {
-                        continue;
-                    }
-                    // Skip if already in results (from BM25 match)
-                    let already_present = results.iter().any(|r| r.role == "self" && r.content == value);
-                    if already_present {
-                        continue;
-                    }
-                    results.push(ColdHit {
-                        role: "self".to_string(),
-                        content: value.to_string(),
-                        conv_id: nid, // Self nodes use themselves as conv_id
-                        conv_title: None,
-                        score: 1.0, // Guaranteed high score for COLD→HOT promotion
-                    });
-                }
-            }
-        }
+        // NOTE: Self node injection is in search_pairs() — the active COLD→HOT path.
+        // search() is only used as trait default fallback; search_pairs() is always
+        // called by find_relevant_with_cold().
 
         // Re-sort by adjusted score and truncate
         results.sort_by(|a, b| {
@@ -1875,6 +1460,60 @@ impl ColdSearch for PersonaDB {
                 Some((primary, adjacent))
             })
             .collect();
+        // Structural injection: always include :Self nodes as pairs (self_hit, None).
+        // Self nodes are system metadata — they must transit through COLD→HOT
+        // regardless of BM25 match. This is the active path (search_pairs is called
+        // by find_relevant_with_cold, not search).
+        {
+            let self_nodes = store.nodes_by_label("Self");
+            kv_registry::kv_debug!(
+                "[COLD] search_pairs: {} BM25 pairs, {} Self nodes in graph",
+                pairs.len(),
+                self_nodes.len()
+            );
+            let mut self_injected = 0usize;
+            for &nid in &self_nodes {
+                if self_injected >= MAX_SELF_IN_RESULTS {
+                    break;
+                }
+                if let Some(node) = store.get_node(nid) {
+                    let value = node
+                        .properties
+                        .get(&PropertyKey::from("value"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if value.is_empty() {
+                        continue;
+                    }
+                    // Skip if already present in BM25 results
+                    let already_present = pairs
+                        .iter()
+                        .any(|(p, _)| p.role == "self" && p.content == value);
+                    if already_present {
+                        continue;
+                    }
+                    pairs.push((
+                        ColdHit {
+                            role: "self".to_string(),
+                            content: value.to_string(),
+                            conv_id: nid,
+                            conv_title: None,
+                            score: 1.0, // Guaranteed high score for COLD→HOT promotion
+                        },
+                        None, // Self nodes are standalone, no adjacent message
+                    ));
+                    self_injected += 1;
+                }
+            }
+            if self_injected > 0 {
+                kv_registry::kv_debug!(
+                    "[COLD] Injected {} Self nodes into search_pairs (total pairs: {})",
+                    self_injected,
+                    pairs.len()
+                );
+            }
+        }
+
         // Re-sort by primary adjusted score and truncate
         pairs.sort_by(|a, b| {
             b.0.score

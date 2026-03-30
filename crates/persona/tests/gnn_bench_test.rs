@@ -82,7 +82,7 @@ fn bench_reward_propagation() {
     let _store = pdb.db.store();
     let rd = RewardDetector {
         token_polarity: std::collections::HashMap::new(),
-        prev_query_tokens: Vec::new(),
+        prev_query_history: Vec::new(),
     };
 
     // Warmup

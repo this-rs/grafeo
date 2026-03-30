@@ -32,7 +32,7 @@ fn cleanup(suffix: &str) {
 fn mock_reward_detector(polarities: &[(i32, f32)]) -> RewardDetector {
     RewardDetector {
         token_polarity: polarities.iter().copied().collect(),
-        prev_query_tokens: Vec::new(),
+        prev_query_history: Vec::new(),
     }
 }
 
@@ -272,7 +272,7 @@ fn t5_cost_tracking_updates_on_reward_propagation() {
     // Build a mock RewardDetector and propagate positive reward
     let rd = RewardDetector {
         token_polarity: HashMap::new(),
-        prev_query_tokens: Vec::new(),
+        prev_query_history: Vec::new(),
     };
     rd.propagate_reward(&pdb, ct_id, 0.8, &[fid1, fid2]);
 
@@ -584,7 +584,7 @@ fn t5_reinforces_edges_created_on_high_reward() {
 
     let rd = RewardDetector {
         token_polarity: HashMap::new(),
-        prev_query_tokens: Vec::new(),
+        prev_query_history: Vec::new(),
     };
 
     // Low reward → NO REINFORCES

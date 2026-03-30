@@ -637,10 +637,10 @@ fn main() -> Result<()> {
         eprintln!(
             "\nCommands: /quit, /schema, /kv, /banks, /history, /conversations, /new <title>"
         );
-        eprintln!("  Ξ(t): /facts, /patterns, /stats, /addpattern <trigger>|<key>|<type>\n");
+        eprintln!("  Ξ(t): /facts, /stats\n");
     } else {
         eprintln!("\nCommands: /quit, /history, /conversations, /new <title>");
-        eprintln!("  Ξ(t): /facts, /patterns, /stats, /addpattern <trigger>|<key>|<type>\n");
+        eprintln!("  Ξ(t): /facts, /stats\n");
     }
 
     // ── Load persistent facts and build dynamic system header ──
@@ -1355,118 +1355,7 @@ fn main() -> Result<()> {
             }
             continue;
         }
-        // Ξ(t) T2: /patterns — list extraction patterns
-        if line == "/patterns" {
-            if let Some(ref pdb) = persona_db {
-                let store = pdb.db.store();
-                let patterns = store.nodes_by_label("Pattern");
-                if patterns.is_empty() {
-                    eprintln!("  (no patterns — zero-seed mode, PersistNet handles persistence)");
-                } else {
-                    let mut items: Vec<(String, i64, f64, bool, bool)> = Vec::new();
-                    for &nid in &patterns {
-                        if let Some(node) = store.get_node(nid) {
-                            let trigger = node
-                                .properties
-                                .get(&PropertyKey::from("trigger"))
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("?")
-                                .to_string();
-                            let hits = node
-                                .properties
-                                .get(&PropertyKey::from("hit_count"))
-                                .and_then(|v| {
-                                    if let Value::Int64(n) = v {
-                                        Some(*n)
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .unwrap_or(0);
-                            let avg_r = node
-                                .properties
-                                .get(&PropertyKey::from("avg_reward"))
-                                .and_then(|v| {
-                                    if let Value::Float64(f) = v {
-                                        Some(*f)
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .unwrap_or(0.0);
-                            let auto = node
-                                .properties
-                                .get(&PropertyKey::from("auto_generated"))
-                                .and_then(|v| {
-                                    if let Value::Bool(b) = v {
-                                        Some(*b)
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .unwrap_or(false);
-                            let active = node
-                                .properties
-                                .get(&PropertyKey::from("active"))
-                                .and_then(|v| {
-                                    if let Value::Bool(b) = v {
-                                        Some(*b)
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .unwrap_or(true);
-                            items.push((trigger, hits, avg_r, auto, active));
-                        }
-                    }
-                    items.sort_by(|a, b| b.1.cmp(&a.1)); // sort by hit_count desc
-                    eprintln!("  Extraction patterns ({}):", items.len());
-                    for (trigger, hits, avg_r, auto, active) in &items {
-                        let tag = if *auto { " [auto]" } else { "" };
-                        let status = if *active { "" } else { " [OFF]" };
-                        eprintln!(
-                            "    \"{trigger}\" → hits={hits}, avg_reward={avg_r:.2}{tag}{status}"
-                        );
-                    }
-                }
-            } else {
-                eprintln!("  No persona DB");
-            }
-            continue;
-        }
-        // Ξ(t) T2: /addpattern <trigger> <key_template> <fact_type>
-        if line.starts_with("/addpattern ") {
-            if let Some(ref pdb) = persona_db {
-                let rest = line.strip_prefix("/addpattern ").unwrap().trim();
-                // Parse: "trigger text" key_template fact_type
-                // Or simpler: trigger|key|type separated by |
-                let parts: Vec<&str> = rest.splitn(3, '|').collect();
-                if parts.len() == 3 {
-                    let trigger = parts[0].trim();
-                    let key_tmpl = parts[1].trim();
-                    let fact_type = parts[2].trim();
-                    pdb.db.create_node_with_props(
-                        &["Pattern"],
-                        [
-                            ("trigger", Value::String(trigger.to_string().into())),
-                            ("key_template", Value::String(key_tmpl.to_string().into())),
-                            ("fact_type", Value::String(fact_type.to_string().into())),
-                            ("hit_count", Value::Int64(0)),
-                            ("avg_reward", Value::Float64(0.0)),
-                            ("auto_generated", Value::Bool(false)),
-                            ("active", Value::Bool(true)),
-                        ],
-                    );
-                    eprintln!("  ✅ Pattern added: \"{trigger}\" → {key_tmpl} ({fact_type})");
-                } else {
-                    eprintln!("  Usage: /addpattern trigger text|key_template|fact_type");
-                    eprintln!("  Example: /addpattern mon surnom est |nickname|identity");
-                }
-            } else {
-                eprintln!("  No persona DB");
-            }
-            continue;
-        }
+        // /patterns and /addpattern commands removed — PersistNet handles persistence.
         // Ξ(t) T5: /stats — system metrics
         if line == "/stats" {
             if let Some(ref pdb) = persona_db {
@@ -1478,14 +1367,10 @@ fn main() -> Result<()> {
                     "  ║ Facts:    {}/{} active (avg_e={:.2}, avg_c={:.2})",
                     s.facts_active, s.facts_total, s.avg_energy, s.avg_confidence
                 );
-                eprintln!(
-                    "  ║ Patterns: {}/{} active ({} auto-generated)",
-                    s.patterns_active, s.patterns_total, s.patterns_auto
-                );
+                eprintln!("  ║ Memories: {} (PersistNet)", s.memories);
                 eprintln!("  ║ ConvTurns: {}", s.conv_turns);
                 eprintln!("  ║ Reward:   {:.3} (last 20 avg)", s.avg_reward_recent);
                 eprintln!("  ║ MaskQual: {:.3} (last 20 avg)", s.avg_mask_reward);
-                eprintln!("  ║ RewardTokens: {} loaded", s.reward_tokens);
                 if let Some(ref gnn) = fact_gnn {
                     eprintln!(
                         "  ║ GNN:     dim={}, updates={}, lr={:.4}",
@@ -1989,13 +1874,13 @@ fn main() -> Result<()> {
                     }
                 }
 
-                // T4: Always tokenize current input for prev_query_tokens tracking
+                // T4: Always tokenize current input for prev_query_history tracking
                 // (even when last_conv_turn_id is None, i.e., turn 1)
                 let user_tokens_for_reward = engine.tokenize(&line, false, false).unwrap_or_default();
                 if let Some(rd) = &mut reward_detector {
                     if last_conv_turn_id.is_none() && !user_tokens_for_reward.is_empty() {
-                        // Turn 1: no conv turn yet, but seed prev_query_tokens for turn 2 comparison
-                        rd.prev_query_tokens = user_tokens_for_reward.clone();
+                        // Turn 1: no conv turn yet, but seed history for turn 2 comparison
+                        rd.prev_query_history.push(user_tokens_for_reward.clone());
                     }
                 }
 
@@ -2463,14 +2348,8 @@ fn main() -> Result<()> {
                 // B3: Store ablation reward for deferred backward at next turn
                 last_ablation_reward = ablation_reward;
 
-                // Ξ(t) T5: Periodic pattern auto-generation and garbage collection
+                // Ξ(t) T5: Periodic garbage collection
                 if let Some(ref pdb) = persona_db {
-                    if turn_count % 5 == 0 {
-                        let generated = pdb.try_generate_patterns();
-                        if generated > 0 {
-                            debug!("  [AutoGen] Generated {} new patterns", generated);
-                        }
-                    }
                     if turn_count % 20 == 0 {
                         pdb.gc_persona_graph(turn_count);
                     }
@@ -2478,6 +2357,29 @@ fn main() -> Result<()> {
             }
             Err(e) => eprintln!("  Error: {e}\n"),
         }
+    }
+
+    // Flush reward for the last turn (normally computed at the *next* user input,
+    // which doesn't exist at /quit). Uses a neutral "end of session" signal:
+    // no reformulation, no new tokens — only engagement + entropy + polarity.
+    if let (Some(rd), Some(pdb), Some(prev_ct)) =
+        (&mut reward_detector, &persona_db, last_conv_turn_id)
+    {
+        let signals = rd.compute_reward(
+            &[],         // no user tokens at quit
+            turn_count,  // current turn count for engagement
+            None,        // no injected facts
+            None,        // no response text
+            last_avg_entropy,
+        );
+        let reward = signals.reward;
+        rd.propagate_reward_ex(pdb, prev_ct, reward, &last_used_fact_ids, Some(signals.factual_signal));
+        // Note: no EMA update needed here — SelfMetrics were already written in the main loop.
+        // The flush only ensures the last turn's reward is propagated to the persona graph.
+        debug!(
+            "  [Reward] flush last turn #{}: {:.2} (engagement-only at quit)",
+            turn_count, reward
+        );
     }
 
     // Ξ(t) T4 (zero-seed): Save learned token polarities at session end

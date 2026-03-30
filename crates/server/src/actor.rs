@@ -3,7 +3,7 @@ use graph_schema::GraphSchema;
 use kv_registry::{ConvFragments, KvBank, KvNodeRegistry};
 use obrain_common::types::NodeId;
 use obrain_core::graph::lpg::LpgStore;
-use persona::{PersonaDB, detect_facts_from_graph, fact_gnn::FactGNN};
+use persona::{PersonaDB, fact_gnn::FactGNN};
 use retrieval::{Engine, GenerationControl, OutputMode, is_meta_query, query_with_registry};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -424,10 +424,8 @@ impl ActorHandle {
             let asst_id = pdb.add_message("assistant", &visible);
             pdb.link_reply(asst_id, user_id);
 
-            let matches = detect_facts_from_graph(pdb, query);
-            for m in &matches {
-                pdb.add_fact(&m.key, &m.value, 0, None);
-            }
+            // PersistNet handles persistence neurally — no pattern matching needed.
+            // Facts are created via PersistNet's forward pass in the main loop.
         }
 
         Ok(GenerateResult {

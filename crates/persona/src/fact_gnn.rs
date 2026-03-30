@@ -28,7 +28,7 @@ const EDGE_TYPES: &[&str] = &[
 ];
 
 /// Node types, each with its own update matrix.
-const NODE_TYPES: &[&str] = &["Fact", "ConvTurn", "Pattern", "Memory"];
+const NODE_TYPES: &[&str] = &["Fact", "ConvTurn", "Memory"];
 
 /// A lightweight GNN operating directly on PersonaDB graph.
 pub struct FactGNN {
@@ -111,14 +111,6 @@ impl FactGNN {
                     })
                     .unwrap_or(0);
                 format!("ConvTurn:{qh}")
-            }
-            "Pattern" => {
-                let trigger = node
-                    .properties
-                    .get(&PropertyKey::from("trigger"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                format!("Pattern:{trigger}")
             }
             "Memory" => {
                 let text = node

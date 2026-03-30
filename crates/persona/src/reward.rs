@@ -1,6 +1,6 @@
 use crate::PersonaDB;
 use obrain_common::types::{NodeId, PropertyKey, Value};
-use obrain_core::graph::Direction;
+
 use std::collections::{HashMap, HashSet};
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -125,9 +125,21 @@ impl std::fmt::Display for RewardSignals {
 ///
 /// Includes an optional token polarity learner (T4) that auto-discovers
 /// reward-associated tokens from structural signals.
+/// Maximum number of previous turns to keep for reformulation detection.
+/// Comparing against N turns (not just N-1) catches reformulations with
+/// an intervening turn (e.g., user reformulates turn 1 at turn 3).
+const REFORMULATION_HISTORY: usize = 3;
+
+/// Cosine similarity threshold for reformulation detection.
+/// 0.70 catches partial reformulations ("Explique le KV cache des LLM"
+/// vs "Redis-moi ce qu'est un KV cache dans un LLM") while avoiding
+/// false positives on unrelated queries.
+const REFORMULATION_THRESHOLD: f32 = 0.70;
+
 pub struct RewardDetector {
-    /// Previous turn's token IDs for reformulation detection
-    pub prev_query_tokens: Vec<i32>,
+    /// Sliding window of recent turns' token IDs for reformulation detection.
+    /// Compared against the current query — max cosine across the window.
+    pub prev_query_history: Vec<Vec<i32>>,
     /// T4: Auto-learned token polarities from structural reward
     pub token_learner: TokenPolarityLearner,
 }
@@ -136,7 +148,7 @@ impl RewardDetector {
     /// Create a new RewardDetector. No seeds, no tokenizer needed.
     pub fn new() -> Self {
         RewardDetector {
-            prev_query_tokens: Vec::new(),
+            prev_query_history: Vec::new(),
             token_learner: TokenPolarityLearner::new(),
         }
     }
@@ -144,7 +156,7 @@ impl RewardDetector {
     /// Compute reward [-1.0, +1.0] for the previous turn based on the current user input.
     ///
     /// Signals (5 total, weighted — all structural/learned, zero hardcoded lexical dependency):
-    /// 1. Reformulation (0.30) — cosine > 0.85 on token bags → user is rephrasing = bad
+    /// 1. Reformulation (0.30) — cosine > 0.70 on token bags (sliding window of 3 turns) → user is rephrasing = bad
     /// 2. Engagement (0.10) — longer sessions → small positive signal
     /// 3. Factual success (0.20) — did the response use injected facts/memories?
     /// 4. Entropy signal (0.25) — low entropy = confident generation = good context
@@ -163,18 +175,33 @@ impl RewardDetector {
         avg_entropy: Option<f32>,
     ) -> RewardSignals {
         if turn_count <= 1 {
-            self.prev_query_tokens = user_tokens.to_vec();
+            self.prev_query_history.push(user_tokens.to_vec());
             return RewardSignals {
                 reward: 0.0,
                 factual_signal: 0.0,
             };
         }
 
-        // (1) Reformulation detection
-        let reformulation_penalty = if !self.prev_query_tokens.is_empty() && !user_tokens.is_empty()
+        // (1) Reformulation detection — sliding window over last N turns
+        let reformulation_penalty = if !self.prev_query_history.is_empty() && !user_tokens.is_empty()
         {
-            let cos = Self::bag_cosine(user_tokens, &self.prev_query_tokens);
-            if cos > 0.85 { -0.3 } else { 0.0 }
+            // Max cosine across the history window — catches reformulations
+            // of any recent turn, not just the immediately previous one
+            let max_cos = self
+                .prev_query_history
+                .iter()
+                .filter(|prev| !prev.is_empty())
+                .map(|prev| Self::bag_cosine(user_tokens, prev))
+                .fold(0.0f32, f32::max);
+            if max_cos > REFORMULATION_THRESHOLD {
+                eprintln!("    [Reward-detail] reformulation detected: max_cos={:.3} > {:.2}", max_cos, REFORMULATION_THRESHOLD);
+                -0.3
+            } else {
+                if max_cos > 0.3 {
+                    eprintln!("    [Reward-detail] near-reformulation: max_cos={:.3} (threshold={:.2})", max_cos, REFORMULATION_THRESHOLD);
+                }
+                0.0
+            }
         } else {
             0.0
         };
@@ -211,7 +238,11 @@ impl RewardDetector {
         // (5) Token polarity — auto-learned from structural reward (T4)
         let polarity_signal = self.token_learner.get_polarity(user_tokens).unwrap_or(0.0);
 
-        self.prev_query_tokens = user_tokens.to_vec();
+        // Update sliding window
+        self.prev_query_history.push(user_tokens.to_vec());
+        if self.prev_query_history.len() > REFORMULATION_HISTORY {
+            self.prev_query_history.remove(0);
+        }
 
         // Weighted combination: 0.30 + 0.10 + 0.20 + 0.25 + 0.15 = 1.0
         // Note: factual went from 0.35 to 0.20 when T4 polarity (0.15) was added
@@ -358,48 +389,9 @@ impl RewardDetector {
             }
         }
 
-        // (3) Update avg_reward of :Pattern nodes that produced used facts
-        for &fid in used_fact_ids {
-            // Follow EXTRACTS edges backwards: Pattern -EXTRACTS-> Fact
-            // We need to find patterns that point TO this fact
-            for &pnid in &store.nodes_by_label("Pattern") {
-                let points_to_fact = store
-                    .edges_from(pnid, Direction::Outgoing)
-                    .any(|(target, _)| target == fid);
-                if points_to_fact {
-                    if let Some(pnode) = store.get_node(pnid) {
-                        let hits = pnode
-                            .properties
-                            .get(&PropertyKey::from("hit_count"))
-                            .and_then(|v| {
-                                if let Value::Int64(n) = v {
-                                    Some(*n)
-                                } else {
-                                    None
-                                }
-                            })
-                            .unwrap_or(1)
-                            .max(1);
-                        let avg = pnode
-                            .properties
-                            .get(&PropertyKey::from("avg_reward"))
-                            .and_then(|v| {
-                                if let Value::Float64(f) = v {
-                                    Some(*f)
-                                } else {
-                                    None
-                                }
-                            })
-                            .unwrap_or(0.0);
-                        let new_avg = (avg * (hits - 1) as f64 + reward as f64) / hits as f64;
-                        pdb.db
-                            .set_node_property(pnid, "avg_reward", Value::Float64(new_avg));
-                    }
-                }
-            }
-        }
+        // Pattern avg_reward update removed — PersistNet handles persistence.
 
-        // (4) REINFORCES between co-used facts if reward is high
+        // (3) REINFORCES between co-used facts if reward is high
         pdb.create_reinforces(used_fact_ids, reward as f64);
     }
 }

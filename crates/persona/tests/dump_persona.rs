@@ -51,11 +51,9 @@ fn dump_elun_db() {
     println!("\n=== Ξ(t) STATS ===");
     println!("  facts: {}/{} active, avg_energy={:.3}, avg_confidence={:.3}",
         stats.facts_active, stats.facts_total, stats.avg_energy, stats.avg_confidence);
-    println!("  patterns: {}/{} active ({} auto)",
-        stats.patterns_active, stats.patterns_total, stats.patterns_auto);
+    println!("  memories: {} (PersistNet)", stats.memories);
     println!("  conv_turns: {}, avg_reward_recent={:.3}, avg_mask_reward={:.3}",
         stats.conv_turns, stats.avg_reward_recent, stats.avg_mask_reward);
-    println!("  reward_tokens: {}", stats.reward_tokens);
 
     // Dump all facts
     let facts = pdb.list_facts();

@@ -11,8 +11,9 @@ fn dump_elun_db() {
 
     // Count all labels
     let labels = [
-        "Conversation", "Message", "Fact", "Memory", "Pattern",
-        "ConvTurn", "GNNWeights", "PersistNetWeights", "RewardToken",
+        "Conversation", "Message", "Fact", "Memory",
+        "ConvTurn", "GNNWeights", "PersistNetWeights",
+        "Self", "SelfEmbedWeights", "SelfAlphaWeights",
     ];
     println!("\n=== NODE COUNTS ===");
     let mut total = 0;
@@ -30,11 +31,9 @@ fn dump_elun_db() {
     println!("\n=== Ξ(t) STATS ===");
     println!("  facts: {}/{} active, avg_energy={:.3}, avg_confidence={:.3}",
         stats.facts_active, stats.facts_total, stats.avg_energy, stats.avg_confidence);
-    println!("  patterns: {}/{} active ({} auto)",
-        stats.patterns_active, stats.patterns_total, stats.patterns_auto);
+    println!("  memories: {} (PersistNet)", stats.memories);
     println!("  conv_turns: {}, avg_reward_recent={:.3}, avg_mask_reward={:.3}",
         stats.conv_turns, stats.avg_reward_recent, stats.avg_mask_reward);
-    println!("  reward_tokens: {}", stats.reward_tokens);
 
     // Dump all facts
     let facts = pdb.list_facts();
@@ -105,27 +104,4 @@ fn dump_elun_db() {
         }
     }
     println!("  ({} turns with reward signal out of {})", rewarded, turns.len());
-
-    // Dump patterns
-    let patterns = store.nodes_by_label("Pattern");
-    println!("\n=== PATTERNS ({}) ===", patterns.len());
-    for &pid in &patterns {
-        if let Some(node) = store.get_node(pid) {
-            let trigger = node.properties.get(&obrain::PropertyKey::from("trigger"))
-                .and_then(|v| v.as_str()).unwrap_or("?");
-            let key_tpl = node.properties.get(&obrain::PropertyKey::from("key_template"))
-                .and_then(|v| v.as_str()).unwrap_or("?");
-            let hits = node.properties.get(&obrain::PropertyKey::from("hit_count"))
-                .and_then(|v| if let obrain::Value::Int64(i) = v { Some(*i) } else { None })
-                .unwrap_or(0);
-            let auto = node.properties.get(&obrain::PropertyKey::from("auto_generated"))
-                .and_then(|v| if let obrain::Value::Bool(b) = v { Some(*b) } else { None })
-                .unwrap_or(false);
-            let avg_r = node.properties.get(&obrain::PropertyKey::from("avg_reward"))
-                .and_then(|v| if let obrain::Value::Float64(f) = v { Some(*f) } else { None })
-                .unwrap_or(0.0);
-            println!("  [{}] trigger=\"{}\" → key=\"{}\" hits={} avg_r={:.2}",
-                if auto { "auto" } else { "seed" }, trigger, key_tpl, hits, avg_r);
-        }
-    }
 }
