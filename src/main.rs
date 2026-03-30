@@ -113,9 +113,19 @@ fn score_persona_facts(
 /// Facts are injected sorted by score descending, with a ~500 token budget (~2000 chars).
 /// Facts with score < 0.1 are omitted when there are more than 10 active facts.
 fn build_system_header(has_graph: bool, scored_facts: &[(String, String, f32)]) -> String {
+    build_unified_header(has_graph, scored_facts, &[])
+}
+
+/// Unified header builder: combines identity (from facts), structured facts, AND memories.
+/// Both facts and memories can be present simultaneously.
+fn build_unified_header(
+    has_graph: bool,
+    scored_facts: &[(String, String, f32)],
+    memories: &[(NodeId, String, f64)],
+) -> String {
     let mut header = String::from("<|im_start|>system\n");
 
-    // Identity from facts
+    // Identity from facts (name fact gets special treatment)
     let name = scored_facts
         .iter()
         .find(|(k, _, _)| k == "name")
@@ -135,20 +145,18 @@ fn build_system_header(has_graph: bool, scored_facts: &[(String, String, f32)]) 
     // ── Memory system instructions ──
     header.push_str(r#"
 ## Mémoire
-Tu as une mémoire persistante entre les sessions. Ce que tu sais est listé sous "Faits connus".
-Quand l'utilisateur te dit quelque chose sur lui ou te demande de retenir une information, confirme naturellement.
-Si un fait contredit un ancien, le nouveau le remplace. N'invente rien — utilise uniquement les faits listés.
+Tu as une mémoire persistante entre les sessions.
+Utilise ces informations pour personnaliser tes réponses. Si un fait contredit un autre, le plus récent prévaut.
+N'invente rien — utilise uniquement les faits et souvenirs listés.
 "#);
 
-    // Inject persistent facts — sorted by GNN score, budget-capped
+    // ── Structured facts (from pattern detection) ──
     let mut other_facts: Vec<&(String, String, f32)> = scored_facts
         .iter()
         .filter(|(k, _, _)| k != "name")
         .collect();
-    // Already sorted by caller, but ensure desc order
     other_facts.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
 
-    // Apply threshold: omit low-score facts when we have plenty
     let threshold = if other_facts.len() > 10 { 0.1 } else { 0.0 };
     let other_facts: Vec<&&(String, String, f32)> = other_facts
         .iter()
@@ -157,7 +165,7 @@ Si un fait contredit un ancien, le nouveau le remplace. N'invente rien — utili
 
     if !other_facts.is_empty() {
         header.push_str("\nFaits connus :\n");
-        let mut budget = 2000usize; // ~500 tokens at ~4 chars/token
+        let mut budget = 1500usize; // ~375 tokens — leave room for memories
         for (key, value, _score) in other_facts.iter().map(|f| (&f.0, &f.1, f.2)) {
             let line = format!("- {key} : {value}\n");
             if line.len() > budget {
@@ -166,38 +174,16 @@ Si un fait contredit un ancien, le nouveau le remplace. N'invente rien — utili
             budget -= line.len();
             header.push_str(&line);
         }
-    } else if name.is_none() {
+    } else if name.is_none() && memories.is_empty() {
         header.push_str(
             "\nFaits connus : (aucun pour l'instant — l'utilisateur ne t'a encore rien dit)\n",
         );
     }
 
-    header.push('\n');
-    header
-}
-
-/// Build the system header using :Memory nodes (PersistNet mode).
-/// Memories are raw user messages, scored by GNN energy.
-fn build_memory_header(has_graph: bool, memories: &[(NodeId, String, f64)]) -> String {
-    let mut header = String::from("<|im_start|>system\n");
-
-    header.push_str("You are a helpful assistant. ");
-
-    if has_graph {
-        header.push_str("Below is structured data from a graph database. Each entry shows [Type] Name and its relations. Use ONLY this data to answer. ");
-    }
-
-    header.push_str("Answer in the same language as the question. /no_think\n");
-
-    header.push_str(r#"
-## Mémoire
-Tu as une mémoire persistante entre les sessions. Ce que tu sais sur l'utilisateur est listé ci-dessous.
-Utilise ces souvenirs pour personnaliser tes réponses. Si un souvenir contredit un autre, le plus récent prévaut.
-"#);
-
+    // ── Memories (from PersistNet neural persistence) ──
     if !memories.is_empty() {
         header.push_str("\nSouvenirs :\n");
-        let mut budget = 2000usize;
+        let mut budget = 1500usize; // ~375 tokens
         for (_nid, text, _energy) in memories {
             let line = format!("- {text}\n");
             if line.len() > budget {
@@ -206,8 +192,6 @@ Utilise ces souvenirs pour personnaliser tes réponses. Si un souvenir contredit
             budget -= line.len();
             header.push_str(&line);
         }
-    } else {
-        header.push_str("\nSouvenirs : (aucun pour l'instant)\n");
     }
 
     header.push('\n');
@@ -1669,7 +1653,8 @@ fn main() -> Result<()> {
                     .map(|(nid, _, _)| format!("{}", nid.0))
                     .collect();
                 if new_top5 != prev_header_top5 && !new_top5.is_empty() {
-                    let new_header = build_memory_header(store.is_some(), &memories);
+                    let scored = score_persona_facts(&current_facts, &fact_gnn, &persona_db);
+                    let new_header = build_unified_header(store.is_some(), &scored, &memories);
                     registry.update_header(&new_header);
                     registry.full_recompact::<fn(&[f32], &[i32], i32) -> anyhow::Result<usize>>(
                         &engine, None, None,
@@ -1691,7 +1676,10 @@ fn main() -> Result<()> {
                 .map(|(k, _, _)| k.clone())
                 .collect();
             if new_top5 != prev_header_top5 && !new_top5.is_empty() {
-                let new_header = build_system_header(store.is_some(), &scored);
+                let memories = persona_db.as_ref()
+                    .map(|pdb| pdb.active_memories())
+                    .unwrap_or_default();
+                let new_header = build_unified_header(store.is_some(), &scored, &memories);
                 registry.update_header(&new_header);
                 registry.full_recompact::<fn(&[f32], &[i32], i32) -> anyhow::Result<usize>>(
                     &engine, None, None,
@@ -2382,11 +2370,12 @@ fn main() -> Result<()> {
                             persist_score, mem_id.0
                         );
 
-                        // Update header with memories
+                        // Update header with memories + facts (unified)
                         let memories = pdb.active_memories();
-                        let memory_header = build_memory_header(store.is_some(), &memories);
-                        registry.update_header(&memory_header);
-                        debug!("  Header updated with {} memories", memories.len());
+                        let scored = score_persona_facts(&current_facts, &fact_gnn, &persona_db);
+                        let unified = build_unified_header(store.is_some(), &scored, &memories);
+                        registry.update_header(&unified);
+                        debug!("  Header updated with {} memories + {} facts", memories.len(), scored.len());
                     } else {
                         debug!(
                             "  [PersistNet] skip (score={:.2} < threshold)",
@@ -2399,10 +2388,6 @@ fn main() -> Result<()> {
 
                 // Pattern-based fact detection — runs ALWAYS when PersonaDB is available,
                 // independently of PersistNet (memories and facts are complementary).
-                // Note: only update header here if PersistNet is NOT active, because
-                // build_system_header (facts-only) and build_memory_header (memories-only)
-                // would overwrite each other. When PersistNet is active, facts are still
-                // stored in the DB but the header uses the memory-based version.
                 if let Some(ref pdb) = persona_db {
                     let matches = detect_facts_from_graph(pdb, &line);
                     if !matches.is_empty() {
@@ -2415,23 +2400,16 @@ fn main() -> Result<()> {
                             );
                         }
                         current_facts = pdb.active_facts();
-                        // Only rebuild header from facts if PersistNet didn't already set it
-                        // (PersistNet uses build_memory_header which includes memories)
-                        if persist_net.is_none() {
-                            let scored = score_persona_facts(&current_facts, &fact_gnn, &persona_db);
-                            let new_header = build_system_header(store.is_some(), &scored);
-                            registry.update_header(&new_header);
-                            debug!(
-                                "  Header updated with {} facts ({} scored)",
-                                current_facts.len(),
-                                scored.len()
-                            );
-                        } else {
-                            debug!(
-                                "  💾 {} facts stored (header managed by PersistNet)",
-                                matches.len()
-                            );
-                        }
+                        // Rebuild unified header with both facts and memories
+                        let scored = score_persona_facts(&current_facts, &fact_gnn, &persona_db);
+                        let memories = pdb.active_memories();
+                        let new_header = build_unified_header(store.is_some(), &scored, &memories);
+                        registry.update_header(&new_header);
+                        debug!(
+                            "  Header updated with {} facts + {} memories",
+                            scored.len(),
+                            memories.len()
+                        );
                     }
                 } else {
                     // No PersonaDB — use legacy hardcoded detection
