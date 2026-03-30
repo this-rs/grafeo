@@ -409,7 +409,7 @@ pub fn generate_with_mask(
             let bias = computer.compute(metrics, &position_map, n_head);
             let magnitude = crate::state_bias::StateBiasComputer::bias_magnitude(&bias);
 
-            eprintln!(
+            kv_registry::kv_debug!(
                 "  [StateBias] reward={:.2}, confidence={:.2}, magnitude={:.4}, n_head={}, n_kv={}",
                 metrics.reward_avg, metrics.confidence, magnitude, n_head, n_kv
             );
@@ -448,7 +448,7 @@ pub fn generate_with_mask(
             let mut dispatcher = crate::iptr::IptrDispatcher::new(iptr_cooldown);
             let tool = crate::iptr_graph::GraphLookupTool::with_defaults(snap.clone());
             dispatcher.register_tool(Box::new(tool));
-            eprintln!(
+            kv_registry::kv_debug!(
                 "  [IPTR] dispatcher ready: {} facts, cooldown={}",
                 snap.len(),
                 iptr_cooldown

@@ -1041,9 +1041,14 @@ impl LlamaEngine {
                 // IPTR: dispatch tools on high entropy, apply logit biases
                 if needs_tool {
                     if let Some(ref mut cb) = on_needs_tool {
-                        // Build recent_text from last ~50 chars of result
+                        // Build recent_text from last ~200 bytes of result (UTF-8 safe)
                         let recent = if result.len() > 200 {
-                            &result[result.len() - 200..]
+                            let mut start = result.len() - 200;
+                            // Walk forward to find a valid UTF-8 char boundary
+                            while !result.is_char_boundary(start) && start < result.len() {
+                                start += 1;
+                            }
+                            &result[start..]
                         } else {
                             &result
                         };
