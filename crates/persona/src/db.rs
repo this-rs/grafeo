@@ -975,13 +975,24 @@ impl PersonaDB {
 
     // ── Pattern management (Ξ(t) T1.3) ──────────────────────────
 
-    /// Seed default extraction patterns if none exist.
+    /// Seed default extraction patterns, adding any missing ones.
+    /// Unlike seed_formulas_if_empty, this is additive: it checks each trigger
+    /// individually so new patterns get added to existing DBs.
     pub fn seed_default_patterns(&self) {
         let store = self.db.store();
         let existing = store.nodes_by_label("Pattern");
-        if !existing.is_empty() {
-            return;
-        }
+
+        // Collect existing triggers for dedup
+        let existing_triggers: std::collections::HashSet<String> = existing
+            .iter()
+            .filter_map(|&nid| {
+                store.get_node(nid).and_then(|n| {
+                    n.properties
+                        .get(&PropertyKey::from("trigger"))
+                        .and_then(|v| v.as_str().map(|s| s.to_string()))
+                })
+            })
+            .collect();
 
         let defaults = [
             // Identity patterns — 1st person (most common in conversation!)
@@ -1053,7 +1064,11 @@ impl PersonaDB {
             ("always answer in ", "language", "preference"),
         ];
 
+        let mut added = 0u32;
         for (trigger, key_template, fact_type) in defaults {
+            if existing_triggers.contains(trigger) {
+                continue;
+            }
             self.db.create_node_with_props(
                 &["Pattern"],
                 [
@@ -1069,6 +1084,10 @@ impl PersonaDB {
                     ("active", Value::Bool(true)),
                 ],
             );
+            added += 1;
+        }
+        if added > 0 {
+            eprintln!("  [Persona] Seeded {} new patterns (total: {})", added, existing.len() + added as usize);
         }
     }
 
