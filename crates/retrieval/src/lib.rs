@@ -1,6 +1,8 @@
 pub mod attn_compiler;
 pub mod attn_dsl;
 pub mod contrastive;
+pub mod formula_evolution;
+pub mod formula_selector;
 mod control;
 mod engine;
 mod generation;
@@ -10,6 +12,7 @@ pub mod projection_net;
 mod query;
 pub mod round_tracker;
 mod scoring;
+pub mod self_embedding;
 pub mod training;
 
 pub use contrastive::{ContrastiveConfig, ContrastiveSample, GraphTopology};
