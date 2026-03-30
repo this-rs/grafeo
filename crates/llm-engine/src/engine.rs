@@ -1054,7 +1054,7 @@ impl LlamaEngine {
                         };
                         if let Some(biases) = cb(entropy, recent, step_idx as u32) {
                             if !biases.is_empty() {
-                                eprintln!(
+                                kv_registry::kv_debug!(
                                     "  [IPTR] logit biases applied: {} tokens, entropy={:.2}",
                                     biases.len(),
                                     entropy

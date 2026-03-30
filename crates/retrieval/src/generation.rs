@@ -470,7 +470,7 @@ pub fn generate_with_mask(
         };
         let result = dispatcher.dispatch(&ctx)?;
         let (n_dispatch, total_us) = dispatcher.stats();
-        eprintln!(
+        kv_registry::kv_debug!(
             "  [IPTR] graph_lookup triggered: {} biases, {} concepts, latency={}µs (dispatch #{}, total={}µs)",
             result.biases.len(),
             result.concepts_found.len(),
