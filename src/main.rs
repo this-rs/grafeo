@@ -46,6 +46,8 @@ use kv_registry::{
 use retrieval::{
     Engine, GenerationControl, GnnContext, OutputMode, is_meta_query, query_with_registry,
 };
+use retrieval::iptr_graph::FactSnapshot;
+use retrieval::state_bias::StateMetrics;
 
 use persona::{PersonaDB, RewardDetector, detect_facts, detect_facts_from_graph};
 use retrieval::attn_dsl::AttnOp;
@@ -995,6 +997,35 @@ fn main() -> Result<()> {
         pdb.seed_formulas_if_empty();
         debug!("  [AFE] Formula selector initialized, seeds ensured");
     }
+
+    // Phase 4 TP.1+TP.2: Self-embedding projector with KV injection
+    // Disabled by default (Phase 5) — superseded by state_kq_b attention bias.
+    // Enable with: cargo build --features self_embed_proprio
+    #[cfg(feature = "self_embed_proprio")]
+    let mut self_projector: Option<retrieval::self_embedding::SelfEmbeddingProjector> =
+        persona_db.as_ref().map(|pdb| {
+            let n_embd = engine.n_embd();
+            let mut proj = retrieval::self_embedding::SelfEmbeddingProjector::new(n_embd);
+            // Load persisted weights if available
+            if let Some(weights) = pdb.load_self_embed_weights() {
+                if proj.load_weights(&weights) {
+                    debug!(
+                        "  [Proprio] Loaded SelfEmbeddingProjector weights ({} floats)",
+                        weights.len()
+                    );
+                }
+            }
+            debug!(
+                "  [Proprio] SelfEmbeddingProjector initialized (n_embd={}, features={}, updates={})",
+                n_embd,
+                retrieval::self_embedding::N_SELF_FEATURES,
+                proj.n_updates
+            );
+            proj
+        });
+    #[cfg(not(feature = "self_embed_proprio"))]
+    let _self_projector: Option<()> = None;
+
     // Track previous assistant response for persisting corrections on positive reward
     #[allow(unused_assignments)]
     let mut last_assistant_response = String::new();
@@ -1030,12 +1061,23 @@ fn main() -> Result<()> {
             (router_heads as f64 * 1000.0 * 1000.0 * 4.0) / 1e6,
             ((100.0 * 1024.0 * 1024.0 / (4.0 * router_heads as f64)) as f64).sqrt() as i32
         );
-        Some(llm_engine::HeadRouter::new(
+        let mut router = llm_engine::HeadRouter::new(
             router_heads,
             llm_engine::N_BANKS,
             head_router_lr,
             head_router_warmup,
-        ))
+        );
+        // Load persisted self_alpha weights (TP.2)
+        if let Some(ref pdb) = persona_db {
+            if let Some(self_weights) = pdb.load_head_router_self_alpha() {
+                router.load_self_weights(&self_weights);
+                debug!(
+                    "  [Proprio] Loaded HeadRouter self_alpha ({} heads)",
+                    self_weights.len()
+                );
+            }
+        }
+        Some(router)
     } else {
         None
     };
@@ -1682,7 +1724,13 @@ fn main() -> Result<()> {
             .map(|p| p as &dyn kv_registry::ColdSearch);
 
         // Phase 4 AFE: Select attention formula (compiled inside query_with_registry)
-        let selected_formula: Option<SelectedFormula> = if let Some(ref pdb) = persona_db {
+        // OBRAIN_AFE_DISABLE=1 forces Identity (for A/B benchmarking)
+        let afe_disabled = std::env::var("OBRAIN_AFE_DISABLE")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        let selected_formula: Option<SelectedFormula> = if afe_disabled {
+            None
+        } else if let Some(ref pdb) = persona_db {
             let formula_nodes = pdb.list_formulas();
             if !formula_nodes.is_empty() {
                 let candidates: Vec<FormulaCandidate> = formula_nodes
@@ -1716,6 +1764,89 @@ fn main() -> Result<()> {
             None
         };
 
+        // Phase 4 TP.2: Inject self-embeddings into KV cache (proprioceptive channel)
+        // Disabled by default (Phase 5) — superseded by state_kq_b.
+        #[allow(unused_mut)]
+        let mut self_embed_positions: Vec<i32> = Vec::new();
+        #[cfg(feature = "self_embed_proprio")]
+        if let (Some(proj), Some(pdb)) = (&mut self_projector, &persona_db) {
+            let metrics = pdb.current_self_metrics();
+            let has_metrics = metrics.reward_avg != 0.0
+                || metrics.mask_reward_avg != 0.0
+                || metrics.gnn_facts_active > 0
+                || !metrics.formula_active_name.is_empty();
+            if has_metrics {
+                let embedding = proj.project(&metrics);
+                let inject_pos = registry.next_pos;
+                let kv_max = engine.seq_pos_max(0);
+                if kv_max >= 0 && inject_pos <= kv_max {
+                    let safe_pos = kv_max + 1;
+                    eprintln!(
+                        "  [Proprio] ⚠ position desync: next_pos={} <= kv_max={}, resyncing to {}",
+                        inject_pos, kv_max, safe_pos
+                    );
+                    registry.next_pos = safe_pos;
+                }
+                let inject_pos = registry.next_pos;
+                match engine.inject_embedding(inject_pos, &embedding) {
+                    Ok(()) => {
+                        self_embed_positions.push(inject_pos);
+                        registry.next_pos = inject_pos + 1;
+                        debug!(
+                            "  [Proprio] self-embedding injected at pos={}, n_embd={}, kv_max={}",
+                            inject_pos,
+                            embedding.len(),
+                            engine.seq_pos_max(0)
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("  [Proprio] injection failed: {e} (inject_pos={}, kv_max={})",
+                            inject_pos, engine.seq_pos_max(0));
+                    }
+                }
+            }
+        }
+
+        // Phase 5: Build IPTR FactSnapshot from PersonaDB (if available)
+        let iptr_snapshot = if std::env::var("OBRAIN_IPTR_DISABLE").is_ok() {
+            None
+        } else {
+            persona_db.as_ref().map(|pdb| {
+                let tokenize_fn = |text: &str| -> Vec<(u32, f32)> {
+                    match engine.tokenize(text, false, false) {
+                        Ok(tokens) => tokens.iter().map(|&t| (t as u32, 1.0f32)).collect(),
+                        Err(_) => Vec::new(),
+                    }
+                };
+                let snap = FactSnapshot::from_persona_db(pdb, Some(&tokenize_fn));
+                eprintln!(
+                    "  [IPTR] FactSnapshot: {} facts, {} edges",
+                    snap.facts.len(),
+                    snap.adjacency.values().map(|v| v.len()).sum::<usize>() / 2
+                );
+                snap
+            })
+        };
+
+        // Phase 5: Extract StateMetrics from PersonaDB SelfMetrics (if available)
+        let state_metrics = if std::env::var("OBRAIN_STATE_BIAS_DISABLE").is_ok() {
+            None
+        } else {
+            persona_db.as_ref().map(|pdb| {
+                let sm = pdb.current_self_metrics();
+                // confidence: mask_reward_avg is in [-1,1], map to [0,1] via (x+1)/2
+                let confidence = ((sm.mask_reward_avg + 1.0) / 2.0).clamp(0.0, 1.0) as f32;
+                eprintln!(
+                    "  [StateBias] reward_avg={:.3}, confidence={:.3}",
+                    sm.reward_avg, confidence
+                );
+                StateMetrics {
+                    reward_avg: sm.reward_avg as f32,
+                    confidence,
+                }
+            })
+        };
+
         match query_with_registry(
             &engine,
             q_store,
@@ -1737,6 +1868,9 @@ fn main() -> Result<()> {
             coact_ref,
             cold_ref,
             selected_formula.as_ref(),
+            &self_embed_positions,
+            iptr_snapshot.as_ref(),
+            state_metrics.as_ref(),
         ) {
             Ok((response, relevant_graph_nodes, avg_entropy, ablation_reward)) => {
                 // Ξ(t) T5: Store entropy signal for next turn's reward computation
@@ -1958,6 +2092,26 @@ fn main() -> Result<()> {
                                     "  [HeadRouter] update #{}, specialization_entropy={:.3}",
                                     router.n_updates,
                                     router.specialization_entropy()
+                                );
+                            }
+                        }
+
+                        // Phase 4 TP.2: Train self-embedding projector + HeadRouter self_alpha
+                        // Disabled by default (Phase 5) — superseded by state_kq_b.
+                        #[cfg(feature = "self_embed_proprio")]
+                        if !self_embed_positions.is_empty() {
+                            if let Some(ref mut proj) = self_projector {
+                                proj.train_step(reward);
+                                debug!(
+                                    "  [Proprio] projector trained: reward={:.2}, updates={}",
+                                    reward, proj.n_updates
+                                );
+                            }
+                            if let Some(ref mut router) = head_router {
+                                router.backward_self(reward);
+                                debug!(
+                                    "  [Proprio] HeadRouter self_alpha updated: reward={:.2}",
+                                    reward
                                 );
                             }
                         }
@@ -2355,6 +2509,27 @@ fn main() -> Result<()> {
             "  [ProjectionNet] Weights saved at session end ({} updates, {} samples)",
             pnet.n_updates(),
             tmgr.n_samples()
+        );
+    }
+
+    // Save SelfEmbeddingProjector weights at session end (Phase 4 TP.2)
+    // Disabled by default (Phase 5) — superseded by state_kq_b.
+    #[cfg(feature = "self_embed_proprio")]
+    if let (Some(proj), Some(pdb)) = (&self_projector, &persona_db) {
+        let weights = proj.save_weights();
+        pdb.save_self_embed_weights(&weights);
+        debug!(
+            "  [Proprio] SelfEmbeddingProjector weights saved ({} updates)",
+            proj.n_updates
+        );
+    }
+
+    // Save HeadRouter self_alpha at session end (Phase 4 TP.2)
+    if let (Some(router), Some(pdb)) = (&head_router, &persona_db) {
+        pdb.save_head_router_self_alpha(router.self_weights());
+        debug!(
+            "  [Proprio] HeadRouter self_alpha saved ({} heads)",
+            router.n_head
         );
     }
 

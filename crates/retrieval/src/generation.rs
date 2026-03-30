@@ -35,6 +35,8 @@ pub fn generate_with_mask(
     output: &OutputMode,
     head_router: Option<&llm_engine::HeadRouter>,
     compiled_formula: Option<&CompiledFormula>,
+    iptr_snapshot: Option<&crate::iptr_graph::FactSnapshot>,
+    state_metrics: Option<&crate::state_bias::StateMetrics>,
 ) -> Result<(String, Option<f32>, Option<i32>, Option<Vec<f32>>)> {
     // /no_think MUST be in the user message for Qwen3 to reliably suppress thinking.
     // Placing it only in the system header gets "diluted" by graph context tokens.
@@ -77,8 +79,9 @@ pub fn generate_with_mask(
     let mask_mem_mb =
         (mask_groups as f64 * max_mask_positions as f64 * max_mask_positions as f64 * 4.0) / 1e6;
 
-    // Count context positions (header + relevant nodes + query)
+    // Count context positions (header + self-embed + relevant nodes + query)
     let mut n_context_positions: i32 = ctx.header_tokens;
+    n_context_positions += ctx.self_embed_positions.len() as i32;
     for node in &ctx.nodes {
         n_context_positions += node.token_end - node.token_start;
     }
@@ -114,6 +117,15 @@ pub fn generate_with_mask(
         let idx = positions.len();
         pos_remap.insert(p, idx);
         positions.push(p);
+    }
+
+    // Self-embedding positions (proprioceptive channel, between header and graph nodes)
+    for &p in &ctx.self_embed_positions {
+        if !pos_remap.contains_key(&p) {
+            let idx = positions.len();
+            pos_remap.insert(p, idx);
+            positions.push(p);
+        }
     }
 
     // Relevant node positions (from KV registry slots)
@@ -358,6 +370,56 @@ pub fn generate_with_mask(
         engine.set_attn_mask(&mask, &positions, 0)?;
     }
 
+    // ── State kq_b bias (Phase 5 — Axe B) ─────────────────────────
+    // Compute and inject attention bias from SelfMetrics BEFORE generation.
+    // This biases attention toward graph nodes (modulated by reward) and
+    // conversation context (modulated by confidence). Static for the entire generation.
+    let state_bias_disabled = std::env::var("OBRAIN_STATE_BIAS_DISABLE")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+
+    if !state_bias_disabled {
+        if let Some(metrics) = state_metrics {
+            let computer = crate::state_bias::StateBiasComputer::new(
+                crate::state_bias::StateBiasConfig::default(),
+            );
+
+            // Build position map from QueryContext — separate graph nodes from conv fragments
+            let graph_ranges: Vec<(i32, i32)> = ctx
+                .nodes
+                .iter()
+                .filter(|n| n.bank != 2) // bank 2 = conversation fragments
+                .map(|n| (n.token_start, n.token_end))
+                .collect();
+            let conv_ranges: Vec<(i32, i32)> = ctx
+                .nodes
+                .iter()
+                .filter(|n| n.bank == 2) // bank 2 = conversation fragments
+                .map(|n| (n.token_start, n.token_end))
+                .collect();
+            let n_kv = ctx.total_tokens;
+            let position_map = crate::state_bias::StateBiasComputer::build_position_map(
+                ctx.header_tokens,
+                &graph_ranges,
+                &conv_ranges,
+                n_kv,
+            );
+
+            let n_head = engine.n_head() as usize;
+            let bias = computer.compute(metrics, &position_map, n_head);
+            let magnitude = crate::state_bias::StateBiasComputer::bias_magnitude(&bias);
+
+            eprintln!(
+                "  [StateBias] reward={:.2}, confidence={:.2}, magnitude={:.4}, n_head={}, n_kv={}",
+                metrics.reward_avg, metrics.confidence, magnitude, n_head, n_kv
+            );
+
+            if magnitude > 0.0 {
+                engine.set_state_bias(&bias, n_head as i32, n_kv);
+            }
+        }
+    }
+
     // ── CRITICAL: Make seq_id=0 KV entries visible to seq_id=1 ──
     // Without this, query tokens on seq_id=1 cannot attend to context
     // nodes encoded on seq_id=0. This was the root cause of the model
@@ -365,6 +427,59 @@ pub fn generate_with_mask(
     // Clear first to remove any stale tokens from a previous generation.
     engine.clear_seq(1);
     engine.seq_cp(0, 1, 0, -1);
+
+    // ── IPTR dispatcher setup (Phase 5 — Axe A) ───────────────────
+    // When a FactSnapshot is provided, create the dispatcher with GraphLookupTool.
+    // The dispatcher runs inline during generation when entropy exceeds the adaptive
+    // threshold, returning logit biases that steer the model toward graph concepts.
+    let iptr_disabled = std::env::var("OBRAIN_IPTR_DISABLE")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    let iptr_cooldown: usize = std::env::var("OBRAIN_IPTR_COOLDOWN")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(16);
+
+    let mut iptr_dispatcher = if !iptr_disabled {
+        iptr_snapshot.and_then(|snap| {
+            if snap.is_empty() {
+                return None;
+            }
+            let mut dispatcher = crate::iptr::IptrDispatcher::new(iptr_cooldown);
+            let tool = crate::iptr_graph::GraphLookupTool::with_defaults(snap.clone());
+            dispatcher.register_tool(Box::new(tool));
+            eprintln!(
+                "  [IPTR] dispatcher ready: {} facts, cooldown={}",
+                snap.len(),
+                iptr_cooldown
+            );
+            Some(dispatcher)
+        })
+    } else {
+        None
+    };
+
+    // Build the IPTR callback closure (captures &mut iptr_dispatcher)
+    let mut iptr_callback = |entropy: f32, recent_text: &str, token_pos: u32| -> Option<HashMap<u32, f32>> {
+        let dispatcher = iptr_dispatcher.as_mut()?;
+        let ctx = crate::iptr::ToolContext {
+            recent_text: recent_text.to_string(),
+            entropy,
+            already_retrieved: Vec::new(),
+            token_position: token_pos,
+        };
+        let result = dispatcher.dispatch(&ctx)?;
+        let (n_dispatch, total_us) = dispatcher.stats();
+        eprintln!(
+            "  [IPTR] graph_lookup triggered: {} biases, {} concepts, latency={}µs (dispatch #{}, total={}µs)",
+            result.biases.len(),
+            result.concepts_found.len(),
+            result.latency_us,
+            n_dispatch,
+            total_us
+        );
+        Some(result.biases)
+    };
 
     // ── Generate with streaming + auto-continuation ────────────────
     // Round 0: generate with custom mask (graph-guided attention).
@@ -419,6 +534,7 @@ pub fn generate_with_mask(
             }
             true
         },
+        Some(&mut iptr_callback),
     )?;
     drop(spinner);
     full_response.push_str(&chunk);
@@ -473,6 +589,7 @@ pub fn generate_with_mask(
                     }
                     true
                 },
+                None, // IPTR: continuations don't need tool dispatch
             )?;
 
             next_pos = end_pos;
@@ -504,6 +621,11 @@ pub fn generate_with_mask(
     // This must happen AFTER all continuations so they benefit from
     // the sparse position exclusion (non-relevant nodes stay invisible).
     engine.clear_attn_mask();
+
+    // Clear state bias after generation (it's specific to this query's metrics).
+    if !state_bias_disabled && state_metrics.is_some() {
+        engine.clear_state_bias();
+    }
 
     ctl.generating.store(false, Ordering::SeqCst);
     let interrupted = ctl.sigint_received.swap(false, Ordering::SeqCst);

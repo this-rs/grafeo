@@ -7,7 +7,7 @@
 //! to prevent Rust panics from crossing into C code (which would be UB).
 
 use crate::ffi;
-use crate::signals::{StepSignals, GenerationSignals, compute_entropy_top_k};
+use crate::signals::{AdaptiveEntropyThreshold, GenerationSignals, StepSignals, compute_entropy_top_k};
 use anyhow::{Result, bail};
 use std::ffi::CString;
 use std::panic::catch_unwind;
@@ -175,22 +175,13 @@ impl LlamaEngine {
             );
 
             // Temperature
-            ffi::llama_sampler_chain_add(
-                chain,
-                ffi::llama_sampler_init_temp(config.temperature),
-            );
+            ffi::llama_sampler_chain_add(chain, ffi::llama_sampler_init_temp(config.temperature));
 
             // Top-P
-            ffi::llama_sampler_chain_add(
-                chain,
-                ffi::llama_sampler_init_top_p(config.top_p, 1),
-            );
+            ffi::llama_sampler_chain_add(chain, ffi::llama_sampler_init_top_p(config.top_p, 1));
 
             // Min-P
-            ffi::llama_sampler_chain_add(
-                chain,
-                ffi::llama_sampler_init_min_p(config.min_p, 1),
-            );
+            ffi::llama_sampler_chain_add(chain, ffi::llama_sampler_init_min_p(config.min_p, 1));
 
             // Final distribution sampler (random seed)
             ffi::llama_sampler_chain_add(
@@ -220,7 +211,10 @@ impl LlamaEngine {
     /// **Important**: Flash attention must be disabled (it's already disabled by default)
     /// because Flash Attention fuses the KQ computation and doesn't emit individual
     /// "kq_soft_max" tensors to the eval callback.
-    pub fn new_with_profiler(config: &EngineConfig, profiler_handle: crate::profiler::ProfilerHandle) -> Result<Self> {
+    pub fn new_with_profiler(
+        config: &EngineConfig,
+        profiler_handle: crate::profiler::ProfilerHandle,
+    ) -> Result<Self> {
         ensure_backend();
 
         let c_path = CString::new(config.model_path.as_str())
@@ -254,7 +248,10 @@ impl LlamaEngine {
         };
         if ctx.is_null() {
             unsafe { ffi::llama_model_free(model) };
-            bail!("Failed to create context with profiler (n_ctx={})", config.n_ctx);
+            bail!(
+                "Failed to create context with profiler (n_ctx={})",
+                config.n_ctx
+            );
         }
 
         let sampler = unsafe {
@@ -265,12 +262,22 @@ impl LlamaEngine {
                 ffi::llama_model_free(model);
                 bail!("Failed to create sampler chain");
             }
-            ffi::llama_sampler_chain_add(chain, ffi::llama_sampler_init_penalties(
-                config.penalty_last_n, config.penalty_repeat, 0.0, 0.0));
+            ffi::llama_sampler_chain_add(
+                chain,
+                ffi::llama_sampler_init_penalties(
+                    config.penalty_last_n,
+                    config.penalty_repeat,
+                    0.0,
+                    0.0,
+                ),
+            );
             ffi::llama_sampler_chain_add(chain, ffi::llama_sampler_init_temp(config.temperature));
             ffi::llama_sampler_chain_add(chain, ffi::llama_sampler_init_top_p(config.top_p, 1));
             ffi::llama_sampler_chain_add(chain, ffi::llama_sampler_init_min_p(config.min_p, 1));
-            ffi::llama_sampler_chain_add(chain, ffi::llama_sampler_init_dist(ffi::LLAMA_DEFAULT_SEED));
+            ffi::llama_sampler_chain_add(
+                chain,
+                ffi::llama_sampler_init_dist(ffi::LLAMA_DEFAULT_SEED),
+            );
             chain
         };
 
@@ -344,7 +351,12 @@ impl LlamaEngine {
     ///
     /// Uses a retry strategy: pre-allocate text.len()/2 + 128 tokens,
     /// if insufficient (negative return = needed size), reallocate and retry.
-    pub fn tokenize(&self, text: &str, add_special: bool, parse_special: bool) -> Result<Vec<ffi::llama_token>> {
+    pub fn tokenize(
+        &self,
+        text: &str,
+        add_special: bool,
+        parse_special: bool,
+    ) -> Result<Vec<ffi::llama_token>> {
         let vocab = self.vocab();
 
         // Pre-allocate: rough estimate
@@ -385,7 +397,11 @@ impl LlamaEngine {
         };
 
         if n2 < 0 {
-            bail!("tokenize failed after retry (text len={}, needed={})", text.len(), -n2);
+            bail!(
+                "tokenize failed after retry (text len={}, needed={})",
+                text.len(),
+                -n2
+            );
         }
 
         buf.truncate(n2 as usize);
@@ -409,8 +425,8 @@ impl LlamaEngine {
                 token,
                 buf.as_mut_ptr() as *mut i8,
                 buf.len() as i32,
-                0,     // lstrip
-                true,  // special
+                0,    // lstrip
+                true, // special
             )
         };
 
@@ -469,9 +485,18 @@ impl LlamaEngine {
     /// - Only the last token's logits are computed (for efficiency)
     ///
     /// Returns the number of tokens encoded, or error if decode fails.
-    pub fn encode(&self, tokens: &[ffi::llama_token], positions: &[ffi::llama_pos], seq_id: ffi::llama_seq_id) -> Result<usize> {
+    pub fn encode(
+        &self,
+        tokens: &[ffi::llama_token],
+        positions: &[ffi::llama_pos],
+        seq_id: ffi::llama_seq_id,
+    ) -> Result<usize> {
         if tokens.len() != positions.len() {
-            bail!("encode: tokens.len()={} != positions.len()={}", tokens.len(), positions.len());
+            bail!(
+                "encode: tokens.len()={} != positions.len()={}",
+                tokens.len(),
+                positions.len()
+            );
         }
         if tokens.is_empty() {
             return Ok(0);
@@ -502,7 +527,12 @@ impl LlamaEngine {
                 ffi::llama_batch_free(batch);
 
                 if ret != 0 {
-                    bail!("llama_decode failed (ret={}, chunk {}/{})", ret, chunk_start / n_batch, (tokens.len() + n_batch - 1) / n_batch);
+                    bail!(
+                        "llama_decode failed (ret={}, chunk {}/{})",
+                        ret,
+                        chunk_start / n_batch,
+                        (tokens.len() + n_batch - 1) / n_batch
+                    );
                 }
             }
         }
@@ -539,14 +569,16 @@ impl LlamaEngine {
         if embeddings.len() % n_embd != 0 {
             bail!(
                 "encode_embeddings: embeddings.len()={} not divisible by n_embd={}",
-                embeddings.len(), n_embd
+                embeddings.len(),
+                n_embd
             );
         }
         let n_tokens = embeddings.len() / n_embd;
         if n_tokens != positions.len() {
             bail!(
                 "encode_embeddings: n_tokens={} (from embeddings) != positions.len()={}",
-                n_tokens, positions.len()
+                n_tokens,
+                positions.len()
             );
         }
         if n_tokens == 0 {
@@ -569,18 +601,16 @@ impl LlamaEngine {
                 let embd_ptr = batch.embd;
                 if embd_ptr.is_null() {
                     ffi::llama_batch_free(batch);
-                    bail!("encode_embeddings: batch.embd is null after llama_batch_init — FFI error");
+                    bail!(
+                        "encode_embeddings: batch.embd is null after llama_batch_init — FFI error"
+                    );
                 }
 
                 for i in 0..chunk_len as usize {
                     let idx = chunk_start + i;
                     // Copy n_embd floats for this virtual token
                     let src = &embeddings[idx * n_embd..(idx + 1) * n_embd];
-                    std::ptr::copy_nonoverlapping(
-                        src.as_ptr(),
-                        embd_ptr.add(i * n_embd),
-                        n_embd,
-                    );
+                    std::ptr::copy_nonoverlapping(src.as_ptr(), embd_ptr.add(i * n_embd), n_embd);
                     *batch.pos.add(i) = positions[idx];
                     *batch.n_seq_id.add(i) = 1;
                     *(*batch.seq_id.add(i)) = seq_id;
@@ -595,13 +625,36 @@ impl LlamaEngine {
                 if ret != 0 {
                     bail!(
                         "llama_decode (embd) failed (ret={}, chunk {}/{})",
-                        ret, chunk_start / n_batch, (n_tokens + n_batch - 1) / n_batch
+                        ret,
+                        chunk_start / n_batch,
+                        (n_tokens + n_batch - 1) / n_batch
                     );
                 }
             }
         }
 
         Ok(n_tokens)
+    }
+
+    /// Inject a single embedding vector at a specific KV cache position on seq_id 0.
+    ///
+    /// Convenience wrapper around `encode_embeddings` for self-embedding injection.
+    /// The embedding must have exactly `n_embd` elements.
+    ///
+    /// # Safety notes
+    /// - Uses `llama_batch_init(1, n_embd, 1)` with `batch.embd` — verifies not null
+    /// - Position must be consecutive with existing KV entries (post llama_memory_* API)
+    pub fn inject_embedding(&self, pos: ffi::llama_pos, embd: &[f32]) -> Result<()> {
+        let n_embd = self.n_embd();
+        if embd.len() != n_embd {
+            bail!(
+                "inject_embedding: embd.len()={} != n_embd={}",
+                embd.len(),
+                n_embd
+            );
+        }
+        self.encode_embeddings(embd, &[pos], 0)?;
+        Ok(())
     }
 
     /// Remove KV cache entries for a position range on seq_id 0.
@@ -617,7 +670,9 @@ impl LlamaEngine {
     /// Used after each response to clean query+generation tokens (seq_id=1).
     pub fn clear_seq(&self, seq_id: ffi::llama_seq_id) {
         let mem = self.memory();
-        unsafe { ffi::llama_memory_seq_rm(mem, seq_id, -1, -1); }
+        unsafe {
+            ffi::llama_memory_seq_rm(mem, seq_id, -1, -1);
+        }
     }
 
     /// Copy seq_id_src → seq_id_dst for positions [p0, p1).
@@ -626,15 +681,25 @@ impl LlamaEngine {
     /// This is essential: tokens decoded on seq_id=1 can only attend to KV entries
     /// that include seq_id=1 in their sequence set. Without seq_cp, query tokens
     /// on seq_id=1 cannot see context nodes encoded on seq_id=0.
-    pub fn seq_cp(&self, src: ffi::llama_seq_id, dst: ffi::llama_seq_id, p0: ffi::llama_pos, p1: ffi::llama_pos) {
+    pub fn seq_cp(
+        &self,
+        src: ffi::llama_seq_id,
+        dst: ffi::llama_seq_id,
+        p0: ffi::llama_pos,
+        p1: ffi::llama_pos,
+    ) {
         let mem = self.memory();
-        unsafe { ffi::llama_memory_seq_cp(mem, src, dst, p0, p1); }
+        unsafe {
+            ffi::llama_memory_seq_cp(mem, src, dst, p0, p1);
+        }
     }
 
     /// Clear the entire KV cache (all sequences).
     pub fn clear_kv(&self) {
         let mem = self.memory();
-        unsafe { ffi::llama_memory_clear(mem, true); }
+        unsafe {
+            ffi::llama_memory_clear(mem, true);
+        }
     }
 
     /// Get the maximum position currently in the KV cache for a sequence.
@@ -663,14 +728,27 @@ impl LlamaEngine {
     ///   n_head = per-head mask, or any divisor of n_head for group masking.
     ///
     /// This is our fork-only API (llama_set_attn_mask).
-    pub fn set_attn_mask(&self, mask: &[f32], positions: &[ffi::llama_pos], n_head_groups: i32) -> Result<()> {
+    pub fn set_attn_mask(
+        &self,
+        mask: &[f32],
+        positions: &[ffi::llama_pos],
+        n_head_groups: i32,
+    ) -> Result<()> {
         let n_pos = positions.len() as i32;
-        let groups = if n_head_groups <= 1 { 1usize } else { n_head_groups as usize };
+        let groups = if n_head_groups <= 1 {
+            1usize
+        } else {
+            n_head_groups as usize
+        };
         let expected = groups * (n_pos as usize) * (n_pos as usize);
         if mask.len() != expected {
             bail!(
                 "set_attn_mask: mask.len()={} but expected {}×{}×{}={}",
-                mask.len(), groups, n_pos, n_pos, expected
+                mask.len(),
+                groups,
+                n_pos,
+                n_pos,
+                expected
             );
         }
         unsafe {
@@ -690,6 +768,37 @@ impl LlamaEngine {
     pub fn clear_attn_mask(&self) {
         unsafe {
             ffi::llama_set_attn_mask(self.ctx, ptr::null(), ptr::null(), 0, 0, -1);
+        }
+    }
+
+    /// Set external state bias (additive kq_b) from SelfMetrics.
+    ///
+    /// The bias tensor is added to attention scores (kq) before softmax in
+    /// `build_attn_mha()`. Layout: `[n_head × n_kv]` flattened row-major.
+    /// Broadcasts across query tokens (all queries see the same bias).
+    ///
+    /// This is our fork-only API (llama_set_state_bias, Phase 5 Axe B).
+    pub fn set_state_bias(&self, bias: &[f32], n_head: i32, n_kv: i32) {
+        let expected = (n_head as usize) * (n_kv as usize);
+        if bias.len() != expected {
+            eprintln!(
+                "  [StateBias] WARNING: bias.len()={} but expected n_head×n_kv={}×{}={}",
+                bias.len(),
+                n_head,
+                n_kv,
+                expected
+            );
+            return;
+        }
+        unsafe {
+            ffi::llama_set_state_bias(self.ctx, bias.as_ptr(), n_head, n_kv);
+        }
+    }
+
+    /// Clear the external state bias (revert to no bias).
+    pub fn clear_state_bias(&self) {
+        unsafe {
+            ffi::llama_set_state_bias(self.ctx, ptr::null(), 0, 0);
         }
     }
 
@@ -721,7 +830,11 @@ impl LlamaEngine {
             bail!("decode_for_logits: empty tokens");
         }
         if tokens.len() != positions.len() {
-            bail!("decode_for_logits: tokens.len()={} != positions.len()={}", tokens.len(), positions.len());
+            bail!(
+                "decode_for_logits: tokens.len()={} != positions.len()={}",
+                tokens.len(),
+                positions.len()
+            );
         }
 
         let n_batch = unsafe { ffi::llama_n_batch(self.ctx) } as usize;
@@ -773,7 +886,9 @@ impl LlamaEngine {
     /// Reset the sampler state (e.g., penalty history).
     /// Call between independent generations.
     pub fn sampler_reset(&self) {
-        unsafe { ffi::llama_sampler_reset(self.sampler); }
+        unsafe {
+            ffi::llama_sampler_reset(self.sampler);
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -784,7 +899,9 @@ impl LlamaEngine {
     /// When enabled, `get_embedding()` returns the last-layer hidden state.
     /// Must be called BEFORE the decode/encode that should produce embeddings.
     pub fn set_embeddings(&self, enable: bool) {
-        unsafe { ffi::llama_set_embeddings(self.ctx, enable); }
+        unsafe {
+            ffi::llama_set_embeddings(self.ctx, enable);
+        }
     }
 
     /// Get the model's embedding dimension (n_embd).
@@ -820,6 +937,31 @@ impl LlamaEngine {
         }
     }
 
+    /// Apply additive logit biases to the last decode output.
+    ///
+    /// Modifies the logit buffer in place. Call AFTER `llama_decode` and BEFORE
+    /// `sample()`. The biases map token_id → additive bias (positive = more likely).
+    ///
+    /// Used by IPTR to steer generation toward graph-retrieved concepts.
+    pub fn apply_logit_biases(&self, biases: &std::collections::HashMap<u32, f32>) {
+        if biases.is_empty() {
+            return;
+        }
+        unsafe {
+            let n_vocab = ffi::llama_vocab_n_tokens(self.vocab()) as usize;
+            let ptr = ffi::llama_get_logits_ith(self.ctx, -1);
+            if ptr.is_null() {
+                return;
+            }
+            for (&token_id, &bias) in biases {
+                let tid = token_id as usize;
+                if tid < n_vocab {
+                    *ptr.add(tid) += bias;
+                }
+            }
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // Generation — streaming token-by-token
     // ═══════════════════════════════════════════════════════════════════════════
@@ -836,6 +978,10 @@ impl LlamaEngine {
     /// generation stopped on an EOG token, false if it hit max_tokens.
     /// `end_pos` is the position after the last generated token (for continuation).
     /// If `keep_seq` is true, seq_id is NOT cleaned up (caller must do it).
+    ///
+    /// `on_needs_tool`: optional IPTR callback. Called when entropy exceeds the adaptive
+    /// threshold. Receives (entropy, recent_text, token_position) and returns logit biases
+    /// to apply before the next sampling step.
     pub fn generate_ex<F: FnMut(&str) -> bool>(
         &self,
         query_tokens: &[ffi::llama_token],
@@ -844,6 +990,7 @@ impl LlamaEngine {
         seq_id: ffi::llama_seq_id,
         keep_seq: bool,
         mut on_token: F,
+        mut on_needs_tool: Option<&mut dyn FnMut(f32, &str, u32) -> Option<std::collections::HashMap<u32, f32>>>,
     ) -> Result<(String, bool, ffi::llama_pos, GenerationSignals)> {
         // Reset sampler state from previous generation
         self.sampler_reset();
@@ -853,7 +1000,8 @@ impl LlamaEngine {
         }
 
         // Encode query tokens into KV
-        let positions: Vec<ffi::llama_pos> = (start_pos..start_pos + query_tokens.len() as i32).collect();
+        let positions: Vec<ffi::llama_pos> =
+            (start_pos..start_pos + query_tokens.len() as i32).collect();
         self.encode(query_tokens, &positions, seq_id)?;
 
         let vocab = self.vocab();
@@ -865,22 +1013,51 @@ impl LlamaEngine {
         let mut step_signals: Vec<StepSignals> = Vec::new();
         let mut first_token_id: Option<i32> = None;
         let mut first_step_logits: Option<Vec<f32>> = None;
+        let mut entropy_threshold = AdaptiveEntropyThreshold::new();
 
         for step_idx in 0..max_tokens {
             // Ξ(t) T3: Extract entropy from logits BEFORE sampling
             let logits = self.get_logits(-1);
             if !logits.is_empty() {
                 let (entropy, top1_prob, top_p_mass) = compute_entropy_top_k(logits, 256);
+
+                // IPTR: check adaptive threshold then update window
+                let needs_tool = entropy_threshold.is_high(entropy);
+                entropy_threshold.update(entropy);
+
                 step_signals.push(StepSignals {
                     entropy,
                     top1_prob,
                     top_p_mass,
                     token_position: step_idx as u32,
+                    needs_tool,
                 });
 
                 // B3: Capture full logits at step 0 for ablation reward
                 if step_idx == 0 {
                     first_step_logits = Some(logits.to_vec());
+                }
+
+                // IPTR: dispatch tools on high entropy, apply logit biases
+                if needs_tool {
+                    if let Some(ref mut cb) = on_needs_tool {
+                        // Build recent_text from last ~50 chars of result
+                        let recent = if result.len() > 200 {
+                            &result[result.len() - 200..]
+                        } else {
+                            &result
+                        };
+                        if let Some(biases) = cb(entropy, recent, step_idx as u32) {
+                            if !biases.is_empty() {
+                                eprintln!(
+                                    "  [IPTR] logit biases applied: {} tokens, entropy={:.2}",
+                                    biases.len(),
+                                    entropy
+                                );
+                                self.apply_logit_biases(&biases);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -915,7 +1092,9 @@ impl LlamaEngine {
                 Err(e) => e.valid_up_to(),
             };
             if valid_up_to > 0 {
-                let piece = std::str::from_utf8(&utf8_buf[..valid_up_to]).unwrap().to_string();
+                let piece = std::str::from_utf8(&utf8_buf[..valid_up_to])
+                    .unwrap()
+                    .to_string();
                 if !on_token(&piece) {
                     result.push_str(&piece);
                     should_break = true;
@@ -924,7 +1103,9 @@ impl LlamaEngine {
                 }
                 utf8_buf.drain(..valid_up_to);
             }
-            if should_break { break; }
+            if should_break {
+                break;
+            }
             // Remaining bytes in utf8_buf are incomplete — wait for next token
 
             // Decode this token to get logits for next sampling
@@ -941,7 +1122,11 @@ impl LlamaEngine {
                 ffi::llama_batch_free(batch);
 
                 if ret != 0 {
-                    bail!("llama_decode failed during generation at pos={} (ret={})", cur_pos, ret);
+                    bail!(
+                        "llama_decode failed during generation at pos={} (ret={})",
+                        cur_pos,
+                        ret
+                    );
                 }
             }
 
@@ -969,7 +1154,8 @@ impl LlamaEngine {
         seq_id: ffi::llama_seq_id,
         on_token: F,
     ) -> Result<(String, bool, GenerationSignals)> {
-        let (text, eog, _, signals) = self.generate_ex(query_tokens, start_pos, max_tokens, seq_id, false, on_token)?;
+        let (text, eog, _, signals) =
+            self.generate_ex(query_tokens, start_pos, max_tokens, seq_id, false, on_token, None)?;
         Ok((text, eog, signals))
     }
 }
@@ -1012,7 +1198,8 @@ mod tests {
                 "/Users/triviere/models/llama3.2-3b.gguf",
                 "/Users/triviere/models/Qwen3-14B-Claude-4.5-Opus-Distill.q4_k_m.gguf",
             ];
-            let model_path = paths.iter()
+            let model_path = paths
+                .iter()
                 .find(|p| std::path::Path::new(p).exists())
                 .expect("No test model found in /Users/triviere/models/");
 
@@ -1037,8 +1224,16 @@ mod tests {
         let count = engine.token_count("éàü café résumé").unwrap();
         assert_eq!(count, tokens.len());
         let text = engine.detokenize(&tokens);
-        assert!(text.contains("café"), "roundtrip should preserve 'café', got: {}", text);
-        eprintln!("  ✓ accents: {} tokens, roundtrip='{}'", tokens.len(), text.trim());
+        assert!(
+            text.contains("café"),
+            "roundtrip should preserve 'café', got: {}",
+            text
+        );
+        eprintln!(
+            "  ✓ accents: {} tokens, roundtrip='{}'",
+            tokens.len(),
+            text.trim()
+        );
     }
 
     #[test]
@@ -1091,10 +1286,16 @@ mod tests {
 
         // Initial state: seq 0 empty
         let pos_max_before = engine.seq_pos_max(0);
-        assert!(pos_max_before < 0, "seq 0 should be empty, got pos_max={}", pos_max_before);
+        assert!(
+            pos_max_before < 0,
+            "seq 0 should be empty, got pos_max={}",
+            pos_max_before
+        );
 
         // Encode tokens
-        let tokens = engine.tokenize("The quick brown fox jumps over the lazy dog", false, true).unwrap();
+        let tokens = engine
+            .tokenize("The quick brown fox jumps over the lazy dog", false, true)
+            .unwrap();
         let n = tokens.len();
         assert!(n >= 8, "need >= 8 tokens, got {}", n);
 
@@ -1112,7 +1313,12 @@ mod tests {
         assert!(evicted, "evict should succeed");
 
         let pos_min_evicted = engine.seq_pos_min(0);
-        assert!(pos_min_evicted >= half, "pos_min should be >= {}, got {}", half, pos_min_evicted);
+        assert!(
+            pos_min_evicted >= half,
+            "pos_min should be >= {}, got {}",
+            half,
+            pos_min_evicted
+        );
         eprintln!("  ✓ evicted 0..{}, pos_min now={}", half, pos_min_evicted);
 
         // Encode 3 more
@@ -1149,7 +1355,11 @@ mod tests {
         // Clear seq 1 → seq 0 intact
         engine.clear_seq(1);
         let pos_max_1_after = engine.seq_pos_max(1);
-        assert!(pos_max_1_after < 0, "seq 1 should be empty after clear, got {}", pos_max_1_after);
+        assert!(
+            pos_max_1_after < 0,
+            "seq 1 should be empty after clear, got {}",
+            pos_max_1_after
+        );
         let pos_max_0_after = engine.seq_pos_max(0);
         assert_eq!(pos_max_0_after, pos_max_0, "seq 0 should be intact");
         eprintln!("  ✓ seq isolation: seq0={}, seq1 cleared", pos_max_0_after);
@@ -1177,13 +1387,12 @@ mod tests {
         let query_tokens = engine.tokenize(query, false, true).unwrap();
 
         let mut streamed: Vec<String> = Vec::new();
-        let (response, _hit_eog, _signals) = engine.generate(
-            &query_tokens,
-            next_pos,
-            64,
-            1,
-            |piece| { streamed.push(piece.to_string()); true },
-        ).unwrap();
+        let (response, _hit_eog, _signals) = engine
+            .generate(&query_tokens, next_pos, 64, 1, |piece| {
+                streamed.push(piece.to_string());
+                true
+            })
+            .unwrap();
 
         assert!(!response.is_empty(), "should produce non-empty text");
         assert!(!streamed.is_empty(), "callback should fire");
@@ -1192,13 +1401,21 @@ mod tests {
 
         // seq_id=1 cleaned up by generate()
         let pos1 = engine.seq_pos_max(1);
-        assert!(pos1 < 0, "seq 1 should be empty after generate, got {}", pos1);
+        assert!(
+            pos1 < 0,
+            "seq 1 should be empty after generate, got {}",
+            pos1
+        );
 
         // seq_id=0 intact
         let pos0 = engine.seq_pos_max(0);
         assert_eq!(pos0, next_pos - 1, "seq 0 should be intact");
 
-        eprintln!("  ✓ generated {} tokens: {}", streamed.len(), &response[..response.len().min(100)]);
+        eprintln!(
+            "  ✓ generated {} tokens: {}",
+            streamed.len(),
+            &response[..response.len().min(100)]
+        );
         engine.clear_kv();
     }
 
@@ -1211,14 +1428,20 @@ mod tests {
         let tokens = engine.tokenize(prompt, true, true).unwrap();
 
         let mut count = 0;
-        let (response, _, _signals) = engine.generate(
-            &tokens, 0, 256, 1,
-            |_| { count += 1; count < 5 },
-        ).unwrap();
+        let (response, _, _signals) = engine
+            .generate(&tokens, 0, 256, 1, |_| {
+                count += 1;
+                count < 5
+            })
+            .unwrap();
 
         assert!(!response.is_empty());
         assert!(count <= 5, "should stop after ~5 callbacks, got {}", count);
-        eprintln!("  ✓ early stop after {} tokens: '{}'", count, response.trim());
+        eprintln!(
+            "  ✓ early stop after {} tokens: '{}'",
+            count,
+            response.trim()
+        );
         engine.clear_kv();
     }
 
@@ -1241,8 +1464,16 @@ mod tests {
         // Extract hidden state of the last token
         let hidden = engine.get_embedding(-1).to_vec();
         let n_embd = engine.n_embd();
-        assert_eq!(hidden.len(), n_embd, "hidden state should be n_embd={}", n_embd);
-        assert!(hidden.iter().any(|&v| v != 0.0), "hidden state should be non-zero");
+        assert_eq!(
+            hidden.len(),
+            n_embd,
+            "hidden state should be n_embd={}",
+            n_embd
+        );
+        assert!(
+            hidden.iter().any(|&v| v != 0.0),
+            "hidden state should be non-zero"
+        );
 
         // Get logits from token-encoded path
         let logits_token = engine.get_logits(-1).to_vec();
@@ -1256,7 +1487,9 @@ mod tests {
         // Note: this is a simplified test — in production, each token would have its own embedding.
         // Here we inject the last hidden state and check that logits are coherent.
         let embd_positions: Vec<i32> = vec![0];
-        engine.encode_embeddings(&hidden, &embd_positions, 0).unwrap();
+        engine
+            .encode_embeddings(&hidden, &embd_positions, 0)
+            .unwrap();
 
         let logits_embd = engine.get_logits(-1).to_vec();
         assert!(!logits_embd.is_empty());
@@ -1270,16 +1503,38 @@ mod tests {
         // Cosine similarity between logits from token path vs embedding path
         // Note: because we're injecting the last hidden state (not all tokens),
         // the logits won't be identical but should show correlation.
-        let dot: f64 = logits_token.iter().zip(logits_embd.iter())
-            .map(|(&a, &b)| a as f64 * b as f64).sum();
-        let norm_a: f64 = logits_token.iter().map(|&v| (v as f64).powi(2)).sum::<f64>().sqrt();
-        let norm_b: f64 = logits_embd.iter().map(|&v| (v as f64).powi(2)).sum::<f64>().sqrt();
-        let cosine = if norm_a > 0.0 && norm_b > 0.0 { dot / (norm_a * norm_b) } else { 0.0 };
+        let dot: f64 = logits_token
+            .iter()
+            .zip(logits_embd.iter())
+            .map(|(&a, &b)| a as f64 * b as f64)
+            .sum();
+        let norm_a: f64 = logits_token
+            .iter()
+            .map(|&v| (v as f64).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        let norm_b: f64 = logits_embd
+            .iter()
+            .map(|&v| (v as f64).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        let cosine = if norm_a > 0.0 && norm_b > 0.0 {
+            dot / (norm_a * norm_b)
+        } else {
+            0.0
+        };
 
-        eprintln!("  ✓ embed roundtrip: cosine(logits_token, logits_embd) = {:.4}", cosine);
+        eprintln!(
+            "  ✓ embed roundtrip: cosine(logits_token, logits_embd) = {:.4}",
+            cosine
+        );
         // Relaxed threshold: injecting just the last hidden state is NOT equivalent
         // to the full token sequence, but logits should be in a similar space.
-        assert!(cosine > 0.3, "cosine similarity too low: {:.4} (expected > 0.3)", cosine);
+        assert!(
+            cosine > 0.3,
+            "cosine similarity too low: {:.4} (expected > 0.3)",
+            cosine
+        );
 
         engine.clear_kv();
     }
@@ -1311,8 +1566,14 @@ mod tests {
         let embd_pos = vec![n_tok as i32];
         engine.encode_embeddings(&fake_embd, &embd_pos, 0).unwrap();
         let pos_after_embd = engine.seq_pos_max(0);
-        assert_eq!(pos_after_embd, n_tok as i32, "pos_max should include embd position");
-        eprintln!("  injected embedding at pos={}, pos_max={}", n_tok, pos_after_embd);
+        assert_eq!(
+            pos_after_embd, n_tok as i32,
+            "pos_max should include embd position"
+        );
+        eprintln!(
+            "  injected embedding at pos={}, pos_max={}",
+            n_tok, pos_after_embd
+        );
 
         // Step 3: Encode 2 more tokens after the embedding
         let more_tokens = engine.tokenize("fox jumps", false, true).unwrap();
@@ -1323,16 +1584,25 @@ mod tests {
 
         // Step 4: Verify KV cache is coherent
         let final_pos = engine.seq_pos_max(0);
-        assert_eq!(final_pos, n_tok as i32 + n_more as i32, "final pos_max should be correct");
+        assert_eq!(
+            final_pos,
+            n_tok as i32 + n_more as i32,
+            "final pos_max should be correct"
+        );
 
         // Step 5: Get logits — should be valid (not NaN/Inf)
         let logits = engine.get_logits(-1);
         assert!(!logits.is_empty(), "logits should be non-empty");
         let all_finite = logits.iter().all(|v| v.is_finite());
-        assert!(all_finite, "all logits should be finite after mixed token+embd encoding");
+        assert!(
+            all_finite,
+            "all logits should be finite after mixed token+embd encoding"
+        );
 
-        eprintln!("  ✓ coexistence: {} tokens + 1 embd + {} tokens = pos_max {}, logits OK",
-            n_tok, n_more, final_pos);
+        eprintln!(
+            "  ✓ coexistence: {} tokens + 1 embd + {} tokens = pos_max {}, logits OK",
+            n_tok, n_more, final_pos
+        );
 
         engine.clear_kv();
     }

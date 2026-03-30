@@ -12,7 +12,10 @@ pub mod projection_net;
 mod query;
 pub mod round_tracker;
 mod scoring;
+pub mod iptr;
+pub mod iptr_graph;
 pub mod self_embedding;
+pub mod state_bias;
 pub mod training;
 
 pub use contrastive::{ContrastiveConfig, ContrastiveSample, GraphTopology};

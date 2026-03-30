@@ -50,6 +50,9 @@ pub fn query_with_registry(
     coactivation: Option<&CoactivationMap>,
     cold_search: Option<&dyn ColdSearch>,
     selected_formula: Option<&SelectedFormula>,
+    self_embed_positions: &[i32],
+    iptr_snapshot: Option<&crate::iptr_graph::FactSnapshot>,
+    state_metrics: Option<&crate::state_bias::StateMetrics>,
 ) -> Result<(String, Vec<NodeId>, Option<f32>, Option<AblationReward>)> {
     registry.begin_query();
     let t_start = Instant::now();
@@ -567,6 +570,7 @@ pub fn query_with_registry(
         header_tokens: registry.header_end,
         nodes: ctx_nodes,
         adjacency: merged_adjacency,
+        self_embed_positions: self_embed_positions.to_vec(),
     };
 
     // Collect relevant graph node IDs for the caller (to link conv fragment)
@@ -581,22 +585,89 @@ pub fn query_with_registry(
         if n_nodes == 0 {
             return None;
         }
+
+        // Build graph_distances from adjacency via BFS (short-path between context nodes)
+        let mut graph_distances = vec![u8::MAX; n_nodes * n_nodes];
+        // Set self-distance = 0
+        for i in 0..n_nodes {
+            graph_distances[i * n_nodes + i] = 0;
+        }
+        // Build adjacency index: node_id → ctx_node index
+        let id_to_idx: HashMap<NodeId, usize> = ctx.nodes.iter().enumerate()
+            .map(|(i, n)| (n.id, i))
+            .collect();
+        // Set direct neighbors (distance = 1)
+        for (i, node) in ctx.nodes.iter().enumerate() {
+            if let Some(neighbors) = ctx.adjacency.get(&node.id) {
+                for &nbr in neighbors {
+                    if let Some(&j) = id_to_idx.get(&nbr) {
+                        graph_distances[i * n_nodes + j] = 1;
+                        graph_distances[j * n_nodes + i] = 1;
+                    }
+                }
+            }
+        }
+        // BFS-extend: Floyd-Warshall for short distances (n_nodes typically < 50)
+        for k in 0..n_nodes {
+            for i in 0..n_nodes {
+                for j in 0..n_nodes {
+                    let d_ik = graph_distances[i * n_nodes + k];
+                    let d_kj = graph_distances[k * n_nodes + j];
+                    if d_ik != u8::MAX && d_kj != u8::MAX {
+                        let d_ikj = d_ik.saturating_add(d_kj);
+                        if d_ikj < graph_distances[i * n_nodes + j] {
+                            graph_distances[i * n_nodes + j] = d_ikj;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Count edges for graph_density
+        let n_edges: usize = graph_distances.iter()
+            .filter(|&&d| d == 1)
+            .count() / 2; // undirected
+        let max_edges = if n_nodes > 1 { n_nodes * (n_nodes - 1) / 2 } else { 1 };
+        let graph_density = n_edges as f32 / max_edges as f32;
+
+        // Coactivation data from the coactivation map (if available)
+        let mut coactivation_data = vec![0.0f32; n_nodes * n_nodes];
+        if let Some(coact) = coactivation {
+            for i in 0..n_nodes {
+                for j in (i + 1)..n_nodes {
+                    let a = ctx.nodes[i].id;
+                    let b = ctx.nodes[j].id;
+                    let key = if a < b { (a, b) } else { (b, a) };
+                    if let Some(entry) = coact.get(&key) {
+                        coactivation_data[i * n_nodes + j] = entry.decay_score;
+                        coactivation_data[j * n_nodes + i] = entry.decay_score;
+                    }
+                }
+            }
+        }
+
         let compile_ctx = CompileContext {
             n_nodes,
             n_head: engine.n_heads() as usize,
             n_pos: 0,
             header_tokens: ctx.header_tokens as usize,
-            graph_distances: vec![u8::MAX; n_nodes * n_nodes],
-            synapse_energies: vec![0.0; n_nodes * n_nodes],
-            coactivations: vec![0.0; n_nodes * n_nodes],
-            node_ages: vec![0.0; n_nodes],
+            graph_distances,
+            synapse_energies: vec![0.0; n_nodes * n_nodes], // TODO: from GNN edge scores
+            coactivations: coactivation_data,
+            node_ages: vec![0.0; n_nodes], // TODO: from registry query_counter
             current_entropy: 0.0,
             current_token_count: 0,
             context_type: String::new(),
-            graph_density: 0.0,
+            graph_density,
         };
         match compile(&sel.op, &compile_ctx) {
-            Ok(compiled) if !compiled.is_noop() => Some(compiled),
+            Ok(compiled) if !compiled.is_noop() => {
+                kv_registry::kv_debug!(
+                    "  [AFE] compiled formula '{}': density={:.2}, n_nodes={}",
+                    sel.name, graph_density, n_nodes
+                );
+                Some(compiled)
+            }
             Ok(_) => None,
             Err(e) => {
                 kv_registry::kv_debug!("  [AFE] compile error: {:?}", e);
@@ -606,7 +677,7 @@ pub fn query_with_registry(
     });
 
     let (response, avg_entropy, first_token_id, first_step_logits) =
-        generate_with_mask(engine, &ctx, query, ctl, output, head_router, compiled_formula.as_ref())?;
+        generate_with_mask(engine, &ctx, query, ctl, output, head_router, compiled_formula.as_ref(), iptr_snapshot, state_metrics)?;
 
     // Ξ(t) Phase B/B3: Compute per-head ablation reward if HeadRouter is active
     let ablation = if let (Some(router), Some(ftid)) = (head_router, first_token_id) {

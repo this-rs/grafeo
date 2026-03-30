@@ -385,6 +385,9 @@ impl ActorHandle {
                 .as_ref()
                 .map(|p| p as &dyn kv_registry::ColdSearch),
             None, // selected_formula — server path, no Phase 4 AFE yet
+            &[],  // self_embed_positions — server path, no proprioception yet
+            None, // iptr_snapshot — server path, no Phase 5 IPTR yet
+            None, // state_metrics — server path, no Phase 5 kq_b yet
         )?;
 
         let clean = strip_think_tags(&raw_response);
