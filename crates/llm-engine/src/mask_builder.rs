@@ -19,10 +19,22 @@ pub struct BankConfig {
 /// - Bank 3 (background): visible to 25% of heads
 pub fn default_bank_config() -> Vec<BankConfig> {
     vec![
-        BankConfig { bank_id: 0, visibility_start_ratio: 0.0 },   // core: all heads
-        BankConfig { bank_id: 1, visibility_start_ratio: 0.25 },  // relations: 75% of heads
-        BankConfig { bank_id: 2, visibility_start_ratio: 0.5 },   // 2-hop: 50% of heads
-        BankConfig { bank_id: 3, visibility_start_ratio: 0.75 },  // background: 25% of heads
+        BankConfig {
+            bank_id: 0,
+            visibility_start_ratio: 0.0,
+        }, // core: all heads
+        BankConfig {
+            bank_id: 1,
+            visibility_start_ratio: 0.25,
+        }, // relations: 75% of heads
+        BankConfig {
+            bank_id: 2,
+            visibility_start_ratio: 0.5,
+        }, // 2-hop: 50% of heads
+        BankConfig {
+            bank_id: 3,
+            visibility_start_ratio: 0.75,
+        }, // background: 25% of heads
     ]
 }
 
@@ -80,7 +92,8 @@ pub fn build_perhead_mask(
     }
 
     // Determine where query/gen positions start (after all nodes)
-    let query_start = nodes.iter()
+    let query_start = nodes
+        .iter()
         .map(|n| n.pos_end)
         .max()
         .unwrap_or(header_tokens) as usize;
@@ -106,7 +119,11 @@ pub fn build_perhead_mask(
                 r.is_visible(h, bank)
             } else {
                 // Phase A fallback: fixed ratio-based visibility
-                let ratio = if bank < bank_ratio.len() { bank_ratio[bank] } else { 1.0 };
+                let ratio = if bank < bank_ratio.len() {
+                    bank_ratio[bank]
+                } else {
+                    1.0
+                };
                 head_ratio >= ratio
             };
 
@@ -114,7 +131,9 @@ pub fn build_perhead_mask(
                 // Mark node positions as visible from any row at or after them (causal)
                 for pos in node.pos_start..node.pos_end {
                     let col = pos as usize;
-                    if col >= n_pos { continue; }
+                    if col >= n_pos {
+                        continue;
+                    }
                     for row in col..n_pos {
                         mask[head_offset + row * n_pos + col] = 0.0;
                     }
@@ -150,17 +169,40 @@ mod tests {
     #[test]
     fn test_4_nodes_4_banks_8_heads() {
         let nodes = vec![
-            NodePosition { pos_start: 2, pos_end: 4, bank: 0 },
-            NodePosition { pos_start: 4, pos_end: 6, bank: 1 },
-            NodePosition { pos_start: 6, pos_end: 8, bank: 2 },
-            NodePosition { pos_start: 8, pos_end: 10, bank: 3 },
+            NodePosition {
+                pos_start: 2,
+                pos_end: 4,
+                bank: 0,
+            },
+            NodePosition {
+                pos_start: 4,
+                pos_end: 6,
+                bank: 1,
+            },
+            NodePosition {
+                pos_start: 6,
+                pos_end: 8,
+                bank: 2,
+            },
+            NodePosition {
+                pos_start: 8,
+                pos_end: 10,
+                bank: 3,
+            },
         ];
         let config = default_bank_config();
         let header_tokens = 2;
         let total_positions = 12; // 2 header + 4*2 node + 2 query
         let n_head = 8;
 
-        let result = build_perhead_mask(&nodes, header_tokens, total_positions, n_head, &config, None);
+        let result = build_perhead_mask(
+            &nodes,
+            header_tokens,
+            total_positions,
+            n_head,
+            &config,
+            None,
+        );
 
         // Shape: n_head * n_pos * n_pos
         assert_eq!(result.mask.len(), 8 * 12 * 12);
@@ -201,15 +243,30 @@ mod tests {
     #[test]
     fn test_all_bank_0_all_visible() {
         let nodes = vec![
-            NodePosition { pos_start: 1, pos_end: 3, bank: 0 },
-            NodePosition { pos_start: 3, pos_end: 5, bank: 0 },
+            NodePosition {
+                pos_start: 1,
+                pos_end: 3,
+                bank: 0,
+            },
+            NodePosition {
+                pos_start: 3,
+                pos_end: 5,
+                bank: 0,
+            },
         ];
         let config = default_bank_config();
         let header_tokens = 1;
         let total_positions = 5;
         let n_head = 4;
 
-        let result = build_perhead_mask(&nodes, header_tokens, total_positions, n_head, &config, None);
+        let result = build_perhead_mask(
+            &nodes,
+            header_tokens,
+            total_positions,
+            n_head,
+            &config,
+            None,
+        );
 
         let n_pos = total_positions as usize;
         // All nodes are bank 0 (ratio 0.0), so all heads should see them
@@ -219,7 +276,8 @@ mod tests {
             for col in 1..5usize {
                 for row in col..n_pos {
                     assert_eq!(
-                        result.mask[ho + row * n_pos + col], 0.0,
+                        result.mask[ho + row * n_pos + col],
+                        0.0,
                         "head={h} row={row} col={col} should be visible"
                     );
                 }
@@ -231,20 +289,48 @@ mod tests {
     #[test]
     fn test_non_divisible_heads() {
         let nodes = vec![
-            NodePosition { pos_start: 1, pos_end: 2, bank: 0 },
-            NodePosition { pos_start: 2, pos_end: 3, bank: 1 },
-            NodePosition { pos_start: 3, pos_end: 4, bank: 2 },
+            NodePosition {
+                pos_start: 1,
+                pos_end: 2,
+                bank: 0,
+            },
+            NodePosition {
+                pos_start: 2,
+                pos_end: 3,
+                bank: 1,
+            },
+            NodePosition {
+                pos_start: 3,
+                pos_end: 4,
+                bank: 2,
+            },
         ];
         let config = vec![
-            BankConfig { bank_id: 0, visibility_start_ratio: 0.0 },
-            BankConfig { bank_id: 1, visibility_start_ratio: 0.33 },
-            BankConfig { bank_id: 2, visibility_start_ratio: 0.66 },
+            BankConfig {
+                bank_id: 0,
+                visibility_start_ratio: 0.0,
+            },
+            BankConfig {
+                bank_id: 1,
+                visibility_start_ratio: 0.33,
+            },
+            BankConfig {
+                bank_id: 2,
+                visibility_start_ratio: 0.66,
+            },
         ];
         let header_tokens = 1;
         let total_positions = 5;
         let n_head = 7; // not divisible by 3
 
-        let result = build_perhead_mask(&nodes, header_tokens, total_positions, n_head, &config, None);
+        let result = build_perhead_mask(
+            &nodes,
+            header_tokens,
+            total_positions,
+            n_head,
+            &config,
+            None,
+        );
 
         assert_eq!(result.mask.len(), 7 * 5 * 5);
         assert_eq!(result.n_head_groups, 7);
@@ -253,7 +339,7 @@ mod tests {
 
         // Head 0 (ratio=0.0): sees bank 0 only (0.0 >= 0.0 yes, 0.0 >= 0.33 no)
         let h0 = 0 * n_pos * n_pos;
-        assert_eq!(result.mask[h0 + 2 * n_pos + 1], 0.0);  // bank 0 pos 1 visible
+        assert_eq!(result.mask[h0 + 2 * n_pos + 1], 0.0); // bank 0 pos 1 visible
         assert_eq!(result.mask[h0 + 3 * n_pos + 2], f32::NEG_INFINITY); // bank 1 pos 2 blocked
 
         // Head 5 (ratio=5/7=0.714): sees banks 0,1 (0.714 >= 0.33) and 2 (0.714 >= 0.66)
@@ -265,8 +351,16 @@ mod tests {
     #[test]
     fn test_head_router_overrides_bank_config() {
         let nodes = vec![
-            NodePosition { pos_start: 2, pos_end: 4, bank: 0 },  // core
-            NodePosition { pos_start: 4, pos_end: 6, bank: 2 },  // 2-hop
+            NodePosition {
+                pos_start: 2,
+                pos_end: 4,
+                bank: 0,
+            }, // core
+            NodePosition {
+                pos_start: 4,
+                pos_end: 6,
+                bank: 2,
+            }, // 2-hop
         ];
         let config = default_bank_config();
         let header_tokens = 2;
@@ -276,29 +370,67 @@ mod tests {
 
         // Create a HeadRouter where head 0 explicitly blocks bank 2
         let mut router = HeadRouter::new(4, 4, 0.01, 0);
-        router.alpha[0 * 4 + 0] = 5.0;  // head 0 sees bank 0 (α=5 → sigmoid≈1)
+        router.alpha[0 * 4 + 0] = 5.0; // head 0 sees bank 0 (α=5 → sigmoid≈1)
         router.alpha[0 * 4 + 2] = -5.0; // head 0 blocks bank 2 (α=-5 → sigmoid≈0)
 
         // Head 3 sees bank 2
         router.alpha[3 * 4 + 0] = 5.0;
         router.alpha[3 * 4 + 2] = 5.0;
 
-        let result = build_perhead_mask(&nodes, header_tokens, total_positions, n_head, &config, Some(&router));
+        let result = build_perhead_mask(
+            &nodes,
+            header_tokens,
+            total_positions,
+            n_head,
+            &config,
+            Some(&router),
+        );
 
         // Head 0: bank 0 (pos 2-3) visible, bank 2 (pos 4-5) blocked
         let h0 = 0 * n_pos * n_pos;
-        assert_eq!(result.mask[h0 + 3 * n_pos + 2], 0.0, "head 0 should see bank 0");
-        assert_eq!(result.mask[h0 + 5 * n_pos + 4], f32::NEG_INFINITY, "head 0 should block bank 2");
+        assert_eq!(
+            result.mask[h0 + 3 * n_pos + 2],
+            0.0,
+            "head 0 should see bank 0"
+        );
+        assert_eq!(
+            result.mask[h0 + 5 * n_pos + 4],
+            f32::NEG_INFINITY,
+            "head 0 should block bank 2"
+        );
 
         // Head 3: both visible
         let h3 = 3 * n_pos * n_pos;
-        assert_eq!(result.mask[h3 + 3 * n_pos + 2], 0.0, "head 3 should see bank 0");
-        assert_eq!(result.mask[h3 + 5 * n_pos + 4], 0.0, "head 3 should see bank 2");
+        assert_eq!(
+            result.mask[h3 + 3 * n_pos + 2],
+            0.0,
+            "head 3 should see bank 0"
+        );
+        assert_eq!(
+            result.mask[h3 + 5 * n_pos + 4],
+            0.0,
+            "head 3 should see bank 2"
+        );
 
         // Without router: verify Phase A behavior (head 0 ratio=0.0, sees bank 0 only)
-        let result_no_router = build_perhead_mask(&nodes, header_tokens, total_positions, n_head, &config, None);
+        let result_no_router = build_perhead_mask(
+            &nodes,
+            header_tokens,
+            total_positions,
+            n_head,
+            &config,
+            None,
+        );
         let h0_nr = 0 * n_pos * n_pos;
-        assert_eq!(result_no_router.mask[h0_nr + 3 * n_pos + 2], 0.0, "no router: head 0 sees bank 0");
-        assert_eq!(result_no_router.mask[h0_nr + 5 * n_pos + 4], f32::NEG_INFINITY, "no router: head 0 blocks bank 2");
+        assert_eq!(
+            result_no_router.mask[h0_nr + 3 * n_pos + 2],
+            0.0,
+            "no router: head 0 sees bank 0"
+        );
+        assert_eq!(
+            result_no_router.mask[h0_nr + 5 * n_pos + 4],
+            f32::NEG_INFINITY,
+            "no router: head 0 blocks bank 2"
+        );
     }
 }

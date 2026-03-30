@@ -132,8 +132,12 @@ impl PersistNet {
     /// - `score`: the persist_score from forward()
     /// - `reward`: positive if the memory was useful, negative if wasteful
     pub fn update(&mut self, projected: &[f32], score: f32, reward: f32) {
-        if reward.abs() < 0.01 { return; }
-        if projected.len() != DIM { return; }
+        if reward.abs() < 0.01 {
+            return;
+        }
+        if projected.len() != DIM {
+            return;
+        }
 
         // Adaptive learning rate (same schedule as FactGNN)
         let lr = 0.01 / (1.0 + 0.001 * self.n_updates as f32);
@@ -214,40 +218,60 @@ impl PersistNet {
         let b1_data = weights_to_base64(&self.b1);
         let w2_data = weights_to_base64(&self.w2);
 
-        db.create_node_with_props(&["PersistNetWeights"], [
-            ("layer", Value::String("w1".to_string().into())),
-            ("data", Value::String(w1_data.into())),
-            ("dim", Value::Int64(DIM as i64)),
-            ("n_embd", Value::Int64(self.n_embd as i64)),
-            ("n_updates", Value::Int64(self.n_updates as i64)),
-            ("total_turns", Value::Int64(self.total_turns as i64)),
-        ]);
-        db.create_node_with_props(&["PersistNetWeights"], [
-            ("layer", Value::String("b1".to_string().into())),
-            ("data", Value::String(b1_data.into())),
-        ]);
-        db.create_node_with_props(&["PersistNetWeights"], [
-            ("layer", Value::String("w2".to_string().into())),
-            ("data", Value::String(w2_data.into())),
-        ]);
-        db.create_node_with_props(&["PersistNetWeights"], [
-            ("layer", Value::String("b2".to_string().into())),
-            ("data", Value::String(weights_to_base64(&[self.b2]).into())),
-        ]);
+        db.create_node_with_props(
+            &["PersistNetWeights"],
+            [
+                ("layer", Value::String("w1".to_string().into())),
+                ("data", Value::String(w1_data.into())),
+                ("dim", Value::Int64(DIM as i64)),
+                ("n_embd", Value::Int64(self.n_embd as i64)),
+                ("n_updates", Value::Int64(self.n_updates as i64)),
+                ("total_turns", Value::Int64(self.total_turns as i64)),
+            ],
+        );
+        db.create_node_with_props(
+            &["PersistNetWeights"],
+            [
+                ("layer", Value::String("b1".to_string().into())),
+                ("data", Value::String(b1_data.into())),
+            ],
+        );
+        db.create_node_with_props(
+            &["PersistNetWeights"],
+            [
+                ("layer", Value::String("w2".to_string().into())),
+                ("data", Value::String(w2_data.into())),
+            ],
+        );
+        db.create_node_with_props(
+            &["PersistNetWeights"],
+            [
+                ("layer", Value::String("b2".to_string().into())),
+                ("data", Value::String(weights_to_base64(&[self.b2]).into())),
+            ],
+        );
     }
 
     /// Load PersistNet weights from PersonaDB. Returns true if weights were loaded.
     pub fn load_weights(&mut self, store: &LpgStore) -> bool {
         let weight_nodes = store.nodes_by_label("PersistNetWeights");
-        if weight_nodes.is_empty() { return false; }
+        if weight_nodes.is_empty() {
+            return false;
+        }
 
         let mut loaded = 0u32;
         for &nid in &weight_nodes {
             if let Some(node) = store.get_node(nid) {
-                let layer = node.properties.get(&PropertyKey::from("layer"))
-                    .and_then(|v| v.as_str()).unwrap_or("");
-                let data = node.properties.get(&PropertyKey::from("data"))
-                    .and_then(|v| v.as_str()).unwrap_or("");
+                let layer = node
+                    .properties
+                    .get(&PropertyKey::from("layer"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let data = node
+                    .properties
+                    .get(&PropertyKey::from("data"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
 
                 match layer {
                     "w1" => {
@@ -258,14 +282,38 @@ impl PersistNet {
                             }
                         }
                         // Also load metadata
-                        self.n_updates = node.properties.get(&PropertyKey::from("n_updates"))
-                            .and_then(|v| if let Value::Int64(n) = v { Some(*n as u64) } else { None })
+                        self.n_updates = node
+                            .properties
+                            .get(&PropertyKey::from("n_updates"))
+                            .and_then(|v| {
+                                if let Value::Int64(n) = v {
+                                    Some(*n as u64)
+                                } else {
+                                    None
+                                }
+                            })
                             .unwrap_or(0);
-                        self.total_turns = node.properties.get(&PropertyKey::from("total_turns"))
-                            .and_then(|v| if let Value::Int64(n) = v { Some(*n as u32) } else { None })
+                        self.total_turns = node
+                            .properties
+                            .get(&PropertyKey::from("total_turns"))
+                            .and_then(|v| {
+                                if let Value::Int64(n) = v {
+                                    Some(*n as u32)
+                                } else {
+                                    None
+                                }
+                            })
                             .unwrap_or(0);
-                        let saved_n_embd = node.properties.get(&PropertyKey::from("n_embd"))
-                            .and_then(|v| if let Value::Int64(n) = v { Some(*n as usize) } else { None })
+                        let saved_n_embd = node
+                            .properties
+                            .get(&PropertyKey::from("n_embd"))
+                            .and_then(|v| {
+                                if let Value::Int64(n) = v {
+                                    Some(*n as usize)
+                                } else {
+                                    None
+                                }
+                            })
                             .unwrap_or(0);
                         if saved_n_embd > 0 && self.n_embd == 0 {
                             self.n_embd = saved_n_embd;
@@ -274,17 +322,26 @@ impl PersistNet {
                     }
                     "b1" => {
                         if let Some(w) = base64_to_weights(data) {
-                            if w.len() == DIM { self.b1 = w; loaded += 1; }
+                            if w.len() == DIM {
+                                self.b1 = w;
+                                loaded += 1;
+                            }
                         }
                     }
                     "w2" => {
                         if let Some(w) = base64_to_weights(data) {
-                            if w.len() == DIM { self.w2 = w; loaded += 1; }
+                            if w.len() == DIM {
+                                self.w2 = w;
+                                loaded += 1;
+                            }
                         }
                     }
                     "b2" => {
                         if let Some(w) = base64_to_weights(data) {
-                            if w.len() == 1 { self.b2 = w[0]; loaded += 1; }
+                            if w.len() == 1 {
+                                self.b2 = w[0];
+                                loaded += 1;
+                            }
                         }
                     }
                     _ => {}
@@ -333,7 +390,10 @@ fn xavier_init_rect(rows: usize, cols: usize) -> Vec<f32> {
     let scale = (2.0 / (rows + cols) as f64).sqrt() as f32;
     let mut w = vec![0.0f32; n];
 
-    let mut state: u64 = 0x517cc1b727220a95 ^ (rows as u64).wrapping_mul(31).wrapping_add((cols as u64).wrapping_mul(37));
+    let mut state: u64 = 0x517cc1b727220a95
+        ^ (rows as u64)
+            .wrapping_mul(31)
+            .wrapping_add((cols as u64).wrapping_mul(37));
     for v in w.iter_mut() {
         state = state.wrapping_add(0x9e3779b97f4a7c15);
         state ^= state >> 30;
@@ -358,8 +418,11 @@ fn weights_to_base64(w: &[f32]) -> String {
 
 fn base64_to_weights(s: &str) -> Option<Vec<f32>> {
     let bytes = base64_decode(s)?;
-    if bytes.len() % 4 != 0 { return None; }
-    let w: Vec<f32> = bytes.chunks_exact(4)
+    if bytes.len() % 4 != 0 {
+        return None;
+    }
+    let w: Vec<f32> = bytes
+        .chunks_exact(4)
         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
         .collect();
     Some(w)
@@ -374,10 +437,16 @@ fn base64_encode(data: &[u8]) -> String {
         let triple = (b0 << 16) | (b1 << 8) | b2;
         result.push(B64_CHARS[((triple >> 18) & 0x3F) as usize] as char);
         result.push(B64_CHARS[((triple >> 12) & 0x3F) as usize] as char);
-        if chunk.len() > 1 { result.push(B64_CHARS[((triple >> 6) & 0x3F) as usize] as char); }
-        else { result.push('='); }
-        if chunk.len() > 2 { result.push(B64_CHARS[(triple & 0x3F) as usize] as char); }
-        else { result.push('='); }
+        if chunk.len() > 1 {
+            result.push(B64_CHARS[((triple >> 6) & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+        if chunk.len() > 2 {
+            result.push(B64_CHARS[(triple & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
     }
     result
 }
@@ -435,7 +504,10 @@ mod tests {
         // Score should be between 0 and 1 (sigmoid output)
         assert!(score >= 0.0 && score <= 1.0, "score={score} not in [0,1]");
         // With random init, score should be roughly 0.5
-        assert!((score - 0.5).abs() < 0.3, "score={score} too far from 0.5 with random init");
+        assert!(
+            (score - 0.5).abs() < 0.3,
+            "score={score} too far from 0.5 with random init"
+        );
     }
 
     #[test]
@@ -450,7 +522,10 @@ mod tests {
         // Positive reward → should reinforce persistence
         net.update(&proj, score, 1.0);
 
-        let w2_diff: f32 = net.w2.iter().zip(w2_before.iter())
+        let w2_diff: f32 = net
+            .w2
+            .iter()
+            .zip(w2_before.iter())
             .map(|(a, b)| (a - b).abs())
             .sum();
         assert!(w2_diff > 0.0, "Weights should change after update");
@@ -472,8 +547,10 @@ mod tests {
         }
 
         let (score_after, _) = net.forward(&fake_emb);
-        assert!(score_after > score_before,
-            "Score should increase after positive reward: {score_before} → {score_after}");
+        assert!(
+            score_after > score_before,
+            "Score should increase after positive reward: {score_before} → {score_after}"
+        );
     }
 
     #[test]
@@ -491,16 +568,20 @@ mod tests {
         }
 
         let (score_after, _) = net.forward(&fake_emb);
-        assert!(score_after < score_before,
-            "Score should decrease after negative reward: {score_before} → {score_after}");
+        assert!(
+            score_after < score_before,
+            "Score should decrease after negative reward: {score_before} → {score_after}"
+        );
     }
 
     #[test]
     fn test_projection_deterministic() {
         let net1 = PersistNet::new(256);
         let net2 = PersistNet::new(256);
-        assert_eq!(net1.projection, net2.projection,
-            "Projection should be deterministic for same n_embd");
+        assert_eq!(
+            net1.projection, net2.projection,
+            "Projection should be deterministic for same n_embd"
+        );
     }
 
     #[test]

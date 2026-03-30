@@ -16,4 +16,8 @@ pub struct QueryContext {
     pub adjacency: HashMap<NodeId, HashSet<NodeId>>,
     pub total_tokens: i32,
     pub header_tokens: i32,
+    /// KV positions occupied by self-embedding vectors (proprioceptive channel).
+    /// These sit between header and graph nodes: [header | self_embeds | graph nodes | query].
+    /// Empty when proprioception is disabled.
+    pub self_embed_positions: Vec<i32>,
 }

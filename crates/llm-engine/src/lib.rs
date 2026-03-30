@@ -20,7 +20,9 @@ pub mod mask_builder;
 pub mod profiler;
 pub mod signals;
 
-pub use engine::{LlamaEngine, EngineConfig, set_verbose};
+pub use engine::{EngineConfig, LlamaEngine, set_verbose};
 pub use head_router::HeadRouter;
-pub use profiler::{HeadProfiler, HeadProfile, HeadSnapshot, ProfilerHandle, profiler_eval_callback, N_BANKS};
-pub use signals::{StepSignals, GenerationSignals, compute_entropy_top_k};
+pub use profiler::{
+    HeadProfile, HeadProfiler, HeadSnapshot, N_BANKS, ProfilerHandle, profiler_eval_callback,
+};
+pub use signals::{AdaptiveEntropyThreshold, GenerationSignals, StepSignals, compute_entropy_top_k};

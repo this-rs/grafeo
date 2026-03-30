@@ -27,7 +27,10 @@ fn truncate_at_boundary(s: &str) -> String {
         }
     }
     let value = &s[..end];
-    value.trim().trim_end_matches(|c: char| c == '.' || c == '!' || c == '?' || c == ',').to_string()
+    value
+        .trim()
+        .trim_end_matches(|c: char| c == '.' || c == '!' || c == '?' || c == ',')
+        .to_string()
 }
 
 /// Ξ(t) T2: Detect facts from :Pattern nodes in the graph.
@@ -46,19 +49,35 @@ pub fn detect_facts_from_graph(pdb: &PersonaDB, msg: &str) -> Vec<PatternMatch> 
         };
 
         // Skip inactive patterns
-        let active = node.properties.get(&PropertyKey::from("active"))
-            .and_then(|v| if let Value::Bool(b) = v { Some(*b) } else { None })
+        let active = node
+            .properties
+            .get(&PropertyKey::from("active"))
+            .and_then(|v| {
+                if let Value::Bool(b) = v {
+                    Some(*b)
+                } else {
+                    None
+                }
+            })
             .unwrap_or(true);
-        if !active { continue; }
+        if !active {
+            continue;
+        }
 
         let trigger = match node.properties.get(&PropertyKey::from("trigger")) {
             Some(v) => v.as_str().unwrap_or("").to_string(),
             None => continue,
         };
-        let key_template = node.properties.get(&PropertyKey::from("key_template"))
-            .and_then(|v| v.as_str()).unwrap_or("memory").to_string();
+        let key_template = node
+            .properties
+            .get(&PropertyKey::from("key_template"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("memory")
+            .to_string();
 
-        if trigger.is_empty() { continue; }
+        if trigger.is_empty() {
+            continue;
+        }
 
         // Prefix match
         let mut this_matched = false;
@@ -95,11 +114,22 @@ pub fn detect_facts_from_graph(pdb: &PersonaDB, msg: &str) -> Vec<PatternMatch> 
 
     // Update hit_count for matched patterns
     for m in &matches {
-        let hit_count = store.get_node(m.pattern_nid)
-            .and_then(|n| n.properties.get(&PropertyKey::from("hit_count"))
-                .and_then(|v| if let Value::Int64(n) = v { Some(*n) } else { None }))
+        let hit_count = store
+            .get_node(m.pattern_nid)
+            .and_then(|n| {
+                n.properties
+                    .get(&PropertyKey::from("hit_count"))
+                    .and_then(|v| {
+                        if let Value::Int64(n) = v {
+                            Some(*n)
+                        } else {
+                            None
+                        }
+                    })
+            })
             .unwrap_or(0);
-        pdb.db.set_node_property(m.pattern_nid, "hit_count", Value::Int64(hit_count + 1));
+        pdb.db
+            .set_node_property(m.pattern_nid, "hit_count", Value::Int64(hit_count + 1));
     }
 
     matches
@@ -112,22 +142,33 @@ pub fn detect_facts(msg: &str) -> Vec<(String, String)> {
 
     for (prefix, key) in &[
         // 1st person (most common)
-        ("je m'appelle ", "name"), ("je m appelle ", "name"),
-        ("mon nom est ", "name"), ("mon nom c'est ", "name"),
-        ("my name is ", "name"), ("je suis ", "identity"),
-        ("i am ", "identity"), ("i'm ", "identity"),
+        ("je m'appelle ", "name"),
+        ("je m appelle ", "name"),
+        ("mon nom est ", "name"),
+        ("mon nom c'est ", "name"),
+        ("my name is ", "name"),
+        ("je suis ", "identity"),
+        ("i am ", "identity"),
+        ("i'm ", "identity"),
         // 2nd person (commands)
-        ("ton nom est ", "name"), ("tu t'appelles ", "name"),
-        ("tu es ", "identity"), ("appelle-toi ", "name"),
-        ("your name is ", "name"), ("you are ", "identity"),
+        ("ton nom est ", "name"),
+        ("tu t'appelles ", "name"),
+        ("tu es ", "identity"),
+        ("appelle-toi ", "name"),
+        ("your name is ", "name"),
+        ("you are ", "identity"),
         ("call yourself ", "name"),
         // Location
-        ("j'habite à ", "city"), ("j'habite a ", "city"),
-        ("je vis à ", "city"), ("je vis a ", "city"),
+        ("j'habite à ", "city"),
+        ("j'habite a ", "city"),
+        ("je vis à ", "city"),
+        ("je vis a ", "city"),
         ("i live in ", "city"),
     ] {
         if let Some(rest) = lower.strip_prefix(prefix) {
-            let value = rest.trim().trim_end_matches(|c: char| c == '.' || c == '!' || c == '?' || c == ',');
+            let value = rest
+                .trim()
+                .trim_end_matches(|c: char| c == '.' || c == '!' || c == '?' || c == ',');
             if !value.is_empty() && value.len() < 100 {
                 // For "je suis X et Y", only take up to first "et"/"and"
                 let value = value.split(" et ").next().unwrap_or(value).trim();
@@ -138,8 +179,12 @@ pub fn detect_facts(msg: &str) -> Vec<(String, String)> {
     }
 
     for prefix in &[
-        "retiens que ", "rappelle-toi que ", "rappelle toi que ",
-        "n'oublie pas que ", "remember that ", "don't forget that ",
+        "retiens que ",
+        "rappelle-toi que ",
+        "rappelle toi que ",
+        "n'oublie pas que ",
+        "remember that ",
+        "don't forget that ",
     ] {
         if let Some(rest) = lower.strip_prefix(prefix) {
             let value = rest.trim().trim_end_matches(|c: char| c == '.' || c == '!');
@@ -150,8 +195,11 @@ pub fn detect_facts(msg: &str) -> Vec<(String, String)> {
     }
 
     for prefix in &[
-        "réponds toujours en ", "reponds toujours en ",
-        "parle toujours en ", "always respond in ", "always answer in ",
+        "réponds toujours en ",
+        "reponds toujours en ",
+        "parle toujours en ",
+        "always respond in ",
+        "always answer in ",
     ] {
         if let Some(rest) = lower.strip_prefix(prefix) {
             let value = rest.trim().trim_end_matches(|c: char| c == '.' || c == '!');

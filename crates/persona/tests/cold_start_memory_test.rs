@@ -7,10 +7,10 @@
 //!   3. Verify BM25 search finds the feedback
 //!   4. Verify search_pairs returns Q/A pairs
 
-use persona::PersonaDB;
 use kv_registry::ColdSearch;
 #[allow(unused_imports)]
 use obrain_common::types::NodeId;
+use persona::PersonaDB;
 
 fn setup_db(path: &str) -> PersonaDB {
     let _ = std::fs::remove_dir_all(path);
@@ -29,7 +29,10 @@ fn test_cold_start_recalls_feedback() {
         let db = setup_db(path);
 
         // Turn 1: User asks about Riemann zeta
-        db.add_message("user", "Démontre que tous les zéros non triviaux de ζ(s) sont dans la bande 0 < Re(s) < 1");
+        db.add_message(
+            "user",
+            "Démontre que tous les zéros non triviaux de ζ(s) sont dans la bande 0 < Re(s) < 1",
+        );
         db.add_message("assistant", "La fonction zêta de Riemann ζ(s) = Σ 1/n^s converge pour Re(s) > 1. Par prolongement analytique, elle s'étend à tout le plan complexe sauf s=1. Les zéros triviaux sont aux entiers négatifs pairs. Pour les non-triviaux, on utilise l'équation fonctionnelle.");
 
         // Turn 2: User gives feedback
@@ -47,18 +50,35 @@ fn test_cold_start_recalls_feedback() {
     let db2 = reopen_db(path);
 
     // Verify BM25 index was rebuilt
-    assert!(db2.indexed_message_count() >= 6, "Expected ≥6 indexed messages, got {}", db2.indexed_message_count());
+    assert!(
+        db2.indexed_message_count() >= 6,
+        "Expected ≥6 indexed messages, got {}",
+        db2.indexed_message_count()
+    );
 
     // Search for the original question topic
     let hits = db2.search_messages("zéros non triviaux bande critique", 10);
-    assert!(!hits.is_empty(), "BM25 should find messages about zeta zeros after cold start");
+    assert!(
+        !hits.is_empty(),
+        "BM25 should find messages about zeta zeros after cold start"
+    );
 
     // Verify we find the FEEDBACK (not just the original question)
-    let feedback_found = hits.iter().any(|h| {
-        h.content.contains("produit eulérien") || h.content.contains("Vallée-Poussin")
-    });
-    assert!(feedback_found, "BM25 should find the correction/feedback messages. Got: {:?}",
-        hits.iter().map(|h| format!("[{}] {}... (score={:.2})", h.role, h.content.chars().take(60).collect::<String>(), h.score)).collect::<Vec<_>>());
+    let feedback_found = hits
+        .iter()
+        .any(|h| h.content.contains("produit eulérien") || h.content.contains("Vallée-Poussin"));
+    assert!(
+        feedback_found,
+        "BM25 should find the correction/feedback messages. Got: {:?}",
+        hits.iter()
+            .map(|h| format!(
+                "[{}] {}... (score={:.2})",
+                h.role,
+                h.content.chars().take(60).collect::<String>(),
+                h.score
+            ))
+            .collect::<Vec<_>>()
+    );
 
     // Search using ColdSearch trait (search_pairs)
     let pairs = db2.search_pairs("zéros non triviaux de ζ(s) bande", 5);
@@ -66,15 +86,33 @@ fn test_cold_start_recalls_feedback() {
 
     // Verify we get Q/A pairs (primary + adjacent)
     let has_pair = pairs.iter().any(|(primary, adj)| adj.is_some());
-    assert!(has_pair, "search_pairs should return at least one Q/A pair. Got: {:?}",
-        pairs.iter().map(|(p, a)| format!("({}: {}... | adj: {})", p.role, p.content.chars().take(40).collect::<String>(), a.is_some())).collect::<Vec<_>>());
+    assert!(
+        has_pair,
+        "search_pairs should return at least one Q/A pair. Got: {:?}",
+        pairs
+            .iter()
+            .map(|(p, a)| format!(
+                "({}: {}... | adj: {})",
+                p.role,
+                p.content.chars().take(40).collect::<String>(),
+                a.is_some()
+            ))
+            .collect::<Vec<_>>()
+    );
 
     // Verify the corrected assistant response is retrievable
     let corrected_found = pairs.iter().any(|(p, a)| {
-        let texts = format!("{} {}", p.content, a.as_ref().map(|x| x.content.as_str()).unwrap_or(""));
+        let texts = format!(
+            "{} {}",
+            p.content,
+            a.as_ref().map(|x| x.content.as_str()).unwrap_or("")
+        );
         texts.contains("Vallée-Poussin") || texts.contains("produit eulérien")
     });
-    assert!(corrected_found, "The corrected response should be in the search_pairs results");
+    assert!(
+        corrected_found,
+        "The corrected response should be in the search_pairs results"
+    );
 
     let _ = std::fs::remove_dir_all(path);
 }
@@ -88,14 +126,20 @@ fn test_cold_start_multiple_corrections() {
 
         // First attempt (wrong)
         db.add_message("user", "Quel est le théorème de Fermat?");
-        db.add_message("assistant", "Le théorème de Fermat dit que a^n + b^n = c^n n'a pas de solution pour n > 2.");
+        db.add_message(
+            "assistant",
+            "Le théorème de Fermat dit que a^n + b^n = c^n n'a pas de solution pour n > 2.",
+        );
 
         // Correction 1
         db.add_message("user", "C'est le grand théorème de Fermat, mais tu oublies que a, b, c doivent être des entiers positifs non nuls.");
         db.add_message("assistant", "Correction: le grand théorème de Fermat (prouvé par Wiles en 1995) dit que pour n > 2, il n'existe pas d'entiers positifs non nuls a, b, c tels que a^n + b^n = c^n.");
 
         // Correction 2
-        db.add_message("user", "Et le petit théorème de Fermat? Tu ne l'as pas mentionné.");
+        db.add_message(
+            "user",
+            "Et le petit théorème de Fermat? Tu ne l'as pas mentionné.",
+        );
         db.add_message("assistant", "Le petit théorème de Fermat dit que si p est premier et a n'est pas divisible par p, alors a^(p-1) ≡ 1 (mod p). C'est fondamental en cryptographie RSA.");
     }
 
@@ -104,18 +148,28 @@ fn test_cold_start_multiple_corrections() {
 
     // Search for Fermat
     let hits = db2.search_messages("théorème Fermat", 10);
-    assert!(hits.len() >= 3, "Should find multiple messages about Fermat, got {}", hits.len());
+    assert!(
+        hits.len() >= 3,
+        "Should find multiple messages about Fermat, got {}",
+        hits.len()
+    );
 
     // The corrections should be findable
     let has_wiles = hits.iter().any(|h| h.content.contains("Wiles"));
-    let has_petit = hits.iter().any(|h| h.content.contains("petit théorème") || h.content.contains("a^(p-1)"));
+    let has_petit = hits
+        .iter()
+        .any(|h| h.content.contains("petit théorème") || h.content.contains("a^(p-1)"));
     assert!(has_wiles, "Should find the Wiles correction");
     assert!(has_petit, "Should find the petit théorème correction");
 
     // Verify pairs include the corrected responses
     let pairs = db2.search_pairs("théorème Fermat", 5);
     let pair_count = pairs.iter().filter(|(_, a)| a.is_some()).count();
-    assert!(pair_count >= 1, "Should have at least 1 Q/A pair, got {}", pair_count);
+    assert!(
+        pair_count >= 1,
+        "Should have at least 1 Q/A pair, got {}",
+        pair_count
+    );
 
     let _ = std::fs::remove_dir_all(path);
 }
@@ -135,11 +189,17 @@ fn test_cold_start_cross_conversation() {
         db.new_conversation("Conversation about Python");
 
         // Conversation 2: talk about Python
-        db.add_message("user", "Quelle est la différence entre list et tuple en Python?");
+        db.add_message(
+            "user",
+            "Quelle est la différence entre list et tuple en Python?",
+        );
         db.add_message("assistant", "Les listes sont mutables (list.append()), les tuples sont immutables. Les tuples sont hashables et utilisables comme clés de dictionnaire.");
 
         // Give feedback in conversation 2
-        db.add_message("user", "Tu oublies que les tuples sont aussi plus performants en mémoire car de taille fixe.");
+        db.add_message(
+            "user",
+            "Tu oublies que les tuples sont aussi plus performants en mémoire car de taille fixe.",
+        );
         db.add_message("assistant", "Correction: en plus de l'immutabilité et la hashabilité, les tuples ont un avantage mémoire car leur taille est fixe — Python peut les allouer plus efficacement que les listes.");
     }
 
@@ -148,16 +208,30 @@ fn test_cold_start_cross_conversation() {
 
     // Search for Rust borrow checker from conversation 1
     let rust_hits = db2.search_messages("borrow checker Rust", 5);
-    assert!(!rust_hits.is_empty(), "Should find Rust messages from previous conversation");
+    assert!(
+        !rust_hits.is_empty(),
+        "Should find Rust messages from previous conversation"
+    );
 
     // Search for Python correction from conversation 2
     let python_hits = db2.search_messages("tuple Python mémoire", 5);
-    assert!(!python_hits.is_empty(), "Should find Python tuple correction");
-    let has_correction = python_hits.iter().any(|h| h.content.contains("taille fixe") || h.content.contains("mémoire"));
-    assert!(has_correction, "Should find the memory correction for tuples");
+    assert!(
+        !python_hits.is_empty(),
+        "Should find Python tuple correction"
+    );
+    let has_correction = python_hits
+        .iter()
+        .any(|h| h.content.contains("taille fixe") || h.content.contains("mémoire"));
+    assert!(
+        has_correction,
+        "Should find the memory correction for tuples"
+    );
 
     // Verify cross-conversation: both conversations' messages are indexed
-    assert!(db2.indexed_message_count() >= 6, "Should have indexed messages from both conversations");
+    assert!(
+        db2.indexed_message_count() >= 6,
+        "Should have indexed messages from both conversations"
+    );
 
     let _ = std::fs::remove_dir_all(path);
 }
@@ -179,7 +253,10 @@ fn test_three_cold_starts_accumulate() {
     {
         let db = PersonaDB::open(path).unwrap();
         db.add_message("user", "Et la complexité en espace du tri fusion?");
-        db.add_message("assistant", "O(n) en espace car il faut un tableau auxiliaire pour fusionner.");
+        db.add_message(
+            "assistant",
+            "O(n) en espace car il faut un tableau auxiliaire pour fusionner.",
+        );
         db.add_message("user", "Précise que c'est O(n) pour le tableau auxiliaire + O(log n) pour la pile de récursion.");
         db.add_message("assistant", "Correction: O(n) pour le tableau auxiliaire + O(log n) pour la pile de récursion, donc O(n) au total dominé par le tableau.");
     }
@@ -195,13 +272,23 @@ fn test_three_cold_starts_accumulate() {
     {
         let db = PersonaDB::open(path).unwrap();
         let count = db.indexed_message_count();
-        assert!(count >= 8, "Should have ≥8 messages across 3 sessions, got {}", count);
+        assert!(
+            count >= 8,
+            "Should have ≥8 messages across 3 sessions, got {}",
+            count
+        );
 
         // Find the correction about space complexity
         let hits = db.search_messages("complexité espace tri fusion", 10);
         let hits_alt = db.search_messages("pile récursion tableau auxiliaire", 10);
-        let has_pile = hits.iter().chain(hits_alt.iter()).any(|h| h.content.contains("pile de récursion"));
-        assert!(has_pile, "Should find the recursion stack correction after 3 cold starts");
+        let has_pile = hits
+            .iter()
+            .chain(hits_alt.iter())
+            .any(|h| h.content.contains("pile de récursion"));
+        assert!(
+            has_pile,
+            "Should find the recursion stack correction after 3 cold starts"
+        );
 
         // Find stability info from session 3
         let hits2 = db.search_messages("tri fusion stable ordre", 10);
@@ -226,15 +313,21 @@ fn test_reward_weighted_bm25_ranking() {
 
         // Turn 1: Bad answer (will get negative reward)
         let _u1 = db.add_message("user", "Explique la complexité du quicksort");
-        let a1 = db.add_message("assistant", "Le quicksort a une complexité O(n log n) dans tous les cas.");
+        let a1 = db.add_message(
+            "assistant",
+            "Le quicksort a une complexité O(n log n) dans tous les cas.",
+        );
 
         // Turn 2: User corrects — this means turn 1 gets negative reward
-        let _u2 = db.add_message("user", "C'est faux. Le quicksort a O(n²) au pire cas, pas O(n log n) dans tous les cas.");
+        let _u2 = db.add_message(
+            "user",
+            "C'est faux. Le quicksort a O(n²) au pire cas, pas O(n log n) dans tous les cas.",
+        );
         let a2 = db.add_message("assistant", "Correction: le quicksort a une complexité O(n log n) en moyenne mais O(n²) au pire cas (pivot mal choisi). Le tri fusion est O(n log n) dans tous les cas.");
 
         // Simulate reward propagation: negative for bad answer, positive for correction
-        db.set_message_reward(a1, -0.4);  // bad answer penalized
-        db.set_message_reward(a2, 0.6);   // correction rewarded
+        db.set_message_reward(a1, -0.4); // bad answer penalized
+        db.set_message_reward(a2, 0.6); // correction rewarded
     }
 
     // Cold start
@@ -242,29 +335,44 @@ fn test_reward_weighted_bm25_ranking() {
 
     // Both messages should be findable
     let hits = db2.search_messages("complexité quicksort", 10);
-    assert!(hits.len() >= 2, "Should find multiple messages, got {}", hits.len());
+    assert!(
+        hits.len() >= 2,
+        "Should find multiple messages, got {}",
+        hits.len()
+    );
 
     // Now search via ColdSearch (reward-weighted)
     let cold_hits = db2.search("complexité quicksort", 10);
     assert!(!cold_hits.is_empty(), "ColdSearch should find results");
 
     // The correction (reward=+0.6) should rank ABOVE the bad answer (reward=-0.4)
-    let correction_idx = cold_hits.iter().position(|h| h.content.contains("pire cas"));
-    let bad_idx = cold_hits.iter().position(|h| h.content.contains("dans tous les cas") && !h.content.contains("pire cas"));
+    let correction_idx = cold_hits
+        .iter()
+        .position(|h| h.content.contains("pire cas"));
+    let bad_idx = cold_hits
+        .iter()
+        .position(|h| h.content.contains("dans tous les cas") && !h.content.contains("pire cas"));
 
     if let (Some(corr_i), Some(bad_i)) = (correction_idx, bad_idx) {
-        assert!(corr_i < bad_i,
+        assert!(
+            corr_i < bad_i,
             "Correction (reward=+0.6) should rank above bad answer (reward=-0.4). \
              Correction at index {}, bad at index {}. Scores: corr={:.3}, bad={:.3}",
-            corr_i, bad_i,
-            cold_hits[corr_i].score, cold_hits[bad_i].score);
+            corr_i,
+            bad_i,
+            cold_hits[corr_i].score,
+            cold_hits[bad_i].score
+        );
     }
     // Also verify the scores themselves
     if let Some(ci) = correction_idx {
         if let Some(bi) = bad_idx {
-            assert!(cold_hits[ci].score > cold_hits[bi].score,
+            assert!(
+                cold_hits[ci].score > cold_hits[bi].score,
                 "Correction score ({:.3}) should be > bad answer score ({:.3})",
-                cold_hits[ci].score, cold_hits[bi].score);
+                cold_hits[ci].score,
+                cold_hits[bi].score
+            );
         }
     }
 
@@ -279,21 +387,27 @@ fn test_zeta_feedback_cold_start_e2e() {
         let db = setup_db(path);
 
         // Turn 1: User asks about ζ(s) zeros
-        let _u1 = db.add_message("user",
-            "Démontre que tous les zéros non triviaux de ζ(s) sont dans la bande 0 < Re(s) < 1");
-        let a1 = db.add_message("assistant",
+        let _u1 = db.add_message(
+            "user",
+            "Démontre que tous les zéros non triviaux de ζ(s) sont dans la bande 0 < Re(s) < 1",
+        );
+        let a1 = db.add_message(
+            "assistant",
             "La fonction zêta de Riemann ζ(s) = Σ 1/n^s converge pour Re(s) > 1. \
              Par prolongement analytique, elle s'étend à tout le plan complexe sauf s=1. \
              Les zéros triviaux sont aux entiers négatifs pairs. \
-             Pour les non-triviaux, on utilise l'équation fonctionnelle.");
+             Pour les non-triviaux, on utilise l'équation fonctionnelle.",
+        );
         // This answer is incomplete/wrong — negative reward
         db.set_message_reward(a1, -0.3);
 
         // Turn 2: User gives specific feedback
-        let u2 = db.add_message("user",
+        let u2 = db.add_message(
+            "user",
             "Ta réponse est incorrecte. Tu n'as pas démontré que les zéros sont DANS la bande. \
              Il faut montrer que ζ(s) ≠ 0 pour Re(s) ≥ 1 en utilisant le produit eulérien \
-             et le théorème de Hadamard.");
+             et le théorème de Hadamard.",
+        );
         db.set_message_reward(u2, 0.5);
 
         let a2 = db.add_message("assistant",
@@ -305,13 +419,17 @@ fn test_zeta_feedback_cold_start_e2e() {
         db.set_message_reward(a2, 0.7);
 
         // Turn 3: User confirms
-        let u3 = db.add_message("user",
+        let u3 = db.add_message(
+            "user",
             "Bien mieux. Le point clé c'est le produit eulérien pour Re(s) > 1 \
-             et de la Vallée-Poussin pour Re(s) = 1.");
+             et de la Vallée-Poussin pour Re(s) = 1.",
+        );
         db.set_message_reward(u3, 0.8);
-        let a3 = db.add_message("assistant",
+        let a3 = db.add_message(
+            "assistant",
             "Exactement. Je retiens: le produit eulérien prouve ζ(s) ≠ 0 pour Re(s) > 1, \
-             et le théorème de de la Vallée-Poussin pour la droite critique Re(s) = 1.");
+             et le théorème de de la Vallée-Poussin pour la droite critique Re(s) = 1.",
+        );
         db.set_message_reward(a3, 0.8);
     }
 
@@ -328,24 +446,43 @@ fn test_zeta_feedback_cold_start_e2e() {
     let raw_hits = db2.search_messages("zéros non triviaux bande critique", 10);
     for (i, h) in cold_hits.iter().enumerate() {
         // Find matching raw hit to get node_id for reward lookup
-        let reward = raw_hits.iter()
+        let reward = raw_hits
+            .iter()
             .find(|r| r.content == h.content)
             .and_then(|r| db2.get_message_reward(r.node_id));
-        eprintln!("  [{}] score={:.4} reward={:+.1?} role={} | {}...",
-            i, h.score, reward, h.role,
-            h.content.chars().take(80).collect::<String>());
+        eprintln!(
+            "  [{}] score={:.4} reward={:+.1?} role={} | {}...",
+            i,
+            h.score,
+            reward,
+            h.role,
+            h.content.chars().take(80).collect::<String>()
+        );
     }
 
     // The corrected response (reward=+0.7) should be in top 3
-    let top3: Vec<&str> = cold_hits.iter().take(3).map(|h| h.content.as_str()).collect();
-    let correction_in_top3 = top3.iter().any(|c|
-        c.contains("produit eulérien") || c.contains("Vallée-Poussin"));
-    assert!(correction_in_top3,
+    let top3: Vec<&str> = cold_hits
+        .iter()
+        .take(3)
+        .map(|h| h.content.as_str())
+        .collect();
+    let correction_in_top3 = top3
+        .iter()
+        .any(|c| c.contains("produit eulérien") || c.contains("Vallée-Poussin"));
+    assert!(
+        correction_in_top3,
         "Corrected answer should be in top 3 results. Top 3:\n{}",
-        top3.iter().enumerate()
-            .map(|(i, c)| format!("  [{}] (score={:.3}) {}...",
-                i, cold_hits[i].score, c.chars().take(80).collect::<String>()))
-            .collect::<Vec<_>>().join("\n"));
+        top3.iter()
+            .enumerate()
+            .map(|(i, c)| format!(
+                "  [{}] (score={:.3}) {}...",
+                i,
+                cold_hits[i].score,
+                c.chars().take(80).collect::<String>()
+            ))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
 
     // The FIRST wrong answer (reward=-0.3) should NOT be in top 2
     let top2_has_wrong = cold_hits.iter().take(2).any(|h| {
@@ -359,11 +496,17 @@ fn test_zeta_feedback_cold_start_e2e() {
     let pairs = db2.search_pairs("zéros ζ produit eulérien Vallée-Poussin", 5);
     assert!(!pairs.is_empty(), "search_pairs should find results");
     let has_corrected_pair = pairs.iter().any(|(p, a)| {
-        let combined = format!("{} {}",
-            p.content, a.as_ref().map(|x| x.content.as_str()).unwrap_or(""));
+        let combined = format!(
+            "{} {}",
+            p.content,
+            a.as_ref().map(|x| x.content.as_str()).unwrap_or("")
+        );
         combined.contains("produit eulérien") || combined.contains("Vallée-Poussin")
     });
-    assert!(has_corrected_pair, "search_pairs should return the corrected Q/A pair");
+    assert!(
+        has_corrected_pair,
+        "search_pairs should return the corrected Q/A pair"
+    );
 
     let _ = std::fs::remove_dir_all(path);
 }
@@ -377,14 +520,24 @@ fn test_zeta_feedback_cold_start_e2e() {
 fn dump_ranking(db: &PersonaDB, query: &str) {
     let cold_hits = db.search(query, 10);
     let raw_hits = db.search_messages(query, 10);
-    eprintln!("\n  ── BM25+Reward ranking for '{}' ({} hits) ──", query, cold_hits.len());
+    eprintln!(
+        "\n  ── BM25+Reward ranking for '{}' ({} hits) ──",
+        query,
+        cold_hits.len()
+    );
     for (i, h) in cold_hits.iter().enumerate() {
-        let reward = raw_hits.iter()
+        let reward = raw_hits
+            .iter()
             .find(|r| r.content == h.content)
             .and_then(|r| db.get_message_reward(r.node_id));
-        eprintln!("  [{}] score={:.3} reward={:+.1?} role={:<9} | {}...",
-            i, h.score, reward, h.role,
-            h.content.chars().take(90).collect::<String>());
+        eprintln!(
+            "  [{}] score={:.3} reward={:+.1?} role={:<9} | {}...",
+            i,
+            h.score,
+            reward,
+            h.role,
+            h.content.chars().take(90).collect::<String>()
+        );
     }
 }
 
@@ -399,14 +552,18 @@ fn test_zeta_multi_session_progressive_learning() {
     eprintln!("\n═══ SESSION 1: First attempt ═══");
     {
         let db = PersonaDB::open(path).unwrap();
-        db.add_message("user",
-            "Démontre que tous les zéros non triviaux de ζ(s) sont dans la bande 0 < Re(s) < 1");
-        let a1 = db.add_message("assistant",
+        db.add_message(
+            "user",
+            "Démontre que tous les zéros non triviaux de ζ(s) sont dans la bande 0 < Re(s) < 1",
+        );
+        let a1 = db.add_message(
+            "assistant",
             "La fonction zêta de Riemann ζ(s) = Σ 1/n^s converge pour Re(s) > 1. \
              Par prolongement analytique, elle s'étend à tout le plan complexe sauf s=1. \
              Les zéros triviaux sont aux entiers négatifs pairs s = -2, -4, -6, ... \
              Pour les non-triviaux, on utilise l'équation fonctionnelle \
-             ξ(s) = ξ(1-s) qui les contraint à la bande critique.");
+             ξ(s) = ξ(1-s) qui les contraint à la bande critique.",
+        );
         // Next session user says "ta réponse est incorrecte" → RewardDetector gives strong negative
         db.set_message_reward(a1, -0.5); // strong negative (wrong/incomplete)
     }
@@ -422,13 +579,16 @@ fn test_zeta_multi_session_progressive_learning() {
         assert!(count >= 2, "Should have session 1 messages");
 
         // User returns with feedback
-        let u2 = db.add_message("user",
+        let u2 = db.add_message(
+            "user",
             "Ta réponse sur ζ(s) est insuffisante. Tu dis 'on utilise l'équation fonctionnelle' \
              mais tu ne démontres rien. Il faut 3 preuves distinctes: \
              1) Re(s) > 1: le produit eulérien. 2) Re(s) = 1: de la Vallée-Poussin. \
-             3) Re(s) < 0: les zéros triviaux via Γ.");
+             3) Re(s) < 0: les zéros triviaux via Γ.",
+        );
         db.set_message_reward(u2, 0.5); // constructive feedback
-        let a2 = db.add_message("assistant",
+        let a2 = db.add_message(
+            "assistant",
             "Vous avez raison, voici la démonstration rigoureuse en 3 parties:\n\
              1) Re(s) > 1: Le produit eulérien ζ(s) = Π_p (1-p^(-s))^(-1) converge absolument. \
              Chaque facteur (1-p^(-s))^(-1) est non nul, donc ζ(s) ≠ 0 pour Re(s) > 1.\n\
@@ -438,7 +598,8 @@ fn test_zeta_multi_session_progressive_learning() {
              3) Re(s) ≤ 0: L'équation fonctionnelle ζ(s) = 2^s π^(s-1) sin(πs/2) Γ(1-s) ζ(1-s) \
              montre que les seuls zéros pour Re(s) < 0 sont les zéros de sin(πs/2), soit s = -2n. \
              Ce sont les zéros triviaux.\n\
-             Conclusion: tous les zéros non triviaux sont dans 0 < Re(s) < 1.");
+             Conclusion: tous les zéros non triviaux sont dans 0 < Re(s) < 1.",
+        );
         db.set_message_reward(a2, 0.7); // good correction
 
         dump_ranking(&db, "zéros non triviaux bande critique");
@@ -456,13 +617,21 @@ fn test_zeta_multi_session_progressive_learning() {
 
         // Verify the correction is accessible
         let hits = db.search("produit eulérien Vallée-Poussin", 5);
-        assert!(!hits.is_empty(), "Session 3: should recall correction from session 2");
-        eprintln!("  ✓ Correction from session 2 found (score={:.3})", hits[0].score);
+        assert!(
+            !hits.is_empty(),
+            "Session 3: should recall correction from session 2"
+        );
+        eprintln!(
+            "  ✓ Correction from session 2 found (score={:.3})",
+            hits[0].score
+        );
 
         // User asks follow-up on a specific point
-        db.add_message("user",
+        db.add_message(
+            "user",
             "Détaille la preuve de de la Vallée-Poussin pour Re(s) = 1. \
-             Pourquoi l'inégalité 3 + 4cos(θ) + cos(2θ) ≥ 0 est-elle suffisante?");
+             Pourquoi l'inégalité 3 + 4cos(θ) + cos(2θ) ≥ 0 est-elle suffisante?",
+        );
         let a3 = db.add_message("assistant",
             "La preuve de de la Vallée-Poussin repose sur:\n\
              Soit σ > 1 et t réel non nul. On considère:\n\
@@ -477,9 +646,11 @@ fn test_zeta_multi_session_progressive_learning() {
         db.set_message_reward(a3, 0.6); // good but could be more rigorous
 
         // User gives positive feedback with a precision
-        let u3b = db.add_message("user",
+        let u3b = db.add_message(
+            "user",
             "Bon développement. Précise que l'argument utilise le pôle simple de ζ en s=1, \
-             ce qui donne la divergence en 1/(σ-1)^3 pour ζ(σ)^3. C'est crucial.");
+             ce qui donne la divergence en 1/(σ-1)^3 pour ζ(σ)^3. C'est crucial.",
+        );
         db.set_message_reward(u3b, 0.7);
         let a3b = db.add_message("assistant",
             "Point crucial noté: ζ(s) a un pôle simple en s=1 avec résidu 1. \
@@ -504,15 +675,24 @@ fn test_zeta_multi_session_progressive_learning() {
 
         // Check knowledge accumulated
         let poussin = db.search("Vallée-Poussin pôle simple", 5);
-        assert!(!poussin.is_empty(), "Session 4: should recall Poussin proof details from session 3");
+        assert!(
+            !poussin.is_empty(),
+            "Session 4: should recall Poussin proof details from session 3"
+        );
         let euler = db.search("produit eulérien convergence", 5);
-        assert!(!euler.is_empty(), "Session 4: should recall Euler product from session 2");
+        assert!(
+            !euler.is_empty(),
+            "Session 4: should recall Euler product from session 2"
+        );
 
         // User asks about Euler product convergence detail
-        db.add_message("user",
+        db.add_message(
+            "user",
             "Pour la partie Re(s) > 1, explique pourquoi le produit eulérien converge \
-             absolument et pourquoi aucun facteur ne s'annule.");
-        let a4 = db.add_message("assistant",
+             absolument et pourquoi aucun facteur ne s'annule.",
+        );
+        let a4 = db.add_message(
+            "assistant",
             "Convergence absolue du produit eulérien pour Re(s) > 1:\n\
              ζ(s) = Π_p (1 - p^(-s))^(-1)\n\
              Le produit converge absolument ssi Σ_p |p^(-s)| converge.\n\
@@ -521,24 +701,29 @@ fn test_zeta_multi_session_progressive_learning() {
              Chaque facteur (1-p^(-s))^(-1): puisque |p^(-s)| = p^(-σ) < 1 pour σ > 1, \
              le facteur 1-p^(-s) ≠ 0. Donc (1-p^(-s))^(-1) est bien défini.\n\
              Un produit infini convergent dont aucun facteur n'est nul a un produit non nul.\n\
-             Donc ζ(s) ≠ 0 pour Re(s) > 1.");
+             Donc ζ(s) ≠ 0 pour Re(s) > 1.",
+        );
         db.set_message_reward(a4, 0.5); // decent but missing something
 
-        let u4 = db.add_message("user",
+        let u4 = db.add_message(
+            "user",
             "Correct mais incomplet. Il faut mentionner que la convergence absolue du produit \
              signifie Σ_p |log(1-p^(-s))| < ∞, et que log(1-z) ~ -z pour |z| petit, \
              donc ça se ramène bien à Σ_p p^(-σ). Aussi, le fait que le produit ≠ 0 \
              utilise le théorème: un produit infini absolument convergent est non nul \
-             ssi aucun facteur n'est nul.");
+             ssi aucun facteur n'est nul.",
+        );
         db.set_message_reward(u4, 0.6);
-        let a4b = db.add_message("assistant",
+        let a4b = db.add_message(
+            "assistant",
             "Merci pour la précision. La démonstration complète:\n\
              1) Convergence absolue: Σ_p |log(1-p^(-s))| ≤ Σ_p Σ_k |p^(-ks)|/k \
              ≤ Σ_p 2|p^(-s)| = 2·Σ_p p^(-σ) < ∞ pour σ > 1 (car log(1-z) ~ -z pour |z| < 1/2).\n\
              2) Non-nullité: Par le théorème des produits infinis, si Σ|a_p| < ∞ \
              avec a_p = -p^(-s), alors Π(1+a_p) ≠ 0 ssi aucun facteur n'est nul.\n\
              Or 1 + a_p = 1-p^(-s) ≠ 0 car |p^(-s)| < 1.\n\
-             Donc ζ(s) = Π(1-p^(-s))^(-1) ≠ 0 pour Re(s) > 1. CQFD.");
+             Donc ζ(s) = Π(1-p^(-s))^(-1) ≠ 0 pour Re(s) > 1. CQFD.",
+        );
         db.set_message_reward(a4b, 0.9); // excellent
 
         dump_ranking(&db, "produit eulérien convergence absolue");
@@ -552,7 +737,11 @@ fn test_zeta_multi_session_progressive_learning() {
         let db = PersonaDB::open(path).unwrap();
         let count = db.indexed_message_count();
         eprintln!("  Cold start: {} messages indexed", count);
-        assert!(count >= 12, "Should have all sessions' messages, got {}", count);
+        assert!(
+            count >= 12,
+            "Should have all sessions' messages, got {}",
+            count
+        );
 
         // ── Test 1: Original question recall ──
         let q1 = db.search("zéros non triviaux bande critique", 10);
@@ -561,47 +750,71 @@ fn test_zeta_multi_session_progressive_learning() {
 
         // Among ASSISTANT responses only, the correction should rank above the bad answer
         let asst_hits: Vec<_> = q1.iter().filter(|h| h.role == "assistant").collect();
-        assert!(asst_hits.len() >= 2, "Should have multiple assistant responses, got {}", asst_hits.len());
+        assert!(
+            asst_hits.len() >= 2,
+            "Should have multiple assistant responses, got {}",
+            asst_hits.len()
+        );
 
         // The TOP assistant response should be a correction (not the initial bad one)
         let top_asst = &asst_hits[0];
         let top_has_proof = top_asst.content.contains("produit eulérien")
             || top_asst.content.contains("Vallée-Poussin")
             || top_asst.content.contains("démonstration rigoureuse");
-        assert!(top_has_proof,
+        assert!(
+            top_has_proof,
             "Top assistant response should be a correction. Got: {}...",
-            top_asst.content.chars().take(100).collect::<String>());
-        eprintln!("  ✓ Top assistant response is the correction (score={:.3})", top_asst.score);
+            top_asst.content.chars().take(100).collect::<String>()
+        );
+        eprintln!(
+            "  ✓ Top assistant response is the correction (score={:.3})",
+            top_asst.score
+        );
 
         // The initial bad answer (reward=-0.1) should rank BELOW the correction
-        let bad_answer_rank = asst_hits.iter().position(|h|
+        let bad_answer_rank = asst_hits.iter().position(|h| {
             h.content.contains("équation fonctionnelle")
-            && h.content.contains("contraint à la bande critique")
-            && !h.content.contains("produit eulérien"));
-        let correction_rank = asst_hits.iter().position(|h|
-            h.content.contains("produit eulérien") || h.content.contains("démonstration rigoureuse"));
+                && h.content.contains("contraint à la bande critique")
+                && !h.content.contains("produit eulérien")
+        });
+        let correction_rank = asst_hits.iter().position(|h| {
+            h.content.contains("produit eulérien") || h.content.contains("démonstration rigoureuse")
+        });
         if let (Some(bad_r), Some(corr_r)) = (bad_answer_rank, correction_rank) {
-            eprintln!("  ✓ Correction at assistant rank {}, bad answer at rank {}", corr_r, bad_r);
-            assert!(corr_r < bad_r,
-                "Correction should rank above bad answer among assistants. corr={}, bad={}", corr_r, bad_r);
+            eprintln!(
+                "  ✓ Correction at assistant rank {}, bad answer at rank {}",
+                corr_r, bad_r
+            );
+            assert!(
+                corr_r < bad_r,
+                "Correction should rank above bad answer among assistants. corr={}, bad={}",
+                corr_r,
+                bad_r
+            );
         }
 
         // ── Test 2: Vallée-Poussin details recall ──
         let q2 = db.search("Vallée-Poussin pôle simple ζ", 5);
         assert!(!q2.is_empty(), "Should recall Poussin proof details");
-        let poussin_detail = q2.iter().any(|h|
-            h.content.contains("pôle simple") || h.content.contains("1/(σ-1)"));
-        assert!(poussin_detail,
-            "Should find the pole argument detail from session 3");
+        let poussin_detail = q2
+            .iter()
+            .any(|h| h.content.contains("pôle simple") || h.content.contains("1/(σ-1)"));
+        assert!(
+            poussin_detail,
+            "Should find the pole argument detail from session 3"
+        );
         eprintln!("  ✓ Vallée-Poussin pole detail found");
 
         // ── Test 3: Euler product convergence recall ──
         let q3 = db.search("produit eulérien convergence absolue log", 5);
         assert!(!q3.is_empty(), "Should recall Euler product convergence");
-        let euler_detail = q3.iter().any(|h|
-            h.content.contains("log(1-z)") || h.content.contains("Σ_p |log"));
-        assert!(euler_detail,
-            "Should find the log convergence argument from session 4");
+        let euler_detail = q3
+            .iter()
+            .any(|h| h.content.contains("log(1-z)") || h.content.contains("Σ_p |log"));
+        assert!(
+            euler_detail,
+            "Should find the log convergence argument from session 4"
+        );
         eprintln!("  ✓ Euler product convergence detail found");
 
         // ── Test 4: search_pairs returns best Q/A combinations ──
@@ -609,7 +822,11 @@ fn test_zeta_multi_session_progressive_learning() {
         assert!(!pairs.is_empty());
         // At least one pair should have both Q and A
         let full_pairs = pairs.iter().filter(|(_, a)| a.is_some()).count();
-        assert!(full_pairs >= 1, "Should have at least 1 Q/A pair, got {}", full_pairs);
+        assert!(
+            full_pairs >= 1,
+            "Should have at least 1 Q/A pair, got {}",
+            full_pairs
+        );
         eprintln!("  ✓ {} Q/A pairs found", full_pairs);
 
         // ── Test 5: Progressive improvement — later sessions' corrections rank higher ──
@@ -617,13 +834,19 @@ fn test_zeta_multi_session_progressive_learning() {
         // when queried on a topic where both are relevant
         let q5 = db.search("produit eulérien ζ(s) convergence", 10);
         dump_ranking(&db, "produit eulérien ζ(s) convergence");
-        let session4_idx = q5.iter().position(|h|
-            h.content.contains("log(1-z)") || h.content.contains("Σ|a_p|"));
-        let session2_idx = q5.iter().position(|h|
-            h.content.contains("Π_p (1-p^(-s))^(-1) converge absolument")
-            && !h.content.contains("log(1-z)"));
+        let session4_idx = q5
+            .iter()
+            .position(|h| h.content.contains("log(1-z)") || h.content.contains("Σ|a_p|"));
+        let session2_idx = q5.iter().position(|h| {
+            h.content
+                .contains("Π_p (1-p^(-s))^(-1) converge absolument")
+                && !h.content.contains("log(1-z)")
+        });
         if let (Some(s4), Some(s2)) = (session4_idx, session2_idx) {
-            eprintln!("  Session 4 correction at rank {}, session 2 at rank {}", s4, s2);
+            eprintln!(
+                "  Session 4 correction at rank {}, session 2 at rank {}",
+                s4, s2
+            );
             // Session 4 (reward 0.9) should be at same or better rank than session 2 (reward 0.7)
             // if BM25 text match is similar
         }
@@ -632,21 +855,27 @@ fn test_zeta_multi_session_progressive_learning() {
         let q6 = db.search("théorème des produits infinis facteur nul", 5);
         let has_user_feedback = q6.iter().any(|h| h.role == "user");
         let has_asst_correction = q6.iter().any(|h| h.role == "assistant");
-        eprintln!("  ✓ Feedback search: {} user msgs, {} assistant corrections",
+        eprintln!(
+            "  ✓ Feedback search: {} user msgs, {} assistant corrections",
             q6.iter().filter(|h| h.role == "user").count(),
-            q6.iter().filter(|h| h.role == "assistant").count());
+            q6.iter().filter(|h| h.role == "assistant").count()
+        );
 
         // ── Test 7: Cross-topic search should not confuse Euler/Poussin ──
         let euler_only = db.search("convergence absolue Σ_p", 3);
         for h in &euler_only {
             // Should get Euler product stuff, not Poussin stuff
-            assert!(!h.content.contains("3 + 4cos"),
-                "Euler product query should not return Poussin proof as top result");
+            assert!(
+                !h.content.contains("3 + 4cos"),
+                "Euler product query should not return Poussin proof as top result"
+            );
         }
         let poussin_only = db.search("inégalité trigonométrique cos contradiction", 3);
         for h in &poussin_only {
-            assert!(!h.content.contains("Σ_p p^(-σ)") || h.content.contains("cos"),
-                "Poussin query should prioritize Poussin content");
+            assert!(
+                !h.content.contains("Σ_p p^(-σ)") || h.content.contains("cos"),
+                "Poussin query should prioritize Poussin content"
+            );
         }
         eprintln!("  ✓ Cross-topic separation verified");
 

@@ -54,7 +54,9 @@ pub struct AddItem {
     pub content: Vec<AddItemContent>,
 }
 
-fn default_message_type() -> String { "message".to_string() }
+fn default_message_type() -> String {
+    "message".to_string()
+}
 
 #[derive(Deserialize)]
 pub struct AddItemContent {
@@ -63,7 +65,9 @@ pub struct AddItemContent {
     pub text: String,
 }
 
-fn default_input_text_type() -> String { "input_text".to_string() }
+fn default_input_text_type() -> String {
+    "input_text".to_string()
+}
 
 // ── List Responses ─────────────────────────────────────────
 

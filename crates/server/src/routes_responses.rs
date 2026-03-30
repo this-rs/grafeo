@@ -1,19 +1,19 @@
 //! Routes for the OpenAI Responses API (POST /v1/responses)
 //! Supports: stateful multi-turn via previous_response_id, conversation linking, SSE streaming.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use axum::{Json, extract::State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, Sse};
-use tokio::sync::Mutex;
-use tokio_stream::wrappers::UnboundedReceiverStream;
-use tokio_stream::StreamExt;
+use axum::{Json, extract::State};
 use obrain_common::types::NodeId;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tokio_stream::StreamExt;
+use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::state::AppState;
-use crate::types::{OpenAIErrorResponse, OpenAIError};
+use crate::types::{OpenAIError, OpenAIErrorResponse};
 use crate::types_responses::*;
 
 /// In-memory cache for response chaining via previous_response_id.
@@ -40,10 +40,8 @@ pub async fn create_response(
     let query = match req.input.last_user_text() {
         Some(text) => text.to_string(),
         None => {
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                "No user text found in input",
-            ).into_response();
+            return error_response(StatusCode::BAD_REQUEST, "No user text found in input")
+                .into_response();
         }
     };
 
@@ -121,18 +119,29 @@ async fn non_stream_response(
             // Cache for chaining
             if req.store {
                 let mut cache = state.response_cache.lock().await;
-                cache.insert(response_id.clone(), CachedResponse {
-                    conversation_id: None,
-                    query,
-                    response_text: result.visible_response,
-                });
+                cache.insert(
+                    response_id.clone(),
+                    CachedResponse {
+                        conversation_id: None,
+                        query,
+                        response_text: result.visible_response,
+                    },
+                );
             }
 
-            (StatusCode::OK, Json(serde_json::to_value(response).unwrap())).into_response()
+            (
+                StatusCode::OK,
+                Json(serde_json::to_value(response).unwrap()),
+            )
+                .into_response()
         }
         Err(e) => {
             eprintln!("  [server/responses] Generation error: {e}");
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("Generation failed: {e}")).into_response()
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("Generation failed: {e}"),
+            )
+            .into_response()
         }
     }
 }
@@ -157,16 +166,21 @@ async fn stream_response(
     let query_clone = query.clone();
     let response_id_clone = response_id.clone();
     tokio::spawn(async move {
-        let result = actor.generate_streaming(query_clone.clone(), token_tx).await;
+        let result = actor
+            .generate_streaming(query_clone.clone(), token_tx)
+            .await;
         // Cache result for chaining
         if store_response {
             if let Ok(ref r) = result {
                 let mut c = cache.lock().await;
-                c.insert(response_id_clone, CachedResponse {
-                    conversation_id: None,
-                    query: query_clone,
-                    response_text: r.visible_response.clone(),
-                });
+                c.insert(
+                    response_id_clone,
+                    CachedResponse {
+                        conversation_id: None,
+                        query: query_clone,
+                        response_text: r.visible_response.clone(),
+                    },
+                );
             }
         }
         drop(result);
@@ -235,38 +249,47 @@ async fn stream_response(
     let m = model.clone();
     let final_events = futures::stream::iter(vec![
         // response.output_text.done
-        Ok::<_, std::convert::Infallible>(Event::default().data(serde_json::json!({
-            "type": "response.output_text.done",
-            "output_index": 0,
-            "content_index": 0,
-        }).to_string())),
+        Ok::<_, std::convert::Infallible>(
+            Event::default().data(
+                serde_json::json!({
+                    "type": "response.output_text.done",
+                    "output_index": 0,
+                    "content_index": 0,
+                })
+                .to_string(),
+            ),
+        ),
         // response.output_item.done
-        Ok(Event::default().data(serde_json::json!({
-            "type": "response.output_item.done",
-            "output_index": 0,
-            "item": {
-                "type": "message",
-                "id": iid,
-                "role": "assistant",
-                "status": "completed",
-            }
-        }).to_string())),
+        Ok(Event::default().data(
+            serde_json::json!({
+                "type": "response.output_item.done",
+                "output_index": 0,
+                "item": {
+                    "type": "message",
+                    "id": iid,
+                    "role": "assistant",
+                    "status": "completed",
+                }
+            })
+            .to_string(),
+        )),
         // response.completed
-        Ok(Event::default().data(serde_json::json!({
-            "type": "response.completed",
-            "response": {
-                "id": rid,
-                "object": "response",
-                "created_at": created_at,
-                "model": m,
-                "status": "completed",
-            }
-        }).to_string())),
+        Ok(Event::default().data(
+            serde_json::json!({
+                "type": "response.completed",
+                "response": {
+                    "id": rid,
+                    "object": "response",
+                    "created_at": created_at,
+                    "model": m,
+                    "status": "completed",
+                }
+            })
+            .to_string(),
+        )),
     ]);
 
-    let full_stream = init_events
-        .chain(delta_events)
-        .chain(final_events);
+    let full_stream = init_events.chain(delta_events).chain(final_events);
 
     Sse::new(full_stream)
 }
@@ -281,13 +304,16 @@ fn parse_conv_id(s: &str) -> Option<NodeId> {
 fn error_response(status: StatusCode, message: &str) -> (StatusCode, Json<serde_json::Value>) {
     (
         status,
-        Json(serde_json::to_value(OpenAIErrorResponse {
-            error: OpenAIError {
-                message: message.to_string(),
-                error_type: "server_error".to_string(),
-                param: None,
-                code: None,
-            },
-        }).unwrap()),
+        Json(
+            serde_json::to_value(OpenAIErrorResponse {
+                error: OpenAIError {
+                    message: message.to_string(),
+                    error_type: "server_error".to_string(),
+                    param: None,
+                    code: None,
+                },
+            })
+            .unwrap(),
+        ),
     )
 }

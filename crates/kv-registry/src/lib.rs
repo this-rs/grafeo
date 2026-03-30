@@ -27,19 +27,21 @@ macro_rules! kv_debug {
     };
 }
 
-pub mod tokenizer;
-pub mod registry;
 pub mod banks;
 pub mod context;
 pub mod conv;
 pub mod hilbert;
 pub mod hilbert_bank;
+pub mod registry;
+pub mod tokenizer;
 
 // Re-exports for convenience
-pub use tokenizer::Tokenizer;
-pub use registry::{KvNodeRegistry, KvSlot, KvSlotMode, KvMetrics, KvTier, TierBudget};
-pub use hilbert::{HilbertLayout, WeightedAdjacencyList, build_fused_adjacency, spectral_embedding_2d_weighted};
-pub use hilbert_bank::{HilbertBank, BankManager};
-pub use banks::{KvBank, load_bank_cache, save_bank_cache, discover_banks};
+pub use banks::{KvBank, discover_banks, load_bank_cache, save_bank_cache};
 pub use context::{ContextNode, QueryContext};
-pub use conv::{ConvFragments, ConvFragment, CONV_NODE_BASE, ColdSearch, ColdHit};
+pub use conv::{CONV_NODE_BASE, ColdHit, ColdSearch, ConvFragment, ConvFragments};
+pub use hilbert::{
+    HilbertLayout, WeightedAdjacencyList, build_fused_adjacency, spectral_embedding_2d_weighted,
+};
+pub use hilbert_bank::{BankManager, HilbertBank};
+pub use registry::{KvMetrics, KvNodeRegistry, KvSlot, KvSlotMode, KvTier, TierBudget};
+pub use tokenizer::Tokenizer;

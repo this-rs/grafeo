@@ -77,23 +77,23 @@
 //! ```
 
 pub mod actor;
-pub mod state;
-pub mod types;
-pub mod types_responses;
-pub mod types_conversations;
 pub mod routes_conversations;
 pub mod routes_responses;
+pub mod state;
+pub mod types;
+pub mod types_conversations;
+pub mod types_responses;
 pub mod ws;
 
-use std::sync::Arc;
-use std::net::SocketAddr;
-use axum::{Router, Json, extract::State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, Sse};
-use tokio_stream::wrappers::UnboundedReceiverStream;
+use axum::{Json, Router, extract::State};
+use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio_stream::StreamExt;
-use tower_http::cors::{CorsLayer, Any};
+use tokio_stream::wrappers::UnboundedReceiverStream;
+use tower_http::cors::{Any, CorsLayer};
 
 use crate::state::AppState;
 use crate::types::*;
@@ -107,16 +107,40 @@ pub async fn start_server(addr: SocketAddr, state: Arc<AppState>) -> anyhow::Res
 
     let app = Router::new()
         .route("/v1/models", axum::routing::get(list_models))
-        .route("/v1/chat/completions", axum::routing::post(chat_completions))
+        .route(
+            "/v1/chat/completions",
+            axum::routing::post(chat_completions),
+        )
         // Conversations API
-        .route("/v1/conversations", axum::routing::get(routes_conversations::list_conversations))
-        .route("/v1/conversations", axum::routing::post(routes_conversations::create_conversation))
-        .route("/v1/conversations/{id}", axum::routing::get(routes_conversations::get_conversation))
-        .route("/v1/conversations/{id}", axum::routing::delete(routes_conversations::delete_conversation))
-        .route("/v1/conversations/{id}/items", axum::routing::get(routes_conversations::list_items))
-        .route("/v1/conversations/{id}/items", axum::routing::post(routes_conversations::add_items))
+        .route(
+            "/v1/conversations",
+            axum::routing::get(routes_conversations::list_conversations),
+        )
+        .route(
+            "/v1/conversations",
+            axum::routing::post(routes_conversations::create_conversation),
+        )
+        .route(
+            "/v1/conversations/{id}",
+            axum::routing::get(routes_conversations::get_conversation),
+        )
+        .route(
+            "/v1/conversations/{id}",
+            axum::routing::delete(routes_conversations::delete_conversation),
+        )
+        .route(
+            "/v1/conversations/{id}/items",
+            axum::routing::get(routes_conversations::list_items),
+        )
+        .route(
+            "/v1/conversations/{id}/items",
+            axum::routing::post(routes_conversations::add_items),
+        )
         // Responses API
-        .route("/v1/responses", axum::routing::post(routes_responses::create_response))
+        .route(
+            "/v1/responses",
+            axum::routing::post(routes_responses::create_response),
+        )
         // WebSocket endpoint for Responses API
         .route("/v1/realtime", axum::routing::get(ws::ws_handler))
         .layer(cors)
@@ -153,7 +177,8 @@ async fn chat_completions(
             "messages must not be empty",
             "invalid_request_error",
             Some("messages"),
-        ).into_response();
+        )
+        .into_response();
     }
 
     // Extract the last user message as the query
@@ -165,7 +190,8 @@ async fn chat_completions(
                 "No user message found in messages array",
                 "invalid_request_error",
                 Some("messages"),
-            ).into_response();
+            )
+            .into_response();
         }
     };
 
@@ -174,18 +200,21 @@ async fn chat_completions(
         stream_chat_completions(state, query).await.into_response()
     } else {
         // ── Non-streaming mode ──────────────────────────────────────
-        non_stream_chat_completions(state, query).await.into_response()
+        non_stream_chat_completions(state, query)
+            .await
+            .into_response()
     }
 }
 
 /// Non-streaming: generate full response, return as JSON
-async fn non_stream_chat_completions(
-    state: Arc<AppState>,
-    query: String,
-) -> impl IntoResponse {
+async fn non_stream_chat_completions(state: Arc<AppState>, query: String) -> impl IntoResponse {
     match state.actor.generate(query).await {
         Ok(result) => {
-            let finish_reason = if result.hit_max_tokens { "length" } else { "stop" };
+            let finish_reason = if result.hit_max_tokens {
+                "length"
+            } else {
+                "stop"
+            };
 
             let response = ChatCompletionResponse {
                 id: generate_completion_id(),
@@ -207,7 +236,11 @@ async fn non_stream_chat_completions(
                 },
             };
 
-            (StatusCode::OK, Json(serde_json::to_value(response).unwrap())).into_response()
+            (
+                StatusCode::OK,
+                Json(serde_json::to_value(response).unwrap()),
+            )
+                .into_response()
         }
         Err(e) => {
             eprintln!("  [server] Generation error: {e}");
@@ -216,16 +249,14 @@ async fn non_stream_chat_completions(
                 &format!("Generation failed: {e}"),
                 "server_error",
                 None,
-            ).into_response()
+            )
+            .into_response()
         }
     }
 }
 
 /// SSE streaming: send token-by-token chunks as Server-Sent Events
-async fn stream_chat_completions(
-    state: Arc<AppState>,
-    query: String,
-) -> impl IntoResponse {
+async fn stream_chat_completions(state: Arc<AppState>, query: String) -> impl IntoResponse {
     let (token_tx, token_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
     let completion_id = generate_completion_id();
@@ -262,8 +293,7 @@ async fn stream_chat_completions(
         }],
     };
 
-    let first_event = Event::default()
-        .data(serde_json::to_string(&first_chunk).unwrap());
+    let first_event = Event::default().data(serde_json::to_string(&first_chunk).unwrap());
 
     // Map token fragments to SSE events
     let id = completion_id.clone();
@@ -284,7 +314,7 @@ async fn stream_chat_completions(
             }],
         };
         Ok::<_, std::convert::Infallible>(
-            Event::default().data(serde_json::to_string(&chunk).unwrap())
+            Event::default().data(serde_json::to_string(&chunk).unwrap()),
         )
     });
 
@@ -308,23 +338,19 @@ async fn stream_chat_completions(
             }],
         };
         Ok::<_, std::convert::Infallible>(
-            Event::default().data(serde_json::to_string(&chunk).unwrap())
+            Event::default().data(serde_json::to_string(&chunk).unwrap()),
         )
-    }).chain(futures::stream::once(async {
+    })
+    .chain(futures::stream::once(async {
         // [DONE] sentinel — standard OpenAI termination
-        Ok::<_, std::convert::Infallible>(
-            Event::default().data("[DONE]".to_string())
-        )
+        Ok::<_, std::convert::Infallible>(Event::default().data("[DONE]".to_string()))
     }));
 
     // Combine: first_event → content_events → finish + [DONE]
-    let first = futures::stream::once(async move {
-        Ok::<_, std::convert::Infallible>(first_event)
-    });
+    let first =
+        futures::stream::once(async move { Ok::<_, std::convert::Infallible>(first_event) });
 
-    let full_stream = first
-        .chain(content_stream)
-        .chain(final_stream);
+    let full_stream = first.chain(content_stream).chain(final_stream);
 
     Sse::new(full_stream)
 }
@@ -338,13 +364,16 @@ fn error_response(
 ) -> (StatusCode, Json<serde_json::Value>) {
     (
         status,
-        Json(serde_json::to_value(OpenAIErrorResponse {
-            error: OpenAIError {
-                message: message.to_string(),
-                error_type: error_type.to_string(),
-                param: param.map(|s| s.to_string()),
-                code: None,
-            },
-        }).unwrap()),
+        Json(
+            serde_json::to_value(OpenAIErrorResponse {
+                error: OpenAIError {
+                    message: message.to_string(),
+                    error_type: error_type.to_string(),
+                    param: param.map(|s| s.to_string()),
+                    code: None,
+                },
+            })
+            .unwrap(),
+        ),
     )
 }

@@ -48,9 +48,16 @@ fn bench_gnn_forward_50_facts() {
     let per_call_us = elapsed.as_micros() as f64 / n_iters as f64;
     let per_call_ms = per_call_us / 1000.0;
 
-    eprintln!("  gnn_forward (50 facts): {:.2}ms/call ({} iters)", per_call_ms, n_iters);
+    eprintln!(
+        "  gnn_forward (50 facts): {:.2}ms/call ({} iters)",
+        per_call_ms, n_iters
+    );
     // In debug mode, allow 10ms (release target is < 1ms)
-    assert!(per_call_ms < 10.0, "GNN forward should be < 10ms (debug), got {:.2}ms", per_call_ms);
+    assert!(
+        per_call_ms < 10.0,
+        "GNN forward should be < 10ms (debug), got {:.2}ms",
+        per_call_ms
+    );
 
     let _ = std::fs::remove_dir_all(format!("/tmp/gnn_bench_{}_forward", std::process::id()));
 }
@@ -92,8 +99,15 @@ fn bench_reward_propagation() {
     let per_call_us = elapsed.as_micros() as f64 / n_iters as f64;
     let per_call_ms = per_call_us / 1000.0;
 
-    eprintln!("  reward_propagation (10 facts): {:.2}ms/call ({} iters)", per_call_ms, n_iters);
-    assert!(per_call_ms < 5.0, "Reward propagation should be < 5ms, got {:.2}ms", per_call_ms);
+    eprintln!(
+        "  reward_propagation (10 facts): {:.2}ms/call ({} iters)",
+        per_call_ms, n_iters
+    );
+    assert!(
+        per_call_ms < 5.0,
+        "Reward propagation should be < 5ms, got {:.2}ms",
+        per_call_ms
+    );
 
     let _ = std::fs::remove_dir_all(format!("/tmp/gnn_bench_{}_reward", std::process::id()));
 }

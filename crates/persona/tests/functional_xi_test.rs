@@ -3,11 +3,11 @@
 //! Unlike the integration tests (which check "does it crash?"), these verify
 //! that each milestone objective ACTUALLY WORKS as specified.
 
+use obrain_common::types::{NodeId, PropertyKey, Value};
+use obrain_core::graph::Direction;
 use persona::PersonaDB;
 use persona::fact_gnn::{FactGNN, query_embedding};
 use persona::reward::RewardDetector;
-use obrain_common::types::{NodeId, PropertyKey, Value};
-use obrain_core::graph::Direction;
 use std::collections::HashMap;
 
 fn temp_db(suffix: &str) -> PersonaDB {
@@ -17,7 +17,11 @@ fn temp_db(suffix: &str) -> PersonaDB {
 }
 
 fn cleanup(suffix: &str) {
-    let _ = std::fs::remove_dir_all(format!("/tmp/xi_func_test_{}_{}", std::process::id(), suffix));
+    let _ = std::fs::remove_dir_all(format!(
+        "/tmp/xi_func_test_{}_{}",
+        std::process::id(),
+        suffix
+    ));
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -50,11 +54,17 @@ fn t4_reward_signal1_token_polarity() {
     // reward = 0.30 * 0.5 + 0.20 * 0 + 0.10 * engagement + 0.25 * 0 + 0.15 * 0
     // engagement = 0.02 * min(2, 20) = 0.04
     // = 0.15 + 0.0 + 0.004 + 0 + 0 = 0.154
-    assert!(r.reward > 0.1, "positive polarity tokens should produce positive reward, got {r}");
+    assert!(
+        r.reward > 0.1,
+        "positive polarity tokens should produce positive reward, got {r}"
+    );
 
     // Turn 3 with negative polarity tokens → negative reward
     let r = rd.compute_reward(&[200], 3, None, None, None);
-    assert!(r.reward < 0.0, "negative polarity tokens should produce negative reward, got {r}");
+    assert!(
+        r.reward < 0.0,
+        "negative polarity tokens should produce negative reward, got {r}"
+    );
 }
 
 #[test]
@@ -68,12 +78,18 @@ fn t4_reward_signal2_reformulation_detection() {
     let r = rd.compute_reward(&[1, 2, 3, 4, 5], 2, None, None, None);
     // reformulation_penalty = -0.3
     // reward = 0.30*0 + 0.20*(-0.3) + 0.10*0.04 + 0.25*0 + 0.15*0 = -0.056
-    assert!(r.reward < 0.0, "reformulation should produce negative reward, got {r}");
+    assert!(
+        r.reward < 0.0,
+        "reformulation should produce negative reward, got {r}"
+    );
 
     // Turn 3: completely different tokens → no reformulation
     let r = rd.compute_reward(&[100, 200, 300, 400, 500], 3, None, None, None);
     // No polarity, no reformulation → small positive from engagement
-    assert!(r.reward >= 0.0, "different tokens = no reformulation penalty, got {r}");
+    assert!(
+        r.reward >= 0.0,
+        "different tokens = no reformulation penalty, got {r}"
+    );
 }
 
 #[test]
@@ -88,7 +104,10 @@ fn t4_reward_signal3_engagement_grows() {
     // Turn 15: engagement = 0.02 * 15 = 0.30, weighted 0.10 → contribution = 0.03
     let r15 = rd.compute_reward(&[98], 15, None, None, None);
 
-    assert!(r15 > r5, "longer engagement should give higher reward: r5={r5}, r15={r15}");
+    assert!(
+        r15 > r5,
+        "longer engagement should give higher reward: r5={r5}, r15={r15}"
+    );
 }
 
 #[test]
@@ -108,14 +127,14 @@ fn t4_reward_signal4_factual_success() {
     let r_with = rd.compute_reward(&[1], 3, Some(&facts), Some(response), None);
 
     // Now with facts that DON'T appear in response
-    let facts_miss = vec![
-        ("name".to_string(), "Bob".to_string()),
-    ];
+    let facts_miss = vec![("name".to_string(), "Bob".to_string())];
     let response_miss = "Bonjour, comment allez-vous ?";
     let r_without = rd.compute_reward(&[2], 4, Some(&facts_miss), Some(response_miss), None);
 
-    assert!(r_with > r_without,
-        "response containing fact values should score higher: with={r_with}, without={r_without}");
+    assert!(
+        r_with > r_without,
+        "response containing fact values should score higher: with={r_with}, without={r_without}"
+    );
 
     // Specifically: factual_signal when facts present but not used = -0.1
     // This tests the -0.1 penalty path
@@ -132,8 +151,10 @@ fn t4_reward_signal5_entropy() {
     // High entropy → uncertain generation → negative signal
     let r_high = rd.compute_reward(&[1], 4, None, None, Some(4.0));
 
-    assert!(r_low > r_high,
-        "low entropy should score higher than high: low={r_low}, high={r_high}");
+    assert!(
+        r_low > r_high,
+        "low entropy should score higher than high: low={r_low}, high={r_high}"
+    );
 }
 
 #[test]
@@ -154,7 +175,10 @@ fn t4_reward_all_5_signals_combined() {
     );
 
     // All 5 signals should contribute positively
-    assert!(r.reward > 0.1, "all positive signals should produce high reward: {r}");
+    assert!(
+        r.reward > 0.1,
+        "all positive signals should produce high reward: {r}"
+    );
     eprintln!("  T4 combined reward = {r:.4}");
 }
 
@@ -170,26 +194,66 @@ fn t5_cost_tracking_initial_values() {
     let store = pdb.db.store();
     let node = store.get_node(fid).unwrap();
 
-    let token_cost = node.properties.get(&PropertyKey::from("token_cost"))
-        .and_then(|v| if let Value::Int64(n) = v { Some(*n) } else { None })
+    let token_cost = node
+        .properties
+        .get(&PropertyKey::from("token_cost"))
+        .and_then(|v| {
+            if let Value::Int64(n) = v {
+                Some(*n)
+            } else {
+                None
+            }
+        })
         .unwrap();
-    let utility = node.properties.get(&PropertyKey::from("utility"))
-        .and_then(|v| if let Value::Float64(f) = v { Some(*f) } else { None })
+    let utility = node
+        .properties
+        .get(&PropertyKey::from("utility"))
+        .and_then(|v| {
+            if let Value::Float64(f) = v {
+                Some(*f)
+            } else {
+                None
+            }
+        })
         .unwrap();
-    let cost_eff = node.properties.get(&PropertyKey::from("cost_efficiency"))
-        .and_then(|v| if let Value::Float64(f) = v { Some(*f) } else { None })
+    let cost_eff = node
+        .properties
+        .get(&PropertyKey::from("cost_efficiency"))
+        .and_then(|v| {
+            if let Value::Float64(f) = v {
+                Some(*f)
+            } else {
+                None
+            }
+        })
         .unwrap();
-    let act_count = node.properties.get(&PropertyKey::from("activation_count"))
-        .and_then(|v| if let Value::Int64(n) = v { Some(*n) } else { None })
+    let act_count = node
+        .properties
+        .get(&PropertyKey::from("activation_count"))
+        .and_then(|v| {
+            if let Value::Int64(n) = v {
+                Some(*n)
+            } else {
+                None
+            }
+        })
         .unwrap();
 
     // token_cost = (4 + 5 + 6) / 4 = 3.75 → max(1, 3) = 3
-    assert!(token_cost > 0, "token_cost should be positive: {token_cost}");
+    assert!(
+        token_cost > 0,
+        "token_cost should be positive: {token_cost}"
+    );
     assert_eq!(utility, 0.5, "initial utility should be 0.5");
-    assert!(cost_eff > 0.0, "initial cost_efficiency should be positive: {cost_eff}");
+    assert!(
+        cost_eff > 0.0,
+        "initial cost_efficiency should be positive: {cost_eff}"
+    );
     assert_eq!(act_count, 0, "initial activation_count should be 0");
 
-    eprintln!("  T5 initial: token_cost={token_cost}, utility={utility:.3}, cost_eff={cost_eff:.4}");
+    eprintln!(
+        "  T5 initial: token_cost={token_cost}, utility={utility:.3}, cost_eff={cost_eff:.4}"
+    );
     cleanup("t5_init");
 }
 
@@ -216,16 +280,38 @@ fn t5_cost_tracking_updates_on_reward_propagation() {
     let store = pdb.db.store();
     let node = store.get_node(fid1).unwrap();
 
-    let act_count = node.properties.get(&PropertyKey::from("activation_count"))
-        .and_then(|v| if let Value::Int64(n) = v { Some(*n) } else { None })
+    let act_count = node
+        .properties
+        .get(&PropertyKey::from("activation_count"))
+        .and_then(|v| {
+            if let Value::Int64(n) = v {
+                Some(*n)
+            } else {
+                None
+            }
+        })
         .unwrap();
-    let utility = node.properties.get(&PropertyKey::from("utility"))
-        .and_then(|v| if let Value::Float64(f) = v { Some(*f) } else { None })
+    let utility = node
+        .properties
+        .get(&PropertyKey::from("utility"))
+        .and_then(|v| {
+            if let Value::Float64(f) = v {
+                Some(*f)
+            } else {
+                None
+            }
+        })
         .unwrap();
 
-    assert_eq!(act_count, 1, "activation_count should be 1 after one propagation");
+    assert_eq!(
+        act_count, 1,
+        "activation_count should be 1 after one propagation"
+    );
     // new_utility = (0.5 * 0 + 0.8) / 1 = 0.8
-    assert!((utility - 0.8).abs() < 0.01, "utility should be ~0.8 after positive reward, got {utility}");
+    assert!(
+        (utility - 0.8).abs() < 0.01,
+        "utility should be ~0.8 after positive reward, got {utility}"
+    );
 
     // Propagate negative reward
     let ct_id2 = pdb.create_conv_turn("where?", "I don't know", 2);
@@ -233,16 +319,35 @@ fn t5_cost_tracking_updates_on_reward_propagation() {
 
     let store = pdb.db.store();
     let node = store.get_node(fid1).unwrap();
-    let act2 = node.properties.get(&PropertyKey::from("activation_count"))
-        .and_then(|v| if let Value::Int64(n) = v { Some(*n) } else { None })
+    let act2 = node
+        .properties
+        .get(&PropertyKey::from("activation_count"))
+        .and_then(|v| {
+            if let Value::Int64(n) = v {
+                Some(*n)
+            } else {
+                None
+            }
+        })
         .unwrap();
-    let util2 = node.properties.get(&PropertyKey::from("utility"))
-        .and_then(|v| if let Value::Float64(f) = v { Some(*f) } else { None })
+    let util2 = node
+        .properties
+        .get(&PropertyKey::from("utility"))
+        .and_then(|v| {
+            if let Value::Float64(f) = v {
+                Some(*f)
+            } else {
+                None
+            }
+        })
         .unwrap();
 
     assert_eq!(act2, 2, "activation_count should be 2");
     // new_utility = (0.8 * 1 + (-0.5)) / 2 = 0.15
-    assert!(util2 < utility, "utility should decrease after negative reward: was {utility}, now {util2}");
+    assert!(
+        util2 < utility,
+        "utility should decrease after negative reward: was {utility}, now {util2}"
+    );
 
     eprintln!("  T5 propagation: act={act2}, utility after neg reward = {util2:.4}");
     cleanup("t5_prop");
@@ -257,8 +362,11 @@ fn t1_gnn_forward_produces_distinct_scores() {
     // After training, different queries should produce different score rankings
     let pdb = temp_db("t1_distinct");
     let facts = vec![
-        ("name", "Alice"), ("color", "blue"), ("food", "sushi"),
-        ("city", "Paris"), ("hobby", "climbing"),
+        ("name", "Alice"),
+        ("color", "blue"),
+        ("food", "sushi"),
+        ("city", "Paris"),
+        ("hobby", "climbing"),
     ];
     for (k, v) in &facts {
         pdb.add_fact(k, v, 0, None);
@@ -284,10 +392,15 @@ fn t1_gnn_forward_produces_distinct_scores() {
     let top1_q2 = scores2[0].0;
 
     // At minimum, scores should differ numerically
-    let diff: f32 = scores1.iter().zip(scores2.iter())
+    let diff: f32 = scores1
+        .iter()
+        .zip(scores2.iter())
         .map(|((_, s1), (_, s2))| (s1 - s2).abs())
         .sum();
-    assert!(diff > 0.01, "different queries should produce different scores: total diff = {diff}");
+    assert!(
+        diff > 0.01,
+        "different queries should produce different scores: total diff = {diff}"
+    );
 
     eprintln!("  T1 score diff across queries = {diff:.4}");
     eprintln!("  top1 for q1 = {top1_q1:?}, top1 for q2 = {top1_q2:?}");
@@ -314,9 +427,14 @@ fn t1_gnn_weights_change_after_update() {
 
     // Debug: what are the actual scores?
     for (nid, score) in &scores_before {
-        let key = store.get_node(*nid)
-            .and_then(|n| n.properties.get(&PropertyKey::from("key"))
-                .and_then(|v| v.as_str()).map(|s| s.to_string()))
+        let key = store
+            .get_node(*nid)
+            .and_then(|n| {
+                n.properties
+                    .get(&PropertyKey::from("key"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
             .unwrap_or_default();
         // Count outgoing edges (for update to work, facts need outgoing edges)
         let edge_count = store.edges_from(*nid, Direction::Outgoing).count();
@@ -324,18 +442,24 @@ fn t1_gnn_weights_change_after_update() {
     }
 
     // Get full weight snapshot before
-    let w_snapshot_before: Vec<f32> = gnn.w_message.values()
+    let w_snapshot_before: Vec<f32> = gnn
+        .w_message
+        .values()
         .flat_map(|w| w.iter().copied())
         .collect();
 
     // Update with strong positive reward
     gnn.update(&store, &fact_ids, &scores_before, 0.8);
 
-    let w_snapshot_after: Vec<f32> = gnn.w_message.values()
+    let w_snapshot_after: Vec<f32> = gnn
+        .w_message
+        .values()
         .flat_map(|w| w.iter().copied())
         .collect();
 
-    let w_diff: f32 = w_snapshot_before.iter().zip(w_snapshot_after.iter())
+    let w_diff: f32 = w_snapshot_before
+        .iter()
+        .zip(w_snapshot_after.iter())
         .map(|(a, b)| (a - b).abs())
         .sum();
 
@@ -345,11 +469,16 @@ fn t1_gnn_weights_change_after_update() {
     );
 
     let scores_after = gnn.score_facts(&store, &q, &fact_ids, 2);
-    let score_diff: f32 = scores_before.iter().zip(scores_after.iter())
+    let score_diff: f32 = scores_before
+        .iter()
+        .zip(scores_after.iter())
         .map(|((_, s1), (_, s2))| (s1 - s2).abs())
         .sum();
 
-    eprintln!("  T1 weight change = {:.6}, score diff = {:.6}", w_diff, score_diff);
+    eprintln!(
+        "  T1 weight change = {:.6}, score diff = {:.6}",
+        w_diff, score_diff
+    );
     cleanup("t1_weights");
 }
 
@@ -369,7 +498,11 @@ fn t7_mentions_bridge_no_training() {
     let scores = gnn.score_node_ids(&store, &q, &fake_ids);
 
     assert_eq!(scores.len(), 2);
-    assert_eq!(scores[&NodeId(999)], 1.0, "before 20 updates, should return uniform 1.0");
+    assert_eq!(
+        scores[&NodeId(999)],
+        1.0,
+        "before 20 updates, should return uniform 1.0"
+    );
     assert_eq!(scores[&NodeId(1000)], 1.0);
 
     cleanup("t7_bridge");
@@ -386,9 +519,10 @@ fn t7_mentions_bridge_with_topology() {
     pdb.mark_facts_used_in(&[f1], ct1);
 
     // Simulate a "data graph node" — just create a node with a custom label
-    let data_nid = pdb.db.create_node_with_props(&["DataNode"], [
-        ("label", Value::String("some_entity".to_string().into())),
-    ]);
+    let data_nid = pdb.db.create_node_with_props(
+        &["DataNode"],
+        [("label", Value::String("some_entity".to_string().into()))],
+    );
 
     // Link ConvTurn → MENTIONS → data node
     pdb.link_mentions(ct1, data_nid);
@@ -408,7 +542,10 @@ fn t7_mentions_bridge_with_topology() {
     let q = query_embedding("who is Alice?");
     let scores = gnn.score_node_ids(&store, &q, &[data_nid]);
 
-    assert!(scores.contains_key(&data_nid), "data node should have a score");
+    assert!(
+        scores.contains_key(&data_nid),
+        "data node should have a score"
+    );
     let score = scores[&data_nid];
     eprintln!("  T7 MENTIONS bridge score = {score:.4}");
 
@@ -418,11 +555,15 @@ fn t7_mentions_bridge_with_topology() {
     // The key test: it participated in the computation (not default 0.0)
 
     // Also test: node WITHOUT mentions should get 0.0
-    let orphan_nid = pdb.db.create_node_with_props(&["DataNode"], [
-        ("label", Value::String("orphan".to_string().into())),
-    ]);
+    let orphan_nid = pdb.db.create_node_with_props(
+        &["DataNode"],
+        [("label", Value::String("orphan".to_string().into()))],
+    );
     let scores2 = gnn.score_node_ids(&store, &q, &[data_nid, orphan_nid]);
-    assert_eq!(scores2[&orphan_nid], 0.0, "orphan node (no MENTIONS) should score 0.0");
+    assert_eq!(
+        scores2[&orphan_nid], 0.0,
+        "orphan node (no MENTIONS) should score 0.0"
+    );
 
     cleanup("t7_topo");
 }
@@ -449,14 +590,22 @@ fn t5_reinforces_edges_created_on_high_reward() {
     // Low reward → NO REINFORCES
     rd.propagate_reward(&pdb, ct, 0.3, &[f1, f2]);
     let store = pdb.db.store();
-    let reinf_count_low = store.edges_from(f1, Direction::Outgoing)
+    let reinf_count_low = store
+        .edges_from(f1, Direction::Outgoing)
         .filter(|(_target, eid)| {
-            store.get_edge(*eid)
-                .map(|e| { let s: &str = e.edge_type.as_ref(); s == "REINFORCES" })
+            store
+                .get_edge(*eid)
+                .map(|e| {
+                    let s: &str = e.edge_type.as_ref();
+                    s == "REINFORCES"
+                })
                 .unwrap_or(false)
         })
         .count();
-    assert_eq!(reinf_count_low, 0, "reward <= 0.5 should NOT create REINFORCES");
+    assert_eq!(
+        reinf_count_low, 0,
+        "reward <= 0.5 should NOT create REINFORCES"
+    );
 
     // High reward → REINFORCES created
     let ct2 = pdb.create_conv_turn("tell me", "Alice loves Paris", 2);
@@ -464,7 +613,10 @@ fn t5_reinforces_edges_created_on_high_reward() {
 
     let store = pdb.db.store();
     let mut reinforces_targets: Vec<NodeId> = Vec::new();
-    for (target, eid) in store.edges_from(f1, Direction::Outgoing).collect::<Vec<_>>() {
+    for (target, eid) in store
+        .edges_from(f1, Direction::Outgoing)
+        .collect::<Vec<_>>()
+    {
         if let Some(edge) = store.get_edge(eid) {
             let label: &str = edge.edge_type.as_ref();
             if label == "REINFORCES" {
@@ -472,10 +624,15 @@ fn t5_reinforces_edges_created_on_high_reward() {
             }
         }
     }
-    assert!(!reinforces_targets.is_empty(),
-        "reward > 0.5 with 3 facts should create REINFORCES edges");
+    assert!(
+        !reinforces_targets.is_empty(),
+        "reward > 0.5 with 3 facts should create REINFORCES edges"
+    );
 
-    eprintln!("  T5 REINFORCES edges from f1: {} targets", reinforces_targets.len());
+    eprintln!(
+        "  T5 REINFORCES edges from f1: {} targets",
+        reinforces_targets.len()
+    );
     cleanup("t5_reinf");
 }
 
@@ -487,19 +644,31 @@ fn t5_reinforces_edges_created_on_high_reward() {
 fn t4_bag_cosine_edge_cases() {
     // Identical → 1.0
     let cos = RewardDetector::bag_cosine(&[1, 2, 3], &[1, 2, 3]);
-    assert!((cos - 1.0).abs() < 0.001, "identical bags should have cosine ~1.0: {cos}");
+    assert!(
+        (cos - 1.0).abs() < 0.001,
+        "identical bags should have cosine ~1.0: {cos}"
+    );
 
     // Completely disjoint → 0.0
     let cos = RewardDetector::bag_cosine(&[1, 2, 3], &[4, 5, 6]);
-    assert!((cos - 0.0).abs() < 0.001, "disjoint bags should have cosine ~0.0: {cos}");
+    assert!(
+        (cos - 0.0).abs() < 0.001,
+        "disjoint bags should have cosine ~0.0: {cos}"
+    );
 
     // Empty
     let cos = RewardDetector::bag_cosine(&[], &[1, 2, 3]);
-    assert!((cos - 0.0).abs() < 0.001, "empty bag should have cosine ~0.0: {cos}");
+    assert!(
+        (cos - 0.0).abs() < 0.001,
+        "empty bag should have cosine ~0.0: {cos}"
+    );
 
     // Partial overlap
     let cos = RewardDetector::bag_cosine(&[1, 2, 3], &[2, 3, 4]);
-    assert!(cos > 0.3 && cos < 0.9, "partial overlap should give intermediate cosine: {cos}");
+    assert!(
+        cos > 0.3 && cos < 0.9,
+        "partial overlap should give intermediate cosine: {cos}"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -535,12 +704,25 @@ fn t6_header_budget_enforcement() {
         included += 1;
     }
 
-    assert!(included < 50, "budget should truncate: only {included}/50 included");
-    assert!(budget_chars <= budget_limit, "should respect budget: {budget_chars} <= {budget_limit}");
-    assert!(included > 10, "should include at least 10 facts: {included}");
+    assert!(
+        included < 50,
+        "budget should truncate: only {included}/50 included"
+    );
+    assert!(
+        budget_chars <= budget_limit,
+        "should respect budget: {budget_chars} <= {budget_limit}"
+    );
+    assert!(
+        included > 10,
+        "should include at least 10 facts: {included}"
+    );
 
     // Verify top-5 keys are the highest-scored
-    let top5: Vec<&str> = scored_facts.iter().take(5).map(|(k, _, _)| k.as_str()).collect();
+    let top5: Vec<&str> = scored_facts
+        .iter()
+        .take(5)
+        .map(|(k, _, _)| k.as_str())
+        .collect();
     assert_eq!(top5[0], "key_0");
     assert_eq!(top5[4], "key_4");
 
@@ -551,26 +733,45 @@ fn t6_header_budget_enforcement() {
 fn t6_top5_change_detection() {
     // Simulate the top-5 change detection logic from main.rs
     let prev_top5: Vec<String> = vec![
-        "name".into(), "city".into(), "color".into(), "food".into(), "hobby".into(),
+        "name".into(),
+        "city".into(),
+        "color".into(),
+        "food".into(),
+        "hobby".into(),
     ];
 
     // Same top-5 → no rebuild needed
     let new_top5_same: Vec<String> = vec![
-        "name".into(), "city".into(), "color".into(), "food".into(), "hobby".into(),
+        "name".into(),
+        "city".into(),
+        "color".into(),
+        "food".into(),
+        "hobby".into(),
     ];
     assert_eq!(prev_top5, new_top5_same, "same top-5 = no rebuild");
 
     // Different top-5 → rebuild needed
     let new_top5_diff: Vec<String> = vec![
-        "name".into(), "city".into(), "color".into(), "food".into(), "language".into(),
+        "name".into(),
+        "city".into(),
+        "color".into(),
+        "food".into(),
+        "language".into(),
     ];
     assert_ne!(prev_top5, new_top5_diff, "different top-5 = rebuild needed");
 
     // Partial change
     let new_top5_partial: Vec<String> = vec![
-        "name".into(), "city".into(), "language".into(), "food".into(), "hobby".into(),
+        "name".into(),
+        "city".into(),
+        "language".into(),
+        "food".into(),
+        "hobby".into(),
     ];
-    assert_ne!(prev_top5, new_top5_partial, "top-5 order change = rebuild needed");
+    assert_ne!(
+        prev_top5, new_top5_partial,
+        "top-5 order change = rebuild needed"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -598,8 +799,16 @@ fn t1_gnn_reinforces_learn_direction() {
 
     // Record initial scores
     let scores_init = gnn.score_facts(&store, &q, &fact_ids, 2);
-    let init_good = scores_init.iter().find(|(nid, _)| *nid == good).map(|(_, s)| *s).unwrap();
-    let init_bad = scores_init.iter().find(|(nid, _)| *nid == bad).map(|(_, s)| *s).unwrap();
+    let init_good = scores_init
+        .iter()
+        .find(|(nid, _)| *nid == good)
+        .map(|(_, s)| *s)
+        .unwrap();
+    let init_bad = scores_init
+        .iter()
+        .find(|(nid, _)| *nid == bad)
+        .map(|(_, s)| *s)
+        .unwrap();
 
     // Train: consistently reward "good" and punish "bad"
     for _ in 0..100 {
@@ -612,8 +821,16 @@ fn t1_gnn_reinforces_learn_direction() {
 
     // Check final scores
     let scores_final = gnn.score_facts(&store, &q, &fact_ids, 2);
-    let final_good = scores_final.iter().find(|(nid, _)| *nid == good).map(|(_, s)| *s).unwrap();
-    let final_bad = scores_final.iter().find(|(nid, _)| *nid == bad).map(|(_, s)| *s).unwrap();
+    let final_good = scores_final
+        .iter()
+        .find(|(nid, _)| *nid == good)
+        .map(|(_, s)| *s)
+        .unwrap();
+    let final_bad = scores_final
+        .iter()
+        .find(|(nid, _)| *nid == bad)
+        .map(|(_, s)| *s)
+        .unwrap();
 
     let delta_good = final_good - init_good;
     let delta_bad = final_bad - init_bad;
@@ -648,8 +865,16 @@ fn t3_entropy_thresholds_match_reward() {
     let r_neutral = rd.compute_reward(&[1], 4, None, None, Some(2.0));
     let r_uncertain = rd.compute_reward(&[1], 5, None, None, Some(5.0));
 
-    assert!(r_confident > r_neutral, "entropy 0.5 > entropy 2.0: {r_confident} vs {r_neutral}");
-    assert!(r_neutral > r_uncertain, "entropy 2.0 > entropy 5.0: {r_neutral} vs {r_uncertain}");
+    assert!(
+        r_confident > r_neutral,
+        "entropy 0.5 > entropy 2.0: {r_confident} vs {r_neutral}"
+    );
+    assert!(
+        r_neutral > r_uncertain,
+        "entropy 2.0 > entropy 5.0: {r_neutral} vs {r_uncertain}"
+    );
 
-    eprintln!("  T3 entropy rewards: confident={r_confident:.4}, neutral={r_neutral:.4}, uncertain={r_uncertain:.4}");
+    eprintln!(
+        "  T3 entropy rewards: confident={r_confident:.4}, neutral={r_neutral:.4}, uncertain={r_uncertain:.4}"
+    );
 }

@@ -6,10 +6,17 @@ pub fn is_meta_query(query: &str) -> bool {
 
     // Identity questions
     let identity_patterns = [
-        "qui es-tu", "qui es tu", "c'est quoi ton nom", "quel est ton nom",
-        "comment tu t'appelles", "comment t'appelles-tu",
-        "what is your name", "who are you", "what are you",
-        "tu es qui", "tu t'appelles comment",
+        "qui es-tu",
+        "qui es tu",
+        "c'est quoi ton nom",
+        "quel est ton nom",
+        "comment tu t'appelles",
+        "comment t'appelles-tu",
+        "what is your name",
+        "who are you",
+        "what are you",
+        "tu es qui",
+        "tu t'appelles comment",
     ];
     if identity_patterns.iter().any(|p| lower.contains(p)) {
         return true;
@@ -17,10 +24,16 @@ pub fn is_meta_query(query: &str) -> bool {
 
     // Memory / fact recall questions
     let memory_patterns = [
-        "qu'est-ce que tu sais sur moi", "que sais-tu de moi", "que sais-tu sur moi",
-        "qu'est-ce que tu retiens", "que retiens-tu",
-        "what do you know about me", "what do you remember",
-        "tu te souviens", "te rappelles-tu", "te souviens-tu",
+        "qu'est-ce que tu sais sur moi",
+        "que sais-tu de moi",
+        "que sais-tu sur moi",
+        "qu'est-ce que tu retiens",
+        "que retiens-tu",
+        "what do you know about me",
+        "what do you remember",
+        "tu te souviens",
+        "te rappelles-tu",
+        "te souviens-tu",
         "do you remember",
     ];
     if memory_patterns.iter().any(|p| lower.contains(p)) {

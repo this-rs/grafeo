@@ -32,6 +32,9 @@ rustyline = { version = "15", features = ["derive"] }
 [features]
 default = []
 http = ["dep:reqwest"]
+## Enable the self-embed proprioceptive channel (Phase 4 TP.2).
+## Disabled by default — superseded by state_kq_b (Phase 5).
+self_embed_proprio = []
 
 [[example]]
 name = "gen_test_graph"

@@ -45,7 +45,10 @@ pub struct TierBudget {
 
 impl TierBudget {
     pub fn new(max_promotions: u32) -> Self {
-        Self { max_promotions, used: 0 }
+        Self {
+            max_promotions,
+            used: 0,
+        }
     }
 
     pub fn can_promote(&self) -> bool {
@@ -99,12 +102,21 @@ pub struct KvMetrics {
 
 impl KvMetrics {
     pub fn new() -> Self {
-        Self { total_queries: 0, cache_hits: 0, cache_misses: 0, encode_time_ms: 0 }
+        Self {
+            total_queries: 0,
+            cache_hits: 0,
+            cache_misses: 0,
+            encode_time_ms: 0,
+        }
     }
 
     pub fn hit_rate(&self) -> f64 {
         let total = self.cache_hits + self.cache_misses;
-        if total == 0 { 0.0 } else { self.cache_hits as f64 / total as f64 }
+        if total == 0 {
+            0.0
+        } else {
+            self.cache_hits as f64 / total as f64
+        }
     }
 }
 
@@ -174,7 +186,8 @@ impl KvNodeRegistry {
 
     /// Check which nodes need to be loaded (not yet in KV).
     pub fn find_missing(&self, needed: &[NodeId]) -> Vec<NodeId> {
-        needed.iter()
+        needed
+            .iter()
             .filter(|id| !self.nodes.contains_key(id))
             .copied()
             .collect()
@@ -242,9 +255,17 @@ impl KvNodeRegistry {
             tier: KvTier::Gamma, // Pure embedding = lowest resolution
         };
         // Advance next_pos past this slot if it was from Hilbert
-        if p + 1 > self.next_pos { self.next_pos = p + 1; }
+        if p + 1 > self.next_pos {
+            self.next_pos = p + 1;
+        }
         // If no Hilbert, advance normally
-        if self.hilbert_layout.is_none() || self.hilbert_layout.as_ref().and_then(|l| l.get_position(node_id)).is_none() {
+        if self.hilbert_layout.is_none()
+            || self
+                .hilbert_layout
+                .as_ref()
+                .and_then(|l| l.get_position(node_id))
+                .is_none()
+        {
             self.next_pos = p + 1;
         }
         self.nodes.insert(node_id, slot);
@@ -289,12 +310,22 @@ impl KvNodeRegistry {
             n_tokens: total,
             last_used: self.query_counter,
             text: text.to_string(),
-            mode: KvSlotMode::EmbeddingWithTags { n_tag_tokens: n_tag },
+            mode: KvSlotMode::EmbeddingWithTags {
+                n_tag_tokens: n_tag,
+            },
             tier: KvTier::Alpha, // Embedding + full tags = highest resolution
         };
         // Advance next_pos past this slot
-        if p + total > self.next_pos { self.next_pos = p + total; }
-        if self.hilbert_layout.is_none() || self.hilbert_layout.as_ref().and_then(|l| l.get_position(node_id)).is_none() {
+        if p + total > self.next_pos {
+            self.next_pos = p + total;
+        }
+        if self.hilbert_layout.is_none()
+            || self
+                .hilbert_layout
+                .as_ref()
+                .and_then(|l| l.get_position(node_id))
+                .is_none()
+        {
             self.next_pos = p + total;
         }
         self.nodes.insert(node_id, slot);
@@ -309,7 +340,9 @@ impl KvNodeRegistry {
     /// Removes tag tokens beyond the first label token via engine.evict().
     /// Slot: EmbeddingWithTags{n} → EmbeddingWithMinimalTag{1}, end = start+2.
     pub fn demote_to_beta(&mut self, node_id: NodeId, engine: &dyn Tokenizer) -> Result<()> {
-        let slot = self.nodes.get_mut(&node_id)
+        let slot = self
+            .nodes
+            .get_mut(&node_id)
             .ok_or_else(|| anyhow::anyhow!("demote_to_beta: node {:?} not in registry", node_id))?;
         match slot.mode {
             KvSlotMode::EmbeddingWithTags { n_tag_tokens } if n_tag_tokens > 1 => {
@@ -335,7 +368,8 @@ impl KvNodeRegistry {
             }
             _ => Err(anyhow::anyhow!(
                 "demote_to_beta: node {:?} mode {:?} cannot demote to Beta",
-                node_id, slot.mode
+                node_id,
+                slot.mode
             )),
         }
     }
@@ -343,8 +377,9 @@ impl KvNodeRegistry {
     /// Demote a node to Gamma (pure embedding). Removes all tag tokens.
     /// Works from Alpha (EmbeddingWithTags) or Beta (EmbeddingWithMinimalTag).
     pub fn demote_to_gamma(&mut self, node_id: NodeId, engine: &dyn Tokenizer) -> Result<()> {
-        let slot = self.nodes.get_mut(&node_id)
-            .ok_or_else(|| anyhow::anyhow!("demote_to_gamma: node {:?} not in registry", node_id))?;
+        let slot = self.nodes.get_mut(&node_id).ok_or_else(|| {
+            anyhow::anyhow!("demote_to_gamma: node {:?} not in registry", node_id)
+        })?;
         match slot.mode {
             KvSlotMode::EmbeddingWithTags { .. } | KvSlotMode::EmbeddingWithMinimalTag { .. } => {
                 if slot.end > slot.start + 1 {
@@ -370,29 +405,42 @@ impl KvNodeRegistry {
 
     /// Promote a node from Gamma (pure embedding) to Beta (embedding + label token).
     /// Encodes 1 label token at position start+1.
-    pub fn promote_to_beta(&mut self, node_id: NodeId, label_text: &str, engine: &dyn Tokenizer) -> Result<()> {
+    pub fn promote_to_beta(
+        &mut self,
+        node_id: NodeId,
+        label_text: &str,
+        engine: &dyn Tokenizer,
+    ) -> Result<()> {
         if !self.tier_budget.consume() {
-            return Err(anyhow::anyhow!("promote_to_beta: tier budget exhausted ({} used)", self.tier_budget.used));
+            return Err(anyhow::anyhow!(
+                "promote_to_beta: tier budget exhausted ({} used)",
+                self.tier_budget.used
+            ));
         }
-        let slot = self.nodes.get_mut(&node_id)
-            .ok_or_else(|| anyhow::anyhow!("promote_to_beta: node {:?} not in registry", node_id))?;
+        let slot = self.nodes.get_mut(&node_id).ok_or_else(|| {
+            anyhow::anyhow!("promote_to_beta: node {:?} not in registry", node_id)
+        })?;
         match slot.mode {
             KvSlotMode::Embedding => {
                 let label_tokens = engine.tokenize(label_text, false, true)?;
                 let n_label = label_tokens.len().min(3) as i32; // cap label to 3 tokens
                 if n_label > 0 {
-                    let label_positions: Vec<i32> = ((slot.start + 1)..=(slot.start + n_label)).collect();
+                    let label_positions: Vec<i32> =
+                        ((slot.start + 1)..=(slot.start + n_label)).collect();
                     engine.encode(&label_tokens[..n_label as usize], &label_positions, 0)?;
                 }
                 slot.end = slot.start + 1 + n_label;
                 slot.n_tokens = 1 + n_label;
-                slot.mode = KvSlotMode::EmbeddingWithMinimalTag { n_label_tokens: n_label };
+                slot.mode = KvSlotMode::EmbeddingWithMinimalTag {
+                    n_label_tokens: n_label,
+                };
                 slot.tier = KvTier::Beta;
                 Ok(())
             }
             _ => Err(anyhow::anyhow!(
                 "promote_to_beta: node {:?} mode {:?} is not Embedding/Gamma",
-                node_id, slot.mode
+                node_id,
+                slot.mode
             )),
         }
     }
@@ -400,12 +448,21 @@ impl KvNodeRegistry {
     /// Promote a node to Alpha (embedding + full micro-tag).
     /// Encodes tag tokens at positions start+1..start+1+n_tag.
     /// Works from Gamma (Embedding) or Beta (EmbeddingWithMinimalTag).
-    pub fn promote_to_alpha(&mut self, node_id: NodeId, tag_text: &str, engine: &dyn Tokenizer) -> Result<()> {
+    pub fn promote_to_alpha(
+        &mut self,
+        node_id: NodeId,
+        tag_text: &str,
+        engine: &dyn Tokenizer,
+    ) -> Result<()> {
         if !self.tier_budget.consume() {
-            return Err(anyhow::anyhow!("promote_to_alpha: tier budget exhausted ({} used)", self.tier_budget.used));
+            return Err(anyhow::anyhow!(
+                "promote_to_alpha: tier budget exhausted ({} used)",
+                self.tier_budget.used
+            ));
         }
-        let slot = self.nodes.get_mut(&node_id)
-            .ok_or_else(|| anyhow::anyhow!("promote_to_alpha: node {:?} not in registry", node_id))?;
+        let slot = self.nodes.get_mut(&node_id).ok_or_else(|| {
+            anyhow::anyhow!("promote_to_alpha: node {:?} not in registry", node_id)
+        })?;
         match slot.mode {
             KvSlotMode::Embedding | KvSlotMode::EmbeddingWithMinimalTag { .. } => {
                 // First, evict any existing tags beyond the embedding
@@ -416,12 +473,15 @@ impl KvNodeRegistry {
                 let tag_tokens = engine.tokenize(tag_text, false, true)?;
                 let n_tag = tag_tokens.len() as i32;
                 if n_tag > 0 {
-                    let tag_positions: Vec<i32> = ((slot.start + 1)..=(slot.start + n_tag)).collect();
+                    let tag_positions: Vec<i32> =
+                        ((slot.start + 1)..=(slot.start + n_tag)).collect();
                     engine.encode(&tag_tokens, &tag_positions, 0)?;
                 }
                 slot.end = slot.start + 1 + n_tag;
                 slot.n_tokens = 1 + n_tag;
-                slot.mode = KvSlotMode::EmbeddingWithTags { n_tag_tokens: n_tag };
+                slot.mode = KvSlotMode::EmbeddingWithTags {
+                    n_tag_tokens: n_tag,
+                };
                 slot.tier = KvTier::Alpha;
                 Ok(())
             }
@@ -499,14 +559,26 @@ impl KvNodeRegistry {
             // become "orphaned" but will be reclaimed on next full_recompact.
             // This is safe: the tokens at those positions will still be in
             // the physical KV cache but won't be referenced by any node.
-            kv_debug!("[Registry] unregistered node {:?} ({} tokens at pos {}..{})",
-                node_id, slot.n_tokens, slot.start, slot.end);
+            kv_debug!(
+                "[Registry] unregistered node {:?} ({} tokens at pos {}..{})",
+                node_id,
+                slot.n_tokens,
+                slot.start,
+                slot.end
+            );
         }
     }
 
     /// Evict least-recently-used nodes to free up token capacity.
-    pub fn evict_lru(&mut self, tokens_needed: i32, protected: &HashSet<NodeId>, engine: &dyn Tokenizer) -> Vec<NodeId> {
-        let mut candidates: Vec<(NodeId, u64, i32)> = self.nodes.iter()
+    pub fn evict_lru(
+        &mut self,
+        tokens_needed: i32,
+        protected: &HashSet<NodeId>,
+        engine: &dyn Tokenizer,
+    ) -> Vec<NodeId> {
+        let mut candidates: Vec<(NodeId, u64, i32)> = self
+            .nodes
+            .iter()
             .filter(|(id, _)| !protected.contains(id))
             .map(|(id, slot)| (*id, slot.last_used, slot.n_tokens))
             .collect();
@@ -516,7 +588,9 @@ impl KvNodeRegistry {
         let mut evicted: Vec<NodeId> = Vec::new();
 
         for (nid, _last_used, n_tokens) in &candidates {
-            if freed >= tokens_needed { break; }
+            if freed >= tokens_needed {
+                break;
+            }
             evicted.push(*nid);
             freed += n_tokens;
         }
@@ -539,17 +613,29 @@ impl KvNodeRegistry {
 
     /// Ensure capacity for `needed_tokens` new tokens.
     /// If position space is near 90% of n_ctx, do a full recompact.
-    pub fn ensure_capacity(&mut self, needed_tokens: i32, max_kv_tokens: i32, protected: &HashSet<NodeId>, engine: &dyn Tokenizer) {
+    pub fn ensure_capacity(
+        &mut self,
+        needed_tokens: i32,
+        max_kv_tokens: i32,
+        protected: &HashSet<NodeId>,
+        engine: &dyn Tokenizer,
+    ) {
         // Check if position space is nearly exhausted (full-recompact trigger)
         let n_ctx = engine.n_ctx() as i32;
         if self.next_pos + needed_tokens > (n_ctx as f64 * 0.9) as i32 {
-            kv_debug!("  ⚠ Position space near limit ({}/{}), full recompact...", self.next_pos, n_ctx);
+            kv_debug!(
+                "  ⚠ Position space near limit ({}/{}), full recompact...",
+                self.next_pos,
+                n_ctx
+            );
             self.full_recompact::<fn(&[f32], &[i32], i32) -> Result<usize>>(engine, None, None);
         }
 
         let total_tokens: i32 = self.nodes.values().map(|s| s.n_tokens).sum();
         let available = max_kv_tokens - total_tokens;
-        if available >= needed_tokens { return; }
+        if available >= needed_tokens {
+            return;
+        }
 
         let to_free = needed_tokens - available;
         self.evict_lru(to_free, protected, engine);
@@ -596,7 +682,9 @@ impl KvNodeRegistry {
                             slot.n_tokens = n_tok;
                             pos += n_tok;
                             true
-                        } else { false }
+                        } else {
+                            false
+                        }
                     }
                     KvSlotMode::Embedding => {
                         // Re-inject embedding if available
@@ -608,8 +696,12 @@ impl KvNodeRegistry {
                                 slot.n_tokens = 1;
                                 pos += 1;
                                 true
-                            } else { false }
-                        } else { false }
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
                     }
                     KvSlotMode::EmbeddingWithMinimalTag { n_label_tokens } => {
                         if let (Some(embd_fn), Some(get_embd)) = (&encode_embd_fn, &get_embedding) {
@@ -620,7 +712,8 @@ impl KvNodeRegistry {
                                 if n_label_tokens > 0 {
                                     if let Ok(tokens) = engine.tokenize(&slot.text, false, true) {
                                         let n = (n_label_tokens as usize).min(tokens.len());
-                                        let label_positions: Vec<i32> = ((pos + 1)..=(pos + n as i32)).collect();
+                                        let label_positions: Vec<i32> =
+                                            ((pos + 1)..=(pos + n as i32)).collect();
                                         let _ = engine.encode(&tokens[..n], &label_positions, 0);
                                     }
                                 }
@@ -630,8 +723,12 @@ impl KvNodeRegistry {
                                 slot.n_tokens = total;
                                 pos += total;
                                 true
-                            } else { false }
-                        } else { false }
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
                     }
                     KvSlotMode::EmbeddingWithTags { n_tag_tokens } => {
                         if let (Some(embd_fn), Some(get_embd)) = (&encode_embd_fn, &get_embedding) {
@@ -642,7 +739,8 @@ impl KvNodeRegistry {
                                 if n_tag_tokens > 0 {
                                     if let Ok(tokens) = engine.tokenize(&slot.text, false, true) {
                                         let n = (n_tag_tokens as usize).min(tokens.len());
-                                        let tag_positions: Vec<i32> = ((pos + 1)..=(pos + n as i32)).collect();
+                                        let tag_positions: Vec<i32> =
+                                            ((pos + 1)..=(pos + n as i32)).collect();
                                         let _ = engine.encode(&tokens[..n], &tag_positions, 0);
                                     }
                                 }
@@ -652,8 +750,12 @@ impl KvNodeRegistry {
                                 slot.n_tokens = total;
                                 pos += total;
                                 true
-                            } else { false }
-                        } else { false }
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
                     }
                 };
 

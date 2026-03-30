@@ -7,15 +7,13 @@
 //! 4. Bank load/evict
 //! 5. Importance-based eviction ordering
 
-use kv_registry::hilbert::{
-    HilbertLayout, spectral_embedding_2d, AdjacencyList,
-};
-use kv_registry::hilbert_bank::BankManager;
-use kv_registry::registry::{KvNodeRegistry, KvTier, KvSlotMode};
+use anyhow::Result;
 use kv_registry::Tokenizer;
+use kv_registry::hilbert::{AdjacencyList, HilbertLayout, spectral_embedding_2d};
+use kv_registry::hilbert_bank::BankManager;
+use kv_registry::registry::{KvNodeRegistry, KvSlotMode, KvTier};
 use obrain_common::types::NodeId;
 use std::collections::{HashMap, HashSet};
-use anyhow::Result;
 
 // ── Mock Tokenizer (no LLM needed) ─────────────────────────────
 
@@ -25,7 +23,9 @@ struct MockTokenizer {
 
 impl MockTokenizer {
     fn new() -> Self {
-        Self { evicted: std::cell::RefCell::new(Vec::new()) }
+        Self {
+            evicted: std::cell::RefCell::new(Vec::new()),
+        }
     }
 }
 
@@ -62,7 +62,9 @@ impl Tokenizer for MockTokenizer {
 // ── Helper: build a test graph ──────────────────────────────────
 
 /// Build a graph with 3 communities of `size` nodes each, connected by bridges.
-fn build_test_graph(size: usize) -> (
+fn build_test_graph(
+    size: usize,
+) -> (
     HashMap<NodeId, HashSet<NodeId>>,
     HashMap<NodeId, usize>, // communities
 ) {
@@ -82,17 +84,32 @@ fn build_test_graph(size: usize) -> (
         for i in (comm * size)..((comm + 1) * size) {
             for j in (comm * size)..((comm + 1) * size) {
                 if i != j {
-                    adjacency.entry(NodeId(i as u64)).or_default().insert(NodeId(j as u64));
+                    adjacency
+                        .entry(NodeId(i as u64))
+                        .or_default()
+                        .insert(NodeId(j as u64));
                 }
             }
         }
     }
 
     // Inter-community bridges
-    adjacency.entry(NodeId((size - 1) as u64)).or_default().insert(NodeId(size as u64));
-    adjacency.entry(NodeId(size as u64)).or_default().insert(NodeId((size - 1) as u64));
-    adjacency.entry(NodeId((2 * size - 1) as u64)).or_default().insert(NodeId((2 * size) as u64));
-    adjacency.entry(NodeId((2 * size) as u64)).or_default().insert(NodeId((2 * size - 1) as u64));
+    adjacency
+        .entry(NodeId((size - 1) as u64))
+        .or_default()
+        .insert(NodeId(size as u64));
+    adjacency
+        .entry(NodeId(size as u64))
+        .or_default()
+        .insert(NodeId((size - 1) as u64));
+    adjacency
+        .entry(NodeId((2 * size - 1) as u64))
+        .or_default()
+        .insert(NodeId((2 * size) as u64));
+    adjacency
+        .entry(NodeId((2 * size) as u64))
+        .or_default()
+        .insert(NodeId((2 * size - 1) as u64));
 
     (adjacency, communities)
 }
@@ -144,7 +161,9 @@ fn test_tier_lifecycle() {
     let nid = NodeId(42);
 
     // Register as embedding (Γ)
-    registry.register_embedding(nid, ":Person Test", &vec![0.0f32; 64], |_e, _p, _s| Ok(1)).unwrap();
+    registry
+        .register_embedding(nid, ":Person Test", &vec![0.0f32; 64], |_e, _p, _s| Ok(1))
+        .unwrap();
     assert_eq!(registry.get_tier(nid), Some(KvTier::Gamma));
 
     // Promote Γ → Β
@@ -156,7 +175,9 @@ fn test_tier_lifecycle() {
     ));
 
     // Promote Β → Α
-    registry.promote_to_alpha(nid, ":Person Test [→knows Alice]", &engine).unwrap();
+    registry
+        .promote_to_alpha(nid, ":Person Test [→knows Alice]", &engine)
+        .unwrap();
     assert_eq!(registry.get_tier(nid), Some(KvTier::Alpha));
     assert!(matches!(
         registry.get_slot(nid).unwrap().mode,
@@ -183,9 +204,9 @@ fn test_tier_budget() {
 
     // Register 5 nodes as Γ
     for i in 0..5 {
-        registry.register_embedding(
-            NodeId(i), ":Test", &vec![0.0f32; 64], |_e, _p, _s| Ok(1)
-        ).unwrap();
+        registry
+            .register_embedding(NodeId(i), ":Test", &vec![0.0f32; 64], |_e, _p, _s| Ok(1))
+            .unwrap();
     }
 
     // Promote 3 → should succeed
@@ -219,9 +240,9 @@ fn test_bank_importance_eviction() {
 
     // Set different importance levels
     let mut rewards = HashMap::new();
-    rewards.insert(0, 0.9f32);  // Bank 0: high importance
-    rewards.insert(1, 0.1f32);  // Bank 1: low importance
-    rewards.insert(2, 0.5f32);  // Bank 2: medium
+    rewards.insert(0, 0.9f32); // Bank 0: high importance
+    rewards.insert(1, 0.1f32); // Bank 1: low importance
+    rewards.insert(2, 0.5f32); // Bank 2: medium
     mgr.update_importance(&rewards, 0.0); // decay=0 → direct assignment
 
     // Eviction candidates: lowest importance first
@@ -241,24 +262,32 @@ fn test_spectral_separates_communities() {
     // Community A: K8 (0-7)
     for i in 0..8 {
         for j in 0..8 {
-            if i != j { adj[i].push(j); }
+            if i != j {
+                adj[i].push(j);
+            }
         }
     }
     // Community B: K8 (8-15)
     for i in 8..16 {
         for j in 8..16 {
-            if i != j { adj[i].push(j); }
+            if i != j {
+                adj[i].push(j);
+            }
         }
     }
     // Community C: K8 (16-23)
     for i in 16..24 {
         for j in 16..24 {
-            if i != j { adj[i].push(j); }
+            if i != j {
+                adj[i].push(j);
+            }
         }
     }
     // Bridges
-    adj[7].push(8); adj[8].push(7);
-    adj[15].push(16); adj[16].push(15);
+    adj[7].push(8);
+    adj[8].push(7);
+    adj[15].push(16);
+    adj[16].push(15);
 
     let coords = spectral_embedding_2d(&adj);
     assert_eq!(coords.len(), 24);
@@ -295,7 +324,8 @@ fn test_hilbert_locality_for_communities() {
 
     // For each community, compute position spread (max - min)
     for comm_id in 0..3 {
-        let mut positions: Vec<u32> = communities.iter()
+        let mut positions: Vec<u32> = communities
+            .iter()
             .filter(|&(_, c)| *c == comm_id)
             .map(|(nid, _)| layout.get_position(*nid).unwrap())
             .collect();
@@ -323,18 +353,22 @@ fn test_tier_distribution() {
 
     // Register 10 nodes: 3 Α, 3 Β, 4 Γ
     for i in 0..10 {
-        registry.register_embedding(
-            NodeId(i), ":Test", &vec![0.0f32; 64], |_e, _p, _s| Ok(1)
-        ).unwrap();
+        registry
+            .register_embedding(NodeId(i), ":Test", &vec![0.0f32; 64], |_e, _p, _s| Ok(1))
+            .unwrap();
     }
 
     // Promote 0-2 to Alpha
     for i in 0..3 {
-        registry.promote_to_alpha(NodeId(i), ":full tag", &engine).unwrap();
+        registry
+            .promote_to_alpha(NodeId(i), ":full tag", &engine)
+            .unwrap();
     }
     // Promote 3-5 to Beta
     for i in 3..6 {
-        registry.promote_to_beta(NodeId(i), ":label", &engine).unwrap();
+        registry
+            .promote_to_beta(NodeId(i), ":label", &engine)
+            .unwrap();
     }
 
     let (alpha, beta, gamma) = registry.tier_distribution();
@@ -347,7 +381,10 @@ fn test_tier_distribution() {
     let n_nodes = registry.nodes.len() as i32;
     // Compression ratio = n_nodes / total_positions
     let compression = n_nodes as f64 / total_positions as f64;
-    assert!(compression < 1.0, "Tiers should use more than 1 pos on average");
+    assert!(
+        compression < 1.0,
+        "Tiers should use more than 1 pos on average"
+    );
     assert!(compression > 0.3, "Not too much overhead: {compression}");
 }
 
@@ -375,9 +412,9 @@ fn test_end_to_end_pipeline() {
     //    that satisfies FnOnce, but we test the structure)
     let bank0_nodes = mgr.banks[0].node_ids.clone();
     for &nid in &bank0_nodes {
-        registry.register_embedding(
-            nid, ":Test", &vec![0.0f32; 64], |_e, _p, _s| Ok(1)
-        ).unwrap();
+        registry
+            .register_embedding(nid, ":Test", &vec![0.0f32; 64], |_e, _p, _s| Ok(1))
+            .unwrap();
     }
     mgr.banks[0].loaded = true;
 
@@ -385,13 +422,18 @@ fn test_end_to_end_pipeline() {
     for &nid in &bank0_nodes {
         let slot = registry.get_slot(nid).unwrap();
         let expected_pos = layout.get_position(nid).unwrap() as i32;
-        assert_eq!(slot.start, expected_pos,
-            "Node {:?} at pos {} but expected Hilbert pos {}", nid, slot.start, expected_pos);
+        assert_eq!(
+            slot.start, expected_pos,
+            "Node {:?} at pos {} but expected Hilbert pos {}",
+            nid, slot.start, expected_pos
+        );
     }
 
     // 6. Promote a node to Alpha
     let promoted_nid = bank0_nodes[0];
-    registry.promote_to_alpha(promoted_nid, ":full tag", &engine).unwrap();
+    registry
+        .promote_to_alpha(promoted_nid, ":full tag", &engine)
+        .unwrap();
     assert_eq!(registry.get_tier(promoted_nid), Some(KvTier::Alpha));
 
     // 7. Demote it back to Gamma

@@ -4,9 +4,9 @@
 //! representing a topologically coherent group of graph nodes.
 //! Banks can be loaded (encode embeddings in tier Γ) and evicted (seq_rm) as blocks.
 
+use crate::Tokenizer;
 use crate::hilbert::HilbertLayout;
 use crate::registry::KvNodeRegistry;
-use crate::Tokenizer;
 use anyhow::Result;
 use obrain_common::types::NodeId;
 use std::collections::{HashMap, HashSet};
@@ -63,10 +63,7 @@ impl BankManager {
     /// `communities`: maps NodeId → community_id (e.g., from Louvain clustering).
     /// Nodes in the same community form a bank.
     /// Nodes without a community assignment go into a "misc" bank.
-    pub fn from_communities(
-        layout: &HilbertLayout,
-        communities: &HashMap<NodeId, usize>,
-    ) -> Self {
+    pub fn from_communities(layout: &HilbertLayout, communities: &HashMap<NodeId, usize>) -> Self {
         // Group nodes by community
         let mut community_nodes: HashMap<usize, Vec<(NodeId, u32)>> = HashMap::new();
         let mut orphan_nodes: Vec<(NodeId, u32)> = Vec::new();
@@ -85,7 +82,11 @@ impl BankManager {
         // Sort communities by their minimum Hilbert position for deterministic ordering
         let mut comm_ids: Vec<usize> = community_nodes.keys().copied().collect();
         comm_ids.sort_by_key(|&c| {
-            community_nodes[&c].iter().map(|&(_, p)| p).min().unwrap_or(0)
+            community_nodes[&c]
+                .iter()
+                .map(|&(_, p)| p)
+                .min()
+                .unwrap_or(0)
         });
 
         for comm_id in comm_ids {
@@ -137,7 +138,10 @@ impl BankManager {
             });
         }
 
-        Self { banks, node_to_bank }
+        Self {
+            banks,
+            node_to_bank,
+        }
     }
 
     /// Segment a HilbertLayout into banks of fixed size (when no community info).
@@ -171,7 +175,10 @@ impl BankManager {
             });
         }
 
-        Self { banks, node_to_bank }
+        Self {
+            banks,
+            node_to_bank,
+        }
     }
 
     /// Load a bank: encode all its nodes as embeddings (tier Γ) into the KV cache.
@@ -190,7 +197,9 @@ impl BankManager {
     where
         F: Fn(&[f32], &[i32], i32) -> Result<usize>,
     {
-        let bank = self.banks.get_mut(bank_id)
+        let bank = self
+            .banks
+            .get_mut(bank_id)
             .ok_or_else(|| anyhow::anyhow!("load_bank: bank {bank_id} not found"))?;
 
         if bank.loaded {
@@ -215,8 +224,10 @@ impl BankManager {
 
         let bank = &mut self.banks[bank_id];
         bank.loaded = true;
-        eprintln!("  [D5] loaded bank '{}': {} nodes at positions [{}, {}]",
-            bank.name, loaded, bank.hilbert_start, bank.hilbert_end);
+        eprintln!(
+            "  [D5] loaded bank '{}': {} nodes at positions [{}, {}]",
+            bank.name, loaded, bank.hilbert_start, bank.hilbert_end
+        );
 
         Ok(loaded)
     }
@@ -228,7 +239,9 @@ impl BankManager {
         registry: &mut KvNodeRegistry,
         engine: &dyn Tokenizer,
     ) -> Result<usize> {
-        let bank = self.banks.get(bank_id)
+        let bank = self
+            .banks
+            .get(bank_id)
             .ok_or_else(|| anyhow::anyhow!("evict_bank: bank {bank_id} not found"))?;
 
         if !bank.loaded {
@@ -252,7 +265,10 @@ impl BankManager {
 
         let bank = &mut self.banks[bank_id];
         bank.loaded = false;
-        eprintln!("  [D5] evicted bank '{}': {} nodes freed", bank.name, evicted);
+        eprintln!(
+            "  [D5] evicted bank '{}': {} nodes freed",
+            bank.name, evicted
+        );
 
         Ok(evicted)
     }
@@ -272,7 +288,9 @@ impl BankManager {
 
     /// Get banks sorted by importance (lowest first — candidates for eviction).
     pub fn eviction_candidates(&self) -> Vec<usize> {
-        let mut loaded: Vec<(usize, f32)> = self.banks.iter()
+        let mut loaded: Vec<(usize, f32)> = self
+            .banks
+            .iter()
             .filter(|b| b.loaded)
             .map(|b| (b.id, b.importance))
             .collect();
@@ -302,7 +320,8 @@ impl BankManager {
 
     /// Get bank IDs relevant for a set of node IDs (for selective loading).
     pub fn banks_for_nodes(&self, node_ids: &[NodeId]) -> HashSet<usize> {
-        node_ids.iter()
+        node_ids
+            .iter()
             .filter_map(|nid| self.node_to_bank.get(nid).copied())
             .collect()
     }
@@ -346,7 +365,9 @@ impl BankManager {
 
         // Replace banks with new structure, preserving loaded status for banks
         // that still exist (same index, same name)
-        let old_loaded: HashMap<String, (bool, f32, u32)> = self.banks.iter()
+        let old_loaded: HashMap<String, (bool, f32, u32)> = self
+            .banks
+            .iter()
             .map(|b| (b.name.clone(), (b.loaded, b.importance, b.activation_count)))
             .collect();
 
@@ -377,8 +398,11 @@ impl BankManager {
         }
 
         if migrated > 0 {
-            eprintln!("  [E5] bank resegment: {} nodes migrated, {} banks",
-                migrated, self.banks.len());
+            eprintln!(
+                "  [E5] bank resegment: {} nodes migrated, {} banks",
+                migrated,
+                self.banks.len()
+            );
         }
 
         migrated
@@ -402,7 +426,11 @@ mod tests {
             communities.insert(nid, (i / 3) as usize); // 3 communities of 3
         }
 
-        let layout = HilbertLayout { positions, order: 2, coords_2d };
+        let layout = HilbertLayout {
+            positions,
+            order: 2,
+            coords_2d,
+        };
         (layout, communities)
     }
 
@@ -510,8 +538,12 @@ mod tests {
 
         // Loaded nodes (bank 0) should keep their bank assignment
         for &nid in &loaded {
-            assert_eq!(mgr.bank_for_node(nid), Some(0),
-                "Loaded node {:?} should stay in bank 0", nid);
+            assert_eq!(
+                mgr.bank_for_node(nid),
+                Some(0),
+                "Loaded node {:?} should stay in bank 0",
+                nid
+            );
         }
 
         // Node 3 was unloaded → should have migrated
@@ -531,8 +563,11 @@ mod tests {
                 // They shouldn't overlap (start_a < end_b && start_b < end_a)
                 let overlap = a.hilbert_start < b.hilbert_end && b.hilbert_start < a.hilbert_end;
                 // In our test setup with sequential positions, communities are contiguous
-                assert!(!overlap, "Banks {} and {} overlap: [{},{}) vs [{},{})",
-                    i, j, a.hilbert_start, a.hilbert_end, b.hilbert_start, b.hilbert_end);
+                assert!(
+                    !overlap,
+                    "Banks {} and {} overlap: [{},{}) vs [{},{})",
+                    i, j, a.hilbert_start, a.hilbert_end, b.hilbert_start, b.hilbert_end
+                );
             }
         }
     }

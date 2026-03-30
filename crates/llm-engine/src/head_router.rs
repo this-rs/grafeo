@@ -31,6 +31,10 @@ pub struct HeadRouter {
     pub n_updates: u64,
     /// Warmup: no learning for the first N queries (observation only).
     pub warmup_remaining: u32,
+    /// Per-head α for self-embedding positions (proprioceptive channel).
+    /// sigmoid(self_alpha[h]) = probability head h attends to self-embed positions.
+    /// Separate from bank α because self-embeds are a different signal type.
+    pub self_alpha: Vec<f32>,
 }
 
 /// Visibility threshold: sigmoid(α) > this means "head sees bank".
@@ -54,6 +58,7 @@ impl HeadRouter {
             lr,
             n_updates: 0,
             warmup_remaining: warmup,
+            self_alpha: vec![0.0; n_head], // neutral: sigmoid(0)=0.5
         }
     }
 
@@ -107,12 +112,14 @@ impl HeadRouter {
             let reward = rewards_per_head[h];
             for b in 0..self.n_bank {
                 let idx = h * self.n_bank + b;
-                if idx >= visibility.len() { continue; }
+                if idx >= visibility.len() {
+                    continue;
+                }
 
                 let vis = visibility[idx];
                 let grad = reward * vis;
-                self.alpha[idx] = (self.alpha[idx] + self.lr * grad)
-                    .clamp(ALPHA_CLIP_MIN, ALPHA_CLIP_MAX);
+                self.alpha[idx] =
+                    (self.alpha[idx] + self.lr * grad).clamp(ALPHA_CLIP_MIN, ALPHA_CLIP_MAX);
             }
         }
 
@@ -135,8 +142,8 @@ impl HeadRouter {
                 let idx = h * self.n_bank + b;
                 let vis = probs[idx];
                 let grad = reward * vis;
-                self.alpha[idx] = (self.alpha[idx] + self.lr * grad)
-                    .clamp(ALPHA_CLIP_MIN, ALPHA_CLIP_MAX);
+                self.alpha[idx] =
+                    (self.alpha[idx] + self.lr * grad).clamp(ALPHA_CLIP_MIN, ALPHA_CLIP_MAX);
             }
         }
 
@@ -152,6 +159,47 @@ impl HeadRouter {
     pub fn load_weights(&mut self, weights: &[f32]) {
         if weights.len() == self.alpha.len() {
             self.alpha.copy_from_slice(weights);
+        }
+    }
+
+    /// Get self-embedding visibility probability for a head.
+    pub fn self_prob(&self, head: usize) -> f32 {
+        if head >= self.n_head {
+            return 0.5;
+        }
+        sigmoid(self.self_alpha[head])
+    }
+
+    /// Check if a head should attend to self-embedding positions.
+    pub fn self_is_visible(&self, head: usize) -> bool {
+        self.self_prob(head) > VISIBILITY_THRESHOLD
+    }
+
+    /// REINFORCE update for self-embedding α, given a uniform reward.
+    ///
+    /// Called when the model uses (or fails to use) self-metrics.
+    /// Positive reward → heads that attended to self-embeds are reinforced.
+    pub fn backward_self(&mut self, reward: f32) {
+        if self.warmup_remaining > 0 {
+            return; // warmup managed by main backward()
+        }
+        for h in 0..self.n_head {
+            let p = sigmoid(self.self_alpha[h]);
+            let grad = reward * p;
+            self.self_alpha[h] =
+                (self.self_alpha[h] + self.lr * grad).clamp(ALPHA_CLIP_MIN, ALPHA_CLIP_MAX);
+        }
+    }
+
+    /// Get self_alpha weights for serialization.
+    pub fn self_weights(&self) -> &[f32] {
+        &self.self_alpha
+    }
+
+    /// Restore self_alpha weights.
+    pub fn load_self_weights(&mut self, weights: &[f32]) {
+        if weights.len() == self.self_alpha.len() {
+            self.self_alpha.copy_from_slice(weights);
         }
     }
 
@@ -171,7 +219,9 @@ impl HeadRouter {
 
             // Normalize to distribution
             let sum: f32 = head_probs.iter().sum();
-            if sum < 1e-8 { continue; }
+            if sum < 1e-8 {
+                continue;
+            }
 
             let mut entropy = 0.0f32;
             for &p in head_probs {
@@ -200,8 +250,12 @@ impl HeadRouter {
         }
 
         let labels = ["core", "relations", "2-hop", "background"];
-        let mut s = format!("HeadRouter: {} updates, lr={}, entropy={:.3}\n",
-            self.n_updates, self.lr, self.specialization_entropy());
+        let mut s = format!(
+            "HeadRouter: {} updates, lr={}, entropy={:.3}\n",
+            self.n_updates,
+            self.lr,
+            self.specialization_entropy()
+        );
         for b in 0..self.n_bank {
             let label = labels.get(b).unwrap_or(&"?");
             s += &format!("  bank {} ({}): mean_prob={:.3}\n", b, label, bank_means[b]);
@@ -224,14 +278,17 @@ mod tests {
         let probs = router.forward();
         assert_eq!(probs.len(), 16);
         for &p in &probs {
-            assert!((p - 0.5).abs() < 0.001, "neutral α=0 should give sigmoid=0.5, got {p}");
+            assert!(
+                (p - 0.5).abs() < 0.001,
+                "neutral α=0 should give sigmoid=0.5, got {p}"
+            );
         }
     }
 
     #[test]
     fn test_forward_extreme_values() {
         let mut router = HeadRouter::new(2, 2, 0.01, 0);
-        router.alpha[0] = 5.0;  // head 0, bank 0 → ~0.993
+        router.alpha[0] = 5.0; // head 0, bank 0 → ~0.993
         router.alpha[1] = -5.0; // head 0, bank 1 → ~0.007
 
         let probs = router.forward();
@@ -252,11 +309,15 @@ mod tests {
         router.backward(&rewards, &visibility);
 
         // α[0] (head0, bank0) should increase (positive reward × visible)
-        assert!(router.alpha[0] > alpha_before[0],
-            "positive reward + visible → α should increase");
+        assert!(
+            router.alpha[0] > alpha_before[0],
+            "positive reward + visible → α should increase"
+        );
         // α[1] (head0, bank1) should NOT change (not visible)
-        assert_eq!(router.alpha[1], alpha_before[1],
-            "not visible → α should not change");
+        assert_eq!(
+            router.alpha[1], alpha_before[1],
+            "not visible → α should not change"
+        );
         // α[3] (head1, bank1) should increase
         assert!(router.alpha[3] > alpha_before[3]);
     }
@@ -272,8 +333,10 @@ mod tests {
 
         // All α should decrease (negative reward × visible)
         for i in 0..4 {
-            assert!(router.alpha[i] < alpha_before[i],
-                "negative reward + visible → α[{i}] should decrease");
+            assert!(
+                router.alpha[i] < alpha_before[i],
+                "negative reward + visible → α[{i}] should decrease"
+            );
         }
     }
 
@@ -286,12 +349,18 @@ mod tests {
         // First 3 calls should be warmup (no learning)
         for _ in 0..3 {
             router.backward(&rewards, &visibility);
-            assert!(router.alpha.iter().all(|&a| a == 0.0), "warmup: α should stay 0");
+            assert!(
+                router.alpha.iter().all(|&a| a == 0.0),
+                "warmup: α should stay 0"
+            );
         }
 
         // 4th call should learn
         router.backward(&rewards, &visibility);
-        assert!(router.alpha.iter().any(|&a| a != 0.0), "after warmup: α should change");
+        assert!(
+            router.alpha.iter().any(|&a| a != 0.0),
+            "after warmup: α should change"
+        );
     }
 
     #[test]
@@ -311,7 +380,10 @@ mod tests {
         for _ in 0..200 {
             router.backward(&neg_rewards, &visibility);
         }
-        assert!((router.alpha[0] - (-5.0)).abs() < 0.001, "should clip at -5.0");
+        assert!(
+            (router.alpha[0] - (-5.0)).abs() < 0.001,
+            "should clip at -5.0"
+        );
     }
 
     #[test]
@@ -357,14 +429,21 @@ mod tests {
             let p_core = router.prob(h, 0);
             let p_bg = router.prob(h, 3);
 
-            assert!(p_core > 0.9,
-                "head {h}: core visibility should converge to >0.9, got {p_core:.3}");
-            assert!(p_bg < 0.2,
-                "head {h}: background visibility should converge to <0.2, got {p_bg:.3}");
+            assert!(
+                p_core > 0.9,
+                "head {h}: core visibility should converge to >0.9, got {p_core:.3}"
+            );
+            assert!(
+                p_bg < 0.2,
+                "head {h}: background visibility should converge to <0.2, got {p_bg:.3}"
+            );
         }
 
         let entropy = router.specialization_entropy();
-        assert!(entropy < 1.2, "after convergence, entropy should be low: {entropy:.3}");
+        assert!(
+            entropy < 1.2,
+            "after convergence, entropy should be low: {entropy:.3}"
+        );
 
         eprintln!("  Convergence test: {} updates", router.n_updates);
         eprintln!("  Specialization entropy: {:.3}", entropy);
@@ -397,14 +476,16 @@ mod tests {
         // Specialized (one bank very high, others very low)
         let mut specialized = HeadRouter::new(4, 4, 0.01, 0);
         for h in 0..4 {
-            specialized.alpha[h * 4 + 0] = 5.0;  // core: high
+            specialized.alpha[h * 4 + 0] = 5.0; // core: high
             specialized.alpha[h * 4 + 1] = -5.0; // relations: low
             specialized.alpha[h * 4 + 2] = -5.0; // 2-hop: low
             specialized.alpha[h * 4 + 3] = -5.0; // background: low
         }
         let entropy_specialized = specialized.specialization_entropy();
 
-        assert!(entropy_specialized < entropy_uniform,
-            "specialized should have lower entropy: {entropy_specialized:.3} < {entropy_uniform:.3}");
+        assert!(
+            entropy_specialized < entropy_uniform,
+            "specialized should have lower entropy: {entropy_specialized:.3} < {entropy_uniform:.3}"
+        );
     }
 }

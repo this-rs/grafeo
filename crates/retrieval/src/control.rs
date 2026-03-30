@@ -37,7 +37,10 @@ impl Spinner {
             let frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
             let mut i = 0;
             while a.load(Ordering::Relaxed) {
-                eprint!("\r\x1b[2K\x1b[90m{} réflexion...\x1b[0m", frames[i % frames.len()]);
+                eprint!(
+                    "\r\x1b[2K\x1b[90m{} réflexion...\x1b[0m",
+                    frames[i % frames.len()]
+                );
                 let _ = io::stderr().flush();
                 i += 1;
                 thread::sleep(std::time::Duration::from_millis(80));
@@ -45,7 +48,10 @@ impl Spinner {
             eprint!("\r\x1b[2K");
             let _ = io::stderr().flush();
         });
-        Self { alive, handle: Some(handle) }
+        Self {
+            alive,
+            handle: Some(handle),
+        }
     }
 }
 

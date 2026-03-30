@@ -9,8 +9,8 @@
 //! InfoNCE for a (anchor, positive) pair with K negatives:
 //!   L_InfoNCE = -log( exp(sim(a,p)/τ) / (exp(sim(a,p)/τ) + Σ exp(sim(a,nk)/τ)) )
 
-use std::collections::{HashMap, HashSet};
 use obrain_common::types::NodeId;
+use std::collections::{HashMap, HashSet};
 
 /// A contrastive training sample: anchor node + positive (connected) + negatives (unconnected).
 #[derive(Debug, Clone)]
@@ -94,9 +94,15 @@ impl GraphTopology {
 
         for &anchor in &available_vec {
             // Get neighbors that also have embeddings
-            let neighbors: Vec<NodeId> = self.neighbors_1hop
+            let neighbors: Vec<NodeId> = self
+                .neighbors_1hop
                 .get(&anchor)
-                .map(|ns| ns.iter().filter(|n| available_nodes.contains(n)).copied().collect())
+                .map(|ns| {
+                    ns.iter()
+                        .filter(|n| available_nodes.contains(n))
+                        .copied()
+                        .collect()
+                })
                 .unwrap_or_default();
 
             if neighbors.is_empty() {
@@ -113,12 +119,16 @@ impl GraphTopology {
             let mut neg_seed = anchor.as_u64().wrapping_mul(2654435761);
 
             // Shuffle available nodes deterministically and pick negatives
-            let mut candidates: Vec<NodeId> = available_vec.iter()
+            let mut candidates: Vec<NodeId> = available_vec
+                .iter()
                 .filter(|&&n| {
                     n != anchor
                         && n != positive
                         && !hop2.map_or(false, |h| h.contains(&n))
-                        && !self.neighbors_1hop.get(&anchor).map_or(false, |h| h.contains(&n))
+                        && !self
+                            .neighbors_1hop
+                            .get(&anchor)
+                            .map_or(false, |h| h.contains(&n))
                 })
                 .copied()
                 .collect();
@@ -195,9 +205,10 @@ pub fn cosine_sim_grad_a(a: &[f32], b: &[f32]) -> Vec<f32> {
     let nb = b.iter().map(|v| v * v).sum::<f32>().sqrt().max(1e-8);
     let na3 = na * na * na;
 
-    a.iter().enumerate().map(|(i, &ai)| {
-        b[i] / (na * nb) - ai * dot / (na3 * nb)
-    }).collect()
+    a.iter()
+        .enumerate()
+        .map(|(i, &ai)| b[i] / (na * nb) - ai * dot / (na3 * nb))
+        .collect()
 }
 
 /// Contrastive training configuration.
@@ -254,9 +265,17 @@ mod tests {
         // All similarities equal — model confused
         let (loss, d_pos, d_negs) = info_nce_loss(0.5, &[0.5, 0.5, 0.5], 0.07);
         // Loss should be -log(1/4) = log(4) ≈ 1.386
-        assert!((loss - (4.0f32).ln()).abs() < 0.1, "loss ≈ log(4): {}", loss);
+        assert!(
+            (loss - (4.0f32).ln()).abs() < 0.1,
+            "loss ≈ log(4): {}",
+            loss
+        );
         // Gradient on positive should push it up
-        assert!(d_pos < 0.0, "d_pos should be negative (push sim up): {}", d_pos);
+        assert!(
+            d_pos < 0.0,
+            "d_pos should be negative (push sim up): {}",
+            d_pos
+        );
     }
 
     #[test]
@@ -323,13 +342,18 @@ mod tests {
 
         // Verify gradient direction: small perturbation along grad should increase cosine
         let eps = 0.001;
-        let a_perturbed: Vec<f32> = a.iter().zip(&grad).map(|(&ai, &gi)| ai + eps * gi).collect();
+        let a_perturbed: Vec<f32> = a
+            .iter()
+            .zip(&grad)
+            .map(|(&ai, &gi)| ai + eps * gi)
+            .collect();
         let cos_orig = cosine_sim(&a, &b);
         let cos_perturbed = cosine_sim(&a_perturbed, &b);
         assert!(
             cos_perturbed > cos_orig - 1e-4,
             "gradient should increase cosine: {} → {}",
-            cos_orig, cos_perturbed
+            cos_orig,
+            cos_perturbed
         );
     }
 }

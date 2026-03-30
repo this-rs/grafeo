@@ -9,10 +9,10 @@
 //! position (from GNN message-passing), then gets injected into the KV cache
 //! via `batch.embd` (1 position per node instead of ~50 tokens).
 
-use std::collections::HashMap;
+use crate::ProjectionNet;
 use anyhow::{Result, bail};
 use obrain_common::types::NodeId;
-use crate::ProjectionNet;
+use std::collections::HashMap;
 
 /// Cache of pre-computed node embeddings.
 ///
@@ -54,7 +54,8 @@ impl NodeEmbeddingCache {
         if embedding.len() != self.n_embd {
             bail!(
                 "NodeEmbeddingCache::insert: embedding.len()={} but n_embd={}",
-                embedding.len(), self.n_embd
+                embedding.len(),
+                self.n_embd
             );
         }
         self.cache.insert(node_id, embedding);
@@ -119,7 +120,10 @@ pub fn compute_text_embedding(engine: &crate::Engine, text: &str) -> Result<Vec<
 
     let tokens = engine.tokenize(text, false, true)?;
     if tokens.is_empty() {
-        bail!("compute_text_embedding: tokenization produced 0 tokens for text: {:?}", &text[..text.len().min(50)]);
+        bail!(
+            "compute_text_embedding: tokenization produced 0 tokens for text: {:?}",
+            &text[..text.len().min(50)]
+        );
     }
 
     // Use seq_id=2 (ablation/temp) to avoid polluting seq 0/1
@@ -227,7 +231,10 @@ pub fn compute_node_embeddings_with_fusion(
                 computed += 1;
             }
             Err(e) => {
-                eprintln!("  ⚠ compute_fused_embedding failed for node {:?}: {}", node_id, e);
+                eprintln!(
+                    "  ⚠ compute_fused_embedding failed for node {:?}: {}",
+                    node_id, e
+                );
             }
         }
     }
@@ -403,9 +410,8 @@ mod tests {
         fact_scores.insert(n1, 0.5f32);
         fact_scores.insert(n2, 1.0f32);
 
-        let rescored = propagate_neighbors(
-            center, &adjacency, &fact_scores, &mut cache, None, None, 20,
-        );
+        let rescored =
+            propagate_neighbors(center, &adjacency, &fact_scores, &mut cache, None, None, 20);
         assert_eq!(rescored, 2); // n1 + n2 rescored, n3 skipped (not in cache)
 
         // n1 was rescored with fact_score=0.5 → weight=0.7 → 2.0 * 0.7 = 1.4

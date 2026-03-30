@@ -8,18 +8,23 @@
 //! - Online REINFORCE training: gradient = reward × score × h_neighbor
 //! - Weights persisted as :GNNWeights nodes in PersonaDB
 
-use std::collections::{HashMap, HashSet, VecDeque};
 use obrain::ObrainDB;
 use obrain_common::types::{NodeId, PropertyKey, Value};
 use obrain_core::graph::{Direction, lpg::LpgStore};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 /// GNN dimension (embedding size per node).
 const DIM: usize = 64;
 
 /// Edge types recognized by the GNN, each with its own weight matrix.
 const EDGE_TYPES: &[&str] = &[
-    "REINFORCES", "CONTRADICTS", "USED_IN", "EXTRACTED_FROM",
-    "TEMPORAL_NEXT", "EXTRACTS", "MENTIONS",
+    "REINFORCES",
+    "CONTRADICTS",
+    "USED_IN",
+    "EXTRACTED_FROM",
+    "TEMPORAL_NEXT",
+    "EXTRACTS",
+    "MENTIONS",
 ];
 
 /// Node types, each with its own update matrix.
@@ -49,7 +54,12 @@ impl FactGNN {
             w_update.insert(nt.to_string(), xavier_init(DIM));
         }
 
-        FactGNN { dim: DIM, w_message, w_update, n_updates: 0 }
+        FactGNN {
+            dim: DIM,
+            w_message,
+            w_update,
+            n_updates: 0,
+        }
     }
 
     /// Compute deterministic embedding for a node based on its properties.
@@ -60,34 +70,62 @@ impl FactGNN {
         };
 
         // Build a seed string from label + key properties
-        let label = node.labels.first()
-            .map(|l| { let s: &str = l.as_ref(); s.to_string() })
+        let label = node
+            .labels
+            .first()
+            .map(|l| {
+                let s: &str = l.as_ref();
+                s.to_string()
+            })
             .unwrap_or_default();
 
         let seed_str = match label.as_str() {
             "Fact" => {
-                let key = node.properties.get(&PropertyKey::from("key"))
-                    .and_then(|v| v.as_str()).unwrap_or("");
-                let value = node.properties.get(&PropertyKey::from("value"))
-                    .and_then(|v| v.as_str()).unwrap_or("");
-                let ft = node.properties.get(&PropertyKey::from("fact_type"))
-                    .and_then(|v| v.as_str()).unwrap_or("");
+                let key = node
+                    .properties
+                    .get(&PropertyKey::from("key"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let value = node
+                    .properties
+                    .get(&PropertyKey::from("value"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let ft = node
+                    .properties
+                    .get(&PropertyKey::from("fact_type"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 format!("Fact:{key}:{value}:{ft}")
             }
             "ConvTurn" => {
-                let qh = node.properties.get(&PropertyKey::from("query_hash"))
-                    .and_then(|v| if let Value::Int64(n) = v { Some(*n) } else { None })
+                let qh = node
+                    .properties
+                    .get(&PropertyKey::from("query_hash"))
+                    .and_then(|v| {
+                        if let Value::Int64(n) = v {
+                            Some(*n)
+                        } else {
+                            None
+                        }
+                    })
                     .unwrap_or(0);
                 format!("ConvTurn:{qh}")
             }
             "Pattern" => {
-                let trigger = node.properties.get(&PropertyKey::from("trigger"))
-                    .and_then(|v| v.as_str()).unwrap_or("");
+                let trigger = node
+                    .properties
+                    .get(&PropertyKey::from("trigger"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 format!("Pattern:{trigger}")
             }
             "Memory" => {
-                let text = node.properties.get(&PropertyKey::from("text"))
-                    .and_then(|v| v.as_str()).unwrap_or("");
+                let text = node
+                    .properties
+                    .get(&PropertyKey::from("text"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 // Use first 100 chars for embedding seed (enough for semantic fingerprint)
                 let truncated: String = text.chars().take(100).collect();
                 format!("Memory:{truncated}")
@@ -111,15 +149,23 @@ impl FactGNN {
         }
 
         while let Some((nid, depth)) = queue.pop_front() {
-            if depth >= hops { continue; }
+            if depth >= hops {
+                continue;
+            }
             // Outgoing edges
-            for (target, _eid) in store.edges_from(nid, Direction::Outgoing).collect::<Vec<_>>() {
+            for (target, _eid) in store
+                .edges_from(nid, Direction::Outgoing)
+                .collect::<Vec<_>>()
+            {
                 if visited.insert(target) {
                     queue.push_back((target, depth + 1));
                 }
             }
             // Incoming edges
-            for (source, _eid) in store.edges_from(nid, Direction::Incoming).collect::<Vec<_>>() {
+            for (source, _eid) in store
+                .edges_from(nid, Direction::Incoming)
+                .collect::<Vec<_>>()
+            {
                 if visited.insert(source) {
                     queue.push_back((source, depth + 1));
                 }
@@ -141,7 +187,9 @@ impl FactGNN {
     ) -> Vec<(NodeId, f32)> {
         // 1. Collect subgraph
         let subgraph = Self::collect_subgraph(store, center_nodes, hops);
-        if subgraph.is_empty() { return Vec::new(); }
+        if subgraph.is_empty() {
+            return Vec::new();
+        }
 
         // 2. Init embeddings
         let mut embeddings: HashMap<NodeId, [f32; DIM]> = HashMap::new();
@@ -157,8 +205,13 @@ impl FactGNN {
                 let mut h = embeddings[&nid];
 
                 // Aggregate messages from neighbors
-                for (target, eid) in store.edges_from(nid, Direction::Outgoing).collect::<Vec<_>>() {
-                    if !subgraph.contains(&target) { continue; }
+                for (target, eid) in store
+                    .edges_from(nid, Direction::Outgoing)
+                    .collect::<Vec<_>>()
+                {
+                    if !subgraph.contains(&target) {
+                        continue;
+                    }
                     let edge_type = Self::get_edge_label(store, nid, target, eid);
                     if let Some(w) = self.w_message.get(&edge_type) {
                         let h_neighbor = &embeddings[&target];
@@ -171,8 +224,13 @@ impl FactGNN {
                 }
 
                 // Incoming edges too (bidirectional message passing)
-                for (source, eid) in store.edges_from(nid, Direction::Incoming).collect::<Vec<_>>() {
-                    if !subgraph.contains(&source) { continue; }
+                for (source, eid) in store
+                    .edges_from(nid, Direction::Incoming)
+                    .collect::<Vec<_>>()
+                {
+                    if !subgraph.contains(&source) {
+                        continue;
+                    }
                     let edge_type = Self::get_edge_label(store, source, nid, eid);
                     if let Some(w) = self.w_message.get(&edge_type) {
                         let h_neighbor = &embeddings[&source];
@@ -184,8 +242,14 @@ impl FactGNN {
                 }
 
                 // Apply node-type update
-                let label = store.get_node(nid)
-                    .and_then(|n| n.labels.first().map(|l| { let s: &str = l.as_ref(); s.to_string() }))
+                let label = store
+                    .get_node(nid)
+                    .and_then(|n| {
+                        n.labels.first().map(|l| {
+                            let s: &str = l.as_ref();
+                            s.to_string()
+                        })
+                    })
                     .unwrap_or_default();
                 if let Some(w) = self.w_update.get(&label) {
                     let updated = mat_vec_mul(w, &h);
@@ -210,20 +274,37 @@ impl FactGNN {
         // 4. Readout: score = dot(query_embed, h_v) for :Fact and :Memory nodes
         let mut scores: Vec<(NodeId, f32)> = Vec::new();
         for &nid in &subgraph {
-            let is_scorable = store.get_node(nid)
-                .map(|n| n.labels.iter().any(|l| {
-                    let s: &str = l.as_ref();
-                    s == "Fact" || s == "Memory"
-                }))
+            let is_scorable = store
+                .get_node(nid)
+                .map(|n| {
+                    n.labels.iter().any(|l| {
+                        let s: &str = l.as_ref();
+                        s == "Fact" || s == "Memory"
+                    })
+                })
                 .unwrap_or(false);
-            if !is_scorable { continue; }
+            if !is_scorable {
+                continue;
+            }
 
             // Only active facts
-            let active = store.get_node(nid)
-                .and_then(|n| n.properties.get(&PropertyKey::from("active"))
-                    .and_then(|v| if let Value::Bool(b) = v { Some(*b) } else { None }))
+            let active = store
+                .get_node(nid)
+                .and_then(|n| {
+                    n.properties
+                        .get(&PropertyKey::from("active"))
+                        .and_then(|v| {
+                            if let Value::Bool(b) = v {
+                                Some(*b)
+                            } else {
+                                None
+                            }
+                        })
+                })
                 .unwrap_or(true);
-            if !active { continue; }
+            if !active {
+                continue;
+            }
 
             let h = &embeddings[&nid];
             let score: f32 = (0..DIM).map(|i| query_embed[i] * h[i]).sum();
@@ -246,7 +327,9 @@ impl FactGNN {
         hops: usize,
     ) -> HashMap<NodeId, [f32; DIM]> {
         let subgraph = Self::collect_subgraph(store, center_nodes, hops);
-        if subgraph.is_empty() { return HashMap::new(); }
+        if subgraph.is_empty() {
+            return HashMap::new();
+        }
 
         // Init embeddings
         let mut embeddings: HashMap<NodeId, [f32; DIM]> = HashMap::new();
@@ -261,36 +344,60 @@ impl FactGNN {
             for &nid in &subgraph {
                 let mut h = embeddings[&nid];
 
-                for (target, eid) in store.edges_from(nid, Direction::Outgoing).collect::<Vec<_>>() {
-                    if !subgraph.contains(&target) { continue; }
+                for (target, eid) in store
+                    .edges_from(nid, Direction::Outgoing)
+                    .collect::<Vec<_>>()
+                {
+                    if !subgraph.contains(&target) {
+                        continue;
+                    }
                     let edge_type = Self::get_edge_label(store, nid, target, eid);
                     if let Some(w) = self.w_message.get(&edge_type) {
                         let h_neighbor = &embeddings[&target];
                         let msg = mat_vec_mul(w, h_neighbor);
-                        for i in 0..DIM { h[i] += relu(msg[i]); }
+                        for i in 0..DIM {
+                            h[i] += relu(msg[i]);
+                        }
                     }
                 }
 
-                for (source, eid) in store.edges_from(nid, Direction::Incoming).collect::<Vec<_>>() {
-                    if !subgraph.contains(&source) { continue; }
+                for (source, eid) in store
+                    .edges_from(nid, Direction::Incoming)
+                    .collect::<Vec<_>>()
+                {
+                    if !subgraph.contains(&source) {
+                        continue;
+                    }
                     let edge_type = Self::get_edge_label(store, source, nid, eid);
                     if let Some(w) = self.w_message.get(&edge_type) {
                         let h_neighbor = &embeddings[&source];
                         let msg = mat_vec_mul(w, h_neighbor);
-                        for i in 0..DIM { h[i] += relu(msg[i]); }
+                        for i in 0..DIM {
+                            h[i] += relu(msg[i]);
+                        }
                     }
                 }
 
-                let label = store.get_node(nid)
-                    .and_then(|n| n.labels.first().map(|l| { let s: &str = l.as_ref(); s.to_string() }))
+                let label = store
+                    .get_node(nid)
+                    .and_then(|n| {
+                        n.labels.first().map(|l| {
+                            let s: &str = l.as_ref();
+                            s.to_string()
+                        })
+                    })
                     .unwrap_or_default();
                 if let Some(w) = self.w_update.get(&label) {
                     let updated = mat_vec_mul(w, &h);
-                    for i in 0..DIM { h[i] = relu(updated[i]); }
+                    for i in 0..DIM {
+                        h[i] = relu(updated[i]);
+                    }
                 }
 
                 let norm = h.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-8);
-                for i in 0..DIM { h[i] /= norm; }
+                for i in 0..DIM {
+                    h[i] /= norm;
+                }
 
                 new_embeddings.insert(nid, h);
             }
@@ -309,7 +416,9 @@ impl FactGNN {
         scores: &[(NodeId, f32)],
         reward: f32,
     ) {
-        if reward.abs() < 0.01 { return; }
+        if reward.abs() < 0.01 {
+            return;
+        }
 
         // Adaptive learning rate
         let lr = 0.01 / (1.0 + 0.001 * self.n_updates as f32);
@@ -322,7 +431,10 @@ impl FactGNN {
             let h = Self::init_embedding(store, nid);
 
             // Update message weights for edges touching this node
-            for (target, eid) in store.edges_from(nid, Direction::Outgoing).collect::<Vec<_>>() {
+            for (target, eid) in store
+                .edges_from(nid, Direction::Outgoing)
+                .collect::<Vec<_>>()
+            {
                 let edge_type = Self::get_edge_label(store, nid, target, eid);
                 if let Some(w) = self.w_message.get_mut(&edge_type) {
                     let h_neighbor = Self::init_embedding(store, target);
@@ -341,7 +453,12 @@ impl FactGNN {
     }
 
     /// Get the edge label between two nodes.
-    fn get_edge_label(store: &LpgStore, _from: NodeId, _to: NodeId, _eid: obrain_common::types::EdgeId) -> String {
+    fn get_edge_label(
+        store: &LpgStore,
+        _from: NodeId,
+        _to: NodeId,
+        _eid: obrain_common::types::EdgeId,
+    ) -> String {
         // ObrainDB edges have labels — try to read it
         // The edge iterator gives us (target, eid), we need the label
         // For now, check by scanning known edge types via structure
@@ -365,50 +482,80 @@ impl FactGNN {
         // Save message weights
         for (edge_type, w) in &self.w_message {
             let data = weights_to_base64(w);
-            db.create_node_with_props(&["GNNWeights"], [
-                ("layer", Value::String("message".to_string().into())),
-                ("edge_type", Value::String(edge_type.clone().into())),
-                ("data", Value::String(data.into())),
-                ("dim", Value::Int64(self.dim as i64)),
-                ("n_updates", Value::Int64(self.n_updates as i64)),
-            ]);
+            db.create_node_with_props(
+                &["GNNWeights"],
+                [
+                    ("layer", Value::String("message".to_string().into())),
+                    ("edge_type", Value::String(edge_type.clone().into())),
+                    ("data", Value::String(data.into())),
+                    ("dim", Value::Int64(self.dim as i64)),
+                    ("n_updates", Value::Int64(self.n_updates as i64)),
+                ],
+            );
         }
 
         // Save update weights
         for (node_type, w) in &self.w_update {
             let data = weights_to_base64(w);
-            db.create_node_with_props(&["GNNWeights"], [
-                ("layer", Value::String("update".to_string().into())),
-                ("edge_type", Value::String(node_type.clone().into())),
-                ("data", Value::String(data.into())),
-                ("dim", Value::Int64(self.dim as i64)),
-                ("n_updates", Value::Int64(self.n_updates as i64)),
-            ]);
+            db.create_node_with_props(
+                &["GNNWeights"],
+                [
+                    ("layer", Value::String("update".to_string().into())),
+                    ("edge_type", Value::String(node_type.clone().into())),
+                    ("data", Value::String(data.into())),
+                    ("dim", Value::Int64(self.dim as i64)),
+                    ("n_updates", Value::Int64(self.n_updates as i64)),
+                ],
+            );
         }
     }
 
     /// Load GNN weights from PersonaDB. Returns true if weights were loaded.
     pub fn load_weights(&mut self, store: &LpgStore) -> bool {
         let weight_nodes = store.nodes_by_label("GNNWeights");
-        if weight_nodes.is_empty() { return false; }
+        if weight_nodes.is_empty() {
+            return false;
+        }
 
         let mut loaded = 0u32;
         for &nid in &weight_nodes {
             if let Some(node) = store.get_node(nid) {
-                let layer = node.properties.get(&PropertyKey::from("layer"))
-                    .and_then(|v| v.as_str()).unwrap_or("");
-                let key = node.properties.get(&PropertyKey::from("edge_type"))
-                    .and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let data = node.properties.get(&PropertyKey::from("data"))
-                    .and_then(|v| v.as_str()).unwrap_or("");
-                let n_upd = node.properties.get(&PropertyKey::from("n_updates"))
-                    .and_then(|v| if let Value::Int64(n) = v { Some(*n as u64) } else { None })
+                let layer = node
+                    .properties
+                    .get(&PropertyKey::from("layer"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let key = node
+                    .properties
+                    .get(&PropertyKey::from("edge_type"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let data = node
+                    .properties
+                    .get(&PropertyKey::from("data"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let n_upd = node
+                    .properties
+                    .get(&PropertyKey::from("n_updates"))
+                    .and_then(|v| {
+                        if let Value::Int64(n) = v {
+                            Some(*n as u64)
+                        } else {
+                            None
+                        }
+                    })
                     .unwrap_or(0);
 
                 if let Some(w) = base64_to_weights(data, DIM) {
                     match layer {
-                        "message" => { self.w_message.insert(key, w); }
-                        "update" => { self.w_update.insert(key, w); }
+                        "message" => {
+                            self.w_message.insert(key, w);
+                        }
+                        "update" => {
+                            self.w_update.insert(key, w);
+                        }
                         _ => {}
                     }
                     self.n_updates = self.n_updates.max(n_upd);
@@ -447,14 +594,17 @@ impl FactGNN {
         fact_ids: &[NodeId],
         hops: usize,
     ) -> Vec<(NodeId, f32)> {
-        if fact_ids.is_empty() { return Vec::new(); }
+        if fact_ids.is_empty() {
+            return Vec::new();
+        }
 
         // Run full forward pass centered on the fact nodes
         let all_scores = self.forward(store, query_embed, fact_ids, hops);
 
         // Filter to only requested fact_ids
         let requested: HashSet<NodeId> = fact_ids.iter().copied().collect();
-        let mut result: Vec<(NodeId, f32)> = all_scores.into_iter()
+        let mut result: Vec<(NodeId, f32)> = all_scores
+            .into_iter()
             .filter(|(nid, _)| requested.contains(nid))
             .collect();
 
@@ -498,7 +648,10 @@ impl FactGNN {
         // Build reverse map: data_node_id → Vec<ConvTurn NodeId>
         let mut mentioned_by: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
         for &ct_id in &conv_turns {
-            for (target, eid) in persona_store.edges_from(ct_id, Direction::Outgoing).collect::<Vec<_>>() {
+            for (target, eid) in persona_store
+                .edges_from(ct_id, Direction::Outgoing)
+                .collect::<Vec<_>>()
+            {
                 if let Some(edge) = persona_store.get_edge(eid) {
                     let label: &str = edge.edge_type.as_ref();
                     if label == "MENTIONS" && data_set.contains(&target) {
@@ -525,33 +678,57 @@ impl FactGNN {
             let mut new_embeddings: HashMap<NodeId, [f32; DIM]> = HashMap::new();
             for &nid in &subgraph {
                 let mut h = embeddings[&nid];
-                for (target, eid) in persona_store.edges_from(nid, Direction::Outgoing).collect::<Vec<_>>() {
-                    if !subgraph.contains(&target) { continue; }
+                for (target, eid) in persona_store
+                    .edges_from(nid, Direction::Outgoing)
+                    .collect::<Vec<_>>()
+                {
+                    if !subgraph.contains(&target) {
+                        continue;
+                    }
                     let edge_type = Self::get_edge_label(persona_store, nid, target, eid);
                     if let Some(w) = self.w_message.get(&edge_type) {
                         let h_neighbor = &embeddings[&target];
                         let msg = mat_vec_mul(w, h_neighbor);
-                        for i in 0..DIM { h[i] += relu(msg[i]); }
+                        for i in 0..DIM {
+                            h[i] += relu(msg[i]);
+                        }
                     }
                 }
-                for (source, eid) in persona_store.edges_from(nid, Direction::Incoming).collect::<Vec<_>>() {
-                    if !subgraph.contains(&source) { continue; }
+                for (source, eid) in persona_store
+                    .edges_from(nid, Direction::Incoming)
+                    .collect::<Vec<_>>()
+                {
+                    if !subgraph.contains(&source) {
+                        continue;
+                    }
                     let edge_type = Self::get_edge_label(persona_store, source, nid, eid);
                     if let Some(w) = self.w_message.get(&edge_type) {
                         let h_neighbor = &embeddings[&source];
                         let msg = mat_vec_mul(w, h_neighbor);
-                        for i in 0..DIM { h[i] += relu(msg[i]); }
+                        for i in 0..DIM {
+                            h[i] += relu(msg[i]);
+                        }
                     }
                 }
-                let label = persona_store.get_node(nid)
-                    .and_then(|n| n.labels.first().map(|l| { let s: &str = l.as_ref(); s.to_string() }))
+                let label = persona_store
+                    .get_node(nid)
+                    .and_then(|n| {
+                        n.labels.first().map(|l| {
+                            let s: &str = l.as_ref();
+                            s.to_string()
+                        })
+                    })
                     .unwrap_or_default();
                 if let Some(w) = self.w_update.get(&label) {
                     let updated = mat_vec_mul(w, &h);
-                    for i in 0..DIM { h[i] = relu(updated[i]); }
+                    for i in 0..DIM {
+                        h[i] = relu(updated[i]);
+                    }
                 }
                 let norm = h.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-8);
-                for i in 0..DIM { h[i] /= norm; }
+                for i in 0..DIM {
+                    h[i] /= norm;
+                }
                 new_embeddings.insert(nid, h);
             }
             embeddings = new_embeddings;
@@ -561,11 +738,19 @@ impl FactGNN {
         let mut scores: HashMap<NodeId, f32> = HashMap::new();
         for &data_nid in data_node_ids {
             if let Some(ct_ids) = mentioned_by.get(&data_nid) {
-                let max_score = ct_ids.iter()
+                let max_score = ct_ids
+                    .iter()
                     .filter_map(|ct| embeddings.get(ct))
                     .map(|h| (0..DIM).map(|i| query_embed[i] * h[i]).sum::<f32>())
                     .fold(f32::NEG_INFINITY, f32::max);
-                scores.insert(data_nid, if max_score.is_finite() { max_score } else { 0.0 });
+                scores.insert(
+                    data_nid,
+                    if max_score.is_finite() {
+                        max_score
+                    } else {
+                        0.0
+                    },
+                );
             } else {
                 scores.insert(data_nid, 0.0);
             }
@@ -651,9 +836,12 @@ fn weights_to_base64(w: &[f32]) -> String {
 fn base64_to_weights(s: &str, dim: usize) -> Option<Vec<f32>> {
     let bytes = base64_decode(s)?;
     let expected = dim * dim * 4;
-    if bytes.len() != expected { return None; }
+    if bytes.len() != expected {
+        return None;
+    }
 
-    let w: Vec<f32> = bytes.chunks_exact(4)
+    let w: Vec<f32> = bytes
+        .chunks_exact(4)
         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
         .collect();
     Some(w)

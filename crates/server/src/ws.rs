@@ -2,15 +2,15 @@
 //! Provides a persistent connection where the client sends response.create
 //! messages and receives typed SSE-like events over the WebSocket.
 
-use std::sync::Arc;
-use axum::extract::{State, WebSocketUpgrade};
 use axum::extract::ws::{Message, WebSocket};
+use axum::extract::{State, WebSocketUpgrade};
 use axum::response::IntoResponse;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
+use crate::routes_responses::CachedResponse;
 use crate::state::AppState;
 use crate::types_responses::*;
-use crate::routes_responses::CachedResponse;
 
 /// WebSocket client message types
 #[derive(serde::Deserialize)]
@@ -59,7 +59,8 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>) {
                                 }
 
                                 // Parse the response request from the data
-                                let req: Result<ResponseRequest, _> = serde_json::from_value(client_msg.data);
+                                let req: Result<ResponseRequest, _> =
+                                    serde_json::from_value(client_msg.data);
                                 match req {
                                     Ok(req) => {
                                         let (ctx, crx) = tokio::sync::oneshot::channel();
@@ -67,18 +68,25 @@ async fn handle_ws(mut socket: WebSocket, state: Arc<AppState>) {
                                         handle_response_create(&mut socket, &state, req, crx).await;
                                     }
                                     Err(e) => {
-                                        send_error(&mut socket, &format!("Invalid request: {e}")).await;
+                                        send_error(&mut socket, &format!("Invalid request: {e}"))
+                                            .await;
                                     }
                                 }
                             }
                             "response.cancel" => {
                                 if let Some(tx) = cancel_tx.take() {
                                     let _ = tx.send(());
-                                    send_event(&mut socket, "response.cancelled", serde_json::json!({})).await;
+                                    send_event(
+                                        &mut socket,
+                                        "response.cancelled",
+                                        serde_json::json!({}),
+                                    )
+                                    .await;
                                 }
                             }
                             other => {
-                                send_error(&mut socket, &format!("Unknown message type: {other}")).await;
+                                send_error(&mut socket, &format!("Unknown message type: {other}"))
+                                    .await;
                             }
                         }
                     }
@@ -117,41 +125,55 @@ async fn handle_response_create(
     let model = req.model.clone();
 
     // Send response.created
-    send_event(socket, "response.created", serde_json::json!({
-        "response": {
-            "id": &response_id,
-            "object": "response",
-            "created_at": created_at,
-            "model": &model,
-            "status": "in_progress",
-        }
-    })).await;
+    send_event(
+        socket,
+        "response.created",
+        serde_json::json!({
+            "response": {
+                "id": &response_id,
+                "object": "response",
+                "created_at": created_at,
+                "model": &model,
+                "status": "in_progress",
+            }
+        }),
+    )
+    .await;
 
     // Send output_item.added
-    send_event(socket, "response.output_item.added", serde_json::json!({
-        "output_index": 0,
-        "item": {
-            "type": "message",
-            "id": &item_id,
-            "role": "assistant",
-            "status": "in_progress",
-        }
-    })).await;
+    send_event(
+        socket,
+        "response.output_item.added",
+        serde_json::json!({
+            "output_index": 0,
+            "item": {
+                "type": "message",
+                "id": &item_id,
+                "role": "assistant",
+                "status": "in_progress",
+            }
+        }),
+    )
+    .await;
 
     // Send content_part.added
-    send_event(socket, "response.content_part.added", serde_json::json!({
-        "output_index": 0,
-        "content_index": 0,
-        "part": { "type": "output_text", "text": "" }
-    })).await;
+    send_event(
+        socket,
+        "response.content_part.added",
+        serde_json::json!({
+            "output_index": 0,
+            "content_index": 0,
+            "part": { "type": "output_text", "text": "" }
+        }),
+    )
+    .await;
 
     // Start generation with streaming
     let (token_tx, mut token_rx) = mpsc::unbounded_channel::<String>();
     let actor = state.actor.clone();
     let query_clone = query.clone();
-    let gen_handle = tokio::spawn(async move {
-        actor.generate_streaming(query_clone, token_tx).await
-    });
+    let gen_handle =
+        tokio::spawn(async move { actor.generate_streaming(query_clone, token_tx).await });
 
     // Stream deltas until generation ends or cancellation
     let mut cancelled = false;
@@ -183,51 +205,76 @@ async fn handle_response_create(
     let status = if cancelled { "cancelled" } else { "completed" };
 
     // Send completion events
-    send_event(socket, "response.output_text.done", serde_json::json!({
-        "output_index": 0,
-        "content_index": 0,
-    })).await;
+    send_event(
+        socket,
+        "response.output_text.done",
+        serde_json::json!({
+            "output_index": 0,
+            "content_index": 0,
+        }),
+    )
+    .await;
 
-    send_event(socket, "response.output_item.done", serde_json::json!({
-        "output_index": 0,
-        "item": {
-            "type": "message",
-            "id": &item_id,
-            "role": "assistant",
-            "status": status,
-        }
-    })).await;
+    send_event(
+        socket,
+        "response.output_item.done",
+        serde_json::json!({
+            "output_index": 0,
+            "item": {
+                "type": "message",
+                "id": &item_id,
+                "role": "assistant",
+                "status": status,
+            }
+        }),
+    )
+    .await;
 
-    send_event(socket, "response.completed", serde_json::json!({
-        "response": {
-            "id": &response_id,
-            "object": "response",
-            "created_at": created_at,
-            "model": &model,
-            "status": status,
-        }
-    })).await;
+    send_event(
+        socket,
+        "response.completed",
+        serde_json::json!({
+            "response": {
+                "id": &response_id,
+                "object": "response",
+                "created_at": created_at,
+                "model": &model,
+                "status": status,
+            }
+        }),
+    )
+    .await;
 
     // Cache for chaining
     if req.store {
         let mut cache = state.response_cache.lock().await;
-        cache.insert(response_id, CachedResponse {
-            conversation_id: None,
-            query,
-            response_text: String::new(), // full text not easily available in streaming
-        });
+        cache.insert(
+            response_id,
+            CachedResponse {
+                conversation_id: None,
+                query,
+                response_text: String::new(), // full text not easily available in streaming
+            },
+        );
     }
 }
 
 async fn send_event(socket: &mut WebSocket, event_type: &str, data: serde_json::Value) {
     let mut event = data;
-    event.as_object_mut().map(|o| o.insert("type".to_string(), serde_json::json!(event_type)));
+    event
+        .as_object_mut()
+        .map(|o| o.insert("type".to_string(), serde_json::json!(event_type)));
     let text = serde_json::to_string(&event).unwrap_or_default();
     let _ = socket.send(Message::Text(text.into())).await;
 }
 
 async fn send_error(socket: &mut WebSocket, message: &str) {
-    send_event(socket, "error", serde_json::json!({
-        "message": message,
-    })).await;
+    send_event(
+        socket,
+        "error",
+        serde_json::json!({
+            "message": message,
+        }),
+    )
+    .await;
 }

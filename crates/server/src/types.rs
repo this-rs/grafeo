@@ -46,9 +46,15 @@ pub struct ChatCompletionRequest {
     pub user: Option<String>,
 }
 
-fn default_temperature() -> f32 { 1.0 }
-fn default_top_p() -> f32 { 1.0 }
-fn default_n() -> u32 { 1 }
+fn default_temperature() -> f32 {
+    1.0
+}
+fn default_top_p() -> f32 {
+    1.0
+}
+fn default_n() -> u32 {
+    1
+}
 
 #[derive(Deserialize, Serialize, Clone)]
 pub struct ChatMessage {

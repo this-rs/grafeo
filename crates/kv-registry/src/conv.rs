@@ -9,7 +9,7 @@ use anyhow::Result;
 use obrain_common::types::NodeId;
 use std::collections::{HashMap, HashSet};
 
-use crate::{Tokenizer, KvNodeRegistry};
+use crate::{KvNodeRegistry, Tokenizer};
 
 /// A search hit from the COLD tier (PersonaDB BM25).
 #[derive(Debug, Clone)]
@@ -128,8 +128,10 @@ impl ConvFragments {
             registry.unregister(evicted.node_id);
             kv_debug!(
                 "[Conv] HOT→WARM: Q{} (node {:?}) — {} hot, {} warm",
-                evicted.turn + 1, evicted.node_id,
-                self.fragments.len(), self.archived.len() + 1,
+                evicted.turn + 1,
+                evicted.node_id,
+                self.fragments.len(),
+                self.archived.len() + 1,
             );
             self.archived.push(evicted);
         }
@@ -147,8 +149,14 @@ impl ConvFragments {
         // Only protect RECENT fragments (last 5), not ALL of them
         let est_tokens = (kv_text.len() as f64 / 3.5) as i32 + 5;
         let recent_count = 5.min(self.fragments.len());
-        let protected: HashSet<NodeId> = related_nodes.iter().copied()
-            .chain(self.fragments[self.fragments.len() - recent_count..].iter().map(|f| f.node_id))
+        let protected: HashSet<NodeId> = related_nodes
+            .iter()
+            .copied()
+            .chain(
+                self.fragments[self.fragments.len() - recent_count..]
+                    .iter()
+                    .map(|f| f.node_id),
+            )
             .collect();
         registry.ensure_capacity(est_tokens, kv_capacity, &protected, engine);
 
@@ -171,12 +179,7 @@ impl ConvFragments {
 
     /// Seed a WARM-tier fragment from PersonaDB history (startup restoration).
     /// These are NOT in the KV cache — they're searchable and promotable.
-    pub fn seed_warm(
-        &mut self,
-        question: &str,
-        answer: &str,
-        related_nodes: &[NodeId],
-    ) {
+    pub fn seed_warm(&mut self, question: &str, answer: &str, related_nodes: &[NodeId]) {
         let turn = self.next_turn;
         self.next_turn += 1;
         let node_id = NodeId(CONV_NODE_BASE + turn as u64);
@@ -205,7 +208,8 @@ impl ConvFragments {
     /// Extract key terms from both question and answer for matching.
     fn extract_terms(question: &str, answer: &str) -> Vec<String> {
         let combined = format!("{} {}", question, Self::summarize_answer(answer, 100));
-        combined.to_lowercase()
+        combined
+            .to_lowercase()
             .split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
             .filter(|s| s.len() > 2)
             .map(|s| s.to_string())
@@ -217,14 +221,24 @@ impl ConvFragments {
         let mut summary = String::new();
         for line in answer.lines() {
             let trimmed = line.trim();
-            if trimmed.is_empty() { continue; }
-            if trimmed.starts_with("---") || trimmed.starts_with("===") { continue; }
-            if trimmed.starts_with("```") { continue; }
+            if trimmed.is_empty() {
+                continue;
+            }
+            if trimmed.starts_with("---") || trimmed.starts_with("===") {
+                continue;
+            }
+            if trimmed.starts_with("```") {
+                continue;
+            }
 
-            if !summary.is_empty() { summary.push(' '); }
+            if !summary.is_empty() {
+                summary.push(' ');
+            }
             summary.push_str(trimmed);
 
-            if summary.len() >= max_chars { break; }
+            if summary.len() >= max_chars {
+                break;
+            }
         }
         if summary.len() > max_chars {
             summary = summary.chars().take(max_chars).collect();
@@ -263,7 +277,9 @@ impl ConvFragments {
 
         // ── Search HOT tier (in KV cache) ──
         for frag in &self.fragments {
-            if registry.get_slot(frag.node_id).is_none() { continue; }
+            if registry.get_slot(frag.node_id).is_none() {
+                continue;
+            }
 
             let score = Self::score_fragment(frag, &meaningful_terms, &stop_words);
             if score > 0 {
@@ -293,17 +309,29 @@ impl ConvFragments {
         }
         // Promote WARM → HOT: re-encode into KV cache
         for frag in promoted {
-            self.promote_to_hot(frag, registry, engine, kv_capacity, &mut relevant_ids, &mut conv_adjacency, "WARM");
+            self.promote_to_hot(
+                frag,
+                registry,
+                engine,
+                kv_capacity,
+                &mut relevant_ids,
+                &mut conv_adjacency,
+                "WARM",
+            );
         }
 
         // ── Search COLD tier (PersonaDB BM25) → promote matches ──
         if let Some(cold_search) = cold {
             let cold_pairs = cold_search.search_pairs(query, 5);
             // Collect fragment texts already in HOT/WARM (for substring dedup)
-            let hot_texts: Vec<String> = self.fragments.iter()
+            let hot_texts: Vec<String> = self
+                .fragments
+                .iter()
                 .map(|f| f.question.to_lowercase())
                 .collect();
-            let warm_texts: Vec<String> = self.archived.iter()
+            let warm_texts: Vec<String> = self
+                .archived
+                .iter()
                 .map(|f| f.question.to_lowercase())
                 .collect();
 
@@ -311,8 +339,12 @@ impl ConvFragments {
             const MAX_COLD_PROMOTE: u32 = 3;
 
             for (primary, adjacent) in &cold_pairs {
-                if cold_promoted >= MAX_COLD_PROMOTE { break; }
-                if primary.score < 0.3 { continue; }
+                if cold_promoted >= MAX_COLD_PROMOTE {
+                    break;
+                }
+                if primary.score < 0.3 {
+                    continue;
+                }
 
                 // Collect both hits to promote (primary + optional adjacent)
                 let mut hits_to_promote: Vec<&ColdHit> = vec![primary];
@@ -321,7 +353,9 @@ impl ConvFragments {
                 }
 
                 for hit in hits_to_promote {
-                    if cold_promoted >= MAX_COLD_PROMOTE { break; }
+                    if cold_promoted >= MAX_COLD_PROMOTE {
+                        break;
+                    }
 
                     // Substring dedup against HOT/WARM
                     let content_lower = hit.content.to_lowercase();
@@ -330,7 +364,9 @@ impl ConvFragments {
                         let q_short: String = q.chars().take(80).collect();
                         content_short == q_short
                     });
-                    if already_in { continue; }
+                    if already_in {
+                        continue;
+                    }
 
                     // Build a ConvFragment from the COLD hit
                     let turn = self.next_turn;
@@ -357,10 +393,20 @@ impl ConvFragments {
 
                     kv_debug!(
                         "[Conv] COLD→HOT: promoting {} '{}' (BM25 score {:.2})",
-                        hit.role, &hit.content.chars().take(60).collect::<String>(), hit.score,
+                        hit.role,
+                        &hit.content.chars().take(60).collect::<String>(),
+                        hit.score,
                     );
 
-                    self.promote_to_hot(frag, registry, engine, kv_capacity, &mut relevant_ids, &mut conv_adjacency, "COLD");
+                    self.promote_to_hot(
+                        frag,
+                        registry,
+                        engine,
+                        kv_capacity,
+                        &mut relevant_ids,
+                        &mut conv_adjacency,
+                        "COLD",
+                    );
                     cold_promoted += 1;
                 }
             }
@@ -393,7 +439,9 @@ impl ConvFragments {
     ) {
         kv_debug!(
             "[Conv] {}→HOT: promoting Q{} '{}' (matched query)",
-            source, frag.turn + 1, &frag.question.chars().take(50).collect::<String>(),
+            source,
+            frag.turn + 1,
+            &frag.question.chars().take(50).collect::<String>(),
         );
         // Make room if needed
         while self.fragments.len() >= self.max_fragments {
@@ -416,18 +464,26 @@ impl ConvFragments {
     }
 
     /// Compute match score for a fragment against query terms.
-    fn score_fragment(frag: &ConvFragment, meaningful_terms: &HashSet<String>, stop_words: &HashSet<&str>) -> usize {
-        let frag_terms: HashSet<&str> = frag.terms.iter()
+    fn score_fragment(
+        frag: &ConvFragment,
+        meaningful_terms: &HashSet<String>,
+        stop_words: &HashSet<&str>,
+    ) -> usize {
+        let frag_terms: HashSet<&str> = frag
+            .terms
+            .iter()
             .map(|t| t.as_str())
             .filter(|t| !stop_words.contains(t))
             .collect();
 
-        let overlap = meaningful_terms.iter()
+        let overlap = meaningful_terms
+            .iter()
             .filter(|t| frag_terms.contains(t.as_str()))
             .count();
 
         let text_lower = frag.kv_text.to_lowercase();
-        let text_matches = meaningful_terms.iter()
+        let text_matches = meaningful_terms
+            .iter()
             .filter(|t| text_lower.contains(t.as_str()))
             .count();
 
@@ -435,7 +491,8 @@ impl ConvFragments {
     }
 
     fn query_terms(query: &str) -> HashSet<String> {
-        query.to_lowercase()
+        query
+            .to_lowercase()
             .split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
             .filter(|s| s.len() > 2)
             .map(|s| s.to_string())
@@ -444,11 +501,13 @@ impl ConvFragments {
 
     fn stop_words() -> HashSet<&'static str> {
         [
-            "les", "des", "est", "sont", "que", "qui", "quels", "quel", "quelle",
-            "pour", "dans", "avec", "sur", "par", "une", "the", "and", "what",
-            "which", "about", "from", "with", "donne", "détails", "details",
-            "plus", "encore", "more", "tell", "show", "comment", "quoi",
-        ].into_iter().collect()
+            "les", "des", "est", "sont", "que", "qui", "quels", "quel", "quelle", "pour", "dans",
+            "avec", "sur", "par", "une", "the", "and", "what", "which", "about", "from", "with",
+            "donne", "détails", "details", "plus", "encore", "more", "tell", "show", "comment",
+            "quoi",
+        ]
+        .into_iter()
+        .collect()
     }
 
     fn add_adjacency(conv_adjacency: &mut HashMap<NodeId, HashSet<NodeId>>, frag: &ConvFragment) {

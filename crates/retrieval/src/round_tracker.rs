@@ -3,7 +3,7 @@
 
 use kv_registry::{KvNodeRegistry, KvTier};
 use obrain_common::types::NodeId;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Entry tracking how often two nodes are co-activated.
@@ -88,11 +88,14 @@ impl RoundTracker {
                     let a = node_ids[i];
                     let b = node_ids[j];
                     let key = if a < b { (a, b) } else { (b, a) };
-                    let entry = self.coactivation_map.entry(key).or_insert(CoactivationEntry {
-                        count: 0,
-                        last_round: round_u32,
-                        decay_score: 0.0,
-                    });
+                    let entry = self
+                        .coactivation_map
+                        .entry(key)
+                        .or_insert(CoactivationEntry {
+                            count: 0,
+                            last_round: round_u32,
+                            decay_score: 0.0,
+                        });
                     entry.count += 1;
                     entry.last_round = round_u32;
                     entry.decay_score += 1.0;
@@ -207,12 +210,11 @@ impl RoundTracker {
         candidates: &[(NodeId, f64)],
         registry: &KvNodeRegistry,
     ) -> Vec<NodeId> {
-        let mut to_promote: Vec<(NodeId, f64)> = candidates.iter()
-            .filter(|(nid, _)| {
-                match registry.get_tier(*nid) {
-                    Some(KvTier::Gamma) | Some(KvTier::Beta) => true,
-                    _ => false,
-                }
+        let mut to_promote: Vec<(NodeId, f64)> = candidates
+            .iter()
+            .filter(|(nid, _)| match registry.get_tier(*nid) {
+                Some(KvTier::Gamma) | Some(KvTier::Beta) => true,
+                _ => false,
             })
             .copied()
             .collect();
@@ -258,7 +260,9 @@ impl RoundTracker {
             if reward > 0.2 {
                 if let Some(neighbors) = adjacency.get(&nid) {
                     for &neighbor in neighbors {
-                        if !registry.tier_budget.can_promote() { break; }
+                        if !registry.tier_budget.can_promote() {
+                            break;
+                        }
                         if let Some(KvTier::Gamma) = registry.get_tier(neighbor) {
                             // Use node ID as a simple label for preemptive promote
                             let label = format!(":{}", neighbor.as_u64());
@@ -287,7 +291,8 @@ impl RoundTracker {
             return HashMap::new();
         }
         let max_count = *self.activation_counts.values().max().unwrap_or(&1) as f32;
-        self.activation_counts.iter()
+        self.activation_counts
+            .iter()
             .map(|(nid, &count)| (*nid, count as f32 / max_count))
             .collect()
     }
@@ -445,7 +450,10 @@ mod tests {
 
         // Round 20 triggers decay: 1.0 * 0.95 = 0.95
         let decayed = t.coactivation_map[&(n(1), n(2))].decay_score;
-        assert!(decayed < initial_score, "decay_score should decrease: {decayed}");
+        assert!(
+            decayed < initial_score,
+            "decay_score should decrease: {decayed}"
+        );
         assert!((decayed - 0.95).abs() < 0.001);
     }
 

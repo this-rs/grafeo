@@ -150,25 +150,30 @@ impl HeadProfiler {
         for query_snapshots in &self.history {
             for snap in query_snapshots {
                 let key = (snap.layer, snap.head);
-                accum.entry(key)
+                accum
+                    .entry(key)
                     .or_insert_with(|| (Vec::new(),))
-                    .0.push(snap.bank_attention);
+                    .0
+                    .push(snap.bank_attention);
             }
         }
 
-        accum.into_iter().map(|(key, (samples,))| {
-            let n = samples.len() as f32;
-            let mut mean = [0.0f32; N_BANKS];
-            for s in &samples {
-                for b in 0..N_BANKS {
-                    mean[b] += s[b];
+        accum
+            .into_iter()
+            .map(|(key, (samples,))| {
+                let n = samples.len() as f32;
+                let mut mean = [0.0f32; N_BANKS];
+                for s in &samples {
+                    for b in 0..N_BANKS {
+                        mean[b] += s[b];
+                    }
                 }
-            }
-            for b in 0..N_BANKS {
-                mean[b] /= n;
-            }
-            (key, mean)
-        }).collect()
+                for b in 0..N_BANKS {
+                    mean[b] /= n;
+                }
+                (key, mean)
+            })
+            .collect()
     }
 
     /// Cluster heads by topology affinity using K-means.
@@ -190,9 +195,7 @@ impl HeadProfiler {
         let k = n_clusters.min(n);
 
         // K-means initialization: spread initial centroids evenly
-        let mut centroids: Vec<[f32; N_BANKS]> = (0..k)
-            .map(|i| vectors[i * n / k])
-            .collect();
+        let mut centroids: Vec<[f32; N_BANKS]> = (0..k).map(|i| vectors[i * n / k]).collect();
 
         let mut assignments = vec![0usize; n];
 
@@ -202,7 +205,9 @@ impl HeadProfiler {
 
             // Assign each point to nearest centroid
             for (i, vec) in vectors.iter().enumerate() {
-                let nearest = centroids.iter().enumerate()
+                let nearest = centroids
+                    .iter()
+                    .enumerate()
                     .min_by(|(_, a), (_, b)| {
                         let da: f32 = (0..N_BANKS).map(|d| (a[d] - vec[d]).powi(2)).sum();
                         let db: f32 = (0..N_BANKS).map(|d| (b[d] - vec[d]).powi(2)).sum();
@@ -242,30 +247,36 @@ impl HeadProfiler {
         }
 
         // Label clusters based on dominant bank attention
-        let cluster_labels: Vec<String> = centroids.iter().map(|c| {
-            let max_bank = c.iter().enumerate()
-                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-                .map(|(i, _)| i)
-                .unwrap_or(0);
-            match max_bank {
-                0 => "fact-sensitive".to_string(),
-                1 => "relation-sensitive".to_string(),
-                2 => "context-sensitive".to_string(),
-                3 => "background-sensitive".to_string(),
-                _ => "general".to_string(),
-            }
-        }).collect();
+        let cluster_labels: Vec<String> = centroids
+            .iter()
+            .map(|c| {
+                let max_bank = c
+                    .iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
+                match max_bank {
+                    0 => "fact-sensitive".to_string(),
+                    1 => "relation-sensitive".to_string(),
+                    2 => "context-sensitive".to_string(),
+                    3 => "background-sensitive".to_string(),
+                    _ => "general".to_string(),
+                }
+            })
+            .collect();
 
         // Build profiles
-        keys.iter().enumerate().map(|(i, &(layer, head))| {
-            HeadProfile {
+        keys.iter()
+            .enumerate()
+            .map(|(i, &(layer, head))| HeadProfile {
                 layer,
                 head,
                 cluster_id: assignments[i] as u32,
                 mean_attention: vectors[i],
                 label: cluster_labels[assignments[i]].clone(),
-            }
-        }).collect()
+            })
+            .collect()
     }
 
     /// Export profiles to JSON.
@@ -331,7 +342,8 @@ pub unsafe extern "C" fn profiler_eval_callback(
     }
 
     // Parse layer index from tensor name: "kq_soft_max-0", "kq_soft_max-1", etc.
-    let layer: u32 = name.strip_prefix("kq_soft_max-")
+    let layer: u32 = name
+        .strip_prefix("kq_soft_max-")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
 
@@ -339,9 +351,9 @@ pub unsafe extern "C" fn profiler_eval_callback(
     // After softmax, each row sums to 1.0
     let ne = tensor.ne;
     let nb = tensor.nb;
-    let n_kv = ne[0] as usize;      // number of KV positions attended to
-    let n_tokens = ne[1] as usize;   // number of query tokens (batch)
-    let n_head = ne[2] as usize;     // number of attention heads
+    let n_kv = ne[0] as usize; // number of KV positions attended to
+    let n_tokens = ne[1] as usize; // number of query tokens (batch)
+    let n_head = ne[2] as usize; // number of attention heads
 
     if tensor.data.is_null() || n_kv == 0 || n_head == 0 {
         return true;
@@ -356,10 +368,8 @@ pub unsafe extern "C" fn profiler_eval_callback(
         // Average across all tokens in the batch
         for tok in 0..n_tokens {
             // SAFETY: Pointer arithmetic within tensor data bounds (n_kv * n_tokens * n_head)
-            let row_ptr = unsafe {
-                (tensor.data as *const u8)
-                    .add(h * nb[2] + tok * nb[1]) as *const f32
-            };
+            let row_ptr =
+                unsafe { (tensor.data as *const u8).add(h * nb[2] + tok * nb[1]) as *const f32 };
 
             for kv_pos in 0..n_kv {
                 let attn_weight = unsafe { *row_ptr.add(kv_pos) };
@@ -454,17 +464,26 @@ mod tests {
         // Verify that heads in the same synthetic group got the same cluster
         let cluster_a = profiles[0].cluster_id;
         for p in &profiles[0..4] {
-            assert_eq!(p.cluster_id, cluster_a, "heads 0-3 should be in same cluster");
+            assert_eq!(
+                p.cluster_id, cluster_a,
+                "heads 0-3 should be in same cluster"
+            );
         }
 
         let cluster_b = profiles[4].cluster_id;
         for p in &profiles[4..8] {
-            assert_eq!(p.cluster_id, cluster_b, "heads 4-7 should be in same cluster");
+            assert_eq!(
+                p.cluster_id, cluster_b,
+                "heads 4-7 should be in same cluster"
+            );
         }
 
         let cluster_c = profiles[8].cluster_id;
         for p in &profiles[8..12] {
-            assert_eq!(p.cluster_id, cluster_c, "heads 8-11 should be in same cluster");
+            assert_eq!(
+                p.cluster_id, cluster_c,
+                "heads 8-11 should be in same cluster"
+            );
         }
 
         // All 3 clusters should be different
@@ -474,7 +493,10 @@ mod tests {
 
         eprintln!("Cluster labels:");
         for p in &profiles {
-            eprintln!("  head {} → cluster {} ({}), mean={:?}", p.head, p.cluster_id, p.label, p.mean_attention);
+            eprintln!(
+                "  head {} → cluster {} ({}), mean={:?}",
+                p.head, p.cluster_id, p.label, p.mean_attention
+            );
         }
     }
 
@@ -484,14 +506,30 @@ mod tests {
 
         // Query 1
         profiler.history.push(vec![
-            HeadSnapshot { layer: 0, head: 0, bank_attention: [0.8, 0.1, 0.05, 0.05] },
-            HeadSnapshot { layer: 0, head: 1, bank_attention: [0.1, 0.1, 0.7, 0.1] },
+            HeadSnapshot {
+                layer: 0,
+                head: 0,
+                bank_attention: [0.8, 0.1, 0.05, 0.05],
+            },
+            HeadSnapshot {
+                layer: 0,
+                head: 1,
+                bank_attention: [0.1, 0.1, 0.7, 0.1],
+            },
         ]);
 
         // Query 2
         profiler.history.push(vec![
-            HeadSnapshot { layer: 0, head: 0, bank_attention: [0.6, 0.2, 0.1, 0.1] },
-            HeadSnapshot { layer: 0, head: 1, bank_attention: [0.2, 0.1, 0.5, 0.2] },
+            HeadSnapshot {
+                layer: 0,
+                head: 0,
+                bank_attention: [0.6, 0.2, 0.1, 0.1],
+            },
+            HeadSnapshot {
+                layer: 0,
+                head: 1,
+                bank_attention: [0.2, 0.1, 0.5, 0.2],
+            },
         ]);
 
         let means = profiler.mean_attention_per_head();
@@ -511,8 +549,16 @@ mod tests {
     fn test_export_json() {
         let mut profiler = HeadProfiler::new(1, 2);
         profiler.history.push(vec![
-            HeadSnapshot { layer: 0, head: 0, bank_attention: [0.8, 0.1, 0.05, 0.05] },
-            HeadSnapshot { layer: 0, head: 1, bank_attention: [0.1, 0.1, 0.7, 0.1] },
+            HeadSnapshot {
+                layer: 0,
+                head: 0,
+                bank_attention: [0.8, 0.1, 0.05, 0.05],
+            },
+            HeadSnapshot {
+                layer: 0,
+                head: 1,
+                bank_attention: [0.1, 0.1, 0.7, 0.1],
+            },
         ]);
 
         let json = profiler.export_json(2);

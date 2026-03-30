@@ -14,7 +14,11 @@
 /// Panics if `d >= 4^order`.
 pub fn hilbert_d2xy(order: u32, d: u32) -> (u32, u32) {
     let n = 1u32 << order; // side length
-    debug_assert!(d < n * n, "d={d} out of range for order={order} (max={})", n * n - 1);
+    debug_assert!(
+        d < n * n,
+        "d={d} out of range for order={order} (max={})",
+        n * n - 1
+    );
 
     let mut x = 0u32;
     let mut y = 0u32;
@@ -182,7 +186,9 @@ pub fn build_fused_adjacency(
         v.sort_by_key(|n| n.0);
         v
     };
-    let id_to_idx: HashMap<NodeId, usize> = node_ids.iter().enumerate()
+    let id_to_idx: HashMap<NodeId, usize> = node_ids
+        .iter()
+        .enumerate()
         .map(|(i, &nid)| (nid, i))
         .collect();
 
@@ -259,7 +265,9 @@ impl HilbertLayout {
 
         // Build dense index: NodeId ↔ usize
         let node_ids: Vec<NodeId> = adjacency.keys().copied().collect();
-        let id_to_idx: HashMap<NodeId, usize> = node_ids.iter().enumerate()
+        let id_to_idx: HashMap<NodeId, usize> = node_ids
+            .iter()
+            .enumerate()
             .map(|(i, &nid)| (nid, i))
             .collect();
 
@@ -292,7 +300,11 @@ impl HilbertLayout {
             coords_2d.insert(nid, coords[idx]);
         }
 
-        Self { positions, order, coords_2d }
+        Self {
+            positions,
+            order,
+            coords_2d,
+        }
     }
 
     /// Compute a Hilbert layout from a weighted adjacency list (E4).
@@ -324,7 +336,11 @@ impl HilbertLayout {
             coords_2d.insert(nid, coords[idx]);
         }
 
-        Self { positions, order, coords_2d }
+        Self {
+            positions,
+            order,
+            coords_2d,
+        }
     }
 
     /// Non-disruptive re-layout from fused adjacency (E4).
@@ -392,7 +408,9 @@ impl HilbertLayout {
 
     /// Get nodes sorted by their Hilbert position.
     pub fn nodes_by_position(&self) -> Vec<(NodeId, u32)> {
-        let mut pairs: Vec<(NodeId, u32)> = self.positions.iter()
+        let mut pairs: Vec<(NodeId, u32)> = self
+            .positions
+            .iter()
             .map(|(&nid, &pos)| (nid, pos))
             .collect();
         pairs.sort_by_key(|&(_, pos)| pos);
@@ -417,7 +435,8 @@ pub type AdjacencyList = Vec<Vec<usize>>;
 /// For disconnected graphs or single-node graphs, returns (0.5, 0.5) for all.
 pub fn spectral_embedding_2d(adjacency: &AdjacencyList) -> Vec<(f32, f32)> {
     // Convert unweighted → weighted (all edges weight 1.0)
-    let weighted: WeightedAdjacencyList = adjacency.iter()
+    let weighted: WeightedAdjacencyList = adjacency
+        .iter()
         .map(|neighbors| neighbors.iter().map(|&j| (j, 1.0)).collect())
         .collect();
     spectral_embedding_2d_weighted(&weighted)
@@ -436,7 +455,8 @@ pub fn spectral_embedding_2d_weighted(adjacency: &WeightedAdjacencyList) -> Vec<
     }
 
     // Compute weighted degree vector: D_ii = Σ_j W_ij
-    let degrees: Vec<f64> = adjacency.iter()
+    let degrees: Vec<f64> = adjacency
+        .iter()
         .map(|neighbors| neighbors.iter().map(|&(_, w)| w).sum::<f64>())
         .collect();
 
@@ -472,14 +492,20 @@ pub fn spectral_embedding_2d_weighted(adjacency: &WeightedAdjacencyList) -> Vec<
 
     // Power iteration for 3rd largest eigenvector
     let fiedler_norm = vec_norm(&fiedler);
-    let fiedler_unit: Vec<f64> = fiedler.iter().map(|&x| x / fiedler_norm.max(1e-12)).collect();
+    let fiedler_unit: Vec<f64> = fiedler
+        .iter()
+        .map(|&x| x / fiedler_norm.max(1e-12))
+        .collect();
     let third = power_iteration_deflated(&matvec, &[&trivial_unit, &fiedler_unit], n, 200);
 
     // Normalize both vectors to [0, 1]
     let xs = normalize_to_unit(&fiedler);
     let ys = normalize_to_unit(&third);
 
-    xs.into_iter().zip(ys).map(|(x, y)| (x as f32, y as f32)).collect()
+    xs.into_iter()
+        .zip(ys)
+        .map(|(x, y)| (x as f32, y as f32))
+        .collect()
 }
 
 /// Power iteration with deflation against given orthogonal vectors.
@@ -490,11 +516,13 @@ fn power_iteration_deflated(
     max_iters: usize,
 ) -> Vec<f64> {
     // Random-ish initial vector (deterministic for reproducibility)
-    let mut v: Vec<f64> = (0..n).map(|i| {
-        // Simple hash-based pseudo-random
-        let x = (i as f64 + 1.0) * 0.618033988749895; // golden ratio
-        x - x.floor() - 0.5
-    }).collect();
+    let mut v: Vec<f64> = (0..n)
+        .map(|i| {
+            // Simple hash-based pseudo-random
+            let x = (i as f64 + 1.0) * 0.618033988749895; // golden ratio
+            x - x.floor() - 0.5
+        })
+        .collect();
 
     // Deflate initial vector
     for &u in deflate_against {
@@ -508,7 +536,9 @@ fn power_iteration_deflated(
     if norm < 1e-12 {
         return vec![0.0; n];
     }
-    for x in &mut v { *x /= norm; }
+    for x in &mut v {
+        *x /= norm;
+    }
 
     for _ in 0..max_iters {
         // v = M * v
@@ -526,7 +556,9 @@ fn power_iteration_deflated(
         if norm < 1e-12 {
             break;
         }
-        for x in &mut mv { *x /= norm; }
+        for x in &mut mv {
+            *x /= norm;
+        }
 
         v = mv;
     }
@@ -586,9 +618,12 @@ mod tests {
         for d in 0..15 {
             let (x1, y1) = hilbert_d2xy(2, d);
             let (x2, y2) = hilbert_d2xy(2, d + 1);
-            let dist = (x1 as i32 - x2 as i32).unsigned_abs()
-                + (y1 as i32 - y2 as i32).unsigned_abs();
-            assert_eq!(dist, 1, "Hilbert locality violated at d={d}: ({x1},{y1})->({x2},{y2})");
+            let dist =
+                (x1 as i32 - x2 as i32).unsigned_abs() + (y1 as i32 - y2 as i32).unsigned_abs();
+            assert_eq!(
+                dist, 1,
+                "Hilbert locality violated at d={d}: ({x1},{y1})->({x2},{y2})"
+            );
         }
     }
 
@@ -605,10 +640,10 @@ mod tests {
     #[test]
     fn test_points_to_hilbert_order() {
         let points = vec![
-            (0.0, 0.0),   // bottom-left
-            (1.0, 0.0),   // bottom-right
-            (1.0, 1.0),   // top-right
-            (0.0, 1.0),   // top-left
+            (0.0, 0.0), // bottom-left
+            (1.0, 0.0), // bottom-right
+            (1.0, 1.0), // top-right
+            (0.0, 1.0), // top-left
         ];
         let sorted = points_to_hilbert_order(&points, 2);
         // All 4 points should appear
@@ -621,12 +656,7 @@ mod tests {
 
     #[test]
     fn test_assign_hilbert_positions() {
-        let points = vec![
-            (0.1, 0.1),
-            (0.9, 0.9),
-            (0.5, 0.5),
-            (0.1, 0.9),
-        ];
+        let points = vec![(0.1, 0.1), (0.9, 0.9), (0.5, 0.5), (0.1, 0.9)];
         let positions = assign_hilbert_positions(&points);
         assert_eq!(positions.len(), 4);
         // Each position should be unique (0..4)
@@ -637,11 +667,11 @@ mod tests {
 
     #[test]
     fn test_optimal_order() {
-        assert_eq!(optimal_order(1), 1);   // 2×2 = 4 >= 1
-        assert_eq!(optimal_order(4), 1);   // 2×2 = 4 >= 4 (ceil(sqrt(4))=2, 2^1=2 >= 2)
-        assert_eq!(optimal_order(5), 2);   // ceil(sqrt(5))=3, 2^2=4 >= 3
-        assert_eq!(optimal_order(16), 2);  // ceil(sqrt(16))=4, 2^2=4 >= 4
-        assert_eq!(optimal_order(17), 3);  // ceil(sqrt(17))=5, 2^3=8 >= 5
+        assert_eq!(optimal_order(1), 1); // 2×2 = 4 >= 1
+        assert_eq!(optimal_order(4), 1); // 2×2 = 4 >= 4 (ceil(sqrt(4))=2, 2^1=2 >= 2)
+        assert_eq!(optimal_order(5), 2); // ceil(sqrt(5))=3, 2^2=4 >= 3
+        assert_eq!(optimal_order(16), 2); // ceil(sqrt(16))=4, 2^2=4 >= 4
+        assert_eq!(optimal_order(17), 3); // ceil(sqrt(17))=5, 2^3=8 >= 5
         assert_eq!(optimal_order(100), 4); // ceil(sqrt(100))=10, 2^4=16 >= 10
     }
 
@@ -662,13 +692,17 @@ mod tests {
         // Cluster A (complete K4)
         for i in 0..4 {
             for j in 0..4 {
-                if i != j { adj[i].push(j); }
+                if i != j {
+                    adj[i].push(j);
+                }
             }
         }
         // Cluster B (complete K4)
         for i in 4..8 {
             for j in 4..8 {
-                if i != j { adj[i].push(j); }
+                if i != j {
+                    adj[i].push(j);
+                }
             }
         }
         // Bridge
@@ -697,18 +731,19 @@ mod tests {
     fn test_spectral_small_graph() {
         // Simple path graph: 0-1-2-3-4
         let adj: AdjacencyList = vec![
-            vec![1],       // 0
-            vec![0, 2],    // 1
-            vec![1, 3],    // 2
-            vec![2, 4],    // 3
-            vec![3],       // 4
+            vec![1],    // 0
+            vec![0, 2], // 1
+            vec![1, 3], // 2
+            vec![2, 4], // 3
+            vec![3],    // 4
         ];
         let coords = spectral_embedding_2d(&adj);
         assert_eq!(coords.len(), 5);
 
         // On a path graph, the Fiedler vector should give monotonic ordering
         // Check that node 0 and node 4 are far apart on at least one axis
-        let d04 = ((coords[0].0 - coords[4].0).powi(2) + (coords[0].1 - coords[4].1).powi(2)).sqrt();
+        let d04 =
+            ((coords[0].0 - coords[4].0).powi(2) + (coords[0].1 - coords[4].1).powi(2)).sqrt();
         assert!(d04 > 0.3, "Endpoints of path should be separated: d={d04}");
     }
 
@@ -854,18 +889,20 @@ mod tests {
         // Find node 2's index
         let idx_2 = node_ids.iter().position(|&n| n == NodeId(2)).unwrap();
         // Node 2 should have edges from co-activation
-        assert!(!weighted[idx_2].is_empty(), "Node 2 should have co-activation edges");
+        assert!(
+            !weighted[idx_2].is_empty(),
+            "Node 2 should have co-activation edges"
+        );
     }
 
     #[test]
     fn test_weighted_spectral_uniform_equals_unweighted() {
         // With uniform weights, weighted spectral = unweighted spectral
-        let adj: AdjacencyList = vec![
-            vec![1, 2], vec![0, 2, 3], vec![0, 1], vec![1],
-        ];
+        let adj: AdjacencyList = vec![vec![1, 2], vec![0, 2, 3], vec![0, 1], vec![1]];
         let coords_unw = spectral_embedding_2d(&adj);
 
-        let weighted: WeightedAdjacencyList = adj.iter()
+        let weighted: WeightedAdjacencyList = adj
+            .iter()
             .map(|neighbors| neighbors.iter().map(|&j| (j, 1.0)).collect())
             .collect();
         let coords_w = spectral_embedding_2d_weighted(&weighted);
@@ -905,10 +942,16 @@ mod tests {
         layout.update_from_fused(&weighted, &node_ids, 10, &frozen);
 
         // Frozen nodes keep their positions
-        assert_eq!(layout.get_position(NodeId(0)).unwrap(), pos0_before,
-            "Frozen node 0 should keep position");
-        assert_eq!(layout.get_position(NodeId(1)).unwrap(), pos1_before,
-            "Frozen node 1 should keep position");
+        assert_eq!(
+            layout.get_position(NodeId(0)).unwrap(),
+            pos0_before,
+            "Frozen node 0 should keep position"
+        );
+        assert_eq!(
+            layout.get_position(NodeId(1)).unwrap(),
+            pos1_before,
+            "Frozen node 1 should keep position"
+        );
     }
 
     #[test]
@@ -937,15 +980,20 @@ mod tests {
         let mut adj: AdjacencyList = vec![Vec::new(); 8];
         for i in 0..4 {
             for j in 0..4 {
-                if i != j { adj[i].push(j); }
+                if i != j {
+                    adj[i].push(j);
+                }
             }
         }
         for i in 4..8 {
             for j in 4..8 {
-                if i != j { adj[i].push(j); }
+                if i != j {
+                    adj[i].push(j);
+                }
             }
         }
-        adj[3].push(4); adj[4].push(3);
+        adj[3].push(4);
+        adj[4].push(3);
 
         let coords = spectral_embedding_2d(&adj);
         let positions = assign_hilbert_positions(&coords);

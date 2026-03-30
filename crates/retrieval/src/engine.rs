@@ -1,13 +1,15 @@
 use anyhow::Result;
-use llm_engine::LlamaEngine;
 use kv_registry::Tokenizer;
+use llm_engine::LlamaEngine;
 
 /// Newtype wrapper to implement Tokenizer for LlamaEngine (orphan rule).
 pub struct Engine(pub LlamaEngine);
 
 impl std::ops::Deref for Engine {
     type Target = LlamaEngine;
-    fn deref(&self) -> &LlamaEngine { &self.0 }
+    fn deref(&self) -> &LlamaEngine {
+        &self.0
+    }
 }
 
 impl Tokenizer for Engine {

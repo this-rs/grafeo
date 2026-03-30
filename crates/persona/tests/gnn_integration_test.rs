@@ -57,10 +57,19 @@ fn query_scenarios() -> Vec<(&'static str, Vec<&'static str>)> {
         ("Quelle est ta couleur préférée ?", vec!["preference_color"]),
         ("Parle-moi de ton dernier voyage", vec!["memory_vacation"]),
         ("Quel est ton animal de compagnie ?", vec!["memory_pet"]),
-        ("Dans quelle langue dois-tu répondre ?", vec!["language", "rule_lang"]),
+        (
+            "Dans quelle langue dois-tu répondre ?",
+            vec!["language", "rule_lang"],
+        ),
         ("Quel format utiliser ?", vec!["rule_format", "style"]),
-        ("Raconte-moi un souvenir", vec!["memory_hobby", "memory_book"]),
-        ("Comment tu préfères qu'on t'appelle ?", vec!["name", "nickname", "surname"]),
+        (
+            "Raconte-moi un souvenir",
+            vec!["memory_hobby", "memory_book"],
+        ),
+        (
+            "Comment tu préfères qu'on t'appelle ?",
+            vec!["name", "nickname", "surname"],
+        ),
         ("Qu'est-ce que tu aimes manger ?", vec!["preference_food"]),
         ("Quel projet tu fais en ce moment ?", vec!["memory_project"]),
     ]
@@ -74,7 +83,11 @@ fn test_gnn_learns_from_rewards() {
 
     let store = pdb.db.store();
     let fact_ids = pdb.active_fact_ids();
-    assert!(fact_ids.len() >= 20, "Should have 20+ facts, got {}", fact_ids.len());
+    assert!(
+        fact_ids.len() >= 20,
+        "Should have 20+ facts, got {}",
+        fact_ids.len()
+    );
 
     let scenarios = query_scenarios();
     let n_turns = 30;
@@ -94,8 +107,11 @@ fn test_gnn_learns_from_rewards() {
         let mut hits = 0u32;
         for &fid in &top5_ids {
             if let Some(node) = store.get_node(fid) {
-                let key = node.properties.get(&obrain_common::types::PropertyKey::from("key"))
-                    .and_then(|v| v.as_str()).unwrap_or("");
+                let key = node
+                    .properties
+                    .get(&obrain_common::types::PropertyKey::from("key"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 if target_keys.contains(&key) {
                     hits += 1;
                 }
@@ -109,16 +125,25 @@ fn test_gnn_learns_from_rewards() {
             -0.2
         };
 
-        if turn < 10 { early_rewards.push(reward); }
-        if turn >= 20 { late_rewards.push(reward); }
+        if turn < 10 {
+            early_rewards.push(reward);
+        }
+        if turn >= 20 {
+            late_rewards.push(reward);
+        }
 
         // GNN update — use target fact IDs as "used" nodes
-        let used: Vec<_> = fact_ids.iter()
+        let used: Vec<_> = fact_ids
+            .iter()
             .filter(|&&fid| {
-                store.get_node(fid)
-                    .and_then(|n| n.properties.get(&obrain_common::types::PropertyKey::from("key"))
-                        .and_then(|v| v.as_str())
-                        .map(|k| target_keys.contains(&k)))
+                store
+                    .get_node(fid)
+                    .and_then(|n| {
+                        n.properties
+                            .get(&obrain_common::types::PropertyKey::from("key"))
+                            .and_then(|v| v.as_str())
+                            .map(|k| target_keys.contains(&k))
+                    })
                     .unwrap_or(false)
             })
             .copied()
@@ -128,12 +153,19 @@ fn test_gnn_learns_from_rewards() {
 
     // Verify GNN trained
     assert!(gnn.n_updates() > 0, "GNN should have been updated");
-    assert!(gnn.n_updates() >= 20, "Expected 20+ updates, got {}", gnn.n_updates());
+    assert!(
+        gnn.n_updates() >= 20,
+        "Expected 20+ updates, got {}",
+        gnn.n_updates()
+    );
 
     // Verify reward trend: late > early (or at least not worse)
     let early_avg: f32 = early_rewards.iter().sum::<f32>() / early_rewards.len() as f32;
     let late_avg: f32 = late_rewards.iter().sum::<f32>() / late_rewards.len() as f32;
-    eprintln!("  Early avg reward: {:.3}, Late avg reward: {:.3}", early_avg, late_avg);
+    eprintln!(
+        "  Early avg reward: {:.3}, Late avg reward: {:.3}",
+        early_avg, late_avg
+    );
     // Note: with random init and hash-based embeddings, improvement may be modest
     // The key test is that GNN doesn't crash and produces valid scores
 
@@ -146,8 +178,11 @@ fn test_gnn_learns_from_rewards() {
         let top5_ids: Vec<_> = scores.iter().take(5).map(|(nid, _)| *nid).collect();
         for &fid in &top5_ids {
             if let Some(node) = store.get_node(fid) {
-                let key = node.properties.get(&obrain_common::types::PropertyKey::from("key"))
-                    .and_then(|v| v.as_str()).unwrap_or("");
+                let key = node
+                    .properties
+                    .get(&obrain_common::types::PropertyKey::from("key"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 if target_keys.contains(&key) {
                     total_recall += 1;
                 }
@@ -155,12 +190,22 @@ fn test_gnn_learns_from_rewards() {
         }
         total_targets += target_keys.len() as u32;
     }
-    let recall_pct = if total_targets > 0 { 100.0 * total_recall as f64 / total_targets as f64 } else { 0.0 };
-    eprintln!("  fact_recall@5 = {:.1}% ({}/{})", recall_pct, total_recall, total_targets);
+    let recall_pct = if total_targets > 0 {
+        100.0 * total_recall as f64 / total_targets as f64
+    } else {
+        0.0
+    };
+    eprintln!(
+        "  fact_recall@5 = {:.1}% ({}/{})",
+        recall_pct, total_recall, total_targets
+    );
     // With hash-based embeddings (not learned), recall won't be great
     // But GNN should learn SOME signal after 30 turns
     // Relaxed assertion: just verify it doesn't crash and produces reasonable scores
-    assert!(total_recall > 0, "GNN should recall at least some facts in top-5");
+    assert!(
+        total_recall > 0,
+        "GNN should recall at least some facts in top-5"
+    );
 
     // Cleanup
     let _ = std::fs::remove_dir_all(format!("/tmp/gnn_test_{}", std::process::id()));
@@ -197,7 +242,12 @@ fn test_gnn_weight_persistence() {
     let scores2 = gnn2.forward(&store, &embed, &fact_ids, 2);
     assert_eq!(scores1.len(), scores2.len());
     for (a, b) in scores1.iter().zip(scores2.iter()) {
-        assert!((a.1 - b.1).abs() < 1e-5, "Scores differ: {} vs {}", a.1, b.1);
+        assert!(
+            (a.1 - b.1).abs() < 1e-5,
+            "Scores differ: {} vs {}",
+            a.1,
+            b.1
+        );
     }
 
     let _ = std::fs::remove_dir_all(format!("/tmp/gnn_test_{}", std::process::id()));
@@ -219,14 +269,22 @@ fn test_build_system_header_budget() {
     // Verify that header respects ~2000 char budget
     let mut facts: Vec<(String, String, f32)> = Vec::new();
     for i in 0..50 {
-        facts.push((format!("key_{i}"), format!("This is a moderately long value for fact number {i} that takes some space"), 1.0 - i as f32 * 0.01));
+        facts.push((
+            format!("key_{i}"),
+            format!("This is a moderately long value for fact number {i} that takes some space"),
+            1.0 - i as f32 * 0.01,
+        ));
     }
     // We can't call build_system_header directly from here (it's in the binary)
     // but we can verify the scoring logic
-    let total_chars: usize = facts.iter()
+    let total_chars: usize = facts
+        .iter()
         .filter(|(k, _, _)| k != "name")
         .map(|(k, v, _)| format!("- {k} : {v}\n").len())
         .sum();
-    assert!(total_chars > 2000, "50 facts should exceed budget: {total_chars}");
+    assert!(
+        total_chars > 2000,
+        "50 facts should exceed budget: {total_chars}"
+    );
     // The budget check in build_system_header would cut at ~2000 chars
 }

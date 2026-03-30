@@ -33,8 +33,12 @@ pub struct ResponseRequest {
     pub metadata: Option<serde_json::Value>,
 }
 
-fn default_true() -> bool { true }
-fn default_temperature() -> f32 { 1.0 }
+fn default_true() -> bool {
+    true
+}
+fn default_temperature() -> f32 {
+    1.0
+}
 
 /// Input: either a plain string or structured input items
 #[derive(Deserialize)]
@@ -49,12 +53,12 @@ impl ResponseInput {
     pub fn last_user_text(&self) -> Option<&str> {
         match self {
             ResponseInput::Text(s) => Some(s.as_str()),
-            ResponseInput::Items(items) => {
-                items.iter().rev()
-                    .find(|i| i.role.as_deref() == Some("user"))
-                    .and_then(|i| i.content.first())
-                    .and_then(|c| c.text.as_deref())
-            }
+            ResponseInput::Items(items) => items
+                .iter()
+                .rev()
+                .find(|i| i.role.as_deref() == Some("user"))
+                .and_then(|i| i.content.first())
+                .and_then(|c| c.text.as_deref()),
         }
     }
 }

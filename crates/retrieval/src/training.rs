@@ -9,14 +9,14 @@
 //! C6: When graph edges are provided, uses contrastive loss (InfoNCE) in addition
 //!     to reconstruction loss. Connected nodes should produce similar embeddings.
 
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
 use anyhow::Result;
 use obrain_common::types::NodeId;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
-use crate::{ProjectionNet, Engine};
-use crate::node_embedding::compute_text_embedding;
 use crate::contrastive::{ContrastiveConfig, GraphTopology};
+use crate::node_embedding::compute_text_embedding;
+use crate::{Engine, ProjectionNet};
 
 /// Configuration for ProjectionNet training.
 pub struct TrainingConfig {
@@ -102,13 +102,21 @@ impl TrainingManager {
         if let Some(ref path) = self.config.weights_path {
             if let Ok(Some(loaded)) = ProjectionNet::load(path) {
                 if loaded.n_input() == pnet.n_input() && loaded.n_hidden() == pnet.n_hidden() {
-                    eprintln!("  [ProjectionNet] Loaded pre-trained weights ({} updates) from {:?}",
-                        loaded.n_updates(), path);
+                    eprintln!(
+                        "  [ProjectionNet] Loaded pre-trained weights ({} updates) from {:?}",
+                        loaded.n_updates(),
+                        path
+                    );
                     *pnet = loaded;
                     return Ok(0); // Skip training, weights are loaded
                 } else {
-                    eprintln!("  [ProjectionNet] Saved weights have wrong dims ({}/{} vs {}/{}), retraining",
-                        loaded.n_input(), loaded.n_hidden(), pnet.n_input(), pnet.n_hidden());
+                    eprintln!(
+                        "  [ProjectionNet] Saved weights have wrong dims ({}/{} vs {}/{}), retraining",
+                        loaded.n_input(),
+                        loaded.n_hidden(),
+                        pnet.n_input(),
+                        pnet.n_hidden()
+                    );
                 }
             }
         }
@@ -143,15 +151,17 @@ impl TrainingManager {
         }
 
         if data.len() < self.config.min_samples {
-            eprintln!("  [ProjectionNet] Only {} samples (need {}), skipping initial training",
-                data.len(), self.config.min_samples);
+            eprintln!(
+                "  [ProjectionNet] Only {} samples (need {}), skipping initial training",
+                data.len(),
+                self.config.min_samples
+            );
             return Ok(0);
         }
 
         // C6: Generate contrastive pairs if graph edges are available
-        let use_contrastive = self.config.contrastive.is_some()
-            && graph_edges.is_some()
-            && data.len() >= 3;
+        let use_contrastive =
+            self.config.contrastive.is_some() && graph_edges.is_some() && data.len() >= 3;
 
         if use_contrastive {
             let edges = graph_edges.unwrap();
@@ -167,7 +177,9 @@ impl TrainingManager {
                     node_to_idx.get(&sample.anchor),
                     node_to_idx.get(&sample.positive),
                 ) {
-                    let neg_indices: Vec<usize> = sample.negatives.iter()
+                    let neg_indices: Vec<usize> = sample
+                        .negatives
+                        .iter()
                         .filter_map(|nid| node_to_idx.get(nid).copied())
                         .collect();
                     if !neg_indices.is_empty() {
@@ -176,8 +188,12 @@ impl TrainingManager {
                 }
             }
 
-            eprintln!("  [ProjectionNet] C6 contrastive: {} pairs from {} edges, {} available nodes",
-                self.contrastive_pairs.len(), edges.len(), available.len());
+            eprintln!(
+                "  [ProjectionNet] C6 contrastive: {} pairs from {} edges, {} available nodes",
+                self.contrastive_pairs.len(),
+                edges.len(),
+                available.len()
+            );
 
             // Train with combined loss
             let history = pnet.train_contrastive(
@@ -189,21 +205,42 @@ impl TrainingManager {
                 config,
             )?;
 
-            let (final_total, final_recon, final_contra) = history.last()
-                .copied().unwrap_or((f32::MAX, f32::MAX, f32::MAX));
+            let (final_total, final_recon, final_contra) =
+                history
+                    .last()
+                    .copied()
+                    .unwrap_or((f32::MAX, f32::MAX, f32::MAX));
 
-            eprintln!("  [ProjectionNet] C6 training done in {:.1}s: total={:.6} (recon={:.6} contra={:.6}), {} updates",
-                t0.elapsed().as_secs_f32(), final_total, final_recon, final_contra, pnet.n_updates());
+            eprintln!(
+                "  [ProjectionNet] C6 training done in {:.1}s: total={:.6} (recon={:.6} contra={:.6}), {} updates",
+                t0.elapsed().as_secs_f32(),
+                final_total,
+                final_recon,
+                final_contra,
+                pnet.n_updates()
+            );
         } else {
             // Reconstruction-only training (pre-C6 fallback)
-            eprintln!("  [ProjectionNet] Training on {} node pairs ({} epochs, reconstruction only)...",
-                data.len(), self.config.initial_epochs);
+            eprintln!(
+                "  [ProjectionNet] Training on {} node pairs ({} epochs, reconstruction only)...",
+                data.len(),
+                self.config.initial_epochs
+            );
 
-            let losses = pnet.train(&data, self.config.initial_epochs, self.config.lr, self.config.lambda_cosine)?;
+            let losses = pnet.train(
+                &data,
+                self.config.initial_epochs,
+                self.config.lr,
+                self.config.lambda_cosine,
+            )?;
             let final_loss = losses.last().copied().unwrap_or(f32::MAX);
 
-            eprintln!("  [ProjectionNet] Training done in {:.1}s: final_loss={:.6}, {} updates",
-                t0.elapsed().as_secs_f32(), final_loss, pnet.n_updates());
+            eprintln!(
+                "  [ProjectionNet] Training done in {:.1}s: final_loss={:.6}, {} updates",
+                t0.elapsed().as_secs_f32(),
+                final_loss,
+                pnet.n_updates()
+            );
         }
 
         // Save weights
@@ -261,10 +298,19 @@ impl TrainingManager {
                     config,
                 ) {
                     Ok(history) => {
-                        let (total, recon, contra) = history.last().copied()
-                            .unwrap_or((f32::MAX, f32::MAX, f32::MAX));
-                        eprintln!("  [ProjectionNet] C6 online update (query {}): total={:.6} (r={:.6} c={:.6}), {} samples",
-                            self.query_count, total, recon, contra, self.training_data.len());
+                        let (total, recon, contra) =
+                            history
+                                .last()
+                                .copied()
+                                .unwrap_or((f32::MAX, f32::MAX, f32::MAX));
+                        eprintln!(
+                            "  [ProjectionNet] C6 online update (query {}): total={:.6} (r={:.6} c={:.6}), {} samples",
+                            self.query_count,
+                            total,
+                            recon,
+                            contra,
+                            self.training_data.len()
+                        );
                         if let Some(ref path) = self.config.weights_path {
                             let _ = pnet.save(path);
                         }
@@ -286,8 +332,13 @@ impl TrainingManager {
         ) {
             Ok(losses) => {
                 let final_loss = losses.last().copied().unwrap_or(f32::MAX);
-                eprintln!("  [ProjectionNet] Online update (query {}): loss={:.6}, {} samples, {} total updates",
-                    self.query_count, final_loss, self.training_data.len(), pnet.n_updates());
+                eprintln!(
+                    "  [ProjectionNet] Online update (query {}): loss={:.6}, {} samples, {} total updates",
+                    self.query_count,
+                    final_loss,
+                    self.training_data.len(),
+                    pnet.n_updates()
+                );
 
                 // Save weights periodically
                 if let Some(ref path) = self.config.weights_path {
@@ -306,7 +357,10 @@ impl TrainingManager {
     pub fn save_weights(&self, pnet: &ProjectionNet) {
         if let Some(ref path) = self.config.weights_path {
             if let Err(e) = pnet.save(path) {
-                eprintln!("  ⚠ [ProjectionNet] Failed to save weights at shutdown: {}", e);
+                eprintln!(
+                    "  ⚠ [ProjectionNet] Failed to save weights at shutdown: {}",
+                    e
+                );
             }
         }
     }

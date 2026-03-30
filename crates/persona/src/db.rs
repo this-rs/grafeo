@@ -2140,6 +2140,58 @@ impl PersonaDB {
         }
     }
 
+    /// Save self-embedding projector weights to a :SelfEmbedWeights node.
+    /// Uses the flat f32 vec from SelfEmbeddingProjector::save_weights().
+    pub fn save_self_embed_weights(&self, weights: &[f32]) {
+        let store = self.db.store();
+
+        // Remove old weights node
+        for nid in store.nodes_by_label("SelfEmbedWeights") {
+            self.db.delete_node(nid);
+        }
+
+        // Encode as little-endian bytes → base64
+        let bytes: Vec<u8> = weights.iter().flat_map(|f| f.to_le_bytes()).collect();
+        let b64 = base64_encode_simple(&bytes);
+
+        self.db.create_node_with_props(
+            &["SelfEmbedWeights"],
+            [
+                ("data", Value::String(b64.into())),
+                ("n_floats", Value::Int64(weights.len() as i64)),
+                (
+                    "updated_at",
+                    Value::String(Utc::now().to_rfc3339().into()),
+                ),
+            ],
+        );
+    }
+
+    /// Load self-embedding projector weights from :SelfEmbedWeights node.
+    /// Returns the flat f32 vec for SelfEmbeddingProjector::load_weights().
+    pub fn load_self_embed_weights(&self) -> Option<Vec<f32>> {
+        let store = self.db.store();
+        let nodes = store.nodes_by_label("SelfEmbedWeights");
+        let nid = *nodes.first()?;
+        let node = store.get_node(nid)?;
+
+        let b64 = match node.properties.get(&PropertyKey::from("data"))? {
+            Value::String(s) => s.to_string(),
+            _ => return None,
+        };
+
+        let bytes = base64_decode_simple(&b64)?;
+        if bytes.len() % 4 != 0 {
+            return None;
+        }
+        Some(
+            bytes
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect(),
+        )
+    }
+
     /// List all :Self nodes as (key, value) pairs.
     pub fn list_self_metrics(&self) -> Vec<(String, String)> {
         let store = self.db.store();
@@ -2160,4 +2212,124 @@ impl PersonaDB {
             })
             .collect()
     }
+
+    /// Save HeadRouter self_alpha weights to a :SelfAlphaWeights node.
+    pub fn save_head_router_self_alpha(&self, weights: &[f32]) {
+        let store = self.db.store();
+        for nid in store.nodes_by_label("SelfAlphaWeights") {
+            self.db.delete_node(nid);
+        }
+        let bytes: Vec<u8> = weights.iter().flat_map(|f| f.to_le_bytes()).collect();
+        let b64 = base64_encode_simple(&bytes);
+        self.db.create_node_with_props(
+            &["SelfAlphaWeights"],
+            [
+                ("data", Value::String(b64.into())),
+                ("n_floats", Value::Int64(weights.len() as i64)),
+                (
+                    "updated_at",
+                    Value::String(Utc::now().to_rfc3339().into()),
+                ),
+            ],
+        );
+    }
+
+    /// Load HeadRouter self_alpha weights from :SelfAlphaWeights node.
+    pub fn load_head_router_self_alpha(&self) -> Option<Vec<f32>> {
+        let store = self.db.store();
+        let nodes = store.nodes_by_label("SelfAlphaWeights");
+        let nid = *nodes.first()?;
+        let node = store.get_node(nid)?;
+        let b64 = match node.properties.get(&PropertyKey::from("data"))? {
+            Value::String(s) => s.to_string(),
+            _ => return None,
+        };
+        let bytes = base64_decode_simple(&b64)?;
+        if bytes.len() % 4 != 0 {
+            return None;
+        }
+        Some(
+            bytes
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect(),
+        )
+    }
+
+    /// Read current :Self nodes back as a SelfMetrics struct.
+    ///
+    /// Returns a default SelfMetrics if no :Self nodes exist yet.
+    pub fn current_self_metrics(&self) -> SelfMetrics {
+        let kvs = self.list_self_metrics();
+        let get = |key: &str| -> String {
+            kvs.iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default()
+        };
+        SelfMetrics {
+            reward_avg: get("reward_avg").parse().unwrap_or(0.0),
+            mask_reward_avg: get("mask_reward_avg").parse().unwrap_or(0.0),
+            head_router_top5: Vec::new(), // not reconstructed from text
+            formula_active_name: get("formula_active"),
+            formula_explanation: String::new(),
+            gnn_facts_active: get("gnn_state").parse().unwrap_or(0),
+            learning_trend: get("learning_trajectory"),
+        }
+    }
+}
+
+// ── base64 helpers (no external dependency) ─────────────────────────────
+
+const B64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+fn base64_encode_simple(data: &[u8]) -> String {
+    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+
+        result.push(B64_CHARS[((triple >> 18) & 0x3F) as usize] as char);
+        result.push(B64_CHARS[((triple >> 12) & 0x3F) as usize] as char);
+        if chunk.len() > 1 {
+            result.push(B64_CHARS[((triple >> 6) & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+        if chunk.len() > 2 {
+            result.push(B64_CHARS[(triple & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+    }
+    result
+}
+
+fn base64_decode_simple(s: &str) -> Option<Vec<u8>> {
+    let s = s.trim_end_matches('=');
+    let mut result = Vec::with_capacity(s.len() * 3 / 4);
+    let mut buf: u32 = 0;
+    let mut bits: u32 = 0;
+
+    for c in s.chars() {
+        let val = match c {
+            'A'..='Z' => c as u32 - 'A' as u32,
+            'a'..='z' => c as u32 - 'a' as u32 + 26,
+            '0'..='9' => c as u32 - '0' as u32 + 52,
+            '+' => 62,
+            '/' => 63,
+            _ => continue,
+        };
+        buf = (buf << 6) | val;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            result.push((buf >> bits) as u8);
+            buf &= (1 << bits) - 1;
+        }
+    }
+
+    Some(result)
 }

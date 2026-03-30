@@ -29,7 +29,11 @@ enum ThinkState {
 
 impl ThinkFilter {
     pub fn new() -> Self {
-        Self { state: ThinkState::Probing, buffer: String::new(), printed_any: false }
+        Self {
+            state: ThinkState::Probing,
+            buffer: String::new(),
+            printed_any: false,
+        }
     }
 
     pub fn feed(&mut self, token: &str) -> String {
@@ -80,9 +84,15 @@ impl ThinkFilter {
                     // Discard accumulated thinking content (keep last 20 chars for partial match)
                     if self.buffer.len() > 100 {
                         // Use char boundary to avoid panic on multi-byte UTF-8 (β, α, ₐ, etc.)
-                        let keep: String = self.buffer.chars()
-                            .rev().take(20).collect::<Vec<_>>()
-                            .into_iter().rev().collect();
+                        let keep: String = self
+                            .buffer
+                            .chars()
+                            .rev()
+                            .take(20)
+                            .collect::<Vec<_>>()
+                            .into_iter()
+                            .rev()
+                            .collect();
                         self.buffer = keep;
                     }
                     break;
@@ -96,9 +106,13 @@ impl ThinkFilter {
                         continue;
                     }
                     // Hold partial <think match
-                    if self.buffer.ends_with('<') || self.buffer.ends_with("<t")
-                        || self.buffer.ends_with("<th") || self.buffer.ends_with("<thi")
-                        || self.buffer.ends_with("<thin") || self.buffer.ends_with("<think") {
+                    if self.buffer.ends_with('<')
+                        || self.buffer.ends_with("<t")
+                        || self.buffer.ends_with("<th")
+                        || self.buffer.ends_with("<thi")
+                        || self.buffer.ends_with("<thin")
+                        || self.buffer.ends_with("<think")
+                    {
                         let hold_from = self.buffer.rfind('<').unwrap_or(self.buffer.len());
                         output.push_str(&self.buffer[..hold_from]);
                         self.buffer = self.buffer[hold_from..].to_string();
@@ -155,7 +169,9 @@ impl ThinkFilter {
 }
 
 impl Default for ThinkFilter {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Remove `<think>...</think>` blocks from a completed string.
