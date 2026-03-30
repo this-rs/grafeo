@@ -1,14 +1,14 @@
-use tokio::sync::{mpsc, oneshot};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::Result;
 use graph_schema::GraphSchema;
-use kv_registry::{KvNodeRegistry, KvBank, ConvFragments};
+use kv_registry::{ConvFragments, KvBank, KvNodeRegistry};
 use obrain_common::types::NodeId;
 use obrain_core::graph::lpg::LpgStore;
-use retrieval::{Engine, GenerationControl, OutputMode, is_meta_query, query_with_registry};
-use think_filter::strip_think_tags;
 use persona::{PersonaDB, detect_facts_from_graph, fact_gnn::FactGNN};
+use retrieval::{Engine, GenerationControl, OutputMode, is_meta_query, query_with_registry};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use think_filter::strip_think_tags;
+use tokio::sync::{mpsc, oneshot};
 
 /// Result of a chat completion generation
 pub struct GenerateResult {
@@ -145,12 +145,25 @@ impl ActorHandle {
             rt.block_on(async move {
                 while let Some(msg) = rx.recv().await {
                     match msg {
-                        ActorMessage::Generate { query, result_tx, token_tx } => {
+                        ActorMessage::Generate {
+                            query,
+                            result_tx,
+                            token_tx,
+                        } => {
                             let result = Self::handle_generate(
-                                &engine, &store, &schema, &mut registry,
-                                &mut conv_frags, &banks, &query,
-                                max_nodes, token_budget, kv_capacity,
-                                &gen_ctl, &persona_db, token_tx,
+                                &engine,
+                                &store,
+                                &schema,
+                                &mut registry,
+                                &mut conv_frags,
+                                &banks,
+                                &query,
+                                max_nodes,
+                                token_budget,
+                                kv_capacity,
+                                &gen_ctl,
+                                &persona_db,
+                                token_tx,
                             );
                             let _ = result_tx.send(result);
                         }
@@ -166,7 +179,10 @@ impl ActorHandle {
                             let result = Self::handle_get_conversation(&persona_db, conv_id);
                             let _ = result_tx.send(result);
                         }
-                        ActorMessage::DeleteConversation { conv_id: _, result_tx } => {
+                        ActorMessage::DeleteConversation {
+                            conv_id: _,
+                            result_tx,
+                        } => {
                             // TODO: PersonaDB doesn't support delete yet
                             let _ = result_tx.send(false);
                         }
@@ -178,12 +194,22 @@ impl ActorHandle {
                             };
                             let _ = result_tx.send(ok);
                         }
-                        ActorMessage::GetMessages { conv_id, limit, result_tx } => {
+                        ActorMessage::GetMessages {
+                            conv_id,
+                            limit,
+                            result_tx,
+                        } => {
                             let result = Self::handle_get_messages(&mut persona_db, conv_id, limit);
                             let _ = result_tx.send(result);
                         }
-                        ActorMessage::AddMessage { conv_id, role, content, result_tx } => {
-                            let result = Self::handle_add_message(&mut persona_db, conv_id, &role, &content);
+                        ActorMessage::AddMessage {
+                            conv_id,
+                            role,
+                            content,
+                            result_tx,
+                        } => {
+                            let result =
+                                Self::handle_add_message(&mut persona_db, conv_id, &role, &content);
                             let _ = result_tx.send(result);
                         }
                         ActorMessage::Shutdown => break,
@@ -196,65 +222,109 @@ impl ActorHandle {
     }
 
     pub fn send(&self, msg: ActorMessage) -> Result<()> {
-        self.tx.send(msg).map_err(|_| anyhow::anyhow!("Actor channel closed"))
+        self.tx
+            .send(msg)
+            .map_err(|_| anyhow::anyhow!("Actor channel closed"))
     }
 
     // ── Convenience methods ─────────────────────────────────────
 
     pub async fn generate(&self, query: String) -> Result<GenerateResult> {
         let (result_tx, result_rx) = oneshot::channel();
-        self.send(ActorMessage::Generate { query, result_tx, token_tx: None })?;
-        result_rx.await.map_err(|_| anyhow::anyhow!("Actor dropped"))?
+        self.send(ActorMessage::Generate {
+            query,
+            result_tx,
+            token_tx: None,
+        })?;
+        result_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("Actor dropped"))?
     }
 
     pub async fn generate_streaming(
-        &self, query: String, token_tx: mpsc::UnboundedSender<String>,
+        &self,
+        query: String,
+        token_tx: mpsc::UnboundedSender<String>,
     ) -> Result<GenerateResult> {
         let (result_tx, result_rx) = oneshot::channel();
-        self.send(ActorMessage::Generate { query, result_tx, token_tx: Some(token_tx) })?;
-        result_rx.await.map_err(|_| anyhow::anyhow!("Actor dropped"))?
+        self.send(ActorMessage::Generate {
+            query,
+            result_tx,
+            token_tx: Some(token_tx),
+        })?;
+        result_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("Actor dropped"))?
     }
 
     pub async fn list_conversations(&self) -> Result<Vec<ConversationInfo>> {
         let (result_tx, result_rx) = oneshot::channel();
         self.send(ActorMessage::ListConversations { result_tx })?;
-        Ok(result_rx.await.map_err(|_| anyhow::anyhow!("Actor dropped"))?)
+        Ok(result_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("Actor dropped"))?)
     }
 
     pub async fn create_conversation(&self, title: String) -> Result<ConversationInfo> {
         let (result_tx, result_rx) = oneshot::channel();
         self.send(ActorMessage::CreateConversation { title, result_tx })?;
-        Ok(result_rx.await.map_err(|_| anyhow::anyhow!("Actor dropped"))?)
+        Ok(result_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("Actor dropped"))?)
     }
 
     pub async fn get_conversation(&self, conv_id: NodeId) -> Result<Option<ConversationInfo>> {
         let (result_tx, result_rx) = oneshot::channel();
         self.send(ActorMessage::GetConversation { conv_id, result_tx })?;
-        Ok(result_rx.await.map_err(|_| anyhow::anyhow!("Actor dropped"))?)
+        Ok(result_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("Actor dropped"))?)
     }
 
     pub async fn delete_conversation(&self, conv_id: NodeId) -> Result<bool> {
         let (result_tx, result_rx) = oneshot::channel();
         self.send(ActorMessage::DeleteConversation { conv_id, result_tx })?;
-        Ok(result_rx.await.map_err(|_| anyhow::anyhow!("Actor dropped"))?)
+        Ok(result_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("Actor dropped"))?)
     }
 
     pub async fn switch_conversation(&self, conv_id: NodeId) -> Result<bool> {
         let (result_tx, result_rx) = oneshot::channel();
         self.send(ActorMessage::SwitchConversation { conv_id, result_tx })?;
-        Ok(result_rx.await.map_err(|_| anyhow::anyhow!("Actor dropped"))?)
+        Ok(result_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("Actor dropped"))?)
     }
 
     pub async fn get_messages(&self, conv_id: NodeId, limit: usize) -> Result<Vec<MessageInfo>> {
         let (result_tx, result_rx) = oneshot::channel();
-        self.send(ActorMessage::GetMessages { conv_id, limit, result_tx })?;
-        Ok(result_rx.await.map_err(|_| anyhow::anyhow!("Actor dropped"))?)
+        self.send(ActorMessage::GetMessages {
+            conv_id,
+            limit,
+            result_tx,
+        })?;
+        Ok(result_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("Actor dropped"))?)
     }
 
-    pub async fn add_message(&self, conv_id: NodeId, role: String, content: String) -> Result<NodeId> {
+    pub async fn add_message(
+        &self,
+        conv_id: NodeId,
+        role: String,
+        content: String,
+    ) -> Result<NodeId> {
         let (result_tx, result_rx) = oneshot::channel();
-        self.send(ActorMessage::AddMessage { conv_id, role, content, result_tx })?;
-        Ok(result_rx.await.map_err(|_| anyhow::anyhow!("Actor dropped"))?)
+        self.send(ActorMessage::AddMessage {
+            conv_id,
+            role,
+            content,
+            result_tx,
+        })?;
+        Ok(result_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("Actor dropped"))?)
     }
 
     // ── Internal handlers ───────────────────────────────────────
@@ -293,15 +363,28 @@ impl ActorHandle {
 
         // TODO: pass real GNN context when fact_gnn is stored in actor state
         let (raw_response, relevant_graph_nodes, _avg_entropy, _ablation) = query_with_registry(
-            engine, q_store, q_schema, registry, conv_frags, banks,
-            query, max_nodes, token_budget, kv_capacity, gen_ctl, &output,
+            engine,
+            q_store,
+            q_schema,
+            registry,
+            conv_frags,
+            banks,
+            query,
+            max_nodes,
+            token_budget,
+            kv_capacity,
+            gen_ctl,
+            &output,
             None, // gnn_ctx — server path, no GNN yet
             None, // head_router — server path, no HeadRouter yet
             None, // embd_cache — server path, no embedding cache yet
             0.0,  // embd_injection_ratio — disabled
             None, // round_tracker — server path, no Phase D yet
             None, // coactivation — server path, no E3 yet
-            persona_db.as_ref().map(|p| p as &dyn kv_registry::ColdSearch),
+            persona_db
+                .as_ref()
+                .map(|p| p as &dyn kv_registry::ColdSearch),
+            None, // selected_formula — server path, no Phase 4 AFE yet
         )?;
 
         let clean = strip_think_tags(&raw_response);
@@ -309,8 +392,10 @@ impl ActorHandle {
 
         if visible.is_empty() && !raw_response.is_empty() {
             let think_content = raw_response
-                .strip_prefix("<think>").unwrap_or(&raw_response)
-                .strip_suffix("</think>").unwrap_or(&raw_response)
+                .strip_prefix("<think>")
+                .unwrap_or(&raw_response)
+                .strip_suffix("</think>")
+                .unwrap_or(&raw_response)
                 .trim();
             if !think_content.is_empty() {
                 visible = think_content.to_string();
@@ -321,8 +406,12 @@ impl ActorHandle {
         let interrupted = gen_ctl.gen_interrupted.swap(false, Ordering::SeqCst);
 
         if let Err(e) = conv_frags.add_turn(
-            query, &visible, &relevant_graph_nodes,
-            registry, engine, kv_capacity,
+            query,
+            &visible,
+            &relevant_graph_nodes,
+            registry,
+            engine,
+            kv_capacity,
         ) {
             eprintln!("  Warning: could not register conv fragment: {e}");
         }
@@ -350,16 +439,24 @@ impl ActorHandle {
 
     fn handle_list_conversations(persona_db: &Option<PersonaDB>) -> Vec<ConversationInfo> {
         match persona_db {
-            Some(pdb) => {
-                pdb.list_conversations().into_iter().map(|(id, title, created_at, msg_count)| {
-                    ConversationInfo { id, title, created_at, message_count: msg_count }
-                }).collect()
-            }
+            Some(pdb) => pdb
+                .list_conversations()
+                .into_iter()
+                .map(|(id, title, created_at, msg_count)| ConversationInfo {
+                    id,
+                    title,
+                    created_at,
+                    message_count: msg_count,
+                })
+                .collect(),
             None => Vec::new(),
         }
     }
 
-    fn handle_create_conversation(persona_db: &mut Option<PersonaDB>, title: &str) -> ConversationInfo {
+    fn handle_create_conversation(
+        persona_db: &mut Option<PersonaDB>,
+        title: &str,
+    ) -> ConversationInfo {
         if let Some(pdb) = persona_db {
             pdb.new_conversation(title);
             ConversationInfo {
@@ -379,17 +476,27 @@ impl ActorHandle {
         }
     }
 
-    fn handle_get_conversation(persona_db: &Option<PersonaDB>, conv_id: NodeId) -> Option<ConversationInfo> {
+    fn handle_get_conversation(
+        persona_db: &Option<PersonaDB>,
+        conv_id: NodeId,
+    ) -> Option<ConversationInfo> {
         let pdb = persona_db.as_ref()?;
         let convs = pdb.list_conversations();
-        convs.into_iter()
-            .find(|(id, _, _, _)| *id == conv_id)
-            .map(|(id, title, created_at, msg_count)| {
-                ConversationInfo { id, title, created_at, message_count: msg_count }
-            })
+        convs.into_iter().find(|(id, _, _, _)| *id == conv_id).map(
+            |(id, title, created_at, msg_count)| ConversationInfo {
+                id,
+                title,
+                created_at,
+                message_count: msg_count,
+            },
+        )
     }
 
-    fn handle_get_messages(persona_db: &mut Option<PersonaDB>, conv_id: NodeId, limit: usize) -> Vec<MessageInfo> {
+    fn handle_get_messages(
+        persona_db: &mut Option<PersonaDB>,
+        conv_id: NodeId,
+        limit: usize,
+    ) -> Vec<MessageInfo> {
         let pdb = match persona_db {
             Some(pdb) => pdb,
             None => return Vec::new(),
@@ -402,10 +509,17 @@ impl ActorHandle {
         let msgs = pdb.recent_messages(limit);
         // Switch back
         pdb.switch_to(original_conv);
-        msgs.into_iter().map(|(role, content)| MessageInfo { role, content }).collect()
+        msgs.into_iter()
+            .map(|(role, content)| MessageInfo { role, content })
+            .collect()
     }
 
-    fn handle_add_message(persona_db: &mut Option<PersonaDB>, conv_id: NodeId, role: &str, content: &str) -> NodeId {
+    fn handle_add_message(
+        persona_db: &mut Option<PersonaDB>,
+        conv_id: NodeId,
+        role: &str,
+        content: &str,
+    ) -> NodeId {
         let pdb = match persona_db {
             Some(pdb) => pdb,
             None => return NodeId(0),

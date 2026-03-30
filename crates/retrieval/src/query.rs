@@ -1,7 +1,8 @@
 use anyhow::Result;
 use graph_schema::GraphSchema;
-use kv_registry::{Tokenizer, KvNodeRegistry, KvBank, ConvFragments, ContextNode, QueryContext, ColdSearch};
-use think_filter::ThinkFilter;
+use kv_registry::{
+    ColdSearch, ContextNode, ConvFragments, KvBank, KvNodeRegistry, QueryContext, Tokenizer,
+};
 use obrain_common::types::NodeId;
 use obrain_core::graph::lpg::LpgStore;
 use std::collections::{HashMap, HashSet};
@@ -9,13 +10,17 @@ use std::io::{self, Write};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
+use think_filter::ThinkFilter;
 
-use crate::engine::Engine;
 use crate::control::{GenerationControl, OutputMode, Spinner};
+use crate::engine::Engine;
+use crate::attn_compiler::{CompileContext, CompiledFormula, compile};
+use crate::attn_dsl::AttnOp;
+use crate::formula_selector::SelectedFormula;
+use crate::generation::{AblationReward, compute_ablation_reward, generate_with_mask};
 use crate::node_embedding::{NodeEmbeddingCache, compute_text_embedding};
-use crate::scoring::{retrieve_nodes, get_micro_tag};
-use crate::generation::{generate_with_mask, compute_ablation_reward, AblationReward};
-use crate::round_tracker::{RoundTracker, DemotionType, CoactivationMap};
+use crate::round_tracker::{CoactivationMap, DemotionType, RoundTracker};
+use crate::scoring::{get_micro_tag, retrieve_nodes};
 use kv_registry::{HilbertLayout, build_fused_adjacency};
 
 /// Optional GNN scoring context for composite E(t) decision.
@@ -44,6 +49,7 @@ pub fn query_with_registry(
     mut round_tracker: Option<&mut RoundTracker>,
     coactivation: Option<&CoactivationMap>,
     cold_search: Option<&dyn ColdSearch>,
+    selected_formula: Option<&SelectedFormula>,
 ) -> Result<(String, Vec<NodeId>, Option<f32>, Option<AblationReward>)> {
     registry.begin_query();
     let t_start = Instant::now();
@@ -61,7 +67,9 @@ pub fn query_with_registry(
             bank_name_lower.contains(term) && *term != "project" && *term != "les" && *term != "des"
         });
         if matches_bank {
-            let missing: Vec<NodeId> = bank.node_ids.iter()
+            let missing: Vec<NodeId> = bank
+                .node_ids
+                .iter()
                 .filter(|nid| !registry.nodes.contains_key(nid))
                 .copied()
                 .collect();
@@ -85,7 +93,16 @@ pub fn query_with_registry(
     // Run the generic retrieval to get scored nodes (only if graph is loaded)
     let (mut scored_nodes_for_query, adjacency, node_texts) =
         if let (Some(st), Some(sch)) = (store, schema) {
-            retrieve_nodes(engine, st, sch, query, max_nodes, token_budget, embd_cache, coactivation)?
+            retrieve_nodes(
+                engine,
+                st,
+                sch,
+                query,
+                max_nodes,
+                token_budget,
+                embd_cache,
+                coactivation,
+            )?
         } else {
             (Vec::new(), HashMap::new(), HashMap::new())
         };
@@ -95,10 +112,13 @@ pub fn query_with_registry(
         if ctx.gnn.n_updates() >= 20 && !scored_nodes_for_query.is_empty() {
             let data_nids: Vec<NodeId> = scored_nodes_for_query.iter().map(|n| n.id).collect();
             let query_embed = persona::fact_gnn::query_embedding(query);
-            let gnn_scores = ctx.gnn.score_node_ids(ctx.persona_store, &query_embed, &data_nids);
+            let gnn_scores = ctx
+                .gnn
+                .score_node_ids(ctx.persona_store, &query_embed, &data_nids);
 
             // Normalize graph scores to [0, 1] range
-            let max_graph = scored_nodes_for_query.iter()
+            let max_graph = scored_nodes_for_query
+                .iter()
                 .map(|n| n._score)
                 .fold(f64::NEG_INFINITY, f64::max)
                 .max(1e-8);
@@ -114,8 +134,11 @@ pub fn query_with_registry(
             }
 
             // Re-sort by composite score
-            scored_nodes_for_query.sort_by(|a, b|
-                b._score.partial_cmp(&a._score).unwrap_or(std::cmp::Ordering::Equal));
+            scored_nodes_for_query.sort_by(|a, b| {
+                b._score
+                    .partial_cmp(&a._score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
         }
     }
 
@@ -143,30 +166,35 @@ pub fn query_with_registry(
         // in <think>...</think> for complex questions, leaving too little for the
         // visible response at 1024. The previous 256 limit was catastrophic.
         let output_ref = &output;
-        let (resp, _, _signals) = engine.generate(&tokens, registry.next_pos, 4096, 1, |piece| {
-            // Ctrl+C during generation → stop
-            if ctl.sigint_received.load(Ordering::Relaxed) { return false; }
-            let visible = filter.feed(piece);
-            if !visible.is_empty() {
-                match output_ref {
-                    OutputMode::Stdout => {
-                        if first_visible {
-                            if let Some(ref a) = spinner_alive { a.store(false, Ordering::Relaxed); }
-                            print!("assistant> ");
+        let (resp, _, _signals) =
+            engine.generate(&tokens, registry.next_pos, 4096, 1, |piece| {
+                // Ctrl+C during generation → stop
+                if ctl.sigint_received.load(Ordering::Relaxed) {
+                    return false;
+                }
+                let visible = filter.feed(piece);
+                if !visible.is_empty() {
+                    match output_ref {
+                        OutputMode::Stdout => {
+                            if first_visible {
+                                if let Some(ref a) = spinner_alive {
+                                    a.store(false, Ordering::Relaxed);
+                                }
+                                print!("assistant> ");
+                                let _ = io::stdout().flush();
+                                first_visible = false;
+                            }
+                            print!("{}", visible);
                             let _ = io::stdout().flush();
-                            first_visible = false;
                         }
-                        print!("{}", visible);
-                        let _ = io::stdout().flush();
-                    }
-                    OutputMode::Channel(tx) => {
-                        first_visible = false;
-                        let _ = tx.send(visible);
+                        OutputMode::Channel(tx) => {
+                            first_visible = false;
+                            let _ = tx.send(visible);
+                        }
                     }
                 }
-            }
-            true
-        })?;
+                true
+            })?;
         drop(spinner);
         ctl.generating.store(false, Ordering::SeqCst);
         let interrupted = ctl.sigint_received.swap(false, Ordering::SeqCst);
@@ -179,22 +207,34 @@ pub fn query_with_registry(
         let remaining = filter.flush();
         if !remaining.is_empty() {
             match output {
-                OutputMode::Stdout => { print!("{}", remaining); }
-                OutputMode::Channel(tx) => { let _ = tx.send(remaining); }
+                OutputMode::Stdout => {
+                    print!("{}", remaining);
+                }
+                OutputMode::Channel(tx) => {
+                    let _ = tx.send(remaining);
+                }
             }
         }
-        if matches!(output, OutputMode::Stdout) { println!("\n"); }
+        if matches!(output, OutputMode::Stdout) {
+            println!("\n");
+        }
         // CRITICAL: clean seq_id=1 after fallback generation.
         engine.clear_seq(1);
         // Diagnostic: if the visible response was empty, the model produced only <think> content
         if resp.trim().is_empty() {
             eprintln!("  [debug] Fallback generation returned empty response");
         } else if resp.contains("<think>") && !resp.contains("</think>") {
-            eprintln!("  [debug] Fallback response has unclosed <think> tag ({} chars)", resp.len());
+            eprintln!(
+                "  [debug] Fallback response has unclosed <think> tag ({} chars)",
+                resp.len()
+            );
         } else if resp.starts_with("<think>") {
             let visible = think_filter::strip_think_tags(&resp);
             if visible.trim().is_empty() {
-                eprintln!("  [debug] Fallback response was ALL think content ({} chars raw)", resp.len());
+                eprintln!(
+                    "  [debug] Fallback response was ALL think content ({} chars raw)",
+                    resp.len()
+                );
             }
         }
         return Ok((resp, Vec::new(), None, None));
@@ -206,7 +246,8 @@ pub fn query_with_registry(
     registry.touch(&needed_ids);
 
     // Estimate tokens needed for missing nodes
-    let est_missing_tokens: i32 = missing.iter()
+    let est_missing_tokens: i32 = missing
+        .iter()
         .filter_map(|nid| node_texts.get(nid))
         .map(|text| (text.len() as f64 / 3.5) as i32 + 10)
         .sum();
@@ -245,7 +286,10 @@ pub fn query_with_registry(
                         let inject_result = if let Some(ref tag_text) = tag {
                             // C7 path: 1 embedding + tag tokens (~3 positions)
                             registry.register_embedding_with_tags(
-                                nid, text, &embd_vec, tag_text,
+                                nid,
+                                text,
+                                &embd_vec,
+                                tag_text,
                                 |e, p, s| engine.encode_embeddings(e, p, s),
                                 engine,
                             )
@@ -262,7 +306,10 @@ pub fn query_with_registry(
                                 continue;
                             }
                             Err(e) => {
-                                eprintln!("  ⚠ embed injection failed for node {:?}: {}, fallback to text", nid, e);
+                                eprintln!(
+                                    "  ⚠ embed injection failed for node {:?}: {}, fallback to text",
+                                    nid, e
+                                );
                             }
                         }
                     }
@@ -276,8 +323,12 @@ pub fn query_with_registry(
     }
 
     if use_embd && (embd_injected > 0 || text_encoded > 0) {
-        eprintln!("  [C4] nodes: {} via embedding, {} via text (ratio={:.0}%)",
-            embd_injected, text_encoded, embd_injection_ratio * 100.0);
+        eprintln!(
+            "  [C4] nodes: {} via embedding, {} via text (ratio={:.0}%)",
+            embd_injected,
+            text_encoded,
+            embd_injection_ratio * 100.0
+        );
     }
 
     let _encode_time = t_start.elapsed().as_millis();
@@ -293,16 +344,19 @@ pub fn query_with_registry(
                 }
             }
             // Re-sort after adjustment
-            scored_nodes_for_query.sort_by(|a, b|
-                b._score.partial_cmp(&a._score).unwrap_or(std::cmp::Ordering::Equal));
+            scored_nodes_for_query.sort_by(|a, b| {
+                b._score
+                    .partial_cmp(&a._score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
         }
 
         // Compute query embedding for domain shift detection
-        let query_embd = compute_text_embedding(engine, query)
-            .unwrap_or_default();
+        let query_embd = compute_text_embedding(engine, query).unwrap_or_default();
 
         // Record this round
-        let scored_pairs: Vec<(NodeId, f64)> = scored_nodes_for_query.iter()
+        let scored_pairs: Vec<(NodeId, f64)> = scored_nodes_for_query
+            .iter()
             .map(|n| (n.id, n._score))
             .collect();
         tracker.record_round(&scored_pairs, query_embd, registry);
@@ -317,7 +371,9 @@ pub fn query_with_registry(
                     registry.demote_to_gamma(*nid, engine)
                 }
             };
-            if result.is_ok() { n_demoted += 1; }
+            if result.is_ok() {
+                n_demoted += 1;
+            }
         }
 
         // Get promotions (candidates → Alpha)
@@ -325,7 +381,9 @@ pub fn query_with_registry(
         let mut n_promoted = 0u32;
         let mut promoted_nids: Vec<NodeId> = Vec::new();
         for nid in to_promote {
-            if !registry.tier_budget.can_promote() { break; }
+            if !registry.tier_budget.can_promote() {
+                break;
+            }
             // Get micro-tag for promotion
             let tag = match (store, schema) {
                 (Some(st), Some(sch)) => get_micro_tag(st, sch, nid, 80),
@@ -341,24 +399,40 @@ pub fn query_with_registry(
         if n_promoted > 0 {
             if gnn_ctx.is_some() || embd_cache.is_some() {
                 let fact_scores = tracker.get_fact_scores();
-                let n_with_facts = promoted_nids.iter()
+                let n_with_facts = promoted_nids
+                    .iter()
                     .filter(|nid| fact_scores.contains_key(nid))
                     .count();
-                eprintln!("  [D6] {} promoted nodes pending rescore ({} with fact_scores)",
-                    n_promoted, n_with_facts);
+                eprintln!(
+                    "  [D6] {} promoted nodes pending rescore ({} with fact_scores)",
+                    n_promoted, n_with_facts
+                );
             }
         }
 
         if n_demoted > 0 || n_promoted > 0 {
             let (a, b, g) = registry.tier_distribution();
-            let shift = if tracker.detect_domain_shift(0.3) { " [DOMAIN SHIFT]" } else { "" };
-            eprintln!("  [D2] round {}: +{} promoted, -{} demoted (Α={} Β={} Γ={}){}",
-                tracker.current_round(), n_promoted, n_demoted, a, b, g, shift);
+            let shift = if tracker.detect_domain_shift(0.3) {
+                " [DOMAIN SHIFT]"
+            } else {
+                ""
+            };
+            eprintln!(
+                "  [D2] round {}: +{} promoted, -{} demoted (Α={} Β={} Γ={}){}",
+                tracker.current_round(),
+                n_promoted,
+                n_demoted,
+                a,
+                b,
+                g,
+                shift
+            );
         }
     }
 
     // ── Find relevant conversation fragments ──────────────────────
-    let (conv_node_ids, conv_adjacency) = conv_frags.find_relevant_with_cold(query, registry, engine, kv_capacity, cold_search);
+    let (conv_node_ids, conv_adjacency) =
+        conv_frags.find_relevant_with_cold(query, registry, engine, kv_capacity, cold_search);
 
     // Pull in graph nodes referenced by relevant conv fragments
     // (enables "donne plus de details" to re-surface Elun nodes from the last turn)
@@ -368,7 +442,9 @@ pub fn query_with_registry(
         if conv_node_ids.contains(&frag.node_id) {
             let mut pulled_from_frag = 0;
             for &gn in &frag.related_graph_nodes {
-                if pulled_from_frag >= MAX_CONV_PULL { break; }
+                if pulled_from_frag >= MAX_CONV_PULL {
+                    break;
+                }
                 let already_in_query = scored_nodes_for_query.iter().any(|n| n.id == gn);
                 if !already_in_query && registry.get_slot(gn).is_some() {
                     conv_pulled_ids.push(gn);
@@ -384,7 +460,8 @@ pub fn query_with_registry(
     // If the query is vague (all scores equal = no strong match) and conv fragments
     // provide context, prefer fragment-referenced nodes over generic retrieval.
     let vague_query = {
-        let scores: HashSet<u64> = scored_nodes_for_query.iter()
+        let scores: HashSet<u64> = scored_nodes_for_query
+            .iter()
             .map(|n| (n._score * 100.0) as u64)
             .collect();
         scores.len() <= 2 // all nodes have same score = nothing specific matched
@@ -395,9 +472,19 @@ pub fn query_with_registry(
     // Bank assignment: top 25% → bank 0 (core), next 25% → bank 1, etc.
     let total_scored = scored_nodes_for_query.len();
     let bank_for_idx = |idx: usize| -> u32 {
-        if total_scored == 0 { return 0; }
+        if total_scored == 0 {
+            return 0;
+        }
         let ratio = idx as f32 / total_scored as f32;
-        if ratio < 0.25 { 0 } else if ratio < 0.50 { 1 } else if ratio < 0.75 { 2 } else { 3 }
+        if ratio < 0.25 {
+            0
+        } else if ratio < 0.50 {
+            1
+        } else if ratio < 0.75 {
+            2
+        } else {
+            3
+        }
     };
     let mut ctx_nodes: Vec<ContextNode> = Vec::new();
     if vague_query && conv_provides_context {
@@ -466,7 +553,10 @@ pub fn query_with_registry(
         for i in 0..conv_pulled_ids.len() {
             for j in 0..conv_pulled_ids.len() {
                 if i != j {
-                    merged_adjacency.entry(conv_pulled_ids[i]).or_default().insert(conv_pulled_ids[j]);
+                    merged_adjacency
+                        .entry(conv_pulled_ids[i])
+                        .or_default()
+                        .insert(conv_pulled_ids[j]);
                 }
             }
         }
@@ -480,12 +570,43 @@ pub fn query_with_registry(
     };
 
     // Collect relevant graph node IDs for the caller (to link conv fragment)
-    let relevant_graph_nodes: Vec<NodeId> = scored_nodes_for_query.iter()
-        .map(|n| n.id)
-        .collect();
+    let relevant_graph_nodes: Vec<NodeId> = scored_nodes_for_query.iter().map(|n| n.id).collect();
+
+    // Phase 4 AFE: Compile selected formula with actual node context
+    let compiled_formula: Option<CompiledFormula> = selected_formula.and_then(|sel| {
+        if matches!(sel.op, AttnOp::Identity) {
+            return None; // Identity = no overlay
+        }
+        let n_nodes = ctx.nodes.len();
+        if n_nodes == 0 {
+            return None;
+        }
+        let compile_ctx = CompileContext {
+            n_nodes,
+            n_head: engine.n_heads() as usize,
+            n_pos: 0,
+            header_tokens: ctx.header_tokens as usize,
+            graph_distances: vec![u8::MAX; n_nodes * n_nodes],
+            synapse_energies: vec![0.0; n_nodes * n_nodes],
+            coactivations: vec![0.0; n_nodes * n_nodes],
+            node_ages: vec![0.0; n_nodes],
+            current_entropy: 0.0,
+            current_token_count: 0,
+            context_type: String::new(),
+            graph_density: 0.0,
+        };
+        match compile(&sel.op, &compile_ctx) {
+            Ok(compiled) if !compiled.is_noop() => Some(compiled),
+            Ok(_) => None,
+            Err(e) => {
+                kv_registry::kv_debug!("  [AFE] compile error: {:?}", e);
+                None
+            }
+        }
+    });
 
     let (response, avg_entropy, first_token_id, first_step_logits) =
-        generate_with_mask(engine, &ctx, query, ctl, output, head_router)?;
+        generate_with_mask(engine, &ctx, query, ctl, output, head_router, compiled_formula.as_ref())?;
 
     // Ξ(t) Phase B/B3: Compute per-head ablation reward if HeadRouter is active
     let ablation = if let (Some(router), Some(ftid)) = (head_router, first_token_id) {
@@ -495,7 +616,10 @@ pub fn query_with_registry(
         match engine.tokenize(&query_text, false, true) {
             Ok(qtokens) => {
                 match compute_ablation_reward(
-                    engine, &ctx, &qtokens, ftid,
+                    engine,
+                    &ctx,
+                    &qtokens,
+                    ftid,
                     first_step_logits.as_deref(),
                     router,
                 ) {
@@ -515,12 +639,13 @@ pub fn query_with_registry(
     // Phase D3: Feed ablation reward back to round tracker for tier adjustments
     if let (Some(abl), Some(tracker)) = (&ablation, round_tracker.as_deref_mut()) {
         if !abl.node_rewards.is_empty() {
-            let (n_accel_demote, n_preempt_promote) = tracker.reward_feedback(
-                &abl.node_rewards, &ctx.adjacency, registry, engine,
-            );
+            let (n_accel_demote, n_preempt_promote) =
+                tracker.reward_feedback(&abl.node_rewards, &ctx.adjacency, registry, engine);
             if n_accel_demote > 0 || n_preempt_promote > 0 {
-                eprintln!("  [D3] reward feedback: {} accelerated demotes, {} preemptive promotes",
-                    n_accel_demote, n_preempt_promote);
+                eprintln!(
+                    "  [D3] reward feedback: {} accelerated demotes, {} preemptive promotes",
+                    n_accel_demote, n_preempt_promote
+                );
             }
         }
     }
@@ -564,8 +689,12 @@ pub fn maybe_relayout(
     let updated = layout.update_from_fused(&weighted_adj, &node_ids, base_position, frozen_nodes);
 
     if updated > 0 {
-        eprintln!("  [E4] Hilbert re-layout: {} nodes, {} co-activation edges fused, {} positions updated",
-            node_ids.len(), coact_pairs.len(), updated);
+        eprintln!(
+            "  [E4] Hilbert re-layout: {} nodes, {} co-activation edges fused, {} positions updated",
+            node_ids.len(),
+            coact_pairs.len(),
+            updated
+        );
     }
 
     updated

@@ -1,13 +1,14 @@
 use anyhow::Result;
-use llm_engine::mask_builder;
 use kv_registry::QueryContext;
-use think_filter::ThinkFilter;
+use llm_engine::mask_builder;
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::sync::atomic::Ordering;
+use think_filter::ThinkFilter;
 
-use crate::engine::Engine;
+use crate::attn_compiler::CompiledFormula;
 use crate::control::{GenerationControl, OutputMode, Spinner};
+use crate::engine::Engine;
 
 /// Result of per-head ablation reward computation.
 #[derive(Debug, Clone)]
@@ -33,6 +34,7 @@ pub fn generate_with_mask(
     ctl: &GenerationControl,
     output: &OutputMode,
     head_router: Option<&llm_engine::HeadRouter>,
+    compiled_formula: Option<&CompiledFormula>,
 ) -> Result<(String, Option<f32>, Option<i32>, Option<Vec<f32>>)> {
     // /no_think MUST be in the user message for Qwen3 to reliably suppress thinking.
     // Placing it only in the system header gets "diluted" by graph context tokens.
@@ -48,23 +50,32 @@ pub fn generate_with_mask(
     // Per-head mask memory = n_groups × n_pos² × 4 bytes (f32).
     // Budget is a fraction of system RAM (default 512MB, env-overridable).
     // Cap = min(memory-derived, n_ctx) — never allocate more than the model can use.
-    let use_perhead_mask = std::env::var("OBRAIN_PERHEAD").map(|v| v == "1").unwrap_or(false) || head_router.is_some();
+    let use_perhead_mask = std::env::var("OBRAIN_PERHEAD")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+        || head_router.is_some();
     let mask_groups = if use_perhead_mask {
-        head_router.map(|r| r.n_head).unwrap_or(engine.n_head() as usize)
-    } else { 1 };
+        head_router
+            .map(|r| r.n_head)
+            .unwrap_or(engine.n_head() as usize)
+    } else {
+        1
+    };
 
     // Dynamic memory budget: default 512MB, overridable via OBRAIN_MASK_BUDGET_MB
     let max_mask_bytes: usize = std::env::var("OBRAIN_MASK_BUDGET_MB")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(512)
-        * 1024 * 1024;
+        * 1024
+        * 1024;
 
     // max_positions = sqrt(budget / (4 × n_groups)), capped at n_ctx
     let n_ctx = engine.n_ctx() as i32;
     let max_mask_positions: i32 = ((max_mask_bytes / (4 * mask_groups)) as f64).sqrt() as i32;
     let max_mask_positions = max_mask_positions.min(n_ctx);
-    let mask_mem_mb = (mask_groups as f64 * max_mask_positions as f64 * max_mask_positions as f64 * 4.0) / 1e6;
+    let mask_mem_mb =
+        (mask_groups as f64 * max_mask_positions as f64 * max_mask_positions as f64 * 4.0) / 1e6;
 
     // Count context positions (header + relevant nodes + query)
     let mut n_context_positions: i32 = ctx.header_tokens;
@@ -76,10 +87,19 @@ pub fn generate_with_mask(
     // n_gen_mask = remaining budget after context, capped at n_predict
     // With micro-tags (~3 pos/node) this typically gives 3500+ gen positions.
     // With full text (~50 pos/node) and many nodes it could be lower.
-    let n_gen_mask: i32 = (max_mask_positions - n_context_positions).max(512).min(n_predict);
-    kv_registry::kv_debug!("  [mask] budget: {} context + {} gen = {} / {} max ({}× groups, {:.0}MB, n_ctx={})",
-        n_context_positions, n_gen_mask, n_context_positions + n_gen_mask,
-        max_mask_positions, mask_groups, mask_mem_mb, n_ctx);
+    let n_gen_mask: i32 = (max_mask_positions - n_context_positions)
+        .max(512)
+        .min(n_predict);
+    kv_registry::kv_debug!(
+        "  [mask] budget: {} context + {} gen = {} / {} max ({}× groups, {:.0}MB, n_ctx={})",
+        n_context_positions,
+        n_gen_mask,
+        n_context_positions + n_gen_mask,
+        max_mask_positions,
+        mask_groups,
+        mask_mem_mb,
+        n_ctx
+    );
 
     // ── Build sparse position map ──────────────────────────────────
     // Only include positions that matter: header + relevant nodes + query + gen.
@@ -119,11 +139,17 @@ pub fn generate_with_mask(
     let sz = positions.len();
 
     if sz as i32 > max_mask_positions {
-        eprintln!("  Warning: mask_size={} > {} ({}groups × {}²×4 = {:.0}MB > budget) — generating without mask. \
+        eprintln!(
+            "  Warning: mask_size={} > {} ({}groups × {}²×4 = {:.0}MB > budget) — generating without mask. \
             Tip: set OBRAIN_MASK_BUDGET_MB={} to allow this.",
-            sz, max_mask_positions, mask_groups, max_mask_positions, mask_mem_mb,
+            sz,
+            max_mask_positions,
+            mask_groups,
+            max_mask_positions,
+            mask_mem_mb,
             // Suggest the minimum budget needed
-            ((mask_groups * sz * sz * 4) as f64 / 1e6).ceil() as usize + 1);
+            ((mask_groups * sz * sz * 4) as f64 / 1e6).ceil() as usize + 1
+        );
         // Fallback: generate without topological mask (but still need seq_cp!)
         engine.clear_seq(1);
         engine.seq_cp(0, 1, 0, -1);
@@ -137,29 +163,34 @@ pub fn generate_with_mask(
         ctl.generating.store(true, Ordering::SeqCst);
         ctl.sigint_received.store(false, Ordering::SeqCst);
         let output_ref = &output;
-        let (resp, _, fallback_signals) = engine.generate(&query_tokens, q_start_real, n_predict, 1, |piece| {
-            if ctl.sigint_received.load(Ordering::Relaxed) { return false; }
-            let visible = filter.feed(piece);
-            if !visible.is_empty() {
-                match output_ref {
-                    OutputMode::Stdout => {
-                        if first_visible {
-                            if let Some(ref a) = spinner_alive { a.store(false, Ordering::Relaxed); }
-                            print!("assistant> ");
+        let (resp, _, fallback_signals) =
+            engine.generate(&query_tokens, q_start_real, n_predict, 1, |piece| {
+                if ctl.sigint_received.load(Ordering::Relaxed) {
+                    return false;
+                }
+                let visible = filter.feed(piece);
+                if !visible.is_empty() {
+                    match output_ref {
+                        OutputMode::Stdout => {
+                            if first_visible {
+                                if let Some(ref a) = spinner_alive {
+                                    a.store(false, Ordering::Relaxed);
+                                }
+                                print!("assistant> ");
+                                let _ = io::stdout().flush();
+                                first_visible = false;
+                            }
+                            print!("{}", visible);
                             let _ = io::stdout().flush();
-                            first_visible = false;
                         }
-                        print!("{}", visible);
-                        let _ = io::stdout().flush();
-                    }
-                    OutputMode::Channel(tx) => {
-                        first_visible = false;
-                        let _ = tx.send(visible);
+                        OutputMode::Channel(tx) => {
+                            first_visible = false;
+                            let _ = tx.send(visible);
+                        }
                     }
                 }
-            }
-            true
-        })?;
+                true
+            })?;
         drop(spinner);
         ctl.generating.store(false, Ordering::SeqCst);
         let interrupted = ctl.sigint_received.swap(false, Ordering::SeqCst);
@@ -172,25 +203,37 @@ pub fn generate_with_mask(
         let remaining = filter.flush();
         if !remaining.is_empty() {
             match output {
-                OutputMode::Stdout => { print!("{}", remaining); }
-                OutputMode::Channel(tx) => { let _ = tx.send(remaining); }
+                OutputMode::Stdout => {
+                    print!("{}", remaining);
+                }
+                OutputMode::Channel(tx) => {
+                    let _ = tx.send(remaining);
+                }
             }
         }
-        if matches!(output, OutputMode::Stdout) { println!("\n"); }
-        return Ok((resp, Some(fallback_signals.avg_entropy), fallback_signals.first_token_id, None));
+        if matches!(output, OutputMode::Stdout) {
+            println!("\n");
+        }
+        return Ok((
+            resp,
+            Some(fallback_signals.avg_entropy),
+            fallback_signals.first_token_id,
+            None,
+        ));
     }
 
     // ── Compile attention mask (sparse) ──────────────────────────────
     // FFI: use f32::NEG_INFINITY (exact), not -1e30 (JSON workaround eliminated)
     let mut mask = vec![f32::NEG_INFINITY; sz * sz];
 
-    let allow = |m: &mut [f32], real_i: i32, real_j: i32, remap: &HashMap<i32, usize>, sz: usize| {
-        if let (Some(&mi), Some(&mj)) = (remap.get(&real_i), remap.get(&real_j)) {
-            if mi < sz && mj < sz && real_j <= real_i {
-                m[mi * sz + mj] = 0.0;
+    let allow =
+        |m: &mut [f32], real_i: i32, real_j: i32, remap: &HashMap<i32, usize>, sz: usize| {
+            if let (Some(&mi), Some(&mj)) = (remap.get(&real_i), remap.get(&real_j)) {
+                if mi < sz && mj < sz && real_j <= real_i {
+                    m[mi * sz + mj] = 0.0;
+                }
             }
-        }
-    };
+        };
 
     let h = ctx.header_tokens;
 
@@ -206,7 +249,9 @@ pub fn generate_with_mask(
     for offset in 0..(query_n + n_gen_mask) {
         let i = q_start_real + offset;
         // See header
-        for j in 0..h { allow(&mut mask, i, j, &pos_remap, sz); }
+        for j in 0..h {
+            allow(&mut mask, i, j, &pos_remap, sz);
+        }
         // See all relevant node tokens
         for node in &ctx.nodes {
             for j in node.token_start..node.token_end {
@@ -223,23 +268,83 @@ pub fn generate_with_mask(
     // OBRAIN_NO_MASK=1: skip topology mask entirely (A/B baseline for benchmarking).
     // OBRAIN_PERHEAD=1: per-head masking where different heads see different banks.
     // Default: broadcast topology mask (all heads see the same sparse positions).
-    let no_mask = std::env::var("OBRAIN_NO_MASK").map(|v| v == "1").unwrap_or(false);
-    let use_perhead = std::env::var("OBRAIN_PERHEAD").map(|v| v == "1").unwrap_or(false);
+    // ── Apply formula overlay (Phase 4 AFE) ────────────────────────
+    // The compiled formula produces an overlay [n_nodes × n_nodes] that modulates
+    // attention between graph nodes. We expand it to token-level positions.
+    if let Some(formula) = compiled_formula {
+        if let Some(ref overlay) = formula.kq_mask_overlay {
+            let n_formula_nodes = ctx.nodes.len();
+            if overlay.len() == n_formula_nodes * n_formula_nodes {
+                let mut n_applied = 0u32;
+                for (ni, node_i) in ctx.nodes.iter().enumerate() {
+                    for (nj, node_j) in ctx.nodes.iter().enumerate() {
+                        let val = overlay[ni * n_formula_nodes + nj];
+                        if val == 0.0 {
+                            continue;
+                        }
+                        // Expand node-pair overlay to all token-position pairs
+                        for pi in node_i.token_start..node_i.token_end {
+                            for pj in node_j.token_start..node_j.token_end {
+                                if let (Some(&mi), Some(&mj)) =
+                                    (pos_remap.get(&pi), pos_remap.get(&pj))
+                                {
+                                    if mi < sz && mj < sz && pj <= pi {
+                                        let idx = mi * sz + mj;
+                                        if val == f32::NEG_INFINITY
+                                            || mask[idx] == f32::NEG_INFINITY
+                                        {
+                                            mask[idx] = f32::NEG_INFINITY;
+                                        } else {
+                                            mask[idx] += val;
+                                        }
+                                        n_applied += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if n_applied > 0 {
+                    kv_registry::kv_debug!(
+                        "  [AFE] formula overlay applied: {} cells modified",
+                        n_applied
+                    );
+                }
+            }
+        }
+        // kq_b (positive bias) not applied yet — requires Phase 2 fork with kq_b support
+        if formula.kq_b.is_some() {
+            kv_registry::kv_debug!(
+                "  [AFE] kq_b bias present but not applied (Phase 2 fork required)"
+            );
+        }
+    }
+
+    let no_mask = std::env::var("OBRAIN_NO_MASK")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    let use_perhead = std::env::var("OBRAIN_PERHEAD")
+        .map(|v| v == "1")
+        .unwrap_or(false);
     if no_mask {
         eprintln!("  [A/B] Topology mask DISABLED (baseline mode)");
     } else if use_perhead || head_router.is_some() {
         // Phase B: per-head masking with HeadRouter (or Phase A per-head with OBRAIN_PERHEAD=1)
-        let mb_nodes: Vec<mask_builder::NodePosition> = ctx.nodes.iter().map(|n| {
-            mask_builder::NodePosition {
+        let mb_nodes: Vec<mask_builder::NodePosition> = ctx
+            .nodes
+            .iter()
+            .map(|n| mask_builder::NodePosition {
                 pos_start: n.token_start,
                 pos_end: n.token_end,
                 bank: n.bank,
-            }
-        }).collect();
+            })
+            .collect();
         let config = mask_builder::default_bank_config();
         // n_head for the mask: use router's head count (reflects granularity setting),
         // or fall back to full n_head when using OBRAIN_PERHEAD env without a router.
-        let mask_n_head = head_router.map(|r| r.n_head as i32).unwrap_or_else(|| engine.n_head());
+        let mask_n_head = head_router
+            .map(|r| r.n_head as i32)
+            .unwrap_or_else(|| engine.n_head());
         let perhead = mask_builder::build_perhead_mask(
             &mb_nodes,
             ctx.header_tokens,
@@ -282,16 +387,23 @@ pub fn generate_with_mask(
 
     // Round 0: with mask
     let (chunk, mut hit_eog, mut next_pos, gen_signals) = engine.generate_ex(
-        &query_tokens, q_start_real, n_predict, 1,
+        &query_tokens,
+        q_start_real,
+        n_predict,
+        1,
         true, // keep_seq=true in case we need continuation
         |piece| {
-            if ctl.sigint_received.load(Ordering::Relaxed) { return false; }
+            if ctl.sigint_received.load(Ordering::Relaxed) {
+                return false;
+            }
             let visible = filter.feed(piece);
             if !visible.is_empty() {
                 match output_ref {
                     OutputMode::Stdout => {
                         if first_visible {
-                            if let Some(ref a) = spinner_alive { a.store(false, Ordering::Relaxed); }
+                            if let Some(ref a) = spinner_alive {
+                                a.store(false, Ordering::Relaxed);
+                            }
                             print!("assistant> ");
                             let _ = io::stdout().flush();
                             first_visible = false;
@@ -306,7 +418,7 @@ pub fn generate_with_mask(
                 }
             }
             true
-        }
+        },
     )?;
     drop(spinner);
     full_response.push_str(&chunk);
@@ -325,15 +437,22 @@ pub fn generate_with_mask(
         let cont_token = engine.tokenize(" ", false, false)?;
 
         for cont in 1..=max_continuations {
-            if ctl.sigint_received.load(Ordering::Relaxed) { break; }
+            if ctl.sigint_received.load(Ordering::Relaxed) {
+                break;
+            }
 
             let is_last = cont == max_continuations;
 
             let (chunk, eog, end_pos, _cont_signals) = engine.generate_ex(
-                &cont_token, next_pos, n_predict, 1,
+                &cont_token,
+                next_pos,
+                n_predict,
+                1,
                 !is_last, // keep_seq alive unless last round
                 |piece| {
-                    if ctl.sigint_received.load(Ordering::Relaxed) { return false; }
+                    if ctl.sigint_received.load(Ordering::Relaxed) {
+                        return false;
+                    }
                     let visible = filter.feed(piece);
                     if !visible.is_empty() {
                         match output_ref {
@@ -353,7 +472,7 @@ pub fn generate_with_mask(
                         }
                     }
                     true
-                }
+                },
             )?;
 
             next_pos = end_pos;
@@ -362,7 +481,9 @@ pub fn generate_with_mask(
 
             if eog {
                 // Natural end — clean up if seq was kept alive
-                if !is_last { engine.clear_seq(1); }
+                if !is_last {
+                    engine.clear_seq(1);
+                }
                 break;
             }
         }
@@ -395,11 +516,17 @@ pub fn generate_with_mask(
     let remaining = filter.flush();
     if !remaining.is_empty() {
         match output {
-            OutputMode::Stdout => { print!("{}", remaining); }
-            OutputMode::Channel(tx) => { let _ = tx.send(remaining); }
+            OutputMode::Stdout => {
+                print!("{}", remaining);
+            }
+            OutputMode::Channel(tx) => {
+                let _ = tx.send(remaining);
+            }
         }
     }
-    if matches!(output, OutputMode::Stdout) { println!("\n"); }
+    if matches!(output, OutputMode::Stdout) {
+        println!("\n");
+    }
 
     // Diagnostic: detect empty visible responses
     if full_response.trim().is_empty() {
@@ -407,11 +534,19 @@ pub fn generate_with_mask(
     } else if full_response.starts_with("<think>") {
         let visible = think_filter::strip_think_tags(&full_response);
         if visible.trim().is_empty() {
-            eprintln!("  [debug] Masked response was ALL think content ({} chars raw)", full_response.len());
+            eprintln!(
+                "  [debug] Masked response was ALL think content ({} chars raw)",
+                full_response.len()
+            );
         }
     }
 
-    Ok((full_response, Some(gen_signals.avg_entropy), gen_signals.first_token_id, gen_signals.first_step_logits))
+    Ok((
+        full_response,
+        Some(gen_signals.avg_entropy),
+        gen_signals.first_token_id,
+        gen_signals.first_step_logits,
+    ))
 }
 
 /// Compute per-head ablation reward by measuring log-prob differential.
@@ -461,7 +596,9 @@ pub fn compute_ablation_reward(
     // For each bank, ablate it and measure log-prob drop
     for b in 0..n_bank {
         // Build ablated mask: same as broadcast mask but bank b blocked for all heads
-        let ablated_nodes: Vec<mask_builder::NodePosition> = ctx.nodes.iter()
+        let ablated_nodes: Vec<mask_builder::NodePosition> = ctx
+            .nodes
+            .iter()
             .filter(|n| n.bank != b as u32) // exclude bank b
             .map(|n| mask_builder::NodePosition {
                 pos_start: n.token_start,
@@ -519,12 +656,16 @@ pub fn compute_ablation_reward(
 
         // Header causal
         for i in 0..ctx.header_tokens {
-            for j in 0..=i { allow(&mut mask, i, j, &abl_remap, sz); }
+            for j in 0..=i {
+                allow(&mut mask, i, j, &abl_remap, sz);
+            }
         }
         // Query sees header + remaining nodes + causal self
         for offset in 0..query_n {
             let i = q_start + offset;
-            for j in 0..ctx.header_tokens { allow(&mut mask, i, j, &abl_remap, sz); }
+            for j in 0..ctx.header_tokens {
+                allow(&mut mask, i, j, &abl_remap, sz);
+            }
             for node in &ablated_nodes {
                 for j in node.pos_start..node.pos_end {
                     allow(&mut mask, i, j, &abl_remap, sz);
@@ -610,6 +751,10 @@ pub fn compute_ablation_reward(
 /// Compute log P(token) from raw logits using log-softmax.
 fn log_softmax_at(logits: &[f32], token_idx: usize) -> f32 {
     let max_logit = logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-    let log_sum_exp: f32 = logits.iter().map(|&l| (l - max_logit).exp()).sum::<f32>().ln();
+    let log_sum_exp: f32 = logits
+        .iter()
+        .map(|&l| (l - max_logit).exp())
+        .sum::<f32>()
+        .ln();
     logits[token_idx] - max_logit - log_sum_exp
 }

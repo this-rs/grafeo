@@ -48,6 +48,8 @@ use retrieval::{
 };
 
 use persona::{PersonaDB, RewardDetector, detect_facts, detect_facts_from_graph};
+use retrieval::attn_dsl::AttnOp;
+use retrieval::formula_selector::{FormulaCandidate, FormulaSelector, SelectedFormula};
 
 /// Build dynamic system header based on graph presence and persistent facts.
 /// Score persona facts via GNN. Returns (key, value, score) with score=1.0 as fallback.
@@ -982,6 +984,15 @@ fn main() -> Result<()> {
     let mut last_avg_entropy: Option<f32> = None;
     // B3: Per-head ablation reward from previous turn (for deferred HeadRouter update)
     let mut last_ablation_reward: Option<retrieval::AblationReward> = None;
+
+    // Phase 4 AFE: Formula selector + tracking
+    let formula_selector = FormulaSelector::new();
+    let mut last_formula_node_id: Option<NodeId> = None;
+    // Seed formulas in PersonaDB if empty
+    if let Some(ref pdb) = persona_db {
+        pdb.seed_formulas_if_empty();
+        debug!("  [AFE] Formula selector initialized, seeds ensured");
+    }
     // Track previous assistant response for persisting corrections on positive reward
     #[allow(unused_assignments)]
     let mut last_assistant_response = String::new();
@@ -1667,6 +1678,42 @@ fn main() -> Result<()> {
         let cold_ref: Option<&dyn kv_registry::ColdSearch> = persona_db
             .as_ref()
             .map(|p| p as &dyn kv_registry::ColdSearch);
+
+        // Phase 4 AFE: Select attention formula (compiled inside query_with_registry)
+        let selected_formula: Option<SelectedFormula> = if let Some(ref pdb) = persona_db {
+            let formula_nodes = pdb.list_formulas();
+            if !formula_nodes.is_empty() {
+                let candidates: Vec<FormulaCandidate> = formula_nodes
+                    .iter()
+                    .map(|f| FormulaCandidate {
+                        name: f.name.clone(),
+                        dsl_json: f.dsl_json.clone(),
+                        avg_reward: f.avg_reward,
+                        energy: f.energy,
+                        activation_count: f.activation_count,
+                        generation: f.generation,
+                        context_affinity: f.context_affinity.clone(),
+                        active: f.active,
+                    })
+                    .collect();
+                // Use turn_count as seed for deterministic but varying selection
+                let selected = formula_selector.select(&candidates, &[], turn_count as u64);
+                // Track the formula's NodeId for reward propagation
+                if let Some(fnode) = formula_nodes.get(selected.candidate_index) {
+                    last_formula_node_id = Some(fnode.id);
+                }
+                debug!(
+                    "  [AFE] selected formula: {} (score={:.3})",
+                    selected.name, selected.score
+                );
+                Some(selected)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         match query_with_registry(
             &engine,
             q_store,
@@ -1687,6 +1734,7 @@ fn main() -> Result<()> {
             round_tracker.as_mut(),
             coact_ref,
             cold_ref,
+            selected_formula.as_ref(),
         ) {
             Ok((response, relevant_graph_nodes, avg_entropy, ablation_reward)) => {
                 // Ξ(t) T5: Store entropy signal for next turn's reward computation
@@ -1909,6 +1957,77 @@ fn main() -> Result<()> {
                                     router.n_updates,
                                     router.specialization_entropy()
                                 );
+                            }
+                        }
+
+                        // Phase 4 AFE: Propagate reward to the formula that was active
+                        if let (Some(fid), Some(pdb2)) =
+                            (last_formula_node_id, &persona_db)
+                        {
+                            pdb2.update_formula_reward(fid, reward as f64);
+                            debug!(
+                                "  [AFE] formula reward: id={:?}, reward={:.2}",
+                                fid, reward
+                            );
+                            // Homeostasis: check if mutation should be triggered
+                            let formulas = pdb2.list_formulas();
+                            let rewards: Vec<f64> = formulas
+                                .iter()
+                                .map(|f| f.avg_reward)
+                                .collect();
+                            if retrieval::formula_evolution::should_mutate_burst(&rewards, 0.05) {
+                                // Find the active formula and mutate it
+                                if let Some(active) = formulas.iter().find(|f| f.id == fid) {
+                                    if let Ok(op) =
+                                        serde_json::from_str::<AttnOp>(&active.dsl_json)
+                                    {
+                                        let mut rng = retrieval::formula_evolution::Rng::new(
+                                            turn_count as u64,
+                                        );
+                                        let mutated =
+                                            retrieval::formula_evolution::mutate(&op, &mut rng);
+                                        if let Ok(json) = serde_json::to_string(&mutated.op) {
+                                            let affinity_refs: Vec<&str> = active
+                                                .context_affinity
+                                                .iter()
+                                                .map(|s| s.as_str())
+                                                .collect();
+                                            let child_id = pdb2.add_formula(
+                                                &format!("{}-m{}", active.name, active.generation + 1),
+                                                &json,
+                                                &affinity_refs,
+                                                active.generation + 1,
+                                                Some(fid),
+                                            );
+                                            debug!(
+                                                "  [AFE] mutation triggered: {} -> {:?} ({:?})",
+                                                active.name, child_id, mutated.mutation_type
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            // GC: cull dead formulas if population exceeded
+                            let gc_candidates: Vec<retrieval::formula_evolution::GcCandidate> =
+                                formulas
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, f)| retrieval::formula_evolution::GcCandidate {
+                                        index: i,
+                                        energy: f.energy,
+                                        activation_count: f.activation_count,
+                                        generation: f.generation,
+                                    })
+                                    .collect();
+                            let gc_targets =
+                                retrieval::formula_evolution::gc_candidates(
+                                    &gc_candidates, 0.05, 50, 50,
+                                );
+                            for idx in gc_targets {
+                                if let Some(f) = formulas.get(idx) {
+                                    pdb2.deactivate_formula(f.id);
+                                    debug!("  [AFE] GC deactivated: {}", f.name);
+                                }
                             }
                         }
 
