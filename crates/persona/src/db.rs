@@ -101,10 +101,28 @@ impl PersonaDB {
             }
         }
 
+        // Also index :Self nodes (Phase 4 introspection)
+        let self_nodes = store.nodes_by_label("Self");
+        for &nid in &self_nodes {
+            if let Some(node) = store.get_node(nid) {
+                let value = node
+                    .properties
+                    .get(&PropertyKey::from("value"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if !value.is_empty() {
+                    // Use a synthetic conv_id (the node itself) and role "self"
+                    idx.add(nid, nid, "self", value);
+                    count += 1;
+                }
+            }
+        }
+
         if count > 0 {
             kv_registry::kv_debug!(
-                "[PersonaDB] BM25 index built: {} messages across {} conversations",
-                count,
+                "[PersonaDB] BM25 index built: {} messages + {} :Self nodes across {} conversations",
+                count - self_nodes.len() as u32,
+                self_nodes.len(),
                 convs.len()
             );
         }
@@ -1963,5 +1981,170 @@ impl PersonaDB {
             active,
             parent_id,
         })
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// :Self nodes — introspective metrics (Phase 4)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Aggregated self-metrics for introspection.
+/// Updated after each turn's reward loop.
+#[derive(Debug, Clone)]
+pub struct SelfMetrics {
+    /// Running average reward (from RewardDetector).
+    pub reward_avg: f64,
+    /// Running average mask quality (factual_signal from reward).
+    pub mask_reward_avg: f64,
+    /// Top-5 HeadRouter heads (head_index, α value) — empty if no router.
+    pub head_router_top5: Vec<(usize, f32)>,
+    /// Name of the currently active attention formula.
+    pub formula_active_name: String,
+    /// Human-readable explanation of the active formula.
+    pub formula_explanation: String,
+    /// Number of active GNN-scored facts.
+    pub gnn_facts_active: usize,
+    /// Recent reward trend: "improving", "stable", or "declining".
+    pub learning_trend: String,
+}
+
+impl PersonaDB {
+    /// Create or update :Self nodes from aggregated metrics.
+    ///
+    /// Each metric becomes a :Self node with `key` as unique identifier.
+    /// Upsert: if a :Self node with matching key exists, update it; otherwise create.
+    pub fn upsert_self_metrics(&self, metrics: &SelfMetrics) {
+        let entries: Vec<(&str, String, String)> = vec![
+            (
+                "reward_avg",
+                format!("Mon reward moyen récent est {:.2}", metrics.reward_avg),
+                format!("{:.4}", metrics.reward_avg),
+            ),
+            (
+                "mask_reward_avg",
+                format!(
+                    "La qualité de mon masque d'attention est {:.2}",
+                    metrics.mask_reward_avg
+                ),
+                format!("{:.4}", metrics.mask_reward_avg),
+            ),
+            (
+                "head_router_top5",
+                if metrics.head_router_top5.is_empty() {
+                    "Pas de routage par tête actif".to_string()
+                } else {
+                    let top: Vec<String> = metrics
+                        .head_router_top5
+                        .iter()
+                        .map(|(h, a)| format!("head{}={:.2}", h, a))
+                        .collect();
+                    format!("Mes têtes d'attention les plus actives : {}", top.join(", "))
+                },
+                metrics
+                    .head_router_top5
+                    .iter()
+                    .map(|(h, a)| format!("{}:{:.3}", h, a))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+            (
+                "formula_active",
+                format!(
+                    "Ma formule d'attention active est '{}' : {}",
+                    metrics.formula_active_name, metrics.formula_explanation
+                ),
+                metrics.formula_active_name.clone(),
+            ),
+            (
+                "gnn_state",
+                format!(
+                    "Mon GNN surveille {} faits actifs",
+                    metrics.gnn_facts_active
+                ),
+                format!("{}", metrics.gnn_facts_active),
+            ),
+            (
+                "learning_trajectory",
+                format!("Ma trajectoire d'apprentissage est : {}", metrics.learning_trend),
+                metrics.learning_trend.clone(),
+            ),
+        ];
+
+        let store = self.db.store();
+        let now = Utc::now().to_rfc3339();
+
+        for (key, value, value_raw) in entries {
+            // Find existing :Self node with this key
+            let existing = store
+                .nodes_by_label("Self")
+                .into_iter()
+                .find(|nid| {
+                    store
+                        .get_node(*nid)
+                        .and_then(|n| {
+                            n.properties
+                                .get(&PropertyKey::from("key"))
+                                .and_then(|v| {
+                                    if let Value::String(s) = v {
+                                        let s_ref: &str = s.as_ref();
+                                    Some(s_ref == key)
+                                    } else {
+                                        None
+                                    }
+                                })
+                        })
+                        .unwrap_or(false)
+                });
+
+            if let Some(nid) = existing {
+                // Update existing
+                self.db
+                    .set_node_property(nid, "value", Value::String(value.clone().into()));
+                self.db
+                    .set_node_property(nid, "value_raw", Value::String(value_raw.into()));
+                self.db
+                    .set_node_property(nid, "updated_at", Value::String(now.clone().into()));
+                // Update BM25 index (re-add with new content)
+                self.msg_index
+                    .borrow_mut()
+                    .add(nid, nid, "self", &value);
+            } else {
+                // Create new :Self node
+                let nid = self.db.create_node_with_props(
+                    &["Self"],
+                    [
+                        ("key", Value::String(key.to_string().into())),
+                        ("value", Value::String(value.clone().into())),
+                        ("value_raw", Value::String(value_raw.into())),
+                        ("updated_at", Value::String(now.clone().into())),
+                    ],
+                );
+                // Add to BM25 index
+                self.msg_index
+                    .borrow_mut()
+                    .add(nid, nid, "self", &value);
+            }
+        }
+    }
+
+    /// List all :Self nodes as (key, value) pairs.
+    pub fn list_self_metrics(&self) -> Vec<(String, String)> {
+        let store = self.db.store();
+        store
+            .nodes_by_label("Self")
+            .into_iter()
+            .filter_map(|nid| {
+                let node = store.get_node(nid)?;
+                let key = match node.properties.get(&PropertyKey::from("key"))? {
+                    Value::String(s) => s.to_string(),
+                    _ => return None,
+                };
+                let value = match node.properties.get(&PropertyKey::from("value"))? {
+                    Value::String(s) => s.to_string(),
+                    _ => return None,
+                };
+                Some((key, value))
+            })
+            .collect()
     }
 }

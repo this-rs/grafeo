@@ -9,7 +9,7 @@ pub mod persist_net;
 pub mod reward;
 
 pub use bm25::{MessageHit, MessageIndex};
-pub use db::{PersonaDB, XiStats};
+pub use db::{PersonaDB, SelfMetrics, XiStats};
 pub use facts::{PatternMatch, detect_facts, detect_facts_from_graph};
 pub use persist_net::PersistNet;
 pub use reward::{RewardDetector, RewardSignals};

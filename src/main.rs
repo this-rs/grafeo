@@ -2271,6 +2271,50 @@ fn main() -> Result<()> {
                     }
                 }
 
+                // Phase 4: Update :Self introspective metrics
+                if let Some(ref pdb) = persona_db {
+                    let formula_name = selected_formula
+                        .as_ref()
+                        .map(|f| f.name.clone())
+                        .unwrap_or_else(|| "none".to_string());
+                    let head_top5: Vec<(usize, f32)> = head_router
+                        .as_ref()
+                        .map(|r| {
+                            let vis = r.forward();
+                            let n_bank = r.n_bank;
+                            let mut head_scores: Vec<(usize, f32)> = (0..r.n_head)
+                                .map(|h| {
+                                    let max_vis = (0..n_bank)
+                                        .map(|b| vis[h * n_bank + b])
+                                        .fold(0.0f32, f32::max);
+                                    (h, max_vis)
+                                })
+                                .collect();
+                            head_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+                            head_scores.truncate(5);
+                            head_scores
+                        })
+                        .unwrap_or_default();
+                    let metrics = persona::SelfMetrics {
+                        reward_avg: last_avg_entropy.unwrap_or(0.0) as f64,
+                        mask_reward_avg: 0.0, // filled from reward signals when available
+                        head_router_top5: head_top5,
+                        formula_active_name: formula_name,
+                        formula_explanation: String::new(), // TS.2 will add NL explanation
+                        gnn_facts_active: last_used_fact_ids.len(),
+                        learning_trend: if turn_count < 5 {
+                            "cold_start".to_string()
+                        } else {
+                            "stable".to_string()
+                        },
+                    };
+                    pdb.upsert_self_metrics(&metrics);
+                    debug!(
+                        "  [Self] metrics updated: reward_avg={:.2}, formula={}",
+                        metrics.reward_avg, metrics.formula_active_name
+                    );
+                }
+
                 // B3: Store ablation reward for deferred backward at next turn
                 last_ablation_reward = ablation_reward;
 
