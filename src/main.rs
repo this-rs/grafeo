@@ -368,8 +368,9 @@ fn main() -> Result<()> {
             let _ = std::fs::create_dir_all(&dir);
             format!("{dir}/default.persona")
         };
-        let ckpt_conv = format!("{persona_resolved_path}/wal/checkpoint.meta");
-        let _ = std::fs::remove_file(&ckpt_conv);
+        // Note: do NOT delete checkpoint.meta for persona DB — deleting it
+        // forces full WAL replay which re-allocates NodeIds sequentially,
+        // losing nodes created in previous sessions (AttnFormulas, Facts, etc.)
         let persona_db = match persona::PersonaDB::open(&persona_resolved_path) {
             Ok(cdb) => {
                 cdb.migrate_facts();
@@ -600,9 +601,7 @@ fn main() -> Result<()> {
         format!("{dir}/default.persona")
     };
     debug!("Persona DB path: {persona_resolved_path}");
-    // Remove stale checkpoint if exists
-    let ckpt_conv = format!("{persona_resolved_path}/wal/checkpoint.meta");
-    let _ = std::fs::remove_file(&ckpt_conv);
+    // Note: do NOT delete checkpoint.meta for persona DB — see comment above
     let mut persona_db = match PersonaDB::open(&persona_resolved_path) {
         Ok(cdb) => {
             let convs = cdb.list_conversations();
