@@ -41,10 +41,12 @@ macro_rules! debug {
 
 use graph_schema::{GraphSchema, discover_schema, get_node_name_generic};
 use kv_registry::{
-    ConvFragments, KvBank, KvNodeRegistry, discover_banks, load_bank_cache, save_bank_cache,
+    BankManager, ConvFragments, KvBank, KvNodeRegistry, discover_banks, load_bank_cache,
+    save_bank_cache,
 };
 use retrieval::{
-    Engine, GenerationControl, GnnContext, OutputMode, is_meta_query, query_with_registry,
+    BankContext, Engine, GenerationControl, GnnContext, OutputMode, is_meta_query,
+    query_with_registry,
 };
 use retrieval::iptr_graph::FactSnapshot;
 use retrieval::state_bias::StateMetrics;
@@ -770,7 +772,10 @@ fn main() -> Result<()> {
         header_n
     );
 
-    // ── Phase D: compute Hilbert layout if enabled ──────────────
+    // ── Phase D: compute Hilbert layout + BankManager if enabled ──
+    let mut bank_manager: Option<BankManager> = None;
+    let mut bank_adjacency: Option<std::collections::HashMap<usize, std::collections::HashSet<usize>>> = None;
+    let mut bank_centroids: Option<std::collections::HashMap<usize, Vec<f32>>> = None;
     if hilbert_enabled {
         if let Some(ref st) = store {
             let hilbert_t0 = Instant::now();
@@ -804,6 +809,28 @@ fn main() -> Result<()> {
                 layout.order,
                 hilbert_t0.elapsed().as_millis()
             );
+
+            // Phase D.2: Create BankManager from Hilbert chunks (~25 nodes/bank)
+            let chunk_size = 25.max(layout.len() / 40).min(50); // 25-50 nodes/bank
+            let mgr = BankManager::from_chunks(&layout, chunk_size)
+                .with_max_loaded(8); // max 8 banks loaded simultaneously
+            let n_banks = mgr.banks.len();
+
+            // Collect graph edges for inter-bank adjacency
+            let graph_edges: Vec<(NodeId, NodeId)> = adjacency
+                .iter()
+                .flat_map(|(&src, targets)| targets.iter().map(move |&tgt| (src, tgt)))
+                .collect();
+            let bank_adj = mgr.build_bank_adjacency(graph_edges.iter().copied());
+
+            eprintln!(
+                "  BankManager: {} banks (chunk_size={}), max_loaded=8",
+                n_banks, chunk_size
+            );
+
+            bank_manager = Some(mgr);
+            bank_adjacency = Some(bank_adj);
+
             registry.set_hilbert_layout(layout);
         } else {
             eprintln!("  --hilbert ignored: no database loaded");
@@ -1204,6 +1231,21 @@ fn main() -> Result<()> {
         None
     };
 
+    // Phase D.3: Compute bank centroids from embedding cache (after embeddings are ready)
+    if let (Some(mgr), Some(cache)) = (&bank_manager, &embd_cache) {
+        let t0 = Instant::now();
+        let centroids = mgr.compute_bank_centroids(|nid| {
+            cache.get(nid).map(|s| s.to_vec())
+        });
+        let n_centroids = centroids.len();
+        bank_centroids = Some(centroids);
+        eprintln!(
+            "  BankManager: {} centroids computed in {:.0}ms",
+            n_centroids,
+            t0.elapsed().as_millis()
+        );
+    }
+
     // Phase C injection pipeline: GNN fusion + ProjectionNet (only when injection enabled)
     let (mut projection_net, mut training_manager): (
         Option<retrieval::ProjectionNet>,
@@ -1453,7 +1495,18 @@ fn main() -> Result<()> {
                 &[], // no self-embed positions in benchmark
                 bench_iptr_snapshot.as_ref(),
                 None, // no state metrics in benchmark (needs PersonaDB SelfMetrics)
-                None, // no bank context in benchmark (T4.2)
+                // T4.3: BankContext in benchmark (structural elimination)
+                match (&mut bank_manager, &bank_centroids, &bank_adjacency) {
+                    (Some(mgr), Some(cents), Some(adj)) => {
+                        Some(BankContext {
+                            manager: mgr,
+                            centroids: cents,
+                            adjacency: adj,
+                            top_k: 3,
+                        })
+                    }
+                    _ => None,
+                },
             );
             let latency_ms = t_start.elapsed().as_secs_f64() * 1000.0;
 
@@ -2077,7 +2130,18 @@ fn main() -> Result<()> {
             &self_embed_positions,
             iptr_snapshot.as_ref(),
             state_metrics.as_ref(),
-            None, // TODO(T4.3+): wire BankContext from HilbertLayout + BankManager
+            // T4.3: BankContext from BankManager (Hilbert structural elimination)
+            match (&mut bank_manager, &bank_centroids, &bank_adjacency) {
+                (Some(mgr), Some(cents), Some(adj)) => {
+                    Some(BankContext {
+                        manager: mgr,
+                        centroids: cents,
+                        adjacency: adj,
+                        top_k: 3,
+                    })
+                }
+                _ => None,
+            },
         ) {
             Ok((response, relevant_graph_nodes, avg_entropy, ablation_reward)) => {
                 // Ξ(t) T5: Store entropy signal for next turn's reward computation

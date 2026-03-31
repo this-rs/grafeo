@@ -40,10 +40,10 @@ pub struct BankContext<'a> {
     pub manager: &'a mut BankManager,
     /// Pre-computed bank centroids (bank_id → mean embedding).
     /// Computed via `BankManager::compute_bank_centroids()`.
-    pub centroids: HashMap<usize, Vec<f32>>,
+    pub centroids: &'a HashMap<usize, Vec<f32>>,
     /// Inter-bank adjacency (bank_id → neighbor bank_ids).
     /// Computed via `BankManager::build_bank_adjacency()`.
-    pub adjacency: HashMap<usize, HashSet<usize>>,
+    pub adjacency: &'a HashMap<usize, HashSet<usize>>,
     /// Number of top banks to select before 1-hop expansion.
     pub top_k: usize,
 }
