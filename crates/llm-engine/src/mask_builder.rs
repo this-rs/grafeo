@@ -261,6 +261,30 @@ impl PerHeadActiveRanges {
     pub fn globally_active_count(&self) -> usize {
         self.total_positions - self.globally_dead.len()
     }
+
+    /// Convert to a flat C-compatible bitmap for FFI to llama.cpp.
+    ///
+    /// Layout: `[n_head × n_pos]` contiguous `u8` array.
+    /// - `0` = active (K/V dequant required)
+    /// - `1` = blocked (K/V dequant can be skipped)
+    ///
+    /// This is the inverse of `ranges`: positions NOT in any active range are blocked.
+    pub fn to_c_bitmap(&self) -> Vec<u8> {
+        let n_head = self.ranges.len();
+        let n_pos = self.total_positions;
+        let mut bitmap = vec![1u8; n_head * n_pos]; // default: blocked
+
+        for (h, head_ranges) in self.ranges.iter().enumerate() {
+            let offset = h * n_pos;
+            for range in head_ranges {
+                for pos in range.start..range.end.min(n_pos) {
+                    bitmap[offset + pos] = 0; // active
+                }
+            }
+        }
+
+        bitmap
+    }
 }
 
 /// Analyze a per-head mask to identify dead columns (fully masked KV positions).
@@ -931,6 +955,66 @@ mod tests {
         assert_eq!(sparsity.total_positions, 0);
         assert!(sparsity.globally_dead.is_empty());
         assert_eq!(sparsity.global_sparsity(), 0.0);
+    }
+
+    /// T6.1: to_c_bitmap produces correct [n_head × n_pos] u8 layout for FFI.
+    #[test]
+    fn test_to_c_bitmap() {
+        let nodes = vec![
+            NodePosition { pos_start: 1, pos_end: 3, bank: 3 },
+        ];
+        let config = default_bank_config();
+        let header_tokens = 1;
+        let total_positions = 5;
+        let n_head = 1;
+
+        let router = phase_a_router(n_head as usize, &config);
+        let mask = build_perhead_mask(&nodes, header_tokens, total_positions, n_head, &config, Some(&router), None);
+        let sparsity = analyze_mask_sparsity(&mask);
+
+        // Globally dead: positions 1,2 (bank 3, single head can't see them)
+        assert_eq!(sparsity.globally_dead, vec![1, 2]);
+
+        let bitmap = sparsity.to_c_bitmap();
+        assert_eq!(bitmap.len(), 1 * 5); // n_head × n_pos
+        // Head 0: active=[0, 3, 4], blocked=[1, 2]
+        assert_eq!(bitmap[0], 0); // pos 0: header, active
+        assert_eq!(bitmap[1], 1); // pos 1: bank 3, blocked
+        assert_eq!(bitmap[2], 1); // pos 2: bank 3, blocked
+        assert_eq!(bitmap[3], 0); // pos 3: query, active
+        assert_eq!(bitmap[4], 0); // pos 4: query, active
+    }
+
+    /// T6.1: to_c_bitmap multi-head layout is correct.
+    #[test]
+    fn test_to_c_bitmap_multi_head() {
+        let nodes = vec![
+            NodePosition { pos_start: 2, pos_end: 4, bank: 0 },
+            NodePosition { pos_start: 4, pos_end: 6, bank: 3 },
+        ];
+        let config = default_bank_config();
+        let header_tokens = 2;
+        let total_positions = 8; // 2 header + 2+2 node + 2 query
+        let n_head = 4;
+
+        let router = phase_a_router(n_head as usize, &config);
+        let mask = build_perhead_mask(&nodes, header_tokens, total_positions, n_head, &config, Some(&router), None);
+        let sparsity = analyze_mask_sparsity(&mask);
+
+        let bitmap = sparsity.to_c_bitmap();
+        assert_eq!(bitmap.len(), 4 * 8);
+
+        // Head 0 (ratio=0.0): sees bank 0 only. Bank 3 (pos 4,5) blocked.
+        assert_eq!(bitmap[0 * 8 + 4], 1); // blocked
+        assert_eq!(bitmap[0 * 8 + 5], 1); // blocked
+        assert_eq!(bitmap[0 * 8 + 2], 0); // bank 0, active
+        assert_eq!(bitmap[0 * 8 + 0], 0); // header, active
+        assert_eq!(bitmap[0 * 8 + 6], 0); // query, active
+
+        // Head 3 (ratio=0.75): sees all banks. Nothing blocked.
+        for pos in 0..8 {
+            assert_eq!(bitmap[3 * 8 + pos], 0, "head 3 pos {} should be active", pos);
+        }
     }
 
     /// T4.3: ActiveRange::len() computes correctly.
