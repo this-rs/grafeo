@@ -147,11 +147,8 @@ pub fn query_with_registry(
 
     if scored_nodes_for_query.is_empty() {
         // No graph data — generate from conversation context + system prompt
-        // /no_think MUST be in the user message for Qwen3 to reliably suppress thinking.
-        // Placing it only in the system header gets "diluted" by graph context tokens.
-        let fallback_text = format!(
-            "<|im_end|>\n<|im_start|>user\n{query} /no_think<|im_end|>\n<|im_start|>assistant\n"
-        );
+        // Format using model's native chat template (extracted from GGUF metadata).
+        let fallback_text = engine.format_user_turn(&format!("{query} /no_think"))?;
         let tokens = engine.tokenize(&fallback_text, false, true)?;
         // Clean seq_id=1 from any previous generation residue, then copy context
         engine.clear_seq(1);
@@ -247,6 +244,7 @@ pub fn query_with_registry(
     let needed_ids: Vec<NodeId> = scored_nodes_for_query.iter().map(|n| n.id).collect();
     let missing = registry.find_missing(&needed_ids);
     registry.touch(&needed_ids);
+
 
     // Estimate tokens needed for missing nodes
     let est_missing_tokens: i32 = missing
@@ -681,9 +679,8 @@ pub fn query_with_registry(
 
     // Ξ(t) Phase B/B3: Compute per-head ablation reward if HeadRouter is active
     let ablation = if let (Some(router), Some(ftid)) = (head_router, first_token_id) {
-        let query_text = format!(
-            "<|im_end|>\n<|im_start|>user\n{query} /no_think<|im_end|>\n<|im_start|>assistant\n"
-        );
+        let query_text = engine.format_user_turn(&format!("{query} /no_think"))
+            .unwrap_or_else(|_| format!("<|im_end|>\n<|im_start|>user\n{query} /no_think<|im_end|>\n<|im_start|>assistant\n"));
         match engine.tokenize(&query_text, false, true) {
             Ok(qtokens) => {
                 match compute_ablation_reward(

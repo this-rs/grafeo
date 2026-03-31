@@ -70,6 +70,10 @@ pub struct EngineConfig {
     pub min_p: f32,
     pub penalty_repeat: f32,
     pub penalty_last_n: i32,
+    /// KV cache quantization type for keys (default: f16, use q8_0/q4_0 for TurboQuant)
+    pub type_k: i32,
+    /// KV cache quantization type for values (default: f16)
+    pub type_v: i32,
 }
 
 impl Default for EngineConfig {
@@ -84,6 +88,8 @@ impl Default for EngineConfig {
             min_p: 0.05,
             penalty_repeat: 1.1,
             penalty_last_n: 64,
+            type_k: 1, // GGML_TYPE_F16
+            type_v: 1, // GGML_TYPE_F16
         }
     }
 }
@@ -138,9 +144,23 @@ impl LlamaEngine {
             let mut params = ffi::llama_context_default_params();
             params.n_ctx = config.n_ctx;
             params.n_batch = config.n_batch;
-            params.flash_attn_type = ffi::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_DISABLED;
+            // KV cache quantization (TurboQuant: rotation Hadamard activée quand quantized)
+            params.type_k = std::mem::transmute(config.type_k);
+            params.type_v = std::mem::transmute(config.type_v);
+            // V quantized requires flash_attn at init. Our guard in build_attn_mha()
+            // auto-disables flash path when custom mask or state_bias is set.
+            let v_quantized = config.type_v != 1; // 1 = GGML_TYPE_F16
+            if v_quantized {
+                params.flash_attn_type = ffi::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_ENABLED;
+            } else {
+                params.flash_attn_type = ffi::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_DISABLED;
+            }
             // Triple seq_id: 0 = persistent context, 1 = query+generation, 2 = ablation eval (B3)
             params.n_seq_max = 3;
+            // Unified KV: all seq_ids share the full n_ctx pool.
+            // Without this, kv_unified=false (default) splits n_ctx into n_seq_max streams
+            // (e.g., 8192/3 = 2816 cells per stream), causing FAILED_PREPARE at pos=2816.
+            params.kv_unified = true;
             ffi::llama_init_from_model(model, params)
         };
         if ctx.is_null() {
@@ -237,8 +257,16 @@ impl LlamaEngine {
             let mut params = ffi::llama_context_default_params();
             params.n_ctx = config.n_ctx;
             params.n_batch = config.n_batch;
-            params.flash_attn_type = ffi::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_DISABLED;
+            params.type_k = std::mem::transmute(config.type_k);
+            params.type_v = std::mem::transmute(config.type_v);
+            let v_quantized = config.type_v != 1;
+            if v_quantized {
+                params.flash_attn_type = ffi::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_ENABLED;
+            } else {
+                params.flash_attn_type = ffi::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_DISABLED;
+            }
             params.n_seq_max = 3;
+            params.kv_unified = true;
 
             // Set eval callback for head profiling
             params.cb_eval = Some(crate::profiler::profiler_eval_callback);
@@ -472,6 +500,180 @@ impl LlamaEngine {
     /// Get the EOS token for this model.
     pub fn token_eos(&self) -> ffi::llama_token {
         unsafe { ffi::llama_token_eos(self.vocab()) }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Chat Template — Dynamic extraction from model GGUF metadata
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Get the chat template embedded in the model's GGUF metadata.
+    ///
+    /// Returns `None` if the model has no chat template (rare for modern models).
+    /// The template is a Jinja2 string, but `llama_chat_apply_template` handles
+    /// the rendering internally for known template families.
+    pub fn chat_template(&self) -> Option<String> {
+        unsafe {
+            let ptr = ffi::llama_model_chat_template(self.model, ptr::null());
+            if ptr.is_null() {
+                return None;
+            }
+            let cstr = std::ffi::CStr::from_ptr(ptr);
+            cstr.to_str().ok().map(|s| s.to_owned())
+        }
+    }
+
+    /// Format messages using the model's native chat template.
+    ///
+    /// Uses `llama_chat_apply_template` which supports a pre-defined list of
+    /// template families (ChatML, Llama 3, Mistral, Gemma, etc.).
+    ///
+    /// - `messages`: slice of (role, content) pairs
+    /// - `add_assistant`: if true, append the assistant turn prefix (for generation)
+    ///
+    /// Returns the formatted prompt string, or falls back to ChatML if the model
+    /// template is not recognized.
+    pub fn apply_chat_template(
+        &self,
+        messages: &[(&str, &str)],
+        add_assistant: bool,
+    ) -> Result<String> {
+        // Build llama_chat_message array
+        let c_roles: Vec<CString> = messages
+            .iter()
+            .map(|(role, _)| CString::new(*role).unwrap())
+            .collect();
+        let c_contents: Vec<CString> = messages
+            .iter()
+            .map(|(_, content)| CString::new(*content).unwrap())
+            .collect();
+
+        let chat_msgs: Vec<ffi::llama_chat_message> = c_roles
+            .iter()
+            .zip(c_contents.iter())
+            .map(|(role, content)| ffi::llama_chat_message {
+                role: role.as_ptr(),
+                content: content.as_ptr(),
+            })
+            .collect();
+
+        // Get model template (or NULL for auto-detect)
+        let tmpl_str = self.chat_template();
+        let tmpl_cstring = tmpl_str.as_ref().map(|s| CString::new(s.as_str()).unwrap());
+        let tmpl_ptr = tmpl_cstring
+            .as_ref()
+            .map(|c| c.as_ptr())
+            .unwrap_or(ptr::null());
+
+        // First call: get needed buffer size
+        let needed = unsafe {
+            ffi::llama_chat_apply_template(
+                tmpl_ptr,
+                chat_msgs.as_ptr(),
+                chat_msgs.len(),
+                add_assistant,
+                ptr::null_mut(),
+                0,
+            )
+        };
+
+        if needed < 0 {
+            // Template not recognized — fall back to ChatML
+            return Ok(self.fallback_chatml(messages, add_assistant));
+        }
+
+        // Allocate buffer and render
+        let buf_size = (needed + 1) as usize;
+        let mut buf = vec![0u8; buf_size];
+
+        let written = unsafe {
+            ffi::llama_chat_apply_template(
+                tmpl_ptr,
+                chat_msgs.as_ptr(),
+                chat_msgs.len(),
+                add_assistant,
+                buf.as_mut_ptr() as *mut i8,
+                buf_size as i32,
+            )
+        };
+
+        if written < 0 {
+            bail!("llama_chat_apply_template failed on second call");
+        }
+
+        buf.truncate(written as usize);
+        Ok(String::from_utf8_lossy(&buf).into_owned())
+    }
+
+    /// Fallback to ChatML format if the model's template is not recognized.
+    fn fallback_chatml(&self, messages: &[(&str, &str)], add_assistant: bool) -> String {
+        let mut out = String::new();
+        for (role, content) in messages {
+            out.push_str(&format!("<|im_start|>{role}\n{content}<|im_end|>\n"));
+        }
+        if add_assistant {
+            out.push_str("<|im_start|>assistant\n");
+        }
+        out
+    }
+
+    /// Format a single user query for generation, using the model's native template.
+    ///
+    /// Returns the "continuation" part to append after the system header in the KV cache:
+    /// - system closing tag + user message + user closing tag + assistant opening tag
+    ///
+    /// For ChatML: `<|im_end|>\n<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n`
+    /// For Llama 3: `<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{query}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n`
+    pub fn format_user_turn(&self, query: &str) -> Result<String> {
+        // Strategy: render [system=".", user=query] with add_assistant=true,
+        // then strip the "open" system part (without closing tag) to get
+        // the continuation that starts with the system closing tag.
+        let messages_with_system = vec![
+            ("system", "."),
+            ("user", query),
+        ];
+        let full = self.apply_chat_template(&messages_with_system, true)?;
+
+        // Get the "open" system part (without closing tag)
+        let system_open = self.format_system_open(".")?;
+
+        // The continuation starts right after the open system part,
+        // which means it begins with the system closing tag — exactly what we need.
+        if let Some(rest) = full.strip_prefix(&system_open) {
+            Ok(rest.to_string())
+        } else {
+            // Fallback: return the full render
+            Ok(full)
+        }
+    }
+
+    /// Format the system header opening using the model's native template.
+    ///
+    /// Returns the system message **without** the closing tag, so that additional
+    /// content (graph nodes) can be appended before the message is closed.
+    ///
+    /// For ChatML: `<|im_start|>system\n{content}`
+    /// For Llama 3: `<|start_header_id|>system<|end_header_id|>\n\n{content}`
+    pub fn format_system_header(&self, system_content: &str) -> Result<String> {
+        let messages = vec![("system", system_content)];
+        self.apply_chat_template(&messages, false)
+    }
+
+    /// Format the "open" system message (without closing tag).
+    ///
+    /// The closing tag is stripped so that graph node text can be appended
+    /// inside the system message before the user turn closes it.
+    pub fn format_system_open(&self, system_content: &str) -> Result<String> {
+        // Render the full system message (with closing tag)
+        let full = self.format_system_header(system_content)?;
+
+        // Find the content in the rendered output and keep everything up to
+        // (and including) the content — strip the closing tag after it.
+        if let Some(pos) = full.rfind(system_content) {
+            Ok(full[..pos + system_content.len()].to_string())
+        } else {
+            // Shouldn't happen — content should appear verbatim in the output
+            Ok(full)
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

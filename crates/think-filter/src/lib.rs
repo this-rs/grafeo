@@ -191,7 +191,12 @@ pub fn strip_think_tags(s: &str) -> String {
             break;
         }
     }
-    result = result.replace("<|im_start|>", "").replace("<|im_end|>", "");
+    // Strip special tokens from all known chat template families
+    result = result
+        .replace("<|im_start|>", "").replace("<|im_end|>", "")           // ChatML (Qwen3)
+        .replace("<|start_header_id|>", "").replace("<|end_header_id|>", "") // Llama 3
+        .replace("<|eot_id|>", "")                                       // Llama 3
+        .replace("<|endoftext|>", "");                                   // General
     result.trim().to_string()
 }
 

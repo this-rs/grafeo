@@ -38,15 +38,17 @@ pub fn generate_with_mask(
     iptr_snapshot: Option<&crate::iptr_graph::FactSnapshot>,
     state_metrics: Option<&crate::state_bias::StateMetrics>,
 ) -> Result<(String, Option<f32>, Option<i32>, Option<Vec<f32>>)> {
-    // /no_think MUST be in the user message for Qwen3 to reliably suppress thinking.
-    // Placing it only in the system header gets "diluted" by graph context tokens.
-    let query_text = format!(
-        "<|im_end|>\n<|im_start|>user\n{query} /no_think<|im_end|>\n<|im_start|>assistant\n"
-    );
+    // Format user turn using the model's native chat template (extracted from GGUF metadata).
+    // This handles ChatML (Qwen3), Llama 3, Mistral, Gemma, etc. automatically.
+    // /no_think is appended for Qwen3-style thinking models (harmless on others).
+    let query_text = engine.format_user_turn(&format!("{query} /no_think"))?;
     let query_tokens = engine.tokenize(&query_text, false, true)?;
     let query_n = query_tokens.len() as i32;
 
-    let n_predict: i32 = 4096; // thinking models need 500-800 tokens for <think>, 1024 was truncating
+    let n_predict: i32 = std::env::var("OBRAIN_N_PREDICT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(4096); // thinking models need 500-800 tokens for <think>, 1024 was truncating
 
     // ── Compute mask budget (dynamic) ───────────────────────────────
     // Per-head mask memory = n_groups × n_pos² × 4 bytes (f32).

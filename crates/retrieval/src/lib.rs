@@ -1,3 +1,4 @@
+pub mod benchmark;
 pub mod attn_compiler;
 pub mod attn_dsl;
 pub mod contrastive;

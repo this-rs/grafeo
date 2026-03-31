@@ -1,0 +1,192 @@
+{
+  "timestamp": "2026-03-31T01:38:59.870304+00:00",
+  "model": "llama3.2-3b",
+  "kv_type_k": "f16",
+  "kv_type_v": "f16",
+  "n_ctx": 8192,
+  "questions": [
+    {
+      "query": "Où habite Thomas Rivière ?",
+      "category": "direct_recall",
+      "hit": true,
+      "keywords_found": [
+        "Lyon"
+      ],
+      "keywords_missing": [],
+      "latency_ms": 1112.3193330000001,
+      "response_preview": "Thomas Rivière habite à Lyon."
+    },
+    {
+      "query": "Sur quel projet travaille Sophie Martin ?",
+      "category": "direct_recall",
+      "hit": true,
+      "keywords_found": [
+        "DataPipeline"
+      ],
+      "keywords_missing": [],
+      "latency_ms": 1292.2463340000002,
+      "response_preview": "Sophie Martin travaille sur le projet DataPipeline, qui est un ETL (Extract, Transform, Load) pipeline en temps réel."
+    },
+    {
+      "query": "Quel langage utilise Marc Dupont ?",
+      "category": "direct_recall",
+      "hit": true,
+      "keywords_found": [
+        "Go"
+      ],
+      "keywords_missing": [],
+      "latency_ms": 1258.828208,
+      "response_preview": "Marc Dupont utilise le langage Go pour ses projets, notamment CloudInfra et l'infrastructure cloud hybride."
+    },
+    {
+      "query": "Qui habite dans la même ville que Thomas Rivière ?",
+      "category": "multi_hop",
+      "hit": false,
+      "keywords_found": [],
+      "keywords_missing": [
+        "Marc"
+      ],
+      "latency_ms": 1180.7173340000002,
+      "response_preview": "Thomas Rivière habite à Lyon."
+    },
+    {
+      "query": "Quelles technologies sont utilisées par le projet Obrain ?",
+      "category": "multi_hop",
+      "hit": true,
+      "keywords_found": [
+        "Rust"
+      ],
+      "keywords_missing": [],
+      "latency_ms": 1700.91975,
+      "response_preview": "Le projet Obrain utilise principalement les technologies suivantes : \n\n1. **Rust** - Langage système performant et memor..."
+    },
+    {
+      "query": "Qui connaît Thomas Rivière ?",
+      "category": "relationship",
+      "hit": false,
+      "keywords_found": [],
+      "keywords_missing": [
+        "Marc",
+        "Alice"
+      ],
+      "latency_ms": 1682.165458,
+      "response_preview": "D'après les informations disponibles, personne n'est explicitement identifiée comme connaissant Thomas Rivière. Les donn..."
+    },
+    {
+      "query": "À quel événement Thomas et Marc ont-ils assisté ensemble ?",
+      "category": "relationship",
+      "hit": true,
+      "keywords_found": [
+        "RustConf"
+      ],
+      "keywords_missing": [],
+      "latency_ms": 2474.686958,
+      "response_preview": "D'après les données disponibles, Thomas Rivière et Marc Dupont n'ont pas assisté ensemble à un événement commun. Les évé..."
+    },
+    {
+      "query": "Combien de personnes utilisent Python ?",
+      "category": "aggregation",
+      "hit": false,
+      "keywords_found": [
+        "Sophie"
+      ],
+      "keywords_missing": [
+        "Alice"
+      ],
+      "latency_ms": 1716.7275,
+      "response_preview": "D'après les données, **1 personne utilise Python** : Sophie Martin (projet DataPipeline et PyTorch)."
+    },
+    {
+      "query": "Liste toutes les villes mentionnées dans le graphe.",
+      "category": "aggregation",
+      "hit": true,
+      "keywords_found": [
+        "Lyon",
+        "Paris",
+        "Grenoble",
+        "Toulouse"
+      ],
+      "keywords_missing": [],
+      "latency_ms": 1952.146708,
+      "response_preview": "Voici toutes les villes mentionnées dans le graphe :\n\n1. **Lyon** \n2. **Paris** \n3. **Grenoble** \n4. **Toulouse**"
+    },
+    {
+      "query": "Décris le profil professionnel de Thomas Rivière.",
+      "category": "context",
+      "hit": false,
+      "keywords_found": [
+        "Rust",
+        "Obrain"
+      ],
+      "keywords_missing": [
+        "Mozilla"
+      ],
+      "latency_ms": 4161.323333,
+      "response_preview": "Thomas Rivière est un développeur de logiciels spécialisé dans le développement embarqué et les moteurs de graphe. Son p..."
+    },
+    {
+      "query": "Quelles sont les compétences de Pierre Bernard ?",
+      "category": "context",
+      "hit": false,
+      "keywords_found": [],
+      "keywords_missing": [
+        "DevOps",
+        "Bash",
+        "Airbus"
+      ],
+      "latency_ms": 2344.4175830000004,
+      "response_preview": "D'après les données disponibles, aucune information spécifique sur les compétences de Pierre Bernard n'est mentionnée da..."
+    },
+    {
+      "query": "Quel est le lien entre Alice Chen et NeuralSearch ?",
+      "category": "relationship",
+      "hit": false,
+      "keywords_found": [],
+      "keywords_missing": [
+        "travaille",
+        "INRIA"
+      ],
+      "latency_ms": 2346.357958,
+      "response_preview": "D'après les données disponibles, **aucun lien explicite n'est mentionné entre Alice Chen et NeuralSearch**. - **Alice Ch..."
+    }
+  ],
+  "summary": {
+    "hit_rate": 0.5,
+    "hits": 6,
+    "total": 12,
+    "latency_avg_ms": 1935.238038083333,
+    "latency_p95_ms": 4161.323333,
+    "by_category": {
+      "aggregation": {
+        "hit_rate": 0.5,
+        "hits": 1,
+        "total": 2,
+        "latency_avg_ms": 1834.437104
+      },
+      "direct_recall": {
+        "hit_rate": 1.0,
+        "hits": 3,
+        "total": 3,
+        "latency_avg_ms": 1221.1312916666668
+      },
+      "multi_hop": {
+        "hit_rate": 0.5,
+        "hits": 1,
+        "total": 2,
+        "latency_avg_ms": 1440.818542
+      },
+      "relationship": {
+        "hit_rate": 0.3333333333333333,
+        "hits": 1,
+        "total": 3,
+        "latency_avg_ms": 2167.7367913333333
+      },
+      "context": {
+        "hit_rate": 0.0,
+        "hits": 0,
+        "total": 2,
+        "latency_avg_ms": 3252.8704580000003
+      }
+    }
+  }
+}

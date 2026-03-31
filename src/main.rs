@@ -107,23 +107,38 @@ fn score_persona_facts(
     }
 }
 
-/// Build the system header with GNN-scored facts.
+/// Build the system header content (model-agnostic, no template tags).
 ///
 /// `scored_facts`: Vec of (key, value, gnn_score). Score=1.0 means unscored (no GNN).
 /// Facts are injected sorted by score descending, with a ~500 token budget (~2000 chars).
 /// Facts with score < 0.1 are omitted when there are more than 10 active facts.
-fn build_system_header(has_graph: bool, scored_facts: &[(String, String, f32)]) -> String {
-    build_unified_header(has_graph, scored_facts, &[])
+fn build_system_content(has_graph: bool, scored_facts: &[(String, String, f32)]) -> String {
+    build_unified_content(has_graph, scored_facts, &[])
 }
 
-/// Unified header builder: combines identity (from facts), structured facts, AND memories.
+/// Format system header for the model's native chat template.
+///
+/// Returns the "open" system message (without closing tag) so that graph nodes
+/// can be appended before the system message is closed by the query turn.
+fn format_system_header(engine: &Engine, content: &str) -> String {
+    match engine.format_system_open(content) {
+        Ok(header) => header,
+        Err(_) => {
+            // Fallback to ChatML if template extraction fails
+            format!("<|im_start|>system\n{content}")
+        }
+    }
+}
+
+/// Unified content builder: combines identity (from facts), structured facts, AND memories.
 /// Both facts and memories can be present simultaneously.
-fn build_unified_header(
+/// Returns the raw content WITHOUT template tags — use format_system_header() to wrap.
+fn build_unified_content(
     has_graph: bool,
     scored_facts: &[(String, String, f32)],
     memories: &[(NodeId, String, f64)],
 ) -> String {
-    let mut header = String::from("<|im_start|>system\n");
+    let mut header = String::new();
 
     // Identity from facts (name fact gets special treatment)
     let name = scored_facts
@@ -271,6 +286,21 @@ fn main() -> Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(99);
 
+    // TurboQuant: KV cache quantization (rotation Hadamard activée automatiquement)
+    // f16=1 (default), q8_0=8, q5_0=6, q4_0=2
+    let type_k: i32 = parse_arg("--ctk")
+        .map(|s| match s.as_str() {
+            "f16" => 1, "q8_0" => 8, "q5_0" => 6, "q4_0" => 2, "q3_0" => 10,
+            _ => { eprintln!("Unknown --ctk type '{}', using f16", s); 1 }
+        })
+        .unwrap_or(1);
+    let type_v: i32 = parse_arg("--ctv")
+        .map(|s| match s.as_str() {
+            "f16" => 1, "q8_0" => 8, "q5_0" => 6, "q4_0" => 2, "q3_0" => 10,
+            _ => { eprintln!("Unknown --ctv type '{}', using f16", s); 1 }
+        })
+        .unwrap_or(1);
+
     let persona_path: Option<PathBuf> = parse_arg("--persona").map(PathBuf::from);
 
     let http_addr: Option<std::net::SocketAddr> = parse_arg("--http").map(|s| {
@@ -307,7 +337,16 @@ fn main() -> Result<()> {
     // Phase D: Hilbert layout for topology-aware KV positioning
     let hilbert_enabled: bool = std::env::args().any(|a| a == "--hilbert");
 
-    eprintln!("=== obrain-chat — Generic Graph LLM + Topological Mask (FFI) ===\n");
+    // Benchmark mode: run 12 questions automatically and output JSON results
+    let benchmark_mode: bool = std::env::args().any(|a| a == "--benchmark");
+    let benchmark_output: Option<String> = parse_arg("--benchmark-output");
+
+    let kv_type_name = |t: i32| match t { 1 => "f16", 2 => "q4_0", 6 => "q5_0", 8 => "q8_0", 10 => "q3_0", _ => "?" };
+    eprintln!("=== obrain-chat — Generic Graph LLM + Topological Mask (FFI) ===");
+    if type_k != 1 || type_v != 1 {
+        eprintln!("  TurboQuant: KV cache K={} V={} (Hadamard rotation auto-enabled)", kv_type_name(type_k), kv_type_name(type_v));
+    }
+    eprintln!();
 
     // ── HTTP server mode (--http host:port) ──────────────────────
     if let Some(http_addr) = http_addr {
@@ -322,6 +361,8 @@ fn main() -> Result<()> {
             model_path: model_path.clone(),
             n_ctx,
             n_gpu_layers: n_gpu,
+            type_k,
+            type_v,
             ..EngineConfig::default()
         })?);
         eprintln!("  Model loaded: n_ctx={}", engine.n_ctx());
@@ -393,7 +434,7 @@ fn main() -> Result<()> {
                     .collect()
             })
             .unwrap_or_default();
-        let system_header = build_system_header(store.is_some(), &persona_facts);
+        let system_header = format_system_header(&engine, &build_system_content(store.is_some(), &persona_facts));
         let header_tokens_vec = engine.tokenize(&system_header, false, true)?;
         let header_n = header_tokens_vec.len() as i32;
         let header_positions: Vec<i32> = (0..header_n).collect();
@@ -485,6 +526,8 @@ fn main() -> Result<()> {
         model_path: model_path.clone(),
         n_ctx,
         n_gpu_layers: n_gpu,
+        type_k,
+        type_v,
         ..EngineConfig::default()
     };
 
@@ -663,7 +706,7 @@ fn main() -> Result<()> {
         .iter()
         .map(|(k, v)| (k.clone(), v.clone(), 1.0))
         .collect();
-    let system_header = build_system_header(store.is_some(), &scored_facts);
+    let system_header = format_system_header(&engine, &build_system_content(store.is_some(), &scored_facts));
     debug!("System header:\n{system_header}");
 
     // ── Initialize KV Node Registry ─────────────────────────────
@@ -1130,6 +1173,8 @@ fn main() -> Result<()> {
             initial_epochs: 30, // C6: contrastive plateaus ~epoch 20, 30 is sufficient
             lr: 0.001,
             lambda_cosine: 0.1,
+            lambda_kurtosis: 0.1,  // TurboQuant+ P2: anti-outlier regularization
+            lambda_innerq: 0.05,   // TurboQuant+ P2: per-channel variance equalization
             min_samples: 5,
             online_epochs: 5,
             online_interval: 10,
@@ -1225,12 +1270,182 @@ fn main() -> Result<()> {
     // Ξ(t) T1: Now that GNN is loaded, rescore facts and update header
     if fact_gnn.is_some() && !current_facts.is_empty() {
         let scored = score_persona_facts(&current_facts, &fact_gnn, &persona_db);
-        let new_header = build_system_header(store.is_some(), &scored);
+        let new_header = format_system_header(&engine, &build_system_content(store.is_some(), &scored));
         registry.update_header(&new_header);
         debug!(
             "  [GNN] Header rescored with {} facts after GNN init",
             scored.len()
         );
+    }
+
+    // ── Benchmark mode (--benchmark) ────────────────────────────────────────
+    if benchmark_mode {
+        use retrieval::benchmark::{
+            BENCH_QUESTIONS, BenchReport, BenchResult, check_keywords, compute_summary,
+        };
+
+        eprintln!("\n=== BENCHMARK MODE ({} questions) ===\n", BENCH_QUESTIONS.len());
+        let mut results: Vec<BenchResult> = Vec::new();
+
+        for (i, bq) in BENCH_QUESTIONS.iter().enumerate() {
+            eprint!("  [{}/{}] {} ... ", i + 1, BENCH_QUESTIONS.len(), bq.query);
+
+            // Reset everything between questions: fresh KV cache, fresh registry, fresh conv
+            conv_frags = kv_registry::ConvFragments::new();
+            engine.clear_kv();
+            engine.clear_attn_mask();
+            engine.clear_state_bias();
+            engine.clear_seq(1); // clear ephemeral generation seq
+            // Rebuild registry from scratch (header only, no graph nodes)
+            // Graph nodes will be re-injected by query_with_registry for each question
+            let header_text = registry.header_text.clone();
+            registry = kv_registry::KvNodeRegistry::new(&header_text, 0);
+            // Re-encode header into KV cache
+            if let Ok(tokens) = engine.tokenize(&header_text, false, true) {
+                let n_tok = tokens.len() as i32;
+                let positions: Vec<i32> = (0..n_tok).collect();
+                let _ = engine.encode(&tokens, &positions, 0);
+                registry.header_end = n_tok;
+                registry.next_pos = n_tok;
+            }
+
+            // Use a channel to capture the response without printing to stdout
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+            let output_mode = OutputMode::Channel(tx);
+
+            let q_store = store.as_ref();
+            let q_schema = schema.as_ref();
+            let coact_ref: Option<&retrieval::CoactivationMap> = None;
+            let cold_ref: Option<&dyn kv_registry::ColdSearch> = persona_db
+                .as_ref()
+                .map(|p| p as &dyn kv_registry::ColdSearch);
+
+            let t_start = Instant::now();
+            let result = query_with_registry(
+                &engine,
+                q_store,
+                q_schema,
+                &mut registry,
+                &mut conv_frags,
+                &banks,
+                bq.query,
+                max_nodes,
+                token_budget,
+                kv_capacity,
+                &gen_ctl,
+                &output_mode,
+                None, // no GNN context in benchmark mode
+                head_router.as_ref(),
+                embd_cache.as_ref(),
+                embd_injection_ratio,
+                round_tracker.as_mut(),
+                coact_ref,
+                cold_ref,
+                None, // no formula selection in benchmark
+                &[], // no self-embed positions in benchmark
+                None, // no IPTR snapshot in benchmark
+                None, // no state metrics in benchmark
+            );
+            let latency_ms = t_start.elapsed().as_secs_f64() * 1000.0;
+
+            // Drain the channel to get the full response
+            drop(output_mode); // close sender
+            let mut response_text = String::new();
+            while let Ok(chunk) = rx.try_recv() {
+                response_text.push_str(&chunk);
+            }
+
+            let response_clean = think_filter::strip_think_tags(&response_text);
+            let trimmed = response_clean.trim();
+
+            match result {
+                Ok((resp_from_fn, _nodes, _entropy, _ablation)) => {
+                    // Use the function return if channel was empty
+                    let final_response = if trimmed.is_empty() {
+                        think_filter::strip_think_tags(&resp_from_fn)
+                    } else {
+                        trimmed.to_string()
+                    };
+                    let final_trimmed = final_response.trim();
+
+                    let (hit, found, missing) = check_keywords(final_trimmed, bq.keywords);
+                    let preview = if final_trimmed.len() > 120 {
+                        format!("{}...", &final_trimmed[..final_trimmed.char_indices().nth(120).map(|(i,_)| i).unwrap_or(final_trimmed.len())])
+                    } else {
+                        final_trimmed.to_string()
+                    };
+
+                    let marker = if hit { "✓" } else { "✗" };
+                    eprintln!("{} ({:.0}ms) [{}]", marker, latency_ms,
+                        if missing.is_empty() { "all keywords found".to_string() }
+                        else { format!("missing: {}", missing.join(", ")) });
+
+                    results.push(BenchResult {
+                        query: bq.query.to_string(),
+                        category: bq.category,
+                        hit,
+                        keywords_found: found,
+                        keywords_missing: missing,
+                        latency_ms,
+                        response_preview: preview,
+                    });
+                }
+                Err(e) => {
+                    eprintln!("ERROR: {}", e);
+                    results.push(BenchResult {
+                        query: bq.query.to_string(),
+                        category: bq.category,
+                        hit: false,
+                        keywords_found: vec![],
+                        keywords_missing: bq.keywords.iter().map(|s| s.to_string()).collect(),
+                        latency_ms,
+                        response_preview: format!("ERROR: {}", e),
+                    });
+                }
+            }
+        }
+
+        // Compute summary
+        let summary = compute_summary(&results);
+        let model_name = std::path::Path::new(&model_path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let report = BenchReport {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            model: model_name,
+            kv_type_k: retrieval::benchmark::kv_type_name(type_k).to_string(),
+            kv_type_v: retrieval::benchmark::kv_type_name(type_v).to_string(),
+            n_ctx,
+            questions: results,
+            summary: summary.clone(),
+        };
+
+        // Print summary
+        eprintln!("\n=== BENCHMARK RESULTS ===");
+        eprintln!("  Hit rate:     {}/{} ({:.1}%)", summary.hits, summary.total, summary.hit_rate * 100.0);
+        eprintln!("  Latency avg:  {:.0}ms", summary.latency_avg_ms);
+        eprintln!("  Latency p95:  {:.0}ms", summary.latency_p95_ms);
+        eprintln!("  KV type:      K={} V={}", report.kv_type_k, report.kv_type_v);
+        eprintln!("\n  By category:");
+        let mut cats: Vec<_> = summary.by_category.iter().collect();
+        cats.sort_by_key(|(k, _)| (*k).clone());
+        for (cat, stats) in &cats {
+            eprintln!("    {:15} {}/{} ({:.0}%)  avg={:.0}ms",
+                cat, stats.hits, stats.total, stats.hit_rate * 100.0, stats.latency_avg_ms);
+        }
+
+        // Write JSON
+        let output_path = benchmark_output.unwrap_or_else(|| "benchmark_results.json".to_string());
+        let json = serde_json::to_string_pretty(&report)?;
+        std::fs::write(&output_path, &json)?;
+        eprintln!("\n  Results written to: {}", output_path);
+
+        // Also print JSON to stdout for piping
+        println!("{}", json);
+
+        return Ok(());
     }
 
     loop {
@@ -1546,7 +1761,7 @@ fn main() -> Result<()> {
                     .collect();
                 if new_top5 != prev_header_top5 && !new_top5.is_empty() {
                     let scored = score_persona_facts(&current_facts, &fact_gnn, &persona_db);
-                    let new_header = build_unified_header(store.is_some(), &scored, &memories);
+                    let new_header = format_system_header(&engine, &build_unified_content(store.is_some(), &scored, &memories));
                     registry.update_header(&new_header);
                     registry.full_recompact::<fn(&[f32], &[i32], i32) -> anyhow::Result<usize>>(
                         &engine, None, None,
@@ -1571,7 +1786,7 @@ fn main() -> Result<()> {
                 let memories = persona_db.as_ref()
                     .map(|pdb| pdb.active_memories())
                     .unwrap_or_default();
-                let new_header = build_unified_header(store.is_some(), &scored, &memories);
+                let new_header = format_system_header(&engine, &build_unified_content(store.is_some(), &scored, &memories));
                 registry.update_header(&new_header);
                 registry.full_recompact::<fn(&[f32], &[i32], i32) -> anyhow::Result<usize>>(
                     &engine, None, None,
@@ -2282,7 +2497,7 @@ fn main() -> Result<()> {
                         // Update header with memories + facts (unified)
                         let memories = pdb.active_memories();
                         let scored = score_persona_facts(&current_facts, &fact_gnn, &persona_db);
-                        let unified = build_unified_header(store.is_some(), &scored, &memories);
+                        let unified = format_system_header(&engine, &build_unified_content(store.is_some(), &scored, &memories));
                         registry.update_header(&unified);
                         debug!("  Header updated with {} memories + {} facts", memories.len(), scored.len());
                     } else {
