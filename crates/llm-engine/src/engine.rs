@@ -103,6 +103,9 @@ pub struct LlamaEngine {
     ctx: *mut ffi::llama_context,
     sampler: *mut ffi::llama_sampler,
     n_ctx: u32,
+    /// V cache is quantized (q8_0, q4_0, etc.) — requires flash attention.
+    /// When true, features that force the non-flash path (state_bias) must be disabled.
+    v_quantized: bool,
     /// If set, the profiler handle keeps the Arc alive for the eval callback.
     /// The raw pointer was passed to llama.cpp as cb_eval_user_data.
     _profiler_handle: Option<crate::profiler::ProfilerHandle>,
@@ -147,8 +150,11 @@ impl LlamaEngine {
             // KV cache quantization (TurboQuant: rotation Hadamard activée quand quantized)
             params.type_k = std::mem::transmute(config.type_k);
             params.type_v = std::mem::transmute(config.type_v);
-            // V quantized requires flash_attn at init. Our guard in build_attn_mha()
-            // auto-disables flash path when custom mask or state_bias is set.
+            // V quantized requires flash_attn at init (llama.cpp enforces this).
+            // IMPORTANT: when V is quantized, features that force the non-flash path
+            // (state_bias → ext_state_kq_b) must be disabled on the Rust side, because
+            // the non-flash path cannot handle quantized V (wrong layout + no dequant → segfault).
+            // build_attn_mha() has a safety net that forces flash even if bias is set.
             let v_quantized = config.type_v != 1; // 1 = GGML_TYPE_F16
             if v_quantized {
                 params.flash_attn_type = ffi::llama_flash_attn_type::LLAMA_FLASH_ATTN_TYPE_ENABLED;
@@ -219,6 +225,7 @@ impl LlamaEngine {
             ctx,
             sampler,
             n_ctx: actual_n_ctx,
+            v_quantized: config.type_v != 1, // 1 = GGML_TYPE_F16
             _profiler_handle: None,
         })
     }
@@ -316,6 +323,7 @@ impl LlamaEngine {
             ctx,
             sampler,
             n_ctx: actual_n_ctx,
+            v_quantized: config.type_v != 1,
             _profiler_handle: Some(profiler_handle),
         })
     }
@@ -323,6 +331,13 @@ impl LlamaEngine {
     /// Get the actual context size (may differ from requested if model has a limit).
     pub fn n_ctx(&self) -> u32 {
         self.n_ctx
+    }
+
+    /// Returns true if V cache is quantized (q8_0, q4_0, etc.).
+    /// When true, flash attention is required — features that force the non-flash path
+    /// (state_bias, per-head kq_b) will cause a segfault and must be disabled.
+    pub fn v_is_quantized(&self) -> bool {
+        self.v_quantized
     }
 
     /// Get the raw context pointer (for advanced FFI calls).

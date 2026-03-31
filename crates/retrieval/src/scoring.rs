@@ -233,6 +233,7 @@ pub fn retrieve_nodes(
 
     // ── Step 2: Fetch + score nodes by target labels ─────────────────
     let mut scored_nodes: Vec<(NodeId, f64)> = Vec::new();
+    let mut seen_nodes: HashSet<NodeId> = HashSet::new();
 
     for (label, label_sim) in &target_labels {
         let node_ids = store.nodes_by_label(label);
@@ -240,6 +241,7 @@ pub fn retrieve_nodes(
         let importance = info.map_or(1.0, |i| i.importance);
 
         for nid in node_ids {
+            seen_nodes.insert(nid);
             let dp = schema.display_props.get(label.as_str());
             let name = get_node_name_generic(store, nid, dp);
             let name_lower = name.to_lowercase();
@@ -286,6 +288,46 @@ pub fn retrieve_nodes(
         }
     }
 
+    // ── Step 2a: Cross-label name search ──────────────────────────────
+    // When label matching found specific labels (e.g., "projet"→"Project"),
+    // the query may also mention entity names from OTHER labels
+    // (e.g., "Sophie Martin" is a Person, not a Project).
+    // Search ALL structural labels for name matches to avoid missing
+    // entities mentioned by name in the query.
+    if !content_terms.is_empty() && !label_matched_terms.is_empty() {
+        for info in &schema.labels {
+            if info.is_noise {
+                continue;
+            }
+            // Skip labels already searched
+            if target_labels.iter().any(|(l, _)| *l == info.label) {
+                continue;
+            }
+            let node_ids = store.nodes_by_label(&info.label);
+            let dp = schema.display_props.get(info.label.as_str());
+
+            for nid in node_ids {
+                if seen_nodes.contains(&nid) {
+                    continue;
+                }
+                let name = get_node_name_generic(store, nid, dp);
+                let name_lower = name.to_lowercase();
+
+                // Only add if name actually matches a content term
+                let mut name_score = 0.0;
+                for term in &content_terms {
+                    if name_lower.contains(term) {
+                        name_score += 10.0;
+                    }
+                }
+                if name_score > 0.0 {
+                    seen_nodes.insert(nid);
+                    scored_nodes.push((nid, name_score + info.importance * 0.5));
+                }
+            }
+        }
+    }
+
     // ── Step 2b: Cosine retrieval from embedding cache ─────────────
     // If embeddings are available, compute cosine(query_embd, node_embd)
     // for ALL cached nodes. This finds semantically relevant nodes even
@@ -304,6 +346,12 @@ pub fn retrieve_nodes(
                     let mut n_cosine_boosted = 0usize;
                     let mut n_cosine_new = 0usize;
 
+                    // Only add cosine-new nodes when fuzzy has poor/no results.
+                    // When fuzzy already found strong matches (max>5), cosine-new nodes
+                    // dilute the context and push relevant nodes out of the token budget.
+                    let fuzzy_max = scored_nodes.iter().map(|(_, s)| *s).fold(0.0f64, f64::max);
+                    let allow_cosine_new = fuzzy_max < 5.0;
+
                     for (nid, node_embd) in cache.iter() {
                         let cos = cosine_similarity(&query_embd, node_embd) as f64;
                         if cos < cosine_threshold {
@@ -318,14 +366,14 @@ pub fn retrieve_nodes(
                                 entry.1 = cosine_score;
                                 n_cosine_boosted += 1;
                             }
-                        } else if !existing.contains(&nid) {
-                            // New node found only via cosine
+                        } else if allow_cosine_new && !existing.contains(&nid) {
+                            // New node found only via cosine (fallback when fuzzy fails)
                             scored_nodes.push((nid, cosine_score));
                             n_cosine_new += 1;
                         }
                     }
 
-                    eprintln!(
+                    kv_registry::kv_debug!(
                         "  [C7] retrieval: {} fuzzy, +{} cosine-new, {} cosine-boosted (cache={})",
                         n_fuzzy_before,
                         n_cosine_new,
@@ -334,7 +382,7 @@ pub fn retrieve_nodes(
                     );
                 }
                 Err(e) => {
-                    eprintln!("  [C7] cosine retrieval skipped: {}", e);
+                    kv_registry::kv_debug!("  [C7] cosine retrieval skipped: {}", e);
                 }
             }
         }
@@ -413,7 +461,7 @@ pub fn retrieve_nodes(
             }
 
             if !affinity_candidates.is_empty() {
-                eprintln!(
+                kv_registry::kv_debug!(
                     "  [E3] affinity: λ={:.2}, {} candidates ({} new)",
                     lambda,
                     affinity_candidates.len(),
@@ -421,6 +469,35 @@ pub fn retrieve_nodes(
                         .iter()
                         .filter(|(nid, _)| !score_map.contains_key(nid))
                         .count()
+                );
+            }
+        }
+    }
+
+    // ── Step 3b: Score-based pruning after BFS ─────────────────────
+    // When specific entities are mentioned (high-score name matches exist),
+    // prune low-relevance nodes to avoid context pollution.
+    // Without this, the model sees ALL graph nodes and confuses properties
+    // between entities (e.g., attributing Kubernetes to Pierre Bernard
+    // instead of his actual properties: DevOps, Bash, Airbus).
+    {
+        let bfs_max_score = bfs_result
+            .iter()
+            .map(|(_, _, s)| *s)
+            .fold(0.0f64, f64::max);
+        if bfs_max_score > 5.0 {
+            // Name-matched seed exists: keep seeds + direct BFS neighbors only.
+            // Threshold: nodes must score at least 2% of max OR be BFS-expanded (depth>0).
+            // BFS neighbors get parent_score*0.4 ≈ 9.2 for a max of 23 → well above threshold.
+            // This removes label-only matches (score ~0.15) that pollute context.
+            let threshold = (bfs_max_score * 0.02).max(0.5);
+            let before = bfs_result.len();
+            bfs_result.retain(|(_, _, s)| *s >= threshold);
+            let pruned = before - bfs_result.len();
+            if pruned > 0 {
+                kv_registry::kv_debug!(
+                    "  [retrieval] pruned {}/{} low-score nodes (threshold={:.2}, max={:.1})",
+                    pruned, before, threshold, bfs_max_score
                 );
             }
         }

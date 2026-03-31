@@ -297,4 +297,93 @@ mod tests {
             elapsed.as_millis()
         );
     }
+
+    // ─────────────────────────────────────────────────────────────────
+    // REGRESSION tests for documented bugs
+    // ─────────────────────────────────────────────────────────────────
+
+    /// REGRESSION: State bias must produce zero-bias when reward is 0 and confidence is 0.5.
+    /// Ensures no silent drift when the system starts up (default metrics).
+    #[test]
+    fn test_regression_default_metrics_no_drift() {
+        let computer = StateBiasComputer::new(StateBiasConfig::default());
+        let metrics = StateMetrics::default(); // reward=0, confidence=0.5
+        let position_map = vec![
+            PositionType::Header,
+            PositionType::GraphNode,
+            PositionType::ConvContext,
+            PositionType::Query,
+        ];
+        let bias = computer.compute(&metrics, &position_map, 2);
+
+        // Header and Query must ALWAYS be 0.0
+        assert_eq!(bias[0], 0.0, "Header bias must be 0");
+        assert_eq!(bias[3], 0.0, "Query bias must be 0");
+        assert_eq!(bias[4], 0.0, "Header bias (head 1) must be 0");
+        assert_eq!(bias[7], 0.0, "Query bias (head 1) must be 0");
+
+        // GraphNode: reward=0 × graph_weight → 0.0
+        assert_eq!(bias[1], 0.0, "GraphNode with reward=0 should have 0 bias");
+
+        // ConvContext: (1-confidence) × conv_weight = (1-0.5) × 0.3 = 0.15
+        assert!((bias[2] - 0.15).abs() < 0.01, "ConvContext default: got {}", bias[2]);
+    }
+
+    /// REGRESSION: Query positions must NEVER have bias applied.
+    /// If query tokens get biased, the model's attention source is corrupted.
+    #[test]
+    fn test_regression_query_never_biased() {
+        let computer = StateBiasComputer::new(StateBiasConfig {
+            graph_weight: 10.0,
+            conv_weight: 10.0,
+            max_bias: 10.0,
+        });
+        let metrics = StateMetrics {
+            reward_avg: 1.0,
+            confidence: 0.0, // max conv bias
+        };
+        // All query positions
+        let position_map = vec![PositionType::Query; 100];
+        let bias = computer.compute(&metrics, &position_map, 32);
+
+        for (i, &b) in bias.iter().enumerate() {
+            assert_eq!(b, 0.0, "Query position bias[{i}] must be 0, got {b}");
+        }
+    }
+
+    /// REGRESSION: Header positions must NEVER have bias applied.
+    /// System prompt attention must be stable regardless of reward/confidence.
+    #[test]
+    fn test_regression_header_never_biased() {
+        let computer = StateBiasComputer::new(StateBiasConfig {
+            graph_weight: 10.0,
+            conv_weight: 10.0,
+            max_bias: 10.0,
+        });
+        let metrics = StateMetrics {
+            reward_avg: 1.0,
+            confidence: 0.0,
+        };
+        let position_map = vec![PositionType::Header; 50];
+        let bias = computer.compute(&metrics, &position_map, 8);
+
+        for (i, &b) in bias.iter().enumerate() {
+            assert_eq!(b, 0.0, "Header position bias[{i}] must be 0, got {b}");
+        }
+    }
+
+    /// REGRESSION: Negative reward must SUPPRESS graph node attention (negative bias).
+    /// This is the key feedback mechanism: bad graph data → negative bias → model ignores nodes.
+    #[test]
+    fn test_regression_negative_reward_suppresses_graph() {
+        let computer = StateBiasComputer::new(StateBiasConfig::default());
+        let metrics = StateMetrics {
+            reward_avg: -0.8,
+            confidence: 0.5,
+        };
+        let position_map = vec![PositionType::GraphNode];
+        let bias = computer.compute(&metrics, &position_map, 1);
+
+        assert!(bias[0] < 0.0, "Negative reward must produce negative graph bias, got {}", bias[0]);
+    }
 }

@@ -341,16 +341,28 @@ pub fn generate_with_mask(
         .map(|v| v == "1")
         .unwrap_or(false);
     if no_mask {
-        eprintln!("  [A/B] Topology mask DISABLED (baseline mode)");
+        kv_registry::kv_debug!("  [A/B] Topology mask DISABLED (baseline mode)");
     } else if use_perhead || head_router.is_some() {
         // Phase B: per-head masking with HeadRouter (or Phase A per-head with OBRAIN_PERHEAD=1)
+        // Remap raw KV positions → compact indices via pos_remap.
+        // Without this, Hilbert-ordered positions (200, 300, 450...) exceed
+        // sz (compact count) and get skipped in the per-head mask builder.
         let mb_nodes: Vec<mask_builder::NodePosition> = ctx
             .nodes
             .iter()
-            .map(|n| mask_builder::NodePosition {
-                pos_start: n.token_start,
-                pos_end: n.token_end,
-                bank: n.bank,
+            .filter_map(|n| {
+                let compact_start = *pos_remap.get(&n.token_start)?;
+                // Find the compact end: last remapped position + 1
+                let compact_end = (n.token_start..n.token_end)
+                    .filter_map(|p| pos_remap.get(&p).copied())
+                    .max()
+                    .map(|m| m + 1)
+                    .unwrap_or(compact_start);
+                Some(mask_builder::NodePosition {
+                    pos_start: compact_start as i32,
+                    pos_end: compact_end as i32,
+                    bank: n.bank,
+                })
             })
             .collect();
         let config = mask_builder::default_bank_config();
@@ -366,8 +378,90 @@ pub fn generate_with_mask(
             mask_n_head,
             &config,
             head_router, // Phase B: learned α-weights, or None for Phase A fixed ratios
+            Some(&positions), // sparse positions: compact index → real KV position
         );
+        // Sanity check: count masked (NEG_INF) entries vs expected causal mask
+        {
+            let n_p = perhead.positions.len();
+            let n_g = perhead.n_head_groups as usize;
+            let mut n_blocked = 0usize;
+            let mut n_causal_blocked = 0usize;
+            for g in 0..n_g {
+                for row in 0..n_p {
+                    for col in 0..n_p {
+                        let val = perhead.mask[g * n_p * n_p + row * n_p + col];
+                        if val == f32::NEG_INFINITY {
+                            n_blocked += 1;
+                            if row < col {
+                                n_causal_blocked += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            let total = n_g * n_p * n_p;
+            let extra_blocked = n_blocked - n_causal_blocked;
+            kv_registry::kv_debug!(
+                "  [mask-sanity] {}×{}×{} = {} entries, blocked={} (causal={}, extra={})",
+                n_g, n_p, n_p, total, n_blocked, n_causal_blocked, extra_blocked
+            );
+            // If extra blocked, report which heads/banks are affected
+            if extra_blocked > 0 {
+                if let Some(r) = head_router {
+                    for h in 0..r.n_head.min(8) {
+                        let mut hidden: Vec<u32> = Vec::new();
+                        for b in 0..r.n_bank {
+                            if !r.is_visible(h, b) {
+                                hidden.push(b as u32);
+                            }
+                        }
+                        if !hidden.is_empty() {
+                            kv_registry::kv_debug!(
+                                "  [mask-sanity] head {} hides banks {:?} (alpha={:.3})",
+                                h, hidden,
+                                (0..r.n_bank).map(|b| r.prob(h, b)).collect::<Vec<_>>().iter().map(|v| format!("{:.2}", v)).collect::<Vec<_>>().join(",")
+                            );
+                        }
+                    }
+                }
+                // Report bank assignment for nodes
+                let banks: Vec<u32> = mb_nodes.iter().map(|n| n.bank).collect();
+                let mut bank_counts = [0u32; 4];
+                for &b in &banks {
+                    if (b as usize) < 4 { bank_counts[b as usize] += 1; }
+                }
+                kv_registry::kv_debug!(
+                    "  [mask-sanity] nodes per bank: {:?} (total={})",
+                    bank_counts, mb_nodes.len()
+                );
+            }
+        }
+
         engine.set_attn_mask(&perhead.mask, &perhead.positions, perhead.n_head_groups)?;
+
+        // T4.3: Analyze mask sparsity for diagnostics and bank eviction feedback.
+        // Globally dead positions = KV entries that no head attends to = wasted dequant.
+        let sparsity = mask_builder::analyze_mask_sparsity(&perhead);
+        if sparsity.total_positions > 0 {
+            let global_pct = (sparsity.global_sparsity() * 100.0) as u32;
+            let n_dead = sparsity.globally_dead.len();
+            let n_active = sparsity.globally_active_count();
+            if n_dead > 0 {
+                kv_registry::kv_debug!(
+                    "  [T4.3] mask sparsity: {}/{} positions globally dead ({}%), compact={} positions",
+                    n_dead, sparsity.total_positions, global_pct, n_active
+                );
+            }
+            // Per-head sparsity for detailed diagnostics
+            let min_active = sparsity.active_count.iter().min().copied().unwrap_or(0);
+            let max_active = sparsity.active_count.iter().max().copied().unwrap_or(0);
+            if min_active != max_active {
+                kv_registry::kv_debug!(
+                    "  [T4.3] per-head active range: {}..{} (of {})",
+                    min_active, max_active, sparsity.total_positions
+                );
+            }
+        }
     } else {
         engine.set_attn_mask(&mask, &positions, 0)?;
     }
@@ -379,6 +473,10 @@ pub fn generate_with_mask(
     let state_bias_disabled = std::env::var("OBRAIN_STATE_BIAS_DISABLE")
         .map(|v| v == "1")
         .unwrap_or(false);
+
+    // V quantization + state_bias now works: llama.cpp fuses the bias into the
+    // flash attention mask (ggml_add in graph before ggml_flash_attn_ext).
+    // No more need to skip state_bias when V is quantized.
 
     if !state_bias_disabled {
         if let Some(metrics) = state_metrics {
@@ -654,11 +752,11 @@ pub fn generate_with_mask(
 
     // Diagnostic: detect empty visible responses
     if full_response.trim().is_empty() {
-        eprintln!("  [debug] generate_with_mask returned empty response");
+        kv_registry::kv_debug!("  [debug] generate_with_mask returned empty response");
     } else if full_response.starts_with("<think>") {
         let visible = think_filter::strip_think_tags(&full_response);
         if visible.trim().is_empty() {
-            eprintln!(
+            kv_registry::kv_debug!(
                 "  [debug] Masked response was ALL think content ({} chars raw)",
                 full_response.len()
             );

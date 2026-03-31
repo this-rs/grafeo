@@ -142,15 +142,15 @@ pub fn compute_text_embedding(engine: &crate::Engine, text: &str) -> Result<Vec<
     // Extract last-layer hidden state of the last token
     let hidden = engine.get_embedding(-1);
     if hidden.is_empty() {
-        engine.set_embeddings(false);
         engine.clear_seq(seq_id);
         bail!("compute_text_embedding: get_embedding returned empty (embeddings not enabled?)");
     }
 
     let result = hidden.to_vec();
 
-    // Cleanup
-    engine.set_embeddings(false);
+    // Cleanup: clear temp seq but DO NOT disable embeddings.
+    // set_embeddings() is global state — disabling here breaks PersistNet
+    // which needs embeddings from the generation decode that follows.
     engine.clear_seq(seq_id);
 
     Ok(result)

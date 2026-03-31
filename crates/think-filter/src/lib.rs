@@ -125,14 +125,35 @@ impl ThinkFilter {
             }
         }
 
-        // Clean role artifacts from beginning of output
+        // Clean role artifacts from beginning of output.
+        // In streaming mode, the role prefix may arrive as a single token ("assistant")
+        // without the trailing newline, which comes in the next token. We must handle:
+        //   1. "assistant\n..." → strip "assistant\n"
+        //   2. "assistant" (exact) → strip entirely (newline will come next)
+        //   3. "system\n..." / "user\n..." → same treatment
         if !self.printed_any && !output.is_empty() {
             let trimmed = output.trim_start();
+            // First try with newline (complete prefix)
             for prefix in &["system\n", "assistant\n", "user\n"] {
                 if trimmed.starts_with(prefix) {
                     output = trimmed[prefix.len()..].to_string();
-                    break;
+                    if !output.trim().is_empty() {
+                        self.printed_any = true;
+                    }
+                    return output;
                 }
+            }
+            // Then try exact match without newline (streaming: prefix arrives alone)
+            for role in &["system", "assistant", "user"] {
+                if trimmed == *role {
+                    // Entire chunk is just the role name — discard it
+                    return String::new();
+                }
+            }
+            // Also strip a leading newline after a previously-swallowed role prefix
+            // (the newline arrives as the next token)
+            if !self.printed_any && (trimmed == "\n" || trimmed.is_empty()) {
+                return String::new();
             }
             if !output.trim().is_empty() {
                 self.printed_any = true;
@@ -159,9 +180,22 @@ impl ThinkFilter {
 
     fn clean_role_prefix(&self, s: String) -> String {
         let trimmed = s.trim_start();
-        for prefix in &["system\n", "assistant\n"] {
+        for prefix in &["system\n", "assistant\n", "user\n"] {
             if trimmed.starts_with(prefix) {
                 return trimmed[prefix.len()..].to_string();
+            }
+        }
+        // Also strip bare role name at start (no newline)
+        for role in &["system", "assistant", "user"] {
+            if trimmed.starts_with(role) && trimmed.len() > role.len() {
+                // Role name followed by content on same line
+                let after = trimmed[role.len()..].trim_start();
+                if !after.is_empty() {
+                    return after.to_string();
+                }
+            }
+            if trimmed == *role {
+                return String::new();
             }
         }
         s
@@ -197,6 +231,13 @@ pub fn strip_think_tags(s: &str) -> String {
         .replace("<|start_header_id|>", "").replace("<|end_header_id|>", "") // Llama 3
         .replace("<|eot_id|>", "")                                       // Llama 3
         .replace("<|endoftext|>", "");                                   // General
+    // Strip role prefix artifacts that leak through chat templates
+    let trimmed = result.trim_start();
+    for prefix in &["system\n", "assistant\n", "user\n"] {
+        if trimmed.starts_with(prefix) {
+            return trimmed[prefix.len()..].trim().to_string();
+        }
+    }
     result.trim().to_string()
 }
 

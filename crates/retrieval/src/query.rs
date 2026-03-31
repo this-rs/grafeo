@@ -1,7 +1,8 @@
 use anyhow::Result;
 use graph_schema::GraphSchema;
 use kv_registry::{
-    ColdSearch, ContextNode, ConvFragments, KvBank, KvNodeRegistry, QueryContext, Tokenizer,
+    BankManager, ColdSearch, ContextNode, ConvFragments, KvBank, KvNodeRegistry, QueryContext,
+    Tokenizer,
 };
 use obrain_common::types::NodeId;
 use obrain_core::graph::lpg::LpgStore;
@@ -29,6 +30,24 @@ pub struct GnnContext<'a> {
     pub persona_store: &'a LpgStore,
 }
 
+/// Context for Hilbert bank-based structural elimination (T4.2).
+///
+/// When provided, `query_with_registry` selects top-K relevant banks via cosine
+/// similarity between query embedding and bank centroids, loads them into KV,
+/// evicts non-relevant banks, and filters retrieval to loaded bank nodes only.
+pub struct BankContext<'a> {
+    /// The bank manager (mutated: loads/evicts banks, updates LRU).
+    pub manager: &'a mut BankManager,
+    /// Pre-computed bank centroids (bank_id → mean embedding).
+    /// Computed via `BankManager::compute_bank_centroids()`.
+    pub centroids: HashMap<usize, Vec<f32>>,
+    /// Inter-bank adjacency (bank_id → neighbor bank_ids).
+    /// Computed via `BankManager::build_bank_adjacency()`.
+    pub adjacency: HashMap<usize, HashSet<usize>>,
+    /// Number of top banks to select before 1-hop expansion.
+    pub top_k: usize,
+}
+
 pub fn query_with_registry(
     engine: &Engine,
     store: Option<&Arc<LpgStore>>,
@@ -53,6 +72,7 @@ pub fn query_with_registry(
     self_embed_positions: &[i32],
     iptr_snapshot: Option<&crate::iptr_graph::FactSnapshot>,
     state_metrics: Option<&crate::state_bias::StateMetrics>,
+    bank_ctx: Option<BankContext>,
 ) -> Result<(String, Vec<NodeId>, Option<f32>, Option<AblationReward>)> {
     registry.begin_query();
     let t_start = Instant::now();
@@ -93,6 +113,98 @@ pub fn query_with_registry(
         }
     }
 
+    // ── T4.2: Hilbert bank selection by cosine retrieval ──────────
+    // Before retrieve_nodes, select and load relevant banks so that only
+    // nodes from loaded banks are considered. This is the structural
+    // elimination step — most of the graph is never decoded.
+    let loaded_bank_nodes: Option<HashSet<NodeId>> = if let Some(bctx) = bank_ctx {
+        // Compute query embedding for bank cosine selection
+        let query_embd = compute_text_embedding(engine, query).unwrap_or_default();
+
+        if !query_embd.is_empty() && !bctx.centroids.is_empty() {
+            // Select top-K banks + 1-hop neighbors
+            let selected = bctx.manager.select_banks(
+                &query_embd,
+                &bctx.centroids,
+                &bctx.adjacency,
+                bctx.top_k,
+            );
+
+            // Load selected banks that aren't loaded yet
+            let mut n_loaded = 0usize;
+            let mut n_evicted = 0usize;
+
+            // Evict loaded banks that are NOT in the selected set
+            let selected_set: HashSet<usize> = selected.iter().copied().collect();
+            let to_evict: Vec<usize> = bctx.manager.banks.iter()
+                .filter(|b| b.loaded && !selected_set.contains(&b.id))
+                .map(|b| b.id)
+                .collect();
+            for bank_id in to_evict {
+                if let Ok(n) = bctx.manager.evict_bank(bank_id, registry, engine) {
+                    n_evicted += n;
+                }
+            }
+
+            // Load selected banks
+            for &bank_id in &selected {
+                if let Some(cache) = embd_cache {
+                    let get_embd = |nid: NodeId| -> Option<Vec<f32>> {
+                        cache.get(nid).map(|s| s.to_vec())
+                    };
+                    let get_text = |nid: NodeId| -> String {
+                        // Try to get primary label from the store, fallback to node ID
+                        if let Some(st) = store {
+                            if let Some(node) = st.get_node(nid) {
+                                if let Some(label) = node.labels.first() {
+                                    return format!("[{}:{}]", label, nid.as_u64());
+                                }
+                            }
+                        }
+                        format!("node_{}", nid.as_u64())
+                    };
+                    let encode_fn = |e: &[f32], p: &[i32], s: i32| -> Result<usize> {
+                        engine.encode_embeddings(e, p, s)
+                    };
+                    match bctx.manager.load_bank(
+                        bank_id,
+                        registry,
+                        &get_embd,
+                        &get_text,
+                        &encode_fn,
+                        Some(engine as &dyn Tokenizer),
+                    ) {
+                        Ok(n) => n_loaded += n,
+                        Err(e) => {
+                            kv_registry::kv_debug!(
+                                "  [T4.2] load_bank {} failed: {}",
+                                bank_id, e
+                            );
+                        }
+                    }
+                }
+            }
+
+            if n_loaded > 0 || n_evicted > 0 {
+                kv_registry::kv_debug!(
+                    "  [T4.2] bank selection: {} selected ({} loaded, {} nodes evicted), {} total loaded",
+                    selected.len(), n_loaded, n_evicted, bctx.manager.loaded_count()
+                );
+            }
+
+            // Collect all node IDs from loaded banks for filtering
+            let loaded_nids: HashSet<NodeId> = bctx.manager.banks.iter()
+                .filter(|b| b.loaded)
+                .flat_map(|b| b.node_ids.iter().copied())
+                .collect();
+            Some(loaded_nids)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     // Run the generic retrieval to get scored nodes (only if graph is loaded)
     let (mut scored_nodes_for_query, adjacency, node_texts) =
         if let (Some(st), Some(sch)) = (store, schema) {
@@ -109,6 +221,22 @@ pub fn query_with_registry(
         } else {
             (Vec::new(), HashMap::new(), HashMap::new())
         };
+
+    // T4.2: Filter scored nodes to only those in loaded banks (structural elimination).
+    // This is the core elimination: nodes from non-loaded banks are never considered,
+    // reducing the working set from N_total to N_loaded_banks.
+    if let Some(ref loaded_nids) = loaded_bank_nodes {
+        let before = scored_nodes_for_query.len();
+        scored_nodes_for_query.retain(|n| loaded_nids.contains(&n.id));
+        let after = scored_nodes_for_query.len();
+        if before != after {
+            kv_registry::kv_debug!(
+                "  [T4.2] structural elimination: {}/{} nodes retained ({}% eliminated)",
+                after, before,
+                if before > 0 { (before - after) * 100 / before } else { 0 }
+            );
+        }
+    }
 
     // Ξ(t) T2: Enrich with GNN composite score E(t) = α·graph + β·gnn - γ·cost
     if let Some(ctx) = gnn_ctx {
@@ -307,7 +435,7 @@ pub fn query_with_registry(
                                 continue;
                             }
                             Err(e) => {
-                                eprintln!(
+                                kv_registry::kv_debug!(
                                     "  ⚠ embed injection failed for node {:?}: {}, fallback to text",
                                     nid, e
                                 );
@@ -324,7 +452,7 @@ pub fn query_with_registry(
     }
 
     if use_embd && (embd_injected > 0 || text_encoded > 0) {
-        eprintln!(
+        kv_registry::kv_debug!(
             "  [C4] nodes: {} via embedding, {} via text (ratio={:.0}%)",
             embd_injected,
             text_encoded,
@@ -404,7 +532,7 @@ pub fn query_with_registry(
                     .iter()
                     .filter(|nid| fact_scores.contains_key(nid))
                     .count();
-                eprintln!(
+                kv_registry::kv_debug!(
                     "  [D6] {} promoted nodes pending rescore ({} with fact_scores)",
                     n_promoted, n_with_facts
                 );
@@ -418,7 +546,7 @@ pub fn query_with_registry(
             } else {
                 ""
             };
-            eprintln!(
+            kv_registry::kv_debug!(
                 "  [D2] round {}: +{} promoted, -{} demoted (Α={} Β={} Γ={}){}",
                 tracker.current_round(),
                 n_promoted,
@@ -693,7 +821,7 @@ pub fn query_with_registry(
                 ) {
                     Ok(abl) => Some(abl),
                     Err(e) => {
-                        eprintln!("  [B3] Ablation reward failed: {e}");
+                        kv_registry::kv_debug!("  [B3] Ablation reward failed: {e}");
                         None
                     }
                 }
@@ -710,7 +838,7 @@ pub fn query_with_registry(
             let (n_accel_demote, n_preempt_promote) =
                 tracker.reward_feedback(&abl.node_rewards, &ctx.adjacency, registry, engine);
             if n_accel_demote > 0 || n_preempt_promote > 0 {
-                eprintln!(
+                kv_registry::kv_debug!(
                     "  [D3] reward feedback: {} accelerated demotes, {} preemptive promotes",
                     n_accel_demote, n_preempt_promote
                 );
@@ -757,7 +885,7 @@ pub fn maybe_relayout(
     let updated = layout.update_from_fused(&weighted_adj, &node_ids, base_position, frozen_nodes);
 
     if updated > 0 {
-        eprintln!(
+        kv_registry::kv_debug!(
             "  [E4] Hilbert re-layout: {} nodes, {} co-activation edges fused, {} positions updated",
             node_ids.len(),
             coact_pairs.len(),

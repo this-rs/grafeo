@@ -737,44 +737,37 @@ pub fn extract_node_with_budget(
         TextBudget::Minimal => 0, // unreachable, handled above
     };
     let extra = collect_extra_props(&node, name_key_used, desc_key_used, prop_limit);
-    let props_suffix = if extra.is_empty() {
-        String::new()
-    } else {
-        let parts: Vec<String> = extra.iter().map(|(k, v)| format!("{}: {}", k, v)).collect();
-        format!(" | {}", parts.join(" | "))
-    };
 
     // ── Outgoing relations summary (Full budget only) ──
     let rel_suffix = if budget == TextBudget::Full {
-        collect_outgoing_relations(store, node_id, &name, 5)
+        collect_outgoing_relations(store, node_id, &name, 12)
     } else {
         String::new()
     };
 
-    let text = if !desc.is_empty() {
+    // Build structured text: properties on separate lines for LLM readability.
+    // Format: "[Type] Name — description (status)\n  key: value\n  Relations: ..."
+    let mut text = String::new();
+    // Header line
+    if !desc.is_empty() {
         if !status.is_empty() {
-            format!(
-                "[{}] {} — {} ({}){}{}",
-                labels, name, desc, status, props_suffix, rel_suffix
-            )
+            text.push_str(&format!("[{}] {} — {} ({})", labels, name, desc, status));
         } else {
-            format!(
-                "[{}] {} — {}{}{}",
-                labels, name, desc, props_suffix, rel_suffix
-            )
+            text.push_str(&format!("[{}] {} — {}", labels, name, desc));
         }
     } else if !status.is_empty() {
-        format!(
-            "[{}] {} ({}){}{}",
-            labels, name, status, props_suffix, rel_suffix
-        )
-    } else if !props_suffix.is_empty() {
-        format!("[{}] {}{}{}", labels, name, props_suffix, rel_suffix)
-    } else if !rel_suffix.is_empty() {
-        format!("[{}] {}{}", labels, name, rel_suffix)
+        text.push_str(&format!("[{}] {} ({})", labels, name, status));
     } else {
-        format!("[{}] {}", labels, name)
-    };
+        text.push_str(&format!("[{}] {}", labels, name));
+    }
+    // Properties: one per line, indented, for clear attribution
+    for (k, v) in &extra {
+        text.push_str(&format!("\n  {}: {}", k, v));
+    }
+    // Relations on their own line
+    if !rel_suffix.is_empty() {
+        text.push_str(&format!("\n  Relations:{}", rel_suffix));
+    }
 
     (text, labels, summary)
 }

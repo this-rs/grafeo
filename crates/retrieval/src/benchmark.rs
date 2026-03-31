@@ -111,6 +111,9 @@ pub struct BenchResult {
     pub keywords_missing: Vec<String>,
     pub latency_ms: f64,
     pub response_preview: String,
+    /// Full response text (for debugging; preview is truncated to 120 chars).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub full_response: Option<String>,
 }
 
 /// Summary statistics for a benchmark run.
@@ -320,5 +323,96 @@ mod tests {
         assert_eq!(kv_type_name(1), "f16");
         assert_eq!(kv_type_name(8), "q8_0");
         assert_eq!(kv_type_name(2), "q4_0");
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // REGRESSION tests for documented bugs
+    // ─────────────────────────────────────────────────────────────────
+
+    /// REGRESSION: check_keywords must be case-insensitive for ALL keywords.
+    /// Without this, benchmark scores are wrong because the LLM may produce
+    /// "lyon" instead of "Lyon", "rust" instead of "Rust", etc.
+    #[test]
+    fn test_regression_keywords_case_insensitive_all_variants() {
+        // Uppercase in expected, lowercase in response
+        let (hit, _, _) = check_keywords("thomas habite à lyon", &["Lyon"]);
+        assert!(hit, "Lyon vs lyon must match");
+
+        // Mixed case
+        let (hit, _, _) = check_keywords("Il utilise RUST", &["Rust"]);
+        assert!(hit, "Rust vs RUST must match");
+
+        // Keyword in middle of word — this IS a match (contains)
+        let (hit, _, _) = check_keywords("DataPipeline est un projet", &["DataPipeline"]);
+        assert!(hit, "DataPipeline exact match");
+
+        // Multi-keyword: all must match
+        let (hit, found, missing) = check_keywords("Marc et Alice connaissent Thomas", &["Marc", "Alice"]);
+        assert!(hit, "both keywords found");
+        assert_eq!(found.len(), 2);
+        assert!(missing.is_empty());
+    }
+
+    /// REGRESSION: check_keywords must handle French accented characters.
+    /// The benchmark questions use French ("Où", "développeur", "Rivière").
+    #[test]
+    fn test_regression_keywords_french_accents() {
+        // Accented chars in response
+        let (hit, _, _) = check_keywords("développeur Rust chez Mozilla", &["Rust", "Mozilla"]);
+        assert!(hit);
+
+        // Accent in keyword
+        let (hit, _, _) = check_keywords("Thomas Rivière habite Lyon", &["Rivière"]);
+        assert!(hit, "Accented keyword must match accented response");
+    }
+
+    /// REGRESSION: check_keywords with empty response must return all missing.
+    #[test]
+    fn test_regression_keywords_empty_response() {
+        let (hit, found, missing) = check_keywords("", &["Lyon", "Rust"]);
+        assert!(!hit);
+        assert!(found.is_empty());
+        assert_eq!(missing.len(), 2);
+    }
+
+    /// REGRESSION: compute_summary with 0 results must not panic (div by zero).
+    #[test]
+    fn test_regression_summary_empty_results() {
+        let summary = compute_summary(&[]);
+        assert_eq!(summary.total, 0);
+        assert_eq!(summary.hits, 0);
+        assert_eq!(summary.hit_rate, 0.0);
+        assert_eq!(summary.latency_avg_ms, 0.0);
+        assert_eq!(summary.latency_p95_ms, 0.0);
+        assert!(summary.by_category.is_empty());
+    }
+
+    /// REGRESSION: All 12 benchmark questions must have non-empty keywords.
+    /// A question with empty keywords would always "pass" — false positive.
+    #[test]
+    fn test_regression_all_questions_have_keywords() {
+        for (i, q) in BENCH_QUESTIONS.iter().enumerate() {
+            assert!(
+                !q.keywords.is_empty(),
+                "Q{}: must have at least one keyword, otherwise it always passes",
+                i + 1
+            );
+        }
+    }
+
+    /// REGRESSION: Keywords must not contain substrings that trivially match stop words.
+    /// E.g., if a keyword is "a" it would match almost any French text.
+    #[test]
+    fn test_regression_keywords_not_too_short() {
+        for (i, q) in BENCH_QUESTIONS.iter().enumerate() {
+            for kw in q.keywords {
+                assert!(
+                    kw.len() >= 2,
+                    "Q{}: keyword '{}' is too short (< 2 chars), would produce false positives",
+                    i + 1,
+                    kw
+                );
+            }
+        }
     }
 }

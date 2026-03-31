@@ -162,7 +162,7 @@ fn build_unified_content(
 ## Mémoire
 Tu as une mémoire persistante entre les sessions.
 Utilise ces informations pour personnaliser tes réponses. Si un fait contredit un autre, le plus récent prévaut.
-N'invente rien — utilise uniquement les faits et souvenirs listés.
+N'invente rien — utilise uniquement les faits et souvenirs listés, mais tu peux créer, innové, tester, te tromper.
 "#);
 
     // ── Structured facts (from pattern detection) ──
@@ -274,6 +274,9 @@ fn main() -> Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(1400);
 
+    let cli_temp: Option<f32> = parse_arg("--temp")
+        .and_then(|s| s.parse().ok());
+
     let kv_capacity: i32 = parse_arg("--kv-capacity")
         .and_then(|s| s.parse().ok())
         .unwrap_or(4096);
@@ -311,40 +314,73 @@ fn main() -> Result<()> {
     // --profile-heads N: run N queries in profiling mode, export head_profile.json, then exit
     let profile_heads: Option<usize> = parse_arg("--profile-heads").and_then(|s| s.parse().ok());
 
-    // --head-router: enable Phase B per-head α-routing via REINFORCE
-    let use_head_router = std::env::args().any(|a| a == "--head-router");
+    let is_benchmark = std::env::args().any(|a| a == "--benchmark");
+    let has_db = db_path.is_some();
+
+    // ── Smart defaults: when --db is provided, enable validated features ──
+    // Override with --no-head-router, --no-hilbert, --no-tier-quant to disable.
+    let no_head_router = std::env::args().any(|a| a == "--no-head-router");
+    let no_hilbert = std::env::args().any(|a| a == "--no-hilbert");
+    let no_tier_quant = std::env::args().any(|a| a == "--no-tier-quant");
+
+    // --head-router: Phase B per-head α-routing via REINFORCE
+    // ON by default when --db is provided (Phase B: +20% recall validated)
+    let use_head_router = std::env::args().any(|a| a == "--head-router")
+        || (has_db && !no_head_router);
     let head_router_lr: f32 = parse_arg("--head-router-lr")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0.01);
     let head_router_warmup: u32 = parse_arg("--head-router-warmup")
         .and_then(|s| s.parse().ok())
-        .unwrap_or(50);
+        .unwrap_or(if is_benchmark { 0 } else { 50 });
     // --head-router-granularity: "full" (n_head) or "gqa" (n_head_kv, default)
-    // "gqa" (default): groups by KV heads — natural for GQA models, best recall-per-MB
-    // "full": each query head routes independently — max specialization potential,
-    //         more memory (~5× for GQA models), may benefit from larger GPU/Apple Silicon
     let head_router_granularity: String =
         parse_arg("--head-router-granularity").unwrap_or_else(|| "gqa".to_string());
 
-    // Phase C: embedding injection
+    // Phase C: embedding injection — stays OFF by default (model-dependent, dangerous on ≤3B)
     let embd_injection_ratio: f32 = parse_arg("--embd-injection-ratio")
         .and_then(|s| s.parse().ok())
-        .unwrap_or(0.0); // 0.0 = disabled, 1.0 = inject all nodes via embeddings
+        .unwrap_or(0.0);
     let _embd_warmup: u32 = parse_arg("--embd-warmup")
         .and_then(|s| s.parse().ok())
-        .unwrap_or(100); // queries before full injection (for soft-mixing schedule)
+        .unwrap_or(100);
 
-    // Phase D: Hilbert layout for topology-aware KV positioning
-    let hilbert_enabled: bool = std::env::args().any(|a| a == "--hilbert");
+    // Phase D: Hilbert layout — ON by default when --db is provided
+    let hilbert_enabled: bool = std::env::args().any(|a| a == "--hilbert")
+        || (has_db && !no_hilbert);
+
+    // P5: Tier-based pre-quantization — "default" when --db is provided (0% quality loss)
+    let tier_quant_mode: Option<String> = parse_arg("--tier-quant").or_else(|| {
+        if has_db && !no_tier_quant {
+            Some("default".to_string())
+        } else {
+            None
+        }
+    });
 
     // Benchmark mode: run 12 questions automatically and output JSON results
     let benchmark_mode: bool = std::env::args().any(|a| a == "--benchmark");
     let benchmark_output: Option<String> = parse_arg("--benchmark-output");
 
+    // Phase C GO decision validated on ≥14B models (76% recall with embeddings vs 64% text-only).
+    // On small models (≤3B), embedding injection produces gibberish (0/12) because the
+    // ProjectionNet (64d→n_embd) projections are not interpretable without fine-tuning.
+    // Auto-enable ONLY when explicitly requested via --embd-injection-ratio.
+    // (Previously auto-enabled in benchmark mode, causing 0/12 regression on 3B.)
+
     let kv_type_name = |t: i32| match t { 1 => "f16", 2 => "q4_0", 6 => "q5_0", 8 => "q8_0", 10 => "q3_0", _ => "?" };
     eprintln!("=== obrain-chat — Generic Graph LLM + Topological Mask (FFI) ===");
     if type_k != 1 || type_v != 1 {
         eprintln!("  TurboQuant: KV cache K={} V={} (Hadamard rotation auto-enabled)", kv_type_name(type_k), kv_type_name(type_v));
+    }
+    if has_db {
+        let features: Vec<&str> = [
+            if use_head_router { Some("head-router") } else { None },
+            if hilbert_enabled { Some("hilbert") } else { None },
+            if tier_quant_mode.is_some() { Some("tier-quant") } else { None },
+            if embd_injection_ratio > 0.0 { Some("embd-inject") } else { None },
+        ].iter().filter_map(|x| *x).collect();
+        eprintln!("  Graph mode: {}", features.join(" + "));
     }
     eprintln!();
 
@@ -398,29 +434,24 @@ fn main() -> Result<()> {
             (None, None, None, Vec::new())
         };
 
-        // Persona DB
-        let persona_resolved_path: String = if let Some(ref cp) = persona_path {
-            cp.to_str().unwrap_or("conv.db").to_string()
-        } else if let Some(ref db_p) = db_path {
-            format!("{db_p}.persona")
-        } else {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-            let dir = format!("{home}/.obrain-chat");
-            let _ = std::fs::create_dir_all(&dir);
-            format!("{dir}/default.persona")
-        };
-        // Note: do NOT delete checkpoint.meta for persona DB — deleting it
-        // forces full WAL replay which re-allocates NodeIds sequentially,
-        // losing nodes created in previous sessions (AttnFormulas, Facts, etc.)
-        let persona_db = match persona::PersonaDB::open(&persona_resolved_path) {
-            Ok(cdb) => {
-                cdb.migrate_facts();
-                // Zero-seed: no pattern seeding, PersistNet handles persistence
-                Some(cdb)
+        // Persona DB — in-memory when no explicit path (clean session, no stale messages)
+        let persona_db = if let Some(ref cp) = persona_path {
+            let p = cp.to_str().unwrap_or("conv.db").to_string();
+            match persona::PersonaDB::open(&p) {
+                Ok(cdb) => { cdb.migrate_facts(); Some(cdb) }
+                Err(e) => { eprintln!("  Warning: could not open persona DB: {e}"); None }
             }
-            Err(e) => {
-                eprintln!("  Warning: could not open persona DB: {e}");
-                None
+        } else if let Some(ref db_p) = db_path {
+            let p = format!("{db_p}.persona");
+            match persona::PersonaDB::open(&p) {
+                Ok(cdb) => { cdb.migrate_facts(); Some(cdb) }
+                Err(e) => { eprintln!("  Warning: could not open persona DB: {e}"); None }
+            }
+        } else {
+            // No persona path, no graph DB → ephemeral in-memory persona
+            match persona::PersonaDB::new_in_memory() {
+                Ok(cdb) => Some(cdb),
+                Err(e) => { eprintln!("  Warning: could not create in-memory persona DB: {e}"); None }
             }
         };
 
@@ -528,6 +559,8 @@ fn main() -> Result<()> {
         n_gpu_layers: n_gpu,
         type_k,
         type_v,
+        // CLI --temp overrides default. Benchmark mode defaults to 0.1 for near-determinism.
+        temperature: cli_temp.unwrap_or(if benchmark_mode { 0.1 } else { EngineConfig::default().temperature }),
         ..EngineConfig::default()
     };
 
@@ -630,51 +663,44 @@ fn main() -> Result<()> {
     let _ = &db_holder; // keep DB alive for the store Arc
 
     // ── Conversation DB (auto-created if not specified) ──────────────
-    let persona_resolved_path: String = if let Some(ref cp) = persona_path {
-        cp.to_str().unwrap_or("conv.db").to_string()
+    // Persona DB — in-memory when no explicit path (clean session, no stale messages)
+    let (persona_resolved_path, mut persona_db) = if let Some(ref cp) = persona_path {
+        let p = cp.to_str().unwrap_or("conv.db").to_string();
+        let db = PersonaDB::open(&p).ok();
+        (p, db)
     } else if let Some(ref db_p) = db_path {
-        // Auto-create alongside the graph DB
-        format!("{db_p}.persona")
+        let p = format!("{db_p}.persona");
+        let db = PersonaDB::open(&p).ok();
+        (p, db)
     } else {
-        // No graph DB: use ~/.obrain-chat/conv.db
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        let dir = format!("{home}/.obrain-chat");
-        let _ = std::fs::create_dir_all(&dir);
-        format!("{dir}/default.persona")
+        // No persona path, no graph DB → ephemeral in-memory persona
+        let db = PersonaDB::new_in_memory().ok();
+        (":memory:".to_string(), db)
     };
-    debug!("Persona DB path: {persona_resolved_path}");
-    // Note: do NOT delete checkpoint.meta for persona DB — see comment above
-    let mut persona_db = match PersonaDB::open(&persona_resolved_path) {
-        Ok(cdb) => {
-            let convs = cdb.list_conversations();
-            eprintln!(
-                "Persona: {} ({} conversations, current: \"{}\")",
-                persona_resolved_path,
-                convs.len(),
-                cdb.current_title()
-            );
-            let recent = cdb.recent_messages(4);
-            if !recent.is_empty() {
-                debug!("  Recent context ({} messages):", recent.len());
-                for (role, content) in &recent {
-                    let snippet: String = content.chars().take(80).collect();
-                    debug!(
-                        "    {}: {}{}",
-                        role,
-                        snippet,
-                        if content.len() > 80 { "..." } else { "" }
-                    );
-                }
+    if let Some(ref cdb) = persona_db {
+        let convs = cdb.list_conversations();
+        eprintln!(
+            "Persona: {} ({} conversations, current: \"{}\")",
+            persona_resolved_path,
+            convs.len(),
+            cdb.current_title()
+        );
+        let recent = cdb.recent_messages(4);
+        if !recent.is_empty() {
+            debug!("  Recent context ({} messages):", recent.len());
+            for (role, content) in &recent {
+                let snippet: String = content.chars().take(80).collect();
+                debug!(
+                    "    {}: {}{}",
+                    role,
+                    snippet,
+                    if content.len() > 80 { "..." } else { "" }
+                );
             }
-            // Ξ(t) T1: migrate old facts at startup (zero-seed: no patterns/reward tokens)
-            cdb.migrate_facts();
-            Some(cdb)
         }
-        Err(e) => {
-            eprintln!("  Warning: could not open persona DB: {e}");
-            None
-        }
-    };
+        cdb.migrate_facts();
+    }
+    debug!("Persona DB path: {persona_resolved_path}");
 
     if store.is_some() {
         eprintln!(
@@ -715,6 +741,24 @@ fn main() -> Result<()> {
     let header_positions: Vec<i32> = (0..header_n).collect();
     engine.encode(&header_tokens_vec, &header_positions, 0)?;
     let mut registry = KvNodeRegistry::new(&system_header, header_n);
+    // P5: tier-based pre-quantization of embeddings
+    if let Some(ref mode) = tier_quant_mode {
+        let config = match mode.as_str() {
+            "default" | "symmetric" => kv_registry::TierQuantConfig::default(),
+            "asymmetric" | "asym" => kv_registry::TierQuantConfig::asymmetric(),
+            "aggressive" => kv_registry::TierQuantConfig::aggressive(),
+            "none" => kv_registry::TierQuantConfig::none(),
+            other => {
+                eprintln!("  ⚠ Unknown --tier-quant mode '{}', using default", other);
+                kv_registry::TierQuantConfig::default()
+            }
+        };
+        eprintln!(
+            "  P5: tier-quant enabled (mode={}): Α={:?}/{:?} Β={:?}/{:?} Γ={:?}/{:?}",
+            mode, config.alpha_k, config.alpha_v, config.beta_k, config.beta_v, config.gamma_k, config.gamma_v
+        );
+        registry.tier_quant_config = Some(config);
+    }
     let mut conv_frags = ConvFragments::new();
     let mut round_tracker: Option<retrieval::RoundTracker> = if embd_injection_ratio > 0.0 {
         Some(retrieval::RoundTracker::new())
@@ -967,7 +1011,7 @@ fn main() -> Result<()> {
             rd.token_learner = pdb.load_learned_tokens();
             let n = rd.token_learner.tracked_count();
             if n > 0 {
-                eprintln!("  [T4] Loaded {} learned token polarities ({} reliable)",
+                debug!("  [T4] Loaded {} learned token polarities ({} reliable)",
                     n, rd.token_learner.reliable_count());
             }
             rd
@@ -1116,36 +1160,67 @@ fn main() -> Result<()> {
         None
     };
 
-    // Phase C: NodeEmbeddingCache + ProjectionNet training pipeline
-    let (embd_cache, mut projection_net, mut training_manager): (
-        Option<retrieval::NodeEmbeddingCache>,
+    // Phase C: NodeEmbeddingCache (always) + ProjectionNet training (conditional on injection)
+    //
+    // The embedding cache is ALWAYS populated when graph nodes exist, because cosine
+    // retrieval (Step 2b in scoring.rs) uses it for semantic matching. This is the
+    // generic cognitive fix: the LLM's embedding space natively understands cross-language
+    // similarity ("événement" ≈ "Event") without hardcoded synonyms.
+    //
+    // GNN fusion + ProjectionNet + KV injection remain gated on embd_injection_ratio > 0.
+
+    let model_name = std::path::Path::new(&model_path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    // Collect node texts from banks (always, for cosine retrieval)
+    let mut node_texts: Vec<(obrain_common::types::NodeId, String)> = Vec::new();
+    {
+        let seen: std::collections::HashSet<obrain_common::types::NodeId> = std::collections::HashSet::new();
+        for bank in &banks {
+            for (nid, text) in &bank.texts {
+                if !seen.contains(nid) {
+                    node_texts.push((*nid, text.clone()));
+                }
+            }
+        }
+    }
+
+    // Always compute text-only embeddings for cosine retrieval
+    let mut embd_cache: Option<retrieval::NodeEmbeddingCache> = if !node_texts.is_empty() {
+        let mut cache = retrieval::NodeEmbeddingCache::new(engine.n_embd(), &model_name);
+        let t0 = std::time::Instant::now();
+        match retrieval::compute_node_embeddings(&engine, &mut cache, &node_texts, false) {
+            Ok(n) => eprintln!(
+                "  [Cosine] Pre-computed {} text embeddings for retrieval in {:.1}s",
+                n,
+                t0.elapsed().as_secs_f32()
+            ),
+            Err(e) => eprintln!("  ⚠ [Cosine] Text embedding computation failed: {}", e),
+        }
+        Some(cache)
+    } else {
+        None
+    };
+
+    // Phase C injection pipeline: GNN fusion + ProjectionNet (only when injection enabled)
+    let (mut projection_net, mut training_manager): (
         Option<retrieval::ProjectionNet>,
         Option<retrieval::TrainingManager>,
     ) = if embd_injection_ratio > 0.0 {
-        let model_name = std::path::Path::new(&model_path)
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default();
         eprintln!(
             "  [Phase C] Embedding injection enabled: ratio={:.0}%, model={}",
             embd_injection_ratio * 100.0,
             model_name
         );
-        let mut cache = retrieval::NodeEmbeddingCache::new(engine.n_embd(), &model_name);
 
-        // Determine weights path from persona dir
-        let weights_path = parse_arg("--persona")
-            .map(|p| retrieval::weights_path_for_persona(std::path::Path::new(&p)));
-
-        // Collect node texts from banks
-        let mut node_texts: Vec<(obrain_common::types::NodeId, String)> = Vec::new();
-        for bank in &banks {
-            for (nid, text) in &bank.texts {
-                if !cache.has(*nid) {
-                    node_texts.push((*nid, text.clone()));
-                }
-            }
-        }
+        // Determine weights path from persona dir (works with --persona OR --db)
+        let weights_path = if persona_resolved_path != ":memory:" {
+            Some(retrieval::weights_path_for_persona(std::path::Path::new(&persona_resolved_path)))
+        } else {
+            None
+        };
 
         // Get GNN embeddings if available
         let gnn_embeds: std::collections::HashMap<obrain_common::types::NodeId, Vec<f32>> =
@@ -1225,46 +1300,36 @@ fn main() -> Result<()> {
                 Err(e) => eprintln!("  ⚠ [Phase C] ProjectionNet training failed: {}", e),
             }
 
-            // Now compute fused embeddings using the trained ProjectionNet
-            let t0 = std::time::Instant::now();
-            let fctx = retrieval::FusionContext {
-                gnn_embeddings: gnn_embeds,
-                projection_net: &pnet,
-            };
-            match retrieval::compute_node_embeddings_with_fusion(
-                &engine,
-                &mut cache,
-                &node_texts,
-                false,
-                Some(&fctx),
-            ) {
-                Ok(n) => eprintln!(
-                    "  [Phase C] Pre-computed {} fused node embeddings in {:.1}s",
-                    n,
-                    t0.elapsed().as_secs_f32()
-                ),
-                Err(e) => eprintln!("  ⚠ [Phase C] Fused embedding computation failed: {}", e),
-            }
-        } else if !node_texts.is_empty() {
-            // No GNN — text-only embeddings (fallback)
-            let t0 = std::time::Instant::now();
-            match retrieval::compute_node_embeddings(&engine, &mut cache, &node_texts, false) {
-                Ok(n) => eprintln!(
-                    "  [Phase C] Pre-computed {} text-only node embeddings in {:.1}s",
-                    n,
-                    t0.elapsed().as_secs_f32()
-                ),
-                Err(e) => eprintln!("  ⚠ [Phase C] Text embedding computation failed: {}", e),
+            // Override text-only embeddings with GNN-fused embeddings
+            if let Some(ref mut cache) = embd_cache {
+                let t0 = std::time::Instant::now();
+                let fctx = retrieval::FusionContext {
+                    gnn_embeddings: gnn_embeds,
+                    projection_net: &pnet,
+                };
+                match retrieval::compute_node_embeddings_with_fusion(
+                    &engine,
+                    cache,
+                    &node_texts,
+                    true, // force: override text-only with fused
+                    Some(&fctx),
+                ) {
+                    Ok(n) => eprintln!(
+                        "  [Phase C] Upgraded {} embeddings to GNN-fused in {:.1}s",
+                        n,
+                        t0.elapsed().as_secs_f32()
+                    ),
+                    Err(e) => eprintln!("  ⚠ [Phase C] Fused embedding computation failed: {}", e),
+                }
             }
         }
 
         (
-            Some(cache),
             if has_gnn { Some(pnet) } else { None },
             Some(tmgr),
         )
     } else {
-        (None, None, None)
+        (None, None)
     };
 
     // Ξ(t) T1: Now that GNN is loaded, rescore facts and update header
@@ -1278,6 +1343,12 @@ fn main() -> Result<()> {
         );
     }
 
+    // Re-enable embedding output after node embedding init (compute_node_embeddings
+    // calls set_embeddings(false) internally, which disables it for PersistNet).
+    if persist_net.is_some() {
+        engine.set_embeddings(true);
+    }
+
     // ── Benchmark mode (--benchmark) ────────────────────────────────────────
     if benchmark_mode {
         use retrieval::benchmark::{
@@ -1285,6 +1356,41 @@ fn main() -> Result<()> {
         };
 
         eprintln!("\n=== BENCHMARK MODE ({} questions) ===\n", BENCH_QUESTIONS.len());
+
+        // Build IPTR FactSnapshot from LpgStore (graph) or PersonaDB (facts)
+        // This enables "think in graph" during generation — when the model hesitates
+        // (high entropy), IPTR triggers a BFS on the graph and applies logit biases
+        // to steer toward relevant concepts.
+        let bench_iptr_snapshot = if std::env::var("OBRAIN_IPTR_DISABLE").is_ok() {
+            None
+        } else {
+            let tokenize_fn = |text: &str| -> Vec<(u32, f32)> {
+                match engine.tokenize(text, false, false) {
+                    Ok(tokens) => tokens.iter().map(|&t| (t as u32, 1.0f32)).collect(),
+                    Err(_) => Vec::new(),
+                }
+            };
+            if let (Some(st), Some(sch)) = (&store, &schema) {
+                // Primary: build from LpgStore (graph nodes = Person, Project, Tech, etc.)
+                let snap = FactSnapshot::from_lpg_store(st, sch, Some(&tokenize_fn));
+                eprintln!("  [IPTR] FactSnapshot from graph: {} facts, {} edges",
+                    snap.len(),
+                    snap.adjacency.values().map(|v| v.len()).sum::<usize>() / 2
+                );
+                if snap.is_empty() { None } else { Some(snap) }
+            } else if let Some(pdb) = persona_db.as_ref() {
+                // Fallback: build from PersonaDB facts
+                let snap = FactSnapshot::from_persona_db(pdb, Some(&tokenize_fn));
+                eprintln!("  [IPTR] FactSnapshot from persona: {} facts, {} edges",
+                    snap.len(),
+                    snap.adjacency.values().map(|v| v.len()).sum::<usize>() / 2
+                );
+                if snap.is_empty() { None } else { Some(snap) }
+            } else {
+                None
+            }
+        };
+
         let mut results: Vec<BenchResult> = Vec::new();
 
         for (i, bq) in BENCH_QUESTIONS.iter().enumerate() {
@@ -1316,9 +1422,11 @@ fn main() -> Result<()> {
             let q_store = store.as_ref();
             let q_schema = schema.as_ref();
             let coact_ref: Option<&retrieval::CoactivationMap> = None;
-            let cold_ref: Option<&dyn kv_registry::ColdSearch> = persona_db
-                .as_ref()
-                .map(|p| p as &dyn kv_registry::ColdSearch);
+            // CRITICAL: disable COLD search in benchmark mode.
+            // Previous benchmark runs store wrong answers in PersonaDB conversation history.
+            // Re-injecting them via COLD→HOT poisons the context and the model repeats
+            // old wrong answers instead of reading fresh graph data.
+            let cold_ref: Option<&dyn kv_registry::ColdSearch> = None;
 
             let t_start = Instant::now();
             let result = query_with_registry(
@@ -1343,8 +1451,9 @@ fn main() -> Result<()> {
                 cold_ref,
                 None, // no formula selection in benchmark
                 &[], // no self-embed positions in benchmark
-                None, // no IPTR snapshot in benchmark
-                None, // no state metrics in benchmark
+                bench_iptr_snapshot.as_ref(),
+                None, // no state metrics in benchmark (needs PersonaDB SelfMetrics)
+                None, // no bank context in benchmark (T4.2)
             );
             let latency_ms = t_start.elapsed().as_secs_f64() * 1000.0;
 
@@ -1388,6 +1497,7 @@ fn main() -> Result<()> {
                         keywords_missing: missing,
                         latency_ms,
                         response_preview: preview,
+                        full_response: Some(final_trimmed.to_string()),
                     });
                 }
                 Err(e) => {
@@ -1400,6 +1510,7 @@ fn main() -> Result<()> {
                         keywords_missing: bq.keywords.iter().map(|s| s.to_string()).collect(),
                         latency_ms,
                         response_preview: format!("ERROR: {}", e),
+                        full_response: None,
                     });
                 }
             }
@@ -1966,6 +2077,7 @@ fn main() -> Result<()> {
             &self_embed_positions,
             iptr_snapshot.as_ref(),
             state_metrics.as_ref(),
+            None, // TODO(T4.3+): wire BankContext from HilbertLayout + BankManager
         ) {
             Ok((response, relevant_graph_nodes, avg_entropy, ablation_reward)) => {
                 // Ξ(t) T5: Store entropy signal for next turn's reward computation
@@ -1973,7 +2085,7 @@ fn main() -> Result<()> {
 
                 // Ξ(t) Phase B/B3: Log ablation reward + backward into HeadRouter
                 if let Some(ref abl) = ablation_reward {
-                    eprintln!(
+                    debug!(
                         "  [B3] head_contribution_entropy={:.3}, bank_contributions={:?}",
                         abl.head_contribution_entropy,
                         abl.bank_contributions
@@ -1985,7 +2097,7 @@ fn main() -> Result<()> {
                     if let Some(ref mut router) = head_router {
                         let visibility = router.forward();
                         router.backward(&abl.per_head_rewards, &visibility);
-                        eprintln!("  [B3] HeadRouter updated (n_updates={})", router.n_updates);
+                        debug!("  [B3] HeadRouter updated (n_updates={})", router.n_updates);
                     }
                 }
                 // P2: Online ProjectionNet refinement
@@ -2476,6 +2588,10 @@ fn main() -> Result<()> {
                 // Extract LLM embedding of user message and decide if it should be persisted
                 if let (Some(pnet), Some(pdb)) = (&mut persist_net, &persona_db) {
                     pnet.tick();
+
+                    // Belt-and-suspenders: ensure embeddings enabled before extraction
+                    // (node_embedding.rs internally disables them after each computation)
+                    engine.set_embeddings(true);
 
                     // Get last-layer hidden state from the encode that just happened
                     let embedding = engine.get_embedding(-1);

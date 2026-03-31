@@ -5,7 +5,8 @@
 #   Phase 2: make dist-all     → Build standalone binaries for all platforms
 #
 # Quick targets:
-#   make deps           Build llama.cpp for Apple Silicon only (native, no Docker)
+#   make deps           Build llama.cpp for Apple Silicon only (skip if .a exist)
+#   make macos-deps     FORCE rebuild llama.cpp from source (use after modifying C++)
 #   make macos          Build Rust binary (macOS arm64)
 #   make linux          Cross-compile Rust binary (Linux x86_64 AVX2, via zig)
 #   make dist           Build macOS + Linux AVX2 binaries
@@ -105,10 +106,36 @@ DOCKER_PLATFORM := --platform linux/amd64
 #  Phase 1: Dependencies (llama.cpp static libs)
 # =============================================
 
-.PHONY: deps deps-all \
+.PHONY: deps deps-all macos-deps \
         deps-docker-cpu-avx2 deps-docker-cpu-compat deps-docker-cuda deps-docker-vulkan deps-docker-sycl
 
-# --- deps: Apple Silicon only (native, no Docker) ---
+# --- macos-deps: FORCE rebuild llama.cpp + copy static libs ---
+# Always rebuilds from source (cmake + make), even if .a files exist.
+# Use this after modifying llama.cpp source code.
+macos-deps:
+	@echo "=== Rebuilding llama.cpp from source (macOS arm64, Metal+Accelerate) ==="
+	cd $(LLAMA_CPP_DIR) && cmake -B build-static \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DBUILD_SHARED_LIBS=OFF \
+		-DGGML_BLAS=ON \
+		-DGGML_METAL=ON \
+		-DGGML_METAL_EMBED_LIBRARY=ON \
+		-DGGML_CUDA=OFF \
+		-DGGML_OPENMP=OFF \
+		-DLLAMA_BUILD_TESTS=OFF \
+		-DLLAMA_BUILD_EXAMPLES=OFF \
+		-DLLAMA_BUILD_SERVER=OFF \
+		-DLLAMA_CURL=OFF
+	cd $(LLAMA_CPP_DIR) && cmake --build build-static --config Release \
+		-j$(JOBS) --target $(LLAMA_TARGETS_MACOS)
+	@mkdir -p $(LLAMA_DEPS_MACOS)
+	@rm -f $(LLAMA_DEPS_MACOS)/*.a
+	@find $(LLAMA_STATIC_MACOS) -name '*.a' -exec cp {} $(LLAMA_DEPS_MACOS)/ \;
+	@echo ""
+	@echo "=== macos-deps rebuilt ==="
+	@ls -lh $(LLAMA_DEPS_MACOS)/*.a
+
+# --- deps: Apple Silicon only (skips if .a already exist) ---
 deps: $(LLAMA_DEPS_MACOS)/libllama.a
 	@echo ""
 	@echo "=== deps complete (Apple Silicon) ==="

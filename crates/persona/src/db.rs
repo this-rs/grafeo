@@ -40,10 +40,25 @@ pub struct PersonaDB {
 }
 
 impl PersonaDB {
+    /// Create a purely in-memory persona (no persistence).
+    /// Ideal for sessions without `--persona`/`--db`: starts clean every time,
+    /// no stale messages from previous runs.
+    pub fn new_in_memory() -> Result<Self> {
+        let db = ObrainDB::new_in_memory();
+        Self::init_from_db(db)
+    }
+
     /// Open or create conversation DB at given path.
     pub fn open(path: &str) -> Result<Self> {
-        let db =
-            ObrainDB::open(path).context(format!("Failed to open conversation DB at {path}"))?;
+        let db = ObrainDB::open(path).map_err(|e| {
+            eprintln!("  [PersonaDB] ObrainDB::open({path}) failed: {e}");
+            e
+        }).context(format!("Failed to open conversation DB at {path}"))?;
+        Self::init_from_db(db)
+    }
+
+    /// Shared init: find/create conversation, build BM25 index.
+    fn init_from_db(db: ObrainDB) -> Result<Self> {
 
         // Find or create the current conversation
         let conv_id = {

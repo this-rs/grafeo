@@ -36,6 +36,3 @@ http = ["dep:reqwest"]
 ## Disabled by default — superseded by state_kq_b (Phase 5).
 self_embed_proprio = []
 
-[[example]]
-name = "gen_test_graph"
-path = "tests/gen_test_graph.rs"

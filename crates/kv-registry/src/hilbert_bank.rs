@@ -9,7 +9,7 @@ use crate::hilbert::HilbertLayout;
 use crate::registry::KvNodeRegistry;
 use anyhow::Result;
 use obrain_common::types::NodeId;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 /// A segment of the Hilbert curve containing topologically related nodes.
 #[derive(Debug, Clone)]
@@ -55,6 +55,11 @@ pub struct BankManager {
     pub banks: Vec<HilbertBank>,
     /// Reverse map: NodeId → bank index.
     pub node_to_bank: HashMap<NodeId, usize>,
+    /// Maximum number of banks loaded simultaneously. 0 = unlimited.
+    pub max_loaded: usize,
+    /// LRU order: front = least recently used, back = most recently used.
+    /// Contains bank IDs of currently loaded banks.
+    pub lru_order: VecDeque<usize>,
 }
 
 impl BankManager {
@@ -141,7 +146,15 @@ impl BankManager {
         Self {
             banks,
             node_to_bank,
+            max_loaded: 0,
+            lru_order: VecDeque::new(),
         }
+    }
+
+    /// Set maximum loaded banks. 0 = unlimited.
+    pub fn with_max_loaded(mut self, max_loaded: usize) -> Self {
+        self.max_loaded = max_loaded;
+        self
     }
 
     /// Segment a HilbertLayout into banks of fixed size (when no community info).
@@ -178,14 +191,20 @@ impl BankManager {
         Self {
             banks,
             node_to_bank,
+            max_loaded: 0,
+            lru_order: VecDeque::new(),
         }
     }
 
     /// Load a bank: encode all its nodes as embeddings (tier Γ) into the KV cache.
     ///
+    /// If `max_loaded > 0` and loading this bank would exceed the limit,
+    /// the least-recently-used bank is auto-evicted first.
+    ///
     /// `get_embedding`: provides the embedding vector for a NodeId.
     /// `get_text`: provides the text label for a NodeId (stored in KvSlot.text).
     /// `encode_embd_fn`: the FFI function to inject embeddings into KV.
+    /// `engine`: needed for LRU auto-eviction (seq_rm + pos resync).
     pub fn load_bank<F>(
         &mut self,
         bank_id: usize,
@@ -193,27 +212,40 @@ impl BankManager {
         get_embedding: &dyn Fn(NodeId) -> Option<Vec<f32>>,
         get_text: &dyn Fn(NodeId) -> String,
         encode_embd_fn: &F,
+        engine: Option<&dyn Tokenizer>,
     ) -> Result<usize>
     where
         F: Fn(&[f32], &[i32], i32) -> Result<usize>,
     {
-        let bank = self
-            .banks
-            .get_mut(bank_id)
-            .ok_or_else(|| anyhow::anyhow!("load_bank: bank {bank_id} not found"))?;
+        if bank_id >= self.banks.len() {
+            anyhow::bail!("load_bank: bank {bank_id} not found");
+        }
 
-        if bank.loaded {
-            return Ok(0); // Already loaded
+        if self.banks[bank_id].loaded {
+            // Already loaded — just touch LRU
+            self.lru_touch(bank_id);
+            return Ok(0);
+        }
+
+        // Auto-evict LRU if at capacity
+        if self.max_loaded > 0 && self.loaded_count() >= self.max_loaded {
+            if let Some(engine) = engine {
+                self.evict_lru(registry, engine)?;
+            } else {
+                anyhow::bail!(
+                    "load_bank: max_loaded={} reached but no engine for auto-evict",
+                    self.max_loaded
+                );
+            }
         }
 
         let mut loaded = 0usize;
-        for &nid in &bank.node_ids.clone() {
+        for &nid in &self.banks[bank_id].node_ids.clone() {
             if registry.get_slot(nid).is_some() {
                 continue; // Already in KV
             }
             if let Some(embd) = get_embedding(nid) {
                 let text = get_text(nid);
-                // Use a closure that calls the shared encode_embd_fn
                 let embd_clone = embd.clone();
                 registry.register_embedding(nid, &text, &embd_clone, |e, p, s| {
                     encode_embd_fn(e, p, s)
@@ -229,7 +261,31 @@ impl BankManager {
             bank.name, loaded, bank.hilbert_start, bank.hilbert_end
         );
 
+        // Add to LRU (most recently used = back)
+        self.lru_order.retain(|&id| id != bank_id);
+        self.lru_order.push_back(bank_id);
+
         Ok(loaded)
+    }
+
+    /// Touch a bank in the LRU: move it to the back (most recently used).
+    fn lru_touch(&mut self, bank_id: usize) {
+        self.lru_order.retain(|&id| id != bank_id);
+        self.lru_order.push_back(bank_id);
+    }
+
+    /// Evict the least-recently-used bank (front of LRU deque).
+    /// Returns the number of nodes evicted, or 0 if no loaded bank.
+    pub fn evict_lru(
+        &mut self,
+        registry: &mut KvNodeRegistry,
+        engine: &dyn Tokenizer,
+    ) -> Result<usize> {
+        let victim = match self.lru_order.pop_front() {
+            Some(id) => id,
+            None => return Ok(0),
+        };
+        self.evict_bank(victim, registry, engine)
     }
 
     /// Evict a bank: remove all its nodes from the KV cache.
@@ -269,6 +325,9 @@ impl BankManager {
             "  [D5] evicted bank '{}': {} nodes freed",
             bank.name, evicted
         );
+
+        // Remove from LRU
+        self.lru_order.retain(|&id| id != bank_id);
 
         Ok(evicted)
     }
@@ -324,6 +383,135 @@ impl BankManager {
             .iter()
             .filter_map(|nid| self.node_to_bank.get(nid).copied())
             .collect()
+    }
+
+    // ── Bank selection by cosine retrieval (T4.2) ─────────────────
+
+    /// Compute the centroid embedding for each bank.
+    ///
+    /// The centroid is the element-wise mean of all node embeddings in the bank.
+    /// Banks with no embeddings available are skipped (no entry in the result).
+    ///
+    /// `get_embedding`: function that returns the embedding for a NodeId
+    /// (typically from `NodeEmbeddingCache::get()`).
+    pub fn compute_bank_centroids<F>(
+        &self,
+        get_embedding: F,
+    ) -> HashMap<usize, Vec<f32>>
+    where
+        F: Fn(NodeId) -> Option<Vec<f32>>,
+    {
+        let mut centroids = HashMap::new();
+
+        for bank in &self.banks {
+            let mut sum: Option<Vec<f32>> = None;
+            let mut count = 0usize;
+
+            for &nid in &bank.node_ids {
+                if let Some(embd) = get_embedding(nid) {
+                    match &mut sum {
+                        Some(s) => {
+                            for (i, &v) in embd.iter().enumerate() {
+                                if i < s.len() {
+                                    s[i] += v;
+                                }
+                            }
+                        }
+                        None => {
+                            sum = Some(embd);
+                        }
+                    }
+                    count += 1;
+                }
+            }
+
+            if let Some(mut s) = sum {
+                if count > 0 {
+                    let inv = 1.0 / count as f32;
+                    for v in &mut s {
+                        *v *= inv;
+                    }
+                }
+                centroids.insert(bank.id, s);
+            }
+        }
+
+        centroids
+    }
+
+    /// Select the top-K most relevant banks for a query, with 1-hop expansion.
+    ///
+    /// 1. Compute cosine similarity between `query_embd` and each bank centroid.
+    /// 2. Take the top-K by similarity.
+    /// 3. Expand with 1-hop neighbor banks (banks that share edges with selected banks).
+    ///
+    /// `centroids`: pre-computed from `compute_bank_centroids()`.
+    /// `adjacency`: inter-bank adjacency (bank_id → set of neighbor bank_ids).
+    /// `k`: number of top banks to select before expansion.
+    ///
+    /// Returns bank IDs ordered by relevance (top-K first, then neighbors).
+    pub fn select_banks(
+        &self,
+        query_embd: &[f32],
+        centroids: &HashMap<usize, Vec<f32>>,
+        adjacency: &HashMap<usize, HashSet<usize>>,
+        k: usize,
+    ) -> Vec<usize> {
+        // Score each bank by cosine similarity
+        let mut scores: Vec<(usize, f32)> = centroids
+            .iter()
+            .map(|(&bank_id, centroid)| {
+                let sim = cosine_similarity(query_embd, centroid);
+                (bank_id, sim)
+            })
+            .collect();
+
+        // Sort by similarity (descending)
+        scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Top-K
+        let top_k: Vec<usize> = scores.iter().take(k).map(|&(id, _)| id).collect();
+
+        // 1-hop expansion: add neighbor banks not already in top-K
+        let mut result: Vec<usize> = top_k.clone();
+        let top_k_set: HashSet<usize> = top_k.iter().copied().collect();
+
+        for &bank_id in &top_k {
+            if let Some(neighbors) = adjacency.get(&bank_id) {
+                for &neighbor in neighbors {
+                    if !top_k_set.contains(&neighbor) && !result.contains(&neighbor) {
+                        result.push(neighbor);
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Build inter-bank adjacency from node-level edges.
+    ///
+    /// Two banks are adjacent if any node in bank A has an edge to any node in bank B.
+    /// `edges`: iterator of (source_node, target_node) pairs.
+    pub fn build_bank_adjacency<I>(&self, edges: I) -> HashMap<usize, HashSet<usize>>
+    where
+        I: IntoIterator<Item = (NodeId, NodeId)>,
+    {
+        let mut adjacency: HashMap<usize, HashSet<usize>> = HashMap::new();
+
+        for (src, tgt) in edges {
+            if let (Some(&bank_a), Some(&bank_b)) = (
+                self.node_to_bank.get(&src),
+                self.node_to_bank.get(&tgt),
+            ) {
+                if bank_a != bank_b {
+                    adjacency.entry(bank_a).or_default().insert(bank_b);
+                    adjacency.entry(bank_b).or_default().insert(bank_a);
+                }
+            }
+        }
+
+        adjacency
     }
 
     /// E5: Re-segment banks from new communities (e.g., after Hilbert re-layout).
@@ -397,6 +585,22 @@ impl BankManager {
             bank.node_ids.sort_by_key(|n| n.0);
         }
 
+        // Rebuild LRU from loaded banks (preserve relative order where possible)
+        let old_lru: Vec<usize> = self.lru_order.iter().copied().collect();
+        self.lru_order.clear();
+        // Re-add banks that are still loaded and still exist
+        for id in &old_lru {
+            if self.banks.get(*id).map_or(false, |b| b.loaded) {
+                self.lru_order.push_back(*id);
+            }
+        }
+        // Add any loaded banks not in old LRU (newly restored from name match)
+        for bank in &self.banks {
+            if bank.loaded && !self.lru_order.contains(&bank.id) {
+                self.lru_order.push_back(bank.id);
+            }
+        }
+
         if migrated > 0 {
             eprintln!(
                 "  [E5] bank resegment: {} nodes migrated, {} banks",
@@ -406,6 +610,27 @@ impl BankManager {
         }
 
         migrated
+    }
+}
+
+/// Cosine similarity between two vectors. Returns 0.0 if either has zero norm.
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    let len = a.len().min(b.len());
+    let mut dot = 0.0f32;
+    let mut norm_a = 0.0f32;
+    let mut norm_b = 0.0f32;
+
+    for i in 0..len {
+        dot += a[i] * b[i];
+        norm_a += a[i] * a[i];
+        norm_b += b[i] * b[i];
+    }
+
+    let denom = norm_a.sqrt() * norm_b.sqrt();
+    if denom < 1e-12 {
+        0.0
+    } else {
+        dot / denom
     }
 }
 
@@ -570,5 +795,385 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // LRU eviction tests
+    // ─────────────────────────────────────────────────────────────────
+
+    use std::cell::Cell;
+
+    /// Mock Tokenizer that tracks evictions for testing.
+    struct MockTokenizer {
+        pos_max: Cell<i32>,
+    }
+
+    impl MockTokenizer {
+        fn new(pos_max: i32) -> Self {
+            Self {
+                pos_max: Cell::new(pos_max),
+            }
+        }
+    }
+
+    impl crate::Tokenizer for MockTokenizer {
+        fn tokenize(&self, _text: &str, _add_bos: bool, _add_special: bool) -> Result<Vec<i32>> {
+            Ok(vec![1]) // dummy
+        }
+        fn encode(&self, _tokens: &[i32], _positions: &[i32], _seq_id: i32) -> Result<()> {
+            Ok(())
+        }
+        fn token_count(&self, _text: &str) -> Result<usize> {
+            Ok(1)
+        }
+        fn evict(&self, _start: i32, _end: i32) {
+            // Simulate eviction by decrementing pos_max
+            let current = self.pos_max.get();
+            self.pos_max.set((current - 1).max(-1));
+        }
+        fn clear_kv(&self) {
+            self.pos_max.set(-1);
+        }
+        fn n_ctx(&self) -> u32 {
+            8192
+        }
+        fn seq_pos_max(&self, _seq_id: i32) -> i32 {
+            self.pos_max.get()
+        }
+    }
+
+    /// Helper: make a registry for testing load/evict.
+    fn make_test_registry() -> KvNodeRegistry {
+        KvNodeRegistry::new("test header", 100) // header_end = 100
+    }
+
+    /// Dummy embedding provider: returns [1.0; 4] for any node.
+    fn dummy_embedding(_nid: NodeId) -> Option<Vec<f32>> {
+        Some(vec![1.0, 2.0, 3.0, 4.0])
+    }
+
+    fn dummy_text(nid: NodeId) -> String {
+        format!("node_{}", nid.0)
+    }
+
+    /// Dummy encode function that just succeeds.
+    fn dummy_encode(_embd: &[f32], _pos: &[i32], _seq_id: i32) -> Result<usize> {
+        Ok(1)
+    }
+
+    #[test]
+    fn test_lru_load_3_banks_max_2_evicts_oldest() {
+        let (layout, communities) = make_test_layout();
+        let mut mgr = BankManager::from_communities(&layout, &communities)
+            .with_max_loaded(2);
+
+        let mut registry = make_test_registry();
+        let engine = MockTokenizer::new(99); // starts at pos 99
+
+        // Load bank 0 → OK (1/2)
+        let loaded = mgr
+            .load_bank(0, &mut registry, &dummy_embedding, &dummy_text, &dummy_encode, Some(&engine))
+            .unwrap();
+        assert!(loaded > 0);
+        assert!(mgr.banks[0].loaded);
+        assert_eq!(mgr.loaded_count(), 1);
+        assert_eq!(mgr.lru_order.len(), 1);
+        assert_eq!(mgr.lru_order[0], 0);
+
+        // Load bank 1 → OK (2/2)
+        let loaded = mgr
+            .load_bank(1, &mut registry, &dummy_embedding, &dummy_text, &dummy_encode, Some(&engine))
+            .unwrap();
+        assert!(loaded > 0);
+        assert!(mgr.banks[1].loaded);
+        assert_eq!(mgr.loaded_count(), 2);
+        assert_eq!(mgr.lru_order.len(), 2);
+
+        // Load bank 2 → at capacity, should auto-evict bank 0 (LRU front)
+        let loaded = mgr
+            .load_bank(2, &mut registry, &dummy_embedding, &dummy_text, &dummy_encode, Some(&engine))
+            .unwrap();
+        assert!(loaded > 0);
+        assert!(!mgr.banks[0].loaded, "Bank 0 should have been evicted (LRU)");
+        assert!(mgr.banks[1].loaded, "Bank 1 should still be loaded");
+        assert!(mgr.banks[2].loaded, "Bank 2 should be loaded");
+        assert_eq!(mgr.loaded_count(), 2, "Should not exceed max_loaded=2");
+        assert_eq!(mgr.lru_order.len(), 2);
+        // LRU order: bank 1 (older), bank 2 (newest)
+        assert_eq!(mgr.lru_order[0], 1);
+        assert_eq!(mgr.lru_order[1], 2);
+    }
+
+    #[test]
+    fn test_lru_touch_on_reload_prevents_eviction() {
+        let (layout, communities) = make_test_layout();
+        let mut mgr = BankManager::from_communities(&layout, &communities)
+            .with_max_loaded(2);
+
+        let mut registry = make_test_registry();
+        let engine = MockTokenizer::new(99);
+
+        // Load bank 0, then bank 1
+        mgr.load_bank(0, &mut registry, &dummy_embedding, &dummy_text, &dummy_encode, Some(&engine)).unwrap();
+        mgr.load_bank(1, &mut registry, &dummy_embedding, &dummy_text, &dummy_encode, Some(&engine)).unwrap();
+
+        // "Touch" bank 0 by re-loading it (already loaded → just LRU touch)
+        let loaded = mgr
+            .load_bank(0, &mut registry, &dummy_embedding, &dummy_text, &dummy_encode, Some(&engine))
+            .unwrap();
+        assert_eq!(loaded, 0, "Already loaded, should return 0");
+
+        // Now LRU order should be: bank 1 (front/oldest), bank 0 (back/newest)
+        assert_eq!(mgr.lru_order[0], 1);
+        assert_eq!(mgr.lru_order[1], 0);
+
+        // Load bank 2 → should evict bank 1 (LRU front), NOT bank 0
+        mgr.load_bank(2, &mut registry, &dummy_embedding, &dummy_text, &dummy_encode, Some(&engine)).unwrap();
+
+        assert!(mgr.banks[0].loaded, "Bank 0 was touched, should survive");
+        assert!(!mgr.banks[1].loaded, "Bank 1 should be evicted (LRU)");
+        assert!(mgr.banks[2].loaded, "Bank 2 just loaded");
+    }
+
+    #[test]
+    fn test_unlimited_max_loaded() {
+        let (layout, communities) = make_test_layout();
+        let mut mgr = BankManager::from_communities(&layout, &communities);
+        // max_loaded = 0 (default) = unlimited
+
+        let mut registry = make_test_registry();
+
+        // Load all 3 banks without engine (no auto-evict needed)
+        for bank_id in 0..3 {
+            mgr.load_bank(bank_id, &mut registry, &dummy_embedding, &dummy_text, &dummy_encode, None).unwrap();
+        }
+        assert_eq!(mgr.loaded_count(), 3);
+        assert_eq!(mgr.lru_order.len(), 3);
+    }
+
+    #[test]
+    fn test_evict_lru_explicit() {
+        let (layout, communities) = make_test_layout();
+        let mut mgr = BankManager::from_communities(&layout, &communities);
+
+        let mut registry = make_test_registry();
+        let engine = MockTokenizer::new(99);
+
+        // Load banks 0 and 1
+        mgr.load_bank(0, &mut registry, &dummy_embedding, &dummy_text, &dummy_encode, Some(&engine)).unwrap();
+        mgr.load_bank(1, &mut registry, &dummy_embedding, &dummy_text, &dummy_encode, Some(&engine)).unwrap();
+
+        // Explicitly evict LRU
+        let evicted = mgr.evict_lru(&mut registry, &engine).unwrap();
+        assert!(evicted > 0, "Should evict nodes from bank 0");
+        assert!(!mgr.banks[0].loaded, "Bank 0 (LRU) should be evicted");
+        assert!(mgr.banks[1].loaded, "Bank 1 should remain");
+        assert_eq!(mgr.lru_order.len(), 1);
+        assert_eq!(mgr.lru_order[0], 1);
+    }
+
+    #[test]
+    fn test_evict_bank_removes_from_lru() {
+        let (layout, communities) = make_test_layout();
+        let mut mgr = BankManager::from_communities(&layout, &communities);
+
+        let mut registry = make_test_registry();
+        let engine = MockTokenizer::new(99);
+
+        mgr.load_bank(0, &mut registry, &dummy_embedding, &dummy_text, &dummy_encode, Some(&engine)).unwrap();
+        mgr.load_bank(1, &mut registry, &dummy_embedding, &dummy_text, &dummy_encode, Some(&engine)).unwrap();
+        assert_eq!(mgr.lru_order.len(), 2);
+
+        // Evict bank 1 directly (not through LRU)
+        mgr.evict_bank(1, &mut registry, &engine).unwrap();
+        assert!(!mgr.banks[1].loaded);
+        assert_eq!(mgr.lru_order.len(), 1, "Bank 1 should be removed from LRU");
+        assert_eq!(mgr.lru_order[0], 0, "Only bank 0 remains in LRU");
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Bank selection / centroid tests (T4.2)
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_compute_bank_centroids() {
+        let (layout, communities) = make_test_layout();
+        let mgr = BankManager::from_communities(&layout, &communities);
+
+        // Embeddings: each node gets [node_id, 0, 0, 0]
+        let centroids = mgr.compute_bank_centroids(|nid: NodeId| {
+            Some(vec![nid.0 as f32, 0.0, 0.0, 0.0])
+        });
+
+        assert_eq!(centroids.len(), 3, "3 banks → 3 centroids");
+
+        // Bank 0: nodes 0,1,2 → centroid = [1.0, 0, 0, 0]
+        let c0 = &centroids[&0];
+        assert_eq!(c0.len(), 4);
+        assert!((c0[0] - 1.0).abs() < 0.01, "mean of 0,1,2 = 1.0, got {}", c0[0]);
+
+        // Bank 1: nodes 3,4,5 → centroid = [4.0, 0, 0, 0]
+        let c1 = &centroids[&1];
+        assert!((c1[0] - 4.0).abs() < 0.01, "mean of 3,4,5 = 4.0, got {}", c1[0]);
+
+        // Bank 2: nodes 6,7,8 → centroid = [7.0, 0, 0, 0]
+        let c2 = &centroids[&2];
+        assert!((c2[0] - 7.0).abs() < 0.01, "mean of 6,7,8 = 7.0, got {}", c2[0]);
+    }
+
+    #[test]
+    fn test_compute_bank_centroids_partial_embeddings() {
+        let (layout, communities) = make_test_layout();
+        let mgr = BankManager::from_communities(&layout, &communities);
+
+        // Only return embeddings for even nodes
+        let centroids = mgr.compute_bank_centroids(|nid: NodeId| {
+            if nid.0 % 2 == 0 {
+                Some(vec![nid.0 as f32, 1.0])
+            } else {
+                None
+            }
+        });
+
+        // Bank 0 has nodes 0,1,2 → only 0,2 have embeddings → centroid = [1.0, 1.0]
+        let c0 = &centroids[&0];
+        assert!((c0[0] - 1.0).abs() < 0.01, "mean of 0,2 = 1.0");
+
+        // Bank 1 has nodes 3,4,5 → only 4 has embedding → centroid = [4.0, 1.0]
+        let c1 = &centroids[&1];
+        assert!((c1[0] - 4.0).abs() < 0.01, "only node 4");
+    }
+
+    #[test]
+    fn test_select_banks_top_k() {
+        let (layout, communities) = make_test_layout();
+        let mgr = BankManager::from_communities(&layout, &communities);
+
+        // Centroids: bank0=[1,0,0], bank1=[0,1,0], bank2=[0,0,1]
+        let mut centroids = HashMap::new();
+        centroids.insert(0, vec![1.0, 0.0, 0.0]);
+        centroids.insert(1, vec![0.0, 1.0, 0.0]);
+        centroids.insert(2, vec![0.0, 0.0, 1.0]);
+
+        let no_adjacency = HashMap::new();
+
+        // Query close to bank 0
+        let selected = mgr.select_banks(&[0.9, 0.1, 0.0], &centroids, &no_adjacency, 1);
+        assert_eq!(selected[0], 0, "Bank 0 is closest to [0.9, 0.1, 0.0]");
+        assert_eq!(selected.len(), 1, "K=1, no adjacency → just 1 bank");
+
+        // Query close to bank 2
+        let selected = mgr.select_banks(&[0.0, 0.0, 1.0], &centroids, &no_adjacency, 1);
+        assert_eq!(selected[0], 2, "Bank 2 is closest to [0,0,1]");
+
+        // K=2
+        let selected = mgr.select_banks(&[0.5, 0.5, 0.0], &centroids, &no_adjacency, 2);
+        assert_eq!(selected.len(), 2);
+        // Both bank 0 and bank 1 should be selected (equal cosine to [0.5, 0.5, 0])
+        assert!(selected.contains(&0));
+        assert!(selected.contains(&1));
+    }
+
+    #[test]
+    fn test_select_banks_with_1hop_expansion() {
+        let (layout, communities) = make_test_layout();
+        let mgr = BankManager::from_communities(&layout, &communities);
+
+        let mut centroids = HashMap::new();
+        centroids.insert(0, vec![1.0, 0.0, 0.0]);
+        centroids.insert(1, vec![0.0, 1.0, 0.0]);
+        centroids.insert(2, vec![0.0, 0.0, 1.0]);
+
+        // Bank 0 → Bank 1 are neighbors
+        let mut adjacency = HashMap::new();
+        adjacency.insert(0, HashSet::from([1]));
+        adjacency.insert(1, HashSet::from([0]));
+
+        // Query selects bank 0 (K=1), expansion adds bank 1
+        let selected = mgr.select_banks(&[1.0, 0.0, 0.0], &centroids, &adjacency, 1);
+        assert_eq!(selected.len(), 2, "K=1 + 1 neighbor");
+        assert_eq!(selected[0], 0, "Top-K first");
+        assert_eq!(selected[1], 1, "Neighbor second");
+    }
+
+    #[test]
+    fn test_build_bank_adjacency() {
+        let (layout, communities) = make_test_layout();
+        let mgr = BankManager::from_communities(&layout, &communities);
+
+        // Edges: node 2 (bank 0) → node 3 (bank 1), node 5 (bank 1) → node 6 (bank 2)
+        let edges = vec![
+            (NodeId(2), NodeId(3)),
+            (NodeId(5), NodeId(6)),
+        ];
+
+        let adjacency = mgr.build_bank_adjacency(edges);
+
+        // Bank 0 ↔ Bank 1
+        assert!(adjacency[&0].contains(&1));
+        assert!(adjacency[&1].contains(&0));
+        // Bank 1 ↔ Bank 2
+        assert!(adjacency[&1].contains(&2));
+        assert!(adjacency[&2].contains(&1));
+        // Bank 0 ↔ Bank 2: NOT adjacent (no direct edge)
+        assert!(!adjacency.get(&0).map_or(false, |s| s.contains(&2)));
+    }
+
+    #[test]
+    fn test_select_banks_performance_10_banks() {
+        // Simulate 10 banks with random centroids
+        let mut centroids = HashMap::new();
+        for i in 0..10 {
+            let mut c = vec![0.0f32; 64];
+            c[i % 64] = 1.0; // Sparse orthogonal centroids
+            centroids.insert(i, c);
+        }
+
+        // Build a simple BankManager with 10 banks
+        let mut positions = HashMap::new();
+        let mut coords_2d = HashMap::new();
+        let mut communities = HashMap::new();
+        for i in 0u64..100 {
+            let nid = NodeId(i);
+            positions.insert(nid, i as u32);
+            coords_2d.insert(nid, (0.0, 0.0));
+            communities.insert(nid, (i / 10) as usize);
+        }
+        let layout = HilbertLayout {
+            positions,
+            order: 4,
+            coords_2d,
+        };
+        let mgr = BankManager::from_communities(&layout, &communities);
+        let adjacency = HashMap::new();
+
+        let query = vec![0.0f32; 64]; // zero query
+
+        let start = std::time::Instant::now();
+        for _ in 0..1000 {
+            let _ = mgr.select_banks(&query, &centroids, &adjacency, 3);
+        }
+        let elapsed = start.elapsed();
+
+        // 1000 iterations of select_banks(10 banks) should be < 10ms total
+        assert!(
+            elapsed.as_millis() < 100, // generous margin for CI
+            "1000× select_banks took {}ms (budget: <10ms total)",
+            elapsed.as_millis()
+        );
+    }
+
+    #[test]
+    fn test_cosine_similarity_basic() {
+        use super::cosine_similarity;
+
+        // Identical vectors
+        assert!((cosine_similarity(&[1.0, 0.0], &[1.0, 0.0]) - 1.0).abs() < 0.001);
+        // Orthogonal
+        assert!(cosine_similarity(&[1.0, 0.0], &[0.0, 1.0]).abs() < 0.001);
+        // Opposite
+        assert!((cosine_similarity(&[1.0, 0.0], &[-1.0, 0.0]) - (-1.0)).abs() < 0.001);
+        // Zero vector
+        assert_eq!(cosine_similarity(&[0.0, 0.0], &[1.0, 0.0]), 0.0);
     }
 }

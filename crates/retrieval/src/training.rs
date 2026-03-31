@@ -34,6 +34,12 @@ pub struct TrainingConfig {
     pub online_interval: u64,
     /// Path to save/load weights.
     pub weights_path: Option<PathBuf>,
+    /// Kurtosis regularization weight. Penalizes excess kurtosis (> 3.0) in output
+    /// distributions, producing quantization-friendly embeddings. Default: 0.0 (disabled).
+    pub lambda_kurtosis: f32,
+    /// InnerQ regularization weight. Penalizes unequal per-channel variance across
+    /// the batch, producing uniformly-distributed channels. Default: 0.0 (disabled).
+    pub lambda_innerq: f32,
     /// C6: Contrastive training config. None = reconstruction only (pre-C6 behavior).
     pub contrastive: Option<ContrastiveConfig>,
 }
@@ -48,6 +54,8 @@ impl Default for TrainingConfig {
             online_epochs: 5,
             online_interval: 10,
             weights_path: None,
+            lambda_kurtosis: 0.0,
+            lambda_innerq: 0.0,
             contrastive: Some(ContrastiveConfig::default()),
         }
     }
@@ -202,6 +210,8 @@ impl TrainingManager {
                 self.config.initial_epochs,
                 self.config.lr,
                 self.config.lambda_cosine,
+                self.config.lambda_kurtosis,
+                self.config.lambda_innerq,
                 config,
             )?;
 
@@ -232,6 +242,8 @@ impl TrainingManager {
                 self.config.initial_epochs,
                 self.config.lr,
                 self.config.lambda_cosine,
+                self.config.lambda_kurtosis,
+                self.config.lambda_innerq,
             )?;
             let final_loss = losses.last().copied().unwrap_or(f32::MAX);
 
@@ -295,6 +307,8 @@ impl TrainingManager {
                     self.config.online_epochs,
                     self.config.lr * 0.5,
                     self.config.lambda_cosine,
+                    self.config.lambda_kurtosis,
+                    self.config.lambda_innerq,
                     config,
                 ) {
                     Ok(history) => {
@@ -329,6 +343,8 @@ impl TrainingManager {
             self.config.online_epochs,
             self.config.lr * 0.5, // lower lr for online updates
             self.config.lambda_cosine,
+            self.config.lambda_kurtosis,
+            self.config.lambda_innerq,
         ) {
             Ok(losses) => {
                 let final_loss = losses.last().copied().unwrap_or(f32::MAX);

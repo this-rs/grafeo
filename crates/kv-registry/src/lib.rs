@@ -33,6 +33,7 @@ pub mod conv;
 pub mod hilbert;
 pub mod hilbert_bank;
 pub mod registry;
+pub mod tier_quant;
 pub mod tokenizer;
 
 // Re-exports for convenience
@@ -44,4 +45,5 @@ pub use hilbert::{
 };
 pub use hilbert_bank::{BankManager, HilbertBank};
 pub use registry::{KvMetrics, KvNodeRegistry, KvSlot, KvSlotMode, KvTier, TierBudget};
+pub use tier_quant::{KeyOrValue, QuantType, TierQuantConfig};
 pub use tokenizer::Tokenizer;

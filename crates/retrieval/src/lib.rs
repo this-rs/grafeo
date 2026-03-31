@@ -29,7 +29,7 @@ pub use node_embedding::{
     compute_node_embeddings_with_fusion, compute_text_embedding,
 };
 pub use projection_net::{ProjectionNet, alpha_schedule, soft_mix};
-pub use query::{GnnContext, maybe_relayout, query_with_registry};
+pub use query::{BankContext, GnnContext, maybe_relayout, query_with_registry};
 pub use round_tracker::{CoactivationMap, DemotionType, RoundTracker};
 pub use scoring::{ScoredContextNode, get_micro_tag, retrieve_nodes};
 pub use scoring::{compute_lambda, expand_by_affinity};

@@ -649,9 +649,17 @@ mod tests {
         assert!(!should_mutate_burst(&rewards, 0.05));
     }
 
+    /// With ≤2 data points, zero-seed bootstrap kicks in: always mutate to
+    /// build initial diversity. With 3-4 points, not enough data for variance.
     #[test]
-    fn test_not_enough_data_no_stagnation() {
-        assert!(!should_mutate_burst(&[0.5, 0.5], 0.05));
+    fn test_bootstrap_and_insufficient_data() {
+        // ≤2 rewards: zero-seed bootstrap → always mutate
+        assert!(should_mutate_burst(&[0.5, 0.5], 0.05));
+        assert!(should_mutate_burst(&[0.5], 0.05));
+        assert!(should_mutate_burst(&[], 0.05));
+        // 3-4 rewards: not enough for variance estimation → no stagnation
+        assert!(!should_mutate_burst(&[0.5, 0.5, 0.5], 0.05));
+        assert!(!should_mutate_burst(&[0.5, 0.5, 0.5, 0.5], 0.05));
     }
 
     #[test]

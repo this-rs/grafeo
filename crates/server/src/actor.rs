@@ -388,6 +388,7 @@ impl ActorHandle {
             &[],  // self_embed_positions — server path, no proprioception yet
             None, // iptr_snapshot — server path, no Phase 5 IPTR yet
             None, // state_metrics — server path, no Phase 5 kq_b yet
+            None, // bank_ctx — server path, no T4.2 bank selection yet
         )?;
 
         let clean = strip_think_tags(&raw_response);

@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::Tokenizer;
 use crate::hilbert::HilbertLayout;
+use crate::tier_quant::{KeyOrValue, TierQuantConfig};
 
 /// How a node was encoded into the KV cache.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,6 +146,9 @@ pub struct KvNodeRegistry {
     /// Phase D: optional Hilbert layout for topology-aware KV positioning.
     /// When set, register_embedding* uses Hilbert positions instead of next_pos.
     pub hilbert_layout: Option<HilbertLayout>,
+    /// P5: optional tier-based pre-quantization config.
+    /// When set, embeddings are quantize→dequantize'd before injection into the KV cache.
+    pub tier_quant_config: Option<TierQuantConfig>,
 }
 
 impl KvNodeRegistry {
@@ -159,6 +163,7 @@ impl KvNodeRegistry {
             header_text: header_text.to_string(),
             tier_budget: TierBudget::new(50),
             hilbert_layout: None,
+            tier_quant_config: None,
         }
     }
 
@@ -243,7 +248,16 @@ impl KvNodeRegistry {
         F: FnOnce(&[f32], &[i32], i32) -> Result<usize>,
     {
         let p = self.position_for(node_id);
-        encode_embd_fn(embedding, &[p], 0)?; // seq_id=0 = persistent context
+        let tier = KvTier::Gamma; // Pure embedding = lowest resolution
+        // P5: pre-quantize embedding if tier_quant_config is set.
+        // We quantize as Value (semantic content carrier). Key quantization
+        // would require a separate injection path — deferred to Option B.
+        if let Some(ref config) = self.tier_quant_config {
+            let quantized = crate::tier_quant::tier_quantize(embedding, tier, KeyOrValue::Value, config);
+            encode_embd_fn(&quantized, &[p], 0)?;
+        } else {
+            encode_embd_fn(embedding, &[p], 0)?;
+        }
 
         let slot = KvSlot {
             start: p,
@@ -252,7 +266,7 @@ impl KvNodeRegistry {
             last_used: self.query_counter,
             text: text.to_string(),
             mode: KvSlotMode::Embedding,
-            tier: KvTier::Gamma, // Pure embedding = lowest resolution
+            tier,
         };
         // Advance next_pos past this slot if it was from Hilbert
         if p + 1 > self.next_pos {
@@ -293,7 +307,13 @@ impl KvNodeRegistry {
     {
         // Step 1: Inject the embedding at position p (Hilbert or sequential)
         let p = self.position_for(node_id);
-        encode_embd_fn(embedding, &[p], 0)?; // seq_id=0 = persistent
+        // P5: pre-quantize embedding for Alpha tier (highest resolution)
+        if let Some(ref config) = self.tier_quant_config {
+            let quantized = crate::tier_quant::tier_quantize(embedding, KvTier::Alpha, KeyOrValue::Value, config);
+            encode_embd_fn(&quantized, &[p], 0)?;
+        } else {
+            encode_embd_fn(embedding, &[p], 0)?; // seq_id=0 = persistent
+        }
 
         // Step 2: Tokenize and encode the micro-tag at positions p+1..
         let tag_tokens = engine.tokenize(tag_text, false, true)?;
@@ -656,6 +676,9 @@ impl KvNodeRegistry {
     {
         engine.clear_kv();
 
+        // P5: clone tier_quant_config for use inside the loop (avoids borrow conflict)
+        let tq_config = self.tier_quant_config.clone();
+
         // Re-encode header (may have changed size since last build)
         let mut pos = 0i32;
         if let Ok(tokens) = engine.tokenize(&self.header_text, false, true) {
@@ -690,7 +713,13 @@ impl KvNodeRegistry {
                         // Re-inject embedding if available
                         if let (Some(embd_fn), Some(get_embd)) = (&encode_embd_fn, &get_embedding) {
                             if let Some(embd) = get_embd(*nid) {
-                                let _ = embd_fn(&embd, &[pos], 0);
+                                // P5: pre-quantize on re-injection
+                                if let Some(ref cfg) = tq_config {
+                                    let q = crate::tier_quant::tier_quantize(&embd, slot.tier, KeyOrValue::Value, cfg);
+                                    let _ = embd_fn(&q, &[pos], 0);
+                                } else {
+                                    let _ = embd_fn(&embd, &[pos], 0);
+                                }
                                 slot.start = pos;
                                 slot.end = pos + 1;
                                 slot.n_tokens = 1;
@@ -706,8 +735,13 @@ impl KvNodeRegistry {
                     KvSlotMode::EmbeddingWithMinimalTag { n_label_tokens } => {
                         if let (Some(embd_fn), Some(get_embd)) = (&encode_embd_fn, &get_embedding) {
                             if let Some(embd) = get_embd(*nid) {
-                                // Re-inject embedding
-                                let _ = embd_fn(&embd, &[pos], 0);
+                                // Re-inject embedding (P5: pre-quantize)
+                                if let Some(ref cfg) = tq_config {
+                                    let q = crate::tier_quant::tier_quantize(&embd, slot.tier, KeyOrValue::Value, cfg);
+                                    let _ = embd_fn(&q, &[pos], 0);
+                                } else {
+                                    let _ = embd_fn(&embd, &[pos], 0);
+                                }
                                 // Re-encode label tokens from text (first few tokens)
                                 if n_label_tokens > 0 {
                                     if let Ok(tokens) = engine.tokenize(&slot.text, false, true) {
@@ -733,8 +767,13 @@ impl KvNodeRegistry {
                     KvSlotMode::EmbeddingWithTags { n_tag_tokens } => {
                         if let (Some(embd_fn), Some(get_embd)) = (&encode_embd_fn, &get_embedding) {
                             if let Some(embd) = get_embd(*nid) {
-                                // Re-inject embedding
-                                let _ = embd_fn(&embd, &[pos], 0);
+                                // Re-inject embedding (P5: pre-quantize)
+                                if let Some(ref cfg) = tq_config {
+                                    let q = crate::tier_quant::tier_quantize(&embd, slot.tier, KeyOrValue::Value, cfg);
+                                    let _ = embd_fn(&q, &[pos], 0);
+                                } else {
+                                    let _ = embd_fn(&embd, &[pos], 0);
+                                }
                                 // Re-encode tag tokens from text
                                 if n_tag_tokens > 0 {
                                     if let Ok(tokens) = engine.tokenize(&slot.text, false, true) {
