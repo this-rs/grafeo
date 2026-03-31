@@ -256,7 +256,7 @@ impl BankManager {
 
         let bank = &mut self.banks[bank_id];
         bank.loaded = true;
-        eprintln!(
+        kv_debug!(
             "  [D5] loaded bank '{}': {} nodes at positions [{}, {}]",
             bank.name, loaded, bank.hilbert_start, bank.hilbert_end
         );
@@ -321,7 +321,7 @@ impl BankManager {
 
         let bank = &mut self.banks[bank_id];
         bank.loaded = false;
-        eprintln!(
+        kv_debug!(
             "  [D5] evicted bank '{}': {} nodes freed",
             bank.name, evicted
         );
@@ -602,7 +602,7 @@ impl BankManager {
         }
 
         if migrated > 0 {
-            eprintln!(
+            kv_debug!(
                 "  [E5] bank resegment: {} nodes migrated, {} banks",
                 migrated,
                 self.banks.len()
