@@ -68,6 +68,10 @@ pub struct HilbertFeaturesConfig {
     pub damping: f64,
     /// PageRank iterations (default: 100).
     pub pagerank_iterations: usize,
+    /// Max nodes for expensive facettes (betweenness, closeness, spectral).
+    /// Above this threshold, these facettes use degree-based approximations.
+    /// 0 = no limit (default: 10_000).
+    pub large_graph_threshold: usize,
 }
 
 impl Default for HilbertFeaturesConfig {
@@ -77,6 +81,7 @@ impl Default for HilbertFeaturesConfig {
             persona_edge_type: "REINFORCES".to_string(),
             damping: 0.85,
             pagerank_iterations: 100,
+            large_graph_threshold: 10_000,
         }
     }
 }
@@ -133,17 +138,34 @@ pub fn hilbert_features(
         };
     }
 
+    // Check if graph is too large for expensive facettes
+    let is_large = config.large_graph_threshold > 0 && n > config.large_graph_threshold;
+
     // Compute all 8 facettes as 2D points per node
-    let facettes: [HashMap<NodeId, [f32; 2]>; 8] = [
-        compute_spectral_12(store),
-        compute_spectral_34(store),
-        compute_community(store),
-        compute_centrality(store, config),
-        compute_bfs_distance(store),
-        compute_betweenness_closeness(store),
-        compute_co_usage(store, &config.persona_edge_type),
-        compute_schema_features(store),
-    ];
+    // For large graphs, expensive facettes (spectral, betweenness) use approximations
+    let facettes: [HashMap<NodeId, [f32; 2]>; 8] = if is_large {
+        [
+            compute_degree_approx(store),      // approx for spectral 1-2
+            compute_degree_approx_secondary(store), // approx for spectral 3-4
+            compute_community(store),
+            compute_centrality(store, config),
+            compute_bfs_distance(store),
+            compute_degree_betweenness_approx(store), // approx for betweenness
+            compute_co_usage(store, &config.persona_edge_type),
+            compute_schema_features(store),
+        ]
+    } else {
+        [
+            compute_spectral_12(store),
+            compute_spectral_34(store),
+            compute_community(store),
+            compute_centrality(store, config),
+            compute_bfs_distance(store),
+            compute_betweenness_closeness(store),
+            compute_co_usage(store, &config.persona_edge_type),
+            compute_schema_features(store),
+        ]
+    };
 
     // Encode each facette via Hilbert and concatenate
     let mut features: HashMap<NodeId, Vec<f32>> = HashMap::with_capacity(n);
@@ -541,9 +563,158 @@ fn compute_schema_features(store: &dyn GraphStore) -> HashMap<NodeId, [f32; 2]> 
         .iter()
         .map(|&nid| {
             let hash = label_hashes.get(&nid).copied().unwrap_or(0);
-            // Normalize hash to [0, 1] via modulo
-            let x = (hash % 10000) as f32 / 10000.0;
+            // Normalize hash to [0, 1] via uniform mapping
+            let x = (hash as f64 / u64::MAX as f64) as f32;
             let y = *prop_counts.get(&nid).unwrap_or(&0) as f32 / max_props;
+            (nid, [x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)])
+        })
+        .collect()
+}
+
+// ============================================================================
+// Large-graph approximations (O(V+E) instead of O(V×E))
+// ============================================================================
+
+/// Approximate spectral facette 1-2 using normalized degree + neighbor degree.
+/// O(V+E) — replaces spectral_embedding for large graphs.
+fn compute_degree_approx(store: &dyn GraphStore) -> HashMap<NodeId, [f32; 2]> {
+    let node_ids = store.node_ids();
+    let mut out_deg: HashMap<NodeId, usize> = HashMap::with_capacity(node_ids.len());
+    let mut neighbor_sum: HashMap<NodeId, f64> = HashMap::with_capacity(node_ids.len());
+
+    // Pass 1: compute degrees
+    for &nid in &node_ids {
+        let deg = store.edges_from(nid, Direction::Outgoing).len();
+        out_deg.insert(nid, deg);
+    }
+
+    let max_deg = out_deg.values().max().copied().unwrap_or(1).max(1) as f64;
+
+    // Pass 2: average neighbor degree
+    for &nid in &node_ids {
+        let neighbors = store.edges_from(nid, Direction::Outgoing);
+        let sum: f64 = neighbors
+            .iter()
+            .map(|(n, _)| *out_deg.get(n).unwrap_or(&0) as f64 / max_deg)
+            .sum();
+        let avg = if neighbors.is_empty() {
+            0.5
+        } else {
+            sum / neighbors.len() as f64
+        };
+        neighbor_sum.insert(nid, avg);
+    }
+
+    node_ids
+        .iter()
+        .map(|&nid| {
+            let x = *out_deg.get(&nid).unwrap_or(&0) as f32 / max_deg as f32;
+            let y = *neighbor_sum.get(&nid).unwrap_or(&0.5) as f32;
+            (nid, [x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)])
+        })
+        .collect()
+}
+
+/// Secondary degree approximation: in-degree vs clustering coefficient proxy.
+fn compute_degree_approx_secondary(store: &dyn GraphStore) -> HashMap<NodeId, [f32; 2]> {
+    let node_ids = store.node_ids();
+    let mut in_deg: HashMap<NodeId, usize> = HashMap::with_capacity(node_ids.len());
+
+    // Count in-degree via outgoing edges of all nodes
+    for &nid in &node_ids {
+        for (neighbor, _) in store.edges_from(nid, Direction::Outgoing) {
+            *in_deg.entry(neighbor).or_insert(0) += 1;
+        }
+    }
+
+    let max_in = in_deg.values().max().copied().unwrap_or(1).max(1) as f32;
+
+    // Clustering coefficient proxy: fraction of neighbor pairs connected
+    node_ids
+        .iter()
+        .map(|&nid| {
+            let x = *in_deg.get(&nid).unwrap_or(&0) as f32 / max_in;
+            // Cheap clustering proxy: |edges among neighbors| / |possible|
+            let neighbors: Vec<NodeId> = store
+                .edges_from(nid, Direction::Outgoing)
+                .iter()
+                .map(|(n, _)| *n)
+                .collect();
+            let k = neighbors.len();
+            let y = if k < 2 {
+                0.0
+            } else {
+                // Sample at most 50 pairs to keep O(degree) not O(degree²)
+                let max_pairs = 50usize;
+                let mut connected = 0usize;
+                let mut checked = 0usize;
+                let step = if k * (k - 1) / 2 > max_pairs {
+                    k / 10 + 1
+                } else {
+                    1
+                };
+                for i in (0..k).step_by(step) {
+                    for j in (i + 1..k).step_by(step) {
+                        let ni_neighbors = store.edges_from(neighbors[i], Direction::Outgoing);
+                        if ni_neighbors.iter().any(|(n, _)| *n == neighbors[j]) {
+                            connected += 1;
+                        }
+                        checked += 1;
+                        if checked >= max_pairs {
+                            break;
+                        }
+                    }
+                    if checked >= max_pairs {
+                        break;
+                    }
+                }
+                if checked > 0 {
+                    connected as f32 / checked as f32
+                } else {
+                    0.0
+                }
+            };
+            (nid, [x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)])
+        })
+        .collect()
+}
+
+/// Approximate betweenness using degree centrality ratio (in/out balance).
+/// O(V+E) — replaces betweenness_centrality + closeness_centrality.
+fn compute_degree_betweenness_approx(store: &dyn GraphStore) -> HashMap<NodeId, [f32; 2]> {
+    let node_ids = store.node_ids();
+    let mut out_deg: HashMap<NodeId, usize> = HashMap::with_capacity(node_ids.len());
+    let mut in_deg: HashMap<NodeId, usize> = HashMap::with_capacity(node_ids.len());
+
+    for &nid in &node_ids {
+        let out = store.edges_from(nid, Direction::Outgoing).len();
+        out_deg.insert(nid, out);
+        for (neighbor, _) in store.edges_from(nid, Direction::Outgoing) {
+            *in_deg.entry(neighbor).or_insert(0) += 1;
+        }
+    }
+
+    let max_total = node_ids
+        .iter()
+        .map(|nid| out_deg.get(nid).unwrap_or(&0) + in_deg.get(nid).unwrap_or(&0))
+        .max()
+        .unwrap_or(1)
+        .max(1) as f32;
+
+    node_ids
+        .iter()
+        .map(|&nid| {
+            let out = *out_deg.get(&nid).unwrap_or(&0) as f32;
+            let inc = *in_deg.get(&nid).unwrap_or(&0) as f32;
+            let total = out + inc;
+            // x = total degree normalized (proxy for betweenness)
+            let x = total / max_total;
+            // y = in/out balance (bridges tend to have balanced in/out)
+            let y = if total > 0.0 {
+                1.0 - (out - inc).abs() / total
+            } else {
+                0.5
+            };
             (nid, [x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)])
         })
         .collect()
