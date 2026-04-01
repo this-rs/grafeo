@@ -145,7 +145,7 @@ pub fn hilbert_features(
     // For large graphs, expensive facettes (spectral, betweenness) use approximations
     let facettes: [HashMap<NodeId, [f32; 2]>; 8] = if is_large {
         [
-            compute_degree_approx(store),      // approx for spectral 1-2
+            compute_degree_approx(store),           // approx for spectral 1-2
             compute_degree_approx_secondary(store), // approx for spectral 3-4
             compute_community(store),
             compute_centrality(store, config),
