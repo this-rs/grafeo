@@ -295,8 +295,11 @@ pub(super) fn load_snapshot_into_store(
     use obrain_common::utils::error::Error;
 
     let config = bincode::config::standard();
-    let (snapshot, _) =
-        bincode::serde::decode_from_slice::<Snapshot, _>(data, config).map_err(|e| {
+    let (snapshot, _) = bincode::serde::decode_from_slice::<Snapshot, _>(data, config)
+        .or_else(|_| {
+            bincode::serde::decode_from_slice::<Snapshot, _>(data, bincode::config::legacy())
+        })
+        .map_err(|e| {
             Error::Serialization(format!("failed to decode snapshot from .obrain file: {e}"))
         })?;
 
@@ -918,6 +921,7 @@ impl super::ObrainDB {
 
         let config = bincode::config::standard();
         let (snapshot, _): (Snapshot, _) = bincode::serde::decode_from_slice(data, config)
+            .or_else(|_| bincode::serde::decode_from_slice(data, bincode::config::legacy()))
             .map_err(|e| Error::Internal(format!("snapshot import failed: {e}")))?;
 
         // Validate default graph data
@@ -1005,6 +1009,7 @@ impl super::ObrainDB {
 
         let config = bincode::config::standard();
         let (snapshot, _): (Snapshot, _) = bincode::serde::decode_from_slice(data, config)
+            .or_else(|_| bincode::serde::decode_from_slice(data, bincode::config::legacy()))
             .map_err(|e| Error::Internal(format!("snapshot restore failed: {e}")))?;
 
         // Validate all data before making any changes

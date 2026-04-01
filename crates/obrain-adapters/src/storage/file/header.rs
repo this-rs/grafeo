@@ -41,6 +41,7 @@ pub fn read_file_header(file: &mut File) -> Result<FileHeader> {
 
     let (header, _): (FileHeader, _) =
         bincode::serde::decode_from_slice(&buf, bincode::config::standard())
+            .or_else(|_| bincode::serde::decode_from_slice(&buf, bincode::config::legacy()))
             .map_err(|e| Error::Serialization(e.to_string()))?;
     Ok(header)
 }
@@ -103,6 +104,7 @@ fn read_db_header(file: &mut File, slot: u8) -> Result<DbHeader> {
 
     let (header, _): (DbHeader, _) =
         bincode::serde::decode_from_slice(&buf, bincode::config::standard())
+            .or_else(|_| bincode::serde::decode_from_slice(&buf, bincode::config::legacy()))
             .map_err(|e| Error::Serialization(e.to_string()))?;
     Ok(header)
 }

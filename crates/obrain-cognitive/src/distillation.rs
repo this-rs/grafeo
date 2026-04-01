@@ -86,6 +86,7 @@ impl DistillArtifact {
     /// Deserialize an artifact from bincode bytes.
     pub fn from_bincode(bytes: &[u8]) -> Result<Self, String> {
         let (artifact, _) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
+            .or_else(|_| bincode::serde::decode_from_slice(bytes, bincode::config::legacy()))
             .map_err(|e| format!("bincode decode error: {e}"))?;
         Ok(artifact)
     }

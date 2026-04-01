@@ -49,6 +49,7 @@ impl WalRecovery {
 
         let (metadata, _): (CheckpointMetadata, _) =
             bincode::serde::decode_from_slice(&data, bincode::config::standard())
+                .or_else(|_| bincode::serde::decode_from_slice(&data, bincode::config::legacy()))
                 .map_err(|e| Error::Serialization(e.to_string()))?;
 
         Ok(Some(metadata))
@@ -85,7 +86,12 @@ impl WalRecovery {
     ///
     /// Returns an error if recovery fails.
     pub fn recover_as<R: WalEntry>(&self) -> Result<Vec<R>> {
-        let checkpoint = self.read_checkpoint_metadata()?;
+        // Gracefully handle corrupted/truncated checkpoint metadata:
+        // fall back to full WAL replay (safe, just slower)
+        let checkpoint = self.read_checkpoint_metadata().unwrap_or_else(|e| {
+            tracing::warn!("Failed to read checkpoint metadata, replaying full WAL: {e}");
+            None
+        });
         self.recover_internal_as::<R>(checkpoint)
     }
 
@@ -110,6 +116,7 @@ impl WalRecovery {
     ) -> Result<Vec<R>> {
         let mut current_tx_records = Vec::new();
         let mut committed_records = Vec::new();
+        let mut has_explicit_tx = false;
 
         // Get all log files in order
         let log_files = self.get_log_files()?;
@@ -155,9 +162,11 @@ impl WalRecovery {
                 match self.read_record_as::<R>(&mut reader) {
                     Ok(Some(record)) => {
                         if record.is_commit() {
+                            has_explicit_tx = true;
                             committed_records.append(&mut current_tx_records);
                             committed_records.push(record);
                         } else if record.is_abort() {
+                            has_explicit_tx = true;
                             current_tx_records.clear();
                         } else if record.is_checkpoint() {
                             current_tx_records.clear();
@@ -177,7 +186,28 @@ impl WalRecovery {
             }
         }
 
-        // Uncommitted records in current_tx_records are discarded
+        // Handle trailing uncommitted records.
+        // Two distinct cases:
+        // 1. Auto-commit mode (no explicit TransactionCommit/Abort in the WAL):
+        //    The writer never used transaction markers. Include trailing records
+        //    as implicitly committed — otherwise ALL data would be silently lost.
+        // 2. Explicit transactions mode (at least one Commit/Abort seen):
+        //    Trailing records are an incomplete transaction (crash mid-tx).
+        //    Discard them to maintain transaction atomicity.
+        if !current_tx_records.is_empty() {
+            if has_explicit_tx {
+                tracing::info!(
+                    "Discarding {} uncommitted WAL records from incomplete transaction",
+                    current_tx_records.len()
+                );
+            } else {
+                tracing::info!(
+                    "Including {} uncommitted WAL records as implicitly committed (auto-commit mode)",
+                    current_tx_records.len()
+                );
+                committed_records.append(&mut current_tx_records);
+            }
+        }
 
         Ok(committed_records)
     }
@@ -282,9 +312,11 @@ impl WalRecovery {
             )));
         }
 
-        // Deserialize
+        // Deserialize — try standard (varint) first, fallback to legacy (fixint)
+        // for WALs written with older bincode configs
         let (record, _): (R, _) =
             bincode::serde::decode_from_slice(&data, bincode::config::standard())
+                .or_else(|_| bincode::serde::decode_from_slice(&data, bincode::config::legacy()))
                 .map_err(|e| Error::Serialization(e.to_string()))?;
 
         Ok(Some(record))
@@ -348,7 +380,37 @@ mod tests {
         let recovery = WalRecovery::new(dir.path());
         let records = recovery.recover().unwrap();
 
-        // Uncommitted records should be discarded
+        // Uncommitted records at end of WAL are included as implicitly committed
+        // (handles crash recovery and auto-commit/embedded usage)
+        assert_eq!(records.len(), 1);
+    }
+
+    #[test]
+    fn test_recovery_aborted_discarded() {
+        let dir = tempdir().unwrap();
+
+        // Write records then abort — these MUST be discarded
+        {
+            let wal = WalManager::open(dir.path()).unwrap();
+
+            wal.log(&WalRecord::CreateNode {
+                id: NodeId::new(1),
+                labels: vec!["Person".to_string()],
+            })
+            .unwrap();
+
+            wal.log(&WalRecord::TransactionAbort {
+                transaction_id: TransactionId::new(1),
+            })
+            .unwrap();
+
+            wal.sync().unwrap();
+        }
+
+        let recovery = WalRecovery::new(dir.path());
+        let records = recovery.recover().unwrap();
+
+        // Aborted records MUST be discarded
         assert_eq!(records.len(), 0);
     }
 
@@ -726,10 +788,12 @@ mod crash_tests {
         assert_eq!(records.len(), 2, "CreateNode(1) + TransactionCommit(1)");
     }
 
-    /// Crash at `wal_after_write`: data may be in BufWriter but no commit
-    /// marker. Recovery should discard the uncommitted record.
+    /// Crash at `wal_after_write` with no explicit transactions: the WAL
+    /// contains a single record without any Commit/Abort markers. This is
+    /// indistinguishable from auto-commit mode (e.g. PersonaDB embedded usage).
+    /// Recovery treats it as implicitly committed to avoid silent data loss.
     #[test]
-    fn test_crash_after_write_uncommitted_discarded() {
+    fn test_crash_after_write_no_explicit_tx_is_kept() {
         let dir = tempdir().unwrap();
         let path = dir.path().to_path_buf();
 
@@ -740,16 +804,63 @@ mod crash_tests {
             let wal = WalManager::with_config(&p, sync_config()).unwrap();
             wal.log(&WalRecord::CreateNode {
                 id: NodeId::new(1),
+                labels: vec!["AutoCommit".into()],
+            })
+            .unwrap();
+        });
+        assert!(matches!(result, CrashResult::Crashed));
+
+        // No explicit tx markers ⇒ auto-commit mode ⇒ records are kept
+        let recovery = WalRecovery::new(&path);
+        let records = recovery.recover().unwrap();
+        assert_eq!(
+            records.len(),
+            1,
+            "Auto-commit mode: uncommitted records are implicitly committed"
+        );
+    }
+
+    /// Crash at `wal_after_write` with a prior committed transaction: trailing
+    /// uncommitted records MUST be discarded (incomplete explicit transaction).
+    #[test]
+    fn test_crash_after_write_with_prior_commit_discards() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+
+        // First: write a committed transaction
+        {
+            let wal = WalManager::with_config(&path, sync_config()).unwrap();
+            wal.log(&WalRecord::CreateNode {
+                id: NodeId::new(1),
+                labels: vec!["Committed".into()],
+            })
+            .unwrap();
+            wal.log(&WalRecord::TransactionCommit {
+                transaction_id: TransactionId::new(1),
+            })
+            .unwrap();
+        }
+
+        // Then: crash while writing a second (uncommitted) record
+        let p = path.clone();
+        let result = with_crash_at(2, move || {
+            let wal = WalManager::with_config(&p, sync_config()).unwrap();
+            wal.log(&WalRecord::CreateNode {
+                id: NodeId::new(2),
                 labels: vec!["Partial".into()],
             })
             .unwrap();
         });
         assert!(matches!(result, CrashResult::Crashed));
 
-        // No committed tx ⇒ recovery returns nothing
+        // Explicit tx seen ⇒ trailing uncommitted records are discarded
         let recovery = WalRecovery::new(&path);
         let records = recovery.recover().unwrap();
-        assert_eq!(records.len(), 0, "Uncommitted records must be discarded");
+        assert_eq!(
+            records.len(),
+            2,
+            "Only the committed tx (CreateNode + Commit) should survive"
+        );
     }
 
     /// Two committed transactions, then crash during the third.

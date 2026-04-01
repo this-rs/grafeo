@@ -340,6 +340,7 @@ impl CompressedEpochBlock {
         let config = bincode::config::standard();
 
         bincode::serde::decode_from_slice::<NodeRecord, _>(data, config)
+            .or_else(|_| bincode::serde::decode_from_slice(data, bincode::config::legacy()))
             .ok()
             .map(|(record, _)| record)
     }
@@ -380,6 +381,7 @@ impl CompressedEpochBlock {
         let config = bincode::config::standard();
 
         bincode::serde::decode_from_slice::<EdgeRecord, _>(data, config)
+            .or_else(|_| bincode::serde::decode_from_slice(data, bincode::config::legacy()))
             .ok()
             .map(|(record, _)| record)
     }
