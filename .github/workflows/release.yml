@@ -355,8 +355,8 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Install wasm-bindgen-cli
-        run: cargo install wasm-bindgen-cli
+      - name: Install wasm-bindgen-cli (pinned to match Cargo.lock)
+        run: cargo install wasm-bindgen-cli --version 0.2.114
 
       - name: Build WASM package (all languages + AI)
         run: bash scripts/build-wasm.sh --target bundler --features full
@@ -393,8 +393,8 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Install wasm-bindgen-cli
-        run: cargo install wasm-bindgen-cli
+      - name: Install wasm-bindgen-cli (pinned to match Cargo.lock)
+        run: cargo install wasm-bindgen-cli --version 0.2.114
 
       - name: Build WASM lite package (GQL only)
         run: bash scripts/build-wasm.sh --target bundler --out-dir crates/bindings/wasm/pkg-lite

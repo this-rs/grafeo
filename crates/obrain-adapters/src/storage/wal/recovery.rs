@@ -116,6 +116,7 @@ impl WalRecovery {
     ) -> Result<Vec<R>> {
         let mut current_tx_records = Vec::new();
         let mut committed_records = Vec::new();
+        let mut has_explicit_tx = false;
 
         // Get all log files in order
         let log_files = self.get_log_files()?;
@@ -161,9 +162,11 @@ impl WalRecovery {
                 match self.read_record_as::<R>(&mut reader) {
                     Ok(Some(record)) => {
                         if record.is_commit() {
+                            has_explicit_tx = true;
                             committed_records.append(&mut current_tx_records);
                             committed_records.push(record);
                         } else if record.is_abort() {
+                            has_explicit_tx = true;
                             current_tx_records.clear();
                         } else if record.is_checkpoint() {
                             current_tx_records.clear();
@@ -183,19 +186,27 @@ impl WalRecovery {
             }
         }
 
-        // If there are uncommitted records remaining, include them as
-        // implicitly committed. This handles two cases:
-        // 1. The process crashed before committing (crash recovery)
-        // 2. The writer used auto-commit/fire-and-forget mode without
-        //    explicit transaction markers (common in embedded usage)
-        // Without this, all data written before the first TransactionCommit
-        // would be silently lost on recovery.
+        // Handle trailing uncommitted records.
+        // Two distinct cases:
+        // 1. Auto-commit mode (no explicit TransactionCommit/Abort in the WAL):
+        //    The writer never used transaction markers. Include trailing records
+        //    as implicitly committed — otherwise ALL data would be silently lost.
+        // 2. Explicit transactions mode (at least one Commit/Abort seen):
+        //    Trailing records are an incomplete transaction (crash mid-tx).
+        //    Discard them to maintain transaction atomicity.
         if !current_tx_records.is_empty() {
-            tracing::info!(
-                "Including {} uncommitted WAL records as implicitly committed",
-                current_tx_records.len()
-            );
-            committed_records.append(&mut current_tx_records);
+            if has_explicit_tx {
+                tracing::info!(
+                    "Discarding {} uncommitted WAL records from incomplete transaction",
+                    current_tx_records.len()
+                );
+            } else {
+                tracing::info!(
+                    "Including {} uncommitted WAL records as implicitly committed (auto-commit mode)",
+                    current_tx_records.len()
+                );
+                committed_records.append(&mut current_tx_records);
+            }
         }
 
         Ok(committed_records)
@@ -777,10 +788,12 @@ mod crash_tests {
         assert_eq!(records.len(), 2, "CreateNode(1) + TransactionCommit(1)");
     }
 
-    /// Crash at `wal_after_write`: data may be in BufWriter but no commit
-    /// marker. Recovery should discard the uncommitted record.
+    /// Crash at `wal_after_write` with no explicit transactions: the WAL
+    /// contains a single record without any Commit/Abort markers. This is
+    /// indistinguishable from auto-commit mode (e.g. PersonaDB embedded usage).
+    /// Recovery treats it as implicitly committed to avoid silent data loss.
     #[test]
-    fn test_crash_after_write_uncommitted_discarded() {
+    fn test_crash_after_write_no_explicit_tx_is_kept() {
         let dir = tempdir().unwrap();
         let path = dir.path().to_path_buf();
 
@@ -791,16 +804,63 @@ mod crash_tests {
             let wal = WalManager::with_config(&p, sync_config()).unwrap();
             wal.log(&WalRecord::CreateNode {
                 id: NodeId::new(1),
+                labels: vec!["AutoCommit".into()],
+            })
+            .unwrap();
+        });
+        assert!(matches!(result, CrashResult::Crashed));
+
+        // No explicit tx markers ⇒ auto-commit mode ⇒ records are kept
+        let recovery = WalRecovery::new(&path);
+        let records = recovery.recover().unwrap();
+        assert_eq!(
+            records.len(),
+            1,
+            "Auto-commit mode: uncommitted records are implicitly committed"
+        );
+    }
+
+    /// Crash at `wal_after_write` with a prior committed transaction: trailing
+    /// uncommitted records MUST be discarded (incomplete explicit transaction).
+    #[test]
+    fn test_crash_after_write_with_prior_commit_discards() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+
+        // First: write a committed transaction
+        {
+            let wal = WalManager::with_config(&path, sync_config()).unwrap();
+            wal.log(&WalRecord::CreateNode {
+                id: NodeId::new(1),
+                labels: vec!["Committed".into()],
+            })
+            .unwrap();
+            wal.log(&WalRecord::TransactionCommit {
+                transaction_id: TransactionId::new(1),
+            })
+            .unwrap();
+        }
+
+        // Then: crash while writing a second (uncommitted) record
+        let p = path.clone();
+        let result = with_crash_at(2, move || {
+            let wal = WalManager::with_config(&p, sync_config()).unwrap();
+            wal.log(&WalRecord::CreateNode {
+                id: NodeId::new(2),
                 labels: vec!["Partial".into()],
             })
             .unwrap();
         });
         assert!(matches!(result, CrashResult::Crashed));
 
-        // No committed tx ⇒ recovery returns nothing
+        // Explicit tx seen ⇒ trailing uncommitted records are discarded
         let recovery = WalRecovery::new(&path);
         let records = recovery.recover().unwrap();
-        assert_eq!(records.len(), 0, "Uncommitted records must be discarded");
+        assert_eq!(
+            records.len(),
+            2,
+            "Only the committed tx (CreateNode + Commit) should survive"
+        );
     }
 
     /// Two committed transactions, then crash during the third.
