@@ -172,20 +172,13 @@ impl KvNodeRegistry {
         self.hilbert_layout = Some(layout);
     }
 
-    /// Get the base KV position for a node: Hilbert position if available, else next_pos.
-    /// When using Hilbert layout, next_pos is advanced past the max Hilbert position
-    /// to keep Token-mode nodes (conversation, header) out of the Hilbert range.
-    fn position_for(&mut self, node_id: NodeId) -> i32 {
-        if let Some(ref layout) = self.hilbert_layout {
-            if let Some(pos) = layout.get_position(node_id) {
-                // Advance next_pos past this position if needed (for non-Hilbert nodes)
-                let pos = pos as i32;
-                if pos + 1 > self.next_pos {
-                    self.next_pos = pos + 1;
-                }
-                return pos;
-            }
-        }
+    /// Get the base KV position for a node: always sequential (next_pos).
+    ///
+    /// The Hilbert layout is used for bank grouping (topological locality) but NOT
+    /// for KV position assignment. The new llama.cpp requires strictly consecutive
+    /// positions — gaps cause "inconsistent sequence positions" errors. Using
+    /// sequential positions is compatible with on-demand bank loading/eviction.
+    fn position_for(&mut self, _node_id: NodeId) -> i32 {
         self.next_pos
     }
 
@@ -268,20 +261,8 @@ impl KvNodeRegistry {
             mode: KvSlotMode::Embedding,
             tier,
         };
-        // Advance next_pos past this slot if it was from Hilbert
-        if p + 1 > self.next_pos {
-            self.next_pos = p + 1;
-        }
-        // If no Hilbert, advance normally
-        if self.hilbert_layout.is_none()
-            || self
-                .hilbert_layout
-                .as_ref()
-                .and_then(|l| l.get_position(node_id))
-                .is_none()
-        {
-            self.next_pos = p + 1;
-        }
+        // Always advance: position_for returns next_pos (sequential)
+        self.next_pos = p + 1;
         self.nodes.insert(node_id, slot);
         self.order.push(node_id);
         self.metrics.cache_misses += 1;
@@ -335,19 +316,8 @@ impl KvNodeRegistry {
             },
             tier: KvTier::Alpha, // Embedding + full tags = highest resolution
         };
-        // Advance next_pos past this slot
-        if p + total > self.next_pos {
-            self.next_pos = p + total;
-        }
-        if self.hilbert_layout.is_none()
-            || self
-                .hilbert_layout
-                .as_ref()
-                .and_then(|l| l.get_position(node_id))
-                .is_none()
-        {
-            self.next_pos = p + total;
-        }
+        // Always advance: position_for returns next_pos (sequential)
+        self.next_pos = p + total;
         self.nodes.insert(node_id, slot);
         self.order.push(node_id);
         self.metrics.cache_misses += 1;
@@ -425,96 +395,39 @@ impl KvNodeRegistry {
 
     /// Promote a node from Gamma (pure embedding) to Beta (embedding + label token).
     /// Encodes 1 label token at position start+1.
+    ///
+    /// NOTE: Disabled — the new llama.cpp requires strictly consecutive positions.
+    /// Encoding tags at `slot.start + 1` (in the middle of the sequence) causes
+    /// "inconsistent sequence positions" errors because `slot.start + 1 != seq_pos_max + 1`.
+    /// Tier promotions need a full recompact to be safe, which is too expensive per-round.
     pub fn promote_to_beta(
         &mut self,
-        node_id: NodeId,
-        label_text: &str,
-        engine: &dyn Tokenizer,
+        _node_id: NodeId,
+        _label_text: &str,
+        _engine: &dyn Tokenizer,
     ) -> Result<()> {
-        if !self.tier_budget.consume() {
-            return Err(anyhow::anyhow!(
-                "promote_to_beta: tier budget exhausted ({} used)",
-                self.tier_budget.used
-            ));
-        }
-        let slot = self.nodes.get_mut(&node_id).ok_or_else(|| {
-            anyhow::anyhow!("promote_to_beta: node {:?} not in registry", node_id)
-        })?;
-        match slot.mode {
-            KvSlotMode::Embedding => {
-                let label_tokens = engine.tokenize(label_text, false, true)?;
-                let n_label = label_tokens.len().min(3) as i32; // cap label to 3 tokens
-                if n_label > 0 {
-                    let label_positions: Vec<i32> =
-                        ((slot.start + 1)..=(slot.start + n_label)).collect();
-                    engine.encode(&label_tokens[..n_label as usize], &label_positions, 0)?;
-                }
-                slot.end = slot.start + 1 + n_label;
-                slot.n_tokens = 1 + n_label;
-                slot.mode = KvSlotMode::EmbeddingWithMinimalTag {
-                    n_label_tokens: n_label,
-                };
-                slot.tier = KvTier::Beta;
-                Ok(())
-            }
-            _ => Err(anyhow::anyhow!(
-                "promote_to_beta: node {:?} mode {:?} is not Embedding/Gamma",
-                node_id,
-                slot.mode
-            )),
-        }
+        Err(anyhow::anyhow!(
+            "promote_to_beta: disabled (consecutive positions required by llama.cpp)"
+        ))
     }
 
     /// Promote a node to Alpha (embedding + full micro-tag).
     /// Encodes tag tokens at positions start+1..start+1+n_tag.
     /// Works from Gamma (Embedding) or Beta (EmbeddingWithMinimalTag).
+    ///
+    /// NOTE: Disabled — the new llama.cpp requires strictly consecutive positions.
+    /// Encoding tags at `slot.start + 1` (in the middle of the sequence) causes
+    /// "inconsistent sequence positions" errors because `slot.start + 1 != seq_pos_max + 1`.
+    /// Tier promotions need a full recompact to be safe, which is too expensive per-round.
     pub fn promote_to_alpha(
         &mut self,
-        node_id: NodeId,
-        tag_text: &str,
-        engine: &dyn Tokenizer,
+        _node_id: NodeId,
+        _tag_text: &str,
+        _engine: &dyn Tokenizer,
     ) -> Result<()> {
-        if !self.tier_budget.consume() {
-            return Err(anyhow::anyhow!(
-                "promote_to_alpha: tier budget exhausted ({} used)",
-                self.tier_budget.used
-            ));
-        }
-        let slot = self.nodes.get_mut(&node_id).ok_or_else(|| {
-            anyhow::anyhow!("promote_to_alpha: node {:?} not in registry", node_id)
-        })?;
-        match slot.mode {
-            KvSlotMode::Embedding | KvSlotMode::EmbeddingWithMinimalTag { .. } => {
-                // First, evict any existing tags beyond the embedding
-                if slot.end > slot.start + 1 {
-                    engine.evict(slot.start + 1, slot.end);
-                }
-                // Encode full tag
-                let tag_tokens = engine.tokenize(tag_text, false, true)?;
-                let n_tag = tag_tokens.len() as i32;
-                if n_tag > 0 {
-                    let tag_positions: Vec<i32> =
-                        ((slot.start + 1)..=(slot.start + n_tag)).collect();
-                    engine.encode(&tag_tokens, &tag_positions, 0)?;
-                }
-                slot.end = slot.start + 1 + n_tag;
-                slot.n_tokens = 1 + n_tag;
-                slot.mode = KvSlotMode::EmbeddingWithTags {
-                    n_tag_tokens: n_tag,
-                };
-                slot.tier = KvTier::Alpha;
-                Ok(())
-            }
-            KvSlotMode::EmbeddingWithTags { .. } => {
-                // Already Alpha
-                slot.tier = KvTier::Alpha;
-                Ok(())
-            }
-            KvSlotMode::Token => Err(anyhow::anyhow!(
-                "promote_to_alpha: node {:?} is Token mode, cannot promote",
-                node_id
-            )),
-        }
+        Err(anyhow::anyhow!(
+            "promote_to_alpha: disabled (consecutive positions required by llama.cpp)"
+        ))
     }
 
     /// Get the tier of a node (if loaded).

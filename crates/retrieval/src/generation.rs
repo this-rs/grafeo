@@ -340,8 +340,30 @@ pub fn generate_with_mask(
     let use_perhead = std::env::var("OBRAIN_PERHEAD")
         .map(|v| v == "1")
         .unwrap_or(false);
-    if no_mask {
-        kv_registry::kv_debug!("  [A/B] Topology mask DISABLED (baseline mode)");
+
+    // ── Mask bypass optimization ──────────────────────────────────
+    // Custom attention masks disable flash attention in llama.cpp, making each
+    // decode O(n_ctx) instead of O(n_filled). This is catastrophic when n_ctx is
+    // large (32768) but few positions are filled (~168).
+    //
+    // Check if the mask actually excludes any KV positions. If ALL filled KV
+    // positions are covered by the sparse position map, the mask is equivalent
+    // to causal → skip it to keep flash attention enabled.
+    let n_kv_filled = ctx.total_tokens; // header + registered nodes
+    let n_kv_in_mask = (0..n_kv_filled).filter(|p| pos_remap.contains_key(p)).count() as i32;
+    let mask_excludes_nothing = n_kv_in_mask >= n_kv_filled;
+
+    if mask_excludes_nothing && !no_mask {
+        kv_registry::kv_debug!(
+            "  [mask-opt] all {} KV positions covered by mask → skipping custom mask (flash-attn stays enabled)",
+            n_kv_filled
+        );
+    }
+
+    if no_mask || mask_excludes_nothing {
+        if no_mask {
+            kv_registry::kv_debug!("  [A/B] Topology mask DISABLED (baseline mode)");
+        }
     } else if use_perhead || head_router.is_some() {
         // Phase B: per-head masking with HeadRouter (or Phase A per-head with OBRAIN_PERHEAD=1)
         // Remap raw KV positions → compact indices via pos_remap.
@@ -381,7 +403,7 @@ pub fn generate_with_mask(
             Some(&positions), // sparse positions: compact index → real KV position
         );
         // Sanity check: count masked (NEG_INF) entries vs expected causal mask
-        {
+        let extra_blocked = {
             let n_p = perhead.positions.len();
             let n_g = perhead.n_head_groups as usize;
             let mut n_blocked = 0usize;
@@ -400,13 +422,13 @@ pub fn generate_with_mask(
                 }
             }
             let total = n_g * n_p * n_p;
-            let extra_blocked = n_blocked - n_causal_blocked;
+            let extra = n_blocked - n_causal_blocked;
             kv_registry::kv_debug!(
                 "  [mask-sanity] {}×{}×{} = {} entries, blocked={} (causal={}, extra={})",
-                n_g, n_p, n_p, total, n_blocked, n_causal_blocked, extra_blocked
+                n_g, n_p, n_p, total, n_blocked, n_causal_blocked, extra
             );
             // If extra blocked, report which heads/banks are affected
-            if extra_blocked > 0 {
+            if extra > 0 {
                 if let Some(r) = head_router {
                     for h in 0..r.n_head.min(8) {
                         let mut hidden: Vec<u32> = Vec::new();
@@ -435,9 +457,22 @@ pub fn generate_with_mask(
                     bank_counts, mb_nodes.len()
                 );
             }
-        }
+            extra
+        };
 
-        engine.set_attn_mask(&perhead.mask, &perhead.positions, perhead.n_head_groups)?;
+        // Optimization: if per-head mask adds NO extra blocking beyond causal,
+        // fall back to broadcast mask (1 group). This keeps flash attention eligible
+        // and avoids the massive cost of n_groups × n_pos² without any benefit.
+        // The HeadRouter learns over time — until it differentiates heads, the
+        // per-head mask is equivalent to causal and just wastes compute.
+        if extra_blocked == 0 {
+            kv_registry::kv_debug!(
+                "  [mask-opt] per-head mask has no extra blocking (router not yet differentiated) → falling back to broadcast mask (1 group, flash-attn eligible)"
+            );
+            engine.set_attn_mask(&mask, &positions, 0)?;
+        } else {
+            engine.set_attn_mask(&perhead.mask, &perhead.positions, perhead.n_head_groups)?;
+        }
 
         // T4.3: Analyze mask sparsity for diagnostics and bank eviction feedback.
         // Globally dead positions = KV entries that no head attends to = wasted dequant.

@@ -130,71 +130,85 @@ pub fn query_with_registry(
                 bctx.top_k,
             );
 
-            // Load selected banks that aren't loaded yet
+            // When embd_injection_ratio > 0, load banks via embedding (fast, 1 KV pos each).
+            // When embd_injection_ratio == 0, DON'T load embeddings — the retrieval path
+            // below will register nodes as text. We still use the selected bank IDs for
+            // structural elimination (filtering scored_nodes to only selected banks).
+            // Bug fix: on small models (3B), raw embeddings produce gibberish.
+            let use_bank_embeddings = embd_injection_ratio > 0.0;
+
             let mut n_loaded = 0usize;
             let mut n_evicted = 0usize;
 
-            // Evict loaded banks that are NOT in the selected set
-            let selected_set: HashSet<usize> = selected.iter().copied().collect();
-            let to_evict: Vec<usize> = bctx.manager.banks.iter()
-                .filter(|b| b.loaded && !selected_set.contains(&b.id))
-                .map(|b| b.id)
-                .collect();
-            for bank_id in to_evict {
-                if let Ok(n) = bctx.manager.evict_bank(bank_id, registry, engine) {
-                    n_evicted += n;
+            if use_bank_embeddings {
+                // Evict loaded banks that are NOT in the selected set
+                let selected_set: HashSet<usize> = selected.iter().copied().collect();
+                let to_evict: Vec<usize> = bctx.manager.banks.iter()
+                    .filter(|b| b.loaded && !selected_set.contains(&b.id))
+                    .map(|b| b.id)
+                    .collect();
+                for bank_id in to_evict {
+                    if let Ok(n) = bctx.manager.evict_bank(bank_id, registry, engine) {
+                        n_evicted += n;
+                    }
                 }
-            }
 
-            // Load selected banks
-            for &bank_id in &selected {
-                if let Some(cache) = embd_cache {
-                    let get_embd = |nid: NodeId| -> Option<Vec<f32>> {
-                        cache.get(nid).map(|s| s.to_vec())
-                    };
-                    let get_text = |nid: NodeId| -> String {
-                        // Try to get primary label from the store, fallback to node ID
-                        if let Some(st) = store {
-                            if let Some(node) = st.get_node(nid) {
-                                if let Some(label) = node.labels.first() {
-                                    return format!("[{}:{}]", label, nid.as_u64());
+                // Load selected banks via embedding
+                for &bank_id in &selected {
+                    if let Some(cache) = embd_cache {
+                        let get_embd = |nid: NodeId| -> Option<Vec<f32>> {
+                            cache.get(nid).map(|s| s.to_vec())
+                        };
+                        let get_text = |nid: NodeId| -> String {
+                            if let Some(st) = store {
+                                if let Some(node) = st.get_node(nid) {
+                                    if let Some(label) = node.labels.first() {
+                                        return format!("[{}:{}]", label, nid.as_u64());
+                                    }
                                 }
                             }
-                        }
-                        format!("node_{}", nid.as_u64())
-                    };
-                    let encode_fn = |e: &[f32], p: &[i32], s: i32| -> Result<usize> {
-                        engine.encode_embeddings(e, p, s)
-                    };
-                    match bctx.manager.load_bank(
-                        bank_id,
-                        registry,
-                        &get_embd,
-                        &get_text,
-                        &encode_fn,
-                        Some(engine as &dyn Tokenizer),
-                    ) {
-                        Ok(n) => n_loaded += n,
-                        Err(e) => {
-                            kv_registry::kv_debug!(
-                                "  [T4.2] load_bank {} failed: {}",
-                                bank_id, e
-                            );
+                            format!("node_{}", nid.as_u64())
+                        };
+                        let encode_fn = |e: &[f32], p: &[i32], s: i32| -> Result<usize> {
+                            engine.encode_embeddings(e, p, s)
+                        };
+                        match bctx.manager.load_bank(
+                            bank_id,
+                            registry,
+                            &get_embd,
+                            &get_text,
+                            &encode_fn,
+                            Some(engine as &dyn Tokenizer),
+                        ) {
+                            Ok(n) => n_loaded += n,
+                            Err(e) => {
+                                kv_registry::kv_debug!(
+                                    "  [T4.2] load_bank {} failed: {}",
+                                    bank_id, e
+                                );
+                            }
                         }
                     }
                 }
-            }
 
-            if n_loaded > 0 || n_evicted > 0 {
+                if n_loaded > 0 || n_evicted > 0 {
+                    kv_registry::kv_debug!(
+                        "  [T4.2] bank selection: {} selected ({} loaded, {} nodes evicted), {} total loaded",
+                        selected.len(), n_loaded, n_evicted, bctx.manager.loaded_count()
+                    );
+                }
+            } else {
                 kv_registry::kv_debug!(
-                    "  [T4.2] bank selection: {} selected ({} loaded, {} nodes evicted), {} total loaded",
-                    selected.len(), n_loaded, n_evicted, bctx.manager.loaded_count()
+                    "  [T4.2] bank selection: {} selected (text-only mode, skipping embedding load)",
+                    selected.len()
                 );
             }
 
-            // Collect all node IDs from loaded banks for filtering
-            let loaded_nids: HashSet<NodeId> = bctx.manager.banks.iter()
-                .filter(|b| b.loaded)
+            // Collect node IDs from SELECTED banks for structural elimination filtering.
+            // When use_bank_embeddings=true, this matches loaded banks.
+            // When use_bank_embeddings=false, this uses selection without loading.
+            let loaded_nids: HashSet<NodeId> = selected.iter()
+                .filter_map(|&bid| bctx.manager.banks.get(bid))
                 .flat_map(|b| b.node_ids.iter().copied())
                 .collect();
             Some(loaded_nids)

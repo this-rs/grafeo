@@ -239,7 +239,7 @@ impl ProjectionNet {
             losses.push(avg_loss);
 
             if epoch % 10 == 0 || epoch == epochs - 1 {
-                eprintln!(
+                kv_registry::kv_debug!(
                     "  [ProjectionNet] epoch {}/{}: loss={:.6}",
                     epoch + 1,
                     epochs,
@@ -561,7 +561,7 @@ impl ProjectionNet {
             history.push((avg_total, avg_recon, avg_contra));
 
             if epoch % 10 == 0 || epoch == epochs - 1 {
-                eprintln!(
+                kv_registry::kv_debug!(
                     "  [ProjectionNet] epoch {}/{}: total={:.6} recon={:.6} contra={:.6}",
                     epoch + 1,
                     epochs,

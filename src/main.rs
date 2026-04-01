@@ -225,6 +225,35 @@ fn parse_arg(flag: &str) -> Option<String> {
         .and_then(|i| std::env::args().nth(i + 1))
 }
 
+/// Resolve a --db or --persona argument into (data_path, meta_dir).
+///
+/// - Short name (no `/` or `.`): `~/.obrain/{kind}/{name}/` for both
+/// - Full path: data stays in place, metadata goes to `~/.obrain/{kind}/{hash}/`
+fn resolve_obrain_path(arg: &str, kind: &str) -> (PathBuf, PathBuf) {
+    let is_short_name = !arg.contains('/') && !arg.contains('.');
+    let home = std::env::var("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."));
+    let base = home.join(".obrain").join(kind);
+
+    if is_short_name {
+        // Short name: everything in ~/.obrain/{kind}/{name}/
+        let dir = base.join(arg);
+        (dir.clone(), dir)
+    } else {
+        // Full path: data at the given path, metadata in ~/.obrain/{kind}/{hash}/
+        let data_path = PathBuf::from(arg);
+        let hash = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            arg.hash(&mut h);
+            format!("{:016x}", h.finish())
+        };
+        let meta_dir = base.join(hash);
+        (data_path, meta_dir)
+    }
+}
+
 fn main() -> Result<()> {
     // ── Generation control (shared with retrieval crate via Arc) ────
     let gen_ctl = GenerationControl {
@@ -266,7 +295,20 @@ fn main() -> Result<()> {
     let model_path = parse_arg("--model")
         .unwrap_or_else(|| "/Users/triviere/models/qwen3-8b-q8.gguf".to_string());
 
-    let db_path: Option<String> = parse_arg("--db");
+    let db_arg: Option<String> = parse_arg("--db");
+    let (db_path, db_meta_dir): (Option<String>, Option<PathBuf>) = if let Some(ref arg) = db_arg {
+        let (data, meta) = resolve_obrain_path(arg, "db");
+        // For short names, db_path is the directory itself
+        // For full paths, db_path is the original argument
+        let dp = if !arg.contains('/') && !arg.contains('.') {
+            data.to_str().unwrap_or(arg).to_string()
+        } else {
+            arg.clone()
+        };
+        (Some(dp), Some(meta))
+    } else {
+        (None, None)
+    };
 
     let max_nodes: usize = parse_arg("--max-nodes")
         .and_then(|s| s.parse().ok())
@@ -306,7 +348,18 @@ fn main() -> Result<()> {
         })
         .unwrap_or(1);
 
-    let persona_path: Option<PathBuf> = parse_arg("--persona").map(PathBuf::from);
+    let persona_arg: Option<String> = parse_arg("--persona");
+    let (persona_path, _persona_meta_dir): (Option<PathBuf>, Option<PathBuf>) = if let Some(ref arg) = persona_arg {
+        let (data, meta) = resolve_obrain_path(arg, "persona");
+        let pp = if !arg.contains('/') && !arg.contains('.') {
+            data // short name → ~/.obrain/persona/{name}/
+        } else {
+            PathBuf::from(arg) // full path → as-is
+        };
+        (Some(pp), Some(meta))
+    } else {
+        (None, None)
+    };
 
     let http_addr: Option<std::net::SocketAddr> = parse_arg("--http").map(|s| {
         s.parse()
@@ -343,6 +396,13 @@ fn main() -> Result<()> {
     let embd_injection_ratio: f32 = parse_arg("--embd-injection-ratio")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0.0);
+
+    // GNN embedding dimension (default 64, matches FactGNN DIM constant).
+    // Currently FactGNN uses a fixed DIM=64. This parameter controls the ProjectionNet
+    // input size and will support runtime GNN dimension when FactGNN is refactored.
+    let gnn_dim: usize = parse_arg("--gnn-dim")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(64);
     let _embd_warmup: u32 = parse_arg("--embd-warmup")
         .and_then(|s| s.parse().ok())
         .unwrap_or(100);
@@ -419,7 +479,12 @@ fn main() -> Result<()> {
             let st = Arc::clone(db.store());
             eprintln!("  {} nodes, {} edges", st.node_count(), st.edge_count());
             let sch = graph_schema::discover_schema(&st);
-            let bank_cache_path = std::path::PathBuf::from(format!("{db_path}.banks"));
+            let bank_cache_path = if let Some(ref meta) = db_meta_dir {
+                    let _ = std::fs::create_dir_all(meta);
+                    meta.join("banks")
+                } else {
+                    std::path::PathBuf::from(format!("{db_path}.banks"))
+                };
             let nc = st.node_count();
             let ec = st.edge_count();
             let bnks = match kv_registry::load_bank_cache(&bank_cache_path, nc, ec) {
@@ -636,7 +701,12 @@ fn main() -> Result<()> {
         );
 
         // Discover or load KV Banks
-        let bank_cache_path = std::path::PathBuf::from(format!("{db_path}.banks"));
+        let bank_cache_path = if let Some(ref meta) = db_meta_dir {
+                    let _ = std::fs::create_dir_all(meta);
+                    meta.join("banks")
+                } else {
+                    std::path::PathBuf::from(format!("{db_path}.banks"))
+                };
         let nc = st.node_count();
         let ec = st.edge_count();
         let bnks = match load_bank_cache(&bank_cache_path, nc, ec) {
@@ -838,7 +908,12 @@ fn main() -> Result<()> {
     }
 
     // ── Warmup: pre-load top banks into KV ──────────────────────
-    let warmup_count = 3.min(banks.len());
+    // Skip text-mode warmup when BankManager is active: BankManager uses
+    // Hilbert positions (1 slot/node via register_embedding) which conflict
+    // with sequential text-mode positions. The warmup would advance next_pos
+    // past the Hilbert range, causing "inconsistent sequence positions" errors.
+    // BankManager handles on-demand loading, making warmup redundant.
+    let warmup_count = if bank_manager.is_some() { 0 } else { 3.min(banks.len()) };
     if warmup_count > 0 {
         let warmup_t0 = Instant::now();
         let mut warmup_loaded = 0;
@@ -1246,23 +1321,58 @@ fn main() -> Result<()> {
         );
     }
 
-    // Phase C injection pipeline: GNN fusion + ProjectionNet (only when injection enabled)
+    // Phase C injection pipeline: ProjectionNet auto-management
+    //
+    // Strategy:
+    //   1. Resolve weights path for (model, db) pair
+    //   2. If pre-trained weights exist → load them, auto-enable embedding injection
+    //   3. If embd_injection_ratio > 0 but no weights → train, save, enable
+    //   4. If embd_injection_ratio == 0 and no weights → text-only mode
+    //
+    // This means: once you train a ProjectionNet for a (model, db) pair,
+    // subsequent runs auto-detect and use embeddings without --embd-injection-ratio.
+
+    // Resolve weights path (always, even when injection is off — to detect pre-trained)
+    let pnet_weights_path: Option<PathBuf> = if let Some(ref meta) = db_meta_dir {
+        let _ = std::fs::create_dir_all(meta);
+        Some(retrieval::projection_weights_path(meta, &model_name, engine.n_embd(), gnn_dim))
+    } else if persona_resolved_path != ":memory:" {
+        Some(retrieval::weights_path_for_persona(std::path::Path::new(&persona_resolved_path)))
+    } else {
+        None
+    };
+
+    // Check if pre-trained weights exist for this (model, db) pair
+    let has_pretrained = pnet_weights_path.as_ref().map(|p| p.exists()).unwrap_or(false);
+
+    // Effective injection ratio: auto-enable if pre-trained weights exist.
+    // NOTE: auto-enable currently disabled because mixed embedding+text positions
+    // cause "inconsistent sequence positions" errors in llama.cpp (positions must
+    // be strictly consecutive). Auto-enable will work once all nodes use embeddings
+    // (embd_injection_ratio=1.0) or the registry handles position gaps.
+    let effective_embd_ratio = if embd_injection_ratio > 0.0 {
+        embd_injection_ratio
+    } else if has_pretrained && false {
+        // TODO: re-enable when mixed embedding+text position issue is resolved
+        kv_registry::kv_debug!(
+            "  [Phase C] Auto-detected pre-trained ProjectionNet for {}, enabling embedding injection",
+            model_name
+        );
+        1.0
+    } else {
+        0.0
+    };
+
     let (mut projection_net, mut training_manager): (
         Option<retrieval::ProjectionNet>,
         Option<retrieval::TrainingManager>,
-    ) = if embd_injection_ratio > 0.0 {
-        eprintln!(
-            "  [Phase C] Embedding injection enabled: ratio={:.0}%, model={}",
-            embd_injection_ratio * 100.0,
-            model_name
+    ) = if effective_embd_ratio > 0.0 || embd_injection_ratio > 0.0 {
+        kv_registry::kv_debug!(
+            "  [Phase C] Embedding injection: ratio={:.0}%, model={}, pretrained={}",
+            effective_embd_ratio * 100.0,
+            model_name,
+            has_pretrained
         );
-
-        // Determine weights path from persona dir (works with --persona OR --db)
-        let weights_path = if persona_resolved_path != ":memory:" {
-            Some(retrieval::weights_path_for_persona(std::path::Path::new(&persona_resolved_path)))
-        } else {
-            None
-        };
 
         // Get GNN embeddings if available
         let gnn_embeds: std::collections::HashMap<obrain_common::types::NodeId, Vec<f32>> =
@@ -1271,7 +1381,7 @@ fn main() -> Result<()> {
                 let node_ids: Vec<obrain_common::types::NodeId> =
                     node_texts.iter().map(|(nid, _)| *nid).collect();
                 let embeds = gnn.get_node_embeddings(&store, &node_ids, 2);
-                eprintln!(
+                kv_registry::kv_debug!(
                     "  [Phase C] GNN embeddings: {} nodes (dim={})",
                     embeds.len(),
                     gnn.dim()
@@ -1282,20 +1392,20 @@ fn main() -> Result<()> {
             };
 
         let has_gnn = !gnn_embeds.is_empty();
-        let gnn_dim = fact_gnn.as_ref().map(|g| g.dim()).unwrap_or(64);
+        // gnn_dim comes from CLI --gnn-dim (already parsed above)
 
         // P1: Create and train ProjectionNet (or load from disk)
         let mut pnet = retrieval::ProjectionNet::new(engine.n_embd(), gnn_dim);
         let mut tmgr = retrieval::TrainingManager::new(retrieval::TrainingConfig {
-            initial_epochs: 30, // C6: contrastive plateaus ~epoch 20, 30 is sufficient
+            initial_epochs: 30,
             lr: 0.001,
             lambda_cosine: 0.1,
-            lambda_kurtosis: 0.1,  // TurboQuant+ P2: anti-outlier regularization
-            lambda_innerq: 0.05,   // TurboQuant+ P2: per-channel variance equalization
+            lambda_kurtosis: 0.1,
+            lambda_innerq: 0.05,
             min_samples: 5,
             online_epochs: 5,
             online_interval: 10,
-            weights_path: weights_path.clone(),
+            weights_path: pnet_weights_path.clone(),
             contrastive: Some(retrieval::ContrastiveConfig::default()),
         });
 
@@ -1319,15 +1429,15 @@ fn main() -> Result<()> {
             });
         if let Some(ref edges) = graph_edges {
             if !edges.is_empty() {
-                eprintln!(
+                kv_registry::kv_debug!(
                     "  [Phase C] C6 contrastive: {} edges extracted from graph",
                     edges.len()
                 );
             }
         }
 
-        if has_gnn && !node_texts.is_empty() {
-            // P1 + C6: Initial training with GNN fusion data + contrastive loss
+        if !node_texts.is_empty() {
+            // Initial training: with GNN if available, text-only otherwise
             match tmgr.initial_training(
                 &mut pnet,
                 &engine,
@@ -1336,40 +1446,39 @@ fn main() -> Result<()> {
                 graph_edges.as_deref(),
             ) {
                 Ok(n) if n > 0 => {
-                    eprintln!("  [Phase C] ProjectionNet trained on {} samples", n);
+                    kv_registry::kv_debug!("  [Phase C] ProjectionNet trained on {} samples", n);
                 }
                 Ok(_) => {} // loaded from disk or skipped
-                Err(e) => eprintln!("  ⚠ [Phase C] ProjectionNet training failed: {}", e),
+                Err(e) => kv_registry::kv_debug!("  ⚠ [Phase C] ProjectionNet training failed: {}", e),
             }
 
-            // Override text-only embeddings with GNN-fused embeddings
-            if let Some(ref mut cache) = embd_cache {
-                let t0 = std::time::Instant::now();
-                let fctx = retrieval::FusionContext {
-                    gnn_embeddings: gnn_embeds,
-                    projection_net: &pnet,
-                };
-                match retrieval::compute_node_embeddings_with_fusion(
-                    &engine,
-                    cache,
-                    &node_texts,
-                    true, // force: override text-only with fused
-                    Some(&fctx),
-                ) {
-                    Ok(n) => eprintln!(
-                        "  [Phase C] Upgraded {} embeddings to GNN-fused in {:.1}s",
-                        n,
-                        t0.elapsed().as_secs_f32()
-                    ),
-                    Err(e) => eprintln!("  ⚠ [Phase C] Fused embedding computation failed: {}", e),
+            // Override text-only embeddings with fused embeddings (only if GNN available)
+            if has_gnn {
+                if let Some(ref mut cache) = embd_cache {
+                    let t0 = std::time::Instant::now();
+                    let fctx = retrieval::FusionContext {
+                        gnn_embeddings: gnn_embeds,
+                        projection_net: &pnet,
+                    };
+                    match retrieval::compute_node_embeddings_with_fusion(
+                        &engine,
+                        cache,
+                        &node_texts,
+                        true,
+                        Some(&fctx),
+                    ) {
+                        Ok(n) => eprintln!(
+                            "  [Phase C] Upgraded {} embeddings to GNN-fused in {:.1}s",
+                            n,
+                            t0.elapsed().as_secs_f32()
+                        ),
+                        Err(e) => kv_registry::kv_debug!("  ⚠ [Phase C] Fused embedding computation failed: {}", e),
+                    }
                 }
             }
         }
 
-        (
-            if has_gnn { Some(pnet) } else { None },
-            Some(tmgr),
-        )
+        (Some(pnet), Some(tmgr))
     } else {
         (None, None)
     };
@@ -1396,6 +1505,14 @@ fn main() -> Result<()> {
         use retrieval::benchmark::{
             BENCH_QUESTIONS, BenchReport, BenchResult, check_keywords, compute_summary,
         };
+
+        // Cap n_predict for benchmark: factoid answers are 50-100 tokens.
+        // 4096 default causes 200s/question as the model generates invisible
+        // <think> tokens or verbose responses without hitting EOG.
+        if std::env::var("OBRAIN_N_PREDICT").is_err() {
+            // SAFETY: single-threaded at this point (before any spawning)
+            unsafe { std::env::set_var("OBRAIN_N_PREDICT", "512"); }
+        }
 
         eprintln!("\n=== BENCHMARK MODE ({} questions) ===\n", BENCH_QUESTIONS.len());
 
@@ -1444,6 +1561,10 @@ fn main() -> Result<()> {
             engine.clear_attn_mask();
             engine.clear_state_bias();
             engine.clear_seq(1); // clear ephemeral generation seq
+            // Reset BankManager loaded flags — KV was just cleared, banks are no longer loaded.
+            if let Some(ref mut mgr) = bank_manager {
+                mgr.reset_loaded();
+            }
             // Rebuild registry from scratch (header only, no graph nodes)
             // Graph nodes will be re-injected by query_with_registry for each question
             let header_text = registry.header_text.clone();
@@ -1487,7 +1608,7 @@ fn main() -> Result<()> {
                 None, // no GNN context in benchmark mode
                 head_router.as_ref(),
                 embd_cache.as_ref(),
-                embd_injection_ratio,
+                effective_embd_ratio,
                 round_tracker.as_mut(),
                 coact_ref,
                 cold_ref,

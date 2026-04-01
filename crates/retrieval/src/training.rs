@@ -110,7 +110,7 @@ impl TrainingManager {
         if let Some(ref path) = self.config.weights_path {
             if let Ok(Some(loaded)) = ProjectionNet::load(path) {
                 if loaded.n_input() == pnet.n_input() && loaded.n_hidden() == pnet.n_hidden() {
-                    eprintln!(
+                    kv_registry::kv_debug!(
                         "  [ProjectionNet] Loaded pre-trained weights ({} updates) from {:?}",
                         loaded.n_updates(),
                         path
@@ -118,7 +118,7 @@ impl TrainingManager {
                     *pnet = loaded;
                     return Ok(0); // Skip training, weights are loaded
                 } else {
-                    eprintln!(
+                    kv_registry::kv_debug!(
                         "  [ProjectionNet] Saved weights have wrong dims ({}/{} vs {}/{}), retraining",
                         loaded.n_input(),
                         loaded.n_hidden(),
@@ -144,22 +144,26 @@ impl TrainingManager {
             // Get GNN embedding (may be absent for some nodes)
             let gnn_g = gnn_embeddings.get(nid);
 
-            if let Some(g) = gnn_g {
-                // Build input: concat(h, g)
-                let mut input = Vec::with_capacity(text_h.len() + g.len());
-                input.extend_from_slice(&text_h);
-                input.extend_from_slice(g);
+            // Build input: concat(text_h, gnn_g) — or concat(text_h, zeros) if no GNN
+            let gnn_dim = pnet.n_input() - pnet.n_hidden(); // n_input = n_embd + gnn_dim
+            let gnn_part: Vec<f32> = if let Some(g) = gnn_g {
+                g.clone()
+            } else {
+                vec![0.0; gnn_dim] // Zero-padded GNN slot for text-only training
+            };
 
-                let idx = data.len();
-                node_to_idx.insert(*nid, idx);
-                ordered_nids.push(*nid);
-                data.push((input, text_h));
-            }
-            // Skip nodes without GNN embeddings — they'll use text-only fallback
+            let mut input = Vec::with_capacity(text_h.len() + gnn_part.len());
+            input.extend_from_slice(&text_h);
+            input.extend_from_slice(&gnn_part);
+
+            let idx = data.len();
+            node_to_idx.insert(*nid, idx);
+            ordered_nids.push(*nid);
+            data.push((input, text_h));
         }
 
         if data.len() < self.config.min_samples {
-            eprintln!(
+            kv_registry::kv_debug!(
                 "  [ProjectionNet] Only {} samples (need {}), skipping initial training",
                 data.len(),
                 self.config.min_samples
@@ -196,7 +200,7 @@ impl TrainingManager {
                 }
             }
 
-            eprintln!(
+            kv_registry::kv_debug!(
                 "  [ProjectionNet] C6 contrastive: {} pairs from {} edges, {} available nodes",
                 self.contrastive_pairs.len(),
                 edges.len(),
@@ -221,7 +225,7 @@ impl TrainingManager {
                     .copied()
                     .unwrap_or((f32::MAX, f32::MAX, f32::MAX));
 
-            eprintln!(
+            kv_registry::kv_debug!(
                 "  [ProjectionNet] C6 training done in {:.1}s: total={:.6} (recon={:.6} contra={:.6}), {} updates",
                 t0.elapsed().as_secs_f32(),
                 final_total,
@@ -231,7 +235,7 @@ impl TrainingManager {
             );
         } else {
             // Reconstruction-only training (pre-C6 fallback)
-            eprintln!(
+            kv_registry::kv_debug!(
                 "  [ProjectionNet] Training on {} node pairs ({} epochs, reconstruction only)...",
                 data.len(),
                 self.config.initial_epochs
@@ -247,7 +251,7 @@ impl TrainingManager {
             )?;
             let final_loss = losses.last().copied().unwrap_or(f32::MAX);
 
-            eprintln!(
+            kv_registry::kv_debug!(
                 "  [ProjectionNet] Training done in {:.1}s: final_loss={:.6}, {} updates",
                 t0.elapsed().as_secs_f32(),
                 final_loss,
@@ -258,9 +262,9 @@ impl TrainingManager {
         // Save weights
         if let Some(ref path) = self.config.weights_path {
             if let Err(e) = pnet.save(path) {
-                eprintln!("  ⚠ [ProjectionNet] Failed to save weights: {}", e);
+                kv_registry::kv_debug!("  ⚠ [ProjectionNet] Failed to save weights: {}", e);
             } else {
-                eprintln!("  [ProjectionNet] Weights saved to {:?}", path);
+                kv_registry::kv_debug!("  [ProjectionNet] Weights saved to {:?}", path);
             }
         }
 
@@ -317,7 +321,7 @@ impl TrainingManager {
                                 .last()
                                 .copied()
                                 .unwrap_or((f32::MAX, f32::MAX, f32::MAX));
-                        eprintln!(
+                        kv_registry::kv_debug!(
                             "  [ProjectionNet] C6 online update (query {}): total={:.6} (r={:.6} c={:.6}), {} samples",
                             self.query_count,
                             total,
@@ -331,7 +335,7 @@ impl TrainingManager {
                         return true;
                     }
                     Err(e) => {
-                        eprintln!("  ⚠ [ProjectionNet] C6 online training failed: {}", e);
+                        kv_registry::kv_debug!("  ⚠ [ProjectionNet] C6 online training failed: {}", e);
                     }
                 }
             }
@@ -348,7 +352,7 @@ impl TrainingManager {
         ) {
             Ok(losses) => {
                 let final_loss = losses.last().copied().unwrap_or(f32::MAX);
-                eprintln!(
+                kv_registry::kv_debug!(
                     "  [ProjectionNet] Online update (query {}): loss={:.6}, {} samples, {} total updates",
                     self.query_count,
                     final_loss,
@@ -363,7 +367,7 @@ impl TrainingManager {
                 true
             }
             Err(e) => {
-                eprintln!("  ⚠ [ProjectionNet] Online training failed: {}", e);
+                kv_registry::kv_debug!("  ⚠ [ProjectionNet] Online training failed: {}", e);
                 false
             }
         }
@@ -373,7 +377,7 @@ impl TrainingManager {
     pub fn save_weights(&self, pnet: &ProjectionNet) {
         if let Some(ref path) = self.config.weights_path {
             if let Err(e) = pnet.save(path) {
-                eprintln!(
+                kv_registry::kv_debug!(
                     "  ⚠ [ProjectionNet] Failed to save weights at shutdown: {}",
                     e
                 );
@@ -397,7 +401,19 @@ impl TrainingManager {
     }
 }
 
-/// Convenience: compute the weights file path from persona directory.
+/// Convenience: compute the weights file path from persona directory (legacy).
 pub fn weights_path_for_persona(persona_dir: &Path) -> PathBuf {
     persona_dir.join("projection_net.bin")
+}
+
+/// Compute the ProjectionNet weights path from db meta directory.
+///
+/// Path includes model name, n_embd and gnn_dim so that switching model or
+/// gnn dimension automatically triggers re-training (different file).
+pub fn projection_weights_path(meta_dir: &Path, model_name: &str, n_embd: usize, gnn_dim: usize) -> PathBuf {
+    // Sanitize model name for filesystem (replace problematic chars)
+    let safe_name: String = model_name.chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+        .collect();
+    meta_dir.join(format!("projection-{}-{}-{}.bin", safe_name, n_embd, gnn_dim))
 }

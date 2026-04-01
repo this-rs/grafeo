@@ -33,4 +33,4 @@ pub use query::{BankContext, GnnContext, maybe_relayout, query_with_registry};
 pub use round_tracker::{CoactivationMap, DemotionType, RoundTracker};
 pub use scoring::{ScoredContextNode, get_micro_tag, retrieve_nodes};
 pub use scoring::{compute_lambda, expand_by_affinity};
-pub use training::{TrainingConfig, TrainingManager, weights_path_for_persona};
+pub use training::{TrainingConfig, TrainingManager, weights_path_for_persona, projection_weights_path};

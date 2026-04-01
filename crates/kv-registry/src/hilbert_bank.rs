@@ -196,6 +196,15 @@ impl BankManager {
         }
     }
 
+    /// Reset all banks to unloaded state. Call after `clear_kv()` to keep
+    /// BankManager in sync with the actual KV cache state.
+    pub fn reset_loaded(&mut self) {
+        for bank in &mut self.banks {
+            bank.loaded = false;
+        }
+        self.lru_order.clear();
+    }
+
     /// Load a bank: encode all its nodes as embeddings (tier Γ) into the KV cache.
     ///
     /// If `max_loaded > 0` and loading this bank would exceed the limit,
