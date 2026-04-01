@@ -616,7 +616,9 @@ fn compute_degree_approx(store: &dyn GraphStore) -> HashMap<NodeId, [f32; 2]> {
 
     // Pass 2: average neighbor total degree (log-normalized)
     for &nid in &node_ids {
-        let neighbors = all_neighbors.get(&nid).map(|v| v.as_slice()).unwrap_or(&[]);
+        let neighbors = all_neighbors
+            .get(&nid)
+            .map_or(&[] as &[NodeId], |v| v.as_slice());
         let sum: f64 = neighbors
             .iter()
             .map(|n| *total_deg.get(n).unwrap_or(&0) as f64)
@@ -639,10 +641,7 @@ fn compute_degree_approx(store: &dyn GraphStore) -> HashMap<NodeId, [f32; 2]> {
         .iter()
         .map(|&nid| {
             let x = log_normalize(*total_deg.get(&nid).unwrap_or(&0) as f64, max_deg);
-            let y = log_normalize(
-                *neighbor_sum.get(&nid).unwrap_or(&0.0),
-                max_neighbor_avg,
-            );
+            let y = log_normalize(*neighbor_sum.get(&nid).unwrap_or(&0.0), max_neighbor_avg);
             (nid, [x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)])
         })
         .collect()
@@ -682,7 +681,9 @@ fn compute_degree_approx_secondary(store: &dyn GraphStore) -> HashMap<NodeId, [f
             };
 
             // Clustering coefficient proxy (sampled)
-            let neighbors = out_neighbors.get(&nid).map(|v| v.as_slice()).unwrap_or(&[]);
+            let neighbors = out_neighbors
+                .get(&nid)
+                .map_or(&[] as &[NodeId], |v| v.as_slice());
             let k = neighbors.len();
             let y = if k < 2 {
                 0.0
@@ -697,8 +698,9 @@ fn compute_degree_approx_secondary(store: &dyn GraphStore) -> HashMap<NodeId, [f
                 };
                 'outer: for i in (0..k).step_by(step) {
                     for j in (i + 1..k).step_by(step) {
-                        let ni_neighbors =
-                            out_neighbors.get(&neighbors[i]).map(|v| v.as_slice()).unwrap_or(&[]);
+                        let ni_neighbors = out_neighbors
+                            .get(&neighbors[i])
+                            .map_or(&[] as &[NodeId], |v| v.as_slice());
                         if ni_neighbors.contains(&neighbors[j]) {
                             connected += 1;
                         }
