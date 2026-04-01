@@ -1,0 +1,204 @@
+{
+  "timestamp": "2026-04-01T02:30:59.060345+00:00",
+  "model": "llama3.2-3b",
+  "kv_type_k": "f16",
+  "kv_type_v": "f16",
+  "n_ctx": 8192,
+  "questions": [
+    {
+      "query": "Où habite Thomas Rivière ?",
+      "category": "direct_recall",
+      "hit": true,
+      "keywords_found": [
+        "Lyon"
+      ],
+      "keywords_missing": [],
+      "latency_ms": 1530.208083,
+      "response_preview": "Thomas Rivière habite à Lyon.",
+      "full_response": "Thomas Rivière habite à Lyon."
+    },
+    {
+      "query": "Sur quel projet travaille Sophie Martin ?",
+      "category": "direct_recall",
+      "hit": true,
+      "keywords_found": [
+        "DataPipeline"
+      ],
+      "keywords_missing": [],
+      "latency_ms": 1524.318708,
+      "response_preview": "Sophie Martin travaille sur le projet DataPipeline, un ETL pipeline temps réel.",
+      "full_response": "Sophie Martin travaille sur le projet DataPipeline, un ETL pipeline temps réel."
+    },
+    {
+      "query": "Quel langage utilise Marc Dupont ?",
+      "category": "direct_recall",
+      "hit": true,
+      "keywords_found": [
+        "Go"
+      ],
+      "keywords_missing": [],
+      "latency_ms": 1571.0267920000001,
+      "response_preview": "Marc Dupont utilise le langage Go.",
+      "full_response": "Marc Dupont utilise le langage Go."
+    },
+    {
+      "query": "Qui habite dans la même ville que Thomas Rivière ?",
+      "category": "multi_hop",
+      "hit": false,
+      "keywords_found": [],
+      "keywords_missing": [
+        "Marc"
+      ],
+      "latency_ms": 1490.324083,
+      "response_preview": "Thomas Rivière habite à Lyon., et il y a au moins une autre personne qui y habite : Sophie Martin.",
+      "full_response": "Thomas Rivière habite à Lyon., et il y a au moins une autre personne qui y habite : Sophie Martin."
+    },
+    {
+      "query": "Quelles technologies sont utilisées par le projet Obrain ?",
+      "category": "multi_hop",
+      "hit": true,
+      "keywords_found": [
+        "Rust"
+      ],
+      "keywords_missing": [],
+      "latency_ms": 2009.814375,
+      "response_preview": "Le projet Obrain utilise les technologies suivantes :\n\n* Rust\n* GGML (, un framework de tenseurs pour inférence LLM)\n* l...",
+      "full_response": "Le projet Obrain utilise les technologies suivantes :\n\n* Rust\n* GGML (, un framework de tenseurs pour inférence LLM)\n* llama.cpp (, une inférence LLM en C++ optimisée)"
+    },
+    {
+      "query": "Qui connaît Thomas Rivière ?",
+      "category": "relationship",
+      "hit": true,
+      "keywords_found": [
+        "Marc",
+        "Alice"
+      ],
+      "keywords_missing": [],
+      "latency_ms": 1754.4169590000001,
+      "response_preview": "Thomas Rivière connaît les personnes suivantes :\n\n*   Marc Dupont :, connu à travers leurs relations\n*   Alice Chen : co...",
+      "full_response": "Thomas Rivière connaît les personnes suivantes :\n\n*   Marc Dupont :, connu à travers leurs relations\n*   Alice Chen : connue à travers leurs relations\n*   Sophie Martin : connue à travers leurs relations"
+    },
+    {
+      "query": "À quel événement Thomas et Marc ont-ils assisté ensemble ?",
+      "category": "relationship",
+      "hit": true,
+      "keywords_found": [
+        "RustConf"
+      ],
+      "keywords_missing": [],
+      "latency_ms": 1744.0940409999998,
+      "response_preview": "Thomas Rivière et Marc Dupont ont assisté ensemble à RustConf 2025.",
+      "full_response": "Thomas Rivière et Marc Dupont ont assisté ensemble à RustConf 2025."
+    },
+    {
+      "query": "Combien de personnes utilisent Python ?",
+      "category": "aggregation",
+      "hit": true,
+      "keywords_found": [
+        "Sophie",
+        "Alice"
+      ],
+      "keywords_missing": [],
+      "latency_ms": 3038.295709,
+      "response_preview": "Selon les informations disponibles,, Sophie Martin et Alice Chen utilisent Python comme langage favori. De plus,, Sophie...",
+      "full_response": "Selon les informations disponibles,, Sophie Martin et Alice Chen utilisent Python comme langage favori. De plus,, Sophie Martin utilise PyTorch, qui est un framework d'apprentissage profond, ce qui implique que Python est également utilisé dans ce contexte.\n\n, Cependant, il n'est pas possible de déterminer avec certitude combien de personnes utilisent Python, car, par exemple, Thomas Rivière utilise PyTorch et non Python comme langage principal."
+    },
+    {
+      "query": "Liste toutes les villes mentionnées dans le graphe.",
+      "category": "aggregation",
+      "hit": true,
+      "keywords_found": [
+        "Lyon",
+        "Paris",
+        "Grenoble",
+        "Toulouse"
+      ],
+      "keywords_missing": [],
+      "latency_ms": 2068.6778750000003,
+      "response_preview": "Voici la liste des villes mentionnées dans le graphe :\n\n1. Lyon\n2. Paris\n3. Grenoble\n4. Toulouse",
+      "full_response": "Voici la liste des villes mentionnées dans le graphe :\n\n1. Lyon\n2. Paris\n3. Grenoble\n4. Toulouse"
+    },
+    {
+      "query": "Décris le profil professionnel de Thomas Rivière.",
+      "category": "context",
+      "hit": true,
+      "keywords_found": [
+        "Rust",
+        "Mozilla",
+        "Obrain"
+      ],
+      "keywords_missing": [],
+      "latency_ms": 3148.491958,
+      "response_preview": "Thomas Rivière est un développeur Rust senior, âgé de 34 ans. Il travaille à Mozilla et possède une expérience, étant qu...",
+      "full_response": "Thomas Rivière est un développeur Rust senior, âgé de 34 ans. Il travaille à Mozilla et possède une expérience, étant qu'il a été mentionné comme ayant travaillé sur des projets importants tels que Obrain et Grafeo.\n\nIl a également participé à des événements professionnels tels que RustConf 2025, où il a, selon les informations disponibles, assisté à la conférence. De plus, il connaît plusieurs personnes, notamment Marc Dupont et Alice Chen, avec qui il a collaboré ou, selon les informations disponibles, a échangé des informations.\n\nEnfin, Thomas Rivière vit à Lyon, sa ville de résidence, et utilise, entre autres choses, Rust, GGML et llama.cpp dans son travail."
+    },
+    {
+      "query": "Quelles sont les compétences de Pierre Bernard ?",
+      "category": "context",
+      "hit": false,
+      "keywords_found": [
+        "DevOps",
+        "Bash"
+      ],
+      "keywords_missing": [
+        "Airbus"
+      ],
+      "latency_ms": 1937.081125,
+      "response_preview": "Pierre Bernard a les compétences suivantes :\n\n- running\n- jeux vidéo\n- Bash\n- CentOS\n- DevOps engineer\n-, Kubernetes\n- S...",
+      "full_response": "Pierre Bernard a les compétences suivantes :\n\n- running\n- jeux vidéo\n- Bash\n- CentOS\n- DevOps engineer\n-, Kubernetes\n- SkyNet-CI"
+    },
+    {
+      "query": "Quel est le lien entre Alice Chen et NeuralSearch ?",
+      "category": "relationship",
+      "hit": false,
+      "keywords_found": [
+        "travaille"
+      ],
+      "keywords_missing": [
+        "INRIA"
+      ],
+      "latency_ms": 1254.658042,
+      "response_preview": "Alice Chen travaille sur NeuralSearch.",
+      "full_response": "Alice Chen travaille sur NeuralSearch."
+    }
+  ],
+  "summary": {
+    "hit_rate": 0.75,
+    "hits": 9,
+    "total": 12,
+    "latency_avg_ms": 1922.6173124999998,
+    "latency_p95_ms": 3148.491958,
+    "by_category": {
+      "relationship": {
+        "hit_rate": 0.6666666666666666,
+        "hits": 2,
+        "total": 3,
+        "latency_avg_ms": 1584.3896806666664
+      },
+      "multi_hop": {
+        "hit_rate": 0.5,
+        "hits": 1,
+        "total": 2,
+        "latency_avg_ms": 1750.069229
+      },
+      "context": {
+        "hit_rate": 0.5,
+        "hits": 1,
+        "total": 2,
+        "latency_avg_ms": 2542.7865415
+      },
+      "aggregation": {
+        "hit_rate": 1.0,
+        "hits": 2,
+        "total": 2,
+        "latency_avg_ms": 2553.486792
+      },
+      "direct_recall": {
+        "hit_rate": 1.0,
+        "hits": 3,
+        "total": 3,
+        "latency_avg_ms": 1541.8511943333335
+      }
+    }
+  }
+}
