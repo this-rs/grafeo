@@ -101,6 +101,32 @@ fn log_normalize(value: f64, max: f64) -> f32 {
     ((1.0 + value).ln() / (1.0 + max).ln()) as f32
 }
 
+/// Check if a facette produced degenerate results (all points identical).
+/// Returns true if the variance of both x and y coordinates is near zero.
+fn is_degenerate(facette: &HashMap<NodeId, [f32; 2]>) -> bool {
+    if facette.len() <= 1 {
+        return true;
+    }
+    let n = facette.len() as f64;
+    let (sum_x, sum_y) = facette
+        .values()
+        .fold((0.0f64, 0.0f64), |(sx, sy), &[x, y]| {
+            (sx + x as f64, sy + y as f64)
+        });
+    let (mean_x, mean_y) = (sum_x / n, sum_y / n);
+    let (var_x, var_y) = facette
+        .values()
+        .fold((0.0f64, 0.0f64), |(vx, vy), &[x, y]| {
+            (
+                vx + (x as f64 - mean_x).powi(2),
+                vy + (y as f64 - mean_y).powi(2),
+            )
+        });
+    let std_x = (var_x / n).sqrt();
+    let std_y = (var_y / n).sqrt();
+    std_x < 1e-6 && std_y < 1e-6
+}
+
 /// Rank-percentile normalization: maps values to their percentile rank in [0, 1].
 ///
 /// Sorts all values and assigns `rank / (n - 1)` to each node.
@@ -210,9 +236,24 @@ pub fn hilbert_features(
             compute_schema_features(store),
         ]
     } else {
+        // Try exact spectral; fallback to degree approx if degenerate (std ≈ 0)
+        let spec12 = compute_spectral_12(store);
+        let spec34 = compute_spectral_34(store);
+
+        let spec12 = if is_degenerate(&spec12) {
+            compute_degree_approx(store)
+        } else {
+            spec12
+        };
+        let spec34 = if is_degenerate(&spec34) {
+            compute_degree_approx_secondary(store)
+        } else {
+            spec34
+        };
+
         [
-            compute_spectral_12(store),
-            compute_spectral_34(store),
+            spec12,
+            spec34,
             compute_community(store),
             compute_centrality(store, config),
             compute_bfs_distance(store),
@@ -351,12 +392,25 @@ pub fn hilbert_features_incremental(
 
 fn compute_spectral_12(store: &dyn GraphStore) -> HashMap<NodeId, [f32; 2]> {
     let result = spectral_embedding(store, 2, None);
+
+    // Extract raw values per dimension
+    let mut dim0: HashMap<NodeId, f64> = HashMap::new();
+    let mut dim1: HashMap<NodeId, f64> = HashMap::new();
+    for (nid, emb) in &result.embeddings {
+        dim0.insert(*nid, *emb.first().unwrap_or(&0.0));
+        dim1.insert(*nid, *emb.get(1).unwrap_or(&0.0));
+    }
+
+    // Rank normalize each dimension independently
+    let ranks0 = rank_normalize(&dim0);
+    let ranks1 = rank_normalize(&dim1);
+
     result
         .embeddings
-        .into_iter()
-        .map(|(nid, emb)| {
-            let x = *emb.first().unwrap_or(&0.5) as f32;
-            let y = *emb.get(1).unwrap_or(&0.5) as f32;
+        .keys()
+        .map(|&nid| {
+            let x = *ranks0.get(&nid).unwrap_or(&0.5);
+            let y = *ranks1.get(&nid).unwrap_or(&0.5);
             (nid, [x, y])
         })
         .collect()
@@ -368,12 +422,23 @@ fn compute_spectral_12(store: &dyn GraphStore) -> HashMap<NodeId, [f32; 2]> {
 
 fn compute_spectral_34(store: &dyn GraphStore) -> HashMap<NodeId, [f32; 2]> {
     let result = spectral_embedding(store, 4, None);
+
+    // Extract raw values per dimension and rank normalize
+    let mut dim2: HashMap<NodeId, f64> = HashMap::new();
+    let mut dim3: HashMap<NodeId, f64> = HashMap::new();
+    for (nid, emb) in &result.embeddings {
+        dim2.insert(*nid, *emb.get(2).unwrap_or(&0.0));
+        dim3.insert(*nid, *emb.get(3).unwrap_or(&0.0));
+    }
+    let ranks2 = rank_normalize(&dim2);
+    let ranks3 = rank_normalize(&dim3);
+
     result
         .embeddings
-        .into_iter()
-        .map(|(nid, emb)| {
-            let x = *emb.get(2).unwrap_or(&0.5) as f32;
-            let y = *emb.get(3).unwrap_or(&0.5) as f32;
+        .keys()
+        .map(|&nid| {
+            let x = *ranks2.get(&nid).unwrap_or(&0.5);
+            let y = *ranks3.get(&nid).unwrap_or(&0.5);
             (nid, [x, y])
         })
         .collect()
