@@ -101,6 +101,46 @@ fn log_normalize(value: f64, max: f64) -> f32 {
     ((1.0 + value).ln() / (1.0 + max).ln()) as f32
 }
 
+/// Rank-percentile normalization: maps values to their percentile rank in [0, 1].
+///
+/// Sorts all values and assigns `rank / (n - 1)` to each node.
+/// Produces a perfectly uniform distribution regardless of the input shape
+/// (power-law, bimodal, etc.). O(V log V) for the sort.
+///
+/// Ties get the same percentile (average rank).
+fn rank_normalize(values: &HashMap<NodeId, f64>) -> HashMap<NodeId, f32> {
+    let n = values.len();
+    if n <= 1 {
+        return values.keys().map(|&nid| (nid, 0.5)).collect();
+    }
+
+    // Sort by value
+    let mut sorted: Vec<(NodeId, f64)> = values.iter().map(|(&k, &v)| (k, v)).collect();
+    sorted.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    let max_rank = (n - 1) as f64;
+    let mut result = HashMap::with_capacity(n);
+
+    // Handle ties: nodes with equal values get the same percentile
+    let mut i = 0;
+    while i < sorted.len() {
+        let val = sorted[i].1;
+        let mut j = i;
+        while j < sorted.len() && (sorted[j].1 - val).abs() < f64::EPSILON {
+            j += 1;
+        }
+        // Average rank for this tie group
+        let avg_rank = (i + j - 1) as f64 / 2.0;
+        let percentile = (avg_rank / max_rank) as f32;
+        for item in &sorted[i..j] {
+            result.insert(item.0, percentile.clamp(0.0, 1.0));
+        }
+        i = j;
+    }
+
+    result
+}
+
 // ============================================================================
 // Result
 // ============================================================================
@@ -391,19 +431,22 @@ fn compute_centrality(
     let pr = pagerank(store, config.damping, config.pagerank_iterations, 1e-6);
     let deg = degree_centrality(store);
 
-    let max_pr = pr
-        .values()
-        .copied()
-        .fold(f64::NEG_INFINITY, f64::max)
-        .max(1e-12);
-    let max_deg = deg.total_degree.values().max().copied().unwrap_or(1).max(1) as f64;
+    // Rank percentile: uniform [0,1] regardless of power-law shape
+    let pr_f64: HashMap<NodeId, f64> = pr.iter().map(|(&k, &v)| (k, v)).collect();
+    let deg_f64: HashMap<NodeId, f64> = deg
+        .total_degree
+        .iter()
+        .map(|(&k, &v)| (k, v as f64))
+        .collect();
+    let pr_ranks = rank_normalize(&pr_f64);
+    let deg_ranks = rank_normalize(&deg_f64);
 
     store
         .node_ids()
         .iter()
         .map(|&nid| {
-            let x = log_normalize(*pr.get(&nid).unwrap_or(&0.0), max_pr);
-            let y = log_normalize(*deg.total_degree.get(&nid).unwrap_or(&0) as f64, max_deg);
+            let x = *pr_ranks.get(&nid).unwrap_or(&0.5);
+            let y = *deg_ranks.get(&nid).unwrap_or(&0.5);
             (nid, [x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)])
         })
         .collect()
@@ -476,23 +519,17 @@ fn compute_betweenness_closeness(store: &dyn GraphStore) -> HashMap<NodeId, [f32
     let bc = betweenness_centrality(store, true);
     let cc = closeness_centrality(store, true);
 
-    let max_bc = bc
-        .values()
-        .copied()
-        .fold(f64::NEG_INFINITY, f64::max)
-        .max(1e-12);
-    let max_cc = cc
-        .values()
-        .copied()
-        .fold(f64::NEG_INFINITY, f64::max)
-        .max(1e-12);
+    let bc_f64: HashMap<NodeId, f64> = bc.into_iter().collect();
+    let cc_f64: HashMap<NodeId, f64> = cc.into_iter().collect();
+    let bc_ranks = rank_normalize(&bc_f64);
+    let cc_ranks = rank_normalize(&cc_f64);
 
     store
         .node_ids()
         .iter()
         .map(|&nid| {
-            let x = log_normalize(*bc.get(&nid).unwrap_or(&0.0), max_bc);
-            let y = log_normalize(*cc.get(&nid).unwrap_or(&0.0), max_cc);
+            let x = *bc_ranks.get(&nid).unwrap_or(&0.5);
+            let y = *cc_ranks.get(&nid).unwrap_or(&0.5);
             (nid, [x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)])
         })
         .collect()
@@ -612,9 +649,7 @@ fn compute_degree_approx(store: &dyn GraphStore) -> HashMap<NodeId, [f32; 2]> {
         }
     }
 
-    let max_deg = total_deg.values().max().copied().unwrap_or(1).max(1) as f64;
-
-    // Pass 2: average neighbor total degree (log-normalized)
+    // Pass 2: average neighbor total degree
     for &nid in &node_ids {
         let neighbors = all_neighbors
             .get(&nid)
@@ -631,17 +666,16 @@ fn compute_degree_approx(store: &dyn GraphStore) -> HashMap<NodeId, [f32; 2]> {
         neighbor_sum.insert(nid, avg);
     }
 
-    let max_neighbor_avg = neighbor_sum
-        .values()
-        .copied()
-        .fold(0.0f64, f64::max)
-        .max(1.0);
+    // Rank percentile on both dimensions
+    let deg_f64: HashMap<NodeId, f64> = total_deg.iter().map(|(&k, &v)| (k, v as f64)).collect();
+    let deg_ranks = rank_normalize(&deg_f64);
+    let neighbor_ranks = rank_normalize(&neighbor_sum);
 
     node_ids
         .iter()
         .map(|&nid| {
-            let x = log_normalize(*total_deg.get(&nid).unwrap_or(&0) as f64, max_deg);
-            let y = log_normalize(*neighbor_sum.get(&nid).unwrap_or(&0.0), max_neighbor_avg);
+            let x = *deg_ranks.get(&nid).unwrap_or(&0.5);
+            let y = *neighbor_ranks.get(&nid).unwrap_or(&0.5);
             (nid, [x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)])
         })
         .collect()
@@ -736,12 +770,15 @@ fn compute_degree_betweenness_approx(store: &dyn GraphStore) -> HashMap<NodeId, 
         }
     }
 
-    let max_total = node_ids
+    // Rank percentile on total degree (betweenness proxy)
+    let total_deg: HashMap<NodeId, f64> = node_ids
         .iter()
-        .map(|nid| out_deg.get(nid).unwrap_or(&0) + in_deg.get(nid).unwrap_or(&0))
-        .max()
-        .unwrap_or(1)
-        .max(1) as f64;
+        .map(|&nid| {
+            let total = *out_deg.get(&nid).unwrap_or(&0) + *in_deg.get(&nid).unwrap_or(&0);
+            (nid, total as f64)
+        })
+        .collect();
+    let total_ranks = rank_normalize(&total_deg);
 
     node_ids
         .iter()
@@ -749,8 +786,8 @@ fn compute_degree_betweenness_approx(store: &dyn GraphStore) -> HashMap<NodeId, 
             let out = *out_deg.get(&nid).unwrap_or(&0) as f64;
             let inc = *in_deg.get(&nid).unwrap_or(&0) as f64;
             let total = out + inc;
-            // x = total degree log-normalized (proxy for betweenness)
-            let x = log_normalize(total, max_total);
+            // x = total degree rank percentile (proxy for betweenness)
+            let x = *total_ranks.get(&nid).unwrap_or(&0.5);
             // y = in/out balance (bridges tend to have balanced in/out)
             let y = if total > 0.0 {
                 (1.0 - (out - inc).abs() / total) as f32
