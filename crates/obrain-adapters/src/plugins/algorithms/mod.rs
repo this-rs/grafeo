@@ -11,6 +11,7 @@
 //! | Centrality | PageRank, betweenness, closeness, degree |
 //! | Community | Louvain, Leiden, label propagation |
 //! | Structure | K-core, bridges, articulation points |
+//! | Embedding | Spectral embedding, Hilbert curve encoding, Hilbert 64d features |
 //!
 //! ## Usage
 //!
@@ -40,10 +41,13 @@ mod community;
 mod components;
 mod ego_graph;
 mod flow;
+pub mod hilbert;
+pub mod hilbert_features;
 mod mst;
 pub mod projection;
 mod shortest_path;
 mod similarity;
+pub mod spectral;
 mod structure;
 mod traits;
 mod traversal;
@@ -112,6 +116,18 @@ pub use shortest_path::{
 };
 pub use structure::{ArticulationPointsAlgorithm, BridgesAlgorithm, KCoreAlgorithm};
 pub use traversal::{BfsAlgorithm, DfsAlgorithm};
+
+// Hilbert curve encoding
+pub use hilbert::{hilbert_d2xy, hilbert_encode_point, hilbert_xy2d};
+
+// Spectral embedding algorithms
+pub use spectral::{SpectralEmbeddingAlgorithm, SpectralEmbeddingResult, spectral_embedding};
+
+// Hilbert 64d multi-facette features
+pub use hilbert_features::{
+    HilbertFeaturesAlgorithm, HilbertFeaturesConfig, HilbertFeaturesResult, hilbert_features,
+    hilbert_features_incremental,
+};
 
 // Node similarity algorithms
 pub use similarity::{

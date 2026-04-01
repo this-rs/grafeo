@@ -277,14 +277,19 @@ pub fn betweenness_centrality(store: &dyn GraphStore, normalized: bool) -> FxHas
             let dist_v = *dist.get(&v).expect("BFS: node popped from queue has dist");
 
             for (w, _) in store.edges_from(v, Direction::Outgoing) {
+                // Skip neighbors not in node_ids (orphan edge targets)
+                let Some(&dist_w) = dist.get(&w) else {
+                    continue;
+                };
+
                 // First visit?
-                if *dist.get(&w).expect("BFS: all nodes initialized with dist") < 0 {
+                if dist_w < 0 {
                     dist.insert(w, dist_v + 1);
                     queue.push_back(w);
                 }
 
                 // Shortest path to w via v?
-                if *dist.get(&w).expect("BFS: all nodes initialized with dist") == dist_v + 1 {
+                if *dist.get(&w).unwrap_or(&-1) == dist_v + 1 {
                     let sigma_v = *sigma
                         .get(&v)
                         .expect("BFS: all nodes initialized with sigma");
