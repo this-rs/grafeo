@@ -258,9 +258,8 @@ pub fn hilbert_features(
     let n = node_ids.len();
 
     if n == 0 {
-        let num_f = 8
-            + if config.enable_temporal { 1 } else { 0 }
-            + if config.enable_external_signal { 1 } else { 0 };
+        let num_f =
+            8 + usize::from(config.enable_temporal) + usize::from(config.enable_external_signal);
         let total_dims = config.levels * num_f;
         return HilbertFeaturesResult {
             features: HashMap::new(),
@@ -324,9 +323,8 @@ pub fn hilbert_features(
     // Check if external signal facette is active (non-empty signals when enabled)
     let has_external_signal = config.enable_external_signal;
 
-    let num_facettes = 8
-        + if temporal_facette.is_some() { 1 } else { 0 }
-        + if has_external_signal { 1 } else { 0 };
+    let num_facettes =
+        8 + usize::from(temporal_facette.is_some()) + usize::from(has_external_signal);
     let total_dims = config.levels * num_facettes;
 
     // Encode each facette via Hilbert and concatenate; also store raw pre-encoding points
@@ -403,9 +401,8 @@ pub fn hilbert_features_incremental(
 
     if node_ids.is_empty() {
         // Dynamic facette count
-        let num_facettes = 8
-            + if config.enable_temporal { 1 } else { 0 }
-            + if config.enable_external_signal { 1 } else { 0 };
+        let num_facettes =
+            8 + usize::from(config.enable_temporal) + usize::from(config.enable_external_signal);
         let total_dims = config.levels * num_facettes;
         return HilbertFeaturesResult {
             features: HashMap::new(),
@@ -440,9 +437,8 @@ pub fn hilbert_features_incremental(
     };
 
     let has_external_signal = config.enable_external_signal;
-    let num_facettes = 8
-        + if temporal_facette.is_some() { 1 } else { 0 }
-        + if has_external_signal { 1 } else { 0 };
+    let num_facettes =
+        8 + usize::from(temporal_facette.is_some()) + usize::from(has_external_signal);
     let total_dims = config.levels * num_facettes;
     let base_local_dims = config.levels * 4; // facettes 4-7
 

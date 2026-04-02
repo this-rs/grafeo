@@ -128,7 +128,7 @@ pub fn heat_kernel_diffusion(
         0
     } else {
         let sample_len = features.features.values().next().map_or(0, |v| v.len());
-        if weights.len() > 0 {
+        if !weights.is_empty() {
             sample_len / weights.len()
         } else {
             0
@@ -188,12 +188,9 @@ pub fn heat_kernel_diffusion(
         for &nid in &node_ids {
             let self_heat = *heat.get(&nid).unwrap_or(&0.0);
 
-            let neighbors = match neighbor_weights.get(&nid) {
-                Some(nw) => nw,
-                None => {
-                    new_heat.insert(nid, alpha * self_heat);
-                    continue;
-                }
+            let Some(neighbors) = neighbor_weights.get(&nid) else {
+                new_heat.insert(nid, alpha * self_heat);
+                continue;
             };
 
             if neighbors.is_empty() {

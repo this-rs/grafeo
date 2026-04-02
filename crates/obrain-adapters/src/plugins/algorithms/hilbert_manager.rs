@@ -261,7 +261,7 @@ impl HilbertFeatureManager {
             .map(|(&nid, vec)| (nid, vec.clone()))
             .collect();
 
-        let tree = VpTree::build(points, |a, b| hilbert_distance(a, b));
+        let tree = VpTree::build(points, hilbert_distance);
         *self.vp_tree.write() = Some(Arc::new(tree));
     }
 }
