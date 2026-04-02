@@ -744,6 +744,42 @@ fn compute_schema_features(store: &dyn GraphStore) -> HashMap<NodeId, [f32; 2]> 
 // Facette 8: Temporal features (age + neighbor age variance)
 // ============================================================================
 
+/// Parse an ISO 8601 / RFC 3339 timestamp string to Unix epoch seconds.
+///
+/// Supports formats like `"2026-03-28T19:40:34.742194+00:00"`,
+/// `"2026-03-28T19:40:34Z"`, and plain epoch seconds `"1711651234"`.
+/// No external dependency — hand-rolled parser for the common subset.
+fn parse_iso_timestamp(s: &str) -> Option<u64> {
+    // Try plain epoch seconds first
+    if let Ok(v) = s.parse::<u64>() {
+        return Some(v);
+    }
+
+    // ISO 8601: "YYYY-MM-DDThh:mm:ss[.frac][Z|+00:00]"
+    let s = s.trim();
+    if s.len() < 19 {
+        return None;
+    }
+
+    let year: i64 = s.get(0..4)?.parse().ok()?;
+    let month: i64 = s.get(5..7)?.parse().ok()?;
+    let day: i64 = s.get(8..10)?.parse().ok()?;
+    let hour: i64 = s.get(11..13)?.parse().ok()?;
+    let min: i64 = s.get(14..16)?.parse().ok()?;
+    let sec: i64 = s.get(17..19)?.parse().ok()?;
+
+    // Days from civil date (Rata Die algorithm, epoch = 1970-01-01)
+    let y = if month <= 2 { year - 1 } else { year };
+    let m = if month <= 2 { month + 9 } else { month - 3 };
+    let days = 365 * y + y / 4 - y / 100 + y / 400 + (m * 153 + 2) / 5 + day - 1 - 719468;
+
+    let epoch = days * 86400 + hour * 3600 + min * 60 + sec;
+    if epoch < 0 {
+        return None;
+    }
+    Some(epoch as u64)
+}
+
 /// Compute temporal features from node timestamps.
 ///
 /// For each node:
@@ -782,6 +818,7 @@ fn compute_temporal_facette(
             let ts = match &val {
                 Value::Int64(v) => Some(*v as u64),
                 Value::Float64(v) => Some(*v as u64),
+                Value::String(s) => parse_iso_timestamp(s),
                 _ => None,
             };
             if let Some(ts) = ts {
