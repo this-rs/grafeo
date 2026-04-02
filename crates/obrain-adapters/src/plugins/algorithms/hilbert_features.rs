@@ -6,6 +6,7 @@
 //!
 //! **Base: 8 facettes × 8 dimensions = 64d per node.**
 //! **With temporal: 9 facettes × 8 dimensions = 72d per node.**
+//! **With temporal + external signal: 10 facettes × 8 dimensions = 80d per node.**
 //!
 //! | Facette | Dims  | Source algorithm            | Captures                |
 //! |---------|-------|----------------------------|-------------------------|
@@ -18,9 +19,14 @@
 //! | 6       | 48-55 | Co-usage (REINFORCES)      | Behavioral coupling     |
 //! | 7       | 56-63 | Schema (labels + props)    | Type / structural role  |
 //! | 8*      | 64-71 | Timestamp age + variance   | Temporal role           |
+//! | 9†      | 72-79 | External 2D signal         | Opaque external signal  |
 //!
 //! *Facette 8 is **opt-in** via `enable_temporal = true`. When enabled but no
 //! node has the configured timestamp property, falls back to 64d silently.
+//!
+//! †Facette 9 is **opt-in** via `enable_external_signal = true`. Encodes an
+//! externally-provided `[f32; 2]` per node. The algorithm is agnostic to the
+//! signal's semantics (could be LLM co-activations, user ratings, etc.).
 //!
 //! Facettes 0-3 are **global** (require full graph computation).
 //! Facettes 4-8 are **local** (can be updated incrementally).
@@ -87,6 +93,18 @@ pub struct HilbertFeaturesConfig {
     pub temporal_property: String,
     /// Time window in seconds for age normalization (default: 30 days = 2_592_000).
     pub temporal_window_secs: u64,
+    /// Enable the 10th external signal facette (default: false).
+    ///
+    /// When enabled, adds 8 dimensions encoding an externally-provided `[f32; 2]` point
+    /// per node. Nodes not in `external_signals` get the neutral `[0.5, 0.5]`.
+    /// The algorithm does not know or care what these signals represent — they
+    /// could be LLM co-activations, user ratings, or any 2D signal.
+    pub enable_external_signal: bool,
+    /// External signal values per node: `NodeId → [x, y]` in `[0, 1]²`.
+    ///
+    /// Only used when `enable_external_signal = true`. Nodes absent from this map
+    /// default to `[0.5, 0.5]` (neutral center).
+    pub external_signals: HashMap<NodeId, [f32; 2]>,
 }
 
 impl Default for HilbertFeaturesConfig {
@@ -100,6 +118,8 @@ impl Default for HilbertFeaturesConfig {
             enable_temporal: false,
             temporal_property: "created_at".to_string(),
             temporal_window_secs: 2_592_000, // 30 days
+            enable_external_signal: false,
+            external_signals: HashMap::new(),
         }
     }
 }
@@ -192,9 +212,18 @@ fn rank_normalize(values: &HashMap<NodeId, f64>) -> HashMap<NodeId, f32> {
 /// Result of `hilbert_features()` computation.
 #[derive(Debug, Clone)]
 pub struct HilbertFeaturesResult {
-    /// Feature vectors: NodeId → 64-dimensional f32 vector.
+    /// Feature vectors: NodeId → multi-dimensional f32 vector (post Hilbert encoding).
     pub features: HashMap<NodeId, Vec<f32>>,
-    /// Number of dimensions (= levels × 8 facettes).
+    /// Raw pre-encoding facette coordinates: NodeId → Vec of `[f32; 2]` per facette.
+    ///
+    /// Each facette produces a 2D point `[x, y]` in `[0, 1]²` *before* Hilbert
+    /// encoding. This is useful for training projections in continuous space
+    /// (e.g., learning a linear map from LLM embeddings to facette space).
+    ///
+    /// Length of each inner `Vec` equals the number of active facettes
+    /// (8 base, +1 if temporal, +1 if external signal).
+    pub raw_facettes: HashMap<NodeId, Vec<[f32; 2]>>,
+    /// Number of dimensions (= levels × num_facettes).
     pub dimensions: usize,
     /// Whether global facettes (spectral, community, centrality) are stale.
     ///
@@ -229,9 +258,13 @@ pub fn hilbert_features(
     let n = node_ids.len();
 
     if n == 0 {
-        let total_dims = config.levels * 8;
+        let num_f = 8
+            + if config.enable_temporal { 1 } else { 0 }
+            + if config.enable_external_signal { 1 } else { 0 };
+        let total_dims = config.levels * num_f;
         return HilbertFeaturesResult {
             features: HashMap::new(),
+            raw_facettes: HashMap::new(),
             dimensions: total_dims,
             dirty_global: false,
         };
@@ -288,30 +321,52 @@ pub fn hilbert_features(
         None
     };
 
-    let num_facettes = if temporal_facette.is_some() { 9 } else { 8 };
+    // Check if external signal facette is active (non-empty signals when enabled)
+    let has_external_signal = config.enable_external_signal;
+
+    let num_facettes = 8
+        + if temporal_facette.is_some() { 1 } else { 0 }
+        + if has_external_signal { 1 } else { 0 };
     let total_dims = config.levels * num_facettes;
 
-    // Encode each facette via Hilbert and concatenate
+    // Encode each facette via Hilbert and concatenate; also store raw pre-encoding points
     let mut features: HashMap<NodeId, Vec<f32>> = HashMap::with_capacity(n);
+    let mut raw_facettes: HashMap<NodeId, Vec<[f32; 2]>> = HashMap::with_capacity(n);
 
     for &nid in &node_ids {
         let mut vec = Vec::with_capacity(total_dims);
+        let mut raw = Vec::with_capacity(num_facettes);
         for facette in &facettes {
             let point = facette.get(&nid).copied().unwrap_or([0.5, 0.5]);
+            raw.push(point);
             let encoded = hilbert_encode_point(point, config.levels);
             vec.extend_from_slice(&encoded);
         }
         // Append temporal facette if present
         if let Some(ref temporal) = temporal_facette {
             let point = temporal.get(&nid).copied().unwrap_or([0.5, 0.5]);
+            raw.push(point);
+            let encoded = hilbert_encode_point(point, config.levels);
+            vec.extend_from_slice(&encoded);
+        }
+        // Append external signal facette if enabled
+        if has_external_signal {
+            let point = config
+                .external_signals
+                .get(&nid)
+                .copied()
+                .unwrap_or([0.5, 0.5]);
+            raw.push(point);
             let encoded = hilbert_encode_point(point, config.levels);
             vec.extend_from_slice(&encoded);
         }
         features.insert(nid, vec);
+        raw_facettes.insert(nid, raw);
     }
 
     HilbertFeaturesResult {
         features,
+        raw_facettes,
         dimensions: total_dims,
         dirty_global: false,
     }
@@ -347,9 +402,14 @@ pub fn hilbert_features_incremental(
     let node_ids = store.node_ids();
 
     if node_ids.is_empty() {
-        let total_dims = config.levels * 8;
+        // Dynamic facette count
+        let num_facettes = 8
+            + if config.enable_temporal { 1 } else { 0 }
+            + if config.enable_external_signal { 1 } else { 0 };
+        let total_dims = config.levels * num_facettes;
         return HilbertFeaturesResult {
             features: HashMap::new(),
+            raw_facettes: HashMap::new(),
             dimensions: total_dims,
             dirty_global: true,
         };
@@ -379,28 +439,41 @@ pub fn hilbert_features_incremental(
         None
     };
 
-    let num_facettes = if temporal_facette.is_some() { 9 } else { 8 };
+    let has_external_signal = config.enable_external_signal;
+    let num_facettes = 8
+        + if temporal_facette.is_some() { 1 } else { 0 }
+        + if has_external_signal { 1 } else { 0 };
     let total_dims = config.levels * num_facettes;
     let base_local_dims = config.levels * 4; // facettes 4-7
 
     // Build result: copy global dims from previous, update local dims for affected
     let mut features: HashMap<NodeId, Vec<f32>> = HashMap::with_capacity(node_ids.len());
+    let mut raw_facettes: HashMap<NodeId, Vec<[f32; 2]>> = HashMap::with_capacity(node_ids.len());
     let global_dims = config.levels * 4; // facettes 0-3
 
     for &nid in &node_ids {
         let mut vec = Vec::with_capacity(total_dims);
+        let mut raw = Vec::with_capacity(num_facettes);
 
-        // Global facettes (dims 0..global_dims): copy from previous
+        // Global facettes (0-3): copy from previous (both encoded and raw)
         if let Some(prev) = previous.features.get(&nid) {
             vec.extend_from_slice(&prev[..global_dims.min(prev.len())]);
-            // Pad if new node not in previous
             while vec.len() < global_dims {
                 vec.extend_from_slice(&hilbert_encode_point([0.5, 0.5], config.levels));
             }
         } else {
-            // New node: fill global dims with default (0.5, 0.5)
             for _ in 0..4 {
                 vec.extend_from_slice(&hilbert_encode_point([0.5, 0.5], config.levels));
+            }
+        }
+        // Copy raw global facettes from previous or default
+        if let Some(prev_raw) = previous.raw_facettes.get(&nid) {
+            for i in 0..4 {
+                raw.push(prev_raw.get(i).copied().unwrap_or([0.5, 0.5]));
+            }
+        } else {
+            for _ in 0..4 {
+                raw.push([0.5, 0.5]);
             }
         }
 
@@ -408,6 +481,7 @@ pub fn hilbert_features_incremental(
         if affected.contains(&nid) {
             for facette in &local_facettes {
                 let point = facette.get(&nid).copied().unwrap_or([0.5, 0.5]);
+                raw.push(point);
                 vec.extend_from_slice(&hilbert_encode_point(point, config.levels));
             }
         } else if let Some(prev) = previous.features.get(&nid) {
@@ -416,8 +490,19 @@ pub fn hilbert_features_incremental(
             while vec.len() < global_dims + base_local_dims {
                 vec.extend_from_slice(&hilbert_encode_point([0.5, 0.5], config.levels));
             }
+            // Copy raw local facettes from previous
+            if let Some(prev_raw) = previous.raw_facettes.get(&nid) {
+                for i in 4..8 {
+                    raw.push(prev_raw.get(i).copied().unwrap_or([0.5, 0.5]));
+                }
+            } else {
+                for _ in 0..4 {
+                    raw.push([0.5, 0.5]);
+                }
+            }
         } else {
             for _ in 0..4 {
+                raw.push([0.5, 0.5]);
                 vec.extend_from_slice(&hilbert_encode_point([0.5, 0.5], config.levels));
             }
         }
@@ -425,14 +510,28 @@ pub fn hilbert_features_incremental(
         // Temporal facette (always recomputed if present)
         if let Some(ref temporal) = temporal_facette {
             let point = temporal.get(&nid).copied().unwrap_or([0.5, 0.5]);
+            raw.push(point);
+            vec.extend_from_slice(&hilbert_encode_point(point, config.levels));
+        }
+
+        // External signal facette (always uses latest config signals)
+        if has_external_signal {
+            let point = config
+                .external_signals
+                .get(&nid)
+                .copied()
+                .unwrap_or([0.5, 0.5]);
+            raw.push(point);
             vec.extend_from_slice(&hilbert_encode_point(point, config.levels));
         }
 
         features.insert(nid, vec);
+        raw_facettes.insert(nid, raw);
     }
 
     HilbertFeaturesResult {
         features,
+        raw_facettes,
         dimensions: total_dims,
         dirty_global: true,
     }
@@ -1181,7 +1280,8 @@ impl GraphAlgorithm for HilbertFeaturesAlgorithm {
 /// dimensions) to the total distance. Setting a weight to 0.0 completely
 /// eliminates that facette from the distance calculation.
 ///
-/// Supports both 64d (8 facettes) and 72d (9 facettes with temporal).
+/// Supports 64d (8 facettes), 72d (9 facettes with temporal or external signal),
+/// and 80d (10 facettes with both temporal and external signal).
 ///
 /// # Predefined profiles
 ///
@@ -2056,5 +2156,292 @@ mod tests {
         // Structural boosts facettes 0-3
         let s = FacetteWeights::structural(8);
         assert!(s.weights[0] > s.weights[4]);
+    }
+
+    // ========================================================================
+    // raw_facettes tests
+    // ========================================================================
+
+    #[test]
+    fn test_raw_facettes_populated() {
+        let store = make_test_graph();
+        let config = HilbertFeaturesConfig::default();
+        let result = hilbert_features(&store, &config);
+
+        // Every node should have raw_facettes
+        assert_eq!(
+            result.raw_facettes.len(),
+            result.features.len(),
+            "raw_facettes should have the same number of entries as features"
+        );
+
+        // Default config = 8 facettes (no temporal)
+        for (nid, raw) in &result.raw_facettes {
+            assert_eq!(
+                raw.len(),
+                8,
+                "Node {nid:?} should have 8 raw facettes, got {}",
+                raw.len()
+            );
+            // Each facette is a [f32; 2] point in [0, 1]²
+            for (i, point) in raw.iter().enumerate() {
+                assert!(
+                    (0.0..=1.0).contains(&point[0]),
+                    "Node {nid:?} facette {i} x={} not in [0,1]",
+                    point[0]
+                );
+                assert!(
+                    (0.0..=1.0).contains(&point[1]),
+                    "Node {nid:?} facette {i} y={} not in [0,1]",
+                    point[1]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_raw_facettes_with_temporal() {
+        let store = LpgStore::new().unwrap();
+        let now = 1_000_000u64;
+        let a = store.create_node(&["A"]);
+        let b = store.create_node(&["B"]);
+        store.create_edge(a, b, "LINK");
+        store.create_edge(b, a, "LINK");
+
+        store.set_node_property(a, "created_at", Value::Int64((now - 100_000) as i64));
+        store.set_node_property(b, "created_at", Value::Int64((now - 1_000) as i64));
+
+        let config = HilbertFeaturesConfig {
+            enable_temporal: true,
+            ..Default::default()
+        };
+        let result = hilbert_features(&store, &config);
+
+        // With temporal = 9 facettes
+        assert_eq!(result.dimensions, 72); // 9 × 8
+        for (nid, raw) in &result.raw_facettes {
+            assert_eq!(
+                raw.len(),
+                9,
+                "Node {nid:?} should have 9 raw facettes (8 + temporal), got {}",
+                raw.len()
+            );
+            for (i, point) in raw.iter().enumerate() {
+                assert!(
+                    (0.0..=1.0).contains(&point[0]),
+                    "Node {nid:?} facette {i} x={} not in [0,1]",
+                    point[0]
+                );
+                assert!(
+                    (0.0..=1.0).contains(&point[1]),
+                    "Node {nid:?} facette {i} y={} not in [0,1]",
+                    point[1]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_raw_facettes_incremental() {
+        let store = LpgStore::new().unwrap();
+        let a = store.create_node(&["A"]);
+        let b = store.create_node(&["B"]);
+        store.create_edge(a, b, "LINK");
+        store.create_edge(b, a, "LINK");
+
+        let config = HilbertFeaturesConfig::default();
+        let full = hilbert_features(&store, &config);
+        assert_eq!(full.raw_facettes.len(), 2);
+
+        // Add a node and run incremental
+        let c = store.create_node(&["C"]);
+        store.create_edge(b, c, "LINK");
+        store.create_edge(c, b, "LINK");
+
+        let incr = hilbert_features_incremental(&store, &config, &full, &[c]);
+
+        // All 3 nodes should have raw_facettes
+        assert_eq!(incr.raw_facettes.len(), 3);
+        for (nid, raw) in &incr.raw_facettes {
+            assert_eq!(
+                raw.len(),
+                8,
+                "Node {nid:?} incremental raw_facettes should have 8 entries"
+            );
+            for (i, point) in raw.iter().enumerate() {
+                assert!(
+                    (0.0..=1.0).contains(&point[0]) && (0.0..=1.0).contains(&point[1]),
+                    "Node {nid:?} facette {i} out of range: {:?}",
+                    point
+                );
+            }
+        }
+
+        // Existing nodes' global raw_facettes (0-3) should be preserved from full
+        for &nid in &[a, b] {
+            let full_raw = &full.raw_facettes[&nid];
+            let incr_raw = &incr.raw_facettes[&nid];
+            // Global facettes (0-3) unchanged
+            assert_eq!(
+                &full_raw[..4],
+                &incr_raw[..4],
+                "Node {nid:?} global raw_facettes changed in incremental"
+            );
+        }
+    }
+
+    // ========================================================================
+    // External signal facette tests
+    // ========================================================================
+
+    #[test]
+    fn test_external_signal_disabled_by_default() {
+        let store = make_test_graph();
+        let config = HilbertFeaturesConfig::default();
+        assert!(!config.enable_external_signal);
+        let result = hilbert_features(&store, &config);
+        // 8 facettes × 8 levels = 64d
+        assert_eq!(result.dimensions, 64);
+        for raw in result.raw_facettes.values() {
+            assert_eq!(raw.len(), 8);
+        }
+    }
+
+    #[test]
+    fn test_external_signal_adds_dimensions() {
+        let store = LpgStore::new().unwrap();
+        let a = store.create_node(&["A"]);
+        let b = store.create_node(&["B"]);
+        store.create_edge(a, b, "LINK");
+        store.create_edge(b, a, "LINK");
+
+        let mut signals = HashMap::new();
+        signals.insert(a, [0.8, 0.2]);
+        signals.insert(b, [0.1, 0.9]);
+
+        let config = HilbertFeaturesConfig {
+            enable_external_signal: true,
+            external_signals: signals,
+            ..Default::default()
+        };
+        let result = hilbert_features(&store, &config);
+
+        // 9 facettes × 8 levels = 72d
+        assert_eq!(result.dimensions, 72);
+        for (nid, raw) in &result.raw_facettes {
+            assert_eq!(
+                raw.len(),
+                9,
+                "Node {nid:?} should have 9 facettes (8 + external)"
+            );
+            for (i, point) in raw.iter().enumerate() {
+                assert!(
+                    (0.0..=1.0).contains(&point[0]) && (0.0..=1.0).contains(&point[1]),
+                    "Node {nid:?} facette {i} out of range: {:?}",
+                    point
+                );
+            }
+        }
+
+        // Verify the external signal facette (last one) matches input
+        let a_ext = result.raw_facettes[&a][8];
+        assert!((a_ext[0] - 0.8).abs() < 1e-6);
+        assert!((a_ext[1] - 0.2).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_external_signal_neutral_default() {
+        // Nodes not in external_signals get [0.5, 0.5]
+        let store = LpgStore::new().unwrap();
+        let a = store.create_node(&["A"]);
+        let b = store.create_node(&["B"]);
+        store.create_edge(a, b, "LINK");
+        store.create_edge(b, a, "LINK");
+
+        // Only provide signal for a, not b
+        let mut signals = HashMap::new();
+        signals.insert(a, [0.9, 0.1]);
+
+        let config = HilbertFeaturesConfig {
+            enable_external_signal: true,
+            external_signals: signals,
+            ..Default::default()
+        };
+        let result = hilbert_features(&store, &config);
+
+        // b should have neutral [0.5, 0.5] for external signal
+        let b_ext = result.raw_facettes[&b][8];
+        assert!((b_ext[0] - 0.5).abs() < 1e-6, "b.x = {}", b_ext[0]);
+        assert!((b_ext[1] - 0.5).abs() < 1e-6, "b.y = {}", b_ext[1]);
+    }
+
+    #[test]
+    fn test_external_signal_with_temporal() {
+        // Both temporal and external signal → 10 facettes × 8 levels = 80d
+        let store = LpgStore::new().unwrap();
+        let now = 1_000_000u64;
+        let a = store.create_node(&["A"]);
+        let b = store.create_node(&["B"]);
+        store.create_edge(a, b, "LINK");
+        store.create_edge(b, a, "LINK");
+        store.set_node_property(a, "created_at", Value::Int64((now - 50_000) as i64));
+        store.set_node_property(b, "created_at", Value::Int64((now - 1_000) as i64));
+
+        let mut signals = HashMap::new();
+        signals.insert(a, [0.7, 0.3]);
+
+        let config = HilbertFeaturesConfig {
+            enable_temporal: true,
+            enable_external_signal: true,
+            external_signals: signals,
+            ..Default::default()
+        };
+        let result = hilbert_features(&store, &config);
+
+        // 10 facettes × 8 = 80d
+        assert_eq!(result.dimensions, 80);
+        for raw in result.raw_facettes.values() {
+            assert_eq!(raw.len(), 10);
+        }
+    }
+
+    #[test]
+    fn test_external_signal_incremental() {
+        let store = LpgStore::new().unwrap();
+        let a = store.create_node(&["A"]);
+        let b = store.create_node(&["B"]);
+        store.create_edge(a, b, "LINK");
+        store.create_edge(b, a, "LINK");
+
+        let mut signals = HashMap::new();
+        signals.insert(a, [0.8, 0.2]);
+        signals.insert(b, [0.3, 0.7]);
+
+        let config = HilbertFeaturesConfig {
+            enable_external_signal: true,
+            external_signals: signals,
+            ..Default::default()
+        };
+
+        let full = hilbert_features(&store, &config);
+        assert_eq!(full.dimensions, 72);
+
+        // Add node c
+        let c = store.create_node(&["C"]);
+        store.create_edge(b, c, "LINK");
+        store.create_edge(c, b, "LINK");
+
+        let incr = hilbert_features_incremental(&store, &config, &full, &[c]);
+        assert_eq!(incr.dimensions, 72);
+        assert_eq!(incr.features.len(), 3);
+
+        // c has no signal → neutral
+        let c_ext = incr.raw_facettes[&c][8];
+        assert!((c_ext[0] - 0.5).abs() < 1e-6);
+        assert!((c_ext[1] - 0.5).abs() < 1e-6);
+
+        // a's external signal should be preserved
+        let a_ext = incr.raw_facettes[&a][8];
+        assert!((a_ext[0] - 0.8).abs() < 1e-6);
     }
 }

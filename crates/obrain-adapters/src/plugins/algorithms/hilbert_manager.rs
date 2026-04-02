@@ -52,11 +52,13 @@ use std::sync::Arc;
 use obrain_common::types::NodeId;
 use obrain_core::change_tracker::{EntityRef, GraphEvent};
 use obrain_core::graph::lpg::LpgStore;
+use obrain_core::index::vp_tree::VpTree;
 use obrain_core::subscription::{EventFilter, EventType, SubscriptionId};
 use parking_lot::RwLock;
 
 use super::hilbert_features::{
-    HilbertFeaturesConfig, HilbertFeaturesResult, hilbert_features, hilbert_features_incremental,
+    HilbertFeaturesConfig, HilbertFeaturesResult, hilbert_distance, hilbert_features,
+    hilbert_features_incremental,
 };
 
 // ============================================================================
@@ -81,6 +83,8 @@ pub struct HilbertFeatureManager {
     config: HilbertFeaturesConfig,
     /// Cached feature result (None = never computed).
     cached: RwLock<Option<HilbertFeaturesResult>>,
+    /// VP-Tree index built from cached features (None = never built).
+    vp_tree: RwLock<Option<Arc<VpTree<NodeId>>>>,
     /// Accumulated changed node IDs since last recalculation.
     pending_changes: Arc<RwLock<HashSet<NodeId>>>,
     /// Minimum number of pending changes before triggering a recalc.
@@ -107,6 +111,7 @@ impl HilbertFeatureManager {
             store,
             config,
             cached: RwLock::new(None),
+            vp_tree: RwLock::new(None),
             pending_changes: Arc::new(RwLock::new(HashSet::new())),
             debounce_threshold: 1,
             subscription_id: RwLock::new(None),
@@ -194,6 +199,7 @@ impl HilbertFeatureManager {
                 // First call: full computation
                 let result = hilbert_features(&*self.store, &self.config);
                 self.pending_changes.write().clear();
+                self.rebuild_vp_tree(&result);
                 let cloned = result.clone();
                 *cached = Some(result);
                 cloned
@@ -203,6 +209,7 @@ impl HilbertFeatureManager {
                 let changed: Vec<NodeId> = self.pending_changes.write().drain().collect();
                 let result =
                     hilbert_features_incremental(&*self.store, &self.config, previous, &changed);
+                self.rebuild_vp_tree(&result);
                 let cloned = result.clone();
                 *cached = Some(result);
                 cloned
@@ -216,13 +223,24 @@ impl HilbertFeatureManager {
 
     /// Force a full recalculation of all features.
     ///
-    /// Clears `dirty_global` and recomputes all 8 facettes (global + local).
+    /// Clears `dirty_global` and recomputes all 8+ facettes (global + local).
     /// Use this after an incremental update has set `dirty_global = true` and
     /// you need accurate global facettes (spectral, community, centrality).
     pub fn force_full_recalc(&self) {
         let result = hilbert_features(&*self.store, &self.config);
         self.pending_changes.write().clear();
+        self.rebuild_vp_tree(&result);
         *self.cached.write() = Some(result);
+    }
+
+    /// Returns the current VP-Tree index, or `None` if features have not been
+    /// computed yet.
+    ///
+    /// The VP-Tree is automatically rebuilt whenever features are recalculated
+    /// (either via `get_features()` or `force_full_recalc()`). It uses
+    /// `hilbert_distance` as its metric.
+    pub fn get_vp_tree(&self) -> Option<Arc<VpTree<NodeId>>> {
+        self.vp_tree.read().clone()
     }
 
     /// Returns the number of pending (unprocessed) changes.
@@ -233,6 +251,18 @@ impl HilbertFeatureManager {
     /// Returns `true` if features have been computed at least once.
     pub fn has_features(&self) -> bool {
         self.cached.read().is_some()
+    }
+
+    /// Rebuild the VP-Tree from the given features.
+    fn rebuild_vp_tree(&self, result: &HilbertFeaturesResult) {
+        let points: Vec<(NodeId, Vec<f32>)> = result
+            .features
+            .iter()
+            .map(|(&nid, vec)| (nid, vec.clone()))
+            .collect();
+
+        let tree = VpTree::build(points, |a, b| hilbert_distance(a, b));
+        *self.vp_tree.write() = Some(Arc::new(tree));
     }
 }
 
@@ -472,5 +502,86 @@ mod tests {
         // Second enable is a no-op
         manager.enable();
         assert!(manager.is_enabled());
+    }
+
+    // ================================================================
+    // VP-Tree tests
+    // ================================================================
+
+    #[test]
+    fn test_vp_tree_none_before_features() {
+        let store = test_store();
+        populate_triangle(&store);
+
+        let manager = HilbertFeatureManager::new(store, HilbertFeaturesConfig::default());
+        assert!(manager.get_vp_tree().is_none());
+    }
+
+    #[test]
+    fn test_vp_tree_built_after_features() {
+        let store = test_store();
+        populate_triangle(&store);
+
+        let manager = HilbertFeatureManager::new(store, HilbertFeaturesConfig::default());
+        let _ = manager.get_features();
+
+        let tree = manager.get_vp_tree();
+        assert!(tree.is_some(), "VP-Tree should be built after get_features()");
+    }
+
+    #[test]
+    fn test_vp_tree_knn_works() {
+        let store = test_store();
+        let (n0, _n1, _n2) = populate_triangle(&store);
+
+        let manager = HilbertFeatureManager::new(store, HilbertFeaturesConfig::default());
+        let features = manager.get_features();
+        let tree = manager.get_vp_tree().unwrap();
+
+        // Query knn for n0 — should return at least n0 itself
+        let query = features.features.get(&n0).unwrap();
+        let results = tree.knn(query, 2, |a, b| {
+            super::super::hilbert_features::hilbert_distance(a, b)
+        });
+        assert_eq!(results.len(), 2);
+        // Closest to n0 should be n0 itself (distance ≈ 0)
+        assert_eq!(results[0].0, n0);
+        assert!(results[0].1 < 1e-6);
+    }
+
+    #[test]
+    fn test_vp_tree_rebuild_on_change() {
+        let store = test_store();
+        populate_triangle(&store);
+
+        let manager =
+            HilbertFeatureManager::new(Arc::clone(&store), HilbertFeaturesConfig::default());
+        manager.enable();
+
+        // Initial features + VP-Tree
+        let _ = manager.get_features();
+        let tree1 = manager.get_vp_tree().unwrap();
+
+        // Mutate graph
+        let n3 = store.create_node(&["D"]);
+        store.create_edge(n3, NodeId(0), "LINK");
+
+        // Trigger recalc
+        let features = manager.get_features();
+        assert_eq!(features.features.len(), 4);
+
+        // VP-Tree should be rebuilt with 4 nodes
+        let tree2 = manager.get_vp_tree().unwrap();
+
+        // Verify tree2 can find the new node
+        let query = features.features.get(&n3).unwrap();
+        let results = tree2.knn(query, 1, |a, b| {
+            super::super::hilbert_features::hilbert_distance(a, b)
+        });
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, n3);
+
+        // tree1 and tree2 should be different Arc instances
+        assert!(!Arc::ptr_eq(&tree1, &tree2));
     }
 }
