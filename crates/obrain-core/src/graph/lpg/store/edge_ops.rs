@@ -149,6 +149,16 @@ impl LpgStore {
 
         self.live_edge_count.fetch_add(1, Ordering::Relaxed);
         self.increment_edge_type_count(type_id);
+
+        // Track the mutation
+        self.track_event(crate::change_tracker::GraphEvent::EdgeCreated {
+            id,
+            src,
+            dst,
+            edge_type: edge_type.to_string(),
+            timestamp: epoch.as_u64(),
+        });
+
         id
     }
 
@@ -463,6 +473,12 @@ impl LpgStore {
 
             self.live_edge_count.fetch_sub(1, Ordering::Relaxed);
             self.decrement_edge_type_count(type_id);
+
+            // Track the mutation
+            self.track_event(crate::change_tracker::GraphEvent::EdgeDeleted {
+                id,
+                timestamp: epoch.as_u64(),
+            });
 
             true
         } else {
