@@ -369,20 +369,14 @@ impl GraphAlgorithm for PersonalizedPageRankAlgorithm {
 
         let ppr = personalized_pagerank(store, &seeds, &config);
 
-        let mut output = AlgorithmResult::new(vec![
-            "node_id".to_string(),
-            "score".to_string(),
-        ]);
+        let mut output = AlgorithmResult::new(vec!["node_id".to_string(), "score".to_string()]);
 
         // Sort by score descending for consistent output
         let mut entries: Vec<_> = ppr.scores.iter().collect();
         entries.sort_by(|a, b| b.1.partial_cmp(a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         for (&node, &score) in entries {
-            output.add_row(vec![
-                Value::Int64(node.0 as i64),
-                Value::Float64(score),
-            ]);
+            output.add_row(vec![Value::Int64(node.0 as i64), Value::Float64(score)]);
         }
 
         Ok(output)

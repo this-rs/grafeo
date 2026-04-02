@@ -123,7 +123,8 @@ impl EventFilter {
         if let Some(ref labels) = self.labels {
             match event {
                 GraphEvent::NodeCreated {
-                    labels: node_labels, ..
+                    labels: node_labels,
+                    ..
                 } => {
                     if !node_labels.iter().any(|l| labels.contains(l.as_str())) {
                         return false;

@@ -9,8 +9,8 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use obrain_core::LpgStore;
 
 use obrain_adapters::plugins::algorithms::{
-    betweenness_centrality, contract_subgraph, leiden, louvain, pagerank, personalized_pagerank,
-    stabilize_communities, ContractionConfig, PprConfig,
+    ContractionConfig, PprConfig, betweenness_centrality, contract_subgraph, leiden, louvain,
+    pagerank, personalized_pagerank, stabilize_communities,
 };
 
 /// Creates a Barabási-Albert scale-free graph with `n` nodes and `m` edges per new node.

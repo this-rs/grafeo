@@ -392,8 +392,8 @@ mod tests {
 
     #[test]
     fn test_concurrent_access() {
-        use std::sync::Arc;
         use parking_lot::RwLock;
+        use std::sync::Arc;
 
         let tracker = Arc::new(RwLock::new(ChangeTracker::new(1000)));
 

@@ -502,11 +502,15 @@ impl LpgStore {
     ///
     /// This replaces any existing tracker. Call once at initialization.
     pub fn enable_tracking(&mut self, capacity: usize) {
-        self.change_tracker = Some(RwLock::new(crate::change_tracker::ChangeTracker::new(capacity)));
+        self.change_tracker = Some(RwLock::new(crate::change_tracker::ChangeTracker::new(
+            capacity,
+        )));
     }
 
     /// Returns a read reference to the change tracker, if tracking is enabled.
-    pub fn changes(&self) -> Option<parking_lot::RwLockReadGuard<'_, crate::change_tracker::ChangeTracker>> {
+    pub fn changes(
+        &self,
+    ) -> Option<parking_lot::RwLockReadGuard<'_, crate::change_tracker::ChangeTracker>> {
         self.change_tracker.as_ref().map(|t| t.read())
     }
 
@@ -528,7 +532,8 @@ impl LpgStore {
     /// Must be called before [`subscribe`](Self::subscribe). Requires `&mut self`
     /// since it modifies the store configuration.
     pub fn enable_subscriptions(&mut self) {
-        self.subscription_manager = Some(RwLock::new(crate::subscription::SubscriptionManager::new()));
+        self.subscription_manager =
+            Some(RwLock::new(crate::subscription::SubscriptionManager::new()));
     }
 
     /// Subscribe to graph events with an optional filter.

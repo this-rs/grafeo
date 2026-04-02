@@ -38,8 +38,8 @@ use obrain_common::utils::error::Result;
 use obrain_common::utils::hash::{FxHashMap, FxHashSet};
 use obrain_core::graph::GraphStore;
 
-use super::community::{louvain, LouvainResult};
 use super::super::{AlgorithmResult, ParameterDef, ParameterType, Parameters};
+use super::community::{LouvainResult, louvain};
 use super::traits::GraphAlgorithm;
 
 // ============================================================================

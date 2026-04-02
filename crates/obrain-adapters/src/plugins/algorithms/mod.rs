@@ -39,17 +39,17 @@ mod centrality;
 mod clustering;
 mod community;
 mod components;
+pub mod contraction;
 mod ego_graph;
 mod flow;
 pub mod hilbert;
 pub mod hilbert_features;
 mod mst;
 pub mod projection;
+pub mod relevance;
 mod shortest_path;
 mod similarity;
 pub mod spectral;
-pub mod contraction;
-pub mod relevance;
 pub mod stable_communities;
 mod structure;
 mod traits;
@@ -140,14 +140,12 @@ pub use similarity::{
 
 // Personalized PageRank & relevance subgraph
 pub use relevance::{
-    PersonalizedPageRankAlgorithm, PprConfig, PprResult, extract_subgraph,
-    personalized_pagerank,
+    PersonalizedPageRankAlgorithm, PprConfig, PprResult, extract_subgraph, personalized_pagerank,
 };
 
 // Stable community detection
 pub use stable_communities::{
-    StableCommunitiesAlgorithm, StableCommunityConfig, StableLouvainResult,
-    stabilize_communities,
+    StableCommunitiesAlgorithm, StableCommunityConfig, StableLouvainResult, stabilize_communities,
 };
 
 // Subgraph contraction (graph coarsening)

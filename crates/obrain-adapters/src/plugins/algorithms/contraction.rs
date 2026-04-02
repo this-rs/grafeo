@@ -152,7 +152,11 @@ pub fn contract_subgraph(
     for &nid in node_ids {
         if let Some(node) = store.get_node(nid) {
             let labels: Vec<String> = node.labels.iter().map(|l| l.to_string()).collect();
-            let props: Vec<(PropertyKey, Value)> = node.properties.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let props: Vec<(PropertyKey, Value)> = node
+                .properties
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
             snapshot_nodes.push((nid, labels, props));
         }
     }
@@ -160,15 +164,25 @@ pub fn contract_subgraph(
     // Step 2: Classify edges as internal or external, snapshot them
     let mut internal_edges: Vec<(EdgeId, NodeId, NodeId, String, Vec<(PropertyKey, Value)>)> =
         Vec::new();
-    let mut external_edges: Vec<(EdgeId, NodeId, NodeId, String, Vec<(PropertyKey, Value)>, bool)> =
-        Vec::new();
+    let mut external_edges: Vec<(
+        EdgeId,
+        NodeId,
+        NodeId,
+        String,
+        Vec<(PropertyKey, Value)>,
+        bool,
+    )> = Vec::new();
 
     for &nid in node_ids {
         // Outgoing edges
         for (neighbor, edge_id) in store.edges_from(nid, Direction::Outgoing) {
             if let Some(edge) = store.get_edge(edge_id) {
                 let etype = edge.edge_type.to_string();
-                let props: Vec<(PropertyKey, Value)> = edge.properties.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                let props: Vec<(PropertyKey, Value)> = edge
+                    .properties
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
                 if contracted_set.contains(&neighbor) {
                     // Internal: only record from lower id to avoid duplicates
                     if nid.0 <= neighbor.0 {
@@ -186,7 +200,11 @@ pub fn contract_subgraph(
             if !contracted_set.contains(&neighbor) {
                 if let Some(edge) = store.get_edge(edge_id) {
                     let etype = edge.edge_type.to_string();
-                    let props: Vec<(PropertyKey, Value)> = edge.properties.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                    let props: Vec<(PropertyKey, Value)> = edge
+                        .properties
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect();
                     // External incoming: src=neighbor (outside), dst=nid (contracted)
                     external_edges.push((edge_id, neighbor, nid, etype, props, true));
                 }
@@ -203,7 +221,11 @@ pub fn contract_subgraph(
             if contracted_set.contains(&neighbor) && !seen_internal.contains(&edge_id) {
                 if let Some(edge) = store.get_edge(edge_id) {
                     let etype = edge.edge_type.to_string();
-                    let props: Vec<(PropertyKey, Value)> = edge.properties.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                    let props: Vec<(PropertyKey, Value)> = edge
+                        .properties
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect();
                     internal_edges.push((edge_id, nid, neighbor, etype, props));
                     seen_internal.insert(edge_id);
                 }
@@ -435,7 +457,9 @@ fn aggregate_properties(
             if let Some(num) = value_to_f64(value) {
                 numeric_props.entry(key.clone()).or_default().push(num);
             }
-            first_values.entry(key.clone()).or_insert_with(|| value.clone());
+            first_values
+                .entry(key.clone())
+                .or_insert_with(|| value.clone());
         }
     }
 
@@ -625,7 +649,8 @@ mod tests {
         // External edges redirected
         assert!(result.external_edges_redirected > 0);
         // Super-node has _contracted_count
-        let count = store.get_node_property(result.supernode_id, &PropertyKey::new("_contracted_count"));
+        let count =
+            store.get_node_property(result.supernode_id, &PropertyKey::new("_contracted_count"));
         assert_eq!(count, Some(Value::Int64(2)));
     }
 

@@ -1505,12 +1505,18 @@ mod tests {
         let temporal = compute_temporal_facette(&store, "created_at", now).unwrap();
 
         // dim1 (x) = rank of age → old should have highest rank
-        assert!(temporal[&old][0] > temporal[&recent][0],
+        assert!(
+            temporal[&old][0] > temporal[&recent][0],
             "Old node age rank ({}) should be > recent ({})",
-            temporal[&old][0], temporal[&recent][0]);
-        assert!(temporal[&mid][0] > temporal[&recent][0],
+            temporal[&old][0],
+            temporal[&recent][0]
+        );
+        assert!(
+            temporal[&mid][0] > temporal[&recent][0],
             "Mid node age rank ({}) should be > recent ({})",
-            temporal[&mid][0], temporal[&recent][0]);
+            temporal[&mid][0],
+            temporal[&recent][0]
+        );
     }
 
     #[test]
@@ -1587,8 +1593,10 @@ mod tests {
         // Bridge node (dim2 = neighbor age variance) should be higher than intra-cluster nodes
         let bridge_var = temporal[&bridge][1];
         let o1_var = temporal[&o1][1];
-        assert!(bridge_var > o1_var,
-            "Bridge variance ({bridge_var}) should be > intra-cluster ({o1_var})");
+        assert!(
+            bridge_var > o1_var,
+            "Bridge variance ({bridge_var}) should be > intra-cluster ({o1_var})"
+        );
     }
 
     #[test]
