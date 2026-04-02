@@ -551,7 +551,7 @@ pub fn hilbert_bank_allocation(
     let mut centroids: Vec<Vec<f32>> = Vec::with_capacity(n_banks);
 
     // First centroid: pick the first node (deterministic)
-    centroids.push(vectors[0].to_vec());
+    centroids.push(vectors[0].clone());
 
     for _ in 1..n_banks {
         // For each point, compute min distance to existing centroids
@@ -571,10 +571,9 @@ pub fn hilbert_bank_allocation(
             .iter()
             .enumerate()
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(i, _)| i)
-            .unwrap_or(0);
+            .map_or(0, |(i, _)| i);
 
-        centroids.push(vectors[best_idx].to_vec());
+        centroids.push(vectors[best_idx].clone());
     }
 
     // Lloyd's iterations
@@ -589,8 +588,7 @@ pub fn hilbert_bank_allocation(
                 .enumerate()
                 .map(|(k, c)| (k, sq_dist(vectors[i], c)))
                 .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-                .map(|(k, _)| k)
-                .unwrap_or(0);
+                .map_or(0, |(k, _)| k);
 
             if assignments[i] != best_k {
                 assignments[i] = best_k;
@@ -645,7 +643,7 @@ pub fn hilbert_bank_allocation(
 
     // Remove empty clusters and sort by size (largest first)
     banks.retain(|b| !b.is_empty());
-    banks.sort_by(|a, b| b.len().cmp(&a.len()));
+    banks.sort_unstable_by_key(|b| std::cmp::Reverse(b.len()));
 
     banks
 }
