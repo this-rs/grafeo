@@ -14,12 +14,24 @@ impl LpgStore {
     pub fn set_node_property(&self, id: NodeId, key: &str, value: Value) {
         let prop_key: PropertyKey = key.into();
 
+        // Capture old value for change tracking (before mutation)
+        let old_value = self.node_properties.get(id, &prop_key);
+
         // Update property index before setting the property (needs to read old value)
         self.update_property_index_on_set(id, &prop_key, &value);
 
         // Sync text index if applicable
         #[cfg(feature = "text-index")]
         self.update_text_index_on_set(id, key, &value);
+
+        // Track the mutation
+        self.track_event(crate::change_tracker::GraphEvent::PropertySet {
+            entity: crate::change_tracker::EntityRef::Node(id),
+            key: prop_key.clone(),
+            old_value,
+            new_value: value.clone(),
+            timestamp: self.current_epoch.load(Ordering::Relaxed),
+        });
 
         #[cfg(not(feature = "temporal"))]
         self.node_properties.set(id, prop_key, value);
@@ -45,12 +57,24 @@ impl LpgStore {
     pub fn set_node_property(&self, id: NodeId, key: &str, value: Value) {
         let prop_key: PropertyKey = key.into();
 
+        // Capture old value for change tracking (before mutation)
+        let old_value = self.node_properties.get(id, &prop_key);
+
         // Update property index before setting the property (needs to read old value)
         self.update_property_index_on_set(id, &prop_key, &value);
 
         // Sync text index if applicable
         #[cfg(feature = "text-index")]
         self.update_text_index_on_set(id, key, &value);
+
+        // Track the mutation
+        self.track_event(crate::change_tracker::GraphEvent::PropertySet {
+            entity: crate::change_tracker::EntityRef::Node(id),
+            key: prop_key.clone(),
+            old_value,
+            new_value: value.clone(),
+            timestamp: self.current_epoch.load(Ordering::Relaxed),
+        });
 
         #[cfg(not(feature = "temporal"))]
         self.node_properties.set(id, prop_key, value);
@@ -61,11 +85,25 @@ impl LpgStore {
 
     /// Sets a property on an edge.
     pub fn set_edge_property(&self, id: EdgeId, key: &str, value: Value) {
+        let prop_key: PropertyKey = key.into();
+
+        // Capture old value for change tracking (before mutation)
+        let old_value = self.edge_properties.get(id, &prop_key);
+
+        // Track the mutation
+        self.track_event(crate::change_tracker::GraphEvent::PropertySet {
+            entity: crate::change_tracker::EntityRef::Edge(id),
+            key: prop_key.clone(),
+            old_value,
+            new_value: value.clone(),
+            timestamp: self.current_epoch.load(Ordering::Relaxed),
+        });
+
         #[cfg(not(feature = "temporal"))]
-        self.edge_properties.set(id, key.into(), value);
+        self.edge_properties.set(id, prop_key, value);
         #[cfg(feature = "temporal")]
         self.edge_properties
-            .set(id, key.into(), value, self.current_epoch());
+            .set(id, prop_key, value, self.current_epoch());
     }
 
     /// Sets a node property at a specific epoch (for snapshot/WAL recovery).

@@ -8,7 +8,10 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use obrain_core::LpgStore;
 
-use obrain_adapters::plugins::algorithms::{betweenness_centrality, leiden, louvain, pagerank};
+use obrain_adapters::plugins::algorithms::{
+    ContractionConfig, PprConfig, betweenness_centrality, contract_subgraph, leiden, louvain,
+    pagerank, personalized_pagerank, stabilize_communities,
+};
 
 /// Creates a Barabási-Albert scale-free graph with `n` nodes and `m` edges per new node.
 ///
@@ -137,11 +140,104 @@ fn bench_betweenness(c: &mut Criterion) {
     group.finish();
 }
 
+// ============================================================================
+// Stable Communities
+// ============================================================================
+
+fn bench_stable_communities(c: &mut Criterion) {
+    let mut group = c.benchmark_group("gds/stable_communities");
+    group.sample_size(10);
+
+    for &size in &[500, 2_000, 10_000] {
+        let store = barabasi_albert(size, 3);
+        // Pre-compute a "previous" Louvain result
+        let prev = louvain(&store, 1.0);
+        group.bench_with_input(BenchmarkId::from_parameter(size), &store, |b, store| {
+            b.iter(|| {
+                let curr = louvain(store, 1.0);
+                stabilize_communities(&prev, &curr, store, 0.3)
+            });
+        });
+    }
+    group.finish();
+}
+
+// ============================================================================
+// Personalized PageRank
+// ============================================================================
+
+fn bench_ppr(c: &mut Criterion) {
+    let mut group = c.benchmark_group("gds/ppr");
+    group.sample_size(10);
+
+    for &size in &[500, 2_000, 10_000] {
+        let store = barabasi_albert(size, 3);
+        let node_ids = store.node_ids();
+        // Pick 3 deterministic seeds
+        let seeds = vec![node_ids[0], node_ids[size / 3], node_ids[2 * size / 3]];
+        let config = PprConfig {
+            budget: 50,
+            ..Default::default()
+        };
+        group.bench_with_input(BenchmarkId::from_parameter(size), &store, |b, store| {
+            b.iter(|| personalized_pagerank(store, &seeds, &config));
+        });
+    }
+    group.finish();
+}
+
+// ============================================================================
+// Subgraph Contraction
+// ============================================================================
+
+fn bench_contraction(c: &mut Criterion) {
+    let mut group = c.benchmark_group("gds/contraction");
+    group.sample_size(10);
+
+    for &size in &[500, 2_000, 10_000] {
+        // Build graph, pick a Louvain community to contract
+        let store = barabasi_albert(size, 3);
+        let result = louvain(&store, 1.0);
+        // Find the largest community
+        let mut comm_nodes: std::collections::HashMap<u64, Vec<obrain_common::types::NodeId>> =
+            std::collections::HashMap::new();
+        for (&nid, &comm) in &result.communities {
+            comm_nodes.entry(comm).or_default().push(nid);
+        }
+        let largest: Vec<obrain_common::types::NodeId> = comm_nodes
+            .into_values()
+            .max_by_key(|v| v.len())
+            .unwrap_or_default();
+
+        let config = ContractionConfig::default();
+
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _| {
+            b.iter(|| {
+                // Rebuild graph each iteration since contraction is destructive
+                let s = barabasi_albert(size, 3);
+                // Re-use the same node IDs (deterministic BA graph)
+                let ids = s.node_ids();
+                let contract_ids: Vec<obrain_common::types::NodeId> = largest
+                    .iter()
+                    .filter_map(|nid| ids.get(nid.0 as usize).copied())
+                    .collect();
+                if !contract_ids.is_empty() {
+                    let _ = contract_subgraph(&s, &contract_ids, &config);
+                }
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_pagerank,
     bench_louvain,
     bench_leiden,
-    bench_betweenness
+    bench_betweenness,
+    bench_stable_communities,
+    bench_ppr,
+    bench_contraction
 );
 criterion_main!(benches);

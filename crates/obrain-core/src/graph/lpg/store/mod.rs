@@ -401,6 +401,23 @@ pub struct LpgStore {
     /// simply discarded.
     /// Lock order: 10 (after named_graphs, independent of other locks)
     property_undo_log: RwLock<FxHashMap<TransactionId, Vec<PropertyUndoEntry>>>,
+
+    /// Optional change tracker for recording graph mutations.
+    ///
+    /// When `Some`, every create/delete/set_property operation records a
+    /// [`GraphEvent`] in the ring buffer. When `None`, there is zero
+    /// overhead (branch prediction eliminates the check).
+    ///
+    /// Enable via [`LpgStore::enable_tracking()`].
+    ///
+    /// Lock order: 11 (after property_undo_log)
+    change_tracker: Option<RwLock<crate::change_tracker::ChangeTracker>>,
+
+    // --- Lock order 12: Subscription Manager ---
+    /// Optional subscription manager for real-time event notifications.
+    /// Held at lock order 12 (after change_tracker=11).
+    /// Read lock during notify, write lock during subscribe/unsubscribe.
+    subscription_manager: Option<RwLock<crate::subscription::SubscriptionManager>>,
 }
 
 impl LpgStore {
@@ -465,7 +482,85 @@ impl LpgStore {
             needs_stats_recompute: AtomicBool::new(false),
             named_graphs: RwLock::new(FxHashMap::default()),
             property_undo_log: RwLock::new(FxHashMap::default()),
+            change_tracker: None,
+            subscription_manager: None,
         })
+    }
+
+    /// Enables change tracking with the given ring buffer capacity.
+    ///
+    /// After calling this, every `create_node`, `create_edge`, `delete_node`,
+    /// `delete_edge`, and `set_node_property` / `set_edge_property` operation
+    /// will record a [`GraphEvent`](crate::change_tracker::GraphEvent) in the
+    /// internal ring buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `capacity` - Maximum number of events to retain (recommendation: 10_000)
+    ///
+    /// # Note
+    ///
+    /// This replaces any existing tracker. Call once at initialization.
+    pub fn enable_tracking(&mut self, capacity: usize) {
+        self.change_tracker = Some(RwLock::new(crate::change_tracker::ChangeTracker::new(
+            capacity,
+        )));
+    }
+
+    /// Returns a read reference to the change tracker, if tracking is enabled.
+    pub fn changes(
+        &self,
+    ) -> Option<parking_lot::RwLockReadGuard<'_, crate::change_tracker::ChangeTracker>> {
+        self.change_tracker.as_ref().map(|t| t.read())
+    }
+
+    /// Records an event in the change tracker and notifies subscribers.
+    ///
+    /// This is a no-op when both tracker and subscriptions are `None`.
+    #[inline]
+    pub(super) fn track_event(&self, event: crate::change_tracker::GraphEvent) {
+        if let Some(ref tracker) = self.change_tracker {
+            tracker.write().record(event.clone());
+        }
+        if let Some(ref mgr) = self.subscription_manager {
+            mgr.read().notify(&event);
+        }
+    }
+
+    /// Enables the subscription system for real-time mutation notifications.
+    ///
+    /// Must be called before [`subscribe`](Self::subscribe). Requires `&mut self`
+    /// since it modifies the store configuration.
+    pub fn enable_subscriptions(&mut self) {
+        self.subscription_manager =
+            Some(RwLock::new(crate::subscription::SubscriptionManager::new()));
+    }
+
+    /// Subscribe to graph events with an optional filter.
+    ///
+    /// Returns a [`SubscriptionId`](crate::subscription::SubscriptionId) for
+    /// later [`unsubscribe`](Self::unsubscribe).
+    ///
+    /// # Warning
+    ///
+    /// The callback **MUST NOT** call mutation methods on the store — this will
+    /// deadlock. Use the callback to record events externally (e.g. push to a
+    /// channel, increment a counter).
+    pub fn subscribe(
+        &self,
+        filter: crate::subscription::EventFilter,
+        callback: Box<dyn Fn(&crate::change_tracker::GraphEvent) + Send + Sync>,
+    ) -> Option<crate::subscription::SubscriptionId> {
+        self.subscription_manager
+            .as_ref()
+            .map(|mgr| mgr.write().subscribe(filter, callback))
+    }
+
+    /// Unsubscribe by ID. Returns `true` if the subscriber was found.
+    pub fn unsubscribe(&self, id: crate::subscription::SubscriptionId) -> bool {
+        self.subscription_manager
+            .as_ref()
+            .is_some_and(|mgr| mgr.write().unsubscribe(id))
     }
 
     /// Returns the current epoch.
