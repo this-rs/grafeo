@@ -230,6 +230,66 @@ fn bench_contraction(c: &mut Criterion) {
     group.finish();
 }
 
+// ── Weighted Hilbert Distance ──────────────────────────────────────
+
+use obrain_adapters::plugins::algorithms::{
+    FacetteWeights, HilbertFeaturesConfig, hilbert_distance, hilbert_features,
+    weighted_hilbert_distance,
+};
+
+fn bench_weighted_distance(c: &mut Criterion) {
+    // Build a BA graph and compute features
+    let store = barabasi_albert(1000, 3);
+    let config = HilbertFeaturesConfig::default();
+    let result = hilbert_features(&store, &config);
+
+    // Collect feature vectors for pairwise distance
+    let vecs: Vec<&Vec<f32>> = result.features.values().collect();
+    let n = vecs.len().min(100); // 100 nodes → 10K pairs
+
+    let uniform = FacetteWeights::uniform(8);
+    let structural = FacetteWeights::structural(8);
+
+    let mut group = c.benchmark_group("weighted_distance");
+
+    group.bench_function("euclidean/10K_pairs", |b| {
+        b.iter(|| {
+            for i in 0..n {
+                for j in (i + 1)..n {
+                    std::hint::black_box(hilbert_distance(vecs[i], vecs[j]));
+                }
+            }
+        });
+    });
+
+    group.bench_function("uniform/10K_pairs", |b| {
+        b.iter(|| {
+            for i in 0..n {
+                for j in (i + 1)..n {
+                    std::hint::black_box(weighted_hilbert_distance(vecs[i], vecs[j], &uniform, 8));
+                }
+            }
+        });
+    });
+
+    group.bench_function("structural/10K_pairs", |b| {
+        b.iter(|| {
+            for i in 0..n {
+                for j in (i + 1)..n {
+                    std::hint::black_box(weighted_hilbert_distance(
+                        vecs[i],
+                        vecs[j],
+                        &structural,
+                        8,
+                    ));
+                }
+            }
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_pagerank,
@@ -238,6 +298,7 @@ criterion_group!(
     bench_betweenness,
     bench_stable_communities,
     bench_ppr,
-    bench_contraction
+    bench_contraction,
+    bench_weighted_distance
 );
 criterion_main!(benches);

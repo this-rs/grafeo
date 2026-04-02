@@ -44,6 +44,7 @@ mod ego_graph;
 mod flow;
 pub mod hilbert;
 pub mod hilbert_features;
+pub mod hilbert_manager;
 mod mst;
 pub mod projection;
 pub mod relevance;
@@ -86,7 +87,7 @@ pub use centrality::{
 pub use clustering::clustering_coefficient_parallel;
 pub use clustering::{
     ClusteringCoefficientResult, clustering_coefficient, global_clustering_coefficient,
-    local_clustering_coefficient, total_triangles, triangle_count,
+    hilbert_bank_allocation, local_clustering_coefficient, total_triangles, triangle_count,
 };
 
 // Community detection algorithms
@@ -128,9 +129,12 @@ pub use spectral::{SpectralEmbeddingAlgorithm, SpectralEmbeddingResult, spectral
 
 // Hilbert 64d multi-facette features
 pub use hilbert_features::{
-    HilbertFeaturesAlgorithm, HilbertFeaturesConfig, HilbertFeaturesResult, hilbert_features,
-    hilbert_features_incremental,
+    FacetteWeights, HilbertFeaturesAlgorithm, HilbertFeaturesConfig, HilbertFeaturesResult,
+    hilbert_distance, hilbert_features, hilbert_features_incremental, weighted_hilbert_distance,
 };
+
+// Hilbert incremental feature manager
+pub use hilbert_manager::HilbertFeatureManager;
 
 // Node similarity algorithms
 pub use similarity::{

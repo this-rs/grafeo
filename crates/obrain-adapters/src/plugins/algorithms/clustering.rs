@@ -1,7 +1,10 @@
-//! Clustering coefficient algorithms: Local, Global, and Triangle counting.
+//! Clustering coefficient algorithms and Hilbert bank allocation.
 //!
 //! These algorithms measure how tightly connected the neighbors of each node are.
 //! A high clustering coefficient indicates that neighbors tend to be connected to each other.
+//!
+//! Also provides [`hilbert_bank_allocation()`] — k-means clustering on Hilbert 64d/72d
+//! feature vectors for semantically homogeneous bank allocation in attention masking.
 
 #[cfg(feature = "parallel")]
 use std::sync::Arc;
@@ -486,6 +489,177 @@ impl ParallelGraphAlgorithm for ClusteringCoefficientAlgorithm {
 }
 
 // ============================================================================
+// Hilbert bank allocation (k-means on Hilbert features)
+// ============================================================================
+
+use super::hilbert_features::HilbertFeaturesResult;
+
+/// Allocate graph nodes into banks using k-means on Hilbert feature vectors.
+///
+/// Produces `n_banks` clusters of nodes that are semantically homogeneous
+/// (similar across all 8/9 Hilbert facettes). Intended as a replacement for
+/// BFS-based bank allocation in attention masking.
+///
+/// Uses **k-means++** initialization for stable, reproducible cluster seeds,
+/// followed by Lloyd's algorithm with early termination when centroid delta
+/// falls below `1e-6`.
+///
+/// # Arguments
+///
+/// * `features` - Hilbert features result (64d or 72d per node)
+/// * `n_banks` - Number of banks (clusters) to produce
+/// * `max_iter` - Maximum Lloyd's iterations (typically 50)
+///
+/// # Returns
+///
+/// A `Vec<Vec<NodeId>>` of length `n_banks`, sorted by cluster size
+/// (largest first). All input nodes are assigned to exactly one cluster.
+/// Empty clusters are removed (so the result may have fewer than `n_banks` entries).
+///
+/// # Example
+///
+/// ```no_run
+/// use obrain_adapters::plugins::algorithms::{hilbert_bank_allocation, hilbert_features, HilbertFeaturesConfig};
+/// use obrain_core::graph::lpg::LpgStore;
+///
+/// let store = LpgStore::new().unwrap();
+/// // ... populate graph ...
+/// let features = hilbert_features(&store, &HilbertFeaturesConfig::default());
+/// let banks = hilbert_bank_allocation(&features, 8, 50);
+/// ```
+pub fn hilbert_bank_allocation(
+    features: &HilbertFeaturesResult,
+    n_banks: usize,
+    max_iter: usize,
+) -> Vec<Vec<NodeId>> {
+    if features.features.is_empty() || n_banks == 0 {
+        return Vec::new();
+    }
+
+    let dims = features.dimensions;
+    let nodes: Vec<NodeId> = features.features.keys().copied().collect();
+    let vectors: Vec<&Vec<f32>> = nodes.iter().map(|n| &features.features[n]).collect();
+    let n = nodes.len();
+
+    if n_banks >= n {
+        // More banks than nodes → one node per bank
+        return nodes.into_iter().map(|n| vec![n]).collect();
+    }
+
+    // k-means++ initialization
+    let mut centroids: Vec<Vec<f32>> = Vec::with_capacity(n_banks);
+
+    // First centroid: pick the first node (deterministic)
+    centroids.push(vectors[0].clone());
+
+    for _ in 1..n_banks {
+        // For each point, compute min distance to existing centroids
+        let mut dists: Vec<f32> = Vec::with_capacity(n);
+
+        for v in &vectors {
+            let min_d = centroids
+                .iter()
+                .map(|c| sq_dist(v, c))
+                .fold(f32::INFINITY, f32::min);
+            dists.push(min_d);
+        }
+
+        // Pick the point with maximum min-distance (deterministic variant of k-means++)
+        // This avoids RNG dependency while still spreading centroids well.
+        let best_idx = dists
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+            .map_or(0, |(i, _)| i);
+
+        centroids.push(vectors[best_idx].clone());
+    }
+
+    // Lloyd's iterations
+    let mut assignments = vec![0usize; n];
+
+    for _iter in 0..max_iter {
+        // Assignment step: assign each point to nearest centroid
+        let mut changed = false;
+        for i in 0..n {
+            let best_k = centroids
+                .iter()
+                .enumerate()
+                .map(|(k, c)| (k, sq_dist(vectors[i], c)))
+                .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+                .map_or(0, |(k, _)| k);
+
+            if assignments[i] != best_k {
+                assignments[i] = best_k;
+                changed = true;
+            }
+        }
+
+        if !changed {
+            break; // Converged
+        }
+
+        // Update step: recompute centroids
+        let mut new_centroids = vec![vec![0.0_f32; dims]; n_banks];
+        let mut counts = vec![0usize; n_banks];
+
+        for i in 0..n {
+            let k = assignments[i];
+            counts[k] += 1;
+            for d in 0..dims {
+                new_centroids[k][d] += vectors[i][d];
+            }
+        }
+
+        // Check convergence (max centroid delta)
+        let mut max_delta: f32 = 0.0;
+        for k in 0..n_banks {
+            if counts[k] > 0 {
+                let c = counts[k] as f32;
+                for d in 0..dims {
+                    new_centroids[k][d] /= c;
+                }
+                let delta = sq_dist(&centroids[k], &new_centroids[k]).sqrt();
+                if delta > max_delta {
+                    max_delta = delta;
+                }
+            }
+            // Keep old centroid for empty clusters
+        }
+
+        centroids = new_centroids;
+
+        if max_delta < 1e-6 {
+            break;
+        }
+    }
+
+    // Build result: group nodes by cluster
+    let mut banks: Vec<Vec<NodeId>> = vec![Vec::new(); n_banks];
+    for i in 0..n {
+        banks[assignments[i]].push(nodes[i]);
+    }
+
+    // Remove empty clusters and sort by size (largest first)
+    banks.retain(|b| !b.is_empty());
+    banks.sort_unstable_by_key(|b| std::cmp::Reverse(b.len()));
+
+    banks
+}
+
+/// Squared Euclidean distance (avoids sqrt for comparison).
+#[inline]
+fn sq_dist(a: &[f32], b: &[f32]) -> f32 {
+    a.iter()
+        .zip(b)
+        .map(|(x, y)| {
+            let d = x - y;
+            d * d
+        })
+        .sum()
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -828,6 +1002,174 @@ mod tests {
             (coeff_0 - 2.0 / 3.0).abs() < 1e-10,
             "Expected 2/3, got {}",
             coeff_0
+        );
+    }
+
+    // ====================================================================
+    // Hilbert bank allocation tests
+    // ====================================================================
+
+    use crate::plugins::algorithms::hilbert_features::{
+        HilbertFeaturesConfig, HilbertFeaturesResult, hilbert_features,
+    };
+
+    fn create_two_cluster_graph() -> (LpgStore, Vec<NodeId>, Vec<NodeId>) {
+        let store = LpgStore::new().unwrap();
+        // Cluster A: tightly connected
+        let a: Vec<NodeId> = (0..5).map(|_| store.create_node(&["A"])).collect();
+        for i in 0..5 {
+            for j in (i + 1)..5 {
+                store.create_edge(a[i], a[j], "LINK");
+                store.create_edge(a[j], a[i], "LINK");
+            }
+        }
+
+        // Cluster B: tightly connected
+        let b: Vec<NodeId> = (0..5).map(|_| store.create_node(&["B"])).collect();
+        for i in 0..5 {
+            for j in (i + 1)..5 {
+                store.create_edge(b[i], b[j], "LINK");
+                store.create_edge(b[j], b[i], "LINK");
+            }
+        }
+
+        // Single bridge edge between clusters
+        store.create_edge(a[0], b[0], "BRIDGE");
+
+        (store, a, b)
+    }
+
+    #[test]
+    fn test_kmeans_convergence() {
+        let (store, _, _) = create_two_cluster_graph();
+        let config = HilbertFeaturesConfig::default();
+        let features = hilbert_features(&store, &config);
+
+        let banks = hilbert_bank_allocation(&features, 2, 50);
+
+        // Should produce exactly 2 non-empty banks
+        assert_eq!(banks.len(), 2);
+
+        // All 10 nodes should be assigned
+        let total: usize = banks.iter().map(|b| b.len()).sum();
+        assert_eq!(total, 10);
+    }
+
+    #[test]
+    fn test_hilbert_banks_nonempty() {
+        let (store, _, _) = create_two_cluster_graph();
+        let config = HilbertFeaturesConfig::default();
+        let features = hilbert_features(&store, &config);
+
+        let banks = hilbert_bank_allocation(&features, 4, 50);
+
+        // All banks should be non-empty (empty ones are removed)
+        for bank in &banks {
+            assert!(!bank.is_empty());
+        }
+
+        // Total nodes = 10
+        let total: usize = banks.iter().map(|b| b.len()).sum();
+        assert_eq!(total, 10);
+    }
+
+    #[test]
+    fn test_hilbert_banks_sorted_by_size() {
+        let (store, _, _) = create_two_cluster_graph();
+        let config = HilbertFeaturesConfig::default();
+        let features = hilbert_features(&store, &config);
+
+        let banks = hilbert_bank_allocation(&features, 3, 50);
+
+        // Banks should be sorted by size (largest first)
+        for i in 1..banks.len() {
+            assert!(
+                banks[i - 1].len() >= banks[i].len(),
+                "Banks not sorted: bank[{}].len()={} < bank[{}].len()={}",
+                i - 1,
+                banks[i - 1].len(),
+                i,
+                banks[i].len()
+            );
+        }
+    }
+
+    #[test]
+    fn test_hilbert_banks_empty_features() {
+        let features = HilbertFeaturesResult {
+            features: std::collections::HashMap::new(),
+            dimensions: 64,
+            dirty_global: false,
+        };
+
+        let banks = hilbert_bank_allocation(&features, 4, 50);
+        assert!(banks.is_empty());
+    }
+
+    #[test]
+    fn test_hilbert_banks_more_banks_than_nodes() {
+        let (store, _, _) = create_two_cluster_graph();
+        let config = HilbertFeaturesConfig::default();
+        let features = hilbert_features(&store, &config);
+
+        // 20 banks for 10 nodes → one node per bank
+        let banks = hilbert_bank_allocation(&features, 20, 50);
+        assert_eq!(banks.len(), 10);
+        for bank in &banks {
+            assert_eq!(bank.len(), 1);
+        }
+    }
+
+    #[test]
+    fn test_hilbert_banks_intra_cluster_distance() {
+        let (store, _, _) = create_two_cluster_graph();
+        let config = HilbertFeaturesConfig::default();
+        let features = hilbert_features(&store, &config);
+
+        let banks = hilbert_bank_allocation(&features, 2, 50);
+
+        // Compute average intra-cluster distance
+        let mut total_intra: f64 = 0.0;
+        let mut count = 0;
+        for bank in &banks {
+            for i in 0..bank.len() {
+                for j in (i + 1)..bank.len() {
+                    let a = &features.features[&bank[i]];
+                    let b = &features.features[&bank[j]];
+                    total_intra += sq_dist(a, b) as f64;
+                    count += 1;
+                }
+            }
+        }
+        let avg_intra = if count > 0 {
+            total_intra / count as f64
+        } else {
+            0.0
+        };
+
+        // Compute average inter-cluster distance
+        let mut total_inter: f64 = 0.0;
+        let mut inter_count = 0;
+        if banks.len() >= 2 {
+            for i in 0..banks[0].len() {
+                for j in 0..banks[1].len() {
+                    let a = &features.features[&banks[0][i]];
+                    let b = &features.features[&banks[1][j]];
+                    total_inter += sq_dist(a, b) as f64;
+                    inter_count += 1;
+                }
+            }
+        }
+        let avg_inter = if inter_count > 0 {
+            total_inter / inter_count as f64
+        } else {
+            0.0
+        };
+
+        // Intra-cluster should be <= inter-cluster (clusters are internally homogeneous)
+        assert!(
+            avg_intra <= avg_inter + 1e-6,
+            "Intra-cluster distance ({avg_intra}) should be <= inter-cluster ({avg_inter})"
         );
     }
 }

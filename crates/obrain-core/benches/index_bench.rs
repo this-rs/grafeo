@@ -2,7 +2,7 @@
 
 use std::hint::black_box;
 
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 use obrain_common::types::{EdgeId, NodeId};
 use obrain_core::index::adjacency::ChunkedAdjacency;
@@ -263,6 +263,70 @@ fn bench_product_quantization(c: &mut Criterion) {
     group.finish();
 }
 
+// ── VP-Tree Benchmarks ─────────────────────────────────────────────
+
+use obrain_core::index::vp_tree::VpTree;
+
+fn euclidean_64d(a: &[f32], b: &[f32]) -> f32 {
+    a.iter()
+        .zip(b)
+        .map(|(x, y)| (x - y).powi(2))
+        .sum::<f32>()
+        .sqrt()
+}
+
+/// Deterministic pseudo-random f32 in [0, 1).
+fn lcg_f32(state: &mut u64) -> f32 {
+    *state = state
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    (*state >> 33) as f32 / (1u64 << 31) as f32
+}
+
+fn generate_64d_points(n: usize) -> Vec<(u32, Vec<f32>)> {
+    let mut rng: u64 = 42;
+    (0..n)
+        .map(|i| {
+            let v: Vec<f32> = (0..64).map(|_| lcg_f32(&mut rng)).collect();
+            (i as u32, v)
+        })
+        .collect()
+}
+
+fn bench_vp_tree_build(c: &mut Criterion) {
+    let mut group = c.benchmark_group("vp_tree_build");
+
+    for &size in &[10_000, 100_000] {
+        let points = generate_64d_points(size);
+        group.bench_with_input(BenchmarkId::from_parameter(size), &points, |b, pts| {
+            b.iter(|| {
+                black_box(VpTree::build(pts.clone(), euclidean_64d));
+            });
+        });
+    }
+
+    group.finish();
+}
+
+fn bench_vp_tree_knn(c: &mut Criterion) {
+    let mut group = c.benchmark_group("vp_tree_knn");
+
+    for &size in &[10_000, 100_000] {
+        let points = generate_64d_points(size);
+        let tree = VpTree::build(points, euclidean_64d);
+        let mut rng: u64 = 123;
+        let query: Vec<f32> = (0..64).map(|_| lcg_f32(&mut rng)).collect();
+
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _| {
+            b.iter(|| {
+                black_box(tree.knn(&query, 10, euclidean_64d));
+            });
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_adjacency_insert,
@@ -275,6 +339,8 @@ criterion_group!(
     bench_hnsw_search,
     bench_scalar_quantization,
     bench_product_quantization,
+    bench_vp_tree_build,
+    bench_vp_tree_knn,
 );
 
 criterion_main!(benches);
