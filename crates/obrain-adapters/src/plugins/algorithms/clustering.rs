@@ -519,8 +519,7 @@ use super::hilbert_features::HilbertFeaturesResult;
 /// # Example
 ///
 /// ```no_run
-/// use obrain_adapters::plugins::algorithms::clustering::hilbert_bank_allocation;
-/// use obrain_adapters::plugins::algorithms::hilbert_features::{hilbert_features, HilbertFeaturesConfig};
+/// use obrain_adapters::plugins::algorithms::{hilbert_bank_allocation, hilbert_features, HilbertFeaturesConfig};
 /// use obrain_core::graph::lpg::LpgStore;
 ///
 /// let store = LpgStore::new().unwrap();
