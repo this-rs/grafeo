@@ -1191,7 +1191,10 @@ impl FacetteWeights {
             w[2] = 1.5; // community
             w[3] = 1.5; // centrality
         }
-        Self { weights: w, is_uniform: false }
+        Self {
+            weights: w,
+            is_uniform: false,
+        }
     }
 
     /// Boost proximity facettes: BFS distance (4), co-usage (6).
@@ -1201,7 +1204,10 @@ impl FacetteWeights {
             w[4] = 2.0; // BFS distance
             w[6] = 2.0; // co-usage
         }
-        Self { weights: w, is_uniform: false }
+        Self {
+            weights: w,
+            is_uniform: false,
+        }
     }
 
     /// Boost behavioral facettes: co-usage (6), schema (7).
@@ -1211,7 +1217,10 @@ impl FacetteWeights {
             w[6] = 2.0; // co-usage
             w[7] = 2.0; // schema
         }
-        Self { weights: w, is_uniform: false }
+        Self {
+            weights: w,
+            is_uniform: false,
+        }
     }
 
     /// Boost the 9th temporal facette (index 8). Only meaningful for 72d (9 facettes).
@@ -1223,13 +1232,19 @@ impl FacetteWeights {
         assert!(n >= 9, "temporal profile requires at least 9 facettes");
         let mut w = vec![0.5; n];
         w[8] = 3.0; // temporal
-        Self { weights: w, is_uniform: false }
+        Self {
+            weights: w,
+            is_uniform: false,
+        }
     }
 
     /// Custom weights. Length must match the number of facettes.
     pub fn custom(weights: Vec<f32>) -> Self {
         let is_uniform = weights.iter().all(|&w| w == 1.0);
-        Self { weights, is_uniform }
+        Self {
+            weights,
+            is_uniform,
+        }
     }
 
     /// Number of facettes.
@@ -1283,7 +1298,12 @@ impl Default for FacetteWeights {
 /// let d = weighted_hilbert_distance(&a, &b, &w, 8);
 /// assert!(d > 0.0);
 /// ```
-pub fn weighted_hilbert_distance(a: &[f32], b: &[f32], weights: &FacetteWeights, levels: usize) -> f32 {
+pub fn weighted_hilbert_distance(
+    a: &[f32],
+    b: &[f32],
+    weights: &FacetteWeights,
+    levels: usize,
+) -> f32 {
     let expected_len = levels * weights.len();
     assert_eq!(
         a.len(),

@@ -233,8 +233,8 @@ fn bench_contraction(c: &mut Criterion) {
 // ── Weighted Hilbert Distance ──────────────────────────────────────
 
 use obrain_adapters::plugins::algorithms::{
-    FacetteWeights, HilbertFeaturesConfig, hilbert_features, weighted_hilbert_distance,
-    hilbert_distance,
+    FacetteWeights, HilbertFeaturesConfig, hilbert_distance, hilbert_features,
+    weighted_hilbert_distance,
 };
 
 fn bench_weighted_distance(c: &mut Criterion) {
@@ -276,7 +276,12 @@ fn bench_weighted_distance(c: &mut Criterion) {
         b.iter(|| {
             for i in 0..n {
                 for j in (i + 1)..n {
-                    std::hint::black_box(weighted_hilbert_distance(vecs[i], vecs[j], &structural, 8));
+                    std::hint::black_box(weighted_hilbert_distance(
+                        vecs[i],
+                        vecs[j],
+                        &structural,
+                        8,
+                    ));
                 }
             }
         });

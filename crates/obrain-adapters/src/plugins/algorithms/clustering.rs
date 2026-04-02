@@ -1012,7 +1012,9 @@ mod tests {
     // Hilbert bank allocation tests
     // ====================================================================
 
-    use crate::plugins::algorithms::hilbert_features::{hilbert_features, HilbertFeaturesConfig, HilbertFeaturesResult};
+    use crate::plugins::algorithms::hilbert_features::{
+        HilbertFeaturesConfig, HilbertFeaturesResult, hilbert_features,
+    };
 
     fn create_two_cluster_graph() -> (LpgStore, Vec<NodeId>, Vec<NodeId>) {
         let store = LpgStore::new().unwrap();

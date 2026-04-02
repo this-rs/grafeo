@@ -46,8 +46,8 @@
 //! ```
 
 use serde::{Deserialize, Serialize};
-use std::collections::BinaryHeap;
 use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 
 // ============================================================================
 // Types
@@ -237,11 +237,7 @@ impl<T: Clone> VpTree<T> {
     }
 
     /// Select the best vantage point from up to 5 random candidates.
-    fn select_vantage_point<F>(
-        items: &[(T, Vec<f32>)],
-        indices: &[usize],
-        distance_fn: &F,
-    ) -> usize
+    fn select_vantage_point<F>(items: &[(T, Vec<f32>)], indices: &[usize], distance_fn: &F) -> usize
     where
         F: Fn(&[f32], &[f32]) -> f32,
     {
@@ -269,7 +265,8 @@ impl<T: Clone> VpTree<T> {
                 .collect();
 
             let mean = dists.iter().sum::<f64>() / dists.len() as f64;
-            let variance = dists.iter().map(|d| (d - mean).powi(2)).sum::<f64>() / dists.len() as f64;
+            let variance =
+                dists.iter().map(|d| (d - mean).powi(2)).sum::<f64>() / dists.len() as f64;
 
             if variance > best_spread {
                 best_spread = variance;
@@ -307,10 +304,7 @@ impl<T: Clone> VpTree<T> {
         self.knn_search(self.root, query, k, &distance_fn, &mut heap, &mut tau);
 
         // Extract results sorted by distance (closest first)
-        let mut results: Vec<(T, f32)> = heap
-            .into_iter()
-            .map(|e| (e.data, e.distance))
-            .collect();
+        let mut results: Vec<(T, f32)> = heap.into_iter().map(|e| (e.data, e.distance)).collect();
         results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
         results
     }
@@ -511,17 +505,17 @@ mod tests {
             assert!(
                 (vp_results[i].1 - brute_top_k[i].1).abs() < 1e-4,
                 "Distance mismatch at position {i}: vp={:.6} (id={}) brute={:.6} (id={})",
-                vp_results[i].1, vp_results[i].0, brute_top_k[i].1, brute_top_k[i].0
+                vp_results[i].1,
+                vp_results[i].0,
+                brute_top_k[i].1,
+                brute_top_k[i].0
             );
         }
     }
 
     #[test]
     fn test_range_search_empty() {
-        let points: Vec<(u32, Vec<f32>)> = vec![
-            (0, vec![0.0, 0.0]),
-            (1, vec![10.0, 10.0]),
-        ];
+        let points: Vec<(u32, Vec<f32>)> = vec![(0, vec![0.0, 0.0]), (1, vec![10.0, 10.0])];
 
         let tree = VpTree::build(points, euclidean);
         // Very small radius around (5,5) — no points nearby

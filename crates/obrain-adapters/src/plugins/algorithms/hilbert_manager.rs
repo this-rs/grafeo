@@ -55,7 +55,9 @@ use obrain_core::graph::lpg::LpgStore;
 use obrain_core::subscription::{EventFilter, EventType, SubscriptionId};
 use parking_lot::RwLock;
 
-use super::hilbert_features::{HilbertFeaturesConfig, HilbertFeaturesResult, hilbert_features, hilbert_features_incremental};
+use super::hilbert_features::{
+    HilbertFeaturesConfig, HilbertFeaturesResult, hilbert_features, hilbert_features_incremental,
+};
 
 // ============================================================================
 // HilbertFeatureManager
@@ -198,8 +200,7 @@ impl HilbertFeatureManager {
             }
             Some(previous) if pending_count >= self.debounce_threshold => {
                 // Incremental recalculation
-                let changed: Vec<NodeId> =
-                    self.pending_changes.write().drain().collect();
+                let changed: Vec<NodeId> = self.pending_changes.write().drain().collect();
                 let result =
                     hilbert_features_incremental(&*self.store, &self.config, previous, &changed);
                 let cloned = result.clone();
@@ -313,7 +314,8 @@ mod tests {
         let store = test_store();
         populate_triangle(&store);
 
-        let manager = HilbertFeatureManager::new(Arc::clone(&store), HilbertFeaturesConfig::default());
+        let manager =
+            HilbertFeatureManager::new(Arc::clone(&store), HilbertFeaturesConfig::default());
         manager.enable();
 
         // Initial computation
@@ -339,7 +341,8 @@ mod tests {
         let store = test_store();
         populate_triangle(&store);
 
-        let mut manager = HilbertFeatureManager::new(Arc::clone(&store), HilbertFeaturesConfig::default());
+        let mut manager =
+            HilbertFeatureManager::new(Arc::clone(&store), HilbertFeaturesConfig::default());
         manager.debounce_threshold = 5; // High threshold
         manager.enable();
 
@@ -362,7 +365,8 @@ mod tests {
         let store = test_store();
         populate_triangle(&store);
 
-        let manager = HilbertFeatureManager::new(Arc::clone(&store), HilbertFeaturesConfig::default());
+        let manager =
+            HilbertFeatureManager::new(Arc::clone(&store), HilbertFeaturesConfig::default());
         manager.enable();
 
         // Initial + mutation
@@ -382,7 +386,8 @@ mod tests {
         let store = test_store();
         populate_triangle(&store);
 
-        let manager = HilbertFeatureManager::new(Arc::clone(&store), HilbertFeaturesConfig::default());
+        let manager =
+            HilbertFeatureManager::new(Arc::clone(&store), HilbertFeaturesConfig::default());
         manager.enable();
         assert!(manager.is_enabled());
 
