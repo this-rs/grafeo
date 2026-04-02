@@ -42,6 +42,7 @@ mod components;
 pub mod contraction;
 mod ego_graph;
 mod flow;
+pub mod heat_diffusion;
 pub mod hilbert;
 pub mod hilbert_features;
 pub mod hilbert_manager;
@@ -120,6 +121,11 @@ pub use shortest_path::{
 };
 pub use structure::{ArticulationPointsAlgorithm, BridgesAlgorithm, KCoreAlgorithm};
 pub use traversal::{BfsAlgorithm, DfsAlgorithm};
+
+// Heat kernel diffusion
+pub use heat_diffusion::{
+    HeatKernelAlgorithm, HeatKernelConfig, calibrate_sigma, heat_kernel_diffusion,
+};
 
 // Hilbert curve encoding
 pub use hilbert::{hilbert_d2xy, hilbert_encode_point, hilbert_xy2d};

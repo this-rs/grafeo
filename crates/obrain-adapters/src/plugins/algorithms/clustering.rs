@@ -1098,6 +1098,7 @@ mod tests {
     fn test_hilbert_banks_empty_features() {
         let features = HilbertFeaturesResult {
             features: std::collections::HashMap::new(),
+            raw_facettes: std::collections::HashMap::new(),
             dimensions: 64,
             dirty_global: false,
         };
