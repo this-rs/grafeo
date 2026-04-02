@@ -113,10 +113,10 @@ impl EventFilter {
     #[must_use]
     pub fn matches(&self, event: &GraphEvent) -> bool {
         // Check event type filter
-        if let Some(ref types) = self.event_types {
-            if !types.contains(&EventType::from_event(event)) {
-                return false;
-            }
+        if let Some(ref types) = self.event_types
+            && !types.contains(&EventType::from_event(event))
+        {
+            return false;
         }
 
         // Check label filter (only for node events)

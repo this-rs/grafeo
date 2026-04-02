@@ -197,17 +197,17 @@ pub fn contract_subgraph(
 
         // Incoming edges from non-contracted nodes
         for (neighbor, edge_id) in store.edges_from(nid, Direction::Incoming) {
-            if !contracted_set.contains(&neighbor) {
-                if let Some(edge) = store.get_edge(edge_id) {
-                    let etype = edge.edge_type.to_string();
-                    let props: Vec<(PropertyKey, Value)> = edge
-                        .properties
-                        .iter()
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect();
-                    // External incoming: src=neighbor (outside), dst=nid (contracted)
-                    external_edges.push((edge_id, neighbor, nid, etype, props, true));
-                }
+            if !contracted_set.contains(&neighbor)
+                && let Some(edge) = store.get_edge(edge_id)
+            {
+                let etype = edge.edge_type.to_string();
+                let props: Vec<(PropertyKey, Value)> = edge
+                    .properties
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                // External incoming: src=neighbor (outside), dst=nid (contracted)
+                external_edges.push((edge_id, neighbor, nid, etype, props, true));
             }
         }
     }
@@ -218,17 +218,18 @@ pub fn contract_subgraph(
     let mut seen_internal: HashSet<EdgeId> = internal_edges.iter().map(|e| e.0).collect();
     for &nid in node_ids {
         for (neighbor, edge_id) in store.edges_from(nid, Direction::Outgoing) {
-            if contracted_set.contains(&neighbor) && !seen_internal.contains(&edge_id) {
-                if let Some(edge) = store.get_edge(edge_id) {
-                    let etype = edge.edge_type.to_string();
-                    let props: Vec<(PropertyKey, Value)> = edge
-                        .properties
-                        .iter()
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect();
-                    internal_edges.push((edge_id, nid, neighbor, etype, props));
-                    seen_internal.insert(edge_id);
-                }
+            if contracted_set.contains(&neighbor)
+                && !seen_internal.contains(&edge_id)
+                && let Some(edge) = store.get_edge(edge_id)
+            {
+                let etype = edge.edge_type.to_string();
+                let props: Vec<(PropertyKey, Value)> = edge
+                    .properties
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                internal_edges.push((edge_id, nid, neighbor, etype, props));
+                seen_internal.insert(edge_id);
             }
         }
     }
@@ -426,7 +427,7 @@ pub fn contract_by_communities(
 
     // Sort by community ID for deterministic ordering
     let mut sorted_comms: Vec<u64> = groups.keys().copied().collect();
-    sorted_comms.sort();
+    sorted_comms.sort_unstable();
 
     for comm in sorted_comms {
         let nodes = &groups[&comm];
@@ -482,7 +483,7 @@ fn aggregate_properties(
         AggregationStrategy::Max => numeric_props
             .iter()
             .map(|(key, vals)| {
-                let max = vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                let max = vals.iter().copied().fold(f64::NEG_INFINITY, f64::max);
                 (key.clone(), Value::Float64(max))
             })
             .collect(),
@@ -565,6 +566,7 @@ impl GraphAlgorithm for SubgraphContractionAlgorithm {
             .filter_map(|s| s.trim().parse::<u64>().ok().map(NodeId))
             .collect();
 
+        #[allow(clippy::no_effect_underscore_binding)]
         let _config = ContractionConfig {
             aggregation,
             super_label,
@@ -750,6 +752,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::many_single_char_names)]
     fn test_by_communities() {
         let store = LpgStore::new().unwrap();
         // Community 0: a, b, c (triangle)

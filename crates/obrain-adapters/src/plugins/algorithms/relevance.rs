@@ -278,10 +278,10 @@ pub fn extract_subgraph(store: &dyn GraphStore, ppr: &PprResult, budget: usize) 
     for &(src_orig, _) in &sorted {
         if let Some(&src_new) = selected.get(&src_orig) {
             for (dst_orig, edge_id) in store.edges_from(src_orig, Direction::Outgoing) {
-                if let Some(&dst_new) = selected.get(&dst_orig) {
-                    if let Some(edge_type) = store.edge_type(edge_id) {
-                        sub.create_edge(src_new, dst_new, &edge_type);
-                    }
+                if let Some(&dst_new) = selected.get(&dst_orig)
+                    && let Some(edge_type) = store.edge_type(edge_id)
+                {
+                    sub.create_edge(src_new, dst_new, &edge_type);
                 }
             }
         }

@@ -248,6 +248,7 @@ fn jaccard_index(a: &FxHashSet<NodeId>, b: &FxHashSet<NodeId>) -> f64 {
 /// # Complexity
 ///
 /// O(k^3) time, O(k^2) space.
+#[allow(clippy::many_single_char_names)]
 fn hungarian_algorithm(cost: &[Vec<f64>]) -> Vec<usize> {
     let k = cost.len();
     if k == 0 {
@@ -572,7 +573,7 @@ mod tests {
         assert_eq!(assignment.len(), 3);
         // Each row assigned to a unique column
         let mut cols: Vec<usize> = assignment.clone();
-        cols.sort();
+        cols.sort_unstable();
         cols.dedup();
         assert_eq!(cols.len(), 3);
     }
@@ -584,7 +585,7 @@ mod tests {
             *counts.entry(comm).or_insert(0) += 1;
         }
         let mut sizes: Vec<usize> = counts.into_values().collect();
-        sizes.sort();
+        sizes.sort_unstable();
         sizes
     }
 }
