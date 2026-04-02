@@ -9,7 +9,8 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use obrain_core::LpgStore;
 
 use obrain_adapters::plugins::algorithms::{
-    betweenness_centrality, leiden, louvain, pagerank, stabilize_communities,
+    betweenness_centrality, leiden, louvain, pagerank, personalized_pagerank, stabilize_communities,
+    PprConfig,
 };
 
 /// Creates a Barabási-Albert scale-free graph with `n` nodes and `m` edges per new node.
@@ -161,12 +162,37 @@ fn bench_stable_communities(c: &mut Criterion) {
     group.finish();
 }
 
+// ============================================================================
+// Personalized PageRank
+// ============================================================================
+
+fn bench_ppr(c: &mut Criterion) {
+    let mut group = c.benchmark_group("gds/ppr");
+    group.sample_size(10);
+
+    for &size in &[500, 2_000, 10_000] {
+        let store = barabasi_albert(size, 3);
+        let node_ids = store.node_ids();
+        // Pick 3 deterministic seeds
+        let seeds = vec![node_ids[0], node_ids[size / 3], node_ids[2 * size / 3]];
+        let config = PprConfig {
+            budget: 50,
+            ..Default::default()
+        };
+        group.bench_with_input(BenchmarkId::from_parameter(size), &store, |b, store| {
+            b.iter(|| personalized_pagerank(store, &seeds, &config));
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_pagerank,
     bench_louvain,
     bench_leiden,
     bench_betweenness,
-    bench_stable_communities
+    bench_stable_communities,
+    bench_ppr
 );
 criterion_main!(benches);

@@ -48,6 +48,7 @@ pub mod projection;
 mod shortest_path;
 mod similarity;
 pub mod spectral;
+pub mod relevance;
 pub mod stable_communities;
 mod structure;
 mod traits;
@@ -134,6 +135,12 @@ pub use hilbert_features::{
 pub use similarity::{
     NodeSimilarityAlgorithm, SimilarityMetric, SimilarityScore, TopKSimilarAlgorithm, adamic_adar,
     cosine_similarity, jaccard, overlap_coefficient, resource_allocation, top_k_similar,
+};
+
+// Personalized PageRank & relevance subgraph
+pub use relevance::{
+    PersonalizedPageRankAlgorithm, PprConfig, PprResult, extract_subgraph,
+    personalized_pagerank,
 };
 
 // Stable community detection
