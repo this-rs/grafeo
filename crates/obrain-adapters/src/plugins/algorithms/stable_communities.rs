@@ -18,8 +18,7 @@
 //!
 //! ```no_run
 //! use obrain_core::graph::lpg::LpgStore;
-//! use obrain_adapters::plugins::algorithms::stable_communities::stabilize_communities;
-//! use obrain_adapters::plugins::algorithms::community::louvain;
+//! use obrain_adapters::plugins::algorithms::{louvain, stabilize_communities};
 //!
 //! let store = LpgStore::new().unwrap();
 //! // ... populate graph ...
