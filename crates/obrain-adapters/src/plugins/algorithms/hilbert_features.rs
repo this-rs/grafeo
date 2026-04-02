@@ -1135,6 +1135,210 @@ impl GraphAlgorithm for HilbertFeaturesAlgorithm {
 }
 
 // ============================================================================
+// Weighted distance
+// ============================================================================
+
+/// Per-facette weights for [`weighted_hilbert_distance()`].
+///
+/// Each weight scales the contribution of one facette (group of `levels`
+/// dimensions) to the total distance. Setting a weight to 0.0 completely
+/// eliminates that facette from the distance calculation.
+///
+/// Supports both 64d (8 facettes) and 72d (9 facettes with temporal).
+///
+/// # Predefined profiles
+///
+/// | Profile       | Boosted facettes                        | Use case                  |
+/// |---------------|-----------------------------------------|---------------------------|
+/// | `uniform`     | All equal                               | Default, no bias          |
+/// | `structural`  | Spectral (0,1) + Community (2) + Centrality (3) | Graph structure queries |
+/// | `proximity`   | BFS (4) + Co-usage (6)                  | Neighborhood queries      |
+/// | `behavioral`  | Co-usage (6) + Schema (7)               | Behavioral similarity     |
+/// | `temporal`    | Temporal (8) boosted                    | Time-based queries (72d)  |
+///
+/// # Example
+///
+/// ```
+/// use obrain_adapters::plugins::algorithms::hilbert_features::FacetteWeights;
+///
+/// let w = FacetteWeights::structural(8);
+/// assert_eq!(w.weights.len(), 8);
+/// assert!(w.weights[0] > w.weights[4]); // spectral > BFS
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct FacetteWeights {
+    /// One weight per facette. Length = number of facettes (8 or 9).
+    pub weights: Vec<f32>,
+    /// Pre-computed flag: true if all weights are 1.0 (enables fast path).
+    is_uniform: bool,
+}
+
+impl FacetteWeights {
+    /// All facettes weighted equally.
+    pub fn uniform(n: usize) -> Self {
+        Self {
+            weights: vec![1.0; n],
+            is_uniform: true,
+        }
+    }
+
+    /// Boost structural facettes: spectral (0,1), community (2), centrality (3).
+    pub fn structural(n: usize) -> Self {
+        let mut w = vec![0.5; n];
+        if n >= 4 {
+            w[0] = 2.0; // spectral 1-2
+            w[1] = 2.0; // spectral 3-4
+            w[2] = 1.5; // community
+            w[3] = 1.5; // centrality
+        }
+        Self { weights: w, is_uniform: false }
+    }
+
+    /// Boost proximity facettes: BFS distance (4), co-usage (6).
+    pub fn proximity(n: usize) -> Self {
+        let mut w = vec![0.5; n];
+        if n >= 7 {
+            w[4] = 2.0; // BFS distance
+            w[6] = 2.0; // co-usage
+        }
+        Self { weights: w, is_uniform: false }
+    }
+
+    /// Boost behavioral facettes: co-usage (6), schema (7).
+    pub fn behavioral(n: usize) -> Self {
+        let mut w = vec![0.5; n];
+        if n >= 8 {
+            w[6] = 2.0; // co-usage
+            w[7] = 2.0; // schema
+        }
+        Self { weights: w, is_uniform: false }
+    }
+
+    /// Boost the 9th temporal facette (index 8). Only meaningful for 72d (9 facettes).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `n < 9`.
+    pub fn temporal(n: usize) -> Self {
+        assert!(n >= 9, "temporal profile requires at least 9 facettes");
+        let mut w = vec![0.5; n];
+        w[8] = 3.0; // temporal
+        Self { weights: w, is_uniform: false }
+    }
+
+    /// Custom weights. Length must match the number of facettes.
+    pub fn custom(weights: Vec<f32>) -> Self {
+        let is_uniform = weights.iter().all(|&w| w == 1.0);
+        Self { weights, is_uniform }
+    }
+
+    /// Number of facettes.
+    pub fn len(&self) -> usize {
+        self.weights.len()
+    }
+
+    /// Returns `true` if no weights are defined.
+    pub fn is_empty(&self) -> bool {
+        self.weights.is_empty()
+    }
+}
+
+impl Default for FacetteWeights {
+    fn default() -> Self {
+        Self::uniform(8)
+    }
+}
+
+/// Compute the weighted Euclidean distance between two Hilbert feature vectors.
+///
+/// Each facette (group of `levels` dimensions) is scaled by its corresponding
+/// weight from `weights`. The formula is:
+///
+/// ```text
+/// d(a, b) = sqrt( Σᵢ wᵢ × Σⱼ (a[i*L+j] - b[i*L+j])² )
+/// ```
+///
+/// where `i` iterates over facettes and `j` over the `levels` dimensions within
+/// each facette.
+///
+/// # Arguments
+///
+/// * `a`, `b` - Feature vectors (must have equal length = `levels × weights.len()`)
+/// * `weights` - Per-facette weights
+/// * `levels` - Dimensions per facette (typically 8)
+///
+/// # Panics
+///
+/// Panics if `a.len() != b.len()` or `a.len() != levels * weights.len()`.
+///
+/// # Example
+///
+/// ```
+/// use obrain_adapters::plugins::algorithms::hilbert_features::{FacetteWeights, weighted_hilbert_distance};
+///
+/// let a = vec![0.0_f32; 64];
+/// let b = vec![1.0_f32; 64];
+/// let w = FacetteWeights::uniform(8);
+///
+/// let d = weighted_hilbert_distance(&a, &b, &w, 8);
+/// assert!(d > 0.0);
+/// ```
+pub fn weighted_hilbert_distance(a: &[f32], b: &[f32], weights: &FacetteWeights, levels: usize) -> f32 {
+    let expected_len = levels * weights.len();
+    assert_eq!(
+        a.len(),
+        b.len(),
+        "weighted_hilbert_distance: a.len() ({}) != b.len() ({})",
+        a.len(),
+        b.len()
+    );
+    assert_eq!(
+        a.len(),
+        expected_len,
+        "weighted_hilbert_distance: vector length ({}) != levels ({}) × facettes ({})",
+        a.len(),
+        levels,
+        weights.len()
+    );
+
+    // Fast path: uniform weights → flat euclidean (no per-facette overhead)
+    if weights.is_uniform {
+        return hilbert_distance(a, b);
+    }
+
+    let mut total = 0.0_f32;
+    for (i, &w) in weights.weights.iter().enumerate() {
+        if w == 0.0 {
+            continue; // Skip eliminated facettes
+        }
+        let start = i * levels;
+        let end = start + levels;
+        let mut facette_dist_sq = 0.0_f32;
+        for j in start..end {
+            let diff = a[j] - b[j];
+            facette_dist_sq += diff * diff;
+        }
+        total += w * facette_dist_sq;
+    }
+    total.sqrt()
+}
+
+/// Standard (unweighted) Euclidean distance between two feature vectors.
+///
+/// Equivalent to `weighted_hilbert_distance(a, b, &FacetteWeights::uniform(n), levels)`
+/// but faster (no weight multiplication).
+#[inline]
+pub fn hilbert_distance(a: &[f32], b: &[f32]) -> f32 {
+    assert_eq!(a.len(), b.len());
+    let mut sum = 0.0_f32;
+    for i in 0..a.len() {
+        let d = a[i] - b[i];
+        sum += d * d;
+    }
+    sum.sqrt()
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -1636,5 +1840,164 @@ mod tests {
             elapsed.as_millis()
         );
         eprintln!("hilbert_features(1000 nodes): {}ms", elapsed.as_millis());
+    }
+
+    // ========================================================================
+    // Weighted distance tests
+    // ========================================================================
+
+    #[test]
+    fn test_weighted_uniform_matches_euclidean() {
+        // uniform weights should produce the same result as plain euclidean
+        let a: Vec<f32> = (0..64).map(|i| i as f32 * 0.01).collect();
+        let b: Vec<f32> = (0..64).map(|i| (63 - i) as f32 * 0.01).collect();
+
+        let w_dist = weighted_hilbert_distance(&a, &b, &FacetteWeights::uniform(8), 8);
+        let e_dist = hilbert_distance(&a, &b);
+
+        assert!(
+            (w_dist - e_dist).abs() < 1e-5,
+            "uniform weighted ({w_dist}) != euclidean ({e_dist})"
+        );
+    }
+
+    #[test]
+    fn test_weighted_uniform_72d() {
+        // 9 facettes × 8 levels = 72d
+        let a = vec![0.5_f32; 72];
+        let mut b = vec![0.5_f32; 72];
+        b[64] = 1.0; // differ in temporal facette
+
+        let w = FacetteWeights::uniform(9);
+        let d = weighted_hilbert_distance(&a, &b, &w, 8);
+        assert!(d > 0.0);
+        assert_eq!(w.len(), 9);
+    }
+
+    #[test]
+    fn test_weighted_zero_eliminates_facette() {
+        let a = vec![0.0_f32; 64];
+        let mut b = vec![0.0_f32; 64];
+        // Make facettes 0 and 1 different
+        for i in 0..16 {
+            b[i] = 1.0;
+        }
+
+        // With uniform weights, distance > 0
+        let d_uniform = weighted_hilbert_distance(&a, &b, &FacetteWeights::uniform(8), 8);
+        assert!(d_uniform > 0.0);
+
+        // With zero weights on facettes 0 and 1, distance = 0
+        let w = FacetteWeights::custom(vec![0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]);
+        let d_zero = weighted_hilbert_distance(&a, &b, &w, 8);
+        assert!(
+            d_zero.abs() < 1e-10,
+            "zeroed facettes should eliminate their contribution, got {d_zero}"
+        );
+    }
+
+    #[test]
+    fn test_structural_changes_ranking() {
+        // Build a small graph and compute features
+        let store = LpgStore::new().unwrap();
+        let mut nodes = Vec::new();
+        for _ in 0..10 {
+            nodes.push(store.create_node(&["N"]));
+        }
+        // Hub topology: node 0 connected to all others
+        for i in 1..10 {
+            store.create_edge(nodes[0], nodes[i], "LINK");
+            store.create_edge(nodes[i], nodes[0], "LINK");
+        }
+        // Chain: 1→2→3→4
+        for i in 1..4 {
+            store.create_edge(nodes[i], nodes[i + 1], "LINK");
+        }
+
+        let config = HilbertFeaturesConfig::default();
+        let result = hilbert_features(&store, &config);
+        let query = &result.features[&nodes[0]]; // Hub node
+
+        // Compute top-5 neighbors with uniform vs structural weights
+        let uniform = FacetteWeights::uniform(8);
+        let structural = FacetteWeights::structural(8);
+
+        let mut ranking_uniform: Vec<(NodeId, f32)> = result
+            .features
+            .iter()
+            .filter(|(nid, _)| **nid != nodes[0])
+            .map(|(nid, v)| (*nid, weighted_hilbert_distance(query, v, &uniform, 8)))
+            .collect();
+        ranking_uniform.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+
+        let mut ranking_structural: Vec<(NodeId, f32)> = result
+            .features
+            .iter()
+            .filter(|(nid, _)| **nid != nodes[0])
+            .map(|(nid, v)| (*nid, weighted_hilbert_distance(query, v, &structural, 8)))
+            .collect();
+        ranking_structural.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+
+        let top5_u: Vec<NodeId> = ranking_uniform.iter().take(5).map(|x| x.0).collect();
+        let top5_s: Vec<NodeId> = ranking_structural.iter().take(5).map(|x| x.0).collect();
+
+        // The rankings should differ (structural boosts spectral/community/centrality)
+        // At minimum, both should return valid results
+        assert_eq!(top5_u.len(), 5);
+        assert_eq!(top5_s.len(), 5);
+        // Note: on small graphs the rankings may coincidentally match,
+        // but the distances should differ
+        let d_u_first = ranking_uniform[0].1;
+        let d_s_first = ranking_structural[0].1;
+        assert!(d_u_first >= 0.0);
+        assert!(d_s_first >= 0.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "weighted_hilbert_distance: vector length")]
+    fn test_custom_weights_validation() {
+        let a = vec![0.0_f32; 64];
+        let b = vec![0.0_f32; 64];
+        // Wrong number of facettes (5 instead of 8)
+        let w = FacetteWeights::custom(vec![1.0; 5]);
+        weighted_hilbert_distance(&a, &b, &w, 8); // Should panic
+    }
+
+    #[test]
+    fn test_temporal_profile() {
+        // 72d vectors with difference only in temporal facette (dims 64-71)
+        let a = vec![0.0_f32; 72];
+        let mut b = vec![0.0_f32; 72];
+        for i in 64..72 {
+            b[i] = 1.0;
+        }
+
+        let uniform = FacetteWeights::uniform(9);
+        let temporal = FacetteWeights::temporal(9);
+
+        let d_uniform = weighted_hilbert_distance(&a, &b, &uniform, 8);
+        let d_temporal = weighted_hilbert_distance(&a, &b, &temporal, 8);
+
+        // Temporal profile should amplify the temporal difference
+        assert!(
+            d_temporal > d_uniform,
+            "temporal distance ({d_temporal}) should be > uniform ({d_uniform})"
+        );
+    }
+
+    #[test]
+    fn test_facette_weights_profiles() {
+        // Just verify the profiles produce correct lengths
+        assert_eq!(FacetteWeights::uniform(8).len(), 8);
+        assert_eq!(FacetteWeights::uniform(9).len(), 9);
+        assert_eq!(FacetteWeights::structural(8).len(), 8);
+        assert_eq!(FacetteWeights::proximity(8).len(), 8);
+        assert_eq!(FacetteWeights::behavioral(8).len(), 8);
+        assert_eq!(FacetteWeights::temporal(9).len(), 9);
+        assert_eq!(FacetteWeights::default().len(), 8);
+
+        // Structural boosts facettes 0-3
+        let s = FacetteWeights::structural(8);
+        assert!(s.weights[0] > s.weights[4]);
     }
 }

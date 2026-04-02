@@ -24,6 +24,7 @@ pub mod ring;
 pub mod text;
 pub mod trie;
 pub mod vector;
+pub mod vp_tree;
 pub mod zone_map;
 
 pub use adjacency::ChunkedAdjacency;
@@ -41,4 +42,5 @@ pub use vector::{
 };
 #[cfg(feature = "vector-index")]
 pub use vector::{HnswConfig, HnswIndex};
+pub use vp_tree::VpTree;
 pub use zone_map::{BloomFilter, ZoneMapBuilder, ZoneMapEntry, ZoneMapIndex};
