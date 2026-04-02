@@ -8,7 +8,9 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use obrain_core::LpgStore;
 
-use obrain_adapters::plugins::algorithms::{betweenness_centrality, leiden, louvain, pagerank};
+use obrain_adapters::plugins::algorithms::{
+    betweenness_centrality, leiden, louvain, pagerank, stabilize_communities,
+};
 
 /// Creates a Barabási-Albert scale-free graph with `n` nodes and `m` edges per new node.
 ///
@@ -137,11 +139,34 @@ fn bench_betweenness(c: &mut Criterion) {
     group.finish();
 }
 
+// ============================================================================
+// Stable Communities
+// ============================================================================
+
+fn bench_stable_communities(c: &mut Criterion) {
+    let mut group = c.benchmark_group("gds/stable_communities");
+    group.sample_size(10);
+
+    for &size in &[500, 2_000, 10_000] {
+        let store = barabasi_albert(size, 3);
+        // Pre-compute a "previous" Louvain result
+        let prev = louvain(&store, 1.0);
+        group.bench_with_input(BenchmarkId::from_parameter(size), &store, |b, store| {
+            b.iter(|| {
+                let curr = louvain(store, 1.0);
+                stabilize_communities(&prev, &curr, store, 0.3)
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_pagerank,
     bench_louvain,
     bench_leiden,
-    bench_betweenness
+    bench_betweenness,
+    bench_stable_communities
 );
 criterion_main!(benches);

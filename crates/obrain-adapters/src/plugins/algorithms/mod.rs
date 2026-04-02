@@ -48,6 +48,7 @@ pub mod projection;
 mod shortest_path;
 mod similarity;
 pub mod spectral;
+pub mod stable_communities;
 mod structure;
 mod traits;
 mod traversal;
@@ -133,6 +134,12 @@ pub use hilbert_features::{
 pub use similarity::{
     NodeSimilarityAlgorithm, SimilarityMetric, SimilarityScore, TopKSimilarAlgorithm, adamic_adar,
     cosine_similarity, jaccard, overlap_coefficient, resource_allocation, top_k_similar,
+};
+
+// Stable community detection
+pub use stable_communities::{
+    StableCommunitiesAlgorithm, StableCommunityConfig, StableLouvainResult,
+    stabilize_communities,
 };
 
 // Graph projections (virtual filtered views)
