@@ -526,7 +526,10 @@ mod tests {
         let _ = manager.get_features();
 
         let tree = manager.get_vp_tree();
-        assert!(tree.is_some(), "VP-Tree should be built after get_features()");
+        assert!(
+            tree.is_some(),
+            "VP-Tree should be built after get_features()"
+        );
     }
 
     #[test]

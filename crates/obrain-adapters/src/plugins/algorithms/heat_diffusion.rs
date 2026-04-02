@@ -21,9 +21,7 @@ use obrain_common::utils::error::Result;
 use obrain_core::graph::{Direction, GraphStore};
 
 use super::super::{AlgorithmResult, ParameterDef, ParameterType, Parameters};
-use super::hilbert_features::{
-    weighted_hilbert_distance, FacetteWeights, HilbertFeaturesResult,
-};
+use super::hilbert_features::{FacetteWeights, HilbertFeaturesResult, weighted_hilbert_distance};
 use super::traits::GraphAlgorithm;
 
 // ============================================================================
@@ -137,9 +135,9 @@ pub fn heat_kernel_diffusion(
         }
     };
 
-    let sigma_sq = config.sigma_sq.unwrap_or_else(|| {
-        calibrate_sigma(store, features, weights, levels)
-    });
+    let sigma_sq = config
+        .sigma_sq
+        .unwrap_or_else(|| calibrate_sigma(store, features, weights, levels));
 
     // Guard: if sigma_sq is zero or non-finite, use 1.0
     let sigma_sq = if sigma_sq <= 0.0 || !sigma_sq.is_finite() {
@@ -160,7 +158,8 @@ pub fn heat_kernel_diffusion(
     }
 
     // Pre-compute neighbor lists + kernel weights
-    let mut neighbor_weights: HashMap<NodeId, Vec<(NodeId, f32)>> = HashMap::with_capacity(node_ids.len());
+    let mut neighbor_weights: HashMap<NodeId, Vec<(NodeId, f32)>> =
+        HashMap::with_capacity(node_ids.len());
     for &nid in &node_ids {
         let edges = store.edges_from(nid, Direction::Outgoing);
         let mut nw: Vec<(NodeId, f32)> = Vec::with_capacity(edges.len());
@@ -230,9 +229,7 @@ pub fn heat_kernel_diffusion(
         .into_iter()
         .filter(|(_, h)| *h > 0.0 && h.is_finite())
         .collect();
-    result.sort_unstable_by(|a, b| {
-        b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-    });
+    result.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     result
 }
 
@@ -294,7 +291,7 @@ impl GraphAlgorithm for HeatKernelAlgorithm {
     }
 
     fn execute(&self, store: &dyn GraphStore, params: &Parameters) -> Result<AlgorithmResult> {
-        use super::hilbert_features::{hilbert_features, HilbertFeaturesConfig};
+        use super::hilbert_features::{HilbertFeaturesConfig, hilbert_features};
 
         // Parse seed nodes from comma-separated string
         let seed_str = params.get_string("seed_nodes").unwrap_or("");
@@ -327,8 +324,7 @@ impl GraphAlgorithm for HeatKernelAlgorithm {
 
         let result = heat_kernel_diffusion(store, &features, &seeds, &weights, &config);
 
-        let mut algo_result =
-            AlgorithmResult::new(vec!["node_id".to_string(), "heat".to_string()]);
+        let mut algo_result = AlgorithmResult::new(vec!["node_id".to_string(), "heat".to_string()]);
         for (node_id, heat) in &result {
             algo_result.add_row(vec![
                 Value::Int64(node_id.0 as i64),
@@ -346,9 +342,9 @@ impl GraphAlgorithm for HeatKernelAlgorithm {
 #[cfg(test)]
 #[allow(clippy::many_single_char_names)]
 mod tests {
+    use super::super::hilbert_features::{HilbertFeaturesConfig, hilbert_features};
     use super::*;
     use obrain_core::graph::lpg::LpgStore;
-    use super::super::hilbert_features::{hilbert_features, HilbertFeaturesConfig};
 
     /// Build a 5-node line graph: A - B - C - D - E (bidirectional edges).
     fn make_line_graph() -> (LpgStore, Vec<NodeId>) {
@@ -507,7 +503,11 @@ mod tests {
             .unwrap_or(8);
 
         let sigma = calibrate_sigma(&store, &features, &weights, levels);
-        assert!(sigma > 0.0, "calibrated sigma² must be positive, got {}", sigma);
+        assert!(
+            sigma > 0.0,
+            "calibrated sigma² must be positive, got {}",
+            sigma
+        );
         assert!(sigma.is_finite(), "calibrated sigma² must be finite");
     }
 }
