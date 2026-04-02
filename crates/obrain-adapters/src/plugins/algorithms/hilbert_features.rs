@@ -1,10 +1,11 @@
-//! Hilbert 64d multi-facette node features.
+//! Hilbert multi-facette node features (64d or 72d).
 //!
-//! Computes a 64-dimensional feature vector per node by orchestrating 8 graph
+//! Computes a multi-dimensional feature vector per node by orchestrating graph
 //! analysis **facettes**, each producing a 2D point per node, then encoding
 //! each via multi-resolution Hilbert curves (8 levels → 8 dimensions).
 //!
-//! **8 facettes × 8 dimensions = 64d per node.**
+//! **Base: 8 facettes × 8 dimensions = 64d per node.**
+//! **With temporal: 9 facettes × 8 dimensions = 72d per node.**
 //!
 //! | Facette | Dims  | Source algorithm            | Captures                |
 //! |---------|-------|----------------------------|-------------------------|
@@ -16,9 +17,13 @@
 //! | 5       | 40-47 | Betweenness + closeness    | Bridge / flow role      |
 //! | 6       | 48-55 | Co-usage (REINFORCES)      | Behavioral coupling     |
 //! | 7       | 56-63 | Schema (labels + props)    | Type / structural role  |
+//! | 8*      | 64-71 | Timestamp age + variance   | Temporal role           |
+//!
+//! *Facette 8 is **opt-in** via `enable_temporal = true`. When enabled but no
+//! node has the configured timestamp property, falls back to 64d silently.
 //!
 //! Facettes 0-3 are **global** (require full graph computation).
-//! Facettes 4-7 are **local** (can be updated incrementally).
+//! Facettes 4-8 are **local** (can be updated incrementally).
 //!
 //! ## Usage
 //!
@@ -72,6 +77,16 @@ pub struct HilbertFeaturesConfig {
     /// Above this threshold, these facettes use degree-based approximations.
     /// 0 = no limit (default: 10_000).
     pub large_graph_threshold: usize,
+    /// Enable the 9th temporal facette (default: false).
+    ///
+    /// When enabled AND at least one node has the `temporal_property`, features
+    /// grow from `levels × 8` to `levels × 9` dimensions. When disabled or no
+    /// timestamps are found, stays at `levels × 8`.
+    pub enable_temporal: bool,
+    /// Node property key holding a Unix timestamp (seconds) (default: "created_at").
+    pub temporal_property: String,
+    /// Time window in seconds for age normalization (default: 30 days = 2_592_000).
+    pub temporal_window_secs: u64,
 }
 
 impl Default for HilbertFeaturesConfig {
@@ -82,6 +97,9 @@ impl Default for HilbertFeaturesConfig {
             damping: 0.85,
             pagerank_iterations: 100,
             large_graph_threshold: 10_000,
+            enable_temporal: false,
+            temporal_property: "created_at".to_string(),
+            temporal_window_secs: 2_592_000, // 30 days
         }
     }
 }
@@ -209,9 +227,9 @@ pub fn hilbert_features(
 ) -> HilbertFeaturesResult {
     let node_ids = store.node_ids();
     let n = node_ids.len();
-    let total_dims = config.levels * 8;
 
     if n == 0 {
+        let total_dims = config.levels * 8;
         return HilbertFeaturesResult {
             features: HashMap::new(),
             dimensions: total_dims,
@@ -222,7 +240,7 @@ pub fn hilbert_features(
     // Check if graph is too large for expensive facettes
     let is_large = config.large_graph_threshold > 0 && n > config.large_graph_threshold;
 
-    // Compute all 8 facettes as 2D points per node
+    // Compute all 8 base facettes as 2D points per node
     // For large graphs, expensive facettes (spectral, betweenness) use approximations
     let facettes: [HashMap<NodeId, [f32; 2]>; 8] = if is_large {
         [
@@ -263,6 +281,16 @@ pub fn hilbert_features(
         ]
     };
 
+    // Optionally compute the 9th temporal facette
+    let temporal_facette = if config.enable_temporal {
+        compute_temporal_facette(store, &config.temporal_property, 0)
+    } else {
+        None
+    };
+
+    let num_facettes = if temporal_facette.is_some() { 9 } else { 8 };
+    let total_dims = config.levels * num_facettes;
+
     // Encode each facette via Hilbert and concatenate
     let mut features: HashMap<NodeId, Vec<f32>> = HashMap::with_capacity(n);
 
@@ -270,6 +298,12 @@ pub fn hilbert_features(
         let mut vec = Vec::with_capacity(total_dims);
         for facette in &facettes {
             let point = facette.get(&nid).copied().unwrap_or([0.5, 0.5]);
+            let encoded = hilbert_encode_point(point, config.levels);
+            vec.extend_from_slice(&encoded);
+        }
+        // Append temporal facette if present
+        if let Some(ref temporal) = temporal_facette {
+            let point = temporal.get(&nid).copied().unwrap_or([0.5, 0.5]);
             let encoded = hilbert_encode_point(point, config.levels);
             vec.extend_from_slice(&encoded);
         }
@@ -311,9 +345,9 @@ pub fn hilbert_features_incremental(
     changed_nodes: &[NodeId],
 ) -> HilbertFeaturesResult {
     let node_ids = store.node_ids();
-    let total_dims = config.levels * 8;
 
     if node_ids.is_empty() {
+        let total_dims = config.levels * 8;
         return HilbertFeaturesResult {
             features: HashMap::new(),
             dimensions: total_dims,
@@ -338,6 +372,17 @@ pub fn hilbert_features_incremental(
     let local_facettes: [&HashMap<NodeId, [f32; 2]>; 4] =
         [&local_bfs, &local_bc, &local_co, &local_schema];
 
+    // Optionally recompute temporal facette (local — always recomputed)
+    let temporal_facette = if config.enable_temporal {
+        compute_temporal_facette(store, &config.temporal_property, 0)
+    } else {
+        None
+    };
+
+    let num_facettes = if temporal_facette.is_some() { 9 } else { 8 };
+    let total_dims = config.levels * num_facettes;
+    let base_local_dims = config.levels * 4; // facettes 4-7
+
     // Build result: copy global dims from previous, update local dims for affected
     let mut features: HashMap<NodeId, Vec<f32>> = HashMap::with_capacity(node_ids.len());
     let global_dims = config.levels * 4; // facettes 0-3
@@ -359,21 +404,28 @@ pub fn hilbert_features_incremental(
             }
         }
 
-        // Local facettes (dims global_dims..total_dims): recompute for affected, copy for others
+        // Local facettes (4-7): recompute for affected, copy for others
         if affected.contains(&nid) {
             for facette in &local_facettes {
                 let point = facette.get(&nid).copied().unwrap_or([0.5, 0.5]);
                 vec.extend_from_slice(&hilbert_encode_point(point, config.levels));
             }
         } else if let Some(prev) = previous.features.get(&nid) {
-            vec.extend_from_slice(&prev[global_dims..total_dims.min(prev.len())]);
-            while vec.len() < total_dims {
+            let local_end = (global_dims + base_local_dims).min(prev.len());
+            vec.extend_from_slice(&prev[global_dims..local_end]);
+            while vec.len() < global_dims + base_local_dims {
                 vec.extend_from_slice(&hilbert_encode_point([0.5, 0.5], config.levels));
             }
         } else {
             for _ in 0..4 {
                 vec.extend_from_slice(&hilbert_encode_point([0.5, 0.5], config.levels));
             }
+        }
+
+        // Temporal facette (always recomputed if present)
+        if let Some(ref temporal) = temporal_facette {
+            let point = temporal.get(&nid).copied().unwrap_or([0.5, 0.5]);
+            vec.extend_from_slice(&hilbert_encode_point(point, config.levels));
         }
 
         features.insert(nid, vec);
@@ -689,6 +741,132 @@ fn compute_schema_features(store: &dyn GraphStore) -> HashMap<NodeId, [f32; 2]> 
 }
 
 // ============================================================================
+// Facette 8: Temporal features (age + neighbor age variance)
+// ============================================================================
+
+/// Compute temporal features from node timestamps.
+///
+/// For each node:
+/// - dim1: rank-normalized age (`now - timestamp`). Older nodes get higher values.
+/// - dim2: normalized standard deviation of neighbor ages. Nodes bridging old and
+///   new regions have high variance.
+///
+/// Nodes missing the timestamp property get a default age of 0.5 (median).
+///
+/// # Arguments
+///
+/// * `store` - The graph store
+/// * `property` - Property key holding a Unix timestamp (seconds)
+/// * `now` - Current time as Unix timestamp (seconds). If 0, auto-detected from
+///   the maximum timestamp in the graph + 1.
+///
+/// # Returns
+///
+/// `Some(HashMap)` if at least one node has a timestamp, `None` otherwise.
+///
+/// # Complexity
+///
+/// O(V + E) — one pass to read timestamps, one pass for neighbor variance.
+fn compute_temporal_facette(
+    store: &dyn GraphStore,
+    property: &str,
+    now: u64,
+) -> Option<HashMap<NodeId, [f32; 2]>> {
+    let node_ids = store.node_ids();
+    let prop_key = obrain_common::types::PropertyKey::new(property);
+
+    // Collect raw timestamps
+    let mut timestamps: HashMap<NodeId, u64> = HashMap::new();
+    for &nid in &node_ids {
+        if let Some(val) = store.get_node_property(nid, &prop_key) {
+            let ts = match &val {
+                Value::Int64(v) => Some(*v as u64),
+                Value::Float64(v) => Some(*v as u64),
+                _ => None,
+            };
+            if let Some(ts) = ts {
+                timestamps.insert(nid, ts);
+            }
+        }
+    }
+
+    // No timestamps found → skip this facette
+    if timestamps.is_empty() {
+        return None;
+    }
+
+    // Auto-detect "now" if not provided
+    let now = if now == 0 {
+        timestamps.values().max().copied().unwrap_or(0) + 1
+    } else {
+        now
+    };
+
+    // Compute raw ages
+    let mut ages: HashMap<NodeId, f64> = HashMap::with_capacity(node_ids.len());
+    for &nid in &node_ids {
+        if let Some(&ts) = timestamps.get(&nid) {
+            ages.insert(nid, now.saturating_sub(ts) as f64);
+        } else {
+            // Missing timestamp → sentinel, will get 0.5 after rank_normalize
+            ages.insert(nid, f64::NAN);
+        }
+    }
+
+    // Split into nodes with and without timestamps for rank normalization
+    let mut known_ages: HashMap<NodeId, f64> = HashMap::new();
+    let mut unknown_nodes: Vec<NodeId> = Vec::new();
+    for (&nid, &age) in &ages {
+        if age.is_nan() {
+            unknown_nodes.push(nid);
+        } else {
+            known_ages.insert(nid, age);
+        }
+    }
+
+    let age_ranks = rank_normalize(&known_ages);
+
+    // Compute neighbor age variance (dim2)
+    let mut neighbor_variance: HashMap<NodeId, f64> = HashMap::with_capacity(node_ids.len());
+    for &nid in &node_ids {
+        let neighbors = store.edges_from(nid, Direction::Outgoing);
+        if neighbors.is_empty() {
+            neighbor_variance.insert(nid, 0.0);
+            continue;
+        }
+
+        let neighbor_ages: Vec<f32> = neighbors
+            .iter()
+            .map(|(n, _)| *age_ranks.get(n).unwrap_or(&0.5))
+            .collect();
+
+        let n = neighbor_ages.len() as f64;
+        let mean = neighbor_ages.iter().map(|&x| x as f64).sum::<f64>() / n;
+        let variance = neighbor_ages
+            .iter()
+            .map(|&x| (x as f64 - mean).powi(2))
+            .sum::<f64>()
+            / n;
+        // std normalized to [0, 0.5] max (since ranks are in [0,1])
+        // Multiply by 2 to spread to [0, 1]
+        let std = variance.sqrt() * 2.0;
+        neighbor_variance.insert(nid, std);
+    }
+
+    let var_ranks = rank_normalize(&neighbor_variance);
+
+    // Build result
+    let mut result = HashMap::with_capacity(node_ids.len());
+    for &nid in &node_ids {
+        let x = *age_ranks.get(&nid).unwrap_or(&0.5);
+        let y = *var_ranks.get(&nid).unwrap_or(&0.5);
+        result.insert(nid, [x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)]);
+    }
+
+    Some(result)
+}
+
+// ============================================================================
 // Large-graph approximations (O(V+E) instead of O(V×E))
 // ============================================================================
 
@@ -890,6 +1068,20 @@ fn hilbert_features_params() -> &'static [ParameterDef] {
                 required: false,
                 default: Some("REINFORCES".to_string()),
             },
+            ParameterDef {
+                name: "enable_temporal".to_string(),
+                description: "Enable 9th temporal facette (adds 8 dims)".to_string(),
+                param_type: ParameterType::Boolean,
+                required: false,
+                default: Some("false".to_string()),
+            },
+            ParameterDef {
+                name: "temporal_property".to_string(),
+                description: "Node property key for Unix timestamp (seconds)".to_string(),
+                param_type: ParameterType::String,
+                required: false,
+                default: Some("created_at".to_string()),
+            },
         ]
     })
 }
@@ -900,7 +1092,7 @@ impl GraphAlgorithm for HilbertFeaturesAlgorithm {
     }
 
     fn description(&self) -> &str {
-        "64d multi-facette Hilbert features (8 facettes × 8 levels)"
+        "Multi-facette Hilbert features (8 or 9 facettes × configurable levels)"
     }
 
     fn parameters(&self) -> &[ParameterDef] {
@@ -913,10 +1105,17 @@ impl GraphAlgorithm for HilbertFeaturesAlgorithm {
             .get_string("persona_edge_type")
             .unwrap_or("REINFORCES")
             .to_string();
+        let enable_temporal = params.get_bool("enable_temporal").unwrap_or(false);
+        let temporal_property = params
+            .get_string("temporal_property")
+            .unwrap_or("created_at")
+            .to_string();
 
         let config = HilbertFeaturesConfig {
             levels,
             persona_edge_type: co_usage,
+            enable_temporal,
+            temporal_property,
             ..Default::default()
         };
 
@@ -1235,6 +1434,161 @@ mod tests {
         // Another full recalc → dirty_global = false
         let full2 = hilbert_features(&store, &config);
         assert!(!full2.dirty_global);
+    }
+
+    // ================================================================
+    // Temporal facette tests
+    // ================================================================
+
+    #[test]
+    fn test_temporal_basic() {
+        let store = LpgStore::new().unwrap();
+        let now = 1_000_000u64;
+        let a = store.create_node(&["A"]);
+        let b = store.create_node(&["A"]);
+        let c = store.create_node(&["A"]);
+        store.create_edge(a, b, "LINK");
+        store.create_edge(b, c, "LINK");
+
+        // Set timestamps: a=old, b=medium, c=recent
+        store.set_node_property(a, "created_at", Value::Int64((now - 100_000) as i64));
+        store.set_node_property(b, "created_at", Value::Int64((now - 50_000) as i64));
+        store.set_node_property(c, "created_at", Value::Int64((now - 1_000) as i64));
+
+        let config = HilbertFeaturesConfig {
+            enable_temporal: true,
+            ..Default::default()
+        };
+        let result = hilbert_features(&store, &config);
+
+        // With temporal → 9 facettes × 8 levels = 72 dims
+        assert_eq!(result.dimensions, 72);
+        for vec in result.features.values() {
+            assert_eq!(vec.len(), 72);
+            for &v in vec {
+                assert!((0.0..=1.0).contains(&v), "Feature value {v} not in [0,1]");
+            }
+        }
+    }
+
+    #[test]
+    fn test_temporal_missing_timestamps() {
+        // No timestamps on any node → stays at 64d
+        let store = make_test_graph();
+        let config = HilbertFeaturesConfig {
+            enable_temporal: true,
+            ..Default::default()
+        };
+        let result = hilbert_features(&store, &config);
+
+        assert_eq!(result.dimensions, 64);
+        for vec in result.features.values() {
+            assert_eq!(vec.len(), 64);
+        }
+    }
+
+    #[test]
+    fn test_temporal_ordering() {
+        // Older nodes should have higher age rank
+        let store = LpgStore::new().unwrap();
+        let old = store.create_node(&["N"]);
+        let mid = store.create_node(&["N"]);
+        let recent = store.create_node(&["N"]);
+        store.create_edge(old, mid, "E");
+        store.create_edge(mid, recent, "E");
+
+        let now = 1_000_000u64;
+        store.set_node_property(old, "created_at", Value::Int64((now - 500_000) as i64));
+        store.set_node_property(mid, "created_at", Value::Int64((now - 100_000) as i64));
+        store.set_node_property(recent, "created_at", Value::Int64((now - 1_000) as i64));
+
+        let temporal = compute_temporal_facette(&store, "created_at", now).unwrap();
+
+        // dim1 (x) = rank of age → old should have highest rank
+        assert!(temporal[&old][0] > temporal[&recent][0],
+            "Old node age rank ({}) should be > recent ({})",
+            temporal[&old][0], temporal[&recent][0]);
+        assert!(temporal[&mid][0] > temporal[&recent][0],
+            "Mid node age rank ({}) should be > recent ({})",
+            temporal[&mid][0], temporal[&recent][0]);
+    }
+
+    #[test]
+    fn test_temporal_opt_in() {
+        // enable_temporal=false → stays at 64d even if timestamps exist
+        let store = LpgStore::new().unwrap();
+        let a = store.create_node(&["A"]);
+        store.set_node_property(a, "created_at", Value::Int64(1_000_000));
+
+        let config = HilbertFeaturesConfig {
+            enable_temporal: false,
+            ..Default::default()
+        };
+        let result = hilbert_features(&store, &config);
+        assert_eq!(result.dimensions, 64);
+    }
+
+    #[test]
+    fn test_temporal_partial_coverage() {
+        // Some nodes have timestamps, others don't → 72d, missing get default 0.5
+        let store = LpgStore::new().unwrap();
+        let a = store.create_node(&["A"]);
+        let b = store.create_node(&["A"]);
+        let c = store.create_node(&["A"]);
+        store.create_edge(a, b, "E");
+        store.create_edge(b, c, "E");
+
+        // Only a and c have timestamps
+        store.set_node_property(a, "created_at", Value::Int64(900_000));
+        store.set_node_property(c, "created_at", Value::Int64(999_000));
+
+        let temporal = compute_temporal_facette(&store, "created_at", 1_000_000).unwrap();
+
+        // b has no timestamp → should still have a valid [0,1] point
+        let b_point = temporal[&b];
+        assert!((0.0..=1.0).contains(&b_point[0]), "b.x = {}", b_point[0]);
+        assert!((0.0..=1.0).contains(&b_point[1]), "b.y = {}", b_point[1]);
+    }
+
+    #[test]
+    fn test_temporal_bridge_variance() {
+        // A node bridging old and new clusters should have high neighbor age variance
+        let store = LpgStore::new().unwrap();
+        let now = 1_000_000u64;
+
+        // Old cluster
+        let o1 = store.create_node(&["Old"]);
+        let o2 = store.create_node(&["Old"]);
+        store.set_node_property(o1, "created_at", Value::Int64((now - 500_000) as i64));
+        store.set_node_property(o2, "created_at", Value::Int64((now - 490_000) as i64));
+
+        // New cluster
+        let n1 = store.create_node(&["New"]);
+        let n2 = store.create_node(&["New"]);
+        store.set_node_property(n1, "created_at", Value::Int64((now - 1_000) as i64));
+        store.set_node_property(n2, "created_at", Value::Int64((now - 2_000) as i64));
+
+        // Bridge node
+        let bridge = store.create_node(&["Bridge"]);
+        store.set_node_property(bridge, "created_at", Value::Int64((now - 250_000) as i64));
+
+        // Connect bridge to both clusters
+        store.create_edge(bridge, o1, "E");
+        store.create_edge(bridge, o2, "E");
+        store.create_edge(bridge, n1, "E");
+        store.create_edge(bridge, n2, "E");
+
+        // Intra-cluster edges
+        store.create_edge(o1, o2, "E");
+        store.create_edge(n1, n2, "E");
+
+        let temporal = compute_temporal_facette(&store, "created_at", now).unwrap();
+
+        // Bridge node (dim2 = neighbor age variance) should be higher than intra-cluster nodes
+        let bridge_var = temporal[&bridge][1];
+        let o1_var = temporal[&o1][1];
+        assert!(bridge_var > o1_var,
+            "Bridge variance ({bridge_var}) should be > intra-cluster ({o1_var})");
     }
 
     #[test]
