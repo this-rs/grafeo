@@ -19,6 +19,7 @@
 #![deny(unsafe_code)]
 
 pub mod cache;
+pub mod change_tracker;
 pub mod execution;
 pub mod graph;
 pub mod index;
@@ -27,6 +28,7 @@ pub mod storage;
 pub mod testing;
 
 // Re-export the types you'll use most often
+pub use change_tracker::{ChangeTracker, EntityRef, GraphDiff, GraphEvent};
 pub use graph::lpg::{Edge, LpgStore, Node};
 pub use index::adjacency::ChunkedAdjacency;
 pub use statistics::{ColumnStatistics, Histogram, LabelStatistics, Statistics};

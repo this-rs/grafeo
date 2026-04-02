@@ -401,6 +401,17 @@ pub struct LpgStore {
     /// simply discarded.
     /// Lock order: 10 (after named_graphs, independent of other locks)
     property_undo_log: RwLock<FxHashMap<TransactionId, Vec<PropertyUndoEntry>>>,
+
+    /// Optional change tracker for recording graph mutations.
+    ///
+    /// When `Some`, every create/delete/set_property operation records a
+    /// [`GraphEvent`] in the ring buffer. When `None`, there is zero
+    /// overhead (branch prediction eliminates the check).
+    ///
+    /// Enable via [`LpgStore::enable_tracking()`].
+    ///
+    /// Lock order: 11 (after property_undo_log)
+    change_tracker: Option<RwLock<crate::change_tracker::ChangeTracker>>,
 }
 
 impl LpgStore {
@@ -465,7 +476,41 @@ impl LpgStore {
             needs_stats_recompute: AtomicBool::new(false),
             named_graphs: RwLock::new(FxHashMap::default()),
             property_undo_log: RwLock::new(FxHashMap::default()),
+            change_tracker: None,
         })
+    }
+
+    /// Enables change tracking with the given ring buffer capacity.
+    ///
+    /// After calling this, every `create_node`, `create_edge`, `delete_node`,
+    /// `delete_edge`, and `set_node_property` / `set_edge_property` operation
+    /// will record a [`GraphEvent`](crate::change_tracker::GraphEvent) in the
+    /// internal ring buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `capacity` - Maximum number of events to retain (recommendation: 10_000)
+    ///
+    /// # Note
+    ///
+    /// This replaces any existing tracker. Call once at initialization.
+    pub fn enable_tracking(&mut self, capacity: usize) {
+        self.change_tracker = Some(RwLock::new(crate::change_tracker::ChangeTracker::new(capacity)));
+    }
+
+    /// Returns a read reference to the change tracker, if tracking is enabled.
+    pub fn changes(&self) -> Option<parking_lot::RwLockReadGuard<'_, crate::change_tracker::ChangeTracker>> {
+        self.change_tracker.as_ref().map(|t| t.read())
+    }
+
+    /// Records an event in the change tracker, if tracking is enabled.
+    ///
+    /// This is a no-op when the tracker is `None`.
+    #[inline]
+    pub(super) fn track_event(&self, event: crate::change_tracker::GraphEvent) {
+        if let Some(ref tracker) = self.change_tracker {
+            tracker.write().record(event);
+        }
     }
 
     /// Returns the current epoch.

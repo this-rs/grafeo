@@ -162,6 +162,14 @@ impl LpgStore {
         let chain = VersionChain::with_initial(record, version_epoch, transaction_id);
         self.nodes.write().insert(id, chain);
         self.live_node_count.fetch_add(1, Ordering::Relaxed);
+
+        // Track the mutation
+        self.track_event(crate::change_tracker::GraphEvent::NodeCreated {
+            id,
+            labels: labels.iter().map(|s| s.to_string()).collect(),
+            timestamp: epoch.as_u64(),
+        });
+
         id
     }
 
@@ -528,6 +536,12 @@ impl LpgStore {
             self.node_properties.remove_all(id, self.current_epoch());
 
             self.live_node_count.fetch_sub(1, Ordering::Relaxed);
+
+            // Track the mutation
+            self.track_event(crate::change_tracker::GraphEvent::NodeDeleted {
+                id,
+                timestamp: epoch.as_u64(),
+            });
 
             true
         } else {
