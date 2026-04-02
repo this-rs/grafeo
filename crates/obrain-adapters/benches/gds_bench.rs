@@ -9,8 +9,8 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use obrain_core::LpgStore;
 
 use obrain_adapters::plugins::algorithms::{
-    betweenness_centrality, leiden, louvain, pagerank, personalized_pagerank, stabilize_communities,
-    PprConfig,
+    betweenness_centrality, contract_subgraph, leiden, louvain, pagerank, personalized_pagerank,
+    stabilize_communities, ContractionConfig, PprConfig,
 };
 
 /// Creates a Barabási-Albert scale-free graph with `n` nodes and `m` edges per new node.
@@ -186,6 +186,50 @@ fn bench_ppr(c: &mut Criterion) {
     group.finish();
 }
 
+// ============================================================================
+// Subgraph Contraction
+// ============================================================================
+
+fn bench_contraction(c: &mut Criterion) {
+    let mut group = c.benchmark_group("gds/contraction");
+    group.sample_size(10);
+
+    for &size in &[500, 2_000, 10_000] {
+        // Build graph, pick a Louvain community to contract
+        let store = barabasi_albert(size, 3);
+        let result = louvain(&store, 1.0);
+        // Find the largest community
+        let mut comm_nodes: std::collections::HashMap<u64, Vec<obrain_common::types::NodeId>> =
+            std::collections::HashMap::new();
+        for (&nid, &comm) in &result.communities {
+            comm_nodes.entry(comm).or_default().push(nid);
+        }
+        let largest: Vec<obrain_common::types::NodeId> = comm_nodes
+            .into_values()
+            .max_by_key(|v| v.len())
+            .unwrap_or_default();
+
+        let config = ContractionConfig::default();
+
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _| {
+            b.iter(|| {
+                // Rebuild graph each iteration since contraction is destructive
+                let s = barabasi_albert(size, 3);
+                // Re-use the same node IDs (deterministic BA graph)
+                let ids = s.node_ids();
+                let contract_ids: Vec<obrain_common::types::NodeId> = largest
+                    .iter()
+                    .filter_map(|nid| ids.get(nid.0 as usize).copied())
+                    .collect();
+                if !contract_ids.is_empty() {
+                    let _ = contract_subgraph(&s, &contract_ids, &config);
+                }
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_pagerank,
@@ -193,6 +237,7 @@ criterion_group!(
     bench_leiden,
     bench_betweenness,
     bench_stable_communities,
-    bench_ppr
+    bench_ppr,
+    bench_contraction
 );
 criterion_main!(benches);

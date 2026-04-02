@@ -48,6 +48,7 @@ pub mod projection;
 mod shortest_path;
 mod similarity;
 pub mod spectral;
+pub mod contraction;
 pub mod relevance;
 pub mod stable_communities;
 mod structure;
@@ -147,6 +148,12 @@ pub use relevance::{
 pub use stable_communities::{
     StableCommunitiesAlgorithm, StableCommunityConfig, StableLouvainResult,
     stabilize_communities,
+};
+
+// Subgraph contraction (graph coarsening)
+pub use contraction::{
+    AggregationStrategy, ContractionConfig, ContractionResult, ContractionSnapshot,
+    SubgraphContractionAlgorithm, contract_by_communities, contract_subgraph, expand_supernode,
 };
 
 // Graph projections (virtual filtered views)
