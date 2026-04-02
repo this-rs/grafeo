@@ -65,7 +65,7 @@ use super::hilbert_features::{
 
 /// Manages incremental Hilbert feature recalculation driven by graph events.
 ///
-/// Subscribes to [`LpgStore`] mutations via the [`SubscriptionManager`] and
+/// Subscribes to [`LpgStore`] mutations via the `SubscriptionManager` and
 /// accumulates changed node IDs. On [`get_features()`](Self::get_features),
 /// triggers a lazy incremental recalculation if the number of pending changes
 /// exceeds the [`debounce_threshold`](Self::debounce_threshold).
