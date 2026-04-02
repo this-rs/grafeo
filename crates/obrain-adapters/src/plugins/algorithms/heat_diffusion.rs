@@ -366,8 +366,7 @@ mod tests {
             .features
             .values()
             .next()
-            .map(|v| v.len() / config.levels)
-            .unwrap_or(8);
+            .map_or(8, |v| v.len() / config.levels);
         let weights = FacetteWeights::uniform(n_facettes);
         (features, weights)
     }
@@ -390,7 +389,7 @@ mod tests {
         assert!(!result.is_empty(), "diffusion should produce results");
 
         // The seed node should have the highest heat
-        let heat_map: HashMap<NodeId, f32> = result.iter().cloned().collect();
+        let heat_map: HashMap<NodeId, f32> = result.iter().copied().collect();
         let seed_heat = heat_map.get(&nodes[0]).copied().unwrap_or(0.0);
         assert!(seed_heat > 0.0, "seed should have positive heat");
 
@@ -496,8 +495,7 @@ mod tests {
             .features
             .values()
             .next()
-            .map(|v| v.len() / weights.len())
-            .unwrap_or(8);
+            .map_or(8, |v| v.len() / weights.len());
 
         let sigma = calibrate_sigma(&store, &features, &weights, levels);
         assert!(
