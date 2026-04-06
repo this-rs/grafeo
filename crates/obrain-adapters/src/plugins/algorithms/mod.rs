@@ -48,6 +48,7 @@ pub mod hilbert_features;
 pub mod hilbert_manager;
 pub mod kernel;
 pub mod kernel_math;
+pub mod kernel_train;
 mod mst;
 pub mod projection;
 pub mod relevance;
