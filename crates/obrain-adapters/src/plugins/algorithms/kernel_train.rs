@@ -18,9 +18,9 @@
 //! GraphStore → extract features + communities → train_contrastive() → frozen Phi_0
 //! ```
 
-use super::kernel::{single_pass_attention, AdjacencyMask, MultiHeadPhi0};
 #[cfg(test)]
 use super::kernel::D_MODEL;
+use super::kernel::{AdjacencyMask, MultiHeadPhi0, single_pass_attention};
 use super::kernel_math::{Matrix, Rng};
 
 // ============================================================================
@@ -178,8 +178,24 @@ fn spsa_gradient(
         .map(|(&p, &d)| p - perturbation_size * d)
         .collect();
 
-    let loss_plus = forward_loss(phi, &weights_plus, features, adj_mask, triplets, margin, alpha);
-    let loss_minus = forward_loss(phi, &weights_minus, features, adj_mask, triplets, margin, alpha);
+    let loss_plus = forward_loss(
+        phi,
+        &weights_plus,
+        features,
+        adj_mask,
+        triplets,
+        margin,
+        alpha,
+    );
+    let loss_minus = forward_loss(
+        phi,
+        &weights_minus,
+        features,
+        adj_mask,
+        triplets,
+        margin,
+        alpha,
+    );
 
     // Restore original weights
     phi.deserialize_weights(&original_weights);
@@ -542,11 +558,15 @@ mod tests {
     #[test]
     fn test_triplet_loss_satisfied() {
         // pos closer than neg by more than margin → loss = 0
-        let m = Matrix::from_vec(3, 3, vec![
-            1.0, 0.0, 0.0,  // anchor
-            0.9, 0.1, 0.0,  // positive (close)
-            0.0, 1.0, 0.0,  // negative (far)
-        ]);
+        let m = Matrix::from_vec(
+            3,
+            3,
+            vec![
+                1.0, 0.0, 0.0, // anchor
+                0.9, 0.1, 0.0, // positive (close)
+                0.0, 1.0, 0.0, // negative (far)
+            ],
+        );
         let loss = triplet_loss(&m, 0, 1, 2, 0.1);
         assert_eq!(loss, 0.0, "satisfied triplet should have zero loss");
     }
@@ -554,23 +574,22 @@ mod tests {
     #[test]
     fn test_triplet_loss_violated() {
         // neg closer than pos → positive loss
-        let m = Matrix::from_vec(3, 3, vec![
-            1.0, 0.0, 0.0,  // anchor
-            0.0, 1.0, 0.0,  // "positive" (actually far)
-            0.9, 0.1, 0.0,  // "negative" (actually close)
-        ]);
+        let m = Matrix::from_vec(
+            3,
+            3,
+            vec![
+                1.0, 0.0, 0.0, // anchor
+                0.0, 1.0, 0.0, // "positive" (actually far)
+                0.9, 0.1, 0.0, // "negative" (actually close)
+            ],
+        );
         let loss = triplet_loss(&m, 0, 1, 2, 0.1);
         assert!(loss > 0.0, "violated triplet should have positive loss");
     }
 
     #[test]
     fn test_triplet_loss_batch_average() {
-        let m = Matrix::from_vec(4, 2, vec![
-            1.0, 0.0,
-            0.9, 0.1,
-            0.0, 1.0,
-            -1.0, 0.0,
-        ]);
+        let m = Matrix::from_vec(4, 2, vec![1.0, 0.0, 0.9, 0.1, 0.0, 1.0, -1.0, 0.0]);
         let triplets = vec![(0, 1, 2), (0, 1, 3)];
         let batch_loss = triplet_loss_batch(&m, &triplets, 0.1);
         let individual = (triplet_loss(&m, 0, 1, 2, 0.1) + triplet_loss(&m, 0, 1, 3, 0.1)) / 2.0;
@@ -627,12 +646,7 @@ mod tests {
     #[test]
     fn test_cluster_similarity_perfect() {
         // Two clusters, identical within, orthogonal between
-        let m = Matrix::from_vec(4, 2, vec![
-            1.0, 0.0,
-            1.0, 0.0,
-            0.0, 1.0,
-            0.0, 1.0,
-        ]);
+        let m = Matrix::from_vec(4, 2, vec![1.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0]);
         let clusters = vec![0, 0, 1, 1];
         let (intra, inter) = cluster_similarity(&m, &clusters);
         assert!((intra - 1.0).abs() < 1e-10, "intra should be 1.0");
@@ -649,8 +663,7 @@ mod tests {
         let triplets = sample_triplets(&clusters, 10, &mut rng);
 
         let grad = spsa_gradient(
-            &mut phi, &features, &mask, &triplets,
-            0.3, 0.005, 0.8, &mut rng,
+            &mut phi, &features, &mask, &triplets, 0.3, 0.005, 0.8, &mut rng,
         );
 
         assert_eq!(grad.len(), phi.param_count());
@@ -672,8 +685,7 @@ mod tests {
         let mut phi = MultiHeadPhi0::default_with_seed(42);
         let mut rng = Rng::new(77);
         let grad_avg = spsa_gradient_avg(
-            &mut phi, &features, &mask, &triplets,
-            0.3, 0.005, 8, 0.8, &mut rng,
+            &mut phi, &features, &mask, &triplets, 0.3, 0.005, 8, 0.8, &mut rng,
         );
 
         assert_eq!(grad_avg.len(), phi.param_count());
@@ -707,16 +719,15 @@ mod tests {
         assert_eq!(result.gap_history.len(), config.epochs);
 
         // Loss should generally decrease (check first vs last quarter average)
-        let first_quarter: f64 =
-            result.loss_history[..8].iter().sum::<f64>() / 8.0;
-        let last_quarter: f64 =
-            result.loss_history[22..].iter().sum::<f64>() / 8.0;
+        let first_quarter: f64 = result.loss_history[..8].iter().sum::<f64>() / 8.0;
+        let last_quarter: f64 = result.loss_history[22..].iter().sum::<f64>() / 8.0;
 
         // Allow some tolerance — SPSA is noisy
         assert!(
             last_quarter <= first_quarter + 0.05,
             "Loss should trend down: first_q={:.4}, last_q={:.4}",
-            first_quarter, last_quarter
+            first_quarter,
+            last_quarter
         );
     }
 
@@ -746,7 +757,8 @@ mod tests {
         assert!(
             gap_after > gap_before - 0.05,
             "Gap should not degrade significantly: before={:.4}, after={:.4}",
-            gap_before, gap_after
+            gap_before,
+            gap_after
         );
     }
 
@@ -850,6 +862,10 @@ mod tests {
         let expected = 4 + 4 + 4 + 4 + 4 + phi.param_count() * 8;
         assert_eq!(bytes.len(), expected);
         // 51200 params * 8 bytes + 20 bytes header = 409620 bytes ≈ 400KB
-        assert!(bytes.len() < 500_000, "serialized size too large: {}", bytes.len());
+        assert!(
+            bytes.len() < 500_000,
+            "serialized size too large: {}",
+            bytes.len()
+        );
     }
 }

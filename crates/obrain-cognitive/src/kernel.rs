@@ -231,7 +231,10 @@ mod tests {
 
         // The new node should now have an embedding
         let new_emb = manager.get_embedding(new_node);
-        assert!(new_emb.is_some(), "new node should have embedding after on_event");
+        assert!(
+            new_emb.is_some(),
+            "new node should have embedding after on_event"
+        );
     }
 
     #[tokio::test]

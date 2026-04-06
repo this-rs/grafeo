@@ -278,11 +278,7 @@ impl Matrix {
             norm_j += b * b;
         }
         let denom = norm_i.sqrt() * norm_j.sqrt();
-        if denom < 1e-12 {
-            0.0
-        } else {
-            dot / denom
-        }
+        if denom < 1e-12 { 0.0 } else { dot / denom }
     }
 
     /// Cosine similarity between a row and an external vector.
@@ -298,11 +294,7 @@ impl Matrix {
             norm_v += vec[c] * vec[c];
         }
         let denom = norm_r.sqrt() * norm_v.sqrt();
-        if denom < 1e-12 {
-            0.0
-        } else {
-            dot / denom
-        }
+        if denom < 1e-12 { 0.0 } else { dot / denom }
     }
 
     /// Extract a sub-matrix: rows [r_start..r_end), cols [c_start..c_end).
@@ -379,7 +371,13 @@ impl fmt::Display for Matrix {
 
 impl fmt::Debug for Matrix {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Matrix({}x{}, norm={:.4})", self.rows, self.cols, self.norm())
+        write!(
+            f,
+            "Matrix({}x{}, norm={:.4})",
+            self.rows,
+            self.cols,
+            self.norm()
+        )
     }
 }
 
@@ -524,7 +522,11 @@ mod tests {
         let var = samples.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n as f64;
         // Mean should be near 0, variance near 1
         assert!(mean.abs() < 0.05, "normal mean too far from 0: {}", mean);
-        assert!((var - 1.0).abs() < 0.1, "normal variance too far from 1: {}", var);
+        assert!(
+            (var - 1.0).abs() < 0.1,
+            "normal variance too far from 1: {}",
+            var
+        );
     }
 
     #[test]
@@ -589,7 +591,9 @@ mod tests {
         let expected_var = 2.0 / (100.0 + 80.0);
         assert!(
             (var - expected_var).abs() < 0.005,
-            "Xavier variance off: got {:.4}, expected {:.4}", var, expected_var
+            "Xavier variance off: got {:.4}, expected {:.4}",
+            var,
+            expected_var
         );
     }
 
@@ -639,7 +643,8 @@ mod tests {
         // Acceptance: 80x80 matmul < 1ms
         assert!(
             per_mul.as_millis() < 1,
-            "80x80 matmul too slow: {:?}", per_mul
+            "80x80 matmul too slow: {:?}",
+            per_mul
         );
     }
 
@@ -709,7 +714,8 @@ mod tests {
             let sim = m.cosine_similarity(i, i);
             assert!(
                 (sim - 1.0).abs() < 1e-10,
-                "cosine(v, v) should be 1.0, got {}", sim
+                "cosine(v, v) should be 1.0, got {}",
+                sim
             );
         }
     }
@@ -728,7 +734,8 @@ mod tests {
         let sim = m.cosine_similarity(0, 1);
         assert!(
             (sim + 1.0).abs() < 1e-10,
-            "opposite vectors should have cosine -1, got {}", sim
+            "opposite vectors should have cosine -1, got {}",
+            sim
         );
     }
 
@@ -805,7 +812,11 @@ mod tests {
         let v = m.to_f32_vec();
         for (f64_val, f32_val) in m.data.iter().zip(v.iter()) {
             let rel_err = ((*f64_val as f32) - *f32_val).abs();
-            assert!(rel_err < 1e-30, "f32 conversion error too large for {}", f64_val);
+            assert!(
+                rel_err < 1e-30,
+                "f32 conversion error too large for {}",
+                f64_val
+            );
         }
     }
 
@@ -819,7 +830,9 @@ mod tests {
             let sum: f64 = sm.row(i).iter().sum();
             assert!(
                 (sum - 1.0).abs() < 1e-10,
-                "softmax row {} sum = {}, expected 1.0", i, sum
+                "softmax row {} sum = {}, expected 1.0",
+                i,
+                sum
             );
         }
     }
@@ -841,9 +854,13 @@ mod tests {
         let sum: f64 = sm.row(0).iter().sum();
         assert!(
             (sum - 1.0).abs() < 1e-10,
-            "softmax unstable with large values: sum={}", sum
+            "softmax unstable with large values: sum={}",
+            sum
         );
-        assert!(sm.data.iter().all(|x| x.is_finite()), "softmax produced non-finite");
+        assert!(
+            sm.data.iter().all(|x| x.is_finite()),
+            "softmax produced non-finite"
+        );
     }
 
     #[test]
@@ -881,7 +898,9 @@ mod tests {
             let rms = mean_sq.sqrt();
             assert!(
                 (rms - 1.0).abs() < 1e-6,
-                "RMS norm row {} rms = {:.6}, expected ~1.0", i, rms
+                "RMS norm row {} rms = {:.6}, expected ~1.0",
+                i,
+                rms
             );
         }
     }
@@ -906,7 +925,8 @@ mod tests {
         for j in 0..4 {
             assert!(
                 (normed.get(0, j) - 1.0).abs() < 1e-6,
-                "RMS norm should not center: got {}", normed.get(0, j)
+                "RMS norm should not center: got {}",
+                normed.get(0, j)
             );
         }
     }
@@ -927,7 +947,9 @@ mod tests {
         let expected = (4.0_f64).ln(); // ln(4) ≈ 1.386
         assert!(
             (h - expected).abs() < 1e-6,
-            "uniform entropy should be ln(n)={:.4}, got {:.4}", expected, h
+            "uniform entropy should be ln(n)={:.4}, got {:.4}",
+            expected,
+            h
         );
     }
 
@@ -936,7 +958,11 @@ mod tests {
         // One very large logit → near-zero entropy
         let m = Matrix::from_vec(1, 4, vec![100.0, 0.0, 0.0, 0.0]);
         let h = shannon_entropy(&m);
-        assert!(h < 0.01, "peaked distribution should have near-zero entropy: {}", h);
+        assert!(
+            h < 0.01,
+            "peaked distribution should have near-zero entropy: {}",
+            h
+        );
     }
 
     // -- Diversity tests --
@@ -945,20 +971,21 @@ mod tests {
     fn test_diversity_identical_rows() {
         let m = Matrix::from_vec(3, 2, vec![1.0, 2.0, 1.0, 2.0, 1.0, 2.0]);
         let d = diversity(&m);
-        assert!(d.abs() < 1e-10, "identical rows should have zero diversity: {}", d);
+        assert!(
+            d.abs() < 1e-10,
+            "identical rows should have zero diversity: {}",
+            d
+        );
     }
 
     #[test]
     fn test_diversity_orthogonal_rows() {
-        let m = Matrix::from_vec(3, 3, vec![
-            1.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-            0.0, 0.0, 1.0,
-        ]);
+        let m = Matrix::from_vec(3, 3, vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
         let d = diversity(&m);
         assert!(
             (d - 1.0).abs() < 1e-10,
-            "orthogonal rows should have diversity 1.0: {}", d
+            "orthogonal rows should have diversity 1.0: {}",
+            d
         );
     }
 

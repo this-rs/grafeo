@@ -19,9 +19,9 @@ use obrain_common::types::{NodeId, PropertyKey, Value};
 use obrain_common::utils::error::Result;
 use obrain_core::graph::{Direction, GraphStore};
 
+use super::super::{AlgorithmResult, ParameterDef, Parameters};
 use super::kernel_math::{Matrix, Rng, gelu, rms_norm, softmax_rows};
 use super::traits::GraphAlgorithm;
-use super::super::{AlgorithmResult, ParameterDef, Parameters};
 
 // ============================================================================
 // Constants
@@ -150,23 +150,35 @@ impl MultiHeadPhi0 {
         let mut offset = 0;
         for head in &mut self.heads {
             let len = head.w_q.data.len();
-            head.w_q.data.copy_from_slice(&weights[offset..offset + len]);
+            head.w_q
+                .data
+                .copy_from_slice(&weights[offset..offset + len]);
             offset += len;
             let len = head.w_k.data.len();
-            head.w_k.data.copy_from_slice(&weights[offset..offset + len]);
+            head.w_k
+                .data
+                .copy_from_slice(&weights[offset..offset + len]);
             offset += len;
             let len = head.w_v.data.len();
-            head.w_v.data.copy_from_slice(&weights[offset..offset + len]);
+            head.w_v
+                .data
+                .copy_from_slice(&weights[offset..offset + len]);
             offset += len;
         }
         let len = self.w_o.data.len();
-        self.w_o.data.copy_from_slice(&weights[offset..offset + len]);
+        self.w_o
+            .data
+            .copy_from_slice(&weights[offset..offset + len]);
         offset += len;
         let len = self.w_ff1.data.len();
-        self.w_ff1.data.copy_from_slice(&weights[offset..offset + len]);
+        self.w_ff1
+            .data
+            .copy_from_slice(&weights[offset..offset + len]);
         offset += len;
         let len = self.w_ff2.data.len();
-        self.w_ff2.data.copy_from_slice(&weights[offset..offset + len]);
+        self.w_ff2
+            .data
+            .copy_from_slice(&weights[offset..offset + len]);
     }
 }
 
@@ -440,12 +452,7 @@ pub fn compute_node_embedding(
 ) -> Option<Vec<f32>> {
     let neighborhood = extract_neighborhood(store, node_id, max_neighbors, rng)?;
 
-    let result = single_pass_attention(
-        &neighborhood.features,
-        phi,
-        &neighborhood.adj_mask,
-        alpha,
-    );
+    let result = single_pass_attention(&neighborhood.features, phi, &neighborhood.adj_mask, alpha);
 
     // Extract center node's row and convert to f32
     Some(result.row_to_f32(neighborhood.center_index))
@@ -464,7 +471,9 @@ pub fn compute_batch(
     let mut results = HashMap::with_capacity(node_ids.len());
 
     for &nid in node_ids {
-        if let Some(embedding) = compute_node_embedding(phi, store, nid, alpha, max_neighbors, &mut rng) {
+        if let Some(embedding) =
+            compute_node_embedding(phi, store, nid, alpha, max_neighbors, &mut rng)
+        {
             results.insert(nid, embedding);
         }
     }
@@ -514,7 +523,9 @@ where
             .collect();
 
         for handle in handles {
-            let partial = handle.join().expect("thread panicked in compute_batch_parallel");
+            let partial = handle
+                .join()
+                .expect("thread panicked in compute_batch_parallel");
             all_results.extend(partial);
         }
     });
@@ -607,18 +618,12 @@ impl GraphAlgorithm for IrreducibleKernel {
         );
 
         // Build result table: node_id | embedding
-        let mut result = AlgorithmResult::new(vec![
-            "node_id".to_string(),
-            "embedding".to_string(),
-        ]);
+        let mut result = AlgorithmResult::new(vec!["node_id".to_string(), "embedding".to_string()]);
 
         for &nid in &node_ids {
             if let Some(emb) = embeddings.get(&nid) {
                 let arc_vec: Arc<[f32]> = emb.as_slice().into();
-                result.add_row(vec![
-                    Value::Int64(nid.0 as i64),
-                    Value::Vector(arc_vec),
-                ]);
+                result.add_row(vec![Value::Int64(nid.0 as i64), Value::Vector(arc_vec)]);
             }
         }
 
@@ -667,9 +672,9 @@ mod tests {
             }
         }
         // A few bridge edges between clusters
-        edges.push((3, 4));  // cluster 0 -> cluster 1
+        edges.push((3, 4)); // cluster 0 -> cluster 1
         edges.push((4, 3));
-        edges.push((7, 8));  // cluster 1 -> cluster 2
+        edges.push((7, 8)); // cluster 1 -> cluster 2
         edges.push((8, 7));
 
         let mask = AdjacencyMask::from_edges(n, &edges);
@@ -825,7 +830,10 @@ mod tests {
         let phi = MultiHeadPhi0::new(D_MODEL, N_HEADS, D_FF, 42);
         let r1 = single_pass_attention(&features, &phi, &mask, DEFAULT_ALPHA);
         let r2 = single_pass_attention(&features, &phi, &mask, DEFAULT_ALPHA);
-        assert!(r1.diff_norm(&r2) < 1e-12, "single_pass must be deterministic");
+        assert!(
+            r1.diff_norm(&r2) < 1e-12,
+            "single_pass must be deterministic"
+        );
     }
 
     #[test]
@@ -834,11 +842,7 @@ mod tests {
         let phi = MultiHeadPhi0::new(D_MODEL, N_HEADS, D_FF, 42);
         let result = single_pass_attention(&features, &phi, &mask, DEFAULT_ALPHA);
 
-        let groups = vec![
-            vec![0, 1, 2, 3],
-            vec![4, 5, 6, 7],
-            vec![8, 9, 10, 11],
-        ];
+        let groups = vec![vec![0, 1, 2, 3], vec![4, 5, 6, 7], vec![8, 9, 10, 11]];
 
         let intra = intra_group_similarity(&result, &groups);
         let inter = inter_group_similarity(&result, &groups);
@@ -847,7 +851,9 @@ mod tests {
         assert!(
             gap > 0.0,
             "Intra-cluster similarity should exceed inter-cluster: intra={:.4}, inter={:.4}, gap={:.4}",
-            intra, inter, gap
+            intra,
+            inter,
+            gap
         );
     }
 
@@ -860,7 +866,8 @@ mod tests {
         let div = super::super::kernel_math::diversity(&result);
         assert!(
             div > 0.05,
-            "Diversity should be > 0.05 (no collapse), got {:.4}", div
+            "Diversity should be > 0.05 (no collapse), got {:.4}",
+            div
         );
     }
 
@@ -889,7 +896,11 @@ mod tests {
     #[test]
     fn test_single_pass_small_graph() {
         // 2 nodes, 1 edge — minimal case
-        let features = Matrix::from_vec(2, D_MODEL, (0..2 * D_MODEL).map(|x| x as f64 * 0.01).collect());
+        let features = Matrix::from_vec(
+            2,
+            D_MODEL,
+            (0..2 * D_MODEL).map(|x| x as f64 * 0.01).collect(),
+        );
         let mask = AdjacencyMask::from_edges(2, &[(0, 1), (1, 0)]);
         let phi = MultiHeadPhi0::new(D_MODEL, N_HEADS, D_FF, 42);
         let result = single_pass_attention(&features, &phi, &mask, DEFAULT_ALPHA);
@@ -901,7 +912,11 @@ mod tests {
     #[test]
     fn test_single_pass_single_node() {
         // 1 node, no edges — should work (self-attention only)
-        let features = Matrix::from_vec(1, D_MODEL, (0..D_MODEL).map(|x| x as f64 * 0.01 + 0.1).collect());
+        let features = Matrix::from_vec(
+            1,
+            D_MODEL,
+            (0..D_MODEL).map(|x| x as f64 * 0.01 + 0.1).collect(),
+        );
         let mask = AdjacencyMask::from_edges(1, &[]);
         let phi = MultiHeadPhi0::new(D_MODEL, N_HEADS, D_FF, 42);
         let result = single_pass_attention(&features, &phi, &mask, DEFAULT_ALPHA);
@@ -927,7 +942,8 @@ mod tests {
         // Should be well under 1ms for 50 nodes
         assert!(
             per_call.as_millis() < 5,
-            "single_pass on 50 nodes too slow: {:?}", per_call
+            "single_pass on 50 nodes too slow: {:?}",
+            per_call
         );
     }
 
@@ -947,10 +963,7 @@ mod tests {
         let row = result.row(0);
         for (i, (&f64_val, &f32_val)) in row.iter().zip(f32_vec.iter()).enumerate() {
             let expected = f64_val as f32;
-            assert_eq!(
-                f32_val, expected,
-                "f32 conversion mismatch at index {}", i
-            );
+            assert_eq!(f32_val, expected, "f32 conversion mismatch at index {}", i);
         }
     }
 
@@ -969,6 +982,9 @@ mod tests {
         let (features, mask, _) = make_test_graph();
         let r1 = single_pass_attention(&features, &phi, &mask, DEFAULT_ALPHA);
         let r2 = single_pass_attention(&features, &phi2, &mask, DEFAULT_ALPHA);
-        assert!(r1.diff_norm(&r2) < 1e-12, "deserialized phi should produce identical output");
+        assert!(
+            r1.diff_norm(&r2) < 1e-12,
+            "deserialized phi should produce identical output"
+        );
     }
 }

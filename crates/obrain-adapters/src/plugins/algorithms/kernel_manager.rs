@@ -37,8 +37,8 @@ use obrain_core::subscription::{EventFilter, EventType, SubscriptionId};
 use parking_lot::RwLock;
 
 use super::kernel::{
-    compute_batch_parallel, compute_node_embedding, MultiHeadPhi0, DEFAULT_ALPHA,
-    DEFAULT_MAX_NEIGHBORS, KERNEL_EMBEDDING_KEY,
+    DEFAULT_ALPHA, DEFAULT_MAX_NEIGHBORS, KERNEL_EMBEDDING_KEY, MultiHeadPhi0,
+    compute_batch_parallel, compute_node_embedding,
 };
 use super::kernel_math::Rng;
 use super::kernel_train::{deserialize_phi0, serialize_phi0};
@@ -126,7 +126,11 @@ impl KernelManager {
 
     /// Create with default random Phi_0 (untrained).
     pub fn new_untrained(store: Arc<LpgStore>, seed: u64) -> Self {
-        Self::new(store, MultiHeadPhi0::default_with_seed(seed), PhiState::Untrained)
+        Self::new(
+            store,
+            MultiHeadPhi0::default_with_seed(seed),
+            PhiState::Untrained,
+        )
     }
 
     // ── Configuration ──
@@ -188,9 +192,9 @@ impl KernelManager {
         };
 
         // Find existing config node or create one
-        let config_node = self.find_config_node().unwrap_or_else(|| {
-            self.store.create_node(&[KERNEL_CONFIG_LABEL])
-        });
+        let config_node = self
+            .find_config_node()
+            .unwrap_or_else(|| self.store.create_node(&[KERNEL_CONFIG_LABEL]));
 
         let arc_bytes: Arc<[u8]> = bytes.into();
         self.store
@@ -213,8 +217,7 @@ impl KernelManager {
         };
 
         let prop_key = PropertyKey::from(PHI_WEIGHTS_KEY);
-        let Some(Value::Bytes(bytes)) = self.store.get_node_property(config_node, &prop_key)
-        else {
+        let Some(Value::Bytes(bytes)) = self.store.get_node_property(config_node, &prop_key) else {
             return false;
         };
 
@@ -513,9 +516,9 @@ fn num_cpus() -> usize {
 
 #[cfg(test)]
 mod tests {
+    use super::super::kernel::{D_MODEL, HILBERT_FEATURES_KEY};
     use super::*;
     use obrain_common::types::PropertyKey;
-    use super::super::kernel::{D_MODEL, HILBERT_FEATURES_KEY};
 
     /// Create a test store with tracking and subscriptions.
     fn test_store() -> Arc<LpgStore> {
@@ -580,7 +583,11 @@ mod tests {
         // Check embeddings are also persisted on the store
         for &nid in &nodes {
             let prop = store.get_node_property(nid, &PropertyKey::from(KERNEL_EMBEDDING_KEY));
-            assert!(prop.is_some(), "node {:?} should have _kernel_embedding property", nid);
+            assert!(
+                prop.is_some(),
+                "node {:?} should have _kernel_embedding property",
+                nid
+            );
         }
     }
 
