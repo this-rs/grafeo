@@ -47,6 +47,7 @@ pub mod hilbert;
 pub mod hilbert_features;
 pub mod hilbert_manager;
 pub mod kernel;
+pub mod kernel_manager;
 pub mod kernel_math;
 pub mod kernel_train;
 mod mst;
@@ -160,6 +161,9 @@ pub use relevance::{
 pub use stable_communities::{
     StableCommunitiesAlgorithm, StableCommunityConfig, StableLouvainResult, stabilize_communities,
 };
+
+// Kernel manager (event-driven incremental embedding management)
+pub use kernel_manager::{KernelManager, PhiState};
 
 // Subgraph contraction (graph coarsening)
 pub use contraction::{
