@@ -302,6 +302,30 @@ impl KernelManager {
         self.pending_changes.write().clear();
     }
 
+    /// Recompute embeddings for a set of changed nodes.
+    ///
+    /// Expands each node to its 1-hop neighborhood, deduplicates, then
+    /// recomputes all affected embeddings. This is the main entry point
+    /// for external callers (e.g. `KernelListener` in `obrain-cognitive`).
+    pub fn recompute_affected(&self, changed: &[NodeId]) {
+        if changed.is_empty() {
+            return;
+        }
+
+        let mut affected = HashSet::new();
+        for &nid in changed {
+            affected.insert(nid);
+            for neighbor in self.store.neighbors(nid, Direction::Both) {
+                affected.insert(neighbor);
+            }
+        }
+
+        self.compute_incremental(&affected);
+
+        // Clear any events that fired during recomputation
+        self.pending_changes.write().clear();
+    }
+
     // ── Query ──
 
     /// Get embedding for a node, triggering flush if debounce threshold reached.
