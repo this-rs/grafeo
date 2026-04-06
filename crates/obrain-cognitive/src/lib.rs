@@ -76,6 +76,10 @@ pub mod episodic;
 #[cfg(feature = "consolidation")]
 pub mod consolidation;
 
+// Kernel embeddings — irreducible kernel C = Φ₀ ∘ A¹(H^∞)
+#[cfg(feature = "kernel")]
+pub mod kernel;
+
 // Stigmergy — diffuse pheromone memory on edges (Layer 2)
 #[cfg(feature = "stigmergy")]
 pub mod stigmergy;
@@ -200,6 +204,9 @@ pub use engram::{
     Engram, EngramHorizon, EngramId, EpisodeId, FsrsState, PredictionError, RecallEvent,
     RecallFeedback,
 };
+
+#[cfg(feature = "kernel")]
+pub use kernel::KernelListener;
 
 #[cfg(feature = "stigmergy")]
 pub use stigmergy::{

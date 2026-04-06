@@ -33,6 +33,9 @@ immune = []
 # Epigenetic layer (Layer 5: cross-instance transgenerational memory)
 epigenetic = ["dep:serde_json"]
 
+# Kernel embeddings (irreducible kernel C = Φ₀ ∘ A¹(H^∞))
+kernel = ["dep:obrain-adapters"]
+
 # Future subsystems
 scar = []
 memory = ["energy"]
@@ -48,7 +51,7 @@ cognitive = ["energy", "synapse"]
 # Level 2: + fabric scoring, co-change detection, GDS refresh
 cognitive-fabric = ["cognitive", "fabric", "co-change", "gds-refresh"]
 # Level 3: all cognitive subsystems
-cognitive-full = ["cognitive-fabric", "scar", "memory", "stagnation", "fingerprint", "distillation", "episodic", "consolidation"]
+cognitive-full = ["cognitive-fabric", "kernel", "scar", "memory", "stagnation", "fingerprint", "distillation", "episodic", "consolidation"]
 
 [dependencies]
 obrain-common.workspace = true
