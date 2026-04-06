@@ -243,14 +243,11 @@ impl KernelManager {
 
     /// Find the existing `_KernelConfig` system node, if any.
     fn find_config_node(&self) -> Option<NodeId> {
-        for nid in self.store.node_ids() {
-            if let Some(node) = self.store.get_node(nid) {
-                if node.has_label(KERNEL_CONFIG_LABEL) {
-                    return Some(nid);
-                }
-            }
-        }
-        None
+        self.store.node_ids().into_iter().find(|&nid| {
+            self.store
+                .get_node(nid)
+                .is_some_and(|node| node.has_label(KERNEL_CONFIG_LABEL))
+        })
     }
 
     // ── Event subscription ──

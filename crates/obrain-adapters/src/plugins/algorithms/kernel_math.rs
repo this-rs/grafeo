@@ -390,7 +390,7 @@ pub fn softmax_rows(m: &Matrix) -> Matrix {
     let mut result = Matrix::zeros(m.rows, m.cols);
     for i in 0..m.rows {
         let row = m.row(i);
-        let max_val = row.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let max_val = row.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         let mut sum = 0.0;
         for j in 0..m.cols {
             let e = (row[j] - max_val).exp();

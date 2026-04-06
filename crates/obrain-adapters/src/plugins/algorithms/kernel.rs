@@ -376,9 +376,7 @@ pub fn extract_neighborhood(
         node_ids.push(*nid);
         let row = features.row_mut(i);
         let copy_len = feats.len().min(d);
-        for j in 0..copy_len {
-            row[j] = feats[j];
-        }
+        row[..copy_len].copy_from_slice(&feats[..copy_len]);
     }
 
     // Build adjacency: center (index 0) connects to all neighbors,
@@ -404,13 +402,12 @@ pub fn extract_neighborhood(
         let nid = node_ids[i];
         let nid_neighbors = store.neighbors(nid, Direction::Both);
         for &target in &nid_neighbors {
-            if let Some(&j) = id_to_local.get(&target) {
-                if j != i && j != center_idx {
-                    // Avoid duplicates
-                    if !local_adj[i].contains(&j) {
-                        local_adj[i].push(j);
-                    }
-                }
+            if let Some(&j) = id_to_local.get(&target)
+                && j != i
+                && j != center_idx
+                && !local_adj[i].contains(&j)
+            {
+                local_adj[i].push(j);
             }
         }
     }
@@ -512,8 +509,6 @@ where
             .iter()
             .enumerate()
             .map(|(thread_idx, chunk)| {
-                let phi = phi;
-                let store = store;
                 s.spawn(move || {
                     // Each thread gets its own Rng with a unique seed
                     let thread_seed = seed.wrapping_add(thread_idx as u64 * 7919);
@@ -598,12 +593,10 @@ impl GraphAlgorithm for IrreducibleKernel {
         let alpha = params.get_float("alpha").unwrap_or(self.alpha);
         let max_neighbors = params
             .get_int("max_neighbors")
-            .map(|i| i as usize)
-            .unwrap_or(self.max_neighbors);
+            .map_or(self.max_neighbors, |i| i as usize);
         let n_threads = params
             .get_int("threads")
-            .map(|i| i as usize)
-            .unwrap_or(self.n_threads);
+            .map_or(self.n_threads, |i| i as usize);
 
         let node_ids = store.node_ids();
 

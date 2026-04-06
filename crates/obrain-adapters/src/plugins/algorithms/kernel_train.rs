@@ -146,6 +146,7 @@ fn forward_loss(
 ///
 /// Perturbs all weights simultaneously with random +/-1 (Bernoulli),
 /// measures loss at both perturbations, and estimates gradient.
+#[allow(clippy::too_many_arguments)]
 fn spsa_gradient(
     phi: &mut MultiHeadPhi0,
     features: &Matrix,
@@ -161,7 +162,13 @@ fn spsa_gradient(
 
     // Random perturbation direction: each element in {-1, +1}
     let delta: Vec<f64> = (0..n_params)
-        .map(|_| if rng.next_u64() % 2 == 0 { 1.0 } else { -1.0 })
+        .map(|_| {
+            if rng.next_u64().is_multiple_of(2) {
+                1.0
+            } else {
+                -1.0
+            }
+        })
         .collect();
 
     // Phi_0 + c*delta
@@ -209,6 +216,7 @@ fn spsa_gradient(
 }
 
 /// Multi-sample SPSA: average over k random directions for variance reduction.
+#[allow(clippy::too_many_arguments)]
 fn spsa_gradient_avg(
     phi: &mut MultiHeadPhi0,
     features: &Matrix,
