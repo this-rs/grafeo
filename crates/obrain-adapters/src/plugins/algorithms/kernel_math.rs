@@ -630,6 +630,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "perf threshold unreliable on CI shared runners"]
     fn test_matmul_80x80_performance() {
         let mut rng = Rng::new(42);
         let a = Matrix::randn(80, 80, &mut rng);
