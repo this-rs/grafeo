@@ -46,6 +46,7 @@ pub mod heat_diffusion;
 pub mod hilbert;
 pub mod hilbert_features;
 pub mod hilbert_manager;
+pub mod kernel_math;
 mod mst;
 pub mod projection;
 pub mod relevance;
