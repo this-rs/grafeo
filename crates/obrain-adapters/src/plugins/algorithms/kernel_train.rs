@@ -600,7 +600,10 @@ mod tests {
         let m = Matrix::from_vec(4, 2, vec![1.0, 0.0, 0.9, 0.1, 0.0, 1.0, -1.0, 0.0]);
         let triplets = vec![(0, 1, 2), (0, 1, 3)];
         let batch_loss = triplet_loss_batch(&m, &triplets, 0.1);
-        let individual = (triplet_loss(&m, 0, 1, 2, 0.1) + triplet_loss(&m, 0, 1, 3, 0.1)) / 2.0;
+        let individual = f64::midpoint(
+            triplet_loss(&m, 0, 1, 2, 0.1),
+            triplet_loss(&m, 0, 1, 3, 0.1),
+        );
         assert!((batch_loss - individual).abs() < 1e-12);
     }
 

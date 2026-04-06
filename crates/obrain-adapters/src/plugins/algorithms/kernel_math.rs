@@ -509,7 +509,7 @@ mod tests {
         let mut r = Rng::new(123);
         for _ in 0..1000 {
             let v = r.next_f64();
-            assert!(v >= -1.0 && v <= 1.0, "next_f64 out of range: {}", v);
+            assert!((-1.0..=1.0).contains(&v), "next_f64 out of range: {}", v);
         }
     }
 
@@ -537,7 +537,7 @@ mod tests {
         r.shuffle(&mut v);
         // Should be a permutation (same elements)
         let mut sorted = v.clone();
-        sorted.sort();
+        sorted.sort_unstable();
         assert_eq!(sorted, original);
         // Should be different order (extremely unlikely to stay same with 20 elements)
         assert_ne!(v, original);
