@@ -29,7 +29,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use obrain_common::types::{NodeId, Value};
+use obrain_common::types::{NodeId, PropertyKey, Value};
 use obrain_core::change_tracker::{EntityRef, GraphEvent};
 use obrain_core::graph::lpg::LpgStore;
 use obrain_core::graph::{Direction, GraphStore};
@@ -41,6 +41,14 @@ use super::kernel::{
     DEFAULT_MAX_NEIGHBORS, KERNEL_EMBEDDING_KEY,
 };
 use super::kernel_math::Rng;
+use super::kernel_train::{deserialize_phi0, serialize_phi0};
+
+/// Label for the system config node storing Phi_0 weights.
+const KERNEL_CONFIG_LABEL: &str = "_KernelConfig";
+/// Property key for serialized Phi_0 weights on the config node.
+const PHI_WEIGHTS_KEY: &str = "_phi_weights";
+/// Property key for Phi state on the config node.
+const PHI_STATE_KEY: &str = "_phi_state";
 
 // ============================================================================
 // Phi0 lifecycle state
@@ -157,6 +165,89 @@ impl KernelManager {
     /// Get a clone of the current Phi_0 weights.
     pub fn phi(&self) -> MultiHeadPhi0 {
         self.phi.read().clone()
+    }
+
+    // ── Persistence ──
+
+    /// Persist Phi_0 weights to the graph store.
+    ///
+    /// Creates (or updates) a system node with label `_KernelConfig`
+    /// containing the serialized weights as `Value::Bytes` and the
+    /// Phi state as `Value::String`. This ensures Phi_0 survives
+    /// snapshot + WAL round-trips.
+    ///
+    /// Call this after training or whenever you want to checkpoint weights.
+    pub fn save_phi(&self) -> NodeId {
+        let phi = self.phi.read().clone();
+        let state = *self.phi_state.read();
+        let bytes = serialize_phi0(&phi);
+        let state_str = match state {
+            PhiState::Untrained => "untrained",
+            PhiState::Training => "training",
+            PhiState::Frozen => "frozen",
+        };
+
+        // Find existing config node or create one
+        let config_node = self.find_config_node().unwrap_or_else(|| {
+            self.store.create_node(&[KERNEL_CONFIG_LABEL])
+        });
+
+        let arc_bytes: Arc<[u8]> = bytes.into();
+        self.store
+            .set_node_property(config_node, PHI_WEIGHTS_KEY, Value::Bytes(arc_bytes));
+        self.store
+            .set_node_property(config_node, PHI_STATE_KEY, Value::String(state_str.into()));
+
+        config_node
+    }
+
+    /// Load Phi_0 weights from the graph store.
+    ///
+    /// Searches for the `_KernelConfig` system node and deserializes
+    /// the stored weights. Returns `true` if weights were found and loaded.
+    ///
+    /// Call this on startup after loading a snapshot to restore Phi_0.
+    pub fn load_phi(&self) -> bool {
+        let Some(config_node) = self.find_config_node() else {
+            return false;
+        };
+
+        let prop_key = PropertyKey::from(PHI_WEIGHTS_KEY);
+        let Some(Value::Bytes(bytes)) = self.store.get_node_property(config_node, &prop_key)
+        else {
+            return false;
+        };
+
+        let Some(phi) = deserialize_phi0(&bytes) else {
+            return false;
+        };
+
+        // Read state
+        let state_key = PropertyKey::from(PHI_STATE_KEY);
+        let state = match self.store.get_node_property(config_node, &state_key) {
+            Some(Value::String(s)) => match s.as_str() {
+                "frozen" => PhiState::Frozen,
+                "training" => PhiState::Training,
+                _ => PhiState::Untrained,
+            },
+            _ => PhiState::Untrained,
+        };
+
+        *self.phi.write() = phi;
+        *self.phi_state.write() = state;
+        true
+    }
+
+    /// Find the existing `_KernelConfig` system node, if any.
+    fn find_config_node(&self) -> Option<NodeId> {
+        for nid in self.store.node_ids() {
+            if let Some(node) = self.store.get_node(nid) {
+                if node.has_label(KERNEL_CONFIG_LABEL) {
+                    return Some(nid);
+                }
+            }
+        }
+        None
     }
 
     // ── Event subscription ──
@@ -694,5 +785,101 @@ mod tests {
 
         let affected = affected_nodes(&event, &*store);
         assert_eq!(affected, vec![n0]);
+    }
+
+    #[test]
+    fn test_save_phi_creates_config_node() {
+        let store = test_store();
+        populate_graph_with_features(&store, 5);
+        let manager = KernelManager::new_untrained(Arc::clone(&store), 42);
+
+        let config_node = manager.save_phi();
+
+        // Config node should exist with correct label
+        let node = store.get_node(config_node).unwrap();
+        assert!(node.has_label("_KernelConfig"));
+
+        // Should have the weights property
+        let key = PropertyKey::from("_phi_weights");
+        let prop = store.get_node_property(config_node, &key);
+        assert!(matches!(prop, Some(Value::Bytes(_))));
+
+        // Should have the state property
+        let state_key = PropertyKey::from("_phi_state");
+        let state_prop = store.get_node_property(config_node, &state_key);
+        assert!(matches!(state_prop, Some(Value::String(s)) if s.as_str() == "untrained"));
+    }
+
+    #[test]
+    fn test_save_phi_idempotent() {
+        let store = test_store();
+        populate_graph_with_features(&store, 3);
+        let manager = KernelManager::new_untrained(Arc::clone(&store), 42);
+
+        let node1 = manager.save_phi();
+        let node2 = manager.save_phi();
+
+        // Should reuse the same config node
+        assert_eq!(node1, node2);
+    }
+
+    #[test]
+    fn test_load_phi_roundtrip() {
+        let store = test_store();
+        populate_graph_with_features(&store, 5);
+
+        // Create manager with frozen Phi and save
+        let phi_original = MultiHeadPhi0::default_with_seed(99);
+        let m1 = KernelManager::new(Arc::clone(&store), phi_original.clone(), PhiState::Frozen);
+        m1.save_phi();
+
+        // New manager — loads from store
+        let m2 = KernelManager::new_untrained(Arc::clone(&store), 42);
+        assert_eq!(m2.phi_state(), PhiState::Untrained);
+        assert!(m2.load_phi());
+        assert_eq!(m2.phi_state(), PhiState::Frozen);
+
+        // Weights should match
+        let phi_loaded = m2.phi();
+        assert_eq!(
+            phi_original.serialize_weights(),
+            phi_loaded.serialize_weights(),
+            "round-tripped Phi_0 weights must be identical"
+        );
+    }
+
+    #[test]
+    fn test_load_phi_no_config_node() {
+        let store = test_store();
+        let manager = KernelManager::new_untrained(Arc::clone(&store), 42);
+
+        // No config node exists
+        assert!(!manager.load_phi());
+        assert_eq!(manager.phi_state(), PhiState::Untrained);
+    }
+
+    #[test]
+    fn test_save_load_compute_embeddings_match() {
+        let store = test_store();
+        populate_graph_with_features(&store, 8);
+
+        // Train (untrained but with fixed seed), compute, save
+        let m1 = KernelManager::new_untrained(Arc::clone(&store), 42);
+        m1.compute_all();
+        m1.save_phi();
+        let emb1: HashMap<NodeId, Vec<f32>> = m1.embeddings.read().clone();
+
+        // New manager, load phi, compute
+        let m2 = KernelManager::new_untrained(Arc::clone(&store), 42);
+        assert!(m2.load_phi());
+        m2.compute_all();
+        let emb2: HashMap<NodeId, Vec<f32>> = m2.embeddings.read().clone();
+
+        // Same phi + same graph = same embeddings
+        assert_eq!(emb1.len(), emb2.len());
+        for (nid, e1) in &emb1 {
+            let e2 = emb2.get(nid).expect("same nodes");
+            assert_eq!(e1, e2, "embeddings should match after phi roundtrip");
+        }
     }
 }
