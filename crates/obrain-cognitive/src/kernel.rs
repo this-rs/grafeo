@@ -1,7 +1,7 @@
 //! # KernelListener — MutationBus integration for kernel embeddings
 //!
-//! Bridges the reactive mutation pipeline ([`MutationBus`](obrain_reactive::MutationBus))
-//! to the [`KernelManager`](obrain_adapters::plugins::algorithms::KernelManager)
+//! Bridges the reactive mutation pipeline (`MutationBus`)
+//! to the [`KernelManager`]
 //! for incremental kernel embedding updates.
 //!
 //! ## Architecture
