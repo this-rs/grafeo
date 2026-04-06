@@ -131,7 +131,7 @@ impl MultiHeadPhi0 {
         heads_total + w_o + ffn
     }
 
-    /// Serialize all weights to a flat Vec<f64> for persistence.
+    /// Serialize all weights to a flat `Vec<f64>` for persistence.
     pub fn serialize_weights(&self) -> Vec<f64> {
         let mut weights = Vec::with_capacity(self.param_count());
         for head in &self.heads {
@@ -145,7 +145,7 @@ impl MultiHeadPhi0 {
         weights
     }
 
-    /// Deserialize weights from a flat Vec<f64>.
+    /// Deserialize weights from a flat `Vec<f64>`.
     pub fn deserialize_weights(&mut self, weights: &[f64]) {
         let mut offset = 0;
         for head in &mut self.heads {

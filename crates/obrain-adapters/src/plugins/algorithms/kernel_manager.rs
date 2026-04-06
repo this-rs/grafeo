@@ -1,6 +1,6 @@
 //! # KernelManager — Event-driven incremental kernel embedding management
 //!
-//! Follows the [`HilbertFeatureManager`] pattern: lazy recalculation
+//! Follows the `HilbertFeatureManager` pattern: lazy recalculation
 //! triggered by accumulated graph mutations, with debounce.
 //!
 //! ## Architecture

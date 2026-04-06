@@ -336,7 +336,7 @@ impl Matrix {
 
     /// Convert to f32 vector for storage as `Value::Vector(Arc<[f32]>)`.
     ///
-    /// Returns a flat Vec<f32> in row-major order. For a single-row matrix
+    /// Returns a flat `Vec<f32>` in row-major order. For a single-row matrix
     /// (one node's embedding), this is directly the embedding vector.
     pub fn to_f32_vec(&self) -> Vec<f32> {
         self.data.iter().map(|&x| x as f32).collect()
