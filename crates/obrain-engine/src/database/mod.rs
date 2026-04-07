@@ -39,6 +39,10 @@ use obrain_adapters::storage::file::ObrainFileManager;
 use obrain_adapters::storage::wal::{
     DurabilityMode as WalDurabilityMode, LpgWal, WalConfig, WalRecord, WalRecovery,
 };
+#[cfg(all(feature = "wal", feature = "tiered-storage"))]
+use obrain_adapters::storage::wal::CheckpointMetadata;
+#[cfg(all(feature = "wal", feature = "tiered-storage"))]
+use obrain_common::types::TransactionId;
 use obrain_common::memory::buffer::{BufferManager, BufferManagerConfig};
 use obrain_common::utils::error::Result;
 use obrain_core::graph::GraphStoreMut;
@@ -377,14 +381,69 @@ impl ObrainDB {
 
                 if !is_single_file && wal_path.exists() {
                     let recovery = WalRecovery::new(&wal_path);
+
+                    // Try to load mmap'd epoch files for fast startup
+                    #[cfg(feature = "tiered-storage")]
+                    let epoch_wal_sequence = {
+                        if let Some(ref db_path) = config.path {
+                            // Configure persist directory on the epoch store
+                            let _ = store.epoch_store().set_persist_dir(db_path.clone());
+                            match store.epoch_store().load_persisted_epochs() {
+                                Ok(seq) if seq > 0 => {
+                                    // Restore in-memory state from mmap'd epochs
+                                    if let Err(e) = store.restore_from_epoch_files() {
+                                        tracing::warn!(
+                                            "Failed to restore from epoch files, falling back to full WAL: {e}"
+                                        );
+                                        0u64
+                                    } else {
+                                        tracing::info!(
+                                            "Restored {} epoch files (wal_sequence={seq}), replaying WAL delta",
+                                            store.epoch_store().mmap_block_count()
+                                        );
+                                        seq
+                                    }
+                                }
+                                Ok(_) => 0u64,
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Failed to load epoch files, falling back to full WAL: {e}"
+                                    );
+                                    0u64
+                                }
+                            }
+                        } else {
+                            0u64
+                        }
+                    };
+                    #[cfg(not(feature = "tiered-storage"))]
+                    let epoch_wal_sequence = 0u64;
+
+                    // If epoch files provided a WAL sequence, do partial replay
+                    #[cfg(feature = "tiered-storage")]
+                    let records = if epoch_wal_sequence > 0 {
+                        let checkpoint = CheckpointMetadata {
+                            epoch: store.current_epoch(),
+                            log_sequence: epoch_wal_sequence,
+                            timestamp_ms: 0,
+                            transaction_id: TransactionId::SYSTEM,
+                        };
+                        recovery.recover_from_checkpoint(Some(&checkpoint))?
+                    } else {
+                        recovery.recover()?
+                    };
+                    #[cfg(not(feature = "tiered-storage"))]
                     let records = recovery.recover()?;
-                    Self::apply_wal_records(
-                        &store,
-                        &catalog,
-                        #[cfg(feature = "rdf")]
-                        &rdf_store,
-                        &records,
-                    )?;
+
+                    if !records.is_empty() {
+                        Self::apply_wal_records(
+                            &store,
+                            &catalog,
+                            #[cfg(feature = "rdf")]
+                            &rdf_store,
+                            &records,
+                        )?;
+                    }
                 }
 
                 // Open/create WAL manager with configured durability

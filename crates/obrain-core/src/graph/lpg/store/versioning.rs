@@ -613,4 +613,506 @@ impl LpgStore {
     pub fn set_epoch(&self, epoch: EpochId) {
         self.current_epoch.store(epoch.as_u64(), Ordering::SeqCst);
     }
+
+    /// Snapshots ALL current store data into epoch files on disk.
+    ///
+    /// This is the core of the `compact` operation: it reads all nodes, edges,
+    /// properties, labels, and adjacency from the in-memory store and writes
+    /// them to epoch files that can be mmap'd on next startup.
+    ///
+    /// The persist directory must have been set on the epoch store before calling.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails or persist directory is not configured.
+    #[cfg(feature = "tiered-storage")]
+    pub fn snapshot_to_epoch_file(
+        &self,
+        wal_sequence: u64,
+    ) -> std::io::Result<std::path::PathBuf> {
+        use crate::storage::epoch_store::IndexEntry;
+        use crate::storage::mmap_epoch::EpochFileData;
+
+        let epoch = self.current_epoch();
+        let config = bincode::config::standard();
+
+        // =====================================================================
+        // 1. Collect node records from version indexes
+        // =====================================================================
+        let mut node_records: Vec<(u64, NodeRecord)> = Vec::new();
+        {
+            let versions = self.node_versions.read();
+            for (node_id, index) in versions.iter() {
+                // Get the latest version from hot refs
+                if let Some(hot_ref) = index.latest_hot() {
+                    let arena = self
+                        .arena_allocator
+                        .arena(hot_ref.arena_epoch)
+                        .expect("arena epoch must exist");
+                    // SAFETY: read_at for a NodeRecord previously allocated
+                    #[allow(unsafe_code)]
+                    let record: &NodeRecord = unsafe { arena.read_at(hot_ref.arena_offset) };
+                    if !record.is_deleted() {
+                        node_records.push((node_id.as_u64(), *record));
+                    }
+                }
+            }
+        }
+        node_records.sort_unstable_by_key(|(id, _)| *id);
+
+        // =====================================================================
+        // 2. Collect edge records from version indexes
+        // =====================================================================
+        let mut edge_records: Vec<(u64, EdgeRecord)> = Vec::new();
+        {
+            let versions = self.edge_versions.read();
+            for (edge_id, index) in versions.iter() {
+                if let Some(hot_ref) = index.latest_hot() {
+                    let arena = self
+                        .arena_allocator
+                        .arena(hot_ref.arena_epoch)
+                        .expect("arena epoch must exist");
+                    #[allow(unsafe_code)]
+                    let record: &EdgeRecord = unsafe { arena.read_at(hot_ref.arena_offset) };
+                    if !record.is_deleted() {
+                        edge_records.push((edge_id.as_u64(), *record));
+                    }
+                }
+            }
+        }
+        edge_records.sort_unstable_by_key(|(id, _)| *id);
+
+        // =====================================================================
+        // 3. Serialize node/edge data + build index entries
+        // =====================================================================
+        let mut node_data = Vec::new();
+        let mut node_index = Vec::with_capacity(node_records.len());
+        for (id, record) in &node_records {
+            let offset = node_data.len() as u32;
+            let serialized = bincode::serde::encode_to_vec(record, config)
+                .expect("NodeRecord serialization should not fail");
+            let length = serialized.len() as u16;
+            node_index.push(IndexEntry {
+                entity_id: *id,
+                offset,
+                length,
+                _pad: 0,
+            });
+            node_data.extend_from_slice(&serialized);
+        }
+
+        let mut edge_data = Vec::new();
+        let mut edge_index = Vec::with_capacity(edge_records.len());
+        for (id, record) in &edge_records {
+            let offset = edge_data.len() as u32;
+            let serialized = bincode::serde::encode_to_vec(record, config)
+                .expect("EdgeRecord serialization should not fail");
+            let length = serialized.len() as u16;
+            edge_index.push(IndexEntry {
+                entity_id: *id,
+                offset,
+                length,
+                _pad: 0,
+            });
+            edge_data.extend_from_slice(&serialized);
+        }
+
+        // =====================================================================
+        // 4. Collect properties
+        // =====================================================================
+        // Serialize as Vec<(entity_id, Vec<(key_str, value)>)> via bincode
+        let mut property_entries: Vec<(u64, Vec<(String, obrain_common::types::Value)>)> =
+            Vec::new();
+
+        // Node properties
+        for (id, _) in &node_records {
+            let node_id = NodeId::new(*id);
+            let props = self.node_properties.get_all(node_id);
+            if !props.is_empty() {
+                let entries: Vec<(String, obrain_common::types::Value)> = props
+                    .into_iter()
+                    .map(|(k, v)| (k.as_str().to_string(), v))
+                    .collect();
+                property_entries.push((*id, entries));
+            }
+        }
+
+        // Edge properties (tagged with high bit to distinguish from node IDs)
+        // We use a separate section marker: first all node props, then a separator,
+        // then edge props. Or we can just serialize them as two separate arrays.
+        let mut edge_property_entries: Vec<(u64, Vec<(String, obrain_common::types::Value)>)> =
+            Vec::new();
+        for (id, _) in &edge_records {
+            let edge_id = EdgeId::new(*id);
+            let props = self.edge_properties.get_all(edge_id);
+            if !props.is_empty() {
+                let entries: Vec<(String, obrain_common::types::Value)> = props
+                    .into_iter()
+                    .map(|(k, v)| (k.as_str().to_string(), v))
+                    .collect();
+                edge_property_entries.push((*id, entries));
+            }
+        }
+
+        // Serialize both as a single blob: (node_props, edge_props)
+        let prop_blob = bincode::serde::encode_to_vec(
+            &(&property_entries, &edge_property_entries),
+            config,
+        )
+        .expect("property serialization should not fail");
+
+        // =====================================================================
+        // 5. Collect labels
+        // =====================================================================
+        // Serialize as Vec<(node_id, Vec<String>)>
+        let mut label_entries: Vec<(u64, Vec<String>)> = Vec::new();
+        {
+            let node_labels = self.node_labels.read();
+            let id_to_label = self.id_to_label.read();
+            for (id, _) in &node_records {
+                let node_id = NodeId::new(*id);
+                #[cfg(not(feature = "temporal"))]
+                if let Some(label_ids) = node_labels.get(&node_id) {
+                    let labels: Vec<String> = label_ids
+                        .iter()
+                        .filter_map(|&lid| id_to_label.get(lid as usize).map(|s| s.to_string()))
+                        .collect();
+                    if !labels.is_empty() {
+                        label_entries.push((*id, labels));
+                    }
+                }
+                #[cfg(feature = "temporal")]
+                if let Some(version_log) = node_labels.get(&node_id) {
+                    if let Some(label_ids) = version_log.latest() {
+                        let labels: Vec<String> = label_ids
+                            .iter()
+                            .filter_map(|&lid| {
+                                id_to_label.get(lid as usize).map(|s| s.to_string())
+                            })
+                            .collect();
+                        if !labels.is_empty() {
+                            label_entries.push((*id, labels));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also serialize the edge type table (needed for reconstructing edges)
+        let edge_types: Vec<String> = self
+            .id_to_edge_type
+            .read()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let label_blob = bincode::serde::encode_to_vec(
+            &(&label_entries, &edge_types),
+            config,
+        )
+        .expect("label serialization should not fail");
+
+        // =====================================================================
+        // 6. Collect adjacency
+        // =====================================================================
+        // Serialize as Vec<(node_id, Vec<(dest_node_id, edge_id)>)>
+        let mut adj_entries: Vec<(u64, Vec<(u64, u64)>)> = Vec::new();
+        for (id, _) in &node_records {
+            let node_id = NodeId::new(*id);
+            let edges = self.forward_adj.edges_from(node_id);
+            if !edges.is_empty() {
+                let adj: Vec<(u64, u64)> = edges
+                    .iter()
+                    .map(|(dst, eid)| (dst.as_u64(), eid.as_u64()))
+                    .collect();
+                adj_entries.push((*id, adj));
+            }
+        }
+
+        // Backward adjacency if available
+        let backward_entries: Vec<(u64, Vec<(u64, u64)>)> = if let Some(ref bwd) = self.backward_adj
+        {
+            let mut entries = Vec::new();
+            for (id, _) in &node_records {
+                let node_id = NodeId::new(*id);
+                let edges = bwd.edges_from(node_id);
+                if !edges.is_empty() {
+                    let adj: Vec<(u64, u64)> = edges
+                        .iter()
+                        .map(|(dst, eid)| (dst.as_u64(), eid.as_u64()))
+                        .collect();
+                    entries.push((*id, adj));
+                }
+            }
+            entries
+        } else {
+            Vec::new()
+        };
+
+        let adj_blob = bincode::serde::encode_to_vec(
+            &(&adj_entries, &backward_entries),
+            config,
+        )
+        .expect("adjacency serialization should not fail");
+
+        // =====================================================================
+        // 7. Build zone map and write epoch file
+        // =====================================================================
+        let zone_map = crate::storage::epoch_store::ZoneMap {
+            min_node_id: node_records.first().map_or(0, |(id, _)| *id),
+            max_node_id: node_records.last().map_or(0, |(id, _)| *id),
+            min_edge_id: edge_records.first().map_or(0, |(id, _)| *id),
+            max_edge_id: edge_records.last().map_or(0, |(id, _)| *id),
+            node_count: node_records.len() as u32,
+            edge_count: edge_records.len() as u32,
+            min_epoch: epoch.as_u64(),
+            max_epoch: epoch.as_u64(),
+        };
+
+        let file_data = EpochFileData {
+            epoch,
+            node_index: &node_index,
+            node_data: &node_data,
+            edge_index: &edge_index,
+            edge_data: &edge_data,
+            zone_map: &zone_map,
+            property_data: Some(&prop_blob),
+            label_data: Some(&label_blob),
+            adjacency_data: Some(&adj_blob),
+        };
+
+        self.epoch_store.persist_epoch_direct(&file_data, wal_sequence)
+    }
+
+    /// Restores the store from mmap'd epoch files.
+    ///
+    /// This is called during database startup after loading epoch files.
+    /// It rebuilds the in-memory indexes (version indexes, labels, adjacency,
+    /// ID counters) from the mmap'd data.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if deserialization fails.
+    #[cfg(feature = "tiered-storage")]
+    pub fn restore_from_epoch_files(&self) -> std::io::Result<()> {
+        let mmap_blocks = self.epoch_store.mmap_blocks().read();
+
+        let mut max_node_id: u64 = 0;
+        let mut max_edge_id: u64 = 0;
+
+        for (epoch_id, block) in mmap_blocks.iter() {
+            let config = bincode::config::standard();
+
+            // =====================================================================
+            // 1. Rebuild version indexes from node/edge index entries
+            // =====================================================================
+            {
+                let mut versions = self.node_versions.write();
+                for entry in block.node_index() {
+                    let node_id = NodeId::new(entry.entity_id);
+                    if entry.entity_id > max_node_id {
+                        max_node_id = entry.entity_id;
+                    }
+                    let cold_ref = ColdVersionRef {
+                        epoch: *epoch_id,
+                        block_offset: entry.offset,
+                        length: entry.length,
+                        created_by: TransactionId::SYSTEM,
+                        deleted_epoch: obrain_common::mvcc::OptionalEpochId::NONE,
+                        deleted_by: None,
+                    };
+                    let index = versions
+                        .entry(node_id)
+                        .or_insert_with(VersionIndex::new);
+                    index.add_cold(cold_ref);
+                }
+            }
+
+            {
+                let mut versions = self.edge_versions.write();
+                for entry in block.edge_index() {
+                    let edge_id = EdgeId::new(entry.entity_id);
+                    if entry.entity_id > max_edge_id {
+                        max_edge_id = entry.entity_id;
+                    }
+                    let cold_ref = ColdVersionRef {
+                        epoch: *epoch_id,
+                        block_offset: entry.offset,
+                        length: entry.length,
+                        created_by: TransactionId::SYSTEM,
+                        deleted_epoch: obrain_common::mvcc::OptionalEpochId::NONE,
+                        deleted_by: None,
+                    };
+                    let index = versions
+                        .entry(edge_id)
+                        .or_insert_with(VersionIndex::new);
+                    index.add_cold(cold_ref);
+                }
+            }
+
+            // =====================================================================
+            // 2. Restore labels
+            // =====================================================================
+            if let Some(label_bytes) = block.label_data_section() {
+                let result: Result<
+                    (Vec<(u64, Vec<String>)>, Vec<String>),
+                    _,
+                > = bincode::serde::decode_from_slice(label_bytes, config).map(|(v, _)| v);
+
+                if let Ok((label_entries, edge_types)) = result {
+                    // Restore edge type table
+                    {
+                        let mut id_to_edge_type = self.id_to_edge_type.write();
+                        let mut edge_type_to_id = self.edge_type_to_id.write();
+                        for (idx, etype) in edge_types.into_iter().enumerate() {
+                            let arc = arcstr::ArcStr::from(etype);
+                            if idx >= id_to_edge_type.len() {
+                                edge_type_to_id.insert(arc.clone(), idx as u32);
+                                id_to_edge_type.push(arc);
+                            }
+                        }
+                    }
+
+                    // Restore node labels
+                    {
+                        let mut label_to_id = self.label_to_id.write();
+                        let mut id_to_label = self.id_to_label.write();
+                        let mut node_labels = self.node_labels.write();
+                        let mut label_index = self.label_index.write();
+
+                        for (node_id_raw, labels) in label_entries {
+                            let node_id = NodeId::new(node_id_raw);
+                            let mut label_ids =
+                                obrain_common::utils::hash::FxHashSet::default();
+
+                            for label_str in labels {
+                                let label_id = if let Some(&id) = label_to_id.get(label_str.as_str())
+                                {
+                                    id
+                                } else {
+                                    let id = id_to_label.len() as u32;
+                                    let arc = arcstr::ArcStr::from(label_str);
+                                    label_to_id.insert(arc.clone(), id);
+                                    id_to_label.push(arc);
+                                    // Ensure label_index has enough slots
+                                    while label_index.len() <= id as usize {
+                                        label_index
+                                            .push(obrain_common::utils::hash::FxHashMap::default());
+                                    }
+                                    id
+                                };
+                                label_ids.insert(label_id);
+
+                                // Update label index
+                                if let Some(node_set) = label_index.get_mut(label_id as usize) {
+                                    node_set.insert(node_id, ());
+                                }
+                            }
+
+                            #[cfg(not(feature = "temporal"))]
+                            {
+                                node_labels.insert(node_id, label_ids);
+                            }
+                            #[cfg(feature = "temporal")]
+                            {
+                                let mut log = obrain_common::temporal::VersionLog::new();
+                                log.append(*epoch_id, label_ids);
+                                node_labels.insert(node_id, log);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // =====================================================================
+            // 3. Restore properties
+            // =====================================================================
+            if let Some(prop_bytes) = block.property_data() {
+                type PropEntries = Vec<(u64, Vec<(String, obrain_common::types::Value)>)>;
+                let result: Result<(PropEntries, PropEntries), _> =
+                    bincode::serde::decode_from_slice(prop_bytes, config).map(|(v, _)| v);
+
+                if let Ok((node_props, edge_props)) = result {
+                    // Restore node properties
+                    for (node_id_raw, props) in node_props {
+                        let node_id = NodeId::new(node_id_raw);
+                        for (key_str, value) in props {
+                            self.node_properties.set(
+                                node_id,
+                                obrain_common::types::PropertyKey::new(key_str),
+                                value,
+                            );
+                        }
+                    }
+
+                    // Restore edge properties
+                    for (edge_id_raw, props) in edge_props {
+                        let edge_id = EdgeId::new(edge_id_raw);
+                        for (key_str, value) in props {
+                            self.edge_properties.set(
+                                edge_id,
+                                obrain_common::types::PropertyKey::new(key_str),
+                                value,
+                            );
+                        }
+                    }
+                }
+            }
+
+            // =====================================================================
+            // 4. Restore adjacency
+            // =====================================================================
+            if let Some(adj_bytes) = block.adjacency_data() {
+                type AdjEntries = Vec<(u64, Vec<(u64, u64)>)>;
+                let result: Result<(AdjEntries, AdjEntries), _> =
+                    bincode::serde::decode_from_slice(adj_bytes, config).map(|(v, _)| v);
+
+                if let Ok((forward_adj, backward_adj)) = result {
+                    // Restore forward adjacency
+                    for (src_raw, edges) in forward_adj {
+                        let src = NodeId::new(src_raw);
+                        for (dst_raw, eid_raw) in edges {
+                            self.forward_adj.add_edge(
+                                src,
+                                NodeId::new(dst_raw),
+                                EdgeId::new(eid_raw),
+                            );
+                        }
+                    }
+
+                    // Restore backward adjacency
+                    if let Some(ref bwd) = self.backward_adj {
+                        for (src_raw, edges) in backward_adj {
+                            let src = NodeId::new(src_raw);
+                            for (dst_raw, eid_raw) in edges {
+                                bwd.add_edge(
+                                    src,
+                                    NodeId::new(dst_raw),
+                                    EdgeId::new(eid_raw),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Update ID counters
+        if max_node_id > 0 {
+            self.next_node_id
+                .fetch_max(max_node_id + 1, Ordering::SeqCst);
+        }
+        if max_edge_id > 0 {
+            self.next_edge_id
+                .fetch_max(max_edge_id + 1, Ordering::SeqCst);
+        }
+
+        // Update live counts
+        let node_count = self.node_versions.read().len() as i64;
+        let edge_count = self.edge_versions.read().len() as i64;
+        self.live_node_count.store(node_count, Ordering::SeqCst);
+        self.live_edge_count.store(edge_count, Ordering::SeqCst);
+
+        Ok(())
+    }
 }

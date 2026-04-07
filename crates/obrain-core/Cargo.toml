@@ -30,6 +30,8 @@ serde_json = { version = "1", optional = true }
 byteorder.workspace = true
 bytes.workspace = true
 bincode = { workspace = true, optional = true }
+bytemuck = { workspace = true, optional = true }
+memmap2 = { workspace = true, optional = true }
 
 # Data import (optional)
 parquet = { version = "58", optional = true, default-features = false }
@@ -56,6 +58,7 @@ rand = { workspace = true, optional = true }
 [dev-dependencies]
 criterion.workspace = true
 tempfile.workspace = true
+bytemuck = { workspace = true }
 
 [features]
 default = ["parallel", "spill", "mmap", "regex"]
@@ -63,7 +66,7 @@ parallel = ["rayon", "crossbeam"]  # Morsel-driven parallelism (rayon, crossbeam
 spill = ["tokio"]                  # Disk spilling for out-of-core execution
 mmap = []                          # File-backed vector storage (MmapStorage)
 rdf = []  # Enable RDF graph model
-tiered-storage = ["obrain-common/tiered-storage", "bincode"]  # Enable tiered hot/cold storage
+tiered-storage = ["obrain-common/tiered-storage", "bincode", "bytemuck", "memmap2", "serde_json"]  # Enable tiered hot/cold storage with mmap persistence
 temporal = ["obrain-common/temporal"]  # Enable append-only versioned properties
 succinct-indexes = []  # Enable succinct data structures (rank/select bitvectors, Elias-Fano, wavelet trees)
 ring-index = ["succinct-indexes", "rdf"]  # Ring Index for RDF (3x space reduction, requires succinct-indexes and rdf)

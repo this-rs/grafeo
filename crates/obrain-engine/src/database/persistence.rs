@@ -1088,6 +1088,64 @@ impl super::ObrainDB {
     pub fn iter_edges(&self) -> impl Iterator<Item = obrain_core::graph::lpg::Edge> + '_ {
         self.store.all_edges()
     }
+
+    /// Compacts the database by writing all current data to mmap-able epoch files.
+    ///
+    /// After compaction, the next database startup will mmap the epoch files
+    /// instead of replaying the full WAL, resulting in near-instant boot times.
+    ///
+    /// This is a one-shot migration operation: it reads all in-memory data
+    /// (nodes, edges, properties, labels, adjacency) and writes it to
+    /// `{db_path}/epochs/` as `.oeb` (Obrain Epoch Block) files.
+    ///
+    /// # Prerequisites
+    ///
+    /// - The database must have been opened with a path (`Config::path` is `Some`)
+    /// - The `tiered-storage` feature must be enabled
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - No database path is configured
+    /// - The epoch store directory cannot be created
+    /// - Writing the epoch file fails
+    #[cfg(feature = "tiered-storage")]
+    pub fn compact(&self) -> Result<std::path::PathBuf> {
+        let db_path = self
+            .config
+            .path
+            .as_ref()
+            .ok_or_else(|| Error::Internal("compact requires a database path".to_string()))?;
+
+        // Ensure epoch store has a persist directory
+        self.store
+            .epoch_store()
+            .set_persist_dir(db_path.clone())
+            .map_err(|e| Error::Internal(format!("failed to create epochs directory: {e}")))?;
+
+        // Get the current WAL sequence from the WAL manager's checkpoint metadata
+        #[cfg(feature = "wal")]
+        let wal_sequence = self
+            .wal
+            .as_ref()
+            .and_then(|w| w.read_checkpoint_metadata().ok().flatten())
+            .map_or(0u64, |m| m.log_sequence);
+        #[cfg(not(feature = "wal"))]
+        let wal_sequence = 0u64;
+
+        // Snapshot all data to an epoch file
+        let path = self
+            .store
+            .snapshot_to_epoch_file(wal_sequence)
+            .map_err(|e| Error::Internal(format!("compact failed: {e}")))?;
+
+        tracing::info!(
+            "Database compacted to {} (wal_sequence={wal_sequence})",
+            path.display()
+        );
+
+        Ok(path)
+    }
 }
 
 #[cfg(test)]

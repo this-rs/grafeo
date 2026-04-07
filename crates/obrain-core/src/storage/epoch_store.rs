@@ -51,6 +51,7 @@
 //! ```
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use obrain_common::types::EpochId;
@@ -58,6 +59,10 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 use super::codec::CompressionCodec;
+use super::mmap_epoch::{
+    EpochFileData, MmapEpochBlock, epoch_filename, write_epoch_checkpoint, write_epoch_file,
+    EpochCheckpoint,
+};
 use crate::graph::lpg::{EdgeRecord, NodeRecord};
 
 /// Compression type used for epoch blocks.
@@ -188,7 +193,11 @@ pub struct EpochBlockHeader {
 }
 
 /// Index entry for locating an entity within compressed data.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+///
+/// This struct is `#[repr(C)]` and 16 bytes, enabling zero-copy reads from
+/// memory-mapped epoch files via `bytemuck::cast_slice`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct IndexEntry {
     /// Entity ID (NodeId or EdgeId as u64).
     pub entity_id: u64,
@@ -196,6 +205,8 @@ pub struct IndexEntry {
     pub offset: u32,
     /// Length of the serialized record.
     pub length: u16,
+    /// Padding for 16-byte alignment.
+    pub _pad: u16,
 }
 
 /// A compressed, immutable epoch block.
@@ -259,6 +270,7 @@ impl CompressedEpochBlock {
                 entity_id: *id,
                 offset,
                 length,
+                _pad: 0,
             });
             node_data.extend_from_slice(&serialized);
         }
@@ -277,6 +289,7 @@ impl CompressedEpochBlock {
                 entity_id: *id,
                 offset,
                 length,
+                _pad: 0,
             });
             edge_data.extend_from_slice(&serialized);
         }
@@ -451,12 +464,16 @@ impl CompressedEpochBlock {
 /// access the same block simultaneously, but writes (freeze/gc) require
 /// exclusive access.
 pub struct EpochStore {
-    /// Epoch ID → compressed block.
+    /// Epoch ID → compressed block (in-memory hot).
     blocks: RwLock<HashMap<EpochId, CompressedEpochBlock>>,
-    /// Total compressed bytes across all blocks.
+    /// Epoch ID → memory-mapped epoch file (cold, persistent).
+    mmap_blocks: RwLock<HashMap<EpochId, MmapEpochBlock>>,
+    /// Total compressed bytes across all in-memory blocks.
     total_size: AtomicUsize,
-    /// Number of frozen epochs.
+    /// Number of frozen epochs (in-memory + mmap'd).
     epoch_count: AtomicUsize,
+    /// Directory for persisting epoch files. None = in-memory only.
+    persist_dir: RwLock<Option<PathBuf>>,
 }
 
 impl Default for EpochStore {
@@ -466,14 +483,61 @@ impl Default for EpochStore {
 }
 
 impl EpochStore {
-    /// Creates a new empty epoch store.
+    /// Creates a new empty epoch store (in-memory only).
     #[must_use]
     pub fn new() -> Self {
         Self {
             blocks: RwLock::new(HashMap::new()),
+            mmap_blocks: RwLock::new(HashMap::new()),
             total_size: AtomicUsize::new(0),
             epoch_count: AtomicUsize::new(0),
+            persist_dir: RwLock::new(None),
         }
+    }
+
+    /// Creates a new epoch store with a persistence directory.
+    ///
+    /// The `epochs/` subdirectory is created automatically if it doesn't exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the directory cannot be created.
+    pub fn with_persist_dir(dir: PathBuf) -> std::io::Result<Self> {
+        let epochs_dir = dir.join("epochs");
+        std::fs::create_dir_all(&epochs_dir)?;
+        Ok(Self {
+            blocks: RwLock::new(HashMap::new()),
+            mmap_blocks: RwLock::new(HashMap::new()),
+            total_size: AtomicUsize::new(0),
+            epoch_count: AtomicUsize::new(0),
+            persist_dir: RwLock::new(Some(dir)),
+        })
+    }
+
+    /// Sets the persistence directory after construction.
+    ///
+    /// Creates the `epochs/` subdirectory if needed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the directory cannot be created.
+    pub fn set_persist_dir(&self, dir: PathBuf) -> std::io::Result<()> {
+        let epochs_dir = dir.join("epochs");
+        std::fs::create_dir_all(&epochs_dir)?;
+        *self.persist_dir.write() = Some(dir);
+        Ok(())
+    }
+
+    /// Returns the persistence directory, if set.
+    #[must_use]
+    pub fn persist_dir(&self) -> Option<PathBuf> {
+        self.persist_dir.read().clone()
+    }
+
+    /// Returns the epochs subdirectory path, if persistence is configured.
+    #[must_use]
+    pub fn epochs_dir(&self) -> Option<PathBuf> {
+        self.persist_dir.read().as_ref().map(|d| d.join("epochs"))
     }
 
     /// Freezes an epoch from arena records into compressed storage.
@@ -595,6 +659,169 @@ impl EpochStore {
         self.epoch_count.load(Ordering::Relaxed)
     }
 
+    /// Gets a node record, searching in-memory blocks first, then mmap'd blocks.
+    #[must_use]
+    pub fn get_node_tiered(&self, epoch: EpochId, offset: u32, length: u16) -> Option<NodeRecord> {
+        // Try in-memory first
+        if let Some(record) = self.get_node(epoch, offset, length) {
+            return Some(record);
+        }
+        // Fall back to mmap'd blocks
+        let mmap_blocks = self.mmap_blocks.read();
+        mmap_blocks.get(&epoch)?.get_node(offset, length)
+    }
+
+    /// Gets an edge record, searching in-memory blocks first, then mmap'd blocks.
+    #[must_use]
+    pub fn get_edge_tiered(&self, epoch: EpochId, offset: u32, length: u16) -> Option<EdgeRecord> {
+        if let Some(record) = self.get_edge(epoch, offset, length) {
+            return Some(record);
+        }
+        let mmap_blocks = self.mmap_blocks.read();
+        mmap_blocks.get(&epoch)?.get_edge(offset, length)
+    }
+
+    /// Persists an in-memory epoch block to disk as an mmap-able epoch file.
+    ///
+    /// After writing, the in-memory block can optionally be dropped and replaced
+    /// by an mmap'd reference (saving RAM).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no persist directory is configured or writing fails.
+    pub fn persist_epoch(
+        &self,
+        epoch: EpochId,
+        wal_sequence: u64,
+        property_data: Option<&[u8]>,
+        label_data: Option<&[u8]>,
+        adjacency_data: Option<&[u8]>,
+    ) -> std::io::Result<std::path::PathBuf> {
+        let epochs_dir = self.epochs_dir().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::Other, "no persist directory configured")
+        })?;
+
+        let blocks = self.blocks.read();
+        let block = blocks.get(&epoch).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("epoch {} not found in memory", epoch.as_u64()),
+            )
+        })?;
+
+        let file_data = EpochFileData {
+            epoch,
+            node_index: &block.node_index,
+            node_data: &block.node_data,
+            edge_index: &block.edge_index,
+            edge_data: &block.edge_data,
+            zone_map: &block.header.zone_map,
+            property_data,
+            label_data,
+            adjacency_data,
+        };
+
+        let path = epochs_dir.join(epoch_filename(epoch));
+        write_epoch_file(&path, &file_data)?;
+
+        // Write checkpoint
+        let checkpoint = EpochCheckpoint {
+            last_persisted_epoch: epoch.as_u64(),
+            wal_sequence,
+            epoch_file_count: self.epoch_count.load(Ordering::Relaxed) as u64,
+            timestamp: chrono_timestamp(),
+        };
+        write_epoch_checkpoint(&epochs_dir, &checkpoint)?;
+
+        Ok(path)
+    }
+
+    /// Persists data directly to an epoch file without requiring an in-memory block.
+    ///
+    /// This is used by the compact operation which builds EpochFileData directly.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
+    pub fn persist_epoch_direct(
+        &self,
+        data: &EpochFileData<'_>,
+        wal_sequence: u64,
+    ) -> std::io::Result<std::path::PathBuf> {
+        let epochs_dir = self.epochs_dir().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::Other, "no persist directory configured")
+        })?;
+
+        let path = epochs_dir.join(epoch_filename(data.epoch));
+        write_epoch_file(&path, data)?;
+
+        let checkpoint = EpochCheckpoint {
+            last_persisted_epoch: data.epoch.as_u64(),
+            wal_sequence,
+            epoch_file_count: {
+                let mmap_count = self.mmap_blocks.read().len() as u64;
+                mmap_count + 1 // +1 for the one we just wrote
+            },
+            timestamp: chrono_timestamp(),
+        };
+        write_epoch_checkpoint(&epochs_dir, &checkpoint)?;
+
+        Ok(path)
+    }
+
+    /// Loads all persisted epoch files from disk via mmap.
+    ///
+    /// Returns the maximum WAL sequence from the checkpoint file, or 0
+    /// if no checkpoint exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if epoch files cannot be read.
+    pub fn load_persisted_epochs(&self) -> std::io::Result<u64> {
+        let epochs_dir = match self.epochs_dir() {
+            Some(dir) => dir,
+            None => return Ok(0),
+        };
+
+        if !epochs_dir.exists() {
+            return Ok(0);
+        }
+
+        let epoch_files = super::mmap_epoch::scan_epoch_files(&epochs_dir)?;
+        let mut mmap_blocks = self.mmap_blocks.write();
+
+        for (epoch, path) in &epoch_files {
+            if !mmap_blocks.contains_key(epoch) {
+                let block = MmapEpochBlock::open(path)?;
+                mmap_blocks.insert(*epoch, block);
+            }
+        }
+
+        let total = self.blocks.read().len() + mmap_blocks.len();
+        self.epoch_count.store(total, Ordering::Relaxed);
+
+        // Read checkpoint for WAL sequence
+        let checkpoint = super::mmap_epoch::read_epoch_checkpoint(&epochs_dir)?;
+        Ok(checkpoint.map_or(0, |c| c.wal_sequence))
+    }
+
+    /// Returns the number of mmap'd epoch blocks.
+    #[must_use]
+    pub fn mmap_block_count(&self) -> usize {
+        self.mmap_blocks.read().len()
+    }
+
+    /// Returns a reference to the mmap'd blocks (for iteration during reads).
+    pub fn mmap_blocks(&self) -> &RwLock<HashMap<EpochId, MmapEpochBlock>> {
+        &self.mmap_blocks
+    }
+
+    /// Checks if an epoch exists in either in-memory or mmap'd storage.
+    #[must_use]
+    pub fn contains_epoch_any(&self, epoch: EpochId) -> bool {
+        self.blocks.read().contains_key(&epoch) || self.mmap_blocks.read().contains_key(&epoch)
+    }
+
     /// Returns statistics about the store.
     #[must_use]
     pub fn stats(&self) -> EpochStoreStats {
@@ -642,6 +869,17 @@ pub struct EpochStoreStats {
     pub total_uncompressed_bytes: usize,
     /// Overall compression ratio.
     pub compression_ratio: f64,
+}
+
+/// Returns an ISO 8601 timestamp string using std::time (no chrono dependency).
+fn chrono_timestamp() -> String {
+    // Use SystemTime for a rough ISO 8601 timestamp
+    let duration = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = duration.as_secs();
+    // Simple UTC timestamp without pulling in chrono
+    format!("{secs}")
 }
 
 #[cfg(test)]

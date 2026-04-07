@@ -62,6 +62,7 @@ wal = ["obrain-engine/wal"]
 spill = ["obrain-engine/spill"]
 mmap = ["obrain-engine/mmap"]
 temporal = ["obrain-engine/temporal"]  # Append-only versioned properties
+tiered-storage = ["obrain-engine/tiered-storage"]  # Hot/cold tiered storage with mmap epoch files
 obrain-file = ["obrain-engine/obrain-file"]  # Single-file .obrain database format
 
 # Enable platform-optimized memory allocator (10-20% faster allocations)

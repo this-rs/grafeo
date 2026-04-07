@@ -952,6 +952,24 @@ impl VersionIndex {
         self.recalculate_latest_epoch();
     }
 
+    /// Returns the latest hot version ref (most recent first).
+    ///
+    /// Used by the compact/snapshot operation to read the current version.
+    #[must_use]
+    pub fn latest_hot(&self) -> Option<&HotVersionRef> {
+        self.hot.first()
+    }
+
+    /// Adds a cold version ref (e.g., when restoring from mmap'd epoch files).
+    ///
+    /// Maintains descending epoch order.
+    pub fn add_cold(&mut self, cold_ref: ColdVersionRef) {
+        self.cold.push(cold_ref);
+        self.cold
+            .sort_by(|a, b| b.epoch.as_u64().cmp(&a.epoch.as_u64()));
+        self.recalculate_latest_epoch();
+    }
+
     /// Returns hot version refs for a specific epoch (for freeze operation).
     pub fn hot_refs_for_epoch(&self, epoch: EpochId) -> impl Iterator<Item = &HotVersionRef> {
         self.hot.iter().filter(move |v| v.epoch == epoch)

@@ -62,7 +62,8 @@ storage = ["obrain-engine/storage"]
 embedded = ["gql", "ai", "algos", "obrain-engine/parallel", "obrain-engine/regex"]
 reactive = ["obrain-engine/reactive"]
 parallel = ["obrain-engine/parallel"]
-full = ["languages", "ai", "algos", "rdf", "storage", "parallel", "reactive"]
+tiered-storage = ["obrain-engine/tiered-storage"]  # Mmap epoch files for instant boot
+full = ["languages", "ai", "algos", "rdf", "storage", "parallel", "reactive", "tiered-storage"]
 
 [dev-dependencies]
 tempfile = "3.27"

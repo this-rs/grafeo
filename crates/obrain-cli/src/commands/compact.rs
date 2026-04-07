@@ -51,6 +51,26 @@ pub fn run(path: &Path, dry_run: bool, format: OutputFormat, quiet: bool) -> Res
         output::status("Compacting database...", quiet);
         db.gc();
 
+        // Create mmap epoch files for instant startup (tiered-storage feature)
+        #[cfg(feature = "tiered-storage")]
+        {
+            output::status("Creating epoch files for instant boot...", quiet);
+            match db.compact() {
+                Ok(epoch_path) => {
+                    output::status(
+                        &format!("Epoch file written: {}", epoch_path.display()),
+                        quiet,
+                    );
+                }
+                Err(e) => {
+                    output::status(
+                        &format!("Warning: epoch file creation failed: {e}"),
+                        false,
+                    );
+                }
+            }
+        }
+
         let stats_after = db.detailed_stats();
 
         let result = CompactionOutput {
