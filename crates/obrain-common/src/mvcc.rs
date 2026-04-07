@@ -960,6 +960,14 @@ impl VersionIndex {
         self.hot.first()
     }
 
+    /// Returns the latest cold version ref (most recent epoch first).
+    ///
+    /// Used by compact when no hot ref exists (entity only in mmap'd cold storage).
+    #[must_use]
+    pub fn latest_cold(&self) -> Option<&ColdVersionRef> {
+        self.cold.first()
+    }
+
     /// Adds a cold version ref (e.g., when restoring from mmap'd epoch files).
     ///
     /// Maintains descending epoch order.
@@ -968,6 +976,20 @@ impl VersionIndex {
         self.cold
             .sort_by(|a, b| b.epoch.as_u64().cmp(&a.epoch.as_u64()));
         self.recalculate_latest_epoch();
+    }
+
+    /// Creates a VersionIndex with a single cold ref, no sorting needed.
+    /// Use this for bulk restore when inserting one cold ref per entity.
+    #[must_use]
+    pub fn with_single_cold(cold_ref: ColdVersionRef) -> Self {
+        let epoch = cold_ref.epoch;
+        let mut cold = SmallVec::new();
+        cold.push(cold_ref);
+        Self {
+            hot: SmallVec::new(),
+            cold,
+            latest_epoch: epoch,
+        }
     }
 
     /// Returns hot version refs for a specific epoch (for freeze operation).

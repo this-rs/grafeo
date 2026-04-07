@@ -52,6 +52,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use obrain_common::types::EpochId;
@@ -467,7 +468,7 @@ pub struct EpochStore {
     /// Epoch ID → compressed block (in-memory hot).
     blocks: RwLock<HashMap<EpochId, CompressedEpochBlock>>,
     /// Epoch ID → memory-mapped epoch file (cold, persistent).
-    mmap_blocks: RwLock<HashMap<EpochId, MmapEpochBlock>>,
+    mmap_blocks: RwLock<HashMap<EpochId, Arc<MmapEpochBlock>>>,
     /// Total compressed bytes across all in-memory blocks.
     total_size: AtomicUsize,
     /// Number of frozen epochs (in-memory + mmap'd).
@@ -792,7 +793,7 @@ impl EpochStore {
 
         for (epoch, path) in &epoch_files {
             if !mmap_blocks.contains_key(epoch) {
-                let block = MmapEpochBlock::open(path)?;
+                let block = Arc::new(MmapEpochBlock::open(path)?);
                 mmap_blocks.insert(*epoch, block);
             }
         }
@@ -812,7 +813,7 @@ impl EpochStore {
     }
 
     /// Returns a reference to the mmap'd blocks (for iteration during reads).
-    pub fn mmap_blocks(&self) -> &RwLock<HashMap<EpochId, MmapEpochBlock>> {
+    pub fn mmap_blocks(&self) -> &RwLock<HashMap<EpochId, Arc<MmapEpochBlock>>> {
         &self.mmap_blocks
     }
 

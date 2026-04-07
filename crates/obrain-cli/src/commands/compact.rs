@@ -14,10 +14,11 @@ struct CompactionOutput {
     dry_run: bool,
     before_size_bytes: usize,
     after_size_bytes: Option<usize>,
+    wal_bytes_pruned: Option<usize>,
 }
 
 /// Run the compact command.
-pub fn run(path: &Path, dry_run: bool, format: OutputFormat, quiet: bool) -> Result<()> {
+pub fn run(path: &Path, dry_run: bool, prune_wal: bool, format: OutputFormat, quiet: bool) -> Result<()> {
     let db = super::open_existing(path)?;
     let stats_before = db.detailed_stats();
 
@@ -28,6 +29,7 @@ pub fn run(path: &Path, dry_run: bool, format: OutputFormat, quiet: bool) -> Res
             dry_run: true,
             before_size_bytes: stats_before.memory_bytes,
             after_size_bytes: None,
+            wal_bytes_pruned: None,
         };
 
         let fmt: Format = format.into();
@@ -71,12 +73,37 @@ pub fn run(path: &Path, dry_run: bool, format: OutputFormat, quiet: bool) -> Res
             }
         }
 
+        // Prune old WAL files if requested
+        let wal_bytes_pruned = if prune_wal {
+            output::status("Pruning old WAL files...", quiet);
+            match db.prune_wal() {
+                Ok(freed) => {
+                    if freed > 0 {
+                        output::status(
+                            &format!("Pruned WAL files, freed {}", format_bytes(freed)),
+                            quiet,
+                        );
+                    } else {
+                        output::status("No WAL files to prune", quiet);
+                    }
+                    Some(freed)
+                }
+                Err(e) => {
+                    output::status(&format!("Warning: WAL prune failed: {e}"), false);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let stats_after = db.detailed_stats();
 
         let result = CompactionOutput {
             dry_run: false,
             before_size_bytes: stats_before.memory_bytes,
             after_size_bytes: Some(stats_after.memory_bytes),
+            wal_bytes_pruned,
         };
 
         let fmt: Format = format.into();
@@ -90,11 +117,14 @@ pub fn run(path: &Path, dry_run: bool, format: OutputFormat, quiet: bool) -> Res
                 let reclaimed = stats_before
                     .memory_bytes
                     .saturating_sub(stats_after.memory_bytes);
-                let items = vec![
+                let mut items = vec![
                     ("Before", format_bytes(stats_before.memory_bytes)),
                     ("After", format_bytes(stats_after.memory_bytes)),
                     ("Reclaimed", format_bytes(reclaimed)),
                 ];
+                if let Some(wal_freed) = wal_bytes_pruned {
+                    items.push(("WAL Pruned", format_bytes(wal_freed)));
+                }
                 output::print_key_value_table(&items, fmt, quiet);
             }
         }
@@ -125,7 +155,7 @@ mod tests {
         create_test_db(&db_path);
 
         // Dry run should succeed without modifying the database
-        run(&db_path, true, OutputFormat::Table, true).expect("dry run should succeed");
+        run(&db_path, true, false, OutputFormat::Table, true).expect("dry run should succeed");
     }
 
     #[test]
@@ -135,7 +165,7 @@ mod tests {
         create_test_db(&db_path);
 
         // Actual compaction
-        run(&db_path, false, OutputFormat::Table, true).expect("compaction should succeed");
+        run(&db_path, false, false, OutputFormat::Table, true).expect("compaction should succeed");
     }
 
     #[test]
@@ -144,8 +174,8 @@ mod tests {
         let db_path = temp.path().join("test.obrain");
         create_test_db(&db_path);
 
-        run(&db_path, true, OutputFormat::Json, true).expect("json format dry run should succeed");
-        run(&db_path, false, OutputFormat::Json, true)
+        run(&db_path, true, false, OutputFormat::Json, true).expect("json format dry run should succeed");
+        run(&db_path, false, false, OutputFormat::Json, true)
             .expect("json format compaction should succeed");
     }
 
@@ -154,7 +184,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let db_path = temp.path().join("nonexistent.obrain");
 
-        let result = run(&db_path, true, OutputFormat::Table, true);
+        let result = run(&db_path, true, false, OutputFormat::Table, true);
         assert!(result.is_err());
     }
 }

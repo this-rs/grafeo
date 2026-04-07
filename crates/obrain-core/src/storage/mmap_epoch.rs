@@ -56,6 +56,28 @@ use obrain_common::types::EpochId;
 use super::epoch_store::{IndexEntry, ZoneMap};
 use crate::graph::lpg::{EdgeRecord, NodeRecord};
 
+/// Index entry for property/adjacency sections, supporting >4GB offsets.
+///
+/// Used in the v2 indexed property and adjacency format to enable
+/// per-entity binary search without deserializing the entire section.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+pub struct WideIndexEntry {
+    /// The entity ID (node or edge) this entry refers to.
+    pub entity_id: u64,
+    /// Byte offset of the serialized data within the data region.
+    pub data_offset: u64,
+    /// Size of the serialized data in bytes.
+    pub data_size: u32,
+    /// Padding for 8-byte alignment.
+    pub _pad: u32,
+}
+
+/// Magic bytes identifying an indexed property section (v2 format).
+pub const INDEXED_PROPERTY_MAGIC: [u8; 8] = *b"PROPIDX\0";
+/// Magic bytes identifying an indexed adjacency section (v2 format).
+pub const INDEXED_ADJACENCY_MAGIC: [u8; 8] = *b"ADJIDX\0\0";
+
 // =============================================================================
 // Constants
 // =============================================================================
@@ -783,6 +805,120 @@ impl MmapEpochBlock {
     }
 
     // =========================================================================
+    // Indexed property/adjacency access (v2 format)
+    // =========================================================================
+
+    /// Checks if the property section uses the indexed format (v2).
+    pub fn has_indexed_properties(&self) -> bool {
+        self.property_data()
+            .is_some_and(|d| d.len() >= 32 && d[..8] == INDEXED_PROPERTY_MAGIC)
+    }
+
+    /// Returns the node property index entries (zero-copy from mmap).
+    pub fn node_property_index(&self) -> Option<&[WideIndexEntry]> {
+        let data = self.property_data()?;
+        if data.len() < 32 || data[..8] != INDEXED_PROPERTY_MAGIC { return None; }
+        let node_count = u64::from_le_bytes(data[8..16].try_into().ok()?) as usize;
+        if node_count == 0 { return Some(&[]); }
+        let start = 32; // after magic(8) + node_count(8) + edge_count(8) + data_region_offset(8)
+        let byte_len = node_count * std::mem::size_of::<WideIndexEntry>();
+        if start + byte_len > data.len() { return None; }
+        Some(bytemuck::cast_slice(&data[start..start + byte_len]))
+    }
+
+    /// Returns the edge property index entries (zero-copy from mmap).
+    pub fn edge_property_index(&self) -> Option<&[WideIndexEntry]> {
+        let data = self.property_data()?;
+        if data.len() < 32 || data[..8] != INDEXED_PROPERTY_MAGIC { return None; }
+        let node_count = u64::from_le_bytes(data[8..16].try_into().ok()?) as usize;
+        let edge_count = u64::from_le_bytes(data[16..24].try_into().ok()?) as usize;
+        if edge_count == 0 { return Some(&[]); }
+        let entry_size = std::mem::size_of::<WideIndexEntry>();
+        let start = 32 + node_count * entry_size;
+        let byte_len = edge_count * entry_size;
+        if start + byte_len > data.len() { return None; }
+        Some(bytemuck::cast_slice(&data[start..start + byte_len]))
+    }
+
+    /// Returns the data region offset within the property section.
+    fn property_data_region_offset(&self) -> Option<usize> {
+        let data = self.property_data()?;
+        if data.len() < 32 || data[..8] != INDEXED_PROPERTY_MAGIC { return None; }
+        Some(u64::from_le_bytes(data[24..32].try_into().ok()?) as usize)
+    }
+
+    /// Gets all properties for a single entity from the indexed property section.
+    /// Returns None if not found. is_edge=false for nodes, true for edges.
+    pub fn get_entity_properties(&self, entity_id: u64, is_edge: bool) -> Option<Vec<(String, obrain_common::types::Value)>> {
+        let section = self.property_data()?;
+        let data_region_offset = self.property_data_region_offset()?;
+        let index = if is_edge { self.edge_property_index()? } else { self.node_property_index()? };
+        let pos = index.binary_search_by_key(&entity_id, |e| e.entity_id).ok()?;
+        let entry = &index[pos];
+        let start = data_region_offset + entry.data_offset as usize;
+        let end = start + entry.data_size as usize;
+        if end > section.len() { return None; }
+        let config = bincode::config::standard();
+        bincode::serde::decode_from_slice::<Vec<(String, obrain_common::types::Value)>, _>(&section[start..end], config)
+            .ok()
+            .map(|(v, _)| v)
+    }
+
+    /// Checks if the adjacency section uses the indexed format.
+    pub fn has_indexed_adjacency(&self) -> bool {
+        self.adjacency_data()
+            .is_some_and(|d| d.len() >= 32 && d[..8] == INDEXED_ADJACENCY_MAGIC)
+    }
+
+    /// Gets forward adjacency for a single node from the indexed adjacency section.
+    pub fn get_forward_adj(&self, node_id: u64) -> Option<Vec<(u64, u64)>> {
+        let section = self.adjacency_data()?;
+        if section.len() < 32 || section[..8] != INDEXED_ADJACENCY_MAGIC { return None; }
+        let forward_count = u64::from_le_bytes(section[8..16].try_into().ok()?) as usize;
+        let _backward_count = u64::from_le_bytes(section[16..24].try_into().ok()?) as usize;
+        let data_region_offset = u64::from_le_bytes(section[24..32].try_into().ok()?) as usize;
+        if forward_count == 0 { return None; }
+        let entry_size = std::mem::size_of::<WideIndexEntry>();
+        let start = 32;
+        let byte_len = forward_count * entry_size;
+        if start + byte_len > section.len() { return None; }
+        let index: &[WideIndexEntry] = bytemuck::cast_slice(&section[start..start + byte_len]);
+        let pos = index.binary_search_by_key(&node_id, |e| e.entity_id).ok()?;
+        let entry = &index[pos];
+        let dstart = data_region_offset + entry.data_offset as usize;
+        let dend = dstart + entry.data_size as usize;
+        if dend > section.len() { return None; }
+        let config = bincode::config::standard();
+        bincode::serde::decode_from_slice::<Vec<(u64, u64)>, _>(&section[dstart..dend], config)
+            .ok()
+            .map(|(v, _)| v)
+    }
+
+    /// Gets backward adjacency for a single node from the indexed adjacency section.
+    pub fn get_backward_adj(&self, node_id: u64) -> Option<Vec<(u64, u64)>> {
+        let section = self.adjacency_data()?;
+        if section.len() < 32 || section[..8] != INDEXED_ADJACENCY_MAGIC { return None; }
+        let forward_count = u64::from_le_bytes(section[8..16].try_into().ok()?) as usize;
+        let backward_count = u64::from_le_bytes(section[16..24].try_into().ok()?) as usize;
+        let data_region_offset = u64::from_le_bytes(section[24..32].try_into().ok()?) as usize;
+        if backward_count == 0 { return None; }
+        let entry_size = std::mem::size_of::<WideIndexEntry>();
+        let bwd_start = 32 + forward_count * entry_size;
+        let byte_len = backward_count * entry_size;
+        if bwd_start + byte_len > section.len() { return None; }
+        let index: &[WideIndexEntry] = bytemuck::cast_slice(&section[bwd_start..bwd_start + byte_len]);
+        let pos = index.binary_search_by_key(&node_id, |e| e.entity_id).ok()?;
+        let entry = &index[pos];
+        let dstart = data_region_offset + entry.data_offset as usize;
+        let dend = dstart + entry.data_size as usize;
+        if dend > section.len() { return None; }
+        let config = bincode::config::standard();
+        bincode::serde::decode_from_slice::<Vec<(u64, u64)>, _>(&section[dstart..dend], config)
+            .ok()
+            .map(|(v, _)| v)
+    }
+
+    // =========================================================================
     // Iteration
     // =========================================================================
 
@@ -1267,5 +1403,123 @@ mod tests {
         let result = MmapEpochBlock::open(&path);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("too small"));
+    }
+
+    /// T2 round-trip: property, label, and adjacency sections survive write → mmap open.
+    #[test]
+    fn test_extended_sections_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("epoch_extended.oeb");
+        let config = bincode::config::standard();
+
+        let epoch = 42u64;
+        let nodes = vec![
+            (1, make_node(1, epoch)),
+            (2, make_node(2, epoch)),
+            (3, make_node(3, epoch)),
+        ];
+        let edges = vec![
+            (100, make_edge(100, 1, 2, epoch)),
+            (200, make_edge(200, 2, 3, epoch)),
+        ];
+
+        let (node_index, node_data, edge_index, edge_data, zone_map) =
+            build_test_data(epoch, &nodes, &edges);
+
+        // Build property data (same format as collect_epoch_properties)
+        // Format: (node_props, edge_props) where each is Vec<(u64, Vec<(String, Value)>)>
+        use obrain_common::types::Value;
+        let node_props: Vec<(u64, Vec<(String, Value)>)> = vec![
+            (1, vec![
+                ("name".to_string(), Value::from("Alice")),
+                ("age".to_string(), Value::from(42i64)),
+            ]),
+            (2, vec![
+                ("name".to_string(), Value::from("Bob")),
+            ]),
+        ];
+        let edge_props: Vec<(u64, Vec<(String, Value)>)> = vec![
+            (100, vec![
+                ("weight".to_string(), Value::from(1.5f64)),
+            ]),
+        ];
+        let property_data = bincode::serde::encode_to_vec(&(&node_props, &edge_props), config).unwrap();
+
+        // Build label data: (label_entries, edge_types)
+        let label_entries: Vec<(u64, Vec<String>)> = vec![
+            (1, vec!["Person".to_string(), "Employee".to_string()]),
+            (2, vec!["Person".to_string()]),
+        ];
+        let edge_types: Vec<String> = vec!["KNOWS".to_string()];
+        let label_data = bincode::serde::encode_to_vec(&(&label_entries, &edge_types), config).unwrap();
+
+        // Build adjacency data
+        let forward: Vec<(u64, Vec<(u64, u64)>)> = vec![
+            (1, vec![(2, 100)]),
+            (2, vec![(3, 200)]),
+        ];
+        let backward: Vec<(u64, Vec<(u64, u64)>)> = vec![
+            (2, vec![(1, 100)]),
+            (3, vec![(2, 200)]),
+        ];
+        let adjacency_data = bincode::serde::encode_to_vec(&(forward, backward), config).unwrap();
+
+        let data = EpochFileData {
+            epoch: EpochId::new(epoch),
+            node_index: &node_index,
+            node_data: &node_data,
+            edge_index: &edge_index,
+            edge_data: &edge_data,
+            zone_map: &zone_map,
+            property_data: Some(&property_data),
+            label_data: Some(&label_data),
+            adjacency_data: Some(&adjacency_data),
+        };
+
+        write_epoch_file(&path, &data).unwrap();
+
+        // Open and verify structure
+        let block = MmapEpochBlock::open(&path).unwrap();
+        assert_eq!(block.node_count(), 3);
+        assert_eq!(block.edge_count(), 2);
+        assert!(block.header().has_properties());
+        assert!(block.header().has_labels());
+        assert!(block.header().has_adjacency());
+
+        // Verify property section is readable
+        let prop_bytes = block.property_data().expect("property section should exist");
+        let (decoded_props, _): ((Vec<(u64, Vec<(String, Value)>)>, Vec<(u64, Vec<(String, Value)>)>), _) =
+            bincode::serde::decode_from_slice(prop_bytes, config).unwrap();
+        let (node_section, edge_section) = decoded_props;
+        // Node 1 has 2 props, node 2 has 1 prop
+        assert_eq!(node_section.len(), 2);
+        assert_eq!(node_section[0].0, 1); // node_id=1
+        assert_eq!(node_section[0].1.len(), 2); // 2 properties
+        assert_eq!(edge_section.len(), 1); // 1 edge with properties
+
+        // Verify label section
+        let lbl_bytes = block.label_data_section().expect("label section should exist");
+        let (decoded_labels, _): ((Vec<(u64, Vec<String>)>, Vec<String>), _) =
+            bincode::serde::decode_from_slice(lbl_bytes, config).unwrap();
+        let (label_entries_decoded, edge_types_decoded) = decoded_labels;
+        assert_eq!(label_entries_decoded.len(), 2);
+        assert_eq!(label_entries_decoded[0].0, 1); // node_id=1
+        assert!(label_entries_decoded[0].1.contains(&"Person".to_string()));
+        assert!(label_entries_decoded[0].1.contains(&"Employee".to_string()));
+        assert_eq!(label_entries_decoded[1].0, 2);
+        assert_eq!(label_entries_decoded[1].1, vec!["Person".to_string()]);
+        assert_eq!(edge_types_decoded, vec!["KNOWS".to_string()]);
+
+        // Verify adjacency section
+        let adj_bytes = block.adjacency_data().expect("adjacency section should exist");
+        let (decoded_adj, _): ((Vec<(u64, Vec<(u64, u64)>)>, Vec<(u64, Vec<(u64, u64)>)>), _) =
+            bincode::serde::decode_from_slice(adj_bytes, config).unwrap();
+        let (fwd, bwd) = decoded_adj;
+        assert_eq!(fwd.len(), 2);
+        assert_eq!(fwd[0], (1, vec![(2, 100)]));
+        assert_eq!(fwd[1], (2, vec![(3, 200)]));
+        assert_eq!(bwd.len(), 2);
+        assert_eq!(bwd[0], (2, vec![(1, 100)]));
+        assert_eq!(bwd[1], (3, vec![(2, 200)]));
     }
 }

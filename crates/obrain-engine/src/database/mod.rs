@@ -391,12 +391,14 @@ impl ObrainDB {
                             match store.epoch_store().load_persisted_epochs() {
                                 Ok(seq) if seq > 0 => {
                                     // Restore in-memory state from mmap'd epochs
+                                    let t_restore = std::time::Instant::now();
                                     if let Err(e) = store.restore_from_epoch_files() {
                                         tracing::warn!(
                                             "Failed to restore from epoch files, falling back to full WAL: {e}"
                                         );
                                         0u64
                                     } else {
+                                        tracing::info!(elapsed = ?t_restore.elapsed(), "epoch files restored");
                                         tracing::info!(
                                             "Restored {} epoch files (wal_sequence={seq}), replaying WAL delta",
                                             store.epoch_store().mmap_block_count()
@@ -435,7 +437,9 @@ impl ObrainDB {
                     #[cfg(not(feature = "tiered-storage"))]
                     let records = recovery.recover()?;
 
+                    tracing::debug!(record_count = records.len(), "WAL recovery");
                     if !records.is_empty() {
+                        let t_wal = std::time::Instant::now();
                         Self::apply_wal_records(
                             &store,
                             &catalog,
@@ -443,6 +447,7 @@ impl ObrainDB {
                             &rdf_store,
                             &records,
                         )?;
+                        tracing::info!(elapsed = ?t_wal.elapsed(), records = records.len(), "WAL replay complete");
                     }
                 }
 

@@ -126,6 +126,10 @@ enum Commands {
         /// Perform a dry-run (show what would be done)
         #[arg(long)]
         dry_run: bool,
+
+        /// Prune old WAL files after compaction
+        #[arg(long)]
+        prune_wal: bool,
     },
 
     /// Execute a query against a database
@@ -335,9 +339,11 @@ fn main() {
         Commands::Backup(cmd) => commands::backup::run(cmd, cli.format, cli.quiet),
         Commands::Data(cmd) => commands::data::run(cmd, cli.format, cli.quiet),
         Commands::Wal(cmd) => commands::wal::run(cmd, cli.format, cli.quiet),
-        Commands::Compact { path, dry_run } => {
-            commands::compact::run(&path, dry_run, cli.format, cli.quiet)
-        }
+        Commands::Compact {
+            path,
+            dry_run,
+            prune_wal,
+        } => commands::compact::run(&path, dry_run, prune_wal, cli.format, cli.quiet),
         Commands::Query {
             path,
             query,
@@ -382,7 +388,7 @@ fn main() {
                 // Validation already printed results, just set the exit code.
                 ExitCode::ValidationFailed
             } else {
-                output::error(&e.to_string());
+                output::error(&format!("{e:?}"));
                 ExitCode::GeneralError
             }
         }

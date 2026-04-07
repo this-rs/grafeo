@@ -11,6 +11,9 @@ use obrain_common::mvcc::VersionChain;
 
 #[cfg(feature = "tiered-storage")]
 use obrain_common::mvcc::{ColdVersionRef, HotVersionRef, VersionIndex};
+#[cfg(feature = "tiered-storage")]
+use obrain_common::types::Value;
+
 
 impl LpgStore {
     /// Discards all uncommitted versions created by a transaction.
@@ -412,7 +415,162 @@ impl LpgStore {
             }
         }
 
+        // =====================================================================
+        // T2: Collect properties, labels, adjacency and persist to disk
+        // =====================================================================
+
+        // Collect the node IDs and edge IDs that were frozen in this epoch
+        let frozen_node_ids: Vec<NodeId> = node_hot_refs.iter().map(|(nid, _)| *nid).collect();
+        let frozen_edge_ids: Vec<EdgeId> = edge_hot_refs.iter().map(|(eid, _)| *eid).collect();
+
+        // --- Properties ---
+        let property_data = self.collect_epoch_properties(&frozen_node_ids, &frozen_edge_ids);
+
+        // --- Labels ---
+        let label_data = self.collect_epoch_labels(&frozen_node_ids);
+
+        // --- Adjacency ---
+        let adjacency_data = self.collect_epoch_adjacency(&frozen_node_ids);
+
+        // --- Persist to disk if configured ---
+        if self.epoch_store.persist_dir().is_some() {
+            let wal_seq = self.wal_sequence.load(Ordering::Acquire);
+            if let Err(e) = self.epoch_store.persist_epoch(
+                epoch,
+                wal_seq,
+                Some(&property_data),
+                Some(&label_data),
+                Some(&adjacency_data),
+            ) {
+                eprintln!("[obrain] failed to persist epoch {}: {}", epoch.as_u64(), e);
+            }
+        }
+
         total_frozen
+    }
+
+    /// Collects all properties for the given node and edge IDs, serialized as bincode.
+    ///
+    /// Format: `(Vec<(u64, Vec<(String, Value)>)>, Vec<(u64, Vec<(String, Value)>)>)`
+    /// = `(node_props, edge_props)` where each entry is `(entity_id, [(key, value)])`
+    ///
+    /// This format matches what `restore_from_epoch_files()` expects for deserialization.
+    #[cfg(feature = "tiered-storage")]
+    fn collect_epoch_properties(&self, node_ids: &[NodeId], edge_ids: &[EdgeId]) -> Vec<u8> {
+        let config = bincode::config::standard();
+
+        // Collect node properties
+        let mut node_props: Vec<(u64, Vec<(String, Value)>)> = Vec::with_capacity(node_ids.len());
+        for &nid in node_ids {
+            let props = self.node_properties.get_all(nid);
+            if !props.is_empty() {
+                let prop_list: Vec<(String, Value)> = props
+                    .into_iter()
+                    .map(|(key, value)| (key.as_str().to_owned(), value))
+                    .collect();
+                node_props.push((nid.as_u64(), prop_list));
+            }
+        }
+
+        // Collect edge properties
+        let mut edge_props: Vec<(u64, Vec<(String, Value)>)> = Vec::with_capacity(edge_ids.len());
+        for &eid in edge_ids {
+            let props = self.edge_properties.get_all(eid);
+            if !props.is_empty() {
+                let prop_list: Vec<(String, Value)> = props
+                    .into_iter()
+                    .map(|(key, value)| (key.as_str().to_owned(), value))
+                    .collect();
+                edge_props.push((eid.as_u64(), prop_list));
+            }
+        }
+
+        bincode::serde::encode_to_vec(&(node_props, edge_props), config)
+            .expect("property section serialization should not fail")
+    }
+
+    /// Collects all labels and edge types for the given node IDs, serialized as bincode.
+    ///
+    /// Format: `(Vec<(u64, Vec<String>)>, Vec<String>)`
+    /// = `([(node_id, [label_name, ...])], [edge_type_name, ...])`
+    ///
+    /// This format matches what `restore_from_epoch_files()` expects for deserialization.
+    #[cfg(feature = "tiered-storage")]
+    fn collect_epoch_labels(&self, node_ids: &[NodeId]) -> Vec<u8> {
+        let config = bincode::config::standard();
+        let node_labels = self.node_labels.read();
+        let id_to_label = self.id_to_label.read();
+
+        let mut entries: Vec<(u64, Vec<String>)> = Vec::with_capacity(node_ids.len());
+        for &nid in node_ids {
+            if let Some(label_ids) = node_labels.get(&nid) {
+                #[cfg(not(feature = "temporal"))]
+                let labels: Vec<String> = label_ids
+                    .iter()
+                    .filter_map(|&lid| id_to_label.get(lid as usize).map(|s| s.to_string()))
+                    .collect();
+                #[cfg(feature = "temporal")]
+                let labels: Vec<String> = label_ids
+                    .current()
+                    .map(|set| {
+                        set.iter()
+                            .filter_map(|&lid| id_to_label.get(lid as usize).map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                if !labels.is_empty() {
+                    entries.push((nid.as_u64(), labels));
+                }
+            }
+        }
+
+        // Also persist the edge type table for full restoration
+        let id_to_edge_type = self.id_to_edge_type.read();
+        let edge_types: Vec<String> = id_to_edge_type.iter().map(|s| s.to_string()).collect();
+
+        bincode::serde::encode_to_vec(&(entries, edge_types), config)
+            .expect("label section serialization should not fail")
+    }
+
+    /// Collects adjacency data for the given node IDs, serialized as bincode.
+    ///
+    /// Format: `(Vec<(u64, Vec<(u64, u64)>)>, Vec<(u64, Vec<(u64, u64)>)>)`
+    /// = `(forward_adj, backward_adj)` where each entry is `(node_id, [(neighbor_id, edge_id)])`
+    #[cfg(feature = "tiered-storage")]
+    fn collect_epoch_adjacency(&self, node_ids: &[NodeId]) -> Vec<u8> {
+        let config = bincode::config::standard();
+
+        // Forward adjacency
+        let mut forward: Vec<(u64, Vec<(u64, u64)>)> = Vec::with_capacity(node_ids.len());
+        for &nid in node_ids {
+            let edges = self.forward_adj.edges_from(nid);
+            if !edges.is_empty() {
+                let entries: Vec<(u64, u64)> = edges
+                    .into_iter()
+                    .map(|(dst, eid)| (dst.as_u64(), eid.as_u64()))
+                    .collect();
+                forward.push((nid.as_u64(), entries));
+            }
+        }
+
+        // Backward adjacency (if enabled)
+        let mut backward: Vec<(u64, Vec<(u64, u64)>)> = Vec::new();
+        if let Some(ref bwd_adj) = self.backward_adj {
+            for &nid in node_ids {
+                let edges = bwd_adj.edges_from(nid);
+                if !edges.is_empty() {
+                    let entries: Vec<(u64, u64)> = edges
+                        .into_iter()
+                        .map(|(src, eid)| (src.as_u64(), eid.as_u64()))
+                        .collect();
+                    backward.push((nid.as_u64(), entries));
+                }
+            }
+        }
+
+        bincode::serde::encode_to_vec(&(forward, backward), config)
+            .expect("adjacency section serialization should not fail")
     }
 
     /// Returns the epoch store for cold storage statistics.
@@ -637,23 +795,33 @@ impl LpgStore {
         let config = bincode::config::standard();
 
         // =====================================================================
-        // 1. Collect node records from version indexes
+        // 1. Collect node records from version indexes (hot + cold)
         // =====================================================================
         let mut node_records: Vec<(u64, NodeRecord)> = Vec::new();
         {
             let versions = self.node_versions.read();
             for (node_id, index) in versions.iter() {
-                // Get the latest version from hot refs
+                // Prefer hot (most recent), fall back to cold
                 if let Some(hot_ref) = index.latest_hot() {
                     let arena = self
                         .arena_allocator
                         .arena(hot_ref.arena_epoch)
                         .expect("arena epoch must exist");
-                    // SAFETY: read_at for a NodeRecord previously allocated
                     #[allow(unsafe_code)]
                     let record: &NodeRecord = unsafe { arena.read_at(hot_ref.arena_offset) };
                     if !record.is_deleted() {
                         node_records.push((node_id.as_u64(), *record));
+                    }
+                } else if let Some(cold_ref) = index.latest_cold() {
+                    // Read from cold storage (mmap'd epoch files)
+                    if let Some(record) = self.epoch_store.get_node_tiered(
+                        cold_ref.epoch,
+                        cold_ref.block_offset,
+                        cold_ref.length,
+                    ) {
+                        if !record.is_deleted() {
+                            node_records.push((node_id.as_u64(), record));
+                        }
                     }
                 }
             }
@@ -661,7 +829,7 @@ impl LpgStore {
         node_records.sort_unstable_by_key(|(id, _)| *id);
 
         // =====================================================================
-        // 2. Collect edge records from version indexes
+        // 2. Collect edge records from version indexes (hot + cold)
         // =====================================================================
         let mut edge_records: Vec<(u64, EdgeRecord)> = Vec::new();
         {
@@ -676,6 +844,16 @@ impl LpgStore {
                     let record: &EdgeRecord = unsafe { arena.read_at(hot_ref.arena_offset) };
                     if !record.is_deleted() {
                         edge_records.push((edge_id.as_u64(), *record));
+                    }
+                } else if let Some(cold_ref) = index.latest_cold() {
+                    if let Some(record) = self.epoch_store.get_edge_tiered(
+                        cold_ref.epoch,
+                        cold_ref.block_offset,
+                        cold_ref.length,
+                    ) {
+                        if !record.is_deleted() {
+                            edge_records.push((edge_id.as_u64(), record));
+                        }
                     }
                 }
             }
@@ -718,13 +896,13 @@ impl LpgStore {
         }
 
         // =====================================================================
-        // 4. Collect properties
+        // 4. Collect properties (indexed format for lazy mmap access)
         // =====================================================================
-        // Serialize as Vec<(entity_id, Vec<(key_str, value)>)> via bincode
-        let mut property_entries: Vec<(u64, Vec<(String, obrain_common::types::Value)>)> =
-            Vec::new();
+        use crate::storage::mmap_epoch::{WideIndexEntry, INDEXED_PROPERTY_MAGIC};
 
-        // Node properties
+        let mut node_prop_index: Vec<WideIndexEntry> = Vec::new();
+        let mut node_prop_data: Vec<u8> = Vec::new();
+
         for (id, _) in &node_records {
             let node_id = NodeId::new(*id);
             let props = self.node_properties.get_all(node_id);
@@ -733,15 +911,21 @@ impl LpgStore {
                     .into_iter()
                     .map(|(k, v)| (k.as_str().to_string(), v))
                     .collect();
-                property_entries.push((*id, entries));
+                let blob = bincode::serde::encode_to_vec(&entries, config)
+                    .expect("property serialization should not fail");
+                node_prop_index.push(WideIndexEntry {
+                    entity_id: *id,
+                    data_offset: node_prop_data.len() as u64,
+                    data_size: blob.len() as u32,
+                    _pad: 0,
+                });
+                node_prop_data.extend_from_slice(&blob);
             }
         }
 
-        // Edge properties (tagged with high bit to distinguish from node IDs)
-        // We use a separate section marker: first all node props, then a separator,
-        // then edge props. Or we can just serialize them as two separate arrays.
-        let mut edge_property_entries: Vec<(u64, Vec<(String, obrain_common::types::Value)>)> =
-            Vec::new();
+        let mut edge_prop_index: Vec<WideIndexEntry> = Vec::new();
+        let mut edge_prop_data: Vec<u8> = Vec::new();
+
         for (id, _) in &edge_records {
             let edge_id = EdgeId::new(*id);
             let props = self.edge_properties.get_all(edge_id);
@@ -750,16 +934,34 @@ impl LpgStore {
                     .into_iter()
                     .map(|(k, v)| (k.as_str().to_string(), v))
                     .collect();
-                edge_property_entries.push((*id, entries));
+                let blob = bincode::serde::encode_to_vec(&entries, config)
+                    .expect("property serialization should not fail");
+                // data_offset is relative to the combined data region start;
+                // edge data comes after node data, so add node_prop_data.len()
+                edge_prop_index.push(WideIndexEntry {
+                    entity_id: *id,
+                    data_offset: (node_prop_data.len() + edge_prop_data.len()) as u64,
+                    data_size: blob.len() as u32,
+                    _pad: 0,
+                });
+                edge_prop_data.extend_from_slice(&blob);
             }
         }
 
-        // Serialize both as a single blob: (node_props, edge_props)
-        let prop_blob = bincode::serde::encode_to_vec(
-            &(&property_entries, &edge_property_entries),
-            config,
-        )
-        .expect("property serialization should not fail");
+        // Build the indexed property section:
+        // [magic:8][node_count:8][edge_count:8][data_region_offset:8][node_idx...][edge_idx...][data...]
+        let entry_size = std::mem::size_of::<WideIndexEntry>();
+        let data_region_offset = 32u64 + (node_prop_index.len() + edge_prop_index.len()) as u64 * entry_size as u64;
+
+        let mut prop_blob = Vec::with_capacity(data_region_offset as usize + node_prop_data.len() + edge_prop_data.len());
+        prop_blob.extend_from_slice(&INDEXED_PROPERTY_MAGIC);
+        prop_blob.extend_from_slice(&(node_prop_index.len() as u64).to_le_bytes());
+        prop_blob.extend_from_slice(&(edge_prop_index.len() as u64).to_le_bytes());
+        prop_blob.extend_from_slice(&data_region_offset.to_le_bytes());
+        prop_blob.extend_from_slice(bytemuck::cast_slice(&node_prop_index));
+        prop_blob.extend_from_slice(bytemuck::cast_slice(&edge_prop_index));
+        prop_blob.extend_from_slice(&node_prop_data);
+        prop_blob.extend_from_slice(&edge_prop_data);
 
         // =====================================================================
         // 5. Collect labels
@@ -813,10 +1015,13 @@ impl LpgStore {
         .expect("label serialization should not fail");
 
         // =====================================================================
-        // 6. Collect adjacency
+        // 6. Collect adjacency (indexed format for lazy mmap access)
         // =====================================================================
-        // Serialize as Vec<(node_id, Vec<(dest_node_id, edge_id)>)>
-        let mut adj_entries: Vec<(u64, Vec<(u64, u64)>)> = Vec::new();
+        use crate::storage::mmap_epoch::INDEXED_ADJACENCY_MAGIC;
+
+        let mut fwd_adj_index: Vec<WideIndexEntry> = Vec::new();
+        let mut fwd_adj_data: Vec<u8> = Vec::new();
+
         for (id, _) in &node_records {
             let node_id = NodeId::new(*id);
             let edges = self.forward_adj.edges_from(node_id);
@@ -825,14 +1030,22 @@ impl LpgStore {
                     .iter()
                     .map(|(dst, eid)| (dst.as_u64(), eid.as_u64()))
                     .collect();
-                adj_entries.push((*id, adj));
+                let blob = bincode::serde::encode_to_vec(&adj, config)
+                    .expect("adjacency serialization should not fail");
+                fwd_adj_index.push(WideIndexEntry {
+                    entity_id: *id,
+                    data_offset: fwd_adj_data.len() as u64,
+                    data_size: blob.len() as u32,
+                    _pad: 0,
+                });
+                fwd_adj_data.extend_from_slice(&blob);
             }
         }
 
-        // Backward adjacency if available
-        let backward_entries: Vec<(u64, Vec<(u64, u64)>)> = if let Some(ref bwd) = self.backward_adj
-        {
-            let mut entries = Vec::new();
+        let mut bwd_adj_index: Vec<WideIndexEntry> = Vec::new();
+        let mut bwd_adj_data: Vec<u8> = Vec::new();
+
+        if let Some(ref bwd) = self.backward_adj {
             for (id, _) in &node_records {
                 let node_id = NodeId::new(*id);
                 let edges = bwd.edges_from(node_id);
@@ -841,19 +1054,32 @@ impl LpgStore {
                         .iter()
                         .map(|(dst, eid)| (dst.as_u64(), eid.as_u64()))
                         .collect();
-                    entries.push((*id, adj));
+                    let blob = bincode::serde::encode_to_vec(&adj, config)
+                        .expect("adjacency serialization should not fail");
+                    // data_offset relative to combined data region
+                    bwd_adj_index.push(WideIndexEntry {
+                        entity_id: *id,
+                        data_offset: (fwd_adj_data.len() + bwd_adj_data.len()) as u64,
+                        data_size: blob.len() as u32,
+                        _pad: 0,
+                    });
+                    bwd_adj_data.extend_from_slice(&blob);
                 }
             }
-            entries
-        } else {
-            Vec::new()
-        };
+        }
 
-        let adj_blob = bincode::serde::encode_to_vec(
-            &(&adj_entries, &backward_entries),
-            config,
-        )
-        .expect("adjacency serialization should not fail");
+        let adj_entry_size = std::mem::size_of::<WideIndexEntry>();
+        let adj_data_region_offset = 32u64 + (fwd_adj_index.len() + bwd_adj_index.len()) as u64 * adj_entry_size as u64;
+
+        let mut adj_blob = Vec::with_capacity(adj_data_region_offset as usize + fwd_adj_data.len() + bwd_adj_data.len());
+        adj_blob.extend_from_slice(&INDEXED_ADJACENCY_MAGIC);
+        adj_blob.extend_from_slice(&(fwd_adj_index.len() as u64).to_le_bytes());
+        adj_blob.extend_from_slice(&(bwd_adj_index.len() as u64).to_le_bytes());
+        adj_blob.extend_from_slice(&adj_data_region_offset.to_le_bytes());
+        adj_blob.extend_from_slice(bytemuck::cast_slice(&fwd_adj_index));
+        adj_blob.extend_from_slice(bytemuck::cast_slice(&bwd_adj_index));
+        adj_blob.extend_from_slice(&fwd_adj_data);
+        adj_blob.extend_from_slice(&bwd_adj_data);
 
         // =====================================================================
         // 7. Build zone map and write epoch file
@@ -895,6 +1121,8 @@ impl LpgStore {
     /// Returns an error if deserialization fails.
     #[cfg(feature = "tiered-storage")]
     pub fn restore_from_epoch_files(&self) -> std::io::Result<()> {
+        #[cfg(debug_assertions)]
+        let t_total = std::time::Instant::now();
         let mmap_blocks = self.epoch_store.mmap_blocks().read();
 
         let mut max_node_id: u64 = 0;
@@ -906,9 +1134,13 @@ impl LpgStore {
             // =====================================================================
             // 1. Rebuild version indexes from node/edge index entries
             // =====================================================================
+            #[cfg(debug_assertions)]
+            let t1 = std::time::Instant::now();
             {
+                let node_entries = block.node_index();
                 let mut versions = self.node_versions.write();
-                for entry in block.node_index() {
+                versions.reserve(node_entries.len());
+                for entry in node_entries {
                     let node_id = NodeId::new(entry.entity_id);
                     if entry.entity_id > max_node_id {
                         max_node_id = entry.entity_id;
@@ -921,16 +1153,19 @@ impl LpgStore {
                         deleted_epoch: obrain_common::mvcc::OptionalEpochId::NONE,
                         deleted_by: None,
                     };
-                    let index = versions
+                    // Use with_single_cold for bulk restore (no per-insert sort)
+                    versions
                         .entry(node_id)
-                        .or_insert_with(VersionIndex::new);
-                    index.add_cold(cold_ref);
+                        .and_modify(|idx| idx.add_cold(cold_ref.clone()))
+                        .or_insert_with(|| VersionIndex::with_single_cold(cold_ref));
                 }
             }
 
             {
+                let edge_entries = block.edge_index();
                 let mut versions = self.edge_versions.write();
-                for entry in block.edge_index() {
+                versions.reserve(edge_entries.len());
+                for entry in edge_entries {
                     let edge_id = EdgeId::new(entry.entity_id);
                     if entry.entity_id > max_edge_id {
                         max_edge_id = entry.entity_id;
@@ -943,16 +1178,21 @@ impl LpgStore {
                         deleted_epoch: obrain_common::mvcc::OptionalEpochId::NONE,
                         deleted_by: None,
                     };
-                    let index = versions
+                    versions
                         .entry(edge_id)
-                        .or_insert_with(VersionIndex::new);
-                    index.add_cold(cold_ref);
+                        .and_modify(|idx| idx.add_cold(cold_ref.clone()))
+                        .or_insert_with(|| VersionIndex::with_single_cold(cold_ref));
                 }
             }
+
+            #[cfg(debug_assertions)]
+            eprintln!("[restore] version indexes: {:?}", t1.elapsed());
 
             // =====================================================================
             // 2. Restore labels
             // =====================================================================
+            #[cfg(debug_assertions)]
+            let t2 = std::time::Instant::now();
             if let Some(label_bytes) = block.label_data_section() {
                 let result: Result<
                     (Vec<(u64, Vec<String>)>, Vec<String>),
@@ -979,6 +1219,7 @@ impl LpgStore {
                         let mut id_to_label = self.id_to_label.write();
                         let mut node_labels = self.node_labels.write();
                         let mut label_index = self.label_index.write();
+                        node_labels.reserve(label_entries.len());
 
                         for (node_id_raw, labels) in label_entries {
                             let node_id = NodeId::new(node_id_raw);
@@ -1024,76 +1265,91 @@ impl LpgStore {
                 }
             }
 
-            // =====================================================================
-            // 3. Restore properties
-            // =====================================================================
-            if let Some(prop_bytes) = block.property_data() {
-                type PropEntries = Vec<(u64, Vec<(String, obrain_common::types::Value)>)>;
-                let result: Result<(PropEntries, PropEntries), _> =
-                    bincode::serde::decode_from_slice(prop_bytes, config).map(|(v, _)| v);
+            #[cfg(debug_assertions)]
+            eprintln!("[restore] labels: {:?}", t2.elapsed());
 
-                if let Ok((node_props, edge_props)) = result {
-                    // Restore node properties
-                    for (node_id_raw, props) in node_props {
-                        let node_id = NodeId::new(node_id_raw);
-                        for (key_str, value) in props {
-                            self.node_properties.set(
-                                node_id,
-                                obrain_common::types::PropertyKey::new(key_str),
-                                value,
-                            );
+            // =====================================================================
+            // 3. Restore properties (skip if indexed — lazy cold access via mmap)
+            // =====================================================================
+            if !block.has_indexed_properties() {
+                // Legacy format: full deserialization (backward compat)
+                if let Some(prop_bytes) = block.property_data() {
+                    type PropEntries = Vec<(u64, Vec<(String, obrain_common::types::Value)>)>;
+                    let result: Result<(PropEntries, PropEntries), _> =
+                        bincode::serde::decode_from_slice(prop_bytes, config).map(|(v, _)| v);
+
+                    if let Ok((node_props, edge_props)) = result {
+                        for (node_id_raw, props) in node_props {
+                            let node_id = NodeId::new(node_id_raw);
+                            for (key_str, value) in props {
+                                self.node_properties.set(
+                                    node_id,
+                                    obrain_common::types::PropertyKey::new(key_str),
+                                    value,
+                                );
+                            }
                         }
-                    }
-
-                    // Restore edge properties
-                    for (edge_id_raw, props) in edge_props {
-                        let edge_id = EdgeId::new(edge_id_raw);
-                        for (key_str, value) in props {
-                            self.edge_properties.set(
-                                edge_id,
-                                obrain_common::types::PropertyKey::new(key_str),
-                                value,
-                            );
+                        for (edge_id_raw, props) in edge_props {
+                            let edge_id = EdgeId::new(edge_id_raw);
+                            for (key_str, value) in props {
+                                self.edge_properties.set(
+                                    edge_id,
+                                    obrain_common::types::PropertyKey::new(key_str),
+                                    value,
+                                );
+                            }
                         }
                     }
                 }
             }
+            // else: indexed format — properties will be read lazily from mmap via cold_epochs
 
             // =====================================================================
-            // 4. Restore adjacency
+            // 4. Restore adjacency (skip if indexed — lazy cold access via mmap)
             // =====================================================================
-            if let Some(adj_bytes) = block.adjacency_data() {
-                type AdjEntries = Vec<(u64, Vec<(u64, u64)>)>;
-                let result: Result<(AdjEntries, AdjEntries), _> =
-                    bincode::serde::decode_from_slice(adj_bytes, config).map(|(v, _)| v);
+            if !block.has_indexed_adjacency() {
+                // Legacy format: full deserialization (backward compat)
+                if let Some(adj_bytes) = block.adjacency_data() {
+                    type AdjEntries = Vec<(u64, Vec<(u64, u64)>)>;
+                    let result: Result<(AdjEntries, AdjEntries), _> =
+                        bincode::serde::decode_from_slice(adj_bytes, config).map(|(v, _)| v);
 
-                if let Ok((forward_adj, backward_adj)) = result {
-                    // Restore forward adjacency
-                    for (src_raw, edges) in forward_adj {
-                        let src = NodeId::new(src_raw);
-                        for (dst_raw, eid_raw) in edges {
-                            self.forward_adj.add_edge(
-                                src,
-                                NodeId::new(dst_raw),
-                                EdgeId::new(eid_raw),
-                            );
-                        }
-                    }
-
-                    // Restore backward adjacency
-                    if let Some(ref bwd) = self.backward_adj {
-                        for (src_raw, edges) in backward_adj {
+                    if let Ok((forward_adj, backward_adj)) = result {
+                        for (src_raw, edges) in forward_adj {
                             let src = NodeId::new(src_raw);
                             for (dst_raw, eid_raw) in edges {
-                                bwd.add_edge(
+                                self.forward_adj.add_edge(
                                     src,
                                     NodeId::new(dst_raw),
                                     EdgeId::new(eid_raw),
                                 );
                             }
                         }
+                        if let Some(ref bwd) = self.backward_adj {
+                            for (src_raw, edges) in backward_adj {
+                                let src = NodeId::new(src_raw);
+                                for (dst_raw, eid_raw) in edges {
+                                    bwd.add_edge(
+                                        src,
+                                        NodeId::new(dst_raw),
+                                        EdgeId::new(eid_raw),
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
+            }
+            // else: indexed format — adjacency will be read lazily from mmap via cold_epochs
+
+            // Register cold epoch for lazy property/adjacency access
+            if block.has_indexed_properties() || block.has_indexed_adjacency() {
+                let arc_block = std::sync::Arc::clone(block);
+                if block.has_indexed_properties() {
+                    self.node_properties.register_cold_epoch(std::sync::Arc::clone(&arc_block));
+                    self.edge_properties.register_cold_epoch(std::sync::Arc::clone(&arc_block));
+                }
+                self.cold_epochs.write().push(arc_block);
             }
         }
 
@@ -1113,6 +1369,8 @@ impl LpgStore {
         self.live_node_count.store(node_count, Ordering::SeqCst);
         self.live_edge_count.store(edge_count, Ordering::SeqCst);
 
+        #[cfg(debug_assertions)]
+        eprintln!("[restore] TOTAL: {:?} (nodes={node_count}, edges={edge_count})", t_total.elapsed());
         Ok(())
     }
 }

@@ -1123,13 +1123,16 @@ impl super::ObrainDB {
             .set_persist_dir(db_path.clone())
             .map_err(|e| Error::Internal(format!("failed to create epochs directory: {e}")))?;
 
-        // Get the current WAL sequence from the WAL manager's checkpoint metadata
+        // Get the current WAL sequence: prefer checkpoint metadata, fallback to current_sequence
+        // (the highest WAL file index). Without this fallback, databases that never
+        // checkpointed would write wal_sequence=0, causing full WAL replay on reopen.
         #[cfg(feature = "wal")]
-        let wal_sequence = self
-            .wal
-            .as_ref()
-            .and_then(|w| w.read_checkpoint_metadata().ok().flatten())
-            .map_or(0u64, |m| m.log_sequence);
+        let wal_sequence = self.wal.as_ref().map_or(0u64, |w| {
+            w.read_checkpoint_metadata()
+                .ok()
+                .flatten()
+                .map_or_else(|| w.current_sequence(), |m| m.log_sequence)
+        });
         #[cfg(not(feature = "wal"))]
         let wal_sequence = 0u64;
 
@@ -1138,6 +1141,20 @@ impl super::ObrainDB {
             .store
             .snapshot_to_epoch_file(wal_sequence)
             .map_err(|e| Error::Internal(format!("compact failed: {e}")))?;
+
+        // Write WAL checkpoint metadata so prune_old_logs knows all data
+        // up to wal_sequence is safely persisted in the epoch file.
+        #[cfg(feature = "wal")]
+        if let Some(ref wal) = self.wal {
+            let epoch = self.store.current_epoch();
+            let tx_id = self
+                .transaction_manager
+                .last_assigned_transaction_id()
+                .unwrap_or_else(|| self.transaction_manager.begin());
+            if let Err(e) = wal.checkpoint(tx_id, epoch) {
+                tracing::warn!("Failed to write WAL checkpoint after compact: {e}");
+            }
+        }
 
         tracing::info!(
             "Database compacted to {} (wal_sequence={wal_sequence})",

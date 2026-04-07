@@ -17,6 +17,10 @@ impl LpgStore {
         node: NodeId,
         direction: Direction,
     ) -> impl Iterator<Item = NodeId> + '_ {
+        // Promote cold adjacency into hot if needed
+        #[cfg(feature = "tiered-storage")]
+        self.ensure_adjacency_hot(node, direction);
+
         let forward: Box<dyn Iterator<Item = NodeId>> = match direction {
             Direction::Outgoing | Direction::Both => {
                 Box::new(self.forward_adj.neighbors(node).into_iter())
@@ -46,6 +50,10 @@ impl LpgStore {
         node: NodeId,
         direction: Direction,
     ) -> impl Iterator<Item = (NodeId, EdgeId)> + '_ {
+        // Promote cold adjacency into hot if needed
+        #[cfg(feature = "tiered-storage")]
+        self.ensure_adjacency_hot(node, direction);
+
         let forward: Box<dyn Iterator<Item = (NodeId, EdgeId)>> = match direction {
             Direction::Outgoing | Direction::Both => {
                 Box::new(self.forward_adj.edges_from(node).into_iter())
@@ -65,6 +73,39 @@ impl LpgStore {
         };
 
         forward.chain(backward)
+    }
+
+    /// Promotes cold adjacency data into hot adjacency indexes.
+    #[cfg(feature = "tiered-storage")]
+    fn ensure_adjacency_hot(&self, node: NodeId, direction: Direction) {
+        if matches!(direction, Direction::Outgoing | Direction::Both) {
+            if self.forward_adj.edges_from(node).is_empty() {
+                let cold = self.cold_epochs.read();
+                for block in cold.iter().rev() {
+                    if let Some(adj) = block.get_forward_adj(node.as_u64()) {
+                        for (dst, eid) in &adj {
+                            self.forward_adj.add_edge(node, NodeId::new(*dst), EdgeId::new(*eid));
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        if matches!(direction, Direction::Incoming | Direction::Both) {
+            if let Some(ref bwd) = self.backward_adj {
+                if bwd.edges_from(node).is_empty() {
+                    let cold = self.cold_epochs.read();
+                    for block in cold.iter().rev() {
+                        if let Some(adj) = block.get_backward_adj(node.as_u64()) {
+                            for (dst, eid) in &adj {
+                                bwd.add_edge(node, NodeId::new(*dst), EdgeId::new(*eid));
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Returns edges to a node (where the node is the destination).

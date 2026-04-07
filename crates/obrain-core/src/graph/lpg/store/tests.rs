@@ -1515,3 +1515,253 @@ fn test_clear() {
     assert_eq!(store.node_count(), 1);
     assert!(store.get_node(n3).is_some());
 }
+
+/// T2 integration test: freeze_epoch collects properties, labels, adjacency,
+/// persists to disk, and MmapEpochBlock reads them back.
+#[cfg(feature = "tiered-storage")]
+#[test]
+fn test_freeze_epoch_full_data_persist() {
+    use crate::storage::mmap_epoch::MmapEpochBlock;
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = LpgStore::new().unwrap();
+
+    // Configure persistence
+    store
+        .set_persist_dir(dir.path().to_path_buf())
+        .expect("set persist_dir");
+
+    // Create nodes with labels (all created at epoch 0)
+    let epoch = store.current_epoch(); // epoch 0
+    let n1 = store.create_node(&["Person", "Employee"]);
+    let n2 = store.create_node(&["Person"]);
+    let n3 = store.create_node(&["Company"]);
+
+    // Set properties on nodes
+    store.set_node_property(n1, "name", Value::from("Alice"));
+    store.set_node_property(n1, "age", Value::from(30i64));
+    store.set_node_property(n1, "active", Value::from(true));
+    store.set_node_property(n2, "name", Value::from("Bob"));
+    store.set_node_property(n2, "age", Value::from(25i64));
+    store.set_node_property(n3, "name", Value::from("ACME"));
+
+    // Create edges with properties
+    let e1 = store.create_edge(n1, n3, "WORKS_AT");
+    let _e2 = store.create_edge(n2, n3, "WORKS_AT");
+    let e3 = store.create_edge(n1, n2, "KNOWS");
+    store.set_edge_property(e1, "since", Value::from(2020i64));
+    store.set_edge_property(e3, "weight", Value::from(0.9f64));
+
+    // Advance to a new epoch, then freeze the epoch where data was created
+    let _new_epoch = store.new_epoch();
+    let frozen = store.freeze_epoch(epoch);
+    assert!(frozen > 0, "should have frozen some records");
+
+    // Check that an epoch file was written
+    let epochs_dir = dir.path().join("epochs");
+    assert!(epochs_dir.exists(), "epochs directory should exist");
+
+    let epoch_files: Vec<_> = std::fs::read_dir(&epochs_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .is_some_and(|ext| ext == "oeb")
+        })
+        .collect();
+    assert_eq!(epoch_files.len(), 1, "should have exactly 1 epoch file");
+
+    // Open via MmapEpochBlock and verify
+    let block = MmapEpochBlock::open(&epoch_files[0].path()).unwrap();
+    assert_eq!(block.header().epoch, epoch.as_u64());
+    assert!(block.header().has_properties(), "should have property section");
+    assert!(block.header().has_labels(), "should have label section");
+    assert!(block.header().has_adjacency(), "should have adjacency section");
+
+    // Verify property data is decodable
+    let config = bincode::config::standard();
+    let prop_bytes = block.property_data().unwrap();
+    type PropEntries = Vec<(u64, Vec<(String, Value)>)>;
+    let (decoded_props, _): ((PropEntries, PropEntries), _) =
+        bincode::serde::decode_from_slice(prop_bytes, config).unwrap();
+    let (node_section, edge_section) = decoded_props;
+
+    // We created 3 nodes with properties
+    assert!(
+        node_section.len() >= 2,
+        "at least 2 nodes should have properties (got {})",
+        node_section.len()
+    );
+
+    assert!(
+        !edge_section.is_empty(),
+        "at least 1 edge should have properties (got {})",
+        edge_section.len()
+    );
+
+    // Verify label data
+    let lbl_bytes = block.label_data_section().unwrap();
+    let (decoded_labels, _): ((Vec<(u64, Vec<String>)>, Vec<String>), _) =
+        bincode::serde::decode_from_slice(lbl_bytes, config).unwrap();
+    let (labels, edge_types) = decoded_labels;
+    assert!(labels.len() >= 2, "at least 2 nodes should have labels");
+    assert!(
+        !edge_types.is_empty(),
+        "edge types should be persisted"
+    );
+
+    // Find the Person+Employee node
+    let n1_labels = labels
+        .iter()
+        .find(|(id, _)| *id == n1.as_u64())
+        .map(|(_, l)| l);
+    assert!(n1_labels.is_some(), "node1 labels should be present");
+    let n1_labels = n1_labels.unwrap();
+    assert!(n1_labels.contains(&"Person".to_string()));
+    assert!(n1_labels.contains(&"Employee".to_string()));
+
+    // Verify adjacency data
+    let adj_bytes = block.adjacency_data().unwrap();
+    let (adj, _): ((Vec<(u64, Vec<(u64, u64)>)>, Vec<(u64, Vec<(u64, u64)>)>), _) =
+        bincode::serde::decode_from_slice(adj_bytes, config).unwrap();
+    let (fwd, _bwd) = adj;
+    assert!(!fwd.is_empty(), "forward adjacency should not be empty");
+
+    // Node 1 should have edges to n3 (WORKS_AT) and n2 (KNOWS)
+    let n1_adj = fwd.iter().find(|(id, _)| *id == n1.as_u64());
+    assert!(n1_adj.is_some(), "node1 should have forward adjacency");
+    assert_eq!(
+        n1_adj.unwrap().1.len(),
+        2,
+        "node1 should have 2 outgoing edges"
+    );
+
+    // Verify checkpoint file
+    let checkpoint_path = epochs_dir.join("epoch_checkpoint.json");
+    assert!(
+        checkpoint_path.exists(),
+        "epoch_checkpoint.json should exist"
+    );
+    let checkpoint_content = std::fs::read_to_string(&checkpoint_path).unwrap();
+    assert!(
+        checkpoint_content.contains("last_persisted_epoch"),
+        "checkpoint should contain epoch info"
+    );
+}
+
+/// T2+T3 integration: freeze → persist → restore_from_epoch_files → data accessible.
+/// Verifies that the serialization format from collect_epoch_* is compatible
+/// with restore_from_epoch_files deserialization.
+#[cfg(feature = "tiered-storage")]
+#[test]
+fn test_freeze_persist_restore_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // Phase 1: Create and populate a store, freeze + persist
+    let store1 = LpgStore::new().unwrap();
+    store1
+        .set_persist_dir(dir.path().to_path_buf())
+        .expect("set persist_dir");
+
+    let epoch = store1.current_epoch();
+    let n1 = store1.create_node(&["Person", "Employee"]);
+    let n2 = store1.create_node(&["Person"]);
+    let n3 = store1.create_node(&["Company"]);
+
+    store1.set_node_property(n1, "name", Value::from("Alice"));
+    store1.set_node_property(n1, "age", Value::from(30i64));
+    store1.set_node_property(n2, "name", Value::from("Bob"));
+    store1.set_node_property(n3, "name", Value::from("ACME"));
+
+    let e1 = store1.create_edge(n1, n3, "WORKS_AT");
+    let _e2 = store1.create_edge(n2, n3, "WORKS_AT");
+    let e3 = store1.create_edge(n1, n2, "KNOWS");
+    store1.set_edge_property(e1, "since", Value::from(2020i64));
+    store1.set_edge_property(e3, "weight", Value::from(0.9f64));
+
+    let _new_epoch = store1.new_epoch();
+    let frozen = store1.freeze_epoch(epoch);
+    assert!(frozen > 0);
+
+    // Phase 2: Create a fresh store, load epoch files, verify all data
+    let store2 = LpgStore::new().unwrap();
+    store2
+        .set_persist_dir(dir.path().to_path_buf())
+        .expect("set persist_dir");
+    store2
+        .epoch_store()
+        .load_persisted_epochs()
+        .expect("load epochs");
+    store2
+        .restore_from_epoch_files()
+        .expect("restore from epochs");
+
+    // Verify node versions exist
+    assert!(
+        store2.get_node(n1).is_some(),
+        "node1 should be accessible after restore"
+    );
+    assert!(
+        store2.get_node(n2).is_some(),
+        "node2 should be accessible after restore"
+    );
+    assert!(
+        store2.get_node(n3).is_some(),
+        "node3 should be accessible after restore"
+    );
+
+    // Verify properties
+    let name1 = store2.get_node_property(n1, &"name".into());
+    assert!(
+        matches!(&name1, Some(Value::String(s)) if s.as_str() == "Alice"),
+        "node1 name should be Alice, got {:?}",
+        name1
+    );
+    let age1 = store2.get_node_property(n1, &"age".into());
+    assert_eq!(
+        age1.and_then(|v| v.as_int64()),
+        Some(30),
+        "node1 age should be 30"
+    );
+    let name3 = store2.get_node_property(n3, &"name".into());
+    assert!(
+        matches!(&name3, Some(Value::String(s)) if s.as_str() == "ACME"),
+        "node3 name should be ACME"
+    );
+
+    // Verify edge properties
+    let since = store2.get_edge_property(e1, &"since".into());
+    assert_eq!(
+        since.and_then(|v| v.as_int64()),
+        Some(2020),
+        "edge1 since should be 2020"
+    );
+
+    // Verify labels
+    let n1_node = store2.get_node(n1).unwrap();
+    assert!(n1_node.has_label("Person"), "n1 should have Person label");
+    assert!(
+        n1_node.has_label("Employee"),
+        "n1 should have Employee label"
+    );
+
+    // Verify adjacency
+    let n1_neighbors: Vec<_> = store2
+        .neighbors(n1, crate::graph::Direction::Outgoing)
+        .collect();
+    assert_eq!(
+        n1_neighbors.len(),
+        2,
+        "node1 should have 2 outgoing neighbors (n3 and n2)"
+    );
+
+    // Verify ID counters
+    let n4 = store2.create_node(&["Test"]);
+    assert!(
+        n4.as_u64() > n3.as_u64(),
+        "new node ID should be > max existing ({} > {})",
+        n4.as_u64(),
+        n3.as_u64()
+    );
+}

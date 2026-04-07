@@ -123,6 +123,12 @@ pub struct WalManager {
 }
 
 impl WalManager {
+    /// Returns the current WAL log sequence number (highest WAL file index).
+    #[must_use]
+    pub fn current_sequence(&self) -> u64 {
+        self.current_sequence.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     /// Opens or creates a WAL in the given directory.
     ///
     /// # Errors
@@ -557,6 +563,48 @@ impl WalManager {
             .and_then(|s| s.to_str())
             .and_then(|s| s.strip_prefix("wal_"))
             .and_then(|s| s.parse().ok())
+    }
+
+    /// Prunes WAL log files whose sequence is below the checkpoint.
+    ///
+    /// Removes all log files that have been fully checkpointed, keeping
+    /// at least the most recent log file as a safety net.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the WAL directory cannot be read.
+    pub fn prune_old_logs(&self) -> Result<()> {
+        let files = self.log_files()?;
+        let current_seq = self.current_sequence.load(Ordering::Relaxed);
+
+        // Read checkpoint metadata to know what's safe to prune
+        let checkpoint_seq = self
+            .read_checkpoint_metadata()
+            .ok()
+            .flatten()
+            .map_or(0, |m| m.log_sequence);
+
+        let mut pruned = 0u32;
+        for file in &files {
+            if let Some(seq) = Self::sequence_from_path(file) {
+                // Never delete the current log file
+                if seq >= current_seq {
+                    continue;
+                }
+                // Only delete if this log is fully checkpointed
+                if seq < checkpoint_seq {
+                    if fs::remove_file(file).is_ok() {
+                        pruned += 1;
+                    }
+                }
+            }
+        }
+
+        if pruned > 0 {
+            tracing::info!("Pruned {pruned} old WAL log files (checkpoint_seq={checkpoint_seq})");
+        }
+
+        Ok(())
     }
 
     fn truncate_old_logs(&self) -> Result<()> {
