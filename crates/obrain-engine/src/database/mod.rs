@@ -418,9 +418,6 @@ impl ObrainDB {
                             0u64
                         }
                     };
-                    #[cfg(not(feature = "tiered-storage"))]
-                    let epoch_wal_sequence = 0u64;
-
                     // If epoch files provided a WAL sequence, do partial replay
                     #[cfg(feature = "tiered-storage")]
                     let records = if epoch_wal_sequence > 0 {

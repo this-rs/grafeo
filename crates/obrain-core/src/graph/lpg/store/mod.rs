@@ -470,12 +470,14 @@ impl LpgStore {
             #[cfg(feature = "tiered-storage")]
             cold_epochs: RwLock::new(Vec::new()),
             node_properties: {
+                #[allow(unused_mut)]
                 let mut ps = PropertyStorage::new();
                 #[cfg(feature = "tiered-storage")]
                 ps.set_is_edge(false);
                 ps
             },
             edge_properties: {
+                #[allow(unused_mut)]
                 let mut ps = PropertyStorage::new();
                 #[cfg(feature = "tiered-storage")]
                 ps.set_is_edge(true);

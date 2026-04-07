@@ -588,15 +588,9 @@ impl WalManager {
         let mut pruned = 0u32;
         for file in &files {
             if let Some(seq) = Self::sequence_from_path(file) {
-                // Never delete the current log file
-                if seq >= current_seq {
-                    continue;
-                }
-                // Only delete if this log is fully checkpointed
-                if seq < checkpoint_seq {
-                    if fs::remove_file(file).is_ok() {
-                        pruned += 1;
-                    }
+                // Never delete the current log file; only delete fully checkpointed logs
+                if seq < current_seq && seq < checkpoint_seq && fs::remove_file(file).is_ok() {
+                    pruned += 1;
                 }
             }
         }
