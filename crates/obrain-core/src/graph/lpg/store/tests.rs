@@ -1564,20 +1564,22 @@ fn test_freeze_epoch_full_data_persist() {
     let epoch_files: Vec<_> = std::fs::read_dir(&epochs_dir)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .is_some_and(|ext| ext == "oeb")
-        })
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "oeb"))
         .collect();
     assert_eq!(epoch_files.len(), 1, "should have exactly 1 epoch file");
 
     // Open via MmapEpochBlock and verify
     let block = MmapEpochBlock::open(&epoch_files[0].path()).unwrap();
     assert_eq!(block.header().epoch, epoch.as_u64());
-    assert!(block.header().has_properties(), "should have property section");
+    assert!(
+        block.header().has_properties(),
+        "should have property section"
+    );
     assert!(block.header().has_labels(), "should have label section");
-    assert!(block.header().has_adjacency(), "should have adjacency section");
+    assert!(
+        block.header().has_adjacency(),
+        "should have adjacency section"
+    );
 
     // Verify property data is decodable
     let config = bincode::config::standard();
@@ -1606,10 +1608,7 @@ fn test_freeze_epoch_full_data_persist() {
         bincode::serde::decode_from_slice(lbl_bytes, config).unwrap();
     let (labels, edge_types) = decoded_labels;
     assert!(labels.len() >= 2, "at least 2 nodes should have labels");
-    assert!(
-        !edge_types.is_empty(),
-        "edge types should be persisted"
-    );
+    assert!(!edge_types.is_empty(), "edge types should be persisted");
 
     // Find the Person+Employee node
     let n1_labels = labels
@@ -1623,8 +1622,10 @@ fn test_freeze_epoch_full_data_persist() {
 
     // Verify adjacency data
     let adj_bytes = block.adjacency_data().unwrap();
-    let (adj, _): ((Vec<(u64, Vec<(u64, u64)>)>, Vec<(u64, Vec<(u64, u64)>)>), _) =
-        bincode::serde::decode_from_slice(adj_bytes, config).unwrap();
+    let (adj, _): (
+        (Vec<(u64, Vec<(u64, u64)>)>, Vec<(u64, Vec<(u64, u64)>)>),
+        _,
+    ) = bincode::serde::decode_from_slice(adj_bytes, config).unwrap();
     let (fwd, _bwd) = adj;
     assert!(!fwd.is_empty(), "forward adjacency should not be empty");
 

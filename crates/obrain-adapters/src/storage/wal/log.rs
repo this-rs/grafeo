@@ -126,7 +126,8 @@ impl WalManager {
     /// Returns the current WAL log sequence number (highest WAL file index).
     #[must_use]
     pub fn current_sequence(&self) -> u64 {
-        self.current_sequence.load(std::sync::atomic::Ordering::SeqCst)
+        self.current_sequence
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Opens or creates a WAL in the given directory.

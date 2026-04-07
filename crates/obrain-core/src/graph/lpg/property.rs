@@ -187,7 +187,10 @@ impl<Id: EntityId> PropertyStorage<Id> {
 
     /// Registers a cold epoch block for lazy property access.
     #[cfg(feature = "tiered-storage")]
-    pub fn register_cold_epoch(&self, block: std::sync::Arc<crate::storage::mmap_epoch::MmapEpochBlock>) {
+    pub fn register_cold_epoch(
+        &self,
+        block: std::sync::Arc<crate::storage::mmap_epoch::MmapEpochBlock>,
+    ) {
         self.cold_epochs.write().push(block);
     }
 
@@ -318,7 +321,8 @@ impl<Id: EntityId> PropertyStorage<Id> {
                     for (k, v) in &props {
                         self.cold_promote(id, PropertyKey::new(k.clone()), v.clone());
                     }
-                    return props.into_iter()
+                    return props
+                        .into_iter()
                         .find(|(k, _)| k.as_str() == key.as_str())
                         .map(|(_, v)| v);
                 }

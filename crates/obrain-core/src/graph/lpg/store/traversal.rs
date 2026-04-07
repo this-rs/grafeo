@@ -84,7 +84,8 @@ impl LpgStore {
                 for block in cold.iter().rev() {
                     if let Some(adj) = block.get_forward_adj(node.as_u64()) {
                         for (dst, eid) in &adj {
-                            self.forward_adj.add_edge(node, NodeId::new(*dst), EdgeId::new(*eid));
+                            self.forward_adj
+                                .add_edge(node, NodeId::new(*dst), EdgeId::new(*eid));
                         }
                         break;
                     }

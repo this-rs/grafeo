@@ -18,7 +18,13 @@ struct CompactionOutput {
 }
 
 /// Run the compact command.
-pub fn run(path: &Path, dry_run: bool, prune_wal: bool, format: OutputFormat, quiet: bool) -> Result<()> {
+pub fn run(
+    path: &Path,
+    dry_run: bool,
+    prune_wal: bool,
+    format: OutputFormat,
+    quiet: bool,
+) -> Result<()> {
     let db = super::open_existing(path)?;
     let stats_before = db.detailed_stats();
 
@@ -65,10 +71,7 @@ pub fn run(path: &Path, dry_run: bool, prune_wal: bool, format: OutputFormat, qu
                     );
                 }
                 Err(e) => {
-                    output::status(
-                        &format!("Warning: epoch file creation failed: {e}"),
-                        false,
-                    );
+                    output::status(&format!("Warning: epoch file creation failed: {e}"), false);
                 }
             }
         }
@@ -174,7 +177,8 @@ mod tests {
         let db_path = temp.path().join("test.obrain");
         create_test_db(&db_path);
 
-        run(&db_path, true, false, OutputFormat::Json, true).expect("json format dry run should succeed");
+        run(&db_path, true, false, OutputFormat::Json, true)
+            .expect("json format dry run should succeed");
         run(&db_path, false, false, OutputFormat::Json, true)
             .expect("json format compaction should succeed");
     }

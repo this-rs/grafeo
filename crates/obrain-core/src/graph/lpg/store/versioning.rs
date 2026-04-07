@@ -14,7 +14,6 @@ use obrain_common::mvcc::{ColdVersionRef, HotVersionRef, VersionIndex};
 #[cfg(feature = "tiered-storage")]
 use obrain_common::types::Value;
 
-
 impl LpgStore {
     /// Discards all uncommitted versions created by a transaction.
     ///
@@ -784,10 +783,7 @@ impl LpgStore {
     ///
     /// Returns an error if writing fails or persist directory is not configured.
     #[cfg(feature = "tiered-storage")]
-    pub fn snapshot_to_epoch_file(
-        &self,
-        wal_sequence: u64,
-    ) -> std::io::Result<std::path::PathBuf> {
+    pub fn snapshot_to_epoch_file(&self, wal_sequence: u64) -> std::io::Result<std::path::PathBuf> {
         use crate::storage::epoch_store::IndexEntry;
         use crate::storage::mmap_epoch::EpochFileData;
 
@@ -898,7 +894,7 @@ impl LpgStore {
         // =====================================================================
         // 4. Collect properties (indexed format for lazy mmap access)
         // =====================================================================
-        use crate::storage::mmap_epoch::{WideIndexEntry, INDEXED_PROPERTY_MAGIC};
+        use crate::storage::mmap_epoch::{INDEXED_PROPERTY_MAGIC, WideIndexEntry};
 
         let mut node_prop_index: Vec<WideIndexEntry> = Vec::new();
         let mut node_prop_data: Vec<u8> = Vec::new();
@@ -951,9 +947,12 @@ impl LpgStore {
         // Build the indexed property section:
         // [magic:8][node_count:8][edge_count:8][data_region_offset:8][node_idx...][edge_idx...][data...]
         let entry_size = std::mem::size_of::<WideIndexEntry>();
-        let data_region_offset = 32u64 + (node_prop_index.len() + edge_prop_index.len()) as u64 * entry_size as u64;
+        let data_region_offset =
+            32u64 + (node_prop_index.len() + edge_prop_index.len()) as u64 * entry_size as u64;
 
-        let mut prop_blob = Vec::with_capacity(data_region_offset as usize + node_prop_data.len() + edge_prop_data.len());
+        let mut prop_blob = Vec::with_capacity(
+            data_region_offset as usize + node_prop_data.len() + edge_prop_data.len(),
+        );
         prop_blob.extend_from_slice(&INDEXED_PROPERTY_MAGIC);
         prop_blob.extend_from_slice(&(node_prop_index.len() as u64).to_le_bytes());
         prop_blob.extend_from_slice(&(edge_prop_index.len() as u64).to_le_bytes());
@@ -988,9 +987,7 @@ impl LpgStore {
                     if let Some(label_ids) = version_log.latest() {
                         let labels: Vec<String> = label_ids
                             .iter()
-                            .filter_map(|&lid| {
-                                id_to_label.get(lid as usize).map(|s| s.to_string())
-                            })
+                            .filter_map(|&lid| id_to_label.get(lid as usize).map(|s| s.to_string()))
                             .collect();
                         if !labels.is_empty() {
                             label_entries.push((*id, labels));
@@ -1008,11 +1005,8 @@ impl LpgStore {
             .map(|s| s.to_string())
             .collect();
 
-        let label_blob = bincode::serde::encode_to_vec(
-            &(&label_entries, &edge_types),
-            config,
-        )
-        .expect("label serialization should not fail");
+        let label_blob = bincode::serde::encode_to_vec(&(&label_entries, &edge_types), config)
+            .expect("label serialization should not fail");
 
         // =====================================================================
         // 6. Collect adjacency (indexed format for lazy mmap access)
@@ -1032,7 +1026,8 @@ impl LpgStore {
             if edges.is_empty() {
                 for block in cold_epochs.iter().rev() {
                     if let Some(cold_adj) = block.get_forward_adj(*id) {
-                        edges = cold_adj.into_iter()
+                        edges = cold_adj
+                            .into_iter()
                             .map(|(dst, eid)| (NodeId::new(dst), EdgeId::new(eid)))
                             .collect();
                         break;
@@ -1067,7 +1062,8 @@ impl LpgStore {
                 if edges.is_empty() {
                     for block in cold_epochs.iter().rev() {
                         if let Some(cold_adj) = block.get_backward_adj(*id) {
-                            edges = cold_adj.into_iter()
+                            edges = cold_adj
+                                .into_iter()
                                 .map(|(dst, eid)| (NodeId::new(dst), EdgeId::new(eid)))
                                 .collect();
                             break;
@@ -1094,9 +1090,12 @@ impl LpgStore {
         }
 
         let adj_entry_size = std::mem::size_of::<WideIndexEntry>();
-        let adj_data_region_offset = 32u64 + (fwd_adj_index.len() + bwd_adj_index.len()) as u64 * adj_entry_size as u64;
+        let adj_data_region_offset =
+            32u64 + (fwd_adj_index.len() + bwd_adj_index.len()) as u64 * adj_entry_size as u64;
 
-        let mut adj_blob = Vec::with_capacity(adj_data_region_offset as usize + fwd_adj_data.len() + bwd_adj_data.len());
+        let mut adj_blob = Vec::with_capacity(
+            adj_data_region_offset as usize + fwd_adj_data.len() + bwd_adj_data.len(),
+        );
         adj_blob.extend_from_slice(&INDEXED_ADJACENCY_MAGIC);
         adj_blob.extend_from_slice(&(fwd_adj_index.len() as u64).to_le_bytes());
         adj_blob.extend_from_slice(&(bwd_adj_index.len() as u64).to_le_bytes());
@@ -1132,7 +1131,8 @@ impl LpgStore {
             adjacency_data: Some(&adj_blob),
         };
 
-        self.epoch_store.persist_epoch_direct(&file_data, wal_sequence)
+        self.epoch_store
+            .persist_epoch_direct(&file_data, wal_sequence)
     }
 
     /// Restores the store from mmap'd epoch files.
@@ -1219,10 +1219,8 @@ impl LpgStore {
             #[cfg(debug_assertions)]
             let t2 = std::time::Instant::now();
             if let Some(label_bytes) = block.label_data_section() {
-                let result: Result<
-                    (Vec<(u64, Vec<String>)>, Vec<String>),
-                    _,
-                > = bincode::serde::decode_from_slice(label_bytes, config).map(|(v, _)| v);
+                let result: Result<(Vec<(u64, Vec<String>)>, Vec<String>), _> =
+                    bincode::serde::decode_from_slice(label_bytes, config).map(|(v, _)| v);
 
                 if let Ok((label_entries, edge_types)) = result {
                     // Restore edge type table
@@ -1248,11 +1246,11 @@ impl LpgStore {
 
                         for (node_id_raw, labels) in label_entries {
                             let node_id = NodeId::new(node_id_raw);
-                            let mut label_ids =
-                                obrain_common::utils::hash::FxHashSet::default();
+                            let mut label_ids = obrain_common::utils::hash::FxHashSet::default();
 
                             for label_str in labels {
-                                let label_id = if let Some(&id) = label_to_id.get(label_str.as_str())
+                                let label_id = if let Some(&id) =
+                                    label_to_id.get(label_str.as_str())
                                 {
                                     id
                                 } else {
@@ -1354,11 +1352,7 @@ impl LpgStore {
                             for (src_raw, edges) in backward_adj {
                                 let src = NodeId::new(src_raw);
                                 for (dst_raw, eid_raw) in edges {
-                                    bwd.add_edge(
-                                        src,
-                                        NodeId::new(dst_raw),
-                                        EdgeId::new(eid_raw),
-                                    );
+                                    bwd.add_edge(src, NodeId::new(dst_raw), EdgeId::new(eid_raw));
                                 }
                             }
                         }
@@ -1371,8 +1365,10 @@ impl LpgStore {
             if block.has_indexed_properties() || block.has_indexed_adjacency() {
                 let arc_block = std::sync::Arc::clone(block);
                 if block.has_indexed_properties() {
-                    self.node_properties.register_cold_epoch(std::sync::Arc::clone(&arc_block));
-                    self.edge_properties.register_cold_epoch(std::sync::Arc::clone(&arc_block));
+                    self.node_properties
+                        .register_cold_epoch(std::sync::Arc::clone(&arc_block));
+                    self.edge_properties
+                        .register_cold_epoch(std::sync::Arc::clone(&arc_block));
                 }
                 self.cold_epochs.write().push(arc_block);
             }
@@ -1395,7 +1391,10 @@ impl LpgStore {
         self.live_edge_count.store(edge_count, Ordering::SeqCst);
 
         #[cfg(debug_assertions)]
-        eprintln!("[restore] TOTAL: {:?} (nodes={node_count}, edges={edge_count})", t_total.elapsed());
+        eprintln!(
+            "[restore] TOTAL: {:?} (nodes={node_count}, edges={edge_count})",
+            t_total.elapsed()
+        );
         Ok(())
     }
 }

@@ -61,8 +61,8 @@ use serde::{Deserialize, Serialize};
 
 use super::codec::CompressionCodec;
 use super::mmap_epoch::{
-    EpochFileData, MmapEpochBlock, epoch_filename, write_epoch_checkpoint, write_epoch_file,
-    EpochCheckpoint,
+    EpochCheckpoint, EpochFileData, MmapEpochBlock, epoch_filename, write_epoch_checkpoint,
+    write_epoch_file,
 };
 use crate::graph::lpg::{EdgeRecord, NodeRecord};
 

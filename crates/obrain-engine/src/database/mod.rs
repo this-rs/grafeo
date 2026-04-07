@@ -35,15 +35,15 @@ use parking_lot::RwLock;
 
 #[cfg(feature = "obrain-file")]
 use obrain_adapters::storage::file::ObrainFileManager;
+#[cfg(all(feature = "wal", feature = "tiered-storage"))]
+use obrain_adapters::storage::wal::CheckpointMetadata;
 #[cfg(feature = "wal")]
 use obrain_adapters::storage::wal::{
     DurabilityMode as WalDurabilityMode, LpgWal, WalConfig, WalRecord, WalRecovery,
 };
-#[cfg(all(feature = "wal", feature = "tiered-storage"))]
-use obrain_adapters::storage::wal::CheckpointMetadata;
+use obrain_common::memory::buffer::{BufferManager, BufferManagerConfig};
 #[cfg(all(feature = "wal", feature = "tiered-storage"))]
 use obrain_common::types::TransactionId;
-use obrain_common::memory::buffer::{BufferManager, BufferManagerConfig};
 use obrain_common::utils::error::Result;
 use obrain_core::graph::GraphStoreMut;
 use obrain_core::graph::lpg::LpgStore;
