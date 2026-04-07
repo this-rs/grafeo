@@ -814,10 +814,10 @@ impl LpgStore {
                         cold_ref.epoch,
                         cold_ref.block_offset,
                         cold_ref.length,
-                    )
-                        && !record.is_deleted() {
-                            node_records.push((node_id.as_u64(), record));
-                        }
+                    ) && !record.is_deleted()
+                    {
+                        node_records.push((node_id.as_u64(), record));
+                    }
                 }
             }
         }
@@ -846,9 +846,10 @@ impl LpgStore {
                         cold_ref.block_offset,
                         cold_ref.length,
                     )
-                        && !record.is_deleted() {
-                            edge_records.push((edge_id.as_u64(), record));
-                        }
+                    && !record.is_deleted()
+                {
+                    edge_records.push((edge_id.as_u64(), record));
+                }
             }
         }
         edge_records.sort_unstable_by_key(|(id, _)| *id);
@@ -981,15 +982,16 @@ impl LpgStore {
                 }
                 #[cfg(feature = "temporal")]
                 if let Some(version_log) = node_labels.get(&node_id)
-                    && let Some(label_ids) = version_log.latest() {
-                        let labels: Vec<String> = label_ids
-                            .iter()
-                            .filter_map(|&lid| id_to_label.get(lid as usize).map(|s| s.to_string()))
-                            .collect();
-                        if !labels.is_empty() {
-                            label_entries.push((*id, labels));
-                        }
+                    && let Some(label_ids) = version_log.latest()
+                {
+                    let labels: Vec<String> = label_ids
+                        .iter()
+                        .filter_map(|&lid| id_to_label.get(lid as usize).map(|s| s.to_string()))
+                        .collect();
+                    if !labels.is_empty() {
+                        label_entries.push((*id, labels));
                     }
+                }
             }
         }
 

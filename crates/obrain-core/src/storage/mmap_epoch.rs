@@ -1021,9 +1021,10 @@ pub fn scan_epoch_files(dir: &Path) -> io::Result<Vec<(EpochId, std::path::PathB
             // Try to extract epoch ID from filename
             if let Some(stem) = path.file_stem().and_then(|s| s.to_str())
                 && let Some(epoch_str) = stem.strip_prefix("epoch_")
-                    && let Ok(epoch_id) = epoch_str.parse::<u64>() {
-                        epochs.push((EpochId::new(epoch_id), path));
-                    }
+                && let Ok(epoch_id) = epoch_str.parse::<u64>()
+            {
+                epochs.push((EpochId::new(epoch_id), path));
+            }
         }
     }
 
@@ -1060,8 +1061,7 @@ pub fn read_epoch_checkpoint(dir: &Path) -> io::Result<Option<EpochCheckpoint>> 
 pub fn write_epoch_checkpoint(dir: &Path, checkpoint: &EpochCheckpoint) -> io::Result<()> {
     let path = dir.join("epoch_checkpoint.json");
     let tmp_path = dir.join("epoch_checkpoint.json.tmp");
-    let content = serde_json::to_string_pretty(checkpoint)
-        .map_err(io::Error::other)?;
+    let content = serde_json::to_string_pretty(checkpoint).map_err(io::Error::other)?;
     std::fs::write(&tmp_path, content)?;
     std::fs::rename(&tmp_path, &path)?;
     Ok(())

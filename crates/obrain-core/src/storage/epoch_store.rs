@@ -699,9 +699,9 @@ impl EpochStore {
         label_data: Option<&[u8]>,
         adjacency_data: Option<&[u8]>,
     ) -> std::io::Result<std::path::PathBuf> {
-        let epochs_dir = self.epochs_dir().ok_or_else(|| {
-            std::io::Error::other("no persist directory configured")
-        })?;
+        let epochs_dir = self
+            .epochs_dir()
+            .ok_or_else(|| std::io::Error::other("no persist directory configured"))?;
 
         let blocks = self.blocks.read();
         let block = blocks.get(&epoch).ok_or_else(|| {
@@ -750,9 +750,9 @@ impl EpochStore {
         data: &EpochFileData<'_>,
         wal_sequence: u64,
     ) -> std::io::Result<std::path::PathBuf> {
-        let epochs_dir = self.epochs_dir().ok_or_else(|| {
-            std::io::Error::other("no persist directory configured")
-        })?;
+        let epochs_dir = self
+            .epochs_dir()
+            .ok_or_else(|| std::io::Error::other("no persist directory configured"))?;
 
         let path = epochs_dir.join(epoch_filename(data.epoch));
         write_epoch_file(&path, data)?;

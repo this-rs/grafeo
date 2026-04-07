@@ -79,31 +79,33 @@ impl LpgStore {
     #[cfg(feature = "tiered-storage")]
     fn ensure_adjacency_hot(&self, node: NodeId, direction: Direction) {
         if matches!(direction, Direction::Outgoing | Direction::Both)
-            && self.forward_adj.edges_from(node).is_empty() {
-                let cold = self.cold_epochs.read();
-                for block in cold.iter().rev() {
-                    if let Some(adj) = block.get_forward_adj(node.as_u64()) {
-                        for (dst, eid) in &adj {
-                            self.forward_adj
-                                .add_edge(node, NodeId::new(*dst), EdgeId::new(*eid));
-                        }
-                        break;
+            && self.forward_adj.edges_from(node).is_empty()
+        {
+            let cold = self.cold_epochs.read();
+            for block in cold.iter().rev() {
+                if let Some(adj) = block.get_forward_adj(node.as_u64()) {
+                    for (dst, eid) in &adj {
+                        self.forward_adj
+                            .add_edge(node, NodeId::new(*dst), EdgeId::new(*eid));
                     }
+                    break;
                 }
             }
+        }
         if matches!(direction, Direction::Incoming | Direction::Both)
             && let Some(ref bwd) = self.backward_adj
-                && bwd.edges_from(node).is_empty() {
-                    let cold = self.cold_epochs.read();
-                    for block in cold.iter().rev() {
-                        if let Some(adj) = block.get_backward_adj(node.as_u64()) {
-                            for (dst, eid) in &adj {
-                                bwd.add_edge(node, NodeId::new(*dst), EdgeId::new(*eid));
-                            }
-                            break;
-                        }
+            && bwd.edges_from(node).is_empty()
+        {
+            let cold = self.cold_epochs.read();
+            for block in cold.iter().rev() {
+                if let Some(adj) = block.get_backward_adj(node.as_u64()) {
+                    for (dst, eid) in &adj {
+                        bwd.add_edge(node, NodeId::new(*dst), EdgeId::new(*eid));
                     }
+                    break;
                 }
+            }
+        }
     }
 
     /// Returns edges to a node (where the node is the destination).
