@@ -510,8 +510,8 @@ impl LpgStore {
                     .collect();
                 #[cfg(feature = "temporal")]
                 let labels: Vec<String> = label_ids
-                    .current()
-                    .map(|set| {
+                    .latest()
+                    .map(|set: &obrain_common::utils::hash::FxHashSet<u32>| {
                         set.iter()
                             .filter_map(|&lid| id_to_label.get(lid as usize).map(|s| s.to_string()))
                             .collect()
@@ -1305,20 +1305,36 @@ impl LpgStore {
                         for (node_id_raw, props) in node_props {
                             let node_id = NodeId::new(node_id_raw);
                             for (key_str, value) in props {
+                                #[cfg(not(feature = "temporal"))]
                                 self.node_properties.set(
                                     node_id,
                                     obrain_common::types::PropertyKey::new(key_str),
                                     value,
+                                );
+                                #[cfg(feature = "temporal")]
+                                self.node_properties.set(
+                                    node_id,
+                                    obrain_common::types::PropertyKey::new(key_str),
+                                    value,
+                                    *epoch_id,
                                 );
                             }
                         }
                         for (edge_id_raw, props) in edge_props {
                             let edge_id = EdgeId::new(edge_id_raw);
                             for (key_str, value) in props {
+                                #[cfg(not(feature = "temporal"))]
                                 self.edge_properties.set(
                                     edge_id,
                                     obrain_common::types::PropertyKey::new(key_str),
                                     value,
+                                );
+                                #[cfg(feature = "temporal")]
+                                self.edge_properties.set(
+                                    edge_id,
+                                    obrain_common::types::PropertyKey::new(key_str),
+                                    value,
+                                    *epoch_id,
                                 );
                             }
                         }
