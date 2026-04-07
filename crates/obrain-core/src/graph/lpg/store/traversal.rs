@@ -78,8 +78,8 @@ impl LpgStore {
     /// Promotes cold adjacency data into hot adjacency indexes.
     #[cfg(feature = "tiered-storage")]
     fn ensure_adjacency_hot(&self, node: NodeId, direction: Direction) {
-        if matches!(direction, Direction::Outgoing | Direction::Both) {
-            if self.forward_adj.edges_from(node).is_empty() {
+        if matches!(direction, Direction::Outgoing | Direction::Both)
+            && self.forward_adj.edges_from(node).is_empty() {
                 let cold = self.cold_epochs.read();
                 for block in cold.iter().rev() {
                     if let Some(adj) = block.get_forward_adj(node.as_u64()) {
@@ -91,10 +91,9 @@ impl LpgStore {
                     }
                 }
             }
-        }
-        if matches!(direction, Direction::Incoming | Direction::Both) {
-            if let Some(ref bwd) = self.backward_adj {
-                if bwd.edges_from(node).is_empty() {
+        if matches!(direction, Direction::Incoming | Direction::Both)
+            && let Some(ref bwd) = self.backward_adj
+                && bwd.edges_from(node).is_empty() {
                     let cold = self.cold_epochs.read();
                     for block in cold.iter().rev() {
                         if let Some(adj) = block.get_backward_adj(node.as_u64()) {
@@ -105,8 +104,6 @@ impl LpgStore {
                         }
                     }
                 }
-            }
-        }
     }
 
     /// Returns edges to a node (where the node is the destination).

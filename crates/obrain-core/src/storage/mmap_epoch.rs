@@ -62,6 +62,7 @@ use crate::graph::lpg::{EdgeRecord, NodeRecord};
 /// per-entity binary search without deserializing the entire section.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+#[allow(clippy::pub_underscore_fields)]
 pub struct WideIndexEntry {
     /// The entity ID (node or edge) this entry refers to.
     pub entity_id: u64,
@@ -105,6 +106,7 @@ pub const EPOCH_FILE_EXTENSION: &str = "oeb";
 /// future extensions without breaking the format.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+#[allow(clippy::pub_underscore_fields)]
 pub struct EpochFileHeader {
     /// Magic bytes: `OBRAIN01`.
     pub magic: [u8; 8],
@@ -1017,13 +1019,11 @@ pub fn scan_epoch_files(dir: &Path) -> io::Result<Vec<(EpochId, std::path::PathB
             .is_some_and(|ext| ext == EPOCH_FILE_EXTENSION)
         {
             // Try to extract epoch ID from filename
-            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                if let Some(epoch_str) = stem.strip_prefix("epoch_") {
-                    if let Ok(epoch_id) = epoch_str.parse::<u64>() {
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                && let Some(epoch_str) = stem.strip_prefix("epoch_")
+                    && let Ok(epoch_id) = epoch_str.parse::<u64>() {
                         epochs.push((EpochId::new(epoch_id), path));
                     }
-                }
-            }
         }
     }
 
@@ -1061,7 +1061,7 @@ pub fn write_epoch_checkpoint(dir: &Path, checkpoint: &EpochCheckpoint) -> io::R
     let path = dir.join("epoch_checkpoint.json");
     let tmp_path = dir.join("epoch_checkpoint.json.tmp");
     let content = serde_json::to_string_pretty(checkpoint)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        .map_err(io::Error::other)?;
     std::fs::write(&tmp_path, content)?;
     std::fs::rename(&tmp_path, &path)?;
     Ok(())
@@ -1484,7 +1484,7 @@ mod tests {
         let edge_props: Vec<(u64, Vec<(String, Value)>)> =
             vec![(100, vec![("weight".to_string(), Value::from(1.5f64))])];
         let property_data =
-            bincode::serde::encode_to_vec(&(&node_props, &edge_props), config).unwrap();
+            bincode::serde::encode_to_vec((&node_props, &edge_props), config).unwrap();
 
         // Build label data: (label_entries, edge_types)
         let label_entries: Vec<(u64, Vec<String>)> = vec![
@@ -1493,7 +1493,7 @@ mod tests {
         ];
         let edge_types: Vec<String> = vec!["KNOWS".to_string()];
         let label_data =
-            bincode::serde::encode_to_vec(&(&label_entries, &edge_types), config).unwrap();
+            bincode::serde::encode_to_vec((&label_entries, &edge_types), config).unwrap();
 
         // Build adjacency data
         let forward: Vec<(u64, Vec<(u64, u64)>)> = vec![(1, vec![(2, 100)]), (2, vec![(3, 200)])];

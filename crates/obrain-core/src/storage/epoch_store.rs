@@ -199,6 +199,7 @@ pub struct EpochBlockHeader {
 /// memory-mapped epoch files via `bytemuck::cast_slice`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, bytemuck::Pod, bytemuck::Zeroable)]
+#[allow(clippy::pub_underscore_fields)]
 pub struct IndexEntry {
     /// Entity ID (NodeId or EdgeId as u64).
     pub entity_id: u64,
@@ -699,7 +700,7 @@ impl EpochStore {
         adjacency_data: Option<&[u8]>,
     ) -> std::io::Result<std::path::PathBuf> {
         let epochs_dir = self.epochs_dir().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::Other, "no persist directory configured")
+            std::io::Error::other("no persist directory configured")
         })?;
 
         let blocks = self.blocks.read();
@@ -750,7 +751,7 @@ impl EpochStore {
         wal_sequence: u64,
     ) -> std::io::Result<std::path::PathBuf> {
         let epochs_dir = self.epochs_dir().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::Other, "no persist directory configured")
+            std::io::Error::other("no persist directory configured")
         })?;
 
         let path = epochs_dir.join(epoch_filename(data.epoch));
@@ -779,9 +780,8 @@ impl EpochStore {
     ///
     /// Returns an error if epoch files cannot be read.
     pub fn load_persisted_epochs(&self) -> std::io::Result<u64> {
-        let epochs_dir = match self.epochs_dir() {
-            Some(dir) => dir,
-            None => return Ok(0),
+        let Some(epochs_dir) = self.epochs_dir() else {
+            return Ok(0);
         };
 
         if !epochs_dir.exists() {

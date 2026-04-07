@@ -814,11 +814,10 @@ impl LpgStore {
                         cold_ref.epoch,
                         cold_ref.block_offset,
                         cold_ref.length,
-                    ) {
-                        if !record.is_deleted() {
+                    )
+                        && !record.is_deleted() {
                             node_records.push((node_id.as_u64(), record));
                         }
-                    }
                 }
             }
         }
@@ -841,17 +840,15 @@ impl LpgStore {
                     if !record.is_deleted() {
                         edge_records.push((edge_id.as_u64(), *record));
                     }
-                } else if let Some(cold_ref) = index.latest_cold() {
-                    if let Some(record) = self.epoch_store.get_edge_tiered(
+                } else if let Some(cold_ref) = index.latest_cold()
+                    && let Some(record) = self.epoch_store.get_edge_tiered(
                         cold_ref.epoch,
                         cold_ref.block_offset,
                         cold_ref.length,
-                    ) {
-                        if !record.is_deleted() {
+                    )
+                        && !record.is_deleted() {
                             edge_records.push((edge_id.as_u64(), record));
                         }
-                    }
-                }
             }
         }
         edge_records.sort_unstable_by_key(|(id, _)| *id);
@@ -983,8 +980,8 @@ impl LpgStore {
                     }
                 }
                 #[cfg(feature = "temporal")]
-                if let Some(version_log) = node_labels.get(&node_id) {
-                    if let Some(label_ids) = version_log.latest() {
+                if let Some(version_log) = node_labels.get(&node_id)
+                    && let Some(label_ids) = version_log.latest() {
                         let labels: Vec<String> = label_ids
                             .iter()
                             .filter_map(|&lid| id_to_label.get(lid as usize).map(|s| s.to_string()))
@@ -993,7 +990,6 @@ impl LpgStore {
                             label_entries.push((*id, labels));
                         }
                     }
-                }
             }
         }
 
@@ -1005,7 +1001,7 @@ impl LpgStore {
             .map(|s| s.to_string())
             .collect();
 
-        let label_blob = bincode::serde::encode_to_vec(&(&label_entries, &edge_types), config)
+        let label_blob = bincode::serde::encode_to_vec((&label_entries, &edge_types), config)
             .expect("label serialization should not fail");
 
         // =====================================================================
@@ -1181,7 +1177,7 @@ impl LpgStore {
                     // Use with_single_cold for bulk restore (no per-insert sort)
                     versions
                         .entry(node_id)
-                        .and_modify(|idx| idx.add_cold(cold_ref.clone()))
+                        .and_modify(|idx| idx.add_cold(cold_ref))
                         .or_insert_with(|| VersionIndex::with_single_cold(cold_ref));
                 }
             }
@@ -1205,7 +1201,7 @@ impl LpgStore {
                     };
                     versions
                         .entry(edge_id)
-                        .and_modify(|idx| idx.add_cold(cold_ref.clone()))
+                        .and_modify(|idx| idx.add_cold(cold_ref))
                         .or_insert_with(|| VersionIndex::with_single_cold(cold_ref));
                 }
             }
