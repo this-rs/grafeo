@@ -1022,9 +1022,23 @@ impl LpgStore {
         let mut fwd_adj_index: Vec<WideIndexEntry> = Vec::new();
         let mut fwd_adj_data: Vec<u8> = Vec::new();
 
+        // Read cold epochs once for adjacency fallback
+        let cold_epochs = self.cold_epochs.read();
+
         for (id, _) in &node_records {
             let node_id = NodeId::new(*id);
-            let edges = self.forward_adj.edges_from(node_id);
+            let mut edges = self.forward_adj.edges_from(node_id);
+            // Fallback to cold epochs if hot adjacency is empty
+            if edges.is_empty() {
+                for block in cold_epochs.iter().rev() {
+                    if let Some(cold_adj) = block.get_forward_adj(*id) {
+                        edges = cold_adj.into_iter()
+                            .map(|(dst, eid)| (NodeId::new(dst), EdgeId::new(eid)))
+                            .collect();
+                        break;
+                    }
+                }
+            }
             if !edges.is_empty() {
                 let adj: Vec<(u64, u64)> = edges
                     .iter()
@@ -1048,7 +1062,18 @@ impl LpgStore {
         if let Some(ref bwd) = self.backward_adj {
             for (id, _) in &node_records {
                 let node_id = NodeId::new(*id);
-                let edges = bwd.edges_from(node_id);
+                let mut edges = bwd.edges_from(node_id);
+                // Fallback to cold epochs if hot adjacency is empty
+                if edges.is_empty() {
+                    for block in cold_epochs.iter().rev() {
+                        if let Some(cold_adj) = block.get_backward_adj(*id) {
+                            edges = cold_adj.into_iter()
+                                .map(|(dst, eid)| (NodeId::new(dst), EdgeId::new(eid)))
+                                .collect();
+                            break;
+                        }
+                    }
+                }
                 if !edges.is_empty() {
                     let adj: Vec<(u64, u64)> = edges
                         .iter()
