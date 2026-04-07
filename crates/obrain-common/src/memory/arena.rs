@@ -20,7 +20,20 @@ use parking_lot::RwLock;
 use crate::types::EpochId;
 
 /// Default chunk size for arena allocations (1 MB).
+///
+/// Without tiered-storage, arenas use small chunks since records are stored
+/// in simple HashMaps. Chunks grow as needed via `alloc()`.
 const DEFAULT_CHUNK_SIZE: usize = 1024 * 1024;
+
+/// Chunk size for tiered-storage arenas (2 GB).
+///
+/// With tiered-storage, `alloc_value_with_offset` requires all allocations
+/// in a single contiguous primary chunk for stable u32 offsets. 2 GB handles
+/// up to ~32M records (at ~64 bytes each). On modern OSes, `alloc` for large
+/// sizes uses mmap(MAP_ANON) internally — pages are allocated lazily on first
+/// touch, so virtual memory cost is near-zero until data is written.
+#[cfg(feature = "tiered-storage")]
+const TIERED_CHUNK_SIZE: usize = 2 * 1024 * 1024 * 1024; // 2 GB
 
 /// Errors from arena allocation operations.
 #[derive(Debug, Clone)]
@@ -437,7 +450,14 @@ impl ArenaAllocator {
     ///
     /// Returns `AllocError::OutOfMemory` if the initial arena allocation fails.
     pub fn new() -> Result<Self, AllocError> {
-        Self::with_chunk_size(DEFAULT_CHUNK_SIZE)
+        #[cfg(feature = "tiered-storage")]
+        {
+            Self::with_chunk_size(TIERED_CHUNK_SIZE)
+        }
+        #[cfg(not(feature = "tiered-storage"))]
+        {
+            Self::with_chunk_size(DEFAULT_CHUNK_SIZE)
+        }
     }
 
     /// Creates a new arena allocator with a custom chunk size.

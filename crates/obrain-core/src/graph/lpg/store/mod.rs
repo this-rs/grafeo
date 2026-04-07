@@ -293,6 +293,10 @@ pub struct LpgStore {
     #[cfg(feature = "tiered-storage")]
     pub(super) epoch_store: Arc<EpochStore>,
 
+    /// Cold mmap'd epoch blocks for lazy property/adjacency access.
+    #[cfg(feature = "tiered-storage")]
+    pub(super) cold_epochs: RwLock<Vec<Arc<crate::storage::mmap_epoch::MmapEpochBlock>>>,
+
     /// Property storage for nodes.
     pub(super) node_properties: PropertyStorage<NodeId>,
 
@@ -418,6 +422,12 @@ pub struct LpgStore {
     /// Held at lock order 12 (after change_tracker=11).
     /// Read lock during notify, write lock during subscribe/unsubscribe.
     subscription_manager: Option<RwLock<crate::subscription::SubscriptionManager>>,
+
+    /// WAL sequence counter shared with ObrainDB for epoch persistence.
+    /// When persist_dir is configured, freeze_epoch() reads this to stamp
+    /// the epoch file header with the current WAL position.
+    #[cfg(feature = "tiered-storage")]
+    pub(crate) wal_sequence: Arc<AtomicU64>,
 }
 
 impl LpgStore {
@@ -457,8 +467,22 @@ impl LpgStore {
             edge_versions: RwLock::new(FxHashMap::default()),
             #[cfg(feature = "tiered-storage")]
             epoch_store: Arc::new(EpochStore::new()),
-            node_properties: PropertyStorage::new(),
-            edge_properties: PropertyStorage::new(),
+            #[cfg(feature = "tiered-storage")]
+            cold_epochs: RwLock::new(Vec::new()),
+            node_properties: {
+                #[allow(unused_mut)]
+                let mut ps = PropertyStorage::new();
+                #[cfg(feature = "tiered-storage")]
+                ps.set_is_edge(false);
+                ps
+            },
+            edge_properties: {
+                #[allow(unused_mut)]
+                let mut ps = PropertyStorage::new();
+                #[cfg(feature = "tiered-storage")]
+                ps.set_is_edge(true);
+                ps
+            },
             label_to_id: RwLock::new(FxHashMap::default()),
             id_to_label: RwLock::new(Vec::new()),
             edge_type_to_id: RwLock::new(FxHashMap::default()),
@@ -484,7 +508,28 @@ impl LpgStore {
             property_undo_log: RwLock::new(FxHashMap::default()),
             change_tracker: None,
             subscription_manager: None,
+            #[cfg(feature = "tiered-storage")]
+            wal_sequence: Arc::new(AtomicU64::new(0)),
         })
+    }
+
+    /// Sets the WAL sequence reference shared with ObrainDB.
+    ///
+    /// This allows `freeze_epoch()` to stamp epoch files with the current
+    /// WAL position, enabling partial WAL replay on startup.
+    #[cfg(feature = "tiered-storage")]
+    pub fn set_wal_sequence_ref(&mut self, wal_seq: Arc<AtomicU64>) {
+        self.wal_sequence = wal_seq;
+    }
+
+    /// Sets the persistence directory on the epoch store.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the directory cannot be created.
+    #[cfg(feature = "tiered-storage")]
+    pub fn set_persist_dir(&self, dir: std::path::PathBuf) -> std::io::Result<()> {
+        self.epoch_store.set_persist_dir(dir)
     }
 
     /// Enables change tracking with the given ring buffer capacity.

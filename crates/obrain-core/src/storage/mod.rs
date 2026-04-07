@@ -36,6 +36,8 @@ pub mod delta;
 pub mod dictionary;
 #[cfg(feature = "tiered-storage")]
 pub mod epoch_store;
+#[cfg(feature = "tiered-storage")]
+pub mod mmap_epoch;
 pub mod runlength;
 #[cfg(feature = "succinct-indexes")]
 pub mod succinct;
@@ -55,6 +57,11 @@ pub use runlength::{Run, RunLengthAnalyzer, RunLengthEncoding, SignedRunLengthEn
 pub use epoch_store::{
     CompressedEpochBlock, CompressionType, EpochBlockHeader, EpochStore, EpochStoreStats,
     IndexEntry, ZoneMap,
+};
+#[cfg(feature = "tiered-storage")]
+pub use mmap_epoch::{
+    EpochCheckpoint, EpochFileData, EpochFileHeader, MmapEpochBlock, epoch_filename,
+    read_epoch_checkpoint, scan_epoch_files, write_epoch_checkpoint, write_epoch_file,
 };
 
 // Succinct data structure exports (feature-gated)

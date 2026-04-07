@@ -485,9 +485,12 @@ impl LpgStore {
                 Some(*record)
             }
             VersionRef::Cold(cold_ref) => {
-                // Read from compressed epoch store
-                self.epoch_store
-                    .get_node(cold_ref.epoch, cold_ref.block_offset, cold_ref.length)
+                // Read from compressed epoch store (in-memory first, then mmap'd)
+                self.epoch_store.get_node_tiered(
+                    cold_ref.epoch,
+                    cold_ref.block_offset,
+                    cold_ref.length,
+                )
             }
         }
     }

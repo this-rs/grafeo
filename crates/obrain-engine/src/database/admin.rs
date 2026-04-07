@@ -330,6 +330,29 @@ impl super::ObrainDB {
         Ok(())
     }
 
+    /// Prunes old WAL log files that have been fully checkpointed.
+    ///
+    /// This removes WAL files whose sequence number is below the last
+    /// checkpoint, freeing disk space. The current active log file is
+    /// always preserved.
+    ///
+    /// Returns the number of bytes freed (approximate, based on size before prune).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the WAL is not enabled or pruning fails.
+    pub fn prune_wal(&self) -> Result<usize> {
+        #[cfg(feature = "wal")]
+        if let Some(ref wal) = self.wal {
+            let size_before = wal.size_bytes();
+            wal.prune_old_logs()?;
+            let size_after = wal.size_bytes();
+            return Ok(size_before.saturating_sub(size_after));
+        }
+
+        Ok(0)
+    }
+
     // =========================================================================
     // ADMIN API: Change Data Capture
     // =========================================================================

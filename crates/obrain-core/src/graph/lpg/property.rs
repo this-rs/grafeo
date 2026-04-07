@@ -147,6 +147,12 @@ pub struct PropertyStorage<Id: EntityId = NodeId> {
     columns: RwLock<FxHashMap<PropertyKey, PropertyColumn<Id>>>,
     /// Default compression mode for new columns.
     default_compression: CompressionMode,
+    /// Cold mmap'd epoch blocks for lazy property access.
+    #[cfg(feature = "tiered-storage")]
+    cold_epochs: RwLock<Vec<std::sync::Arc<crate::storage::mmap_epoch::MmapEpochBlock>>>,
+    /// Whether this storage is for edges (vs nodes).
+    #[cfg(feature = "tiered-storage")]
+    is_edge: bool,
     _marker: PhantomData<Id>,
 }
 
@@ -157,6 +163,10 @@ impl<Id: EntityId> PropertyStorage<Id> {
         Self {
             columns: RwLock::new(FxHashMap::default()),
             default_compression: CompressionMode::None,
+            #[cfg(feature = "tiered-storage")]
+            cold_epochs: RwLock::new(Vec::new()),
+            #[cfg(feature = "tiered-storage")]
+            is_edge: false,
             _marker: PhantomData,
         }
     }
@@ -167,8 +177,42 @@ impl<Id: EntityId> PropertyStorage<Id> {
         Self {
             columns: RwLock::new(FxHashMap::default()),
             default_compression: mode,
+            #[cfg(feature = "tiered-storage")]
+            cold_epochs: RwLock::new(Vec::new()),
+            #[cfg(feature = "tiered-storage")]
+            is_edge: false,
             _marker: PhantomData,
         }
+    }
+
+    /// Registers a cold epoch block for lazy property access.
+    #[cfg(feature = "tiered-storage")]
+    pub fn register_cold_epoch(
+        &self,
+        block: std::sync::Arc<crate::storage::mmap_epoch::MmapEpochBlock>,
+    ) {
+        self.cold_epochs.write().push(block);
+    }
+
+    /// Sets whether this storage is for edges (vs nodes).
+    #[cfg(feature = "tiered-storage")]
+    pub fn set_is_edge(&mut self, is_edge: bool) {
+        self.is_edge = is_edge;
+    }
+
+    /// Promotes a cold property value into the hot column store.
+    /// Handles both temporal and non-temporal compilation modes.
+    #[cfg(feature = "tiered-storage")]
+    fn cold_promote(&self, id: Id, key: PropertyKey, value: Value) {
+        let mut columns = self.columns.write();
+        let mode = self.default_compression;
+        let col = columns
+            .entry(key)
+            .or_insert_with(|| PropertyColumn::with_compression(mode));
+        #[cfg(not(feature = "temporal"))]
+        col.set(id, value);
+        #[cfg(feature = "temporal")]
+        col.set(id, value, EpochId::new(0));
     }
 
     /// Sets the default compression mode for new columns.
@@ -263,7 +307,29 @@ impl<Id: EntityId> PropertyStorage<Id> {
     #[must_use]
     pub fn get(&self, id: Id, key: &PropertyKey) -> Option<Value> {
         let columns = self.columns.read();
-        columns.get(key).and_then(|col| col.get(id))
+        if let Some(val) = columns.get(key).and_then(|col| col.get(id)) {
+            return Some(val);
+        }
+        drop(columns);
+
+        #[cfg(feature = "tiered-storage")]
+        {
+            let cold = self.cold_epochs.read();
+            for block in cold.iter().rev() {
+                if let Some(props) = block.get_entity_properties(id.as_u64(), self.is_edge) {
+                    // Found in cold storage — cache all props in hot for future lookups
+                    for (k, v) in &props {
+                        self.cold_promote(id, PropertyKey::new(k.clone()), v.clone());
+                    }
+                    return props
+                        .into_iter()
+                        .find(|(k, _)| k.as_str() == key.as_str())
+                        .map(|(_, v)| v);
+                }
+            }
+        }
+
+        None
     }
 
     /// Removes a property value for an entity.
@@ -308,6 +374,34 @@ impl<Id: EntityId> PropertyStorage<Id> {
                 result.insert(key.clone(), value);
             }
         }
+
+        // If we got results from hot, assume it's complete (was cached or set directly)
+        if !result.is_empty() {
+            return result;
+        }
+        drop(columns);
+
+        #[cfg(feature = "tiered-storage")]
+        {
+            let cold = self.cold_epochs.read();
+            for block in cold.iter().rev() {
+                if let Some(props) = block.get_entity_properties(id.as_u64(), self.is_edge) {
+                    // Cache in hot
+                    for (k, v) in &props {
+                        self.cold_promote(id, PropertyKey::new(k.clone()), v.clone());
+                    }
+                    // Re-read from hot (set populated it)
+                    let columns = self.columns.read();
+                    for (key, col) in columns.iter() {
+                        if let Some(value) = col.get(id) {
+                            result.insert(key.clone(), value);
+                        }
+                    }
+                    return result;
+                }
+            }
+        }
+
         result
     }
 

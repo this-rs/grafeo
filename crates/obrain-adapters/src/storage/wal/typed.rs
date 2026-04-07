@@ -143,6 +143,12 @@ impl<R: WalEntry> TypedWal<R> {
         &self.manager
     }
 
+    /// Returns the current WAL log sequence number.
+    #[must_use]
+    pub fn current_sequence(&self) -> u64 {
+        self.manager.current_sequence()
+    }
+
     /// Returns the total number of records written.
     #[must_use]
     pub fn record_count(&self) -> u64 {
@@ -193,6 +199,18 @@ impl<R: WalEntry> TypedWal<R> {
     #[must_use]
     pub fn path(&self) -> PathBuf {
         self.manager.path()
+    }
+
+    /// Prunes WAL log files that have been fully checkpointed.
+    ///
+    /// Removes old log files whose sequence is below the checkpoint,
+    /// keeping at least the current active log file as a safety net.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the WAL directory cannot be read.
+    pub fn prune_old_logs(&self) -> Result<()> {
+        self.manager.prune_old_logs()
     }
 }
 
