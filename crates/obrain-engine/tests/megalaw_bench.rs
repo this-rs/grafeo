@@ -5,7 +5,9 @@
 //!   cargo test -p obrain-engine --features "cypher,wal,tiered-storage" --test megalaw_bench -- --nocapture
 
 use obrain_core::graph::Direction;
+use obrain_core::graph::traits::GraphStore;
 use obrain_engine::ObrainDB;
+use std::sync::Arc;
 use std::time::Instant;
 
 #[test]
@@ -214,6 +216,146 @@ fn bench_megalaw_retrieval_steps() {
         );
     }
 
+    // ── Phase 6: Cypher pipeline breakdown ──
+    // Isolate each phase to find the 160ms overhead
+    println!("\n--- Cypher Pipeline Breakdown ---");
+    {
+        use obrain_engine::query::{
+            binder::Binder, optimizer::Optimizer,
+            translators::cypher,
+        };
+
+        let test_query = "MATCH (n:Document) RETURN count(n)";
+
+        // Phase A: translate_full (parse + classify)
+        let start = Instant::now();
+        let _translation = cypher::translate_full(test_query).unwrap();
+        let translate_full_ms = start.elapsed().as_secs_f64() * 1000.0;
+        println!("    translate_full (parse+classify): {:.3}ms", translate_full_ms);
+
+        // Phase B: translate (to logical plan)
+        let start = Instant::now();
+        let logical_plan = cypher::translate(test_query).unwrap();
+        let translate_ms = start.elapsed().as_secs_f64() * 1000.0;
+        println!("    translate (logical plan):        {:.3}ms", translate_ms);
+
+        // Phase C: binder
+        let start = Instant::now();
+        let mut binder = Binder::new();
+        let _ctx = binder.bind(&logical_plan).unwrap();
+        let bind_ms = start.elapsed().as_secs_f64() * 1000.0;
+        println!("    bind:                           {:.3}ms", bind_ms);
+
+        // Phase D: optimizer
+        let start = Instant::now();
+        let active = db.store();
+        let optimizer = Optimizer::from_graph_store(active.as_ref() as &dyn GraphStore);
+        let optimized = optimizer.optimize(logical_plan).unwrap();
+        let optimize_ms = start.elapsed().as_secs_f64() * 1000.0;
+        println!("    optimize:                       {:.3}ms", optimize_ms);
+
+        // Phase E: physical planning
+        let start = Instant::now();
+        let planner = obrain_engine::query::Planner::new(Arc::clone(&active) as Arc<dyn obrain_core::graph::traits::GraphStoreMut>);
+        let physical = planner.plan(&optimized).unwrap();
+        let plan_ms = start.elapsed().as_secs_f64() * 1000.0;
+        println!("    physical plan:                  {:.3}ms", plan_ms);
+
+        // Phase F: execution
+        let start = Instant::now();
+        let mut op = physical.operator;
+        let executor = obrain_engine::query::Executor::with_columns(physical.columns.clone());
+        let _result = executor.execute(op.as_mut()).unwrap();
+        let exec_ms = start.elapsed().as_secs_f64() * 1000.0;
+        println!("    execute:                        {:.3}ms", exec_ms);
+
+        let total = translate_full_ms + translate_ms + bind_ms + optimize_ms + plan_ms + exec_ms;
+        println!("    TOTAL (sum of phases):          {:.3}ms", total);
+
+        // Run full pipeline 5 times (with cache)
+        println!("\n    Full execute_cypher (5 runs):");
+        for i in 0..5 {
+            let start = Instant::now();
+            let r = session.execute_cypher(test_query).unwrap();
+            let ms = start.elapsed().as_secs_f64() * 1000.0;
+            println!("      run {}: {:.3}ms [{} rows]", i, ms, r.row_count());
+        }
+    }
+
+    // ── Phase 7: Scoring simulation (retrieve_nodes bottleneck) ──
+    println!("\n--- Scoring Simulation (retrieve_nodes pattern) ---");
+    {
+        use obrain_common::types::PropertyKey;
+
+        let doc_nodes = store.nodes_by_label("Document");
+        println!("  Document nodes: {}", doc_nodes.len());
+
+        // Simulate what retrieve_nodes does: for each node, get name property
+        let name_key = PropertyKey::from("name");
+        let title_key = PropertyKey::from("title");
+
+        // Pattern 1: get_node() per node (current retrieve_nodes approach)
+        let sample_size = std::cmp::min(10_000, doc_nodes.len());
+        let sample = &doc_nodes[..sample_size];
+
+        let start = Instant::now();
+        let mut matched = 0usize;
+        for &nid in sample {
+            if let Some(node) = store.get_node(nid) {
+                let name = node.properties.get(&name_key)
+                    .or_else(|| node.properties.get(&title_key))
+                    .and_then(|v| v.as_str());
+                if let Some(n) = name {
+                    if n.to_lowercase().contains("contract") {
+                        matched += 1;
+                    }
+                }
+            }
+        }
+        let p1_ms = start.elapsed().as_secs_f64() * 1000.0;
+        println!("  Pattern 1 (get_node per node) x{}: {:.1}ms ({:.1}us/node, {} matched)",
+            sample_size, p1_ms, p1_ms * 1000.0 / sample_size as f64, matched);
+
+        // Pattern 2: get_node_property_batch (batch property access)
+        let start = Instant::now();
+        let name_values = store.get_node_property_batch(sample, &name_key);
+        let batch_ms = start.elapsed().as_secs_f64() * 1000.0;
+        let mut matched2 = 0usize;
+        for val in &name_values {
+            if let Some(v) = val {
+                if let Some(s) = v.as_str() {
+                    if s.to_lowercase().contains("contract") {
+                        matched2 += 1;
+                    }
+                }
+            }
+        }
+        let total_p2_ms = start.elapsed().as_secs_f64() * 1000.0;
+        println!("  Pattern 2 (batch property) x{}: {:.1}ms batch + {:.1}ms filter = {:.1}ms ({:.1}us/node, {} matched)",
+            sample_size, batch_ms, total_p2_ms - batch_ms, total_p2_ms,
+            total_p2_ms * 1000.0 / sample_size as f64, matched2);
+
+        // Pattern 3: find_nodes_by_property (exact match via index)
+        if store.has_property_index("name") {
+            let start = Instant::now();
+            let exact = store.find_nodes_by_property("name", &obrain_common::types::Value::from("Contract"));
+            let p3_ms = start.elapsed().as_secs_f64() * 1000.0;
+            println!("  Pattern 3 (property index exact): {:.3}ms ({} results)", p3_ms, exact.len());
+        } else {
+            println!("  Pattern 3 (property index): SKIPPED — no index on 'name'");
+        }
+
+        // Extrapolation for full 8M scan
+        let per_node_us = p1_ms * 1000.0 / sample_size as f64;
+        let estimated_full_ms = per_node_us * doc_nodes.len() as f64 / 1000.0;
+        println!("\n  Estimated full scan (Pattern 1, {} nodes): {:.0}ms ({:.1}s)",
+            doc_nodes.len(), estimated_full_ms, estimated_full_ms / 1000.0);
+        let per_node_us_batch = total_p2_ms * 1000.0 / sample_size as f64;
+        let estimated_batch_ms = per_node_us_batch * doc_nodes.len() as f64 / 1000.0;
+        println!("  Estimated full scan (Pattern 2, {} nodes): {:.0}ms ({:.1}s)",
+            doc_nodes.len(), estimated_batch_ms, estimated_batch_ms / 1000.0);
+    }
+
     println!("\n--- SUMMARY ---");
     println!("  DB: {} nodes, {} edges (~21GB epoch)", nc, ec);
     println!("  DB open (tiered restore): {:.1}ms", open_ms);
@@ -222,4 +364,5 @@ fn bench_megalaw_retrieval_steps() {
     println!("    2. nodes_by_label on Document (8M nodes) — allocation time");
     println!("    3. BFS expansion from hub nodes — exponential blowup");
     println!("    4. Per-node property access on cold nodes — epoch mmap latency");
+    println!("    5. Full scan for name matching — no text index");
 }
