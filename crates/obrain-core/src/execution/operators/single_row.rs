@@ -164,6 +164,62 @@ impl Operator for NodeListOperator {
     }
 }
 
+/// An operator that produces exactly one row with pre-computed scalar values.
+///
+/// Used for optimizations where aggregate results (e.g., COUNT(*)) can be
+/// computed without scanning data — for example, `MATCH (n) RETURN count(n)`
+/// uses `store.node_count()` directly instead of iterating all nodes.
+pub struct ScalarResultOperator {
+    /// The pre-computed values to return.
+    values: Vec<obrain_common::types::Value>,
+    /// The output schema.
+    schema: Vec<LogicalType>,
+    /// Whether the result has been produced.
+    produced: bool,
+}
+
+impl ScalarResultOperator {
+    /// Creates a new scalar result operator with the given values.
+    #[must_use]
+    pub fn new(values: Vec<obrain_common::types::Value>, schema: Vec<LogicalType>) -> Self {
+        assert_eq!(values.len(), schema.len(), "values and schema must have same length");
+        Self {
+            values,
+            schema,
+            produced: false,
+        }
+    }
+}
+
+impl Operator for ScalarResultOperator {
+    fn next(&mut self) -> OperatorResult {
+        if self.produced {
+            return Ok(None);
+        }
+
+        self.produced = true;
+
+        let mut chunk = DataChunk::with_capacity(&self.schema, 1);
+        for (i, value) in self.values.iter().enumerate() {
+            let col = chunk
+                .column_mut(i)
+                .expect("column exists: chunk created with matching schema");
+            col.push_value(value.clone());
+        }
+        chunk.set_count(1);
+
+        Ok(Some(chunk))
+    }
+
+    fn reset(&mut self) {
+        self.produced = false;
+    }
+
+    fn name(&self) -> &'static str {
+        "ScalarResult"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

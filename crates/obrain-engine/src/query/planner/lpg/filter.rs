@@ -3,9 +3,9 @@
 use super::{
     ApplyOperator, Arc, BinaryOp, EmptyOperator, ExpressionPredicate, FilterExpression, FilterOp,
     FilterOperator, GraphStore, HashAggregateOperator, HashJoinOperator, HashMap,
-    LogicalExpression, LogicalOperator, NodeListOperator, Operator, PhysicalAggregateExpr,
-    PhysicalJoinType, RangeBounds, Result, TransactionId, UnaryOp, Value, convert_binary_op,
-    convert_filter_expression,
+    LogicalExpression, LogicalOperator, LogicalType, NodeId, NodeListOperator, Operator,
+    PhysicalAggregateExpr, PhysicalJoinType, RangeBounds, Result, TransactionId, UnaryOp, Value,
+    convert_binary_op, convert_filter_expression,
 };
 
 /// Cross-type equality comparison with Int64/Float64 coercion.
@@ -53,6 +53,11 @@ impl super::Planner {
             let schema = self.derive_schema_from_columns(&columns);
             let empty_op = Box::new(EmptyOperator::new(schema));
             return Ok((empty_op, columns));
+        }
+
+        // Try to use direct node-by-id seek for `WHERE id(n) = X` patterns
+        if let Some(result) = self.try_plan_filter_with_id_lookup(filter)? {
+            return Ok(result);
         }
 
         // Try to use property index for equality predicates on indexed properties
@@ -737,6 +742,315 @@ impl super::Planner {
     /// When a filter predicate is an equality check on an indexed property,
     /// and the input is a simple NodeScan, we can use the index to look up
     /// matching nodes directly instead of scanning all nodes.
+    /// Optimizes `WHERE id(n) = X` into a direct O(1) node seek.
+    ///
+    /// Instead of scanning all nodes and filtering, this directly looks up
+    /// the node by its internal ID using `store.get_node()`.
+    ///
+    /// Also handles `WHERE id(n) = X AND <other predicates>` by extracting
+    /// the id condition and wrapping remaining predicates in a FilterOperator.
+    ///
+    /// Also handles range patterns like `WHERE id(n) < X` or `WHERE id(n) >= X AND id(n) < Y`.
+    pub(super) fn try_plan_filter_with_id_lookup(
+        &self,
+        filter: &FilterOp,
+    ) -> Result<Option<(Box<dyn Operator>, Vec<String>)>> {
+        // Only optimize if input is a simple NodeScan (not nested)
+        let scan_variable = match filter.input.as_ref() {
+            LogicalOperator::NodeScan(scan) if scan.input.is_none() => scan.variable.clone(),
+            _ => return Ok(None),
+        };
+
+        // Try to extract id() equality from the predicate
+        if let Some((variable, node_id)) =
+            Self::extract_id_equality(&filter.predicate, &scan_variable)
+        {
+            // Direct O(1) lookup
+            let node_exists = if let Some(tx) = self.transaction_id {
+                self.store
+                    .get_node_versioned(node_id, self.viewing_epoch, tx)
+                    .is_some()
+            } else {
+                self.store
+                    .get_node_at_epoch(node_id, self.viewing_epoch)
+                    .is_some()
+            };
+
+            let columns = vec![variable.clone()];
+
+            if !node_exists {
+                let schema = vec![LogicalType::Node];
+                return Ok(Some((Box::new(EmptyOperator::new(schema)), columns)));
+            }
+
+            let node_list_op: Box<dyn Operator> =
+                Box::new(NodeListOperator::new(vec![node_id], 2048));
+
+            // Check for remaining predicates (e.g., `id(n) = 42 AND n.age > 30`)
+            if let Some(remaining) =
+                Self::extract_remaining_after_id(&filter.predicate, &scan_variable)
+            {
+                let variable_columns: HashMap<String, usize> = columns
+                    .iter()
+                    .enumerate()
+                    .map(|(i, name)| (name.clone(), i))
+                    .collect();
+                let filter_expr = self.convert_expression(&remaining)?;
+                let predicate = ExpressionPredicate::new(
+                    filter_expr,
+                    variable_columns,
+                    Arc::clone(&self.store) as Arc<dyn GraphStore>,
+                )
+                .with_transaction_context(self.viewing_epoch, self.transaction_id)
+                .with_session_context(self.session_context.clone());
+                let filtered = Box::new(FilterOperator::new(node_list_op, Box::new(predicate)));
+                return Ok(Some((filtered, columns)));
+            }
+
+            return Ok(Some((node_list_op, columns)));
+        }
+
+        // Try to extract id() range conditions: id(n) < X, id(n) >= X, etc.
+        if let Some((variable, range_ids)) =
+            self.extract_id_range(&filter.predicate, &scan_variable)
+        {
+            // Filter by MVCC visibility
+            let epoch = self.viewing_epoch;
+            let tx_id = self.transaction_id;
+            let visible_ids: Vec<NodeId> = range_ids
+                .into_iter()
+                .filter(|&id| {
+                    if let Some(tx) = tx_id {
+                        self.store.get_node_versioned(id, epoch, tx).is_some()
+                    } else {
+                        self.store.get_node_at_epoch(id, epoch).is_some()
+                    }
+                })
+                .collect();
+
+            let columns = vec![variable];
+            let node_list_op: Box<dyn Operator> =
+                Box::new(NodeListOperator::new(visible_ids, 2048));
+            return Ok(Some((node_list_op, columns)));
+        }
+
+        Ok(None)
+    }
+
+    /// Extracts `id(variable) = <int_literal>` from a predicate.
+    ///
+    /// Handles both top-level equality and equality within AND chains.
+    /// Returns `(variable_name, NodeId)` if found.
+    fn extract_id_equality(
+        predicate: &LogicalExpression,
+        target_variable: &str,
+    ) -> Option<(String, NodeId)> {
+        match predicate {
+            // Simple case: id(n) = 42
+            LogicalExpression::Binary {
+                left,
+                op: BinaryOp::Eq,
+                right,
+            } => Self::match_id_eq_literal(left, right, target_variable),
+
+            // AND chain: id(n) = 42 AND ...
+            LogicalExpression::Binary {
+                left,
+                op: BinaryOp::And,
+                right,
+            } => Self::extract_id_equality(left, target_variable)
+                .or_else(|| Self::extract_id_equality(right, target_variable)),
+
+            _ => None,
+        }
+    }
+
+    /// Extracts the variable name from an id() expression.
+    ///
+    /// Handles both representations:
+    /// - `LogicalExpression::Id("n")` (GraphQL/Gremlin translators)
+    /// - `FunctionCall { name: "id", args: [Variable("n")] }` (GQL/Cypher translators)
+    fn extract_id_variable(expr: &LogicalExpression) -> Option<&str> {
+        match expr {
+            LogicalExpression::Id(var) => Some(var.as_str()),
+            LogicalExpression::FunctionCall {
+                name, args, ..
+            } if name.eq_ignore_ascii_case("id")
+                && args.len() == 1
+                && matches!(&args[0], LogicalExpression::Variable(_)) =>
+            {
+                if let LogicalExpression::Variable(var) = &args[0] {
+                    Some(var.as_str())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Matches `id(var) = Literal(Int64)` or the reverse.
+    ///
+    /// Handles both `Id("n")` and `FunctionCall("id", [Variable("n")])` forms.
+    fn match_id_eq_literal(
+        left: &LogicalExpression,
+        right: &LogicalExpression,
+        target_variable: &str,
+    ) -> Option<(String, NodeId)> {
+        // id(n) = 42
+        if let Some(var) = Self::extract_id_variable(left) {
+            if var == target_variable {
+                if let LogicalExpression::Literal(Value::Int64(id)) = right {
+                    if *id >= 0 {
+                        return Some((var.to_string(), NodeId::new(*id as u64)));
+                    }
+                }
+            }
+        }
+        // 42 = id(n)
+        if let Some(var) = Self::extract_id_variable(right) {
+            if var == target_variable {
+                if let LogicalExpression::Literal(Value::Int64(id)) = left {
+                    if *id >= 0 {
+                        return Some((var.to_string(), NodeId::new(*id as u64)));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Checks if an expression is an id() call on the target variable.
+    #[allow(dead_code)]
+    fn is_id_expression(expr: &LogicalExpression, target_variable: &str) -> bool {
+        Self::extract_id_variable(expr)
+            .is_some_and(|var| var == target_variable)
+    }
+
+    /// Extracts remaining predicates after removing the `id(n) = X` part.
+    fn extract_remaining_after_id(
+        predicate: &LogicalExpression,
+        target_variable: &str,
+    ) -> Option<LogicalExpression> {
+        match predicate {
+            LogicalExpression::Binary {
+                left,
+                op: BinaryOp::And,
+                right,
+            } => {
+                let left_remaining = Self::extract_remaining_after_id(left, target_variable);
+                let right_remaining = Self::extract_remaining_after_id(right, target_variable);
+
+                match (left_remaining, right_remaining) {
+                    (Some(l), Some(r)) => Some(LogicalExpression::Binary {
+                        left: Box::new(l),
+                        op: BinaryOp::And,
+                        right: Box::new(r),
+                    }),
+                    (Some(l), None) => Some(l),
+                    (None, Some(r)) => Some(r),
+                    (None, None) => None,
+                }
+            }
+            LogicalExpression::Binary {
+                left,
+                op: BinaryOp::Eq,
+                right,
+            } => {
+                // If this is the id() = X condition, remove it
+                if Self::match_id_eq_literal(left, right, target_variable).is_some() {
+                    None
+                } else {
+                    Some(predicate.clone())
+                }
+            }
+            _ => Some(predicate.clone()),
+        }
+    }
+
+    /// Extracts id() range conditions like `id(n) < 1000` or `id(n) >= 0 AND id(n) < 1000`.
+    ///
+    /// Returns `(variable, Vec<NodeId>)` with all IDs in the range.
+    /// Only handles ranges up to 100_000 to avoid materializing huge vectors.
+    fn extract_id_range(
+        &self,
+        predicate: &LogicalExpression,
+        target_variable: &str,
+    ) -> Option<(String, Vec<NodeId>)> {
+        let mut lower: i64 = 0;
+        let mut upper: Option<i64> = None;
+        let mut variable = String::new();
+
+        if !Self::collect_id_range_bounds(predicate, target_variable, &mut lower, &mut upper, &mut variable) {
+            return None;
+        }
+
+        // Only optimize small ranges (avoid materializing millions of IDs)
+        let max_range = 100_000i64;
+        let upper_val = upper?;
+        if upper_val - lower > max_range || upper_val <= lower {
+            return None;
+        }
+
+        let ids: Vec<NodeId> = (lower..upper_val).map(|i| NodeId::new(i as u64)).collect();
+        Some((variable, ids))
+    }
+
+    /// Recursively collects id() range bounds from AND chains.
+    fn collect_id_range_bounds(
+        predicate: &LogicalExpression,
+        target_variable: &str,
+        lower: &mut i64,
+        upper: &mut Option<i64>,
+        variable: &mut String,
+    ) -> bool {
+        match predicate {
+            LogicalExpression::Binary {
+                left,
+                op: BinaryOp::And,
+                right,
+            } => {
+                let l = Self::collect_id_range_bounds(left, target_variable, lower, upper, variable);
+                let r = Self::collect_id_range_bounds(right, target_variable, lower, upper, variable);
+                l || r
+            }
+            LogicalExpression::Binary { left, op, right } => {
+                // Match id(var) <op> literal or literal <op> id(var)
+                // Use extract_id_variable to handle both LogicalExpression::Id and FunctionCall("id", [Variable])
+                if let (Some(var), LogicalExpression::Literal(Value::Int64(val))) =
+                    (Self::extract_id_variable(left), right.as_ref())
+                {
+                    if var == target_variable {
+                        *variable = var.to_string();
+                        return match op {
+                            BinaryOp::Lt => { *upper = Some(*val); true }
+                            BinaryOp::Le => { *upper = Some(*val + 1); true }
+                            BinaryOp::Gt => { *lower = *val + 1; true }
+                            BinaryOp::Ge => { *lower = *val; true }
+                            _ => false,
+                        };
+                    }
+                }
+                if let (LogicalExpression::Literal(Value::Int64(val)), Some(var)) =
+                    (left.as_ref(), Self::extract_id_variable(right))
+                {
+                    if var == target_variable {
+                        *variable = var.to_string();
+                        return match op {
+                            BinaryOp::Lt => { *lower = *val + 1; true }
+                            BinaryOp::Le => { *lower = *val; true }
+                            BinaryOp::Gt => { *upper = Some(*val); true }
+                            BinaryOp::Ge => { *upper = Some(*val + 1); true }
+                            _ => false,
+                        };
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
     ///
     /// Returns `Ok(Some((operator, columns)))` if optimization was applied,
     /// `Ok(None)` if not applicable, or `Err` on error.

@@ -99,7 +99,7 @@ pub use scan::ScanOperator;
 pub use scan_vector::VectorScanOperator;
 pub use set_ops::{ExceptOperator, IntersectOperator, OtherwiseOperator};
 pub use shortest_path::ShortestPathOperator;
-pub use single_row::{EmptyOperator, NodeListOperator, SingleRowOperator};
+pub use single_row::{EmptyOperator, NodeListOperator, ScalarResultOperator, SingleRowOperator};
 pub use sort::{NullOrder, SortDirection, SortKey, SortOperator};
 pub use union::UnionOperator;
 pub use unwind::UnwindOperator;

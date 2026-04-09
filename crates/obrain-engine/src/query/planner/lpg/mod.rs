@@ -23,7 +23,7 @@ use crate::query::plan::{
     NodeScanOp, OtherwiseOp, PathMode, RemoveLabelOp, ReturnOp, SetPropertyOp, ShortestPathOp,
     SkipOp, SortOp, SortOrder, UnaryOp, UnionOp, UnwindOp,
 };
-use obrain_common::types::{EpochId, TransactionId};
+use obrain_common::types::{EpochId, NodeId, TransactionId};
 use obrain_common::types::{LogicalType, Value};
 use obrain_common::utils::error::{Error, Result};
 use obrain_core::execution::AdaptiveContext;
@@ -37,7 +37,8 @@ use obrain_core::execution::operators::{
     LoadDataOperator, MapCollectOperator, MergeConfig, MergeOperator, MergeRelationshipConfig,
     MergeRelationshipOperator, NestedLoopJoinOperator, NodeListOperator, NullOrder, Operator,
     ParameterScanOperator, ProjectExpr, ProjectOperator, PropertySource, RemoveLabelOperator,
-    ScanOperator, SetPropertyOperator, ShortestPathOperator, SimpleAggregateOperator,
+    ScalarResultOperator, ScanOperator, SetPropertyOperator, ShortestPathOperator,
+    SimpleAggregateOperator,
     SortDirection, SortKey as PhysicalSortKey, SortOperator, UnwindOperator,
     VariableLengthExpandOperator,
 };
@@ -2444,5 +2445,156 @@ mod tests {
         let physical = planner.plan(&logical).unwrap();
         assert!(physical.columns().contains(&"a".to_string()));
         assert!(physical.columns().contains(&"b".to_string()));
+    }
+
+    // ==================== NodeByIdSeek Planner Tests ====================
+
+    #[test]
+    fn test_plan_id_seek_equality() {
+        let store = create_test_store();
+        let planner = Planner::new(store);
+
+        // MATCH (n) WHERE id(n) = 0 RETURN n
+        // Uses FunctionCall form (as GQL translator produces)
+        let logical = LogicalPlan::new(LogicalOperator::Return(ReturnOp {
+            items: vec![ReturnItem {
+                expression: LogicalExpression::Variable("n".to_string()),
+                alias: None,
+            }],
+            distinct: false,
+            input: Box::new(LogicalOperator::Filter(FilterOp {
+                predicate: LogicalExpression::Binary {
+                    left: Box::new(LogicalExpression::FunctionCall {
+                        name: "id".to_string(),
+                        args: vec![LogicalExpression::Variable("n".to_string())],
+                        distinct: false,
+                    }),
+                    op: BinaryOp::Eq,
+                    right: Box::new(LogicalExpression::Literal(Value::Int64(0))),
+                },
+                input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
+                    variable: "n".to_string(),
+                    label: None,
+                    input: None,
+                })),
+                pushdown_hint: None,
+            })),
+        }));
+
+        let physical = planner.plan(&logical).unwrap();
+        assert_eq!(physical.columns(), &["n"]);
+    }
+
+    #[test]
+    fn test_plan_id_seek_with_id_expression() {
+        let store = create_test_store();
+        let planner = Planner::new(store);
+
+        // Test with LogicalExpression::Id form (GraphQL/Gremlin path)
+        let logical = LogicalPlan::new(LogicalOperator::Return(ReturnOp {
+            items: vec![ReturnItem {
+                expression: LogicalExpression::Variable("n".to_string()),
+                alias: None,
+            }],
+            distinct: false,
+            input: Box::new(LogicalOperator::Filter(FilterOp {
+                predicate: LogicalExpression::Binary {
+                    left: Box::new(LogicalExpression::Id("n".to_string())),
+                    op: BinaryOp::Eq,
+                    right: Box::new(LogicalExpression::Literal(Value::Int64(0))),
+                },
+                input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
+                    variable: "n".to_string(),
+                    label: None,
+                    input: None,
+                })),
+                pushdown_hint: None,
+            })),
+        }));
+
+        let physical = planner.plan(&logical).unwrap();
+        assert_eq!(physical.columns(), &["n"]);
+    }
+
+    #[test]
+    fn test_plan_id_seek_nonexistent() {
+        let store = create_test_store();
+        let planner = Planner::new(store);
+
+        // MATCH (n) WHERE id(n) = 99999 RETURN n — node doesn't exist
+        let logical = LogicalPlan::new(LogicalOperator::Return(ReturnOp {
+            items: vec![ReturnItem {
+                expression: LogicalExpression::Variable("n".to_string()),
+                alias: None,
+            }],
+            distinct: false,
+            input: Box::new(LogicalOperator::Filter(FilterOp {
+                predicate: LogicalExpression::Binary {
+                    left: Box::new(LogicalExpression::FunctionCall {
+                        name: "id".to_string(),
+                        args: vec![LogicalExpression::Variable("n".to_string())],
+                        distinct: false,
+                    }),
+                    op: BinaryOp::Eq,
+                    right: Box::new(LogicalExpression::Literal(Value::Int64(99999))),
+                },
+                input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
+                    variable: "n".to_string(),
+                    label: None,
+                    input: None,
+                })),
+                pushdown_hint: None,
+            })),
+        }));
+
+        let physical = planner.plan(&logical).unwrap();
+        assert_eq!(physical.columns(), &["n"]);
+    }
+
+    #[test]
+    fn test_plan_id_seek_range() {
+        let store = create_test_store();
+        let planner = Planner::new(store);
+
+        // MATCH (n) WHERE id(n) >= 0 AND id(n) < 2 RETURN n
+        let logical = LogicalPlan::new(LogicalOperator::Return(ReturnOp {
+            items: vec![ReturnItem {
+                expression: LogicalExpression::Variable("n".to_string()),
+                alias: None,
+            }],
+            distinct: false,
+            input: Box::new(LogicalOperator::Filter(FilterOp {
+                predicate: LogicalExpression::Binary {
+                    left: Box::new(LogicalExpression::Binary {
+                        left: Box::new(LogicalExpression::FunctionCall {
+                            name: "id".to_string(),
+                            args: vec![LogicalExpression::Variable("n".to_string())],
+                            distinct: false,
+                        }),
+                        op: BinaryOp::Ge,
+                        right: Box::new(LogicalExpression::Literal(Value::Int64(0))),
+                    }),
+                    op: BinaryOp::And,
+                    right: Box::new(LogicalExpression::Binary {
+                        left: Box::new(LogicalExpression::FunctionCall {
+                            name: "id".to_string(),
+                            args: vec![LogicalExpression::Variable("n".to_string())],
+                            distinct: false,
+                        }),
+                        op: BinaryOp::Lt,
+                        right: Box::new(LogicalExpression::Literal(Value::Int64(2))),
+                    }),
+                },
+                input: Box::new(LogicalOperator::NodeScan(NodeScanOp {
+                    variable: "n".to_string(),
+                    label: None,
+                    input: None,
+                })),
+                pushdown_hint: None,
+            })),
+        }));
+
+        let physical = planner.plan(&logical).unwrap();
+        assert_eq!(physical.columns(), &["n"]);
     }
 }

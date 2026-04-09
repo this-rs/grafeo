@@ -4577,6 +4577,248 @@ mod tests {
             // Second column should be the name
             assert_eq!(result.rows[0][1], Value::String("Alix".into()));
         }
+
+        // ==================== NodeByIdSeek Tests ====================
+
+        #[test]
+        fn test_gql_id_seek_point_lookup() {
+            let db = ObrainDB::new_in_memory();
+            let session = db.session();
+
+            let n0 = session.create_node(&["Person"]);
+            let n1 = session.create_node(&["Person"]);
+            let _n2 = session.create_node(&["Animal"]);
+
+            // Point lookup: WHERE id(n) = <id>
+            let result = session
+                .execute(&format!("MATCH (n) WHERE id(n) = {} RETURN n", n1.as_u64()))
+                .unwrap();
+
+            assert_eq!(result.row_count(), 1, "Should return exactly 1 node");
+            assert_eq!(result.columns[0], "n");
+
+            // Verify it's the right node by looking up n0
+            let result0 = session
+                .execute(&format!("MATCH (n) WHERE id(n) = {} RETURN n", n0.as_u64()))
+                .unwrap();
+            assert_eq!(result0.row_count(), 1);
+        }
+
+        #[test]
+        fn test_gql_id_seek_not_found() {
+            let db = ObrainDB::new_in_memory();
+            let session = db.session();
+
+            session.create_node(&["Person"]);
+
+            // Non-existent node
+            let result = session
+                .execute("MATCH (n) WHERE id(n) = 999999 RETURN n")
+                .unwrap();
+
+            assert_eq!(result.row_count(), 0, "Should return empty for non-existent id");
+        }
+
+        #[test]
+        fn test_gql_id_seek_with_additional_predicate() {
+            use obrain_common::types::Value;
+
+            let db = ObrainDB::new_in_memory();
+            let session = db.session();
+
+            let n0 = session.create_node_with_props(
+                &["Person"],
+                [("age", Value::Int64(30))],
+            );
+            let n1 = session.create_node_with_props(
+                &["Person"],
+                [("age", Value::Int64(20))],
+            );
+
+            // id(n) = X AND n.age > 25 — should match n0 only
+            let result = session
+                .execute(&format!(
+                    "MATCH (n) WHERE id(n) = {} AND n.age > 25 RETURN n",
+                    n0.as_u64()
+                ))
+                .unwrap();
+            assert_eq!(result.row_count(), 1);
+
+            // id(n) = X AND n.age > 25 — should NOT match n1 (age=20)
+            let result = session
+                .execute(&format!(
+                    "MATCH (n) WHERE id(n) = {} AND n.age > 25 RETURN n",
+                    n1.as_u64()
+                ))
+                .unwrap();
+            assert_eq!(result.row_count(), 0);
+        }
+
+        #[test]
+        fn test_gql_id_seek_in_and_chain() {
+            use obrain_common::types::Value;
+
+            let db = ObrainDB::new_in_memory();
+            let session = db.session();
+
+            let n0 = session.create_node_with_props(
+                &["Person"],
+                [("name", Value::String("Alix".into()))],
+            );
+
+            // id buried in AND chain: n.name = 'Alix' AND id(n) = X
+            let result = session
+                .execute(&format!(
+                    "MATCH (n) WHERE n.name = 'Alix' AND id(n) = {} RETURN n",
+                    n0.as_u64()
+                ))
+                .unwrap();
+            assert_eq!(result.row_count(), 1);
+        }
+
+        #[test]
+        fn test_gql_id_seek_range() {
+            let db = ObrainDB::new_in_memory();
+            let session = db.session();
+
+            // Create 10 nodes
+            for _ in 0..10 {
+                session.create_node(&["Item"]);
+            }
+
+            // Range: id(n) >= 2 AND id(n) < 5
+            let result = session
+                .execute("MATCH (n) WHERE id(n) >= 2 AND id(n) < 5 RETURN n")
+                .unwrap();
+            assert_eq!(result.row_count(), 3, "Should return nodes 2,3,4");
+
+            // Range: id(n) < 3
+            let result = session
+                .execute("MATCH (n) WHERE id(n) < 3 RETURN n")
+                .unwrap();
+            assert_eq!(result.row_count(), 3, "Should return nodes 0,1,2");
+        }
+
+        #[test]
+        fn test_gql_id_seek_return_id() {
+            use obrain_common::types::Value;
+
+            let db = ObrainDB::new_in_memory();
+            let session = db.session();
+
+            let n0 = session.create_node(&["Test"]);
+
+            // RETURN id(n) — verify we get the right id back
+            let result = session
+                .execute(&format!(
+                    "MATCH (n) WHERE id(n) = {} RETURN id(n)",
+                    n0.as_u64()
+                ))
+                .unwrap();
+            assert_eq!(result.row_count(), 1);
+            // id() returns the node id as i64
+            assert_eq!(result.rows[0][0], Value::Int64(n0.as_u64() as i64));
+        }
+
+        // ==================== Count Shortcut Tests ====================
+
+        #[test]
+        fn test_gql_count_all_nodes_shortcut() {
+            let db = ObrainDB::new_in_memory();
+            let session = db.session();
+
+            session.create_node(&["Person"]);
+            session.create_node(&["Person"]);
+            session.create_node(&["Animal"]);
+
+            // MATCH (n) RETURN count(n) — should use node_count() shortcut
+            let result = session
+                .execute("MATCH (n) RETURN count(n)")
+                .unwrap();
+
+            assert_eq!(result.row_count(), 1);
+            assert_eq!(
+                result.rows[0][0],
+                obrain_common::types::Value::Int64(3)
+            );
+        }
+
+        #[test]
+        fn test_gql_count_by_label_shortcut() {
+            let db = ObrainDB::new_in_memory();
+            let session = db.session();
+
+            session.create_node(&["Person"]);
+            session.create_node(&["Person"]);
+            session.create_node(&["Animal"]);
+
+            // MATCH (n:Person) RETURN count(n) — should use nodes_by_label shortcut
+            let result = session
+                .execute("MATCH (n:Person) RETURN count(n)")
+                .unwrap();
+
+            assert_eq!(result.row_count(), 1);
+            assert_eq!(
+                result.rows[0][0],
+                obrain_common::types::Value::Int64(2)
+            );
+        }
+
+        #[test]
+        fn test_gql_count_empty_graph() {
+            let db = ObrainDB::new_in_memory();
+            let session = db.session();
+
+            // Empty graph → count = 0
+            let result = session
+                .execute("MATCH (n) RETURN count(n)")
+                .unwrap();
+
+            assert_eq!(result.row_count(), 1);
+            assert_eq!(
+                result.rows[0][0],
+                obrain_common::types::Value::Int64(0)
+            );
+        }
+
+        #[test]
+        fn test_gql_count_nonexistent_label() {
+            let db = ObrainDB::new_in_memory();
+            let session = db.session();
+
+            session.create_node(&["Person"]);
+
+            // MATCH (n:Ghost) RETURN count(n) — no Ghost nodes
+            let result = session
+                .execute("MATCH (n:Ghost) RETURN count(n)")
+                .unwrap();
+
+            assert_eq!(result.row_count(), 1);
+            assert_eq!(
+                result.rows[0][0],
+                obrain_common::types::Value::Int64(0)
+            );
+        }
+
+        #[test]
+        fn test_gql_id_seek_with_label_scan() {
+            let db = ObrainDB::new_in_memory();
+            let session = db.session();
+
+            let _n0 = session.create_node(&["Person"]);
+            let n1 = session.create_node(&["Animal"]);
+
+            // MATCH (n:Animal) WHERE id(n) = X — label scan + id filter
+            // This should NOT use NodeByIdSeek (label scan has input),
+            // but should still return correct results
+            let result = session
+                .execute(&format!(
+                    "MATCH (n:Animal) WHERE id(n) = {} RETURN n",
+                    n1.as_u64()
+                ))
+                .unwrap();
+            assert_eq!(result.row_count(), 1);
+        }
     }
 
     #[cfg(feature = "cypher")]
