@@ -5,7 +5,7 @@
 //! with selected subsystems and registers their listeners with the reactive
 //! [`Scheduler`].
 
-use crate::config::CognitiveConfig;
+use crate::config::{CognitiveConfig, KernelConfigToml};
 use crate::provenance::ProvenanceRecorder;
 #[allow(unused_imports)]
 use std::sync::Arc;
@@ -27,6 +27,13 @@ use crate::fabric::{FabricListener, FabricStore};
 
 #[cfg(feature = "co-change")]
 use crate::co_change::{CoChangeConfig, CoChangeDetector, CoChangeStore};
+
+#[cfg(feature = "kernel")]
+use crate::kernel::KernelListener;
+#[cfg(feature = "kernel")]
+use obrain_adapters::plugins::algorithms::KernelManager;
+#[cfg(feature = "kernel")]
+use obrain_core::graph::lpg::LpgStore;
 
 use crate::tenant::TenantManager;
 use obrain_core::graph::GraphStoreMut;
@@ -102,6 +109,9 @@ pub struct DefaultCognitiveEngine {
 
     #[cfg(feature = "co-change")]
     co_change: Option<Arc<CoChangeStore>>,
+
+    #[cfg(feature = "kernel")]
+    kernel: Option<Arc<KernelManager>>,
 
     #[cfg(feature = "engram")]
     engram_store: Option<Arc<EngramStore>>,
@@ -186,6 +196,12 @@ impl DefaultCognitiveEngine {
         &self.provenance
     }
 
+    /// Returns the kernel manager, if the kernel subsystem is active.
+    #[cfg(feature = "kernel")]
+    pub fn kernel_manager(&self) -> Option<&Arc<KernelManager>> {
+        self.kernel.as_ref()
+    }
+
     /// Sets the engram store, metrics collector, and vector index.
     ///
     /// Called by higher-level coordinators (e.g., EngramManager) to wire
@@ -219,6 +235,9 @@ impl std::fmt::Debug for DefaultCognitiveEngine {
 
         #[cfg(feature = "co-change")]
         d.field("co_change", &self.co_change.is_some());
+
+        #[cfg(feature = "kernel")]
+        d.field("kernel", &self.kernel.is_some());
 
         d.field("tenant_count", &self.tenant_manager.tenant_count());
         d.field("provenance_events", &self.provenance.total_events());
@@ -258,8 +277,16 @@ pub struct CognitiveEngineBuilder {
     #[cfg(feature = "co-change")]
     co_change_config: Option<CoChangeConfig>,
 
+    #[cfg(feature = "kernel")]
+    kernel_config: Option<KernelConfigToml>,
+
     /// Optional backing graph store for write-through persistence.
     graph_store: Option<Arc<dyn GraphStoreMut>>,
+
+    /// Optional LpgStore reference for kernel embedding manager.
+    /// KernelManager requires Arc<LpgStore> specifically.
+    #[cfg(feature = "kernel")]
+    lpg_store: Option<Arc<LpgStore>>,
 }
 
 impl CognitiveEngineBuilder {
@@ -278,7 +305,13 @@ impl CognitiveEngineBuilder {
             #[cfg(feature = "co-change")]
             co_change_config: None,
 
+            #[cfg(feature = "kernel")]
+            kernel_config: None,
+
             graph_store: None,
+
+            #[cfg(feature = "kernel")]
+            lpg_store: None,
         }
     }
 
@@ -306,6 +339,11 @@ impl CognitiveEngineBuilder {
         #[cfg(feature = "co-change")]
         if config.co_change.enabled {
             builder.co_change_config = Some(config.co_change.to_runtime());
+        }
+
+        #[cfg(feature = "kernel")]
+        if config.kernel.enabled {
+            builder.kernel_config = Some(config.kernel.clone());
         }
 
         builder
@@ -346,6 +384,27 @@ impl CognitiveEngineBuilder {
     #[cfg(feature = "co-change")]
     pub fn with_co_change(mut self, config: CoChangeConfig) -> Self {
         self.co_change_config = Some(config);
+        self
+    }
+
+    /// Enables the kernel embedding subsystem with the given configuration.
+    ///
+    /// Requires [`with_lpg_store`](Self::with_lpg_store) to also be called,
+    /// since [`KernelManager`] needs a direct `Arc<LpgStore>` reference.
+    #[cfg(feature = "kernel")]
+    pub fn with_kernel(mut self, config: KernelConfigToml) -> Self {
+        self.kernel_config = Some(config);
+        self
+    }
+
+    /// Sets the `Arc<LpgStore>` needed by the kernel embedding manager.
+    ///
+    /// The kernel subsystem requires direct access to the `LpgStore` (not
+    /// the `dyn GraphStoreMut` trait object) for subscription-based incremental
+    /// updates. Call this alongside [`with_kernel`](Self::with_kernel).
+    #[cfg(feature = "kernel")]
+    pub fn with_lpg_store(mut self, store: Arc<LpgStore>) -> Self {
+        self.lpg_store = Some(store);
         self
     }
 
@@ -434,6 +493,31 @@ impl CognitiveEngineBuilder {
             store
         });
 
+        // Kernel embeddings
+        #[cfg(feature = "kernel")]
+        let kernel = self.kernel_config.and_then(|config| {
+            let Some(lpg) = self.lpg_store else {
+                tracing::warn!(
+                    "cognitive: kernel subsystem enabled but no LpgStore provided \
+                     (call with_lpg_store). Kernel embeddings will not be active."
+                );
+                return None;
+            };
+            let mut manager = KernelManager::new_untrained(Arc::clone(&lpg), config.seed);
+            manager.set_alpha(config.alpha);
+            manager.set_max_neighbors(config.max_neighbors);
+            manager.debounce_threshold = config.debounce_threshold;
+            // Attempt to restore Phi_0 from a previous run persisted in the store.
+            // Falls back to random initialization if no weights are found.
+            manager.load_phi();
+            let manager = Arc::new(manager);
+            let listener = Arc::new(KernelListener::new(Arc::clone(&manager)));
+            scheduler.register_listener(listener);
+            active_count += 1;
+            tracing::info!("cognitive: kernel embedding subsystem activated");
+            Some(manager)
+        });
+
         let provenance = Arc::new(ProvenanceRecorder::new());
 
         tracing::info!(
@@ -451,6 +535,8 @@ impl CognitiveEngineBuilder {
             fabric,
             #[cfg(feature = "co-change")]
             co_change,
+            #[cfg(feature = "kernel")]
+            kernel,
             #[cfg(feature = "engram")]
             engram_store: None,
             #[cfg(feature = "engram")]
@@ -486,7 +572,13 @@ impl std::fmt::Debug for CognitiveEngineBuilder {
         #[cfg(feature = "co-change")]
         d.field("co_change", &self.co_change_config.is_some());
 
+        #[cfg(feature = "kernel")]
+        d.field("kernel", &self.kernel_config.is_some());
+
         d.field("graph_store", &self.graph_store.is_some());
+
+        #[cfg(feature = "kernel")]
+        d.field("lpg_store", &self.lpg_store.is_some());
 
         d.finish()
     }

@@ -323,6 +323,34 @@ impl StagnationConfigToml {
     }
 }
 
+/// Serializable configuration for the kernel embedding subsystem.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct KernelConfigToml {
+    /// Whether the kernel embedding subsystem is enabled.
+    pub enabled: bool,
+    /// Seed for Phi0 random initialization.
+    pub seed: u64,
+    /// APPNP anchoring factor (0.0-1.0, default 0.8).
+    pub alpha: f64,
+    /// Max neighbors before Fisher-Yates sampling.
+    pub max_neighbors: usize,
+    /// Debounce threshold: min pending changes before auto-flush.
+    pub debounce_threshold: usize,
+}
+
+impl Default for KernelConfigToml {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            seed: 42,
+            alpha: 0.8,
+            max_neighbors: 50,
+            debounce_threshold: 1,
+        }
+    }
+}
+
 /// Serializable configuration for the GDS refresh scheduler.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -386,6 +414,8 @@ pub struct CognitiveConfig {
     pub co_change: CoChangeConfigToml,
     /// GDS refresh scheduler configuration.
     pub gds_refresh: GdsRefreshConfigToml,
+    /// Kernel embedding subsystem configuration.
+    pub kernel: KernelConfigToml,
     /// Scar memory configuration.
     pub scar: ScarConfigToml,
     /// Memory horizons configuration.
@@ -406,6 +436,7 @@ impl Default for CognitiveConfig {
             fabric: FabricConfigToml::default(),
             co_change: CoChangeConfigToml::default(),
             gds_refresh: GdsRefreshConfigToml::default(),
+            kernel: KernelConfigToml::default(),
             scar: ScarConfigToml::default(),
             memory: MemoryConfigToml::default(),
             stagnation: StagnationConfigToml::default(),
@@ -440,6 +471,10 @@ impl CognitiveConfig {
                 ..Default::default()
             },
             gds_refresh: GdsRefreshConfigToml {
+                enabled: true,
+                ..Default::default()
+            },
+            kernel: KernelConfigToml {
                 enabled: true,
                 ..Default::default()
             },

@@ -504,8 +504,14 @@ impl ObrainDB {
             let scheduler =
                 obrain_reactive::Scheduler::new(&bus, obrain_reactive::BatchConfig::default());
             let config = obrain_cognitive::CognitiveConfig::default();
-            let engine =
-                obrain_cognitive::CognitiveEngineBuilder::from_config(&config).build(&scheduler);
+            #[allow(unused_mut)]
+            let mut builder =
+                obrain_cognitive::CognitiveEngineBuilder::from_config(&config);
+            #[cfg(feature = "kernel")]
+            {
+                builder = builder.with_lpg_store(Arc::clone(&store));
+            }
+            let engine = builder.build(&scheduler);
             (
                 Some(Arc::new(engine) as Arc<dyn obrain_cognitive::CognitiveEngine>),
                 Some(scheduler),

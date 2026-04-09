@@ -421,6 +421,11 @@ impl KernelManager {
 
     /// Get embedding for a node, triggering flush if debounce threshold reached.
     ///
+    /// Uses a cache-then-store strategy: checks in-memory cache first, then
+    /// falls back to reading `_kernel_embedding` from the graph store. This
+    /// enables zero-cost restarts — embeddings persisted in the store are
+    /// loaded lazily on first access, no batch recomputation needed.
+    ///
     /// Returns `None` if the node has no embedding (not yet computed or no features).
     pub fn get_embedding(&self, node_id: NodeId) -> Option<Vec<f32>> {
         // Check if we need to flush
@@ -429,21 +434,59 @@ impl KernelManager {
             self.flush();
         }
 
-        self.embeddings.read().get(&node_id).cloned()
+        // Fast path: in-memory cache hit
+        if let Some(emb) = self.embeddings.read().get(&node_id).cloned() {
+            return Some(emb);
+        }
+
+        // Slow path: lazy load from store (persisted from previous session)
+        let prop_key = PropertyKey::from(KERNEL_EMBEDDING_KEY);
+        if let Some(Value::Vector(v)) = self.store.get_node_property(node_id, &prop_key) {
+            let emb: Vec<f32> = v.to_vec();
+            self.embeddings.write().insert(node_id, emb.clone());
+            return Some(emb);
+        }
+
+        None
     }
 
     /// Get embeddings for multiple nodes.
+    ///
+    /// Uses cache-then-store lazy loading (see [`get_embedding`]).
     pub fn get_embeddings(&self, node_ids: &[NodeId]) -> HashMap<NodeId, Vec<f32>> {
         let pending_count = self.pending_changes.read().len();
         if pending_count >= self.debounce_threshold {
             self.flush();
         }
 
+        let mut result = HashMap::with_capacity(node_ids.len());
         let cache = self.embeddings.read();
-        node_ids
-            .iter()
-            .filter_map(|&nid| cache.get(&nid).map(|emb| (nid, emb.clone())))
-            .collect()
+
+        // Collect cache hits and misses in one pass
+        let mut misses: Vec<NodeId> = Vec::new();
+        for &nid in node_ids {
+            if let Some(emb) = cache.get(&nid) {
+                result.insert(nid, emb.clone());
+            } else {
+                misses.push(nid);
+            }
+        }
+        drop(cache);
+
+        // Lazy load misses from store
+        if !misses.is_empty() {
+            let prop_key = PropertyKey::from(KERNEL_EMBEDDING_KEY);
+            let mut write_cache = self.embeddings.write();
+            for nid in misses {
+                if let Some(Value::Vector(v)) = self.store.get_node_property(nid, &prop_key) {
+                    let emb: Vec<f32> = v.to_vec();
+                    write_cache.insert(nid, emb.clone());
+                    result.insert(nid, emb);
+                }
+            }
+        }
+
+        result
     }
 
     /// Returns the number of cached embeddings.
@@ -461,9 +504,11 @@ impl KernelManager {
         !self.embeddings.read().is_empty()
     }
 
-    /// Remove embedding for a deleted node.
+    /// Remove embedding for a deleted node (cache + store).
     pub fn remove_embedding(&self, node_id: NodeId) {
         self.embeddings.write().remove(&node_id);
+        // Also remove from store to prevent lazy-load from resurrecting it
+        self.store.remove_node_property(node_id, KERNEL_EMBEDDING_KEY);
     }
 }
 
