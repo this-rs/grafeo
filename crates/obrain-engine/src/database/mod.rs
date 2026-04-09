@@ -403,6 +403,17 @@ impl ObrainDB {
                                             "Restored {} epoch files (wal_sequence={seq}), replaying WAL delta",
                                             store.epoch_store().mmap_block_count()
                                         );
+                                        // Sync the store's current_epoch to the highest
+                                        // restored epoch so MVCC visibility works correctly.
+                                        let max_epoch = store.epoch_store().mmap_blocks()
+                                            .read()
+                                            .keys()
+                                            .copied()
+                                            .max();
+                                        if let Some(epoch) = max_epoch {
+                                            store.sync_epoch(epoch);
+                                            tracing::info!(?epoch, "store epoch synced to restored max");
+                                        }
                                         seq
                                     }
                                 }
