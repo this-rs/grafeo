@@ -48,6 +48,8 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
 
+use obrain_common::types::PropertyKey;
+
 use obrain_common::types::{NodeId, Value};
 use obrain_common::utils::error::Result;
 #[cfg(test)]
@@ -231,6 +233,93 @@ pub struct HilbertFeaturesResult {
     /// previous global values and should be recalculated in a background
     /// full pass when convenient. `false` after a full `hilbert_features()`.
     pub dirty_global: bool,
+}
+
+// ============================================================================
+// Fast-path: Load pre-computed features from store
+// ============================================================================
+
+/// Attempt to load pre-computed `_hilbert_features` from the graph store.
+///
+/// This is a **fast-path** for startup: instead of recomputing all 8 facettes
+/// (spectral, community, PageRank, etc.), we load the feature vectors that
+/// were previously stored as node properties via `compute-hilbert` or similar.
+///
+/// # Returns
+///
+/// - `Some(HilbertFeaturesResult)` if ≥ `min_coverage` fraction of nodes
+///   have `_hilbert_features` and the dimensions are consistent.
+/// - `None` if features are absent, inconsistent, or below coverage threshold.
+///
+/// # Performance
+///
+/// O(N) property reads (batch) vs O(N × complexity) for full computation.
+/// On megalaw (8.1M nodes): ~2s load vs ~140s compute.
+pub fn try_load_hilbert_features_from_store(
+    store: &dyn GraphStore,
+    min_coverage: f64,
+) -> Option<HilbertFeaturesResult> {
+    let node_ids = store.all_node_ids();
+    let n = node_ids.len();
+    if n == 0 {
+        return None;
+    }
+
+    let key = PropertyKey::from("_hilbert_features");
+
+    // Phase 1: Sample to check coverage (avoid loading all if <90% covered)
+    let sample_size = n.min(500);
+    let step = if n > sample_size { n / sample_size } else { 1 };
+    let mut sample_hits = 0usize;
+    let mut detected_dims: Option<usize> = None;
+
+    for i in (0..n).step_by(step).take(sample_size) {
+        if let Some(Value::Vector(v)) = store.get_node_property(node_ids[i], &key) {
+            sample_hits += 1;
+            let d = v.len();
+            if let Some(expected) = detected_dims {
+                if d != expected {
+                    // Inconsistent dimensions — can't use cached features
+                    return None;
+                }
+            } else {
+                detected_dims = Some(d);
+            }
+        }
+    }
+
+    let coverage = sample_hits as f64 / sample_size as f64;
+    if coverage < min_coverage {
+        return None;
+    }
+
+    let dims = detected_dims?;
+
+    // Phase 2: Batch load all features
+    let batch = store.get_node_property_batch(&node_ids, &key);
+    let mut features = HashMap::with_capacity(n);
+    let mut loaded = 0usize;
+
+    for (i, val) in batch.into_iter().enumerate() {
+        if let Some(Value::Vector(v)) = val {
+            if v.len() == dims {
+                features.insert(node_ids[i], v.to_vec());
+                loaded += 1;
+            }
+        }
+    }
+
+    let actual_coverage = loaded as f64 / n as f64;
+    if actual_coverage < min_coverage {
+        return None;
+    }
+
+    Some(HilbertFeaturesResult {
+        features,
+        raw_facettes: HashMap::new(), // Not available from stored features
+        dimensions: dims,
+        dirty_global: false, // Loaded from a full compute, considered clean
+    })
 }
 
 // ============================================================================
@@ -2439,5 +2528,75 @@ mod tests {
         // a's external signal should be preserved
         let a_ext = incr.raw_facettes[&a][8];
         assert!((a_ext[0] - 0.8).abs() < 1e-6);
+    }
+
+    // ==================== try_load_hilbert_features_from_store Tests ====================
+
+    #[test]
+    fn test_load_features_from_store_roundtrip() {
+        use std::sync::Arc;
+
+        let store = make_test_graph();
+
+        // Step 1: Compute features
+        let config = HilbertFeaturesConfig::default();
+        let computed = hilbert_features(&store, &config);
+        assert!(!computed.features.is_empty());
+
+        // Step 2: Store features as _hilbert_features property
+        let key = "_hilbert_features";
+        for (nid, feats) in &computed.features {
+            let vec: Arc<[f32]> = feats.as_slice().into();
+            store.set_node_property(*nid, key, Value::Vector(vec));
+        }
+
+        // Step 3: Load from store
+        let loaded = try_load_hilbert_features_from_store(&store, 0.9);
+        assert!(loaded.is_some(), "Should successfully load features from store");
+
+        let loaded = loaded.unwrap();
+        assert_eq!(loaded.features.len(), computed.features.len());
+        assert_eq!(loaded.dimensions, computed.dimensions);
+
+        // Verify feature vectors match
+        for (nid, computed_feats) in &computed.features {
+            let loaded_feats = &loaded.features[nid];
+            assert_eq!(computed_feats, loaded_feats, "Features should match for node {:?}", nid);
+        }
+    }
+
+    #[test]
+    fn test_load_features_from_store_empty() {
+        let store = LpgStore::new().unwrap();
+        // Empty store → None
+        let result = try_load_hilbert_features_from_store(&store, 0.9);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_load_features_from_store_no_features() {
+        let store = make_test_graph();
+        // Graph has nodes but no _hilbert_features → None
+        let result = try_load_hilbert_features_from_store(&store, 0.9);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_load_features_from_store_partial_coverage() {
+        use std::sync::Arc;
+
+        let store = make_test_graph();
+        let config = HilbertFeaturesConfig::default();
+        let computed = hilbert_features(&store, &config);
+
+        // Only store features for first node (low coverage)
+        if let Some((nid, feats)) = computed.features.iter().next() {
+            let vec: Arc<[f32]> = feats.as_slice().into();
+            store.set_node_property(*nid, "_hilbert_features", Value::Vector(vec));
+        }
+
+        // Coverage < 90% → None
+        let result = try_load_hilbert_features_from_store(&store, 0.9);
+        assert!(result.is_none(), "Should fail with partial coverage");
     }
 }
