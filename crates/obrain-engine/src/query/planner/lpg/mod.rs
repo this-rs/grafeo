@@ -355,7 +355,7 @@ impl Planner {
         match op {
             LogicalOperator::NodeScan(scan) => {
                 let estimate = if let Some(label) = &scan.label {
-                    self.store.nodes_by_label(label).len() as f64
+                    self.store.node_count_by_label(label) as f64
                 } else {
                     self.store.node_count() as f64
                 };
@@ -460,7 +460,7 @@ impl Planner {
         match op {
             LogicalOperator::NodeScan(scan) => {
                 if let Some(label) = &scan.label {
-                    self.store.nodes_by_label(label).len() as f64
+                    self.store.node_count_by_label(label) as f64
                 } else {
                     self.store.node_count() as f64
                 }

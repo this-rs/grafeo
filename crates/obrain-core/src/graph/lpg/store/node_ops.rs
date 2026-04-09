@@ -1074,10 +1074,23 @@ impl LpgStore {
             .collect()
     }
 
-    /// Returns the number of nodes (non-deleted at current epoch).
+    /// Returns the number of live (non-deleted) nodes.
+    ///
+    /// O(1) — reads the atomic counter maintained by create/delete operations.
+    /// The counter is initialized during WAL/epoch restore and kept in sync
+    /// via `fetch_add`/`fetch_sub` on every mutation.
+    #[must_use]
+    pub fn node_count(&self) -> usize {
+        self.live_node_count.load(Ordering::Relaxed).max(0) as usize
+    }
+
+    /// Returns the number of nodes via full scan (expensive, O(n)).
+    ///
+    /// Use only for validation or when the atomic counter may be stale
+    /// (e.g., after a crash recovery without proper counter initialization).
     #[must_use]
     #[cfg(not(feature = "tiered-storage"))]
-    pub fn node_count(&self) -> usize {
+    pub fn node_count_scan(&self) -> usize {
         let epoch = self.current_epoch();
         self.nodes
             .read()
@@ -1087,11 +1100,11 @@ impl LpgStore {
             .count()
     }
 
-    /// Returns the number of nodes (non-deleted at current epoch).
+    /// Returns the number of nodes via full scan (expensive, O(n)).
     /// (Tiered storage version)
     #[must_use]
     #[cfg(feature = "tiered-storage")]
-    pub fn node_count(&self) -> usize {
+    pub fn node_count_scan(&self) -> usize {
         let epoch = self.current_epoch();
         let versions = self.node_versions.read();
         versions

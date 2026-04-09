@@ -640,10 +640,22 @@ impl LpgStore {
         }
     }
 
-    /// Returns the number of edges (non-deleted at current epoch).
+    /// Returns the number of live (non-deleted) edges.
+    ///
+    /// O(1) — reads the atomic counter maintained by create/delete operations.
+    /// The counter is initialized during WAL/epoch restore and kept in sync
+    /// via `fetch_add`/`fetch_sub` on every mutation.
+    #[must_use]
+    pub fn edge_count(&self) -> usize {
+        self.live_edge_count.load(Ordering::Relaxed).max(0) as usize
+    }
+
+    /// Returns the number of edges via full scan (expensive, O(m)).
+    ///
+    /// Use only for validation or when the atomic counter may be stale.
     #[must_use]
     #[cfg(not(feature = "tiered-storage"))]
-    pub fn edge_count(&self) -> usize {
+    pub fn edge_count_scan(&self) -> usize {
         let epoch = self.current_epoch();
         self.edges
             .read()
@@ -653,11 +665,11 @@ impl LpgStore {
             .count()
     }
 
-    /// Returns the number of edges (non-deleted at current epoch).
+    /// Returns the number of edges via full scan (expensive, O(m)).
     /// (Tiered storage version)
     #[must_use]
     #[cfg(feature = "tiered-storage")]
-    pub fn edge_count(&self) -> usize {
+    pub fn edge_count_scan(&self) -> usize {
         let epoch = self.current_epoch();
         let versions = self.edge_versions.read();
         versions
