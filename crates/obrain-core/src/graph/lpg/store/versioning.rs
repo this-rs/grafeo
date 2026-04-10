@@ -190,6 +190,10 @@ impl LpgStore {
             }
         }
 
+        // Counters were not incremented for PENDING nodes/edges:
+        // force a full recompute so node_count()/edge_count() resync.
+        self.needs_stats_recompute.store(true, Ordering::Relaxed);
+
         self.sync_epoch(commit_epoch);
     }
 
@@ -221,6 +225,10 @@ impl LpgStore {
                 log.finalize_pending(commit_epoch);
             }
         }
+
+        // Counters were not incremented for PENDING nodes/edges:
+        // force a full recompute so node_count()/edge_count() resync.
+        self.needs_stats_recompute.store(true, Ordering::Relaxed);
 
         self.sync_epoch(commit_epoch);
     }

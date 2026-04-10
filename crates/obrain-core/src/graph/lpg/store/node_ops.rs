@@ -161,7 +161,13 @@ impl LpgStore {
 
         let chain = VersionChain::with_initial(record, version_epoch, transaction_id);
         self.nodes.write().insert(id, chain);
-        self.live_node_count.fetch_add(1, Ordering::Relaxed);
+
+        // Only increment the live counter for immediately-visible (SYSTEM)
+        // nodes.  Transactional (PENDING) nodes become visible at commit,
+        // which sets needs_stats_recompute to resync the counter.
+        if transaction_id == TransactionId::SYSTEM {
+            self.live_node_count.fetch_add(1, Ordering::Relaxed);
+        }
 
         // Track the mutation
         self.track_event(crate::change_tracker::GraphEvent::NodeCreated {
@@ -221,7 +227,12 @@ impl LpgStore {
             versions.insert(id, VersionIndex::with_initial(hot_ref));
         }
 
-        self.live_node_count.fetch_add(1, Ordering::Relaxed);
+        // Only increment the live counter for immediately-visible (SYSTEM)
+        // nodes.  Transactional (PENDING) nodes become visible at commit,
+        // which sets needs_stats_recompute to resync the counter.
+        if transaction_id == TransactionId::SYSTEM {
+            self.live_node_count.fetch_add(1, Ordering::Relaxed);
+        }
 
         // Track the mutation
         self.track_event(crate::change_tracker::GraphEvent::NodeCreated {

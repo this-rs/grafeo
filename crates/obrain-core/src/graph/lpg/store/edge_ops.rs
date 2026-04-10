@@ -81,8 +81,13 @@ impl LpgStore {
             backward.add_edge(dst, src, id);
         }
 
-        self.live_edge_count.fetch_add(1, Ordering::Relaxed);
-        self.increment_edge_type_count(type_id);
+        // Only increment the live counter for immediately-visible (SYSTEM)
+        // edges.  Transactional (PENDING) edges become visible at commit,
+        // which sets needs_stats_recompute to resync the counter.
+        if transaction_id == TransactionId::SYSTEM {
+            self.live_edge_count.fetch_add(1, Ordering::Relaxed);
+            self.increment_edge_type_count(type_id);
+        }
 
         // Track the mutation
         self.track_event(crate::change_tracker::GraphEvent::EdgeCreated {
@@ -147,8 +152,13 @@ impl LpgStore {
             backward.add_edge(dst, src, id);
         }
 
-        self.live_edge_count.fetch_add(1, Ordering::Relaxed);
-        self.increment_edge_type_count(type_id);
+        // Only increment the live counter for immediately-visible (SYSTEM)
+        // edges.  Transactional (PENDING) edges become visible at commit,
+        // which sets needs_stats_recompute to resync the counter.
+        if transaction_id == TransactionId::SYSTEM {
+            self.live_edge_count.fetch_add(1, Ordering::Relaxed);
+            self.increment_edge_type_count(type_id);
+        }
 
         // Track the mutation
         self.track_event(crate::change_tracker::GraphEvent::EdgeCreated {
