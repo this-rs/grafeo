@@ -645,8 +645,14 @@ impl LpgStore {
     /// O(1) — reads the atomic counter maintained by create/delete operations.
     /// The counter is initialized during WAL/epoch restore and kept in sync
     /// via `fetch_add`/`fetch_sub` on every mutation.
+    ///
+    /// After a transaction rollback, the counter may be stale; this method
+    /// transparently triggers a full recomputation to resync it.
     #[must_use]
     pub fn edge_count(&self) -> usize {
+        if self.needs_stats_recompute.load(Ordering::Relaxed) {
+            self.ensure_statistics_fresh();
+        }
         self.live_edge_count.load(Ordering::Relaxed).max(0) as usize
     }
 
