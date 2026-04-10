@@ -2130,6 +2130,7 @@ dependencies = [
  "obrain-adapters",
  "obrain-common",
  "obrain-core",
+ "obrain-iam",
  "obrain-reactive",
  "parking_lot",
  "proptest",
@@ -2236,6 +2237,19 @@ name = "obrain-examples"
 version = "0.0.1"
 dependencies = [
  "obrain",
+]
+
+[[package]]
+name = "obrain-iam"
+version = "0.0.1"
+dependencies = [
+ "obrain-common",
+ "obrain-core",
+ "proptest",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "thiserror",
 ]
 
 [[package]]

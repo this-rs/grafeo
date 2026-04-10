@@ -11,6 +11,7 @@
 //! need reactive features).
 
 use crate::bus::MutationBus;
+use crate::event::EventContext;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::event::MutationEvent;
 use crate::listener::MutationListener;
@@ -66,8 +67,8 @@ type ListenerList = Arc<RwLock<Vec<Arc<dyn MutationListener>>>>;
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
     use super::{
-        Arc, BatchConfig, Duration, ListenerList, MutationBus, MutationEvent, MutationListener,
-        RwLock,
+        Arc, BatchConfig, Duration, EventContext, ListenerList, MutationBus, MutationEvent,
+        MutationListener, RwLock,
     };
     use crate::event::MutationBatch;
     use parking_lot::Mutex;
@@ -220,6 +221,9 @@ mod native {
     ) {
         let mut buffer: Vec<MutationEvent> = Vec::with_capacity(config.max_batch_size);
         let mut flush_deadline: Option<tokio::time::Instant> = None;
+        // Track the most recent context from incoming batches.
+        // When multiple batches are accumulated, the latest context wins.
+        let mut current_context: Option<Arc<EventContext>> = None;
 
         tracing::info!(
             max_batch_size = config.max_batch_size,
@@ -242,15 +246,19 @@ mod native {
                     if result.is_err() || *shutdown_rx.borrow() {
                         // Drain remaining events from the channel
                         while let Ok(batch) = rx.try_recv() {
+                            if batch.context.is_some() {
+                                current_context.clone_from(&batch.context);
+                            }
                             for event in batch.events {
                                 buffer.push(event);
                             }
                         }
                         // Flush any remaining buffer
                         if !buffer.is_empty() {
-                            dispatch_batch(&buffer, &listeners).await;
+                            dispatch_batch(&buffer, &listeners, current_context.as_ref().map(|c| c.as_ref())).await;
                             buffer.clear();
                         }
+                        drop(current_context);
                         tracing::info!("scheduler loop shutting down");
                         break;
                     }
@@ -260,6 +268,9 @@ mod native {
                 result = rx.recv() => {
                     match result {
                         Ok(batch) => {
+                            if batch.context.is_some() {
+                                current_context.clone_from(&batch.context);
+                            }
                             for event in batch.events {
                                 buffer.push(event);
                             }
@@ -273,12 +284,13 @@ mod native {
                             while buffer.len() >= config.max_batch_size {
                                 let drain_end = config.max_batch_size.min(buffer.len());
                                 let batch: Vec<MutationEvent> = buffer.drain(..drain_end).collect();
-                                dispatch_batch(&batch, &listeners).await;
+                                dispatch_batch(&batch, &listeners, current_context.as_ref().map(|c| c.as_ref())).await;
                             }
 
                             // Reset deadline if buffer is now empty
                             if buffer.is_empty() {
                                 flush_deadline = None;
+                                current_context = None;
                             }
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -291,9 +303,10 @@ mod native {
                         Err(broadcast::error::RecvError::Closed) => {
                             tracing::info!("bus closed, flushing remaining events");
                             if !buffer.is_empty() {
-                                dispatch_batch(&buffer, &listeners).await;
+                                dispatch_batch(&buffer, &listeners, current_context.as_ref().map(|c| c.as_ref())).await;
                                 buffer.clear();
                             }
+                            drop(current_context);
                             break;
                         }
                     }
@@ -302,8 +315,9 @@ mod native {
                 // Timeout: flush incomplete batch
                 () = tokio::time::sleep(timeout), if flush_deadline.is_some() => {
                     if !buffer.is_empty() {
-                        dispatch_batch(&buffer, &listeners).await;
+                        dispatch_batch(&buffer, &listeners, current_context.as_ref().map(|c| c.as_ref())).await;
                         buffer.clear();
+                        current_context = None;
                     }
                     flush_deadline = None;
                 }
@@ -316,7 +330,14 @@ mod native {
     /// Each listener receives its filtered event slice in a separate spawned task
     /// via `tokio::task::JoinSet`. This ensures a slow listener does not block
     /// faster ones (required by T1.5 acceptance criteria).
-    async fn dispatch_batch(events: &[MutationEvent], listeners: &ListenerList) {
+    ///
+    /// Listeners that reject the current context via [`MutationListener::accepts_context`]
+    /// are skipped entirely.
+    async fn dispatch_batch(
+        events: &[MutationEvent],
+        listeners: &ListenerList,
+        context: Option<&EventContext>,
+    ) {
         if events.is_empty() {
             return;
         }
@@ -334,12 +355,23 @@ mod native {
             "dispatching batch to listeners concurrently"
         );
 
-        // Share events across all spawned tasks via Arc
+        // Share events and context across all spawned tasks via Arc
         let shared_events: Arc<Vec<MutationEvent>> = Arc::new(events.to_vec());
+        let shared_context: Option<Arc<EventContext>> = context.map(|c| Arc::new(c.clone()));
         let mut join_set = tokio::task::JoinSet::new();
 
         for listener in listener_snapshot {
+            // Check context-level filtering before spawning a task
+            if !listener.accepts_context(context) {
+                tracing::trace!(
+                    listener = listener.name(),
+                    "listener rejected context, skipping"
+                );
+                continue;
+            }
+
             let events_ref = Arc::clone(&shared_events);
+            let _ctx = shared_context.clone();
             join_set.spawn(async move {
                 // Filter events this listener accepts
                 let accepted: Vec<&MutationEvent> =

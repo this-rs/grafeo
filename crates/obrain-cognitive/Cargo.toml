@@ -36,8 +36,17 @@ epigenetic = ["dep:serde_json"]
 # Kernel embeddings (irreducible kernel C = Φ₀ ∘ A¹(H^∞))
 kernel = ["dep:obrain-adapters"]
 
+# Kernel parameters — cognitive parameters as graph nodes
+kernel-params = []
+
+# Session metrics — performance signals from work sessions (Noyau Cognitif T2)
+session-metrics = ["kernel-params"]
+
 # Cognitive Persona — database-native knowledge lens
 persona = ["synapse", "energy"]
+
+# IAM — Identity & Access Management (ORN system, policy evaluation)
+iam = ["dep:obrain-iam"]
 
 # Future subsystems
 scar = []
@@ -54,13 +63,14 @@ cognitive = ["energy", "synapse"]
 # Level 2: + fabric scoring, co-change detection, GDS refresh
 cognitive-fabric = ["cognitive", "fabric", "co-change", "gds-refresh"]
 # Level 3: all cognitive subsystems
-cognitive-full = ["cognitive-fabric", "kernel", "scar", "memory", "stagnation", "fingerprint", "distillation", "episodic", "consolidation", "persona"]
+cognitive-full = ["cognitive-fabric", "kernel", "kernel-params", "session-metrics", "scar", "memory", "stagnation", "fingerprint", "distillation", "episodic", "consolidation", "persona"]
 
 [dependencies]
 obrain-common.workspace = true
 obrain-core = { workspace = true, default-features = false }
 obrain-reactive.workspace = true
 obrain-adapters = { workspace = true, optional = true, default-features = false, features = ["algos"] }
+obrain-iam = { workspace = true, optional = true }
 
 # Async runtime — only sync feature for all targets (WASM-compatible).
 # NOTE: we don't use `workspace = true` because the workspace tokio
