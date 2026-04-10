@@ -499,7 +499,7 @@ impl ArenaAllocator {
     /// Creates a new epoch and returns its ID.
     ///
     /// Each call allocates a **fresh** arena (not shared).  For
-    /// tiered-storage write paths prefer [`arena_or_create`] which
+    /// tiered-storage write paths prefer [`Self::arena_or_create`] which
     /// coalesces epochs into a shared arena.
     ///
     /// # Errors
