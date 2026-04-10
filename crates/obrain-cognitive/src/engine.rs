@@ -284,7 +284,7 @@ pub struct CognitiveEngineBuilder {
     graph_store: Option<Arc<dyn GraphStoreMut>>,
 
     /// Optional LpgStore reference for kernel embedding manager.
-    /// KernelManager requires Arc<LpgStore> specifically.
+    /// KernelManager requires `Arc<LpgStore>` specifically.
     #[cfg(feature = "kernel")]
     lpg_store: Option<Arc<LpgStore>>,
 }
