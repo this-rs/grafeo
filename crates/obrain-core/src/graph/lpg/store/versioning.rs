@@ -244,17 +244,37 @@ impl LpgStore {
     #[cfg(not(feature = "tiered-storage"))]
     #[doc(hidden)]
     pub fn finalize_version_epochs(&self, transaction_id: TransactionId, commit_epoch: EpochId) {
+        // Count PENDING creates (non-deleted) before finalizing, then
+        // increment atomic counters directly — avoids a full O(n) recompute.
+        let mut new_nodes: i64 = 0;
+        let mut new_edges: i64 = 0;
         {
             let mut nodes = self.nodes.write();
             for chain in nodes.values_mut() {
+                // A chain with a PENDING version by this tx that is NOT deleted
+                // = a new node being committed.
+                if chain.has_pending_by(transaction_id) && !chain.is_deleted() {
+                    new_nodes += 1;
+                }
                 chain.finalize_epochs(transaction_id, commit_epoch);
             }
         }
         {
             let mut edges = self.edges.write();
             for chain in edges.values_mut() {
+                if chain.has_pending_by(transaction_id) && !chain.is_deleted() {
+                    new_edges += 1;
+                }
                 chain.finalize_epochs(transaction_id, commit_epoch);
             }
+        }
+
+        // Increment counters for newly committed nodes/edges
+        if new_nodes > 0 {
+            self.live_node_count.fetch_add(new_nodes, Ordering::Relaxed);
+        }
+        if new_edges > 0 {
+            self.live_edge_count.fetch_add(new_edges, Ordering::Relaxed);
         }
 
         // Finalize PENDING epochs in property and label version logs
@@ -267,10 +287,6 @@ impl LpgStore {
                 log.finalize_pending(commit_epoch);
             }
         }
-
-        // Counters were not incremented for PENDING nodes/edges:
-        // force a full recompute so node_count()/edge_count() resync.
-        self.needs_stats_recompute.store(true, Ordering::Relaxed);
 
         self.sync_epoch(commit_epoch);
     }
@@ -280,17 +296,32 @@ impl LpgStore {
     #[cfg(feature = "tiered-storage")]
     #[doc(hidden)]
     pub fn finalize_version_epochs(&self, transaction_id: TransactionId, commit_epoch: EpochId) {
+        let mut new_nodes: i64 = 0;
+        let mut new_edges: i64 = 0;
         {
             let mut versions = self.node_versions.write();
             for index in versions.values_mut() {
+                if index.has_pending_by(transaction_id) && !index.is_deleted() {
+                    new_nodes += 1;
+                }
                 index.finalize_epochs(transaction_id, commit_epoch);
             }
         }
         {
             let mut versions = self.edge_versions.write();
             for index in versions.values_mut() {
+                if index.has_pending_by(transaction_id) && !index.is_deleted() {
+                    new_edges += 1;
+                }
                 index.finalize_epochs(transaction_id, commit_epoch);
             }
+        }
+
+        if new_nodes > 0 {
+            self.live_node_count.fetch_add(new_nodes, Ordering::Relaxed);
+        }
+        if new_edges > 0 {
+            self.live_edge_count.fetch_add(new_edges, Ordering::Relaxed);
         }
 
         // Finalize PENDING epochs in property and label version logs
@@ -303,10 +334,6 @@ impl LpgStore {
                 log.finalize_pending(commit_epoch);
             }
         }
-
-        // Counters were not incremented for PENDING nodes/edges:
-        // force a full recompute so node_count()/edge_count() resync.
-        self.needs_stats_recompute.store(true, Ordering::Relaxed);
 
         self.sync_epoch(commit_epoch);
     }
