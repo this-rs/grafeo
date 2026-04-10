@@ -540,9 +540,10 @@ impl super::Planner {
             LogicalOperator::NodeScan(scan) if scan.input.is_none() => {
                 // If COUNT(var), verify var matches the scan variable
                 if let Some(var) = count_var
-                    && var != scan.variable {
-                        return None;
-                    }
+                    && var != scan.variable
+                {
+                    return None;
+                }
 
                 let count = if let Some(label) = &scan.label {
                     // MATCH (n:Label) RETURN count(n) → O(1) label count

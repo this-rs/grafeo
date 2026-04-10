@@ -338,9 +338,10 @@ fn bench_megalaw_retrieval_steps() {
                     .or_else(|| node.properties.get(&title_key))
                     .and_then(|v| v.as_str());
                 if let Some(n) = name
-                    && n.to_lowercase().contains("contract") {
-                        matched += 1;
-                    }
+                    && n.to_lowercase().contains("contract")
+                {
+                    matched += 1;
+                }
             }
         }
         let p1_ms = start.elapsed().as_secs_f64() * 1000.0;
@@ -360,9 +361,10 @@ fn bench_megalaw_retrieval_steps() {
         for val in &name_values {
             if let Some(v) = val
                 && let Some(s) = v.as_str()
-                    && s.to_lowercase().contains("contract") {
-                        matched2 += 1;
-                    }
+                && s.to_lowercase().contains("contract")
+            {
+                matched2 += 1;
+            }
         }
         let total_p2_ms = start.elapsed().as_secs_f64() * 1000.0;
         println!(
