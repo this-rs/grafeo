@@ -209,12 +209,34 @@ impl LpgStore {
         edge_ids: &[EdgeId],
     ) {
         if !node_ids.is_empty() {
-            let mut versions = self.node_versions.write();
-            for &nid in node_ids {
-                if let Some(index) = versions.get_mut(&nid) {
-                    index.remove_versions_by(transaction_id);
-                    if index.is_empty() {
-                        versions.remove(&nid);
+            let mut removed = Vec::new();
+            {
+                let mut versions = self.node_versions.write();
+                for &nid in node_ids {
+                    if let Some(index) = versions.get_mut(&nid) {
+                        index.remove_versions_by(transaction_id);
+                        if index.is_empty() {
+                            versions.remove(&nid);
+                            removed.push(nid);
+                        }
+                    }
+                }
+            }
+
+            // Clean up label_index and node_labels for fully-removed nodes
+            if !removed.is_empty() {
+                {
+                    let mut label_index = self.label_index.write();
+                    for set in label_index.iter_mut() {
+                        for &nid in &removed {
+                            set.remove(&nid);
+                        }
+                    }
+                }
+                {
+                    let mut node_labels = self.node_labels.write();
+                    for &nid in &removed {
+                        node_labels.remove(&nid);
                     }
                 }
             }
