@@ -6,7 +6,7 @@
 //! [`drain_pending`](InstrumentedStore::drain_pending) to collect all buffered
 //! events and publish them as a single [`MutationBatch`].
 
-use crate::event::{EdgeSnapshot, MutationEvent, NodeSnapshot};
+use crate::event::{EdgeSnapshot, EventContext, MutationEvent, NodeSnapshot};
 use arcstr::ArcStr;
 use obrain_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TransactionId, Value};
 use obrain_common::utils::hash::FxHashMap;
@@ -27,6 +27,8 @@ pub struct InstrumentedStore<S: GraphStoreMut> {
     inner: S,
     /// Pending mutation events accumulated during the current transaction.
     pending: Mutex<Vec<MutationEvent>>,
+    /// Optional event context for the current session/tenant.
+    event_context: Mutex<Option<Arc<EventContext>>>,
 }
 
 impl<S: GraphStoreMut> InstrumentedStore<S> {
@@ -35,6 +37,7 @@ impl<S: GraphStoreMut> InstrumentedStore<S> {
         Self {
             inner,
             pending: Mutex::new(Vec::new()),
+            event_context: Mutex::new(None),
         }
     }
 
@@ -61,6 +64,24 @@ impl<S: GraphStoreMut> InstrumentedStore<S> {
     /// Returns the number of pending events.
     pub fn pending_count(&self) -> usize {
         self.pending.lock().len()
+    }
+
+    /// Sets the event context for this store's pending mutations.
+    ///
+    /// When [`drain_pending`](Self::drain_pending) is called, the caller can
+    /// use this context to create a [`MutationBatch::with_context`].
+    pub fn set_event_context(&self, context: Arc<EventContext>) {
+        *self.event_context.lock() = Some(context);
+    }
+
+    /// Clears the event context.
+    pub fn clear_event_context(&self) {
+        *self.event_context.lock() = None;
+    }
+
+    /// Returns the current event context, if any.
+    pub fn event_context(&self) -> Option<Arc<EventContext>> {
+        self.event_context.lock().clone()
     }
 
     fn snapshot_node(node: &Node) -> NodeSnapshot {
