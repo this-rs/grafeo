@@ -434,8 +434,7 @@ fn enrichment_from_any_agent() {
     // Get the synapse weight after Agent 1's reward
     let weight_after_a1 = synapse_store
         .get_synapse(NodeId(1), NodeId(2))
-        .map(|s| s.current_weight())
-        .unwrap_or(0.0);
+        .map_or(0.0, |s| s.current_weight());
     println!("  Synapse 1↔2 after Agent 1 reward: {:.4}", weight_after_a1);
 
     // Agent 2: queries same nodes → gets rewarded too → synapse further reinforced
@@ -444,8 +443,7 @@ fn enrichment_from_any_agent() {
 
     let weight_after_a2 = synapse_store
         .get_synapse(NodeId(1), NodeId(2))
-        .map(|s| s.current_weight())
-        .unwrap_or(0.0);
+        .map_or(0.0, |s| s.current_weight());
     println!("  Synapse 1↔2 after Agent 2 reward: {:.4}", weight_after_a2);
 
     assert!(

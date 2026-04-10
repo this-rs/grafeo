@@ -332,4 +332,213 @@ impl LpgStore {
         self.node_properties.rebuild_zone_maps();
         self.edge_properties.rebuild_zone_maps();
     }
+
+    // === Label-scoped text search ===
+
+    /// Finds nodes by label with a case-insensitive substring match on a property.
+    ///
+    /// This is dramatically faster than scanning all nodes when the label index
+    /// restricts the candidate set. Supports early termination via `limit`.
+    ///
+    /// # Arguments
+    ///
+    /// * `label` - Optional label filter (if `None`, searches all nodes)
+    /// * `property` - Property key to search in (e.g., "name", "title")
+    /// * `substring` - Case-insensitive substring to search for
+    /// * `limit` - Maximum number of results to return
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use obrain_core::graph::lpg::LpgStore;
+    /// use obrain_common::types::Value;
+    ///
+    /// let store = LpgStore::new().expect("arena allocation");
+    /// let n1 = store.create_node(&["Person"]);
+    /// store.set_node_property(n1, "name", Value::from("Alice Johnson"));
+    /// let n2 = store.create_node(&["Person"]);
+    /// store.set_node_property(n2, "name", Value::from("Bob Smith"));
+    ///
+    /// let results = store.find_nodes_by_label_property_contains(
+    ///     Some("Person"), "name", "alice", 10
+    /// );
+    /// assert_eq!(results.len(), 1);
+    /// assert_eq!(results[0], n1);
+    /// ```
+    #[must_use]
+    pub fn find_nodes_by_label_property_contains(
+        &self,
+        label: Option<&str>,
+        property: &str,
+        substring: &str,
+        limit: usize,
+    ) -> Vec<NodeId> {
+        let key = PropertyKey::new(property);
+        let needle = substring.to_lowercase();
+        let mut results = Vec::with_capacity(limit.min(1024));
+
+        // Get candidate node IDs: label-filtered or all
+        if let Some(label) = label {
+            let label_to_id = self.label_to_id.read();
+            let Some(&label_id) = label_to_id.get(label) else {
+                return Vec::new();
+            };
+            let index = self.label_index.read();
+            if let Some(set) = index.get(label_id as usize) {
+                for &nid in set.keys() {
+                    if let Some(val) = self.node_properties.get(nid, &key)
+                        && let Some(s) = val.as_str()
+                        && s.to_lowercase().contains(&needle)
+                    {
+                        results.push(nid);
+                        if results.len() >= limit {
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            for &nid in &self.node_ids() {
+                if let Some(val) = self.node_properties.get(nid, &key)
+                    && let Some(s) = val.as_str()
+                    && s.to_lowercase().contains(&needle)
+                {
+                    results.push(nid);
+                    if results.len() >= limit {
+                        break;
+                    }
+                }
+            }
+        }
+
+        results
+    }
+
+    /// Like [`Self::find_nodes_by_label_property_contains`] but with an additional
+    /// `max_scan` cap on the total number of nodes inspected. This prevents
+    /// worst-case O(N) full scans when the search term matches nothing (e.g.
+    /// English terms in a French-only database with 8M nodes).
+    ///
+    /// Returns early when either `limit` results are found **or** `max_scan`
+    /// nodes have been inspected, whichever comes first.
+    #[must_use]
+    pub fn find_nodes_by_label_property_contains_bounded(
+        &self,
+        label: Option<&str>,
+        property: &str,
+        substring: &str,
+        limit: usize,
+        max_scan: usize,
+    ) -> Vec<NodeId> {
+        let key = PropertyKey::new(property);
+        let needle = substring.to_lowercase();
+        let mut results = Vec::with_capacity(limit.min(1024));
+        let mut scanned = 0usize;
+
+        if let Some(label) = label {
+            let label_to_id = self.label_to_id.read();
+            let Some(&label_id) = label_to_id.get(label) else {
+                return Vec::new();
+            };
+            let index = self.label_index.read();
+            if let Some(set) = index.get(label_id as usize) {
+                for &nid in set.keys() {
+                    scanned += 1;
+                    if scanned > max_scan {
+                        break;
+                    }
+                    if let Some(val) = self.node_properties.get(nid, &key)
+                        && let Some(s) = val.as_str()
+                        && s.to_lowercase().contains(&needle)
+                    {
+                        results.push(nid);
+                        if results.len() >= limit {
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            for &nid in &self.node_ids() {
+                scanned += 1;
+                if scanned > max_scan {
+                    break;
+                }
+                if let Some(val) = self.node_properties.get(nid, &key)
+                    && let Some(s) = val.as_str()
+                    && s.to_lowercase().contains(&needle)
+                {
+                    results.push(nid);
+                    if results.len() >= limit {
+                        break;
+                    }
+                }
+            }
+        }
+
+        results
+    }
+
+    /// Finds nodes by label with a case-insensitive substring match across
+    /// multiple properties. Returns as soon as any property matches.
+    ///
+    /// # Arguments
+    ///
+    /// * `label` - Optional label filter
+    /// * `properties` - Property keys to search across (checks in order)
+    /// * `substring` - Case-insensitive substring to search for
+    /// * `limit` - Maximum number of results to return
+    #[must_use]
+    pub fn find_nodes_by_label_properties_contains(
+        &self,
+        label: Option<&str>,
+        properties: &[&str],
+        substring: &str,
+        limit: usize,
+    ) -> Vec<NodeId> {
+        let keys: Vec<PropertyKey> = properties.iter().map(|p| PropertyKey::new(*p)).collect();
+        let needle = substring.to_lowercase();
+        let mut results = Vec::with_capacity(limit.min(1024));
+
+        let check_node = |nid: NodeId| -> bool {
+            for key in &keys {
+                if let Some(val) = self.node_properties.get(nid, key)
+                    && let Some(s) = val.as_str()
+                    && s.to_lowercase().contains(&needle)
+                {
+                    return true;
+                }
+            }
+            false
+        };
+
+        if let Some(label) = label {
+            let label_to_id = self.label_to_id.read();
+            let Some(&label_id) = label_to_id.get(label) else {
+                return Vec::new();
+            };
+            let index = self.label_index.read();
+            if let Some(set) = index.get(label_id as usize) {
+                for &nid in set.keys() {
+                    if check_node(nid) {
+                        results.push(nid);
+                        if results.len() >= limit {
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            for &nid in &self.node_ids() {
+                if check_node(nid) {
+                    results.push(nid);
+                    if results.len() >= limit {
+                        break;
+                    }
+                }
+            }
+        }
+
+        results
+    }
 }
