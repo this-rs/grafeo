@@ -37,11 +37,19 @@ fn bench_megalaw_retrieval_steps() {
 
     let start = Instant::now();
     let nc = store.node_count();
-    println!("  node_count():  {} ({:.3}ms)", nc, start.elapsed().as_secs_f64() * 1000.0);
+    println!(
+        "  node_count():  {} ({:.3}ms)",
+        nc,
+        start.elapsed().as_secs_f64() * 1000.0
+    );
 
     let start = Instant::now();
     let ec = store.edge_count();
-    println!("  edge_count():  {} ({:.3}ms)", ec, start.elapsed().as_secs_f64() * 1000.0);
+    println!(
+        "  edge_count():  {} ({:.3}ms)",
+        ec,
+        start.elapsed().as_secs_f64() * 1000.0
+    );
 
     // ── Phase 2: Label index performance ──
     println!("\n--- Label Index (nodes_by_label) ---");
@@ -166,7 +174,11 @@ fn bench_megalaw_retrieval_steps() {
         let bfs_ms = start.elapsed().as_secs_f64() * 1000.0;
         println!(
             "    hop-0: {}, hop-1: {}, hop-2: {}, total visited: {}, {:.3}ms",
-            hop_counts[0], hop_counts[1], hop_counts[2], visited.len(), bfs_ms
+            hop_counts[0],
+            hop_counts[1],
+            hop_counts[2],
+            visited.len(),
+            bfs_ms
         );
     }
 
@@ -178,7 +190,10 @@ fn bench_megalaw_retrieval_steps() {
         ("MATCH (n) RETURN count(n)", 3),
         ("MATCH (n:Document) RETURN count(n)", 3),
         ("MATCH (n) WHERE id(n) = 0 RETURN n", 5),
-        ("MATCH (n)-[r]->(m) WHERE id(n) = 0 RETURN type(r), id(m) LIMIT 10", 5),
+        (
+            "MATCH (n)-[r]->(m) WHERE id(n) = 0 RETURN type(r), id(m) LIMIT 10",
+            5,
+        ),
     ];
 
     // Isolated timing: direct API vs Cypher
@@ -188,14 +203,27 @@ fn bench_megalaw_retrieval_steps() {
     let start = Instant::now();
     let direct_count = store.node_count_by_label("Document");
     let direct_ms = start.elapsed().as_secs_f64() * 1000.0;
-    println!("    store.node_count_by_label(\"Document\"): {} ({:.3}ms)", direct_count, direct_ms);
+    println!(
+        "    store.node_count_by_label(\"Document\"): {} ({:.3}ms)",
+        direct_count, direct_ms
+    );
 
     // Cypher: includes parse + translate + plan + execute
     let start = Instant::now();
-    let cypher_count = session.execute_cypher("MATCH (n:Document) RETURN count(n)").unwrap().scalar::<i64>().unwrap();
+    let cypher_count = session
+        .execute_cypher("MATCH (n:Document) RETURN count(n)")
+        .unwrap()
+        .scalar::<i64>()
+        .unwrap();
     let cypher_ms = start.elapsed().as_secs_f64() * 1000.0;
-    println!("    Cypher count(n:Document):              {} ({:.3}ms)", cypher_count, cypher_ms);
-    println!("    Overhead: {:.1}ms (parse + translate + plan + execute)", cypher_ms - direct_ms);
+    println!(
+        "    Cypher count(n:Document):              {} ({:.3}ms)",
+        cypher_count, cypher_ms
+    );
+    println!(
+        "    Overhead: {:.1}ms (parse + translate + plan + execute)",
+        cypher_ms - direct_ms
+    );
 
     assert_eq!(direct_count as i64, cypher_count, "Counts must match");
 
@@ -220,10 +248,7 @@ fn bench_megalaw_retrieval_steps() {
     // Isolate each phase to find the 160ms overhead
     println!("\n--- Cypher Pipeline Breakdown ---");
     {
-        use obrain_engine::query::{
-            binder::Binder, optimizer::Optimizer,
-            translators::cypher,
-        };
+        use obrain_engine::query::{binder::Binder, optimizer::Optimizer, translators::cypher};
 
         let test_query = "MATCH (n:Document) RETURN count(n)";
 
@@ -231,7 +256,10 @@ fn bench_megalaw_retrieval_steps() {
         let start = Instant::now();
         let _translation = cypher::translate_full(test_query).unwrap();
         let translate_full_ms = start.elapsed().as_secs_f64() * 1000.0;
-        println!("    translate_full (parse+classify): {:.3}ms", translate_full_ms);
+        println!(
+            "    translate_full (parse+classify): {:.3}ms",
+            translate_full_ms
+        );
 
         // Phase B: translate (to logical plan)
         let start = Instant::now();
@@ -256,7 +284,9 @@ fn bench_megalaw_retrieval_steps() {
 
         // Phase E: physical planning
         let start = Instant::now();
-        let planner = obrain_engine::query::Planner::new(Arc::clone(&active) as Arc<dyn obrain_core::graph::traits::GraphStoreMut>);
+        let planner = obrain_engine::query::Planner::new(
+            Arc::clone(&active) as Arc<dyn obrain_core::graph::traits::GraphStoreMut>
+        );
         let physical = planner.plan(&optimized).unwrap();
         let plan_ms = start.elapsed().as_secs_f64() * 1000.0;
         println!("    physical plan:                  {:.3}ms", plan_ms);
@@ -302,7 +332,9 @@ fn bench_megalaw_retrieval_steps() {
         let mut matched = 0usize;
         for &nid in sample {
             if let Some(node) = store.get_node(nid) {
-                let name = node.properties.get(&name_key)
+                let name = node
+                    .properties
+                    .get(&name_key)
                     .or_else(|| node.properties.get(&title_key))
                     .and_then(|v| v.as_str());
                 if let Some(n) = name {
@@ -313,8 +345,13 @@ fn bench_megalaw_retrieval_steps() {
             }
         }
         let p1_ms = start.elapsed().as_secs_f64() * 1000.0;
-        println!("  Pattern 1 (get_node per node) x{}: {:.1}ms ({:.1}us/node, {} matched)",
-            sample_size, p1_ms, p1_ms * 1000.0 / sample_size as f64, matched);
+        println!(
+            "  Pattern 1 (get_node per node) x{}: {:.1}ms ({:.1}us/node, {} matched)",
+            sample_size,
+            p1_ms,
+            p1_ms * 1000.0 / sample_size as f64,
+            matched
+        );
 
         // Pattern 2: get_node_property_batch (batch property access)
         let start = Instant::now();
@@ -331,16 +368,27 @@ fn bench_megalaw_retrieval_steps() {
             }
         }
         let total_p2_ms = start.elapsed().as_secs_f64() * 1000.0;
-        println!("  Pattern 2 (batch property) x{}: {:.1}ms batch + {:.1}ms filter = {:.1}ms ({:.1}us/node, {} matched)",
-            sample_size, batch_ms, total_p2_ms - batch_ms, total_p2_ms,
-            total_p2_ms * 1000.0 / sample_size as f64, matched2);
+        println!(
+            "  Pattern 2 (batch property) x{}: {:.1}ms batch + {:.1}ms filter = {:.1}ms ({:.1}us/node, {} matched)",
+            sample_size,
+            batch_ms,
+            total_p2_ms - batch_ms,
+            total_p2_ms,
+            total_p2_ms * 1000.0 / sample_size as f64,
+            matched2
+        );
 
         // Pattern 3: find_nodes_by_property (exact match via index)
         if store.has_property_index("name") {
             let start = Instant::now();
-            let exact = store.find_nodes_by_property("name", &obrain_common::types::Value::from("Contract"));
+            let exact = store
+                .find_nodes_by_property("name", &obrain_common::types::Value::from("Contract"));
             let p3_ms = start.elapsed().as_secs_f64() * 1000.0;
-            println!("  Pattern 3 (property index exact): {:.3}ms ({} results)", p3_ms, exact.len());
+            println!(
+                "  Pattern 3 (property index exact): {:.3}ms ({} results)",
+                p3_ms,
+                exact.len()
+            );
         } else {
             println!("  Pattern 3 (property index): SKIPPED — no index on 'name'");
         }
@@ -348,12 +396,20 @@ fn bench_megalaw_retrieval_steps() {
         // Extrapolation for full 8M scan
         let per_node_us = p1_ms * 1000.0 / sample_size as f64;
         let estimated_full_ms = per_node_us * doc_nodes.len() as f64 / 1000.0;
-        println!("\n  Estimated full scan (Pattern 1, {} nodes): {:.0}ms ({:.1}s)",
-            doc_nodes.len(), estimated_full_ms, estimated_full_ms / 1000.0);
+        println!(
+            "\n  Estimated full scan (Pattern 1, {} nodes): {:.0}ms ({:.1}s)",
+            doc_nodes.len(),
+            estimated_full_ms,
+            estimated_full_ms / 1000.0
+        );
         let per_node_us_batch = total_p2_ms * 1000.0 / sample_size as f64;
         let estimated_batch_ms = per_node_us_batch * doc_nodes.len() as f64 / 1000.0;
-        println!("  Estimated full scan (Pattern 2, {} nodes): {:.0}ms ({:.1}s)",
-            doc_nodes.len(), estimated_batch_ms, estimated_batch_ms / 1000.0);
+        println!(
+            "  Estimated full scan (Pattern 2, {} nodes): {:.0}ms ({:.1}s)",
+            doc_nodes.len(),
+            estimated_batch_ms,
+            estimated_batch_ms / 1000.0
+        );
     }
 
     println!("\n--- SUMMARY ---");

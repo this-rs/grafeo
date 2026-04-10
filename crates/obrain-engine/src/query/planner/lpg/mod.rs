@@ -38,9 +38,8 @@ use obrain_core::execution::operators::{
     MergeRelationshipOperator, NestedLoopJoinOperator, NodeListOperator, NullOrder, Operator,
     ParameterScanOperator, ProjectExpr, ProjectOperator, PropertySource, RemoveLabelOperator,
     ScalarResultOperator, ScanOperator, SetPropertyOperator, ShortestPathOperator,
-    SimpleAggregateOperator,
-    SortDirection, SortKey as PhysicalSortKey, SortOperator, UnwindOperator,
-    VariableLengthExpandOperator,
+    SimpleAggregateOperator, SortDirection, SortKey as PhysicalSortKey, SortOperator,
+    UnwindOperator, VariableLengthExpandOperator,
 };
 use obrain_core::graph::{Direction, GraphStore, GraphStoreMut};
 use std::collections::HashMap;

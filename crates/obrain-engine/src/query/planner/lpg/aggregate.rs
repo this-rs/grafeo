@@ -538,8 +538,6 @@ impl super::Planner {
         // Input must be a simple NodeScan (no filter, no input)
         match agg.input.as_ref() {
             LogicalOperator::NodeScan(scan) if scan.input.is_none() => {
-
-
                 // If COUNT(var), verify var matches the scan variable
                 if let Some(var) = count_var {
                     if var != scan.variable {

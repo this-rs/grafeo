@@ -4616,7 +4616,11 @@ mod tests {
                 .execute("MATCH (n) WHERE id(n) = 999999 RETURN n")
                 .unwrap();
 
-            assert_eq!(result.row_count(), 0, "Should return empty for non-existent id");
+            assert_eq!(
+                result.row_count(),
+                0,
+                "Should return empty for non-existent id"
+            );
         }
 
         #[test]
@@ -4626,14 +4630,8 @@ mod tests {
             let db = ObrainDB::new_in_memory();
             let session = db.session();
 
-            let n0 = session.create_node_with_props(
-                &["Person"],
-                [("age", Value::Int64(30))],
-            );
-            let n1 = session.create_node_with_props(
-                &["Person"],
-                [("age", Value::Int64(20))],
-            );
+            let n0 = session.create_node_with_props(&["Person"], [("age", Value::Int64(30))]);
+            let n1 = session.create_node_with_props(&["Person"], [("age", Value::Int64(20))]);
 
             // id(n) = X AND n.age > 25 — should match n0 only
             let result = session
@@ -4661,10 +4659,8 @@ mod tests {
             let db = ObrainDB::new_in_memory();
             let session = db.session();
 
-            let n0 = session.create_node_with_props(
-                &["Person"],
-                [("name", Value::String("Alix".into()))],
-            );
+            let n0 = session
+                .create_node_with_props(&["Person"], [("name", Value::String("Alix".into()))]);
 
             // id buried in AND chain: n.name = 'Alix' AND id(n) = X
             let result = session
@@ -4732,15 +4728,10 @@ mod tests {
             session.create_node(&["Animal"]);
 
             // MATCH (n) RETURN count(n) — should use node_count() shortcut
-            let result = session
-                .execute("MATCH (n) RETURN count(n)")
-                .unwrap();
+            let result = session.execute("MATCH (n) RETURN count(n)").unwrap();
 
             assert_eq!(result.row_count(), 1);
-            assert_eq!(
-                result.rows[0][0],
-                obrain_common::types::Value::Int64(3)
-            );
+            assert_eq!(result.rows[0][0], obrain_common::types::Value::Int64(3));
         }
 
         #[test]
@@ -4753,15 +4744,10 @@ mod tests {
             session.create_node(&["Animal"]);
 
             // MATCH (n:Person) RETURN count(n) — should use nodes_by_label shortcut
-            let result = session
-                .execute("MATCH (n:Person) RETURN count(n)")
-                .unwrap();
+            let result = session.execute("MATCH (n:Person) RETURN count(n)").unwrap();
 
             assert_eq!(result.row_count(), 1);
-            assert_eq!(
-                result.rows[0][0],
-                obrain_common::types::Value::Int64(2)
-            );
+            assert_eq!(result.rows[0][0], obrain_common::types::Value::Int64(2));
         }
 
         #[test]
@@ -4770,15 +4756,10 @@ mod tests {
             let session = db.session();
 
             // Empty graph → count = 0
-            let result = session
-                .execute("MATCH (n) RETURN count(n)")
-                .unwrap();
+            let result = session.execute("MATCH (n) RETURN count(n)").unwrap();
 
             assert_eq!(result.row_count(), 1);
-            assert_eq!(
-                result.rows[0][0],
-                obrain_common::types::Value::Int64(0)
-            );
+            assert_eq!(result.rows[0][0], obrain_common::types::Value::Int64(0));
         }
 
         #[test]
@@ -4789,15 +4770,10 @@ mod tests {
             session.create_node(&["Person"]);
 
             // MATCH (n:Ghost) RETURN count(n) — no Ghost nodes
-            let result = session
-                .execute("MATCH (n:Ghost) RETURN count(n)")
-                .unwrap();
+            let result = session.execute("MATCH (n:Ghost) RETURN count(n)").unwrap();
 
             assert_eq!(result.row_count(), 1);
-            assert_eq!(
-                result.rows[0][0],
-                obrain_common::types::Value::Int64(0)
-            );
+            assert_eq!(result.rows[0][0], obrain_common::types::Value::Int64(0));
         }
 
         #[test]

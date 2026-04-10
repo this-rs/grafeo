@@ -130,7 +130,11 @@ fn bench_property_index_on_po_data() {
         },
         iterations,
     );
-    print_bench("MATCH (p:Project {slug: 'project-7'})", no_idx_slug, row_count);
+    print_bench(
+        "MATCH (p:Project {slug: 'project-7'})",
+        no_idx_slug,
+        row_count,
+    );
 
     let no_idx_status = measure(
         || {
@@ -171,14 +175,12 @@ fn bench_property_index_on_po_data() {
         iterations,
     );
     let rc2 = session
-        .execute_cypher("MATCH (n:Note {project_slug: 'project-3', note_type: 'gotcha'}) RETURN n.id")
+        .execute_cypher(
+            "MATCH (n:Note {project_slug: 'project-3', note_type: 'gotcha'}) RETURN n.id",
+        )
         .unwrap()
         .row_count();
-    print_bench(
-        "MATCH (n:Note {project_slug,note_type})",
-        no_idx_note,
-        rc2,
-    );
+    print_bench("MATCH (n:Note {project_slug,note_type})", no_idx_note, rc2);
 
     // ---- PHASE 2: Create indexes ----
     println!("\n--- PHASE 2: Create Indexes ---");
@@ -273,23 +275,19 @@ fn bench_property_index_on_po_data() {
         },
         iterations,
     );
-    print_bench(
-        "MATCH (n:Note {project_slug,note_type})",
-        idx_note,
-        rc2,
-    );
+    print_bench("MATCH (n:Note {project_slug,note_type})", idx_note, rc2);
 
     // ---- PHASE 4: Speedup summary ----
     println!("\n--- SPEEDUP SUMMARY ---");
     let speedups = [
         ("Project.slug lookup (unique)", no_idx_slug.0, idx_slug.0),
-        ("Task.status count (high card)", no_idx_status.0, idx_status.0),
-        ("Task.plan_id lookup (20 rows)", no_idx_plan.0, idx_plan.0),
         (
-            "Note.project_slug+type (combo)",
-            no_idx_note.0,
-            idx_note.0,
+            "Task.status count (high card)",
+            no_idx_status.0,
+            idx_status.0,
         ),
+        ("Task.plan_id lookup (20 rows)", no_idx_plan.0, idx_plan.0),
+        ("Note.project_slug+type (combo)", no_idx_note.0, idx_note.0),
     ];
 
     for (name, before, after) in &speedups {
@@ -301,7 +299,10 @@ fn bench_property_index_on_po_data() {
     }
 
     // Correctness: same row counts
-    assert_eq!(row_count, row_count_idx, "Row counts must match with/without index");
+    assert_eq!(
+        row_count, row_count_idx,
+        "Row counts must match with/without index"
+    );
     println!("\n  All row counts match — index is correct");
 }
 
@@ -446,7 +447,11 @@ fn test_property_index_mutation_hooks() {
     let r = session
         .execute_cypher("MATCH (p:Project {slug: 'proj-5'}) RETURN p")
         .expect("lookup deleted");
-    assert_eq!(r.row_count(), 0, "Deleted node should not be found via index");
+    assert_eq!(
+        r.row_count(),
+        0,
+        "Deleted node should not be found via index"
+    );
     println!("  DELETE: Deleted node removed from index");
 
     // Test 4: Overall count consistency
@@ -493,7 +498,9 @@ fn bench_on_real_po_database() {
     println!("  PO Database: {} total nodes", node_count);
 
     // Count by label
-    for label in &["Project", "Plan", "Task", "Note", "Skill", "Decision", "Step"] {
+    for label in &[
+        "Project", "Plan", "Task", "Note", "Skill", "Decision", "Step",
+    ] {
         let count = session
             .execute_cypher(&format!("MATCH (n:{label}) RETURN count(n)"))
             .unwrap()
@@ -588,7 +595,10 @@ fn bench_on_real_po_database() {
     ] {
         println!(
             "  {:<30} {:.3}ms -> {:.3}ms  ({:.1}x)",
-            name, before, after, before / after
+            name,
+            before,
+            after,
+            before / after
         );
     }
 

@@ -2552,7 +2552,10 @@ mod tests {
 
         // Step 3: Load from store
         let loaded = try_load_hilbert_features_from_store(&store, 0.9);
-        assert!(loaded.is_some(), "Should successfully load features from store");
+        assert!(
+            loaded.is_some(),
+            "Should successfully load features from store"
+        );
 
         let loaded = loaded.unwrap();
         assert_eq!(loaded.features.len(), computed.features.len());
@@ -2561,7 +2564,11 @@ mod tests {
         // Verify feature vectors match
         for (nid, computed_feats) in &computed.features {
             let loaded_feats = &loaded.features[nid];
-            assert_eq!(computed_feats, loaded_feats, "Features should match for node {:?}", nid);
+            assert_eq!(
+                computed_feats, loaded_feats,
+                "Features should match for node {:?}",
+                nid
+            );
         }
     }
 

@@ -873,11 +873,10 @@ impl super::Planner {
     fn extract_id_variable(expr: &LogicalExpression) -> Option<&str> {
         match expr {
             LogicalExpression::Id(var) => Some(var.as_str()),
-            LogicalExpression::FunctionCall {
-                name, args, ..
-            } if name.eq_ignore_ascii_case("id")
-                && args.len() == 1
-                && matches!(&args[0], LogicalExpression::Variable(_)) =>
+            LogicalExpression::FunctionCall { name, args, .. }
+                if name.eq_ignore_ascii_case("id")
+                    && args.len() == 1
+                    && matches!(&args[0], LogicalExpression::Variable(_)) =>
             {
                 if let LogicalExpression::Variable(var) = &args[0] {
                     Some(var.as_str())
@@ -923,8 +922,7 @@ impl super::Planner {
     /// Checks if an expression is an id() call on the target variable.
     #[allow(dead_code)]
     fn is_id_expression(expr: &LogicalExpression, target_variable: &str) -> bool {
-        Self::extract_id_variable(expr)
-            .is_some_and(|var| var == target_variable)
+        Self::extract_id_variable(expr).is_some_and(|var| var == target_variable)
     }
 
     /// Extracts remaining predicates after removing the `id(n) = X` part.
@@ -981,7 +979,13 @@ impl super::Planner {
         let mut upper: Option<i64> = None;
         let mut variable = String::new();
 
-        if !Self::collect_id_range_bounds(predicate, target_variable, &mut lower, &mut upper, &mut variable) {
+        if !Self::collect_id_range_bounds(
+            predicate,
+            target_variable,
+            &mut lower,
+            &mut upper,
+            &mut variable,
+        ) {
             return None;
         }
 
@@ -1010,8 +1014,10 @@ impl super::Planner {
                 op: BinaryOp::And,
                 right,
             } => {
-                let l = Self::collect_id_range_bounds(left, target_variable, lower, upper, variable);
-                let r = Self::collect_id_range_bounds(right, target_variable, lower, upper, variable);
+                let l =
+                    Self::collect_id_range_bounds(left, target_variable, lower, upper, variable);
+                let r =
+                    Self::collect_id_range_bounds(right, target_variable, lower, upper, variable);
                 l || r
             }
             LogicalExpression::Binary { left, op, right } => {
@@ -1023,10 +1029,22 @@ impl super::Planner {
                     if var == target_variable {
                         *variable = var.to_string();
                         return match op {
-                            BinaryOp::Lt => { *upper = Some(*val); true }
-                            BinaryOp::Le => { *upper = Some(*val + 1); true }
-                            BinaryOp::Gt => { *lower = *val + 1; true }
-                            BinaryOp::Ge => { *lower = *val; true }
+                            BinaryOp::Lt => {
+                                *upper = Some(*val);
+                                true
+                            }
+                            BinaryOp::Le => {
+                                *upper = Some(*val + 1);
+                                true
+                            }
+                            BinaryOp::Gt => {
+                                *lower = *val + 1;
+                                true
+                            }
+                            BinaryOp::Ge => {
+                                *lower = *val;
+                                true
+                            }
                             _ => false,
                         };
                     }
@@ -1037,10 +1055,22 @@ impl super::Planner {
                     if var == target_variable {
                         *variable = var.to_string();
                         return match op {
-                            BinaryOp::Lt => { *lower = *val + 1; true }
-                            BinaryOp::Le => { *lower = *val; true }
-                            BinaryOp::Gt => { *upper = Some(*val); true }
-                            BinaryOp::Ge => { *upper = Some(*val + 1); true }
+                            BinaryOp::Lt => {
+                                *lower = *val + 1;
+                                true
+                            }
+                            BinaryOp::Le => {
+                                *lower = *val;
+                                true
+                            }
+                            BinaryOp::Gt => {
+                                *upper = Some(*val);
+                                true
+                            }
+                            BinaryOp::Ge => {
+                                *upper = Some(*val + 1);
+                                true
+                            }
                             _ => false,
                         };
                     }

@@ -405,14 +405,19 @@ impl ObrainDB {
                                         );
                                         // Sync the store's current_epoch to the highest
                                         // restored epoch so MVCC visibility works correctly.
-                                        let max_epoch = store.epoch_store().mmap_blocks()
+                                        let max_epoch = store
+                                            .epoch_store()
+                                            .mmap_blocks()
                                             .read()
                                             .keys()
                                             .copied()
                                             .max();
                                         if let Some(epoch) = max_epoch {
                                             store.sync_epoch(epoch);
-                                            tracing::info!(?epoch, "store epoch synced to restored max");
+                                            tracing::info!(
+                                                ?epoch,
+                                                "store epoch synced to restored max"
+                                            );
                                         }
                                         seq
                                     }
@@ -505,8 +510,7 @@ impl ObrainDB {
                 obrain_reactive::Scheduler::new(&bus, obrain_reactive::BatchConfig::default());
             let config = obrain_cognitive::CognitiveConfig::default();
             #[allow(unused_mut)]
-            let mut builder =
-                obrain_cognitive::CognitiveEngineBuilder::from_config(&config);
+            let mut builder = obrain_cognitive::CognitiveEngineBuilder::from_config(&config);
             #[cfg(feature = "kernel")]
             {
                 builder = builder.with_lpg_store(Arc::clone(&store));

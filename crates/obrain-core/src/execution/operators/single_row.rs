@@ -182,7 +182,11 @@ impl ScalarResultOperator {
     /// Creates a new scalar result operator with the given values.
     #[must_use]
     pub fn new(values: Vec<obrain_common::types::Value>, schema: Vec<LogicalType>) -> Self {
-        assert_eq!(values.len(), schema.len(), "values and schema must have same length");
+        assert_eq!(
+            values.len(),
+            schema.len(),
+            "values and schema must have same length"
+        );
         Self {
             values,
             schema,

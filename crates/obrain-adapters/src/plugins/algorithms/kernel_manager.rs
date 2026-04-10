@@ -508,7 +508,8 @@ impl KernelManager {
     pub fn remove_embedding(&self, node_id: NodeId) {
         self.embeddings.write().remove(&node_id);
         // Also remove from store to prevent lazy-load from resurrecting it
-        self.store.remove_node_property(node_id, KERNEL_EMBEDDING_KEY);
+        self.store
+            .remove_node_property(node_id, KERNEL_EMBEDDING_KEY);
     }
 }
 
