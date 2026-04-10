@@ -178,11 +178,11 @@ mod tests {
         let resource = Orn::node("alice", 1);
 
         assert_eq!(
-            evaluate(&[policy.clone()], "graph:read", &resource),
+            evaluate(std::slice::from_ref(&policy), "graph:read", &resource),
             PolicyDecision::Allow
         );
         assert_eq!(
-            evaluate(&[policy.clone()], "graph:write", &resource),
+            evaluate(std::slice::from_ref(&policy), "graph:write", &resource),
             PolicyDecision::Allow
         );
         assert_eq!(
@@ -203,7 +203,7 @@ mod tests {
         let edge = Orn::edge("alice", 7);
 
         assert_eq!(
-            evaluate(&[policy.clone()], "graph:read", &node),
+            evaluate(std::slice::from_ref(&policy), "graph:read", &node),
             PolicyDecision::Allow
         );
         assert_eq!(
@@ -268,7 +268,11 @@ mod tests {
         );
 
         assert_eq!(
-            evaluate(&[policy.clone()], "graph:read", &Orn::node("alice", 1)),
+            evaluate(
+                std::slice::from_ref(&policy),
+                "graph:read",
+                &Orn::node("alice", 1)
+            ),
             PolicyDecision::Allow,
         );
         assert_eq!(
@@ -290,7 +294,7 @@ mod tests {
         let other = Orn::tenant("alice", "other-kb");
 
         assert_eq!(
-            evaluate(&[policy.clone()], "graph:read", &chess),
+            evaluate(std::slice::from_ref(&policy), "graph:read", &chess),
             PolicyDecision::Allow
         );
         assert_eq!(
