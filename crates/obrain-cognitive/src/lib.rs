@@ -92,6 +92,10 @@ pub mod immune;
 #[cfg(feature = "epigenetic")]
 pub mod epigenetic;
 
+// Cognitive Persona — database-native knowledge lens
+#[cfg(feature = "persona")]
+pub mod persona;
+
 // Engram system — biomimetic memory traces (Layer 0+)
 pub mod engram;
 
@@ -235,4 +239,10 @@ pub use immune::{
 pub use epigenetic::{
     EngramTemplate, EpigeneticBridge, EpigeneticMark, EpigeneticMarkId, ExpressionCondition,
     LABEL_EPIGENETIC_MARK, ProjectContext, SerializedMark, TRANSGENERATIONAL_DECAY,
+};
+
+#[cfg(feature = "persona")]
+pub use persona::{
+    CognitivePersona, PersonaConfig, PersonaFeedbackResult, PersonaId, PersonaRecallEngine,
+    PersonaRecallResult, PersonaStats, PersonaStore,
 };
