@@ -222,9 +222,9 @@ impl<T> VersionChain<T> {
     /// Checks if this chain has a PENDING version created by the given transaction.
     #[must_use]
     pub fn has_pending_by(&self, tx: TransactionId) -> bool {
-        self.versions.iter().any(|v| {
-            v.info.created_by == tx && v.info.created_epoch == EpochId::PENDING
-        })
+        self.versions
+            .iter()
+            .any(|v| v.info.created_by == tx && v.info.created_epoch == EpochId::PENDING)
     }
 
     /// Checks if the latest version of this chain is deleted.
@@ -836,11 +836,8 @@ impl VersionIndex {
     /// Checks if the latest version is deleted.
     #[must_use]
     pub fn is_deleted(&self) -> bool {
-        self.hot
-            .first()
-            .is_some_and(|v| v.deleted_epoch.is_some())
-            || (self.hot.is_empty()
-                && self.cold.first().is_some_and(|v| v.deleted_by.is_some()))
+        self.hot.first().is_some_and(|v| v.deleted_epoch.is_some())
+            || (self.hot.is_empty() && self.cold.first().is_some_and(|v| v.deleted_by.is_some()))
     }
 
     /// Removes all versions created by the given transaction (for rollback).
