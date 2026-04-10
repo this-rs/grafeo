@@ -14,12 +14,12 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use obrain_common::types::NodeId;
-use obrain_common::Value;
 use crate::error::{IamError, IamResult};
-use crate::model::{props, LABEL_USER};
+use crate::model::{LABEL_USER, props};
 use crate::orn::Orn;
 use crate::store::IamStore;
+use obrain_common::Value;
+use obrain_common::types::NodeId;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -325,7 +325,10 @@ impl GdprManager {
         };
 
         let mut consent_node_props: Vec<(&str, Value)> = vec![
-            (consent_props::LEVEL, Value::from(level.to_string().as_str())),
+            (
+                consent_props::LEVEL,
+                Value::from(level.to_string().as_str()),
+            ),
             (
                 consent_props::CATEGORY,
                 Value::from(category.to_string().as_str()),
@@ -338,10 +341,7 @@ impl GdprManager {
                 consent_props::TARGET_NODE_ID,
                 Value::from(format!("{}", target_node_id.0).as_str()),
             ),
-            (
-                consent_props::OWNER_USER_ID,
-                Value::from(owner_user_id),
-            ),
+            (consent_props::OWNER_USER_ID, Value::from(owner_user_id)),
             (consent_props::CREATED_AT, Value::from(now.as_str())),
             (consent_props::UPDATED_AT, Value::from(now.as_str())),
         ];
@@ -379,9 +379,7 @@ impl GdprManager {
         lpg.nodes_by_label(LABEL_CONSENT)
             .into_iter()
             .filter(|&nid| {
-                self.get_str(nid, consent_props::OWNER_USER_ID)
-                    .as_deref()
-                    == Some(owner_user_id)
+                self.get_str(nid, consent_props::OWNER_USER_ID).as_deref() == Some(owner_user_id)
             })
             .filter_map(|nid| self.node_to_consent(nid))
             .collect()
@@ -406,11 +404,12 @@ impl GdprManager {
     /// status to "erased" and clearing PII properties. Full physical deletion
     /// will follow when the API is ready.
     pub fn request_erasure(&self, user_id: &str) -> IamResult<ErasureCertificate> {
-        let user = self.store.get_user(user_id).ok_or_else(|| {
-            IamError::ResourceNotFound {
+        let user = self
+            .store
+            .get_user(user_id)
+            .ok_or_else(|| IamError::ResourceNotFound {
                 resource: format!("user:{user_id}"),
-            }
-        })?;
+            })?;
 
         let lpg = self.store.inner();
         let now = now_iso();
@@ -444,11 +443,7 @@ impl GdprManager {
             credentials_deleted = cred_targets.len();
             // Clear token hashes (PII erasure)
             for cred_nid in cred_targets {
-                lpg.set_node_property(
-                    cred_nid,
-                    props::TOKEN_HASH.into(),
-                    Value::from("ERASED"),
-                );
+                lpg.set_node_property(cred_nid, props::TOKEN_HASH.into(), Value::from("ERASED"));
             }
         }
 
@@ -498,11 +493,12 @@ impl GdprManager {
 
     /// Exports all data associated with a user as a portable JSON structure.
     pub fn export_user_data(&self, user_id: &str) -> IamResult<UserDataExport> {
-        let user = self.store.get_user(user_id).ok_or_else(|| {
-            IamError::ResourceNotFound {
+        let user = self
+            .store
+            .get_user(user_id)
+            .ok_or_else(|| IamError::ResourceNotFound {
                 resource: format!("user:{user_id}"),
-            }
-        })?;
+            })?;
 
         // Roles
         let roles = self
@@ -782,7 +778,13 @@ mod tests {
         let data_node = lpg.create_node_with_props(&["DataNode"], Vec::<(&str, Value)>::new());
 
         let record = gdpr
-            .set_consent(data_node, "u1", ConsentLevel::Private, DataCategory::Personal, 0)
+            .set_consent(
+                data_node,
+                "u1",
+                ConsentLevel::Private,
+                DataCategory::Personal,
+                0,
+            )
             .unwrap();
 
         assert_eq!(record.level, ConsentLevel::Private);
@@ -803,12 +805,24 @@ mod tests {
         let data_node = lpg.create_node_with_props(&["DataNode"], Vec::<(&str, Value)>::new());
 
         // Set initial consent
-        gdpr.set_consent(data_node, "u1", ConsentLevel::Private, DataCategory::Personal, 0)
-            .unwrap();
+        gdpr.set_consent(
+            data_node,
+            "u1",
+            ConsentLevel::Private,
+            DataCategory::Personal,
+            0,
+        )
+        .unwrap();
 
         // Update to community
         let updated = gdpr
-            .set_consent(data_node, "u1", ConsentLevel::Community, DataCategory::Behavioral, 3600)
+            .set_consent(
+                data_node,
+                "u1",
+                ConsentLevel::Community,
+                DataCategory::Behavioral,
+                3600,
+            )
             .unwrap();
 
         assert_eq!(updated.level, ConsentLevel::Community);
@@ -826,12 +840,30 @@ mod tests {
         let node2 = lpg.create_node_with_props(&["DataNode"], Vec::<(&str, Value)>::new());
         let node3 = lpg.create_node_with_props(&["DataNode"], Vec::<(&str, Value)>::new());
 
-        gdpr.set_consent(node1, "u1", ConsentLevel::Private, DataCategory::Personal, 0)
-            .unwrap();
-        gdpr.set_consent(node2, "u1", ConsentLevel::Public, DataCategory::Cognitive, 0)
-            .unwrap();
-        gdpr.set_consent(node3, "other_user", ConsentLevel::Private, DataCategory::Metadata, 0)
-            .unwrap();
+        gdpr.set_consent(
+            node1,
+            "u1",
+            ConsentLevel::Private,
+            DataCategory::Personal,
+            0,
+        )
+        .unwrap();
+        gdpr.set_consent(
+            node2,
+            "u1",
+            ConsentLevel::Public,
+            DataCategory::Cognitive,
+            0,
+        )
+        .unwrap();
+        gdpr.set_consent(
+            node3,
+            "other_user",
+            ConsentLevel::Private,
+            DataCategory::Metadata,
+            0,
+        )
+        .unwrap();
 
         let alice_consents = gdpr.list_user_consents("u1");
         assert_eq!(alice_consents.len(), 2);
@@ -856,12 +888,24 @@ mod tests {
 
         // Create some data with consent
         let data_node = lpg.create_node_with_props(&["DataNode"], Vec::<(&str, Value)>::new());
-        gdpr.set_consent(data_node, "u1", ConsentLevel::Private, DataCategory::Personal, 0)
-            .unwrap();
+        gdpr.set_consent(
+            data_node,
+            "u1",
+            ConsentLevel::Private,
+            DataCategory::Personal,
+            0,
+        )
+        .unwrap();
 
         // Create a credential
         iam_store
-            .create_credential("c1", "u1", crate::model::CredentialType::Session, "hash", 3600)
+            .create_credential(
+                "c1",
+                "u1",
+                crate::model::CredentialType::Session,
+                "hash",
+                3600,
+            )
             .unwrap();
 
         // Create an audit event
@@ -916,8 +960,14 @@ mod tests {
 
         // Create some consented data
         let data_node = lpg.create_node_with_props(&["DataNode"], Vec::<(&str, Value)>::new());
-        gdpr.set_consent(data_node, "u1", ConsentLevel::Community, DataCategory::Cognitive, 0)
-            .unwrap();
+        gdpr.set_consent(
+            data_node,
+            "u1",
+            ConsentLevel::Community,
+            DataCategory::Cognitive,
+            0,
+        )
+        .unwrap();
 
         // Create some audit events
         iam_store.log_audit_event(
@@ -957,8 +1007,14 @@ mod tests {
         let lpg = iam_store.inner();
 
         let data_node = lpg.create_node_with_props(&["DataNode"], Vec::<(&str, Value)>::new());
-        gdpr.set_consent(data_node, "u1", ConsentLevel::Public, DataCategory::Metadata, 3600)
-            .unwrap();
+        gdpr.set_consent(
+            data_node,
+            "u1",
+            ConsentLevel::Public,
+            DataCategory::Metadata,
+            3600,
+        )
+        .unwrap();
 
         // Manually expire
         assert!(gdpr.expire_consent(data_node));
@@ -985,10 +1041,22 @@ mod tests {
         let node1 = lpg.create_node_with_props(&["DataNode"], Vec::<(&str, Value)>::new());
         let node2 = lpg.create_node_with_props(&["DataNode"], Vec::<(&str, Value)>::new());
 
-        gdpr.set_consent(node1, "u1", ConsentLevel::Community, DataCategory::Personal, 0)
-            .unwrap();
-        gdpr.set_consent(node2, "u1", ConsentLevel::Private, DataCategory::Cognitive, 7200)
-            .unwrap();
+        gdpr.set_consent(
+            node1,
+            "u1",
+            ConsentLevel::Community,
+            DataCategory::Personal,
+            0,
+        )
+        .unwrap();
+        gdpr.set_consent(
+            node2,
+            "u1",
+            ConsentLevel::Private,
+            DataCategory::Cognitive,
+            7200,
+        )
+        .unwrap();
 
         // 2. Export data (portability)
         let export = gdpr.export_user_data("u1").unwrap();

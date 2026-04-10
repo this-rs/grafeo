@@ -127,11 +127,7 @@ pub trait AuthProvider: Send + Sync + fmt::Debug {
     ) -> IamResult<PolicyDecision>;
 
     /// Creates session credentials for an authenticated identity.
-    fn create_session(
-        &self,
-        identity: &Identity,
-        ttl_secs: u64,
-    ) -> IamResult<SessionCredentials>;
+    fn create_session(&self, identity: &Identity, ttl_secs: u64) -> IamResult<SessionCredentials>;
 
     /// Revokes a session credential by ID.
     fn revoke_session(&self, credential_id: &str) -> IamResult<()>;
@@ -258,9 +254,9 @@ impl ObrainIamProvider {
 
     /// Generates a random-ish session token.
     fn generate_token() -> String {
-        use std::sync::atomic::{AtomicU64, Ordering};
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
+        use std::sync::atomic::{AtomicU64, Ordering};
 
         static TOKEN_COUNTER: AtomicU64 = AtomicU64::new(1);
         let n = TOKEN_COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -319,12 +315,17 @@ impl AuthProvider for ObrainIamProvider {
                 Ok(self.user_to_identity(&user))
             }
 
-            AuthRequest::OidcToken { token: _, issuer: _ } => {
+            AuthRequest::OidcToken {
+                token: _,
+                issuer: _,
+            } => {
                 // OIDC verification requires external JWKS fetch — not yet
                 // implemented. This will be added when JWT/ed25519 support
                 // lands (T1.7).
                 Err(IamError::InvalidParameter {
-                    message: "OIDC authentication not yet implemented — requires T1.7 (JWT/Ed25519)".to_string(),
+                    message:
+                        "OIDC authentication not yet implemented — requires T1.7 (JWT/Ed25519)"
+                            .to_string(),
                 })
             }
         }
@@ -336,26 +337,19 @@ impl AuthProvider for ObrainIamProvider {
         action: &str,
         resource: &Orn,
     ) -> IamResult<PolicyDecision> {
-        let decision = self.store.evaluate_access(&identity.user_id, action, resource)?;
+        let decision = self
+            .store
+            .evaluate_access(&identity.user_id, action, resource)?;
 
         // Log audit event
         let event_id = Self::generate_id("evt");
-        self.store.log_audit_event(
-            &event_id,
-            &identity.principal,
-            action,
-            resource,
-            decision,
-        );
+        self.store
+            .log_audit_event(&event_id, &identity.principal, action, resource, decision);
 
         Ok(decision)
     }
 
-    fn create_session(
-        &self,
-        identity: &Identity,
-        ttl_secs: u64,
-    ) -> IamResult<SessionCredentials> {
+    fn create_session(&self, identity: &Identity, ttl_secs: u64) -> IamResult<SessionCredentials> {
         let cred_id = Self::generate_id("cred");
         let token = Self::generate_token();
         let token_hash = Self::hash_token(&token);
@@ -452,11 +446,12 @@ impl AuthProvider for ObrainIamProvider {
         ttl_secs: u64,
     ) -> IamResult<SessionCredentials> {
         // Verify the role exists
-        let _role = self.store.find_role_by_name(role_name).ok_or_else(|| {
-            IamError::ResourceNotFound {
-                resource: format!("role:{role_name}"),
-            }
-        })?;
+        let _role =
+            self.store
+                .find_role_by_name(role_name)
+                .ok_or_else(|| IamError::ResourceNotFound {
+                    resource: format!("role:{role_name}"),
+                })?;
 
         // Verify the user actually has this role attached
         let user_roles = self.store.get_user_roles(&identity.user_id)?;
@@ -505,8 +500,8 @@ impl ObrainIamProvider {
         token_hash: &str,
         expected_type: CredentialType,
     ) -> IamResult<Identity> {
+        use crate::model::{EDGE_HAS_CREDENTIAL, LABEL_CREDENTIAL, LABEL_USER, props};
         use obrain_common::Value;
-        use crate::model::{props, LABEL_CREDENTIAL, LABEL_USER, EDGE_HAS_CREDENTIAL};
 
         let store = self.store.inner();
         let cred_nodes = store.nodes_by_label(LABEL_CREDENTIAL);
@@ -540,15 +535,11 @@ impl ObrainIamProvider {
                             if et.as_str() == EDGE_HAS_CREDENTIAL {
                                 // Found the user — build identity
                                 if let Some(user) = self.store.get_user(
-                                    &self.get_str_prop(user_nid, props::ID)
-                                        .unwrap_or_default(),
+                                    &self.get_str_prop(user_nid, props::ID).unwrap_or_default(),
                                 ) {
                                     if user.status != EntityStatus::Active {
                                         return Err(IamError::AccessDenied {
-                                            reason: format!(
-                                                "user account is {}",
-                                                user.status
-                                            ),
+                                            reason: format!("user account is {}", user.status),
                                         });
                                     }
                                     return Ok(self.user_to_identity(&user));
@@ -572,17 +563,17 @@ impl ObrainIamProvider {
         token_hash: &str,
         expected_type: CredentialType,
     ) -> IamResult<()> {
+        use crate::model::{EDGE_HAS_CREDENTIAL, props};
         use obrain_common::Value;
-        use crate::model::{props, EDGE_HAS_CREDENTIAL};
 
         let store = self.store.inner();
 
         // Find user node
-        let user_nid = self.find_user_node(user_id).ok_or_else(|| {
-            IamError::ResourceNotFound {
+        let user_nid = self
+            .find_user_node(user_id)
+            .ok_or_else(|| IamError::ResourceNotFound {
                 resource: format!("user:{user_id}"),
-            }
-        })?;
+            })?;
 
         // Walk user's credentials
         use obrain_core::graph::Direction;
@@ -619,8 +610,8 @@ impl ObrainIamProvider {
 
     /// Helper: find user node by IAM ID.
     fn find_user_node(&self, user_id: &str) -> Option<obrain_common::types::NodeId> {
+        use crate::model::{LABEL_USER, props};
         use obrain_common::Value;
-        use crate::model::{props, LABEL_USER};
 
         let store = self.store.inner();
         for nid in store.nodes_by_label(LABEL_USER) {
@@ -634,11 +625,7 @@ impl ObrainIamProvider {
     }
 
     /// Helper: get string property from a node.
-    fn get_str_prop(
-        &self,
-        nid: obrain_common::types::NodeId,
-        key: &str,
-    ) -> Option<String> {
+    fn get_str_prop(&self, nid: obrain_common::types::NodeId, key: &str) -> Option<String> {
         use obrain_common::Value;
         match self.store.inner().get_node_property(nid, &key.into()) {
             Some(Value::String(s)) => Some(s.to_string()),
@@ -654,21 +641,29 @@ impl ObrainIamProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use obrain_core::graph::lpg::LpgStore;
     use crate::model::PolicyEffect;
+    use obrain_core::graph::lpg::LpgStore;
 
     fn setup() -> ObrainIamProvider {
         let lpg = LpgStore::new().expect("failed to create LpgStore");
         let iam_store = Arc::new(IamStore::new(Arc::new(lpg)));
 
         // Bootstrap: create a user with a role and policy
-        iam_store.create_user("u1", "alice", Some("alice@obrain.dev")).unwrap();
-        iam_store.create_role("r1", "reader", Some("Read-only")).unwrap();
-        iam_store.create_policy(
-            "p1", "ReadAll", PolicyEffect::Allow,
-            &["graph:read", "graph:list"],
-            &[Orn::all_in_account("default")],
-        ).unwrap();
+        iam_store
+            .create_user("u1", "alice", Some("alice@obrain.dev"))
+            .unwrap();
+        iam_store
+            .create_role("r1", "reader", Some("Read-only"))
+            .unwrap();
+        iam_store
+            .create_policy(
+                "p1",
+                "ReadAll",
+                PolicyEffect::Allow,
+                &["graph:read", "graph:list"],
+                &[Orn::all_in_account("default")],
+            )
+            .unwrap();
         iam_store.attach_role("u1", "r1").unwrap();
         iam_store.attach_policy_to_role("r1", "p1").unwrap();
 
@@ -755,9 +750,10 @@ mod tests {
         // Create an API key credential for alice
         let api_key = "my-secret-api-key";
         let key_hash = ObrainIamProvider::hash_token(api_key);
-        provider.store().create_credential(
-            "ak1", "u1", CredentialType::ApiKey, &key_hash, 0,
-        ).unwrap();
+        provider
+            .store()
+            .create_credential("ak1", "u1", CredentialType::ApiKey, &key_hash, 0)
+            .unwrap();
 
         // Authenticate with it
         let identity = provider
@@ -776,9 +772,10 @@ mod tests {
 
         // Create an API key credential
         let key_hash = ObrainIamProvider::hash_token("real-key");
-        provider.store().create_credential(
-            "ak1", "u1", CredentialType::ApiKey, &key_hash, 0,
-        ).unwrap();
+        provider
+            .store()
+            .create_credential("ak1", "u1", CredentialType::ApiKey, &key_hash, 0)
+            .unwrap();
 
         let err = provider
             .authenticate(&AuthRequest::ApiKey {
@@ -944,7 +941,10 @@ mod tests {
 
         assert_eq!(fed_token.scoped_actions, vec!["graph:read"]);
         assert_eq!(fed_token.scoped_resources.len(), 1);
-        assert_eq!(fed_token.target_instance.as_deref(), Some("peer-instance-1"));
+        assert_eq!(
+            fed_token.target_instance.as_deref(),
+            Some("peer-instance-1")
+        );
         assert_eq!(fed_token.credentials.ttl_secs, 1800);
         assert!(fed_token.credentials.token.starts_with("obt_"));
 
@@ -1083,7 +1083,9 @@ mod tests {
             })
             .unwrap();
 
-        let err = provider.assume_role(&identity, "nonexistent", 3600).unwrap_err();
+        let err = provider
+            .assume_role(&identity, "nonexistent", 3600)
+            .unwrap_err();
         assert!(matches!(err, IamError::ResourceNotFound { .. }));
     }
 }

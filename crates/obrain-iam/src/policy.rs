@@ -123,13 +123,19 @@ mod tests {
             vec![Orn::all_in_account("alice")],
         );
         let resource = Orn::node("alice", 42);
-        assert_eq!(evaluate(&[policy], "graph:read", &resource), PolicyDecision::Allow);
+        assert_eq!(
+            evaluate(&[policy], "graph:read", &resource),
+            PolicyDecision::Allow
+        );
     }
 
     #[test]
     fn implicit_deny_no_policies() {
         let resource = Orn::node("alice", 42);
-        assert_eq!(evaluate(&[], "graph:read", &resource), PolicyDecision::ImplicitDeny);
+        assert_eq!(
+            evaluate(&[], "graph:read", &resource),
+            PolicyDecision::ImplicitDeny
+        );
     }
 
     #[test]
@@ -171,9 +177,18 @@ mod tests {
         );
         let resource = Orn::node("alice", 1);
 
-        assert_eq!(evaluate(&[policy.clone()], "graph:read", &resource), PolicyDecision::Allow);
-        assert_eq!(evaluate(&[policy.clone()], "graph:write", &resource), PolicyDecision::Allow);
-        assert_eq!(evaluate(&[policy], "iam:create_user", &resource), PolicyDecision::ImplicitDeny);
+        assert_eq!(
+            evaluate(&[policy.clone()], "graph:read", &resource),
+            PolicyDecision::Allow
+        );
+        assert_eq!(
+            evaluate(&[policy.clone()], "graph:write", &resource),
+            PolicyDecision::Allow
+        );
+        assert_eq!(
+            evaluate(&[policy], "iam:create_user", &resource),
+            PolicyDecision::ImplicitDeny
+        );
     }
 
     #[test]
@@ -187,8 +202,14 @@ mod tests {
         let node = Orn::node("alice", 42);
         let edge = Orn::edge("alice", 7);
 
-        assert_eq!(evaluate(&[policy.clone()], "graph:read", &node), PolicyDecision::Allow);
-        assert_eq!(evaluate(&[policy], "graph:read", &edge), PolicyDecision::ImplicitDeny);
+        assert_eq!(
+            evaluate(&[policy.clone()], "graph:read", &node),
+            PolicyDecision::Allow
+        );
+        assert_eq!(
+            evaluate(&[policy], "graph:read", &edge),
+            PolicyDecision::ImplicitDeny
+        );
     }
 
     #[test]
@@ -200,7 +221,10 @@ mod tests {
             vec![Orn::all_in_account("alice")],
         );
         let bob_resource = Orn::node("bob", 1);
-        assert_eq!(evaluate(&[policy], "graph:read", &bob_resource), PolicyDecision::ImplicitDeny);
+        assert_eq!(
+            evaluate(&[policy], "graph:read", &bob_resource),
+            PolicyDecision::ImplicitDeny
+        );
     }
 
     #[test]
@@ -259,15 +283,19 @@ mod tests {
             "tenant-scope",
             PolicyEffect::Allow,
             &["*"],
-            vec![
-                "orn:obrain:graph:alice:tenant/chess-kb".parse().unwrap(),
-            ],
+            vec!["orn:obrain:graph:alice:tenant/chess-kb".parse().unwrap()],
         );
 
         let chess = Orn::tenant("alice", "chess-kb");
         let other = Orn::tenant("alice", "other-kb");
 
-        assert_eq!(evaluate(&[policy.clone()], "graph:read", &chess), PolicyDecision::Allow);
-        assert_eq!(evaluate(&[policy], "graph:read", &other), PolicyDecision::ImplicitDeny);
+        assert_eq!(
+            evaluate(&[policy.clone()], "graph:read", &chess),
+            PolicyDecision::Allow
+        );
+        assert_eq!(
+            evaluate(&[policy], "graph:read", &other),
+            PolicyDecision::ImplicitDeny
+        );
     }
 }

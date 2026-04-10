@@ -71,11 +71,7 @@ impl StabilityTracker {
     /// A community is considered stable if it appears in `k` consecutive
     /// sessions (including the most recent) with Jaccard similarity >= `min_jaccard`
     /// between consecutive sessions.
-    pub fn find_stable(
-        &self,
-        k: u32,
-        min_jaccard: f64,
-    ) -> Vec<CristallizationCandidate> {
+    pub fn find_stable(&self, k: u32, min_jaccard: f64) -> Vec<CristallizationCandidate> {
         let k = k as usize;
         if self.snapshots.len() < k || k == 0 {
             return Vec::new();
@@ -96,13 +92,11 @@ impl StabilityTracker {
                 for i in (0..recent_sessions.len() - 1).rev() {
                     let session = &recent_sessions[i];
                     // Find the best-matching community in this session
-                    let best_match = session
-                        .iter()
-                        .max_by(|a, b| {
-                            let ja = Self::jaccard(current_members, &a.members);
-                            let jb = Self::jaccard(current_members, &b.members);
-                            ja.partial_cmp(&jb).unwrap_or(std::cmp::Ordering::Equal)
-                        });
+                    let best_match = session.iter().max_by(|a, b| {
+                        let ja = Self::jaccard(current_members, &a.members);
+                        let jb = Self::jaccard(current_members, &b.members);
+                        ja.partial_cmp(&jb).unwrap_or(std::cmp::Ordering::Equal)
+                    });
 
                     if let Some(matched) = best_match {
                         let jaccard = Self::jaccard(current_members, &matched.members);

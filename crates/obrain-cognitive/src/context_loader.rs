@@ -228,7 +228,11 @@ pub fn load_context(
 
     // Collect and sort by score descending
     let mut nodes: Vec<ActivatedNode> = result_map.into_values().collect();
-    nodes.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    nodes.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     ContextBundle {
         nodes,
@@ -264,14 +268,8 @@ mod tests {
         }
 
         fn add_edge(&mut self, from: NodeId, to: NodeId, weight: f64) {
-            self.edges
-                .entry(from)
-                .or_default()
-                .push((to, weight));
-            self.edges
-                .entry(to)
-                .or_default()
-                .push((from, weight));
+            self.edges.entry(from).or_default().push((to, weight));
+            self.edges.entry(to).or_default().push((from, weight));
         }
     }
 
@@ -377,11 +375,13 @@ mod tests {
 
         let bundle = load_context(&[nid(1)], &config, &neighbors, &communities, &tokens);
 
-        let activated_ids: HashSet<NodeId> =
-            bundle.nodes.iter().map(|n| n.node_id).collect();
+        let activated_ids: HashSet<NodeId> = bundle.nodes.iter().map(|n| n.node_id).collect();
         assert!(activated_ids.contains(&nid(1)));
         assert!(activated_ids.contains(&nid(2)));
-        assert!(!activated_ids.contains(&nid(3)), "should not cross high-cohesion boundary");
+        assert!(
+            !activated_ids.contains(&nid(3)),
+            "should not cross high-cohesion boundary"
+        );
         assert!(bundle.boundary_stops > 0);
     }
 
@@ -404,11 +404,13 @@ mod tests {
 
         let bundle = load_context(&[nid(1)], &config, &neighbors, &communities, &tokens);
 
-        let activated_ids: HashSet<NodeId> =
-            bundle.nodes.iter().map(|n| n.node_id).collect();
+        let activated_ids: HashSet<NodeId> = bundle.nodes.iter().map(|n| n.node_id).collect();
         assert!(activated_ids.contains(&nid(1)));
         assert!(activated_ids.contains(&nid(2)));
-        assert!(activated_ids.contains(&nid(3)), "should cross low-cohesion boundary");
+        assert!(
+            activated_ids.contains(&nid(3)),
+            "should cross low-cohesion boundary"
+        );
         assert_eq!(bundle.boundary_stops, 0);
         assert_eq!(bundle.communities_touched.len(), 2);
     }
@@ -481,7 +483,11 @@ mod tests {
 
         // Score at depth 1: 1.0 * 0.5 * (1.0 - 0.5) = 0.25 (passes 0.2)
         // Score at depth 2: 0.25 * 0.5 * 0.5 = 0.0625 (fails 0.2)
-        assert!(bundle.nodes.len() <= 2, "energy should die off, got {} nodes", bundle.nodes.len());
+        assert!(
+            bundle.nodes.len() <= 2,
+            "energy should die off, got {} nodes",
+            bundle.nodes.len()
+        );
     }
 
     #[test]

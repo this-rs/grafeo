@@ -67,11 +67,7 @@ pub struct NativeProtocol {
 
 impl NativeProtocol {
     /// Get available transitions from the given state matching the given trigger.
-    pub fn available_transitions(
-        &self,
-        state: &str,
-        trigger: &str,
-    ) -> Vec<&ProtocolTransition> {
+    pub fn available_transitions(&self, state: &str, trigger: &str) -> Vec<&ProtocolTransition> {
         self.transitions
             .iter()
             .filter(|t| t.from_state == state && t.trigger == trigger)
@@ -80,7 +76,9 @@ impl NativeProtocol {
 
     /// Find the start state of the protocol, if any.
     pub fn start_state(&self) -> Option<&ProtocolState> {
-        self.states.iter().find(|s| s.state_type == StateType::Start)
+        self.states
+            .iter()
+            .find(|s| s.state_type == StateType::Start)
     }
 
     /// Check whether a state name is terminal.
@@ -145,14 +143,10 @@ impl ProtocolRun {
         now: u64,
     ) -> Result<&str, String> {
         if self.status != RunStatus::Running {
-            return Err(format!(
-                "cannot fire transition: run is {:?}",
-                self.status
-            ));
+            return Err(format!("cannot fire transition: run is {:?}", self.status));
         }
 
-        let transitions =
-            protocol.available_transitions(&self.current_state, trigger);
+        let transitions = protocol.available_transitions(&self.current_state, trigger);
 
         let transition = transitions.first().ok_or_else(|| {
             format!(
@@ -294,9 +288,7 @@ mod tests {
 
         let result = run.fire("approve", &protocol, 1000);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("no transition from 'draft'"));
+        assert!(result.unwrap_err().contains("no transition from 'draft'"));
     }
 
     #[test]
@@ -336,12 +328,10 @@ mod tests {
         assert_eq!(from_draft.len(), 1);
         assert_eq!(from_draft[0].to_state, "review");
 
-        let from_review_approve =
-            protocol.available_transitions("review", "approve");
+        let from_review_approve = protocol.available_transitions("review", "approve");
         assert_eq!(from_review_approve.len(), 1);
 
-        let from_review_reject =
-            protocol.available_transitions("review", "reject");
+        let from_review_reject = protocol.available_transitions("review", "reject");
         assert_eq!(from_review_reject.len(), 1);
 
         // No transition for this trigger from this state

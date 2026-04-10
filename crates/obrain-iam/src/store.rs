@@ -9,8 +9,8 @@
 
 use std::sync::Arc;
 
-use obrain_common::types::NodeId;
 use obrain_common::Value;
+use obrain_common::types::NodeId;
 use obrain_core::graph::lpg::LpgStore;
 
 use crate::error::{IamError, IamResult};
@@ -136,8 +136,7 @@ impl IamStore {
             role_props.push((props::DESCRIPTION, Value::from(d)));
         }
 
-        self.store
-            .create_node_with_props(&[LABEL_ROLE], role_props);
+        self.store.create_node_with_props(&[LABEL_ROLE], role_props);
 
         Ok(Role {
             id: id.to_string(),
@@ -360,7 +359,10 @@ impl IamStore {
 
         let cred_props: Vec<(&str, Value)> = vec![
             (props::ID, Value::from(id)),
-            (props::CRED_TYPE, Value::from(cred_type.to_string().as_str())),
+            (
+                props::CRED_TYPE,
+                Value::from(cred_type.to_string().as_str()),
+            ),
             (props::TOKEN_HASH, Value::from(token_hash)),
             (props::CREATED_AT, Value::from(now.as_str())),
             (props::EXPIRES_AT, Value::from(expires.as_str())),
@@ -404,7 +406,10 @@ impl IamStore {
 
         let event_props: Vec<(&str, Value)> = vec![
             (props::ID, Value::from(id)),
-            (props::PRINCIPAL, Value::from(principal.to_string().as_str())),
+            (
+                props::PRINCIPAL,
+                Value::from(principal.to_string().as_str()),
+            ),
             (props::ACTION, Value::from(action)),
             (props::RESOURCE, Value::from(resource.to_string().as_str())),
             (props::RESULT, Value::from(result_str)),
@@ -419,8 +424,7 @@ impl IamStore {
 
         // Try to link to user
         if let Some(user_nid) = self.find_user_node_by_principal(principal) {
-            self.store
-                .create_edge(user_nid, event_nid, EDGE_PERFORMED);
+            self.store.create_edge(user_nid, event_nid, EDGE_PERFORMED);
         }
 
         AuditEvent {
@@ -631,7 +635,9 @@ mod tests {
     #[test]
     fn create_and_get_user() {
         let iam = new_store();
-        let user = iam.create_user("u1", "alice", Some("alice@example.com")).unwrap();
+        let user = iam
+            .create_user("u1", "alice", Some("alice@example.com"))
+            .unwrap();
         assert_eq!(user.username, "alice");
         assert_eq!(user.email.as_deref(), Some("alice@example.com"));
         assert_eq!(user.status, EntityStatus::Active);
@@ -867,8 +873,20 @@ mod tests {
         let principal = Orn::user("default", "alice");
         let resource = Orn::node("alice", 42);
 
-        iam.log_audit_event("e1", &principal, "graph:read", &resource, PolicyDecision::Allow);
-        iam.log_audit_event("e2", &principal, "graph:write", &resource, PolicyDecision::Deny);
+        iam.log_audit_event(
+            "e1",
+            &principal,
+            "graph:read",
+            &resource,
+            PolicyDecision::Allow,
+        );
+        iam.log_audit_event(
+            "e2",
+            &principal,
+            "graph:write",
+            &resource,
+            PolicyDecision::Deny,
+        );
 
         let events = iam.list_audit_events(10);
         assert_eq!(events.len(), 2);
@@ -881,20 +899,31 @@ mod tests {
         let iam = new_store();
 
         // Create entities
-        iam.create_user("u1", "alice", Some("alice@obrain.dev")).unwrap();
+        iam.create_user("u1", "alice", Some("alice@obrain.dev"))
+            .unwrap();
         iam.create_user("u2", "bob", None).unwrap();
 
-        iam.create_role("r1", "graph-reader", Some("Read-only access to graph")).unwrap();
-        iam.create_role("r2", "graph-admin", Some("Full access to graph")).unwrap();
+        iam.create_role("r1", "graph-reader", Some("Read-only access to graph"))
+            .unwrap();
+        iam.create_role("r2", "graph-admin", Some("Full access to graph"))
+            .unwrap();
 
         iam.create_policy(
-            "p1", "ReadNodes", PolicyEffect::Allow,
-            &["graph:read"], &[Orn::all_of_type("graph", "*", "node")],
-        ).unwrap();
+            "p1",
+            "ReadNodes",
+            PolicyEffect::Allow,
+            &["graph:read"],
+            &[Orn::all_of_type("graph", "*", "node")],
+        )
+        .unwrap();
         iam.create_policy(
-            "p2", "WriteNodes", PolicyEffect::Allow,
-            &["graph:write", "graph:delete"], &[Orn::all_of_type("graph", "*", "node")],
-        ).unwrap();
+            "p2",
+            "WriteNodes",
+            PolicyEffect::Allow,
+            &["graph:write", "graph:delete"],
+            &[Orn::all_of_type("graph", "*", "node")],
+        )
+        .unwrap();
 
         // Wire up
         iam.attach_role("u1", "r1").unwrap(); // alice = reader
@@ -906,21 +935,45 @@ mod tests {
         let target = Orn::node("alice", 42);
 
         // Alice can read
-        assert!(iam.evaluate_access("u1", "graph:read", &target).unwrap().is_allowed());
+        assert!(
+            iam.evaluate_access("u1", "graph:read", &target)
+                .unwrap()
+                .is_allowed()
+        );
         // Alice cannot write
-        assert!(!iam.evaluate_access("u1", "graph:write", &target).unwrap().is_allowed());
+        assert!(
+            !iam.evaluate_access("u1", "graph:write", &target)
+                .unwrap()
+                .is_allowed()
+        );
 
         // Bob can read and write
-        assert!(iam.evaluate_access("u2", "graph:read", &target).unwrap().is_allowed());
-        assert!(iam.evaluate_access("u2", "graph:write", &target).unwrap().is_allowed());
+        assert!(
+            iam.evaluate_access("u2", "graph:read", &target)
+                .unwrap()
+                .is_allowed()
+        );
+        assert!(
+            iam.evaluate_access("u2", "graph:write", &target)
+                .unwrap()
+                .is_allowed()
+        );
 
         // Credential creation
-        let cred = iam.create_credential("c1", "u1", CredentialType::Session, "tok_hash", 7200).unwrap();
+        let cred = iam
+            .create_credential("c1", "u1", CredentialType::Session, "tok_hash", 7200)
+            .unwrap();
         assert_eq!(cred.cred_type, CredentialType::Session);
 
         // Audit
         let principal = Orn::user("default", "alice");
-        iam.log_audit_event("e1", &principal, "graph:read", &target, PolicyDecision::Allow);
+        iam.log_audit_event(
+            "e1",
+            &principal,
+            "graph:read",
+            &target,
+            PolicyDecision::Allow,
+        );
         assert_eq!(iam.list_audit_events(10).len(), 1);
     }
 }

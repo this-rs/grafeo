@@ -395,10 +395,8 @@ impl SessionMetricStore {
     ) -> CognitiveResult<()> {
         use crate::kernel_params::LABEL_KERNEL_PARAM;
 
-        let filter = CognitiveFilter::PropertyEquals(
-            "kernel_name".to_string(),
-            Value::from(param_name),
-        );
+        let filter =
+            CognitiveFilter::PropertyEquals("kernel_name".to_string(), Value::from(param_name));
         let param_nodes = storage.query_nodes(LABEL_KERNEL_PARAM, Some(&filter));
 
         let param_node = param_nodes.first().ok_or_else(|| {
@@ -444,8 +442,8 @@ mod tests {
     use crate::engram::traits::{CognitiveEdge, CognitiveNode, CognitiveStorage};
     use obrain_common::types::{EdgeId, NodeId};
     use std::collections::HashMap;
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     // -----------------------------------------------------------------------
     // In-memory mock CognitiveStorage
@@ -737,10 +735,7 @@ mod tests {
 
         // Create a KernelParam node manually
         let mut props = HashMap::new();
-        props.insert(
-            "kernel_name".to_string(),
-            Value::from("propagation_decay"),
-        );
+        props.insert("kernel_name".to_string(), Value::from("propagation_decay"));
         props.insert("kernel_value".to_string(), Value::Float64(0.3));
         props.insert("kernel_min".to_string(), Value::Float64(0.05));
         props.insert("kernel_max".to_string(), Value::Float64(0.9));
@@ -788,8 +783,7 @@ mod tests {
         };
         let metric_id = SessionMetricStore::save_metric(&storage, &metric).unwrap();
 
-        let result =
-            SessionMetricStore::link_to_param(&storage, metric_id, "nonexistent_param");
+        let result = SessionMetricStore::link_to_param(&storage, metric_id, "nonexistent_param");
         assert!(result.is_err());
     }
 

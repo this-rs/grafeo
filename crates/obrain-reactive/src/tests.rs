@@ -394,8 +394,8 @@ mod reactive_tests {
         use crate::event::EventContext;
         use crate::listener::{MutationListener, TenantFilteredListener};
         use async_trait::async_trait;
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         /// A simple test listener that counts events received.
         struct CountingListener {

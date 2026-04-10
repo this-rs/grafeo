@@ -95,9 +95,7 @@ mod tests {
 
     #[test]
     fn max_notes_decreases_with_level() {
-        let notes: Vec<usize> = (0..=4)
-            .map(|l| ScaffoldingLevel(l).max_notes())
-            .collect();
+        let notes: Vec<usize> = (0..=4).map(|l| ScaffoldingLevel(l).max_notes()).collect();
         for i in 0..4 {
             assert!(
                 notes[i] >= notes[i + 1],

@@ -356,9 +356,7 @@ pub enum MetaEvent {
         new_lr: f64,
     },
     /// Global degradation — all learning rates increased.
-    GlobalDegradation {
-        lr_factor: f64,
-    },
+    GlobalDegradation { lr_factor: f64 },
 }
 
 // ---------------------------------------------------------------------------
@@ -469,9 +467,9 @@ fn update_learning_rate(
         obrain_common::types::Value::from(name),
     );
     let nodes = storage.query_nodes(crate::kernel_params::LABEL_KERNEL_PARAM, Some(&filter));
-    let node = nodes.first().ok_or_else(|| {
-        CognitiveError::Store(format!("kernel param not found: {name}"))
-    })?;
+    let node = nodes
+        .first()
+        .ok_or_else(|| CognitiveError::Store(format!("kernel param not found: {name}")))?;
 
     let mut props = std::collections::HashMap::new();
     props.insert(
@@ -512,10 +510,7 @@ mod tests {
         let grads = compute_gradients(&feedback);
         let decay_grad = grads.iter().find(|g| g.param_name == "propagation_decay");
         assert!(decay_grad.is_some());
-        assert!(
-            decay_grad.unwrap().gradient < 0.0,
-            "should decrease decay"
-        );
+        assert!(decay_grad.unwrap().gradient < 0.0, "should decrease decay");
     }
 
     #[test]

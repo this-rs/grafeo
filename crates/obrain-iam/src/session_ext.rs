@@ -205,8 +205,7 @@ impl AuthenticatedSession {
 
     /// Builds a tenant ORN.
     pub fn tenant_orn(&self) -> Option<Orn> {
-        self.tenant()
-            .map(|t| Orn::tenant(self.account_id(), t))
+        self.tenant().map(|t| Orn::tenant(self.account_id(), t))
     }
 }
 
@@ -320,8 +319,7 @@ mod tests {
     #[test]
     fn tenant_scoped_session() {
         let (provider, identity) = setup();
-        let session =
-            AuthenticatedSession::with_tenant(identity, provider, "chess-kb");
+        let session = AuthenticatedSession::with_tenant(identity, provider, "chess-kb");
 
         assert_eq!(session.tenant(), Some("chess-kb"));
         assert_eq!(session.username(), "alice");

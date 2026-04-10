@@ -105,18 +105,9 @@ impl KernelParam {
             .properties
             .get(PROP_VALUE)
             .and_then(|v| v.as_float64())?;
-        let min_value = node
-            .properties
-            .get(PROP_MIN)
-            .and_then(|v| v.as_float64())?;
-        let max_value = node
-            .properties
-            .get(PROP_MAX)
-            .and_then(|v| v.as_float64())?;
-        let learning_rate = node
-            .properties
-            .get(PROP_LR)
-            .and_then(|v| v.as_float64())?;
+        let min_value = node.properties.get(PROP_MIN).and_then(|v| v.as_float64())?;
+        let max_value = node.properties.get(PROP_MAX).and_then(|v| v.as_float64())?;
+        let learning_rate = node.properties.get(PROP_LR).and_then(|v| v.as_float64())?;
         let last_adjusted = node
             .properties
             .get(PROP_LAST_ADJUSTED)
@@ -297,9 +288,7 @@ impl KernelParamStore {
     /// For each entry in [`DEFAULT_PARAMS`], checks whether a node with
     /// matching `kernel_name` already exists. If not, creates it.
     /// Returns all kernel parameters (existing + newly created).
-    pub fn seed_defaults(
-        storage: &dyn CognitiveStorage,
-    ) -> CognitiveResult<Vec<KernelParam>> {
+    pub fn seed_defaults(storage: &dyn CognitiveStorage) -> CognitiveResult<Vec<KernelParam>> {
         let existing = Self::list_params(storage)?;
 
         for def in DEFAULT_PARAMS {
@@ -328,10 +317,7 @@ impl KernelParamStore {
         storage: &dyn CognitiveStorage,
         name: &str,
     ) -> CognitiveResult<Option<KernelParam>> {
-        let filter = CognitiveFilter::PropertyEquals(
-            PROP_NAME.to_string(),
-            Value::from(name),
-        );
+        let filter = CognitiveFilter::PropertyEquals(PROP_NAME.to_string(), Value::from(name));
         let nodes = storage.query_nodes(LABEL_KERNEL_PARAM, Some(&filter));
 
         Ok(nodes.first().and_then(KernelParam::from_cognitive_node))
@@ -348,19 +334,15 @@ impl KernelParamStore {
         value: f64,
         now_millis: Option<u64>,
     ) -> CognitiveResult<()> {
-        let filter = CognitiveFilter::PropertyEquals(
-            PROP_NAME.to_string(),
-            Value::from(name),
-        );
+        let filter = CognitiveFilter::PropertyEquals(PROP_NAME.to_string(), Value::from(name));
         let nodes = storage.query_nodes(LABEL_KERNEL_PARAM, Some(&filter));
 
-        let node = nodes.first().ok_or_else(|| {
-            CognitiveError::Store(format!("kernel param not found: {name}"))
-        })?;
+        let node = nodes
+            .first()
+            .ok_or_else(|| CognitiveError::Store(format!("kernel param not found: {name}")))?;
 
-        let mut param = KernelParam::from_cognitive_node(node).ok_or_else(|| {
-            CognitiveError::Store(format!("invalid kernel param node: {name}"))
-        })?;
+        let mut param = KernelParam::from_cognitive_node(node)
+            .ok_or_else(|| CognitiveError::Store(format!("invalid kernel param node: {name}")))?;
 
         param.value = param.clamped_value(value);
         param.adjustment_count += 1;
@@ -372,9 +354,7 @@ impl KernelParamStore {
     }
 
     /// Lists all kernel parameters.
-    pub fn list_params(
-        storage: &dyn CognitiveStorage,
-    ) -> CognitiveResult<Vec<KernelParam>> {
+    pub fn list_params(storage: &dyn CognitiveStorage) -> CognitiveResult<Vec<KernelParam>> {
         let nodes = storage.query_nodes(LABEL_KERNEL_PARAM, None);
         Ok(nodes
             .iter()
@@ -385,9 +365,7 @@ impl KernelParamStore {
     /// Reconstructs a [`CognitiveKernelConfig`] from the graph parameters.
     ///
     /// Missing parameters fall back to their defaults.
-    pub fn build_config(
-        storage: &dyn CognitiveStorage,
-    ) -> CognitiveResult<CognitiveKernelConfig> {
+    pub fn build_config(storage: &dyn CognitiveStorage) -> CognitiveResult<CognitiveKernelConfig> {
         let params = Self::list_params(storage)?;
         let defaults = CognitiveKernelConfig::default();
 
@@ -406,30 +384,18 @@ impl KernelParamStore {
                 defaults.community_cohesion_threshold,
             ),
             max_hops: get("max_hops", defaults.max_hops as f64) as u32,
-            min_propagated_energy: get(
-                "min_propagated_energy",
-                defaults.min_propagated_energy,
-            ),
+            min_propagated_energy: get("min_propagated_energy", defaults.min_propagated_energy),
             cristallization_sessions: get(
                 "cristallization_sessions",
                 defaults.cristallization_sessions as f64,
             ) as u32,
-            cristallization_energy: get(
-                "cristallization_energy",
-                defaults.cristallization_energy,
-            ),
-            dissolution_hit_rate: get(
-                "dissolution_hit_rate",
-                defaults.dissolution_hit_rate,
-            ),
+            cristallization_energy: get("cristallization_energy", defaults.cristallization_energy),
+            dissolution_hit_rate: get("dissolution_hit_rate", defaults.dissolution_hit_rate),
             context_budget_tokens: get(
                 "context_budget_tokens",
                 defaults.context_budget_tokens as f64,
             ) as u32,
-            kernel_learning_rate: get(
-                "kernel_learning_rate",
-                defaults.kernel_learning_rate,
-            ),
+            kernel_learning_rate: get("kernel_learning_rate", defaults.kernel_learning_rate),
         })
     }
 }
@@ -444,8 +410,8 @@ mod tests {
     use crate::engram::traits::{CognitiveEdge, CognitiveNode, CognitiveStorage};
     use obrain_common::types::{EdgeId, NodeId};
     use std::collections::HashMap;
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     // -----------------------------------------------------------------------
     // In-memory mock CognitiveStorage
@@ -466,11 +432,7 @@ mod tests {
     }
 
     impl CognitiveStorage for MockStorage {
-        fn create_node(
-            &self,
-            label: &str,
-            properties: &HashMap<String, Value>,
-        ) -> NodeId {
+        fn create_node(&self, label: &str, properties: &HashMap<String, Value>) -> NodeId {
             let id = NodeId::from(self.next_id.fetch_add(1, Ordering::Relaxed));
             let node = CognitiveNode {
                 id,
@@ -491,11 +453,7 @@ mod tests {
             EdgeId::from(0_u64)
         }
 
-        fn query_nodes(
-            &self,
-            label: &str,
-            filter: Option<&CognitiveFilter>,
-        ) -> Vec<CognitiveNode> {
+        fn query_nodes(&self, label: &str, filter: Option<&CognitiveFilter>) -> Vec<CognitiveNode> {
             let nodes = self.nodes.lock().unwrap();
             nodes
                 .iter()
@@ -591,8 +549,7 @@ mod tests {
         assert_eq!(param.adjustment_count, 0);
 
         // Set new value
-        KernelParamStore::set_param(&storage, "propagation_decay", 0.5, Some(12345))
-            .unwrap();
+        KernelParamStore::set_param(&storage, "propagation_decay", 0.5, Some(12345)).unwrap();
 
         let param = KernelParamStore::get_param(&storage, "propagation_decay")
             .unwrap()
@@ -608,16 +565,14 @@ mod tests {
         KernelParamStore::seed_defaults(&storage).unwrap();
 
         // Set value above max (propagation_decay max = 0.9)
-        KernelParamStore::set_param(&storage, "propagation_decay", 99.0, Some(1))
-            .unwrap();
+        KernelParamStore::set_param(&storage, "propagation_decay", 99.0, Some(1)).unwrap();
         let param = KernelParamStore::get_param(&storage, "propagation_decay")
             .unwrap()
             .unwrap();
         assert!((param.value - 0.9).abs() < f64::EPSILON);
 
         // Set value below min (propagation_decay min = 0.05)
-        KernelParamStore::set_param(&storage, "propagation_decay", 0.001, Some(2))
-            .unwrap();
+        KernelParamStore::set_param(&storage, "propagation_decay", 0.001, Some(2)).unwrap();
         let param = KernelParamStore::get_param(&storage, "propagation_decay")
             .unwrap()
             .unwrap();
@@ -630,8 +585,7 @@ mod tests {
         KernelParamStore::seed_defaults(&storage).unwrap();
 
         for i in 0..5 {
-            KernelParamStore::set_param(&storage, "max_hops", 4.0, Some(i))
-                .unwrap();
+            KernelParamStore::set_param(&storage, "max_hops", 4.0, Some(i)).unwrap();
         }
 
         let param = KernelParamStore::get_param(&storage, "max_hops")
@@ -646,12 +600,9 @@ mod tests {
         KernelParamStore::seed_defaults(&storage).unwrap();
 
         // Override some values
-        KernelParamStore::set_param(&storage, "propagation_decay", 0.5, Some(1))
-            .unwrap();
-        KernelParamStore::set_param(&storage, "max_hops", 7.0, Some(1))
-            .unwrap();
-        KernelParamStore::set_param(&storage, "context_budget_tokens", 2000.0, Some(1))
-            .unwrap();
+        KernelParamStore::set_param(&storage, "propagation_decay", 0.5, Some(1)).unwrap();
+        KernelParamStore::set_param(&storage, "max_hops", 7.0, Some(1)).unwrap();
+        KernelParamStore::set_param(&storage, "context_budget_tokens", 2000.0, Some(1)).unwrap();
 
         let config = KernelParamStore::build_config(&storage).unwrap();
 
@@ -676,8 +627,7 @@ mod tests {
         let storage = MockStorage::new();
         KernelParamStore::seed_defaults(&storage).unwrap();
 
-        let result =
-            KernelParamStore::set_param(&storage, "nonexistent", 1.0, Some(1));
+        let result = KernelParamStore::set_param(&storage, "nonexistent", 1.0, Some(1));
         assert!(result.is_err());
     }
 }

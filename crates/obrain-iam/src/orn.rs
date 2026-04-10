@@ -660,9 +660,7 @@ mod tests {
 
     #[test]
     fn substitute_multiple_vars() {
-        let template: Orn = "orn:obrain:${service}:${tenant}:${type}/*"
-            .parse()
-            .unwrap();
+        let template: Orn = "orn:obrain:${service}:${tenant}:${type}/*".parse().unwrap();
 
         let mut vars = HashMap::new();
         vars.insert("service".to_string(), "graph".to_string());
@@ -724,10 +722,7 @@ mod tests {
     #[test]
     fn builder_cognitive() {
         let orn = Orn::cognitive("alice", "engram", "42");
-        assert_eq!(
-            orn.to_string(),
-            "orn:obrain:cognitive:alice:engram/42"
-        );
+        assert_eq!(orn.to_string(), "orn:obrain:cognitive:alice:engram/42");
     }
 
     // -- Serde roundtrip -----------------------------------------------------

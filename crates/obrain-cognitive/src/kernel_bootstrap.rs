@@ -100,8 +100,8 @@ mod tests {
     use crate::engram::traits::{CognitiveEdge, CognitiveFilter, CognitiveNode, CognitiveStorage};
     use obrain_common::types::{EdgeId, NodeId, Value};
     use std::collections::HashMap;
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     // -----------------------------------------------------------------------
     // In-memory mock CognitiveStorage (same pattern as kernel_params tests)
@@ -122,11 +122,7 @@ mod tests {
     }
 
     impl CognitiveStorage for MockStorage {
-        fn create_node(
-            &self,
-            label: &str,
-            properties: &HashMap<String, Value>,
-        ) -> NodeId {
+        fn create_node(&self, label: &str, properties: &HashMap<String, Value>) -> NodeId {
             let id = NodeId::from(self.next_id.fetch_add(1, Ordering::Relaxed));
             let node = CognitiveNode {
                 id,
@@ -147,11 +143,7 @@ mod tests {
             EdgeId::from(0_u64)
         }
 
-        fn query_nodes(
-            &self,
-            label: &str,
-            filter: Option<&CognitiveFilter>,
-        ) -> Vec<CognitiveNode> {
+        fn query_nodes(&self, label: &str, filter: Option<&CognitiveFilter>) -> Vec<CognitiveNode> {
             let nodes = self.nodes.lock().unwrap();
             nodes
                 .iter()
@@ -248,8 +240,7 @@ mod tests {
         let defaults = CognitiveKernelConfig::default();
 
         assert!(
-            (result.config.propagation_decay - defaults.propagation_decay).abs()
-                < f64::EPSILON
+            (result.config.propagation_decay - defaults.propagation_decay).abs() < f64::EPSILON
         );
         assert_eq!(result.config.max_hops, defaults.max_hops);
         assert_eq!(
@@ -266,8 +257,7 @@ mod tests {
         KernelParamStore::seed_defaults(&storage).unwrap();
 
         // Modify a param
-        KernelParamStore::set_param(&storage, "propagation_decay", 0.6, Some(1000))
-            .unwrap();
+        KernelParamStore::set_param(&storage, "propagation_decay", 0.6, Some(1000)).unwrap();
 
         // Warm start should pick up the modification
         let result = bootstrap(&storage, None).unwrap();
