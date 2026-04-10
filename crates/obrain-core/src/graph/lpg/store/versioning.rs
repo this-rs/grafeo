@@ -23,14 +23,44 @@ impl LpgStore {
     #[doc(hidden)]
     #[cfg(not(feature = "tiered-storage"))]
     pub fn discard_uncommitted_versions(&self, transaction_id: TransactionId) {
-        // Remove uncommitted node versions
-        {
+        // Remove uncommitted node versions, collecting IDs of fully-removed nodes
+        // so we can clean up the label_index afterwards.
+        let removed_node_ids: Vec<NodeId> = {
             let mut nodes = self.nodes.write();
             for chain in nodes.values_mut() {
                 chain.remove_versions_by(transaction_id);
             }
             // Remove completely empty chains (no versions left)
-            nodes.retain(|_, chain| !chain.is_empty());
+            let mut removed = Vec::new();
+            nodes.retain(|&id, chain| {
+                if chain.is_empty() {
+                    removed.push(id);
+                    false
+                } else {
+                    true
+                }
+            });
+            removed
+        };
+
+        // Clean up label_index and node_labels for removed nodes
+        if !removed_node_ids.is_empty() {
+            // Remove from label_index: scan each label's set and purge removed IDs
+            {
+                let mut label_index = self.label_index.write();
+                for set in label_index.iter_mut() {
+                    for &nid in &removed_node_ids {
+                        set.remove(&nid);
+                    }
+                }
+            }
+            // Remove from node_labels mapping
+            {
+                let mut node_labels = self.node_labels.write();
+                for &nid in &removed_node_ids {
+                    node_labels.remove(&nid);
+                }
+            }
         }
 
         // Remove uncommitted edge versions
@@ -63,12 +93,34 @@ impl LpgStore {
         edge_ids: &[EdgeId],
     ) {
         if !node_ids.is_empty() {
-            let mut nodes = self.nodes.write();
-            for &nid in node_ids {
-                if let Some(chain) = nodes.get_mut(&nid) {
-                    chain.remove_versions_by(transaction_id);
-                    if chain.is_empty() {
-                        nodes.remove(&nid);
+            let mut removed = Vec::new();
+            {
+                let mut nodes = self.nodes.write();
+                for &nid in node_ids {
+                    if let Some(chain) = nodes.get_mut(&nid) {
+                        chain.remove_versions_by(transaction_id);
+                        if chain.is_empty() {
+                            nodes.remove(&nid);
+                            removed.push(nid);
+                        }
+                    }
+                }
+            }
+
+            // Clean up label_index and node_labels for fully-removed nodes
+            if !removed.is_empty() {
+                {
+                    let mut label_index = self.label_index.write();
+                    for set in label_index.iter_mut() {
+                        for &nid in &removed {
+                            set.remove(&nid);
+                        }
+                    }
+                }
+                {
+                    let mut node_labels = self.node_labels.write();
+                    for &nid in &removed {
+                        node_labels.remove(&nid);
                     }
                 }
             }
@@ -94,14 +146,40 @@ impl LpgStore {
     #[doc(hidden)]
     #[cfg(feature = "tiered-storage")]
     pub fn discard_uncommitted_versions(&self, transaction_id: TransactionId) {
-        // Remove uncommitted node versions
-        {
+        // Remove uncommitted node versions, collecting removed node IDs
+        let removed_node_ids: Vec<NodeId> = {
             let mut versions = self.node_versions.write();
             for index in versions.values_mut() {
                 index.remove_versions_by(transaction_id);
             }
-            // Remove completely empty indexes (no versions left)
-            versions.retain(|_, index| !index.is_empty());
+            let mut removed = Vec::new();
+            versions.retain(|&id, index| {
+                if index.is_empty() {
+                    removed.push(id);
+                    false
+                } else {
+                    true
+                }
+            });
+            removed
+        };
+
+        // Clean up label_index and node_labels for removed nodes
+        if !removed_node_ids.is_empty() {
+            {
+                let mut label_index = self.label_index.write();
+                for set in label_index.iter_mut() {
+                    for &nid in &removed_node_ids {
+                        set.remove(&nid);
+                    }
+                }
+            }
+            {
+                let mut node_labels = self.node_labels.write();
+                for &nid in &removed_node_ids {
+                    node_labels.remove(&nid);
+                }
+            }
         }
 
         // Remove uncommitted edge versions
