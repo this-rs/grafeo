@@ -462,6 +462,45 @@ impl<Id: EntityId> PropertyStorage<Id> {
         results
     }
 
+    /// Iterates over all vector values for a given property key, calling `f(id, &[f32])`
+    /// for each entity that has a `Value::Vector` at that key.
+    ///
+    /// This avoids the allocation overhead of `get_batch` when building external indices
+    /// (e.g., VP-Tree) that only need to iterate all vectors once. The closure receives
+    /// a borrowed slice — no cloning occurs.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use obrain_core::graph::lpg::PropertyStorage;
+    /// use obrain_common::types::{NodeId, PropertyKey, Value};
+    ///
+    /// let storage: PropertyStorage<NodeId> = PropertyStorage::new();
+    /// let key = PropertyKey::new("embedding");
+    /// storage.set(NodeId(1), key.clone(), Value::Vector(vec![1.0, 2.0]));
+    /// storage.set(NodeId(2), key.clone(), Value::Vector(vec![3.0, 4.0]));
+    ///
+    /// let mut count = 0;
+    /// storage.for_each_vector(&key, |_id, v| { count += 1; assert_eq!(v.len(), 2); });
+    /// assert_eq!(count, 2);
+    /// ```
+    pub fn for_each_vector(&self, key: &PropertyKey, mut f: impl FnMut(Id, &[f32])) {
+        let columns = self.columns.read();
+        if let Some(col) = columns.get(key) {
+            col.for_each_vector(&mut f);
+        }
+    }
+
+    /// Returns the count of entities with a `Value::Vector` for a given property key,
+    /// along with the vector dimensionality (from the first vector found).
+    ///
+    /// Useful for pre-allocating buffers before `for_each_vector`.
+    #[must_use]
+    pub fn vector_column_stats(&self, key: &PropertyKey) -> Option<(usize, usize)> {
+        let columns = self.columns.read();
+        columns.get(key).and_then(|col| col.vector_stats())
+    }
+
     /// Gets all properties for multiple entities efficiently.
     ///
     /// More efficient than calling [`Self::get_all`] in a loop because it
@@ -966,6 +1005,34 @@ impl<Id: EntityId> PropertyColumn<Id> {
         None
     }
 
+    /// Iterates over all `Value::Vector` entries, calling `f(id, &[f32])`.
+    ///
+    /// Only visits the hot buffer (uncompressed values). Vector columns are
+    /// typically never compressed (no suitable codec), so this covers all data.
+    pub fn for_each_vector(&self, f: &mut impl FnMut(Id, &[f32])) {
+        for (&id, value) in &self.values {
+            if let Value::Vector(v) = value {
+                f(id, v);
+            }
+        }
+    }
+
+    /// Returns `(count, dimensions)` for vectors in this column, or `None` if empty.
+    #[must_use]
+    pub fn vector_stats(&self) -> Option<(usize, usize)> {
+        let mut count = 0usize;
+        let mut dims = 0usize;
+        for value in self.values.values() {
+            if let Value::Vector(v) = value {
+                count += 1;
+                if dims == 0 && !v.is_empty() {
+                    dims = v.len();
+                }
+            }
+        }
+        if count > 0 { Some((count, dims)) } else { None }
+    }
+
     /// Removes a value for an entity.
     pub fn remove(&mut self, id: Id) -> Option<Value> {
         let removed = self.values.remove(&id);
@@ -1440,6 +1507,31 @@ impl<Id: EntityId> PropertyColumn<Id> {
             .and_then(|log| log.latest())
             .filter(|v| !v.is_null())
             .cloned()
+    }
+
+    /// Iterates over all `Value::Vector` entries (latest version), calling `f(id, &[f32])`.
+    pub fn for_each_vector(&self, f: &mut impl FnMut(Id, &[f32])) {
+        for (&id, log) in &self.values {
+            if let Some(Value::Vector(v)) = log.latest() {
+                f(id, v);
+            }
+        }
+    }
+
+    /// Returns `(count, dimensions)` for vectors in this column, or `None` if empty.
+    #[must_use]
+    pub fn vector_stats(&self) -> Option<(usize, usize)> {
+        let mut count = 0usize;
+        let mut dims = 0usize;
+        for log in self.values.values() {
+            if let Some(Value::Vector(v)) = log.latest() {
+                count += 1;
+                if dims == 0 && !v.is_empty() {
+                    dims = v.len();
+                }
+            }
+        }
+        if count > 0 { Some((count, dims)) } else { None }
     }
 
     /// Removes a value by appending a tombstone (Null) at the given epoch.

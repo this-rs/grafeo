@@ -281,6 +281,42 @@ impl LpgStore {
         self.node_properties.get_all_batch(ids)
     }
 
+    /// Iterates over all node vector values for a given property key,
+    /// calling `f(node_id, &[f32])` for each node that has a `Value::Vector`.
+    ///
+    /// Zero-copy: the closure receives a borrowed slice into the column store.
+    /// Use this for building external indices (VP-Tree, HNSW) without intermediate
+    /// HashMap allocation.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use obrain_core::graph::lpg::LpgStore;
+    /// use obrain_common::types::{PropertyKey, Value};
+    ///
+    /// let store = LpgStore::new().expect("arena allocation");
+    /// let n1 = store.create_node(&["Point"]);
+    /// store.set_node_property(n1, "emb", Value::Vector(vec![1.0, 2.0]));
+    ///
+    /// let mut count = 0;
+    /// store.for_each_node_vector(&PropertyKey::new("emb"), |_nid, v| {
+    ///     count += 1;
+    ///     assert_eq!(v.len(), 2);
+    /// });
+    /// assert_eq!(count, 1);
+    /// ```
+    pub fn for_each_node_vector(&self, key: &PropertyKey, f: impl FnMut(NodeId, &[f32])) {
+        self.node_properties.for_each_vector(key, f);
+    }
+
+    /// Returns `(count, dimensions)` for node vectors at a given property key.
+    ///
+    /// Useful for pre-allocating buffers before `for_each_node_vector`.
+    #[must_use]
+    pub fn node_vector_stats(&self, key: &PropertyKey) -> Option<(usize, usize)> {
+        self.node_properties.vector_column_stats(key)
+    }
+
     /// Gets selected properties for multiple nodes (projection pushdown).
     ///
     /// This is more efficient than [`Self::get_nodes_properties_batch`] when you only
