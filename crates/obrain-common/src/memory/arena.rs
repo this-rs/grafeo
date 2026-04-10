@@ -13,6 +13,7 @@
 use std::alloc::{Layout, alloc, dealloc};
 use std::fmt;
 use std::ptr::NonNull;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use parking_lot::RwLock;
@@ -435,12 +436,20 @@ pub struct ArenaStats {
 /// Use this to create new epochs, allocate in the current epoch, and
 /// clean up old epochs when they're no longer needed.
 pub struct ArenaAllocator {
-    /// Map of epochs to arenas.
-    arenas: RwLock<hashbrown::HashMap<EpochId, Arena>>,
+    /// Map of epochs to arenas.  Multiple epochs may share the same
+    /// `Arc<Arena>` to avoid allocating a huge chunk per epoch (critical
+    /// for tiered-storage where each chunk is 2 GB).
+    arenas: RwLock<hashbrown::HashMap<EpochId, Arc<Arena>>>,
     /// Current epoch.
     current_epoch: AtomicUsize,
     /// Default chunk size.
     chunk_size: usize,
+    /// The arena currently accepting new allocations.  In tiered-storage
+    /// mode, `ensure_epoch` clones this `Arc` instead of creating a
+    /// brand-new 2 GB chunk for every epoch.  When the active arena is
+    /// full, a new one is created and promoted.
+    #[cfg(feature = "tiered-storage")]
+    active_write_arena: parking_lot::Mutex<Arc<Arena>>,
 }
 
 impl ArenaAllocator {
@@ -466,20 +475,19 @@ impl ArenaAllocator {
     ///
     /// Returns `AllocError::OutOfMemory` if the initial arena allocation fails.
     pub fn with_chunk_size(chunk_size: usize) -> Result<Self, AllocError> {
-        let allocator = Self {
-            arenas: RwLock::new(hashbrown::HashMap::new()),
+        let epoch = EpochId::INITIAL;
+        let initial_arena = Arc::new(Arena::with_chunk_size(epoch, chunk_size)?);
+
+        let mut map = hashbrown::HashMap::new();
+        map.insert(epoch, Arc::clone(&initial_arena));
+
+        Ok(Self {
+            arenas: RwLock::new(map),
             current_epoch: AtomicUsize::new(0),
             chunk_size,
-        };
-
-        // Create the initial epoch
-        let epoch = EpochId::INITIAL;
-        allocator
-            .arenas
-            .write()
-            .insert(epoch, Arena::with_chunk_size(epoch, chunk_size)?);
-
-        Ok(allocator)
+            #[cfg(feature = "tiered-storage")]
+            active_write_arena: parking_lot::Mutex::new(initial_arena),
+        })
     }
 
     /// Returns the current epoch.
@@ -490,6 +498,10 @@ impl ArenaAllocator {
 
     /// Creates a new epoch and returns its ID.
     ///
+    /// Each call allocates a **fresh** arena (not shared).  For
+    /// tiered-storage write paths prefer [`arena_or_create`] which
+    /// coalesces epochs into a shared arena.
+    ///
     /// # Errors
     ///
     /// Returns `AllocError::OutOfMemory` if the arena allocation fails.
@@ -497,7 +509,7 @@ impl ArenaAllocator {
         let new_id = self.current_epoch.fetch_add(1, Ordering::AcqRel) as u64 + 1;
         let epoch = EpochId::new(new_id);
 
-        let arena = Arena::with_chunk_size(epoch, self.chunk_size)?;
+        let arena = Arc::new(Arena::with_chunk_size(epoch, self.chunk_size)?);
         self.arenas.write().insert(epoch, arena);
 
         Ok(epoch)
@@ -517,12 +529,16 @@ impl ArenaAllocator {
             return Err(AllocError::EpochNotFound(epoch));
         }
         Ok(parking_lot::RwLockReadGuard::map(arenas, |arenas| {
-            &arenas[&epoch]
+            arenas[&epoch].as_ref()
         }))
     }
 
     /// Ensures an arena exists for the given epoch, creating it if necessary.
     /// Returns whether a new arena was created.
+    ///
+    /// Multiple epochs **share** the same physical arena to avoid
+    /// allocating a 2 GB mmap per auto-committed transaction.  A fresh
+    /// arena is only created when the active one is full.
     ///
     /// # Errors
     ///
@@ -537,15 +553,31 @@ impl ArenaAllocator {
             }
         }
 
-        // Slow path: create the epoch
+        // Slow path: register the epoch with a shared arena
         let mut arenas = self.arenas.write();
         // Double-check after acquiring write lock
         if arenas.contains_key(&epoch) {
             return Ok(false);
         }
 
-        let arena = Arena::with_chunk_size(epoch, self.chunk_size)?;
-        arenas.insert(epoch, arena);
+        // Reuse the active write arena instead of creating a new one.
+        // Only create a fresh arena when the active one is more than
+        // 75% full (extremely unlikely with 2 GB chunks).
+        let shared = {
+            let mut active = self.active_write_arena.lock();
+            let used = active.total_used();
+            let capacity = active.total_allocated();
+            if used > capacity * 3 / 4 {
+                // Active arena is nearly full — promote a new one
+                let new_arena = Arc::new(Arena::with_chunk_size(epoch, self.chunk_size)?);
+                *active = Arc::clone(&new_arena);
+                new_arena
+            } else {
+                Arc::clone(&active)
+            }
+        };
+
+        arenas.insert(epoch, shared);
         Ok(true)
     }
 
@@ -585,12 +617,17 @@ impl ArenaAllocator {
     }
 
     /// Returns total memory allocated across all epochs.
+    ///
+    /// When multiple epochs share the same arena (tiered-storage
+    /// coalescing), each physical arena is counted only once.
     #[must_use]
     pub fn total_allocated(&self) -> usize {
-        self.arenas
-            .read()
+        let arenas = self.arenas.read();
+        let mut seen = hashbrown::HashSet::new();
+        arenas
             .values()
-            .map(Arena::total_allocated)
+            .filter(|a| seen.insert(Arc::as_ptr(a) as usize))
+            .map(|a| a.total_allocated())
             .sum()
     }
 }
