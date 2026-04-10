@@ -5,7 +5,7 @@
 //! | Model | When to use | Example use case |
 //! | ----- | ----------- | ---------------- |
 //! | [`lpg`] | Most apps (default) | Social networks, fraud detection |
-//! | [`rdf`] | Knowledge graphs | Ontologies, linked data (feature-gated) |
+//! | `rdf` | Knowledge graphs | Ontologies, linked data (feature-gated) |
 //!
 //! These are separate implementations with no abstraction overhead - you get
 //! the full performance of whichever model you choose.

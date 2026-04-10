@@ -9,8 +9,8 @@
 //! so you can recover after crashes without losing committed transactions.
 //! The WAL module requires filesystem I/O and is gated behind the `wal` feature.
 //!
-//! The [`mod@file`] module implements a single-file `.obrain` format with
-//! dual-header crash safety and sidecar WAL. Gated behind `obrain-file`.
+//! The `file` module (requires `obrain-file` feature) implements a single-file
+//! `.obrain` format with dual-header crash safety and sidecar WAL.
 
 #[cfg(feature = "obrain-file")]
 pub mod file;

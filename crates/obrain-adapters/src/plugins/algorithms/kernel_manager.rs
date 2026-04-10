@@ -452,7 +452,7 @@ impl KernelManager {
 
     /// Get embeddings for multiple nodes.
     ///
-    /// Uses cache-then-store lazy loading (see [`get_embedding`]).
+    /// Uses cache-then-store lazy loading (see [`Self::get_embedding`]).
     pub fn get_embeddings(&self, node_ids: &[NodeId]) -> HashMap<NodeId, Vec<f32>> {
         let pending_count = self.pending_changes.read().len();
         if pending_count >= self.debounce_threshold {
