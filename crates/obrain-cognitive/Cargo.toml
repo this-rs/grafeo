@@ -36,6 +36,12 @@ epigenetic = ["dep:serde_json"]
 # Kernel embeddings (irreducible kernel C = Φ₀ ∘ A¹(H^∞))
 kernel = ["dep:obrain-adapters"]
 
+# Kernel parameters — cognitive parameters as graph nodes
+kernel-params = []
+
+# Session metrics — performance signals from work sessions (Noyau Cognitif T2)
+session-metrics = ["kernel-params"]
+
 # Cognitive Persona — database-native knowledge lens
 persona = ["synapse", "energy"]
 
@@ -57,7 +63,7 @@ cognitive = ["energy", "synapse"]
 # Level 2: + fabric scoring, co-change detection, GDS refresh
 cognitive-fabric = ["cognitive", "fabric", "co-change", "gds-refresh"]
 # Level 3: all cognitive subsystems
-cognitive-full = ["cognitive-fabric", "kernel", "scar", "memory", "stagnation", "fingerprint", "distillation", "episodic", "consolidation", "persona"]
+cognitive-full = ["cognitive-fabric", "kernel", "kernel-params", "session-metrics", "scar", "memory", "stagnation", "fingerprint", "distillation", "episodic", "consolidation", "persona"]
 
 [dependencies]
 obrain-common.workspace = true
