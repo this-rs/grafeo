@@ -30,6 +30,14 @@ pub struct IamStore {
     store: Arc<LpgStore>,
 }
 
+impl std::fmt::Debug for IamStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IamStore")
+            .field("store", &"<LpgStore>")
+            .finish()
+    }
+}
+
 impl IamStore {
     /// Creates a new `IamStore` wrapping the given LPG store.
     pub fn new(store: Arc<LpgStore>) -> Self {

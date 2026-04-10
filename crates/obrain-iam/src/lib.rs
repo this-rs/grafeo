@@ -30,6 +30,7 @@ pub mod error;
 pub mod model;
 pub mod orn;
 pub mod policy;
+pub mod provider;
 pub mod store;
 
 pub use error::{IamError, IamResult};
@@ -38,4 +39,8 @@ pub use model::{
     Role, User,
 };
 pub use orn::Orn;
+pub use provider::{
+    AuthProvider, AuthRequest, FederationRequest, FederationToken, Identity, ObrainIamProvider,
+    SessionCredentials,
+};
 pub use store::IamStore;
