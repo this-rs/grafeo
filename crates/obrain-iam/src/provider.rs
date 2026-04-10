@@ -530,21 +530,21 @@ impl ObrainIamProvider {
             for user_nid in user_nodes {
                 use obrain_core::graph::Direction;
                 for (target, eid) in store.edges_from(user_nid, Direction::Outgoing) {
-                    if target == cred_nid {
-                        if let Some(et) = store.edge_type(eid) {
-                            if et.as_str() == EDGE_HAS_CREDENTIAL {
-                                // Found the user — build identity
-                                if let Some(user) = self.store.get_user(
-                                    &self.get_str_prop(user_nid, props::ID).unwrap_or_default(),
-                                ) {
-                                    if user.status != EntityStatus::Active {
-                                        return Err(IamError::AccessDenied {
-                                            reason: format!("user account is {}", user.status),
-                                        });
-                                    }
-                                    return Ok(self.user_to_identity(&user));
-                                }
+                    if target == cred_nid
+                        && let Some(et) = store.edge_type(eid)
+                        && et.as_str() == EDGE_HAS_CREDENTIAL
+                    {
+                        // Found the user — build identity
+                        if let Some(user) = self
+                            .store
+                            .get_user(&self.get_str_prop(user_nid, props::ID).unwrap_or_default())
+                        {
+                            if user.status != EntityStatus::Active {
+                                return Err(IamError::AccessDenied {
+                                    reason: format!("user account is {}", user.status),
+                                });
                             }
+                            return Ok(self.user_to_identity(&user));
                         }
                     }
                 }
@@ -615,10 +615,10 @@ impl ObrainIamProvider {
 
         let store = self.store.inner();
         for nid in store.nodes_by_label(LABEL_USER) {
-            if let Some(Value::String(id)) = store.get_node_property(nid, &props::ID.into()) {
-                if id.as_str() == user_id {
-                    return Some(nid);
-                }
+            if let Some(Value::String(id)) = store.get_node_property(nid, &props::ID.into())
+                && id.as_str() == user_id
+            {
+                return Some(nid);
             }
         }
         None

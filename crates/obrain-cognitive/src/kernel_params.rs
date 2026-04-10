@@ -373,8 +373,7 @@ impl KernelParamStore {
             params
                 .iter()
                 .find(|p| p.name == name)
-                .map(|p| p.value)
-                .unwrap_or(default)
+                .map_or(default, |p| p.value)
         };
 
         Ok(CognitiveKernelConfig {

@@ -245,10 +245,8 @@ impl ParamHistory {
         // Oscillation detection: count sign changes
         if gradient.abs() > 1e-9 {
             let current_sign = gradient > 0.0;
-            if let Some(last) = self.last_sign {
-                if current_sign != last {
-                    self.sign_change_count += 1;
-                }
+            if self.last_sign == Some(!current_sign) {
+                self.sign_change_count += 1;
             }
             self.last_sign = Some(current_sign);
         }
@@ -345,18 +343,27 @@ pub struct ParamAdjustment {
 pub enum MetaEvent {
     /// Parameter is oscillating — learning rate reduced.
     Oscillation {
+        /// Name of the oscillating parameter.
         param_name: String,
+        /// Learning rate before reduction.
         old_lr: f64,
+        /// Learning rate after reduction.
         new_lr: f64,
     },
     /// Parameter has converged — learning rate reduced.
     Convergence {
+        /// Name of the converged parameter.
         param_name: String,
+        /// Learning rate before reduction.
         old_lr: f64,
+        /// Learning rate after reduction.
         new_lr: f64,
     },
     /// Global degradation — all learning rates increased.
-    GlobalDegradation { lr_factor: f64 },
+    GlobalDegradation {
+        /// Factor applied to all learning rates.
+        lr_factor: f64,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -397,9 +404,8 @@ pub fn adapt(
         history.record(&grad.param_name, grad.gradient);
 
         // Find the corresponding parameter
-        let param = match params.iter().find(|p| p.name == grad.param_name) {
-            Some(p) => p,
-            None => continue,
+        let Some(param) = params.iter().find(|p| p.name == grad.param_name) else {
+            continue;
         };
 
         // Meta-adaptation: check for oscillation and convergence

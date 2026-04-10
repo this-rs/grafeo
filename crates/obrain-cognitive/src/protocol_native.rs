@@ -156,7 +156,7 @@ impl ProtocolRun {
         })?;
 
         let target = transition.to_state.clone();
-        self.current_state = target.clone();
+        self.current_state.clone_from(&target);
         self.states_visited.push((target, now));
 
         // Check if we reached a terminal state

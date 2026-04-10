@@ -272,22 +272,22 @@ impl GdprManager {
             // Update existing consent
             lpg.set_node_property(
                 existing_nid,
-                consent_props::LEVEL.into(),
+                consent_props::LEVEL,
                 Value::from(level.to_string().as_str()),
             );
             lpg.set_node_property(
                 existing_nid,
-                consent_props::CATEGORY.into(),
+                consent_props::CATEGORY,
                 Value::from(category.to_string().as_str()),
             );
             lpg.set_node_property(
                 existing_nid,
-                consent_props::RETENTION_TTL.into(),
+                consent_props::RETENTION_TTL,
                 Value::Int64(retention_ttl_secs as i64),
             );
             lpg.set_node_property(
                 existing_nid,
-                consent_props::UPDATED_AT.into(),
+                consent_props::UPDATED_AT,
                 Value::from(now.as_str()),
             );
 
@@ -295,7 +295,7 @@ impl GdprManager {
                 let exp = format!("{}+{}s", &now, retention_ttl_secs);
                 lpg.set_node_property(
                     existing_nid,
-                    consent_props::RETENTION_EXPIRES.into(),
+                    consent_props::RETENTION_EXPIRES,
                     Value::from(exp.as_str()),
                 );
                 Some(exp)
@@ -419,19 +419,15 @@ impl GdprManager {
         let consents_deleted = consents.len();
         // Mark each consent as erased (clear level → "erased")
         for consent in &consents {
-            if let Ok(nid) = consent.target_node_id.parse::<u64>() {
-                if let Some(consent_nid) = self.find_consent_node(NodeId(nid)) {
-                    lpg.set_node_property(
-                        consent_nid,
-                        consent_props::LEVEL.into(),
-                        Value::from("erased"),
-                    );
-                    lpg.set_node_property(
-                        consent_nid,
-                        consent_props::UPDATED_AT.into(),
-                        Value::from(now.as_str()),
-                    );
-                }
+            if let Ok(nid) = consent.target_node_id.parse::<u64>()
+                && let Some(consent_nid) = self.find_consent_node(NodeId(nid))
+            {
+                lpg.set_node_property(consent_nid, consent_props::LEVEL, Value::from("erased"));
+                lpg.set_node_property(
+                    consent_nid,
+                    consent_props::UPDATED_AT,
+                    Value::from(now.as_str()),
+                );
             }
         }
 
@@ -443,7 +439,7 @@ impl GdprManager {
             credentials_deleted = cred_targets.len();
             // Clear token hashes (PII erasure)
             for cred_nid in cred_targets {
-                lpg.set_node_property(cred_nid, props::TOKEN_HASH.into(), Value::from("ERASED"));
+                lpg.set_node_property(cred_nid, props::TOKEN_HASH, Value::from("ERASED"));
             }
         }
 
@@ -457,7 +453,7 @@ impl GdprManager {
             for audit_nid in audit_targets {
                 lpg.set_node_property(
                     audit_nid,
-                    props::PRINCIPAL.into(),
+                    props::PRINCIPAL,
                     Value::from("orn:obrain:iam:*:user/ERASED"),
                 );
             }
@@ -465,10 +461,10 @@ impl GdprManager {
 
         // 4. Anonymize the user node itself (clear PII)
         if let Some(user_nid) = user_node {
-            lpg.set_node_property(user_nid, props::NAME.into(), Value::from("ERASED"));
-            lpg.set_node_property(user_nid, props::STATUS.into(), Value::from("erased"));
+            lpg.set_node_property(user_nid, props::NAME, Value::from("ERASED"));
+            lpg.set_node_property(user_nid, props::STATUS, Value::from("erased"));
             // Clear email if present
-            lpg.set_node_property(user_nid, props::EMAIL.into(), Value::from(""));
+            lpg.set_node_property(user_nid, props::EMAIL, Value::from(""));
         }
 
         let total_nodes = consents_deleted + credentials_deleted + audit_events_deleted + 1;
@@ -554,7 +550,7 @@ impl GdprManager {
         let lpg = self.store.inner();
         let consent_nodes = lpg.nodes_by_label(LABEL_CONSENT);
         let _now = now_iso();
-        let mut expired_count = 0;
+        let expired_count = 0;
 
         for consent_nid in consent_nodes {
             // Skip already-erased/expired
@@ -606,14 +602,10 @@ impl GdprManager {
     pub fn expire_consent(&self, target_node_id: NodeId) -> bool {
         let lpg = self.store.inner();
         if let Some(consent_nid) = self.find_consent_node(target_node_id) {
+            lpg.set_node_property(consent_nid, consent_props::LEVEL, Value::from("expired"));
             lpg.set_node_property(
                 consent_nid,
-                consent_props::LEVEL.into(),
-                Value::from("expired"),
-            );
-            lpg.set_node_property(
-                consent_nid,
-                consent_props::UPDATED_AT.into(),
+                consent_props::UPDATED_AT,
                 Value::from(now_iso().as_str()),
             );
             true
@@ -632,10 +624,10 @@ impl GdprManager {
         let lpg = self.store.inner();
 
         for (target, eid) in lpg.edges_from(target_node_id, Direction::Outgoing) {
-            if let Some(et) = lpg.edge_type(eid) {
-                if et.as_str() == EDGE_HAS_CONSENT {
-                    return Some(target);
-                }
+            if let Some(et) = lpg.edge_type(eid)
+                && et.as_str() == EDGE_HAS_CONSENT
+            {
+                return Some(target);
             }
         }
         None
@@ -645,10 +637,10 @@ impl GdprManager {
     fn find_user_node(&self, user_id: &str) -> Option<NodeId> {
         let lpg = self.store.inner();
         for nid in lpg.nodes_by_label(LABEL_USER) {
-            if let Some(Value::String(id)) = lpg.get_node_property(nid, &props::ID.into()) {
-                if id.as_str() == user_id {
-                    return Some(nid);
-                }
+            if let Some(Value::String(id)) = lpg.get_node_property(nid, &props::ID.into())
+                && id.as_str() == user_id
+            {
+                return Some(nid);
             }
         }
         None
@@ -660,10 +652,10 @@ impl GdprManager {
         let lpg = self.store.inner();
         let mut targets = Vec::new();
         for (target, eid) in lpg.edges_from(src, Direction::Outgoing) {
-            if let Some(et) = lpg.edge_type(eid) {
-                if et.as_str() == edge_type {
-                    targets.push(target);
-                }
+            if let Some(et) = lpg.edge_type(eid)
+                && et.as_str() == edge_type
+            {
+                targets.push(target);
             }
         }
         targets

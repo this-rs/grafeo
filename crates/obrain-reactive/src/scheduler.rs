@@ -247,7 +247,7 @@ mod native {
                         // Drain remaining events from the channel
                         while let Ok(batch) = rx.try_recv() {
                             if batch.context.is_some() {
-                                current_context = batch.context.clone();
+                                current_context.clone_from(&batch.context);
                             }
                             for event in batch.events {
                                 buffer.push(event);
@@ -269,7 +269,7 @@ mod native {
                     match result {
                         Ok(batch) => {
                             if batch.context.is_some() {
-                                current_context = batch.context.clone();
+                                current_context.clone_from(&batch.context);
                             }
                             for event in batch.events {
                                 buffer.push(event);

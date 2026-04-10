@@ -14,7 +14,11 @@ use obrain_common::types::NodeId;
 use obrain_core::graph::lpg::LpgStore;
 
 use crate::error::{IamError, IamResult};
-use crate::model::*;
+use crate::model::{
+    AuditEvent, Credential, CredentialType, EDGE_HAS_CREDENTIAL, EDGE_HAS_POLICY, EDGE_HAS_ROLE,
+    EDGE_PERFORMED, EntityStatus, LABEL_AUDIT_EVENT, LABEL_CREDENTIAL, LABEL_POLICY, LABEL_ROLE,
+    LABEL_USER, Policy, PolicyDecision, PolicyEffect, Role, User, props,
+};
 use crate::orn::Orn;
 use crate::policy;
 
@@ -96,10 +100,9 @@ impl IamStore {
         for nid in candidates {
             if let Some(Value::String(name)) =
                 self.store.get_node_property(nid, &props::NAME.into())
+                && name.as_str() == username
             {
-                if name.as_str() == username {
-                    return self.node_to_user(nid);
-                }
+                return self.node_to_user(nid);
             }
         }
         None
@@ -156,10 +159,10 @@ impl IamStore {
     pub fn find_role_by_name(&self, name: &str) -> Option<Role> {
         let candidates = self.store.nodes_by_label(LABEL_ROLE);
         for nid in candidates {
-            if let Some(Value::String(n)) = self.store.get_node_property(nid, &props::NAME.into()) {
-                if n.as_str() == name {
-                    return self.node_to_role(nid);
-                }
+            if let Some(Value::String(n)) = self.store.get_node_property(nid, &props::NAME.into())
+                && n.as_str() == name
+            {
+                return self.node_to_role(nid);
             }
         }
         None
@@ -462,10 +465,9 @@ impl IamStore {
         for nid in candidates {
             if let Some(Value::String(nid_val)) =
                 self.store.get_node_property(nid, &props::ID.into())
+                && nid_val.as_str() == id
             {
-                if nid_val.as_str() == id {
-                    return Some(nid);
-                }
+                return Some(nid);
             }
         }
         None
@@ -479,10 +481,9 @@ impl IamStore {
         for nid in candidates {
             if let Some(Value::String(name)) =
                 self.store.get_node_property(nid, &props::NAME.into())
+                && name.as_str() == username
             {
-                if name.as_str() == username {
-                    return Some(nid);
-                }
+                return Some(nid);
             }
         }
         None
@@ -492,12 +493,11 @@ impl IamStore {
     fn has_edge(&self, src: NodeId, dst: NodeId, edge_type: &str) -> bool {
         use obrain_core::graph::Direction;
         for (target, eid) in self.store.edges_from(src, Direction::Outgoing) {
-            if target == dst {
-                if let Some(et) = self.store.edge_type(eid) {
-                    if et.as_str() == edge_type {
-                        return true;
-                    }
-                }
+            if target == dst
+                && let Some(et) = self.store.edge_type(eid)
+                && et.as_str() == edge_type
+            {
+                return true;
             }
         }
         false
@@ -508,10 +508,10 @@ impl IamStore {
         use obrain_core::graph::Direction;
         let mut targets = Vec::new();
         for (target, eid) in self.store.edges_from(src, Direction::Outgoing) {
-            if let Some(et) = self.store.edge_type(eid) {
-                if et.as_str() == edge_type {
-                    targets.push(target);
-                }
+            if let Some(et) = self.store.edge_type(eid)
+                && et.as_str() == edge_type
+            {
+                targets.push(target);
             }
         }
         targets
