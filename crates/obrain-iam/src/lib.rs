@@ -19,12 +19,23 @@
 //! ## Modules
 //!
 //! - [`orn`] — ORN parsing, formatting, pattern matching, wildcard, variable substitution
+//! - [`model`] — Domain types (User, Role, Policy, Credential, AuditEvent)
+//! - [`store`] — Graph-backed IAM store (CRUD operations on `__system` graph)
+//! - [`policy`] — Policy evaluation engine (allow/deny/implicit-deny)
 //! - [`error`] — IAM error types
 
 #![deny(unsafe_code)]
 
 pub mod error;
+pub mod model;
 pub mod orn;
+pub mod policy;
+pub mod store;
 
-pub use error::IamError;
+pub use error::{IamError, IamResult};
+pub use model::{
+    AuditEvent, Credential, CredentialType, EntityStatus, Policy, PolicyDecision, PolicyEffect,
+    Role, User,
+};
 pub use orn::Orn;
+pub use store::IamStore;
