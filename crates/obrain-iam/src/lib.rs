@@ -27,6 +27,7 @@
 #![deny(unsafe_code)]
 
 pub mod error;
+pub mod gdpr;
 pub mod model;
 pub mod orn;
 pub mod policy;
