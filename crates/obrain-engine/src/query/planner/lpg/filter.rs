@@ -897,25 +897,19 @@ impl super::Planner {
         target_variable: &str,
     ) -> Option<(String, NodeId)> {
         // id(n) = 42
-        if let Some(var) = Self::extract_id_variable(left) {
-            if var == target_variable {
-                if let LogicalExpression::Literal(Value::Int64(id)) = right {
-                    if *id >= 0 {
+        if let Some(var) = Self::extract_id_variable(left)
+            && var == target_variable
+                && let LogicalExpression::Literal(Value::Int64(id)) = right
+                    && *id >= 0 {
                         return Some((var.to_string(), NodeId::new(*id as u64)));
                     }
-                }
-            }
-        }
         // 42 = id(n)
-        if let Some(var) = Self::extract_id_variable(right) {
-            if var == target_variable {
-                if let LogicalExpression::Literal(Value::Int64(id)) = left {
-                    if *id >= 0 {
+        if let Some(var) = Self::extract_id_variable(right)
+            && var == target_variable
+                && let LogicalExpression::Literal(Value::Int64(id)) = left
+                    && *id >= 0 {
                         return Some((var.to_string(), NodeId::new(*id as u64)));
                     }
-                }
-            }
-        }
         None
     }
 
@@ -1025,8 +1019,7 @@ impl super::Planner {
                 // Use extract_id_variable to handle both LogicalExpression::Id and FunctionCall("id", [Variable])
                 if let (Some(var), LogicalExpression::Literal(Value::Int64(val))) =
                     (Self::extract_id_variable(left), right.as_ref())
-                {
-                    if var == target_variable {
+                    && var == target_variable {
                         *variable = var.to_string();
                         return match op {
                             BinaryOp::Lt => {
@@ -1048,11 +1041,9 @@ impl super::Planner {
                             _ => false,
                         };
                     }
-                }
                 if let (LogicalExpression::Literal(Value::Int64(val)), Some(var)) =
                     (left.as_ref(), Self::extract_id_variable(right))
-                {
-                    if var == target_variable {
+                    && var == target_variable {
                         *variable = var.to_string();
                         return match op {
                             BinaryOp::Lt => {
@@ -1074,7 +1065,6 @@ impl super::Planner {
                             _ => false,
                         };
                     }
-                }
                 false
             }
             _ => false,

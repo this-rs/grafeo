@@ -539,11 +539,10 @@ impl super::Planner {
         match agg.input.as_ref() {
             LogicalOperator::NodeScan(scan) if scan.input.is_none() => {
                 // If COUNT(var), verify var matches the scan variable
-                if let Some(var) = count_var {
-                    if var != scan.variable {
+                if let Some(var) = count_var
+                    && var != scan.variable {
                         return None;
                     }
-                }
 
                 let count = if let Some(label) = &scan.label {
                     // MATCH (n:Label) RETURN count(n) → O(1) label count

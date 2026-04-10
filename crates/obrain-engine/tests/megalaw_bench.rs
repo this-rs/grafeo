@@ -237,7 +237,7 @@ fn bench_megalaw_retrieval_steps() {
             rc = r.row_count();
         }
         let mean = times.iter().sum::<f64>() / times.len() as f64;
-        let min = times.iter().cloned().fold(f64::INFINITY, f64::min);
+        let min = times.iter().copied().fold(f64::INFINITY, f64::min);
         println!(
             "    {:<60} mean: {:>8.1}ms  min: {:>8.1}ms  [{} rows]",
             q, mean, min, rc
@@ -285,7 +285,7 @@ fn bench_megalaw_retrieval_steps() {
         // Phase E: physical planning
         let start = Instant::now();
         let planner = obrain_engine::query::Planner::new(
-            Arc::clone(&active) as Arc<dyn obrain_core::graph::traits::GraphStoreMut>
+            Arc::clone(active) as Arc<dyn obrain_core::graph::traits::GraphStoreMut>
         );
         let physical = planner.plan(&optimized).unwrap();
         let plan_ms = start.elapsed().as_secs_f64() * 1000.0;
@@ -337,11 +337,10 @@ fn bench_megalaw_retrieval_steps() {
                     .get(&name_key)
                     .or_else(|| node.properties.get(&title_key))
                     .and_then(|v| v.as_str());
-                if let Some(n) = name {
-                    if n.to_lowercase().contains("contract") {
+                if let Some(n) = name
+                    && n.to_lowercase().contains("contract") {
                         matched += 1;
                     }
-                }
             }
         }
         let p1_ms = start.elapsed().as_secs_f64() * 1000.0;
@@ -359,13 +358,11 @@ fn bench_megalaw_retrieval_steps() {
         let batch_ms = start.elapsed().as_secs_f64() * 1000.0;
         let mut matched2 = 0usize;
         for val in &name_values {
-            if let Some(v) = val {
-                if let Some(s) = v.as_str() {
-                    if s.to_lowercase().contains("contract") {
+            if let Some(v) = val
+                && let Some(s) = v.as_str()
+                    && s.to_lowercase().contains("contract") {
                         matched2 += 1;
                     }
-                }
-            }
         }
         let total_p2_ms = start.elapsed().as_secs_f64() * 1000.0;
         println!(

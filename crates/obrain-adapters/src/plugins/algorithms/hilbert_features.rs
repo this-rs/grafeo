@@ -301,12 +301,11 @@ pub fn try_load_hilbert_features_from_store(
     let mut loaded = 0usize;
 
     for (i, val) in batch.into_iter().enumerate() {
-        if let Some(Value::Vector(v)) = val {
-            if v.len() == dims {
+        if let Some(Value::Vector(v)) = val
+            && v.len() == dims {
                 features.insert(node_ids[i], v.to_vec());
                 loaded += 1;
             }
-        }
     }
 
     let actual_coverage = loaded as f64 / n as f64;

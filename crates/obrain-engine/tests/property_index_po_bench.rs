@@ -22,8 +22,8 @@ fn measure<F: FnMut() -> R, R>(mut f: F, iterations: usize) -> (f64, f64, f64, f
     }
     let mean = times.iter().sum::<f64>() / times.len() as f64;
     let variance = times.iter().map(|t| (t - mean).powi(2)).sum::<f64>() / times.len() as f64;
-    let min = times.iter().cloned().fold(f64::INFINITY, f64::min);
-    let max = times.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let min = times.iter().copied().fold(f64::INFINITY, f64::min);
+    let max = times.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     (mean, variance.sqrt(), min, max)
 }
 
