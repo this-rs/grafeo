@@ -101,8 +101,9 @@ cdc = []  # Change data capture with history API
 reactive = []  # Reactive mutation event bus (post-commit hook for obrain-reactive)
 cognitive = ["reactive", "dep:obrain-reactive", "dep:obrain-cognitive", "obrain-cognitive/cognitive"]  # Cognitive engine (energy + synapses)
 cognitive-fabric = ["cognitive", "obrain-cognitive/cognitive-fabric"]  # + fabric, co-change, GDS
-cognitive-full = ["cognitive", "obrain-cognitive/cognitive-full"]  # All cognitive subsystems
+cognitive-full = ["cognitive", "kernel", "obrain-cognitive/cognitive-full"]  # All cognitive subsystems
 cognitive-engram = ["cognitive", "obrain-cognitive/engram"]  # Engram subsystem (Layer 0: Hebbian + FSRS)
+kernel = ["cognitive", "obrain-cognitive/kernel"]  # Kernel embeddings (reactive, incremental)
 metrics = []  # Lock-free query, transaction, and session metrics
 embed = ["ort", "tokenizers", "hf-hub"]  # ONNX embedding generation (opt-in, adds ~17MB)
 

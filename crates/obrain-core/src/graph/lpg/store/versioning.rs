@@ -23,14 +23,44 @@ impl LpgStore {
     #[doc(hidden)]
     #[cfg(not(feature = "tiered-storage"))]
     pub fn discard_uncommitted_versions(&self, transaction_id: TransactionId) {
-        // Remove uncommitted node versions
-        {
+        // Remove uncommitted node versions, collecting IDs of fully-removed nodes
+        // so we can clean up the label_index afterwards.
+        let removed_node_ids: Vec<NodeId> = {
             let mut nodes = self.nodes.write();
             for chain in nodes.values_mut() {
                 chain.remove_versions_by(transaction_id);
             }
             // Remove completely empty chains (no versions left)
-            nodes.retain(|_, chain| !chain.is_empty());
+            let mut removed = Vec::new();
+            nodes.retain(|&id, chain| {
+                if chain.is_empty() {
+                    removed.push(id);
+                    false
+                } else {
+                    true
+                }
+            });
+            removed
+        };
+
+        // Clean up label_index and node_labels for removed nodes
+        if !removed_node_ids.is_empty() {
+            // Remove from label_index: scan each label's set and purge removed IDs
+            {
+                let mut label_index = self.label_index.write();
+                for set in label_index.iter_mut() {
+                    for &nid in &removed_node_ids {
+                        set.remove(&nid);
+                    }
+                }
+            }
+            // Remove from node_labels mapping
+            {
+                let mut node_labels = self.node_labels.write();
+                for &nid in &removed_node_ids {
+                    node_labels.remove(&nid);
+                }
+            }
         }
 
         // Remove uncommitted edge versions
@@ -63,12 +93,34 @@ impl LpgStore {
         edge_ids: &[EdgeId],
     ) {
         if !node_ids.is_empty() {
-            let mut nodes = self.nodes.write();
-            for &nid in node_ids {
-                if let Some(chain) = nodes.get_mut(&nid) {
-                    chain.remove_versions_by(transaction_id);
-                    if chain.is_empty() {
-                        nodes.remove(&nid);
+            let mut removed = Vec::new();
+            {
+                let mut nodes = self.nodes.write();
+                for &nid in node_ids {
+                    if let Some(chain) = nodes.get_mut(&nid) {
+                        chain.remove_versions_by(transaction_id);
+                        if chain.is_empty() {
+                            nodes.remove(&nid);
+                            removed.push(nid);
+                        }
+                    }
+                }
+            }
+
+            // Clean up label_index and node_labels for fully-removed nodes
+            if !removed.is_empty() {
+                {
+                    let mut label_index = self.label_index.write();
+                    for set in label_index.iter_mut() {
+                        for &nid in &removed {
+                            set.remove(&nid);
+                        }
+                    }
+                }
+                {
+                    let mut node_labels = self.node_labels.write();
+                    for &nid in &removed {
+                        node_labels.remove(&nid);
                     }
                 }
             }
@@ -94,14 +146,40 @@ impl LpgStore {
     #[doc(hidden)]
     #[cfg(feature = "tiered-storage")]
     pub fn discard_uncommitted_versions(&self, transaction_id: TransactionId) {
-        // Remove uncommitted node versions
-        {
+        // Remove uncommitted node versions, collecting removed node IDs
+        let removed_node_ids: Vec<NodeId> = {
             let mut versions = self.node_versions.write();
             for index in versions.values_mut() {
                 index.remove_versions_by(transaction_id);
             }
-            // Remove completely empty indexes (no versions left)
-            versions.retain(|_, index| !index.is_empty());
+            let mut removed = Vec::new();
+            versions.retain(|&id, index| {
+                if index.is_empty() {
+                    removed.push(id);
+                    false
+                } else {
+                    true
+                }
+            });
+            removed
+        };
+
+        // Clean up label_index and node_labels for removed nodes
+        if !removed_node_ids.is_empty() {
+            {
+                let mut label_index = self.label_index.write();
+                for set in label_index.iter_mut() {
+                    for &nid in &removed_node_ids {
+                        set.remove(&nid);
+                    }
+                }
+            }
+            {
+                let mut node_labels = self.node_labels.write();
+                for &nid in &removed_node_ids {
+                    node_labels.remove(&nid);
+                }
+            }
         }
 
         // Remove uncommitted edge versions
@@ -131,12 +209,34 @@ impl LpgStore {
         edge_ids: &[EdgeId],
     ) {
         if !node_ids.is_empty() {
-            let mut versions = self.node_versions.write();
-            for &nid in node_ids {
-                if let Some(index) = versions.get_mut(&nid) {
-                    index.remove_versions_by(transaction_id);
-                    if index.is_empty() {
-                        versions.remove(&nid);
+            let mut removed = Vec::new();
+            {
+                let mut versions = self.node_versions.write();
+                for &nid in node_ids {
+                    if let Some(index) = versions.get_mut(&nid) {
+                        index.remove_versions_by(transaction_id);
+                        if index.is_empty() {
+                            versions.remove(&nid);
+                            removed.push(nid);
+                        }
+                    }
+                }
+            }
+
+            // Clean up label_index and node_labels for fully-removed nodes
+            if !removed.is_empty() {
+                {
+                    let mut label_index = self.label_index.write();
+                    for set in label_index.iter_mut() {
+                        for &nid in &removed {
+                            set.remove(&nid);
+                        }
+                    }
+                }
+                {
+                    let mut node_labels = self.node_labels.write();
+                    for &nid in &removed {
+                        node_labels.remove(&nid);
                     }
                 }
             }
@@ -166,17 +266,37 @@ impl LpgStore {
     #[cfg(not(feature = "tiered-storage"))]
     #[doc(hidden)]
     pub fn finalize_version_epochs(&self, transaction_id: TransactionId, commit_epoch: EpochId) {
+        // Count PENDING creates (non-deleted) before finalizing, then
+        // increment atomic counters directly — avoids a full O(n) recompute.
+        let mut new_nodes: i64 = 0;
+        let mut new_edges: i64 = 0;
         {
             let mut nodes = self.nodes.write();
             for chain in nodes.values_mut() {
+                // A chain with a PENDING version by this tx that is NOT deleted
+                // = a new node being committed.
+                if chain.has_pending_by(transaction_id) && !chain.is_deleted() {
+                    new_nodes += 1;
+                }
                 chain.finalize_epochs(transaction_id, commit_epoch);
             }
         }
         {
             let mut edges = self.edges.write();
             for chain in edges.values_mut() {
+                if chain.has_pending_by(transaction_id) && !chain.is_deleted() {
+                    new_edges += 1;
+                }
                 chain.finalize_epochs(transaction_id, commit_epoch);
             }
+        }
+
+        // Increment counters for newly committed nodes/edges
+        if new_nodes > 0 {
+            self.live_node_count.fetch_add(new_nodes, Ordering::Relaxed);
+        }
+        if new_edges > 0 {
+            self.live_edge_count.fetch_add(new_edges, Ordering::Relaxed);
         }
 
         // Finalize PENDING epochs in property and label version logs
@@ -198,17 +318,32 @@ impl LpgStore {
     #[cfg(feature = "tiered-storage")]
     #[doc(hidden)]
     pub fn finalize_version_epochs(&self, transaction_id: TransactionId, commit_epoch: EpochId) {
+        let mut new_nodes: i64 = 0;
+        let mut new_edges: i64 = 0;
         {
             let mut versions = self.node_versions.write();
             for index in versions.values_mut() {
+                if index.has_pending_by(transaction_id) && !index.is_deleted() {
+                    new_nodes += 1;
+                }
                 index.finalize_epochs(transaction_id, commit_epoch);
             }
         }
         {
             let mut versions = self.edge_versions.write();
             for index in versions.values_mut() {
+                if index.has_pending_by(transaction_id) && !index.is_deleted() {
+                    new_edges += 1;
+                }
                 index.finalize_epochs(transaction_id, commit_epoch);
             }
+        }
+
+        if new_nodes > 0 {
+            self.live_node_count.fetch_add(new_nodes, Ordering::Relaxed);
+        }
+        if new_edges > 0 {
+            self.live_edge_count.fetch_add(new_edges, Ordering::Relaxed);
         }
 
         // Finalize PENDING epochs in property and label version logs

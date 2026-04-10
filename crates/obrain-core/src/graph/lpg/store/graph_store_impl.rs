@@ -118,6 +118,10 @@ impl GraphStore for LpgStore {
         LpgStore::node_count(self)
     }
 
+    fn node_count_by_label(&self, label: &str) -> usize {
+        LpgStore::node_count_by_label(self, label)
+    }
+
     fn edge_count(&self) -> usize {
         LpgStore::edge_count(self)
     }

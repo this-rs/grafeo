@@ -4,8 +4,9 @@ use super::{
     AggregateOp, Arc, Direction, Error, ExpandDirection, ExpandStep, ExpressionPredicate,
     FactorizedAggregate, FactorizedAggregateOperator, FilterExpression, FilterOperator, GraphStore,
     HashAggregateOperator, HashMap, LazyFactorizedChainOperator, LogicalAggregateFunction,
-    LogicalExpression, LogicalType, Operator, PhysicalAggregateExpr, ProjectExpr, ProjectOperator,
-    Result, SimpleAggregateOperator, convert_aggregate_function, expression_to_string,
+    LogicalExpression, LogicalOperator, LogicalType, Operator, PhysicalAggregateExpr, ProjectExpr,
+    ProjectOperator, Result, ScalarResultOperator, SimpleAggregateOperator, Value,
+    convert_aggregate_function, expression_to_string,
 };
 
 impl super::Planner {
@@ -14,6 +15,13 @@ impl super::Planner {
         &self,
         agg: &AggregateOp,
     ) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        // === Fast-path: COUNT without scan ===
+        // MATCH (n) RETURN count(n) → store.node_count() in O(1)
+        // MATCH ()-[r]->() RETURN count(r) → store.edge_count() in O(1)
+        if let Some(result) = self.try_plan_count_shortcut(agg) {
+            return Ok(result);
+        }
+
         // Check if we can use factorized aggregation for speedup
         // Conditions:
         // 1. Factorized execution is enabled
@@ -489,6 +497,78 @@ impl super::Planner {
                     Error::Internal(format!("Cannot resolve expression to column: {:?}", expr))
                 })
             }
+        }
+    }
+
+    /// Tries to optimize simple COUNT aggregates to avoid scanning.
+    ///
+    /// Patterns optimized:
+    /// - `MATCH (n) RETURN count(n)` → `store.node_count()`
+    /// - `MATCH (n:Label) RETURN count(n)` → `store.nodes_by_label("Label").len()`
+    /// - `MATCH (n) RETURN count(*)` → `store.node_count()`
+    ///
+    /// Returns `Some((operator, columns))` if optimized, `None` otherwise.
+    fn try_plan_count_shortcut(
+        &self,
+        agg: &AggregateOp,
+    ) -> Option<(Box<dyn Operator>, Vec<String>)> {
+        // Only optimize: no GROUP BY, no HAVING, single aggregate
+        if !agg.group_by.is_empty() || agg.having.is_some() || agg.aggregates.len() != 1 {
+            return None;
+        }
+
+        let agg_expr = &agg.aggregates[0];
+
+        // Must be COUNT or CountNonNull
+        let is_count = matches!(
+            agg_expr.function,
+            LogicalAggregateFunction::Count | LogicalAggregateFunction::CountNonNull
+        );
+        if !is_count {
+            return None;
+        }
+
+        // The expression must be None (COUNT(*)) or a Variable matching the scan variable
+        let count_var = match &agg_expr.expression {
+            None => None, // COUNT(*)
+            Some(LogicalExpression::Variable(var)) => Some(var.as_str()),
+            _ => return None, // COUNT(n.prop) etc. — can't shortcut
+        };
+
+        // Input must be a simple NodeScan (no filter, no input)
+        match agg.input.as_ref() {
+            LogicalOperator::NodeScan(scan) if scan.input.is_none() => {
+                // If COUNT(var), verify var matches the scan variable
+                if let Some(var) = count_var
+                    && var != scan.variable
+                {
+                    return None;
+                }
+
+                let count = if let Some(label) = &scan.label {
+                    // MATCH (n:Label) RETURN count(n) → O(1) label count
+                    self.store.node_count_by_label(label) as i64
+                } else {
+                    // MATCH (n) RETURN count(n) → node_count()
+                    self.store.node_count() as i64
+                };
+
+                let alias = agg_expr
+                    .alias
+                    .clone()
+                    .unwrap_or_else(|| format!("{:?}(...)", agg_expr.function).to_lowercase());
+
+                // Register as scalar column
+                self.scalar_columns.borrow_mut().insert(alias.clone());
+
+                let op: Box<dyn Operator> = Box::new(ScalarResultOperator::new(
+                    vec![Value::Int64(count)],
+                    vec![LogicalType::Int64],
+                ));
+
+                Some((op, vec![alias]))
+            }
+            _ => None,
         }
     }
 }

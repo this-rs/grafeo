@@ -403,6 +403,22 @@ impl ObrainDB {
                                             "Restored {} epoch files (wal_sequence={seq}), replaying WAL delta",
                                             store.epoch_store().mmap_block_count()
                                         );
+                                        // Sync the store's current_epoch to the highest
+                                        // restored epoch so MVCC visibility works correctly.
+                                        let max_epoch = store
+                                            .epoch_store()
+                                            .mmap_blocks()
+                                            .read()
+                                            .keys()
+                                            .copied()
+                                            .max();
+                                        if let Some(epoch) = max_epoch {
+                                            store.sync_epoch(epoch);
+                                            tracing::info!(
+                                                ?epoch,
+                                                "store epoch synced to restored max"
+                                            );
+                                        }
                                         seq
                                     }
                                 }
@@ -493,8 +509,13 @@ impl ObrainDB {
             let scheduler =
                 obrain_reactive::Scheduler::new(&bus, obrain_reactive::BatchConfig::default());
             let config = obrain_cognitive::CognitiveConfig::default();
-            let engine =
-                obrain_cognitive::CognitiveEngineBuilder::from_config(&config).build(&scheduler);
+            #[allow(unused_mut)]
+            let mut builder = obrain_cognitive::CognitiveEngineBuilder::from_config(&config);
+            #[cfg(feature = "kernel")]
+            {
+                builder = builder.with_lpg_store(Arc::clone(&store));
+            }
+            let engine = builder.build(&scheduler);
             (
                 Some(Arc::new(engine) as Arc<dyn obrain_cognitive::CognitiveEngine>),
                 Some(scheduler),

@@ -126,7 +126,7 @@ pub use activation::{
 #[cfg(feature = "co-change")]
 pub use co_change::{CoChangeConfig, CoChangeDetector, CoChangeRelation, CoChangeStore};
 
-pub use config::CognitiveConfig;
+pub use config::{CognitiveConfig, KernelConfigToml};
 
 #[cfg(feature = "energy")]
 pub use energy::{

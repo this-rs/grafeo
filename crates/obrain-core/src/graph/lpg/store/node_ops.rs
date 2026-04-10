@@ -161,7 +161,13 @@ impl LpgStore {
 
         let chain = VersionChain::with_initial(record, version_epoch, transaction_id);
         self.nodes.write().insert(id, chain);
-        self.live_node_count.fetch_add(1, Ordering::Relaxed);
+
+        // Only increment the live counter for immediately-visible (SYSTEM)
+        // nodes.  Transactional (PENDING) nodes become visible at commit,
+        // which sets needs_stats_recompute to resync the counter.
+        if transaction_id == TransactionId::SYSTEM {
+            self.live_node_count.fetch_add(1, Ordering::Relaxed);
+        }
 
         // Track the mutation
         self.track_event(crate::change_tracker::GraphEvent::NodeCreated {
@@ -221,7 +227,12 @@ impl LpgStore {
             versions.insert(id, VersionIndex::with_initial(hot_ref));
         }
 
-        self.live_node_count.fetch_add(1, Ordering::Relaxed);
+        // Only increment the live counter for immediately-visible (SYSTEM)
+        // nodes.  Transactional (PENDING) nodes become visible at commit,
+        // which sets needs_stats_recompute to resync the counter.
+        if transaction_id == TransactionId::SYSTEM {
+            self.live_node_count.fetch_add(1, Ordering::Relaxed);
+        }
 
         // Track the mutation
         self.track_event(crate::change_tracker::GraphEvent::NodeCreated {
@@ -307,6 +318,60 @@ impl LpgStore {
         // The record is immutable once allocated in the arena.
 
         id
+    }
+
+    /// Gets only the labels of a node without loading any properties.
+    ///
+    /// This is O(1) vs O(properties) for `get_node()` — use this when you
+    /// only need to check which labels a node has (e.g., BFS structural
+    /// filtering, label matching).
+    #[must_use]
+    pub fn get_node_labels(&self, id: NodeId) -> Option<Vec<arcstr::ArcStr>> {
+        // Check existence
+        #[cfg(not(feature = "tiered-storage"))]
+        {
+            let nodes = self.nodes.read();
+            let chain = nodes.get(&id)?;
+            let record = chain.visible_at(self.current_epoch())?;
+            if record.is_deleted() {
+                return None;
+            }
+        }
+        #[cfg(feature = "tiered-storage")]
+        {
+            let versions = self.node_versions.read();
+            let index = versions.get(&id)?;
+            let version_ref = index.visible_at(self.current_epoch())?;
+            let record = self.read_node_record(&version_ref)?;
+            if record.is_deleted() {
+                return None;
+            }
+        }
+
+        let id_to_label = self.id_to_label.read();
+        let node_labels = self.node_labels.read();
+
+        let mut labels = Vec::new();
+        #[cfg(not(feature = "temporal"))]
+        if let Some(label_ids) = node_labels.get(&id) {
+            for &label_id in label_ids {
+                if let Some(label) = id_to_label.get(label_id as usize) {
+                    labels.push(label.clone());
+                }
+            }
+        }
+        #[cfg(feature = "temporal")]
+        if let Some(log) = node_labels.get(&id)
+            && let Some(label_ids) = log.latest()
+        {
+            for &label_id in label_ids {
+                if let Some(label) = id_to_label.get(label_id as usize) {
+                    labels.push(label.clone());
+                }
+            }
+        }
+
+        Some(labels)
     }
 
     /// Gets a node by ID (latest visible version).
@@ -1074,10 +1139,29 @@ impl LpgStore {
             .collect()
     }
 
-    /// Returns the number of nodes (non-deleted at current epoch).
+    /// Returns the number of live (non-deleted) nodes.
+    ///
+    /// O(1) — reads the atomic counter maintained by create/delete operations.
+    /// The counter is initialized during WAL/epoch restore and kept in sync
+    /// via `fetch_add`/`fetch_sub` on every mutation.
+    ///
+    /// After a transaction rollback, the counter may be stale; this method
+    /// transparently triggers a full recomputation to resync it.
+    #[must_use]
+    pub fn node_count(&self) -> usize {
+        if self.needs_stats_recompute.load(Ordering::Relaxed) {
+            self.ensure_statistics_fresh();
+        }
+        self.live_node_count.load(Ordering::Relaxed).max(0) as usize
+    }
+
+    /// Returns the number of nodes via full scan (expensive, O(n)).
+    ///
+    /// Use only for validation or when the atomic counter may be stale
+    /// (e.g., after a crash recovery without proper counter initialization).
     #[must_use]
     #[cfg(not(feature = "tiered-storage"))]
-    pub fn node_count(&self) -> usize {
+    pub fn node_count_scan(&self) -> usize {
         let epoch = self.current_epoch();
         self.nodes
             .read()
@@ -1087,11 +1171,11 @@ impl LpgStore {
             .count()
     }
 
-    /// Returns the number of nodes (non-deleted at current epoch).
+    /// Returns the number of nodes via full scan (expensive, O(n)).
     /// (Tiered storage version)
     #[must_use]
     #[cfg(feature = "tiered-storage")]
-    pub fn node_count(&self) -> usize {
+    pub fn node_count_scan(&self) -> usize {
         let epoch = self.current_epoch();
         let versions = self.node_versions.read();
         versions

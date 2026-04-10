@@ -1766,3 +1766,51 @@ fn test_freeze_persist_restore_roundtrip() {
         n3.as_u64()
     );
 }
+
+#[test]
+fn test_savepoint_rollback_label_count() {
+    use obrain_common::types::EpochId;
+
+    let store = LpgStore::new().unwrap();
+    let tx = TransactionId::new(1);
+    let epoch = store.current_epoch();
+
+    // CREATE (:A) inside transaction
+    let _a_id = store.create_node_versioned(&["A"], epoch, tx);
+    assert_eq!(
+        store.node_count_by_label("A"),
+        1,
+        "A visible in label_index after create"
+    );
+
+    // SAVEPOINT: capture next_node_id
+    let sp_next_node = store.peek_next_node_id();
+
+    // CREATE (:B) inside transaction after savepoint
+    let _b_id = store.create_node_versioned(&["B"], epoch, tx);
+    assert_eq!(
+        store.node_count_by_label("B"),
+        1,
+        "B visible in label_index after create"
+    );
+
+    // ROLLBACK TO SAVEPOINT: discard B
+    let node_ids: Vec<_> = (sp_next_node..store.peek_next_node_id())
+        .map(obrain_common::types::NodeId::new)
+        .collect();
+    store.discard_entities_by_id(tx, &node_ids, &[]);
+    assert_eq!(
+        store.node_count_by_label("B"),
+        0,
+        "B removed from label_index after discard"
+    );
+
+    // COMMIT
+    let commit_epoch = EpochId::new(epoch.as_u64() + 1);
+    store.finalize_version_epochs(tx, commit_epoch);
+
+    // After commit: A should be 1, B should be 0
+    assert_eq!(store.node_count_by_label("A"), 1, "A count after commit");
+    assert_eq!(store.node_count_by_label("B"), 0, "B count after commit");
+    assert_eq!(store.node_count(), 1, "total node count after commit");
+}

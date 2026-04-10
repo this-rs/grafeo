@@ -426,10 +426,40 @@ impl<Id: EntityId> PropertyStorage<Id> {
     #[must_use]
     pub fn get_batch(&self, ids: &[Id], key: &PropertyKey) -> Vec<Option<Value>> {
         let columns = self.columns.read();
-        match columns.get(key) {
+        let mut results: Vec<Option<Value>> = match columns.get(key) {
             Some(col) => ids.iter().map(|&id| col.get(id)).collect(),
             None => vec![None; ids.len()],
+        };
+        drop(columns);
+
+        // Fallback to cold storage for entries not found in hot
+        #[cfg(feature = "tiered-storage")]
+        {
+            let has_missing = results.iter().any(|v| v.is_none());
+            if has_missing {
+                let cold = self.cold_epochs.read();
+                if !cold.is_empty() {
+                    let key_str = key.as_str();
+                    for (idx, result) in results.iter_mut().enumerate() {
+                        if result.is_none() {
+                            for block in cold.iter().rev() {
+                                if let Some(props) =
+                                    block.get_entity_properties(ids[idx].as_u64(), self.is_edge)
+                                {
+                                    *result = props
+                                        .into_iter()
+                                        .find(|(k, _)| k.as_str() == key_str)
+                                        .map(|(_, v)| v);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
+
+        results
     }
 
     /// Gets all properties for multiple entities efficiently.

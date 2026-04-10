@@ -143,6 +143,12 @@ pub trait GraphStore: Send + Sync {
     /// Returns the total number of non-deleted nodes.
     fn node_count(&self) -> usize;
 
+    /// Returns the count of nodes with a specific label (O(1)).
+    fn node_count_by_label(&self, label: &str) -> usize {
+        // Default fallback (O(n) via nodes_by_label), overridden by LpgStore
+        self.nodes_by_label(label).len()
+    }
+
     /// Returns the total number of non-deleted edges.
     fn edge_count(&self) -> usize;
 

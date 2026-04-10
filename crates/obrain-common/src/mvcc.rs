@@ -219,6 +219,22 @@ impl<T> VersionChain<T> {
         self.versions.iter().any(|v| v.info.deleted_by == Some(tx))
     }
 
+    /// Checks if this chain has a PENDING version created by the given transaction.
+    #[must_use]
+    pub fn has_pending_by(&self, tx: TransactionId) -> bool {
+        self.versions
+            .iter()
+            .any(|v| v.info.created_by == tx && v.info.created_epoch == EpochId::PENDING)
+    }
+
+    /// Checks if the latest version of this chain is deleted.
+    #[must_use]
+    pub fn is_deleted(&self) -> bool {
+        self.versions
+            .front()
+            .is_some_and(|v| v.info.deleted_epoch.is_some())
+    }
+
     /// Removes all versions created by the given transaction.
     ///
     /// Used for rollback to discard uncommitted changes.
@@ -807,6 +823,21 @@ impl VersionIndex {
     pub fn deleted_by(&self, tx: TransactionId) -> bool {
         self.hot.iter().any(|v| v.deleted_by == Some(tx))
             || self.cold.iter().any(|v| v.deleted_by == Some(tx))
+    }
+
+    /// Checks if this index has a PENDING version created by the given transaction.
+    #[must_use]
+    pub fn has_pending_by(&self, tx: TransactionId) -> bool {
+        self.hot
+            .iter()
+            .any(|v| v.created_by == tx && v.epoch == EpochId::PENDING)
+    }
+
+    /// Checks if the latest version is deleted.
+    #[must_use]
+    pub fn is_deleted(&self) -> bool {
+        self.hot.first().is_some_and(|v| v.deleted_epoch.is_some())
+            || (self.hot.is_empty() && self.cold.first().is_some_and(|v| v.deleted_by.is_some()))
     }
 
     /// Removes all versions created by the given transaction (for rollback).

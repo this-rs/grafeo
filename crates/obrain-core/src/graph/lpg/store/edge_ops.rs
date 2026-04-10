@@ -81,8 +81,13 @@ impl LpgStore {
             backward.add_edge(dst, src, id);
         }
 
-        self.live_edge_count.fetch_add(1, Ordering::Relaxed);
-        self.increment_edge_type_count(type_id);
+        // Only increment the live counter for immediately-visible (SYSTEM)
+        // edges.  Transactional (PENDING) edges become visible at commit,
+        // which sets needs_stats_recompute to resync the counter.
+        if transaction_id == TransactionId::SYSTEM {
+            self.live_edge_count.fetch_add(1, Ordering::Relaxed);
+            self.increment_edge_type_count(type_id);
+        }
 
         // Track the mutation
         self.track_event(crate::change_tracker::GraphEvent::EdgeCreated {
@@ -147,8 +152,13 @@ impl LpgStore {
             backward.add_edge(dst, src, id);
         }
 
-        self.live_edge_count.fetch_add(1, Ordering::Relaxed);
-        self.increment_edge_type_count(type_id);
+        // Only increment the live counter for immediately-visible (SYSTEM)
+        // edges.  Transactional (PENDING) edges become visible at commit,
+        // which sets needs_stats_recompute to resync the counter.
+        if transaction_id == TransactionId::SYSTEM {
+            self.live_edge_count.fetch_add(1, Ordering::Relaxed);
+            self.increment_edge_type_count(type_id);
+        }
 
         // Track the mutation
         self.track_event(crate::change_tracker::GraphEvent::EdgeCreated {
@@ -640,10 +650,28 @@ impl LpgStore {
         }
     }
 
-    /// Returns the number of edges (non-deleted at current epoch).
+    /// Returns the number of live (non-deleted) edges.
+    ///
+    /// O(1) — reads the atomic counter maintained by create/delete operations.
+    /// The counter is initialized during WAL/epoch restore and kept in sync
+    /// via `fetch_add`/`fetch_sub` on every mutation.
+    ///
+    /// After a transaction rollback, the counter may be stale; this method
+    /// transparently triggers a full recomputation to resync it.
+    #[must_use]
+    pub fn edge_count(&self) -> usize {
+        if self.needs_stats_recompute.load(Ordering::Relaxed) {
+            self.ensure_statistics_fresh();
+        }
+        self.live_edge_count.load(Ordering::Relaxed).max(0) as usize
+    }
+
+    /// Returns the number of edges via full scan (expensive, O(m)).
+    ///
+    /// Use only for validation or when the atomic counter may be stale.
     #[must_use]
     #[cfg(not(feature = "tiered-storage"))]
-    pub fn edge_count(&self) -> usize {
+    pub fn edge_count_scan(&self) -> usize {
         let epoch = self.current_epoch();
         self.edges
             .read()
@@ -653,11 +681,11 @@ impl LpgStore {
             .count()
     }
 
-    /// Returns the number of edges (non-deleted at current epoch).
+    /// Returns the number of edges via full scan (expensive, O(m)).
     /// (Tiered storage version)
     #[must_use]
     #[cfg(feature = "tiered-storage")]
-    pub fn edge_count(&self) -> usize {
+    pub fn edge_count_scan(&self) -> usize {
         let epoch = self.current_epoch();
         let versions = self.edge_versions.read();
         versions

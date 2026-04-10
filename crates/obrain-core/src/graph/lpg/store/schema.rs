@@ -325,6 +325,21 @@ impl LpgStore {
         Vec::new()
     }
 
+    /// Returns the number of nodes with a specific label.
+    ///
+    /// O(1) — reads the label index set size without allocating a Vec.
+    #[must_use]
+    pub fn node_count_by_label(&self, label: &str) -> usize {
+        let label_to_id = self.label_to_id.read();
+        if let Some(&label_id) = label_to_id.get(label) {
+            let index = self.label_index.read();
+            if let Some(set) = index.get(label_id as usize) {
+                return set.len();
+            }
+        }
+        0
+    }
+
     /// Returns the number of distinct labels in the store.
     #[must_use]
     pub fn label_count(&self) -> usize {

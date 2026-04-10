@@ -9,7 +9,7 @@
 //! - Expression and operator conversion functions
 //! - Reusable operator builders (in the common submodule)
 //!
-//! Model-specific planning lives in [`lpg`] and [`rdf`].
+//! Model-specific planning lives in [`lpg`] and `rdf` (feature-gated).
 
 pub(crate) mod common;
 pub mod lpg;
