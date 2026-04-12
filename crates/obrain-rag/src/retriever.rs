@@ -10,7 +10,7 @@
 //! 4. **Node extraction**: extract text content from all activated nodes.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, LazyLock, RwLock};
+use std::sync::{Arc, RwLock};
 
 use obrain_cognitive::activation::{SpreadConfig, SynapseActivationSource, spread};
 use obrain_cognitive::engram::{
@@ -280,6 +280,55 @@ impl InvertedIndex {
         scored
     }
 
+    /// Query the index scoped to nodes with a specific label.
+    ///
+    /// Like `query()` but only returns nodes that have the given label.
+    /// Cardinality dampening is skipped since we're already filtering by label.
+    fn query_by_label(&self, terms: &[String], label: &str, max_results: usize) -> Vec<(NodeId, f64)> {
+        if terms.is_empty() || self.total_nodes == 0 {
+            return Vec::new();
+        }
+
+        let lower_label = label.to_lowercase();
+
+        // Get nodes with this label
+        let label_nodes: HashSet<NodeId> = self
+            .label_entries
+            .get(&lower_label)
+            .map(|ids| ids.iter().copied().collect())
+            .unwrap_or_default();
+
+        if label_nodes.is_empty() {
+            return Vec::new();
+        }
+
+        let n = self.total_nodes as f64;
+        let mut node_scores: HashMap<NodeId, f64> = HashMap::new();
+
+        for term in terms {
+            if let Some(entries) = self.text_entries.get(term.as_str()) {
+                let df = self
+                    .term_doc_freq
+                    .get(term.as_str())
+                    .copied()
+                    .unwrap_or(1)
+                    .max(1) as f64;
+                let idf = (n / df).ln().max(0.1);
+
+                for entry in entries {
+                    if label_nodes.contains(&entry.node_id) {
+                        *node_scores.entry(entry.node_id).or_default() += entry.tf * idf;
+                    }
+                }
+            }
+        }
+
+        let mut scored: Vec<(NodeId, f64)> = node_scores.into_iter().collect();
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(max_results);
+        scored
+    }
+
     /// Return diagnostics: (total_nodes, distinct_terms, label_distribution).
     fn stats(&self) -> (usize, usize, Vec<(String, usize, f64)>) {
         let total = self.total_nodes.max(1);
@@ -489,6 +538,36 @@ impl EngramRetriever {
         idx.stats()
     }
 
+    // ── Label-scoped recall ───────────────────────────────────
+
+    /// Recall nodes with a specific label, bypassing engram matching.
+    ///
+    /// This is the direct-match path: queries the inverted index for nodes
+    /// of the given label and returns them with full content extracted.
+    /// Useful for recalling raw messages (`CogMessage`) or identity nodes
+    /// (`Identity`) that haven't yet formed into engrams.
+    pub fn recall_by_label(
+        &self,
+        query: &str,
+        label: &str,
+        max_results: usize,
+    ) -> Vec<RetrievedNode> {
+        let terms = tokenize_query(query);
+        let idx = self.index.read().unwrap();
+        let hits = idx.query_by_label(&terms, label, max_results);
+        drop(idx);
+
+        let mut nodes = Vec::with_capacity(hits.len());
+        for (node_id, score) in hits {
+            if let Some(mut retrieved) = self.extract_node_content(node_id) {
+                retrieved.score = score;
+                retrieved.source = RetrievalSource::DirectMatch { text_score: score };
+                nodes.push(retrieved);
+            }
+        }
+        nodes
+    }
+
     // ── Internal helpers ────────────────────────────────────────
 
     /// Convert a text query into cue NodeIds using the inverted index.
@@ -621,19 +700,21 @@ impl Retriever for EngramRetriever {
             }
         }
 
-        // Also add cue nodes themselves (direct text matches)
+        // Also add cue nodes themselves (direct text matches).
+        // These are first-class results — no score penalty.
+        // When no engrams exist, direct matches ARE the recall path.
         for (node_id, text_score) in &cue_nodes {
-            if !activated_nodes.contains_key(node_id) {
-                activated_nodes.insert(
-                    *node_id,
-                    (
-                        *text_score * 0.5,
-                        RetrievalSource::SpreadingActivation {
-                            depth: 0,
-                            activation: *text_score,
-                        },
-                    ),
-                );
+            let direct_source = RetrievalSource::DirectMatch {
+                text_score: *text_score,
+            };
+            match activated_nodes.get(node_id) {
+                Some((existing_score, _)) if *existing_score >= *text_score => {
+                    // Engram/activation already found this with higher score — keep it
+                }
+                _ => {
+                    // Direct match is stronger or node not yet seen — use it
+                    activated_nodes.insert(*node_id, (*text_score, direct_source));
+                }
             }
         }
 
@@ -680,35 +761,15 @@ impl Retriever for EngramRetriever {
 // Tokenization
 // ─────────────────────────────────────────────────────────────────
 
-/// Static stop word set — built once, reused across all queries.
-static STOP_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-    [
-        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
-        "do", "does", "did", "will", "would", "could", "should", "may", "might", "shall", "can",
-        "need", "dare", "ought", "used", "to", "of", "in", "for", "on", "with", "at", "by", "from",
-        "as", "into", "through", "during", "before", "after", "above", "below", "between", "out",
-        "off", "over", "under", "again", "further", "then", "once", "and", "but", "or", "nor",
-        "not", "so", "yet", "both", "each", "few", "more", "most", "other", "some", "such", "no",
-        "than", "too", "very", "just", "about", "also", "this", "that", "these", "those", "it",
-        "its", "my", "your", "his", "her", "our", "their", "what", "which", "who", "whom", "where",
-        "when", "why", "how", // French stop words
-        "le", "la", "les", "un", "une", "des", "du", "de", "et", "est", "en", "que", "qui", "dans",
-        "pour", "par", "sur", "avec", "ce", "se", "son", "sa", "ses", "au", "aux", "ne", "pas",
-        "plus", "sont", "ont", "fait", "être", "avoir", "il", "elle", "nous", "vous", "ils",
-        "elles", "je", "tu", "on", "me", "te", "lui", "leur", "y", "si", "ou", "mais", "donc",
-        "car", "ni", "quels", "quelles", "quel", "quelle", "comment", "combien",
-    ]
-    .into_iter()
-    .collect()
-});
-
 /// Tokenize a text string into lowercase normalized terms.
 ///
-/// Filters out common stop words (EN+FR) and very short terms (< 2 chars).
+/// No stop word filtering — everything emerges from the graph.
+/// TF-IDF naturally dampens common terms (high document frequency → low IDF).
+/// Only single characters are filtered as noise.
 fn tokenize_text(text: &str) -> Vec<String> {
     text.to_lowercase()
         .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
-        .filter(|w| w.len() >= 2 && !STOP_WORDS.contains(w))
+        .filter(|w| w.len() >= 2)
         .map(String::from)
         .collect()
 }
