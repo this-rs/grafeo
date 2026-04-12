@@ -15,7 +15,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::store_trait::{
-    OptionalGraphStore, PROP_SYNAPSE_WEIGHT, load_edge_f64, persist_edge_f64,
+    OptionalGraphStore, PROP_SYNAPSE_LAST_REINFORCED_EPOCH, PROP_SYNAPSE_REINFORCEMENT_COUNT,
+    PROP_SYNAPSE_WEIGHT, epoch_to_instant, load_edge_f64, now_epoch_secs, persist_edge_f64,
 };
 
 // ---------------------------------------------------------------------------
@@ -307,16 +308,27 @@ impl SynapseStore {
         self.touch(key);
         self.maybe_evict();
 
-        // Write-through
+        // Write-through: persist weight, epoch timestamp, and reinforcement count
         if let Some(eid) = self.ensure_edge(key)
             && let Some(gs) = &self.graph_store
             && let Some(entry) = self.synapses.get(&key)
         {
+            // Persist the raw weight (not decayed) — decay will be recomputed
+            // from the epoch timestamp on reload.
+            persist_edge_f64(gs.as_ref(), eid, PROP_SYNAPSE_WEIGHT, entry.raw_weight());
+            // Persist epoch so cross-session decay works correctly.
+            let epoch_secs = now_epoch_secs();
             persist_edge_f64(
                 gs.as_ref(),
                 eid,
-                PROP_SYNAPSE_WEIGHT,
-                entry.current_weight(),
+                PROP_SYNAPSE_LAST_REINFORCED_EPOCH,
+                epoch_secs,
+            );
+            persist_edge_f64(
+                gs.as_ref(),
+                eid,
+                PROP_SYNAPSE_REINFORCEMENT_COUNT,
+                entry.reinforcement_count as f64,
             );
         }
     }
@@ -362,9 +374,30 @@ impl SynapseStore {
         // Lazy load from graph: look for an edge with the synapse weight
         if let Some(gs) = &self.graph_store
             && let Some(eid) = self.edge_ids.get(&key)
-            && let Some(weight) = load_edge_f64(gs.as_ref(), *eid, PROP_SYNAPSE_WEIGHT)
+            && let Some(raw_weight) = load_edge_f64(gs.as_ref(), *eid, PROP_SYNAPSE_WEIGHT)
         {
-            let syn = Synapse::new(key.0, key.1, weight, self.config.default_half_life);
+            // Reconstruct the Instant from the persisted epoch timestamp.
+            // If epoch is missing, treat as "just now" (no cross-session decay).
+            let last_reinforced = epoch_to_instant(
+                load_edge_f64(gs.as_ref(), *eid, PROP_SYNAPSE_LAST_REINFORCED_EPOCH),
+            );
+            let reinforcement_count = load_edge_f64(
+                gs.as_ref(),
+                *eid,
+                PROP_SYNAPSE_REINFORCEMENT_COUNT,
+            )
+            .map(|v| v as u32)
+            .unwrap_or(1);
+
+            let syn = Synapse {
+                source: key.0,
+                target: key.1,
+                weight: raw_weight,
+                reinforcement_count,
+                last_reinforced,
+                created_at: last_reinforced, // best approximation
+                half_life: self.config.default_half_life,
+            };
             self.synapses.insert(key, syn.clone());
             self.touch(key);
             self.maybe_evict();

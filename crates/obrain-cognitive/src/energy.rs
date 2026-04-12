@@ -15,7 +15,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::store_trait::{OptionalGraphStore, PROP_ENERGY, load_node_f64, persist_node_f64};
+use crate::store_trait::{
+    OptionalGraphStore, PROP_ENERGY, PROP_ENERGY_LAST_ACTIVATED_EPOCH, epoch_to_instant,
+    load_node_f64, now_epoch_secs, persist_node_f64,
+};
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -272,17 +275,24 @@ impl EnergyStore {
             }
             return energy;
         }
-        // Lazy load from graph store
+        // Lazy load from graph store — reconstruct Instant from epoch
         if let Some(gs) = &self.graph_store
-            && let Some(val) = load_node_f64(gs.as_ref(), node_id, PROP_ENERGY)
+            && let Some(raw_energy) = load_node_f64(gs.as_ref(), node_id, PROP_ENERGY)
         {
-            let mut ne = NodeEnergy::new(val, self.config.default_half_life);
+            let last_activated = epoch_to_instant(load_node_f64(
+                gs.as_ref(),
+                node_id,
+                PROP_ENERGY_LAST_ACTIVATED_EPOCH,
+            ));
+            let mut ne =
+                NodeEnergy::new_at(raw_energy, self.config.default_half_life, last_activated);
             if self.max_cache_entries > 0 {
                 ne.last_access = self.access_counter.fetch_add(1, Ordering::Relaxed);
             }
+            let current = ne.current_energy();
             self.nodes.insert(node_id, ne);
             self.maybe_evict();
-            return val;
+            return current;
         }
         0.0
     }
@@ -306,11 +316,17 @@ impl EnergyStore {
             });
         self.touch(node_id);
         self.maybe_evict();
-        // Write-through
+        // Write-through: persist raw energy + epoch timestamp
         if let Some(gs) = &self.graph_store
             && let Some(entry) = self.nodes.get(&node_id)
         {
-            persist_node_f64(gs.as_ref(), node_id, PROP_ENERGY, entry.current_energy());
+            persist_node_f64(gs.as_ref(), node_id, PROP_ENERGY, entry.raw_energy());
+            persist_node_f64(
+                gs.as_ref(),
+                node_id,
+                PROP_ENERGY_LAST_ACTIVATED_EPOCH,
+                now_epoch_secs(),
+            );
         }
     }
 
