@@ -40,7 +40,8 @@ mod formation;
 pub use formation::compute_modulated_min_episodes;
 #[cfg(feature = "engram")]
 pub use formation::{
-    CoActivationDetector, EngramFormationTrigger, FormationConfig, HebbianWithSurprise,
+    CoActivationDetector, CoActivationSnapshot, EngramFormationTrigger, FormationConfig,
+    FormationSnapshot, HebbianWithSurprise,
 };
 
 #[cfg(feature = "engram")]
