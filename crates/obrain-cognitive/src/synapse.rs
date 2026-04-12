@@ -365,43 +365,69 @@ impl SynapseStore {
     /// Returns the synapse between two nodes, if it exists.
     ///
     /// If not in the hot cache, attempts lazy load from the graph store.
+    /// When `edge_ids` is empty (e.g. after process restart), uses graph
+    /// traversal to locate the SYNAPSE edge between the two nodes.
     pub fn get_synapse(&self, a: NodeId, b: NodeId) -> Option<Synapse> {
         let key = SynapseKey::new(a, b);
         if let Some(s) = self.synapses.get(&key) {
             self.touch(key);
             return Some(s.clone());
         }
-        // Lazy load from graph: look for an edge with the synapse weight
-        if let Some(gs) = &self.graph_store
-            && let Some(eid) = self.edge_ids.get(&key)
-            && let Some(raw_weight) = load_edge_f64(gs.as_ref(), *eid, PROP_SYNAPSE_WEIGHT)
-        {
-            // Reconstruct the Instant from the persisted epoch timestamp.
-            // If epoch is missing, treat as "just now" (no cross-session decay).
-            let last_reinforced = epoch_to_instant(
-                load_edge_f64(gs.as_ref(), *eid, PROP_SYNAPSE_LAST_REINFORCED_EPOCH),
-            );
-            let reinforcement_count = load_edge_f64(
-                gs.as_ref(),
-                *eid,
-                PROP_SYNAPSE_REINFORCEMENT_COUNT,
-            )
-            .map(|v| v as u32)
-            .unwrap_or(1);
+        // Try known edge_id first, then fall back to graph traversal
+        let gs = self.graph_store.as_ref()?;
+        let eid = if let Some(eid) = self.edge_ids.get(&key) {
+            *eid
+        } else {
+            // Traverse outgoing edges from the lower-id node to find the SYNAPSE edge
+            self.find_synapse_edge(gs.as_ref(), key)?
+        };
+        let raw_weight = load_edge_f64(gs.as_ref(), eid, PROP_SYNAPSE_WEIGHT)?;
 
-            let syn = Synapse {
-                source: key.0,
-                target: key.1,
-                weight: raw_weight,
-                reinforcement_count,
-                last_reinforced,
-                created_at: last_reinforced, // best approximation
-                half_life: self.config.default_half_life,
-            };
-            self.synapses.insert(key, syn.clone());
-            self.touch(key);
-            self.maybe_evict();
-            return Some(syn);
+        // Reconstruct the Instant from the persisted epoch timestamp.
+        // If epoch is missing, treat as "just now" (no cross-session decay).
+        let last_reinforced = epoch_to_instant(
+            load_edge_f64(gs.as_ref(), eid, PROP_SYNAPSE_LAST_REINFORCED_EPOCH),
+        );
+        let reinforcement_count = load_edge_f64(
+            gs.as_ref(),
+            eid,
+            PROP_SYNAPSE_REINFORCEMENT_COUNT,
+        )
+        .map(|v| v as u32)
+        .unwrap_or(1);
+
+        let syn = Synapse {
+            source: key.0,
+            target: key.1,
+            weight: raw_weight,
+            reinforcement_count,
+            last_reinforced,
+            created_at: last_reinforced, // best approximation
+            half_life: self.config.default_half_life,
+        };
+        self.synapses.insert(key, syn.clone());
+        self.touch(key);
+        self.maybe_evict();
+        Some(syn)
+    }
+
+    /// Searches the graph for a SYNAPSE edge between the two nodes of a key.
+    /// Populates `edge_ids` on hit for subsequent fast lookups.
+    fn find_synapse_edge(
+        &self,
+        gs: &dyn obrain_core::graph::GraphStoreMut,
+        key: SynapseKey,
+    ) -> Option<EdgeId> {
+        use obrain_core::graph::Direction;
+        for (target, eid) in gs.edges_from(key.0, Direction::Outgoing) {
+            if target == key.1 {
+                if let Some(etype) = gs.edge_type(eid) {
+                    if etype.as_str() == SYNAPSE_EDGE_TYPE {
+                        self.edge_ids.insert(key, eid);
+                        return Some(eid);
+                    }
+                }
+            }
         }
         None
     }
