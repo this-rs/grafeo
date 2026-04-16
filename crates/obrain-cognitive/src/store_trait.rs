@@ -180,7 +180,9 @@ pub fn epoch_to_instant(epoch_opt: Option<f64>) -> std::time::Instant {
         .as_secs_f64();
 
     let delta_secs = (now_epoch - epoch_secs).clamp(0.0, 365.0 * 86400.0);
-    Instant::now() - std::time::Duration::from_secs_f64(delta_secs)
+    Instant::now()
+        .checked_sub(std::time::Duration::from_secs_f64(delta_secs))
+        .unwrap()
 }
 
 /// Returns the current time as epoch-seconds (`f64`).

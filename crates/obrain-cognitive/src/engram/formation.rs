@@ -90,8 +90,11 @@ pub struct CoActivationDetector {
 /// Serializable snapshot of a [`CoActivationDetector`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoActivationSnapshot {
+    /// Co-occurrence pairs: ((node_a_raw, node_b_raw), count).
     pub co_occurrences: Vec<((u64, u64), u32)>,
+    /// Total number of episodes observed.
     pub episode_count: u32,
+    /// Per-node episode counts: (node_raw, count).
     pub node_episodes: Vec<(u64, u32)>,
 }
 
@@ -455,8 +458,11 @@ impl HebbianWithSurprise {
 /// Serializable snapshot of a [`HebbianWithSurprise`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FormationSnapshot {
+    /// Co-activation detector snapshot.
     pub detector: CoActivationSnapshot,
+    /// Accumulated surprise score.
     pub surprise_accumulator: f64,
+    /// Total activation count.
     pub activation_count: u32,
 }
 

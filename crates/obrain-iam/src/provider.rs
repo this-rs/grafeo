@@ -593,6 +593,7 @@ impl ObrainIamProvider {
                 if et.as_str() != EDGE_HAS_CREDENTIAL {
                     continue;
                 }
+                #[allow(clippy::collapsible_if)]
                 if let Some(Value::String(t)) =
                     store.get_node_property(target, &props::CRED_TYPE.into())
                 {

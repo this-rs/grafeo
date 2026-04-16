@@ -613,6 +613,7 @@ impl ChunkedAdjacency {
     /// Used by `bulk_create_edges_with_id` to avoid creating intermediate Vec allocations.
     /// The caller is responsible for updating `edge_count` via `add_to_edge_count`.
     #[doc(hidden)]
+    #[allow(dead_code)]
     pub(crate) fn lists_write(
         &self,
     ) -> parking_lot::RwLockWriteGuard<'_, FxHashMap<NodeId, AdjacencyList>> {
@@ -621,6 +622,7 @@ impl ChunkedAdjacency {
 
     /// Adds to the edge count atomically. Used with `lists_write()`.
     #[doc(hidden)]
+    #[allow(dead_code)]
     pub(crate) fn add_to_edge_count(&self, count: usize) {
         self.edge_count.fetch_add(count, Ordering::Relaxed);
     }

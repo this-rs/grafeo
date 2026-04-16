@@ -977,7 +977,7 @@ mod tests {
         assert_eq!(export.roles, vec!["reader"]);
         assert_eq!(export.consents.len(), 1);
         assert_eq!(export.consents[0].level, ConsentLevel::Community);
-        assert!(export.audit_events.len() >= 1);
+        assert!(!export.audit_events.is_empty());
 
         // Should be JSON-serializable
         let json = serde_json::to_string_pretty(&export).unwrap();

@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use crate::store_trait::{
     OptionalGraphStore, PROP_QUERY_AFFINITY, PROP_QUERY_AFFINITY_COUNT, load_node_f64,
-    now_epoch_secs, persist_node_f64,
+    persist_node_f64,
 };
 
 // ---------------------------------------------------------------------------
@@ -151,15 +151,15 @@ impl AffinityStore {
 
         let mut entry = self.nodes.entry(node_id).or_insert_with(|| {
             // Cold start: check graph store first
-            if let Some(gs) = &self.graph_store {
-                if let Some(existing) = load_node_f64(gs.as_ref(), node_id, PROP_QUERY_AFFINITY) {
-                    let count = load_node_f64(gs.as_ref(), node_id, PROP_QUERY_AFFINITY_COUNT)
-                        .unwrap_or(1.0) as u32;
-                    return NodeAffinity {
-                        score: existing,
-                        count,
-                    };
-                }
+            if let Some(gs) = &self.graph_store
+                && let Some(existing) = load_node_f64(gs.as_ref(), node_id, PROP_QUERY_AFFINITY)
+            {
+                let count = load_node_f64(gs.as_ref(), node_id, PROP_QUERY_AFFINITY_COUNT)
+                    .unwrap_or(1.0) as u32;
+                return NodeAffinity {
+                    score: existing,
+                    count,
+                };
             }
             // True cold start — first interaction, no EMA needed
             NodeAffinity::new(cosine_sim)
@@ -215,14 +215,13 @@ impl AffinityStore {
             }
         } else {
             self.lazy_load(node_id)
-                .map(|v| if v < self.config.min_affinity { 0.0 } else { v })
-                .unwrap_or(0.0)
+                .map_or(0.0, |v| if v < self.config.min_affinity { 0.0 } else { v })
         }
     }
 
     /// Get the update count for a node.
     pub fn get_count(&self, node_id: NodeId) -> u32 {
-        self.nodes.get(&node_id).map(|e| e.count).unwrap_or(0)
+        self.nodes.get(&node_id).map_or(0, |e| e.count)
     }
 
     /// Get the top-K nodes by affinity score.

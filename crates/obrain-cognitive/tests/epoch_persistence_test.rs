@@ -17,7 +17,7 @@ fn epoch_to_instant_none_returns_now() {
     let result = epoch_to_instant(None);
     let after = Instant::now();
     // Should be essentially "now" — within a few ms
-    assert!(result >= before - Duration::from_millis(10));
+    assert!(result >= before.checked_sub(Duration::from_millis(10)).unwrap());
     assert!(result <= after + Duration::from_millis(10));
 }
 
@@ -46,7 +46,7 @@ fn epoch_to_instant_clock_skew_future_clamped() {
     let after = Instant::now();
 
     // Should be clamped to ~now (delta = 0), not in the future
-    assert!(result >= before - Duration::from_millis(10));
+    assert!(result >= before.checked_sub(Duration::from_millis(10)).unwrap());
     assert!(result <= after + Duration::from_millis(10));
 }
 

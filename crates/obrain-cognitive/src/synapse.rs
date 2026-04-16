@@ -437,8 +437,7 @@ impl SynapseStore {
             PROP_SYNAPSE_LAST_REINFORCED_EPOCH,
         ));
         let reinforcement_count = load_edge_f64(gs.as_ref(), eid, PROP_SYNAPSE_REINFORCEMENT_COUNT)
-            .map(|v| v as u32)
-            .unwrap_or(1);
+            .map_or(1, |v| v as u32);
 
         let syn = Synapse {
             source: key.0,
@@ -464,13 +463,12 @@ impl SynapseStore {
     ) -> Option<EdgeId> {
         use obrain_core::graph::Direction;
         for (target, eid) in gs.edges_from(key.0, Direction::Outgoing) {
-            if target == key.1 {
-                if let Some(etype) = gs.edge_type(eid) {
-                    if etype.as_str() == SYNAPSE_EDGE_TYPE {
-                        self.edge_ids.insert(key, eid);
-                        return Some(eid);
-                    }
-                }
+            if target == key.1
+                && let Some(etype) = gs.edge_type(eid)
+                && etype.as_str() == SYNAPSE_EDGE_TYPE
+            {
+                self.edge_ids.insert(key, eid);
+                return Some(eid);
             }
         }
         None

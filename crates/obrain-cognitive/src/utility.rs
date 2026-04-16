@@ -77,6 +77,7 @@ impl NodeUtility {
         }
     }
 
+    #[allow(dead_code)]
     fn new_at(score: f64, half_life: Duration, at: Instant) -> Self {
         Self {
             score,
@@ -219,14 +220,13 @@ impl UtilityStore {
         } else {
             // Try lazy load from graph
             self.lazy_load(node_id)
-                .map(|v| if v < self.config.min_utility { 0.0 } else { v })
-                .unwrap_or(0.0)
+                .map_or(0.0, |v| if v < self.config.min_utility { 0.0 } else { v })
         }
     }
 
     /// Get the access count for a node.
     pub fn get_count(&self, node_id: NodeId) -> u32 {
-        self.nodes.get(&node_id).map(|e| e.count).unwrap_or(0)
+        self.nodes.get(&node_id).map_or(0, |e| e.count)
     }
 
     /// Prune nodes with utility below the minimum threshold.
@@ -348,7 +348,9 @@ mod tests {
         let store = UtilityStore::new(config);
 
         // Insert a utility "in the past"
-        let past = Instant::now() - Duration::from_secs(3600);
+        let past = Instant::now()
+            .checked_sub(Duration::from_secs(3600))
+            .unwrap();
         store.nodes.insert(
             nid(1),
             NodeUtility::new_at(0.8, Duration::from_secs(3600), past),
@@ -375,7 +377,9 @@ mod tests {
         let store = UtilityStore::new(config);
 
         // Insert an old entry that should have decayed below threshold
-        let past = Instant::now() - Duration::from_secs(100); // ~100 half-lives
+        let past = Instant::now()
+            .checked_sub(Duration::from_secs(100))
+            .unwrap(); // ~100 half-lives
         store.nodes.insert(
             nid(1),
             NodeUtility::new_at(0.5, Duration::from_secs(1), past),

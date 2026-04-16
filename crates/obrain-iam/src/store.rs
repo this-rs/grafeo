@@ -686,8 +686,7 @@ impl IamStore {
     fn node_to_user(&self, nid: NodeId) -> Option<User> {
         let must_change = self
             .get_str(nid, props::MUST_CHANGE_PASSWORD)
-            .map(|s| s == "true")
-            .unwrap_or(false);
+            .is_some_and(|s| s == "true");
 
         Some(User {
             id: self.get_str(nid, props::ID)?,
