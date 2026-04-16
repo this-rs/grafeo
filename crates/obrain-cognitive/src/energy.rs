@@ -379,9 +379,11 @@ impl EnergyStore {
         use crate::synapse::CrossBaseNodeId;
         self.cross_base
             .iter()
-            .map(|entry: dashmap::mapref::multiple::RefMulti<'_, CrossBaseNodeId, f64>| {
-                (entry.key().clone(), *entry.value())
-            })
+            .map(
+                |entry: dashmap::mapref::multiple::RefMulti<'_, CrossBaseNodeId, f64>| {
+                    (entry.key().clone(), *entry.value())
+                },
+            )
             .collect()
     }
 
@@ -393,12 +395,16 @@ impl EnergyStore {
         let mut entries: Vec<(NodeId, f64)> = self
             .cross_base
             .iter()
-            .filter(|entry: &dashmap::mapref::multiple::RefMulti<'_, CrossBaseNodeId, f64>| {
-                entry.key().db_id == db_id
-            })
-            .map(|entry: dashmap::mapref::multiple::RefMulti<'_, CrossBaseNodeId, f64>| {
-                (entry.key().node_id, *entry.value())
-            })
+            .filter(
+                |entry: &dashmap::mapref::multiple::RefMulti<'_, CrossBaseNodeId, f64>| {
+                    entry.key().db_id == db_id
+                },
+            )
+            .map(
+                |entry: dashmap::mapref::multiple::RefMulti<'_, CrossBaseNodeId, f64>| {
+                    (entry.key().node_id, *entry.value())
+                },
+            )
             .collect();
         entries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         entries.truncate(limit);

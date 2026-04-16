@@ -284,7 +284,12 @@ impl InvertedIndex {
     ///
     /// Like `query()` but only returns nodes that have the given label.
     /// Cardinality dampening is skipped since we're already filtering by label.
-    fn query_by_label(&self, terms: &[String], label: &str, max_results: usize) -> Vec<(NodeId, f64)> {
+    fn query_by_label(
+        &self,
+        terms: &[String],
+        label: &str,
+        max_results: usize,
+    ) -> Vec<(NodeId, f64)> {
         if terms.is_empty() || self.total_nodes == 0 {
             return Vec::new();
         }

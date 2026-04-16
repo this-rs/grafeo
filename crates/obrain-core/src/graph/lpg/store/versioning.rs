@@ -821,8 +821,11 @@ impl LpgStore {
 
         // Phase 1: Resolve all label IDs and collect label data
         // (get_or_create_label_id has its own lock internally)
-        let mut node_label_data: Vec<(NodeId, obrain_common::utils::hash::FxHashSet<u32>, Vec<u32>)> =
-            Vec::with_capacity(nodes.len());
+        let mut node_label_data: Vec<(
+            NodeId,
+            obrain_common::utils::hash::FxHashSet<u32>,
+            Vec<u32>,
+        )> = Vec::with_capacity(nodes.len());
         for (id, labels) in nodes {
             let mut label_set = obrain_common::utils::hash::FxHashSet::default();
             let mut label_ids = Vec::with_capacity(labels.len());
@@ -840,7 +843,10 @@ impl LpgStore {
             for (id, _, label_ids) in &node_label_data {
                 for &label_id in label_ids {
                     if index.len() <= label_id as usize {
-                        index.resize_with(label_id as usize + 1, obrain_common::utils::hash::FxHashMap::default);
+                        index.resize_with(
+                            label_id as usize + 1,
+                            obrain_common::utils::hash::FxHashMap::default,
+                        );
                     }
                     index[label_id as usize].insert(*id, ());
                 }
@@ -878,17 +884,15 @@ impl LpgStore {
 
         // Update next_node_id to max + 1
         if let Some(max_id) = nodes.iter().map(|(id, _)| id.as_u64()).max() {
-            let _ = self.next_node_id.fetch_update(
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-                |current| {
+            let _ = self
+                .next_node_id
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
                     if max_id >= current {
                         Some(max_id + 1)
                     } else {
                         None
                     }
-                },
-            );
+                });
         }
 
         Ok(())
@@ -1000,17 +1004,15 @@ impl LpgStore {
 
         // Update next_edge_id to max + 1 (tracked during the loop)
         if !edges.is_empty() {
-            let _ = self.next_edge_id.fetch_update(
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-                |current| {
+            let _ = self
+                .next_edge_id
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
                     if max_id >= current {
                         Some(max_id + 1)
                     } else {
                         None
                     }
-                },
-            );
+                });
         }
 
         Ok(())
@@ -1100,17 +1102,15 @@ impl LpgStore {
             .fetch_add(nodes.len() as i64, Ordering::Relaxed);
 
         if let Some(max_id) = nodes.iter().map(|(id, _)| id.as_u64()).max() {
-            let _ = self.next_node_id.fetch_update(
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-                |current| {
+            let _ = self
+                .next_node_id
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
                     if max_id >= current {
                         Some(max_id + 1)
                     } else {
                         None
                     }
-                },
-            );
+                });
         }
         Ok(())
     }
@@ -1178,17 +1178,15 @@ impl LpgStore {
         }
 
         if let Some(max_id) = edges.iter().map(|(id, _, _, _)| id.as_u64()).max() {
-            let _ = self.next_edge_id.fetch_update(
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-                |current| {
+            let _ = self
+                .next_edge_id
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
                     if max_id >= current {
                         Some(max_id + 1)
                     } else {
                         None
                     }
-                },
-            );
+                });
         }
         Ok(())
     }

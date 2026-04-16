@@ -431,16 +431,14 @@ impl SynapseStore {
 
         // Reconstruct the Instant from the persisted epoch timestamp.
         // If epoch is missing, treat as "just now" (no cross-session decay).
-        let last_reinforced = epoch_to_instant(
-            load_edge_f64(gs.as_ref(), eid, PROP_SYNAPSE_LAST_REINFORCED_EPOCH),
-        );
-        let reinforcement_count = load_edge_f64(
+        let last_reinforced = epoch_to_instant(load_edge_f64(
             gs.as_ref(),
             eid,
-            PROP_SYNAPSE_REINFORCEMENT_COUNT,
-        )
-        .map(|v| v as u32)
-        .unwrap_or(1);
+            PROP_SYNAPSE_LAST_REINFORCED_EPOCH,
+        ));
+        let reinforcement_count = load_edge_f64(gs.as_ref(), eid, PROP_SYNAPSE_REINFORCEMENT_COUNT)
+            .map(|v| v as u32)
+            .unwrap_or(1);
 
         let syn = Synapse {
             source: key.0,

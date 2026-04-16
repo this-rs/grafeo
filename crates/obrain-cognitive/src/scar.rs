@@ -435,7 +435,11 @@ impl ScarStore {
     /// instead. The scar summary is persisted after the operation.
     pub fn boost_scar(&self, node_id: NodeId, intensity: f64, reason: ScarReason) {
         let boosted = if let Some(mut scars) = self.scars.get_mut(&node_id) {
-            if let Some(scar) = scars.iter_mut().rev().find(|s| !s.is_healed() && s.reason == reason) {
+            if let Some(scar) = scars
+                .iter_mut()
+                .rev()
+                .find(|s| !s.is_healed() && s.reason == reason)
+            {
                 scar.intensity = (scar.intensity + intensity).min(1.0);
                 true
             } else {

@@ -528,8 +528,8 @@ impl ObrainIamProvider {
         self.remove_password_credential(user_id);
 
         let cred_id = Self::generate_id("pw");
-        let bcrypt_hash = bcrypt::hash(password, bcrypt::DEFAULT_COST)
-            .map_err(|e| IamError::Internal {
+        let bcrypt_hash =
+            bcrypt::hash(password, bcrypt::DEFAULT_COST).map_err(|e| IamError::Internal {
                 message: format!("bcrypt hash failed: {e}"),
             })?;
         self.store.create_credential(
@@ -566,11 +566,11 @@ impl ObrainIamProvider {
         use crate::model::props;
         use obrain_common::Value;
 
-        let nid = self.find_user_node(user_id).ok_or_else(|| {
-            IamError::ResourceNotFound {
+        let nid = self
+            .find_user_node(user_id)
+            .ok_or_else(|| IamError::ResourceNotFound {
                 resource: format!("user:{user_id}"),
-            }
-        })?;
+            })?;
         self.store.inner().set_node_property(
             nid,
             props::MUST_CHANGE_PASSWORD,
@@ -580,10 +580,7 @@ impl ObrainIamProvider {
     }
 
     /// Finds the password credential node for a user, if any.
-    fn find_password_credential(
-        &self,
-        user_id: &str,
-    ) -> Option<obrain_common::types::NodeId> {
+    fn find_password_credential(&self, user_id: &str) -> Option<obrain_common::types::NodeId> {
         use crate::model::{EDGE_HAS_CREDENTIAL, props};
         use obrain_common::Value;
         use obrain_core::graph::Direction;

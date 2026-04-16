@@ -426,7 +426,12 @@ fn populate_store_from_snapshot_ref(
     // --- Bulk edge creation ---
     let t_edges = std::time::Instant::now();
     for (chunk_idx, chunk) in edges.chunks(EDGE_BATCH).enumerate() {
-        let bulk: Vec<(obrain_common::types::EdgeId, obrain_common::types::NodeId, obrain_common::types::NodeId, &str)> = chunk
+        let bulk: Vec<(
+            obrain_common::types::EdgeId,
+            obrain_common::types::NodeId,
+            obrain_common::types::NodeId,
+            &str,
+        )> = chunk
             .iter()
             .map(|e| (e.id, e.src, e.dst, e.edge_type.as_str()))
             .collect();

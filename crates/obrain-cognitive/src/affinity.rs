@@ -21,8 +21,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::store_trait::{
-    OptionalGraphStore, PROP_QUERY_AFFINITY, PROP_QUERY_AFFINITY_COUNT,
-    load_node_f64, now_epoch_secs, persist_node_f64,
+    OptionalGraphStore, PROP_QUERY_AFFINITY, PROP_QUERY_AFFINITY_COUNT, load_node_f64,
+    now_epoch_secs, persist_node_f64,
 };
 
 // ---------------------------------------------------------------------------
@@ -113,7 +113,12 @@ impl AffinityStore {
     fn persist(&self, node_id: NodeId, affinity: &NodeAffinity) {
         if let Some(gs) = &self.graph_store {
             persist_node_f64(gs.as_ref(), node_id, PROP_QUERY_AFFINITY, affinity.score);
-            persist_node_f64(gs.as_ref(), node_id, PROP_QUERY_AFFINITY_COUNT, affinity.count as f64);
+            persist_node_f64(
+                gs.as_ref(),
+                node_id,
+                PROP_QUERY_AFFINITY_COUNT,
+                affinity.count as f64,
+            );
         }
     }
 
@@ -150,7 +155,10 @@ impl AffinityStore {
                 if let Some(existing) = load_node_f64(gs.as_ref(), node_id, PROP_QUERY_AFFINITY) {
                     let count = load_node_f64(gs.as_ref(), node_id, PROP_QUERY_AFFINITY_COUNT)
                         .unwrap_or(1.0) as u32;
-                    return NodeAffinity { score: existing, count };
+                    return NodeAffinity {
+                        score: existing,
+                        count,
+                    };
                 }
             }
             // True cold start — first interaction, no EMA needed
@@ -200,7 +208,11 @@ impl AffinityStore {
     pub fn get_affinity(&self, node_id: NodeId) -> f64 {
         if let Some(entry) = self.nodes.get(&node_id) {
             let val = entry.score;
-            if val < self.config.min_affinity { 0.0 } else { val }
+            if val < self.config.min_affinity {
+                0.0
+            } else {
+                val
+            }
         } else {
             self.lazy_load(node_id)
                 .map(|v| if v < self.config.min_affinity { 0.0 } else { v })
@@ -217,7 +229,8 @@ impl AffinityStore {
     ///
     /// Used for predictive prefetch at session start.
     pub fn top_k(&self, k: usize) -> Vec<(NodeId, f64)> {
-        let mut entries: Vec<(NodeId, f64)> = self.nodes
+        let mut entries: Vec<(NodeId, f64)> = self
+            .nodes
             .iter()
             .filter(|e| e.score >= self.config.min_affinity)
             .map(|entry| (*entry.key(), entry.score))
@@ -288,7 +301,10 @@ mod tests {
         assert!(a > 0.57 && a < 0.59, "EMA should be ~0.58, got {a}");
         // Third: EMA(0.2 * 0.9 + 0.8 * 0.58) = 0.18 + 0.464 = 0.644
         let a = store.update(nid(1), 0.9);
-        assert!(a > 0.63 && a < 0.66, "EMA should converge toward 0.9, got {a}");
+        assert!(
+            a > 0.63 && a < 0.66,
+            "EMA should converge toward 0.9, got {a}"
+        );
     }
 
     #[test]
@@ -309,7 +325,10 @@ mod tests {
         let before = store.get_affinity(nid(1));
         let after = store.penalize(nid(1), 0.3); // Reduce by 30%
         assert!(after < before, "penalize should reduce affinity");
-        assert!(after > 0.55 && after < 0.57, "0.8 * 0.7 = 0.56, got {after}");
+        assert!(
+            after > 0.55 && after < 0.57,
+            "0.8 * 0.7 = 0.56, got {after}"
+        );
     }
 
     #[test]

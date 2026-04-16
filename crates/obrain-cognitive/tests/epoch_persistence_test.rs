@@ -4,7 +4,6 @@
 //! and that synapse/energy write-through persists epoch data for proper
 //! cross-session decay calculation.
 
-
 use obrain_cognitive::store_trait::{epoch_to_instant, now_epoch_secs};
 use std::time::{Duration, Instant};
 

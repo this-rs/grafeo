@@ -111,7 +111,7 @@ impl CoActivationDetector {
             co_occurrences: self
                 .co_occurrences
                 .iter()
-                .map(|e| ((e.key().0 .0, e.key().1 .0), *e.value()))
+                .map(|e| ((e.key().0.0, e.key().1.0), *e.value()))
                 .collect(),
             episode_count: self.episode_count,
             node_episodes: self

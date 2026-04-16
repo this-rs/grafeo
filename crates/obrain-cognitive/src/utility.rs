@@ -143,8 +143,18 @@ impl UtilityStore {
     fn persist(&self, node_id: NodeId, utility: &NodeUtility) {
         if let Some(gs) = &self.graph_store {
             persist_node_f64(gs.as_ref(), node_id, PROP_UTILITY_SCORE, utility.current());
-            persist_node_f64(gs.as_ref(), node_id, PROP_UTILITY_COUNT, utility.count as f64);
-            persist_node_f64(gs.as_ref(), node_id, PROP_UTILITY_LAST_UPDATED_EPOCH, now_epoch_secs());
+            persist_node_f64(
+                gs.as_ref(),
+                node_id,
+                PROP_UTILITY_COUNT,
+                utility.count as f64,
+            );
+            persist_node_f64(
+                gs.as_ref(),
+                node_id,
+                PROP_UTILITY_LAST_UPDATED_EPOCH,
+                now_epoch_secs(),
+            );
         }
     }
 
@@ -152,8 +162,8 @@ impl UtilityStore {
     fn lazy_load(&self, node_id: NodeId) -> Option<f64> {
         if let Some(gs) = &self.graph_store {
             let score = load_node_f64(gs.as_ref(), node_id, PROP_UTILITY_SCORE)?;
-            let count = load_node_f64(gs.as_ref(), node_id, PROP_UTILITY_COUNT)
-                .unwrap_or(1.0) as u32;
+            let count =
+                load_node_f64(gs.as_ref(), node_id, PROP_UTILITY_COUNT).unwrap_or(1.0) as u32;
             let epoch = load_node_f64(gs.as_ref(), node_id, PROP_UTILITY_LAST_UPDATED_EPOCH);
             let last_updated = crate::store_trait::epoch_to_instant(epoch);
 
@@ -177,9 +187,10 @@ impl UtilityStore {
     /// Returns the new utility score.
     pub fn boost(&self, node_id: NodeId, amount: f64) -> f64 {
         let amount = amount.max(0.0);
-        let mut entry = self.nodes.entry(node_id).or_insert_with(|| {
-            NodeUtility::new(0.0, self.config.default_half_life)
-        });
+        let mut entry = self
+            .nodes
+            .entry(node_id)
+            .or_insert_with(|| NodeUtility::new(0.0, self.config.default_half_life));
 
         let utility = entry.value_mut();
         // Add to current (decayed) value, then re-anchor at now
@@ -200,7 +211,11 @@ impl UtilityStore {
     pub fn get_utility(&self, node_id: NodeId) -> f64 {
         if let Some(entry) = self.nodes.get(&node_id) {
             let val = entry.current();
-            if val < self.config.min_utility { 0.0 } else { val }
+            if val < self.config.min_utility {
+                0.0
+            } else {
+                val
+            }
         } else {
             // Try lazy load from graph
             self.lazy_load(node_id)
@@ -240,7 +255,8 @@ impl UtilityStore {
 
     /// Get the top-K nodes by utility score.
     pub fn top_k(&self, k: usize) -> Vec<(NodeId, f64)> {
-        let mut entries: Vec<(NodeId, f64)> = self.nodes
+        let mut entries: Vec<(NodeId, f64)> = self
+            .nodes
             .iter()
             .map(|entry| (*entry.key(), entry.current()))
             .collect();
@@ -333,7 +349,10 @@ mod tests {
 
         // Insert a utility "in the past"
         let past = Instant::now() - Duration::from_secs(3600);
-        store.nodes.insert(nid(1), NodeUtility::new_at(0.8, Duration::from_secs(3600), past));
+        store.nodes.insert(
+            nid(1),
+            NodeUtility::new_at(0.8, Duration::from_secs(3600), past),
+        );
 
         let u = store.get_utility(nid(1));
         // After 1 half-life: 0.8 * 0.5 = 0.4
@@ -357,7 +376,10 @@ mod tests {
 
         // Insert an old entry that should have decayed below threshold
         let past = Instant::now() - Duration::from_secs(100); // ~100 half-lives
-        store.nodes.insert(nid(1), NodeUtility::new_at(0.5, Duration::from_secs(1), past));
+        store.nodes.insert(
+            nid(1),
+            NodeUtility::new_at(0.5, Duration::from_secs(1), past),
+        );
         store.boost(nid(2), 0.5); // Fresh entry
 
         let pruned = store.prune();

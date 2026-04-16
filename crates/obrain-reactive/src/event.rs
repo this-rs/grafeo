@@ -41,11 +41,7 @@ impl EventContext {
     /// - `tenant_id` → tenant
     /// - `sub` (subject) → principal ARN
     /// - `jti` (JWT ID) → session ID
-    pub fn from_wami(
-        tenant_id: Option<String>,
-        sub: String,
-        jti: String,
-    ) -> Self {
+    pub fn from_wami(tenant_id: Option<String>, sub: String, jti: String) -> Self {
         Self {
             tenant_id,
             principal_arn: Some(sub),

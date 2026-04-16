@@ -602,11 +602,8 @@ impl IamStore {
             }
 
             // Mark as revoked (soft delete)
-            self.store.set_node_property(
-                cred_nid,
-                props::TOKEN_HASH,
-                Value::from("__revoked__"),
-            );
+            self.store
+                .set_node_property(cred_nid, props::TOKEN_HASH, Value::from("__revoked__"));
             purged += 1;
         }
 
