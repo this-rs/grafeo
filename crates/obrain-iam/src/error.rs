@@ -50,6 +50,13 @@ pub enum IamError {
     /// Serialization/deserialization error.
     #[error("serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
+
+    /// Internal error — wraps an unexpected failure.
+    #[error("internal error: {message}")]
+    Internal {
+        /// Description of what went wrong.
+        message: String,
+    },
 }
 
 /// Convenience type alias.

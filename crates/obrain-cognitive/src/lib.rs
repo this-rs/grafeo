@@ -58,6 +58,12 @@ pub mod gds_refresh;
 #[cfg(feature = "scar")]
 pub mod scar;
 
+#[cfg(feature = "utility")]
+pub mod utility;
+
+#[cfg(feature = "affinity")]
+pub mod affinity;
+
 #[cfg(feature = "memory")]
 pub mod memory;
 
@@ -180,7 +186,8 @@ pub use gds_refresh::{GdsRefreshConfig, GdsRefreshScheduler};
 
 #[cfg(feature = "synapse")]
 pub use synapse::{
-    Synapse, SynapseConfig, SynapseListener, SynapseStore, mutation_frequency_score, synapse_score,
+    CrossBaseNodeId, CrossBaseSynapse, Synapse, SynapseConfig, SynapseListener, SynapseStore,
+    mutation_frequency_score, synapse_score,
 };
 
 #[cfg(feature = "scar")]

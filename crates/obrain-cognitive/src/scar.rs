@@ -82,6 +82,12 @@ pub enum ScarReason {
     Invalidation,
     /// A constraint was violated.
     ConstraintViolation(String),
+    /// LLM output was truncated.
+    Truncation,
+    /// LLM output contained repetitive content.
+    Repetition,
+    /// The user explicitly corrected the output.
+    UserCorrection,
     /// Custom reason.
     Custom(String),
 }
@@ -93,6 +99,9 @@ impl fmt::Display for ScarReason {
             Self::Error(msg) => write!(f, "error: {}", msg),
             Self::Invalidation => write!(f, "invalidation"),
             Self::ConstraintViolation(msg) => write!(f, "constraint violation: {}", msg),
+            Self::Truncation => write!(f, "truncation"),
+            Self::Repetition => write!(f, "repetition"),
+            Self::UserCorrection => write!(f, "user correction"),
             Self::Custom(msg) => write!(f, "{}", msg),
         }
     }
@@ -391,6 +400,56 @@ impl ScarStore {
             .iter()
             .map(|e| e.value().iter().filter(|s| s.is_active(min)).count())
             .sum()
+    }
+
+    /// Returns the cumulative active scar intensity for a node, or `0.0` if
+    /// no scars exist.
+    ///
+    /// This is a convenience wrapper around [`cumulative_intensity`](Self::cumulative_intensity)
+    /// that the hub layer uses for quick risk checks.
+    pub fn get_scar_intensity(&self, node_id: NodeId) -> f64 {
+        self.cumulative_intensity(node_id)
+    }
+
+    /// Reduces the intensity of all active scars on `node_id` by `amount`.
+    ///
+    /// Each scar's raw intensity is decreased (clamped to `0.0`). Scars whose
+    /// intensity drops to zero are effectively healed. The scar summary is
+    /// persisted after the operation.
+    pub fn partial_heal(&self, node_id: NodeId, amount: f64) {
+        if let Some(mut scars) = self.scars.get_mut(&node_id) {
+            for scar in scars.iter_mut() {
+                if !scar.is_healed() {
+                    scar.intensity = (scar.intensity - amount).max(0.0);
+                }
+            }
+        }
+        self.persist_scar_summary(node_id);
+    }
+
+    /// Increases the intensity of the most recent active scar on `node_id`, or
+    /// creates a new scar if none exist.
+    ///
+    /// The scar's raw intensity is increased by `intensity` (clamped to `1.0`).
+    /// If `reason` differs from the existing scar's reason, a new scar is added
+    /// instead. The scar summary is persisted after the operation.
+    pub fn boost_scar(&self, node_id: NodeId, intensity: f64, reason: ScarReason) {
+        let boosted = if let Some(mut scars) = self.scars.get_mut(&node_id) {
+            if let Some(scar) = scars.iter_mut().rev().find(|s| !s.is_healed() && s.reason == reason) {
+                scar.intensity = (scar.intensity + intensity).min(1.0);
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if boosted {
+            self.persist_scar_summary(node_id);
+        } else {
+            self.add_scar(node_id, intensity.min(1.0), reason);
+        }
     }
 
     /// Returns a reference to the config.

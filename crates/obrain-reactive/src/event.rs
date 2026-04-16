@@ -35,6 +35,24 @@ impl EventContext {
         }
     }
 
+    /// Creates an `EventContext` from WAMI JWT claims.
+    ///
+    /// Maps JWT fields to event context:
+    /// - `tenant_id` → tenant
+    /// - `sub` (subject) → principal ARN
+    /// - `jti` (JWT ID) → session ID
+    pub fn from_wami(
+        tenant_id: Option<String>,
+        sub: String,
+        jti: String,
+    ) -> Self {
+        Self {
+            tenant_id,
+            principal_arn: Some(sub),
+            session_id: Some(jti),
+        }
+    }
+
     /// Creates an `EventContext` with only the tenant ID set.
     pub fn tenant(tenant_id: impl Into<String>) -> Self {
         Self {

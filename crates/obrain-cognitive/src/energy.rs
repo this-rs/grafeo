@@ -185,6 +185,9 @@ impl NodeEnergy {
 pub struct EnergyStore {
     /// Per-node energy entries (includes inline LRU access counter).
     nodes: DashMap<NodeId, NodeEnergy>,
+    /// Cross-base energy map — tracks energy for nodes identified by (db_id, node_id) pairs.
+    #[cfg(feature = "synapse")]
+    cross_base: DashMap<crate::synapse::CrossBaseNodeId, f64>,
     /// Monotonic counter for LRU tracking.
     access_counter: AtomicU64,
     /// Maximum cache entries (0 = unlimited).
@@ -200,6 +203,8 @@ impl EnergyStore {
     pub fn new(config: EnergyConfig) -> Self {
         Self {
             nodes: DashMap::new(),
+            #[cfg(feature = "synapse")]
+            cross_base: DashMap::new(),
             access_counter: AtomicU64::new(0),
             max_cache_entries: 0,
             config,
@@ -214,6 +219,8 @@ impl EnergyStore {
     ) -> Self {
         Self {
             nodes: DashMap::new(),
+            #[cfg(feature = "synapse")]
+            cross_base: DashMap::new(),
             access_counter: AtomicU64::new(0),
             max_cache_entries: 0,
             config,
@@ -360,6 +367,51 @@ impl EnergyStore {
             .iter()
             .map(|entry| (*entry.key(), entry.value().current_energy()))
             .collect()
+    }
+
+    // -----------------------------------------------------------------------
+    // Cross-base energy operations
+    // -----------------------------------------------------------------------
+
+    /// Returns a snapshot of all cross-base energy entries.
+    #[cfg(feature = "synapse")]
+    pub fn snapshot_cross_base(&self) -> Vec<(crate::synapse::CrossBaseNodeId, f64)> {
+        use crate::synapse::CrossBaseNodeId;
+        self.cross_base
+            .iter()
+            .map(|entry: dashmap::mapref::multiple::RefMulti<'_, CrossBaseNodeId, f64>| {
+                (entry.key().clone(), *entry.value())
+            })
+            .collect()
+    }
+
+    /// Returns the top `limit` nodes for a specific database, sorted by
+    /// energy descending.
+    #[cfg(feature = "synapse")]
+    pub fn get_top_nodes_for_base(&self, db_id: &str, limit: usize) -> Vec<(NodeId, f64)> {
+        use crate::synapse::CrossBaseNodeId;
+        let mut entries: Vec<(NodeId, f64)> = self
+            .cross_base
+            .iter()
+            .filter(|entry: &dashmap::mapref::multiple::RefMulti<'_, CrossBaseNodeId, f64>| {
+                entry.key().db_id == db_id
+            })
+            .map(|entry: dashmap::mapref::multiple::RefMulti<'_, CrossBaseNodeId, f64>| {
+                (entry.key().node_id, *entry.value())
+            })
+            .collect();
+        entries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        entries.truncate(limit);
+        entries
+    }
+
+    /// Boosts (inserts or adds to) the cross-base energy for a given node.
+    #[cfg(feature = "synapse")]
+    pub fn boost_cross_base(&self, xbid: crate::synapse::CrossBaseNodeId, amount: f64) {
+        self.cross_base
+            .entry(xbid)
+            .and_modify(|e| *e += amount)
+            .or_insert(amount);
     }
 }
 

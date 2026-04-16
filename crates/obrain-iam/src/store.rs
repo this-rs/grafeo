@@ -84,6 +84,7 @@ impl IamStore {
             username: username.to_string(),
             email: email.map(String::from),
             status: EntityStatus::Active,
+            must_change_password: false,
             created_at: now,
         })
     }
@@ -456,6 +457,163 @@ impl IamStore {
     }
 
     // -----------------------------------------------------------------------
+    // User management
+    // -----------------------------------------------------------------------
+
+    /// Deactivates a user account (sets status to Inactive).
+    pub fn deactivate_user(&self, user_id: &str) -> IamResult<()> {
+        let nid = self
+            .find_node_by_label_and_id(LABEL_USER, user_id)
+            .ok_or_else(|| IamError::ResourceNotFound {
+                resource: format!("user:{user_id}"),
+            })?;
+        self.store
+            .set_node_property(nid, props::STATUS, Value::from("inactive"));
+        Ok(())
+    }
+
+    /// Detaches a role from a user.
+    ///
+    /// Removes the `HAS_ROLE` edge between the user and the role.
+    /// No-op if the edge doesn't exist.
+    pub fn detach_role(&self, user_id: &str, role_id: &str) -> IamResult<()> {
+        use obrain_core::graph::Direction;
+
+        let user_nid = self
+            .find_node_by_label_and_id(LABEL_USER, user_id)
+            .ok_or_else(|| IamError::ResourceNotFound {
+                resource: format!("user:{user_id}"),
+            })?;
+        let role_nid = self
+            .find_node_by_label_and_id(LABEL_ROLE, role_id)
+            .ok_or_else(|| IamError::ResourceNotFound {
+                resource: format!("role:{role_id}"),
+            })?;
+
+        // Find and remove the edge
+        for (target, eid) in self.store.edges_from(user_nid, Direction::Outgoing) {
+            if target == role_nid
+                && let Some(et) = self.store.edge_type(eid)
+                && et.as_str() == EDGE_HAS_ROLE
+            {
+                self.store.delete_edge(eid);
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Deletes a role by ID.
+    ///
+    /// Marks the role as inactive (soft delete). Does not cascade to policies.
+    pub fn delete_role(&self, role_id: &str) -> IamResult<()> {
+        let nid = self
+            .find_node_by_label_and_id(LABEL_ROLE, role_id)
+            .ok_or_else(|| IamError::ResourceNotFound {
+                resource: format!("role:{role_id}"),
+            })?;
+        // Soft delete: mark as deleted by setting status
+        self.store
+            .set_node_property(nid, props::STATUS, Value::from("deleted"));
+        Ok(())
+    }
+
+    /// Updates the description of a role.
+    pub fn update_role_description(
+        &self,
+        role_id: &str,
+        description: Option<&str>,
+    ) -> IamResult<()> {
+        let nid = self
+            .find_node_by_label_and_id(LABEL_ROLE, role_id)
+            .ok_or_else(|| IamError::ResourceNotFound {
+                resource: format!("role:{role_id}"),
+            })?;
+        if let Some(desc) = description {
+            self.store
+                .set_node_property(nid, props::DESCRIPTION, Value::from(desc));
+        }
+        Ok(())
+    }
+
+    /// Detaches a policy from a role.
+    pub fn detach_policy_from_role(&self, role_id: &str, policy_id: &str) -> IamResult<()> {
+        use obrain_core::graph::Direction;
+
+        let role_nid = self
+            .find_node_by_label_and_id(LABEL_ROLE, role_id)
+            .ok_or_else(|| IamError::ResourceNotFound {
+                resource: format!("role:{role_id}"),
+            })?;
+        let policy_nid = self
+            .find_node_by_label_and_id(LABEL_POLICY, policy_id)
+            .ok_or_else(|| IamError::ResourceNotFound {
+                resource: format!("policy:{policy_id}"),
+            })?;
+
+        for (target, eid) in self.store.edges_from(role_nid, Direction::Outgoing) {
+            if target == policy_nid
+                && let Some(et) = self.store.edge_type(eid)
+                && et.as_str() == EDGE_HAS_POLICY
+            {
+                self.store.delete_edge(eid);
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Deletes a policy by ID (soft delete).
+    pub fn delete_policy(&self, policy_id: &str) -> IamResult<()> {
+        let nid = self
+            .find_node_by_label_and_id(LABEL_POLICY, policy_id)
+            .ok_or_else(|| IamError::ResourceNotFound {
+                resource: format!("policy:{policy_id}"),
+            })?;
+        self.store
+            .set_node_property(nid, props::STATUS, Value::from("deleted"));
+        Ok(())
+    }
+
+    /// Purges all expired session credentials.
+    ///
+    /// Returns the number of credentials purged (soft-revoked).
+    pub fn purge_session_credentials(&self) -> usize {
+        let cred_nodes = self.store.nodes_by_label(LABEL_CREDENTIAL);
+        let mut purged = 0;
+
+        for cred_nid in cred_nodes {
+            // Only purge session credentials, not API keys or passwords
+            let is_session = matches!(
+                self.store.get_node_property(cred_nid, &props::CRED_TYPE.into()),
+                Some(Value::String(t)) if t.as_str() == "session"
+            );
+            if !is_session {
+                continue;
+            }
+
+            // Check if already revoked
+            let is_revoked = matches!(
+                self.store.get_node_property(cred_nid, &props::TOKEN_HASH.into()),
+                Some(Value::String(h)) if h.as_str() == "__revoked__"
+            );
+            if is_revoked {
+                continue;
+            }
+
+            // Mark as revoked (soft delete)
+            self.store.set_node_property(
+                cred_nid,
+                props::TOKEN_HASH,
+                Value::from("__revoked__"),
+            );
+            purged += 1;
+        }
+
+        purged
+    }
+
+    // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
 
@@ -529,6 +687,11 @@ impl IamStore {
 
     /// Converts a graph node to a [`User`].
     fn node_to_user(&self, nid: NodeId) -> Option<User> {
+        let must_change = self
+            .get_str(nid, props::MUST_CHANGE_PASSWORD)
+            .map(|s| s == "true")
+            .unwrap_or(false);
+
         Some(User {
             id: self.get_str(nid, props::ID)?,
             username: self.get_str(nid, props::NAME)?,
@@ -537,6 +700,7 @@ impl IamStore {
                 .get_str(nid, props::STATUS)
                 .and_then(|s| EntityStatus::from_str_loose(&s))
                 .unwrap_or(EntityStatus::Active),
+            must_change_password: must_change,
             created_at: self.get_str(nid, props::CREATED_AT).unwrap_or_default(),
         })
     }

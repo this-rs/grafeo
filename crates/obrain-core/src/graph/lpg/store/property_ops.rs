@@ -9,6 +9,35 @@ use obrain_common::utils::hash::FxHashMap;
 use std::sync::atomic::Ordering;
 
 impl LpgStore {
+    /// Sets a property on a node during bulk restore (snapshot loading).
+    ///
+    /// Skips property index, text index, change tracking, and props_count
+    /// updates. Use ONLY during initial snapshot restore when the store is
+    /// empty and no indexes exist yet.
+    ///
+    /// After bulk loading, call `rebuild_zone_maps()` if property indexes
+    /// are needed, and `create_text_index()` for text search.
+    pub fn set_node_property_bulk(&self, id: NodeId, key: &str, value: Value) {
+        let prop_key: PropertyKey = key.into();
+        #[cfg(not(feature = "temporal"))]
+        self.node_properties.set(id, prop_key, value);
+        #[cfg(feature = "temporal")]
+        self.node_properties
+            .set(id, prop_key, value, self.current_epoch());
+    }
+
+    /// Sets a property on an edge during bulk restore (snapshot loading).
+    ///
+    /// Same as `set_node_property_bulk` but for edges.
+    pub fn set_edge_property_bulk(&self, id: EdgeId, key: &str, value: Value) {
+        let prop_key: PropertyKey = key.into();
+        #[cfg(not(feature = "temporal"))]
+        self.edge_properties.set(id, prop_key, value);
+        #[cfg(feature = "temporal")]
+        self.edge_properties
+            .set(id, prop_key, value, self.current_epoch());
+    }
+
     /// Sets a property on a node.
     #[cfg(not(feature = "tiered-storage"))]
     pub fn set_node_property(&self, id: NodeId, key: &str, value: Value) {

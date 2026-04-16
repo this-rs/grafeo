@@ -294,6 +294,13 @@ pub(super) fn load_snapshot_into_store(
 ) -> obrain_common::utils::error::Result<()> {
     use obrain_common::utils::error::Error;
 
+    let t0 = std::time::Instant::now();
+    tracing::info!(
+        bytes = data.len(),
+        mb = format!("{:.1}", data.len() as f64 / (1024.0 * 1024.0)),
+        "Decoding snapshot (bincode)..."
+    );
+
     let config = bincode::config::standard();
     let (snapshot, _) = bincode::serde::decode_from_slice::<Snapshot, _>(data, config)
         .or_else(|_| {
@@ -303,7 +310,24 @@ pub(super) fn load_snapshot_into_store(
             Error::Serialization(format!("failed to decode snapshot from .obrain file: {e}"))
         })?;
 
+    tracing::info!(
+        nodes = snapshot.nodes.len(),
+        edges = snapshot.edges.len(),
+        named_graphs = snapshot.named_graphs.len(),
+        elapsed_ms = t0.elapsed().as_millis(),
+        "Snapshot decoded, populating store..."
+    );
+
+    let t1 = std::time::Instant::now();
     populate_store_from_snapshot_ref(store, &snapshot.nodes, &snapshot.edges)?;
+
+    tracing::info!(
+        nodes = snapshot.nodes.len(),
+        edges = snapshot.edges.len(),
+        elapsed_ms = t1.elapsed().as_millis(),
+        total_ms = t0.elapsed().as_millis(),
+        "Store populated from snapshot"
+    );
 
     // Restore epoch from snapshot (store-level only; TransactionManager
     // sync is handled in with_config() after all recovery completes).
@@ -338,15 +362,50 @@ pub(super) fn load_snapshot_into_store(
 }
 
 /// Populates a store from snapshot refs (borrowed, for single-file loading).
+///
+/// Uses `set_node_property_bulk` / `set_edge_property_bulk` which skip
+/// property index, text index, and change tracking — those are empty during
+/// initial restore and will be built afterwards by `ensure_indexes`.
 #[cfg(feature = "obrain-file")]
 fn populate_store_from_snapshot_ref(
     store: &obrain_core::graph::lpg::LpgStore,
     nodes: &[SnapshotNode],
     edges: &[SnapshotEdge],
 ) -> obrain_common::utils::error::Result<()> {
+    // Pre-allocate HashMaps to final size — avoids catastrophic rehashing
+    // at 100M+ entries (each rehash copies the entire table).
+    let t_reserve = std::time::Instant::now();
+    store.reserve_for_restore(nodes.len(), edges.len());
+    tracing::info!(
+        nodes = nodes.len(),
+        edges = edges.len(),
+        elapsed_ms = t_reserve.elapsed().as_millis(),
+        "pre-allocated store capacity"
+    );
+
+    // --- Bulk node creation ---
+    let t_nodes = std::time::Instant::now();
+
+    // Batch size for chunked bulk inserts
+    const NODE_BATCH: usize = 500_000;
+    const EDGE_BATCH: usize = 2_000_000;
+
+    for chunk in nodes.chunks(NODE_BATCH) {
+        let bulk: Vec<(obrain_common::types::NodeId, Vec<&str>)> = chunk
+            .iter()
+            .map(|n| (n.id, n.labels.iter().map(|s| s.as_str()).collect()))
+            .collect();
+        store.bulk_create_nodes_with_id(&bulk)?;
+    }
+    tracing::info!(
+        nodes = nodes.len(),
+        elapsed_ms = t_nodes.elapsed().as_millis(),
+        "bulk nodes created"
+    );
+
+    // Node properties (still per-node — properties are sparse and varied)
+    let t_props = std::time::Instant::now();
     for node in nodes {
-        let label_refs: Vec<&str> = node.labels.iter().map(|s| s.as_str()).collect();
-        store.create_node_with_id(node.id, &label_refs)?;
         for (key, entries) in &node.properties {
             #[cfg(feature = "temporal")]
             for (epoch, value) in entries {
@@ -354,12 +413,47 @@ fn populate_store_from_snapshot_ref(
             }
             #[cfg(not(feature = "temporal"))]
             if let Some((_, value)) = entries.last() {
-                store.set_node_property(node.id, key, value.clone());
+                store.set_node_property_bulk(node.id, key, value.clone());
             }
         }
     }
+    tracing::info!(
+        nodes = nodes.len(),
+        elapsed_ms = t_props.elapsed().as_millis(),
+        "node properties set"
+    );
+
+    // --- Bulk edge creation ---
+    let t_edges = std::time::Instant::now();
+    for (chunk_idx, chunk) in edges.chunks(EDGE_BATCH).enumerate() {
+        let bulk: Vec<(obrain_common::types::EdgeId, obrain_common::types::NodeId, obrain_common::types::NodeId, &str)> = chunk
+            .iter()
+            .map(|e| (e.id, e.src, e.dst, e.edge_type.as_str()))
+            .collect();
+        store.bulk_create_edges_with_id(&bulk)?;
+        if (chunk_idx + 1) % 5 == 0 || chunk.len() < EDGE_BATCH {
+            tracing::info!(
+                edges_so_far = (chunk_idx + 1) * EDGE_BATCH.min(edges.len()),
+                total = edges.len(),
+                elapsed_ms = t_edges.elapsed().as_millis(),
+                "bulk edges progress"
+            );
+        }
+    }
+    tracing::info!(
+        edges = edges.len(),
+        elapsed_ms = t_edges.elapsed().as_millis(),
+        "bulk edges created"
+    );
+
+    // Edge properties (still per-edge)
+    let t_eprops = std::time::Instant::now();
+    let mut edge_props_count = 0usize;
     for edge in edges {
-        store.create_edge_with_id(edge.id, edge.src, edge.dst, &edge.edge_type)?;
+        if edge.properties.is_empty() {
+            continue;
+        }
+        edge_props_count += 1;
         for (key, entries) in &edge.properties {
             #[cfg(feature = "temporal")]
             for (epoch, value) in entries {
@@ -367,10 +461,18 @@ fn populate_store_from_snapshot_ref(
             }
             #[cfg(not(feature = "temporal"))]
             if let Some((_, value)) = entries.last() {
-                store.set_edge_property(edge.id, key, value.clone());
+                store.set_edge_property_bulk(edge.id, key, value.clone());
             }
         }
     }
+    if edge_props_count > 0 {
+        tracing::info!(
+            edges_with_props = edge_props_count,
+            elapsed_ms = t_eprops.elapsed().as_millis(),
+            "edge properties set"
+        );
+    }
+
     Ok(())
 }
 

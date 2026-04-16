@@ -269,21 +269,33 @@ impl ObrainDB {
         let is_read_only = config.access_mode == crate::config::AccessMode::ReadOnly;
 
         // --- Single-file format (.obrain) ---
+        //
+        // Uses mmap to load the snapshot: the kernel maps the file into the
+        // process address space and loads pages on demand during bincode
+        // deserialization. This avoids allocating + copying the entire file
+        // into a Vec<u8> and is dramatically faster for large databases
+        // (e.g., 3.9 GB Wikipedia → near-instant open).
         #[cfg(feature = "obrain-file")]
         let file_manager: Option<Arc<ObrainFileManager>> = if is_read_only {
             // Read-only mode: open with shared lock, load snapshot, skip WAL
             if let Some(ref db_path) = config.path {
                 if db_path.exists() && db_path.is_file() {
                     let fm = ObrainFileManager::open_read_only(db_path)?;
-                    let snapshot_data = fm.read_snapshot()?;
-                    if !snapshot_data.is_empty() {
-                        Self::apply_snapshot_data(
-                            &store,
-                            &catalog,
-                            #[cfg(feature = "rdf")]
-                            &rdf_store,
-                            &snapshot_data,
-                        )?;
+                    match fm.mmap_snapshot() {
+                        Ok(mmap) => {
+                            Self::apply_snapshot_data(
+                                &store,
+                                &catalog,
+                                #[cfg(feature = "rdf")]
+                                &rdf_store,
+                                &mmap,
+                            )?;
+                            // CRC after decode — pages already in cache, ~free
+                            fm.verify_mmap_crc(&mmap)?;
+                        }
+                        Err(e) => {
+                            tracing::debug!("No snapshot to mmap (read-only): {e}");
+                        }
                     }
                     Some(Arc::new(fm))
                 } else {
@@ -312,16 +324,22 @@ impl ObrainDB {
                         )));
                     };
 
-                    // Load snapshot data from the file
-                    let snapshot_data = fm.read_snapshot()?;
-                    if !snapshot_data.is_empty() {
-                        Self::apply_snapshot_data(
-                            &store,
-                            &catalog,
-                            #[cfg(feature = "rdf")]
-                            &rdf_store,
-                            &snapshot_data,
-                        )?;
+                    // Load snapshot via mmap — pages loaded on demand by the kernel
+                    match fm.mmap_snapshot() {
+                        Ok(mmap) => {
+                            Self::apply_snapshot_data(
+                                &store,
+                                &catalog,
+                                #[cfg(feature = "rdf")]
+                                &rdf_store,
+                                &mmap,
+                            )?;
+                            // CRC after decode — pages already in cache, ~free
+                            fm.verify_mmap_crc(&mmap)?;
+                        }
+                        Err(e) => {
+                            tracing::debug!("No snapshot to mmap: {e}");
+                        }
                     }
 
                     // Recover sidecar WAL if present
@@ -1357,6 +1375,26 @@ impl ObrainDB {
         }
 
         *is_open = false;
+        Ok(())
+    }
+
+    /// Commits the WAL — flushes pending records and optionally checkpoints
+    /// the snapshot to the `.obrain` file.
+    ///
+    /// This is the primary durability API: callers should invoke this after
+    /// a batch of mutations that must survive process restarts.
+    #[cfg(feature = "wal")]
+    pub fn commit_wal(&self) -> Result<()> {
+        if let Some(ref wal) = self.wal {
+            wal.flush()?;
+        }
+
+        // If we have a file manager, checkpoint the snapshot too
+        #[cfg(feature = "obrain-file")]
+        if let Some(ref fm) = self.file_manager {
+            self.checkpoint_to_file(fm)?;
+        }
+
         Ok(())
     }
 

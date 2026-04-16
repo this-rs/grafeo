@@ -60,6 +60,21 @@ pub const PROP_SYNAPSE_REINFORCEMENT_COUNT: &str = "_cog_synapse_reinforcement_c
 /// Same rationale as `PROP_SYNAPSE_LAST_REINFORCED_EPOCH`.
 pub const PROP_ENERGY_LAST_ACTIVATED_EPOCH: &str = "_cog_energy_last_activated_epoch";
 
+/// Node property key for utility score.
+pub const PROP_UTILITY_SCORE: &str = "_cog_utility_score";
+
+/// Node property key for utility activation count.
+pub const PROP_UTILITY_COUNT: &str = "_cog_utility_count";
+
+/// Node property key for utility last updated epoch timestamp.
+pub const PROP_UTILITY_LAST_UPDATED_EPOCH: &str = "_cog_utility_last_updated_epoch";
+
+/// Node property key for query affinity score.
+pub const PROP_QUERY_AFFINITY: &str = "_cog_query_affinity";
+
+/// Node property key for query affinity count.
+pub const PROP_QUERY_AFFINITY_COUNT: &str = "_cog_query_affinity_count";
+
 // ---------------------------------------------------------------------------
 // CognitiveStore trait
 // ---------------------------------------------------------------------------

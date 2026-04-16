@@ -160,6 +160,48 @@ impl Synapse {
 }
 
 // ---------------------------------------------------------------------------
+// CrossBaseNodeId — node identifier spanning multiple databases
+// ---------------------------------------------------------------------------
+
+/// Identifies a node across different databases by combining a database
+/// identifier with a [`NodeId`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct CrossBaseNodeId {
+    /// The database this node belongs to.
+    pub db_id: String,
+    /// The node identifier within that database.
+    pub node_id: NodeId,
+}
+
+impl CrossBaseNodeId {
+    /// Creates a new cross-base node identifier.
+    pub fn new(db_id: String, node_id: NodeId) -> Self {
+        Self { db_id, node_id }
+    }
+}
+
+/// A snapshot of a cross-base synapse — a weighted connection between two
+/// nodes from potentially different databases.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CrossBaseSynapse {
+    /// Source node.
+    pub source: CrossBaseNodeId,
+    /// Target node.
+    pub target: CrossBaseNodeId,
+    /// Current weight of the synapse.
+    weight: f64,
+    /// Number of times this synapse has been reinforced.
+    pub reinforcement_count: u32,
+}
+
+impl CrossBaseSynapse {
+    /// Returns the current weight of this cross-base synapse.
+    pub fn current_weight(&self) -> f64 {
+        self.weight
+    }
+}
+
+// ---------------------------------------------------------------------------
 // SynapseKey — canonical (src, tgt) pair with min/max ordering
 // ---------------------------------------------------------------------------
 
@@ -201,6 +243,8 @@ pub struct SynapseStore {
     config: SynapseConfig,
     /// Optional backing graph store for write-through persistence.
     graph_store: OptionalGraphStore,
+    /// Cross-base synapses between nodes from different databases.
+    cross_base: DashMap<(CrossBaseNodeId, CrossBaseNodeId), (f64, u32)>,
 }
 
 impl SynapseStore {
@@ -214,6 +258,7 @@ impl SynapseStore {
             max_cache_entries: 0,
             config,
             graph_store: None,
+            cross_base: DashMap::new(),
         }
     }
 
@@ -230,6 +275,7 @@ impl SynapseStore {
             max_cache_entries: 0,
             config,
             graph_store: Some(graph_store),
+            cross_base: DashMap::new(),
         }
     }
 
@@ -490,6 +536,69 @@ impl SynapseStore {
             .map(|entry| entry.value().clone())
             .collect()
     }
+
+    // -- cross-base synapse methods ------------------------------------------
+
+    /// Reinforces (or creates) a cross-base synapse between two nodes from
+    /// potentially different databases.
+    ///
+    /// The weight is clamped to `max_synapse_weight` after reinforcement.
+    pub fn reinforce_cross_base(
+        &self,
+        source: CrossBaseNodeId,
+        target: CrossBaseNodeId,
+        amount: f64,
+    ) {
+        let max_w = self.config.max_synapse_weight;
+        let initial = self.config.initial_weight;
+        let key = (source, target);
+        self.cross_base
+            .entry(key)
+            .and_modify(|(w, count)| {
+                *w = (*w + amount).min(max_w);
+                *count += 1;
+            })
+            .or_insert_with(|| ((initial + amount).min(max_w), 1));
+    }
+
+    /// Removes all cross-base synapses whose weight is below `threshold`.
+    ///
+    /// Returns the number of pruned entries.
+    pub fn prune_cross_base(&self, threshold: f64) -> usize {
+        let to_remove: Vec<(CrossBaseNodeId, CrossBaseNodeId)> = self
+            .cross_base
+            .iter()
+            .filter(|entry| entry.value().0 < threshold)
+            .map(|entry| entry.key().clone())
+            .collect();
+        let count = to_remove.len();
+        for key in to_remove {
+            self.cross_base.remove(&key);
+        }
+        count
+    }
+
+    /// Returns the total number of cross-base synapses.
+    pub fn cross_base_len(&self) -> usize {
+        self.cross_base.len()
+    }
+
+    /// Returns a snapshot of all cross-base synapses.
+    pub fn snapshot_cross_base(&self) -> Vec<CrossBaseSynapse> {
+        self.cross_base
+            .iter()
+            .map(|entry| {
+                let (src, tgt) = entry.key().clone();
+                let (weight, count) = *entry.value();
+                CrossBaseSynapse {
+                    source: src,
+                    target: tgt,
+                    weight,
+                    reinforcement_count: count,
+                }
+            })
+            .collect()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -552,6 +661,7 @@ impl std::fmt::Debug for SynapseStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SynapseStore")
             .field("synapse_count", &self.synapses.len())
+            .field("cross_base_count", &self.cross_base.len())
             .field("config", &self.config)
             .finish()
     }

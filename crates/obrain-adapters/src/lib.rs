@@ -11,7 +11,9 @@
 //! - [`storage`] - Persistence: write-ahead log, memory-mapped files
 //! - [`plugins`] - Extension points for custom functions and algorithms
 
-#![forbid(unsafe_code)]
+// deny (not forbid) so individual methods (e.g., mmap_snapshot) can
+// #[allow(unsafe_code)] with a documented safety justification.
+#![deny(unsafe_code)]
 #![warn(missing_docs)]
 
 pub mod plugins;

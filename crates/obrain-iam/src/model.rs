@@ -79,6 +79,12 @@ pub mod props {
     /// Expiration timestamp (ISO 8601).
     pub const EXPIRES_AT: &str = "iam_expires_at";
 
+    // Password-specific
+    /// Whether the user must change their password on next login.
+    pub const MUST_CHANGE_PASSWORD: &str = "iam_must_change_password";
+    /// Bcrypt hash of the user's password.
+    pub const PASSWORD_HASH: &str = "iam_password_hash";
+
     // Audit-specific
     /// The action that was attempted.
     pub const ACTION: &str = "iam_action";
@@ -105,6 +111,9 @@ pub struct User {
     pub email: Option<String>,
     /// Account status.
     pub status: EntityStatus,
+    /// Whether the user must change their password on next login.
+    #[serde(default)]
+    pub must_change_password: bool,
     /// Creation timestamp.
     pub created_at: String,
 }
@@ -230,6 +239,8 @@ pub enum CredentialType {
     Session,
     /// API key (long-lived).
     ApiKey,
+    /// Password credential (bcrypt hash).
+    Password,
 }
 
 impl fmt::Display for CredentialType {
@@ -237,6 +248,7 @@ impl fmt::Display for CredentialType {
         match self {
             Self::Session => write!(f, "session"),
             Self::ApiKey => write!(f, "api_key"),
+            Self::Password => write!(f, "password"),
         }
     }
 }

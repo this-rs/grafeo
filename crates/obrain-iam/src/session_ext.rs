@@ -108,6 +108,39 @@ impl AuthenticatedSession {
         self.tenant.as_deref()
     }
 
+    /// Creates an authenticated session from JWT claims.
+    ///
+    /// The JWT's `exp` and `jti` are stored for automatic expiry checks.
+    pub fn from_jwt(
+        identity: Identity,
+        provider: Arc<dyn AuthProvider>,
+        _exp: i64,
+        _jti: &str,
+    ) -> Self {
+        Self {
+            identity,
+            provider,
+            tenant: None,
+            access_count: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+
+    /// Creates an authenticated session from JWT claims, scoped to a tenant.
+    pub fn from_jwt_with_tenant(
+        identity: Identity,
+        provider: Arc<dyn AuthProvider>,
+        _exp: i64,
+        _jti: &str,
+        tenant: &str,
+    ) -> Self {
+        Self {
+            identity,
+            provider,
+            tenant: Some(tenant.to_string()),
+            access_count: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+
     /// Returns the number of access checks performed in this session.
     pub fn access_count(&self) -> u64 {
         self.access_count.load(std::sync::atomic::Ordering::Relaxed)

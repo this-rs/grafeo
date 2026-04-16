@@ -800,6 +800,222 @@ impl LpgStore {
         Ok(())
     }
 
+    /// Bulk-creates nodes with specific IDs during snapshot restore.
+    ///
+    /// Acquires each lock once for all nodes instead of per-node, dramatically
+    /// reducing contention when restoring millions of nodes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AllocError`] if allocation fails (tiered-storage only).
+    #[cfg(not(feature = "tiered-storage"))]
+    #[doc(hidden)]
+    pub fn bulk_create_nodes_with_id(
+        &self,
+        nodes: &[(NodeId, Vec<&str>)],
+    ) -> Result<(), AllocError> {
+        if nodes.is_empty() {
+            return Ok(());
+        }
+        let epoch = self.current_epoch();
+
+        // Phase 1: Resolve all label IDs and collect label data
+        // (get_or_create_label_id has its own lock internally)
+        let mut node_label_data: Vec<(NodeId, obrain_common::utils::hash::FxHashSet<u32>, Vec<u32>)> =
+            Vec::with_capacity(nodes.len());
+        for (id, labels) in nodes {
+            let mut label_set = obrain_common::utils::hash::FxHashSet::default();
+            let mut label_ids = Vec::with_capacity(labels.len());
+            for label in labels {
+                let label_id = self.get_or_create_label_id(label);
+                label_set.insert(label_id);
+                label_ids.push(label_id);
+            }
+            node_label_data.push((*id, label_set, label_ids));
+        }
+
+        // Phase 2: Bulk insert into label_index (one lock acquisition)
+        {
+            let mut index = self.label_index.write();
+            for (id, _, label_ids) in &node_label_data {
+                for &label_id in label_ids {
+                    if index.len() <= label_id as usize {
+                        index.resize_with(label_id as usize + 1, obrain_common::utils::hash::FxHashMap::default);
+                    }
+                    index[label_id as usize].insert(*id, ());
+                }
+            }
+        }
+
+        // Phase 3: Bulk insert into node_labels (one lock acquisition)
+        {
+            let mut node_labels = self.node_labels.write();
+            for (id, label_set, _) in node_label_data {
+                #[cfg(not(feature = "temporal"))]
+                node_labels.insert(id, label_set);
+                #[cfg(feature = "temporal")]
+                {
+                    use obrain_common::temporal::VersionLog;
+                    node_labels.insert(id, VersionLog::with_value(epoch, label_set));
+                }
+            }
+        }
+
+        // Phase 4: Bulk create version chains (one lock acquisition on self.nodes)
+        {
+            let mut nodes_map = self.nodes.write();
+            for (id, labels) in nodes {
+                let mut record = NodeRecord::new(*id, epoch);
+                record.set_label_count(labels.len() as u16);
+                let chain = VersionChain::with_initial(record, epoch, TransactionId::SYSTEM);
+                nodes_map.insert(*id, chain);
+            }
+        }
+
+        // Phase 5: Update counters
+        self.live_node_count
+            .fetch_add(nodes.len() as i64, Ordering::Relaxed);
+
+        // Update next_node_id to max + 1
+        if let Some(max_id) = nodes.iter().map(|(id, _)| id.as_u64()).max() {
+            let _ = self.next_node_id.fetch_update(
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+                |current| {
+                    if max_id >= current {
+                        Some(max_id + 1)
+                    } else {
+                        None
+                    }
+                },
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Pre-allocates capacity for bulk node/edge insertion.
+    ///
+    /// Call this ONCE before calling `bulk_create_nodes_with_id` /
+    /// `bulk_create_edges_with_id` in a loop to avoid incremental HashMap
+    /// rehashing (which is catastrophic at 100M+ entries).
+    #[doc(hidden)]
+    pub fn reserve_for_restore(&self, node_count: usize, edge_count: usize) {
+        #[cfg(not(feature = "tiered-storage"))]
+        {
+            self.nodes.write().reserve(node_count);
+            self.edges.write().reserve(edge_count);
+        }
+        #[cfg(feature = "tiered-storage")]
+        {
+            self.node_versions.write().reserve(node_count);
+            self.edge_versions.write().reserve(edge_count);
+        }
+    }
+
+    /// Bulk-creates edges with specific IDs during snapshot restore.
+    ///
+    /// Acquires each lock once for all edges instead of per-edge, dramatically
+    /// reducing contention when restoring hundreds of millions of edges.
+    /// Uses `bulk_load` on adjacency indexes (direct chunk creation, no delta buffer).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AllocError`] if allocation fails (tiered-storage only).
+    #[cfg(not(feature = "tiered-storage"))]
+    #[doc(hidden)]
+    pub fn bulk_create_edges_with_id(
+        &self,
+        edges: &[(EdgeId, NodeId, NodeId, &str)],
+    ) -> Result<(), AllocError> {
+        if edges.is_empty() {
+            return Ok(());
+        }
+        let epoch = self.current_epoch();
+
+        // Single-pass: resolve types, insert version chains, and build adjacency
+        // all in one iteration — zero intermediate Vec allocations.
+        let mut type_counts: obrain_common::utils::hash::FxHashMap<u32, usize> =
+            obrain_common::utils::hash::FxHashMap::default();
+
+        // Acquire all locks upfront
+        let mut edges_map = self.edges.write();
+        let mut fwd_lists = self.forward_adj.lists_write();
+        let mut bwd_lists = self.backward_adj.as_ref().map(|b| b.lists_write());
+
+        let mut max_id: u64 = 0;
+
+        for &(id, src, dst, edge_type) in edges {
+            let type_id = self.get_or_create_edge_type_id(edge_type);
+            *type_counts.entry(type_id).or_insert(0) += 1;
+
+            // Insert version chain
+            let record = EdgeRecord::new(id, src, dst, type_id, epoch);
+            let chain = VersionChain::with_initial(record, epoch, TransactionId::SYSTEM);
+            edges_map.insert(id, chain);
+
+            // Insert adjacency directly (no compaction, no intermediate Vec)
+            use crate::index::adjacency::AdjacencyList;
+            fwd_lists
+                .entry(src)
+                .or_insert_with(AdjacencyList::new)
+                .add_edge(dst, id);
+            if let Some(ref mut bwd) = bwd_lists {
+                bwd.entry(dst)
+                    .or_insert_with(AdjacencyList::new)
+                    .add_edge(src, id);
+            }
+
+            let id_val = id.as_u64();
+            if id_val > max_id {
+                max_id = id_val;
+            }
+        }
+
+        // Release locks before counter updates
+        drop(edges_map);
+        drop(fwd_lists);
+        drop(bwd_lists);
+
+        // Update adjacency edge counts
+        self.forward_adj.add_to_edge_count(edges.len());
+        if let Some(ref backward) = self.backward_adj {
+            backward.add_to_edge_count(edges.len());
+        }
+
+        // Phase 4: Bulk update counters
+        self.live_edge_count
+            .fetch_add(edges.len() as i64, Ordering::Relaxed);
+
+        // Bulk increment edge type counts (one lock acquisition)
+        {
+            let mut counts = self.edge_type_live_counts.write();
+            for (type_id, count) in &type_counts {
+                if counts.len() <= *type_id as usize {
+                    counts.resize(*type_id as usize + 1, 0);
+                }
+                counts[*type_id as usize] += *count as i64;
+            }
+        }
+
+        // Update next_edge_id to max + 1 (tracked during the loop)
+        if !edges.is_empty() {
+            let _ = self.next_edge_id.fetch_update(
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+                |current| {
+                    if max_id >= current {
+                        Some(max_id + 1)
+                    } else {
+                        None
+                    }
+                },
+            );
+        }
+
+        Ok(())
+    }
+
     /// Creates an edge with a specific ID during recovery.
     ///
     /// This is used for WAL recovery to restore edges with their original IDs.
@@ -844,6 +1060,136 @@ impl LpgStore {
                     None
                 }
             });
+        Ok(())
+    }
+
+    /// Bulk-creates nodes with specific IDs during snapshot restore (tiered version).
+    #[cfg(feature = "tiered-storage")]
+    #[doc(hidden)]
+    pub fn bulk_create_nodes_with_id(
+        &self,
+        nodes: &[(NodeId, Vec<&str>)],
+    ) -> Result<(), AllocError> {
+        if nodes.is_empty() {
+            return Ok(());
+        }
+        let epoch = self.current_epoch();
+
+        // Phase 1: Register labels for all nodes
+        for (id, labels) in nodes {
+            #[cfg(not(feature = "temporal"))]
+            self.register_node_labels(*id, labels);
+            #[cfg(feature = "temporal")]
+            self.register_node_labels(*id, labels, epoch);
+        }
+
+        // Phase 2: Bulk allocate and insert version indexes
+        let arena = self.arena_allocator.arena_or_create(epoch)?;
+        {
+            let mut versions = self.node_versions.write();
+            for (id, labels) in nodes {
+                let mut record = NodeRecord::new(*id, epoch);
+                record.set_label_count(labels.len() as u16);
+                let (offset, _stored) = arena.alloc_value_with_offset(record)?;
+                let hot_ref = HotVersionRef::new(epoch, epoch, offset, TransactionId::SYSTEM);
+                versions.insert(*id, VersionIndex::with_initial(hot_ref));
+            }
+        }
+
+        self.live_node_count
+            .fetch_add(nodes.len() as i64, Ordering::Relaxed);
+
+        if let Some(max_id) = nodes.iter().map(|(id, _)| id.as_u64()).max() {
+            let _ = self.next_node_id.fetch_update(
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+                |current| {
+                    if max_id >= current {
+                        Some(max_id + 1)
+                    } else {
+                        None
+                    }
+                },
+            );
+        }
+        Ok(())
+    }
+
+    /// Bulk-creates edges with specific IDs during snapshot restore (tiered version).
+    #[cfg(feature = "tiered-storage")]
+    #[doc(hidden)]
+    pub fn bulk_create_edges_with_id(
+        &self,
+        edges: &[(EdgeId, NodeId, NodeId, &str)],
+    ) -> Result<(), AllocError> {
+        if edges.is_empty() {
+            return Ok(());
+        }
+        let epoch = self.current_epoch();
+
+        // Phase 1: Pre-resolve edge types and count
+        let mut type_counts: obrain_common::utils::hash::FxHashMap<u32, usize> =
+            obrain_common::utils::hash::FxHashMap::default();
+        let mut resolved: Vec<(EdgeId, NodeId, NodeId, u32)> = Vec::with_capacity(edges.len());
+        for &(id, src, dst, edge_type) in edges {
+            let type_id = self.get_or_create_edge_type_id(edge_type);
+            *type_counts.entry(type_id).or_insert(0) += 1;
+            resolved.push((id, src, dst, type_id));
+        }
+
+        // Phase 2: Bulk allocate and insert version indexes
+        let arena = self.arena_allocator.arena_or_create(epoch)?;
+        {
+            let mut versions = self.edge_versions.write();
+            for &(id, src, dst, type_id) in &resolved {
+                let record = EdgeRecord::new(id, src, dst, type_id, epoch);
+                let (offset, _stored) = arena.alloc_value_with_offset(record)?;
+                let hot_ref = HotVersionRef::new(epoch, epoch, offset, TransactionId::SYSTEM);
+                versions.insert(id, VersionIndex::with_initial(hot_ref));
+            }
+        }
+
+        // Phase 3: Bulk load adjacency (direct chunk creation, no delta buffer)
+        let forward_edges: Vec<(NodeId, NodeId, EdgeId)> = resolved
+            .iter()
+            .map(|&(id, src, dst, _)| (src, dst, id))
+            .collect();
+        self.forward_adj.bulk_load(&forward_edges);
+
+        if let Some(ref backward) = self.backward_adj {
+            let backward_edges: Vec<(NodeId, NodeId, EdgeId)> = resolved
+                .iter()
+                .map(|&(id, src, dst, _)| (dst, src, id))
+                .collect();
+            backward.bulk_load(&backward_edges);
+        }
+
+        // Phase 4: Counters
+        self.live_edge_count
+            .fetch_add(edges.len() as i64, Ordering::Relaxed);
+        {
+            let mut counts = self.edge_type_live_counts.write();
+            for (type_id, count) in &type_counts {
+                if counts.len() <= *type_id as usize {
+                    counts.resize(*type_id as usize + 1, 0);
+                }
+                counts[*type_id as usize] += *count as i64;
+            }
+        }
+
+        if let Some(max_id) = edges.iter().map(|(id, _, _, _)| id.as_u64()).max() {
+            let _ = self.next_edge_id.fetch_update(
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+                |current| {
+                    if max_id >= current {
+                        Some(max_id + 1)
+                    } else {
+                        None
+                    }
+                },
+            );
+        }
         Ok(())
     }
 

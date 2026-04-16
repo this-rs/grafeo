@@ -16,6 +16,9 @@ default = []
 obrain-common.workspace = true
 obrain-core = { workspace = true, default-features = false }
 
+# Password hashing
+bcrypt.workspace = true
+
 # Error handling
 thiserror.workspace = true
 

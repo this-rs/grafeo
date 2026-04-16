@@ -291,11 +291,14 @@ impl super::ObrainDB {
         let mut index = InvertedIndex::new(BM25Config::default());
         let prop_key = PropertyKey::new(property);
 
-        // Index all existing nodes with this label + property
+        // Batch-fetch all property values for this label — O(1) hash lookups
+        // per node instead of O(n) individual get_node_property calls.
         let nodes = self.store.nodes_by_label(label);
-        for node_id in nodes {
-            if let Some(Value::String(text)) = self.store.get_node_property(node_id, &prop_key) {
-                index.insert(node_id, text.as_str());
+        let values = self.store.get_node_property_batch(&nodes, &prop_key);
+
+        for (node_id, value) in nodes.iter().zip(values.iter()) {
+            if let Some(Value::String(text)) = value {
+                index.insert(*node_id, text.as_str());
             }
         }
 

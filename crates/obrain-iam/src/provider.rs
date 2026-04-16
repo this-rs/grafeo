@@ -94,6 +94,13 @@ pub enum AuthRequest {
         /// The expected issuer (for validation).
         issuer: String,
     },
+    /// Password-based authentication.
+    Password {
+        /// Username.
+        username: String,
+        /// The plaintext password (will be hashed for comparison).
+        password: String,
+    },
     /// Internal / bootstrap authentication — trusted, no credential check.
     /// Used for system-level operations (migrations, initial setup).
     Internal {
@@ -315,6 +322,24 @@ impl AuthProvider for ObrainIamProvider {
                 Ok(self.user_to_identity(&user))
             }
 
+            AuthRequest::Password { username, password } => {
+                let user = self.store.find_user_by_name(username).ok_or_else(|| {
+                    IamError::AccessDenied {
+                        reason: "invalid credentials".to_string(),
+                    }
+                })?;
+
+                if user.status != EntityStatus::Active {
+                    return Err(IamError::AccessDenied {
+                        reason: format!("user account is {}", user.status),
+                    });
+                }
+
+                self.verify_password_bcrypt(&user.id, password)?;
+
+                Ok(self.user_to_identity(&user))
+            }
+
             AuthRequest::OidcToken {
                 token: _,
                 issuer: _,
@@ -490,6 +515,116 @@ impl AuthProvider for ObrainIamProvider {
 }
 
 // ---------------------------------------------------------------------------
+// Password & user management methods for ObrainIamProvider
+// ---------------------------------------------------------------------------
+
+impl ObrainIamProvider {
+    /// Sets (or replaces) the user's password.
+    ///
+    /// Creates a `Password` credential with the hashed password. If the user
+    /// already has a password credential, it is replaced.
+    pub fn set_user_password(&self, user_id: &str, password: &str) -> IamResult<()> {
+        // Remove existing password credential if any
+        self.remove_password_credential(user_id);
+
+        let cred_id = Self::generate_id("pw");
+        let bcrypt_hash = bcrypt::hash(password, bcrypt::DEFAULT_COST)
+            .map_err(|e| IamError::Internal {
+                message: format!("bcrypt hash failed: {e}"),
+            })?;
+        self.store.create_credential(
+            &cred_id,
+            user_id,
+            CredentialType::Password,
+            &bcrypt_hash,
+            0, // no expiry for passwords
+        )?;
+        Ok(())
+    }
+
+    /// Returns `true` if the user has a password credential.
+    pub fn has_password(&self, user_id: &str) -> bool {
+        self.find_password_credential(user_id).is_some()
+    }
+
+    /// Returns `true` if the user must change their password on next login.
+    pub fn must_change_password(&self, user_id: &str) -> bool {
+        use crate::model::props;
+        use obrain_common::Value;
+
+        let Some(nid) = self.find_user_node(user_id) else {
+            return false;
+        };
+        matches!(
+            self.store.inner().get_node_property(nid, &props::MUST_CHANGE_PASSWORD.into()),
+            Some(Value::String(s)) if s.as_str() == "true"
+        )
+    }
+
+    /// Sets the `must_change_password` flag on a user.
+    pub fn set_must_change_password(&self, user_id: &str, must_change: bool) -> IamResult<()> {
+        use crate::model::props;
+        use obrain_common::Value;
+
+        let nid = self.find_user_node(user_id).ok_or_else(|| {
+            IamError::ResourceNotFound {
+                resource: format!("user:{user_id}"),
+            }
+        })?;
+        self.store.inner().set_node_property(
+            nid,
+            props::MUST_CHANGE_PASSWORD,
+            Value::from(if must_change { "true" } else { "false" }),
+        );
+        Ok(())
+    }
+
+    /// Finds the password credential node for a user, if any.
+    fn find_password_credential(
+        &self,
+        user_id: &str,
+    ) -> Option<obrain_common::types::NodeId> {
+        use crate::model::{EDGE_HAS_CREDENTIAL, props};
+        use obrain_common::Value;
+        use obrain_core::graph::Direction;
+
+        let user_nid = self.find_user_node(user_id)?;
+        let store = self.store.inner();
+
+        for (target, eid) in store.edges_from(user_nid, Direction::Outgoing) {
+            if let Some(et) = store.edge_type(eid) {
+                if et.as_str() != EDGE_HAS_CREDENTIAL {
+                    continue;
+                }
+                if let Some(Value::String(t)) =
+                    store.get_node_property(target, &props::CRED_TYPE.into())
+                {
+                    if t.as_str() == "password" {
+                        return Some(target);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Removes the password credential for a user (if any).
+    fn remove_password_credential(&self, user_id: &str) {
+        // Mark the old password credential as expired by overwriting the hash.
+        // Full node deletion is not yet available in LpgStore.
+        if let Some(cred_nid) = self.find_password_credential(user_id) {
+            use crate::model::props;
+            use obrain_common::Value;
+            self.store.inner().set_node_property(
+                cred_nid,
+                props::TOKEN_HASH,
+                Value::from("__revoked__"),
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Private helpers for ObrainIamProvider
 // ---------------------------------------------------------------------------
 
@@ -599,6 +734,59 @@ impl ObrainIamProvider {
                 };
                 if hash_ok {
                     return Ok(());
+                }
+            }
+        }
+
+        Err(IamError::AccessDenied {
+            reason: "invalid credentials".to_string(),
+        })
+    }
+
+    /// Verify a password credential using bcrypt.
+    ///
+    /// Passwords are stored as bcrypt hashes. This method finds the user's
+    /// Password credential and verifies the plaintext against the stored hash.
+    fn verify_password_bcrypt(&self, user_id: &str, plaintext: &str) -> IamResult<()> {
+        use crate::model::{EDGE_HAS_CREDENTIAL, props};
+        use obrain_common::Value;
+
+        let store = self.store.inner();
+
+        let user_nid = self
+            .find_user_node(user_id)
+            .ok_or_else(|| IamError::ResourceNotFound {
+                resource: format!("user:{user_id}"),
+            })?;
+
+        use obrain_core::graph::Direction;
+        for (target, eid) in store.edges_from(user_nid, Direction::Outgoing) {
+            if let Some(et) = store.edge_type(eid) {
+                if et.as_str() != EDGE_HAS_CREDENTIAL {
+                    continue;
+                }
+
+                let type_ok = match store.get_node_property(target, &props::CRED_TYPE.into()) {
+                    Some(Value::String(t)) => t.as_str() == CredentialType::Password.to_string(),
+                    _ => false,
+                };
+                if !type_ok {
+                    continue;
+                }
+
+                if let Some(Value::String(stored_hash)) =
+                    store.get_node_property(target, &props::TOKEN_HASH.into())
+                {
+                    // Support both bcrypt hashes ($2b$...) and legacy DefaultHasher hashes
+                    let verified = if stored_hash.starts_with("$2") {
+                        bcrypt::verify(plaintext, stored_hash.as_str()).unwrap_or(false)
+                    } else {
+                        // Legacy: DefaultHasher comparison
+                        stored_hash.as_str() == Self::hash_token(plaintext)
+                    };
+                    if verified {
+                        return Ok(());
+                    }
                 }
             }
         }
