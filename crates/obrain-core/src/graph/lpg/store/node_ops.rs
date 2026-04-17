@@ -101,6 +101,19 @@ impl LpgStore {
         }
 
         node.properties = self.node_properties.get_all(id).into_iter().collect();
+
+        // Merge properties from the mmap fallback (overlay mode).
+        // Local (delta) properties take precedence — only add missing keys from mmap.
+        if let Some(fb) = self.property_fallback.get() {
+            if let Some(fb_node) = fb.get_node(id) {
+                for (key, value) in fb_node.properties {
+                    if !node.properties.contains_key(&key) {
+                        node.properties.insert(key, value);
+                    }
+                }
+            }
+        }
+
         node
     }
 
@@ -129,6 +142,18 @@ impl LpgStore {
             .get_all_at(id, epoch)
             .into_iter()
             .collect();
+
+        // Merge properties from the mmap fallback (overlay mode).
+        if let Some(fb) = self.property_fallback.get() {
+            if let Some(fb_node) = fb.get_node(id) {
+                for (key, value) in fb_node.properties {
+                    if !node.properties.contains_key(&key) {
+                        node.properties.insert(key, value);
+                    }
+                }
+            }
+        }
+
         node
     }
 
