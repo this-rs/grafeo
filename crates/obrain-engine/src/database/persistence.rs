@@ -805,6 +805,17 @@ impl super::ObrainDB {
             .last_assigned_transaction_id()
             .map_or(0, |t| t.0);
 
+        #[cfg(feature = "vector-index")]
+        if let Some(hnsw_blob) = super::native_writer::export_hnsw_section(&self.store) {
+            return super::native_writer::write_native_v2_with_hnsw(
+                &self.store,
+                path,
+                epoch.0,
+                transaction_id,
+                &hnsw_blob,
+            );
+        }
+
         super::native_writer::write_native_v2(&self.store, path, epoch.0, transaction_id)
     }
 
@@ -1900,6 +1911,110 @@ mod tests {
                 .unwrap();
             let count_str = result.rows[0][0].to_string();
             assert_eq!(count_str, "2", "2 LIVES_IN edges after final reopen");
+        }
+    }
+
+    /// Tests that HNSW vector indexes survive a v2 save/reopen cycle.
+    #[test]
+    #[cfg(all(feature = "obrain-file", feature = "vector-index"))]
+    fn test_native_v2_hnsw_persistence() {
+        use obrain_core::index::vector::{DistanceMetric, HnswConfig, HnswIndex};
+        use std::collections::HashMap;
+        use std::sync::Arc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("hnsw_persist.obrain");
+
+        // ── Phase 1: Create DB with a vector index ──
+        {
+            let db = ObrainDB::new_in_memory();
+            let session = db.session();
+
+            // Create some nodes
+            session.execute("INSERT (:Doc {title: 'hello'})").unwrap();
+            session.execute("INSERT (:Doc {title: 'world'})").unwrap();
+            session.execute("INSERT (:Doc {title: 'test'})").unwrap();
+
+            // Create an HNSW index and insert embeddings
+            let dim = 8;
+            let config = HnswConfig::new(dim, DistanceMetric::Cosine);
+            let index = HnswIndex::new(config);
+
+            // Build a simple accessor backed by a HashMap
+            let emb1: Vec<f32> = vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+            let emb2: Vec<f32> = vec![0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+            let emb3: Vec<f32> = vec![0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+            let embeddings: HashMap<obrain_common::types::NodeId, Arc<[f32]>> = [
+                (obrain_common::types::NodeId::new(1), Arc::from(emb1)),
+                (obrain_common::types::NodeId::new(2), Arc::from(emb2)),
+                (obrain_common::types::NodeId::new(3), Arc::from(emb3)),
+            ]
+            .into_iter()
+            .collect();
+
+            let accessor =
+                |id: obrain_common::types::NodeId| -> Option<Arc<[f32]>> { embeddings.get(&id).cloned() };
+
+            for (&id, emb) in &embeddings {
+                index.insert(id, emb, &accessor);
+            }
+
+            // Verify search works before save
+            let query = vec![0.9, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0f32];
+            let results = index.search(&query, 3, &accessor);
+            assert!(!results.is_empty(), "search should return results before save");
+
+            // Register the index in the store
+            db.store
+                .add_vector_index("Doc", "embedding", Arc::new(index));
+
+            // Save as v2
+            db.save(&db_path).unwrap();
+        }
+
+        // ── Phase 2: Reopen and verify HNSW index restored ──
+        {
+            let db = ObrainDB::open(&db_path).unwrap();
+
+            // Check the vector index exists
+            let restored_index = db
+                .store
+                .get_vector_index("Doc", "embedding")
+                .expect("HNSW index should be restored from v2 file");
+
+            // Verify config was preserved
+            let config = restored_index.config();
+            assert_eq!(config.dimensions, 8);
+            assert_eq!(config.metric, DistanceMetric::Cosine);
+
+            // Verify node count matches
+            assert_eq!(restored_index.len(), 3, "HNSW should have 3 nodes");
+
+            // Verify search still works (topology was restored)
+            // Build accessor again for search
+            let emb1: Vec<f32> = vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+            let emb2: Vec<f32> = vec![0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+            let emb3: Vec<f32> = vec![0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+            let embeddings: HashMap<obrain_common::types::NodeId, Arc<[f32]>> = [
+                (obrain_common::types::NodeId::new(1), Arc::from(emb1)),
+                (obrain_common::types::NodeId::new(2), Arc::from(emb2)),
+                (obrain_common::types::NodeId::new(3), Arc::from(emb3)),
+            ]
+            .into_iter()
+            .collect();
+
+            let accessor =
+                |id: obrain_common::types::NodeId| -> Option<Arc<[f32]>> { embeddings.get(&id).cloned() };
+
+            let query = vec![0.9, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0f32];
+            let results = restored_index.search(&query, 3, &accessor);
+            assert!(!results.is_empty(), "search should return results after restore");
+            // Node 1 (all 1.0) should be closest to query (all 0.9)
+            assert_eq!(
+                results[0].0,
+                obrain_common::types::NodeId::new(1),
+                "closest node should be node 1"
+            );
         }
     }
 }

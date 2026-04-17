@@ -263,7 +263,14 @@ impl LpgStore {
     /// ```
     #[must_use]
     pub fn get_node_property(&self, id: NodeId, key: &PropertyKey) -> Option<Value> {
-        self.node_properties.get(id, key)
+        if let Some(v) = self.node_properties.get(id, key) {
+            return Some(v);
+        }
+        // Fallback to mmap-backed store (overlay mode).
+        if let Some(fb) = self.property_fallback.get() {
+            return fb.get_node_property(id, key);
+        }
+        None
     }
 
     /// Gets a single property from an edge without loading all properties.
@@ -271,7 +278,13 @@ impl LpgStore {
     /// This is O(1) vs O(properties) for `get_edge().get_property()`.
     #[must_use]
     pub fn get_edge_property(&self, id: EdgeId, key: &PropertyKey) -> Option<Value> {
-        self.edge_properties.get(id, key)
+        if let Some(v) = self.edge_properties.get(id, key) {
+            return Some(v);
+        }
+        if let Some(fb) = self.property_fallback.get() {
+            return fb.get_edge_property(id, key);
+        }
+        None
     }
 
     // === Batch Property Operations ===
@@ -298,7 +311,16 @@ impl LpgStore {
     /// ```
     #[must_use]
     pub fn get_node_property_batch(&self, ids: &[NodeId], key: &PropertyKey) -> Vec<Option<Value>> {
-        self.node_properties.get_batch(ids, key)
+        let mut results = self.node_properties.get_batch(ids, key);
+        // Fill missing entries from fallback (overlay mode).
+        if let Some(fb) = self.property_fallback.get() {
+            for (i, val) in results.iter_mut().enumerate() {
+                if val.is_none() {
+                    *val = fb.get_node_property(ids[i], key);
+                }
+            }
+        }
+        results
     }
 
     /// Gets all properties for multiple nodes in a single batch operation.

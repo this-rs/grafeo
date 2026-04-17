@@ -1,6 +1,6 @@
 //! Vector, text, and hybrid search operations for ObrainDB.
 
-#[cfg(any(feature = "text-index", feature = "hybrid-search"))]
+#[cfg(any(feature = "vector-index", feature = "text-index", feature = "hybrid-search"))]
 use obrain_common::types::NodeId;
 #[cfg(feature = "vector-index")]
 use obrain_common::types::Value;

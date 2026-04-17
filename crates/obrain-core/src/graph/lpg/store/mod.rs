@@ -428,6 +428,14 @@ pub struct LpgStore {
     /// the epoch file header with the current WAL position.
     #[cfg(feature = "tiered-storage")]
     pub(crate) wal_sequence: Arc<AtomicU64>,
+
+    /// Optional property fallback layer (e.g., mmap-backed store).
+    ///
+    /// When set, `get_node_property` and `get_edge_property` fall back to
+    /// this store when the property is not found in the local PropertyStorage.
+    /// This enables overlay mode: structure materialized locally, properties
+    /// served from mmap zero-copy, writes go to local storage.
+    property_fallback: std::sync::OnceLock<Arc<dyn crate::graph::GraphStore>>,
 }
 
 impl LpgStore {
@@ -510,7 +518,19 @@ impl LpgStore {
             subscription_manager: None,
             #[cfg(feature = "tiered-storage")]
             wal_sequence: Arc::new(AtomicU64::new(0)),
+            property_fallback: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Set a property fallback layer (e.g., mmap-backed store for overlay mode).
+    ///
+    /// When set, property reads that miss in local storage automatically
+    /// fall back to this store. This enables instant DB open: structure is
+    /// materialized locally (fast), properties are served from mmap (zero-copy).
+    ///
+    /// Must be called exactly once, before concurrent reads begin.
+    pub fn set_property_fallback(&self, fallback: Arc<dyn crate::graph::GraphStore>) {
+        let _ = self.property_fallback.set(fallback);
     }
 
     /// Sets the WAL sequence reference shared with ObrainDB.

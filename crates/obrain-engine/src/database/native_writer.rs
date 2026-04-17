@@ -11,7 +11,7 @@
 //! | 12 KiB   | 4 KiB    | TOC (section table) |
 //! | 16 KiB+  | variable | Data sections (strings, nodes, edges, CSR, props...) |
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -197,11 +197,33 @@ fn serialize_value(
 /// Writes the store contents to a native v2 `.obrain` file.
 ///
 /// This produces a file that can be mmap'd and read with zero deserialization.
+/// If `hnsw_section` is provided, it's written as the HnswTopology section.
 pub fn write_native_v2(
     store: &LpgStore,
     path: &Path,
     epoch: u64,
     transaction_id: u64,
+) -> Result<()> {
+    write_native_v2_inner(store, path, epoch, transaction_id, None)
+}
+
+/// Writes the store contents plus optional HNSW topology to a native v2 file.
+pub fn write_native_v2_with_hnsw(
+    store: &LpgStore,
+    path: &Path,
+    epoch: u64,
+    transaction_id: u64,
+    hnsw_section: &[u8],
+) -> Result<()> {
+    write_native_v2_inner(store, path, epoch, transaction_id, Some(hnsw_section))
+}
+
+fn write_native_v2_inner(
+    store: &LpgStore,
+    path: &Path,
+    epoch: u64,
+    transaction_id: u64,
+    hnsw_section: Option<&[u8]>,
 ) -> Result<()> {
     let file = std::fs::File::create(path)
         .map_err(|e| Error::Internal(format!("create file: {e}")))?;
@@ -231,13 +253,19 @@ pub fn write_native_v2(
     // 1c. Collect nodes → NodeSlots + PropEntries
     let node_count = store.node_count();
     let edge_count = store.edge_count();
-    let mut node_slots: Vec<NodeSlot> = vec![NodeSlot::default(); node_count];
+    // Initialize with FLAG_DELETED so gaps in the ID space are marked as tombstones
+    let tombstone_node = {
+        let mut s = NodeSlot::default();
+        s.flags = NodeSlot::FLAG_DELETED;
+        s
+    };
+    let mut node_slots: Vec<NodeSlot> = vec![tombstone_node; node_count];
     let mut prop_entries: Vec<PropEntry> = Vec::with_capacity(node_count * 5);
 
     for node in store.all_nodes() {
         let idx = node.id.0 as usize;
         if idx >= node_slots.len() {
-            node_slots.resize(idx + 1, NodeSlot::default());
+            node_slots.resize(idx + 1, tombstone_node);
         }
 
         // Build label_mask bitmap
@@ -263,12 +291,30 @@ pub fn write_native_v2(
         node_slots[idx] = NodeSlot::new(node.id.0, label_mask, prop_offset, prop_count);
     }
 
+    // Build a set of live node IDs for orphan-edge filtering
+    let live_node_ids: HashSet<u64> = node_slots
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| !s.is_deleted())
+        .map(|(i, _)| i as u64)
+        .collect();
+
     // 1d. Collect edges → EdgeSlots + PropEntries
-    let mut edge_slots: Vec<EdgeSlot> = vec![EdgeSlot::default(); edge_count];
+    let tombstone_edge = {
+        let mut s = EdgeSlot::default();
+        s.flags = EdgeSlot::FLAG_DELETED;
+        s
+    };
+    let mut edge_slots: Vec<EdgeSlot> = vec![tombstone_edge; edge_count];
     for edge in store.all_edges() {
+        // Skip orphan edges (src or dst points to a deleted/non-existent node)
+        if !live_node_ids.contains(&edge.src.0) || !live_node_ids.contains(&edge.dst.0) {
+            continue;
+        }
+
         let idx = edge.id.0 as usize;
         if idx >= edge_slots.len() {
-            edge_slots.resize(idx + 1, EdgeSlot::default());
+            edge_slots.resize(idx + 1, tombstone_edge);
         }
 
         let type_ref = strings.intern(edge.edge_type.as_str());
@@ -293,12 +339,12 @@ pub fn write_native_v2(
         );
     }
 
-    // 1e. Build CSR forward + backward adjacency
+    // 1e. Build CSR forward + backward adjacency (using live nodes/edges only)
     let actual_node_count = node_slots.len();
     let (csr_fwd_offsets, csr_fwd_targets, csr_fwd_edge_ids) =
-        build_csr_forward(store, actual_node_count);
+        build_csr_forward(store, actual_node_count, &live_node_ids);
     let (csr_bwd_offsets, csr_bwd_targets, csr_bwd_edge_ids) =
-        build_csr_backward(store, actual_node_count);
+        build_csr_backward(store, actual_node_count, &live_node_ids);
 
     // 1f. Finalize string table
     let string_table = strings.into_bytes();
@@ -378,6 +424,11 @@ pub fn write_native_v2(
     let et_cat_bytes = obrain_common::types::flat::slice_as_bytes(&edge_type_refs);
     write_section!(SectionType::EdgeTypeCatalog, et_cat_bytes);
 
+    // HNSW topology (optional)
+    if let Some(hnsw_data) = hnsw_section {
+        write_section!(SectionType::HnswTopology, hnsw_data);
+    }
+
     // ── Phase 3: write headers at the start ──
 
     // Build TOC page
@@ -451,11 +502,15 @@ pub fn write_native_v2(
 fn build_csr_forward(
     store: &LpgStore,
     node_count: usize,
+    live_node_ids: &HashSet<u64>,
 ) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
-    // Collect all outgoing edges per node
+    // Collect all outgoing edges per node (skip orphan edges)
     let mut adj: Vec<Vec<(u64, u64)>> = vec![Vec::new(); node_count]; // (target, edge_id)
 
     for edge in store.all_edges() {
+        if !live_node_ids.contains(&edge.src.0) || !live_node_ids.contains(&edge.dst.0) {
+            continue;
+        }
         let src = edge.src.0 as usize;
         if src < node_count {
             adj[src].push((edge.dst.0, edge.id.0));
@@ -487,11 +542,15 @@ fn build_csr_forward(
 fn build_csr_backward(
     store: &LpgStore,
     node_count: usize,
+    live_node_ids: &HashSet<u64>,
 ) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
-    // Collect all incoming edges per node
+    // Collect all incoming edges per node (skip orphan edges)
     let mut adj: Vec<Vec<(u64, u64)>> = vec![Vec::new(); node_count]; // (source, edge_id)
 
     for edge in store.all_edges() {
+        if !live_node_ids.contains(&edge.src.0) || !live_node_ids.contains(&edge.dst.0) {
+            continue;
+        }
         let dst = edge.dst.0 as usize;
         if dst < node_count {
             adj[dst].push((edge.src.0, edge.id.0));
@@ -538,5 +597,130 @@ fn align_padding(offset: u64, align: u64) -> u64 {
 fn u64_slice_as_bytes(slice: &[u64]) -> &[u8] {
     unsafe {
         std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 8)
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Multi-index HNSW envelope
+// ─────────────────────────────────────────────────────────────────────
+//
+// Wire format (all little-endian):
+//   [count: u32]
+//   for each index:
+//     [key_len: u32] [key_bytes: key_len] [topo_len: u32] [topo_bytes: topo_len]
+//
+// `key` is the `"label:property"` string identifying the vector index.
+// `topo_bytes` is the output of `HnswFlatTopology::to_bytes()`.
+
+/// Serializes multiple HNSW indexes into a single envelope blob.
+///
+/// Each entry is a `(key, topology_bytes)` pair where `key` is the
+/// `"label:property"` identifier and `topology_bytes` comes from
+/// `HnswFlatTopology::to_bytes()`.
+pub fn pack_hnsw_indexes(entries: &[(&str, Vec<u8>)]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(4 + entries.len() * 64);
+    buf.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+    for (key, topo) in entries {
+        let key_bytes = key.as_bytes();
+        buf.extend_from_slice(&(key_bytes.len() as u32).to_le_bytes());
+        buf.extend_from_slice(key_bytes);
+        buf.extend_from_slice(&(topo.len() as u32).to_le_bytes());
+        buf.extend_from_slice(topo);
+    }
+    buf
+}
+
+/// Deserializes a multi-index HNSW envelope into `(key, topology_bytes)` pairs.
+///
+/// Returns `None` if the data is malformed.
+pub fn unpack_hnsw_indexes(data: &[u8]) -> Option<Vec<(String, &[u8])>> {
+    if data.len() < 4 {
+        return None;
+    }
+    let count = u32::from_le_bytes(data[..4].try_into().ok()?) as usize;
+    let mut pos = 4;
+    let mut result = Vec::with_capacity(count);
+
+    for _ in 0..count {
+        if pos + 4 > data.len() {
+            return None;
+        }
+        let key_len = u32::from_le_bytes(data[pos..pos + 4].try_into().ok()?) as usize;
+        pos += 4;
+        if pos + key_len > data.len() {
+            return None;
+        }
+        let key = std::str::from_utf8(&data[pos..pos + key_len]).ok()?;
+        pos += key_len;
+
+        if pos + 4 > data.len() {
+            return None;
+        }
+        let topo_len = u32::from_le_bytes(data[pos..pos + 4].try_into().ok()?) as usize;
+        pos += 4;
+        if pos + topo_len > data.len() {
+            return None;
+        }
+        let topo = &data[pos..pos + topo_len];
+        pos += topo_len;
+
+        result.push((key.to_string(), topo));
+    }
+    Some(result)
+}
+
+/// Exports all HNSW indexes from the store as a packed envelope blob.
+///
+/// Returns `None` if there are no vector indexes.
+#[cfg(feature = "vector-index")]
+pub fn export_hnsw_section(store: &LpgStore) -> Option<Vec<u8>> {
+    let entries = store.vector_index_entries();
+    if entries.is_empty() {
+        return None;
+    }
+
+    let packed: Vec<(&str, Vec<u8>)> = entries
+        .iter()
+        .map(|(key, index)| {
+            let flat = index.export_flat();
+            (key.as_str(), flat.to_bytes())
+        })
+        .collect();
+
+    Some(pack_hnsw_indexes(&packed))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hnsw_envelope_roundtrip() {
+        let entries = vec![
+            ("Person:embedding", vec![1u8, 2, 3, 4, 5]),
+            ("Document:vector", vec![10, 20, 30]),
+        ];
+        let packed = pack_hnsw_indexes(&entries);
+        let unpacked = unpack_hnsw_indexes(&packed).expect("unpack should succeed");
+
+        assert_eq!(unpacked.len(), 2);
+        assert_eq!(unpacked[0].0, "Person:embedding");
+        assert_eq!(unpacked[0].1, &[1, 2, 3, 4, 5]);
+        assert_eq!(unpacked[1].0, "Document:vector");
+        assert_eq!(unpacked[1].1, &[10, 20, 30]);
+    }
+
+    #[test]
+    fn test_hnsw_envelope_empty() {
+        let entries: Vec<(&str, Vec<u8>)> = vec![];
+        let packed = pack_hnsw_indexes(&entries);
+        let unpacked = unpack_hnsw_indexes(&packed).expect("unpack should succeed");
+        assert!(unpacked.is_empty());
+    }
+
+    #[test]
+    fn test_hnsw_envelope_malformed() {
+        assert!(unpack_hnsw_indexes(&[]).is_none());
+        assert!(unpack_hnsw_indexes(&[1, 0, 0, 0]).is_none()); // count=1 but no data
     }
 }

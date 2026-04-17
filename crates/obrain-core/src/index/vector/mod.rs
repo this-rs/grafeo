@@ -109,7 +109,7 @@ pub use zone_map::VectorZoneMap;
 #[cfg(feature = "vector-index")]
 pub use config::HnswConfig;
 #[cfg(feature = "vector-index")]
-pub use hnsw::HnswIndex;
+pub use hnsw::{HnswFlatHeader, HnswFlatTopology, HnswIndex};
 #[cfg(feature = "vector-index")]
 pub use quantized_hnsw::QuantizedHnswIndex;
 

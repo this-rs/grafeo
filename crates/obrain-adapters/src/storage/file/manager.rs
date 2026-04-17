@@ -411,10 +411,11 @@ impl ObrainFileManager {
                 .map_err(|e| Error::Internal(format!("mmap full file failed: {e}")))?
         };
 
-        // Random access pattern — v2 reader jumps between sections via TOC
+        // Default to Normal — callers can switch to Sequential/WillNeed
+        // before scanning, or Random for point lookups.
         #[cfg(unix)]
-        mmap.advise(memmap2::Advice::Random)
-            .unwrap_or_else(|e| tracing::debug!("madvise(Random) failed: {e}"));
+        mmap.advise(memmap2::Advice::Normal)
+            .unwrap_or_else(|e| tracing::debug!("madvise(Normal) failed: {e}"));
 
         tracing::info!(
             path = %self.path.display(),

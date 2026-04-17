@@ -21,7 +21,12 @@ mod index;
 mod persistence;
 #[cfg(feature = "obrain-file")]
 #[allow(unsafe_code)]
-pub(crate) mod mmap_store;
+pub mod mmap_store;
+#[cfg(feature = "obrain-file")]
+pub mod overlay_store;
+#[cfg(feature = "obrain-file")]
+#[allow(unsafe_code)]
+pub mod nocache_reader;
 #[cfg(feature = "obrain-file")]
 #[allow(unsafe_code)]
 pub(crate) mod native_writer;
@@ -1191,6 +1196,40 @@ impl ObrainDB {
         #[cfg(feature = "temporal")]
         store.sync_epoch(mmap_store.epoch());
 
+        // ── HNSW vector indexes ──
+        #[cfg(feature = "vector-index")]
+        if let Some(hnsw_bytes) = mmap_store.hnsw_topology_bytes() {
+            if let Some(indexes) = native_writer::unpack_hnsw_indexes(hnsw_bytes) {
+                let t_hnsw = std::time::Instant::now();
+                let mut restored = 0usize;
+                for (key, topo_bytes) in &indexes {
+                    if let Some(flat) =
+                        obrain_core::index::vector::HnswFlatTopology::from_bytes(topo_bytes)
+                    {
+                        if let Some(hnsw) =
+                            obrain_core::index::vector::HnswIndex::from_flat(&flat)
+                        {
+                            if let Some((label, property)) = key.split_once(':') {
+                                store.add_vector_index(
+                                    label,
+                                    property,
+                                    std::sync::Arc::new(hnsw),
+                                );
+                                restored += 1;
+                            }
+                        }
+                    }
+                }
+                if restored > 0 {
+                    tracing::info!(
+                        restored,
+                        elapsed_ms = t_hnsw.elapsed().as_millis(),
+                        "HNSW vector indexes restored from mmap"
+                    );
+                }
+            }
+        }
+
         tracing::info!(
             live_nodes,
             live_edges,
@@ -1199,6 +1238,218 @@ impl ObrainDB {
         );
 
         Ok(())
+    }
+
+    /// Materialize only the graph structure (nodes + labels, edges + types)
+    /// from an mmap store into an LpgStore, **without copying any properties**.
+    ///
+    /// This is dramatically faster than full materialization for large databases
+    /// with heavy vector properties (e.g. 32 GB megalaw: full = 20+ min,
+    /// structure-only = ~30s).
+    ///
+    /// The caller is expected to use an `OverlayStore` that reads properties
+    /// from the mmap and writes new properties to the LpgStore delta.
+    #[cfg(feature = "obrain-file")]
+    pub fn materialize_structure_only(
+        mmap_store: &mmap_store::MmapStore,
+        store: &Arc<LpgStore>,
+    ) -> Result<()> {
+        use obrain_common::utils::error::Error;
+
+        let t0 = std::time::Instant::now();
+        let node_count = mmap_store.node_slot_count();
+        let edge_count = mmap_store.edge_slot_count();
+
+        tracing::info!(
+            node_slots = node_count,
+            edge_slots = edge_count,
+            "Materializing structure only (mmap v2 → LpgStore, NO properties)..."
+        );
+
+        store.reserve_for_restore(node_count, edge_count);
+
+        // ── Nodes (labels only, no properties) ──
+        let t_nodes = std::time::Instant::now();
+        let owned_nodes: Vec<(obrain_common::types::NodeId, smallvec::SmallVec<[arcstr::ArcStr; 4]>)> =
+            mmap_store
+                .iter_nodes()
+                .map(|(id, labels, _props)| (id, labels))
+                .collect();
+        let live_nodes = owned_nodes.len();
+
+        const NODE_BATCH: usize = 500_000;
+        for chunk in owned_nodes.chunks(NODE_BATCH) {
+            let refs: Vec<(obrain_common::types::NodeId, Vec<&str>)> = chunk
+                .iter()
+                .map(|(id, labels)| (*id, labels.iter().map(|l| l.as_str()).collect()))
+                .collect();
+            store
+                .bulk_create_nodes_with_id(&refs)
+                .map_err(|e| Error::Internal(format!("materialize nodes: {e}")))?;
+        }
+        tracing::info!(live_nodes, elapsed_ms = t_nodes.elapsed().as_millis(), "nodes materialized (structure only)");
+
+        // ── Edges (type only, no properties) ──
+        let t_edges = std::time::Instant::now();
+        let owned_edges: Vec<(
+            obrain_common::types::EdgeId,
+            obrain_common::types::NodeId,
+            obrain_common::types::NodeId,
+            arcstr::ArcStr,
+        )> = mmap_store
+            .iter_edges()
+            .map(|(id, src, dst, edge_type, _props)| (id, src, dst, edge_type))
+            .collect();
+        let live_edges = owned_edges.len();
+
+        const EDGE_BATCH: usize = 2_000_000;
+        for chunk in owned_edges.chunks(EDGE_BATCH) {
+            let refs: Vec<(
+                obrain_common::types::EdgeId,
+                obrain_common::types::NodeId,
+                obrain_common::types::NodeId,
+                &str,
+            )> = chunk
+                .iter()
+                .map(|(id, src, dst, et)| (*id, *src, *dst, et.as_str()))
+                .collect();
+            store
+                .bulk_create_edges_with_id(&refs)
+                .map_err(|e| Error::Internal(format!("materialize edges: {e}")))?;
+        }
+        tracing::info!(live_edges, elapsed_ms = t_edges.elapsed().as_millis(), "edges materialized (structure only)");
+
+        // ── Sync epoch ──
+        #[cfg(feature = "temporal")]
+        store.sync_epoch(mmap_store.epoch());
+
+        // ── HNSW vector indexes (restored from mmap, zero property copy) ──
+        #[cfg(feature = "vector-index")]
+        if let Some(hnsw_bytes) = mmap_store.hnsw_topology_bytes() {
+            if let Some(indexes) = native_writer::unpack_hnsw_indexes(hnsw_bytes) {
+                let t_hnsw = std::time::Instant::now();
+                let mut restored = 0usize;
+                for (key, topo_bytes) in &indexes {
+                    if let Some(flat) =
+                        obrain_core::index::vector::HnswFlatTopology::from_bytes(topo_bytes)
+                    {
+                        if let Some(hnsw) =
+                            obrain_core::index::vector::HnswIndex::from_flat(&flat)
+                        {
+                            if let Some((label, property)) = key.split_once(':') {
+                                store.add_vector_index(
+                                    label,
+                                    property,
+                                    std::sync::Arc::new(hnsw),
+                                );
+                                restored += 1;
+                            }
+                        }
+                    }
+                }
+                if restored > 0 {
+                    tracing::info!(
+                        restored,
+                        elapsed_ms = t_hnsw.elapsed().as_millis(),
+                        "HNSW vector indexes restored from mmap (structure-only path)"
+                    );
+                }
+            }
+        }
+
+        tracing::info!(
+            live_nodes,
+            live_edges,
+            total_ms = t0.elapsed().as_millis(),
+            "Structure-only materialization complete (NO properties copied)"
+        );
+
+        Ok(())
+    }
+
+    /// Open a database in overlay mode: mmap for reads, LpgStore for mutations.
+    ///
+    /// Only materializes the graph structure (nodes + edges), NOT properties.
+    /// Properties are read from mmap on demand, new properties go to the delta.
+    ///
+    /// Returns `(ObrainDB, OverlayStore)` — the ObrainDB holds the LpgStore
+    /// and file manager, the OverlayStore provides merged read/write access.
+    #[cfg(feature = "obrain-file")]
+    pub fn open_overlay(path: impl AsRef<std::path::Path>) -> Result<(Self, overlay_store::OverlayStore)> {
+        use obrain_adapters::storage::file::format::DATA_OFFSET;
+
+        let path = path.as_ref();
+        let fm = ObrainFileManager::open(path)?;
+
+        if !fm.file_header().is_native_format() {
+            return Err(obrain_common::utils::error::Error::Internal(
+                "overlay mode requires native v2 format".to_string(),
+            ));
+        }
+
+        let mmap = fm.mmap_full_file()?;
+        let active = fm.active_header();
+        let epoch = obrain_common::types::EpochId(active.epoch);
+        let toc_offset = DATA_OFFSET as usize;
+        let ms = mmap_store::MmapStore::from_mmap(mmap, toc_offset, epoch)
+            .map_err(|e| obrain_common::utils::error::Error::Internal(
+                format!("native v2 open failed: {e}"),
+            ))?;
+        let mmap_arc = Arc::new(ms);
+
+        // Create LpgStore for the delta (mutations only)
+        let store = Arc::new(LpgStore::new()?);
+
+        // Materialize structure only (nodes + labels + edges + types)
+        Self::materialize_structure_only(&mmap_arc, &store)?;
+
+        // Set mmap as property fallback — get_node_property/get_edge_property
+        // will check local storage first, then fall back to mmap (zero-copy).
+        store.set_property_fallback(Arc::clone(&mmap_arc) as Arc<dyn obrain_core::graph::GraphStore>);
+
+        let overlay = overlay_store::OverlayStore::new(Arc::clone(&mmap_arc), Arc::clone(&store));
+
+        // Build the ObrainDB with the delta store
+        let transaction_manager = Arc::new(TransactionManager::new());
+        let catalog = Arc::new(Catalog::new());
+
+        let config = crate::Config::persistent(path);
+
+        let db = Self {
+            config,
+            store,
+            catalog,
+            #[cfg(feature = "rdf")]
+            rdf_store: Arc::new(RdfStore::new()),
+            transaction_manager,
+            buffer_manager: BufferManager::new(BufferManagerConfig::default()),
+            #[cfg(feature = "wal")]
+            wal: None,
+            #[cfg(feature = "wal")]
+            wal_graph_context: Arc::new(parking_lot::Mutex::new(None)),
+            query_cache: Arc::new(QueryCache::new(1000)),
+            commit_counter: Arc::new(AtomicUsize::new(0)),
+            is_open: RwLock::new(true),
+            #[cfg(feature = "cdc")]
+            cdc_log: Arc::new(crate::cdc::CdcLog::new()),
+            #[cfg(feature = "embed")]
+            embedding_models: RwLock::new(hashbrown::HashMap::new()),
+            #[cfg(feature = "obrain-file")]
+            file_manager: Some(Arc::new(fm)),
+            #[cfg(feature = "obrain-file")]
+            mmap_store: Some(mmap_arc),
+            external_store: None,
+            #[cfg(feature = "metrics")]
+            metrics: None,
+            current_graph: RwLock::new(None),
+            read_only: false,
+            #[cfg(feature = "cognitive")]
+            cognitive_engine: None,
+            #[cfg(feature = "cognitive")]
+            _cognitive_scheduler: None,
+        };
+
+        Ok((db, overlay))
     }
 
     // =========================================================================
@@ -1398,6 +1649,17 @@ impl ObrainDB {
     #[must_use]
     pub fn store(&self) -> &Arc<LpgStore> {
         &self.store
+    }
+
+    /// Returns the read-only mmap store if available (v2 native format).
+    ///
+    /// When opened with `Config::read_only()` on a v2 `.obrain` file, the data
+    /// is served directly from mmap without materialization into LpgStore.
+    /// Use this for zero-copy read access (instant open, no RAM overhead).
+    #[cfg(feature = "obrain-file")]
+    #[must_use]
+    pub fn mmap_store(&self) -> Option<&Arc<mmap_store::MmapStore>> {
+        self.mmap_store.as_ref()
     }
 
     /// Returns the LPG store for the currently active graph.
@@ -1631,6 +1893,17 @@ impl ObrainDB {
         if fm.file_header().is_native_format() {
             // v2 native: write directly using native_writer
             let path = fm.path().to_path_buf();
+
+            #[cfg(feature = "vector-index")]
+            if let Some(hnsw_blob) = native_writer::export_hnsw_section(&self.store) {
+                native_writer::write_native_v2_with_hnsw(
+                    &self.store, &path, epoch.0, transaction_id, &hnsw_blob,
+                )?;
+            } else {
+                native_writer::write_native_v2(&self.store, &path, epoch.0, transaction_id)?;
+            }
+
+            #[cfg(not(feature = "vector-index"))]
             native_writer::write_native_v2(&self.store, &path, epoch.0, transaction_id)?;
         } else {
             // v1 legacy: bincode serialize + write snapshot
