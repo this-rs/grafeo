@@ -1272,8 +1272,7 @@ impl ObrainDB {
         let t_nodes = std::time::Instant::now();
         let owned_nodes: Vec<(obrain_common::types::NodeId, smallvec::SmallVec<[arcstr::ArcStr; 4]>)> =
             mmap_store
-                .iter_nodes()
-                .map(|(id, labels, _props)| (id, labels))
+                .iter_nodes_structure_only()
                 .collect();
         let live_nodes = owned_nodes.len();
 
@@ -1297,8 +1296,7 @@ impl ObrainDB {
             obrain_common::types::NodeId,
             arcstr::ArcStr,
         )> = mmap_store
-            .iter_edges()
-            .map(|(id, src, dst, edge_type, _props)| (id, src, dst, edge_type))
+            .iter_edges_structure_only()
             .collect();
         let live_edges = owned_edges.len();
 
