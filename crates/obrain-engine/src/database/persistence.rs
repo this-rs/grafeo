@@ -794,8 +794,27 @@ impl super::ObrainDB {
     /// all named graph data.
     /// Useful for:
     /// Saves the database to a single `.obrain` file.
+    ///
+    /// Uses the native v2 mmap-friendly format for instant loading.
+    /// The legacy v1 bincode format is available via [`save_as_obrain_file_legacy`].
     #[cfg(feature = "obrain-file")]
     fn save_as_obrain_file(&self, path: &Path) -> Result<()> {
+        let epoch = self.store.current_epoch();
+        let transaction_id = self
+            .transaction_manager
+            .last_assigned_transaction_id()
+            .map_or(0, |t| t.0);
+
+        super::native_writer::write_native_v2(&self.store, path, epoch.0, transaction_id)
+    }
+
+    /// Saves the database to a single `.obrain` file using the legacy v1 format.
+    ///
+    /// This uses bincode serialization and produces files compatible with
+    /// older versions of obrain.
+    #[cfg(feature = "obrain-file")]
+    #[allow(dead_code)]
+    fn save_as_obrain_file_legacy(&self, path: &Path) -> Result<()> {
         use obrain_adapters::storage::file::ObrainFileManager;
 
         let snapshot_data = self.export_snapshot()?;
@@ -1777,5 +1796,110 @@ mod tests {
         // Restore should bring back the index
         db.restore_snapshot(&snapshot).unwrap();
         assert!(db.has_property_index("email"));
+    }
+
+    /// Full lifecycle test for native v2 format:
+    /// create → save v2 → reopen (materialize) → query → mutate → save → reopen → verify
+    #[test]
+    #[cfg(feature = "obrain-file")]
+    fn test_native_v2_lifecycle() {
+        use std::time::Instant;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("lifecycle.obrain");
+
+        // ── Phase 1: Create and populate ──
+        {
+            let db = ObrainDB::new_in_memory();
+            let session = db.session();
+
+            session.execute("INSERT (:Person {name: 'Alice', age: 30})").unwrap();
+            session.execute("INSERT (:Person {name: 'Bob', age: 25})").unwrap();
+            session.execute("INSERT (:City {name: 'Paris'})").unwrap();
+            session
+                .execute("MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'}) INSERT (a)-[:KNOWS {since: 2020}]->(b)")
+                .unwrap();
+            session
+                .execute("MATCH (a:Person {name: 'Alice'}), (c:City {name: 'Paris'}) INSERT (a)-[:LIVES_IN]->(c)")
+                .unwrap();
+
+            assert_eq!(db.store.node_count(), 3);
+            assert_eq!(db.store.edge_count(), 2);
+
+            // Save as v2 native format
+            db.save(&db_path).unwrap();
+        }
+
+        // ── Phase 2: Reopen (triggers materialize_mmap_to_lpg) and verify ──
+        {
+            let t_open = Instant::now();
+            let db = ObrainDB::open(&db_path).unwrap();
+            let open_ms = t_open.elapsed().as_millis();
+            eprintln!("v2 open + materialize: {open_ms}ms");
+
+            assert_eq!(db.store.node_count(), 3, "node count after reopen");
+            assert_eq!(db.store.edge_count(), 2, "edge count after reopen");
+
+            let session = db.session();
+
+            // Verify node data
+            let result = session
+                .execute("MATCH (p:Person) RETURN p.name ORDER BY p.name")
+                .unwrap();
+            assert_eq!(result.rows.len(), 2);
+            let names: Vec<String> = result
+                .rows
+                .iter()
+                .map(|r| r[0].to_string())
+                .collect();
+            assert!(names.contains(&"\"Alice\"".to_string()), "expected Alice, got: {names:?}");
+            assert!(names.contains(&"\"Bob\"".to_string()), "expected Bob, got: {names:?}");
+
+            // Verify edge data
+            let result = session
+                .execute("MATCH (a)-[r:KNOWS]->(b) RETURN a.name, r.since, b.name")
+                .unwrap();
+            assert_eq!(result.rows.len(), 1, "KNOWS edge count");
+
+            // Verify city node
+            let result = session
+                .execute("MATCH (c:City) RETURN c.name")
+                .unwrap();
+            assert_eq!(result.rows.len(), 1);
+
+            // ── Phase 3: Mutate and save again ──
+            session
+                .execute("INSERT (:Person {name: 'Charlie', age: 35})")
+                .unwrap();
+            session
+                .execute("MATCH (b:Person {name: 'Bob'}), (c:City {name: 'Paris'}) INSERT (b)-[:LIVES_IN]->(c)")
+                .unwrap();
+
+            assert_eq!(db.store.node_count(), 4, "node count after mutation");
+            assert_eq!(db.store.edge_count(), 3, "edge count after mutation");
+
+            db.save(&db_path).unwrap();
+        }
+
+        // ── Phase 4: Reopen and verify mutations persisted ──
+        {
+            let db = ObrainDB::open(&db_path).unwrap();
+
+            assert_eq!(db.store.node_count(), 4, "node count final reopen");
+            assert_eq!(db.store.edge_count(), 3, "edge count final reopen");
+
+            let session = db.session();
+
+            let result = session
+                .execute("MATCH (p:Person) RETURN p.name ORDER BY p.name")
+                .unwrap();
+            assert_eq!(result.rows.len(), 3, "3 persons after final reopen");
+
+            let result = session
+                .execute("MATCH ()-[r:LIVES_IN]->() RETURN count(r)")
+                .unwrap();
+            let count_str = result.rows[0][0].to_string();
+            assert_eq!(count_str, "2", "2 LIVES_IN edges after final reopen");
+        }
     }
 }

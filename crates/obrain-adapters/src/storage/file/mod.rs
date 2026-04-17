@@ -23,6 +23,9 @@
 pub mod format;
 pub mod header;
 pub mod manager;
+#[allow(unsafe_code)]
+pub mod toc;
 
 pub use format::{DbHeader, FileHeader, MAGIC};
 pub use manager::ObrainFileManager;
+pub use toc::{FileToc, SectionEntry, SectionType, TocBuilder, TocError};

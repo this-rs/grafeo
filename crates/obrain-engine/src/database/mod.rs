@@ -19,6 +19,12 @@ mod crud;
 mod embed;
 mod index;
 mod persistence;
+#[cfg(feature = "obrain-file")]
+#[allow(unsafe_code)]
+pub(crate) mod mmap_store;
+#[cfg(feature = "obrain-file")]
+#[allow(unsafe_code)]
+pub(crate) mod native_writer;
 mod query;
 #[cfg(feature = "rdf")]
 mod rdf_ops;
@@ -116,6 +122,9 @@ pub struct ObrainDB {
     /// Single-file database manager (when using `.obrain` format).
     #[cfg(feature = "obrain-file")]
     pub(super) file_manager: Option<Arc<ObrainFileManager>>,
+    /// Native v2 mmap-backed store for instant read-only access.
+    #[cfg(feature = "obrain-file")]
+    pub(super) mmap_store: Option<Arc<mmap_store::MmapStore>>,
     /// External graph store (when using with_store()).
     /// When set, sessions route queries through this store instead of the built-in LpgStore.
     pub(super) external_store: Option<Arc<dyn GraphStoreMut>>,
@@ -270,33 +279,56 @@ impl ObrainDB {
 
         // --- Single-file format (.obrain) ---
         //
-        // Uses mmap to load the snapshot: the kernel maps the file into the
-        // process address space and loads pages on demand during bincode
-        // deserialization. This avoids allocating + copying the entire file
-        // into a Vec<u8> and is dramatically faster for large databases
-        // (e.g., 3.9 GB Wikipedia → near-instant open).
+        // Two paths depending on format version:
+        // - v1 (legacy): mmap snapshot region → bincode decode into LpgStore
+        // - v2 (native): mmap full file → MmapStore (zero-copy, instant open)
+        #[cfg(feature = "obrain-file")]
+        let mut native_mmap_store: Option<Arc<mmap_store::MmapStore>> = None;
+
         #[cfg(feature = "obrain-file")]
         let file_manager: Option<Arc<ObrainFileManager>> = if is_read_only {
             // Read-only mode: open with shared lock, load snapshot, skip WAL
             if let Some(ref db_path) = config.path {
                 if db_path.exists() && db_path.is_file() {
                     let fm = ObrainFileManager::open_read_only(db_path)?;
-                    match fm.mmap_snapshot() {
-                        Ok(mmap) => {
-                            Self::apply_snapshot_data(
-                                &store,
-                                &catalog,
-                                #[cfg(feature = "rdf")]
-                                &rdf_store,
-                                &mmap,
-                            )?;
-                            // CRC after decode — pages already in cache, ~free
-                            fm.verify_mmap_crc(&mmap)?;
-                        }
-                        Err(e) => {
-                            tracing::debug!("No snapshot to mmap (read-only): {e}");
+
+                    if fm.file_header().is_native_format() {
+                        // ── v2 native: mmap full file → MmapStore (instant) ──
+                        let t_open = std::time::Instant::now();
+                        let mmap = fm.mmap_full_file()?;
+                        let active = fm.active_header();
+                        let epoch = obrain_common::types::EpochId(active.epoch);
+                        let toc_offset = obrain_adapters::storage::file::format::DATA_OFFSET as usize;
+                        let ms = mmap_store::MmapStore::from_mmap(mmap, toc_offset, epoch)
+                            .map_err(|e| obrain_common::utils::error::Error::Internal(
+                                format!("native v2 open failed: {e}"),
+                            ))?;
+                        tracing::info!(
+                            elapsed = ?t_open.elapsed(),
+                            node_slots = ms.node_slot_count(),
+                            edge_slots = ms.edge_slot_count(),
+                            "Instant open via native v2 mmap",
+                        );
+                        native_mmap_store = Some(Arc::new(ms));
+                    } else {
+                        // ── v1 legacy: bincode decode ──
+                        match fm.mmap_snapshot() {
+                            Ok(mmap) => {
+                                Self::apply_snapshot_data(
+                                    &store,
+                                    &catalog,
+                                    #[cfg(feature = "rdf")]
+                                    &rdf_store,
+                                    &mmap,
+                                )?;
+                                fm.verify_mmap_crc(&mmap)?;
+                            }
+                            Err(e) => {
+                                tracing::debug!("No snapshot to mmap (read-only): {e}");
+                            }
                         }
                     }
+
                     Some(Arc::new(fm))
                 } else {
                     return Err(obrain_common::utils::error::Error::Internal(format!(
@@ -324,21 +356,41 @@ impl ObrainDB {
                         )));
                     };
 
-                    // Load snapshot via mmap — pages loaded on demand by the kernel
-                    match fm.mmap_snapshot() {
-                        Ok(mmap) => {
-                            Self::apply_snapshot_data(
-                                &store,
-                                &catalog,
-                                #[cfg(feature = "rdf")]
-                                &rdf_store,
-                                &mmap,
-                            )?;
-                            // CRC after decode — pages already in cache, ~free
-                            fm.verify_mmap_crc(&mmap)?;
+                    // Load snapshot via mmap
+                    if fm.file_header().is_native_format() {
+                        // v2 native: mmap full file, then materialize into LpgStore
+                        // (read-write mode needs mutable in-memory store for mutations)
+                        match fm.mmap_full_file() {
+                            Ok(mmap) => {
+                                let active = fm.active_header();
+                                let epoch = obrain_common::types::EpochId(active.epoch);
+                                let toc_offset = obrain_adapters::storage::file::format::DATA_OFFSET as usize;
+                                let ms = mmap_store::MmapStore::from_mmap(mmap, toc_offset, epoch)
+                                    .map_err(|e| obrain_common::utils::error::Error::Internal(
+                                        format!("native v2 open failed: {e}"),
+                                    ))?;
+                                Self::materialize_mmap_to_lpg(&ms, &store, &catalog)?;
+                            }
+                            Err(e) => {
+                                tracing::debug!("No snapshot to mmap (v2): {e}");
+                            }
                         }
-                        Err(e) => {
-                            tracing::debug!("No snapshot to mmap: {e}");
+                    } else {
+                        // v1 legacy: bincode decode
+                        match fm.mmap_snapshot() {
+                            Ok(mmap) => {
+                                Self::apply_snapshot_data(
+                                    &store,
+                                    &catalog,
+                                    #[cfg(feature = "rdf")]
+                                    &rdf_store,
+                                    &mmap,
+                                )?;
+                                fm.verify_mmap_crc(&mmap)?;
+                            }
+                            Err(e) => {
+                                tracing::debug!("No snapshot to mmap: {e}");
+                            }
                         }
                     }
 
@@ -561,6 +613,8 @@ impl ObrainDB {
             embedding_models: RwLock::new(hashbrown::HashMap::new()),
             #[cfg(feature = "obrain-file")]
             file_manager,
+            #[cfg(feature = "obrain-file")]
+            mmap_store: native_mmap_store,
             external_store: None,
             #[cfg(feature = "metrics")]
             metrics: Some(Arc::new(crate::metrics::MetricsRegistry::new())),
@@ -637,6 +691,8 @@ impl ObrainDB {
             embedding_models: RwLock::new(hashbrown::HashMap::new()),
             #[cfg(feature = "obrain-file")]
             file_manager: None,
+            #[cfg(feature = "obrain-file")]
+            mmap_store: None,
             external_store: Some(store),
             #[cfg(feature = "metrics")]
             metrics: Some(Arc::new(crate::metrics::MetricsRegistry::new())),
@@ -1002,6 +1058,147 @@ impl ObrainDB {
             rdf_store,
             data,
         )
+    }
+
+    /// Materializes a read-only MmapStore into a mutable LpgStore.
+    ///
+    /// This is used when opening a v2 native file in read-write mode: the file
+    /// is mmap'd for fast parsing, then all nodes and edges are copied into the
+    /// in-memory LpgStore so mutations can proceed normally.
+    ///
+    /// The catalog parameter is reserved for future schema restoration.
+    #[cfg(feature = "obrain-file")]
+    fn materialize_mmap_to_lpg(
+        mmap_store: &mmap_store::MmapStore,
+        store: &Arc<LpgStore>,
+        _catalog: &Arc<crate::catalog::Catalog>,
+    ) -> Result<()> {
+        use obrain_common::utils::error::Error;
+
+        let t0 = std::time::Instant::now();
+        let node_count = mmap_store.node_slot_count();
+        let edge_count = mmap_store.edge_slot_count();
+
+        tracing::info!(
+            node_slots = node_count,
+            edge_slots = edge_count,
+            "Materializing mmap v2 → LpgStore..."
+        );
+
+        // Pre-allocate store capacity
+        store.reserve_for_restore(node_count, edge_count);
+
+        // ── Nodes ──
+        let t_nodes = std::time::Instant::now();
+
+        // Collect nodes with owned labels so ArcStr lives long enough
+        let owned_nodes: Vec<(obrain_common::types::NodeId, smallvec::SmallVec<[arcstr::ArcStr; 4]>)> =
+            mmap_store
+                .iter_nodes()
+                .map(|(id, labels, _props)| (id, labels))
+                .collect();
+        let live_nodes = owned_nodes.len();
+
+        // Bulk create nodes with their original IDs
+        const NODE_BATCH: usize = 500_000;
+        for chunk in owned_nodes.chunks(NODE_BATCH) {
+            let refs: Vec<(obrain_common::types::NodeId, Vec<&str>)> = chunk
+                .iter()
+                .map(|(id, labels)| (*id, labels.iter().map(|l| l.as_str()).collect()))
+                .collect();
+            store
+                .bulk_create_nodes_with_id(&refs)
+                .map_err(|e| Error::Internal(format!("materialize nodes: {e}")))?;
+        }
+
+        tracing::info!(
+            live_nodes,
+            elapsed_ms = t_nodes.elapsed().as_millis(),
+            "nodes materialized"
+        );
+
+        // ── Node properties ──
+        let t_props = std::time::Instant::now();
+        for (id, _labels, properties) in mmap_store.iter_nodes() {
+            for (key, value) in properties {
+                store.set_node_property_bulk(id, key.as_str(), value);
+            }
+        }
+        tracing::info!(
+            elapsed_ms = t_props.elapsed().as_millis(),
+            "node properties materialized"
+        );
+
+        // ── Edges ──
+        let t_edges = std::time::Instant::now();
+        // Collect edges with owned ArcStr so edge_type lives long enough for bulk_create
+        let owned_edges: Vec<(
+            obrain_common::types::EdgeId,
+            obrain_common::types::NodeId,
+            obrain_common::types::NodeId,
+            arcstr::ArcStr,
+        )> = mmap_store
+            .iter_edges()
+            .map(|(id, src, dst, edge_type, _props)| (id, src, dst, edge_type))
+            .collect();
+
+        let live_edges = owned_edges.len();
+        const EDGE_BATCH: usize = 2_000_000;
+        for chunk in owned_edges.chunks(EDGE_BATCH) {
+            let refs: Vec<(
+                obrain_common::types::EdgeId,
+                obrain_common::types::NodeId,
+                obrain_common::types::NodeId,
+                &str,
+            )> = chunk
+                .iter()
+                .map(|(id, src, dst, et)| (*id, *src, *dst, et.as_str()))
+                .collect();
+            store
+                .bulk_create_edges_with_id(&refs)
+                .map_err(|e| Error::Internal(format!("materialize edges: {e}")))?;
+        }
+        tracing::info!(
+            live_edges,
+            elapsed_ms = t_edges.elapsed().as_millis(),
+            "edges materialized"
+        );
+
+        // ── Edge properties ──
+        let t_eprops = std::time::Instant::now();
+        let mut edges_with_props = 0usize;
+        for (id, _src, _dst, _et, properties) in mmap_store.iter_edges() {
+            if properties.is_empty() {
+                continue;
+            }
+            edges_with_props += 1;
+            for (key, value) in properties {
+                store.set_edge_property_bulk(id, key.as_str(), value);
+            }
+        }
+        if edges_with_props > 0 {
+            tracing::info!(
+                edges_with_props,
+                elapsed_ms = t_eprops.elapsed().as_millis(),
+                "edge properties materialized"
+            );
+        }
+
+        // Note: labels and edge types are automatically registered in the store
+        // by bulk_create_nodes_with_id and bulk_create_edges_with_id.
+
+        // ── Sync epoch ──
+        #[cfg(feature = "temporal")]
+        store.sync_epoch(mmap_store.epoch());
+
+        tracing::info!(
+            live_nodes,
+            live_edges,
+            total_ms = t0.elapsed().as_millis(),
+            "Materialization complete (mmap v2 → LpgStore)"
+        );
+
+        Ok(())
     }
 
     // =========================================================================
@@ -1424,24 +1621,33 @@ impl ObrainDB {
         use obrain_core::testing::crash::maybe_crash;
 
         maybe_crash("checkpoint_to_file:before_export");
-        let snapshot_data = self.export_snapshot()?;
-        maybe_crash("checkpoint_to_file:after_export");
 
         let epoch = self.store.current_epoch();
         let transaction_id = self
             .transaction_manager
             .last_assigned_transaction_id()
             .map_or(0, |t| t.0);
-        let node_count = self.store.node_count() as u64;
-        let edge_count = self.store.edge_count() as u64;
 
-        fm.write_snapshot(
-            &snapshot_data,
-            epoch.0,
-            transaction_id,
-            node_count,
-            edge_count,
-        )?;
+        if fm.file_header().is_native_format() {
+            // v2 native: write directly using native_writer
+            let path = fm.path().to_path_buf();
+            native_writer::write_native_v2(&self.store, &path, epoch.0, transaction_id)?;
+        } else {
+            // v1 legacy: bincode serialize + write snapshot
+            let snapshot_data = self.export_snapshot()?;
+            maybe_crash("checkpoint_to_file:after_export");
+
+            let node_count = self.store.node_count() as u64;
+            let edge_count = self.store.edge_count() as u64;
+
+            fm.write_snapshot(
+                &snapshot_data,
+                epoch.0,
+                transaction_id,
+                node_count,
+                edge_count,
+            )?;
+        }
 
         maybe_crash("checkpoint_to_file:after_write_snapshot");
         Ok(())

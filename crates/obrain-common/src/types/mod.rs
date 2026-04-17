@@ -19,6 +19,9 @@ mod validity;
 mod value;
 mod zoned_datetime;
 
+#[allow(unsafe_code)]
+pub mod flat;
+
 pub use date::Date;
 pub use duration::Duration;
 pub use id::{EdgeId, EdgeTypeId, EpochId, IndexId, LabelId, NodeId, PropertyKeyId, TransactionId};

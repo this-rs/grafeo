@@ -386,6 +386,46 @@ impl ObrainFileManager {
         Ok(mmap)
     }
 
+    /// Memory-maps the **entire** `.obrain` file for native v2 format.
+    ///
+    /// Unlike [`mmap_snapshot()`](Self::mmap_snapshot) which maps only the data
+    /// payload starting at `DATA_OFFSET`, this maps the whole file including
+    /// headers and TOC. The v2 reader needs the full file because section
+    /// offsets in the TOC are absolute file offsets.
+    ///
+    /// Returns an error if there is no snapshot data.
+    #[allow(unsafe_code)]
+    pub fn mmap_full_file(&self) -> Result<memmap2::Mmap> {
+        let active_header = self.active_header.lock();
+        if active_header.is_empty() {
+            return Err(Error::Internal("no snapshot data in file".to_string()));
+        }
+        drop(active_header);
+
+        let file = self.file.lock();
+
+        // SAFETY: file lock guarantees no concurrent modification.
+        let mmap = unsafe {
+            memmap2::MmapOptions::new()
+                .map(&*file)
+                .map_err(|e| Error::Internal(format!("mmap full file failed: {e}")))?
+        };
+
+        // Random access pattern — v2 reader jumps between sections via TOC
+        #[cfg(unix)]
+        mmap.advise(memmap2::Advice::Random)
+            .unwrap_or_else(|e| tracing::debug!("madvise(Random) failed: {e}"));
+
+        tracing::info!(
+            path = %self.path.display(),
+            file_bytes = mmap.len(),
+            "Full file mmap'd for native v2 ({:.1} MB)",
+            mmap.len() as f64 / (1024.0 * 1024.0),
+        );
+
+        Ok(mmap)
+    }
+
     /// Verify the CRC-32 checksum of an already-mmap'd snapshot.
     ///
     /// Call this AFTER deserialization — the pages are already in the page

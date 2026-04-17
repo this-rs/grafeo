@@ -1,0 +1,542 @@
+//! Native v2 writer: converts an in-memory LpgStore into the mmap-friendly
+//! `.obrain` v2 file format.
+//!
+//! The writer produces a single file with this layout:
+//!
+//! | Offset   | Size     | Contents |
+//! |----------|----------|----------|
+//! | 0        | 4 KiB    | FileHeader (magic=GRAF, version=2) |
+//! | 4 KiB    | 4 KiB    | DbHeader slot 0 |
+//! | 8 KiB    | 4 KiB    | DbHeader slot 1 |
+//! | 12 KiB   | 4 KiB    | TOC (section table) |
+//! | 16 KiB+  | variable | Data sections (strings, nodes, edges, CSR, props...) |
+
+use std::collections::HashMap;
+use std::io::{BufWriter, Seek, SeekFrom, Write};
+use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use obrain_adapters::storage::file::format::{
+    DbHeader, FileHeader, DATA_OFFSET, DB_HEADER_SIZE, FILE_HEADER_SIZE,
+};
+use obrain_adapters::storage::file::toc::{SectionType, TocBuilder, TOC_PAGE_SIZE};
+use obrain_common::types::flat::{
+    EdgeSlot, NodeSlot, PropEntry, StringRef, ValueType,
+};
+use obrain_common::types::Value;
+use obrain_common::utils::error::{Error, Result};
+use obrain_core::graph::lpg::LpgStore;
+
+/// Alignment for data sections (8 bytes for u64 casting).
+const SECTION_ALIGN: u64 = 8;
+
+/// Byte offset where data sections begin (after FileHeader + 2 DbHeaders + TOC).
+const SECTIONS_START: u64 = DATA_OFFSET + TOC_PAGE_SIZE as u64;
+
+// ─────────────────────────────────────────────────────────────────────
+// StringTable builder
+// ───────────────────────────────────────────────────��─────────────────
+
+/// Collects unique strings and produces a compact StringTable.
+struct StringTableBuilder {
+    /// Buffer holding concatenated UTF-8 strings.
+    buffer: Vec<u8>,
+    /// Map from string content to its StringRef.
+    lookup: HashMap<String, StringRef>,
+}
+
+impl StringTableBuilder {
+    fn new() -> Self {
+        Self {
+            buffer: Vec::with_capacity(1024 * 1024), // 1 MB initial
+            lookup: HashMap::with_capacity(4096),
+        }
+    }
+
+    /// Interns a string, returning its StringRef. Deduplicates.
+    fn intern(&mut self, s: &str) -> StringRef {
+        if let Some(&sref) = self.lookup.get(s) {
+            return sref;
+        }
+        let offset = self.buffer.len() as u32;
+        let len = s.len() as u32;
+        self.buffer.extend_from_slice(s.as_bytes());
+        let sref = StringRef::new(offset, len);
+        self.lookup.insert(s.to_string(), sref);
+        sref
+    }
+
+    /// Returns the raw bytes of the string table.
+    fn into_bytes(self) -> Vec<u8> {
+        self.buffer
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Value serializer
+// ─────────────────────────────────────────────────────────────────────
+
+/// Serializes a `Value` into the values buffer, returning (value_type, offset, len).
+fn serialize_value(
+    value: &Value,
+    values_buf: &mut Vec<u8>,
+    strings: &mut StringTableBuilder,
+) -> (u8, u32, u32) {
+    let offset = values_buf.len() as u32;
+    match value {
+        Value::Null => (ValueType::Null as u8, offset, 0),
+        Value::Bool(b) => {
+            values_buf.push(if *b { 1 } else { 0 });
+            (ValueType::Bool as u8, offset, 1)
+        }
+        Value::Int64(v) => {
+            values_buf.extend_from_slice(&v.to_le_bytes());
+            (ValueType::Int64 as u8, offset, 8)
+        }
+        Value::Float64(v) => {
+            values_buf.extend_from_slice(&v.to_le_bytes());
+            (ValueType::Float64 as u8, offset, 8)
+        }
+        Value::String(s) => {
+            // Store the string ref into the string table
+            let sref = strings.intern(s.as_str());
+            values_buf.extend_from_slice(&sref.offset.to_le_bytes());
+            values_buf.extend_from_slice(&sref.len.to_le_bytes());
+            (ValueType::String as u8, offset, 8)
+        }
+        Value::Bytes(b) => {
+            let len = b.len() as u32;
+            values_buf.extend_from_slice(b);
+            (ValueType::Bytes as u8, offset, len)
+        }
+        Value::Timestamp(ts) => {
+            // Store as i64 microseconds since epoch
+            values_buf.extend_from_slice(&ts.as_micros().to_le_bytes());
+            (ValueType::Timestamp as u8, offset, 8)
+        }
+        Value::Date(d) => {
+            // Store as i32 days since epoch
+            values_buf.extend_from_slice(&d.as_days().to_le_bytes());
+            (ValueType::Date as u8, offset, 4)
+        }
+        Value::Time(t) => {
+            // Store as u64 nanos + i32 offset_seconds
+            values_buf.extend_from_slice(&t.as_nanos().to_le_bytes());
+            values_buf.extend_from_slice(&t.offset_seconds().unwrap_or(0).to_le_bytes());
+            (ValueType::Time as u8, offset, 12)
+        }
+        Value::Duration(d) => {
+            // Store as 3 × i64 (months, days, nanos)
+            values_buf.extend_from_slice(&d.months().to_le_bytes());
+            values_buf.extend_from_slice(&d.days().to_le_bytes());
+            values_buf.extend_from_slice(&d.nanos().to_le_bytes());
+            (ValueType::Duration as u8, offset, 24)
+        }
+        Value::ZonedDatetime(zdt) => {
+            // Store as Timestamp (i64 micros) + i32 offset_seconds
+            values_buf.extend_from_slice(&zdt.as_timestamp().as_micros().to_le_bytes());
+            values_buf.extend_from_slice(&zdt.offset_seconds().to_le_bytes());
+            (ValueType::ZonedDatetime as u8, offset, 12)
+        }
+        Value::Vector(v) => {
+            // Write f32 array directly
+            let byte_len = (v.len() * 4) as u32;
+            for &f in v.iter() {
+                values_buf.extend_from_slice(&f.to_le_bytes());
+            }
+            (ValueType::Vector as u8, offset, byte_len)
+        }
+        Value::List(items) => {
+            // Serialize as: count:u32 + items serialized recursively
+            let start = values_buf.len() as u32;
+            values_buf.extend_from_slice(&(items.len() as u32).to_le_bytes());
+            for item in items.iter() {
+                let (vt, _off, _len) = serialize_value(item, values_buf, strings);
+                // Store type + length inline for each item
+                values_buf.push(vt);
+            }
+            let total_len = values_buf.len() as u32 - start;
+            (ValueType::List as u8, start, total_len)
+        }
+        Value::Map(map) => {
+            // Serialize as: count:u32 + (key_ref + value)*
+            let start = values_buf.len() as u32;
+            values_buf.extend_from_slice(&(map.len() as u32).to_le_bytes());
+            for (k, v) in map.iter() {
+                let key_ref = strings.intern(k.as_str());
+                values_buf.extend_from_slice(&key_ref.offset.to_le_bytes());
+                values_buf.extend_from_slice(&key_ref.len.to_le_bytes());
+                let (vt, _off, _len) = serialize_value(v, values_buf, strings);
+                values_buf.push(vt);
+            }
+            let total_len = values_buf.len() as u32 - start;
+            (ValueType::Map as u8, start, total_len)
+        }
+        Value::Path { nodes, edges } => {
+            let start = values_buf.len() as u32;
+            values_buf.extend_from_slice(&(nodes.len() as u32).to_le_bytes());
+            values_buf.extend_from_slice(&(edges.len() as u32).to_le_bytes());
+            for n in nodes.iter() {
+                let (vt, _, _) = serialize_value(n, values_buf, strings);
+                values_buf.push(vt);
+            }
+            for e in edges.iter() {
+                let (vt, _, _) = serialize_value(e, values_buf, strings);
+                values_buf.push(vt);
+            }
+            let total_len = values_buf.len() as u32 - start;
+            (ValueType::Path as u8, start, total_len)
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Public API
+// ─────────────────────────────────────────────────────────────────────
+
+/// Writes the store contents to a native v2 `.obrain` file.
+///
+/// This produces a file that can be mmap'd and read with zero deserialization.
+pub fn write_native_v2(
+    store: &LpgStore,
+    path: &Path,
+    epoch: u64,
+    transaction_id: u64,
+) -> Result<()> {
+    let file = std::fs::File::create(path)
+        .map_err(|e| Error::Internal(format!("create file: {e}")))?;
+    let mut w = BufWriter::with_capacity(8 * 1024 * 1024, file); // 8MB buffer
+
+    // ── Phase 1: collect all data in memory ──
+
+    let mut strings = StringTableBuilder::new();
+    let mut values_buf: Vec<u8> = Vec::with_capacity(64 * 1024 * 1024); // 64MB for values
+
+    // 1a. Build label catalog: label_name → label_id (u32)
+    let all_labels = store.all_labels();
+    let mut label_name_to_id: HashMap<String, u32> = HashMap::new();
+    let mut label_refs: Vec<StringRef> = Vec::with_capacity(all_labels.len());
+    for (i, label) in all_labels.iter().enumerate() {
+        label_name_to_id.insert(label.clone(), i as u32);
+        label_refs.push(strings.intern(label));
+    }
+
+    // 1b. Build edge type catalog: edge_type → type_id (stored as StringRef)
+    let all_edge_types = store.all_edge_types();
+    let mut edge_type_refs: Vec<StringRef> = Vec::with_capacity(all_edge_types.len());
+    for et in &all_edge_types {
+        edge_type_refs.push(strings.intern(et));
+    }
+
+    // 1c. Collect nodes → NodeSlots + PropEntries
+    let node_count = store.node_count();
+    let edge_count = store.edge_count();
+    let mut node_slots: Vec<NodeSlot> = vec![NodeSlot::default(); node_count];
+    let mut prop_entries: Vec<PropEntry> = Vec::with_capacity(node_count * 5);
+
+    for node in store.all_nodes() {
+        let idx = node.id.0 as usize;
+        if idx >= node_slots.len() {
+            node_slots.resize(idx + 1, NodeSlot::default());
+        }
+
+        // Build label_mask bitmap
+        let mut label_mask: u64 = 0;
+        for label in &node.labels {
+            if let Some(&lid) = label_name_to_id.get(label.as_str()) {
+                if lid < 64 {
+                    label_mask |= 1u64 << lid;
+                }
+            }
+        }
+
+        // Collect properties
+        let prop_offset = prop_entries.len() as u32;
+        let mut prop_count = 0u16;
+        for (key, value) in &node.properties {
+            let key_ref = strings.intern(key.as_str());
+            let (vt, voff, vlen) = serialize_value(value, &mut values_buf, &mut strings);
+            prop_entries.push(PropEntry::new(key_ref, vt, voff, vlen));
+            prop_count += 1;
+        }
+
+        node_slots[idx] = NodeSlot::new(node.id.0, label_mask, prop_offset, prop_count);
+    }
+
+    // 1d. Collect edges → EdgeSlots + PropEntries
+    let mut edge_slots: Vec<EdgeSlot> = vec![EdgeSlot::default(); edge_count];
+    for edge in store.all_edges() {
+        let idx = edge.id.0 as usize;
+        if idx >= edge_slots.len() {
+            edge_slots.resize(idx + 1, EdgeSlot::default());
+        }
+
+        let type_ref = strings.intern(edge.edge_type.as_str());
+
+        // Collect properties
+        let prop_offset = prop_entries.len() as u32;
+        let mut prop_count = 0u16;
+        for (key, value) in &edge.properties {
+            let key_ref = strings.intern(key.as_str());
+            let (vt, voff, vlen) = serialize_value(value, &mut values_buf, &mut strings);
+            prop_entries.push(PropEntry::new(key_ref, vt, voff, vlen));
+            prop_count += 1;
+        }
+
+        edge_slots[idx] = EdgeSlot::new(
+            edge.id.0,
+            edge.src.0,
+            edge.dst.0,
+            type_ref,
+            prop_offset,
+            prop_count,
+        );
+    }
+
+    // 1e. Build CSR forward + backward adjacency
+    let actual_node_count = node_slots.len();
+    let (csr_fwd_offsets, csr_fwd_targets, csr_fwd_edge_ids) =
+        build_csr_forward(store, actual_node_count);
+    let (csr_bwd_offsets, csr_bwd_targets, csr_bwd_edge_ids) =
+        build_csr_backward(store, actual_node_count);
+
+    // 1f. Finalize string table
+    let string_table = strings.into_bytes();
+
+    // ── Phase 2: write file ──
+
+    // Reserve space for headers + TOC (will be written at the end)
+    let header_reserve = SECTIONS_START;
+    w.seek(SeekFrom::Start(header_reserve))
+        .map_err(|e| Error::Internal(format!("seek: {e}")))?;
+
+    let mut toc = TocBuilder::new();
+    let mut cursor = header_reserve;
+
+    // Helper: write a section, record in TOC
+    macro_rules! write_section {
+        ($section_type:expr, $data:expr) => {{
+            // Align to SECTION_ALIGN
+            let padding = align_padding(cursor, SECTION_ALIGN);
+            if padding > 0 {
+                w.write_all(&vec![0u8; padding as usize])
+                    .map_err(|e| Error::Internal(format!("write padding: {e}")))?;
+                cursor += padding;
+            }
+
+            let data: &[u8] = $data;
+            let offset = cursor;
+            let length = data.len() as u64;
+            w.write_all(data)
+                .map_err(|e| Error::Internal(format!("write section: {e}")))?;
+            cursor += length;
+
+            // CRC32 placeholder (0 for now, can be computed later)
+            toc.add($section_type, offset, length, 0);
+        }};
+    }
+
+    // Write sections in order
+    write_section!(SectionType::Strings, &string_table);
+
+    let nodes_bytes = obrain_common::types::flat::slice_as_bytes(&node_slots);
+    write_section!(SectionType::Nodes, nodes_bytes);
+
+    let edges_bytes = obrain_common::types::flat::slice_as_bytes(&edge_slots);
+    write_section!(SectionType::Edges, edges_bytes);
+
+    let props_bytes = obrain_common::types::flat::slice_as_bytes(&prop_entries);
+    write_section!(SectionType::Properties, props_bytes);
+
+    write_section!(SectionType::PropertyValues, &values_buf);
+
+    // CSR Forward
+    let fwd_off_bytes = u64_slice_as_bytes(&csr_fwd_offsets);
+    write_section!(SectionType::CsrForwardOffsets, fwd_off_bytes);
+
+    let fwd_tgt_bytes = u64_slice_as_bytes(&csr_fwd_targets);
+    write_section!(SectionType::CsrForwardTargets, fwd_tgt_bytes);
+
+    let fwd_eid_bytes = u64_slice_as_bytes(&csr_fwd_edge_ids);
+    write_section!(SectionType::CsrForwardEdgeIds, fwd_eid_bytes);
+
+    // CSR Backward
+    let bwd_off_bytes = u64_slice_as_bytes(&csr_bwd_offsets);
+    write_section!(SectionType::CsrBackwardOffsets, bwd_off_bytes);
+
+    let bwd_tgt_bytes = u64_slice_as_bytes(&csr_bwd_targets);
+    write_section!(SectionType::CsrBackwardTargets, bwd_tgt_bytes);
+
+    let bwd_eid_bytes = u64_slice_as_bytes(&csr_bwd_edge_ids);
+    write_section!(SectionType::CsrBackwardEdgeIds, bwd_eid_bytes);
+
+    // Label catalog (array of StringRef)
+    let label_cat_bytes = obrain_common::types::flat::slice_as_bytes(&label_refs);
+    write_section!(SectionType::LabelCatalog, label_cat_bytes);
+
+    // Edge type catalog
+    let et_cat_bytes = obrain_common::types::flat::slice_as_bytes(&edge_type_refs);
+    write_section!(SectionType::EdgeTypeCatalog, et_cat_bytes);
+
+    // ── Phase 3: write headers at the start ──
+
+    // Build TOC page
+    let toc_page = toc.build();
+
+    // Seek back and write FileHeader
+    w.seek(SeekFrom::Start(0))
+        .map_err(|e| Error::Internal(format!("seek header: {e}")))?;
+
+    let file_header = FileHeader::new_native();
+    let fh_bytes = bincode::serde::encode_to_vec(&file_header, bincode::config::standard())
+        .map_err(|e| Error::Internal(format!("encode file header: {e}")))?;
+    w.write_all(&fh_bytes)
+        .map_err(|e| Error::Internal(format!("write file header: {e}")))?;
+
+    // Pad to FILE_HEADER_SIZE
+    let fh_pad = FILE_HEADER_SIZE as usize - fh_bytes.len();
+    w.write_all(&vec![0u8; fh_pad])
+        .map_err(|e| Error::Internal(format!("write fh padding: {e}")))?;
+
+    // Write DbHeader slot 0
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
+    let db_header = DbHeader {
+        iteration: 1,
+        checksum: 0, // TODO: compute CRC32 over all sections
+        snapshot_length: cursor - SECTIONS_START,
+        epoch,
+        transaction_id,
+        node_count: node_slots.len() as u64,
+        edge_count: edge_slots.len() as u64,
+        timestamp_ms: now_ms,
+    };
+    let dbh_bytes = bincode::serde::encode_to_vec(&db_header, bincode::config::standard())
+        .map_err(|e| Error::Internal(format!("encode db header: {e}")))?;
+    w.write_all(&dbh_bytes)
+        .map_err(|e| Error::Internal(format!("write db header 0: {e}")))?;
+    let dbh_pad = DB_HEADER_SIZE as usize - dbh_bytes.len();
+    w.write_all(&vec![0u8; dbh_pad])
+        .map_err(|e| Error::Internal(format!("write dbh0 padding: {e}")))?;
+
+    // DbHeader slot 1 (empty)
+    let empty_dbh =
+        bincode::serde::encode_to_vec(&DbHeader::EMPTY, bincode::config::standard())
+            .map_err(|e| Error::Internal(format!("encode empty db header: {e}")))?;
+    w.write_all(&empty_dbh)
+        .map_err(|e| Error::Internal(format!("write db header 1: {e}")))?;
+    let dbh1_pad = DB_HEADER_SIZE as usize - empty_dbh.len();
+    w.write_all(&vec![0u8; dbh1_pad])
+        .map_err(|e| Error::Internal(format!("write dbh1 padding: {e}")))?;
+
+    // Write TOC at offset 12 KiB
+    w.write_all(&toc_page)
+        .map_err(|e| Error::Internal(format!("write toc: {e}")))?;
+
+    w.flush()
+        .map_err(|e| Error::Internal(format!("flush: {e}")))?;
+
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// CSR builders
+// ─────────────────────────────────────────────────────────────────────
+
+/// Build CSR forward adjacency from the store.
+/// Returns (offsets, targets, edge_ids).
+fn build_csr_forward(
+    store: &LpgStore,
+    node_count: usize,
+) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
+    // Collect all outgoing edges per node
+    let mut adj: Vec<Vec<(u64, u64)>> = vec![Vec::new(); node_count]; // (target, edge_id)
+
+    for edge in store.all_edges() {
+        let src = edge.src.0 as usize;
+        if src < node_count {
+            adj[src].push((edge.dst.0, edge.id.0));
+        }
+    }
+
+    // Build CSR arrays
+    let mut offsets = Vec::with_capacity(node_count + 1);
+    let total_edges: usize = adj.iter().map(|v| v.len()).sum();
+    let mut targets = Vec::with_capacity(total_edges);
+    let mut edge_ids = Vec::with_capacity(total_edges);
+
+    let mut offset = 0u64;
+    for neighbors in &adj {
+        offsets.push(offset);
+        for &(target, eid) in neighbors {
+            targets.push(target);
+            edge_ids.push(eid);
+        }
+        offset += neighbors.len() as u64;
+    }
+    offsets.push(offset);
+
+    (offsets, targets, edge_ids)
+}
+
+/// Build CSR backward adjacency from the store.
+/// Returns (offsets, targets, edge_ids).
+fn build_csr_backward(
+    store: &LpgStore,
+    node_count: usize,
+) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
+    // Collect all incoming edges per node
+    let mut adj: Vec<Vec<(u64, u64)>> = vec![Vec::new(); node_count]; // (source, edge_id)
+
+    for edge in store.all_edges() {
+        let dst = edge.dst.0 as usize;
+        if dst < node_count {
+            adj[dst].push((edge.src.0, edge.id.0));
+        }
+    }
+
+    // Build CSR arrays
+    let mut offsets = Vec::with_capacity(node_count + 1);
+    let total_edges: usize = adj.iter().map(|v| v.len()).sum();
+    let mut targets = Vec::with_capacity(total_edges);
+    let mut edge_ids = Vec::with_capacity(total_edges);
+
+    let mut offset = 0u64;
+    for neighbors in &adj {
+        offsets.push(offset);
+        for &(target, eid) in neighbors {
+            targets.push(target);
+            edge_ids.push(eid);
+        }
+        offset += neighbors.len() as u64;
+    }
+    offsets.push(offset);
+
+    (offsets, targets, edge_ids)
+}
+
+// ──────────────────────────────────────────────────────────────���──────
+// Helpers
+// ───────────────────────────────────────────────────────���─────────────
+
+/// Compute padding needed to reach the next aligned offset.
+#[inline]
+fn align_padding(offset: u64, align: u64) -> u64 {
+    let rem = offset % align;
+    if rem == 0 {
+        0
+    } else {
+        align - rem
+    }
+}
+
+/// View a `&[u64]` as `&[u8]`.
+#[inline]
+fn u64_slice_as_bytes(slice: &[u64]) -> &[u8] {
+    unsafe {
+        std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 8)
+    }
+}

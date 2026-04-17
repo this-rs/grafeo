@@ -28,6 +28,9 @@ parking_lot.workspace = true
 crossbeam = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }
 
+# Memory mapping
+memmap2 = { workspace = true, optional = true }
+
 # Serialization
 serde.workspace = true
 bincode.workspace = true
@@ -73,7 +76,7 @@ rdf = ["obrain-core/rdf", "obrain-adapters/rdf", "md5", "sha1", "sha2"]  # RDF g
 parallel = ["rayon", "crossbeam", "obrain-core/parallel", "obrain-adapters/parallel"]  # Parallel execution
 algos = ["obrain-adapters/algos"]  # Graph algorithm plugin (SSSP, PageRank, etc.)
 wal = ["obrain-adapters/wal"]  # Write-ahead log storage
-obrain-file = ["obrain-adapters/obrain-file"]  # Single-file .obrain format
+obrain-file = ["obrain-adapters/obrain-file", "memmap2"]  # Single-file .obrain format
 spill = ["obrain-core/spill"]  # Disk spilling for out-of-core execution
 mmap = ["obrain-core/mmap"]  # File-backed vector storage
 temporal = ["obrain-core/temporal"]  # Append-only versioned properties
