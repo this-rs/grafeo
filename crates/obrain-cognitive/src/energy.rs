@@ -505,6 +505,9 @@ impl EnergyStore {
         if self.substrate.is_some() {
             // The substrate column is the source of truth. The cache is a
             // warm-read accelerator populated lazily — no eager fill here.
+            tracing::trace!(
+                "energy::load_from_graph: no-op (state is column-resident)"
+            );
             return 0;
         }
 

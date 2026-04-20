@@ -367,6 +367,9 @@ impl UtilityStore {
     pub fn load_from_graph(&self) -> usize {
         #[cfg(feature = "substrate")]
         if self.substrate.is_some() {
+            tracing::trace!(
+                "utility::load_from_graph: no-op (state is column-resident)"
+            );
             return 0;
         }
 
