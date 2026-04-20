@@ -198,6 +198,24 @@ impl ObrainDB {
     /// ```
     #[cfg(feature = "wal")]
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        // T5 Step 6: when OBRAIN_BACKEND=substrate is set and the
+        // `substrate-backend` feature is compiled in, route `open` through
+        // the SubstrateStore path. This is the progressive-cutover knob:
+        // the feature ships by default in prod builds (so the substrate
+        // crate is linked), but the actual routing default stays on
+        // LpgStore until T17 so cognitive stores (T6) and embedding tiers
+        // (T8) can land without regressions on the main chat/recall path.
+        #[cfg(feature = "substrate-backend")]
+        {
+            if std::env::var("OBRAIN_BACKEND")
+                .ok()
+                .as_deref()
+                .map(|v| v.eq_ignore_ascii_case("substrate"))
+                .unwrap_or(false)
+            {
+                return Self::open_substrate(path);
+            }
+        }
         Self::with_config(Config::persistent(path.as_ref()))
     }
 

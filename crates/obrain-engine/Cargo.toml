@@ -65,7 +65,7 @@ serde_json = "1"
 tokio.workspace = true
 
 [features]
-default = ["gql", "parallel", "wal", "spill", "mmap", "regex"]
+default = ["gql", "parallel", "wal", "spill", "mmap", "regex", "substrate-backend"]
 regex = ["dep:regex", "obrain-core/regex"]
 regex-lite = ["dep:regex-lite", "obrain-core/regex-lite"]
 gql = ["obrain-adapters/gql"]
@@ -83,7 +83,8 @@ spill = ["obrain-core/spill"]  # Disk spilling for out-of-core execution
 mmap = ["obrain-core/mmap"]  # File-backed vector storage
 temporal = ["obrain-core/temporal"]  # Append-only versioned properties
 tiered-storage = ["obrain-core/tiered-storage"]  # Hot/cold tiered storage with mmap epoch files
-substrate-backend = ["dep:obrain-substrate"]  # Substrate (mmap + WAL native) storage backend — T5 migration path, opt-in until T17 cutover
+substrate-backend = ["dep:obrain-substrate"]  # Substrate (mmap + WAL native) storage backend — default-compiled since T5 Step 6; runtime routing via OBRAIN_BACKEND=substrate (full cutover = T17)
+legacy-backend = []  # Explicit marker for the LpgStore-only path (used by obrain-migrate CLI, T14). LpgStore remains the runtime default until T17 cutover.
 # Convenience groups
 languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]  # All query language parsers
 ai = ["vector-index", "text-index", "hybrid-search", "cdc"]  # All AI/RAG features
