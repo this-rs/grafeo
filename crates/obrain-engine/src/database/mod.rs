@@ -1395,90 +1395,14 @@ impl ObrainDB {
         Ok(())
     }
 
-    /// Open a database in overlay mode: mmap for reads, LpgStore for mutations.
-    ///
-    /// Only materializes the graph structure (nodes + edges), NOT properties.
-    /// Properties are read from mmap on demand, new properties go to the delta.
-    ///
-    /// Returns `(ObrainDB, OverlayStore)` — the ObrainDB holds the LpgStore
-    /// and file manager, the OverlayStore provides merged read/write access.
-    #[cfg(feature = "obrain-file")]
-    pub fn open_overlay(path: impl AsRef<std::path::Path>) -> Result<(Self, overlay_store::OverlayStore)> {
-        use obrain_adapters::storage::file::format::DATA_OFFSET;
-
-        let path = path.as_ref();
-        let fm = ObrainFileManager::open(path)?;
-
-        if !fm.file_header().is_native_format() {
-            return Err(obrain_common::utils::error::Error::Internal(
-                "overlay mode requires native v2 format".to_string(),
-            ));
-        }
-
-        let mmap = fm.mmap_full_file()?;
-        let active = fm.active_header();
-        let epoch = obrain_common::types::EpochId(active.epoch);
-        let toc_offset = DATA_OFFSET as usize;
-        let ms = mmap_store::MmapStore::from_mmap(mmap, toc_offset, epoch)
-            .map_err(|e| obrain_common::utils::error::Error::Internal(
-                format!("native v2 open failed: {e}"),
-            ))?;
-        let mmap_arc = Arc::new(ms);
-
-        // Create LpgStore for the delta (mutations only)
-        let store = Arc::new(LpgStore::new()?);
-
-        // Materialize structure only (nodes + labels + edges + types)
-        Self::materialize_structure_only(&mmap_arc, &store)?;
-
-        // Set mmap as property fallback — get_node_property/get_edge_property
-        // will check local storage first, then fall back to mmap (zero-copy).
-        store.set_property_fallback(Arc::clone(&mmap_arc) as Arc<dyn obrain_core::graph::GraphStore>);
-
-        let overlay = overlay_store::OverlayStore::new(Arc::clone(&mmap_arc), Arc::clone(&store));
-
-        // Build the ObrainDB with the delta store
-        let transaction_manager = Arc::new(TransactionManager::new());
-        let catalog = Arc::new(Catalog::new());
-
-        let config = crate::Config::persistent(path);
-
-        let db = Self {
-            config,
-            store,
-            catalog,
-            #[cfg(feature = "rdf")]
-            rdf_store: Arc::new(RdfStore::new()),
-            transaction_manager,
-            buffer_manager: BufferManager::new(BufferManagerConfig::default()),
-            #[cfg(feature = "wal")]
-            wal: None,
-            #[cfg(feature = "wal")]
-            wal_graph_context: Arc::new(parking_lot::Mutex::new(None)),
-            query_cache: Arc::new(QueryCache::new(1000)),
-            commit_counter: Arc::new(AtomicUsize::new(0)),
-            is_open: RwLock::new(true),
-            #[cfg(feature = "cdc")]
-            cdc_log: Arc::new(crate::cdc::CdcLog::new()),
-            #[cfg(feature = "embed")]
-            embedding_models: RwLock::new(hashbrown::HashMap::new()),
-            #[cfg(feature = "obrain-file")]
-            file_manager: Some(Arc::new(fm)),
-            #[cfg(feature = "obrain-file")]
-            mmap_store: Some(mmap_arc),
-            external_store: None,
-            #[cfg(feature = "metrics")]
-            metrics: None,
-            current_graph: RwLock::new(None),
-            read_only: false,
-            #[cfg(feature = "cognitive")]
-            cognitive_engine: None,
-            #[cfg(feature = "cognitive")]
-            _cognitive_scheduler: None,
-        };
-
-        Ok((db, overlay))
-    }
+    // `open_overlay` has been removed as part of the T5 substrate migration.
+    //
+    // Rationale: substrate is natively mmap zero-copy, so the overlay
+    // "mmap base + LpgStore delta" trick is no longer needed — `ObrainDB::open`
+    // on a substrate-backed DB doesn't materialize properties into RAM.
+    //
+    // Callers (only obrain-hub/src/knowledge_store.rs) migrated to
+    // `ObrainDB::open` directly.
 
     // =========================================================================
     // Session & Configuration
