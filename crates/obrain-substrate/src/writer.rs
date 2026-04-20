@@ -648,27 +648,60 @@ impl Writer {
 /// only — no WAL logging happens here; callers (`Writer::decay_all_energy`,
 /// `replay::apply`) own the WAL logic.
 ///
-/// Correctness-first scalar implementation. SIMD u16×8 acceleration is a
-/// follow-up (T6 Step 0b) that will wrap this same function behind a
-/// runtime dispatch.
+/// The hot path processes 8 live slots at a time through
+/// [`crate::simd::decay_u16x8`] (SSE2 on x86_64, NEON on aarch64, scalar
+/// otherwise). The batch gathers 8 strided `energy` u16s into a stack
+/// buffer, applies the SIMD mul-high, then scatters the results back —
+/// skipping tombstoned slots via a per-slot flag test so the column keeps
+/// its exact scalar semantics (bit-for-bit equivalent, property-tested in
+/// [`crate::simd`]).
 pub fn apply_energy_decay_to_zone(zf: &mut ZoneFile, factor_q16: u16, high_water: u32) {
-    let factor = factor_q16 as u32;
     let zone_slice = zf.as_slice_mut();
     let stride = NodeRecord::SIZE;
     // high_water is exclusive; slot 0 is reserved.
-    for slot in 1..high_water {
-        let offset = (slot as usize) * stride;
-        if offset + stride > zone_slice.len() {
-            break;
+    let first_slot: u32 = 1;
+    let last_slot_exclusive: u32 = high_water;
+    let total_capacity = zone_slice.len() / stride;
+    let cap = (last_slot_exclusive as usize).min(total_capacity);
+    let mut slot = first_slot as usize;
+
+    // --- Batched SIMD body: 8 slots per iteration ------------------------
+    while slot + 8 <= cap {
+        let base = slot * stride;
+        // Gather 8 u16 energies + 8 flags. We go through bytemuck on each
+        // slot to stay strict-aliasing-safe under the unsafe_code ban at
+        // the crate root — the inner `decay_u16x8` is the only unsafe site.
+        let mut lanes = [0u16; 8];
+        let mut alive = [false; 8];
+        for i in 0..8 {
+            let off = base + i * stride;
+            let rec: &NodeRecord = bytemuck::from_bytes(&zone_slice[off..off + stride]);
+            lanes[i] = rec.energy;
+            alive[i] = rec.flags & crate::record::node_flags::TOMBSTONED == 0;
         }
+        crate::simd::decay_u16x8(&mut lanes, factor_q16);
+        for i in 0..8 {
+            if !alive[i] {
+                continue;
+            }
+            let off = base + i * stride;
+            let rec: &mut NodeRecord =
+                bytemuck::from_bytes_mut(&mut zone_slice[off..off + stride]);
+            rec.energy = lanes[i];
+        }
+        slot += 8;
+    }
+
+    // --- Scalar tail for the last (<8) slots -----------------------------
+    let factor = factor_q16 as u32;
+    while slot < cap {
+        let offset = slot * stride;
         let rec: &mut NodeRecord =
             bytemuck::from_bytes_mut(&mut zone_slice[offset..offset + stride]);
-        if rec.flags & crate::record::node_flags::TOMBSTONED != 0 {
-            continue;
+        if rec.flags & crate::record::node_flags::TOMBSTONED == 0 {
+            rec.energy = (((rec.energy as u32) * factor) >> 16) as u16;
         }
-        // (energy × factor) / 65536 — saturate at u16::MAX.
-        let decayed = ((rec.energy as u32) * factor) >> 16;
-        rec.energy = decayed.min(u16::MAX as u32) as u16;
+        slot += 1;
     }
 }
 
@@ -691,25 +724,51 @@ pub fn apply_energy_decay_to_zone(zf: &mut ZoneFile, factor_q16: u16, high_water
 /// to restrict decay to `edge_flags::SYNAPSE_ACTIVE`, that's an O(1) flag
 /// test inside this loop.
 ///
-/// Correctness-first scalar implementation. SIMD u16×8 acceleration is a
-/// follow-up (T6 Step 7) that will wrap this same function behind a
-/// runtime dispatch.
+/// The hot path batches 8 edge slots per iteration through
+/// [`crate::simd::decay_u16x8`], gathering/scattering `weight_u16` through a
+/// stack buffer and masking tombstoned slots on write-back. Bit-for-bit
+/// equivalent to the scalar fallback — property-tested in [`crate::simd`].
 pub fn apply_synapse_decay_to_zone(zf: &mut ZoneFile, factor_q16: u16, high_water: u64) {
-    let factor = factor_q16 as u32;
     let zone_slice = zf.as_slice_mut();
     let stride = EdgeRecord::SIZE;
-    for slot in 1..high_water {
-        let offset = (slot as usize) * stride;
-        if offset + stride > zone_slice.len() {
-            break;
+    let total_capacity = zone_slice.len() / stride;
+    let cap = (high_water as usize).min(total_capacity);
+    let mut slot: usize = 1;
+
+    // --- Batched SIMD body: 8 edges per iteration ------------------------
+    while slot + 8 <= cap {
+        let base = slot * stride;
+        let mut lanes = [0u16; 8];
+        let mut alive = [false; 8];
+        for i in 0..8 {
+            let off = base + i * stride;
+            let rec: &EdgeRecord = bytemuck::from_bytes(&zone_slice[off..off + stride]);
+            lanes[i] = rec.weight_u16;
+            alive[i] = rec.flags & crate::record::edge_flags::TOMBSTONED == 0;
         }
+        crate::simd::decay_u16x8(&mut lanes, factor_q16);
+        for i in 0..8 {
+            if !alive[i] {
+                continue;
+            }
+            let off = base + i * stride;
+            let rec: &mut EdgeRecord =
+                bytemuck::from_bytes_mut(&mut zone_slice[off..off + stride]);
+            rec.weight_u16 = lanes[i];
+        }
+        slot += 8;
+    }
+
+    // --- Scalar tail for the last (<8) slots -----------------------------
+    let factor = factor_q16 as u32;
+    while slot < cap {
+        let offset = slot * stride;
         let rec: &mut EdgeRecord =
             bytemuck::from_bytes_mut(&mut zone_slice[offset..offset + stride]);
-        if rec.flags & crate::record::edge_flags::TOMBSTONED != 0 {
-            continue;
+        if rec.flags & crate::record::edge_flags::TOMBSTONED == 0 {
+            rec.weight_u16 = (((rec.weight_u16 as u32) * factor) >> 16) as u16;
         }
-        let decayed = ((rec.weight_u16 as u32) * factor) >> 16;
-        rec.weight_u16 = decayed.min(u16::MAX as u32) as u16;
+        slot += 1;
     }
 }
 

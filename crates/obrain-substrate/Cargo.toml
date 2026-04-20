@@ -57,6 +57,10 @@ criterion.workspace = true
 name = "crud_micro"
 harness = false
 
+[[bench]]
+name = "decay_all"
+harness = false
+
 [features]
 default = []
 # Expose legacy read-only LpgStore ingestion (used only by the obrain-migrate binary).

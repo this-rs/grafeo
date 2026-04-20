@@ -37,6 +37,7 @@ pub mod meta;
 pub mod page;
 pub mod record;
 pub mod replay;
+pub mod simd;
 pub mod store;
 pub mod tiers;
 pub mod wal;
