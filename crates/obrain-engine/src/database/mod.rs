@@ -133,6 +133,18 @@ pub struct ObrainDB {
     /// External graph store (when using with_store()).
     /// When set, sessions route queries through this store instead of the built-in LpgStore.
     pub(super) external_store: Option<Arc<dyn GraphStoreMut>>,
+    /// Typed [`SubstrateStore`] handle, retained alongside the erased
+    /// `external_store` when the database is opened via `open_substrate`.
+    ///
+    /// Cognitive stores (energy/scar/utility/affinity/synapse) need the
+    /// concrete substrate handle to call its column-view APIs
+    /// (`reinforce_edge_synapse_f32`, `decay_all_edge_synapse`, etc.) which
+    /// are not part of the `GraphStoreMut` trait. `None` when the database
+    /// is backed by `LpgStore` (legacy path).
+    ///
+    /// [`SubstrateStore`]: obrain_substrate::SubstrateStore
+    #[cfg(feature = "substrate-backend")]
+    pub(super) substrate_store: Option<Arc<obrain_substrate::SubstrateStore>>,
     /// Metrics registry shared across all sessions.
     #[cfg(feature = "metrics")]
     pub(crate) metrics: Option<Arc<crate::metrics::MetricsRegistry>>,
@@ -245,8 +257,15 @@ impl ObrainDB {
                 path_ref.display()
             ))
         })?;
-        let store: Arc<dyn GraphStoreMut> = Arc::new(store);
-        Self::with_store(store, Config::in_memory())
+        // Keep a typed handle in addition to the erased `GraphStoreMut` one:
+        // cognitive stores reach for the substrate column APIs (reinforce /
+        // decay_all / iter_live_synapse_weights) which are not part of the
+        // `GraphStoreMut` trait.
+        let typed: Arc<obrain_substrate::SubstrateStore> = Arc::new(store);
+        let erased: Arc<dyn GraphStoreMut> = Arc::clone(&typed) as Arc<dyn GraphStoreMut>;
+        let mut db = Self::with_store(erased, Config::in_memory())?;
+        db.substrate_store = Some(typed);
+        Ok(db)
     }
 
     /// Opens an existing database in read-only mode.
@@ -669,6 +688,8 @@ impl ObrainDB {
             #[cfg(feature = "obrain-file")]
             mmap_store: native_mmap_store,
             external_store: None,
+            #[cfg(feature = "substrate-backend")]
+            substrate_store: None,
             #[cfg(feature = "metrics")]
             metrics: Some(Arc::new(crate::metrics::MetricsRegistry::new())),
             current_graph: RwLock::new(None),
@@ -747,6 +768,8 @@ impl ObrainDB {
             #[cfg(feature = "obrain-file")]
             mmap_store: None,
             external_store: Some(store),
+            #[cfg(feature = "substrate-backend")]
+            substrate_store: None,
             #[cfg(feature = "metrics")]
             metrics: Some(Arc::new(crate::metrics::MetricsRegistry::new())),
             current_graph: RwLock::new(None),
@@ -1858,6 +1881,35 @@ impl ObrainDB {
             ));
         }
         Arc::clone(&self.store) as Arc<dyn GraphStoreMut>
+    }
+
+    /// Returns the typed [`SubstrateStore`] handle when the database is
+    /// backed by the substrate backend, or `None` otherwise.
+    ///
+    /// This is the progressive-cutover hook for T6: cognitive stores
+    /// (energy / scar / utility / affinity / synapse) use this to route
+    /// cognitive mutations through the substrate column APIs
+    /// (`reinforce_edge_synapse_f32`, `decay_all_edge_synapse`,
+    /// `boost_edge_synapse_f32`, ...) which aren't part of the
+    /// `GraphStoreMut` trait. When `None`, cognitive stores fall back to
+    /// the LPG-property path (legacy behaviour).
+    ///
+    /// A typical call sequence from the hub:
+    ///
+    /// ```ignore
+    /// let synapse = match db.substrate_handle() {
+    ///     Some(sub) => SynapseStore::with_substrate(cfg, graph_store, sub),
+    ///     None => SynapseStore::new(cfg, graph_store),
+    /// };
+    /// ```
+    ///
+    /// Only compiled when the `substrate-backend` feature is enabled.
+    ///
+    /// [`SubstrateStore`]: obrain_substrate::SubstrateStore
+    #[cfg(feature = "substrate-backend")]
+    #[must_use]
+    pub fn substrate_handle(&self) -> Option<Arc<obrain_substrate::SubstrateStore>> {
+        self.substrate_store.as_ref().map(Arc::clone)
     }
 
     /// Logs a WAL record if WAL is enabled.
