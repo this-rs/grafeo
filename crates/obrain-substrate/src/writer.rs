@@ -56,6 +56,7 @@ struct ZoneCache {
     nodes: Option<ZoneFile>,
     edges: Option<ZoneFile>,
     engram_members: Option<ZoneFile>,
+    engram_bitset: Option<ZoneFile>,
 }
 
 impl Writer {
@@ -617,6 +618,61 @@ impl Writer {
         self.with_engram_zone(|zf| crate::engram::EngramZone::members(zf, engram_id))
     }
 
+    // ==================================================================
+    // Engram bitset column (T7 Step 1)
+    // ==================================================================
+
+    /// Overwrite the 64-bit engram signature for `node_id` through the
+    /// WAL-first path. Absolute semantics — the caller is responsible for
+    /// folding in every engram the node still belongs to.
+    #[tracing::instrument(level = "trace", skip(self))]
+    pub fn set_engram_bitset(&self, node_id: u32, bitset: u64) -> SubstrateResult<()> {
+        let rec = WalRecord {
+            lsn: 0,
+            timestamp: unix_micros(),
+            flags: 0,
+            payload: WalPayload::EngramBitsetSet { node_id, bitset },
+        };
+        self.wal.append(rec)?;
+        self.with_engram_bitset_zone(|zf| {
+            crate::engram_bitset::EngramBitsetColumn::set_raw(zf, node_id, bitset)
+        })
+    }
+
+    /// Convenience RMW: OR the mask for `engram_id` into `node_id`'s bitset.
+    /// Reads the current bitset under the zone lock, ORs the new bit, logs
+    /// the absolute post-state, then writes back.
+    ///
+    /// Does NOT remove stale bits — use [`Self::set_engram_bitset`] with a
+    /// freshly-recomputed value for leave/remove semantics.
+    #[tracing::instrument(level = "trace", skip(self))]
+    pub fn add_engram_bit(&self, node_id: u32, engram_id: u16) -> SubstrateResult<()> {
+        crate::engram_bitset::check_nonzero_engram_id(engram_id)?;
+        let mask = crate::engram_bitset::engram_bit_mask(engram_id);
+        self.with_engram_bitset_zone(|zf| {
+            let current = crate::engram_bitset::EngramBitsetColumn::get(zf, node_id);
+            let new_bits = current | mask;
+            let rec = WalRecord {
+                lsn: 0,
+                timestamp: unix_micros(),
+                flags: 0,
+                payload: WalPayload::EngramBitsetSet {
+                    node_id,
+                    bitset: new_bits,
+                },
+            };
+            self.wal.append(rec)?;
+            crate::engram_bitset::EngramBitsetColumn::set_raw(zf, node_id, new_bits)
+        })
+    }
+
+    /// Read the 64-bit engram signature for `node_id`.
+    pub fn engram_bitset(&self, node_id: u32) -> SubstrateResult<u64> {
+        self.with_engram_bitset_zone(|zf| {
+            Ok(crate::engram_bitset::EngramBitsetColumn::get(zf, node_id))
+        })
+    }
+
     /// Seal the transaction: append a commit-flagged no-op and fsync.
     ///
     /// Under [`SyncMode::EveryCommit`] the `FLAG_COMMIT` bit triggers fsync
@@ -645,6 +701,10 @@ impl Writer {
             z.fsync()?;
         }
         if let Some(z) = zones.engram_members.as_ref() {
+            z.msync()?;
+            z.fsync()?;
+        }
+        if let Some(z) = zones.engram_bitset.as_ref() {
             z.msync()?;
             z.fsync()?;
         }
@@ -687,6 +747,18 @@ impl Writer {
             zones.engram_members = Some(sub.open_zone(Zone::EngramMembers)?);
         }
         f(zones.engram_members.as_mut().unwrap())
+    }
+
+    fn with_engram_bitset_zone<R>(
+        &self,
+        f: impl FnOnce(&mut ZoneFile) -> SubstrateResult<R>,
+    ) -> SubstrateResult<R> {
+        let mut zones = self.zones.lock();
+        if zones.engram_bitset.is_none() {
+            let sub = self.substrate.lock();
+            zones.engram_bitset = Some(sub.open_zone(Zone::EngramBitset)?);
+        }
+        f(zones.engram_bitset.as_mut().unwrap())
     }
 }
 
@@ -1237,6 +1309,78 @@ mod tests {
         assert_eq!(got, members);
         let got1 = w2.engram_members(1).unwrap().unwrap();
         assert_eq!(got1, vec![1u32, 2, 3, 4, 5]);
+    }
+
+    // =====================================================================
+    // T7 Step 1 — Engram bitset column
+    // =====================================================================
+
+    #[test]
+    fn set_engram_bitset_roundtrip_via_writer() {
+        let sub = SubstrateFile::open_tempfile().unwrap();
+        let w = Writer::new(sub, SyncMode::Never).unwrap();
+        w.set_engram_bitset(7, 0xFACE_B00C_0000_0001).unwrap();
+        w.commit().unwrap();
+        let got = w.engram_bitset(7).unwrap();
+        assert_eq!(got, 0xFACE_B00C_0000_0001);
+        // Unset slots return 0.
+        assert_eq!(w.engram_bitset(8).unwrap(), 0);
+    }
+
+    #[test]
+    fn add_engram_bit_ors_in_mask() {
+        let sub = SubstrateFile::open_tempfile().unwrap();
+        let w = Writer::new(sub, SyncMode::Never).unwrap();
+        w.add_engram_bit(1, 5).unwrap();
+        w.add_engram_bit(1, 10).unwrap();
+        w.add_engram_bit(1, 70).unwrap(); // 70 % 64 = 6
+        w.commit().unwrap();
+        let got = w.engram_bitset(1).unwrap();
+        assert_eq!(got, (1u64 << 5) | (1u64 << 10) | (1u64 << 6));
+    }
+
+    #[test]
+    fn add_engram_bit_rejects_zero_engram_id() {
+        let sub = SubstrateFile::open_tempfile().unwrap();
+        let w = Writer::new(sub, SyncMode::Never).unwrap();
+        let err = w.add_engram_bit(1, 0).unwrap_err();
+        assert!(matches!(err, crate::SubstrateError::WalBadFrame(_)));
+    }
+
+    #[test]
+    fn engram_bitset_wal_rebuild_after_zone_wipe() {
+        // Crash-safety: wipe the bitset column file, replay rebuilds it.
+        let td = tempfile::tempdir().unwrap();
+        let sub_path = td.path().join("kb");
+        {
+            let sub = SubstrateFile::create(&sub_path).unwrap();
+            let w = Writer::new(sub, SyncMode::EveryCommit).unwrap();
+            // Mix of set_engram_bitset (absolute) and add_engram_bit (RMW).
+            w.set_engram_bitset(1, 0xAAAA_BBBB).unwrap();
+            w.add_engram_bit(2, 3).unwrap();
+            w.add_engram_bit(2, 3).unwrap(); // idempotent
+            w.add_engram_bit(2, 67).unwrap(); // 67 % 64 = 3 (collides)
+            w.add_engram_bit(2, 7).unwrap();
+            w.set_engram_bitset(100, 0xFFFF_FFFF_FFFF_FFFF).unwrap();
+            w.commit().unwrap();
+            w.wal().fsync().unwrap();
+        }
+        // Wipe the bitset zone.
+        std::fs::write(
+            sub_path.join(crate::file::zone::ENGRAM_BITSET),
+            Vec::<u8>::new(),
+        )
+        .unwrap();
+
+        let sub2 = SubstrateFile::open(&sub_path).unwrap();
+        let stats = crate::replay::replay_from(&sub2, 0).unwrap();
+        assert_eq!(stats.decode_errors, 0);
+
+        let w2 = Writer::new(sub2, SyncMode::Never).unwrap();
+        assert_eq!(w2.engram_bitset(1).unwrap(), 0xAAAA_BBBB);
+        assert_eq!(w2.engram_bitset(2).unwrap(), (1u64 << 3) | (1u64 << 7));
+        assert_eq!(w2.engram_bitset(100).unwrap(), 0xFFFF_FFFF_FFFF_FFFF);
+        assert_eq!(w2.engram_bitset(3).unwrap(), 0); // untouched
     }
 
     #[test]

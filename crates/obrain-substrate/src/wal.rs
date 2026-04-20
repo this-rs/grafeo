@@ -59,6 +59,7 @@ pub enum WalKind {
     Tier1Update = 0x61,
     Tier2Update = 0x62,
     EngramMembersSet = 0x70,
+    EngramBitsetSet = 0x71,
     Checkpoint = 0xF0,
     NoOp = 0xFE,
     EndOfLog = 0xFF,
@@ -92,6 +93,7 @@ impl WalKind {
             0x61 => Tier1Update,
             0x62 => Tier2Update,
             0x70 => EngramMembersSet,
+            0x71 => EngramBitsetSet,
             0xF0 => Checkpoint,
             0xFE => NoOp,
             0xFF => EndOfLog,
@@ -215,6 +217,12 @@ pub enum WalPayload {
         engram_id: u16,
         members: Vec<u32>,
     },
+    /// Absolute value of a node's 64-bit engram signature (T7 Step 1).
+    /// Replay overwrites the column slot with `bitset` verbatim — idempotent.
+    EngramBitsetSet {
+        node_id: u32,
+        bitset: u64,
+    },
     Checkpoint {
         at_lsn: u64,
     },
@@ -251,6 +259,7 @@ impl WalPayload {
             Tier1Update { .. } => K::Tier1Update,
             Tier2Update { .. } => K::Tier2Update,
             EngramMembersSet { .. } => K::EngramMembersSet,
+            EngramBitsetSet { .. } => K::EngramBitsetSet,
             Checkpoint { .. } => K::Checkpoint,
             NoOp => K::NoOp,
             EndOfLog => K::EndOfLog,
@@ -567,6 +576,10 @@ mod tests {
             WalPayload::EngramMembersSet {
                 engram_id: 7,
                 members: vec![10, 20, 30, 40, 50],
+            },
+            WalPayload::EngramBitsetSet {
+                node_id: 42,
+                bitset: 0xAAAA_BBBB_CCCC_DDDD,
             },
             WalPayload::Checkpoint { at_lsn: 123 },
             WalPayload::NoOp,

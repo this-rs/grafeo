@@ -57,11 +57,22 @@ pub mod zone {
     pub const HILBERT: &str = "substrate.hilbert";
     pub const COMMUNITY: &str = "substrate.community";
     pub const ENGRAM_MEMBERS: &str = "substrate.engram_members";
+    pub const ENGRAM_BITSET: &str = "substrate.engram_bitset";
     pub const WAL: &str = "substrate.wal";
     pub const CHECKPOINT: &str = "substrate.checkpoint";
 
     pub const ALL_MMAPPED: &[&str] = &[
-        NODES, EDGES, PROPS, STRINGS, TIER0, TIER1, TIER2, HILBERT, COMMUNITY, ENGRAM_MEMBERS,
+        NODES,
+        EDGES,
+        PROPS,
+        STRINGS,
+        TIER0,
+        TIER1,
+        TIER2,
+        HILBERT,
+        COMMUNITY,
+        ENGRAM_MEMBERS,
+        ENGRAM_BITSET,
     ];
 }
 
@@ -80,6 +91,9 @@ pub enum Zone {
     /// Engram-membership side-table (T7). Maps `engram_id: u16 → Vec<u32>`
     /// node slot IDs via an in-place directory + append-only payload.
     EngramMembers,
+    /// Per-node 64-bit engram signature (T7 Step 1). One u64 per node slot,
+    /// used as a Bloom-filter-like candidate prune for Hopfield recall.
+    EngramBitset,
 }
 
 impl Zone {
@@ -95,6 +109,7 @@ impl Zone {
             Zone::Hilbert => zone::HILBERT,
             Zone::Community => zone::COMMUNITY,
             Zone::EngramMembers => zone::ENGRAM_MEMBERS,
+            Zone::EngramBitset => zone::ENGRAM_BITSET,
         }
     }
 }

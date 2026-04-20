@@ -63,12 +63,20 @@ pub fn replay_from(substrate: &SubstrateFile, from_offset: u64) -> SubstrateResu
     let mut nodes: Option<ZoneFile> = None;
     let mut edges: Option<ZoneFile> = None;
     let mut engram_members: Option<ZoneFile> = None;
+    let mut engram_bitset: Option<ZoneFile> = None;
 
     for item in reader.iter_from(from_offset) {
         match item {
             Ok((rec, off, len)) => {
                 stats.last_lsn = stats.last_lsn.max(rec.lsn);
-                match apply(substrate, &rec, &mut nodes, &mut edges, &mut engram_members)? {
+                match apply(
+                    substrate,
+                    &rec,
+                    &mut nodes,
+                    &mut edges,
+                    &mut engram_members,
+                    &mut engram_bitset,
+                )? {
                     Applied::Yes => stats.applied += 1,
                     Applied::Skipped => stats.skipped_unsupported += 1,
                 }
@@ -99,6 +107,10 @@ pub fn replay_from(substrate: &SubstrateFile, from_offset: u64) -> SubstrateResu
         zf.msync()?;
         zf.fsync()?;
     }
+    if let Some(zf) = engram_bitset.as_ref() {
+        zf.msync()?;
+        zf.fsync()?;
+    }
 
     debug!(?stats, "wal replay complete");
     Ok(stats)
@@ -115,6 +127,7 @@ fn apply(
     nodes: &mut Option<ZoneFile>,
     edges: &mut Option<ZoneFile>,
     engram_members: &mut Option<ZoneFile>,
+    engram_bitset: &mut Option<ZoneFile>,
 ) -> SubstrateResult<Applied> {
     match &rec.payload {
         WalPayload::NodeInsert {
@@ -381,6 +394,16 @@ fn apply(
             }
             let zf = engram_members.as_mut().unwrap();
             crate::engram::EngramZone::set_members_raw(zf, *engram_id, members)?;
+            Ok(Applied::Yes)
+        }
+
+        // Per-node engram bitset column (T7 Step 1).
+        WalPayload::EngramBitsetSet { node_id, bitset } => {
+            if engram_bitset.is_none() {
+                *engram_bitset = Some(substrate.open_zone(Zone::EngramBitset)?);
+            }
+            let zf = engram_bitset.as_mut().unwrap();
+            crate::engram_bitset::EngramBitsetColumn::set_raw(zf, *node_id, *bitset)?;
             Ok(Applied::Yes)
         }
 

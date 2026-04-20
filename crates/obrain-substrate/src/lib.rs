@@ -31,6 +31,7 @@
 pub mod checkpoint;
 pub mod dict;
 pub mod engram;
+pub mod engram_bitset;
 pub mod error;
 pub mod file;
 pub mod heap;
@@ -67,6 +68,7 @@ pub use wal_io::{SyncMode, WalIter, WalReader, WalWriter};
 pub use checkpoint::{checkpoint, CheckpointStats};
 pub use dict::DictSnapshot;
 pub use engram::{EngramZone, ENGRAM_HEADER_SIZE, ENGRAM_MAGIC, ENGRAM_ZONE_VERSION, MAX_ENGRAM_ID};
+pub use engram_bitset::{engram_bit_mask, EngramBitsetColumn, BITSET_ENTRY_SIZE};
 pub use replay::{replay_from, ReplayStats};
 pub use store::SubstrateStore;
 pub use writer::Writer;
