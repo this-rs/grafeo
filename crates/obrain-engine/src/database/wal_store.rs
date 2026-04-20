@@ -24,7 +24,7 @@ use arcstr::ArcStr;
 /// when the WAL context differs from this store's graph. The shared
 /// `wal_graph_context` mutex ensures atomicity of context-switch + mutation
 /// pairs across concurrent sessions.
-pub(crate) struct WalGraphStore {
+pub struct WalGraphStore {
     inner: Arc<LpgStore>,
     wal: Arc<LpgWal>,
     /// Which named graph this store represents (`None` = default graph).

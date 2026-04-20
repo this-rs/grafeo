@@ -35,7 +35,7 @@ mod query;
 mod rdf_ops;
 mod search;
 #[cfg(feature = "wal")]
-pub(crate) mod wal_store;
+pub mod wal_store;
 
 #[cfg(feature = "wal")]
 use std::path::Path;
@@ -1814,6 +1814,32 @@ impl ObrainDB {
     #[must_use]
     pub fn wal(&self) -> Option<&Arc<LpgWal>> {
         self.wal.as_ref()
+    }
+
+    /// Returns a WAL-aware [`GraphStoreMut`] handle for direct-mutation consumers.
+    ///
+    /// When the database has a WAL, this returns an
+    /// [`Arc<WalGraphStore>`](wal_store::WalGraphStore) that logs every mutation
+    /// (create/delete nodes & edges, set properties) before delegating to the
+    /// in-memory [`LpgStore`]. Without a WAL, it returns the raw
+    /// `Arc<LpgStore>` directly.
+    ///
+    /// This is the sanctioned entry point for subsystems that need to mutate
+    /// the graph outside a query (e.g. hub-level stores: AssetRegistry,
+    /// UserBrain, PersonaStore, etc.) while preserving durability. It replaces
+    /// the now-removed `PersistentStore` wrapper that used to live in
+    /// `obrain-hub`.
+    #[must_use]
+    pub fn graph_store_mut(&self) -> Arc<dyn GraphStoreMut> {
+        #[cfg(feature = "wal")]
+        if let Some(ref wal) = self.wal {
+            return Arc::new(wal_store::WalGraphStore::new(
+                Arc::clone(&self.store),
+                Arc::clone(wal),
+                Arc::clone(&self.wal_graph_context),
+            ));
+        }
+        Arc::clone(&self.store) as Arc<dyn GraphStoreMut>
     }
 
     /// Logs a WAL record if WAL is enabled.
