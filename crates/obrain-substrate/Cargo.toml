@@ -1,0 +1,63 @@
+[package]
+name = "obrain-substrate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Topology-as-storage substrate: mmap + WAL + fixed-size Pod records + tiered embeddings"
+
+[dependencies]
+# Graph traits + shared ID/value types. Kept default-features-off so we don't
+# pull in LpgStore's tree (rayon, tokio, mmap). The GraphStore trait surface
+# only needs the core definitions.
+obrain-common.workspace = true
+obrain-core = { workspace = true, default-features = false }
+
+# Error handling
+thiserror.workspace = true
+
+# Data layout — min_const_generics lets Pod/Zeroable derive for arrays > 32 elements.
+bytemuck = { workspace = true, features = ["derive", "min_const_generics"] }
+
+# Memory-mapped I/O
+memmap2.workspace = true
+
+# Hashing
+crc32fast.workspace = true
+foldhash.workspace = true
+sha2.workspace = true
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+bincode = { workspace = true }
+
+# Concurrency
+parking_lot.workspace = true
+dashmap.workspace = true
+
+# Collections (small-label inline storage, matches lpg::Node layout)
+smallvec.workspace = true
+
+# Observability
+tracing.workspace = true
+
+# Misc
+arcstr.workspace = true
+byteorder.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+proptest.workspace = true
+rand.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "crud_micro"
+harness = false
+
+[features]
+default = []
+# Expose legacy read-only LpgStore ingestion (used only by the obrain-migrate binary).
+legacy-reader = []
