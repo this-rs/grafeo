@@ -85,6 +85,10 @@ pub struct AffinityStore {
     config: AffinityConfig,
     /// Optional backing graph store for write-through persistence.
     graph_store: OptionalGraphStore,
+    /// Optional substrate backend — writes through to the 5-bit `affinity`
+    /// sub-field of `NodeRecord.scar_util_affinity`.
+    #[cfg(feature = "substrate")]
+    substrate: Option<Arc<obrain_substrate::SubstrateStore>>,
 }
 
 impl AffinityStore {
@@ -94,6 +98,8 @@ impl AffinityStore {
             nodes: DashMap::new(),
             config,
             graph_store: None,
+            #[cfg(feature = "substrate")]
+            substrate: None,
         }
     }
 
@@ -106,11 +112,39 @@ impl AffinityStore {
             nodes: DashMap::new(),
             config,
             graph_store: Some(graph_store),
+            #[cfg(feature = "substrate")]
+            substrate: None,
         }
+    }
+
+    /// Creates an affinity store backed by a substrate column view (T6).
+    #[cfg(feature = "substrate")]
+    pub fn with_substrate(
+        config: AffinityConfig,
+        substrate: Arc<obrain_substrate::SubstrateStore>,
+    ) -> Self {
+        Self {
+            nodes: DashMap::new(),
+            config,
+            graph_store: None,
+            substrate: Some(substrate),
+        }
+    }
+
+    /// Returns `true` if this store routes through a substrate column view.
+    #[cfg(feature = "substrate")]
+    pub fn is_substrate_backed(&self) -> bool {
+        self.substrate.is_some()
     }
 
     /// Persists affinity state for a node.
     fn persist(&self, node_id: NodeId, affinity: &NodeAffinity) {
+        #[cfg(feature = "substrate")]
+        if let Some(sub) = &self.substrate {
+            let _ = sub.set_node_affinity_field_f32(node_id, affinity.score as f32);
+            return;
+        }
+
         if let Some(gs) = &self.graph_store {
             persist_node_f64(gs.as_ref(), node_id, PROP_QUERY_AFFINITY, affinity.score);
             persist_node_f64(
@@ -204,8 +238,21 @@ impl AffinityStore {
     /// Get the current query affinity for a node.
     ///
     /// Returns 0.0 for nodes with no affinity history.
-    /// Lazily loads from graph store if not in hot cache.
+    ///
+    /// **Substrate mode**: reads the 5-bit affinity sub-field directly.
+    /// **Legacy mode**: Lazily loads from graph store if not in hot cache.
     pub fn get_affinity(&self, node_id: NodeId) -> f64 {
+        #[cfg(feature = "substrate")]
+        if let Some(sub) = &self.substrate {
+            return sub
+                .get_node_affinity_field_f32(node_id)
+                .ok()
+                .flatten()
+                .map(|v| v as f64)
+                .map(|v| if v < self.config.min_affinity { 0.0 } else { v })
+                .unwrap_or(0.0);
+        }
+
         if let Some(entry) = self.nodes.get(&node_id) {
             let val = entry.score;
             if val < self.config.min_affinity {
@@ -227,7 +274,24 @@ impl AffinityStore {
     /// Get the top-K nodes by affinity score.
     ///
     /// Used for predictive prefetch at session start.
+    ///
+    /// **Substrate mode**: O(N) scan over the authoritative column.
     pub fn top_k(&self, k: usize) -> Vec<(NodeId, f64)> {
+        #[cfg(feature = "substrate")]
+        if let Some(sub) = &self.substrate {
+            let mut entries: Vec<(NodeId, f64)> = match sub.iter_live_scar_util_affinity() {
+                Ok(pairs) => pairs
+                    .into_iter()
+                    .map(|(id, p)| (id, obrain_substrate::q5_to_affinity(p.affinity) as f64))
+                    .filter(|(_, v)| *v >= self.config.min_affinity)
+                    .collect(),
+                Err(_) => return Vec::new(),
+            };
+            entries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            entries.truncate(k);
+            return entries;
+        }
+
         let mut entries: Vec<(NodeId, f64)> = self
             .nodes
             .iter()
@@ -237,6 +301,45 @@ impl AffinityStore {
         entries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         entries.truncate(k);
         entries
+    }
+
+    /// Rehydrates the affinity cache from the backing graph store.
+    ///
+    /// **Substrate mode**: no-op — the 5-bit affinity sub-field is already
+    /// crash-consistent on open; reads go through the column directly.
+    ///
+    /// **Legacy mode**: iterates every node and loads `PROP_QUERY_AFFINITY`
+    /// (+ count) into the hot cache. Required on brain open so `len()`,
+    /// `top_k()`, and predictive prefetch reflect historical affinity
+    /// rather than starting empty.
+    ///
+    /// Returns the number of nodes loaded.
+    pub fn load_from_graph(&self) -> usize {
+        #[cfg(feature = "substrate")]
+        if self.substrate.is_some() {
+            return 0;
+        }
+
+        let Some(gs) = self.graph_store.as_ref() else {
+            return 0;
+        };
+        let mut loaded = 0usize;
+        for nid in gs.node_ids() {
+            if self.nodes.contains_key(&nid) {
+                continue;
+            }
+            let Some(score) = load_node_f64(gs.as_ref(), nid, PROP_QUERY_AFFINITY) else {
+                continue;
+            };
+            if score <= 0.0 {
+                continue;
+            }
+            let count = load_node_f64(gs.as_ref(), nid, PROP_QUERY_AFFINITY_COUNT)
+                .unwrap_or(1.0) as u32;
+            self.nodes.insert(nid, NodeAffinity { score, count });
+            loaded += 1;
+        }
+        loaded
     }
 
     /// Total number of tracked nodes.
@@ -356,5 +459,89 @@ mod tests {
         assert!(a <= 1.01, "should be clamped to 1.0, got {a}");
         let a = store.update(nid(2), -0.5); // Below 0.0
         assert!(a >= -0.01, "should be clamped to 0.0, got {a}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Substrate-backed integration tests
+// ---------------------------------------------------------------------------
+
+#[cfg(all(test, feature = "substrate"))]
+mod substrate_tests {
+    use super::*;
+    use obrain_core::graph::traits::GraphStoreMut;
+    use obrain_substrate::SubstrateStore;
+
+    fn make_substrate(n: usize) -> (Arc<SubstrateStore>, Vec<NodeId>, tempfile::TempDir) {
+        let td = tempfile::tempdir().unwrap();
+        let sub = SubstrateStore::create(td.path().join("kb")).unwrap();
+        let mut ids = Vec::with_capacity(n);
+        for _ in 0..n {
+            ids.push(sub.create_node(&["n"]));
+        }
+        sub.flush().unwrap();
+        (Arc::new(sub), ids, td)
+    }
+
+    #[test]
+    fn update_writes_through_column() {
+        let (sub, ids, _td) = make_substrate(3);
+        let store = AffinityStore::with_substrate(AffinityConfig::default(), sub.clone());
+        assert!(store.is_substrate_backed());
+        let id = ids[0];
+        store.update(id, 0.8);
+        let packed = sub.get_node_scar_util_affinity(id).unwrap().unwrap();
+        // affinity_to_q5(0.8) = (0.8 * 31).round() = 25
+        assert!(
+            (24..=26).contains(&packed.affinity),
+            "got {}",
+            packed.affinity
+        );
+        assert!(packed.dirty);
+    }
+
+    #[test]
+    fn get_affinity_reads_column() {
+        let (sub, ids, _td) = make_substrate(2);
+        let store = AffinityStore::with_substrate(AffinityConfig::default(), sub.clone());
+        let id = ids[0];
+        store.update(id, 0.6);
+        store.nodes.clear();
+        let a = store.get_affinity(id);
+        assert!((a - 0.6).abs() < 0.05, "got {a}");
+    }
+
+    #[test]
+    fn update_preserves_scar_and_utility() {
+        let (sub, ids, _td) = make_substrate(1);
+        let store = AffinityStore::with_substrate(AffinityConfig::default(), sub.clone());
+        let id = ids[0];
+        sub.set_node_scar_field_f32(id, 1.0).unwrap();
+        sub.set_node_utility_field_f32(id, 2.5).unwrap();
+        store.update(id, 0.9);
+        let packed = sub.get_node_scar_util_affinity(id).unwrap().unwrap();
+        assert_eq!(packed.scar, 8); // 1.0 / 4 * 31 ≈ 8
+        assert!((15..=17).contains(&packed.utility));
+        assert!((27..=29).contains(&packed.affinity));
+    }
+
+    #[test]
+    fn load_from_graph_is_noop_in_substrate_mode() {
+        let (sub, _ids, _td) = make_substrate(1);
+        let store = AffinityStore::with_substrate(AffinityConfig::default(), sub.clone());
+        assert_eq!(store.load_from_graph(), 0);
+    }
+
+    #[test]
+    fn top_k_reads_from_column() {
+        let (sub, ids, _td) = make_substrate(5);
+        let store = AffinityStore::with_substrate(AffinityConfig::default(), sub.clone());
+        store.update(ids[0], 0.2);
+        store.update(ids[1], 0.9);
+        store.update(ids[2], 0.5);
+        let top = store.top_k(2);
+        assert_eq!(top.len(), 2);
+        assert_eq!(top[0].0, ids[1]);
+        assert_eq!(top[1].0, ids[2]);
     }
 }

@@ -116,6 +116,11 @@ pub struct UtilityStore {
     config: UtilityConfig,
     /// Optional backing graph store for write-through persistence.
     graph_store: OptionalGraphStore,
+    /// Optional substrate backend — writes through to the 5-bit `utility`
+    /// sub-field of `NodeRecord.scar_util_affinity`. Scores are clamped to
+    /// `[0, UTILITY_MAX_SCORE_Q5]` (5.0 by default) before quantization.
+    #[cfg(feature = "substrate")]
+    substrate: Option<Arc<obrain_substrate::SubstrateStore>>,
 }
 
 impl UtilityStore {
@@ -125,6 +130,8 @@ impl UtilityStore {
             nodes: DashMap::new(),
             config,
             graph_store: None,
+            #[cfg(feature = "substrate")]
+            substrate: None,
         }
     }
 
@@ -137,11 +144,45 @@ impl UtilityStore {
             nodes: DashMap::new(),
             config,
             graph_store: Some(graph_store),
+            #[cfg(feature = "substrate")]
+            substrate: None,
         }
+    }
+
+    /// Creates a utility store backed by a substrate column view (T6).
+    ///
+    /// Every `boost` updates the 5-bit utility sub-field atomically under
+    /// the zone lock, preserving scar / affinity bits via
+    /// [`obrain_substrate::writer::Writer::update_utility_field`].
+    #[cfg(feature = "substrate")]
+    pub fn with_substrate(
+        config: UtilityConfig,
+        substrate: Arc<obrain_substrate::SubstrateStore>,
+    ) -> Self {
+        Self {
+            nodes: DashMap::new(),
+            config,
+            graph_store: None,
+            substrate: Some(substrate),
+        }
+    }
+
+    /// Returns `true` if this store routes through a substrate column view.
+    #[cfg(feature = "substrate")]
+    pub fn is_substrate_backed(&self) -> bool {
+        self.substrate.is_some()
     }
 
     /// Persists utility state for a node to the graph store.
     fn persist(&self, node_id: NodeId, utility: &NodeUtility) {
+        // Substrate path: write-through quantized score to the 5-bit utility
+        // sub-field.
+        #[cfg(feature = "substrate")]
+        if let Some(sub) = &self.substrate {
+            let _ = sub.set_node_utility_field_f32(node_id, utility.current() as f32);
+            return;
+        }
+
         if let Some(gs) = &self.graph_store {
             persist_node_f64(gs.as_ref(), node_id, PROP_UTILITY_SCORE, utility.current());
             persist_node_f64(
@@ -209,7 +250,21 @@ impl UtilityStore {
     ///
     /// Returns 0.0 for nodes with no utility history.
     /// Lazily loads from graph store if not in hot cache.
+    ///
+    /// **Substrate mode**: reads the 5-bit utility sub-field directly
+    /// (column is the source of truth); the hot cache is bypassed.
     pub fn get_utility(&self, node_id: NodeId) -> f64 {
+        #[cfg(feature = "substrate")]
+        if let Some(sub) = &self.substrate {
+            return sub
+                .get_node_utility_field_f32(node_id)
+                .ok()
+                .flatten()
+                .map(|v| v as f64)
+                .map(|v| if v < self.config.min_utility { 0.0 } else { v })
+                .unwrap_or(0.0);
+        }
+
         if let Some(entry) = self.nodes.get(&node_id) {
             let val = entry.current();
             if val < self.config.min_utility {
@@ -239,7 +294,23 @@ impl UtilityStore {
     }
 
     /// Get all nodes with utility above a threshold.
+    ///
+    /// **Substrate mode**: iterates the authoritative column.
     pub fn nodes_above(&self, threshold: f64) -> Vec<(NodeId, f64)> {
+        #[cfg(feature = "substrate")]
+        if let Some(sub) = &self.substrate {
+            return match sub.iter_live_scar_util_affinity() {
+                Ok(pairs) => pairs
+                    .into_iter()
+                    .filter_map(|(id, p)| {
+                        let v = obrain_substrate::q5_to_utility(p.utility) as f64;
+                        (v >= threshold).then_some((id, v))
+                    })
+                    .collect(),
+                Err(_) => Vec::new(),
+            };
+        }
+
         self.nodes
             .iter()
             .filter_map(|entry| {
@@ -254,7 +325,24 @@ impl UtilityStore {
     }
 
     /// Get the top-K nodes by utility score.
+    ///
+    /// **Substrate mode**: O(N) scan over the column.
     pub fn top_k(&self, k: usize) -> Vec<(NodeId, f64)> {
+        #[cfg(feature = "substrate")]
+        if let Some(sub) = &self.substrate {
+            let mut entries: Vec<(NodeId, f64)> = match sub.iter_live_scar_util_affinity() {
+                Ok(pairs) => pairs
+                    .into_iter()
+                    .map(|(id, p)| (id, obrain_substrate::q5_to_utility(p.utility) as f64))
+                    .filter(|(_, v)| *v >= self.config.min_utility)
+                    .collect(),
+                Err(_) => return Vec::new(),
+            };
+            entries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            entries.truncate(k);
+            return entries;
+        }
+
         let mut entries: Vec<(NodeId, f64)> = self
             .nodes
             .iter()
@@ -263,6 +351,53 @@ impl UtilityStore {
         entries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         entries.truncate(k);
         entries
+    }
+
+    /// Rehydrates the utility cache from the backing graph store.
+    ///
+    /// **Substrate mode**: no-op — the 5-bit utility sub-field is already
+    /// crash-consistent on open; `get_utility` reads it directly.
+    ///
+    /// **Legacy mode**: iterates every node and loads `PROP_UTILITY_SCORE`
+    /// (+ count + epoch) into the hot cache. Required on brain open so
+    /// `len()` and `top_k()` reflect historical utility rather than
+    /// starting empty.
+    ///
+    /// Returns the number of nodes loaded.
+    pub fn load_from_graph(&self) -> usize {
+        #[cfg(feature = "substrate")]
+        if self.substrate.is_some() {
+            return 0;
+        }
+
+        let Some(gs) = self.graph_store.as_ref() else {
+            return 0;
+        };
+        let mut loaded = 0usize;
+        for nid in gs.node_ids() {
+            if self.nodes.contains_key(&nid) {
+                continue;
+            }
+            let Some(score) = load_node_f64(gs.as_ref(), nid, PROP_UTILITY_SCORE) else {
+                continue;
+            };
+            if score <= 0.0 {
+                continue;
+            }
+            let count =
+                load_node_f64(gs.as_ref(), nid, PROP_UTILITY_COUNT).unwrap_or(1.0) as u32;
+            let epoch = load_node_f64(gs.as_ref(), nid, PROP_UTILITY_LAST_UPDATED_EPOCH);
+            let last_updated = crate::store_trait::epoch_to_instant(epoch);
+            let utility = NodeUtility {
+                score,
+                count,
+                last_updated,
+                half_life: self.config.default_half_life,
+            };
+            self.nodes.insert(nid, utility);
+            loaded += 1;
+        }
+        loaded
     }
 
     /// Total number of tracked nodes.
@@ -402,5 +537,85 @@ mod tests {
         assert_eq!(top.len(), 2);
         assert_eq!(top[0].0, nid(2)); // Highest
         assert_eq!(top[1].0, nid(3)); // Second
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Substrate-backed integration tests
+// ---------------------------------------------------------------------------
+
+#[cfg(all(test, feature = "substrate"))]
+mod substrate_tests {
+    use super::*;
+    use obrain_core::graph::traits::GraphStoreMut;
+    use obrain_substrate::SubstrateStore;
+
+    fn make_substrate(n: usize) -> (Arc<SubstrateStore>, Vec<NodeId>, tempfile::TempDir) {
+        let td = tempfile::tempdir().unwrap();
+        let sub = SubstrateStore::create(td.path().join("kb")).unwrap();
+        let mut ids = Vec::with_capacity(n);
+        for _ in 0..n {
+            ids.push(sub.create_node(&["n"]));
+        }
+        sub.flush().unwrap();
+        (Arc::new(sub), ids, td)
+    }
+
+    #[test]
+    fn boost_writes_through_column() {
+        let (sub, ids, _td) = make_substrate(3);
+        let store = UtilityStore::with_substrate(UtilityConfig::default(), sub.clone());
+        assert!(store.is_substrate_backed());
+        let id = ids[0];
+        store.boost(id, 2.5);
+        let packed = sub.get_node_scar_util_affinity(id).unwrap().unwrap();
+        // utility_to_q5(2.5) = (2.5 / 5 * 31).round() = 16
+        assert!((15..=17).contains(&packed.utility), "got {}", packed.utility);
+        assert!(packed.dirty);
+    }
+
+    #[test]
+    fn get_utility_reads_column() {
+        let (sub, ids, _td) = make_substrate(2);
+        let store = UtilityStore::with_substrate(UtilityConfig::default(), sub.clone());
+        let id = ids[0];
+        store.boost(id, 3.0);
+        store.nodes.clear();
+        let u = store.get_utility(id);
+        assert!((u - 3.0).abs() < 0.25, "got {u}");
+    }
+
+    #[test]
+    fn boost_preserves_scar_and_affinity() {
+        let (sub, ids, _td) = make_substrate(1);
+        let store = UtilityStore::with_substrate(UtilityConfig::default(), sub.clone());
+        let id = ids[0];
+        sub.set_node_scar_field_f32(id, 2.0).unwrap();
+        sub.set_node_affinity_field_f32(id, 0.5).unwrap();
+        store.boost(id, 4.0);
+        let packed = sub.get_node_scar_util_affinity(id).unwrap().unwrap();
+        assert_eq!(packed.scar, 16); // 2/4 * 31 = 15.5 → 16
+        assert_eq!(packed.affinity, 16); // 0.5 * 31 = 15.5 → 16
+        assert!(packed.utility >= 24); // 4/5 * 31 ≈ 25
+    }
+
+    #[test]
+    fn load_from_graph_is_noop_in_substrate_mode() {
+        let (sub, _ids, _td) = make_substrate(1);
+        let store = UtilityStore::with_substrate(UtilityConfig::default(), sub.clone());
+        assert_eq!(store.load_from_graph(), 0);
+    }
+
+    #[test]
+    fn top_k_reads_from_column() {
+        let (sub, ids, _td) = make_substrate(5);
+        let store = UtilityStore::with_substrate(UtilityConfig::default(), sub.clone());
+        store.boost(ids[0], 0.5);
+        store.boost(ids[1], 3.0);
+        store.boost(ids[2], 1.5);
+        let top = store.top_k(2);
+        assert_eq!(top.len(), 2);
+        assert_eq!(top[0].0, ids[1]);
+        assert_eq!(top[1].0, ids[2]);
     }
 }

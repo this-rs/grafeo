@@ -184,6 +184,12 @@ impl NodeEnergy {
 /// the value lazily from the graph property.
 pub struct EnergyStore {
     /// Per-node energy entries (includes inline LRU access counter).
+    ///
+    /// When the store is backed by a `SubstrateStore` (via [`Self::with_substrate`]),
+    /// this cache is a best-effort write-back layer around the authoritative
+    /// on-disk column; reads first probe the cache, then fall through to the
+    /// substrate column. In the legacy graph-store mode it is the primary
+    /// working set, write-through'd to the backing `GraphStoreMut` properties.
     nodes: DashMap<NodeId, NodeEnergy>,
     /// Cross-base energy map — tracks energy for nodes identified by (db_id, node_id) pairs.
     #[cfg(feature = "synapse")]
@@ -194,8 +200,13 @@ pub struct EnergyStore {
     max_cache_entries: usize,
     /// Configuration.
     config: EnergyConfig,
-    /// Optional backing graph store for write-through persistence.
+    /// Optional backing graph store for write-through persistence (legacy mode).
     graph_store: OptionalGraphStore,
+    /// Optional backing substrate store — when set, the cognitive column of
+    /// `NodeRecord.energy` (u16 Q1.15) is the source of truth and cache is a
+    /// thin accelerator.
+    #[cfg(feature = "substrate")]
+    substrate: Option<Arc<obrain_substrate::SubstrateStore>>,
 }
 
 impl EnergyStore {
@@ -209,6 +220,8 @@ impl EnergyStore {
             max_cache_entries: 0,
             config,
             graph_store: None,
+            #[cfg(feature = "substrate")]
+            substrate: None,
         }
     }
 
@@ -225,7 +238,44 @@ impl EnergyStore {
             max_cache_entries: 0,
             config,
             graph_store: Some(graph_store),
+            #[cfg(feature = "substrate")]
+            substrate: None,
         }
+    }
+
+    /// Creates a new energy store backed by a substrate column view (T6).
+    ///
+    /// The `NodeRecord.energy` u16 Q1.15 column is the source of truth —
+    /// every `boost` / `set` translates to a dedicated `EnergyReinforce`
+    /// WAL record + mmap column mutation via
+    /// [`SubstrateStore::boost_node_energy_f32`] /
+    /// [`SubstrateStore::set_node_energy_f32`]. The in-memory `DashMap`
+    /// cache is retained as a warm-read accelerator.
+    ///
+    /// Decay semantics shift from lazy-per-read (legacy) to eager-periodic-
+    /// batch — callers must invoke [`Self::decay_all`] on a schedule (the
+    /// Consolidator Thinker from T13 owns this cadence at runtime).
+    #[cfg(feature = "substrate")]
+    pub fn with_substrate(
+        config: EnergyConfig,
+        substrate: Arc<obrain_substrate::SubstrateStore>,
+    ) -> Self {
+        Self {
+            nodes: DashMap::new(),
+            #[cfg(feature = "synapse")]
+            cross_base: DashMap::new(),
+            access_counter: AtomicU64::new(0),
+            max_cache_entries: 0,
+            config,
+            graph_store: None,
+            substrate: Some(substrate),
+        }
+    }
+
+    /// Returns `true` if this store routes through a substrate column view.
+    #[cfg(feature = "substrate")]
+    pub fn is_substrate_backed(&self) -> bool {
+        self.substrate.is_some()
     }
 
     /// Sets the maximum number of cache entries. When exceeded, LRU eviction kicks in.
@@ -266,12 +316,23 @@ impl EnergyStore {
         }
     }
 
-    /// Returns the current energy for a node (with decay applied).
+    /// Returns the current energy for a node.
     ///
-    /// Returns `0.0` if the node has never been tracked.
-    /// If the node is not in the hot cache but exists in the graph store,
-    /// the value is loaded lazily.
+    /// In **legacy mode**, decay is applied on read via `NodeEnergy::current_energy()`.
+    /// In **substrate-backed mode**, the raw column value is returned — decay
+    /// is eager/batched (see [`Self::decay_all`]). Returns `0.0` if the node
+    /// has never been tracked (or has tombstoned / missing column).
     pub fn get_energy(&self, node_id: NodeId) -> f64 {
+        // Substrate-backed: column is source of truth.
+        #[cfg(feature = "substrate")]
+        if let Some(sub) = self.substrate.as_ref() {
+            match sub.get_node_energy_f32(node_id) {
+                Ok(Some(v)) => return v as f64,
+                Ok(None) => return 0.0,
+                Err(_) => return 0.0,
+            }
+        }
+
         if let Some(entry) = self.nodes.get(&node_id) {
             let energy = entry.current_energy();
             drop(entry);
@@ -306,11 +367,45 @@ impl EnergyStore {
 
     /// Boosts a node's energy by `amount`.
     ///
-    /// If the node is not yet tracked, it is created with the boost as
-    /// initial energy. The new energy value is written through to the
-    /// backing graph store (if configured).
+    /// **Substrate mode**: dispatches to
+    /// [`SubstrateStore::boost_node_energy_f32`] which logs an
+    /// `EnergyReinforce` WAL record + mutates the u16 Q1.15 column.
+    /// The column saturates at `config.max_energy` clamped to the Q1.15
+    /// range (`[0, 1.0]` — values > 1.0 in the legacy config are silently
+    /// clamped by the fixed-point encoding).
+    ///
+    /// **Legacy mode**: if the node is not yet tracked, it is created with
+    /// the boost as initial energy. The new energy value is written through
+    /// to the backing graph store (if configured).
     pub fn boost(&self, node_id: NodeId, amount: f64) {
         let max_energy = self.config.max_energy;
+
+        // Substrate-backed: the column is the source of truth. We still
+        // maintain the cache for legacy callers that inspect `snapshot()` /
+        // `len()` fast-path, but the durable write is a WAL-first column
+        // mutation.
+        #[cfg(feature = "substrate")]
+        if let Some(sub) = self.substrate.as_ref() {
+            // Q1.15 tops out at ~1.0; clamp max_energy into that range.
+            let max_q = max_energy.min(1.0) as f32;
+            let amt = amount as f32;
+            if let Ok(Some(new_v)) = sub.boost_node_energy_f32(node_id, amt, max_q) {
+                // Sync cache to reflect the durable value (for snapshot/len parity).
+                self.nodes
+                    .entry(node_id)
+                    .and_modify(|e| {
+                        e.energy = new_v as f64;
+                        e.last_activated = Instant::now();
+                    })
+                    .or_insert_with(|| {
+                        NodeEnergy::new(new_v as f64, self.config.default_half_life)
+                    });
+                self.touch(node_id);
+                self.maybe_evict();
+            }
+            return;
+        }
+
         self.nodes
             .entry(node_id)
             .and_modify(|e| {
@@ -337,8 +432,51 @@ impl EnergyStore {
         }
     }
 
+    /// Apply an eager multiplicative decay to every live node's energy
+    /// column. `factor` is in `[0.0, 1.0]` (`0.5` halves all energies).
+    ///
+    /// **Substrate mode**: dispatches to [`SubstrateStore::decay_all_energy`]
+    /// which logs a single `EnergyDecay` WAL record and rewrites every live
+    /// slot in one pass. This is the replacement for the legacy
+    /// per-read exponential decay.
+    ///
+    /// **Legacy mode**: iterates the hot cache and multiplies each
+    /// `raw_energy`, resetting `last_activated` to `now`. The backing
+    /// graph-store (if any) is NOT re-persisted in this path — callers that
+    /// rely on legacy `PROP_ENERGY` durability should stick with lazy decay.
+    pub fn decay_all(&self, factor: f64) {
+        #[cfg(feature = "substrate")]
+        if let Some(sub) = self.substrate.as_ref() {
+            let _ = sub.decay_all_energy(factor as f32);
+            // Invalidate cache — cheapest path is to clear, next read re-reads
+            // the column. The cache is a best-effort accelerator in
+            // substrate mode, not a source of truth.
+            self.nodes.clear();
+            return;
+        }
+
+        let f = factor.clamp(0.0, 1.0);
+        let now = Instant::now();
+        for mut entry in self.nodes.iter_mut() {
+            entry.energy *= f;
+            entry.last_activated = now;
+        }
+    }
+
     /// Returns all node IDs whose current energy is below `threshold`.
     pub fn list_low_energy(&self, threshold: f64) -> Vec<NodeId> {
+        #[cfg(feature = "substrate")]
+        if let Some(sub) = self.substrate.as_ref() {
+            return match sub.iter_live_node_energies() {
+                Ok(pairs) => pairs
+                    .into_iter()
+                    .filter(|(_, e)| (*e as f64) < threshold)
+                    .map(|(id, _)| id)
+                    .collect(),
+                Err(_) => Vec::new(),
+            };
+        }
+
         self.nodes
             .iter()
             .filter(|entry| entry.value().current_energy() < threshold)
@@ -346,12 +484,65 @@ impl EnergyStore {
             .collect()
     }
 
+    /// Rehydrates the energy cache from the backing graph store.
+    ///
+    /// **Substrate mode**: this is a no-op returning `0`. The on-disk
+    /// u16 Q1.15 column is the source of truth; there is nothing to
+    /// "rehydrate" — the substrate's own mmap + WAL-replay already leaves
+    /// the column in its crash-consistent state on open. The in-memory
+    /// DashMap cache is populated lazily on demand (next `get_energy` /
+    /// `boost`).
+    ///
+    /// **Legacy mode**: iterates every node and loads `PROP_ENERGY` (+
+    /// epoch) into the hot cache. Required on brain open — otherwise
+    /// `len()`, `snapshot()`, and aggregate health metrics (total energy,
+    /// activation count) report zero until a `boost()` call repopulates the
+    /// DashMap.
+    ///
+    /// Returns the number of nodes loaded.
+    pub fn load_from_graph(&self) -> usize {
+        #[cfg(feature = "substrate")]
+        if self.substrate.is_some() {
+            // The substrate column is the source of truth. The cache is a
+            // warm-read accelerator populated lazily — no eager fill here.
+            return 0;
+        }
+
+        let Some(gs) = self.graph_store.as_ref() else {
+            return 0;
+        };
+        let mut loaded = 0usize;
+        for nid in gs.node_ids() {
+            if self.nodes.contains_key(&nid) {
+                continue;
+            }
+            let Some(raw_energy) = load_node_f64(gs.as_ref(), nid, PROP_ENERGY) else {
+                continue;
+            };
+            let last_activated = epoch_to_instant(load_node_f64(
+                gs.as_ref(),
+                nid,
+                PROP_ENERGY_LAST_ACTIVATED_EPOCH,
+            ));
+            let ne = NodeEnergy::new_at(raw_energy, self.config.default_half_life, last_activated);
+            self.nodes.insert(nid, ne);
+            loaded += 1;
+        }
+        loaded
+    }
+
     /// Returns the number of tracked nodes.
+    ///
+    /// **Substrate mode**: this reports the cache size (eagerly-boosted or
+    /// previously-read nodes). Use [`Self::snapshot`] for an authoritative
+    /// count over the on-disk column.
     pub fn len(&self) -> usize {
         self.nodes.len()
     }
 
     /// Returns `true` if no nodes are tracked.
+    ///
+    /// **Substrate mode**: reflects the cache only — see [`Self::len`].
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
@@ -362,7 +553,21 @@ impl EnergyStore {
     }
 
     /// Returns all tracked node IDs with their current energy.
+    ///
+    /// **Substrate mode**: iterates the authoritative on-disk column
+    /// (O(N) mmap scan of live non-tombstoned slots). Tombstoned nodes and
+    /// slots beyond the high-water mark are excluded.
+    ///
+    /// **Legacy mode**: snapshots the DashMap cache, applying decay on read.
     pub fn snapshot(&self) -> Vec<(NodeId, f64)> {
+        #[cfg(feature = "substrate")]
+        if let Some(sub) = self.substrate.as_ref() {
+            return match sub.iter_live_node_energies() {
+                Ok(pairs) => pairs.into_iter().map(|(id, e)| (id, e as f64)).collect(),
+                Err(_) => Vec::new(),
+            };
+        }
+
         self.nodes
             .iter()
             .map(|entry| (*entry.key(), entry.value().current_energy()))
@@ -549,5 +754,114 @@ impl std::fmt::Debug for EnergyListener {
         f.debug_struct("EnergyListener")
             .field("store", &self.store)
             .finish()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Substrate-backed tests (T6)
+// ---------------------------------------------------------------------------
+
+#[cfg(all(test, feature = "substrate"))]
+mod substrate_tests {
+    use super::*;
+    use obrain_substrate::SubstrateStore;
+    use std::sync::Arc;
+
+    /// Helper: create a substrate store in a tempdir with `n` node slots
+    /// allocated via the `GraphStoreMut` trait (each node gets a single
+    /// label "n") so they have legitimate `label_bitset` entries. Returns
+    /// the store and the allocated `NodeId`s.
+    fn make_substrate(n: usize) -> (Arc<SubstrateStore>, Vec<NodeId>, tempfile::TempDir) {
+        use obrain_core::graph::traits::GraphStoreMut;
+        let td = tempfile::tempdir().unwrap();
+        let sub = SubstrateStore::create(td.path().join("kb")).unwrap();
+        let mut ids = Vec::with_capacity(n);
+        for _ in 0..n {
+            let id = sub.create_node(&["n"]);
+            ids.push(id);
+        }
+        sub.flush().unwrap();
+        (Arc::new(sub), ids, td)
+    }
+
+    #[test]
+    fn substrate_energy_boost_reads_back_through_column() {
+        let (sub, ids, _td) = make_substrate(3);
+        let cfg = EnergyConfig::default();
+        let store = EnergyStore::with_substrate(cfg, sub.clone());
+        assert!(store.is_substrate_backed());
+
+        // Boost slot 1 by 0.5 — column should hold ≈ 0.5.
+        store.boost(ids[0], 0.5);
+        let e0 = store.get_energy(ids[0]);
+        assert!((e0 - 0.5).abs() < 1e-3, "energy after boost: {e0}");
+
+        // Another boost — saturates at max_energy (clamped to 1.0 in Q1.15).
+        store.boost(ids[0], 0.8);
+        let e1 = store.get_energy(ids[0]);
+        assert!(e1 <= 1.0_f64 + 1e-3, "energy exceeded 1.0: {e1}");
+        assert!(e1 >= 0.9_f64, "energy should approach max: {e1}");
+    }
+
+    #[test]
+    fn substrate_decay_all_halves_every_node() {
+        let (sub, ids, _td) = make_substrate(5);
+        let cfg = EnergyConfig::default();
+        let store = EnergyStore::with_substrate(cfg, sub.clone());
+
+        // Seed every node at 0.8.
+        for id in &ids {
+            store.boost(*id, 0.8);
+        }
+        // Decay ×0.5.
+        store.decay_all(0.5);
+        // Every node's column should now be ≈ 0.4 (±1 ULP of Q1.15).
+        for id in &ids {
+            let e = store.get_energy(*id);
+            assert!((e - 0.4).abs() < 5e-3, "node {id:?} energy: {e} (expected ≈ 0.4)");
+        }
+    }
+
+    #[test]
+    fn substrate_load_from_graph_is_noop_but_returns_zero() {
+        let (sub, ids, _td) = make_substrate(2);
+        let cfg = EnergyConfig::default();
+        let store = EnergyStore::with_substrate(cfg, sub.clone());
+        // Seed one node so the column is non-zero.
+        store.boost(ids[0], 0.3);
+        // load_from_graph is a no-op in substrate mode (column is
+        // already authoritative on disk).
+        assert_eq!(store.load_from_graph(), 0);
+        // But the value is still readable.
+        assert!(store.get_energy(ids[0]) > 0.0);
+    }
+
+    #[test]
+    fn substrate_snapshot_iterates_live_column() {
+        let (sub, ids, _td) = make_substrate(4);
+        let cfg = EnergyConfig::default();
+        let store = EnergyStore::with_substrate(cfg, sub.clone());
+        store.boost(ids[0], 0.2);
+        store.boost(ids[2], 0.7);
+        // Nodes 1 & 3 were never boosted — they have zero energy in the
+        // column but are still "live" (allocated slots). snapshot() iterates
+        // every live slot so it returns 4 entries.
+        let snap = store.snapshot();
+        assert_eq!(snap.len(), 4);
+        let sum: f64 = snap.iter().map(|(_, e)| *e).sum();
+        assert!((sum - 0.9).abs() < 5e-3, "sum of energies: {sum}");
+    }
+
+    #[test]
+    fn substrate_list_low_energy_filters_via_column() {
+        let (sub, ids, _td) = make_substrate(3);
+        let cfg = EnergyConfig::default();
+        let store = EnergyStore::with_substrate(cfg, sub.clone());
+        store.boost(ids[0], 0.1);
+        store.boost(ids[1], 0.5);
+        store.boost(ids[2], 0.9);
+        let low = store.list_low_energy(0.3);
+        assert_eq!(low.len(), 1);
+        assert_eq!(low[0], ids[0]);
     }
 }

@@ -31,7 +31,7 @@ hopfield = ["engram"]
 immune = []
 
 # Epigenetic layer (Layer 5: cross-instance transgenerational memory)
-epigenetic = ["dep:serde_json"]
+epigenetic = []
 
 # Kernel embeddings (irreducible kernel C = Φ₀ ∘ A¹(H^∞))
 kernel = ["dep:obrain-adapters"]
@@ -48,6 +48,9 @@ persona = ["synapse", "energy"]
 # IAM — Identity & Access Management (ORN system, policy evaluation)
 iam = ["dep:obrain-iam"]
 
+# Substrate — topology-as-storage column-view backend (T6)
+substrate = ["dep:obrain-substrate"]
+
 # Future subsystems
 scar = []
 utility = []
@@ -55,7 +58,7 @@ affinity = []
 memory = ["energy"]
 stagnation = []
 fingerprint = []
-distillation = ["energy", "synapse", "fingerprint", "dep:serde_json", "dep:bincode"]
+distillation = ["energy", "synapse", "fingerprint", "dep:bincode"]
 episodic = []
 consolidation = ["energy", "fabric", "gds-refresh"]
 
@@ -73,6 +76,7 @@ obrain-core = { workspace = true, default-features = false }
 obrain-reactive.workspace = true
 obrain-adapters = { workspace = true, optional = true, default-features = false, features = ["algos"] }
 obrain-iam = { workspace = true, optional = true }
+obrain-substrate = { workspace = true, optional = true }
 
 # Async runtime — only sync feature for all targets (WASM-compatible).
 # NOTE: we don't use `workspace = true` because the workspace tokio
@@ -93,9 +97,9 @@ tracing.workspace = true
 # Data structures
 smallvec.workspace = true
 
-# Serialization (for CognitiveConfig TOML support)
+# Serialization (for CognitiveConfig TOML support + engram persistence)
 serde.workspace = true
-serde_json = { workspace = true, optional = true }
+serde_json.workspace = true
 bincode = { workspace = true, optional = true }
 toml = "0.8"
 
@@ -114,6 +118,8 @@ bincode.workspace = true
 criterion.workspace = true
 smallvec.workspace = true
 proptest.workspace = true
+tempfile.workspace = true
+obrain-substrate.workspace = true
 
 [lints]
 workspace = true
