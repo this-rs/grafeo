@@ -251,12 +251,25 @@ impl ObrainDB {
     #[cfg(feature = "substrate-backend")]
     pub fn open_substrate(path: impl AsRef<std::path::Path>) -> Result<Self> {
         let path_ref = path.as_ref();
-        let store = obrain_substrate::SubstrateStore::create(path_ref).map_err(|e| {
-            obrain_common::utils::error::Error::Internal(format!(
-                "substrate: failed to open {}: {e}",
-                path_ref.display()
-            ))
-        })?;
+        // Detect existing substrate: if `substrate.meta` is present, open;
+        // otherwise create. This mirrors the semantics of ObrainDB::open(path)
+        // on the legacy path (open-or-create idempotent).
+        let meta_path = path_ref.join("substrate.meta");
+        let store = if meta_path.is_file() {
+            obrain_substrate::SubstrateStore::open(path_ref).map_err(|e| {
+                obrain_common::utils::error::Error::Internal(format!(
+                    "substrate: failed to open existing store at {}: {e}",
+                    path_ref.display()
+                ))
+            })?
+        } else {
+            obrain_substrate::SubstrateStore::create(path_ref).map_err(|e| {
+                obrain_common::utils::error::Error::Internal(format!(
+                    "substrate: failed to create store at {}: {e}",
+                    path_ref.display()
+                ))
+            })?
+        };
         // Keep a typed handle in addition to the erased `GraphStoreMut` one:
         // cognitive stores reach for the substrate column APIs (reinforce /
         // decay_all / iter_live_synapse_weights) which are not part of the
@@ -1826,6 +1839,17 @@ impl ObrainDB {
             wal.sync()?;
         }
 
+        // T6 Step 2b: when substrate is the backend, persist its dict
+        // (registries + high-water marks) and msync the mmap zones. Without
+        // this, reopen sees an empty/stale dict and treats all previously
+        // allocated nodes/edges as non-live (is_live_on_disk → false).
+        #[cfg(feature = "substrate-backend")]
+        if let Some(ref sub) = self.substrate_store
+            && let Err(e) = sub.flush()
+        {
+            tracing::error!("substrate flush during close failed: {e}");
+        }
+
         *is_open = false;
         Ok(())
     }
@@ -1845,6 +1869,17 @@ impl ObrainDB {
         #[cfg(feature = "obrain-file")]
         if let Some(ref fm) = self.file_manager {
             self.checkpoint_to_file(fm)?;
+        }
+
+        // T6 Step 2b: substrate dict + mmap zones must be persisted
+        // alongside the WAL commit for cross-restart durability.
+        #[cfg(feature = "substrate-backend")]
+        if let Some(ref sub) = self.substrate_store {
+            sub.flush().map_err(|e| {
+                obrain_common::utils::error::Error::Internal(format!(
+                    "substrate flush during commit_wal failed: {e}"
+                ))
+            })?;
         }
 
         Ok(())
@@ -1872,6 +1907,17 @@ impl ObrainDB {
     /// `obrain-hub`.
     #[must_use]
     pub fn graph_store_mut(&self) -> Arc<dyn GraphStoreMut> {
+        // T6 Step 2b: in substrate-backend mode, the substrate IS the
+        // authoritative store. Its `GraphStoreMut` impl is already WAL-native
+        // (every mutation logs a WalRecord synchronously before touching
+        // mmap), so we do NOT wrap it with `WalGraphStore` — doing so would
+        // funnel writes through the dummy `self.store` LpgStore that lives
+        // next to the substrate in `with_store`, silently dropping them on
+        // disk. Return the substrate's erased handle directly.
+        #[cfg(feature = "substrate-backend")]
+        if let Some(ref sub) = self.substrate_store {
+            return Arc::clone(sub) as Arc<dyn GraphStoreMut>;
+        }
         #[cfg(feature = "wal")]
         if let Some(ref wal) = self.wal {
             return Arc::new(wal_store::WalGraphStore::new(

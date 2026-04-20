@@ -543,17 +543,25 @@ impl SynapseStore {
             // Traverse outgoing edges from the lower-id node to find the SYNAPSE edge
             self.find_synapse_edge(gs.as_ref(), key)?
         };
-        let raw_weight = load_edge_f64(gs.as_ref(), eid, PROP_SYNAPSE_WEIGHT)?;
 
-        // Substrate is authoritative for weight when set — override LPG.
+        // Load the raw weight. In substrate mode, the column (EdgeRecord.weight_u16)
+        // is authoritative — the LPG property path may not be persisted at all
+        // (substrate edge properties land in a later milestone). In legacy mode,
+        // the LPG property is required; missing means no synapse.
         #[cfg(feature = "substrate")]
-        let raw_weight = if let Some(sub) = self.substrate.as_ref() {
-            match sub.get_edge_synapse_weight_f32(eid) {
-                Ok(Some(w)) => (w as f64) * self.config.max_synapse_weight,
-                _ => raw_weight,
-            }
-        } else {
-            raw_weight
+        let substrate_weight_raw: Option<f64> = self
+            .substrate
+            .as_ref()
+            .and_then(|sub| match sub.get_edge_synapse_weight_f32(eid) {
+                Ok(Some(w)) => Some((w as f64) * self.config.max_synapse_weight),
+                _ => None,
+            });
+        #[cfg(not(feature = "substrate"))]
+        let substrate_weight_raw: Option<f64> = None;
+
+        let raw_weight = match substrate_weight_raw {
+            Some(w) => w,
+            None => load_edge_f64(gs.as_ref(), eid, PROP_SYNAPSE_WEIGHT)?,
         };
 
         // Reconstruct the Instant from the persisted epoch timestamp.
