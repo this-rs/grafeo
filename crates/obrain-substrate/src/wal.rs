@@ -58,6 +58,7 @@ pub enum WalKind {
     Tier0Update = 0x60,
     Tier1Update = 0x61,
     Tier2Update = 0x62,
+    EngramMembersSet = 0x70,
     Checkpoint = 0xF0,
     NoOp = 0xFE,
     EndOfLog = 0xFF,
@@ -90,6 +91,7 @@ impl WalKind {
             0x60 => Tier0Update,
             0x61 => Tier1Update,
             0x62 => Tier2Update,
+            0x70 => EngramMembersSet,
             0xF0 => Checkpoint,
             0xFE => NoOp,
             0xFF => EndOfLog,
@@ -205,6 +207,14 @@ pub enum WalPayload {
         node_id: u32,
         f16s: Vec<u16>, // 384 × f16 stored as raw u16
     },
+    /// Full engram membership snapshot. The WAL carries the entire list of
+    /// member node slot IDs so replay is idempotent (re-applying overwrites
+    /// the same directory entry with the same bytes). `engram_id = 0` is
+    /// reserved and rejected by the writer.
+    EngramMembersSet {
+        engram_id: u16,
+        members: Vec<u32>,
+    },
     Checkpoint {
         at_lsn: u64,
     },
@@ -240,6 +250,7 @@ impl WalPayload {
             Tier0Update { .. } => K::Tier0Update,
             Tier1Update { .. } => K::Tier1Update,
             Tier2Update { .. } => K::Tier2Update,
+            EngramMembersSet { .. } => K::EngramMembersSet,
             Checkpoint { .. } => K::Checkpoint,
             NoOp => K::NoOp,
             EndOfLog => K::EndOfLog,
@@ -552,6 +563,10 @@ mod tests {
             WalPayload::Tier2Update {
                 node_id: 42,
                 f16s: vec![0x3C00; 384], // f16 1.0
+            },
+            WalPayload::EngramMembersSet {
+                engram_id: 7,
+                members: vec![10, 20, 30, 40, 50],
             },
             WalPayload::Checkpoint { at_lsn: 123 },
             WalPayload::NoOp,

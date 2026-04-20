@@ -55,6 +55,7 @@ pub struct Writer {
 struct ZoneCache {
     nodes: Option<ZoneFile>,
     edges: Option<ZoneFile>,
+    engram_members: Option<ZoneFile>,
 }
 
 impl Writer {
@@ -577,6 +578,45 @@ impl Writer {
         })
     }
 
+    // ==================================================================
+    // Engram membership side-table (T7 Step 0)
+    // ==================================================================
+
+    /// Write the full membership list for `engram_id` through the WAL-first
+    /// path: append a [`WalPayload::EngramMembersSet`] record, then update
+    /// the mmap'd side-table.
+    ///
+    /// Passing an empty `members` slice clears the engram's directory entry
+    /// (no payload bytes written). `engram_id = 0` is reserved and rejected.
+    #[tracing::instrument(level = "trace", skip(self, members))]
+    pub fn set_engram_members(
+        &self,
+        engram_id: u16,
+        members: Vec<u32>,
+    ) -> SubstrateResult<()> {
+        // (1) WAL first — payload carries full state for idempotent replay.
+        let rec = WalRecord {
+            lsn: 0,
+            timestamp: unix_micros(),
+            flags: 0,
+            payload: WalPayload::EngramMembersSet {
+                engram_id,
+                members: members.clone(),
+            },
+        };
+        self.wal.append(rec)?;
+
+        // (2) Side-table mutation.
+        self.with_engram_zone(|zf| {
+            crate::engram::EngramZone::set_members_raw(zf, engram_id, &members)
+        })
+    }
+
+    /// Read the current membership list for `engram_id`.
+    pub fn engram_members(&self, engram_id: u16) -> SubstrateResult<Option<Vec<u32>>> {
+        self.with_engram_zone(|zf| crate::engram::EngramZone::members(zf, engram_id))
+    }
+
     /// Seal the transaction: append a commit-flagged no-op and fsync.
     ///
     /// Under [`SyncMode::EveryCommit`] the `FLAG_COMMIT` bit triggers fsync
@@ -601,6 +641,10 @@ impl Writer {
             z.fsync()?;
         }
         if let Some(z) = zones.edges.as_ref() {
+            z.msync()?;
+            z.fsync()?;
+        }
+        if let Some(z) = zones.engram_members.as_ref() {
             z.msync()?;
             z.fsync()?;
         }
@@ -631,6 +675,18 @@ impl Writer {
             zones.edges = Some(sub.open_zone(Zone::Edges)?);
         }
         f(zones.edges.as_mut().unwrap())
+    }
+
+    fn with_engram_zone<R>(
+        &self,
+        f: impl FnOnce(&mut ZoneFile) -> SubstrateResult<R>,
+    ) -> SubstrateResult<R> {
+        let mut zones = self.zones.lock();
+        if zones.engram_members.is_none() {
+            let sub = self.substrate.lock();
+            zones.engram_members = Some(sub.open_zone(Zone::EngramMembers)?);
+        }
+        f(zones.engram_members.as_mut().unwrap())
     }
 }
 
@@ -1089,6 +1145,98 @@ mod tests {
         assert_eq!(u.utility, 19);
         assert_eq!(u.affinity, 11);
         assert!(u.dirty);
+    }
+
+    // =====================================================================
+    // T7 Step 0 — Engram membership side-table
+    // =====================================================================
+
+    #[test]
+    fn set_engram_members_walks_and_mutates_zone() {
+        let td = tempfile::tempdir().unwrap();
+        let sub = SubstrateFile::create(td.path().join("kb")).unwrap();
+        let wal_path = sub.wal_path();
+        let w = Writer::new(sub, SyncMode::Never).unwrap();
+
+        let members: Vec<u32> = (1..=100).map(|i| i * 3).collect();
+        w.set_engram_members(42, members.clone()).unwrap();
+        w.commit().unwrap();
+        w.wal().fsync().unwrap();
+
+        // (1) Direct readback from the side-table via the Writer.
+        let got = w.engram_members(42).unwrap().unwrap();
+        assert_eq!(got, members);
+
+        // (2) WAL stream contains the EngramMembersSet payload.
+        drop(w);
+        let r = crate::wal_io::WalReader::open(&wal_path).unwrap();
+        let items: Vec<_> = r.iter_from(0).collect::<Result<Vec<_>, _>>().unwrap();
+        let found = items.iter().any(|(rec, _, _)| {
+            matches!(
+                &rec.payload,
+                WalPayload::EngramMembersSet { engram_id: 42, members: m } if m == &members
+            )
+        });
+        assert!(found, "EngramMembersSet record missing from WAL");
+    }
+
+    #[test]
+    fn set_engram_members_close_reopen_roundtrip() {
+        // T7 Step 0 acceptance: create engram with 100 members → close →
+        // reopen → members() returns the same list, rebuilt from the WAL.
+        let td = tempfile::tempdir().unwrap();
+        let sub_path = td.path().join("kb");
+        let members: Vec<u32> = (1..=100).map(|i| i * 7 + 1).collect();
+        {
+            let sub = SubstrateFile::create(&sub_path).unwrap();
+            let w = Writer::new(sub, SyncMode::EveryCommit).unwrap();
+            w.set_engram_members(999, members.clone()).unwrap();
+            w.commit().unwrap();
+            w.msync_zones().unwrap();
+            w.wal().fsync().unwrap();
+        }
+        // Re-open the substrate — mmap picks up the on-disk zone directly.
+        let sub2 = SubstrateFile::open(&sub_path).unwrap();
+        let w2 = Writer::new(sub2, SyncMode::Never).unwrap();
+        let got = w2.engram_members(999).unwrap().unwrap();
+        assert_eq!(got, members);
+    }
+
+    #[test]
+    fn engram_members_rebuild_from_wal_after_zone_wipe() {
+        // Simulate a crash that destroys the side-table zone file but keeps
+        // the WAL durable. Replay must reconstruct the membership exactly.
+        let td = tempfile::tempdir().unwrap();
+        let sub_path = td.path().join("kb");
+        let members: Vec<u32> = (1..=100).map(|i| i + 10_000).collect();
+        {
+            let sub = SubstrateFile::create(&sub_path).unwrap();
+            let w = Writer::new(sub, SyncMode::EveryCommit).unwrap();
+            w.set_engram_members(1234, members.clone()).unwrap();
+            // Also set a second engram to check replay handles multiple records.
+            w.set_engram_members(1, vec![1u32, 2, 3, 4, 5]).unwrap();
+            w.commit().unwrap();
+            w.wal().fsync().unwrap();
+            // Intentionally do NOT msync_zones — pretend the mmap writes
+            // never hit disk.
+        }
+        // Wipe the side-table zone.
+        std::fs::write(
+            sub_path.join(crate::file::zone::ENGRAM_MEMBERS),
+            Vec::<u8>::new(),
+        )
+        .unwrap();
+
+        // Replay reconstructs the side-table from the WAL.
+        let sub2 = SubstrateFile::open(&sub_path).unwrap();
+        let stats = crate::replay::replay_from(&sub2, 0).unwrap();
+        assert_eq!(stats.decode_errors, 0);
+
+        let w2 = Writer::new(sub2, SyncMode::Never).unwrap();
+        let got = w2.engram_members(1234).unwrap().unwrap();
+        assert_eq!(got, members);
+        let got1 = w2.engram_members(1).unwrap().unwrap();
+        assert_eq!(got1, vec![1u32, 2, 3, 4, 5]);
     }
 
     #[test]

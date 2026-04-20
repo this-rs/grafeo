@@ -62,12 +62,13 @@ pub fn replay_from(substrate: &SubstrateFile, from_offset: u64) -> SubstrateResu
     // Lazily open zones we need.
     let mut nodes: Option<ZoneFile> = None;
     let mut edges: Option<ZoneFile> = None;
+    let mut engram_members: Option<ZoneFile> = None;
 
     for item in reader.iter_from(from_offset) {
         match item {
             Ok((rec, off, len)) => {
                 stats.last_lsn = stats.last_lsn.max(rec.lsn);
-                match apply(substrate, &rec, &mut nodes, &mut edges)? {
+                match apply(substrate, &rec, &mut nodes, &mut edges, &mut engram_members)? {
                     Applied::Yes => stats.applied += 1,
                     Applied::Skipped => stats.skipped_unsupported += 1,
                 }
@@ -94,6 +95,10 @@ pub fn replay_from(substrate: &SubstrateFile, from_offset: u64) -> SubstrateResu
         zf.msync()?;
         zf.fsync()?;
     }
+    if let Some(zf) = engram_members.as_ref() {
+        zf.msync()?;
+        zf.fsync()?;
+    }
 
     debug!(?stats, "wal replay complete");
     Ok(stats)
@@ -109,6 +114,7 @@ fn apply(
     rec: &WalRecord,
     nodes: &mut Option<ZoneFile>,
     edges: &mut Option<ZoneFile>,
+    engram_members: &mut Option<ZoneFile>,
 ) -> SubstrateResult<Applied> {
     match &rec.payload {
         WalPayload::NodeInsert {
@@ -362,6 +368,19 @@ fn apply(
                 zf.as_slice_mut()[offset..offset + NodeRecord::SIZE]
                     .copy_from_slice(bytemuck::bytes_of(&updated));
             }
+            Ok(Applied::Yes)
+        }
+
+        // Engram-membership side-table (T7).
+        WalPayload::EngramMembersSet {
+            engram_id,
+            members,
+        } => {
+            if engram_members.is_none() {
+                *engram_members = Some(substrate.open_zone(Zone::EngramMembers)?);
+            }
+            let zf = engram_members.as_mut().unwrap();
+            crate::engram::EngramZone::set_members_raw(zf, *engram_id, members)?;
             Ok(Applied::Yes)
         }
 
