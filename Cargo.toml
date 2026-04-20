@@ -10,6 +10,7 @@ members = [
     "crates/obrain-cognitive",
     "crates/obrain-rag",
     "crates/obrain-iam",
+    "crates/obrain-substrate",
     "crates/obrain-cli",
     "crates/bindings/python",
     "crates/bindings/node",
@@ -39,6 +40,7 @@ obrain-reactive = { path = "crates/obrain-reactive", version = "0.0.1" }
 obrain-cognitive = { path = "crates/obrain-cognitive", version = "0.0.1", default-features = false }
 obrain-rag = { path = "crates/obrain-rag", version = "0.0.1", default-features = false }
 obrain-iam = { path = "crates/obrain-iam", version = "0.0.1", default-features = false }
+obrain-substrate = { path = "crates/obrain-substrate", version = "0.0.1" }
 obrain-bindings-common = { path = "crates/bindings/common", version = "0.0.1", default-features = false }
 
 # Error handling

@@ -201,6 +201,36 @@ impl ObrainDB {
         Self::with_config(Config::persistent(path.as_ref()))
     }
 
+    /// Opens a database backed by the `SubstrateStore` (mmap + WAL native).
+    ///
+    /// This is the T5 migration path. Internally, it constructs a
+    /// [`obrain_substrate::SubstrateStore`] at the given path and routes all
+    /// queries and mutations through it via the [`with_store`] constructor.
+    ///
+    /// Once T6+ land and `substrate-backend` becomes the default for
+    /// [`ObrainDB::open`], this method will be folded into the regular
+    /// `open` path. For now, it lives side-by-side so callers can opt in
+    /// explicitly without disturbing existing behaviour.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the substrate store cannot be created/opened at
+    /// `path`.
+    ///
+    /// [`with_store`]: Self::with_store
+    #[cfg(feature = "substrate-backend")]
+    pub fn open_substrate(path: impl AsRef<std::path::Path>) -> Result<Self> {
+        let path_ref = path.as_ref();
+        let store = obrain_substrate::SubstrateStore::create(path_ref).map_err(|e| {
+            obrain_common::utils::error::Error::Internal(format!(
+                "substrate: failed to open {}: {e}",
+                path_ref.display()
+            ))
+        })?;
+        let store: Arc<dyn GraphStoreMut> = Arc::new(store);
+        Self::with_store(store, Config::in_memory())
+    }
+
     /// Opens an existing database in read-only mode.
     ///
     /// Uses a shared file lock, so multiple processes can read the same

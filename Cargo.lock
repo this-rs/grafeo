@@ -2259,6 +2259,7 @@ dependencies = [
  "obrain-common",
  "obrain-core",
  "obrain-reactive",
+ "obrain-substrate",
  "ort",
  "parking_lot",
  "rayon",
@@ -2364,6 +2365,32 @@ dependencies = [
  "tokio",
  "tracing",
  "web-time",
+]
+
+[[package]]
+name = "obrain-substrate"
+version = "0.0.1"
+dependencies = [
+ "arcstr",
+ "bincode",
+ "bytemuck",
+ "byteorder",
+ "crc32fast",
+ "criterion",
+ "dashmap",
+ "foldhash 0.2.0",
+ "memmap2",
+ "obrain-common",
+ "obrain-core",
+ "parking_lot",
+ "proptest",
+ "rand 0.10.0",
+ "serde",
+ "sha2",
+ "smallvec",
+ "tempfile",
+ "thiserror",
+ "tracing",
 ]
 
 [[package]]

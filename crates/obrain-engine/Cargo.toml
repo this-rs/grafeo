@@ -12,6 +12,7 @@ description = "Query engine and database management for Obrain"
 obrain-common.workspace = true
 obrain-core = { workspace = true, default-features = false }
 obrain-adapters = { workspace = true, default-features = false }
+obrain-substrate = { workspace = true, optional = true }
 
 # Error handling
 thiserror.workspace = true
@@ -82,6 +83,7 @@ spill = ["obrain-core/spill"]  # Disk spilling for out-of-core execution
 mmap = ["obrain-core/mmap"]  # File-backed vector storage
 temporal = ["obrain-core/temporal"]  # Append-only versioned properties
 tiered-storage = ["obrain-core/tiered-storage"]  # Hot/cold tiered storage with mmap epoch files
+substrate-backend = ["dep:obrain-substrate"]  # Substrate (mmap + WAL native) storage backend — T5 migration path, opt-in until T17 cutover
 # Convenience groups
 languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]  # All query language parsers
 ai = ["vector-index", "text-index", "hybrid-search", "cdc"]  # All AI/RAG features
