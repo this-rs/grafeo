@@ -510,6 +510,71 @@ impl SynapseStore {
         count
     }
 
+    /// Rehydrates the synapse cache from the backing graph store.
+    ///
+    /// Iterates over all nodes, scans their outgoing edges, and rebuilds the
+    /// in-memory `synapses` DashMap from any edge typed `SYNAPSE` carrying
+    /// the `PROP_SYNAPSE_WEIGHT` property. Must be called once on brain open
+    /// — otherwise `len()`, `snapshot()`, and any other "list all" surface
+    /// will report zero until a `reinforce()` call populates the cache
+    /// (which only happens on fresh co-activations).
+    ///
+    /// Lazy per-key lookup via `get_synapse()` already works for individual
+    /// reads, but health metrics and outbound enumeration rely on the cache
+    /// being fully populated.
+    ///
+    /// Returns the number of synapses loaded into the cache.
+    pub fn load_from_graph(&self) -> usize {
+        use obrain_core::graph::Direction;
+        let Some(gs) = self.graph_store.as_ref() else {
+            return 0;
+        };
+        let mut loaded = 0usize;
+        for nid in gs.node_ids() {
+            for (target, eid) in gs.edges_from(nid, Direction::Outgoing) {
+                let Some(etype) = gs.edge_type(eid) else {
+                    continue;
+                };
+                if etype.as_str() != SYNAPSE_EDGE_TYPE {
+                    continue;
+                }
+                // Canonical (min, max) key — skip the mirror iteration.
+                let key = SynapseKey::new(nid, target);
+                if key.0 != nid {
+                    continue;
+                }
+                if self.synapses.contains_key(&key) {
+                    continue;
+                }
+                let Some(raw_weight) = load_edge_f64(gs.as_ref(), eid, PROP_SYNAPSE_WEIGHT) else {
+                    continue;
+                };
+                let last_reinforced = epoch_to_instant(load_edge_f64(
+                    gs.as_ref(),
+                    eid,
+                    PROP_SYNAPSE_LAST_REINFORCED_EPOCH,
+                ));
+                let reinforcement_count =
+                    load_edge_f64(gs.as_ref(), eid, PROP_SYNAPSE_REINFORCEMENT_COUNT)
+                        .map_or(1, |v| v as u32);
+
+                let syn = Synapse {
+                    source: key.0,
+                    target: key.1,
+                    weight: raw_weight,
+                    reinforcement_count,
+                    last_reinforced,
+                    created_at: last_reinforced,
+                    half_life: self.config.default_half_life,
+                };
+                self.synapses.insert(key, syn);
+                self.edge_ids.insert(key, eid);
+                loaded += 1;
+            }
+        }
+        loaded
+    }
+
     /// Returns the total number of synapses.
     pub fn len(&self) -> usize {
         self.synapses.len()
