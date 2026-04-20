@@ -228,6 +228,16 @@ const SYNAPSE_EDGE_TYPE: &str = "SYNAPSE";
 /// provided, synapse weights are persisted as edge properties on
 /// `SYNAPSE`-typed edges. On read, if the synapse is not in the hot cache,
 /// the store attempts to load the weight lazily from the graph property.
+///
+/// **Substrate-backed mode (T6):** When constructed via
+/// [`Self::with_substrate`], the authoritative weight lives on the
+/// `EdgeRecord.weight_u16` column of the `SubstrateStore` — every
+/// reinforcement translates to a `SynapseReinforce` WAL record + mmap
+/// column mutation. Decay is batched via [`Self::decay_all`] (the
+/// Consolidator Thinker owns its cadence at runtime). The DashMap becomes
+/// a warm-read accelerator. The `graph_store` is still required in this
+/// mode because edge creation (structural shape) goes through the graph
+/// store; only the weight column is substrate-routed.
 pub struct SynapseStore {
     /// Synapses indexed by canonical (source, target) key.
     synapses: DashMap<SynapseKey, Synapse>,
@@ -243,6 +253,11 @@ pub struct SynapseStore {
     config: SynapseConfig,
     /// Optional backing graph store for write-through persistence.
     graph_store: OptionalGraphStore,
+    /// Optional backing substrate store — when set, the cognitive column
+    /// `EdgeRecord.weight_u16` (Q0.16) is the source of truth for synapse
+    /// weights and the DashMap is a thin warm-read accelerator.
+    #[cfg(feature = "substrate")]
+    substrate: Option<Arc<obrain_substrate::SubstrateStore>>,
     /// Cross-base synapses between nodes from different databases.
     cross_base: DashMap<(CrossBaseNodeId, CrossBaseNodeId), (f64, u32)>,
 }
@@ -258,6 +273,8 @@ impl SynapseStore {
             max_cache_entries: 0,
             config,
             graph_store: None,
+            #[cfg(feature = "substrate")]
+            substrate: None,
             cross_base: DashMap::new(),
         }
     }
@@ -275,8 +292,55 @@ impl SynapseStore {
             max_cache_entries: 0,
             config,
             graph_store: Some(graph_store),
+            #[cfg(feature = "substrate")]
+            substrate: None,
             cross_base: DashMap::new(),
         }
+    }
+
+    /// Creates a new synapse store backed by a substrate column view (T6).
+    ///
+    /// The `EdgeRecord.weight_u16` Q0.16 column is the source of truth for
+    /// synapse weights — every `reinforce` translates to a dedicated
+    /// `SynapseReinforce` WAL record + mmap column mutation via
+    /// [`SubstrateStore::reinforce_edge_synapse_f32`] /
+    /// [`SubstrateStore::boost_edge_synapse_f32`]. The in-memory `DashMap`
+    /// cache is retained as a warm-read accelerator and for cross-session
+    /// bookkeeping (`reinforcement_count`, `last_reinforced` timestamps —
+    /// neither currently fits on the 30 B `EdgeRecord`).
+    ///
+    /// Decay semantics shift from lazy-per-read (legacy) to eager-periodic-
+    /// batch — callers must invoke [`Self::decay_all`] on a schedule (the
+    /// Consolidator Thinker from T13 owns this cadence at runtime).
+    ///
+    /// `graph_store` is still required for edge creation (structural
+    /// shape); only the weight column is substrate-routed. When the graph
+    /// store is itself substrate-backed (via `HubWalStore`/`WalGraphStore`),
+    /// the structural + cognitive paths converge on the same WAL.
+    #[cfg(feature = "substrate")]
+    pub fn with_substrate(
+        config: SynapseConfig,
+        graph_store: Arc<dyn obrain_core::graph::GraphStoreMut>,
+        substrate: Arc<obrain_substrate::SubstrateStore>,
+    ) -> Self {
+        Self {
+            synapses: DashMap::new(),
+            edge_ids: DashMap::new(),
+            access_order: DashMap::new(),
+            access_counter: AtomicU64::new(0),
+            max_cache_entries: 0,
+            config,
+            graph_store: Some(graph_store),
+            substrate: Some(substrate),
+            cross_base: DashMap::new(),
+        }
+    }
+
+    /// Returns `true` if this store routes weight mutations through a
+    /// substrate column view.
+    #[cfg(feature = "substrate")]
+    pub fn is_substrate_backed(&self) -> bool {
+        self.substrate.is_some()
     }
 
     /// Sets the maximum number of cache entries. When exceeded, LRU eviction kicks in.
@@ -330,6 +394,12 @@ impl SynapseStore {
     /// Then, if the total outgoing weight from `source` (or `target`) exceeds
     /// `max_total_outgoing_weight`, all outgoing weights from that node are
     /// normalized proportionally (competitive Hebbian normalization).
+    ///
+    /// In **substrate-backed mode**, the authoritative weight column
+    /// (`EdgeRecord.weight_u16`, Q0.16 in `[0, 1]`) is mutated via
+    /// [`SubstrateStore::reinforce_edge_synapse_f32`] — WAL-logged
+    /// synchronously before the mmap write. The in-memory cache is updated
+    /// as a mirror for reinforcement-count and timestamp bookkeeping.
     pub fn reinforce(&self, source: NodeId, target: NodeId, amount: f64) {
         if source == target {
             return; // No self-synapses
@@ -359,6 +429,24 @@ impl SynapseStore {
             && let Some(gs) = &self.graph_store
             && let Some(entry) = self.synapses.get(&key)
         {
+            // In substrate mode, route the weight through the EdgeRecord
+            // column — this is the sole durable write path. The graph
+            // store's edge properties become metadata (reinforcement count
+            // + epoch) that stay on the LPG side until T10 expands the
+            // edge record.
+            #[cfg(feature = "substrate")]
+            if let Some(sub) = self.substrate.as_ref() {
+                // Clamp to [0, 1] for the Q0.16 column. Values above 1.0
+                // saturate — expected in high-activity regimes because
+                // `max_synapse_weight` defaults to 10.0 while the column
+                // tops at 1.0. The source-of-truth raw weight stays in
+                // the DashMap + LPG property for cross-session fidelity;
+                // the column is a fast-path gradient used by the
+                // Consolidator and spreading-activation code.
+                let normalized = (entry.raw_weight() / max_w).clamp(0.0, 1.0);
+                let _ = sub.reinforce_edge_synapse_f32(eid, normalized as f32);
+            }
+
             // Persist the raw weight (not decayed) — decay will be recomputed
             // from the epoch timestamp on reload.
             persist_edge_f64(gs.as_ref(), eid, PROP_SYNAPSE_WEIGHT, entry.raw_weight());
@@ -376,6 +464,34 @@ impl SynapseStore {
                 PROP_SYNAPSE_REINFORCEMENT_COUNT,
                 entry.reinforcement_count as f64,
             );
+        }
+    }
+
+    /// Apply a multiplicative decay to every live synapse weight column
+    /// (`weight ← weight × factor`) in a single WAL batch.
+    ///
+    /// This is the eager-periodic-batch counterpart of the lazy per-read
+    /// decay baked into [`Synapse::current_weight`]. In **substrate-backed
+    /// mode** it issues a single `SynapseDecay` WAL record followed by a
+    /// zone-wide mmap scan (O(live_edges), tombstones skipped).
+    ///
+    /// In legacy mode (no substrate), it iterates the DashMap and scales
+    /// every cached synapse weight in place — useful for test parity but
+    /// not as efficient.
+    ///
+    /// `factor` is clamped to `[0.0, 1.0]`. The Consolidator Thinker (T13)
+    /// owns the cadence at runtime.
+    pub fn decay_all(&self, factor: f64) {
+        let f = factor.clamp(0.0, 1.0);
+        #[cfg(feature = "substrate")]
+        if let Some(sub) = self.substrate.as_ref() {
+            let _ = sub.decay_all_edge_synapse(f as f32);
+        }
+        // Always also scale the in-memory cache so reads reflect the new
+        // weight even before a cache reload. In substrate-only mode the
+        // cache is a mirror; in legacy mode the cache is authoritative.
+        for mut entry in self.synapses.iter_mut() {
+            entry.scale_weight(f);
         }
     }
 
@@ -428,6 +544,17 @@ impl SynapseStore {
             self.find_synapse_edge(gs.as_ref(), key)?
         };
         let raw_weight = load_edge_f64(gs.as_ref(), eid, PROP_SYNAPSE_WEIGHT)?;
+
+        // Substrate is authoritative for weight when set — override LPG.
+        #[cfg(feature = "substrate")]
+        let raw_weight = if let Some(sub) = self.substrate.as_ref() {
+            match sub.get_edge_synapse_weight_f32(eid) {
+                Ok(Some(w)) => (w as f64) * self.config.max_synapse_weight,
+                _ => raw_weight,
+            }
+        } else {
+            raw_weight
+        };
 
         // Reconstruct the Instant from the persisted epoch timestamp.
         // If epoch is missing, treat as "just now" (no cross-session decay).
@@ -523,6 +650,12 @@ impl SynapseStore {
     /// reads, but health metrics and outbound enumeration rely on the cache
     /// being fully populated.
     ///
+    /// **Substrate-backed mode:** this still walks the graph store because
+    /// the `SynapseKey → EdgeId` mapping + `reinforcement_count` /
+    /// `last_reinforced` metadata live on the LPG side. The weight column
+    /// itself is read from the substrate (`EdgeRecord.weight_u16`) and
+    /// overrides the LPG value on hit — the substrate is authoritative.
+    ///
     /// Returns the number of synapses loaded into the cache.
     pub fn load_from_graph(&self) -> usize {
         use obrain_core::graph::Direction;
@@ -557,6 +690,19 @@ impl SynapseStore {
                 let reinforcement_count =
                     load_edge_f64(gs.as_ref(), eid, PROP_SYNAPSE_REINFORCEMENT_COUNT)
                         .map_or(1, |v| v as u32);
+
+                // Substrate is authoritative for weight when set — override
+                // the LPG-persisted value with the column read. Denormalize
+                // from Q0.16 `[0, 1]` back to raw `[0, max_synapse_weight]`.
+                #[cfg(feature = "substrate")]
+                let raw_weight = if let Some(sub) = self.substrate.as_ref() {
+                    match sub.get_edge_synapse_weight_f32(eid) {
+                        Ok(Some(w)) => (w as f64) * self.config.max_synapse_weight,
+                        _ => raw_weight,
+                    }
+                } else {
+                    raw_weight
+                };
 
                 let syn = Synapse {
                     source: key.0,
@@ -804,5 +950,163 @@ impl std::fmt::Debug for SynapseListener {
         f.debug_struct("SynapseListener")
             .field("store", &self.store)
             .finish()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Substrate-backed tests (T6 Step 2b)
+// ---------------------------------------------------------------------------
+
+#[cfg(all(test, feature = "substrate"))]
+mod substrate_tests {
+    use super::*;
+    use obrain_core::graph::traits::GraphStoreMut;
+    use obrain_substrate::SubstrateStore;
+
+    /// Seed `n` nodes in a fresh substrate store (labels are single letter
+    /// "n") and return the store + NodeIds + TempDir (kept alive so mmap
+    /// survives for the duration of the test).
+    fn make_substrate(n: usize) -> (Arc<SubstrateStore>, Vec<NodeId>, tempfile::TempDir) {
+        let td = tempfile::tempdir().unwrap();
+        let sub = SubstrateStore::create(td.path().join("kb")).unwrap();
+        let mut ids = Vec::with_capacity(n);
+        for _ in 0..n {
+            ids.push(sub.create_node(&["n"]));
+        }
+        sub.flush().unwrap();
+        (Arc::new(sub), ids, td)
+    }
+
+    #[test]
+    fn substrate_reinforce_writes_through_edge_column() {
+        let (sub, ids, _td) = make_substrate(2);
+        let cfg = SynapseConfig::default();
+        let store = SynapseStore::with_substrate(
+            cfg.clone(),
+            sub.clone() as Arc<dyn GraphStoreMut>,
+            sub.clone(),
+        );
+        assert!(store.is_substrate_backed());
+
+        // Reinforce — edge is created via the graph store (= substrate),
+        // weight column is bumped via SynapseReinforce WAL.
+        store.reinforce(ids[0], ids[1], 0.5);
+
+        // Look up the EdgeId via the cache populated in ensure_edge.
+        let key = SynapseKey::new(ids[0], ids[1]);
+        let eid = *store
+            .edge_ids
+            .get(&key)
+            .expect("edge_id populated after reinforce");
+
+        // Column must hold the normalized weight (raw / max_synapse_weight).
+        let col = sub
+            .get_edge_synapse_weight_f32(eid)
+            .unwrap()
+            .expect("weight column readable");
+        // raw = initial + 0.5 = 0.6; max = 10.0 → normalized ≈ 0.06.
+        let expected = (0.6_f32 / cfg.max_synapse_weight as f32).clamp(0.0, 1.0);
+        assert!(
+            (col - expected).abs() < 1e-3,
+            "column weight {col}, expected {expected}"
+        );
+    }
+
+    #[test]
+    fn substrate_decay_all_halves_every_edge_weight() {
+        let (sub, ids, _td) = make_substrate(3);
+        let cfg = SynapseConfig::default();
+        let store = SynapseStore::with_substrate(
+            cfg,
+            sub.clone() as Arc<dyn GraphStoreMut>,
+            sub.clone(),
+        );
+        // Seed three pairwise synapses.
+        store.reinforce(ids[0], ids[1], 0.4);
+        store.reinforce(ids[0], ids[2], 0.4);
+        store.reinforce(ids[1], ids[2], 0.4);
+
+        // Snapshot column values before decay.
+        let before: Vec<(EdgeId, f32)> = sub
+            .iter_live_synapse_weights()
+            .unwrap()
+            .into_iter()
+            .filter(|(_, w)| *w > 0.0)
+            .collect();
+        assert_eq!(before.len(), 3, "three synapse edges have non-zero weight");
+
+        // Apply ×0.5 decay.
+        store.decay_all(0.5);
+
+        for (eid, before_w) in &before {
+            let after = sub
+                .get_edge_synapse_weight_f32(*eid)
+                .unwrap()
+                .unwrap();
+            let expected = before_w * 0.5;
+            assert!(
+                (after - expected).abs() < 1e-3,
+                "edge {eid:?}: before={before_w}, after={after}, expected≈{expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn substrate_get_synapse_reads_column_weight() {
+        let (sub, ids, _td) = make_substrate(2);
+        let cfg = SynapseConfig::default();
+        let store = SynapseStore::with_substrate(
+            cfg.clone(),
+            sub.clone() as Arc<dyn GraphStoreMut>,
+            sub.clone(),
+        );
+        store.reinforce(ids[0], ids[1], 0.5);
+
+        // Flush the cache to force a reload path.
+        store.synapses.clear();
+
+        let syn = store
+            .get_synapse(ids[0], ids[1])
+            .expect("synapse recovered via column read");
+        // `raw_weight` stored is col × max_synapse_weight; col was 0.6/10 = 0.06
+        // → raw ≈ 0.6. Decay is zero (just set).
+        assert!(
+            (syn.current_weight() - 0.6).abs() < 0.1,
+            "recovered weight {} not close to 0.6",
+            syn.current_weight()
+        );
+    }
+
+    #[test]
+    fn substrate_load_from_graph_rehydrates_from_column() {
+        let (sub, ids, _td) = make_substrate(2);
+        let cfg = SynapseConfig::default();
+        {
+            // First session: reinforce, then drop the SynapseStore — the
+            // weight is already in substrate WAL + column.
+            let store = SynapseStore::with_substrate(
+                cfg.clone(),
+                sub.clone() as Arc<dyn GraphStoreMut>,
+                sub.clone(),
+            );
+            store.reinforce(ids[0], ids[1], 0.5);
+        }
+        // Second session: brand-new SynapseStore over the same substrate.
+        let store2 = SynapseStore::with_substrate(
+            cfg.clone(),
+            sub.clone() as Arc<dyn GraphStoreMut>,
+            sub.clone(),
+        );
+        assert_eq!(store2.len(), 0, "cache starts empty");
+        let loaded = store2.load_from_graph();
+        assert_eq!(loaded, 1, "one synapse rehydrated from graph + column");
+        let syn = store2
+            .get_synapse(ids[0], ids[1])
+            .expect("synapse visible after load_from_graph");
+        assert!(
+            syn.raw_weight() > 0.4,
+            "weight restored from column, got {}",
+            syn.raw_weight()
+        );
     }
 }
