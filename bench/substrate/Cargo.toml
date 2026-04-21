@@ -25,6 +25,12 @@ path = "src/bench_substrate.rs"
 name = "retrieval-gate"
 path = "src/bin/retrieval_gate.rs"
 
+# T16 — E2E validation harness. Opens a real substrate, measures startup time,
+# warms the page cache, and reports RSS anon/total breakdown with gate verdicts.
+[[bin]]
+name = "t16-validation"
+path = "src/bin/t16_validation.rs"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -38,6 +44,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 obrain-substrate = { path = "../../crates/obrain-substrate" }
 # T10 — LDleiden incremental community detection bench.
 obrain-cognitive = { path = "../../crates/obrain-cognitive", features = ["community"] }
+# T16 — t16-validation binary needs GraphStore trait methods on SubstrateStore
+# (node_count / node_ids / get_node).
+obrain-core = { path = "../../crates/obrain-core", default-features = false }
 rayon = "1"
 
 # NOTE: obrain-engine / obrain-core path deps are wired in T3 once the SubstrateStore
