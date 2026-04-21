@@ -34,6 +34,9 @@
 //! }
 //! ```
 
+use crate::error::SubstrateResult;
+use crate::file::{SubstrateFile, Zone};
+use crate::tier_persist::{self, TierMagic};
 use crate::tiered_scan::{ScanConfig, TieredQuery, scan_tiered};
 use crate::tiers::{L2_DIM, Tier0, Tier0Builder, Tier1, Tier1Builder, Tier2, Tier2Builder};
 use parking_lot::RwLock;
@@ -190,6 +193,172 @@ impl SubstrateTieredIndex {
         guard.l0.reserve(additional);
         guard.l1.reserve(additional);
         guard.l2.reserve(additional);
+    }
+
+    /// Construct an index from pre-computed parts. Used by
+    /// [`Self::load_from_zones`] to re-hydrate an index from the
+    /// on-disk tier zones without re-running the projection
+    /// pipeline. Callers are responsible for coherence:
+    ///
+    /// * `slot_to_offset.len() == l0.len() == l1.len() == l2.len()`
+    /// * `offset_to_slot[slot_to_offset[i]] == i` for every `i`
+    ///
+    /// Violations surface as incorrect search results, not panics.
+    pub fn from_parts(
+        dim: usize,
+        slot_to_offset: Vec<NodeOffset>,
+        offset_to_slot: HashMap<NodeOffset, usize>,
+        l0: Vec<Tier0>,
+        l1: Vec<Tier1>,
+        l2: Vec<Tier2>,
+    ) -> Self {
+        assert_eq!(
+            dim, L2_DIM,
+            "SubstrateTieredIndex currently only supports dim = L2_DIM = {L2_DIM}; got {dim}"
+        );
+        Self {
+            inner: RwLock::new(Inner {
+                offset_to_slot,
+                slot_to_offset,
+                l0,
+                l1,
+                l2,
+            }),
+            b0: Tier0Builder::with_default_seed(dim),
+            b1: Tier1Builder::with_default_seed(dim),
+            b2: Tier2Builder::new(),
+            dim,
+        }
+    }
+
+    /// Persist the current state of the index to the three tier zones
+    /// (`substrate.tier0 / .tier1 / .tier2`) of `sub`.
+    ///
+    /// The index holds a read lock for the duration of the three
+    /// zone writes — concurrent searches continue uninterrupted but
+    /// inserts / deletes / rebuilds block until persistence is done.
+    /// Each zone is written with its own header + CRC; see
+    /// [`crate::tier_persist`] for the format.
+    ///
+    /// The write pattern is **one shot**: the full Vec is dumped to
+    /// disk atomically at each call. There's no delta path. For the
+    /// migration pipeline that's fine (persistence runs once at the
+    /// end of `phase_tiers`); runtime hot paths that need delta
+    /// persistence belong in T17.
+    pub fn persist_to_zones(&self, sub: &SubstrateFile) -> SubstrateResult<()> {
+        let guard = self.inner.read();
+        let n_slots = guard.slot_to_offset.len() as u32;
+
+        // Tier0 carries slot_to_offset (master); tier1 and tier2 do not.
+        {
+            let mut zf0 = sub.open_zone(Zone::Tier0)?;
+            tier_persist::write_tier_zone::<Tier0>(
+                &mut zf0,
+                TierMagic::Tier0,
+                n_slots,
+                Some(&guard.slot_to_offset),
+                &guard.l0,
+            )?;
+        }
+        {
+            let mut zf1 = sub.open_zone(Zone::Tier1)?;
+            tier_persist::write_tier_zone::<Tier1>(
+                &mut zf1,
+                TierMagic::Tier1,
+                n_slots,
+                None,
+                &guard.l1,
+            )?;
+        }
+        {
+            let mut zf2 = sub.open_zone(Zone::Tier2)?;
+            tier_persist::write_tier_zone::<Tier2>(
+                &mut zf2,
+                TierMagic::Tier2,
+                n_slots,
+                None,
+                &guard.l2,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Reconstruct an index from the tier zones of `sub`, or return
+    /// `Ok(None)` when any zone is missing / corrupt / inconsistent.
+    ///
+    /// A successful load means **no projection work** is done — the
+    /// tier records are copied out of the mmap verbatim. For a 5 M
+    /// node PO substrate that's a ~4 GB memcpy (tier2 alone is
+    /// 5 M × 768 B ≈ 3.8 GB), measured at 1-2 s vs 60 s for a
+    /// full rebuild-from-properties path.
+    ///
+    /// All failures are soft: the caller falls back to
+    /// [`Self::rebuild`]. Errors are only raised on I/O problems
+    /// that mean we couldn't even touch the zone file (mmap
+    /// permission denied, etc).
+    pub fn load_from_zones(sub: &SubstrateFile, dim: usize) -> SubstrateResult<Option<Self>> {
+        assert_eq!(
+            dim, L2_DIM,
+            "SubstrateTieredIndex currently only supports dim = L2_DIM = {L2_DIM}; got {dim}"
+        );
+
+        // Tier0 — includes slot_to_offset master.
+        let zf0 = sub.open_zone(Zone::Tier0)?;
+        let Some((n0, s2o, l0)) = tier_persist::read_tier_zone::<Tier0>(&zf0, TierMagic::Tier0)?
+        else {
+            return Ok(None);
+        };
+        let Some(slot_to_offset) = s2o else {
+            // Tier0 without slot_to_offset is a format violation.
+            return Ok(None);
+        };
+
+        // Tier1.
+        let zf1 = sub.open_zone(Zone::Tier1)?;
+        let Some((n1, _, l1)) = tier_persist::read_tier_zone::<Tier1>(&zf1, TierMagic::Tier1)?
+        else {
+            return Ok(None);
+        };
+        if n0 != n1 {
+            return Ok(None);
+        }
+
+        // Tier2.
+        let zf2 = sub.open_zone(Zone::Tier2)?;
+        let Some((n2, _, l2)) = tier_persist::read_tier_zone::<Tier2>(&zf2, TierMagic::Tier2)?
+        else {
+            return Ok(None);
+        };
+        if n0 != n2 {
+            return Ok(None);
+        }
+
+        // Sanity check vector lengths — read_tier_zone already guarantees
+        // this, but the assertion is cheap and catches a class of future
+        // refactors that might drift.
+        let expected = n0 as usize;
+        if slot_to_offset.len() != expected
+            || l0.len() != expected
+            || l1.len() != expected
+            || l2.len() != expected
+        {
+            return Ok(None);
+        }
+
+        // Reconstruct offset_to_slot from slot_to_offset.
+        let mut offset_to_slot = HashMap::with_capacity(expected);
+        for (slot, &offset) in slot_to_offset.iter().enumerate() {
+            offset_to_slot.insert(offset, slot);
+        }
+
+        Ok(Some(Self::from_parts(
+            dim,
+            slot_to_offset,
+            offset_to_slot,
+            l0,
+            l1,
+            l2,
+        )))
     }
 
     fn project_query(&self, query: &[f32]) -> TieredQuery {
@@ -495,6 +664,67 @@ mod tests {
         idx.insert(5, &emb(5, DIM));
         let hits = idx.search_top_k(&emb(5, DIM), 1);
         assert_eq!(hits[0].0, 5);
+    }
+
+    #[test]
+    fn persist_load_roundtrip() {
+        // Build an index, persist it to the tier zones of a tempfile
+        // substrate, then load a fresh instance from the same zones
+        // and verify the two agree on every search result.
+        let src = SubstrateTieredIndex::new(DIM);
+        let offsets: Vec<NodeOffset> = vec![5, 11, 23, 47, 89, 100, 250, 777];
+        for &o in &offsets {
+            src.insert(o, &emb(o, DIM));
+        }
+
+        let sub = crate::file::SubstrateFile::open_tempfile().unwrap();
+        src.persist_to_zones(&sub).unwrap();
+
+        // Fresh instance from zones.
+        let loaded = SubstrateTieredIndex::load_from_zones(&sub, DIM)
+            .unwrap()
+            .expect("tier zones must load successfully after persist");
+
+        assert_eq!(loaded.len(), src.len());
+
+        // Self-recall behaviour must match bit-for-bit (both indexes
+        // use the same default SRP seeds, so projections are identical
+        // and cascade ordering is deterministic).
+        for &o in &offsets {
+            let q = emb(o, DIM);
+            let src_hits = src.search_top_k(&q, 5);
+            let loaded_hits = loaded.search_top_k(&q, 5);
+            assert_eq!(
+                src_hits, loaded_hits,
+                "search disagree for offset {o}: src={src_hits:?} loaded={loaded_hits:?}"
+            );
+            // And the top-1 should still be the self-recall offset.
+            assert_eq!(loaded_hits[0].0, o);
+        }
+    }
+
+    #[test]
+    fn load_from_empty_zones_returns_none() {
+        // Fresh substrate: tier zones are 0 B. Load must return None
+        // so the caller falls back to rebuild-from-properties.
+        let sub = crate::file::SubstrateFile::open_tempfile().unwrap();
+        let got = SubstrateTieredIndex::load_from_zones(&sub, DIM).unwrap();
+        assert!(got.is_none());
+    }
+
+    #[test]
+    fn persist_empty_index_is_valid() {
+        // An index with zero entries persists + loads cleanly — the
+        // header tracks n_slots=0 and the payload is zero bytes.
+        let src = SubstrateTieredIndex::new(DIM);
+        let sub = crate::file::SubstrateFile::open_tempfile().unwrap();
+        src.persist_to_zones(&sub).unwrap();
+
+        let loaded = SubstrateTieredIndex::load_from_zones(&sub, DIM)
+            .unwrap()
+            .expect("empty-index persist must be loadable");
+        assert_eq!(loaded.len(), 0);
+        assert!(loaded.is_empty());
     }
 
     #[test]

@@ -47,6 +47,7 @@ pub mod replay;
 pub mod retrieval;
 pub mod simd;
 pub mod store;
+pub mod tier_persist;
 pub mod tiered_scan;
 pub mod tiers;
 pub mod wal;
@@ -98,8 +99,8 @@ pub use popcount::{
 };
 pub use replay::{replay_from, ReplayStats};
 pub use retrieval::{NodeOffset, SubstrateTieredIndex, VectorIndex};
-pub use props_snapshot::{PropertiesStreamingWriter, PROPS_FILENAME};
-pub use store::SubstrateStore;
+pub use props_snapshot::{PropertiesSnapshotV1, PropertiesStreamingWriter, PROPS_FILENAME};
+pub use store::{SubstrateStore, SKIP_ON_LOAD_PROP_KEYS};
 pub use warden::{
     CommunityFragmentation, CommunityWarden, FragmentationReport, DEFAULT_FRAGMENTATION_TRIGGER,
 };

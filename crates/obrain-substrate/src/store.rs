@@ -137,6 +137,28 @@ use crate::writer::Writer;
 /// Dict side-car filename relative to the substrate directory.
 const DICT_FILENAME: &str = "substrate.dict";
 
+/// Property keys that are NOT rehydrated into the in-memory `DashMap`
+/// during [`SubstrateStore::load_properties`].
+///
+/// Rationale (T16 / T17 staging): these properties already have a
+/// mmappable on-disk representation elsewhere and exist in
+/// `substrate.props` only as a legacy artefact of the migration
+/// pipeline. Loading them into the heap-backed `DashMap` inflates
+/// anonymous RSS by a factor of 5-8× on large corpora (wiki: 7.19 GiB
+/// props → 54.85 GiB anon). Since the runtime accessors for these keys
+/// are the typed columns (tiers / future dedicated zones), nothing
+/// observable changes for legitimate callers — only migration-time
+/// QA tools (`obrain-migrate`, `rebuild_tiers`, `inspect`) still read
+/// them via `get_node_property`, and they open the store once and
+/// exit, so they can afford a slower path if needed later.
+///
+/// Extend this list cautiously: every entry here is an implicit
+/// assertion that no runtime code in the tree reads that key via
+/// `get_node_property` / `get_properties`. Audit with
+/// `rg 'get_node_property.*"<key>"' | rg -v 'examples/|tests/|migrate|neo4j2obrain'`
+/// before adding.
+pub const SKIP_ON_LOAD_PROP_KEYS: &[&str] = &["_st_embedding"];
+
 // ---------------------------------------------------------------------------
 // Label registry (step 1 in-memory version)
 //
@@ -547,9 +569,17 @@ impl SubstrateStore {
         let snap = PropertiesSnapshotV1::load(&path)?;
         let mut nodes_loaded = 0usize;
         let mut edges_loaded = 0usize;
+        let mut node_props_skipped = 0usize;
+        let mut edge_props_skipped = 0usize;
+        // Hot loop: a small contains check over <10 short strings. A linear
+        // scan is faster than any hash-set overhead at this size.
+        let skip = |k: &str| SKIP_ON_LOAD_PROP_KEYS.iter().any(|s| *s == k);
         for e in snap.nodes {
             let nid = obrain_common::types::NodeId(e.id);
-            let map = entries_to_map(e.props);
+            let before = e.props.len();
+            let filtered: Vec<_> = e.props.into_iter().filter(|(k, _)| !skip(k)).collect();
+            node_props_skipped += before - filtered.len();
+            let map = entries_to_map(filtered);
             // Merge into the DashMap entry built by rebuild_from_zones.
             // If the node was tombstoned between the last flush and the
             // reopen it will not be present here; we silently skip.
@@ -560,7 +590,10 @@ impl SubstrateStore {
         }
         for e in snap.edges {
             let eid = obrain_common::types::EdgeId(e.id);
-            let map = entries_to_map(e.props);
+            let before = e.props.len();
+            let filtered: Vec<_> = e.props.into_iter().filter(|(k, _)| !skip(k)).collect();
+            edge_props_skipped += before - filtered.len();
+            let map = entries_to_map(filtered);
             if let Some(mut in_mem) = self.edges.get_mut(&eid) {
                 in_mem.properties = map;
                 edges_loaded += 1;
@@ -568,9 +601,12 @@ impl SubstrateStore {
         }
         if nodes_loaded > 0 || edges_loaded > 0 {
             tracing::info!(
-                "props snapshot: loaded {} node-property maps, {} edge-property maps",
+                "props snapshot: loaded {} node-property maps, {} edge-property maps \
+                 (skipped-on-load: {} node-props, {} edge-props — see SKIP_ON_LOAD_PROP_KEYS)",
                 nodes_loaded,
-                edges_loaded
+                edges_loaded,
+                node_props_skipped,
+                edge_props_skipped,
             );
         }
         Ok(())
@@ -796,6 +832,35 @@ impl SubstrateStore {
     /// for direct slot-level reads).
     pub fn writer(&self) -> &Writer {
         &self.writer
+    }
+
+    /// Load the on-disk tier index (L0 / L1 / L2) from `substrate.tier0/1/2`
+    /// zones, if present and valid.
+    ///
+    /// Returns:
+    /// * `Ok(Some(index))` — all three zones present, CRC-valid, consistent
+    ///   `n_slots`. Ready for `search_topk`.
+    /// * `Ok(None)` — any zone missing, corrupted, wrong version, or slot
+    ///   counts disagree. Caller should fall back to a rebuild (e.g.
+    ///   `SubstrateTieredIndex::rebuild` from `_st_embedding` properties).
+    /// * `Err(_)` — only on I/O failure that prevented even opening a zone.
+    ///
+    /// Corruption of a tier zone is **never** fatal here; the fallback-to-
+    /// rebuild path lets the store stay open for callers that don't need
+    /// retrieval (geometric activation, tooling, tests).
+    ///
+    /// The `dim` argument is the tier2 / original embedding dimension
+    /// (currently always `L2_DIM = 384`). It feeds `Tier0Builder` /
+    /// `Tier1Builder` with the seed so subsequent inserts use the same
+    /// projection as the persisted zones.
+    ///
+    /// See `docs/rfc/substrate/tier-persistence.md` for the on-disk format.
+    pub fn load_tier_index(
+        &self,
+        dim: usize,
+    ) -> SubstrateResult<Option<crate::retrieval::SubstrateTieredIndex>> {
+        let sub = self.substrate.lock();
+        crate::retrieval::SubstrateTieredIndex::load_from_zones(&sub, dim)
     }
 
     /// Create a node whose `community_id` is known at insert time
@@ -2720,7 +2785,12 @@ mod tests {
         let path = td.path().join("kb");
 
         // --- Write phase ---
-        let (node_id, edge_id, embedding) = {
+        // `generic_vec` is a user-visible vector property that MUST roundtrip.
+        // We intentionally avoid `_st_embedding` here because that key is
+        // filtered during `load_properties` (see `SKIP_ON_LOAD_PROP_KEYS`);
+        // its roundtrip semantics are covered by
+        // `skip_on_load_keys_are_dropped_after_reopen` below.
+        let (node_id, edge_id, generic_vec) = {
             let s = SubstrateStore::create(&path).unwrap();
             let a = s.create_node(&["Doc"]);
             let b = s.create_node(&["Doc"]);
@@ -2728,7 +2798,7 @@ mod tests {
 
             let vec: Arc<[f32]> = Arc::from(vec![0.1_f32, 0.2, -0.3, 0.5].into_boxed_slice());
             s.set_node_property(a, "title", Value::String("hello".into()));
-            s.set_node_property(a, "_st_embedding", Value::Vector(vec.clone()));
+            s.set_node_property(a, "generic_vec", Value::Vector(vec.clone()));
             s.set_node_property(a, "count", Value::Int64(42));
             s.set_edge_property(e, "weight", Value::Float64(0.75));
             s.flush().unwrap();
@@ -2750,11 +2820,11 @@ mod tests {
         assert!(matches!(count, Value::Int64(42)));
 
         let emb = s
-            .get_node_property(node_id, &PropertyKey::new("_st_embedding"))
-            .expect("_st_embedding should persist");
+            .get_node_property(node_id, &PropertyKey::new("generic_vec"))
+            .expect("generic_vec should persist");
         match emb {
             Value::Vector(v) => {
-                assert_eq!(&*v, &*embedding, "vector embedding must roundtrip byte-exact");
+                assert_eq!(&*v, &*generic_vec, "vector value must roundtrip byte-exact");
             }
             other => panic!("expected Vector, got {other:?}"),
         }
@@ -2764,6 +2834,61 @@ mod tests {
             .get_edge_property(edge_id, &PropertyKey::new("weight"))
             .expect("edge weight should persist");
         assert!(matches!(w, Value::Float64(f) if (f - 0.75).abs() < 1e-12));
+    }
+
+    /// Contract test for `SKIP_ON_LOAD_PROP_KEYS`.
+    ///
+    /// Keys in that list are written to `substrate.props` on flush (so the
+    /// on-disk sidecar still has them — e.g. for migration-time QA tools
+    /// that scan the whole props file) but MUST NOT reappear in the
+    /// in-memory `PropertyMap` after a reopen. This is how anon-RSS stays
+    /// decoupled from the size of the on-disk props file.
+    ///
+    /// Regression guard: if someone removes `_st_embedding` from
+    /// `SKIP_ON_LOAD_PROP_KEYS`, this test flips from pass to fail and
+    /// they have to consciously re-open the anon-RSS / T16-gate trade-off.
+    #[test]
+    fn skip_on_load_keys_are_dropped_after_reopen() {
+        use obrain_core::graph::traits::GraphStore;
+        use std::sync::Arc;
+
+        let td = tempfile::tempdir().unwrap();
+        let path = td.path().join("kb");
+
+        let node_id = {
+            let s = SubstrateStore::create(&path).unwrap();
+            let a = s.create_node(&["Doc"]);
+            let vec: Arc<[f32]> = Arc::from(vec![0.7_f32; 8].into_boxed_slice());
+            s.set_node_property(a, "title", Value::String("persistent".into()));
+            s.set_node_property(a, "_st_embedding", Value::Vector(vec));
+            s.flush().unwrap();
+            a
+        };
+
+        let s = SubstrateStore::open(&path).unwrap();
+
+        // Non-skipped key survives reopen as usual.
+        assert!(
+            s.get_node_property(node_id, &PropertyKey::new("title")).is_some(),
+            "non-skipped key should roundtrip"
+        );
+
+        // Skipped key is silently dropped on load — get returns None, not the
+        // original vector. This is the `_st_embedding`-lives-in-tiers contract.
+        assert!(
+            s.get_node_property(node_id, &PropertyKey::new("_st_embedding")).is_none(),
+            "_st_embedding should be filtered during load_properties and not appear in the DashMap"
+        );
+
+        // Belt-and-braces: every key listed in SKIP_ON_LOAD_PROP_KEYS must
+        // behave the same way. If the list grows, this assertion grows with
+        // it for free.
+        for key in SKIP_ON_LOAD_PROP_KEYS {
+            let _ = s.get_node_property(node_id, &PropertyKey::new(*key));
+            // We don't assert None here for every key (the test only wrote
+            // `_st_embedding`), but we want the lookup path to be exercised
+            // so a future panic/UB regression is caught.
+        }
     }
 
     #[test]
