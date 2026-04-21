@@ -96,6 +96,7 @@ pub use blob_column::{
     BlobColSpec, BlobColumnHeader, BlobColumnReader, BlobColumnWriter, BlobSlotEntry,
     BLOB_COLUMN_MAGIC, BLOB_COLUMN_VERSION, BLOB_HEADER_SIZE, BLOB_SLOT_STRIDE,
 };
+pub use blob_column_registry::BLOB_COLUMN_THRESHOLD_BYTES;
 pub use checkpoint::{checkpoint, CheckpointStats};
 pub use dict::DictSnapshot;
 pub use engram::{EngramZone, ENGRAM_HEADER_SIZE, ENGRAM_MAGIC, ENGRAM_ZONE_VERSION, MAX_ENGRAM_ID};

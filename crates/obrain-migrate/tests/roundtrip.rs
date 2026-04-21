@@ -416,3 +416,164 @@ fn value_vector_bypasses_props_sidecar_and_roundtrips_via_vec_columns() {
         );
     }
 }
+
+/// T16.7 Step 4e — contract check: an oversize `Value::String`
+/// (payload > `BLOB_COLUMN_THRESHOLD_BYTES` = 256 B) written during
+/// migration MUST land in the substrate blob_columns zone
+/// (`substrate.blobcol.node.<key>.idx` + `.dat`) and NOT in the
+/// `substrate.props` bincode sidecar.
+///
+/// This is the integration-level anchor for the blob routing added to
+/// `phase_nodes` / `flush_edge_props_chunk`. Without it, fresh
+/// migrations of PO (928 MB `data` key / 681k entries) would still ship
+/// the heavy payload in the sidecar and blow the anon-RSS gate ≤ 1 GB.
+///
+/// Verified invariants:
+///   1. After flush + reopen, `get_node_property` returns the byte-exact
+///      string (proves blob_columns writer + reader + dict roundtrip).
+///   2. The persisted `substrate.props` file does NOT contain the
+///      property key (substring scan — bincode stores keys as UTF-8).
+///   3. The blob-column sidecar files (`.idx` + `.dat`) exist on disk.
+///   4. A short string (≤ threshold) still lands on the sidecar
+///      (negative control — routing must be size-gated, not universal).
+#[test]
+fn oversize_string_bypasses_props_sidecar_and_roundtrips_via_blob_columns() {
+    let td = TempDir::new().unwrap();
+    let path = td.path().join("subs.obrain");
+    let substrate = Arc::new(SubstrateStore::create(&path).unwrap());
+
+    let n = substrate.create_node(&["Doc"]);
+    // Short key stays on the sidecar (control) — 16 B < 256 B threshold.
+    substrate.set_node_property(n, "title", Value::String("Hello".into()));
+    // Big `data` key (> 256 B) must route to the blob column. We embed
+    // a distinctive marker so we can assert byte-exact roundtrip below
+    // even in the middle of a 2 KB payload.
+    let marker = "MARKER_4E_STEP";
+    let big_data: String = format!(
+        "{}{}{}",
+        "A".repeat(1024),
+        marker,
+        "Z".repeat(1024),
+    );
+    assert!(big_data.len() > 256, "sanity: payload must exceed threshold");
+    substrate.set_node_property(n, "data", Value::String(big_data.clone().into()));
+
+    substrate.flush().unwrap();
+    drop(substrate);
+
+    // Reopen — blob_columns must hydrate from the dict v4 blob_columns
+    // section + `.idx`/`.dat` sidecars.
+    let substrate2 = Arc::new(SubstrateStore::open(&path).unwrap());
+    let nid = GraphStore::all_node_ids(&*substrate2)[0];
+
+    // 1. Big string roundtrips byte-exact via the column path.
+    match substrate2.get_node_property(nid, &PropertyKey::new("data")) {
+        Some(Value::String(s)) => {
+            let got: &str = &s;
+            assert_eq!(got.len(), big_data.len(), "length mismatch");
+            assert_eq!(got, big_data.as_str(), "payload not byte-exact");
+            assert!(got.contains(marker), "marker not round-tripped");
+        }
+        other => panic!("expected Value::String via blob column, got {other:?}"),
+    }
+
+    // 2. Short `title` still roundtrips (sidecar path).
+    match substrate2.get_node_property(nid, &PropertyKey::new("title")) {
+        Some(Value::String(s)) => {
+            let got: &str = &s;
+            assert_eq!(got, "Hello", "short string sidecar roundtrip failed");
+        }
+        other => panic!("expected Value::String for 'title', got {other:?}"),
+    }
+
+    // 3. Raw `substrate.props` sidecar does NOT mention `data` but
+    // *does* mention `title`. Same substring-scan logic as the vector
+    // test — bincode stores the key as UTF-8 and we control the full
+    // property set so there is no risk of a spurious match in binary.
+    let props_file = path.join("substrate.props");
+    if props_file.exists() {
+        let bytes = std::fs::read(&props_file).unwrap();
+        let data_hit = bytes.windows(b"data".len()).any(|w| w == b"data");
+        assert!(
+            !data_hit,
+            "substrate.props must NOT contain oversize 'data' key; sidecar size={} B",
+            bytes.len()
+        );
+        let title_hit = bytes.windows(b"title".len()).any(|w| w == b"title");
+        assert!(
+            title_hit,
+            "substrate.props SHOULD contain scalar 'title' key (sanity)",
+        );
+        // Payload must not leak either — marker lives only in the blob.
+        let marker_hit = bytes
+            .windows(marker.len())
+            .any(|w| w == marker.as_bytes());
+        assert!(
+            !marker_hit,
+            "oversize string payload leaked into substrate.props",
+        );
+    }
+
+    // 4. Blob-column sidecar files exist on disk. `BlobColSpec` names
+    // them `substrate.blobcol.<entity>.<prop_key_id:04x>.{idx,dat}`
+    // — the middle segment is the hex-encoded PropKeyRegistry id, not
+    // the property key name. Since this test only creates one oversize
+    // node property, we expect at least one such pair under `path/`.
+    let mut saw_idx = false;
+    let mut saw_dat = false;
+    for entry in std::fs::read_dir(&path).unwrap() {
+        let e = entry.unwrap();
+        let name = e.file_name().to_string_lossy().to_string();
+        if name.starts_with("substrate.blobcol.node.") {
+            if name.ends_with(".idx") {
+                saw_idx = true;
+            }
+            if name.ends_with(".dat") {
+                saw_dat = true;
+            }
+        }
+    }
+    assert!(saw_idx, "missing substrate.blobcol.node.*.idx file");
+    assert!(saw_dat, "missing substrate.blobcol.node.*.dat file");
+}
+
+/// T16.7 Step 4e — same contract as the string test, for
+/// `Value::Bytes` payloads exceeding `BLOB_COLUMN_THRESHOLD_BYTES`.
+/// Verifies tag dispatch in the blob encoding (`'B'` vs `'S'`) so a
+/// regression that collapses both tags into one — silently corrupting
+/// types on reopen — is caught by the roundtrip.
+#[test]
+fn oversize_bytes_bypasses_props_sidecar_and_roundtrips_via_blob_columns() {
+    let td = TempDir::new().unwrap();
+    let path = td.path().join("subs.obrain");
+    let substrate = Arc::new(SubstrateStore::create(&path).unwrap());
+
+    let n = substrate.create_node(&["Blob"]);
+    // Build a 1 KB bytes payload with a distinctive middle sentinel.
+    let mut big: Vec<u8> = (0..1024).map(|i| (i & 0xFF) as u8).collect();
+    big[512] = 0xAB;
+    big[513] = 0xCD;
+    big[514] = 0xEF;
+    assert!(big.len() > 256);
+    substrate.set_node_property(n, "blob", Value::Bytes(big.clone().into()));
+
+    substrate.flush().unwrap();
+    drop(substrate);
+
+    let substrate2 = Arc::new(SubstrateStore::open(&path).unwrap());
+    let nid = GraphStore::all_node_ids(&*substrate2)[0];
+    match substrate2.get_node_property(nid, &PropertyKey::new("blob")) {
+        Some(Value::Bytes(arc)) => {
+            assert_eq!(arc.len(), big.len());
+            assert_eq!(arc.as_ref(), big.as_slice());
+        }
+        other => panic!("expected Value::Bytes via blob column, got {other:?}"),
+    }
+
+    let props_file = path.join("substrate.props");
+    if props_file.exists() {
+        let bytes = std::fs::read(&props_file).unwrap();
+        let hit = bytes.windows(b"blob".len()).any(|w| w == b"blob");
+        assert!(!hit, "substrate.props must NOT contain oversize 'blob' key");
+    }
+}

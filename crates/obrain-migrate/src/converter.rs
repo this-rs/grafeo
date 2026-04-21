@@ -31,7 +31,7 @@ use obrain_common::types::{EdgeId, NodeId, PropertyKey, Value};
 use obrain_common::utils::hash::{FxBuildHasher, FxHashMap};
 use obrain_core::graph::Direction;
 use obrain_core::graph::traits::{GraphStore, GraphStoreMut};
-use obrain_substrate::{PropertiesStreamingWriter, SubstrateStore};
+use obrain_substrate::{PropertiesStreamingWriter, SubstrateStore, BLOB_COLUMN_THRESHOLD_BYTES};
 
 use crate::checkpoint::{Checkpoint, Phase};
 #[cfg(feature = "legacy-read")]
@@ -509,6 +509,17 @@ fn phase_nodes(
     // can show "of the N props seen, V went to vec columns".
     let mut vectors_routed: u64 = 0;
     let mut vector_bytes_routed: u64 = 0;
+    // T16.7 Step 4e — same peel-off for oversize `Value::String` /
+    // `Value::Bytes` (payload > BLOB_COLUMN_THRESHOLD_BYTES). The runtime
+    // side (`set_node_property`, post-Step 4d) intercepts these and
+    // writes them into `substrate.blobcol.node.*.idx+.dat` instead of
+    // the bincode sidecar. Routing here at the migrate layer ensures
+    // *fresh* migrations skip the sidecar entirely for heavy keys like
+    // PO's `data` (928 MB / 681k entries) — not just on second-open
+    // auto-migration. Separate counters so the heartbeat distinguishes
+    // vectors vs. blobs when diagnosing oversized-sidecar regressions.
+    let mut blobs_routed: u64 = 0;
+    let mut blob_bytes_routed: u64 = 0;
     let mut stats = ValueSizeStats::default();
 
     // Per-node scratch buffer for the streaming writer. Reused across
@@ -591,28 +602,54 @@ fn phase_nodes(
             let _ = std::io::stderr().flush();
         }
 
-        // T16.7 Step 3 — split scratch_props into vector and non-vector
-        // buckets. Vectors are routed via `substrate.set_node_property`
-        // which (post-Step 2b) writes them into the dense mmap'd
-        // `VecColumnRegistry` zones instead of the bincode sidecar.
-        // Scalars + strings + bytes + lists + maps stay on the streaming
-        // writer path (bounded-RSS, no heap copies).
+        // T16.7 Step 3 + Step 4e — split scratch_props into column-bound
+        // and sidecar-bound buckets. Three classes route via
+        // `substrate.set_node_property` instead of the streaming writer:
+        //
+        //   1. `Value::Vector(_)`  → dense mmap'd `VecColumnRegistry`
+        //      (Step 2b contract).
+        //   2. `Value::String(s)` with `s.len() > BLOB_COLUMN_THRESHOLD_BYTES`
+        //      → `BlobColumnRegistry` (Step 4d contract, tag 'S').
+        //   3. `Value::Bytes(b)`  with `b.len() > BLOB_COLUMN_THRESHOLD_BYTES`
+        //      → `BlobColumnRegistry` (Step 4d contract, tag 'B').
+        //
+        // Scalars, short strings, short bytes, lists, and maps stay on
+        // the streaming writer path (bounded-RSS, no heap copies).
         //
         // Rationale for routing *here* rather than relying solely on
         // `persist_properties`' defensive filter: we never want the
-        // vectors to transit the DashMap at all, since `props_writer`
-        // consumes `scratch_props` synchronously and the DashMap is
-        // separately hydrated by `load_properties` on reopen. Splitting
-        // at the source of the migration keeps the anon-RSS budget tight
-        // throughout phase_nodes.
+        // heavy values to transit the DashMap at all, since
+        // `props_writer` consumes `scratch_props` synchronously and the
+        // DashMap is separately hydrated by `load_properties` on reopen.
+        // Splitting at the source of the migration keeps the anon-RSS
+        // budget tight throughout phase_nodes AND ensures fresh
+        // migrations bypass the sidecar for heavy keys (PO's `data`,
+        // megalaw's legal text) — not just post-reopen auto-migration.
         if !scratch_props.is_empty() {
             let mut i = 0;
             while i < scratch_props.len() {
-                if matches!(scratch_props[i].1, Value::Vector(_)) {
+                let route_to_column = match &scratch_props[i].1 {
+                    Value::Vector(_) => true,
+                    Value::String(s) if s.len() > BLOB_COLUMN_THRESHOLD_BYTES => true,
+                    Value::Bytes(b) if b.len() > BLOB_COLUMN_THRESHOLD_BYTES => true,
+                    _ => false,
+                };
+                if route_to_column {
                     let (key, value) = scratch_props.swap_remove(i);
-                    if let Value::Vector(ref v) = value {
-                        vectors_routed += 1;
-                        vector_bytes_routed += (v.len() as u64) * 4;
+                    match &value {
+                        Value::Vector(v) => {
+                            vectors_routed += 1;
+                            vector_bytes_routed += (v.len() as u64) * 4;
+                        }
+                        Value::String(s) => {
+                            blobs_routed += 1;
+                            blob_bytes_routed += s.len() as u64;
+                        }
+                        Value::Bytes(b) => {
+                            blobs_routed += 1;
+                            blob_bytes_routed += b.len() as u64;
+                        }
+                        _ => unreachable!("route_to_column guarded on Vector/String/Bytes"),
                     }
                     substrate.set_node_property(new_id, &key, value);
                     // swap_remove keeps index `i` pointing at what was
@@ -647,10 +684,11 @@ fn phase_nodes(
             tracing::info!(
                 "phase_nodes heartbeat: {nodes_written}/{total} nodes written, \
                  {total_props_seen} props seen (skipped: {skipped_by_key} by-key, \
-                 {skipped_oversize} oversize; {vectors_routed} vectors → vec_columns, \
-                 {} MiB); props.stream.tmp={props_size_mb} MB; \
-                 top heavy keys: {}",
+                 {skipped_oversize} oversize; {vectors_routed} vectors → vec_columns \
+                 = {} MiB; {blobs_routed} blobs → blob_columns = {} MiB); \
+                 props.stream.tmp={props_size_mb} MB; top heavy keys: {}",
                 vector_bytes_routed / (1024 * 1024),
+                blob_bytes_routed / (1024 * 1024),
                 stats.top_report(6)
             );
             last_heartbeat_at = std::time::Instant::now();
@@ -672,8 +710,10 @@ fn phase_nodes(
     tracing::info!(
         "Phase::Nodes — wrote {nodes_written} nodes, saw {total_props_seen} props \
          (skipped: {skipped_by_key} by-key, {skipped_oversize} oversize; \
-         {vectors_routed} vectors routed to vec_columns = {} MiB kept off sidecar)",
+         {vectors_routed} vectors routed to vec_columns = {} MiB kept off sidecar, \
+         {blobs_routed} blobs routed to blob_columns = {} MiB kept off sidecar)",
         vector_bytes_routed / (1024 * 1024),
+        blob_bytes_routed / (1024 * 1024),
     );
     if !stats.per_key.is_empty() {
         tracing::info!(
@@ -860,17 +900,26 @@ fn flush_edge_props_chunk(
     let mut scratch: Vec<(String, Value)> = Vec::with_capacity(8);
 
     for ((_old_id, new_id), props) in pairs.iter().zip(props_batch.into_iter()) {
-        // Non-cognitive props → split between vec_columns (vectors) and
-        // streamed substrate.props entry (everything else). See the
-        // twin comment in `phase_nodes` for rationale; same T16.7 Step 3
+        // Non-cognitive props → split between column-bound (vectors
+        // + oversize strings + oversize bytes) and streamed
+        // substrate.props entry (everything else). See the twin comment
+        // in `phase_nodes` for rationale; same T16.7 Step 3 + Step 4e
         // contract applies on the edge side.
         scratch.clear();
         for (key, value) in props.iter() {
             if is_cognitive_key(key.as_str()) {
                 continue;
             }
-            if matches!(value, Value::Vector(_)) {
+            let route_to_column = match value {
+                Value::Vector(_) => true,
+                Value::String(s) if s.len() > BLOB_COLUMN_THRESHOLD_BYTES => true,
+                Value::Bytes(b) if b.len() > BLOB_COLUMN_THRESHOLD_BYTES => true,
+                _ => false,
+            };
+            if route_to_column {
                 // Route directly — bypass the sidecar to keep anon RSS bounded.
+                // `set_edge_property` dispatches Vector → VecColumnRegistry
+                // and oversize String/Bytes → BlobColumnRegistry.
                 substrate.set_edge_property(*new_id, key.as_str(), value.clone());
                 continue;
             }
