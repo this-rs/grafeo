@@ -49,12 +49,24 @@ mod legacy_reader;
 struct Cli {
     /// Input `.obrain` database (either a directory of epoch files or a
     /// single `GRAF`-magic file). Auto-detected at open time.
-    #[arg(long = "in", value_name = "PATH")]
-    input: PathBuf,
+    ///
+    /// Unused in `--finalize` mode.
+    #[arg(long = "in", value_name = "PATH", required_unless_present = "finalize")]
+    input: Option<PathBuf>,
 
     /// Output `.obrain` directory (substrate format). Created if absent.
-    #[arg(long = "out", value_name = "PATH")]
-    output: PathBuf,
+    ///
+    /// Unused in `--finalize` mode.
+    #[arg(long = "out", value_name = "PATH", required_unless_present = "finalize")]
+    output: Option<PathBuf>,
+
+    /// Finalize an existing substrate base: open it (which auto-migrates
+    /// `Value::Vector` sidecar entries into vec-column zones per T16.7
+    /// Step 3b), flush, and close. Use this on bases produced before a
+    /// vec_columns-aware release to catch them up without having to
+    /// re-migrate from legacy. Mutually exclusive with `--in` / `--out`.
+    #[arg(long = "finalize", value_name = "SUBSTRATE_DIR", conflicts_with_all = ["input", "output", "resume"])]
+    finalize: Option<PathBuf>,
 
     /// Number of worker threads for edge / property replay phases.
     /// (0 = rayon default = physical core count).
@@ -117,17 +129,35 @@ fn main() -> Result<()> {
         .with_target(false)
         .init();
 
+    // Dispatch mode: --finalize short-circuits the full legacy→substrate
+    // pipeline and runs the in-place auto-migration on an existing base.
+    // See `converter::finalize` for the contract.
+    if let Some(target) = cli.finalize {
+        tracing::info!(
+            "obrain-migrate --finalize: target={}",
+            target.display()
+        );
+        converter::finalize(&target)?;
+        tracing::info!("obrain-migrate: done");
+        return Ok(());
+    }
+
+    // Normal migration path. `required_unless_present = "finalize"` on
+    // clap ensures both are Some here.
+    let input = cli.input.expect("clap: input required unless finalize");
+    let output = cli.output.expect("clap: output required unless finalize");
+
     tracing::info!(
         "obrain-migrate starting: in={} out={} workers={} resume={}",
-        cli.input.display(),
-        cli.output.display(),
+        input.display(),
+        output.display(),
         cli.workers,
         cli.resume
     );
 
     converter::migrate(&converter::MigrateOptions {
-        input: cli.input,
-        output: cli.output,
+        input,
+        output,
         workers: cli.workers,
         resume: cli.resume,
         with_cognitive_init: cli.with_cognitive_init,

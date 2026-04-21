@@ -285,6 +285,84 @@ pub fn migrate(opts: &MigrateOptions) -> Result<()> {
     Ok(())
 }
 
+/// Run the "catch up on missing phases" pass on an existing substrate
+/// base. Invoked via `obrain-migrate --finalize <substrate_path>`.
+///
+/// The primary use case at T16.7 is the in-place vector-column upgrade:
+/// a base migrated before the vec_columns routing landed keeps its
+/// `Value::Vector` payloads in `substrate.props`. Opening the base with
+/// T16.7+ code automatically routes those vectors into dense mmap'd
+/// `substrate.veccol.*` zones via `load_properties` (see Step 3b), and
+/// the subsequent `flush()` re-serialises the sidecar without them. A
+/// third reopen then returns the vector from vec_columns exclusively.
+///
+/// This helper packages that open-flush-close cycle behind a dedicated
+/// CLI entry point so operators can run the upgrade explicitly — no
+/// service startup, no query workload, just the minimal side-effects
+/// needed to persist the catch-up. Logs the before/after sidecar size
+/// so operators can verify the RSS win.
+///
+/// Arguments:
+/// * `substrate_dir` — the directory containing `substrate.meta` /
+///   `substrate.props` / `substrate.veccol.*` zones. The same path
+///   passed to a running hub.
+///
+/// Idempotent by construction: the second `--finalize` run on the same
+/// base is a no-op (`auto_migrated` counters come back zero; sidecar is
+/// already vector-free).
+pub fn finalize(substrate_dir: &Path) -> Result<()> {
+    if !substrate_dir.exists() {
+        anyhow::bail!(
+            "finalize target does not exist: {}",
+            substrate_dir.display()
+        );
+    }
+    // Report sidecar size before the upgrade so the caller can see the
+    // shrinkage from the single log output.
+    let props_path = substrate_dir.join("substrate.props");
+    let before_bytes = std::fs::metadata(&props_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
+
+    tracing::info!(
+        "obrain-migrate --finalize: opening {} (substrate.props={} MiB)",
+        substrate_dir.display(),
+        before_bytes / (1024 * 1024),
+    );
+
+    // (1) Open — `load_properties` runs on startup and routes any
+    //     `Value::Vector` entries in the sidecar to the vec-column
+    //     registry. The tracing::info! emitted from `load_properties`
+    //     reports the auto-migration counters.
+    let store = SubstrateStore::open(substrate_dir)
+        .with_context(|| format!("open {}", substrate_dir.display()))?;
+
+    // (2) Flush — re-serialises the props sidecar via the defensive
+    //     filter, drops the vector entries, persists the dict v3 with
+    //     the freshly-created vec-column specs, and msyncs every zone.
+    store
+        .flush()
+        .context("flush after finalize auto-migration")?;
+
+    // (3) Drop the handle so the Drop impl releases the WAL / mmap
+    //     file descriptors. `drop(store)` is explicit for clarity; the
+    //     close is already handled by scope end on the subsequent
+    //     `return`.
+    drop(store);
+
+    let after_bytes = std::fs::metadata(&props_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let delta_bytes = before_bytes.saturating_sub(after_bytes);
+    tracing::info!(
+        "obrain-migrate --finalize: done. substrate.props: {} MiB → {} MiB ({} MiB freed)",
+        before_bytes / (1024 * 1024),
+        after_bytes / (1024 * 1024),
+        delta_bytes / (1024 * 1024),
+    );
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Phase implementations
 // ---------------------------------------------------------------------------
@@ -1237,5 +1315,42 @@ mod tests {
         assert_eq!(clamp01(-0.5), 0.0);
         assert_eq!(clamp01(2.0), 1.0);
         assert_eq!(clamp01(0.42), 0.42);
+    }
+
+    /// T16.7 Step 3b companion — smoke test for `finalize()`.
+    ///
+    /// `finalize()` is a thin open→flush→drop composition; the
+    /// auto-migration correctness itself is covered by
+    /// `obrain_substrate::store::tests::auto_migrates_legacy_vectors_on_load`.
+    /// This test exercises the wrapper specifically: it must
+    ///   1. succeed on a fresh (no-op) substrate,
+    ///   2. reject a non-existent path with a clear error,
+    ///   3. be idempotent (second call on the same path is a no-op).
+    #[test]
+    fn finalize_noop_on_fresh_substrate_and_idempotent() {
+        use obrain_substrate::SubstrateStore;
+        let td = tempfile::tempdir().unwrap();
+        let path = td.path().join("fresh");
+
+        // Create a minimal substrate, flush, drop. No vectors anywhere.
+        {
+            let s = SubstrateStore::create(&path).unwrap();
+            s.flush().unwrap();
+        }
+
+        // (1) Fresh substrate → finalize succeeds, no panic, no error.
+        super::finalize(&path).expect("finalize on fresh substrate should succeed");
+
+        // (2) Idempotency: running finalize again on the same path is
+        //     safe (the post-flush sidecar is already vector-free, so
+        //     the auto-migration counters come back zero).
+        super::finalize(&path).expect("finalize should be idempotent");
+
+        // (3) Non-existent path → clear error (no panic).
+        let missing = td.path().join("does_not_exist");
+        assert!(
+            super::finalize(&missing).is_err(),
+            "finalize should return Err on a missing path"
+        );
     }
 }
