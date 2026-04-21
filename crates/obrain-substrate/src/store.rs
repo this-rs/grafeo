@@ -106,6 +106,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU16, AtomicU32, AtomicU64, Ordering};
 
 use arcstr::ArcStr;
@@ -445,9 +446,21 @@ pub struct SubstrateStore {
     edge_properties: DashMap<EdgeId, PropertyMap>,
     /// First incoming edge head per destination node. The `next_to` chain
     /// on `EdgeRecord` is durable, but the entry point is kept in memory
-    /// only — step 3 may promote it to a sidecar file. Rebuilt from an
-    /// O(E) zone scan on open.
-    incoming_heads: DashMap<NodeId, EdgeId>,
+    /// only — a future sidecar persist may promote it to disk.
+    ///
+    /// **T17e Phase 4**: lazily built on first access via
+    /// [`Self::incoming_heads`]. The map is no longer populated by
+    /// [`Self::rebuild_from_zones`] at open time — the O(E) zone scan
+    /// now only happens the first time a reverse traversal, a
+    /// `create_edge`, or a `delete_edge` is issued.
+    ///
+    /// Races with concurrent writes during the first build are safe:
+    /// `OnceLock::get_or_init` serialises init, so a writer that fires
+    /// `incoming_heads()` blocks until the scan completes; the writer
+    /// then inserts its own edge head into the now-populated map. Edges
+    /// written AFTER the scan's `next_edge_id` snapshot are handled by
+    /// the writer's own `insert` call post-init.
+    incoming_heads_cell: OnceLock<DashMap<NodeId, EdgeId>>,
     /// Label name ↔ bit index, keyed by `ArcStr`. Persisted via
     /// `substrate.dict` (step 3).
     labels: RwLock<LabelRegistry>,
@@ -630,7 +643,7 @@ impl SubstrateStore {
             next_engram_id: AtomicU16::new(snapshot.next_engram_id),
             node_properties: DashMap::new(),
             edge_properties: DashMap::new(),
-            incoming_heads: DashMap::new(),
+            incoming_heads_cell: OnceLock::new(),
             labels: RwLock::new(labels),
             edge_types: RwLock::new(edge_types),
             prop_keys: RwLock::new(prop_keys),
@@ -648,13 +661,13 @@ impl SubstrateStore {
         );
 
         // (2) Rebuild the minimal in-memory side-cars from the on-disk
-        //     zones. T17e Phase 3: the `nodes` / `edges` DashMaps are
-        //     gone — the scan only fills `incoming_heads` (reverse-chain
-        //     head per destination, not yet persisted) and the community
-        //     range maps (first/last slot per community, used by the
-        //     CommunityWarden). The Edges-zone sweep is still O(E) for
-        //     `incoming_heads`; a future sidecar persist of those heads
-        //     will eliminate it entirely.
+        //     zones. T17e Phase 4: the `incoming_heads` map is now lazy
+        //     (OnceLock<DashMap>) — it is NOT populated here. The scan
+        //     only fills the community range maps (first/last live slot
+        //     per community, used by the CommunityWarden + prefetch).
+        //     The reverse-chain head map is built on demand by
+        //     `SubstrateStore::incoming_heads()` the first time a
+        //     reverse traversal, create_edge, or delete_edge needs it.
         let t_rebuild = std::time::Instant::now();
         let rebuild_span = tracing::info_span!("rebuild_zones").entered();
         store.rebuild_from_zones()?;
@@ -662,9 +675,9 @@ impl SubstrateStore {
         tracing::info!(
             phase = "rebuild_zones",
             elapsed_ms = t_rebuild.elapsed().as_millis() as u64,
-            incoming_heads = store.incoming_heads.len(),
+            incoming_heads = "lazy",
             communities = store.community_placements.len(),
-            "side-cars rebuilt (incoming_heads + community ranges)"
+            "side-cars rebuilt (community ranges only; incoming_heads deferred to first access)"
         );
 
         // (3) Hydrate the vec-column registry from the persisted specs
@@ -894,23 +907,26 @@ impl SubstrateStore {
         Ok(())
     }
 
-    /// Walk the Nodes + Edges zones and rebuild the minimal in-memory
-    /// side-cars (T17e Phase 3):
+    /// Walk the Nodes zone and rebuild the minimal in-memory side-cars
+    /// (T17e Phase 4):
     ///
     /// * `community_placements` / `community_first_slots` — max/min live
-    ///   slot per community id (CommunityWarden + prefetch);
-    /// * `incoming_heads` — highest live `EdgeId` per destination node
-    ///   (head of the reverse `next_to` chain; splice-at-head invariant
-    ///   guarantees the head is always the max live id).
+    ///   slot per community id (CommunityWarden + prefetch).
     ///
-    /// Labels and edge-type ArcStrs are no longer materialised here —
-    /// they resolve on demand via [`Self::resolve_node_labels_from_bitset`]
-    /// and [`Self::resolve_edge_type_by_id`] straight from the mmap'd
-    /// zones + registries.
+    /// The reverse-chain head map (`incoming_heads_cell`) is **no longer
+    /// populated here**. It is built lazily on first access via
+    /// [`Self::incoming_heads`], which runs a parallel scan of the Edges
+    /// zone under `OnceLock::get_or_init`. This removes the O(E) edge
+    /// scan from the open path — the dominant term on large datasets
+    /// (≈ 99 s / 95% of startup on Wikipedia 119M edges).
     ///
-    /// Slots 1..`next_node_id` and 1..`next_edge_id` are considered
-    /// allocated; anything further is zero-initialised mmap padding and
-    /// ignored.
+    /// Labels and edge-type ArcStrs are resolved on demand via
+    /// [`Self::resolve_node_labels_from_bitset`] and
+    /// [`Self::resolve_edge_type_by_id`] straight from the mmap'd zones
+    /// + registries.
+    ///
+    /// Slots 1..`next_node_id` are considered allocated; anything
+    /// further is zero-initialised mmap padding and ignored.
     fn rebuild_from_zones(&self) -> SubstrateResult<()> {
         // ---- Nodes: community range maps only ----
         let node_hw = self.next_node_id.load(Ordering::Acquire);
@@ -936,36 +952,87 @@ impl SubstrateStore {
                 .or_insert(slot);
         }
 
-        // ---- Edges: incoming_heads only ----
-        // For each dst, track the highest live EdgeId seen so far —
-        // that's the head of the incoming chain (splice-at-head
-        // invariant: newer ids are spliced at the front, and edges only
-        // drop out of middle positions; head is always the max live id).
-        let edge_hw = self.next_edge_id.load(Ordering::Acquire);
-        let mut heads: FxHashMap<NodeId, EdgeId> = FxHashMap::default();
-        for slot in 1..edge_hw {
-            let Some(rec) = self.writer.read_edge(slot)? else {
-                continue;
-            };
-            if rec.flags & edge_flags::TOMBSTONED != 0 {
-                continue;
-            }
-            let edge_id = EdgeId(slot);
-            let dst = NodeId(rec.dst as u64);
-            heads
-                .entry(dst)
-                .and_modify(|cur| {
-                    if cur.0 < edge_id.0 {
-                        *cur = edge_id;
-                    }
-                })
-                .or_insert(edge_id);
-        }
-        for (dst, head) in heads {
-            self.incoming_heads.insert(dst, head);
-        }
+        // Edges: `incoming_heads_cell` is lazy — no scan at open time.
+        // See [`Self::incoming_heads`] for the on-demand builder.
 
         Ok(())
+    }
+
+    /// Return the reverse-chain head map, building it on first access.
+    ///
+    /// **T17e Phase 4 — lazy incoming index.**
+    ///
+    /// The map is stored as `OnceLock<DashMap<NodeId, EdgeId>>` and built
+    /// the first time it is needed (a reverse traversal, `create_edge`, or
+    /// `delete_edge`). The build is an O(E) parallel scan of the Edges
+    /// zone that computes, for each dst, the **highest live `EdgeId`** —
+    /// the head of the incoming chain (splice-at-head invariant: newer
+    /// ids are always spliced at the front, and edges only drop out of
+    /// middle positions, so the head is always the max live id).
+    ///
+    /// Concurrency: `OnceLock::get_or_init` serialises the build — a
+    /// concurrent writer firing `incoming_heads()` mid-build blocks until
+    /// the scan completes, then inserts its own head into the now-live
+    /// DashMap. Edges allocated **after** the scan's `next_edge_id`
+    /// snapshot are handled by the writer's own post-init `insert`, so
+    /// the "live window" is closed by construction.
+    pub(crate) fn incoming_heads(&self) -> &DashMap<NodeId, EdgeId> {
+        self.incoming_heads_cell.get_or_init(|| {
+            use rayon::prelude::*;
+
+            let t0 = std::time::Instant::now();
+            let edge_hw = self.next_edge_id.load(Ordering::Acquire);
+            let map: DashMap<NodeId, EdgeId> = DashMap::new();
+
+            // Parallel scan: each worker folds a local FxHashMap<dst, max
+            // EdgeId>, then we merge into the final DashMap. Reading the
+            // Edges zone under rayon is safe because `writer.read_edge`
+            // only touches the mmap — no shared mutable state.
+            let partials: Vec<FxHashMap<NodeId, EdgeId>> = (1..edge_hw)
+                .into_par_iter()
+                .fold(
+                    FxHashMap::<NodeId, EdgeId>::default,
+                    |mut acc, slot| {
+                        if let Ok(Some(rec)) = self.writer.read_edge(slot) {
+                            if rec.flags & edge_flags::TOMBSTONED == 0 {
+                                let edge_id = EdgeId(slot);
+                                let dst = NodeId(rec.dst as u64);
+                                acc.entry(dst)
+                                    .and_modify(|cur: &mut EdgeId| {
+                                        if cur.0 < edge_id.0 {
+                                            *cur = edge_id;
+                                        }
+                                    })
+                                    .or_insert(edge_id);
+                            }
+                        }
+                        acc
+                    },
+                )
+                .collect();
+
+            for partial in partials {
+                for (dst, head) in partial {
+                    map.entry(dst)
+                        .and_modify(|cur| {
+                            if cur.0 < head.0 {
+                                *cur = head;
+                            }
+                        })
+                        .or_insert(head);
+                }
+            }
+
+            tracing::info!(
+                phase = "incoming_heads_lazy_build",
+                elapsed_ms = t0.elapsed().as_millis() as u64,
+                edges_scanned = edge_hw.saturating_sub(1),
+                heads = map.len(),
+                "lazy build of incoming_heads completed"
+            );
+
+            map
+        })
     }
 
     /// Build a [`DictSnapshot`] capturing all three registries + slot
@@ -2308,7 +2375,7 @@ impl SubstrateStore {
         dst: NodeId,
         mut visit: impl FnMut(&EdgeRecord, EdgeId),
     ) {
-        let Some(head_ref) = self.incoming_heads.get(&dst) else {
+        let Some(head_ref) = self.incoming_heads().get(&dst) else {
             return;
         };
         let mut cur = *head_ref;
@@ -2364,7 +2431,7 @@ impl SubstrateStore {
 
         // (2) fetch current incoming head of dst
         let prev_in_head = self
-            .incoming_heads
+            .incoming_heads()
             .get(&dst)
             .map(|e| *e)
             .unwrap_or(EdgeId(0));
@@ -2390,7 +2457,7 @@ impl SubstrateStore {
             .expect("update_node (splice src head) failed");
 
         // (4) update incoming_heads (in-memory)
-        self.incoming_heads.insert(dst, edge_id);
+        self.incoming_heads().insert(dst, edge_id);
 
         // (5) write the edge slot
         self.writer
@@ -2457,17 +2524,14 @@ impl SubstrateStore {
         }
 
         // --- Incoming chain ---
-        let head = self
-            .incoming_heads
-            .get(&dst_id)
-            .map(|e| *e)
-            .unwrap_or(EdgeId(0));
+        let heads = self.incoming_heads();
+        let head = heads.get(&dst_id).map(|e| *e).unwrap_or(EdgeId(0));
         if head == edge_id {
             let next_id = Self::offset_to_edge_id(rec.next_to);
             if next_id.0 == 0 {
-                self.incoming_heads.remove(&dst_id);
+                heads.remove(&dst_id);
             } else {
-                self.incoming_heads.insert(dst_id, next_id);
+                heads.insert(dst_id, next_id);
             }
         } else if head.0 != 0 {
             let target_off = Self::edge_slot_to_offset(edge_id);
@@ -4456,8 +4520,8 @@ mod tests {
         assert_eq!(out_a[0].0, b); // peer = dst for Outgoing
         assert_eq!(out_a[0].1, e_ab);
 
-        // Incoming chains work because incoming_heads was rebuilt from
-        // the Edges-zone scan.
+        // Incoming chains work because `incoming_heads()` lazily builds
+        // the reverse-head map on first access (T17e Phase 4).
         let in_c = s2.edges_from(c, Direction::Incoming);
         assert_eq!(in_c.len(), 1);
         assert_eq!(in_c[0].0, b); // peer = src for Incoming
