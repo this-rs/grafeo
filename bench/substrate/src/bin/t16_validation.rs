@@ -138,6 +138,15 @@ struct FileSizes {
     dict: u64,
     wal: u64,
     meta: u64,
+    /// T16.7 Step 4: sum of all `substrate.blobcol.*.{idx,dat}` files
+    /// (dense slot-index + byte-arena for `Value::String`/`Value::Bytes`
+    /// exceeding `BLOB_COLUMN_THRESHOLD_BYTES`). Mmap'd and file-backed,
+    /// so must be included in `file_backed_bytes` — otherwise the
+    /// post-Step-4d anon estimate is inflated by ~1 GB on PO.
+    blob_columns: u64,
+    /// T16.7 Step 3: sum of all `substrate.veccol.*` files (dense f32
+    /// vector zones). Same rationale as `blob_columns`.
+    vec_columns: u64,
     total: u64,
 }
 
@@ -310,6 +319,28 @@ fn measure_file_sizes(dir: &Path) -> FileSizes {
     let dict = read("substrate.dict");
     let wal = read("substrate.wal");
     let meta = read("substrate.meta");
+    // T16.7 Step 4 — sum blob column files (variable count, named
+    // `substrate.blobcol.<entity>.<hex>.{idx,dat}`). These are mmap'd
+    // and file-backed; excluding them from the file-backed bucket
+    // inflates the anon estimate by however many of them got page-
+    // cached during open / warm-up.
+    let (blob_columns, vec_columns) = std::fs::read_dir(dir)
+        .map(|rd| {
+            let mut blob = 0u64;
+            let mut vec = 0u64;
+            for e in rd.flatten() {
+                let name = e.file_name();
+                let name = name.to_string_lossy();
+                let sz = e.metadata().map(|m| m.len()).unwrap_or(0);
+                if name.starts_with("substrate.blobcol.") {
+                    blob += sz;
+                } else if name.starts_with("substrate.veccol.") {
+                    vec += sz;
+                }
+            }
+            (blob, vec)
+        })
+        .unwrap_or((0, 0));
     let total = nodes
         + edges
         + props
@@ -323,7 +354,9 @@ fn measure_file_sizes(dir: &Path) -> FileSizes {
         + tier2
         + dict
         + wal
-        + meta;
+        + meta
+        + blob_columns
+        + vec_columns;
     FileSizes {
         nodes,
         edges,
@@ -339,6 +372,8 @@ fn measure_file_sizes(dir: &Path) -> FileSizes {
         dict,
         wal,
         meta,
+        blob_columns,
+        vec_columns,
         total,
     }
 }
@@ -431,6 +466,7 @@ fn print_summary(r: &T16Report) {
     println!("  community/hilbert : {} / {}", fmt_bytes(f.community), fmt_bytes(f.hilbert));
     println!("  engram mem/bits   : {} / {}", fmt_bytes(f.engram_members), fmt_bytes(f.engram_bitset));
     println!("  tier 0/1/2        : {} / {} / {}", fmt_bytes(f.tier0), fmt_bytes(f.tier1), fmt_bytes(f.tier2));
+    println!("  blob/vec cols     : {} / {}", fmt_bytes(f.blob_columns), fmt_bytes(f.vec_columns));
     println!("  wal/meta          : {} / {}", fmt_bytes(f.wal), fmt_bytes(f.meta));
     println!("  total file bytes  : {}", fmt_bytes(f.total));
     println!();
