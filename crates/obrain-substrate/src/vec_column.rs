@@ -478,6 +478,78 @@ impl VecColumnWriter {
     pub fn spec(&self) -> &VecColSpec {
         &self.spec
     }
+
+    /// Borrow the raw bytes for one slot out of the writer's own
+    /// mmap, or `None` if the slot index is past the current
+    /// high-water mark.
+    ///
+    /// This mirrors [`VecColumnReader::read_slot`] but serves reads
+    /// through the *same* mmap that writes go through, so the T16.7
+    /// routing path does not need to maintain a separate reader
+    /// handle per spec. Between `write_slot` and the next
+    /// `finalize` the on-disk header still carries a stale CRC, so a
+    /// fresh [`VecColumnReader`] would refuse to open — but the
+    /// payload bytes are live in the mmap and safe to re-read here.
+    ///
+    /// The returned slice is `dim * sizeof(dtype)` bytes long and
+    /// aliases the writer's mmap directly — zero-copy.
+    pub fn read_slot(&self, slot: u32) -> Option<&[u8]> {
+        if slot >= self.n_slots {
+            return None;
+        }
+        let stride = self.spec.slot_stride();
+        let offset = HEADER_SIZE + (slot as usize) * stride;
+        let end = offset + stride;
+        let slice = self.zf.as_slice();
+        if end > slice.len() {
+            // Should never happen — ensure_room already grew the
+            // file to accommodate `n_slots`. Defensive only.
+            return None;
+        }
+        Some(&slice[offset..end])
+    }
+
+    /// Convenience typed reader for `f32` columns served by the
+    /// writer's mmap. Returns `None` if the slot is out of range or
+    /// the stored dtype is not F32. See [`Self::read_slot`] for the
+    /// through-writer rationale.
+    pub fn read_slot_f32(&self, slot: u32) -> Option<&[f32]> {
+        if self.spec.dtype != VecDType::F32 {
+            return None;
+        }
+        let bytes = self.read_slot(slot)?;
+        bytemuck::try_cast_slice::<u8, f32>(bytes).ok()
+    }
+
+    /// Force-finalise the current state: compute the payload CRC,
+    /// write the header, `msync` + `fsync`. Unlike
+    /// [`Self::finalize`], the writer stays alive so subsequent
+    /// `write_slot`s can extend the column after the fact. Used by
+    /// `SubstrateStore::flush` to make all open vec columns durable
+    /// without dropping the registry.
+    pub fn sync(&mut self) -> SubstrateResult<()> {
+        let stride = self.spec.slot_stride();
+        let payload_bytes = (self.n_slots as usize) * stride;
+        let total = HEADER_SIZE + payload_bytes;
+        ensure_room(&mut self.zf, total, 0)?;
+
+        let crc = {
+            let slice = self.zf.as_slice();
+            let payload = &slice[HEADER_SIZE..HEADER_SIZE + payload_bytes];
+            let mut h = crc32fast::Hasher::new();
+            h.update(payload);
+            h.finalize()
+        };
+        let mut header = VecColumnHeader::new(&self.spec, self.n_slots);
+        header.crc32 = crc;
+        {
+            let slice = self.zf.as_slice_mut();
+            slice[..HEADER_SIZE].copy_from_slice(bytemuck::bytes_of(&header));
+        }
+        self.zf.msync()?;
+        self.zf.fsync()?;
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -992,5 +1064,78 @@ mod tests {
         let re = VecColumnReader::open(&sub, edge_spec).unwrap().unwrap();
         assert_eq!(rn.read_slot_f32(0).unwrap(), &v_node);
         assert_eq!(re.read_slot_f32(0).unwrap(), &v_edge);
+    }
+
+    #[test]
+    fn writer_read_slot_matches_written_bytes() {
+        // The T16.7 Step 2 hot path: the routing layer keeps a
+        // writer open and reads from it without a separate reader
+        // handle. This exercises the writer-served read path.
+        let sub = SubstrateFile::open_tempfile().unwrap();
+        let spec = sample_spec_f32(3, 6);
+        let mut w = VecColumnWriter::create(&sub, spec).unwrap();
+
+        let v0: [f32; 6] = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6];
+        let v2: [f32; 6] = [2.0, 2.1, 2.2, 2.3, 2.4, 2.5];
+        w.write_slot(0, bytemuck::cast_slice(&v0)).unwrap();
+        w.write_slot(2, bytemuck::cast_slice(&v2)).unwrap();
+
+        // Slot 0 reads back what we wrote.
+        assert_eq!(w.read_slot_f32(0).unwrap(), &v0);
+        // Slot 1 is the zero-filled gap.
+        assert_eq!(w.read_slot_f32(1).unwrap(), &[0.0f32; 6][..]);
+        // Slot 2 reads back what we wrote.
+        assert_eq!(w.read_slot_f32(2).unwrap(), &v2);
+        // Slot 3 is past the high-water mark.
+        assert_eq!(w.read_slot_f32(3), None);
+    }
+
+    #[test]
+    fn writer_sync_makes_new_reader_valid_without_dropping() {
+        // Sync writes the header (with fresh CRC) + msync+fsync,
+        // but keeps the writer alive. A fresh Reader opened after
+        // sync sees the data. Subsequent writes through the same
+        // writer should still be possible and visible after another
+        // sync.
+        let sub = SubstrateFile::open_tempfile().unwrap();
+        let spec = sample_spec_f32(4, 3);
+        let mut w = VecColumnWriter::create(&sub, spec).unwrap();
+
+        let v0: [f32; 3] = [1.0, 2.0, 3.0];
+        w.write_slot(0, bytemuck::cast_slice(&v0)).unwrap();
+        w.sync().unwrap();
+
+        // Read via a fresh reader.
+        let r = VecColumnReader::open(&sub, spec).unwrap().unwrap();
+        assert_eq!(r.n_slots(), 1);
+        assert_eq!(r.read_slot_f32(0).unwrap(), &v0);
+        drop(r);
+
+        // Writer still alive — extend the column.
+        let v1: [f32; 3] = [10.0, 20.0, 30.0];
+        w.write_slot(1, bytemuck::cast_slice(&v1)).unwrap();
+        w.sync().unwrap();
+
+        let r = VecColumnReader::open(&sub, spec).unwrap().unwrap();
+        assert_eq!(r.n_slots(), 2);
+        assert_eq!(r.read_slot_f32(0).unwrap(), &v0);
+        assert_eq!(r.read_slot_f32(1).unwrap(), &v1);
+    }
+
+    #[test]
+    fn writer_read_slot_rejects_wrong_dtype() {
+        // A u8 writer should refuse to serve read_slot_f32 even
+        // though the payload happens to be 4-byte aligned.
+        let sub = SubstrateFile::open_tempfile().unwrap();
+        let spec = VecColSpec {
+            prop_key_id: 5,
+            entity_kind: EntityKind::Node,
+            dim: 4,
+            dtype: VecDType::U8,
+        };
+        let mut w = VecColumnWriter::create(&sub, spec).unwrap();
+        w.write_slot(0, &[1u8, 2, 3, 4]).unwrap();
+        assert!(w.read_slot_f32(0).is_none());
+        assert_eq!(w.read_slot(0).unwrap(), &[1u8, 2, 3, 4][..]);
     }
 }

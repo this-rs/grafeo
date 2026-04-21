@@ -737,6 +737,10 @@ impl SubstrateStore {
 
     /// Build a [`DictSnapshot`] capturing all three registries + slot
     /// allocator state. Called by [`Self::flush`] and tests.
+    ///
+    /// The `vec_columns` list is populated by T16.7 Step 2 once the
+    /// routing layer lands; until then, leave it empty so v3 dicts
+    /// still roundtrip cleanly for existing bases.
     fn build_dict_snapshot(&self) -> crate::dict::DictSnapshot {
         crate::dict::DictSnapshot {
             labels: self.labels.read().names(),
@@ -745,6 +749,7 @@ impl SubstrateStore {
             next_node_id: self.next_node_id.load(Ordering::Acquire) as u64,
             next_edge_id: self.next_edge_id.load(Ordering::Acquire),
             next_engram_id: self.next_engram_id.load(Ordering::Acquire),
+            vec_columns: Vec::new(),
         }
     }
 

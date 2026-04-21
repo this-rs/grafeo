@@ -46,6 +46,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 
 use crate::error::{SubstrateError, SubstrateResult};
+use crate::vec_column::{EntityKind, VecColSpec, VecDType};
 
 const MAGIC: u32 = 0xD1C7_0DB1;
 /// Dict on-disk format version.
@@ -54,7 +55,15 @@ const MAGIC: u32 = 0xD1C7_0DB1;
 /// * v2 (T7 Step 6): adds `next_engram_id: u16` immediately after
 ///   `next_edge_id`. v1 dicts load with `next_engram_id = 1` (default —
 ///   the slot allocator starts at 1, slot 0 is reserved).
-const FORMAT_VERSION: u32 = 2;
+/// * v3 (T16.7 Step 2): appends a list of `VecColSpec`s recording
+///   which property keys have been promoted to dense mmap vector
+///   columns. Each spec is 8 bytes on wire: `u16 prop_key_id`,
+///   `u8 entity_kind`, `u8 dtype`, `u32 dim`. v1 / v2 dicts load with
+///   an empty list (no vec columns seen yet).
+const FORMAT_VERSION: u32 = 3;
+
+/// Wire size of one `VecColSpec` in the v3 tail of the dict.
+const VEC_COL_SPEC_WIRE_SIZE: usize = 2 + 1 + 1 + 4;
 
 /// All three registries + allocator state captured at one point in time.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,6 +82,12 @@ pub struct DictSnapshot {
     /// [`crate::engram::MAX_ENGRAM_ID`]). Persisted from format v2 (T7
     /// Step 6); v1 dicts load this as 1.
     pub next_engram_id: u16,
+    /// Vector columns that have been materialised for this substrate.
+    /// Each entry tells the store "property key N, with this dtype and
+    /// dim, lives in a dense mmap zone on disk and not in the bincode
+    /// sidecar". Persisted from format v3 (T16.7 Step 2); v1 / v2
+    /// dicts load with an empty list.
+    pub vec_columns: Vec<VecColSpec>,
 }
 
 impl Default for DictSnapshot {
@@ -84,6 +99,7 @@ impl Default for DictSnapshot {
             next_node_id: 1,
             next_edge_id: 1,
             next_engram_id: 1,
+            vec_columns: Vec::new(),
         }
     }
 }
@@ -125,6 +141,23 @@ impl DictSnapshot {
         // v2: next_engram_id (u16). Always written by current format.
         buf.extend_from_slice(&self.next_engram_id.to_le_bytes());
 
+        // v3: vec_columns list. `u16 count` followed by 8 bytes per spec
+        // (prop_key_id u16, entity_kind u8, dtype u8, dim u32).
+        if self.vec_columns.len() > u16::MAX as usize {
+            return Err(SubstrateError::Internal(format!(
+                "dict overflow: {} vec_columns (max {})",
+                self.vec_columns.len(),
+                u16::MAX
+            )));
+        }
+        buf.extend_from_slice(&(self.vec_columns.len() as u16).to_le_bytes());
+        for spec in &self.vec_columns {
+            buf.extend_from_slice(&spec.prop_key_id.to_le_bytes());
+            buf.push(spec.entity_kind as u8);
+            buf.push(spec.dtype as u8);
+            buf.extend_from_slice(&spec.dim.to_le_bytes());
+        }
+
         // Pad to 4-byte boundary before crc to keep alignment clean.
         while buf.len() % 4 != 0 {
             buf.push(0);
@@ -150,12 +183,13 @@ impl DictSnapshot {
             )));
         }
         let version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
-        // Accept both v1 and v2:
-        // * v1 → no `next_engram_id` field; load as 1 (default).
-        // * v2 → reads the trailing u16.
-        if !(version == 1 || version == FORMAT_VERSION) {
+        // Accept v1, v2, and current version:
+        // * v1 → no `next_engram_id`, no `vec_columns`.
+        // * v2 → `next_engram_id` present, no `vec_columns`.
+        // * v3 → all fields present.
+        if !(version == 1 || version == 2 || version == FORMAT_VERSION) {
             return Err(SubstrateError::Internal(format!(
-                "dict version {version} unsupported (expected 1 or {FORMAT_VERSION})"
+                "dict version {version} unsupported (expected 1, 2, or {FORMAT_VERSION})"
             )));
         }
 
@@ -194,7 +228,7 @@ impl DictSnapshot {
                  next_edge_id={next_edge_id} (both must be ≥ 1; slot 0 = null sentinel)"
             )));
         }
-        // v2: read `next_engram_id` (u16) immediately after `next_edge_id`.
+        // v2+: read `next_engram_id` (u16) immediately after `next_edge_id`.
         // v1: default to 1 (slot 0 reserved for null engram).
         let next_engram_id: u16 = if version >= 2 {
             if cur.len() < 18 {
@@ -215,6 +249,67 @@ impl DictSnapshot {
         } else {
             1
         };
+
+        // Advance cursor past the allocator counters.
+        let after_counters = if version >= 2 { 18 } else { 16 };
+        let mut cur = &cur[after_counters..];
+
+        // v3+: vec_columns list. u16 count + 8 B per spec.
+        // v1 / v2: empty list — nothing more to read.
+        let vec_columns: Vec<VecColSpec> = if version >= 3 {
+            if cur.len() < 2 {
+                return Err(SubstrateError::Internal(
+                    "dict v3 truncated at vec_columns count".into(),
+                ));
+            }
+            let n = u16::from_le_bytes([cur[0], cur[1]]) as usize;
+            cur = &cur[2..];
+            let need = n * VEC_COL_SPEC_WIRE_SIZE;
+            if cur.len() < need {
+                return Err(SubstrateError::Internal(format!(
+                    "dict v3 truncated at vec_columns body (need {need}, have {})",
+                    cur.len()
+                )));
+            }
+            let mut out = Vec::with_capacity(n);
+            for i in 0..n {
+                let base = i * VEC_COL_SPEC_WIRE_SIZE;
+                let prop_key_id = u16::from_le_bytes([cur[base], cur[base + 1]]);
+                let entity_byte = cur[base + 2];
+                let dtype_byte = cur[base + 3];
+                let dim = u32::from_le_bytes([
+                    cur[base + 4],
+                    cur[base + 5],
+                    cur[base + 6],
+                    cur[base + 7],
+                ]);
+                let Some(entity_kind) = EntityKind::from_u8(entity_byte) else {
+                    return Err(SubstrateError::Internal(format!(
+                        "dict v3: invalid entity_kind byte {entity_byte} at vec_column[{i}]"
+                    )));
+                };
+                let Some(dtype) = VecDType::from_u8(dtype_byte) else {
+                    return Err(SubstrateError::Internal(format!(
+                        "dict v3: invalid dtype byte {dtype_byte} at vec_column[{i}]"
+                    )));
+                };
+                if dim == 0 {
+                    return Err(SubstrateError::Internal(format!(
+                        "dict v3: vec_column[{i}] has dim=0 (invalid)"
+                    )));
+                }
+                out.push(VecColSpec {
+                    prop_key_id,
+                    entity_kind,
+                    dim,
+                    dtype,
+                });
+            }
+            out
+        } else {
+            Vec::new()
+        };
+
         Ok(Self {
             labels,
             edge_types,
@@ -222,6 +317,7 @@ impl DictSnapshot {
             next_node_id,
             next_edge_id,
             next_engram_id,
+            vec_columns,
         })
     }
 
@@ -351,6 +447,7 @@ mod tests {
             next_node_id: 12345,
             next_edge_id: 67_890,
             next_engram_id: 4321,
+            vec_columns: Vec::new(),
         };
         let bytes = s.to_bytes().unwrap();
         let back = DictSnapshot::from_bytes(&bytes).unwrap();
@@ -368,10 +465,67 @@ mod tests {
             next_node_id: 42,
             next_edge_id: 99,
             next_engram_id: 7,
+            vec_columns: Vec::new(),
         };
         s.persist(&path).unwrap();
         let back = DictSnapshot::load(&path).unwrap();
         assert_eq!(s, back);
+    }
+
+    #[test]
+    fn roundtrip_v3_with_vec_columns() {
+        let s = DictSnapshot {
+            labels: vec!["Person".into()],
+            edge_types: vec!["KNOWS".into()],
+            prop_keys: vec!["embedding".into(), "data".into(), "score".into()],
+            next_node_id: 1_000_000,
+            next_edge_id: 2_000_000,
+            next_engram_id: 42,
+            vec_columns: vec![
+                VecColSpec {
+                    prop_key_id: 0,
+                    entity_kind: EntityKind::Node,
+                    dim: 80,
+                    dtype: VecDType::F32,
+                },
+                VecColSpec {
+                    prop_key_id: 1,
+                    entity_kind: EntityKind::Edge,
+                    dim: 384,
+                    dtype: VecDType::F16,
+                },
+            ],
+        };
+        let bytes = s.to_bytes().unwrap();
+        let back = DictSnapshot::from_bytes(&bytes).unwrap();
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn v2_dict_loads_as_v3_with_empty_vec_columns() {
+        // Simulate a pre-T16.7 dict on disk by writing a v2-format
+        // byte stream by hand and verifying we load it as v3 with an
+        // empty vec_columns list.
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&MAGIC.to_le_bytes());
+        buf.extend_from_slice(&2u32.to_le_bytes()); // v2
+
+        // Three empty name lists.
+        for _ in 0..3 {
+            buf.extend_from_slice(&0u16.to_le_bytes());
+        }
+        buf.extend_from_slice(&1u64.to_le_bytes()); // next_node_id
+        buf.extend_from_slice(&1u64.to_le_bytes()); // next_edge_id
+        buf.extend_from_slice(&1u16.to_le_bytes()); // next_engram_id
+        while buf.len() % 4 != 0 {
+            buf.push(0);
+        }
+        let crc = crc32c(&buf);
+        buf.extend_from_slice(&crc.to_le_bytes());
+
+        let back = DictSnapshot::from_bytes(&buf).unwrap();
+        assert_eq!(back.vec_columns, Vec::<VecColSpec>::new());
+        assert_eq!(back.next_engram_id, 1);
     }
 
     #[test]
@@ -513,6 +667,7 @@ mod tests {
             next_node_id: 5,
             next_edge_id: 6,
             next_engram_id: 9999,
+            vec_columns: Vec::new(),
         };
         let bytes = s.to_bytes().unwrap();
         let back = DictSnapshot::from_bytes(&bytes).unwrap();
@@ -521,8 +676,8 @@ mod tests {
     }
 
     #[test]
-    fn v2_zero_engram_counter_rejected() {
-        // Manually craft v2 bytes with next_engram_id = 0.
+    fn v3_zero_engram_counter_rejected() {
+        // Manually craft v-current bytes with next_engram_id = 0.
         let mut buf = Vec::new();
         buf.extend_from_slice(&MAGIC.to_le_bytes());
         buf.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
