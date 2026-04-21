@@ -1,18 +1,16 @@
 // T6 Step 2b smoke test — direct cross-restart edge persistence via ObrainDB
-// opened in substrate mode.
-
-#![cfg(feature = "substrate-backend")]
+// opened in substrate mode. Since the T17 cutover, substrate is the only
+// backend, so the former `#![cfg(feature = "substrate-backend")]` gate was
+// dropped.
 
 use obrain_core::graph::{Direction, GraphStoreMut};
 use obrain_engine::ObrainDB;
 
 #[test]
 fn substrate_cross_restart_edge_survives() {
-    // SAFETY: tests in this file are single-threaded and the env var is set
-    // before ObrainDB::open reads it.
-    unsafe {
-        std::env::set_var("OBRAIN_BACKEND", "substrate");
-    }
+    // T17 cutover: `ObrainDB::open` always routes through substrate now, so
+    // the former `OBRAIN_BACKEND=substrate` env-var setup is no longer
+    // required. Kept minimal on purpose.
     let tmp = tempfile::tempdir().unwrap();
     let db_path = tmp.path().join("brain.db");
 

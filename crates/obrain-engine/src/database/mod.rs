@@ -143,7 +143,6 @@ pub struct ObrainDB {
     /// is backed by `LpgStore` (legacy path).
     ///
     /// [`SubstrateStore`]: obrain_substrate::SubstrateStore
-    #[cfg(feature = "substrate-backend")]
     pub(super) substrate_store: Option<Arc<obrain_substrate::SubstrateStore>>,
     /// Metrics registry shared across all sessions.
     #[cfg(feature = "metrics")]
@@ -210,25 +209,11 @@ impl ObrainDB {
     /// ```
     #[cfg(feature = "wal")]
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        // T5 Step 6: when OBRAIN_BACKEND=substrate is set and the
-        // `substrate-backend` feature is compiled in, route `open` through
-        // the SubstrateStore path. This is the progressive-cutover knob:
-        // the feature ships by default in prod builds (so the substrate
-        // crate is linked), but the actual routing default stays on
-        // LpgStore until T17 so cognitive stores (T6) and embedding tiers
-        // (T8) can land without regressions on the main chat/recall path.
-        #[cfg(feature = "substrate-backend")]
-        {
-            if std::env::var("OBRAIN_BACKEND")
-                .ok()
-                .as_deref()
-                .map(|v| v.eq_ignore_ascii_case("substrate"))
-                .unwrap_or(false)
-            {
-                return Self::open_substrate(path);
-            }
-        }
-        Self::with_config(Config::persistent(path.as_ref()))
+        // T17 cutover: substrate is the single storage backend. The former
+        // LpgStore-backed path (`Config::persistent` → `with_config`) and the
+        // `OBRAIN_BACKEND=substrate` runtime knob are gone. Any lingering
+        // `OBRAIN_BACKEND` env-var setting is ignored on purpose.
+        Self::open_substrate(path)
     }
 
     /// Opens a database backed by the `SubstrateStore` (mmap + WAL native).
@@ -237,10 +222,10 @@ impl ObrainDB {
     /// [`obrain_substrate::SubstrateStore`] at the given path and routes all
     /// queries and mutations through it via the [`with_store`] constructor.
     ///
-    /// Once T6+ land and `substrate-backend` becomes the default for
-    /// [`ObrainDB::open`], this method will be folded into the regular
-    /// `open` path. For now, it lives side-by-side so callers can opt in
-    /// explicitly without disturbing existing behaviour.
+    /// Since T17 cutover, [`ObrainDB::open`] delegates unconditionally to
+    /// this method — substrate is the single storage backend. Kept as a
+    /// public API for callers that want to express the substrate intent
+    /// explicitly in tests or tooling.
     ///
     /// # Errors
     ///
@@ -248,7 +233,6 @@ impl ObrainDB {
     /// `path`.
     ///
     /// [`with_store`]: Self::with_store
-    #[cfg(feature = "substrate-backend")]
     pub fn open_substrate(path: impl AsRef<std::path::Path>) -> Result<Self> {
         let path_ref = path.as_ref();
         // Detect existing substrate: if `substrate.meta` is present, open;
@@ -701,7 +685,6 @@ impl ObrainDB {
             #[cfg(feature = "obrain-file")]
             mmap_store: native_mmap_store,
             external_store: None,
-            #[cfg(feature = "substrate-backend")]
             substrate_store: None,
             #[cfg(feature = "metrics")]
             metrics: Some(Arc::new(crate::metrics::MetricsRegistry::new())),
@@ -781,7 +764,6 @@ impl ObrainDB {
             #[cfg(feature = "obrain-file")]
             mmap_store: None,
             external_store: Some(store),
-            #[cfg(feature = "substrate-backend")]
             substrate_store: None,
             #[cfg(feature = "metrics")]
             metrics: Some(Arc::new(crate::metrics::MetricsRegistry::new())),
@@ -1839,11 +1821,11 @@ impl ObrainDB {
             wal.sync()?;
         }
 
-        // T6 Step 2b: when substrate is the backend, persist its dict
-        // (registries + high-water marks) and msync the mmap zones. Without
-        // this, reopen sees an empty/stale dict and treats all previously
-        // allocated nodes/edges as non-live (is_live_on_disk → false).
-        #[cfg(feature = "substrate-backend")]
+        // Substrate is the single backend (T17 cutover): persist its dict
+        // (registries + high-water marks) and msync the mmap zones before
+        // marking the database closed. Without this, reopen sees an empty
+        // or stale dict and treats all previously allocated nodes/edges as
+        // non-live (is_live_on_disk → false).
         if let Some(ref sub) = self.substrate_store
             && let Err(e) = sub.flush()
         {
@@ -1871,9 +1853,8 @@ impl ObrainDB {
             self.checkpoint_to_file(fm)?;
         }
 
-        // T6 Step 2b: substrate dict + mmap zones must be persisted
-        // alongside the WAL commit for cross-restart durability.
-        #[cfg(feature = "substrate-backend")]
+        // Substrate dict + mmap zones must be persisted alongside the WAL
+        // commit for cross-restart durability (T17 cutover — unconditional).
         if let Some(ref sub) = self.substrate_store {
             sub.flush().map_err(|e| {
                 obrain_common::utils::error::Error::Internal(format!(
@@ -1907,14 +1888,13 @@ impl ObrainDB {
     /// `obrain-hub`.
     #[must_use]
     pub fn graph_store_mut(&self) -> Arc<dyn GraphStoreMut> {
-        // T6 Step 2b: in substrate-backend mode, the substrate IS the
-        // authoritative store. Its `GraphStoreMut` impl is already WAL-native
-        // (every mutation logs a WalRecord synchronously before touching
-        // mmap), so we do NOT wrap it with `WalGraphStore` — doing so would
-        // funnel writes through the dummy `self.store` LpgStore that lives
-        // next to the substrate in `with_store`, silently dropping them on
-        // disk. Return the substrate's erased handle directly.
-        #[cfg(feature = "substrate-backend")]
+        // T17 cutover: substrate is the single authoritative store. Its
+        // `GraphStoreMut` impl is already WAL-native (every mutation logs a
+        // WalRecord synchronously before touching mmap), so we do NOT wrap it
+        // with `WalGraphStore` — doing so would funnel writes through the
+        // dummy `self.store` LpgStore that lives next to the substrate in
+        // `with_store`, silently dropping them on disk. Return the
+        // substrate's erased handle directly.
         if let Some(ref sub) = self.substrate_store {
             return Arc::clone(sub) as Arc<dyn GraphStoreMut>;
         }
@@ -1949,10 +1929,7 @@ impl ObrainDB {
     /// };
     /// ```
     ///
-    /// Only compiled when the `substrate-backend` feature is enabled.
-    ///
     /// [`SubstrateStore`]: obrain_substrate::SubstrateStore
-    #[cfg(feature = "substrate-backend")]
     #[must_use]
     pub fn substrate_handle(&self) -> Option<Arc<obrain_substrate::SubstrateStore>> {
         self.substrate_store.as_ref().map(Arc::clone)

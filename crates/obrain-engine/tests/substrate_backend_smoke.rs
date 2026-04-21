@@ -1,4 +1,4 @@
-//! Smoke tests for the `substrate-backend` feature.
+//! Smoke tests for the substrate storage backend.
 //!
 //! Validates that `ObrainDB::open_substrate` wires a `SubstrateStore` through
 //! the `with_store` external-store path correctly: sessions execute queries
@@ -6,9 +6,8 @@
 //!
 //! This is the **T5 Step 1** regression surface. It's intentionally
 //! minimal — deeper functional coverage is delivered by the substrate's own
-//! 240 tests + the 104-test GraphStore parity suite.
-
-#![cfg(feature = "substrate-backend")]
+//! 240 tests + the 104-test GraphStore parity suite. The former
+//! `#![cfg(feature = "substrate-backend")]` gate was removed at T17 cutover.
 
 use obrain_common::types::{NodeId, PropertyKey, Value};
 use obrain_core::graph::Direction;
