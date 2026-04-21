@@ -2222,6 +2222,49 @@ impl SubstrateStore {
         }
     }
 
+    // -----------------------------------------------------------------
+    // T17e Phase 1 — mmap + registry resolvers
+    //
+    // Zero-rebuild read helpers introduced as a preparatory step toward
+    // T17e (eliminate the `nodes` / `edges` DashMaps). Both methods
+    // return the *same* data that `NodeInMem.labels` and
+    // `EdgeInMem.edge_type` carry after a full `rebuild_from_zones`, but
+    // they read it directly from the mmap'd `NodeRecord.label_bitset`
+    // and `EdgeRecord.edge_type` fields via the in-memory registries.
+    //
+    // Phase 1 is behaviour-preserving: the DashMaps stay populated and
+    // continue to be the source of truth for properties; these helpers
+    // simply demonstrate that the mmap+registry path produces the same
+    // labels/edge_type for every live record. Phase 3 will remove the
+    // DashMaps and promote these helpers to the sole read path.
+    // -----------------------------------------------------------------
+
+    /// Resolve label names from a `NodeRecord.label_bitset` via the
+    /// in-memory [`LabelRegistry`]. Equivalent to `NodeInMem.labels` after
+    /// a rebuild, but reads directly from the registry — no DashMap lookup.
+    #[inline]
+    fn resolve_node_labels_from_bitset(&self, bitset: u64) -> SmallVec<[ArcStr; 2]> {
+        self.labels.read().labels_for_bitset(bitset)
+    }
+
+    /// Resolve an edge-type `ArcStr` from an `EdgeRecord.edge_type` id via
+    /// the in-memory [`EdgeTypeRegistry`]. Falls back to `__UNKNOWN_{id}`
+    /// on dict/zone drift — matches `rebuild_from_zones` behaviour so any
+    /// dictionary corruption manifests identically on both code paths.
+    #[inline]
+    fn resolve_edge_type_by_id(&self, id: u16) -> ArcStr {
+        match self.edge_types.read().name_for(id) {
+            Some(n) => n,
+            None => {
+                tracing::error!(
+                    target: "substrate",
+                    "resolve_edge_type_by_id: edge_type id {id} not in registry — dict/zone drift?"
+                );
+                ArcStr::from(format!("__UNKNOWN_{id}"))
+            }
+        }
+    }
+
     /// Convert an `EdgeId` slot to a byte offset in the Edges zone for
     /// use in `U48` chain pointers (`first_edge_off`, `next_from`,
     /// `next_to`). Slot 0 → offset 0 (sentinel).
@@ -2493,14 +2536,24 @@ impl SubstrateStore {
 
 impl GraphStore for SubstrateStore {
     // -- Point lookups --
+    //
+    // T17e Phase 1 — Labels and edge_type are resolved directly from the
+    // mmap'd record + in-memory registry. The `nodes` / `edges` DashMaps
+    // are still consulted for properties (Phase 2 splits them into
+    // dedicated `node_properties` / `edge_properties` maps; Phase 3
+    // eliminates the structural DashMaps entirely). Behaviour is
+    // preserved: the mmap+registry path returns the same SmallVec /
+    // ArcStr a post-rebuild DashMap entry would carry.
     fn get_node(&self, id: NodeId) -> Option<Node> {
         if !self.is_live_on_disk(id) {
             return None;
         }
-        let entry = self.nodes.get(&id)?;
+        let rec = self.writer.read_node(id.0 as u32).ok().flatten()?;
         let mut n = Node::new(id);
-        n.labels = entry.labels.clone();
-        n.properties = entry.properties.clone();
+        n.labels = self.resolve_node_labels_from_bitset(rec.label_bitset);
+        if let Some(entry) = self.nodes.get(&id) {
+            n.properties = entry.properties.clone();
+        }
         Some(n)
     }
 
@@ -2509,14 +2562,16 @@ impl GraphStore for SubstrateStore {
             return None;
         }
         let rec = self.writer.read_edge(id.0).ok().flatten()?;
-        let mem = self.edges.get(&id)?;
+        let edge_type = self.resolve_edge_type_by_id(rec.edge_type);
         let mut e = Edge::new(
             id,
             NodeId(rec.src as u64),
             NodeId(rec.dst as u64),
-            mem.edge_type.clone(),
+            edge_type,
         );
-        e.properties = mem.properties.clone();
+        if let Some(entry) = self.edges.get(&id) {
+            e.properties = entry.properties.clone();
+        }
         Some(e)
     }
 
