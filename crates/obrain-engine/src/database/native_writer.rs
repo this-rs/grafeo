@@ -12,7 +12,7 @@
 //! | 16 KiB+  | variable | Data sections (strings, nodes, edges, CSR, props...) |
 
 use std::collections::{HashMap, HashSet};
-use std::io::{BufWriter, Seek, SeekFrom, Write};
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -73,119 +73,180 @@ impl StringTableBuilder {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Values writer — spills to temp file instead of buffering in RAM
+// ─────────────────────────────────────────────────────────────────────
+
+/// Writes serialized property values to a temporary file on disk.
+///
+/// This replaces the in-memory `Vec<u8>` values buffer which caused OOM
+/// for large databases (8M+ nodes with 384d+ embedding vectors = 20+ GB
+/// of property values that don't fit in RAM alongside the store itself).
+struct ValuesWriter {
+    writer: BufWriter<std::fs::File>,
+    offset: u32,
+    path: std::path::PathBuf,
+}
+
+impl ValuesWriter {
+    fn new(parent_dir: &Path) -> std::io::Result<Self> {
+        let path = parent_dir.join(format!(
+            ".obrain-values-{}.tmp",
+            std::process::id()
+        ));
+        let file = std::fs::File::create(&path)?;
+        Ok(Self {
+            writer: BufWriter::with_capacity(8 * 1024 * 1024, file),
+            offset: 0,
+            path,
+        })
+    }
+
+    #[inline]
+    fn offset(&self) -> u32 {
+        self.offset
+    }
+
+    #[inline]
+    fn write(&mut self, data: &[u8]) -> std::io::Result<()> {
+        self.writer.write_all(data)?;
+        self.offset += data.len() as u32;
+        Ok(())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.writer.flush()
+    }
+
+    /// Total bytes written.
+    fn len(&self) -> u64 {
+        self.offset as u64
+    }
+
+    /// Copy all values to the target writer, then delete the temp file.
+    fn copy_to_and_cleanup<W: Write>(&mut self, target: &mut W) -> std::io::Result<()> {
+        self.writer.flush()?;
+        // Re-open the same file for reading (writer still holds the write handle
+        // but we've flushed, so the read will see all data)
+        let file = std::fs::File::open(&self.path)?;
+        let mut reader = BufReader::with_capacity(8 * 1024 * 1024, file);
+        std::io::copy(&mut reader, target)?;
+        Ok(())
+        // temp file is cleaned up by Drop
+    }
+}
+
+impl Drop for ValuesWriter {
+    fn drop(&mut self) {
+        // Best-effort cleanup of temp file
+        std::fs::remove_file(&self.path).ok();
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Value serializer
 // ─────────────────────────────────────────────────────────────────────
 
 /// Serializes a `Value` into the values buffer, returning (value_type, offset, len).
 fn serialize_value(
     value: &Value,
-    values_buf: &mut Vec<u8>,
+    values: &mut ValuesWriter,
     strings: &mut StringTableBuilder,
-) -> (u8, u32, u32) {
-    let offset = values_buf.len() as u32;
+) -> std::result::Result<(u8, u32, u32), Error> {
+    let offset = values.offset();
+    let r = |e: std::io::Error| Error::Internal(format!("values write: {e}"));
     match value {
-        Value::Null => (ValueType::Null as u8, offset, 0),
+        Value::Null => Ok((ValueType::Null as u8, offset, 0)),
         Value::Bool(b) => {
-            values_buf.push(if *b { 1 } else { 0 });
-            (ValueType::Bool as u8, offset, 1)
+            values.write(&[if *b { 1 } else { 0 }]).map_err(r)?;
+            Ok((ValueType::Bool as u8, offset, 1))
         }
         Value::Int64(v) => {
-            values_buf.extend_from_slice(&v.to_le_bytes());
-            (ValueType::Int64 as u8, offset, 8)
+            values.write(&v.to_le_bytes()).map_err(r)?;
+            Ok((ValueType::Int64 as u8, offset, 8))
         }
         Value::Float64(v) => {
-            values_buf.extend_from_slice(&v.to_le_bytes());
-            (ValueType::Float64 as u8, offset, 8)
+            values.write(&v.to_le_bytes()).map_err(r)?;
+            Ok((ValueType::Float64 as u8, offset, 8))
         }
         Value::String(s) => {
-            // Store the string ref into the string table
             let sref = strings.intern(s.as_str());
-            values_buf.extend_from_slice(&sref.offset.to_le_bytes());
-            values_buf.extend_from_slice(&sref.len.to_le_bytes());
-            (ValueType::String as u8, offset, 8)
+            values.write(&sref.offset.to_le_bytes()).map_err(r)?;
+            values.write(&sref.len.to_le_bytes()).map_err(r)?;
+            Ok((ValueType::String as u8, offset, 8))
         }
         Value::Bytes(b) => {
             let len = b.len() as u32;
-            values_buf.extend_from_slice(b);
-            (ValueType::Bytes as u8, offset, len)
+            values.write(b).map_err(r)?;
+            Ok((ValueType::Bytes as u8, offset, len))
         }
         Value::Timestamp(ts) => {
-            // Store as i64 microseconds since epoch
-            values_buf.extend_from_slice(&ts.as_micros().to_le_bytes());
-            (ValueType::Timestamp as u8, offset, 8)
+            values.write(&ts.as_micros().to_le_bytes()).map_err(r)?;
+            Ok((ValueType::Timestamp as u8, offset, 8))
         }
         Value::Date(d) => {
-            // Store as i32 days since epoch
-            values_buf.extend_from_slice(&d.as_days().to_le_bytes());
-            (ValueType::Date as u8, offset, 4)
+            values.write(&d.as_days().to_le_bytes()).map_err(r)?;
+            Ok((ValueType::Date as u8, offset, 4))
         }
         Value::Time(t) => {
-            // Store as u64 nanos + i32 offset_seconds
-            values_buf.extend_from_slice(&t.as_nanos().to_le_bytes());
-            values_buf.extend_from_slice(&t.offset_seconds().unwrap_or(0).to_le_bytes());
-            (ValueType::Time as u8, offset, 12)
+            values.write(&t.as_nanos().to_le_bytes()).map_err(r)?;
+            values.write(&t.offset_seconds().unwrap_or(0).to_le_bytes()).map_err(r)?;
+            Ok((ValueType::Time as u8, offset, 12))
         }
         Value::Duration(d) => {
-            // Store as 3 × i64 (months, days, nanos)
-            values_buf.extend_from_slice(&d.months().to_le_bytes());
-            values_buf.extend_from_slice(&d.days().to_le_bytes());
-            values_buf.extend_from_slice(&d.nanos().to_le_bytes());
-            (ValueType::Duration as u8, offset, 24)
+            values.write(&d.months().to_le_bytes()).map_err(r)?;
+            values.write(&d.days().to_le_bytes()).map_err(r)?;
+            values.write(&d.nanos().to_le_bytes()).map_err(r)?;
+            Ok((ValueType::Duration as u8, offset, 24))
         }
         Value::ZonedDatetime(zdt) => {
-            // Store as Timestamp (i64 micros) + i32 offset_seconds
-            values_buf.extend_from_slice(&zdt.as_timestamp().as_micros().to_le_bytes());
-            values_buf.extend_from_slice(&zdt.offset_seconds().to_le_bytes());
-            (ValueType::ZonedDatetime as u8, offset, 12)
+            values.write(&zdt.as_timestamp().as_micros().to_le_bytes()).map_err(r)?;
+            values.write(&zdt.offset_seconds().to_le_bytes()).map_err(r)?;
+            Ok((ValueType::ZonedDatetime as u8, offset, 12))
         }
         Value::Vector(v) => {
-            // Write f32 array directly
             let byte_len = (v.len() * 4) as u32;
             for &f in v.iter() {
-                values_buf.extend_from_slice(&f.to_le_bytes());
+                values.write(&f.to_le_bytes()).map_err(r)?;
             }
-            (ValueType::Vector as u8, offset, byte_len)
+            Ok((ValueType::Vector as u8, offset, byte_len))
         }
         Value::List(items) => {
-            // Serialize as: count:u32 + items serialized recursively
-            let start = values_buf.len() as u32;
-            values_buf.extend_from_slice(&(items.len() as u32).to_le_bytes());
+            let start = values.offset();
+            values.write(&(items.len() as u32).to_le_bytes()).map_err(r)?;
             for item in items.iter() {
-                let (vt, _off, _len) = serialize_value(item, values_buf, strings);
-                // Store type + length inline for each item
-                values_buf.push(vt);
+                let (vt, _off, _len) = serialize_value(item, values, strings)?;
+                values.write(&[vt]).map_err(r)?;
             }
-            let total_len = values_buf.len() as u32 - start;
-            (ValueType::List as u8, start, total_len)
+            let total_len = values.offset() - start;
+            Ok((ValueType::List as u8, start, total_len))
         }
         Value::Map(map) => {
-            // Serialize as: count:u32 + (key_ref + value)*
-            let start = values_buf.len() as u32;
-            values_buf.extend_from_slice(&(map.len() as u32).to_le_bytes());
+            let start = values.offset();
+            values.write(&(map.len() as u32).to_le_bytes()).map_err(r)?;
             for (k, v) in map.iter() {
                 let key_ref = strings.intern(k.as_str());
-                values_buf.extend_from_slice(&key_ref.offset.to_le_bytes());
-                values_buf.extend_from_slice(&key_ref.len.to_le_bytes());
-                let (vt, _off, _len) = serialize_value(v, values_buf, strings);
-                values_buf.push(vt);
+                values.write(&key_ref.offset.to_le_bytes()).map_err(r)?;
+                values.write(&key_ref.len.to_le_bytes()).map_err(r)?;
+                let (vt, _off, _len) = serialize_value(v, values, strings)?;
+                values.write(&[vt]).map_err(r)?;
             }
-            let total_len = values_buf.len() as u32 - start;
-            (ValueType::Map as u8, start, total_len)
+            let total_len = values.offset() - start;
+            Ok((ValueType::Map as u8, start, total_len))
         }
         Value::Path { nodes, edges } => {
-            let start = values_buf.len() as u32;
-            values_buf.extend_from_slice(&(nodes.len() as u32).to_le_bytes());
-            values_buf.extend_from_slice(&(edges.len() as u32).to_le_bytes());
+            let start = values.offset();
+            values.write(&(nodes.len() as u32).to_le_bytes()).map_err(r)?;
+            values.write(&(edges.len() as u32).to_le_bytes()).map_err(r)?;
             for n in nodes.iter() {
-                let (vt, _, _) = serialize_value(n, values_buf, strings);
-                values_buf.push(vt);
+                let (vt, _, _) = serialize_value(n, values, strings)?;
+                values.write(&[vt]).map_err(r)?;
             }
             for e in edges.iter() {
-                let (vt, _, _) = serialize_value(e, values_buf, strings);
-                values_buf.push(vt);
+                let (vt, _, _) = serialize_value(e, values, strings)?;
+                values.write(&[vt]).map_err(r)?;
             }
-            let total_len = values_buf.len() as u32 - start;
-            (ValueType::Path as u8, start, total_len)
+            let total_len = values.offset() - start;
+            Ok((ValueType::Path as u8, start, total_len))
         }
     }
 }
@@ -229,10 +290,12 @@ fn write_native_v2_inner(
         .map_err(|e| Error::Internal(format!("create file: {e}")))?;
     let mut w = BufWriter::with_capacity(8 * 1024 * 1024, file); // 8MB buffer
 
-    // ── Phase 1: collect all data in memory ──
+    // ── Phase 1: collect structural data in memory, spill values to disk ──
 
     let mut strings = StringTableBuilder::new();
-    let mut values_buf: Vec<u8> = Vec::with_capacity(64 * 1024 * 1024); // 64MB for values
+    let values_dir = path.parent().unwrap_or(Path::new("."));
+    let mut values_writer = ValuesWriter::new(values_dir)
+        .map_err(|e| Error::Internal(format!("create values temp file: {e}")))?;
 
     // 1a. Build label catalog: label_name → label_id (u32)
     let all_labels = store.all_labels();
@@ -278,12 +341,12 @@ fn write_native_v2_inner(
             }
         }
 
-        // Collect properties
+        // Collect properties (values spilled to temp file on disk)
         let prop_offset = prop_entries.len() as u32;
         let mut prop_count = 0u16;
         for (key, value) in &node.properties {
             let key_ref = strings.intern(key.as_str());
-            let (vt, voff, vlen) = serialize_value(value, &mut values_buf, &mut strings);
+            let (vt, voff, vlen) = serialize_value(value, &mut values_writer, &mut strings)?;
             prop_entries.push(PropEntry::new(key_ref, vt, voff, vlen));
             prop_count += 1;
         }
@@ -319,12 +382,12 @@ fn write_native_v2_inner(
 
         let type_ref = strings.intern(edge.edge_type.as_str());
 
-        // Collect properties
+        // Collect properties (values spilled to temp file on disk)
         let prop_offset = prop_entries.len() as u32;
         let mut prop_count = 0u16;
         for (key, value) in &edge.properties {
             let key_ref = strings.intern(key.as_str());
-            let (vt, voff, vlen) = serialize_value(value, &mut values_buf, &mut strings);
+            let (vt, voff, vlen) = serialize_value(value, &mut values_writer, &mut strings)?;
             prop_entries.push(PropEntry::new(key_ref, vt, voff, vlen));
             prop_count += 1;
         }
@@ -394,7 +457,27 @@ fn write_native_v2_inner(
     let props_bytes = obrain_common::types::flat::slice_as_bytes(&prop_entries);
     write_section!(SectionType::Properties, props_bytes);
 
-    write_section!(SectionType::PropertyValues, &values_buf);
+    // PropertyValues: stream from temp file on disk (not held in RAM)
+    {
+        values_writer.flush()
+            .map_err(|e| Error::Internal(format!("flush values: {e}")))?;
+        let values_len = values_writer.len();
+
+        // Align
+        let padding = align_padding(cursor, SECTION_ALIGN);
+        if padding > 0 {
+            w.write_all(&vec![0u8; padding as usize])
+                .map_err(|e| Error::Internal(format!("write padding: {e}")))?;
+            cursor += padding;
+        }
+
+        let offset = cursor;
+        values_writer.copy_to_and_cleanup(&mut w)
+            .map_err(|e| Error::Internal(format!("copy values: {e}")))?;
+        cursor += values_len;
+
+        toc.add(SectionType::PropertyValues, offset, values_len, 0);
+    }
 
     // CSR Forward
     let fwd_off_bytes = u64_slice_as_bytes(&csr_fwd_offsets);

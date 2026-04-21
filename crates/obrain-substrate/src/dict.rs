@@ -48,7 +48,13 @@ use std::path::Path;
 use crate::error::{SubstrateError, SubstrateResult};
 
 const MAGIC: u32 = 0xD1C7_0DB1;
-const FORMAT_VERSION: u32 = 1;
+/// Dict on-disk format version.
+///
+/// * v1 (T6): labels, edge_types, prop_keys, next_node_id, next_edge_id.
+/// * v2 (T7 Step 6): adds `next_engram_id: u16` immediately after
+///   `next_edge_id`. v1 dicts load with `next_engram_id = 1` (default —
+///   the slot allocator starts at 1, slot 0 is reserved).
+const FORMAT_VERSION: u32 = 2;
 
 /// All three registries + allocator state captured at one point in time.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,6 +69,10 @@ pub struct DictSnapshot {
     pub next_node_id: u64,
     /// Next edge slot to allocate. Starts at 1 (slot 0 = null sentinel).
     pub next_edge_id: u64,
+    /// Next engram id to allocate. Starts at 1 (id 0 = null engram, see
+    /// [`crate::engram::MAX_ENGRAM_ID`]). Persisted from format v2 (T7
+    /// Step 6); v1 dicts load this as 1.
+    pub next_engram_id: u16,
 }
 
 impl Default for DictSnapshot {
@@ -73,6 +83,7 @@ impl Default for DictSnapshot {
             prop_keys: Vec::new(),
             next_node_id: 1,
             next_edge_id: 1,
+            next_engram_id: 1,
         }
     }
 }
@@ -111,6 +122,8 @@ impl DictSnapshot {
 
         buf.extend_from_slice(&self.next_node_id.to_le_bytes());
         buf.extend_from_slice(&self.next_edge_id.to_le_bytes());
+        // v2: next_engram_id (u16). Always written by current format.
+        buf.extend_from_slice(&self.next_engram_id.to_le_bytes());
 
         // Pad to 4-byte boundary before crc to keep alignment clean.
         while buf.len() % 4 != 0 {
@@ -137,9 +150,12 @@ impl DictSnapshot {
             )));
         }
         let version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
-        if version != FORMAT_VERSION {
+        // Accept both v1 and v2:
+        // * v1 → no `next_engram_id` field; load as 1 (default).
+        // * v2 → reads the trailing u16.
+        if !(version == 1 || version == FORMAT_VERSION) {
             return Err(SubstrateError::Internal(format!(
-                "dict version {version} unsupported (expected {FORMAT_VERSION})"
+                "dict version {version} unsupported (expected 1 or {FORMAT_VERSION})"
             )));
         }
 
@@ -178,12 +194,34 @@ impl DictSnapshot {
                  next_edge_id={next_edge_id} (both must be ≥ 1; slot 0 = null sentinel)"
             )));
         }
+        // v2: read `next_engram_id` (u16) immediately after `next_edge_id`.
+        // v1: default to 1 (slot 0 reserved for null engram).
+        let next_engram_id: u16 = if version >= 2 {
+            if cur.len() < 18 {
+                return Err(SubstrateError::Internal(format!(
+                    "dict v2 truncated at next_engram_id (need 18, have {})",
+                    cur.len()
+                )));
+            }
+            let v = u16::from_le_bytes(cur[16..18].try_into().unwrap());
+            if v == 0 {
+                return Err(SubstrateError::Internal(
+                    "dict invariant violation: next_engram_id=0 (must be ≥ 1; \
+                     id 0 = null engram sentinel)"
+                        .into(),
+                ));
+            }
+            v
+        } else {
+            1
+        };
         Ok(Self {
             labels,
             edge_types,
             prop_keys,
             next_node_id,
             next_edge_id,
+            next_engram_id,
         })
     }
 
@@ -312,6 +350,7 @@ mod tests {
             prop_keys: vec!["name".into(), "age".into(), "role".into()],
             next_node_id: 12345,
             next_edge_id: 67_890,
+            next_engram_id: 4321,
         };
         let bytes = s.to_bytes().unwrap();
         let back = DictSnapshot::from_bytes(&bytes).unwrap();
@@ -328,6 +367,7 @@ mod tests {
             prop_keys: vec!["id".into()],
             next_node_id: 42,
             next_edge_id: 99,
+            next_engram_id: 7,
         };
         s.persist(&path).unwrap();
         let back = DictSnapshot::load(&path).unwrap();
@@ -405,5 +445,121 @@ mod tests {
             msg.contains("next_node_id") || msg.contains("next_edge_id"),
             "got: {msg}"
         );
+    }
+
+    /// Build a synthetic v1 dict on the wire — exactly the layout that
+    /// shipped before T7 Step 6 (no `next_engram_id`). The new loader
+    /// must accept it and default the engram allocator to 1.
+    fn build_v1_bytes(
+        labels: &[&str],
+        edge_types: &[&str],
+        prop_keys: &[&str],
+        next_node_id: u64,
+        next_edge_id: u64,
+    ) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(256);
+        buf.extend_from_slice(&MAGIC.to_le_bytes());
+        buf.extend_from_slice(&1u32.to_le_bytes()); // version 1
+        let write_names = |buf: &mut Vec<u8>, names: &[&str]| {
+            buf.extend_from_slice(&(names.len() as u16).to_le_bytes());
+            for n in names {
+                let b = n.as_bytes();
+                buf.push(b.len() as u8);
+                buf.extend_from_slice(b);
+            }
+        };
+        write_names(&mut buf, labels);
+        write_names(&mut buf, edge_types);
+        write_names(&mut buf, prop_keys);
+        buf.extend_from_slice(&next_node_id.to_le_bytes());
+        buf.extend_from_slice(&next_edge_id.to_le_bytes());
+        // No next_engram_id.
+        while buf.len() % 4 != 0 {
+            buf.push(0);
+        }
+        let crc = crc32c(&buf);
+        buf.extend_from_slice(&crc.to_le_bytes());
+        buf
+    }
+
+    #[test]
+    fn v1_dict_loads_with_default_next_engram_id() {
+        let bytes = build_v1_bytes(
+            &["Person"],
+            &["KNOWS", "COACT"],
+            &["name"],
+            17,
+            42,
+        );
+        let snap = DictSnapshot::from_bytes(&bytes).unwrap();
+        assert_eq!(snap.labels, vec!["Person".to_string()]);
+        assert_eq!(
+            snap.edge_types,
+            vec!["KNOWS".to_string(), "COACT".to_string()]
+        );
+        assert_eq!(snap.prop_keys, vec!["name".to_string()]);
+        assert_eq!(snap.next_node_id, 17);
+        assert_eq!(snap.next_edge_id, 42);
+        // v1 has no engram allocator → defaults to 1.
+        assert_eq!(snap.next_engram_id, 1);
+    }
+
+    #[test]
+    fn v2_dict_roundtrips_engram_counter() {
+        let s = DictSnapshot {
+            labels: vec!["A".into()],
+            edge_types: vec!["E".into()],
+            prop_keys: vec!["k".into()],
+            next_node_id: 5,
+            next_edge_id: 6,
+            next_engram_id: 9999,
+        };
+        let bytes = s.to_bytes().unwrap();
+        let back = DictSnapshot::from_bytes(&bytes).unwrap();
+        assert_eq!(back.next_engram_id, 9999);
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn v2_zero_engram_counter_rejected() {
+        // Manually craft v2 bytes with next_engram_id = 0.
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&MAGIC.to_le_bytes());
+        buf.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+        // Empty name lists
+        buf.extend_from_slice(&0u16.to_le_bytes());
+        buf.extend_from_slice(&0u16.to_le_bytes());
+        buf.extend_from_slice(&0u16.to_le_bytes());
+        buf.extend_from_slice(&1u64.to_le_bytes()); // next_node_id
+        buf.extend_from_slice(&1u64.to_le_bytes()); // next_edge_id
+        buf.extend_from_slice(&0u16.to_le_bytes()); // next_engram_id = 0 (illegal)
+        while buf.len() % 4 != 0 {
+            buf.push(0);
+        }
+        let crc = crc32c(&buf);
+        buf.extend_from_slice(&crc.to_le_bytes());
+        let err = DictSnapshot::from_bytes(&buf).unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("next_engram_id"), "got: {msg}");
+    }
+
+    #[test]
+    fn unknown_version_rejected() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&MAGIC.to_le_bytes());
+        buf.extend_from_slice(&999u32.to_le_bytes()); // future / unknown version
+        buf.extend_from_slice(&0u16.to_le_bytes());
+        buf.extend_from_slice(&0u16.to_le_bytes());
+        buf.extend_from_slice(&0u16.to_le_bytes());
+        buf.extend_from_slice(&1u64.to_le_bytes());
+        buf.extend_from_slice(&1u64.to_le_bytes());
+        while buf.len() % 4 != 0 {
+            buf.push(0);
+        }
+        let crc = crc32c(&buf);
+        buf.extend_from_slice(&crc.to_le_bytes());
+        let err = DictSnapshot::from_bytes(&buf).unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("999"), "got: {msg}");
     }
 }

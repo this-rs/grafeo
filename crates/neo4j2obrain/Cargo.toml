@@ -17,12 +17,28 @@ path = "src/main.rs"
 # without a network dependency during `cargo check --workspace`. Enable
 # with `--features neo4j-bolt` for production imports.
 default = []
-neo4j-bolt = ["neo4rs", "tokio"]
+neo4j-bolt = ["neo4rs", "tokio", "chrono"]
+# ONNX embedding computation for stage 2 (fill missing `_st_embedding`).
+# Off by default so the hermetic workspace build does not pull the
+# ~17 MB ort transitive closure. Enable for production imports;
+# without it stage 2 logs "no embedder wired" and sets
+# `stats.embeddings_computed = 0`.
+#
+# Uses `ort` with DEFAULT features (bundled onnxruntime downloaded by
+# the build script), NOT `load-dynamic`. The `load-dynamic` path
+# deadlocks on macOS inside `ort::setup_api` → triple-`OnceLock`
+# reentrance when the ABI cannot be resolved. See gotcha note tagged
+# `ort deadlock`. The prod embedder in obrain-chat uses default
+# features too, so staying aligned here means the vectors we emit
+# land in the same space as the runtime.
+embed = ["dep:ort"]
 
 [dependencies]
 obrain-core = { workspace = true }
 obrain-common = { workspace = true }
 obrain-substrate = { workspace = true }
+obrain-cognitive = { workspace = true, features = ["community"] }
+obrain-adapters = { workspace = true, features = ["algos"] }
 
 clap = { version = "4.5", features = ["derive", "env"] }
 indicatif = "0.17"
@@ -37,6 +53,25 @@ parking_lot = { workspace = true }
 # Optional — pulled in only with `--features neo4j-bolt`.
 neo4rs = { version = "0.8", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"], optional = true }
+# neo4rs uses chrono internally for Date/DateTime; we translate to
+# obrain's Timestamp/Date via chrono. Same version as neo4rs to avoid
+# dual-compilation.
+chrono = { version = "0.4", default-features = false, features = ["std"], optional = true }
+
+# Optional — pulled in only with `--features embed`.
+#
+# Default features intentionally ON: this picks the bundled
+# onnxruntime build script (~17 MB DL at compile time, cached after).
+# Do NOT switch to `default-features = false, features = ["load-dynamic", "api-24"]`
+# — that path deadlocks on macOS (see gotcha note `ort deadlock`).
+ort = { version = "2.0.0-rc.12", optional = true }
+
+# Stage 2 parallelism. Thread-local `SentenceTransformer` × rayon worker
+# gives near-linear scaling on embedding inference — Wikipedia-scale
+# imports go from hours to minutes on an 8-core M2. Kept a hard dep
+# (not feature-gated) so the pipeline can also parallelize other
+# per-node scans in the future without another feature toggle.
+rayon = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

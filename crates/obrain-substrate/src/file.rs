@@ -40,9 +40,49 @@
 
 use crate::error::{SubstrateError, SubstrateResult};
 use crate::meta::{MetaHeader, META_FILE_SIZE, SUBSTRATE_FORMAT_VERSION};
-use memmap2::{MmapMut, MmapOptions};
+use memmap2::{Advice, MmapMut, MmapOptions};
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
+
+/// Threshold below which `advise_huge_pages` refuses to apply the THP hint:
+/// mappings smaller than this are too small to benefit from a 2 MB huge
+/// page (they would waste TLB entries and fragment the address space).
+/// 8 MB covers typical zone files on bootstrap while still letting growing
+/// zones acquire huge-page backing as soon as they cross this threshold.
+const HUGE_PAGE_MIN_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Cross-platform huge-page / Transparent-Huge-Pages hint for a mmap region.
+///
+/// * **Linux**: issues `madvise(MADV_HUGEPAGE)`. The kernel tries to back
+///   the region with 2 MB pages where possible. Requires
+///   `CONFIG_TRANSPARENT_HUGEPAGE=y`. If THP is disabled the call returns
+///   `EINVAL` and we silently ignore it — the hint is advisory.
+/// * **macOS / Windows / other**: no-op. Darwin's superpages require
+///   allocation-time flags (`VM_FLAGS_SUPERPAGE_SIZE_2MB`) that memmap2
+///   does not expose, and Windows large pages require a privileged token.
+///   Both platforms fall back to default 4-16 KB pages without error.
+///
+/// The hint lives on the VMA, not the file descriptor, so this helper must
+/// be invoked after every `map_mut` / remap. Zones smaller than
+/// `HUGE_PAGE_MIN_BYTES` are skipped — they can't fill a single huge page.
+fn advise_huge_pages(map: &MmapMut, len: u64) {
+    if len < HUGE_PAGE_MIN_BYTES {
+        return;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // Ignore the result: THP is a hint. Kernels without CONFIG_TRANSPARENT_HUGEPAGE
+        // return EINVAL; we treat that as "no huge pages, back with regular 4K" which is
+        // exactly the pre-hint behaviour.
+        let _ = map.advise(Advice::HugePage);
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        // Keep the binding to silence the unused-var warning without cfg-annotating
+        // the call site.
+        let _ = map;
+    }
+}
 
 /// Canonical names for the per-zone files inside a substrate directory.
 pub mod zone {
@@ -145,7 +185,9 @@ impl ZoneFile {
             // SAFETY: we just opened `file` with read+write, the substrate
             // directory is exclusively locked (see SubstrateFile::open), and we
             // never truncate while a mmap is live.
-            Some(unsafe { MmapOptions::new().len(len as usize).map_mut(&file)? })
+            let m = unsafe { MmapOptions::new().len(len as usize).map_mut(&file)? };
+            advise_huge_pages(&m, len);
+            Some(m)
         };
         Ok(Self {
             path: path.to_path_buf(),
@@ -211,7 +253,13 @@ impl ZoneFile {
         self.file.set_len(new_len)?;
         self.len = new_len;
         // SAFETY: same invariants as `open_or_create`.
-        self.map = Some(unsafe { MmapOptions::new().len(new_len as usize).map_mut(&self.file)? });
+        let m = unsafe { MmapOptions::new().len(new_len as usize).map_mut(&self.file)? };
+        // `madvise(MADV_HUGEPAGE)` must be re-applied after every remap — the
+        // hint lives on the VMA, not on the file. A zone that crossed the
+        // HUGE_PAGE_MIN_BYTES threshold during this grow will now be eligible
+        // for THP backing.
+        advise_huge_pages(&m, new_len);
+        self.map = Some(m);
         self.remap_count += 1;
         Ok(())
     }
@@ -228,6 +276,74 @@ impl ZoneFile {
     /// Fsync the underlying file descriptor.
     pub fn fsync(&self) -> SubstrateResult<()> {
         self.file.sync_all()?;
+        Ok(())
+    }
+
+    /// Evict pages backing this zone from the resident set via
+    /// `madvise(MADV_DONTNEED)` (Unix only — on non-Unix this is a no-op).
+    ///
+    /// Primary use: the T11 Step 5 prefetch bench, which needs a cold
+    /// page cache to measure the `WILLNEED` effect. Production code
+    /// does not call this — `DONTNEED` is a destructive hint (subsequent
+    /// reads miss the cache and fault in from disk).
+    ///
+    /// Marked `unsafe` because `DONTNEED` semantics on Linux include
+    /// *discarding dirty pages* in anonymous mappings. For a
+    /// file-backed mmap the behavior is benign (pages are re-read from
+    /// the file on next access), but we surface the hazard so tests
+    /// and developers explicitly opt in.
+    ///
+    /// # Safety
+    /// The caller must ensure no other thread is reading this zone
+    /// concurrently via an existing `&[u8]` reference, since the pages
+    /// backing that slice may be evicted and re-faulted between reads.
+    pub unsafe fn advise_dontneed(&self) -> SubstrateResult<()> {
+        if let Some(m) = self.map.as_ref() {
+            // SAFETY: delegated to caller — file-backed mapping, caller
+            // attests no live &[u8] outstanding.
+            unsafe { m.unchecked_advise(memmap2::UncheckedAdvice::DontNeed)? };
+        }
+        Ok(())
+    }
+
+    /// Advise the kernel that the byte range `[offset, offset + len)` of
+    /// this zone will be accessed soon (`madvise(MADV_WILLNEED)` on Unix,
+    /// `PrefetchVirtualMemory` on Windows, no-op elsewhere).
+    ///
+    /// This is a *hint* — it does not block and does not guarantee the
+    /// range will be resident. It asks the kernel to schedule readahead
+    /// for the given pages before the application touches them, which on
+    /// cold-cache access patterns can remove most of the minor+major
+    /// page-fault latency from the hot path (T11 Step 5).
+    ///
+    /// **Bounds.** `offset + len` is clamped to `self.len` so callers can
+    /// safely advise a range that overruns the mapped region (typical
+    /// when `last_slot + 1` rounds past the high-water mark on the last
+    /// partial page).
+    ///
+    /// **No-op cases:**
+    /// * Zone is unmapped (`self.map` is `None`, i.e. empty file) →
+    ///   returns `Ok(())` immediately.
+    /// * `len == 0` after clamping → `Ok(())` (the kernel call itself is
+    ///   a no-op for zero-length ranges on most platforms, and skipping
+    ///   avoids an unnecessary syscall).
+    ///
+    /// **Errors.** An I/O error from `madvise` is surfaced as
+    /// `SubstrateError::Io`. Callers treat the result as best-effort: a
+    /// prefetch failure must not abort the activation pipeline.
+    pub fn advise_willneed(&self, offset: usize, len: usize) -> SubstrateResult<()> {
+        let Some(m) = self.map.as_ref() else {
+            return Ok(());
+        };
+        let total = self.len as usize;
+        if total == 0 || offset >= total {
+            return Ok(());
+        }
+        let clamped = len.min(total - offset);
+        if clamped == 0 {
+            return Ok(());
+        }
+        m.advise_range(Advice::WillNeed, offset, clamped)?;
         Ok(())
     }
 }

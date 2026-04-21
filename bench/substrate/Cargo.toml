@@ -1,0 +1,74 @@
+# Standalone workspace — kept out of the main grafeo workspace to avoid
+# cross-contaminating release builds with bench-only dependencies.
+[workspace]
+
+[package]
+name = "bench-substrate"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+description = "Baseline + Substrate comparison benchmarks — RSS, startup, retrieval, activation"
+build = "build.rs"
+
+[[bin]]
+name = "bench-baseline"
+path = "src/bench_baseline.rs"
+
+[[bin]]
+name = "bench-substrate"
+path = "src/bench_substrate.rs"
+
+# T9 — retrieval gate. Measures recall@10 / recall@100 against an f32 brute-force
+# ground truth + p50/p95/p99 latency on 10⁶ nodes. Exits non-zero if any gate fails.
+[[bin]]
+name = "retrieval-gate"
+path = "src/bin/retrieval_gate.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+sysinfo = "0.32"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# T9 — retrieval gate binary needs substrate tiers + cascade at runtime,
+# not just bench-time. Promoted from dev-dependencies for the bin target.
+obrain-substrate = { path = "../../crates/obrain-substrate" }
+# T10 — LDleiden incremental community detection bench.
+obrain-cognitive = { path = "../../crates/obrain-cognitive", features = ["community"] }
+rayon = "1"
+
+# NOTE: obrain-engine / obrain-core path deps are wired in T3 once the SubstrateStore
+# public surface is defined. Until then, the bench runners are stubs that exercise
+# the RSS sampler + JSON schema only.
+
+[dev-dependencies]
+criterion = "0.8"
+tempfile = "3"
+
+[[bench]]
+name = "retrieval"
+harness = false
+
+[[bench]]
+name = "activation"
+harness = false
+
+[[bench]]
+name = "crud"
+harness = false
+
+# T10 Step 5 — LDleiden incremental community detection at production
+# scale. Measures batch bootstrap (n=10⁶), 10% Δ edges incremental
+# throughput, and end-to-end modularity preservation vs. full re-run.
+[[bench]]
+name = "ldleiden"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = 1

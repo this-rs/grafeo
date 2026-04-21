@@ -148,9 +148,18 @@ pub async fn stream_into_substrate(
 
 /// Translate a Neo4j bolt map into substrate [`Value`]s.
 ///
-/// Supported kinds: Null, Boolean, Integer, Float, String, List<primitive>.
-/// Unsupported kinds (Geo / Date / Duration / nested Map / Node / Relationship)
-/// are dropped with a single warn-level trace.
+/// Supported kinds:
+/// * scalars — Null, Boolean, Integer, Float, String, Bytes
+/// * temporal — Date, DateTime, LocalDateTime, DateTimeZoneId
+///   (collapsed to [`Value::Timestamp`] in seconds)
+/// * containers — List (→ `Vector<f32>` if all-numeric, else recursive `List`)
+///   and Map (recursive)
+///
+/// Dropped kinds (with a single warn-level trace per occurrence): Node,
+/// Relation, UnboundedRelation, Path, Point2D, Point3D, Duration, Time,
+/// LocalTime. These are either embedded-graph constructs that do not
+/// translate 1:1 to properties, or geo / duration types the cognitive
+/// pipeline does not consume.
 fn bolt_map_to_props(map: &neo4rs::BoltMap) -> Vec<(PropertyKey, Value)> {
     let mut out = Vec::with_capacity(map.value.len());
     for (k, v) in map.value.iter() {
@@ -162,14 +171,94 @@ fn bolt_map_to_props(map: &neo4rs::BoltMap) -> Vec<(PropertyKey, Value)> {
 }
 
 /// Best-effort translation of a single bolt value.
+///
+/// Returns `None` when the value is Null or of a kind we intentionally
+/// drop. The first two cases are separated in the match so Null does
+/// not trip the warn branch (Null is semantically a valid "absent"
+/// marker, not an unsupported type).
 fn value_from_bolt(v: &neo4rs::BoltType) -> Option<Value> {
     use neo4rs::BoltType::*;
+    use obrain_common::types::Timestamp;
+
     Some(match v {
         Null(_) => return None,
         Boolean(b) => Value::Bool(b.value),
         Integer(i) => Value::Int64(i.value),
         Float(f) => Value::Float64(f.value),
         String(s) => Value::String(s.value.clone().into()),
+        Bytes(b) => Value::Bytes(b.value.as_ref().into()),
+
+        // -------- Lists --------------------------------------------------
+        //
+        // Neo4j embedding vectors are almost always `List<Float>` on the
+        // bolt wire. Detect that shape and fast-path to `Value::Vector`
+        // (Arc<[f32]>) so the cognitive pipeline sees them natively.
+        // Fallback: recursive translation into `Value::List` for
+        // heterogeneous or non-numeric lists.
+        List(list) => translate_list(list)?,
+
+        // -------- Maps ---------------------------------------------------
+        Map(m) => {
+            use std::collections::BTreeMap;
+            use std::sync::Arc;
+            let mut bt = BTreeMap::new();
+            for (k, v) in m.value.iter() {
+                if let Some(val) = value_from_bolt(v) {
+                    bt.insert(PropertyKey::new(k.value.as_str()), val);
+                }
+            }
+            if bt.is_empty() {
+                return None;
+            }
+            Value::Map(Arc::new(bt))
+        }
+
+        // -------- Temporal ----------------------------------------------
+        //
+        // We collapse every time-zoned / local / date-only variant to
+        // a single UTC-seconds `Timestamp`. The cognitive pipeline does
+        // not distinguish; preserving the original kind would force us
+        // to fan out into several obrain Value variants for no benefit.
+        DateTime(dt) => {
+            use chrono::DateTime as ChronoDT;
+            use chrono::FixedOffset;
+            match ChronoDT::<FixedOffset>::try_from(dt) {
+                Ok(t) => Value::Timestamp(Timestamp::from_secs(t.timestamp())),
+                Err(_) => return None,
+            }
+        }
+        LocalDateTime(dt) => {
+            use chrono::NaiveDateTime;
+            match NaiveDateTime::try_from(dt) {
+                Ok(t) => Value::Timestamp(Timestamp::from_secs(t.and_utc().timestamp())),
+                Err(_) => return None,
+            }
+        }
+        DateTimeZoneId(dt) => {
+            use chrono::DateTime as ChronoDT;
+            use chrono::FixedOffset;
+            match ChronoDT::<FixedOffset>::try_from(dt) {
+                Ok(t) => Value::Timestamp(Timestamp::from_secs(t.timestamp())),
+                Err(_) => return None,
+            }
+        }
+        Date(d) => {
+            use chrono::NaiveDate;
+            match NaiveDate::try_from(d) {
+                Ok(nd) => {
+                    // Midnight UTC on that date. Keeps ordering semantics
+                    // without introducing a distinct Date variant.
+                    let ts = nd
+                        .and_hms_opt(0, 0, 0)
+                        .map(|ndt| ndt.and_utc().timestamp())
+                        .unwrap_or(0);
+                    Value::Timestamp(Timestamp::from_secs(ts))
+                }
+                Err(_) => return None,
+            }
+        }
+
+        // -------- Dropped kinds -----------------------------------------
         _ => {
             tracing::warn!(
                 "bolt_reader: dropping unsupported Neo4j value kind ({:?})",
@@ -178,4 +267,53 @@ fn value_from_bolt(v: &neo4rs::BoltType) -> Option<Value> {
             return None;
         }
     })
+}
+
+/// Translate a `BoltList` into either a dense `Value::Vector` (when
+/// every element is numeric — the embedding case) or a heterogeneous
+/// `Value::List`.
+///
+/// The numeric fast-path inspects every element: as soon as a non-numeric
+/// one is seen we fall back to the recursive path. Integers are cast to
+/// f32 so a `List<Integer>` that happens to encode a dense vector (rare,
+/// but possible in legacy schemas) still lands as `Value::Vector`.
+fn translate_list(list: &neo4rs::BoltList) -> Option<Value> {
+    use neo4rs::BoltType::*;
+    use std::sync::Arc;
+
+    if list.value.is_empty() {
+        return Some(Value::List(Arc::from(Vec::<Value>::new())));
+    }
+
+    // Numeric detection — Float and/or Integer only.
+    let all_numeric = list
+        .value
+        .iter()
+        .all(|e| matches!(e, Float(_) | Integer(_)));
+
+    if all_numeric {
+        let mut buf: Vec<f32> = Vec::with_capacity(list.value.len());
+        for e in list.value.iter() {
+            match e {
+                Float(f) => buf.push(f.value as f32),
+                Integer(i) => buf.push(i.value as f32),
+                _ => unreachable!("numeric-only path already checked"),
+            }
+        }
+        return Some(Value::Vector(Arc::from(buf)));
+    }
+
+    // Heterogeneous / non-numeric: recurse per element, skip Nulls and
+    // drops cleanly. An all-dropped list collapses to None so we don't
+    // write an empty `List` property — matches the Map handling above.
+    let mut items: Vec<Value> = Vec::with_capacity(list.value.len());
+    for e in list.value.iter() {
+        if let Some(v) = value_from_bolt(e) {
+            items.push(v);
+        }
+    }
+    if items.is_empty() {
+        return None;
+    }
+    Some(Value::List(Arc::from(items)))
 }

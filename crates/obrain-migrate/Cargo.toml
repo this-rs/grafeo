@@ -1,0 +1,59 @@
+[package]
+name = "obrain-migrate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "One-shot migration tool: legacy .obrain (LpgStore) → substrate format"
+
+[[bin]]
+name = "obrain-migrate"
+path = "src/main.rs"
+
+[features]
+default = ["legacy-read", "single-file-read"]
+# When enabled, the binary can read pre-substrate .obrain stores via the
+# in-tree LpgStore implementation (obrain-core). This feature is expected
+# to be dropped together with LpgStore itself at T17 cut-over — at that
+# point the binary retires.
+legacy-read = []
+# When enabled, the binary can also read single-file `.obrain` databases
+# (the `GRAF`-magic on-disk format used by `ObrainDB::open`). Dispatches
+# directory vs. single-file at open time. Kept as a feature so the
+# `legacy-read`-only build stays free of the obrain-engine dep. Mandatory
+# for migrating e.g. `wikipedia.obrain` (21 GB v2 native) into the new
+# substrate layout.
+single-file-read = ["dep:obrain-engine"]
+
+[dependencies]
+obrain-core = { workspace = true, features = ["tiered-storage"] }
+obrain-common = { workspace = true }
+obrain-substrate = { workspace = true }
+# Used by the `single-file-read` path to open a v1/v2 `.obrain` file and
+# expose its graph as an `Arc<dyn GraphStore>`. We take obrain-engine
+# with its upstream `default` features so the `QueryLanguage` enum
+# (gated per-feature inside obrain-engine) stays non-empty — a minimal
+# feature set would leave several `match` arms non-exhaustive. On top of
+# defaults we add `obrain-file` so both the `ObrainFileManager` side and
+# the `MmapStore` side (v2) are compiled in. The v2 mmap path is the
+# zero-copy reader used by `wikipedia.obrain` and any other large
+# single-file export.
+obrain-engine = { workspace = true, default-features = true, features = ["obrain-file"], optional = true }
+
+clap = { version = "4.5", features = ["derive"] }
+indicatif = "0.17"
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+sha2 = { workspace = true }
+parking_lot = { workspace = true }
+rayon = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

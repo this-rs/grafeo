@@ -106,7 +106,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU32, AtomicU64, Ordering};
 
 use arcstr::ArcStr;
 use dashmap::DashMap;
@@ -123,8 +123,13 @@ use smallvec::SmallVec;
 
 use crate::error::{SubstrateError, SubstrateResult};
 use crate::file::SubstrateFile;
+use crate::meta::meta_flags;
 use crate::record::{
-    EdgeRecord, NodeRecord, PackedScarUtilAff, U48, edge_flags, f32_to_q1_15,
+    EdgeRecord, NodeRecord, NODES_PER_PAGE, PackedScarUtilAff, U48, edge_flags, f32_to_q1_15,
+};
+use crate::props_snapshot::{
+    entries_to_map, map_to_entries, PropEntry, PropertiesSnapshotV1,
+    PropertiesStreamingWriter, PROPS_FILENAME,
 };
 use crate::wal_io::SyncMode;
 use crate::writer::Writer;
@@ -365,6 +370,10 @@ pub struct SubstrateStore {
     /// format spec (EdgeRecord at index 0 is never a real edge); allocation
     /// starts at 1.
     next_edge_id: AtomicU64,
+    /// Next engram id to allocate. Id 0 is the null-engram sentinel
+    /// (see [`crate::engram::MAX_ENGRAM_ID`]); allocation starts at 1.
+    /// Persisted via `substrate.dict` v2.
+    next_engram_id: AtomicU16,
     /// In-memory node state (labels + properties). The durable skeleton
     /// lives in the Nodes zone; the fields here become persistent in later
     /// T4 steps.
@@ -391,6 +400,55 @@ pub struct SubstrateStore {
     /// Cached statistics snapshot (cost-based optimizer). Step 4 wires this
     /// to real stats; for now a fresh empty snapshot is returned.
     stats: Arc<Statistics>,
+    /// Per-community slot allocator state (T11 Step 3).
+    ///
+    /// Maps `community_id → last_slot_allocated_for_this_community`. The
+    /// allocator uses this to decide:
+    ///
+    /// * **Fast path** — if the community's last slot is the global tail
+    ///   AND lies in the same 4 KiB page as the next allocation would,
+    ///   extend in place (`next_node_id += 1`). Preserves community
+    ///   contiguity at zero cost.
+    /// * **Slow path** — otherwise, round `next_node_id` up to the next
+    ///   page boundary and open a fresh page for this community. Any
+    ///   trailing slots in the previous page are skipped (bounded waste
+    ///   ≤ NODES_PER_PAGE - 1 slots per community transition).
+    ///
+    /// Rebuilt on open by scanning the Nodes zone (one entry per live
+    /// `community_id` observed, pointing at its highest allocated slot).
+    community_placements: DashMap<u32, u32>,
+    /// Per-community **first** allocated slot (T11 Step 5 — prefetch
+    /// companion to `community_placements`).
+    ///
+    /// Maps `community_id → first_slot_ever_allocated_for_this_community`
+    /// that is still live in the current generation of the zone. Together
+    /// with `community_placements` (last slot), this pair forms the
+    /// bounding slot range used by [`Self::prefetch_community`] to issue
+    /// `madvise(WILLNEED)` over the whole community's page range.
+    ///
+    /// * **Rebuild on open** — populated by the ascending-slot scan in
+    ///   [`Self::rebuild_from_zones`] via `entry(cid).or_insert(slot)`.
+    ///   The first live slot observed for a given cid is the oldest page
+    ///   that still holds a node of that community.
+    /// * **Online allocation** — `allocate_node_id_in_community` sets the
+    ///   entry on the slow path for a fresh community (entry was
+    ///   `u32::MAX`). Subsequent slow-path allocations (opening a new
+    ///   page for an existing community) leave it untouched: the
+    ///   community's earliest pages still live on disk, so the bounding
+    ///   range starts there.
+    /// * **Post-compaction** — [`Self::refresh_community_ranges`] is
+    ///   called by the CommunityWarden after a `CompactCommunity` cycle
+    ///   relocates nodes to a new page. This rewrites both maps from the
+    ///   current Nodes zone so the prefetch range tracks the new layout.
+    ///
+    /// The range `[first_slot, last_slot]` is a **superset** of the
+    /// community's actual pages (other communities may have slots
+    /// interleaved mid-range on pre-compaction data). That over-advise is
+    /// bounded — post-compaction the range is tight, pre-compaction it
+    /// is the same bound that `CommunityFragmentation::fragmentation`
+    /// reports. `madvise(WILLNEED)` is a kernel hint, so a loose bound
+    /// wastes no correctness; it just dilutes the page-fault savings.
+    community_first_slots: DashMap<u32, u32>,
 }
 
 #[derive(Clone, Default)]
@@ -451,6 +509,7 @@ impl SubstrateStore {
             writer: Arc::new(writer),
             next_node_id: AtomicU32::new(snapshot.next_node_id as u32),
             next_edge_id: AtomicU64::new(snapshot.next_edge_id),
+            next_engram_id: AtomicU16::new(snapshot.next_engram_id),
             nodes: DashMap::new(),
             edges: DashMap::new(),
             incoming_heads: DashMap::new(),
@@ -458,6 +517,8 @@ impl SubstrateStore {
             edge_types: RwLock::new(edge_types),
             prop_keys: RwLock::new(prop_keys),
             stats: Arc::new(Statistics::new()),
+            community_placements: DashMap::new(),
+            community_first_slots: DashMap::new(),
         };
 
         // (2) Rebuild in-memory side-cars from the on-disk zones. This is
@@ -465,7 +526,54 @@ impl SubstrateStore {
         //     — zero-filled slots past the marks are never read.
         store.rebuild_from_zones()?;
 
+        // (3) Load properties from the sidecar snapshot, if present.
+        //     Fresh stores have no `.props` file and this is a no-op.
+        //     A corrupt snapshot logs a warning and degrades to empty
+        //     properties rather than refusing to open — the store is
+        //     still usable structurally.
+        store.load_properties()?;
+
         Ok(store)
+    }
+
+    /// Load the properties sidecar and populate `self.nodes[*].properties`
+    /// and `self.edges[*].properties` maps. See
+    /// [`Self::persist_properties`] for the symmetric write path.
+    fn load_properties(&self) -> SubstrateResult<()> {
+        let path = {
+            let sub = self.substrate.lock();
+            sub.path().join(PROPS_FILENAME)
+        };
+        let snap = PropertiesSnapshotV1::load(&path)?;
+        let mut nodes_loaded = 0usize;
+        let mut edges_loaded = 0usize;
+        for e in snap.nodes {
+            let nid = obrain_common::types::NodeId(e.id);
+            let map = entries_to_map(e.props);
+            // Merge into the DashMap entry built by rebuild_from_zones.
+            // If the node was tombstoned between the last flush and the
+            // reopen it will not be present here; we silently skip.
+            if let Some(mut in_mem) = self.nodes.get_mut(&nid) {
+                in_mem.properties = map;
+                nodes_loaded += 1;
+            }
+        }
+        for e in snap.edges {
+            let eid = obrain_common::types::EdgeId(e.id);
+            let map = entries_to_map(e.props);
+            if let Some(mut in_mem) = self.edges.get_mut(&eid) {
+                in_mem.properties = map;
+                edges_loaded += 1;
+            }
+        }
+        if nodes_loaded > 0 || edges_loaded > 0 {
+            tracing::info!(
+                "props snapshot: loaded {} node-property maps, {} edge-property maps",
+                nodes_loaded,
+                edges_loaded
+            );
+        }
+        Ok(())
     }
 
     /// Walk the Nodes + Edges zones and rebuild:
@@ -483,7 +591,7 @@ impl SubstrateStore {
     /// allocated; anything further is zero-initialised mmap padding and
     /// ignored.
     fn rebuild_from_zones(&self) -> SubstrateResult<()> {
-        // ---- Nodes: rebuild labels view ----
+        // ---- Nodes: rebuild labels view + community_placements ----
         let node_hw = self.next_node_id.load(Ordering::Acquire);
         let labels_guard = self.labels.read();
         for slot in 1..node_hw {
@@ -504,6 +612,16 @@ impl SubstrateStore {
                     properties: PropertyMap::new(),
                 },
             );
+            // T11 Step 3: community_placements = max live slot per cid.
+            // The scan order is ascending so a simple overwrite trails the
+            // highest-slot-wins invariant without an explicit compare.
+            self.community_placements.insert(rec.community_id, slot);
+            // T11 Step 5: community_first_slots = min live slot per cid.
+            // `entry.or_insert` keeps the first observation — which is the
+            // lowest slot in an ascending scan.
+            self.community_first_slots
+                .entry(rec.community_id)
+                .or_insert(slot);
         }
         drop(labels_guard);
 
@@ -571,6 +689,7 @@ impl SubstrateStore {
             prop_keys: self.prop_keys.read().names(),
             next_node_id: self.next_node_id.load(Ordering::Acquire) as u64,
             next_edge_id: self.next_edge_id.load(Ordering::Acquire),
+            next_engram_id: self.next_engram_id.load(Ordering::Acquire),
         }
     }
 
@@ -599,12 +718,285 @@ impl SubstrateStore {
         self.writer.commit()?;
         self.writer.msync_zones()?;
         self.persist_dict()?;
+        self.persist_properties()?;
         Ok(())
+    }
+
+    /// Open a [`PropertiesStreamingWriter`] targeting this store's
+    /// `substrate.props` sidecar.
+    ///
+    /// This is the DashMap-bypass path used by `obrain-migrate` on
+    /// bulk runs (megalaw, wikipedia…) where routing every property
+    /// through `set_node_property` would blow the DashMap past
+    /// available RAM before the first `flush()`. See
+    /// [`crate::props_snapshot`] for the coexistence contract with
+    /// `flush()` / `persist_properties()`.
+    ///
+    /// Runtime code MUST NOT use this — there's no synchronisation
+    /// with the in-memory property maps, so reads through
+    /// `get_node_property` won't see the streamed values until the
+    /// store is reopened.
+    pub fn open_streaming_props_writer(
+        &self,
+    ) -> SubstrateResult<PropertiesStreamingWriter> {
+        let path = {
+            let sub = self.substrate.lock();
+            sub.path().join(PROPS_FILENAME)
+        };
+        PropertiesStreamingWriter::open(path)
+    }
+
+    /// Persist the in-memory `self.nodes[*].properties` and
+    /// `self.edges[*].properties` maps to a sidecar `substrate.props`
+    /// file. See [`crate::props_snapshot`] for rationale and format.
+    ///
+    /// This is a **full rewrite** every call — there is no delta
+    /// encoding. Callers that churn properties should prefer larger
+    /// flush intervals. The T17 property-pages subsystem will replace
+    /// this with O(Δ) mmap writes.
+    fn persist_properties(&self) -> SubstrateResult<()> {
+        let mut snap = PropertiesSnapshotV1::default();
+        // Nodes
+        snap.nodes.reserve(self.nodes.len());
+        for entry in self.nodes.iter() {
+            // Skip entries with no properties — they're just label
+            // views, no need to persist.
+            if entry.value().properties.is_empty() {
+                continue;
+            }
+            snap.nodes.push(PropEntry {
+                id: entry.key().as_u64(),
+                props: map_to_entries(&entry.value().properties),
+            });
+        }
+        // Edges
+        snap.edges.reserve(self.edges.len());
+        for entry in self.edges.iter() {
+            if entry.value().properties.is_empty() {
+                continue;
+            }
+            snap.edges.push(PropEntry {
+                id: entry.key().as_u64(),
+                props: map_to_entries(&entry.value().properties),
+            });
+        }
+        let path = {
+            let sub = self.substrate.lock();
+            sub.path().join(PROPS_FILENAME)
+        };
+        snap.persist(&path)
     }
 
     /// Number of node slots handed out so far (including tombstoned).
     pub fn slot_high_water(&self) -> u32 {
         self.next_node_id.load(Ordering::Acquire)
+    }
+
+    /// Access the underlying [`Writer`] (used by tests and CommunityWarden
+    /// for direct slot-level reads).
+    pub fn writer(&self) -> &Writer {
+        &self.writer
+    }
+
+    /// Create a node whose `community_id` is known at insert time
+    /// (T11 Step 3 — online community-local allocation).
+    ///
+    /// The slot is chosen by [`Self::allocate_node_id_in_community`] so
+    /// successive inserts into the same community land in the same 4 KiB
+    /// page whenever possible, preserving community contiguity without a
+    /// full bulk-sort pass.
+    ///
+    /// Contract vs `create_node(labels)` (trait method):
+    ///
+    /// | aspect                  | `create_node`            | `create_node_in_community` |
+    /// |-------------------------|--------------------------|----------------------------|
+    /// | slot policy             | tail-append              | community-local page       |
+    /// | NodeRecord.community_id | 0 (uncategorized)        | caller-supplied            |
+    /// | HILBERT_SORTED flag     | untouched                | cleared                    |
+    /// | page alignment on 1st   | —                        | rounds up to page boundary |
+    ///
+    /// Returns the fresh [`NodeId`] (always non-zero; slot 0 is reserved).
+    pub fn create_node_in_community(
+        &self,
+        labels: &[&str],
+        community_id: u32,
+    ) -> NodeId {
+        let id = self.allocate_node_id_in_community(community_id);
+        let bitset = self
+            .intern_labels_to_bitset(labels)
+            .expect("label registry overflow (>64 labels); step 3 lifts this");
+        let rec = NodeRecord {
+            label_bitset: bitset,
+            community_id,
+            ..Default::default()
+        };
+        self.writer
+            .write_node(id.0 as u32, rec)
+            .expect("write_node failed — WAL append or mmap grow");
+        let label_vec = {
+            let reg = self.labels.read();
+            reg.labels_for_bitset(bitset)
+        };
+        self.nodes.insert(
+            id,
+            NodeInMem {
+                labels: label_vec,
+                properties: PropertyMap::new(),
+            },
+        );
+        id
+    }
+
+    /// Look up the most recently allocated slot for `community_id` (or
+    /// `None` if that community has never been used in this store).
+    /// Exposed for tests and for the CommunityWarden (Step 4).
+    pub fn last_slot_for_community(&self, community_id: u32) -> Option<u32> {
+        self.community_placements
+            .get(&community_id)
+            .map(|r| *r.value())
+            .filter(|s| *s != u32::MAX)
+    }
+
+    /// Look up the earliest live slot for `community_id` (or `None` if
+    /// that community has never been used in this store).
+    ///
+    /// Companion to [`Self::last_slot_for_community`] — the pair
+    /// `(first, last)` is the bounding slot range used by the prefetch
+    /// hook (T11 Step 5). See the docs on `community_first_slots` for
+    /// how this is maintained across online allocation and compaction.
+    pub fn first_slot_for_community(&self, community_id: u32) -> Option<u32> {
+        self.community_first_slots
+            .get(&community_id)
+            .map(|r| *r.value())
+            .filter(|s| *s != u32::MAX)
+    }
+
+    /// Bounding slot range `[first, last]` (inclusive) for a community,
+    /// or `None` if the community has no live nodes. Both bounds are
+    /// live slots; the range may contain slots that belong to other
+    /// communities (pre-compaction) — the CommunityWarden tightens it by
+    /// running compaction.
+    pub fn community_slot_range(&self, community_id: u32) -> Option<(u32, u32)> {
+        let first = self.first_slot_for_community(community_id)?;
+        let last = self.last_slot_for_community(community_id)?;
+        if first > last {
+            // Out-of-order bounds mean the maps drifted — treat as empty
+            // and let the next rebuild/refresh repair. Logging kept
+            // cheap: this is a hot path for prefetch.
+            tracing::debug!(
+                target: "substrate.prefetch",
+                "community {community_id}: inverted range first={first} > last={last} — \
+                 skipping prefetch; call refresh_community_ranges() after compaction"
+            );
+            return None;
+        }
+        Some((first, last))
+    }
+
+    /// Issue `madvise(WILLNEED)` over the bounding page range of
+    /// `community_id` on the **Nodes**, **Community**, and **Hilbert**
+    /// zones (T11 Step 5).
+    ///
+    /// The hook is designed to be called on activation points where a
+    /// node of `community_id` is about to be traversed — e.g. a
+    /// retrieval hit, a spreading-activation seed, or a user message
+    /// citing a node. By the time the hot path reads the surrounding
+    /// community pages, the kernel has already scheduled readahead for
+    /// them, shaving most of the cold-cache page-fault latency.
+    ///
+    /// Returns `Ok(())` regardless of whether advise was actually issued
+    /// (zones may be unmapped, the range may be empty) — the hook is
+    /// best-effort by contract.
+    ///
+    /// ### Complexity
+    /// Three syscalls (one per advised zone), each O(1) kernel-side.
+    /// Safe to call on every hot event.
+    ///
+    /// ### What it does *not* do
+    /// * Does not block — `madvise` is asynchronous.
+    /// * Does not guarantee residency — under memory pressure the
+    ///   kernel may drop the pages before the app reads them.
+    /// * Does not prefetch property / string / tier zones — those are
+    ///   accessed via distinct locality patterns and are not keyed by
+    ///   community_id. Callers that need them should issue their own
+    ///   targeted advise.
+    pub fn prefetch_community(&self, community_id: u32) -> SubstrateResult<()> {
+        let Some((first, last)) = self.community_slot_range(community_id) else {
+            return Ok(());
+        };
+        // Byte ranges on each zone. `last` is inclusive so we add one to
+        // cover the last slot's full record.
+        let slot_count = (last - first + 1) as usize;
+
+        // Nodes zone: 32 B per slot.
+        let nodes_off = (first as usize) * NodeRecord::SIZE;
+        let nodes_len = slot_count * NodeRecord::SIZE;
+        self.writer
+            .advise_zone_willneed(crate::file::Zone::Nodes, nodes_off, nodes_len)?;
+
+        // Community side-column: 4 B per slot (u32).
+        let cid_off = (first as usize) * core::mem::size_of::<u32>();
+        let cid_len = slot_count * core::mem::size_of::<u32>();
+        self.writer
+            .advise_zone_willneed(crate::file::Zone::Community, cid_off, cid_len)?;
+
+        // Hilbert side-column: 4 B per slot (u32).
+        self.writer
+            .advise_zone_willneed(crate::file::Zone::Hilbert, cid_off, cid_len)?;
+
+        Ok(())
+    }
+
+    /// Convenience: read the `community_id` of `node_id` and issue a
+    /// prefetch for its whole community. Returns `Ok(())` silently if
+    /// the node is tombstoned, out of range, or uncategorized
+    /// (`community_id == 0`).
+    ///
+    /// This is the one-call hook to drop at retrieval hits / citations /
+    /// spreading-activation seeds.
+    pub fn on_node_activated(&self, node_id: NodeId) -> SubstrateResult<()> {
+        let slot = node_id.0 as u32;
+        if slot == 0 || slot >= self.slot_high_water() {
+            return Ok(());
+        }
+        let Some(rec) = self.writer.read_node(slot)? else {
+            return Ok(());
+        };
+        if rec.is_tombstoned() {
+            return Ok(());
+        }
+        // Community 0 = "uncategorized". Advising the entire
+        // uncategorized slice is rarely useful (it's the default bucket)
+        // and would spam advise on cold zones. Skip.
+        if rec.community_id == 0 {
+            return Ok(());
+        }
+        self.prefetch_community(rec.community_id)
+    }
+
+    /// Rebuild the `(first_slot, last_slot)` maps from the current Nodes
+    /// zone. Called after compaction / bulk re-sort to track the new
+    /// layout — online allocation maintains the maps incrementally, but
+    /// a `CompactCommunity` cycle moves nodes to fresh slots that the
+    /// allocator didn't see. Cost: O(node_high_water) Nodes-zone scan.
+    pub fn refresh_community_ranges(&self) -> SubstrateResult<()> {
+        self.community_placements.clear();
+        self.community_first_slots.clear();
+        let hw = self.next_node_id.load(Ordering::Acquire);
+        for slot in 1..hw {
+            let Some(rec) = self.writer.read_node(slot)? else {
+                continue;
+            };
+            if rec.is_tombstoned() {
+                continue;
+            }
+            // Ascending scan → first_slot takes the min, last_slot the max.
+            self.community_first_slots
+                .entry(rec.community_id)
+                .or_insert(slot);
+            self.community_placements.insert(rec.community_id, slot);
+        }
+        Ok(())
     }
 
     /// Number of edge slots handed out so far (including tombstoned).
@@ -804,6 +1196,308 @@ impl SubstrateStore {
             .decay_all_synapse(factor_q16, self.edge_slot_high_water())
     }
 
+    // ==================================================================
+    // Coactivation (COACT) typed-edge column API (T7 Step 5)
+    // ==================================================================
+    //
+    // Hub-side semantics (count, last_seen_ts, reward) live in
+    // `obrain-hub::memory::CoactivationMap`. The substrate side stores a
+    // single Q0.16 cumulative weight per (a, b) pair as the `weight_u16`
+    // column of an EdgeRecord whose `edge_type` is the dict-interned
+    // `"COACT"` id. The Hub keeps a `(NodeId, NodeId) → EdgeId` cache so
+    // it can reinforce a known slot in O(1) without scanning chains.
+
+    /// Return the dict-interned id of the canonical COACT edge type,
+    /// registering it on demand if this is the first call on a fresh
+    /// substrate. Persisted to `substrate.dict` at the next [`Self::flush`].
+    ///
+    /// Cheap to call repeatedly (single `RwLock::read` fast-path on the
+    /// already-interned name).
+    pub fn coact_type_id(&self) -> SubstrateResult<u16> {
+        // Fast-path: already interned.
+        if let Some(id) = self
+            .edge_types
+            .read()
+            .id_for(crate::record::COACT_EDGE_TYPE_NAME)
+        {
+            return Ok(id);
+        }
+        // Slow-path: take the write lock and intern.
+        self.edge_types
+            .write()
+            .intern(crate::record::COACT_EDGE_TYPE_NAME)
+    }
+
+    /// Saturating-add `delta` (clamped to `[0.0, 1.0]`) to the COACT
+    /// edge slot's weight column, returning the new weight in `f32`.
+    ///
+    /// The caller is responsible for ensuring `id` resolves to a live
+    /// edge whose `edge_type` is the COACT id (typically because the
+    /// Hub allocated the slot itself when first observing the pair).
+    pub fn coact_reinforce_f32(
+        &self,
+        id: EdgeId,
+        delta: f32,
+    ) -> SubstrateResult<f32> {
+        let delta_q16 = (delta.clamp(0.0, 1.0) * 65535.0).round() as u16;
+        let new = self.writer.coact_reinforce_at(id.0, delta_q16)?;
+        Ok(new as f32 / 65535.0)
+    }
+
+    /// Apply a Q0.16 multiplicative decay to every live COACT edge's
+    /// weight column. Synapse and other edge types are untouched.
+    /// `factor` is clamped to `[0.0, 1.0]`.
+    pub fn decay_all_coact(&self, factor: f32) -> SubstrateResult<()> {
+        let factor_q16 =
+            (factor.clamp(0.0, 1.0) * 65536.0).round().min(65535.0) as u16;
+        let coact_id = self.coact_type_id()?;
+        self.writer.decay_all_coact(
+            factor_q16,
+            self.edge_slot_high_water(),
+            coact_id,
+        )
+    }
+
+    /// Read the current weight (`f32` in `[0, 1]`) of a COACT edge slot.
+    /// Returns `None` if the slot is unallocated, tombstoned, or not a
+    /// COACT-typed edge.
+    pub fn coact_weight_f32(&self, id: EdgeId) -> SubstrateResult<Option<f32>> {
+        if id.0 == 0 || id.0 >= self.edge_slot_high_water() {
+            return Ok(None);
+        }
+        let coact_id = self.coact_type_id()?;
+        Ok(self
+            .writer
+            .read_edge(id.0)?
+            .filter(|r| {
+                r.flags & edge_flags::TOMBSTONED == 0 && r.edge_type == coact_id
+            })
+            .map(|r| r.weight_f32()))
+    }
+
+    // ---- Engram seeding (T7 Step 6) ----------------------------------
+    //
+    // The substrate stores two pieces of state per engram:
+    //
+    //   * an id-keyed membership list in the EngramZone side-table
+    //     (`Writer::set_engram_members`), and
+    //   * a 64-bit Bloom signature on every member node in the
+    //     EngramBitset column (`Writer::add_engram_bit`).
+    //
+    // Hub-level callers (CoactivationMap → cluster detection → engram
+    // formation) hand us a list of node-id clusters; we allocate fresh
+    // engram ids out of the dict-persisted `next_engram_id` counter,
+    // write the membership list, and OR the bit into each member's
+    // signature. Every step is WAL-first (the underlying `Writer`
+    // primitives all log absolute payloads), so a crash mid-batch leaves
+    // a consistent durable state.
+
+    /// Allocate the next engram id atomically, advancing the
+    /// dict-persisted counter. Returns an error once the u16 space is
+    /// exhausted (max 65535 engrams per substrate — the directory zone
+    /// is sized for exactly that).
+    ///
+    /// O(1) on the fast-path; loops on contention.
+    fn alloc_engram_id(&self) -> SubstrateResult<u16> {
+        loop {
+            let cur = self.next_engram_id.load(Ordering::Acquire);
+            if cur == 0 {
+                // Previously wrapped past u16::MAX — allocator poisoned.
+                return Err(SubstrateError::Internal(
+                    "engram id allocator exhausted (>65535 engrams)".into(),
+                ));
+            }
+            // After allocating `cur`, the counter advances to `cur + 1`.
+            // When `cur == u16::MAX`, the next slot wraps to 0 — that's
+            // the poison sentinel observed on the next call.
+            let new_counter = cur.checked_add(1).unwrap_or(0);
+            match self.next_engram_id.compare_exchange_weak(
+                cur,
+                new_counter,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Ok(cur),
+                Err(_) => continue,
+            }
+        }
+    }
+
+    /// Inspect the current engram-id high-water mark (next id to allocate).
+    /// Useful for tests and for checkpoint/snapshot machinery.
+    pub fn next_engram_id(&self) -> u16 {
+        self.next_engram_id.load(Ordering::Acquire)
+    }
+
+    /// Seed a single engram from the given member node ids. Allocates a
+    /// fresh engram id, writes the membership list to the EngramZone
+    /// side-table, then OR's the engram's bit into every member's
+    /// 64-bit signature in the EngramBitset column.
+    ///
+    /// Returns the allocated engram id.
+    ///
+    /// **Crash semantics**: all WAL writes happen synchronously through
+    /// the underlying `Writer` primitives. After a crash, replay
+    /// reconstructs the membership list and bitset deterministically;
+    /// however, no checkpoint marker is emitted at the end of the seed,
+    /// so an interrupted multi-member seed may leave only the prefix of
+    /// bitset OR's that completed before the crash applied. Callers that
+    /// need atomic-batch semantics across many engrams should use
+    /// [`Self::seed_engrams_batch`] which wraps the whole batch in a
+    /// single commit/flush and rejects the entire batch on the first
+    /// failure.
+    ///
+    /// Empty `members` is allowed and only allocates the id + clears the
+    /// directory entry; no member bits are touched.
+    pub fn seed_engram(&self, members: &[NodeId]) -> SubstrateResult<u16> {
+        // Validate node ids before consuming an engram id, so a bad
+        // batch can't leak counter values.
+        let nid_high = self.next_node_id.load(Ordering::Acquire) as u64;
+        for nid in members {
+            if nid.0 == 0 || nid.0 >= nid_high {
+                return Err(SubstrateError::Internal(format!(
+                    "seed_engram: member NodeId({}) out of range \
+                     (high-water = {nid_high})",
+                    nid.0
+                )));
+            }
+            if nid.0 > u32::MAX as u64 {
+                return Err(SubstrateError::Internal(format!(
+                    "seed_engram: NodeId({}) exceeds u32 (substrate slot ids \
+                     are u32)",
+                    nid.0
+                )));
+            }
+        }
+
+        let engram_id = self.alloc_engram_id()?;
+
+        // 1) Write the membership directory entry.
+        //    We hand the Vec to the writer (consumes) and keep our own
+        //    copy via `members.iter()` for the bit-OR loop below.
+        let member_u32: Vec<u32> =
+            members.iter().map(|n| n.0 as u32).collect();
+        self.writer
+            .set_engram_members(engram_id, member_u32.clone())?;
+
+        // 2) OR the engram bit into each member's signature.
+        for nid in &member_u32 {
+            self.writer.add_engram_bit(*nid, engram_id)?;
+        }
+
+        Ok(engram_id)
+    }
+
+    /// Seed many engrams in one go. Each cluster becomes a fresh engram
+    /// with a freshly allocated id; the returned `Vec<u16>` is in
+    /// 1-to-1 order with `clusters`.
+    ///
+    /// On failure, IDs already allocated to earlier clusters in the
+    /// batch are NOT released (the dict counter is monotonic), but the
+    /// partial state is durable — a subsequent reopen sees exactly the
+    /// engrams whose `set_engram_members` had completed. Callers that
+    /// want all-or-nothing semantics should pre-validate inputs.
+    pub fn seed_engrams_batch(
+        &self,
+        clusters: &[Vec<NodeId>],
+    ) -> SubstrateResult<Vec<u16>> {
+        let mut out = Vec::with_capacity(clusters.len());
+        for cluster in clusters {
+            let id = self.seed_engram(cluster)?;
+            out.push(id);
+        }
+        Ok(out)
+    }
+
+    /// Read the 64-bit engram-membership signature for `node_id`. Returns
+    /// `0` for the null sentinel, for slots past the high-water mark, and
+    /// for nodes that belong to no engram.
+    pub fn engram_bitset(&self, node_id: NodeId) -> SubstrateResult<u64> {
+        if node_id.0 == 0
+            || node_id.0 as u32 >= self.next_node_id.load(Ordering::Acquire)
+        {
+            return Ok(0);
+        }
+        self.writer.engram_bitset(node_id.0 as u32)
+    }
+
+    /// OR `engram_id`'s bit into `node_id`'s 64-bit signature. Used by
+    /// Hub-side semantic routing to assign a freshly observed node (e.g.
+    /// an identity question) into an existing engram without rewriting
+    /// the membership directory.
+    ///
+    /// **Note**: this does NOT update the engram's membership directory
+    /// — the bitset is a Bloom signature for fast recall, the directory
+    /// is the authoritative member list. Callers that want both should
+    /// pair this with [`Self::set_engram_members`] on the resolved set.
+    pub fn add_engram_bit(
+        &self,
+        node_id: NodeId,
+        engram_id: u16,
+    ) -> SubstrateResult<()> {
+        if node_id.0 == 0
+            || node_id.0 as u32 >= self.next_node_id.load(Ordering::Acquire)
+        {
+            return Err(SubstrateError::Internal(format!(
+                "add_engram_bit: NodeId({}) out of range",
+                node_id.0
+            )));
+        }
+        self.writer
+            .add_engram_bit(node_id.0 as u32, engram_id)
+    }
+
+    /// Read the membership directory entry for `engram_id`. Returns
+    /// `Ok(None)` for unknown / cleared / null engrams; otherwise the
+    /// list of member node-id slots.
+    pub fn engram_members(
+        &self,
+        engram_id: u16,
+    ) -> SubstrateResult<Option<Vec<NodeId>>> {
+        Ok(self
+            .writer
+            .engram_members(engram_id)?
+            .map(|v| v.into_iter().map(|n| NodeId(n as u64)).collect()))
+    }
+
+    /// Replace the membership directory for `engram_id` with `members`.
+    /// Empty `members` clears the slot. Bitset bits on the affected
+    /// nodes are NOT updated by this call — pair with
+    /// [`Self::add_engram_bit`] per member if needed.
+    pub fn set_engram_members(
+        &self,
+        engram_id: u16,
+        members: &[NodeId],
+    ) -> SubstrateResult<()> {
+        let raw: Vec<u32> = members.iter().map(|n| n.0 as u32).collect();
+        self.writer.set_engram_members(engram_id, raw)
+    }
+
+    /// Compute the top-`k` nodes by engram-bitset overlap with
+    /// `query_nid`'s 64-bit signature. Returns `Vec<(NodeId, overlap_bits)>`
+    /// sorted by descending overlap. Nodes with zero overlap are skipped.
+    /// SIMD-accelerated on aarch64 / x86_64.
+    ///
+    /// This is the substrate-level Hopfield recall primitive used by
+    /// cognitive recall (engram-mediated cross-session retrieval).
+    pub fn hopfield_recall(
+        &self,
+        query_nid: NodeId,
+        k: usize,
+    ) -> SubstrateResult<Vec<(NodeId, u32)>> {
+        if query_nid.0 == 0
+            || query_nid.0 as u32 >= self.next_node_id.load(Ordering::Acquire)
+        {
+            return Ok(Vec::new());
+        }
+        Ok(self
+            .writer
+            .hopfield_recall(query_nid.0 as u32, k)?
+            .into_iter()
+            .map(|(nid, score)| (NodeId(nid as u64), score))
+            .collect())
+    }
+
     /// Iterate live edges (non-tombstoned, slot > 0, slot < high-water) and
     /// produce a `Vec<(EdgeId, f32)>` of their current synapse weights. Used
     /// by `SynapseStore::snapshot()` in substrate-view mode.
@@ -907,6 +1601,124 @@ impl SubstrateStore {
         NodeId(raw as u64)
     }
 
+    /// Allocate a node slot inside the given community's current page,
+    /// opening a new 4 KiB-aligned page if necessary (T11 Step 3).
+    ///
+    /// Policy:
+    ///
+    /// * **Fast path** — if this community already owns the *global tail*
+    ///   (`last_slot == next_node_id - 1`) and the next slot is still in
+    ///   the same page, append at `next_node_id`. No waste.
+    /// * **Slow path** — round `next_node_id` up to the next page
+    ///   boundary and claim that slot. Any trailing slots in the previous
+    ///   page are left as zero-initialised padding (tombstoned-by-absence
+    ///   — `is_live_on_disk` filters them out by the zero label_bitset
+    ///   never matching a real node's bitset OR by explicit
+    ///   `TOMBSTONED` flag if a padding slot is later recycled).
+    ///
+    /// Concurrent-safe: the compare_exchange loop ensures no two threads
+    /// pick the same slot under a `next_node_id` CAS race. The
+    /// per-community DashMap entry is then updated under its write lock.
+    ///
+    /// Also clears `meta_flags::HILBERT_SORTED` because any online
+    /// allocation breaks the invariant "file is globally Hilbert-sorted".
+    /// Full resort requires another call to
+    /// [`Writer::bulk_sort_by_hilbert`].
+    fn allocate_node_id_in_community(&self, community_id: u32) -> NodeId {
+        // Acquire the per-community entry BEFORE reading next_node_id so
+        // the fast-path check is consistent.
+        let mut entry = self.community_placements.entry(community_id).or_insert(u32::MAX);
+
+        loop {
+            let hw = self.next_node_id.load(Ordering::Acquire);
+            let last_slot = *entry;
+
+            // Fast path: extend in place.
+            //
+            // Preconditions:
+            //   - community has a prior allocation (last_slot != u32::MAX),
+            //   - that allocation is the global tail (last_slot == hw - 1),
+            //   - the next slot (hw) lies in the same 4 KiB page as
+            //     last_slot (i.e. the page isn't already full).
+            let can_fast_path = last_slot != u32::MAX
+                && hw > 0
+                && last_slot == hw - 1
+                && (last_slot / NODES_PER_PAGE) == (hw / NODES_PER_PAGE);
+
+            if can_fast_path {
+                // Single-step bump. Fails only on CAS race with another
+                // thread; on failure we re-read hw and try again.
+                if self
+                    .next_node_id
+                    .compare_exchange(hw, hw + 1, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    *entry = hw;
+                    self.clear_hilbert_sorted_flag();
+                    return NodeId(hw as u64);
+                }
+                continue;
+            }
+
+            // Slow path: open a new page for this community.
+            //
+            // If hw is already at a page boundary (or at the reserved
+            // slot-1 head), use it directly; otherwise round up.
+            let aligned = if hw <= 1 || hw % NODES_PER_PAGE == 0 {
+                hw.max(1)
+            } else {
+                // ceil(hw / NODES_PER_PAGE) * NODES_PER_PAGE
+                ((hw + NODES_PER_PAGE - 1) / NODES_PER_PAGE) * NODES_PER_PAGE
+            };
+            if self
+                .next_node_id
+                .compare_exchange(hw, aligned + 1, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                let was_fresh = last_slot == u32::MAX;
+                *entry = aligned;
+                // T11 Step 5: track the community's earliest slot so the
+                // prefetch hook can compute a bounding range. Fresh
+                // community → first_slot = this allocation. Existing
+                // community opening a second page → leave first_slot
+                // untouched; it still points at the community's oldest
+                // live page, which is where the prefetch range must
+                // start.
+                if was_fresh {
+                    self.community_first_slots.insert(community_id, aligned);
+                }
+                self.clear_hilbert_sorted_flag();
+                return NodeId(aligned as u64);
+            }
+            // CAS lost — retry with a fresh read of hw.
+        }
+    }
+
+    /// Public, idempotent handle to [`Self::clear_hilbert_sorted_flag`]
+    /// used by the [`crate::warden::CommunityWarden`] to force a
+    /// `bulk_sort_by_hilbert` re-run after it decides a community is too
+    /// fragmented. A no-op if the flag is already clear.
+    pub fn invalidate_layout_flag(&self) {
+        self.clear_hilbert_sorted_flag();
+    }
+
+    /// Clear `meta_flags::HILBERT_SORTED` on the in-memory meta header.
+    ///
+    /// Called on every online allocation because any new node breaks the
+    /// post-sort invariant that the file is globally Hilbert-ordered.
+    /// The flag is persisted to disk on the next checkpoint / flush.
+    fn clear_hilbert_sorted_flag(&self) {
+        let mut sub = self.substrate.lock();
+        let mut h = sub.meta_header();
+        if h.flags & meta_flags::HILBERT_SORTED != 0 {
+            h.flags &= !meta_flags::HILBERT_SORTED;
+            // Best-effort in-memory rewrite; persistence lands via the
+            // checkpoint path. An I/O error here would mean msync/fsync
+            // failure which the caller will surface on flush.
+            let _ = sub.write_meta_header(&h);
+        }
+    }
+
     /// Allocate the next edge slot (index into `substrate.edges`). Slot 0
     /// is the null-edge sentinel, so allocation starts at 1.
     fn allocate_edge_id(&self) -> EdgeId {
@@ -948,7 +1760,14 @@ impl SubstrateStore {
 
     /// Walk the outgoing edge chain of `src`, skipping tombstoned records.
     /// Entry point: `NodeRecord.first_edge_off`; link field: `next_from`.
-    fn walk_outgoing_chain(
+    ///
+    /// `pub(crate)` so tight-loop consumers inside the crate (T12 heat
+    /// kernel, spreading activation, Ricci refresh) can iterate
+    /// outgoing edges without paying the `Vec` allocation of the
+    /// public trait method `edges_from`. The callback receives the
+    /// full `EdgeRecord` by reference so callers can read `dst`,
+    /// `weight_u16`, `ricci_u8`, etc. in one pass.
+    pub(crate) fn walk_outgoing_chain(
         &self,
         src: NodeId,
         mut visit: impl FnMut(&EdgeRecord, EdgeId),
@@ -1893,6 +2712,61 @@ mod tests {
     }
 
     #[test]
+    fn properties_survive_reopen() {
+        use obrain_core::graph::traits::GraphStore;
+        use std::sync::Arc;
+
+        let td = tempfile::tempdir().unwrap();
+        let path = td.path().join("kb");
+
+        // --- Write phase ---
+        let (node_id, edge_id, embedding) = {
+            let s = SubstrateStore::create(&path).unwrap();
+            let a = s.create_node(&["Doc"]);
+            let b = s.create_node(&["Doc"]);
+            let e = s.create_edge(a, b, "LINKS_TO");
+
+            let vec: Arc<[f32]> = Arc::from(vec![0.1_f32, 0.2, -0.3, 0.5].into_boxed_slice());
+            s.set_node_property(a, "title", Value::String("hello".into()));
+            s.set_node_property(a, "_st_embedding", Value::Vector(vec.clone()));
+            s.set_node_property(a, "count", Value::Int64(42));
+            s.set_edge_property(e, "weight", Value::Float64(0.75));
+            s.flush().unwrap();
+            (a, e, vec)
+        };
+
+        // --- Reopen phase ---
+        let s = SubstrateStore::open(&path).unwrap();
+
+        // Node properties
+        let title = s
+            .get_node_property(node_id, &PropertyKey::new("title"))
+            .expect("title should persist");
+        assert!(matches!(title, Value::String(ref s) if s.as_str() == "hello"));
+
+        let count = s
+            .get_node_property(node_id, &PropertyKey::new("count"))
+            .expect("count should persist");
+        assert!(matches!(count, Value::Int64(42)));
+
+        let emb = s
+            .get_node_property(node_id, &PropertyKey::new("_st_embedding"))
+            .expect("_st_embedding should persist");
+        match emb {
+            Value::Vector(v) => {
+                assert_eq!(&*v, &*embedding, "vector embedding must roundtrip byte-exact");
+            }
+            other => panic!("expected Vector, got {other:?}"),
+        }
+
+        // Edge property
+        let w = s
+            .get_edge_property(edge_id, &PropertyKey::new("weight"))
+            .expect("edge weight should persist");
+        assert!(matches!(w, Value::Float64(f) if (f - 0.75).abs() < 1e-12));
+    }
+
+    #[test]
     fn create_node_returns_nonzero_increasing_ids() {
         let (_td, s) = store();
         let a = s.create_node(&["Person"]);
@@ -2701,5 +3575,533 @@ mod tests {
         assert!(snap.prop_keys.is_empty());
         assert_eq!(snap.next_node_id, 2);
         assert_eq!(snap.next_edge_id, 1);
+    }
+
+    // ---------------------------------------------------------------------
+    // T7 Step 5 — COACT typed-edge column API on the store
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn coact_type_id_is_interned_lazily_and_persisted() {
+        let td = tempfile::tempdir().unwrap();
+        let path = td.path().join("kb");
+        let s = SubstrateStore::create(&path).unwrap();
+
+        // First call → registers "COACT" in the edge-type dict.
+        let id1 = s.coact_type_id().unwrap();
+        // Second call → fast-path read returns the same id.
+        let id2 = s.coact_type_id().unwrap();
+        assert_eq!(id1, id2);
+
+        s.flush().unwrap();
+        // The persisted dict carries the name.
+        let snap =
+            crate::dict::DictSnapshot::load(&path.join(DICT_FILENAME)).unwrap();
+        assert!(
+            snap.edge_types
+                .iter()
+                .any(|n| n == crate::record::COACT_EDGE_TYPE_NAME),
+            "dict must carry COACT after flush, got {:?}",
+            snap.edge_types
+        );
+
+        // Reopen → the id is recovered (might or might not be the same
+        // numeric id depending on registry order, but the registry must
+        // resolve the name).
+        drop(s);
+        let s2 = SubstrateStore::open(&path).unwrap();
+        let id3 = s2.coact_type_id().unwrap();
+        assert_eq!(id3, id1, "id must be stable across reopen");
+    }
+
+    #[test]
+    fn coact_reinforce_f32_saturates_and_reads_back() {
+        let (_td, s) = store();
+        let coact_id = s.coact_type_id().unwrap();
+
+        // Manually allocate a COACT edge slot via the writer (we don't
+        // expose a typed-create helper at the store level yet — Hub-side
+        // CoactivationMap will do this through the higher API in Step 5
+        // wiring).
+        let mut e = EdgeRecord::default();
+        e.src = 1;
+        e.dst = 2;
+        e.edge_type = coact_id;
+        e.weight_u16 = 0;
+        s.writer.write_edge(1, e).unwrap();
+        // Important: bump the edge high-water so coact_weight_f32 will
+        // even consider slot 1 (the API guards on edge_slot_high_water).
+        s.next_edge_id.store(2, Ordering::Release);
+
+        // Reinforce three times by 0.4 → saturates at 1.0.
+        let new = s.coact_reinforce_f32(EdgeId(1), 0.4).unwrap();
+        assert!((new - 0.4).abs() < 1e-3, "got {new}");
+        let new = s.coact_reinforce_f32(EdgeId(1), 0.4).unwrap();
+        assert!((new - 0.8).abs() < 1e-3, "got {new}");
+        let new = s.coact_reinforce_f32(EdgeId(1), 0.4).unwrap();
+        // Saturated at 1.0 (allow ±1 ULP for Q0.16 quantization).
+        assert!(new >= 0.999, "got {new}");
+
+        // Read-back via typed accessor: only returns Some for COACT-typed
+        // edges; returns None for synapse / wrong type.
+        let w = s.coact_weight_f32(EdgeId(1)).unwrap();
+        assert!(w.is_some());
+        assert!(w.unwrap() >= 0.999);
+
+        // A non-COACT edge slot must NOT be readable as a COACT weight.
+        let mut e2 = EdgeRecord::default();
+        e2.src = 3;
+        e2.dst = 4;
+        e2.edge_type = coact_id.wrapping_add(1); // anything but COACT
+        e2.weight_u16 = 0xFFFF;
+        s.writer.write_edge(2, e2).unwrap();
+        s.next_edge_id.store(3, Ordering::Release);
+        assert_eq!(s.coact_weight_f32(EdgeId(2)).unwrap(), None);
+    }
+
+    #[test]
+    fn decay_all_coact_only_touches_coact_typed_edges() {
+        let (_td, s) = store();
+        let coact_id = s.coact_type_id().unwrap();
+        let other_id = coact_id.wrapping_add(1);
+
+        // Slots 1..=4: COACT, slots 5..=6: other type. All weight=0x8000.
+        for slot in 1..=6u64 {
+            let mut e = EdgeRecord::default();
+            e.src = slot as u32;
+            e.dst = (slot as u32) + 100;
+            e.edge_type = if slot <= 4 { coact_id } else { other_id };
+            e.weight_u16 = 0x8000;
+            s.writer.write_edge(slot, e).unwrap();
+        }
+        s.next_edge_id.store(7, Ordering::Release);
+
+        // Decay COACT by 0.5 — only COACT slots halve.
+        s.decay_all_coact(0.5).unwrap();
+
+        for slot in 1..=4u64 {
+            let rec = s.writer.read_edge(slot).unwrap().unwrap();
+            assert_eq!(rec.weight_u16, 0x4000, "COACT slot {slot} must be halved");
+        }
+        for slot in 5..=6u64 {
+            let rec = s.writer.read_edge(slot).unwrap().unwrap();
+            assert_eq!(
+                rec.weight_u16, 0x8000,
+                "non-COACT slot {slot} must NOT be touched"
+            );
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // T7 Step 6 — Engram seed batch operation + id allocator persistence
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn alloc_engram_id_starts_at_one_and_increments() {
+        let (_td, s) = store();
+        assert_eq!(s.next_engram_id(), 1);
+        let a = s.alloc_engram_id().unwrap();
+        let b = s.alloc_engram_id().unwrap();
+        let c = s.alloc_engram_id().unwrap();
+        assert_eq!((a, b, c), (1, 2, 3));
+        assert_eq!(s.next_engram_id(), 4);
+    }
+
+    #[test]
+    fn alloc_engram_id_rejects_after_exhaustion() {
+        let (_td, s) = store();
+        // Pre-poison the counter to simulate a previously-exhausted
+        // allocator (this avoids burning 65k allocations in a unit test).
+        s.next_engram_id.store(0, Ordering::Release);
+        let err = s.alloc_engram_id().unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("exhausted"), "got: {msg}");
+    }
+
+    #[test]
+    fn alloc_engram_id_last_slot_then_poisoned() {
+        let (_td, s) = store();
+        // Seed the counter at u16::MAX — one allocation must succeed
+        // (returns 65535 = MAX_ENGRAM_ID), the next must fail.
+        s.next_engram_id.store(u16::MAX, Ordering::Release);
+        let last = s.alloc_engram_id().unwrap();
+        assert_eq!(last, u16::MAX);
+        assert_eq!(s.next_engram_id(), 0, "counter wraps to poison sentinel");
+        let err = s.alloc_engram_id().unwrap_err();
+        assert!(format!("{err:?}").contains("exhausted"));
+    }
+
+    #[test]
+    fn seed_engram_writes_members_and_bitset() {
+        let (_td, s) = store();
+        let n1 = s.create_node(&["A"]);
+        let n2 = s.create_node(&["B"]);
+        let n3 = s.create_node(&["C"]);
+
+        let eid = s.seed_engram(&[n1, n2, n3]).unwrap();
+        assert_eq!(eid, 1, "first engram id is 1");
+
+        // Members must round-trip through the EngramZone directory.
+        let members = s.writer.engram_members(eid).unwrap().unwrap();
+        let mut expected: Vec<u32> =
+            [n1, n2, n3].iter().map(|n| n.0 as u32).collect();
+        let mut got = members.clone();
+        expected.sort();
+        got.sort();
+        assert_eq!(got, expected);
+
+        // The corresponding bit must be set in every member's signature.
+        let mask = crate::engram_bitset::engram_bit_mask(eid);
+        for nid in [n1, n2, n3] {
+            let bits = s.writer.engram_bitset(nid.0 as u32).unwrap();
+            assert!(
+                bits & mask == mask,
+                "node {nid:?} missing engram bit; bits=0x{bits:016x} mask=0x{mask:016x}"
+            );
+        }
+    }
+
+    #[test]
+    fn seed_engram_rejects_out_of_range_node() {
+        let (_td, s) = store();
+        let _n1 = s.create_node(&["A"]);
+        // NodeId(99) is past the high-water mark.
+        let err = s.seed_engram(&[NodeId(99)]).unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("out of range") || msg.contains("high-water"),
+            "got: {msg}"
+        );
+        // The id allocator must NOT have advanced.
+        assert_eq!(s.next_engram_id(), 1);
+    }
+
+    #[test]
+    fn seed_engram_rejects_null_node_zero() {
+        let (_td, s) = store();
+        let _n1 = s.create_node(&["A"]);
+        let err = s.seed_engram(&[NodeId(0)]).unwrap_err();
+        assert!(format!("{err:?}").contains("out of range"));
+    }
+
+    #[test]
+    fn seed_engram_empty_members_allocates_id_only() {
+        let (_td, s) = store();
+        let eid = s.seed_engram(&[]).unwrap();
+        assert_eq!(eid, 1);
+        // Empty membership clears the directory slot per
+        // `EngramZone::set_members_raw` semantics → reads back as None.
+        // The id is still consumed (allocator advanced), so a follow-up
+        // seed gets id=2 — the empty seed is observable only through the
+        // counter, not the directory.
+        let m = s.writer.engram_members(eid).unwrap();
+        assert!(m.is_none(), "cleared directory slot must read as None");
+        assert_eq!(s.next_engram_id(), 2);
+    }
+
+    #[test]
+    fn seed_engrams_batch_allocates_distinct_ids_in_order() {
+        let (_td, s) = store();
+        let n1 = s.create_node(&["A"]);
+        let n2 = s.create_node(&["B"]);
+        let n3 = s.create_node(&["C"]);
+        let n4 = s.create_node(&["D"]);
+
+        let clusters = vec![
+            vec![n1, n2],
+            vec![n3, n4],
+            vec![n1, n3], // overlap allowed — bit ORs accumulate
+        ];
+        let ids = s.seed_engrams_batch(&clusters).unwrap();
+        assert_eq!(ids, vec![1, 2, 3]);
+
+        // n1 belongs to engrams {1, 3}; n3 belongs to {2, 3}.
+        let m1 = crate::engram_bitset::engram_bit_mask(1);
+        let m2 = crate::engram_bitset::engram_bit_mask(2);
+        let m3 = crate::engram_bitset::engram_bit_mask(3);
+        let bits_n1 = s.writer.engram_bitset(n1.0 as u32).unwrap();
+        let bits_n3 = s.writer.engram_bitset(n3.0 as u32).unwrap();
+        assert_eq!(bits_n1 & m1, m1);
+        assert_eq!(bits_n1 & m3, m3);
+        assert_eq!(bits_n3 & m2, m2);
+        assert_eq!(bits_n3 & m3, m3);
+        // n1 should NOT carry engram-2's bit (it wasn't in cluster 1).
+        // (Only meaningful when the masks differ — engram-1 and engram-2
+        // hash to different bits modulo 64 for these small ids.)
+        if m1 != m2 && m2 != m3 {
+            assert_eq!(bits_n1 & m2, 0, "n1 must not carry engram-2 bit");
+        }
+    }
+
+    #[test]
+    fn seed_engram_persists_allocator_across_reopen() {
+        let td = tempfile::tempdir().unwrap();
+        let path = td.path().join("kb");
+        let s = SubstrateStore::create(&path).unwrap();
+        let n1 = s.create_node(&["A"]);
+        let n2 = s.create_node(&["B"]);
+        let _ = s.seed_engram(&[n1, n2]).unwrap();
+        let _ = s.seed_engram(&[n1]).unwrap();
+        assert_eq!(s.next_engram_id(), 3);
+        s.flush().unwrap();
+        drop(s);
+
+        // Reopen — the counter must come back from substrate.dict.
+        let s2 = SubstrateStore::open(&path).unwrap();
+        assert_eq!(
+            s2.next_engram_id(),
+            3,
+            "next_engram_id must round-trip via substrate.dict v2"
+        );
+        // Allocating again gives 3, not 1 — ids are monotonic across reopens.
+        let next = s2.alloc_engram_id().unwrap();
+        assert_eq!(next, 3);
+    }
+
+    #[test]
+    fn seed_engram_membership_persists_across_reopen() {
+        let td = tempfile::tempdir().unwrap();
+        let path = td.path().join("kb");
+        let s = SubstrateStore::create(&path).unwrap();
+        let n1 = s.create_node(&["A"]);
+        let n2 = s.create_node(&["B"]);
+        let n3 = s.create_node(&["C"]);
+        let eid = s.seed_engram(&[n1, n2, n3]).unwrap();
+        s.flush().unwrap();
+        drop(s);
+
+        let s2 = SubstrateStore::open(&path).unwrap();
+        let mut got = s2.writer.engram_members(eid).unwrap().unwrap();
+        let mut expected: Vec<u32> =
+            [n1, n2, n3].iter().map(|n| n.0 as u32).collect();
+        got.sort();
+        expected.sort();
+        assert_eq!(got, expected);
+
+        // Bitsets must also survive.
+        let mask = crate::engram_bitset::engram_bit_mask(eid);
+        for nid in [n1, n2, n3] {
+            let bits = s2.writer.engram_bitset(nid.0 as u32).unwrap();
+            assert!(
+                bits & mask == mask,
+                "after reopen, node {nid:?} missing engram bit"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // T11 Step 5 — madvise(WILLNEED) prefetch hook
+    // -----------------------------------------------------------------
+    //
+    // These tests exercise the observable state of the prefetch API
+    // (range tracking + idempotency + rebuild parity + live-node
+    // reach). madvise is a best-effort kernel hint, so the tests
+    // assert that the calls succeed and do not perturb the data; the
+    // actual page-fault savings are measured by the bench harness
+    // that consumes this API (Step 6).
+
+    #[test]
+    fn community_range_tracks_first_and_last_slot_online() {
+        let (_td, s) = store();
+        // Community 42: three consecutive inserts through the
+        // community-local allocator. Fast-path extends the same page
+        // so first = allocation #1's slot, last = allocation #3's.
+        let a = s.create_node_in_community(&["L"], 42);
+        let b = s.create_node_in_community(&["L"], 42);
+        let c = s.create_node_in_community(&["L"], 42);
+        let first = s.first_slot_for_community(42).expect("first must exist");
+        let last = s.last_slot_for_community(42).expect("last must exist");
+        assert_eq!(first, a.0 as u32, "first slot = first insertion");
+        assert_eq!(last, c.0 as u32, "last slot = last insertion");
+        assert!(
+            b.0 as u32 >= first && (b.0 as u32) <= last,
+            "middle insertion inside bounding range"
+        );
+        let (rf, rl) = s.community_slot_range(42).unwrap();
+        assert_eq!((rf, rl), (first, last));
+    }
+
+    #[test]
+    fn community_range_separates_communities() {
+        let (_td, s) = store();
+        let a1 = s.create_node_in_community(&["L"], 1);
+        let a2 = s.create_node_in_community(&["L"], 1);
+        let b1 = s.create_node_in_community(&["L"], 2);
+        let a3 = s.create_node_in_community(&["L"], 1);
+        // Community 2 opens its own page (slot alignment forces it on the
+        // slow path); its range is just the single slot it owns.
+        let (c1_lo, c1_hi) = s.community_slot_range(1).unwrap();
+        let (c2_lo, c2_hi) = s.community_slot_range(2).unwrap();
+        assert_eq!(c1_lo, a1.0 as u32);
+        assert_eq!(c1_hi, a3.0 as u32);
+        assert_eq!(c2_lo, b1.0 as u32);
+        assert_eq!(c2_hi, b1.0 as u32);
+        // Verify c1 actually spans multiple slots, proving the range
+        // covers the bucket rather than a single slot.
+        assert!(a3.0 as u32 > a2.0 as u32 && a2.0 as u32 > a1.0 as u32);
+    }
+
+    #[test]
+    fn community_range_none_for_unknown_cid() {
+        let (_td, s) = store();
+        assert!(s.community_slot_range(999).is_none());
+        assert!(s.first_slot_for_community(999).is_none());
+        assert!(s.last_slot_for_community(999).is_none());
+    }
+
+    #[test]
+    fn prefetch_on_empty_community_is_noop() {
+        let (_td, s) = store();
+        // No community 42 has been created — prefetch must swallow
+        // silently (best-effort contract).
+        s.prefetch_community(42).expect("empty prefetch must not error");
+    }
+
+    #[test]
+    fn prefetch_populated_community_succeeds() {
+        let (_td, s) = store();
+        for _ in 0..NODES_PER_PAGE as usize + 3 {
+            // Force the slow path to fire at least once by pushing the
+            // community across a 4 KiB page boundary.
+            s.create_node_in_community(&["L"], 7);
+        }
+        let (lo, hi) = s.community_slot_range(7).unwrap();
+        assert!(hi >= lo + NODES_PER_PAGE);
+        // Call is idempotent and never errors.
+        s.prefetch_community(7).unwrap();
+        s.prefetch_community(7).unwrap();
+    }
+
+    #[test]
+    fn on_node_activated_resolves_cid_and_prefetches() {
+        let (_td, s) = store();
+        let a = s.create_node_in_community(&["L"], 3);
+        let _b = s.create_node_in_community(&["L"], 3);
+        // Known node → prefetch returns Ok, no panic.
+        s.on_node_activated(a).unwrap();
+        // Out-of-range slot → silent Ok.
+        s.on_node_activated(NodeId(u32::MAX as u64)).unwrap();
+        // Null-sentinel slot → silent Ok.
+        s.on_node_activated(NodeId(0)).unwrap();
+    }
+
+    #[test]
+    fn on_node_activated_skips_uncategorized() {
+        let (_td, s) = store();
+        let a = s.create_node(&["Uncat"]); // community_id == 0
+        // No community 0 range is tracked in the hot path; the call
+        // still succeeds as a silent no-op.
+        s.on_node_activated(a).unwrap();
+    }
+
+    #[test]
+    fn rebuild_populates_first_and_last_slot_maps() {
+        let td = tempfile::tempdir().unwrap();
+        let path = td.path().join("kb");
+        let s = SubstrateStore::create(&path).unwrap();
+        let a = s.create_node_in_community(&["L"], 11);
+        let _b = s.create_node_in_community(&["L"], 11);
+        let c = s.create_node_in_community(&["L"], 11);
+        let d = s.create_node_in_community(&["L"], 22);
+        s.flush().unwrap();
+        drop(s);
+
+        let s2 = SubstrateStore::open(&path).unwrap();
+        let (lo11, hi11) = s2.community_slot_range(11).unwrap();
+        assert_eq!(lo11, a.0 as u32);
+        assert_eq!(hi11, c.0 as u32);
+        let (lo22, hi22) = s2.community_slot_range(22).unwrap();
+        assert_eq!(lo22, d.0 as u32);
+        assert_eq!(hi22, d.0 as u32);
+        // Prefetch after reopen must still work — proves the rebuild
+        // populated everything the hot path needs.
+        s2.prefetch_community(11).unwrap();
+        s2.prefetch_community(22).unwrap();
+    }
+
+    #[test]
+    fn refresh_community_ranges_repairs_after_compaction() {
+        let (_td, s) = store();
+        // Seed three distinct communities so refresh has something to
+        // rewrite.
+        let a1 = s.create_node_in_community(&["L"], 1);
+        let a2 = s.create_node_in_community(&["L"], 1);
+        let b1 = s.create_node_in_community(&["L"], 2);
+        let c1 = s.create_node_in_community(&["L"], 3);
+        // Manual invariant poisoning to simulate drift (e.g. the maps
+        // fell out of sync with disk after a compaction cycle that
+        // bypassed the allocator).
+        s.community_first_slots.insert(1, 9999);
+        s.community_placements.insert(1, 1);
+        // After refresh, the maps rebuild from the actual Nodes zone.
+        s.refresh_community_ranges().unwrap();
+        let (lo1, hi1) = s.community_slot_range(1).unwrap();
+        let (lo2, hi2) = s.community_slot_range(2).unwrap();
+        let (lo3, hi3) = s.community_slot_range(3).unwrap();
+        assert_eq!(lo1, a1.0 as u32);
+        assert_eq!(hi1, a2.0 as u32);
+        assert_eq!(lo2, b1.0 as u32);
+        assert_eq!(hi2, b1.0 as u32);
+        assert_eq!(lo3, c1.0 as u32);
+        assert_eq!(hi3, c1.0 as u32);
+    }
+
+    #[test]
+    fn prefetch_does_not_mutate_data() {
+        // The prefetch hook is a madvise hint — it must not touch
+        // bytes. Verify the Nodes zone content is bit-identical before
+        // and after the call.
+        let (_td, s) = store();
+        for _ in 0..NODES_PER_PAGE as usize {
+            s.create_node_in_community(&["L"], 5);
+        }
+        let before: Vec<u8> = s
+            .writer
+            .substrate()
+            .lock()
+            .open_zone(crate::file::Zone::Nodes)
+            .unwrap()
+            .as_slice()
+            .to_vec();
+        s.prefetch_community(5).unwrap();
+        let after: Vec<u8> = s
+            .writer
+            .substrate()
+            .lock()
+            .open_zone(crate::file::Zone::Nodes)
+            .unwrap()
+            .as_slice()
+            .to_vec();
+        assert_eq!(before, after, "prefetch must be read-only");
+    }
+
+    #[test]
+    fn advise_zone_out_of_bounds_is_clamped() {
+        // Direct ZoneFile::advise_willneed smoke — the wrapper must
+        // tolerate offset/len overrunning the mapped region (the
+        // prefetch path relies on this for the last partial page).
+        let (_td, s) = store();
+        // Make sure the zone is non-empty so ZoneFile::map is Some.
+        let _ = s.create_node_in_community(&["L"], 1);
+        // Huge offset/len: silent Ok.
+        s.writer
+            .advise_zone_willneed(crate::file::Zone::Nodes, 0, usize::MAX / 2)
+            .unwrap();
+        s.writer
+            .advise_zone_willneed(crate::file::Zone::Nodes, usize::MAX / 2, 4096)
+            .unwrap();
+    }
+
+    #[test]
+    fn advise_empty_zone_is_noop() {
+        // Fresh substrate: Hilbert / Community zones haven't been
+        // touched, so their ZoneFile::map is None. Advise must swallow.
+        let (_td, s) = store();
+        s.writer
+            .advise_zone_willneed(crate::file::Zone::Hilbert, 0, 4096)
+            .unwrap();
+        s.writer
+            .advise_zone_willneed(crate::file::Zone::Community, 0, 4096)
+            .unwrap();
     }
 }

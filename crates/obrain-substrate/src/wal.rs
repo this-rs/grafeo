@@ -55,11 +55,13 @@ pub enum WalKind {
     CommunityAssign = 0x50,
     HilbertRepermute = 0x51,
     RicciUpdate = 0x52,
+    CompactCommunity = 0x53,
     Tier0Update = 0x60,
     Tier1Update = 0x61,
     Tier2Update = 0x62,
     EngramMembersSet = 0x70,
     EngramBitsetSet = 0x71,
+    CoactDecay = 0x46,
     Checkpoint = 0xF0,
     NoOp = 0xFE,
     EndOfLog = 0xFF,
@@ -89,11 +91,13 @@ impl WalKind {
             0x50 => CommunityAssign,
             0x51 => HilbertRepermute,
             0x52 => RicciUpdate,
+            0x53 => CompactCommunity,
             0x60 => Tier0Update,
             0x61 => Tier1Update,
             0x62 => Tier2Update,
             0x70 => EngramMembersSet,
             0x71 => EngramBitsetSet,
+            0x46 => CoactDecay,
             0xF0 => Checkpoint,
             0xFE => NoOp,
             0xFF => EndOfLog,
@@ -228,6 +232,52 @@ pub enum WalPayload {
     },
     NoOp,
     EndOfLog,
+    /// Apply a Q0.16 multiplicative decay to every live edge whose
+    /// `edge_type` equals `coact_type_id` (T7 Step 5).
+    ///
+    /// Distinct from [`WalPayload::SynapseDecay`] because COACT and
+    /// SYNAPSE columns share the same `weight_u16` slot but follow
+    /// different decay schedules — see RFC pillar 2 / format-spec §2.
+    ///
+    /// Idempotent under replay: re-applying the same factor multiplies
+    /// twice (mirroring `SynapseDecay` semantics — replay deterministic
+    /// because the records are ordered).
+    ///
+    /// **Wire-compat note**: this variant is intentionally appended at the
+    /// tail of `WalPayload` to keep all preceding serde variant indices
+    /// stable for older WAL files written before T7 Step 5.
+    CoactDecay {
+        factor_q16: u16,
+        coact_type_id: u16,
+    },
+    /// Transactional per-community compaction (T11 Step 5).
+    ///
+    /// Relocates every live node of `community_id` from its scattered old
+    /// slot to a fresh contiguous page-aligned range at the file tail.
+    /// `relocations[i] = (old_slot, new_slot)` describes the move; the WAL
+    /// record precedes the mmap mutation (WAL-first), so a crash between
+    /// the two is recovered idempotently by replay:
+    ///
+    /// * On replay, the engine walks the mapping and, for each `(old, new)`:
+    ///   - if the node at `old` carries `community_id == target` → copy to
+    ///     `new`, zero-fill `old` (completes the move);
+    ///   - if the node at `new` already carries `community_id == target` →
+    ///     treat as already applied (no-op).
+    ///
+    /// * Edge remap is also idempotent: re-applying `src = old_to_new[src]`
+    ///   only fires when `src` is still in the old-slot domain (i.e. still
+    ///   tied to the pre-compaction layout) — after the first pass, `src`
+    ///   has moved to the new range and the lookup misses, so the second
+    ///   application is a no-op.
+    ///
+    /// `page_range` (`(first, last)`, half-open on `last`) documents the
+    /// new contiguous page range for verification / debugging; the actual
+    /// replay only depends on `relocations`.
+    CompactCommunity {
+        community_id: u32,
+        relocations: Vec<(u32, u32)>,
+        page_range: (u32, u32),
+    },
 }
 
 impl WalPayload {
@@ -260,6 +310,8 @@ impl WalPayload {
             Tier2Update { .. } => K::Tier2Update,
             EngramMembersSet { .. } => K::EngramMembersSet,
             EngramBitsetSet { .. } => K::EngramBitsetSet,
+            CoactDecay { .. } => K::CoactDecay,
+            CompactCommunity { .. } => K::CompactCommunity,
             Checkpoint { .. } => K::Checkpoint,
             NoOp => K::NoOp,
             EndOfLog => K::EndOfLog,
@@ -584,6 +636,15 @@ mod tests {
             WalPayload::Checkpoint { at_lsn: 123 },
             WalPayload::NoOp,
             WalPayload::EndOfLog,
+            WalPayload::CoactDecay {
+                factor_q16: 64880,
+                coact_type_id: 7,
+            },
+            WalPayload::CompactCommunity {
+                community_id: 3,
+                relocations: vec![(100, 256), (101, 257), (102, 258)],
+                page_range: (2, 4),
+            },
         ];
         for (i, p) in payloads.into_iter().enumerate() {
             let rec = WalRecord {

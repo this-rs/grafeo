@@ -92,6 +92,17 @@ pub struct NodeRecord {
 const _: [(); 1] = [(); (core::mem::size_of::<NodeRecord>() == 32) as usize];
 const _: [(); 1] = [(); (core::mem::align_of::<NodeRecord>() == 8) as usize];
 
+/// Number of `NodeRecord` slots that fit in a 4 KiB page.
+///
+/// `PAGE_SIZE (4096) / NodeRecord::SIZE (32) = 128`. The online-insertion
+/// allocator (T11 Step 3) uses this to decide when a community's current
+/// page is full and a new one must be opened.
+pub const NODES_PER_PAGE: u32 = 128;
+
+// Compile-time sanity check: adjust if NodeRecord grows / PAGE_SIZE changes.
+const _: [(); 1] =
+    [(); ((4096usize / NodeRecord::SIZE) == NODES_PER_PAGE as usize) as usize];
+
 impl NodeRecord {
     pub const SIZE: usize = 32;
 
@@ -241,6 +252,22 @@ pub mod edge_flags {
     pub const SYNAPSE_ACTIVE: u8 = 1 << 3;
     pub const BRIDGE: u8 = 1 << 4;
 }
+
+/// Canonical edge-type name for cumulative coactivation edges (T7 Step 5).
+///
+/// Per RFC pillar 2 (substrate format-spec §2 — "Coactivation : edge type
+/// COACT"), coactivation between two nodes is recorded as an explicit
+/// edge type stored in [`EdgeRecord::edge_type`] (interned via the
+/// dictionary), distinct from synapse-typed edges so that decay schedules
+/// can differ:
+///
+/// * SYNAPSE edges decay fast (Hebbian short-term reinforcement),
+/// * COACT   edges decay slowly (long-term coactivation evidence).
+///
+/// The associated [`edge_flags::COACT`] flag bit is orthogonal — it can
+/// be set on any edge type as a quick boolean tag, but the canonical
+/// "this is a coactivation edge" signal is `edge_type == coact_type_id`.
+pub const COACT_EDGE_TYPE_NAME: &str = "COACT";
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Pod, Zeroable)]

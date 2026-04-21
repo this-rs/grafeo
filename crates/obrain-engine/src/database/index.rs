@@ -119,13 +119,10 @@ impl super::ObrainDB {
             None => DistanceMetric::Cosine,
         };
 
-        // Scan nodes to validate vectors exist and check dimensions
+        // Pass 1: count vectors + detect dimensions (no cloning).
         let prop_key = PropertyKey::new(property);
         let mut found_dims: Option<usize> = dimensions;
         let mut vector_count = 0usize;
-
-        #[cfg(feature = "vector-index")]
-        let mut vectors: Vec<(obrain_common::types::NodeId, Vec<f32>)> = Vec::new();
 
         for node in self.store.nodes_with_label(label) {
             if let Some(Value::Vector(v)) = node.properties.get(&prop_key) {
@@ -142,8 +139,6 @@ impl super::ObrainDB {
                     found_dims = Some(v.len());
                 }
                 vector_count += 1;
-                #[cfg(feature = "vector-index")]
-                vectors.push((node.id, v.to_vec()));
             }
         }
 
@@ -194,11 +189,14 @@ impl super::ObrainDB {
                 config = config.with_ef_construction(ef_c);
             }
 
-            let index = HnswIndex::with_capacity(config, vectors.len());
+            let index = HnswIndex::with_capacity(config, vector_count);
             let accessor =
                 obrain_core::index::vector::PropertyVectorAccessor::new(&*self.store, property);
-            for (node_id, vec) in &vectors {
-                index.insert(*node_id, vec, &accessor);
+            // Pass 2: iterate nodes again, insert directly without cloning vectors.
+            for node in self.store.nodes_with_label(label) {
+                if let Some(Value::Vector(v)) = node.properties.get(&prop_key) {
+                    index.insert(node.id, v, &accessor);
+                }
             }
 
             self.store
@@ -291,14 +289,14 @@ impl super::ObrainDB {
         let mut index = InvertedIndex::new(BM25Config::default());
         let prop_key = PropertyKey::new(property);
 
-        // Batch-fetch all property values for this label — O(1) hash lookups
-        // per node instead of O(n) individual get_node_property calls.
+        // Stream through nodes one-by-one instead of batch-fetching all
+        // property values at once, which would allocate millions of strings
+        // simultaneously for large labels (e.g. 8M+ Document nodes).
+        // Each string is dropped after BM25 insert, keeping memory bounded.
         let nodes = self.store.nodes_by_label(label);
-        let values = self.store.get_node_property_batch(&nodes, &prop_key);
-
-        for (node_id, value) in nodes.iter().zip(values.iter()) {
-            if let Some(Value::String(text)) = value {
-                index.insert(*node_id, text.as_str());
+        for &node_id in &nodes {
+            if let Some(Value::String(text)) = self.store.get_node_property(node_id, &prop_key) {
+                index.insert(node_id, text.as_str());
             }
         }
 

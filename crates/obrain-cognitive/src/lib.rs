@@ -134,6 +134,15 @@ pub mod epigenetic;
 #[cfg(feature = "persona")]
 pub mod persona;
 
+// Community detection — batch Leiden + incremental LDleiden (T10)
+#[cfg(feature = "community")]
+pub mod community;
+
+// Thinkers — self-maintaining background agents (T13):
+// Consolidator / CommunityWarden / Predictor / Dreamer.
+#[cfg(feature = "thinker")]
+pub mod thinker;
+
 // Engram system — biomimetic memory traces (Layer 0+)
 pub mod engram;
 

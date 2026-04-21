@@ -74,6 +74,28 @@ pub trait CommunityProvider: Send + Sync {
     fn community_cohesion(&self, community_id: u64) -> f64;
 }
 
+/// Provides Ricci-Ollivier curvature per directed edge (T12).
+///
+/// Edges with `curvature < config.ricci_bottleneck_threshold` are
+/// treated as semantic bottlenecks by [`load_context_with_curvature`] —
+/// BFS halts at them the same way it halts at a high-cohesion community
+/// boundary in [`load_context`].
+///
+/// The curvature scale matches [`compute_ricci_fast`] in
+/// `obrain-substrate`: roughly `[-1, 1]`, where negative values mark
+/// inter-community bridges and positive values mark dense intra-
+/// community edges.
+///
+/// [`compute_ricci_fast`]: https://docs.rs/obrain-substrate
+pub trait CurvatureProvider: Send + Sync {
+    /// Returns the Ricci curvature of the directed edge `src -> dst`,
+    /// or `None` when the edge has no recorded curvature (e.g.
+    /// freshly created, not yet refreshed). `None` is treated as
+    /// "no bottleneck" so the BFS falls back to the community-
+    /// cohesion rule.
+    fn curvature(&self, src: NodeId, dst: NodeId) -> Option<f64>;
+}
+
 /// Provides weighted neighbors for spreading activation.
 pub trait NeighborProvider: Send + Sync {
     /// Returns neighbors of a node with their synapse weights.
@@ -106,11 +128,48 @@ impl TokenEstimator for FixedTokenEstimator {
 /// cohesion (accept boundary) but continues through weak boundaries.
 ///
 /// The result is budget-truncated to `config.context_budget_tokens`.
+///
+/// This is the legacy Louvain-bounded entry point. For the Ricci-bounded
+/// variant introduced by T12 Step 6, see
+/// [`load_context_with_curvature`]. Existing callers are unaffected.
 pub fn load_context(
     seeds: &[NodeId],
     config: &CognitiveKernelConfig,
     neighbors: &dyn NeighborProvider,
     communities: &dyn CommunityProvider,
+    tokens: &dyn TokenEstimator,
+) -> ContextBundle {
+    load_context_impl(seeds, config, neighbors, communities, None, tokens)
+}
+
+/// Ricci-bounded variant of [`load_context`] (T12 Step 6).
+///
+/// Identical semantics to [`load_context`] with one extra rule: when a
+/// `CurvatureProvider` is supplied, every neighbour edge is first
+/// probed for its Ricci curvature. If `curvature(src, dst) <
+/// config.ricci_bottleneck_threshold`, the edge is treated as a
+/// semantic bottleneck and BFS stops (same as a high-cohesion boundary).
+///
+/// Falls back to the community-cohesion rule on edges with no recorded
+/// curvature (`curvature == None`), so the function is safe to call on
+/// partially-refreshed graphs.
+pub fn load_context_with_curvature(
+    seeds: &[NodeId],
+    config: &CognitiveKernelConfig,
+    neighbors: &dyn NeighborProvider,
+    communities: &dyn CommunityProvider,
+    curvature: &dyn CurvatureProvider,
+    tokens: &dyn TokenEstimator,
+) -> ContextBundle {
+    load_context_impl(seeds, config, neighbors, communities, Some(curvature), tokens)
+}
+
+fn load_context_impl(
+    seeds: &[NodeId],
+    config: &CognitiveKernelConfig,
+    neighbors: &dyn NeighborProvider,
+    communities: &dyn CommunityProvider,
+    curvature: Option<&dyn CurvatureProvider>,
     tokens: &dyn TokenEstimator,
 ) -> ContextBundle {
     let mut result_map: HashMap<NodeId, ActivatedNode> = HashMap::new();
@@ -187,6 +246,23 @@ pub fn load_context(
 
             if propagated_score < config.min_propagated_energy {
                 continue;
+            }
+
+            // T12 Step 6 — Ricci-bounded BFS: if a curvature provider
+            // is plugged in and the edge's κ is strictly below the
+            // configured threshold, treat the edge as a semantic
+            // bottleneck and stop. This takes priority over the
+            // community-cohesion check because curvature operates at
+            // the per-edge level (finer-grained) and is recomputed
+            // online by the Dreamer Thinker, whereas cohesion is a
+            // batch-derived community-level signal.
+            if let Some(curv) = curvature {
+                if let Some(k) = curv.curvature(node_id, neighbor) {
+                    if k < config.ricci_bottleneck_threshold {
+                        boundary_stops += 1;
+                        continue;
+                    }
+                }
             }
 
             let neighbor_community = communities.community_of(neighbor);
@@ -534,5 +610,171 @@ mod tests {
         let node2 = bundle.nodes.iter().find(|n| n.node_id == nid(2));
         assert!(node2.is_some());
         assert_eq!(node2.unwrap().source, ActivationSource::CrossCommunity);
+    }
+
+    // ------------------------------------------------------------------
+    // T12 Step 6 — Ricci-bounded BFS.
+    // ------------------------------------------------------------------
+
+    /// Curvature provider with configurable per-edge κ.
+    struct MockCurvature {
+        edges: HashMap<(NodeId, NodeId), f64>,
+    }
+
+    impl MockCurvature {
+        fn new() -> Self {
+            Self { edges: HashMap::new() }
+        }
+        fn set(&mut self, src: NodeId, dst: NodeId, k: f64) {
+            self.edges.insert((src, dst), k);
+            self.edges.insert((dst, src), k);
+        }
+    }
+
+    impl CurvatureProvider for MockCurvature {
+        fn curvature(&self, src: NodeId, dst: NodeId) -> Option<f64> {
+            self.edges.get(&(src, dst)).copied()
+        }
+    }
+
+    #[test]
+    fn ricci_bottleneck_blocks_crossing_below_threshold() {
+        // Two-hop graph 1—2—3. Set κ(2,3) = −0.5 (below threshold 0.0):
+        // the BFS must refuse to cross that edge and flag a
+        // boundary_stop, even though the loose-cohesion community rule
+        // would happily cross.
+        let mut neighbors = MockNeighbors::new();
+        neighbors.add_edge(nid(1), nid(2), 1.0);
+        neighbors.add_edge(nid(2), nid(3), 1.0);
+
+        let mut communities = MockCommunities::new();
+        for i in 1..=3 {
+            communities.set_community(nid(i), 1);
+        }
+        communities.set_cohesion(1, 0.1); // loose → would cross without curv
+
+        let mut curv = MockCurvature::new();
+        curv.set(nid(1), nid(2), 0.5); // dense, crossable
+        curv.set(nid(2), nid(3), -0.5); // bottleneck, blocked
+
+        let tokens = FixedTokenEstimator(10);
+        let config = default_config();
+
+        let bundle = load_context_with_curvature(
+            &[nid(1)],
+            &config,
+            &neighbors,
+            &communities,
+            &curv,
+            &tokens,
+        );
+
+        assert!(
+            bundle.nodes.iter().any(|n| n.node_id == nid(2)),
+            "node 2 should be reached (edge 1->2 is dense)"
+        );
+        assert!(
+            bundle.nodes.iter().all(|n| n.node_id != nid(3)),
+            "node 3 must NOT be reached: edge 2->3 is a Ricci bottleneck"
+        );
+        assert!(
+            bundle.boundary_stops >= 1,
+            "Ricci bottleneck must be counted as a boundary stop"
+        );
+    }
+
+    #[test]
+    fn ricci_above_threshold_allows_crossing() {
+        // Same topology but κ(2,3) = +0.3 (above threshold 0.0): edge
+        // is semantically dense, BFS must cross.
+        let mut neighbors = MockNeighbors::new();
+        neighbors.add_edge(nid(1), nid(2), 1.0);
+        neighbors.add_edge(nid(2), nid(3), 1.0);
+
+        let mut communities = MockCommunities::new();
+        for i in 1..=3 {
+            communities.set_community(nid(i), 1);
+        }
+        communities.set_cohesion(1, 0.1);
+
+        let mut curv = MockCurvature::new();
+        curv.set(nid(1), nid(2), 0.5);
+        curv.set(nid(2), nid(3), 0.3);
+
+        let tokens = FixedTokenEstimator(10);
+        let config = default_config();
+
+        let bundle = load_context_with_curvature(
+            &[nid(1)],
+            &config,
+            &neighbors,
+            &communities,
+            &curv,
+            &tokens,
+        );
+
+        assert!(
+            bundle.nodes.iter().any(|n| n.node_id == nid(3)),
+            "node 3 must be reached: edge 2->3 has κ > threshold"
+        );
+    }
+
+    #[test]
+    fn ricci_none_falls_back_to_community_rule() {
+        // If the curvature provider returns None (edge not yet
+        // refreshed), the BFS must fall back to the community-cohesion
+        // rule — so a high-cohesion inter-community boundary still
+        // blocks even though the curvature provider says nothing.
+        let mut neighbors = MockNeighbors::new();
+        neighbors.add_edge(nid(1), nid(2), 1.0);
+        neighbors.add_edge(nid(2), nid(3), 1.0);
+
+        let mut communities = MockCommunities::new();
+        communities.set_community(nid(1), 1);
+        communities.set_community(nid(2), 1);
+        communities.set_community(nid(3), 2);
+        communities.set_cohesion(1, 0.9); // high cohesion → stop
+
+        let curv = MockCurvature::new(); // empty → all None
+
+        let tokens = FixedTokenEstimator(10);
+        let config = default_config();
+
+        let bundle = load_context_with_curvature(
+            &[nid(1)],
+            &config,
+            &neighbors,
+            &communities,
+            &curv,
+            &tokens,
+        );
+
+        assert!(
+            bundle.nodes.iter().all(|n| n.node_id != nid(3)),
+            "node 3 must be blocked by high-cohesion fallback when κ is unknown"
+        );
+        assert!(bundle.boundary_stops >= 1);
+    }
+
+    #[test]
+    fn ricci_api_unchanged_for_legacy_callers() {
+        // Smoke test: the no-curvature entry point behaves exactly
+        // like the pre-T12 version. Same graph as
+        // `two_communities_low_cohesion_crosses_boundary`.
+        let mut neighbors = MockNeighbors::new();
+        neighbors.add_edge(nid(1), nid(2), 1.0);
+        neighbors.add_edge(nid(2), nid(3), 1.0);
+
+        let mut communities = MockCommunities::new();
+        communities.set_community(nid(1), 1);
+        communities.set_community(nid(2), 1);
+        communities.set_community(nid(3), 2);
+        communities.set_cohesion(1, 0.5); // loose
+
+        let tokens = FixedTokenEstimator(10);
+        let config = default_config();
+
+        let bundle = load_context(&[nid(1)], &config, &neighbors, &communities, &tokens);
+        assert!(bundle.nodes.iter().any(|n| n.node_id == nid(3)));
     }
 }

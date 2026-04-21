@@ -96,3 +96,8 @@ pub use crystallization::{
 mod manager;
 #[cfg(feature = "engram")]
 pub use manager::EngramManager;
+
+#[cfg(feature = "substrate")]
+pub mod substrate_adapter;
+#[cfg(feature = "substrate")]
+pub use substrate_adapter::SubstrateVectorIndexAdapter;

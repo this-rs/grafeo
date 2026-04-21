@@ -257,6 +257,22 @@ pub struct CognitiveKernelConfig {
     pub context_budget_tokens: u32,
     /// Meta-learning rate for parameter adjustment.
     pub kernel_learning_rate: f64,
+    /// Ricci-Ollivier curvature threshold for the Ricci-bounded BFS
+    /// in `context_loader` (T12 Step 6). An edge whose curvature is
+    /// strictly below this threshold is treated as a semantic
+    /// bottleneck and BFS stops at it (same "accept boundary"
+    /// semantics as `community_cohesion_threshold`).
+    ///
+    /// Default is `0.0` — only strictly-negative curvature (inter-
+    /// community bridges per Jost-Liu / Forman) counts as a
+    /// bottleneck. Set higher (e.g. `0.1`) to bias the BFS toward
+    /// denser local neighbourhoods.
+    ///
+    /// Only consulted when a `CurvatureProvider` is passed to
+    /// `context_loader::load_context_with_curvature`. The default
+    /// `load_context` entry point ignores this field entirely, so
+    /// existing callers are unaffected.
+    pub ricci_bottleneck_threshold: f64,
 }
 
 impl Default for CognitiveKernelConfig {
@@ -271,6 +287,7 @@ impl Default for CognitiveKernelConfig {
             dissolution_hit_rate: 0.05,
             context_budget_tokens: 750,
             kernel_learning_rate: 0.1,
+            ricci_bottleneck_threshold: 0.0,
         }
     }
 }
@@ -395,6 +412,10 @@ impl KernelParamStore {
                 defaults.context_budget_tokens as f64,
             ) as u32,
             kernel_learning_rate: get("kernel_learning_rate", defaults.kernel_learning_rate),
+            ricci_bottleneck_threshold: get(
+                "ricci_bottleneck_threshold",
+                defaults.ricci_bottleneck_threshold,
+            ),
         })
     }
 }

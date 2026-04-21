@@ -51,6 +51,12 @@ iam = ["dep:obrain-iam"]
 # Substrate — topology-as-storage column-view backend (T6)
 substrate = ["dep:obrain-substrate"]
 
+# Thinkers — self-maintaining background agents (T13): Consolidator,
+# CommunityWarden, Predictor, Dreamer. All implementations live under
+# the `thinker` module gate; pulls in substrate for direct column-view
+# mutations (decay, pruning, compaction).
+thinker = ["substrate"]
+
 # Future subsystems
 scar = []
 utility = []
@@ -61,6 +67,11 @@ fingerprint = []
 distillation = ["energy", "synapse", "fingerprint", "dep:bincode"]
 episodic = []
 consolidation = ["energy", "fabric", "gds-refresh"]
+
+# Community detection — batch Leiden (Traag-Waltman) + incremental LDleiden.
+# Standalone (no obrain-adapters dependency): maintains node→community_id online
+# in response to edge add/remove/reweight, with substrate persistence via T10 Step 3.
+community = []
 
 # Convenience feature groups (3 progressive levels)
 # Level 1: minimum viable cognitive — energy + synapses
@@ -90,6 +101,7 @@ thiserror.workspace = true
 # Concurrency
 parking_lot.workspace = true
 dashmap.workspace = true
+rayon = { workspace = true }
 
 # Tracing
 tracing.workspace = true
@@ -115,6 +127,7 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 arcstr.workspace = true
 serde_json.workspace = true
 bincode.workspace = true
+bytemuck = { workspace = true, features = ["derive"] }
 criterion.workspace = true
 smallvec.workspace = true
 proptest.workspace = true
