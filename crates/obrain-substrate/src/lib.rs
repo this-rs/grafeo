@@ -29,6 +29,7 @@
 #![deny(unsafe_code)]
 
 pub mod blob_column;
+pub mod blob_column_registry;
 pub mod checkpoint;
 pub mod dict;
 pub mod engram;
