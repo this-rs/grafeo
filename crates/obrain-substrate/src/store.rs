@@ -425,23 +425,23 @@ pub struct SubstrateStore {
     /// (see [`crate::engram::MAX_ENGRAM_ID`]); allocation starts at 1.
     /// Persisted via `substrate.dict` v2.
     next_engram_id: AtomicU16,
-    /// In-memory node state (labels only after T17e Phase 2). The durable
-    /// skeleton lives in the Nodes zone; properties now live in their own
-    /// dedicated [`Self::node_properties`] map so nodes without properties
-    /// carry zero heap weight. Phase 3 eliminates this map in favour of
-    /// mmap+registry resolution.
-    nodes: DashMap<NodeId, NodeInMem>,
-    /// In-memory edge state (edge-type ArcStr only after T17e Phase 2).
-    /// Same rationale as [`Self::nodes`]; properties live in
-    /// [`Self::edge_properties`].
-    edges: DashMap<EdgeId, EdgeInMem>,
     /// Dedicated property map for nodes (T17e Phase 2). Entries are only
     /// materialised when a property is actually set — nodes without
-    /// properties pay zero anon-RSS here. Kept in sync with
-    /// [`Self::nodes`] lifecycle (removed on `delete_node`).
+    /// properties pay zero anon-RSS here. Pruned on `delete_node` to
+    /// prevent `persist_properties` re-serialising dead entries.
+    ///
+    /// T17e Phase 3: the former `nodes: DashMap<NodeId, NodeInMem>` has
+    /// been eliminated — labels and liveness now resolve directly from
+    /// `NodeRecord.label_bitset` + `LabelRegistry` via
+    /// [`Self::resolve_node_labels_from_bitset`] and
+    /// [`Self::is_live_on_disk`].
     node_properties: DashMap<NodeId, PropertyMap>,
     /// Dedicated property map for edges (T17e Phase 2). Same contract as
-    /// [`Self::node_properties`].
+    /// [`Self::node_properties`]. T17e Phase 3: the former
+    /// `edges: DashMap<EdgeId, EdgeInMem>` has been eliminated — edge
+    /// type and liveness resolve from `EdgeRecord.edge_type` +
+    /// `EdgeTypeRegistry` via [`Self::resolve_edge_type_by_id`] and
+    /// [`Self::is_live_edge_on_disk`].
     edge_properties: DashMap<EdgeId, PropertyMap>,
     /// First incoming edge head per destination node. The `next_to` chain
     /// on `EdgeRecord` is durable, but the entry point is kept in memory
@@ -548,15 +548,10 @@ pub struct SubstrateStore {
     blob_columns: BlobColumnRegistry,
 }
 
-#[derive(Clone, Default)]
-struct NodeInMem {
-    labels: SmallVec<[ArcStr; 2]>,
-}
-
-#[derive(Clone, Default)]
-struct EdgeInMem {
-    edge_type: ArcStr,
-}
+// T17e Phase 3 — `NodeInMem` and `EdgeInMem` were removed along with
+// their DashMaps. Labels/edge_type/liveness all resolve from the mmap'd
+// zones + in-memory registries now. See `resolve_node_labels_from_bitset`,
+// `resolve_edge_type_by_id`, `is_live_on_disk`, `is_live_edge_on_disk`.
 
 impl SubstrateStore {
     /// Open an existing substrate at `path`, journaling in `EveryCommit` mode.
@@ -633,8 +628,6 @@ impl SubstrateStore {
             next_node_id: AtomicU32::new(snapshot.next_node_id as u32),
             next_edge_id: AtomicU64::new(snapshot.next_edge_id),
             next_engram_id: AtomicU16::new(snapshot.next_engram_id),
-            nodes: DashMap::new(),
-            edges: DashMap::new(),
             node_properties: DashMap::new(),
             edge_properties: DashMap::new(),
             incoming_heads: DashMap::new(),
@@ -654,9 +647,14 @@ impl SubstrateStore {
             "writer + mmap + store skeleton ready"
         );
 
-        // (2) Rebuild in-memory side-cars from the on-disk zones. This is
-        //     an O(N + E) scan bounded by the just-loaded high-water marks
-        //     — zero-filled slots past the marks are never read.
+        // (2) Rebuild the minimal in-memory side-cars from the on-disk
+        //     zones. T17e Phase 3: the `nodes` / `edges` DashMaps are
+        //     gone — the scan only fills `incoming_heads` (reverse-chain
+        //     head per destination, not yet persisted) and the community
+        //     range maps (first/last slot per community, used by the
+        //     CommunityWarden). The Edges-zone sweep is still O(E) for
+        //     `incoming_heads`; a future sidecar persist of those heads
+        //     will eliminate it entirely.
         let t_rebuild = std::time::Instant::now();
         let rebuild_span = tracing::info_span!("rebuild_zones").entered();
         store.rebuild_from_zones()?;
@@ -664,11 +662,9 @@ impl SubstrateStore {
         tracing::info!(
             phase = "rebuild_zones",
             elapsed_ms = t_rebuild.elapsed().as_millis() as u64,
-            nodes = store.nodes.len(),
-            edges = store.edges.len(),
             incoming_heads = store.incoming_heads.len(),
             communities = store.community_placements.len(),
-            "in-memory side-cars rebuilt (O(N + E) scan)"
+            "side-cars rebuilt (incoming_heads + community ranges)"
         );
 
         // (3) Hydrate the vec-column registry from the persisted specs
@@ -838,10 +834,10 @@ impl SubstrateStore {
             }
             let map = entries_to_map(scalars);
             // Populate the dedicated node_properties map (T17e Phase 2).
-            // Liveness gate uses the structural `nodes` DashMap (built by
-            // rebuild_from_zones) — tombstoned-between-flush-and-reopen
-            // nodes are silently skipped, matching the pre-Phase-2 contract.
-            if !map.is_empty() && self.nodes.contains_key(&nid) {
+            // Liveness gate now reads straight from the mmap'd NodeRecord
+            // (T17e Phase 3) — tombstoned-between-flush-and-reopen nodes
+            // are silently skipped, matching the pre-Phase-2 contract.
+            if !map.is_empty() && self.is_live_on_disk(nid) {
                 self.node_properties.insert(nid, map);
                 nodes_loaded += 1;
             }
@@ -874,7 +870,7 @@ impl SubstrateStore {
                 edge_blobs_migrated += 1;
             }
             let map = entries_to_map(scalars);
-            if !map.is_empty() && self.edges.contains_key(&eid) {
+            if !map.is_empty() && self.is_live_edge_on_disk(eid) {
                 self.edge_properties.insert(eid, map);
                 edges_loaded += 1;
             }
@@ -898,24 +894,26 @@ impl SubstrateStore {
         Ok(())
     }
 
-    /// Walk the Nodes + Edges zones and rebuild:
+    /// Walk the Nodes + Edges zones and rebuild the minimal in-memory
+    /// side-cars (T17e Phase 3):
     ///
-    /// * the in-memory `nodes` DashMap (labels from bitset; properties
-    ///   are lost at step 3 since property pages land in step 4+);
-    /// * the in-memory `edges` DashMap (edge-type ArcStr via the
-    ///   registry; properties are lost at step 3 for the same reason);
-    /// * the `incoming_heads` map — the first live edge on each
-    ///   destination's `next_to` chain, identified as the live edge with
-    ///   the highest `EdgeId` per `dst` (splice-at-head invariant: newer
-    ///   edges always sit at the front).
+    /// * `community_placements` / `community_first_slots` — max/min live
+    ///   slot per community id (CommunityWarden + prefetch);
+    /// * `incoming_heads` — highest live `EdgeId` per destination node
+    ///   (head of the reverse `next_to` chain; splice-at-head invariant
+    ///   guarantees the head is always the max live id).
+    ///
+    /// Labels and edge-type ArcStrs are no longer materialised here —
+    /// they resolve on demand via [`Self::resolve_node_labels_from_bitset`]
+    /// and [`Self::resolve_edge_type_by_id`] straight from the mmap'd
+    /// zones + registries.
     ///
     /// Slots 1..`next_node_id` and 1..`next_edge_id` are considered
     /// allocated; anything further is zero-initialised mmap padding and
     /// ignored.
     fn rebuild_from_zones(&self) -> SubstrateResult<()> {
-        // ---- Nodes: rebuild labels view + community_placements ----
+        // ---- Nodes: community range maps only ----
         let node_hw = self.next_node_id.load(Ordering::Acquire);
-        let labels_guard = self.labels.read();
         for slot in 1..node_hw {
             let Some(rec) = self.writer.read_node(slot)? else {
                 // Zone shorter than the persisted high-water mark. This
@@ -926,8 +924,6 @@ impl SubstrateStore {
             if rec.flags & crate::record::node_flags::TOMBSTONED != 0 {
                 continue;
             }
-            let labels = labels_guard.labels_for_bitset(rec.label_bitset);
-            self.nodes.insert(NodeId(slot as u64), NodeInMem { labels });
             // T11 Step 3: community_placements = max live slot per cid.
             // The scan order is ascending so a simple overwrite trails the
             // highest-slot-wins invariant without an explicit compare.
@@ -939,15 +935,13 @@ impl SubstrateStore {
                 .entry(rec.community_id)
                 .or_insert(slot);
         }
-        drop(labels_guard);
 
-        // ---- Edges: rebuild edges DashMap + incoming_heads ----
-        let edge_hw = self.next_edge_id.load(Ordering::Acquire);
-        let edge_types_guard = self.edge_types.read();
+        // ---- Edges: incoming_heads only ----
         // For each dst, track the highest live EdgeId seen so far —
         // that's the head of the incoming chain (splice-at-head
         // invariant: newer ids are spliced at the front, and edges only
         // drop out of middle positions; head is always the max live id).
+        let edge_hw = self.next_edge_id.load(Ordering::Acquire);
         let mut heads: FxHashMap<NodeId, EdgeId> = FxHashMap::default();
         for slot in 1..edge_hw {
             let Some(rec) = self.writer.read_edge(slot)? else {
@@ -957,21 +951,6 @@ impl SubstrateStore {
                 continue;
             }
             let edge_id = EdgeId(slot);
-            let edge_type = edge_types_guard
-                .name_for(rec.edge_type)
-                .unwrap_or_else(|| {
-                    // Should never happen: every edge_type id was interned
-                    // before the edge was written. If it does, fall back to
-                    // a synthetic ArcStr so the map entry is still usable.
-                    tracing::error!(
-                        target: "substrate",
-                        "rebuild: edge slot {slot} references unknown edge_type id {} — \
-                         dict/zone drift?",
-                        rec.edge_type
-                    );
-                    ArcStr::from(format!("__UNKNOWN_{}", rec.edge_type))
-                });
-            self.edges.insert(edge_id, EdgeInMem { edge_type });
             let dst = NodeId(rec.dst as u64);
             heads
                 .entry(dst)
@@ -982,7 +961,6 @@ impl SubstrateStore {
                 })
                 .or_insert(edge_id);
         }
-        drop(edge_types_guard);
         for (dst, head) in heads {
             self.incoming_heads.insert(dst, head);
         }
@@ -1229,11 +1207,8 @@ impl SubstrateStore {
         self.writer
             .write_node(id.0 as u32, rec)
             .expect("write_node failed — WAL append or mmap grow");
-        let label_vec = {
-            let reg = self.labels.read();
-            reg.labels_for_bitset(bitset)
-        };
-        self.nodes.insert(id, NodeInMem { labels: label_vec });
+        // T17e Phase 3: labels resolve from the mmap'd NodeRecord +
+        // registry on demand; no DashMap to populate.
         id
     }
 
@@ -2788,14 +2763,23 @@ impl GraphStore for SubstrateStore {
     }
 
     // -- Scans --
+    //
+    // T17e Phase 3: the scans iterate the slot range `1..high_water_mark`
+    // directly and filter via the mmap'd TOMBSTONED flag. Cost shifts
+    // from O(live) DashMap-iter to O(high_water) mmap-scan — for a
+    // healthy store the two are within a constant factor, and the mmap
+    // scan is pointer-chased cache-line-sized, so in practice the new
+    // scans are *faster* than iterating a DashMap's sharded buckets.
     fn node_ids(&self) -> Vec<NodeId> {
-        let mut out: Vec<NodeId> = self
-            .nodes
-            .iter()
-            .filter(|e| self.is_live_on_disk(*e.key()))
-            .map(|e| *e.key())
-            .collect();
-        out.sort_by_key(|n| n.0);
+        let hw = self.next_node_id.load(Ordering::Acquire);
+        let mut out: Vec<NodeId> = Vec::new();
+        for slot in 1..hw {
+            let id = NodeId(slot as u64);
+            if self.is_live_on_disk(id) {
+                out.push(id);
+            }
+        }
+        // Already sorted by construction — ascending slot scan.
         out
     }
 
@@ -2807,38 +2791,43 @@ impl GraphStore for SubstrateStore {
         let mask = 1u64 << bit;
         drop(reg);
 
-        let mut out: Vec<NodeId> = self
-            .nodes
-            .iter()
-            .filter_map(|e| {
-                let id = *e.key();
-                if !self.is_live_on_disk(id) {
-                    return None;
-                }
-                let rec = self.writer.read_node(id.0 as u32).ok()??;
-                if rec.label_bitset & mask != 0 {
-                    Some(id)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        out.sort_by_key(|n| n.0);
+        let hw = self.next_node_id.load(Ordering::Acquire);
+        let mut out: Vec<NodeId> = Vec::new();
+        for slot in 1..hw {
+            let Ok(Some(rec)) = self.writer.read_node(slot) else {
+                continue;
+            };
+            if rec.flags & crate::record::node_flags::TOMBSTONED != 0 {
+                continue;
+            }
+            if rec.label_bitset & mask != 0 {
+                out.push(NodeId(slot as u64));
+            }
+        }
+        // Already sorted by construction.
         out
     }
 
     fn node_count(&self) -> usize {
-        self.nodes
-            .iter()
-            .filter(|e| self.is_live_on_disk(*e.key()))
-            .count()
+        let hw = self.next_node_id.load(Ordering::Acquire);
+        let mut n = 0usize;
+        for slot in 1..hw {
+            if self.is_live_on_disk(NodeId(slot as u64)) {
+                n += 1;
+            }
+        }
+        n
     }
 
     fn edge_count(&self) -> usize {
-        self.edges
-            .iter()
-            .filter(|e| self.is_live_edge_on_disk(*e.key()))
-            .count()
+        let hw = self.next_edge_id.load(Ordering::Acquire);
+        let mut n = 0usize;
+        for slot in 1..hw {
+            if self.is_live_edge_on_disk(EdgeId(slot)) {
+                n += 1;
+            }
+        }
+        n
     }
 
     // -- Entity metadata --
@@ -2846,7 +2835,10 @@ impl GraphStore for SubstrateStore {
         if !self.is_live_edge_on_disk(id) {
             return None;
         }
-        self.edges.get(&id).map(|e| e.edge_type.clone())
+        // T17e Phase 3: resolve directly from the mmap'd EdgeRecord +
+        // registry — no DashMap cache.
+        let rec = self.writer.read_edge(id.0).ok().flatten()?;
+        Some(self.resolve_edge_type_by_id(rec.edge_type))
     }
 
     // -- Filtered search --
@@ -3016,11 +3008,8 @@ impl GraphStoreMut for SubstrateStore {
         self.writer
             .write_node(id.0 as u32, rec)
             .expect("write_node failed — WAL append or mmap grow");
-        let label_vec = {
-            let reg = self.labels.read();
-            reg.labels_for_bitset(bitset)
-        };
-        self.nodes.insert(id, NodeInMem { labels: label_vec });
+        // T17e Phase 3: labels resolve from the mmap'd NodeRecord +
+        // registry on demand; no DashMap to populate.
         id
     }
 
@@ -3044,14 +3033,8 @@ impl GraphStoreMut for SubstrateStore {
         let id = self.allocate_edge_id();
         let _rec = self.splice_edge_at_head(id, src, dst, edge_type_id);
 
-        // In-memory side — edge_type name only (properties live in
-        // `edge_properties` after T17e Phase 2).
-        self.edges.insert(
-            id,
-            EdgeInMem {
-                edge_type: edge_type.into(),
-            },
-        );
+        // T17e Phase 3: edge_type resolves from the mmap'd EdgeRecord +
+        // registry on demand; no DashMap to populate.
         id
     }
 
@@ -3079,15 +3062,17 @@ impl GraphStoreMut for SubstrateStore {
             return false;
         }
         // Flip the TOMBSTONED flag in the on-disk slot + journal NodeDelete.
+        // T17e Phase 3: the flag flip in the mmap'd record is now the
+        // sole source of truth for liveness — `is_live_on_disk` + every
+        // `resolve_*` helper consult it directly. `get_node` will now
+        // return None.
         self.writer
             .tombstone_node(id.0 as u32)
             .expect("tombstone_node failed");
-        // Drop from the in-memory side-tables — get_node will now return
-        // None. T17e Phase 2: the dedicated `node_properties` map also
-        // holds an entry when the node has properties; drop it here so
+        // The dedicated `node_properties` map may still hold an entry
+        // when the node has properties; drop it here so
         // `persist_properties` doesn't re-serialise a dead entity on the
         // next flush.
-        self.nodes.remove(&id);
         self.node_properties.remove(&id);
         true
     }
@@ -3134,9 +3119,8 @@ impl GraphStoreMut for SubstrateStore {
         self.writer
             .tombstone_edge(id.0)
             .expect("tombstone_edge failed");
-        // T17e Phase 2: drop from both in-memory side-tables (edge-type
-        // cache + property map).
-        self.edges.remove(&id);
+        // T17e Phase 3: the mmap TOMBSTONED flag is authoritative; only
+        // the property map needs explicit cleanup here.
         self.edge_properties.remove(&id);
         true
     }
@@ -3224,33 +3208,37 @@ impl GraphStoreMut for SubstrateStore {
     }
 
     // -- Label mutation --
+    //
+    // T17e Phase 3: both `add_label` and `remove_label` pivot on the
+    // `NodeRecord.label_bitset` field — the canonical representation.
+    // We read the current record, shift the bit for the target label,
+    // and write the new record back. No in-memory DashMap to keep in
+    // sync (the former `NodeInMem.labels` view was a cache of this
+    // same bitset that we can now materialise on the fly via
+    // `resolve_node_labels_from_bitset`).
     fn add_label(&self, node_id: NodeId, label: &str) -> bool {
         if !self.is_live_on_disk(node_id) {
             return false;
         }
-        // Update the in-memory side and recompute the bitset.
-        let mut entry = self.nodes.entry(node_id).or_default();
-        if entry.labels.iter().any(|l| l.as_str() == label) {
+        let old = match self.writer.read_node(node_id.0 as u32) {
+            Ok(Some(rec)) => rec,
+            _ => return false,
+        };
+        // Intern first — if the label is already interned we can
+        // early-out on idempotent adds without holding the write lock
+        // longer than necessary.
+        let bit = self
+            .labels
+            .write()
+            .intern(label)
+            .expect("label registry overflow");
+        let mask = 1u64 << bit;
+        if old.label_bitset & mask != 0 {
+            // Label already set: idempotent no-op, matches LpgStore.
             return false;
         }
-        entry.labels.push(label.into());
-        let new_bitset = {
-            let mut reg = self.labels.write();
-            let mut b = 0u64;
-            for l in &entry.labels {
-                let bit = reg.intern(l.as_str()).expect("label registry overflow");
-                b |= 1u64 << bit;
-            }
-            b
-        };
-        let old = self
-            .writer
-            .read_node(node_id.0 as u32)
-            .ok()
-            .flatten()
-            .unwrap_or_default();
         let updated = NodeRecord {
-            label_bitset: new_bitset,
+            label_bitset: old.label_bitset | mask,
             ..old
         };
         self.writer
@@ -3263,30 +3251,21 @@ impl GraphStoreMut for SubstrateStore {
         if !self.is_live_on_disk(node_id) {
             return false;
         }
-        let mut entry = self.nodes.entry(node_id).or_default();
-        let before = entry.labels.len();
-        entry.labels.retain(|l| l.as_str() != label);
-        if entry.labels.len() == before {
+        let old = match self.writer.read_node(node_id.0 as u32) {
+            Ok(Some(rec)) => rec,
+            _ => return false,
+        };
+        let Some(bit) = self.labels.read().bit_for(label) else {
+            // Label was never interned → can't be on this node.
+            return false;
+        };
+        let mask = 1u64 << bit;
+        if old.label_bitset & mask == 0 {
+            // Label not present: no-op, matches LpgStore.
             return false;
         }
-        let new_bitset = {
-            let reg = self.labels.read();
-            let mut b = 0u64;
-            for l in &entry.labels {
-                if let Some(bit) = reg.bit_for(l.as_str()) {
-                    b |= 1u64 << bit;
-                }
-            }
-            b
-        };
-        let old = self
-            .writer
-            .read_node(node_id.0 as u32)
-            .ok()
-            .flatten()
-            .unwrap_or_default();
         let updated = NodeRecord {
-            label_bitset: new_bitset,
+            label_bitset: old.label_bitset & !mask,
             ..old
         };
         self.writer
