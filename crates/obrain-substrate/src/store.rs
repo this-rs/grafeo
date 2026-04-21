@@ -575,9 +575,19 @@ impl SubstrateStore {
         sub: SubstrateFile,
         sync_mode: SyncMode,
     ) -> SubstrateResult<Self> {
+        // T17a — Instrumentation. Each phase emits an `info_span!` scope
+        // plus an explicit `elapsed_ms` event so `RUST_LOG=info` gives a
+        // full breakdown of cold-open latency. Added to hunt the 79 s
+        // Wikipedia startup (gate: 100 ms). Do not remove without a
+        // replacement — these spans also serve as regression anchors.
+        let _total_span = tracing::info_span!("substrate.from_substrate").entered();
+        let t_total = std::time::Instant::now();
+
         // (1) Load the persisted dict (registries + slot allocator state).
         // Missing on fresh create → DictSnapshot::default() (empty
         // registries, counters = 1).
+        let t_dict = std::time::Instant::now();
+        let dict_span = tracing::info_span!("dict_load").entered();
         let dict_path = sub.path().join(DICT_FILENAME);
         let snapshot = crate::dict::DictSnapshot::load(&dict_path)?;
 
@@ -587,7 +597,25 @@ impl SubstrateStore {
         edge_types.load_from(&snapshot.edge_types)?;
         let mut prop_keys = PropertyKeyRegistry::default();
         prop_keys.load_from(&snapshot.prop_keys)?;
+        drop(dict_span);
+        tracing::info!(
+            phase = "dict_load",
+            elapsed_ms = t_dict.elapsed().as_millis() as u64,
+            labels = snapshot.labels.len(),
+            edge_types = snapshot.edge_types.len(),
+            prop_keys = snapshot.prop_keys.len(),
+            vec_columns = snapshot.vec_columns.len(),
+            blob_columns = snapshot.blob_columns.len(),
+            next_node_id = snapshot.next_node_id,
+            next_edge_id = snapshot.next_edge_id,
+            "dict + registries loaded"
+        );
 
+        // (1b) Writer init — opens the WAL, maps each zone into the
+        //      process address space, wires sync_mode. This is what
+        //      brings the on-disk zone files into the VM.
+        let t_writer = std::time::Instant::now();
+        let writer_span = tracing::info_span!("writer_init").entered();
         let writer = Writer::new(sub, sync_mode)?;
         let substrate = writer.substrate();
 
@@ -609,11 +637,29 @@ impl SubstrateStore {
             vec_columns: VecColumnRegistry::new(),
             blob_columns: BlobColumnRegistry::new(),
         };
+        drop(writer_span);
+        tracing::info!(
+            phase = "writer_init",
+            elapsed_ms = t_writer.elapsed().as_millis() as u64,
+            "writer + mmap + store skeleton ready"
+        );
 
         // (2) Rebuild in-memory side-cars from the on-disk zones. This is
         //     an O(N + E) scan bounded by the just-loaded high-water marks
         //     — zero-filled slots past the marks are never read.
+        let t_rebuild = std::time::Instant::now();
+        let rebuild_span = tracing::info_span!("rebuild_zones").entered();
         store.rebuild_from_zones()?;
+        drop(rebuild_span);
+        tracing::info!(
+            phase = "rebuild_zones",
+            elapsed_ms = t_rebuild.elapsed().as_millis() as u64,
+            nodes = store.nodes.len(),
+            edges = store.edges.len(),
+            incoming_heads = store.incoming_heads.len(),
+            communities = store.community_placements.len(),
+            "in-memory side-cars rebuilt (O(N + E) scan)"
+        );
 
         // (3) Hydrate the vec-column registry from the persisted specs
         //     (dict v3). For each `(prop_key_id, entity_kind, dim, dtype)`
@@ -630,6 +676,8 @@ impl SubstrateStore {
         //     upgrade path safe against silent data loss — see the
         //     `auto_migrates_legacy_vectors_on_load` test for the
         //     regression anchor.
+        let t_hydrate = std::time::Instant::now();
+        let hydrate_span = tracing::info_span!("hydrate_columns").entered();
         {
             let sub = store.substrate.lock();
             let names = store.prop_keys.read().names();
@@ -647,6 +695,14 @@ impl SubstrateStore {
                 .blob_columns
                 .hydrate_from_dict(&sub, &names, &snapshot.blob_columns)?;
         }
+        drop(hydrate_span);
+        tracing::info!(
+            phase = "hydrate_columns",
+            elapsed_ms = t_hydrate.elapsed().as_millis() as u64,
+            vec_columns = snapshot.vec_columns.len(),
+            blob_columns = snapshot.blob_columns.len(),
+            "vec + blob column registries hydrated"
+        );
 
         // (4) Load properties from the sidecar snapshot, if present.
         //     Fresh stores have no `.props` file and this is a no-op.
@@ -659,7 +715,21 @@ impl SubstrateStore {
         //     re-serialised sidecar via the `persist_properties`
         //     defensive filter, closing the upgrade in a single
         //     open-close cycle.
+        let t_props = std::time::Instant::now();
+        let props_span = tracing::info_span!("load_properties").entered();
         store.load_properties()?;
+        drop(props_span);
+        tracing::info!(
+            phase = "load_properties",
+            elapsed_ms = t_props.elapsed().as_millis() as u64,
+            "properties sidecar walked + scalars/vectors/blobs routed"
+        );
+
+        tracing::info!(
+            phase = "from_substrate_total",
+            elapsed_ms = t_total.elapsed().as_millis() as u64,
+            "SubstrateStore::from_substrate complete"
+        );
 
         Ok(store)
     }
