@@ -28,6 +28,7 @@
 
 #![deny(unsafe_code)]
 
+pub mod blob_column;
 pub mod checkpoint;
 pub mod dict;
 pub mod engram;
@@ -90,6 +91,10 @@ pub use tiers::{
 };
 pub use wal::{PropValue, WAL_HEADER_SIZE, WalKind, WalPayload, WalRecord};
 pub use wal_io::{SyncMode, WalIter, WalReader, WalWriter};
+pub use blob_column::{
+    BlobColSpec, BlobColumnHeader, BlobColumnReader, BlobColumnWriter, BlobSlotEntry,
+    BLOB_COLUMN_MAGIC, BLOB_COLUMN_VERSION, BLOB_HEADER_SIZE, BLOB_SLOT_STRIDE,
+};
 pub use checkpoint::{checkpoint, CheckpointStats};
 pub use dict::DictSnapshot;
 pub use engram::{EngramZone, ENGRAM_HEADER_SIZE, ENGRAM_MAGIC, ENGRAM_ZONE_VERSION, MAX_ENGRAM_ID};
