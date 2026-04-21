@@ -893,11 +893,27 @@ fn phase_tiers(
     );
     let index = SubstrateTieredIndex::new(L2_DIM);
     index.rebuild(&pairs);
-    // The index currently lives in-process. Persisting it to the
-    // substrate tier zones is T17's concern (see RFC "Tier persistence");
-    // until then the tier build is a warm-up hint — consumers of the
-    // migrated store rebuild via `SubstrateTieredIndex::rebuild` at open.
-    let _ = substrate;
+
+    // T16.5 — persist L0/L1/L2 to substrate.tier0/.tier1/.tier2 so
+    // downstream opens skip the rebuild from `_st_embedding`. See
+    // `docs/rfc/substrate/tier-persistence.md` for the on-disk format.
+    //
+    // The write path here holds the `SubstrateFile` mutex for the full
+    // duration of the three zone writes. This is a batch operation during
+    // migration (no concurrent readers), so contention is a non-concern.
+    let t_persist = std::time::Instant::now();
+    {
+        let sub_mutex = substrate.writer().substrate();
+        let sub_guard = sub_mutex.lock();
+        index.persist_to_zones(&sub_guard).with_context(|| {
+            "Phase::Tiers — persisting tier zones to substrate failed"
+        })?;
+    }
+    tracing::info!(
+        "Phase::Tiers — persisted {} slots to tier0/1/2 in {:.2} s",
+        pairs.len(),
+        t_persist.elapsed().as_secs_f64(),
+    );
     Ok(())
 }
 
@@ -990,14 +1006,39 @@ fn is_cognitive_key(k: &str) -> bool {
 }
 
 /// Embedding-like keys that should NOT be copied into the substrate
-/// side's property map. `phase_tiers` reads them directly from the
-/// legacy store to build the L0/L1/L2 index, and once the legacy store
-/// is closed at the end of `phase_tiers` the embeddings are freed.
-/// Persisting them as substrate properties would double the RSS of the
-/// migration and bloat the sidecar snapshot for no benefit until the
-/// T17 property-pages subsystem lands.
+/// side's property map. Three kinds, all of which must stay out of the
+/// `substrate.props` bincode sidecar to keep anon RSS under the T16
+/// gate:
+///
+/// - `_st_embedding` — semantic vector (f32 × 384). `phase_tiers` reads
+///   it directly from the legacy store to build the L0/L1/L2 index,
+///   and once the legacy store is closed the embedding is freed.
+/// - `_kernel_embedding` — derived by the kernel plugin warden
+///   (f32 × 80). Rebuildable on first warden tick, no durability loss.
+///   Constant mirrored from `obrain-adapters::plugins::algorithms::
+///   kernel::KERNEL_EMBEDDING_KEY` — if that string is renamed, update
+///   here too.
+/// - `_hilbert_features` — derived from graph topology by the kernel
+///   plugin warden (f32 × 64). Same rebuildable story. Constant
+///   mirrored from `obrain-adapters::plugins::algorithms::kernel::
+///   HILBERT_FEATURES_KEY`.
+///
+/// Persisting any of these as substrate properties would double the
+/// RSS of the migration and bloat the sidecar snapshot for no benefit
+/// until the T17 property-pages subsystem lands.
+///
+/// Direct string dependency (rather than importing the constants) is
+/// deliberate: `obrain-migrate` must not depend on `obrain-adapters`
+/// to keep the legacy-read build graph minimal. The `skipped_keys_in_sync`
+/// test below asserts the spellings match.
+const KERNEL_EMBEDDING_KEY: &str = "_kernel_embedding";
+const HILBERT_FEATURES_KEY: &str = "_hilbert_features";
+
 fn is_embedding_key(k: &str) -> bool {
-    matches!(k, "_st_embedding")
+    matches!(
+        k,
+        "_st_embedding" | KERNEL_EMBEDDING_KEY | HILBERT_FEATURES_KEY
+    )
 }
 
 fn clamp01(x: f32) -> f32 {
@@ -1104,6 +1145,40 @@ mod tests {
         assert!(is_cognitive_key(cog_keys::SYNAPSE_WEIGHT));
         assert!(!is_cognitive_key("title"));
         assert!(!is_cognitive_key("_st_embedding"));
+    }
+
+    #[test]
+    fn embedding_key_detection() {
+        // Pre-T16.6 behaviour: only `_st_embedding` was filtered. The
+        // T16.6 extension adds the two warden-derived vectors. All
+        // three must be routed out of the substrate.props sidecar.
+        assert!(is_embedding_key("_st_embedding"));
+        assert!(is_embedding_key("_kernel_embedding"));
+        assert!(is_embedding_key("_hilbert_features"));
+
+        // User-provided semantic embedding stays in props for now —
+        // promotion to a typed substrate column is T17 work.
+        assert!(!is_embedding_key("embedding"));
+        assert!(!is_embedding_key("title"));
+        assert!(!is_embedding_key(""));
+    }
+
+    #[test]
+    fn skipped_keys_in_sync_with_adapter_constants() {
+        // The converter mirrors the `_kernel_embedding` / `_hilbert_features`
+        // strings from `obrain-adapters::plugins::algorithms::kernel` rather
+        // than taking a heavy dependency on that crate (see the doc comment
+        // on `is_embedding_key`). If someone renames the keys on the adapter
+        // side, the migration filter silently stops working and anon RSS
+        // regresses. This test is the canary — it compares the mirrored
+        // constants against the raw strings the adapter is known to write.
+        //
+        // Rationale for not using the real constants here: pulling
+        // `obrain-adapters` (and transitively the plugin runtime) into
+        // `obrain-migrate` would defeat the point of keeping the legacy-read
+        // build graph minimal.
+        assert_eq!(KERNEL_EMBEDDING_KEY, "_kernel_embedding");
+        assert_eq!(HILBERT_FEATURES_KEY, "_hilbert_features");
     }
 
     #[test]
