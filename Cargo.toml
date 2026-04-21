@@ -11,6 +11,8 @@ members = [
     "crates/obrain-rag",
     "crates/obrain-iam",
     "crates/obrain-substrate",
+    "crates/obrain-migrate",
+    "crates/neo4j2obrain",
     "crates/obrain-cli",
     "crates/bindings/python",
     "crates/bindings/node",

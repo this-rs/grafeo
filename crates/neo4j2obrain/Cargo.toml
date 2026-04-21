@@ -1,0 +1,42 @@
+[package]
+name = "neo4j2obrain"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Streaming importer: Neo4j (bolt) → obrain substrate, with auto-cognitive initialisation"
+
+[[bin]]
+name = "neo4j2obrain"
+path = "src/main.rs"
+
+[features]
+# Neo4j bolt reader — disabled by default so the crate compiles cleanly
+# without a network dependency during `cargo check --workspace`. Enable
+# with `--features neo4j-bolt` for production imports.
+default = []
+neo4j-bolt = ["neo4rs", "tokio"]
+
+[dependencies]
+obrain-core = { workspace = true }
+obrain-common = { workspace = true }
+obrain-substrate = { workspace = true }
+
+clap = { version = "4.5", features = ["derive", "env"] }
+indicatif = "0.17"
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+parking_lot = { workspace = true }
+
+# Optional — pulled in only with `--features neo4j-bolt`.
+neo4rs = { version = "0.8", optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"], optional = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
