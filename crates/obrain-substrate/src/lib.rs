@@ -51,6 +51,7 @@ pub mod tier_persist;
 pub mod tiered_scan;
 pub mod tiers;
 pub mod vec_column;
+pub mod vec_column_registry;
 pub mod wal;
 pub mod wal_io;
 pub mod warden;

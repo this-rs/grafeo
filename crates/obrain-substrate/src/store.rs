@@ -131,6 +131,8 @@ use crate::props_snapshot::{
     entries_to_map, map_to_entries, PropEntry, PropertiesSnapshotV1,
     PropertiesStreamingWriter, PROPS_FILENAME,
 };
+use crate::vec_column::EntityKind;
+use crate::vec_column_registry::VecColumnRegistry;
 use crate::wal_io::SyncMode;
 use crate::writer::Writer;
 
@@ -341,7 +343,12 @@ struct PropertyKeyRegistry {
 
 impl PropertyKeyRegistry {
     /// Register a property-key name if absent, return its interned id.
-    #[allow(dead_code)] // wired by step 4 (property page writer)
+    ///
+    /// Wired by T16.7: every `Value::Vector` write routes through
+    /// [`VecColumnRegistry`], which needs a stable `prop_key_id` to
+    /// name the vec-column zone file. Scalar properties still don't
+    /// touch this registry — they live in the DashMap and are
+    /// persisted via the props sidecar.
     fn intern(&mut self, name: &str) -> SubstrateResult<u16> {
         if let Some(&id) = self.name_to_id.get(name) {
             return Ok(id);
@@ -490,6 +497,21 @@ pub struct SubstrateStore {
     /// reports. `madvise(WILLNEED)` is a kernel hint, so a loose bound
     /// wastes no correctness; it just dilutes the page-fault savings.
     community_first_slots: DashMap<u32, u32>,
+    /// Routing table + open-writer cache for `Value::Vector` properties.
+    ///
+    /// Every `set_node_property(_, _, Value::Vector(_))` and
+    /// `set_edge_property(_, _, Value::Vector(_))` call is intercepted
+    /// here and routed to a dense mmap'd `substrate.veccol.*` zone
+    /// instead of the per-entity `PropertyMap` + bincode `substrate.props`
+    /// sidecar. This closes the T16 anon-RSS gate (≤ 1 GiB) — vector
+    /// payloads never touch the anonymous heap.
+    ///
+    /// Hydrated on open from `DictSnapshot.vec_columns` (v3) so a
+    /// fresh `get_node_property` resolves the right zone even before
+    /// the first write in this session. Durability is batched to
+    /// [`Self::flush`] via `sync_all()` — same cadence as the dict and
+    /// the props sidecar.
+    vec_columns: VecColumnRegistry,
 }
 
 #[derive(Clone, Default)]
@@ -560,6 +582,7 @@ impl SubstrateStore {
             stats: Arc::new(Statistics::new()),
             community_placements: DashMap::new(),
             community_first_slots: DashMap::new(),
+            vec_columns: VecColumnRegistry::new(),
         };
 
         // (2) Rebuild in-memory side-cars from the on-disk zones. This is
@@ -573,6 +596,22 @@ impl SubstrateStore {
         //     properties rather than refusing to open — the store is
         //     still usable structurally.
         store.load_properties()?;
+
+        // (4) Hydrate the vec-column registry from the persisted specs
+        //     (dict v3). For each `(prop_key_id, entity_kind, dim, dtype)`
+        //     tuple we reopen the corresponding `substrate.veccol.*`
+        //     zone so subsequent reads and writes in this session route
+        //     to the right file without a cold `ZoneFile::open`.
+        //
+        //     Hydration runs after `prop_keys` is loaded so the registry
+        //     can resolve `prop_key_id → PropertyKey` names.
+        {
+            let sub = store.substrate.lock();
+            let names = store.prop_keys.read().names();
+            store
+                .vec_columns
+                .hydrate_from_dict(&sub, &names, &snapshot.vec_columns)?;
+        }
 
         Ok(store)
     }
@@ -738,9 +777,10 @@ impl SubstrateStore {
     /// Build a [`DictSnapshot`] capturing all three registries + slot
     /// allocator state. Called by [`Self::flush`] and tests.
     ///
-    /// The `vec_columns` list is populated by T16.7 Step 2 once the
-    /// routing layer lands; until then, leave it empty so v3 dicts
-    /// still roundtrip cleanly for existing bases.
+    /// `vec_columns` is populated from the live [`VecColumnRegistry`]
+    /// so every open zone has a persisted spec entry — on next open,
+    /// `hydrate_from_dict` can reopen each zone by filename without
+    /// relying on a directory scan.
     fn build_dict_snapshot(&self) -> crate::dict::DictSnapshot {
         crate::dict::DictSnapshot {
             labels: self.labels.read().names(),
@@ -749,7 +789,7 @@ impl SubstrateStore {
             next_node_id: self.next_node_id.load(Ordering::Acquire) as u64,
             next_edge_id: self.next_edge_id.load(Ordering::Acquire),
             next_engram_id: self.next_engram_id.load(Ordering::Acquire),
-            vec_columns: Vec::new(),
+            vec_columns: self.vec_columns.specs_snapshot(),
         }
     }
 
@@ -770,13 +810,20 @@ impl SubstrateStore {
     ///    fsyncs under `SyncMode::EveryCommit`.
     /// 2. `writer.msync_zones()` — flushes dirty mmap pages so the
     ///    Nodes/Edges zones on disk agree with the WAL.
-    /// 3. `persist_dict()` — atomically rewrites `substrate.dict` with
-    ///    the current registries and slot counters. Done last so any
-    ///    crash before here leaves the WAL as source of truth (replay
-    ///    will reconstruct both).
+    /// 3. `vec_columns.sync_all()` — for each open `substrate.veccol.*`
+    ///    zone, recompute the CRC, overwrite the header, and
+    ///    `msync + fsync`. Done **before** the dict is persisted so
+    ///    the dict can't reference a zone whose header is stale from
+    ///    a previous session (CRC mismatch on next open would silently
+    ///    demote the column to "missing" and lose data).
+    /// 4. `persist_dict()` — atomically rewrites `substrate.dict` with
+    ///    the current registries, slot counters, and vec-column specs.
+    ///    Done last so any crash before here leaves the WAL as source
+    ///    of truth (replay will reconstruct both).
     pub fn flush(&self) -> SubstrateResult<()> {
         self.writer.commit()?;
         self.writer.msync_zones()?;
+        self.vec_columns.sync_all()?;
         self.persist_dict()?;
         self.persist_properties()?;
         Ok(())
@@ -816,6 +863,13 @@ impl SubstrateStore {
     /// this with O(Δ) mmap writes.
     fn persist_properties(&self) -> SubstrateResult<()> {
         let mut snap = PropertiesSnapshotV1::default();
+        // Defensive filter: `Value::Vector` writes are routed to
+        // `vec_columns` and never inserted into the DashMap by
+        // `set_node_property`, but older bases migrated before T16.7
+        // may still carry vector entries loaded via non-trait paths.
+        // Dropping them here prevents re-persistence into the bincode
+        // sidecar (which is the whole point of T16.7).
+        let is_vec = |(_, v): &(String, Value)| matches!(v, Value::Vector(_));
         // Nodes
         snap.nodes.reserve(self.nodes.len());
         for entry in self.nodes.iter() {
@@ -824,9 +878,16 @@ impl SubstrateStore {
             if entry.value().properties.is_empty() {
                 continue;
             }
+            let props: Vec<(String, Value)> = map_to_entries(&entry.value().properties)
+                .into_iter()
+                .filter(|p| !is_vec(p))
+                .collect();
+            if props.is_empty() {
+                continue;
+            }
             snap.nodes.push(PropEntry {
                 id: entry.key().as_u64(),
-                props: map_to_entries(&entry.value().properties),
+                props,
             });
         }
         // Edges
@@ -835,9 +896,16 @@ impl SubstrateStore {
             if entry.value().properties.is_empty() {
                 continue;
             }
+            let props: Vec<(String, Value)> = map_to_entries(&entry.value().properties)
+                .into_iter()
+                .filter(|p| !is_vec(p))
+                .collect();
+            if props.is_empty() {
+                continue;
+            }
             snap.edges.push(PropEntry {
                 id: entry.key().as_u64(),
-                props: map_to_entries(&entry.value().properties),
+                props,
             });
         }
         let path = {
@@ -1684,6 +1752,48 @@ impl SubstrateStore {
         }
     }
 
+    /// Interior helper: route a `Value::Vector` write to the
+    /// [`VecColumnRegistry`]. Interns the property-key, locks the
+    /// substrate for the duration of `write_slot` (which may `ensure_room`
+    /// the zone), and swallows errors with a log — the `GraphStoreMut`
+    /// trait's setters are infallible, so the historical contract is to
+    /// silently drop a bad write and let the next flush surface the
+    /// problem via the props sidecar. For vectors, a bad write generally
+    /// means the spec drifted (different dim for the same key) or the
+    /// zone could not be grown; both are programming bugs and land in
+    /// the `error!` log.
+    fn route_vector_write(
+        &self,
+        entity_kind: EntityKind,
+        slot: u32,
+        key: &str,
+        vector: &[f32],
+    ) {
+        let prop_key_id = match self.prop_keys.write().intern(key) {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::error!(
+                    target: "substrate::vec_columns",
+                    "prop_keys.intern({key:?}) failed: {e} — dropping Value::Vector write"
+                );
+                return;
+            }
+        };
+        let pk = PropertyKey::new(key);
+        let sub = self.substrate.lock();
+        if let Err(e) = self
+            .vec_columns
+            .write(&sub, &pk, entity_kind, prop_key_id, slot, vector)
+        {
+            tracing::error!(
+                target: "substrate::vec_columns",
+                "vec_columns.write(key={key:?}, ek={entity_kind:?}, \
+                 slot={slot}, dim={}) failed: {e} — dropping Value::Vector write",
+                vector.len()
+            );
+        }
+    }
+
     /// Allocate the next node id (slot index).
     fn allocate_node_id(&self) -> NodeId {
         let raw = self.next_node_id.fetch_add(1, Ordering::AcqRel);
@@ -2158,6 +2268,12 @@ impl GraphStore for SubstrateStore {
         if !self.is_live_on_disk(id) {
             return None;
         }
+        // T16.7: vector-typed properties live in their own mmap zone.
+        // Check the registry first so reads after a fresh open resolve
+        // without waiting for a `set_node_property` in this session.
+        if let Some(arc) = self.vec_columns.read(key, EntityKind::Node, id.0 as u32) {
+            return Some(Value::Vector(arc));
+        }
         let entry = self.nodes.get(&id)?;
         entry.properties.get(key).cloned()
     }
@@ -2165,6 +2281,9 @@ impl GraphStore for SubstrateStore {
     fn get_edge_property(&self, id: EdgeId, key: &PropertyKey) -> Option<Value> {
         if !self.is_live_edge_on_disk(id) {
             return None;
+        }
+        if let Some(arc) = self.vec_columns.read(key, EntityKind::Edge, id.0 as u32) {
+            return Some(Value::Vector(arc));
         }
         let entry = self.edges.get(&id)?;
         entry.properties.get(key).cloned()
@@ -2671,6 +2790,14 @@ impl GraphStoreMut for SubstrateStore {
             // LpgStore silently no-ops on missing nodes; match that contract.
             return;
         }
+        // T16.7: `Value::Vector` writes bypass the DashMap + props
+        // sidecar and go straight to a dense mmap'd column. This keeps
+        // embeddings off the anon heap. Scalar values still take the
+        // in-memory path.
+        if let Value::Vector(ref v) = value {
+            self.route_vector_write(EntityKind::Node, id.0 as u32, key, v);
+            return;
+        }
         self.nodes
             .entry(id)
             .or_default()
@@ -2681,6 +2808,15 @@ impl GraphStoreMut for SubstrateStore {
     fn set_edge_property(&self, id: EdgeId, key: &str, value: Value) {
         if !self.is_live_edge_on_disk(id) {
             // LpgStore silently no-ops on missing edges; match that contract.
+            return;
+        }
+        if let Value::Vector(ref v) = value {
+            // EdgeId is u64 in the trait, but `VecColumnWriter::write_slot`
+            // takes u32. In practice no substrate deployment has come close
+            // to 2^32 live edges; if that ever changes, the vec-column
+            // schema needs a v2 bump to widen the slot field.
+            let slot = id.0 as u32;
+            self.route_vector_write(EntityKind::Edge, slot, key, v);
             return;
         }
         self.edges
@@ -2860,58 +2996,69 @@ mod tests {
         assert!(matches!(w, Value::Float64(f) if (f - 0.75).abs() < 1e-12));
     }
 
-    /// Contract test for `SKIP_ON_LOAD_PROP_KEYS`.
+    /// T16.7 contract: `Value::Vector` writes — including those named
+    /// in `SKIP_ON_LOAD_PROP_KEYS` — are routed to dense mmap'd
+    /// `substrate.veccol.*` zones and roundtrip byte-exactly through
+    /// a reopen, without going near the bincode `substrate.props`
+    /// sidecar. This is the replacement for the pre-T16.7 contract
+    /// where `_st_embedding` was silently dropped at load time to
+    /// dodge the anon-RSS blow-out.
     ///
-    /// Keys in that list are written to `substrate.props` on flush (so the
-    /// on-disk sidecar still has them — e.g. for migration-time QA tools
-    /// that scan the whole props file) but MUST NOT reappear in the
-    /// in-memory `PropertyMap` after a reopen. This is how anon-RSS stays
-    /// decoupled from the size of the on-disk props file.
-    ///
-    /// Regression guard: if someone removes `_st_embedding` from
-    /// `SKIP_ON_LOAD_PROP_KEYS`, this test flips from pass to fail and
-    /// they have to consciously re-open the anon-RSS / T16-gate trade-off.
+    /// Regression guard: if vector routing stops triggering (e.g.
+    /// someone removes the `Value::Vector` arm in `set_node_property`),
+    /// this test goes red — the vector ends up in the DashMap, hits
+    /// `SKIP_ON_LOAD_PROP_KEYS`, and the reopen returns `None` again,
+    /// re-introducing the anon-RSS problem.
     #[test]
-    fn skip_on_load_keys_are_dropped_after_reopen() {
+    fn vector_properties_roundtrip_via_vec_columns_after_reopen() {
         use obrain_core::graph::traits::GraphStore;
         use std::sync::Arc;
 
         let td = tempfile::tempdir().unwrap();
         let path = td.path().join("kb");
 
-        let node_id = {
+        let (node_id, expected) = {
             let s = SubstrateStore::create(&path).unwrap();
             let a = s.create_node(&["Doc"]);
-            let vec: Arc<[f32]> = Arc::from(vec![0.7_f32; 8].into_boxed_slice());
+            let v: Vec<f32> = (0..8).map(|i| (i as f32) * 0.125).collect();
+            let arc: Arc<[f32]> = Arc::from(v.clone().into_boxed_slice());
             s.set_node_property(a, "title", Value::String("persistent".into()));
-            s.set_node_property(a, "_st_embedding", Value::Vector(vec));
+            s.set_node_property(a, "_st_embedding", Value::Vector(arc));
             s.flush().unwrap();
-            a
+            (a, v)
         };
 
         let s = SubstrateStore::open(&path).unwrap();
 
-        // Non-skipped key survives reopen as usual.
+        // Non-vector key roundtrips through the props sidecar as usual.
         assert!(
             s.get_node_property(node_id, &PropertyKey::new("title")).is_some(),
-            "non-skipped key should roundtrip"
+            "scalar key should roundtrip via the props sidecar"
         );
 
-        // Skipped key is silently dropped on load — get returns None, not the
-        // original vector. This is the `_st_embedding`-lives-in-tiers contract.
-        assert!(
-            s.get_node_property(node_id, &PropertyKey::new("_st_embedding")).is_none(),
-            "_st_embedding should be filtered during load_properties and not appear in the DashMap"
-        );
+        // Vector roundtrip: post-T16.7 this is stored in the vec-column
+        // zone and hydrated back on open — bytes-exact.
+        let got = s
+            .get_node_property(node_id, &PropertyKey::new("_st_embedding"))
+            .expect("_st_embedding should roundtrip via vec_columns after T16.7");
+        match got {
+            Value::Vector(arc) => {
+                assert_eq!(
+                    arc.as_ref(),
+                    &expected[..],
+                    "vector payload must roundtrip byte-exact"
+                );
+            }
+            other => panic!("expected Value::Vector, got {other:?}"),
+        }
 
-        // Belt-and-braces: every key listed in SKIP_ON_LOAD_PROP_KEYS must
-        // behave the same way. If the list grows, this assertion grows with
-        // it for free.
+        // Every name in `SKIP_ON_LOAD_PROP_KEYS` is still a valid lookup
+        // key — the list now only affects legacy bincode-sidecar bases
+        // (pre-T16.7 migrations); freshly-written vectors are untouched
+        // by it. Exercise the lookup path so a future regression that
+        // panics on these keys is caught.
         for key in SKIP_ON_LOAD_PROP_KEYS {
             let _ = s.get_node_property(node_id, &PropertyKey::new(*key));
-            // We don't assert None here for every key (the test only wrote
-            // `_st_embedding`), but we want the lookup path to be exercised
-            // so a future panic/UB regression is caught.
         }
     }
 
