@@ -425,14 +425,24 @@ pub struct SubstrateStore {
     /// (see [`crate::engram::MAX_ENGRAM_ID`]); allocation starts at 1.
     /// Persisted via `substrate.dict` v2.
     next_engram_id: AtomicU16,
-    /// In-memory node state (labels + properties). The durable skeleton
-    /// lives in the Nodes zone; the fields here become persistent in later
-    /// T4 steps.
+    /// In-memory node state (labels only after T17e Phase 2). The durable
+    /// skeleton lives in the Nodes zone; properties now live in their own
+    /// dedicated [`Self::node_properties`] map so nodes without properties
+    /// carry zero heap weight. Phase 3 eliminates this map in favour of
+    /// mmap+registry resolution.
     nodes: DashMap<NodeId, NodeInMem>,
-    /// In-memory edge state (edge-type name ArcStr + property map). The
-    /// durable skeleton lives in the Edges zone; these fields become
-    /// persistent in step 3.
+    /// In-memory edge state (edge-type ArcStr only after T17e Phase 2).
+    /// Same rationale as [`Self::nodes`]; properties live in
+    /// [`Self::edge_properties`].
     edges: DashMap<EdgeId, EdgeInMem>,
+    /// Dedicated property map for nodes (T17e Phase 2). Entries are only
+    /// materialised when a property is actually set — nodes without
+    /// properties pay zero anon-RSS here. Kept in sync with
+    /// [`Self::nodes`] lifecycle (removed on `delete_node`).
+    node_properties: DashMap<NodeId, PropertyMap>,
+    /// Dedicated property map for edges (T17e Phase 2). Same contract as
+    /// [`Self::node_properties`].
+    edge_properties: DashMap<EdgeId, PropertyMap>,
     /// First incoming edge head per destination node. The `next_to` chain
     /// on `EdgeRecord` is durable, but the entry point is kept in memory
     /// only — step 3 may promote it to a sidecar file. Rebuilt from an
@@ -541,13 +551,11 @@ pub struct SubstrateStore {
 #[derive(Clone, Default)]
 struct NodeInMem {
     labels: SmallVec<[ArcStr; 2]>,
-    properties: PropertyMap,
 }
 
 #[derive(Clone, Default)]
 struct EdgeInMem {
     edge_type: ArcStr,
-    properties: PropertyMap,
 }
 
 impl SubstrateStore {
@@ -627,6 +635,8 @@ impl SubstrateStore {
             next_engram_id: AtomicU16::new(snapshot.next_engram_id),
             nodes: DashMap::new(),
             edges: DashMap::new(),
+            node_properties: DashMap::new(),
+            edge_properties: DashMap::new(),
             incoming_heads: DashMap::new(),
             labels: RwLock::new(labels),
             edge_types: RwLock::new(edge_types),
@@ -734,8 +744,8 @@ impl SubstrateStore {
         Ok(store)
     }
 
-    /// Load the properties sidecar and populate `self.nodes[*].properties`
-    /// and `self.edges[*].properties` maps. See
+    /// Load the properties sidecar and populate `self.node_properties`
+    /// and `self.edge_properties` maps (T17e Phase 2). See
     /// [`Self::persist_properties`] for the symmetric write path.
     ///
     /// T16.7 Step 3b contract: `Value::Vector` entries found in the
@@ -827,11 +837,12 @@ impl SubstrateStore {
                 node_blobs_migrated += 1;
             }
             let map = entries_to_map(scalars);
-            // Merge into the DashMap entry built by rebuild_from_zones.
-            // If the node was tombstoned between the last flush and the
-            // reopen it will not be present here; we silently skip.
-            if let Some(mut in_mem) = self.nodes.get_mut(&nid) {
-                in_mem.properties = map;
+            // Populate the dedicated node_properties map (T17e Phase 2).
+            // Liveness gate uses the structural `nodes` DashMap (built by
+            // rebuild_from_zones) — tombstoned-between-flush-and-reopen
+            // nodes are silently skipped, matching the pre-Phase-2 contract.
+            if !map.is_empty() && self.nodes.contains_key(&nid) {
+                self.node_properties.insert(nid, map);
                 nodes_loaded += 1;
             }
         }
@@ -863,8 +874,8 @@ impl SubstrateStore {
                 edge_blobs_migrated += 1;
             }
             let map = entries_to_map(scalars);
-            if let Some(mut in_mem) = self.edges.get_mut(&eid) {
-                in_mem.properties = map;
+            if !map.is_empty() && self.edges.contains_key(&eid) {
+                self.edge_properties.insert(eid, map);
                 edges_loaded += 1;
             }
         }
@@ -916,13 +927,7 @@ impl SubstrateStore {
                 continue;
             }
             let labels = labels_guard.labels_for_bitset(rec.label_bitset);
-            self.nodes.insert(
-                NodeId(slot as u64),
-                NodeInMem {
-                    labels,
-                    properties: PropertyMap::new(),
-                },
-            );
+            self.nodes.insert(NodeId(slot as u64), NodeInMem { labels });
             // T11 Step 3: community_placements = max live slot per cid.
             // The scan order is ascending so a simple overwrite trails the
             // highest-slot-wins invariant without an explicit compare.
@@ -966,13 +971,7 @@ impl SubstrateStore {
                     );
                     ArcStr::from(format!("__UNKNOWN_{}", rec.edge_type))
                 });
-            self.edges.insert(
-                edge_id,
-                EdgeInMem {
-                    edge_type,
-                    properties: PropertyMap::new(),
-                },
-            );
+            self.edges.insert(edge_id, EdgeInMem { edge_type });
             let dst = NodeId(rec.dst as u64);
             heads
                 .entry(dst)
@@ -1078,9 +1077,9 @@ impl SubstrateStore {
         PropertiesStreamingWriter::open(path)
     }
 
-    /// Persist the in-memory `self.nodes[*].properties` and
-    /// `self.edges[*].properties` maps to a sidecar `substrate.props`
-    /// file. See [`crate::props_snapshot`] for rationale and format.
+    /// Persist the in-memory `self.node_properties` and
+    /// `self.edge_properties` maps to a sidecar `substrate.props` file.
+    /// See [`crate::props_snapshot`] for rationale and format.
     ///
     /// This is a **full rewrite** every call — there is no delta
     /// encoding. Callers that churn properties should prefer larger
@@ -1109,15 +1108,16 @@ impl SubstrateStore {
                 .map(|n| n > BLOB_COLUMN_THRESHOLD_BYTES)
                 .unwrap_or(false)
         };
-        // Nodes
-        snap.nodes.reserve(self.nodes.len());
-        for entry in self.nodes.iter() {
-            // Skip entries with no properties — they're just label
-            // views, no need to persist.
-            if entry.value().properties.is_empty() {
+        // Nodes (T17e Phase 2: iterate the dedicated property map; empty
+        // property sets no longer occupy a DashMap entry, so the `is_empty`
+        // guard below is purely a defensive no-op for entries left behind
+        // by `remove_node_property` clearing the last key).
+        snap.nodes.reserve(self.node_properties.len());
+        for entry in self.node_properties.iter() {
+            if entry.value().is_empty() {
                 continue;
             }
-            let props: Vec<(String, Value)> = map_to_entries(&entry.value().properties)
+            let props: Vec<(String, Value)> = map_to_entries(entry.value())
                 .into_iter()
                 .filter(|p| !is_routed_out(p))
                 .collect();
@@ -1130,12 +1130,12 @@ impl SubstrateStore {
             });
         }
         // Edges
-        snap.edges.reserve(self.edges.len());
-        for entry in self.edges.iter() {
-            if entry.value().properties.is_empty() {
+        snap.edges.reserve(self.edge_properties.len());
+        for entry in self.edge_properties.iter() {
+            if entry.value().is_empty() {
                 continue;
             }
-            let props: Vec<(String, Value)> = map_to_entries(&entry.value().properties)
+            let props: Vec<(String, Value)> = map_to_entries(entry.value())
                 .into_iter()
                 .filter(|p| !is_routed_out(p))
                 .collect();
@@ -1233,13 +1233,7 @@ impl SubstrateStore {
             let reg = self.labels.read();
             reg.labels_for_bitset(bitset)
         };
-        self.nodes.insert(
-            id,
-            NodeInMem {
-                labels: label_vec,
-                properties: PropertyMap::new(),
-            },
-        );
+        self.nodes.insert(id, NodeInMem { labels: label_vec });
         id
     }
 
@@ -2551,8 +2545,8 @@ impl GraphStore for SubstrateStore {
         let rec = self.writer.read_node(id.0 as u32).ok().flatten()?;
         let mut n = Node::new(id);
         n.labels = self.resolve_node_labels_from_bitset(rec.label_bitset);
-        if let Some(entry) = self.nodes.get(&id) {
-            n.properties = entry.properties.clone();
+        if let Some(entry) = self.node_properties.get(&id) {
+            n.properties = entry.clone();
         }
         Some(n)
     }
@@ -2569,8 +2563,8 @@ impl GraphStore for SubstrateStore {
             NodeId(rec.dst as u64),
             edge_type,
         );
-        if let Some(entry) = self.edges.get(&id) {
-            e.properties = entry.properties.clone();
+        if let Some(entry) = self.edge_properties.get(&id) {
+            e.properties = entry.clone();
         }
         Some(e)
     }
@@ -2624,8 +2618,8 @@ impl GraphStore for SubstrateStore {
         {
             return Some(v);
         }
-        let entry = self.nodes.get(&id)?;
-        entry.properties.get(key).cloned()
+        let entry = self.node_properties.get(&id)?;
+        entry.get(key).cloned()
     }
 
     fn get_edge_property(&self, id: EdgeId, key: &PropertyKey) -> Option<Value> {
@@ -2641,8 +2635,8 @@ impl GraphStore for SubstrateStore {
         {
             return Some(v);
         }
-        let entry = self.edges.get(&id)?;
-        entry.properties.get(key).cloned()
+        let entry = self.edge_properties.get(&id)?;
+        entry.get(key).cloned()
     }
 
     fn get_node_property_batch(
@@ -2663,8 +2657,8 @@ impl GraphStore for SubstrateStore {
                 if !self.is_live_on_disk(*id) {
                     return out;
                 }
-                if let Some(entry) = self.nodes.get(id) {
-                    for (k, v) in entry.properties.iter() {
+                if let Some(entry) = self.node_properties.get(id) {
+                    for (k, v) in entry.iter() {
                         out.insert(k.clone(), v.clone());
                     }
                 }
@@ -2684,9 +2678,9 @@ impl GraphStore for SubstrateStore {
                 if !self.is_live_on_disk(*id) {
                     return out;
                 }
-                if let Some(entry) = self.nodes.get(id) {
+                if let Some(entry) = self.node_properties.get(id) {
                     for k in keys {
-                        if let Some(v) = entry.properties.get(k) {
+                        if let Some(v) = entry.get(k) {
                             out.insert(k.clone(), v.clone());
                         }
                     }
@@ -2707,9 +2701,9 @@ impl GraphStore for SubstrateStore {
                 if !self.is_live_edge_on_disk(*id) {
                     return out;
                 }
-                if let Some(entry) = self.edges.get(id) {
+                if let Some(entry) = self.edge_properties.get(id) {
                     for k in keys {
-                        if let Some(v) = entry.properties.get(k) {
+                        if let Some(v) = entry.get(k) {
                             out.insert(k.clone(), v.clone());
                         }
                     }
@@ -2856,17 +2850,24 @@ impl GraphStore for SubstrateStore {
     }
 
     // -- Filtered search --
+    //
+    // T17e Phase 2: these scans iterate `node_properties` directly — a
+    // node without the queried property cannot possibly match, so
+    // skipping the empty-property nodes (no entry in the map) is both
+    // correct and strictly more efficient than scanning every live
+    // `NodeInMem`. The liveness gate still runs because a node may be
+    // tombstoned after its property was set.
     fn find_nodes_by_property(&self, property: &str, value: &Value) -> Vec<NodeId> {
         let key = PropertyKey::new(property);
         let mut out: Vec<NodeId> = self
-            .nodes
+            .node_properties
             .iter()
             .filter_map(|e| {
                 let id = *e.key();
                 if !self.is_live_on_disk(id) {
                     return None;
                 }
-                match e.value().properties.get(&key) {
+                match e.value().get(&key) {
                     Some(v) if v == value => Some(id),
                     _ => None,
                 }
@@ -2877,16 +2878,23 @@ impl GraphStore for SubstrateStore {
     }
 
     fn find_nodes_by_properties(&self, conditions: &[(&str, Value)]) -> Vec<NodeId> {
+        // Contract (LpgStore parity): empty conditions match every live
+        // node. T17e Phase 2: we must NOT iterate `node_properties` here
+        // because nodes without any property would be silently dropped —
+        // fall back to the structural `nodes` map, same as `node_ids()`.
+        if conditions.is_empty() {
+            return self.node_ids();
+        }
         let keys: Vec<PropertyKey> = conditions.iter().map(|(k, _)| PropertyKey::new(*k)).collect();
         let mut out: Vec<NodeId> = self
-            .nodes
+            .node_properties
             .iter()
             .filter_map(|e| {
                 let id = *e.key();
                 if !self.is_live_on_disk(id) {
                     return None;
                 }
-                let props = &e.value().properties;
+                let props = e.value();
                 for (key, (_, expected)) in keys.iter().zip(conditions.iter()) {
                     match props.get(key) {
                         Some(v) if v == expected => continue,
@@ -2917,14 +2925,14 @@ impl GraphStore for SubstrateStore {
         let key = PropertyKey::new(property);
 
         let mut out: Vec<NodeId> = self
-            .nodes
+            .node_properties
             .iter()
             .filter_map(|e| {
                 let id = *e.key();
                 if !self.is_live_on_disk(id) {
                     return None;
                 }
-                let v = e.value().properties.get(&key)?.clone();
+                let v = e.value().get(&key)?.clone();
                 let ov = OrderableValue::try_from(&v).ok()?;
                 if let Some(m) = &min_o {
                     let cmp = ov.partial_cmp(m)?;
@@ -3012,13 +3020,7 @@ impl GraphStoreMut for SubstrateStore {
             let reg = self.labels.read();
             reg.labels_for_bitset(bitset)
         };
-        self.nodes.insert(
-            id,
-            NodeInMem {
-                labels: label_vec,
-                properties: PropertyMap::new(),
-            },
-        );
+        self.nodes.insert(id, NodeInMem { labels: label_vec });
         id
     }
 
@@ -3042,12 +3044,12 @@ impl GraphStoreMut for SubstrateStore {
         let id = self.allocate_edge_id();
         let _rec = self.splice_edge_at_head(id, src, dst, edge_type_id);
 
-        // In-memory side — edge_type name + empty property map.
+        // In-memory side — edge_type name only (properties live in
+        // `edge_properties` after T17e Phase 2).
         self.edges.insert(
             id,
             EdgeInMem {
                 edge_type: edge_type.into(),
-                properties: PropertyMap::new(),
             },
         );
         id
@@ -3080,8 +3082,13 @@ impl GraphStoreMut for SubstrateStore {
         self.writer
             .tombstone_node(id.0 as u32)
             .expect("tombstone_node failed");
-        // Drop from the in-memory side-table — get_node will now return None.
+        // Drop from the in-memory side-tables — get_node will now return
+        // None. T17e Phase 2: the dedicated `node_properties` map also
+        // holds an entry when the node has properties; drop it here so
+        // `persist_properties` doesn't re-serialise a dead entity on the
+        // next flush.
         self.nodes.remove(&id);
+        self.node_properties.remove(&id);
         true
     }
 
@@ -3127,7 +3134,10 @@ impl GraphStoreMut for SubstrateStore {
         self.writer
             .tombstone_edge(id.0)
             .expect("tombstone_edge failed");
+        // T17e Phase 2: drop from both in-memory side-tables (edge-type
+        // cache + property map).
         self.edges.remove(&id);
+        self.edge_properties.remove(&id);
         true
     }
 
@@ -3164,10 +3174,9 @@ impl GraphStoreMut for SubstrateStore {
             self.route_blob_write(EntityKind::Node, id.0 as u32, key, &tagged);
             return;
         }
-        self.nodes
+        self.node_properties
             .entry(id)
             .or_default()
-            .properties
             .insert(PropertyKey::new(key), value);
     }
 
@@ -3190,10 +3199,9 @@ impl GraphStoreMut for SubstrateStore {
             self.route_blob_write(EntityKind::Edge, slot, key, &tagged);
             return;
         }
-        self.edges
+        self.edge_properties
             .entry(id)
             .or_default()
-            .properties
             .insert(PropertyKey::new(key), value);
     }
 
@@ -3201,9 +3209,8 @@ impl GraphStoreMut for SubstrateStore {
         if !self.is_live_on_disk(id) {
             return None;
         }
-        self.nodes
+        self.node_properties
             .get_mut(&id)?
-            .properties
             .remove(&PropertyKey::new(key))
     }
 
@@ -3211,9 +3218,8 @@ impl GraphStoreMut for SubstrateStore {
         if !self.is_live_edge_on_disk(id) {
             return None;
         }
-        self.edges
+        self.edge_properties
             .get_mut(&id)?
-            .properties
             .remove(&PropertyKey::new(key))
     }
 
