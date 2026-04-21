@@ -131,6 +131,9 @@ use crate::props_snapshot::{
     entries_to_map, map_to_entries, PropEntry, PropertiesSnapshotV1,
     PropertiesStreamingWriter, PROPS_FILENAME,
 };
+use crate::blob_column_registry::{
+    blob_payload_len, encode_blob_payload, BlobColumnRegistry, BLOB_COLUMN_THRESHOLD_BYTES,
+};
 use crate::vec_column::EntityKind;
 use crate::vec_column_registry::VecColumnRegistry;
 use crate::wal_io::SyncMode;
@@ -512,6 +515,27 @@ pub struct SubstrateStore {
     /// [`Self::flush`] via `sync_all()` — same cadence as the dict and
     /// the props sidecar.
     vec_columns: VecColumnRegistry,
+    /// Routing table + open-writer cache for oversized `Value::String`
+    /// and `Value::Bytes` properties (T16.7 Step 4).
+    ///
+    /// Every `set_node_property(_, _, Value::String(s))` and
+    /// `set_edge_property(_, _, Value::Bytes(b))` call whose payload
+    /// exceeds [`BLOB_COLUMN_THRESHOLD_BYTES`] is intercepted here and
+    /// routed to a variable-length `substrate.blobcol.*` zone pair
+    /// (idx + dat) instead of the bincode `substrate.props` sidecar.
+    /// This is what finally closes the T16 anon-RSS gate (≤ 1 GiB) for
+    /// the chat/event `data` key on PO (928 MB across 681k entries,
+    /// avg 1.4 KiB per payload).
+    ///
+    /// Hydrated on open from `DictSnapshot.blob_columns` (v4) so a
+    /// fresh `get_node_property` after reopen resolves the right column
+    /// before the first write of the session. A 1-byte type tag inside
+    /// the arena payload preserves the `String` vs `Bytes` distinction
+    /// (see [`crate::blob_column_registry::encode_blob_payload`]).
+    /// Durability is batched to [`Self::flush`] via `sync_all()` — same
+    /// cadence as the dict, the vec-column registry, and the props
+    /// sidecar.
+    blob_columns: BlobColumnRegistry,
 }
 
 #[derive(Clone, Default)]
@@ -583,6 +607,7 @@ impl SubstrateStore {
             community_placements: DashMap::new(),
             community_first_slots: DashMap::new(),
             vec_columns: VecColumnRegistry::new(),
+            blob_columns: BlobColumnRegistry::new(),
         };
 
         // (2) Rebuild in-memory side-cars from the on-disk zones. This is
@@ -611,6 +636,16 @@ impl SubstrateStore {
             store
                 .vec_columns
                 .hydrate_from_dict(&sub, &names, &snapshot.vec_columns)?;
+            // (3b) Same contract for blob columns (T16.7 Step 4d): reopen
+            //      each `(prop_key_id, entity_kind)` pair's two files so
+            //      `get_node_property` / `get_edge_property` resolve the
+            //      right column before the first session write. Runs
+            //      BEFORE `load_properties` so pre-T16.7.4 sidecars
+            //      carrying oversized `Value::String` / `Value::Bytes`
+            //      can auto-migrate through the setter path.
+            store
+                .blob_columns
+                .hydrate_from_dict(&sub, &names, &snapshot.blob_columns)?;
         }
 
         // (4) Load properties from the sidecar snapshot, if present.
@@ -641,6 +676,14 @@ impl SubstrateStore {
     /// them from the sidecar via the `persist_properties` defensive
     /// filter. Without this routing, opening a pre-T16.7 base with
     /// T16.7+ code would silently lose vector data on first close.
+    ///
+    /// T16.7 Step 4d extends the contract to oversized `Value::String` /
+    /// `Value::Bytes` entries (payload > [`BLOB_COLUMN_THRESHOLD_BYTES`]).
+    /// They are routed through the same public setter so the blob
+    /// registry materialises the correct column pair, and the next
+    /// `flush()` drops them from the sidecar — closing the anon-RSS
+    /// gate for the `data` key on pre-T16.7.4 bases in one open-close
+    /// cycle.
     fn load_properties(&self) -> SubstrateResult<()> {
         let path = {
             let sub = self.substrate.lock();
@@ -657,18 +700,33 @@ impl SubstrateStore {
         // size should they want to repack).
         let mut node_vectors_migrated = 0usize;
         let mut edge_vectors_migrated = 0usize;
+        let mut node_blobs_migrated = 0usize;
+        let mut edge_blobs_migrated = 0usize;
         // Hot loop: a small contains check over <10 short strings. A linear
         // scan is faster than any hash-set overhead at this size.
         let skip = |k: &str| SKIP_ON_LOAD_PROP_KEYS.iter().any(|s| *s == k);
+        // Local predicate: is this an oversized scalar payload that
+        // should auto-migrate into the blob-column registry? Checked
+        // by byte length, not by registry membership, so the very
+        // first load after a T16.7.4 upgrade (registry still empty)
+        // still routes the payload — the setter will then register
+        // the column on the fly.
+        let is_blob = |v: &Value| {
+            blob_payload_len(v)
+                .map(|n| n > BLOB_COLUMN_THRESHOLD_BYTES)
+                .unwrap_or(false)
+        };
         for e in snap.nodes {
             let nid = obrain_common::types::NodeId(e.id);
             let before = e.props.len();
-            // Split the sidecar entry three ways:
+            // Split the sidecar entry four ways (T16.7 Step 4d):
             //   - dropped entirely (SKIP_ON_LOAD keys — rebuildable)
-            //   - routed to vec_columns (Value::Vector auto-migration)
+            //   - routed to vec_columns   (Value::Vector)
+            //   - routed to blob_columns  (oversized String / Bytes)
             //   - kept on the DashMap scalar path (everything else)
             let mut scalars: Vec<(String, Value)> = Vec::with_capacity(before);
             let mut vectors: Vec<(String, Value)> = Vec::new();
+            let mut blobs: Vec<(String, Value)> = Vec::new();
             for (k, v) in e.props {
                 if skip(&k) {
                     node_props_skipped += 1;
@@ -676,6 +734,8 @@ impl SubstrateStore {
                 }
                 if matches!(v, Value::Vector(_)) {
                     vectors.push((k, v));
+                } else if is_blob(&v) {
+                    blobs.push((k, v));
                 } else {
                     scalars.push((k, v));
                 }
@@ -689,6 +749,12 @@ impl SubstrateStore {
             for (k, v) in vectors {
                 self.set_node_property(nid, &k, v);
                 node_vectors_migrated += 1;
+            }
+            // Same contract for blob-eligible scalars — the setter
+            // handles the type-tag prefix and column allocation.
+            for (k, v) in blobs {
+                self.set_node_property(nid, &k, v);
+                node_blobs_migrated += 1;
             }
             let map = entries_to_map(scalars);
             // Merge into the DashMap entry built by rebuild_from_zones.
@@ -704,6 +770,7 @@ impl SubstrateStore {
             let before = e.props.len();
             let mut scalars: Vec<(String, Value)> = Vec::with_capacity(before);
             let mut vectors: Vec<(String, Value)> = Vec::new();
+            let mut blobs: Vec<(String, Value)> = Vec::new();
             for (k, v) in e.props {
                 if skip(&k) {
                     edge_props_skipped += 1;
@@ -711,6 +778,8 @@ impl SubstrateStore {
                 }
                 if matches!(v, Value::Vector(_)) {
                     vectors.push((k, v));
+                } else if is_blob(&v) {
+                    blobs.push((k, v));
                 } else {
                     scalars.push((k, v));
                 }
@@ -718,6 +787,10 @@ impl SubstrateStore {
             for (k, v) in vectors {
                 self.set_edge_property(eid, &k, v);
                 edge_vectors_migrated += 1;
+            }
+            for (k, v) in blobs {
+                self.set_edge_property(eid, &k, v);
+                edge_blobs_migrated += 1;
             }
             let map = entries_to_map(scalars);
             if let Some(mut in_mem) = self.edges.get_mut(&eid) {
@@ -729,13 +802,16 @@ impl SubstrateStore {
             tracing::info!(
                 "props snapshot: loaded {} node-property maps, {} edge-property maps \
                  (skipped-on-load: {} node-props, {} edge-props — see SKIP_ON_LOAD_PROP_KEYS; \
-                 auto-migrated to vec_columns: {} node vectors, {} edge vectors)",
+                 auto-migrated to vec_columns: {} node vectors, {} edge vectors; \
+                 auto-migrated to blob_columns: {} node blobs, {} edge blobs)",
                 nodes_loaded,
                 edges_loaded,
                 node_props_skipped,
                 edge_props_skipped,
                 node_vectors_migrated,
                 edge_vectors_migrated,
+                node_blobs_migrated,
+                edge_blobs_migrated,
             );
         }
         Ok(())
@@ -861,10 +937,10 @@ impl SubstrateStore {
             next_edge_id: self.next_edge_id.load(Ordering::Acquire),
             next_engram_id: self.next_engram_id.load(Ordering::Acquire),
             vec_columns: self.vec_columns.specs_snapshot(),
-            // Populated in Step 4d once the store owns a
-            // `BlobColumnRegistry`. For now, persist an empty list so
-            // existing bases keep round-tripping unchanged.
-            blob_columns: Vec::new(),
+            // Every open blob-column gets a spec here so
+            // `hydrate_from_dict` can reopen the column pair by
+            // filename on next open — no directory scan needed.
+            blob_columns: self.blob_columns.specs_snapshot(),
         }
     }
 
@@ -891,14 +967,18 @@ impl SubstrateStore {
     ///    the dict can't reference a zone whose header is stale from
     ///    a previous session (CRC mismatch on next open would silently
     ///    demote the column to "missing" and lose data).
-    /// 4. `persist_dict()` — atomically rewrites `substrate.dict` with
-    ///    the current registries, slot counters, and vec-column specs.
-    ///    Done last so any crash before here leaves the WAL as source
-    ///    of truth (replay will reconstruct both).
+    /// 4. `blob_columns.sync_all()` — same contract for the blob-column
+    ///    pairs (idx + dat). Both CRCs are recomputed and msync'd
+    ///    before the dict references them.
+    /// 5. `persist_dict()` — atomically rewrites `substrate.dict` with
+    ///    the current registries, slot counters, and column specs
+    ///    (vec + blob). Done last so any crash before here leaves the
+    ///    WAL as source of truth (replay will reconstruct both).
     pub fn flush(&self) -> SubstrateResult<()> {
         self.writer.commit()?;
         self.writer.msync_zones()?;
         self.vec_columns.sync_all()?;
+        self.blob_columns.sync_all()?;
         self.persist_dict()?;
         self.persist_properties()?;
         Ok(())
@@ -944,7 +1024,21 @@ impl SubstrateStore {
         // may still carry vector entries loaded via non-trait paths.
         // Dropping them here prevents re-persistence into the bincode
         // sidecar (which is the whole point of T16.7).
-        let is_vec = |(_, v): &(String, Value)| matches!(v, Value::Vector(_));
+        //
+        // T16.7 Step 4d extends the filter to oversized `Value::String`
+        // / `Value::Bytes` entries (payload > BLOB_COLUMN_THRESHOLD_BYTES).
+        // These were routed to `blob_columns` by the setter, but a
+        // streamed-write path or a pre-T16.7.4 sidecar load could still
+        // land them on the DashMap. Dropping here closes the anon-RSS
+        // gate on next flush.
+        let is_routed_out = |(_, v): &(String, Value)| {
+            if matches!(v, Value::Vector(_)) {
+                return true;
+            }
+            blob_payload_len(v)
+                .map(|n| n > BLOB_COLUMN_THRESHOLD_BYTES)
+                .unwrap_or(false)
+        };
         // Nodes
         snap.nodes.reserve(self.nodes.len());
         for entry in self.nodes.iter() {
@@ -955,7 +1049,7 @@ impl SubstrateStore {
             }
             let props: Vec<(String, Value)> = map_to_entries(&entry.value().properties)
                 .into_iter()
-                .filter(|p| !is_vec(p))
+                .filter(|p| !is_routed_out(p))
                 .collect();
             if props.is_empty() {
                 continue;
@@ -973,7 +1067,7 @@ impl SubstrateStore {
             }
             let props: Vec<(String, Value)> = map_to_entries(&entry.value().properties)
                 .into_iter()
-                .filter(|p| !is_vec(p))
+                .filter(|p| !is_routed_out(p))
                 .collect();
             if props.is_empty() {
                 continue;
@@ -1869,6 +1963,52 @@ impl SubstrateStore {
         }
     }
 
+    /// Interior helper: route an oversized `Value::String` or
+    /// `Value::Bytes` write to the [`BlobColumnRegistry`]. Interns the
+    /// property-key, locks the substrate for the duration of
+    /// `write_slot` (which may `ensure_room` the two backing files),
+    /// and swallows errors with a log — the `GraphStoreMut` trait's
+    /// setters are infallible, so the historical contract is to
+    /// silently drop a bad write and let the next flush surface the
+    /// problem.
+    ///
+    /// `tagged` is the already-encoded payload (1-byte type tag + raw
+    /// bytes) produced by
+    /// [`crate::blob_column_registry::encode_blob_payload`]. Callers
+    /// must have verified the payload qualifies for routing (length >
+    /// [`BLOB_COLUMN_THRESHOLD_BYTES`]) before invoking this helper.
+    fn route_blob_write(
+        &self,
+        entity_kind: EntityKind,
+        slot: u32,
+        key: &str,
+        tagged: &[u8],
+    ) {
+        let prop_key_id = match self.prop_keys.write().intern(key) {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::error!(
+                    target: "substrate::blob_columns",
+                    "prop_keys.intern({key:?}) failed: {e} — dropping blob write"
+                );
+                return;
+            }
+        };
+        let pk = PropertyKey::new(key);
+        let sub = self.substrate.lock();
+        if let Err(e) = self
+            .blob_columns
+            .write(&sub, &pk, entity_kind, prop_key_id, slot, tagged)
+        {
+            tracing::error!(
+                target: "substrate::blob_columns",
+                "blob_columns.write(key={key:?}, ek={entity_kind:?}, \
+                 slot={slot}, len={}) failed: {e} — dropping blob write",
+                tagged.len()
+            );
+        }
+    }
+
     /// Allocate the next node id (slot index).
     fn allocate_node_id(&self) -> NodeId {
         let raw = self.next_node_id.fetch_add(1, Ordering::AcqRel);
@@ -2349,6 +2489,16 @@ impl GraphStore for SubstrateStore {
         if let Some(arc) = self.vec_columns.read(key, EntityKind::Node, id.0 as u32) {
             return Some(Value::Vector(arc));
         }
+        // T16.7 Step 4d: blob-routed String/Bytes live in their own
+        // column pair. The 1-byte type tag baked into the arena
+        // payload lets `read_value` reconstruct the exact original
+        // variant.
+        if let Some(v) = self
+            .blob_columns
+            .read_value(key, EntityKind::Node, id.0 as u32)
+        {
+            return Some(v);
+        }
         let entry = self.nodes.get(&id)?;
         entry.properties.get(key).cloned()
     }
@@ -2359,6 +2509,12 @@ impl GraphStore for SubstrateStore {
         }
         if let Some(arc) = self.vec_columns.read(key, EntityKind::Edge, id.0 as u32) {
             return Some(Value::Vector(arc));
+        }
+        if let Some(v) = self
+            .blob_columns
+            .read_value(key, EntityKind::Edge, id.0 as u32)
+        {
+            return Some(v);
         }
         let entry = self.edges.get(&id)?;
         entry.properties.get(key).cloned()
@@ -2873,6 +3029,16 @@ impl GraphStoreMut for SubstrateStore {
             self.route_vector_write(EntityKind::Node, id.0 as u32, key, v);
             return;
         }
+        // T16.7 Step 4d: oversized `Value::String` / `Value::Bytes`
+        // payloads route to the blob-column registry. `encode_blob_payload`
+        // returns `Some(tagged_bytes)` iff the payload qualifies — `None`
+        // for short scalars, non-blob variants, etc. The 1-byte type tag
+        // at the head of the returned buffer lets the reader reconstruct
+        // the original `Value` variant byte-exactly on the get side.
+        if let Some(tagged) = encode_blob_payload(&value) {
+            self.route_blob_write(EntityKind::Node, id.0 as u32, key, &tagged);
+            return;
+        }
         self.nodes
             .entry(id)
             .or_default()
@@ -2892,6 +3058,11 @@ impl GraphStoreMut for SubstrateStore {
             // schema needs a v2 bump to widen the slot field.
             let slot = id.0 as u32;
             self.route_vector_write(EntityKind::Edge, slot, key, v);
+            return;
+        }
+        if let Some(tagged) = encode_blob_payload(&value) {
+            let slot = id.0 as u32;
+            self.route_blob_write(EntityKind::Edge, slot, key, &tagged);
             return;
         }
         self.edges
@@ -3274,6 +3445,201 @@ mod tests {
                 assert_eq!(arc.as_ref(), &vec_payload[..]);
             }
             other => panic!("expected Value::Vector, got {other:?}"),
+        }
+    }
+
+    /// T16.7 Step 4d — blob auto-migration regression anchor.
+    ///
+    /// Mirror of [`auto_migrates_legacy_vectors_on_load`] for the
+    /// variable-length blob path: an oversized `Value::String` (bigger
+    /// than [`BLOB_COLUMN_THRESHOLD_BYTES`]) sitting in a pre-T16.7.4
+    /// `substrate.props` sidecar must auto-migrate into the
+    /// [`BlobColumnRegistry`] on open, and the next `flush()` must
+    /// evict it from the sidecar. A `Value::Bytes` variant is exercised
+    /// to prove the 1-byte type tag preserves the distinction.
+    #[test]
+    fn auto_migrates_legacy_blobs_on_load() {
+        use crate::props_snapshot::PropertiesStreamingWriter;
+        use obrain_core::graph::traits::GraphStore;
+        use std::sync::Arc;
+
+        let td = tempfile::tempdir().unwrap();
+        let path = td.path().join("kb");
+
+        // Phase 1 — fresh T16.7.4 store, allocate a node slot so the
+        // auto-migration has a live target to write into.
+        let (node_id_str, node_id_bytes) = {
+            let s = SubstrateStore::create(&path).unwrap();
+            let a = s.create_node(&["Chat"]);
+            let b = s.create_node(&["Chat"]);
+            s.flush().unwrap();
+            (a, b)
+        };
+
+        // Phase 2 — overwrite `substrate.props` with a hand-crafted
+        // snapshot carrying BOTH an oversized string and an oversized
+        // byte payload. These are the exact shape of pre-T16.7.4 data
+        // coming out of `obrain-migrate` on a PO chat history.
+        let sidecar_path = path.join(PROPS_FILENAME);
+        let big_string: String = "chat payload éclair ".repeat(100); // ~2 KiB
+        let big_bytes: Vec<u8> =
+            (0..2048u32).map(|i| (i & 0xff) as u8).collect();
+        let bytes_arc: Arc<[u8]> = Arc::from(big_bytes.clone());
+        assert!(big_string.as_bytes().len() > BLOB_COLUMN_THRESHOLD_BYTES);
+        assert!(big_bytes.len() > BLOB_COLUMN_THRESHOLD_BYTES);
+        {
+            let mut w = PropertiesStreamingWriter::open(&sidecar_path).unwrap();
+            let props_a: Vec<(String, Value)> = vec![
+                ("title".to_string(), Value::String("keep me inline".into())),
+                (
+                    "data".to_string(),
+                    Value::String(big_string.as_str().into()),
+                ),
+            ];
+            w.append_node(node_id_str.0, &props_a).unwrap();
+            let props_b: Vec<(String, Value)> = vec![
+                ("blob".to_string(), Value::Bytes(bytes_arc.clone())),
+            ];
+            w.append_node(node_id_bytes.0, &props_b).unwrap();
+            w.finish().unwrap();
+        }
+
+        // Sanity: pre-upgrade sidecar must carry BOTH blob keys.
+        {
+            let raw = std::fs::read(&sidecar_path).unwrap();
+            assert!(
+                raw.windows(b"data".len()).any(|w| w == b"data"),
+                "pre-upgrade sidecar should carry the `data` key"
+            );
+            assert!(
+                raw.windows(b"blob".len()).any(|w| w == b"blob"),
+                "pre-upgrade sidecar should carry the `blob` key"
+            );
+        }
+
+        // Phase 3 — reopen. `load_properties` must route the two
+        // oversized entries into blob_columns.
+        let s = SubstrateStore::open(&path).unwrap();
+
+        // 3a. Big string is readable via blob_columns, byte-exact.
+        let got = s
+            .get_node_property(node_id_str, &PropertyKey::new("data"))
+            .expect("big string should auto-migrate on load");
+        match got {
+            Value::String(ref arc) => assert_eq!(arc.as_str(), big_string),
+            other => panic!("expected Value::String, got {other:?}"),
+        }
+        // 3b. Big bytes are readable via blob_columns, byte-exact —
+        //     AND must come back as Value::Bytes (not Value::String).
+        let got = s
+            .get_node_property(node_id_bytes, &PropertyKey::new("blob"))
+            .expect("big bytes should auto-migrate on load");
+        match got {
+            Value::Bytes(arc) => assert_eq!(arc.as_ref(), big_bytes.as_slice()),
+            other => panic!("expected Value::Bytes, got {other:?}"),
+        }
+        // 3c. Short scalar still lives on the DashMap sidecar path.
+        match s.get_node_property(node_id_str, &PropertyKey::new("title")) {
+            Some(Value::String(arc)) => assert_eq!(arc.as_str(), "keep me inline"),
+            other => panic!("expected inline Value::String, got {other:?}"),
+        }
+
+        // Phase 4 — flush + drop. Defensive filter must strip both
+        // blob entries from the rewritten sidecar.
+        s.flush().unwrap();
+        drop(s);
+
+        let raw_after = std::fs::read(&sidecar_path).unwrap();
+        // The scalar key survives.
+        assert!(
+            raw_after.windows(b"title".len()).any(|w| w == b"title"),
+            "short scalar key should still be in the post-flush sidecar"
+        );
+        // The blob keys do NOT.
+        assert!(
+            !raw_after.windows(b"data".len()).any(|w| w == b"data"),
+            "post-flush sidecar must not carry the auto-migrated `data` key \
+             (bytes len={})",
+            raw_after.len()
+        );
+        assert!(
+            !raw_after.windows(b"blob".len()).any(|w| w == b"blob"),
+            "post-flush sidecar must not carry the auto-migrated `blob` key \
+             (bytes len={})",
+            raw_after.len()
+        );
+
+        // Phase 5 — reopen a third time. The blob columns must still
+        // satisfy reads (hydrated from dict v4, no sidecar fallback).
+        let s = SubstrateStore::open(&path).unwrap();
+        match s.get_node_property(node_id_str, &PropertyKey::new("data")) {
+            Some(Value::String(arc)) => assert_eq!(arc.as_str(), big_string),
+            other => panic!(
+                "expected persisted Value::String after second reopen, got {other:?}"
+            ),
+        }
+        match s.get_node_property(node_id_bytes, &PropertyKey::new("blob")) {
+            Some(Value::Bytes(arc)) => {
+                assert_eq!(arc.as_ref(), big_bytes.as_slice());
+            }
+            other => panic!(
+                "expected persisted Value::Bytes after second reopen, got {other:?}"
+            ),
+        }
+    }
+
+    /// T16.7 Step 4d — fresh writes also route, not just legacy load.
+    /// Ensures `set_node_property` on an oversized Value::String /
+    /// Value::Bytes never touches the DashMap (= never lands in the
+    /// bincode sidecar) and that reads come back byte-exact.
+    #[test]
+    fn fresh_blob_writes_bypass_sidecar() {
+        use obrain_core::graph::traits::GraphStore;
+        use std::sync::Arc;
+
+        let td = tempfile::tempdir().unwrap();
+        let path = td.path().join("kb");
+        let big_string: String = "éclair ".repeat(200); // > 256 B
+        let big_bytes: Vec<u8> =
+            (0..1024u32).map(|i| ((i * 7) & 0xff) as u8).collect();
+
+        let (nid, eid) = {
+            let s = SubstrateStore::create(&path).unwrap();
+            let a = s.create_node(&["Doc"]);
+            let b = s.create_node(&["Doc"]);
+            let e = s.create_edge(a, b, "REL");
+            s.set_node_property(a, "data", Value::String(big_string.as_str().into()));
+            s.set_edge_property(
+                e,
+                "blob",
+                Value::Bytes(Arc::from(big_bytes.clone())),
+            );
+            s.flush().unwrap();
+            (a, e)
+        };
+
+        // Sidecar must NOT contain either blob key.
+        let sidecar = std::fs::read(path.join(PROPS_FILENAME)).unwrap();
+        assert!(
+            !sidecar.windows(b"data".len()).any(|w| w == b"data"),
+            "fresh oversized String must not land in substrate.props"
+        );
+        assert!(
+            !sidecar.windows(b"blob".len()).any(|w| w == b"blob"),
+            "fresh oversized Bytes must not land in substrate.props"
+        );
+
+        // Reopen and verify byte-exact reads.
+        let s = SubstrateStore::open(&path).unwrap();
+        match s.get_node_property(nid, &PropertyKey::new("data")) {
+            Some(Value::String(arc)) => assert_eq!(arc.as_str(), big_string),
+            other => panic!("expected String, got {other:?}"),
+        }
+        match s.get_edge_property(eid, &PropertyKey::new("blob")) {
+            Some(Value::Bytes(arc)) => {
+                assert_eq!(arc.as_ref(), big_bytes.as_slice());
+            }
+            other => panic!("expected Bytes, got {other:?}"),
         }
     }
 

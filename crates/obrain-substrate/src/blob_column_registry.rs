@@ -35,7 +35,7 @@
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use obrain_common::types::PropertyKey;
+use obrain_common::types::{PropertyKey, Value};
 use parking_lot::Mutex;
 
 use crate::blob_column::{BlobColSpec, BlobColumnWriter};
@@ -50,6 +50,93 @@ use crate::vec_column::EntityKind;
 /// payload on PO (avg 1.4 KiB) while leaving small identifiers
 /// (`file_path` avg 97 B, short `name` / `id` keys) in the scalar path.
 pub const BLOB_COLUMN_THRESHOLD_BYTES: usize = 256;
+
+/// Leading tag byte marking a blob-column payload that originated from a
+/// `Value::String`. The raw UTF-8 bytes follow the tag.
+pub(crate) const BLOB_TAG_STRING: u8 = b'S';
+
+/// Leading tag byte marking a blob-column payload that originated from a
+/// `Value::Bytes`. The raw bytes follow the tag.
+pub(crate) const BLOB_TAG_BYTES: u8 = b'B';
+
+/// Inspect a [`Value`] and decide whether it should be routed to a blob
+/// column. Returns `Some(tagged_bytes)` if the value is a `String` or
+/// `Bytes` whose payload exceeds [`BLOB_COLUMN_THRESHOLD_BYTES`], `None`
+/// otherwise. The first byte of the returned vector is a type tag
+/// ([`BLOB_TAG_STRING`] or [`BLOB_TAG_BYTES`]) so the read-back path can
+/// reconstruct the original [`Value`] variant byte-exactly — without
+/// this, a `Value::String` and a `Value::Bytes` with identical payloads
+/// would be indistinguishable on reopen.
+///
+/// `Value::Vector` is intentionally NOT handled here — vectors live in
+/// the dense `vec_columns` zones (fixed `dim × dtype`), not in the
+/// variable-length blob arena.
+pub(crate) fn encode_blob_payload(value: &Value) -> Option<Vec<u8>> {
+    match value {
+        Value::String(s) => {
+            let bytes = s.as_bytes();
+            if bytes.len() > BLOB_COLUMN_THRESHOLD_BYTES {
+                let mut out = Vec::with_capacity(1 + bytes.len());
+                out.push(BLOB_TAG_STRING);
+                out.extend_from_slice(bytes);
+                Some(out)
+            } else {
+                None
+            }
+        }
+        Value::Bytes(b) => {
+            if b.len() > BLOB_COLUMN_THRESHOLD_BYTES {
+                let mut out = Vec::with_capacity(1 + b.len());
+                out.push(BLOB_TAG_BYTES);
+                out.extend_from_slice(b);
+                Some(out)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Rebuild a [`Value`] from a tagged blob payload. `None` on an unknown
+/// tag or a [`BLOB_TAG_STRING`] payload that is not valid UTF-8 — both
+/// signal corruption or forward-compat drift and are treated as "absent"
+/// by the read-side router rather than poisoning the caller's property
+/// map.
+pub(crate) fn decode_blob_payload(bytes: &[u8]) -> Option<Value> {
+    let (tag, payload) = bytes.split_first()?;
+    match *tag {
+        BLOB_TAG_STRING => {
+            let s = std::str::from_utf8(payload).ok()?;
+            Some(Value::String(s.into()))
+        }
+        BLOB_TAG_BYTES => Some(Value::Bytes(Arc::from(payload))),
+        _ => None,
+    }
+}
+
+/// Size hint matching the bytes [`encode_blob_payload`] would write,
+/// without paying for the copy. The setter uses this to decide routing
+/// before allocating the tagged buffer.
+pub(crate) fn blob_payload_len(value: &Value) -> Option<usize> {
+    match value {
+        Value::String(s) => Some(s.as_bytes().len()),
+        Value::Bytes(b) => Some(b.len()),
+        _ => None,
+    }
+}
+
+/// True when a [`Value`] qualifies for blob-column routing
+/// (String or Bytes whose payload exceeds the threshold). Used by the
+/// store's setter fast-path and its `persist_properties` defensive
+/// filter — never instantiated directly for an inline boolean, because
+/// we want a single place for the routing predicate.
+#[cfg(test)]
+pub(crate) fn should_route_to_blob(value: &Value) -> bool {
+    blob_payload_len(value)
+        .map(|n| n > BLOB_COLUMN_THRESHOLD_BYTES)
+        .unwrap_or(false)
+}
 
 /// Routing table + open-writer cache for blob-typed properties.
 pub(crate) struct BlobColumnRegistry {
@@ -169,8 +256,11 @@ impl BlobColumnRegistry {
     /// the slot is past the writer's high-water mark, or if the slot
     /// is marked absent (`len == 0`).
     ///
-    /// The returned `Arc<[u8]>` is an owned copy — the writer's mmap
-    /// borrow cannot escape the Mutex guard.
+    /// The returned `Arc<[u8]>` is an owned copy of the **raw bytes
+    /// including the 1-byte type tag** — the writer's mmap borrow
+    /// cannot escape the Mutex guard. Callers that want a fully
+    /// reconstructed [`Value`] should use [`Self::read_value`] instead,
+    /// which strips the tag.
     pub(crate) fn read(
         &self,
         key: &PropertyKey,
@@ -182,6 +272,21 @@ impl BlobColumnRegistry {
         let guard = writer.lock();
         let data: &[u8] = guard.read_slot(slot)?;
         Some(Arc::from(data))
+    }
+
+    /// Read-through that reconstructs the original [`Value`] variant
+    /// (String or Bytes) from the tagged payload. Returns `None` when
+    /// the slot is absent, the tag is unknown, or a `String` payload is
+    /// not valid UTF-8 (treated as "absent" rather than a hard error —
+    /// same degradation policy as [`Self::read`]).
+    pub(crate) fn read_value(
+        &self,
+        key: &PropertyKey,
+        ek: EntityKind,
+        slot: u32,
+    ) -> Option<Value> {
+        let raw = self.read(key, ek, slot)?;
+        decode_blob_payload(&raw)
     }
 
     /// Iterate every currently-registered spec. Used by
@@ -410,5 +515,117 @@ mod tests {
         // RFC / plan-level discussion — the value is part of the
         // public routing contract.
         assert_eq!(BLOB_COLUMN_THRESHOLD_BYTES, 256);
+    }
+
+    #[test]
+    fn encode_blob_payload_routes_big_string() {
+        let big = "x".repeat(BLOB_COLUMN_THRESHOLD_BYTES + 1);
+        let v = Value::String(big.as_str().into());
+        let encoded = encode_blob_payload(&v).expect("big string must route");
+        assert_eq!(encoded[0], BLOB_TAG_STRING);
+        assert_eq!(&encoded[1..], big.as_bytes());
+        assert_eq!(encoded.len(), 1 + big.len());
+    }
+
+    #[test]
+    fn encode_blob_payload_routes_big_bytes() {
+        let big: Vec<u8> = (0..(BLOB_COLUMN_THRESHOLD_BYTES as u32 + 1))
+            .map(|i| (i & 0xff) as u8)
+            .collect();
+        let v = Value::Bytes(Arc::from(big.clone()));
+        let encoded = encode_blob_payload(&v).expect("big bytes must route");
+        assert_eq!(encoded[0], BLOB_TAG_BYTES);
+        assert_eq!(&encoded[1..], big.as_slice());
+    }
+
+    #[test]
+    fn encode_blob_payload_rejects_below_threshold() {
+        // Exactly at threshold → stays inline (strict `>` cutoff).
+        let at = "a".repeat(BLOB_COLUMN_THRESHOLD_BYTES);
+        assert!(encode_blob_payload(&Value::String(at.as_str().into())).is_none());
+        let at_b: Vec<u8> = vec![7u8; BLOB_COLUMN_THRESHOLD_BYTES];
+        assert!(encode_blob_payload(&Value::Bytes(Arc::from(at_b))).is_none());
+    }
+
+    #[test]
+    fn encode_blob_payload_ignores_other_variants() {
+        assert!(encode_blob_payload(&Value::Null).is_none());
+        assert!(encode_blob_payload(&Value::Int64(12345)).is_none());
+        assert!(encode_blob_payload(&Value::Bool(true)).is_none());
+        // Vectors go via vec_columns, never here.
+        let v: Vec<f32> = vec![0.0; 1024];
+        assert!(encode_blob_payload(&Value::Vector(Arc::from(v))).is_none());
+    }
+
+    #[test]
+    fn decode_blob_payload_roundtrips_string_and_bytes() {
+        let s = "hello world — utf-8 éclair".to_string();
+        let encoded_s = {
+            let mut v = vec![BLOB_TAG_STRING];
+            v.extend_from_slice(s.as_bytes());
+            v
+        };
+        match decode_blob_payload(&encoded_s).expect("valid string roundtrip") {
+            Value::String(a) => assert_eq!(a.as_str(), s),
+            other => panic!("expected String, got {other:?}"),
+        }
+
+        let raw: Vec<u8> = (0u8..=255).collect();
+        let encoded_b = {
+            let mut v = vec![BLOB_TAG_BYTES];
+            v.extend_from_slice(&raw);
+            v
+        };
+        match decode_blob_payload(&encoded_b).expect("valid bytes roundtrip") {
+            Value::Bytes(a) => assert_eq!(a.as_ref(), raw.as_slice()),
+            other => panic!("expected Bytes, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_blob_payload_rejects_unknown_tag_and_bad_utf8() {
+        assert!(decode_blob_payload(&[]).is_none());
+        assert!(decode_blob_payload(&[b'Z', 1, 2, 3]).is_none());
+        // Invalid UTF-8 under a String tag → None, not a panic.
+        assert!(decode_blob_payload(&[BLOB_TAG_STRING, 0xff, 0xfe]).is_none());
+    }
+
+    #[test]
+    fn should_route_to_blob_matches_threshold() {
+        assert!(!should_route_to_blob(&Value::Null));
+        assert!(!should_route_to_blob(&Value::String("short".into())));
+        let big = "x".repeat(BLOB_COLUMN_THRESHOLD_BYTES + 1);
+        assert!(should_route_to_blob(&Value::String(big.as_str().into())));
+        let big_b: Vec<u8> = vec![0u8; BLOB_COLUMN_THRESHOLD_BYTES + 1];
+        assert!(should_route_to_blob(&Value::Bytes(Arc::from(big_b))));
+    }
+
+    #[test]
+    fn read_value_reconstructs_variant() {
+        let sub = SubstrateFile::open_tempfile().unwrap();
+        let reg = BlobColumnRegistry::new();
+        let s = "éclair ".repeat(128); // > 256 B once encoded
+        let big = Value::String(s.as_str().into());
+        let payload = encode_blob_payload(&big).unwrap();
+        reg.write(&sub, &pk("greeting"), EntityKind::Node, 3, 7, &payload)
+            .unwrap();
+        let got = reg
+            .read_value(&pk("greeting"), EntityKind::Node, 7)
+            .expect("read_value must return");
+        assert_eq!(got, big);
+
+        // Same column can also store Bytes if the type tag says so.
+        // Needs > 256 B to qualify for blob routing.
+        let raw: Vec<u8> = (0..(BLOB_COLUMN_THRESHOLD_BYTES as u32 + 128))
+            .map(|i| (i & 0xff) as u8)
+            .collect();
+        let big_b = Value::Bytes(Arc::from(raw.clone()));
+        let payload_b = encode_blob_payload(&big_b).unwrap();
+        reg.write(&sub, &pk("greeting"), EntityKind::Node, 3, 8, &payload_b)
+            .unwrap();
+        match reg.read_value(&pk("greeting"), EntityKind::Node, 8).unwrap() {
+            Value::Bytes(b) => assert_eq!(b.as_ref(), raw.as_slice()),
+            other => panic!("expected Bytes, got {other:?}"),
+        }
     }
 }
