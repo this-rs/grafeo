@@ -45,6 +45,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
 
+use crate::blob_column::BlobColSpec;
 use crate::error::{SubstrateError, SubstrateResult};
 use crate::vec_column::{EntityKind, VecColSpec, VecDType};
 
@@ -60,10 +61,18 @@ const MAGIC: u32 = 0xD1C7_0DB1;
 ///   columns. Each spec is 8 bytes on wire: `u16 prop_key_id`,
 ///   `u8 entity_kind`, `u8 dtype`, `u32 dim`. v1 / v2 dicts load with
 ///   an empty list (no vec columns seen yet).
-const FORMAT_VERSION: u32 = 3;
+/// * v4 (T16.7 Step 4): appends a list of `BlobColSpec`s recording
+///   which property keys have been promoted to two-file mmap blob
+///   columns (for oversized `Value::String` / `Value::Bytes` payloads).
+///   Each spec is 3 bytes on wire: `u16 prop_key_id`, `u8 entity_kind`.
+///   v1 / v2 / v3 dicts load with an empty list.
+const FORMAT_VERSION: u32 = 4;
 
-/// Wire size of one `VecColSpec` in the v3 tail of the dict.
+/// Wire size of one `VecColSpec` in the v3+ tail of the dict.
 const VEC_COL_SPEC_WIRE_SIZE: usize = 2 + 1 + 1 + 4;
+
+/// Wire size of one `BlobColSpec` in the v4+ tail of the dict.
+const BLOB_COL_SPEC_WIRE_SIZE: usize = 2 + 1;
 
 /// All three registries + allocator state captured at one point in time.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,6 +97,12 @@ pub struct DictSnapshot {
     /// sidecar". Persisted from format v3 (T16.7 Step 2); v1 / v2
     /// dicts load with an empty list.
     pub vec_columns: Vec<VecColSpec>,
+    /// Blob columns that have been materialised for this substrate.
+    /// Each entry tells the store "property key N (for this entity
+    /// kind) lives in a two-file mmap blob-column zone pair on disk
+    /// and not in the bincode sidecar". Persisted from format v4
+    /// (T16.7 Step 4); v1 / v2 / v3 dicts load with an empty list.
+    pub blob_columns: Vec<BlobColSpec>,
 }
 
 impl Default for DictSnapshot {
@@ -100,6 +115,7 @@ impl Default for DictSnapshot {
             next_edge_id: 1,
             next_engram_id: 1,
             vec_columns: Vec::new(),
+            blob_columns: Vec::new(),
         }
     }
 }
@@ -158,6 +174,23 @@ impl DictSnapshot {
             buf.extend_from_slice(&spec.dim.to_le_bytes());
         }
 
+        // v4: blob_columns list. `u16 count` followed by 3 bytes per spec
+        // (prop_key_id u16, entity_kind u8). No dim/dtype — blobs are
+        // variable-length opaque byte payloads identified solely by
+        // (prop_key_id, entity_kind).
+        if self.blob_columns.len() > u16::MAX as usize {
+            return Err(SubstrateError::Internal(format!(
+                "dict overflow: {} blob_columns (max {})",
+                self.blob_columns.len(),
+                u16::MAX
+            )));
+        }
+        buf.extend_from_slice(&(self.blob_columns.len() as u16).to_le_bytes());
+        for spec in &self.blob_columns {
+            buf.extend_from_slice(&spec.prop_key_id.to_le_bytes());
+            buf.push(spec.entity_kind as u8);
+        }
+
         // Pad to 4-byte boundary before crc to keep alignment clean.
         while buf.len() % 4 != 0 {
             buf.push(0);
@@ -183,13 +216,14 @@ impl DictSnapshot {
             )));
         }
         let version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
-        // Accept v1, v2, and current version:
-        // * v1 → no `next_engram_id`, no `vec_columns`.
-        // * v2 → `next_engram_id` present, no `vec_columns`.
-        // * v3 → all fields present.
-        if !(version == 1 || version == 2 || version == FORMAT_VERSION) {
+        // Accept v1, v2, v3, and current version:
+        // * v1 → no `next_engram_id`, no `vec_columns`, no `blob_columns`.
+        // * v2 → `next_engram_id` present, no `vec_columns`, no `blob_columns`.
+        // * v3 → `vec_columns` present, no `blob_columns`.
+        // * v4 → all fields present.
+        if !(version == 1 || version == 2 || version == 3 || version == FORMAT_VERSION) {
             return Err(SubstrateError::Internal(format!(
-                "dict version {version} unsupported (expected 1, 2, or {FORMAT_VERSION})"
+                "dict version {version} unsupported (expected 1, 2, 3, or {FORMAT_VERSION})"
             )));
         }
 
@@ -305,6 +339,46 @@ impl DictSnapshot {
                     dtype,
                 });
             }
+            // Advance cursor past the vec_columns payload so the v4
+            // blob_columns parse below starts at the right offset.
+            cur = &cur[need..];
+            out
+        } else {
+            Vec::new()
+        };
+
+        // v4+: blob_columns list. u16 count + 3 B per spec
+        // (prop_key_id u16, entity_kind u8). v1 / v2 / v3: empty list.
+        let blob_columns: Vec<BlobColSpec> = if version >= 4 {
+            if cur.len() < 2 {
+                return Err(SubstrateError::Internal(
+                    "dict v4 truncated at blob_columns count".into(),
+                ));
+            }
+            let n = u16::from_le_bytes([cur[0], cur[1]]) as usize;
+            cur = &cur[2..];
+            let need = n * BLOB_COL_SPEC_WIRE_SIZE;
+            if cur.len() < need {
+                return Err(SubstrateError::Internal(format!(
+                    "dict v4 truncated at blob_columns body (need {need}, have {})",
+                    cur.len()
+                )));
+            }
+            let mut out = Vec::with_capacity(n);
+            for i in 0..n {
+                let base = i * BLOB_COL_SPEC_WIRE_SIZE;
+                let prop_key_id = u16::from_le_bytes([cur[base], cur[base + 1]]);
+                let entity_byte = cur[base + 2];
+                let Some(entity_kind) = EntityKind::from_u8(entity_byte) else {
+                    return Err(SubstrateError::Internal(format!(
+                        "dict v4: invalid entity_kind byte {entity_byte} at blob_column[{i}]"
+                    )));
+                };
+                out.push(BlobColSpec {
+                    prop_key_id,
+                    entity_kind,
+                });
+            }
             out
         } else {
             Vec::new()
@@ -318,6 +392,7 @@ impl DictSnapshot {
             next_edge_id,
             next_engram_id,
             vec_columns,
+            blob_columns,
         })
     }
 
@@ -448,6 +523,7 @@ mod tests {
             next_edge_id: 67_890,
             next_engram_id: 4321,
             vec_columns: Vec::new(),
+            blob_columns: Vec::new(),
         };
         let bytes = s.to_bytes().unwrap();
         let back = DictSnapshot::from_bytes(&bytes).unwrap();
@@ -466,6 +542,7 @@ mod tests {
             next_edge_id: 99,
             next_engram_id: 7,
             vec_columns: Vec::new(),
+            blob_columns: Vec::new(),
         };
         s.persist(&path).unwrap();
         let back = DictSnapshot::load(&path).unwrap();
@@ -495,6 +572,7 @@ mod tests {
                     dtype: VecDType::F16,
                 },
             ],
+            blob_columns: Vec::new(),
         };
         let bytes = s.to_bytes().unwrap();
         let back = DictSnapshot::from_bytes(&bytes).unwrap();
@@ -525,7 +603,139 @@ mod tests {
 
         let back = DictSnapshot::from_bytes(&buf).unwrap();
         assert_eq!(back.vec_columns, Vec::<VecColSpec>::new());
+        assert_eq!(back.blob_columns, Vec::<BlobColSpec>::new());
         assert_eq!(back.next_engram_id, 1);
+    }
+
+    #[test]
+    fn roundtrip_v4_with_blob_columns() {
+        // Mixed vec + blob columns — the common shape post-Step 4d.
+        let s = DictSnapshot {
+            labels: vec!["Message".into()],
+            edge_types: vec!["HAS_EVENT".into()],
+            prop_keys: vec!["embedding".into(), "data".into(), "file_path".into()],
+            next_node_id: 100,
+            next_edge_id: 200,
+            next_engram_id: 3,
+            vec_columns: vec![VecColSpec {
+                prop_key_id: 0,
+                entity_kind: EntityKind::Node,
+                dim: 80,
+                dtype: VecDType::F32,
+            }],
+            blob_columns: vec![
+                BlobColSpec {
+                    prop_key_id: 1, // "data"
+                    entity_kind: EntityKind::Node,
+                },
+                BlobColSpec {
+                    prop_key_id: 1, // "data" on edges too
+                    entity_kind: EntityKind::Edge,
+                },
+            ],
+        };
+        let bytes = s.to_bytes().unwrap();
+        let back = DictSnapshot::from_bytes(&bytes).unwrap();
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn v3_dict_loads_as_v4_with_empty_blob_columns() {
+        // Simulate a pre-Step-4 dict on disk by writing a v3-format
+        // byte stream by hand (with a non-empty vec_columns list to
+        // exercise the cursor advance) and verifying we load it as v4
+        // with an empty blob_columns list.
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&MAGIC.to_le_bytes());
+        buf.extend_from_slice(&3u32.to_le_bytes()); // v3
+
+        // Three empty name lists.
+        for _ in 0..3 {
+            buf.extend_from_slice(&0u16.to_le_bytes());
+        }
+        buf.extend_from_slice(&1u64.to_le_bytes()); // next_node_id
+        buf.extend_from_slice(&1u64.to_le_bytes()); // next_edge_id
+        buf.extend_from_slice(&1u16.to_le_bytes()); // next_engram_id
+
+        // One vec_column spec to make sure the cursor reaches the
+        // tail cleanly after the payload.
+        buf.extend_from_slice(&1u16.to_le_bytes()); // vec_columns count
+        buf.extend_from_slice(&0u16.to_le_bytes()); // prop_key_id
+        buf.push(EntityKind::Node as u8);
+        buf.push(VecDType::F32 as u8);
+        buf.extend_from_slice(&16u32.to_le_bytes()); // dim
+
+        while buf.len() % 4 != 0 {
+            buf.push(0);
+        }
+        let crc = crc32c(&buf);
+        buf.extend_from_slice(&crc.to_le_bytes());
+
+        let back = DictSnapshot::from_bytes(&buf).unwrap();
+        assert_eq!(back.vec_columns.len(), 1);
+        assert_eq!(back.blob_columns, Vec::<BlobColSpec>::new());
+    }
+
+    #[test]
+    fn v4_blob_columns_truncated_body_is_rejected() {
+        // Hand-craft a v4 header that claims 2 blob_columns but has
+        // only 3 bytes in the payload region (enough for 1).
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&MAGIC.to_le_bytes());
+        buf.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+        for _ in 0..3 {
+            buf.extend_from_slice(&0u16.to_le_bytes());
+        }
+        buf.extend_from_slice(&1u64.to_le_bytes());
+        buf.extend_from_slice(&1u64.to_le_bytes());
+        buf.extend_from_slice(&1u16.to_le_bytes());
+        buf.extend_from_slice(&0u16.to_le_bytes()); // vec_columns count = 0
+        buf.extend_from_slice(&2u16.to_le_bytes()); // blob_columns count = 2
+        // Only 3 bytes of blob_columns payload (enough for 1 spec, not 2).
+        buf.extend_from_slice(&0u16.to_le_bytes()); // prop_key_id
+        buf.push(EntityKind::Node as u8);
+        while buf.len() % 4 != 0 {
+            buf.push(0);
+        }
+        let crc = crc32c(&buf);
+        buf.extend_from_slice(&crc.to_le_bytes());
+
+        let err = DictSnapshot::from_bytes(&buf).unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("blob_columns") && msg.contains("truncated"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn v4_blob_columns_bad_entity_kind_rejected() {
+        // u8 entity_kind = 42 is not a valid EntityKind.
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&MAGIC.to_le_bytes());
+        buf.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+        for _ in 0..3 {
+            buf.extend_from_slice(&0u16.to_le_bytes());
+        }
+        buf.extend_from_slice(&1u64.to_le_bytes());
+        buf.extend_from_slice(&1u64.to_le_bytes());
+        buf.extend_from_slice(&1u16.to_le_bytes());
+        buf.extend_from_slice(&0u16.to_le_bytes()); // vec_columns count = 0
+        buf.extend_from_slice(&1u16.to_le_bytes()); // blob_columns count = 1
+        buf.extend_from_slice(&0u16.to_le_bytes()); // prop_key_id
+        buf.push(42); // bogus entity_kind
+        while buf.len() % 4 != 0 {
+            buf.push(0);
+        }
+        let crc = crc32c(&buf);
+        buf.extend_from_slice(&crc.to_le_bytes());
+
+        let err = DictSnapshot::from_bytes(&buf).unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("entity_kind") && msg.contains("blob_column"),
+            "got: {msg}"
+        );
     }
 
     #[test]
@@ -668,6 +878,7 @@ mod tests {
             next_edge_id: 6,
             next_engram_id: 9999,
             vec_columns: Vec::new(),
+            blob_columns: Vec::new(),
         };
         let bytes = s.to_bytes().unwrap();
         let back = DictSnapshot::from_bytes(&bytes).unwrap();

@@ -861,6 +861,10 @@ impl SubstrateStore {
             next_edge_id: self.next_edge_id.load(Ordering::Acquire),
             next_engram_id: self.next_engram_id.load(Ordering::Acquire),
             vec_columns: self.vec_columns.specs_snapshot(),
+            // Populated in Step 4d once the store owns a
+            // `BlobColumnRegistry`. For now, persist an empty list so
+            // existing bases keep round-tripping unchanged.
+            blob_columns: Vec::new(),
         }
     }
 
