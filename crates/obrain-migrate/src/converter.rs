@@ -423,6 +423,14 @@ fn phase_nodes(
     let mut skipped_by_key: u64 = 0;
     let mut skipped_oversize: u64 = 0;
     let mut total_props_seen: u64 = 0;
+    // T16.7 Step 3 — count user-level `Value::Vector` props that we peel
+    // off the sidecar-bound `scratch_props` and route via
+    // `substrate.set_node_property`, which (post-Step 2b) dispatches to
+    // the dense mmap'd `VecColumnRegistry` instead of the bincode props
+    // file. Tracked separately from `total_props_seen` so the heartbeat
+    // can show "of the N props seen, V went to vec columns".
+    let mut vectors_routed: u64 = 0;
+    let mut vector_bytes_routed: u64 = 0;
     let mut stats = ValueSizeStats::default();
 
     // Per-node scratch buffer for the streaming writer. Reused across
@@ -505,8 +513,39 @@ fn phase_nodes(
             let _ = std::io::stderr().flush();
         }
 
+        // T16.7 Step 3 — split scratch_props into vector and non-vector
+        // buckets. Vectors are routed via `substrate.set_node_property`
+        // which (post-Step 2b) writes them into the dense mmap'd
+        // `VecColumnRegistry` zones instead of the bincode sidecar.
+        // Scalars + strings + bytes + lists + maps stay on the streaming
+        // writer path (bounded-RSS, no heap copies).
+        //
+        // Rationale for routing *here* rather than relying solely on
+        // `persist_properties`' defensive filter: we never want the
+        // vectors to transit the DashMap at all, since `props_writer`
+        // consumes `scratch_props` synchronously and the DashMap is
+        // separately hydrated by `load_properties` on reopen. Splitting
+        // at the source of the migration keeps the anon-RSS budget tight
+        // throughout phase_nodes.
         if !scratch_props.is_empty() {
-            props_writer.append_node(new_id.as_u64(), &scratch_props)?;
+            let mut i = 0;
+            while i < scratch_props.len() {
+                if matches!(scratch_props[i].1, Value::Vector(_)) {
+                    let (key, value) = scratch_props.swap_remove(i);
+                    if let Value::Vector(ref v) = value {
+                        vectors_routed += 1;
+                        vector_bytes_routed += (v.len() as u64) * 4;
+                    }
+                    substrate.set_node_property(new_id, &key, value);
+                    // swap_remove keeps index `i` pointing at what was
+                    // the last entry — re-examine it without advancing.
+                } else {
+                    i += 1;
+                }
+            }
+            if !scratch_props.is_empty() {
+                props_writer.append_node(new_id.as_u64(), &scratch_props)?;
+            }
         }
 
         node_map.insert(old_id.as_u64(), new_id);
@@ -530,8 +569,10 @@ fn phase_nodes(
             tracing::info!(
                 "phase_nodes heartbeat: {nodes_written}/{total} nodes written, \
                  {total_props_seen} props seen (skipped: {skipped_by_key} by-key, \
-                 {skipped_oversize} oversize); props.stream.tmp={props_size_mb} MB; \
+                 {skipped_oversize} oversize; {vectors_routed} vectors → vec_columns, \
+                 {} MiB); props.stream.tmp={props_size_mb} MB; \
                  top heavy keys: {}",
+                vector_bytes_routed / (1024 * 1024),
                 stats.top_report(6)
             );
             last_heartbeat_at = std::time::Instant::now();
@@ -552,7 +593,9 @@ fn phase_nodes(
     pb.finish_and_clear();
     tracing::info!(
         "Phase::Nodes — wrote {nodes_written} nodes, saw {total_props_seen} props \
-         (skipped: {skipped_by_key} by-key, {skipped_oversize} oversize)"
+         (skipped: {skipped_by_key} by-key, {skipped_oversize} oversize; \
+         {vectors_routed} vectors routed to vec_columns = {} MiB kept off sidecar)",
+        vector_bytes_routed / (1024 * 1024),
     );
     if !stats.per_key.is_empty() {
         tracing::info!(
@@ -739,10 +782,18 @@ fn flush_edge_props_chunk(
     let mut scratch: Vec<(String, Value)> = Vec::with_capacity(8);
 
     for ((_old_id, new_id), props) in pairs.iter().zip(props_batch.into_iter()) {
-        // Non-cognitive props → streamed substrate.props entry.
+        // Non-cognitive props → split between vec_columns (vectors) and
+        // streamed substrate.props entry (everything else). See the
+        // twin comment in `phase_nodes` for rationale; same T16.7 Step 3
+        // contract applies on the edge side.
         scratch.clear();
         for (key, value) in props.iter() {
             if is_cognitive_key(key.as_str()) {
+                continue;
+            }
+            if matches!(value, Value::Vector(_)) {
+                // Route directly — bypass the sidecar to keep anon RSS bounded.
+                substrate.set_edge_property(*new_id, key.as_str(), value.clone());
                 continue;
             }
             scratch.push((key.as_str().to_string(), value.clone()));

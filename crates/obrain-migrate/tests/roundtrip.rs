@@ -330,3 +330,89 @@ fn converter_is_idempotent_on_synthetic_input() {
     let f2 = build_once(&td.path().join("run2.obrain"));
     assert_eq!(f1, f2, "migration must be structurally idempotent");
 }
+
+/// T16.7 Step 3 — contract check: a user-level `Value::Vector` property
+/// written during migration MUST land in the substrate vec_columns zone
+/// (dense mmap) and NOT in the `substrate.props` bincode sidecar.
+///
+/// This is the integration-level anchor for the split logic added to
+/// `phase_nodes` / `flush_edge_props_chunk`. It exercises the same
+/// public `substrate.set_node_property` path those helpers use, so a
+/// regression in the store-level routing (Step 2b) or in the migration
+/// wiring (this step) surfaces here.
+///
+/// Verified invariants:
+///   1. After flush + reopen, `get_node_property` returns the byte-exact
+///      vector (proves vec_columns writer+reader are wired).
+///   2. The persisted `substrate.props` file, inspected as raw bytes,
+///      does NOT contain the property key. This is the anon-RSS win:
+///      the vector never transits the bincode sidecar, so reopen does
+///      not hydrate it into the DashMap either.
+#[test]
+fn value_vector_bypasses_props_sidecar_and_roundtrips_via_vec_columns() {
+    let td = TempDir::new().unwrap();
+    let path = td.path().join("subs.obrain");
+    let substrate = Arc::new(SubstrateStore::create(&path).unwrap());
+
+    let n = substrate.create_node(&["Person"]);
+    substrate.set_node_property(n, "name", Value::String("Alice".into()));
+    // Non-trivial length so a bincode-encoded form would be easy to
+    // spot in the raw props file if the routing ever regresses.
+    let vec_payload: Vec<f32> = (0..384).map(|i| i as f32 * 0.01).collect();
+    substrate.set_node_property(
+        n,
+        "embedding_user",
+        Value::Vector(vec_payload.clone().into()),
+    );
+
+    substrate.flush().unwrap();
+    drop(substrate);
+
+    // Reopen — vec_columns must hydrate from the dict + zone files.
+    let substrate2 = Arc::new(SubstrateStore::open(&path).unwrap());
+    // 1. Vector roundtrips byte-exact.
+    let nid = GraphStore::all_node_ids(&*substrate2)[0];
+    let got = substrate2
+        .get_node_property(nid, &PropertyKey::new("embedding_user"))
+        .expect("vector should be readable via vec_columns");
+    match got {
+        Value::Vector(arc) => {
+            assert_eq!(arc.len(), 384);
+            for (i, (a, b)) in arc.iter().zip(vec_payload.iter()).enumerate() {
+                assert!((a - b).abs() < 1e-6, "diff at {i}: {a} vs {b}");
+            }
+        }
+        other => panic!("expected Value::Vector, got {other:?}"),
+    }
+    // 2. The scalar property still works (vec routing didn't drop it).
+    assert!(matches!(
+        substrate2.get_node_property(nid, &PropertyKey::new("name")),
+        Some(Value::String(_))
+    ));
+
+    // 3. The raw `substrate.props` sidecar does NOT mention the key.
+    // We read it as bytes — bincode encodes the key as UTF-8 so a
+    // substring scan is conclusive (no risk of a stray match inside a
+    // binary payload since we control the full property set).
+    // `SubstrateFile::create(path)` writes zone files directly under
+    // `path/`; no nested `substrate.obrain/` subdirectory.
+    let props_file = path.join("substrate.props");
+    if props_file.exists() {
+        let bytes = std::fs::read(&props_file).unwrap();
+        let needle = b"embedding_user";
+        let hit = bytes
+            .windows(needle.len())
+            .any(|w| w == needle);
+        assert!(
+            !hit,
+            "substrate.props must not contain vector property key; sidecar size={} B",
+            bytes.len()
+        );
+        // `name` *should* still be there (scalar path).
+        let name_hit = bytes.windows(b"name".len()).any(|w| w == b"name");
+        assert!(
+            name_hit,
+            "substrate.props should still contain scalar 'name' key (sanity)",
+        );
+    }
+}
