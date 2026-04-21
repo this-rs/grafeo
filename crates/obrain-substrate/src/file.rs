@@ -526,6 +526,27 @@ impl SubstrateFile {
         ZoneFile::open_or_create(&self.zone_path(zone))
     }
 
+    /// Open a zone file by raw filename inside the substrate directory.
+    ///
+    /// This is the escape hatch for zones whose filenames are built
+    /// dynamically from per-column metadata — currently only the
+    /// `vec_column` subsystem (`substrate.veccol.<key>.<dtype>.<dim>`,
+    /// one file per distinct prop-key / dimension). Each call creates a
+    /// fresh [`ZoneFile`]; the caller keeps it alive for the window
+    /// during which writes / reads are issued.
+    ///
+    /// The `filename` is interpreted verbatim as a file name **inside**
+    /// `self.path()`; the caller must not pass a path with directory
+    /// separators. We enforce this with a debug-assertion to catch
+    /// caller bugs early without an extra syscall in release.
+    pub fn open_named_zone(&self, filename: &str) -> SubstrateResult<ZoneFile> {
+        debug_assert!(
+            !filename.contains(std::path::MAIN_SEPARATOR) && !filename.contains('/'),
+            "open_named_zone: filename must not contain path separators (got {filename:?})"
+        );
+        ZoneFile::open_or_create(&self.path.join(filename))
+    }
+
     /// Path of the WAL file.
     pub fn wal_path(&self) -> PathBuf {
         self.path.join(zone::WAL)

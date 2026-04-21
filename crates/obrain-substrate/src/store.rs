@@ -157,7 +157,26 @@ const DICT_FILENAME: &str = "substrate.dict";
 /// `get_node_property` / `get_properties`. Audit with
 /// `rg 'get_node_property.*"<key>"' | rg -v 'examples/|tests/|migrate|neo4j2obrain'`
 /// before adding.
-pub const SKIP_ON_LOAD_PROP_KEYS: &[&str] = &["_st_embedding"];
+///
+/// **T16.7** — extended to `_kernel_embedding` (80-dim Φ₀ projection) and
+/// `_hilbert_features` (64-dim topology-derived signature). Both are
+/// derived by the `kernel_manager` warden from the graph itself, not
+/// persistent user data — loading them inflates anon RSS for nothing.
+/// `obrain-migrate` (T16.6) already drops them at migration time, so
+/// only legacy bases still carry them; this list handles that case too.
+///
+/// Audit trail for each entry:
+/// - `_st_embedding` (384-dim SentenceTransformer): tier zones are the
+///   runtime accessor; the copy in props is a migration artefact.
+///   Added: T16 anon-RSS post-mortem.
+/// - `_kernel_embedding` (80-dim Φ₀): no runtime caller outside
+///   `obrain-migrate`; kernel warden regenerates it in-memory on demand.
+///   Added: T16.7 (runtime filter sync with T16.6 migrate filter).
+/// - `_hilbert_features` (64-dim topology-derived): same story —
+///   recomputed by the hilbert warden; never read by the hub runtime.
+///   Added: T16.7.
+pub const SKIP_ON_LOAD_PROP_KEYS: &[&str] =
+    &["_st_embedding", "_kernel_embedding", "_hilbert_features"];
 
 // ---------------------------------------------------------------------------
 // Label registry (step 1 in-memory version)
