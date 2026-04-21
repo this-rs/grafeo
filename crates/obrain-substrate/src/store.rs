@@ -590,21 +590,21 @@ impl SubstrateStore {
         //     — zero-filled slots past the marks are never read.
         store.rebuild_from_zones()?;
 
-        // (3) Load properties from the sidecar snapshot, if present.
-        //     Fresh stores have no `.props` file and this is a no-op.
-        //     A corrupt snapshot logs a warning and degrades to empty
-        //     properties rather than refusing to open — the store is
-        //     still usable structurally.
-        store.load_properties()?;
-
-        // (4) Hydrate the vec-column registry from the persisted specs
+        // (3) Hydrate the vec-column registry from the persisted specs
         //     (dict v3). For each `(prop_key_id, entity_kind, dim, dtype)`
         //     tuple we reopen the corresponding `substrate.veccol.*`
         //     zone so subsequent reads and writes in this session route
         //     to the right file without a cold `ZoneFile::open`.
         //
         //     Hydration runs after `prop_keys` is loaded so the registry
-        //     can resolve `prop_key_id → PropertyKey` names.
+        //     can resolve `prop_key_id → PropertyKey` names, and BEFORE
+        //     `load_properties` so pre-T16.7 bases whose sidecar still
+        //     holds `Value::Vector` payloads can auto-migrate them into
+        //     vec_columns on the fly during the sidecar walk. Swapping
+        //     (3) and (4) vs. the original order is what makes the
+        //     upgrade path safe against silent data loss — see the
+        //     `auto_migrates_legacy_vectors_on_load` test for the
+        //     regression anchor.
         {
             let sub = store.substrate.lock();
             let names = store.prop_keys.read().names();
@@ -613,12 +613,34 @@ impl SubstrateStore {
                 .hydrate_from_dict(&sub, &names, &snapshot.vec_columns)?;
         }
 
+        // (4) Load properties from the sidecar snapshot, if present.
+        //     Fresh stores have no `.props` file and this is a no-op.
+        //     A corrupt snapshot logs a warning and degrades to empty
+        //     properties rather than refusing to open — the store is
+        //     still usable structurally. `Value::Vector` entries are
+        //     routed into the (already-hydrated) vec_columns registry
+        //     instead of the DashMap — this auto-migrates pre-T16.7
+        //     sidecars in place; the next `flush()` drops them from the
+        //     re-serialised sidecar via the `persist_properties`
+        //     defensive filter, closing the upgrade in a single
+        //     open-close cycle.
+        store.load_properties()?;
+
         Ok(store)
     }
 
     /// Load the properties sidecar and populate `self.nodes[*].properties`
     /// and `self.edges[*].properties` maps. See
     /// [`Self::persist_properties`] for the symmetric write path.
+    ///
+    /// T16.7 Step 3b contract: `Value::Vector` entries found in the
+    /// sidecar (pre-T16.7 vintage bases) are routed through
+    /// [`Self::set_node_property`] / [`Self::set_edge_property`] so they
+    /// land in the vec-column registry instead of the DashMap. This
+    /// auto-migrates vectors in place — the next `flush()` then drops
+    /// them from the sidecar via the `persist_properties` defensive
+    /// filter. Without this routing, opening a pre-T16.7 base with
+    /// T16.7+ code would silently lose vector data on first close.
     fn load_properties(&self) -> SubstrateResult<()> {
         let path = {
             let sub = self.substrate.lock();
@@ -629,15 +651,46 @@ impl SubstrateStore {
         let mut edges_loaded = 0usize;
         let mut node_props_skipped = 0usize;
         let mut edge_props_skipped = 0usize;
+        // Count the vectors we auto-migrate out of the sidecar — one
+        // log line at the end lets operators confirm the upgrade
+        // happened (and gives them a before/after view of the sidecar
+        // size should they want to repack).
+        let mut node_vectors_migrated = 0usize;
+        let mut edge_vectors_migrated = 0usize;
         // Hot loop: a small contains check over <10 short strings. A linear
         // scan is faster than any hash-set overhead at this size.
         let skip = |k: &str| SKIP_ON_LOAD_PROP_KEYS.iter().any(|s| *s == k);
         for e in snap.nodes {
             let nid = obrain_common::types::NodeId(e.id);
             let before = e.props.len();
-            let filtered: Vec<_> = e.props.into_iter().filter(|(k, _)| !skip(k)).collect();
-            node_props_skipped += before - filtered.len();
-            let map = entries_to_map(filtered);
+            // Split the sidecar entry three ways:
+            //   - dropped entirely (SKIP_ON_LOAD keys — rebuildable)
+            //   - routed to vec_columns (Value::Vector auto-migration)
+            //   - kept on the DashMap scalar path (everything else)
+            let mut scalars: Vec<(String, Value)> = Vec::with_capacity(before);
+            let mut vectors: Vec<(String, Value)> = Vec::new();
+            for (k, v) in e.props {
+                if skip(&k) {
+                    node_props_skipped += 1;
+                    continue;
+                }
+                if matches!(v, Value::Vector(_)) {
+                    vectors.push((k, v));
+                } else {
+                    scalars.push((k, v));
+                }
+            }
+            // Route vectors through the public setter so the registry
+            // allocates/reopens the correct column file and writes the
+            // slot. `set_node_property`'s `is_live_on_disk` check also
+            // protects us from tombstoned-between-flush-and-reopen
+            // nodes — it no-ops in that case, matching the behaviour
+            // of the scalar branch below.
+            for (k, v) in vectors {
+                self.set_node_property(nid, &k, v);
+                node_vectors_migrated += 1;
+            }
+            let map = entries_to_map(scalars);
             // Merge into the DashMap entry built by rebuild_from_zones.
             // If the node was tombstoned between the last flush and the
             // reopen it will not be present here; we silently skip.
@@ -649,9 +702,24 @@ impl SubstrateStore {
         for e in snap.edges {
             let eid = obrain_common::types::EdgeId(e.id);
             let before = e.props.len();
-            let filtered: Vec<_> = e.props.into_iter().filter(|(k, _)| !skip(k)).collect();
-            edge_props_skipped += before - filtered.len();
-            let map = entries_to_map(filtered);
+            let mut scalars: Vec<(String, Value)> = Vec::with_capacity(before);
+            let mut vectors: Vec<(String, Value)> = Vec::new();
+            for (k, v) in e.props {
+                if skip(&k) {
+                    edge_props_skipped += 1;
+                    continue;
+                }
+                if matches!(v, Value::Vector(_)) {
+                    vectors.push((k, v));
+                } else {
+                    scalars.push((k, v));
+                }
+            }
+            for (k, v) in vectors {
+                self.set_edge_property(eid, &k, v);
+                edge_vectors_migrated += 1;
+            }
+            let map = entries_to_map(scalars);
             if let Some(mut in_mem) = self.edges.get_mut(&eid) {
                 in_mem.properties = map;
                 edges_loaded += 1;
@@ -660,11 +728,14 @@ impl SubstrateStore {
         if nodes_loaded > 0 || edges_loaded > 0 {
             tracing::info!(
                 "props snapshot: loaded {} node-property maps, {} edge-property maps \
-                 (skipped-on-load: {} node-props, {} edge-props — see SKIP_ON_LOAD_PROP_KEYS)",
+                 (skipped-on-load: {} node-props, {} edge-props — see SKIP_ON_LOAD_PROP_KEYS; \
+                 auto-migrated to vec_columns: {} node vectors, {} edge vectors)",
                 nodes_loaded,
                 edges_loaded,
                 node_props_skipped,
                 edge_props_skipped,
+                node_vectors_migrated,
+                edge_vectors_migrated,
             );
         }
         Ok(())
@@ -3059,6 +3130,146 @@ mod tests {
         // panics on these keys is caught.
         for key in SKIP_ON_LOAD_PROP_KEYS {
             let _ = s.get_node_property(node_id, &PropertyKey::new(*key));
+        }
+    }
+
+    /// T16.7 Step 3b — auto-migration regression anchor.
+    ///
+    /// Simulates a **pre-T16.7 vintage base**: a `SubstrateStore` whose
+    /// `substrate.props` sidecar carries a `Value::Vector` payload
+    /// written through the old code path (direct bincode serialisation
+    /// of the DashMap, no vec-column zone). We fabricate the state by
+    /// driving `PropertiesStreamingWriter` directly so we can write a
+    /// vector entry without going through the routed setter.
+    ///
+    /// On reopen, `load_properties` MUST:
+    ///   1. Route the vector into the vec-column registry so
+    ///      `get_node_property` returns it (byte-exact) via vec_columns.
+    ///   2. Keep the DashMap sidecar free of the vector entry — the
+    ///      next `flush()` will then re-persist a vector-free sidecar
+    ///      via the `persist_properties` defensive filter, completing
+    ///      the upgrade.
+    ///
+    /// If someone reintroduces the pre-Step-3b load path (direct
+    /// `entries_to_map` without the vector split) this test goes red:
+    /// the vector would end up in the DashMap, the next flush would
+    /// drop it from the sidecar (defensive filter) AND from the DashMap
+    /// on the subsequent reopen — silent data loss.
+    #[test]
+    fn auto_migrates_legacy_vectors_on_load() {
+        use crate::props_snapshot::PropertiesStreamingWriter;
+        use obrain_core::graph::traits::GraphStore;
+        use std::sync::Arc;
+
+        let td = tempfile::tempdir().unwrap();
+        let path = td.path().join("kb");
+
+        // Phase 1 — create a fresh T16.7 store, write ONE node with a
+        // scalar (so the node slot exists and labels are persisted),
+        // then flush + drop.
+        let node_id = {
+            let s = SubstrateStore::create(&path).unwrap();
+            let a = s.create_node(&["Doc"]);
+            s.set_node_property(a, "title", Value::String("legacy".into()));
+            s.flush().unwrap();
+            a
+        };
+
+        // Phase 2 — simulate the pre-T16.7 sidecar state by OVER-
+        // WRITING `substrate.props` with a hand-crafted snapshot that
+        // contains both the scalar and a vector entry for the same
+        // node. Because `PropertiesStreamingWriter` doesn't filter by
+        // value kind (it's the post-filter consumer of whatever
+        // `persist_properties` feeds it), we get the vector into the
+        // sidecar exactly as a v1.x migration would have done.
+        let sidecar_path = path.join(PROPS_FILENAME);
+        let vec_payload: Vec<f32> = (0..16).map(|i| i as f32 * 0.0625).collect();
+        let arc: Arc<[f32]> = Arc::from(vec_payload.clone().into_boxed_slice());
+        {
+            let mut w = PropertiesStreamingWriter::open(&sidecar_path).unwrap();
+            let props: Vec<(String, Value)> = vec![
+                ("title".to_string(), Value::String("legacy".into())),
+                ("legacy_embedding".to_string(), Value::Vector(arc.clone())),
+            ];
+            w.append_node(node_id.0, &props).unwrap();
+            w.finish().unwrap();
+        }
+
+        // Sanity: the raw pre-upgrade sidecar must actually contain the
+        // vector key — otherwise this test is not exercising what it
+        // claims. Bincode encodes the key as a UTF-8 string, so a byte
+        // substring scan is conclusive.
+        {
+            let raw = std::fs::read(&sidecar_path).unwrap();
+            assert!(
+                raw.windows(b"legacy_embedding".len())
+                    .any(|w| w == b"legacy_embedding"),
+                "pre-upgrade sidecar should carry the vector key (test invariant)"
+            );
+        }
+
+        // Phase 3 — reopen. `load_properties` must route the vector
+        // into vec_columns.
+        let s = SubstrateStore::open(&path).unwrap();
+
+        // 3a. Vector is readable via vec_columns — byte-exact.
+        let got = s
+            .get_node_property(node_id, &PropertyKey::new("legacy_embedding"))
+            .expect("vector should be auto-migrated to vec_columns on load");
+        match got {
+            Value::Vector(arc) => {
+                assert_eq!(
+                    arc.as_ref(),
+                    &vec_payload[..],
+                    "auto-migrated vector must be byte-exact",
+                );
+            }
+            other => panic!("expected Value::Vector, got {other:?}"),
+        }
+
+        // 3b. Scalar still lives on the DashMap sidecar path.
+        assert!(
+            matches!(
+                s.get_node_property(node_id, &PropertyKey::new("title")),
+                Some(Value::String(_))
+            ),
+            "scalar property should still be present after auto-migration"
+        );
+
+        // Phase 4 — flush + drop. The defensive filter in
+        // `persist_properties` now strips the vector from the
+        // re-serialised sidecar.
+        s.flush().unwrap();
+        drop(s);
+
+        // 4a. Post-flush sidecar must NOT carry the vector key.
+        let raw_after = std::fs::read(&sidecar_path).unwrap();
+        assert!(
+            !raw_after
+                .windows(b"legacy_embedding".len())
+                .any(|w| w == b"legacy_embedding"),
+            "post-flush sidecar must not carry the auto-migrated vector key \
+             (bytes len={})",
+            raw_after.len(),
+        );
+        // 4b. The scalar key survives.
+        assert!(
+            raw_after.windows(b"title".len()).any(|w| w == b"title"),
+            "scalar key should still be in the post-flush sidecar"
+        );
+
+        // Phase 5 — reopen a THIRD time. The vector must still be
+        // readable (now exclusively from the vec-column zone; the
+        // sidecar no longer references it).
+        let s = SubstrateStore::open(&path).unwrap();
+        let got = s
+            .get_node_property(node_id, &PropertyKey::new("legacy_embedding"))
+            .expect("vector should still be readable after upgrade-then-flush cycle");
+        match got {
+            Value::Vector(arc) => {
+                assert_eq!(arc.as_ref(), &vec_payload[..]);
+            }
+            other => panic!("expected Value::Vector, got {other:?}"),
         }
     }
 
