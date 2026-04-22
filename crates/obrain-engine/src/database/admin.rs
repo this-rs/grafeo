@@ -172,27 +172,34 @@ impl super::ObrainDB {
     /// For RDF mode, returns predicate and named graph information.
     #[must_use]
     pub fn schema(&self) -> crate::admin::SchemaInfo {
-        let labels = self
-            .store
+        // T17 W3c slice 5a: trait reads route through data_store() so substrate
+        // mode returns real labels/types/keys (previously self.store was the
+        // dummy LpgStore → empty results). Per-label counts use the trait's
+        // node_count_by_label (substrate overrides with O(1) label-index).
+        // Edge-type counts still go through self.store.edges_with_type() —
+        // no trait equivalent yet; slice 5b adds substrate parity.
+        let data = self.data_store();
+        let labels = data
             .all_labels()
             .into_iter()
             .map(|name| crate::admin::LabelInfo {
-                name: name.clone(),
-                count: self.store.nodes_with_label(&name).count(),
+                count: data.node_count_by_label(&name),
+                name,
             })
             .collect();
 
-        let edge_types = self
-            .store
+        let edge_types = data
             .all_edge_types()
             .into_iter()
             .map(|name| crate::admin::EdgeTypeInfo {
-                name: name.clone(),
+                // TODO(T17 W3c slice 5b): add edge_count_by_type to the trait
+                // so substrate-backed ObrainDB can report non-zero counts here.
                 count: self.store.edges_with_type(&name).count(),
+                name,
             })
             .collect();
 
-        let property_keys = self.store.all_property_keys();
+        let property_keys = data.all_property_keys();
 
         crate::admin::SchemaInfo::Lpg(crate::admin::LpgSchemaInfo {
             labels,

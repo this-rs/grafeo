@@ -1988,7 +1988,10 @@ impl ObrainDB {
 
         maybe_crash("checkpoint_to_file:before_export");
 
-        let epoch = self.store.current_epoch();
+        // T17 W3c slice 5a: route trait reads through data_store() so substrate
+        // mode sees real epoch/counts instead of the dummy LpgStore (zeros).
+        let data = self.data_store();
+        let epoch = data.current_epoch();
         let transaction_id = self
             .transaction_manager
             .last_assigned_transaction_id()
@@ -2017,8 +2020,8 @@ impl ObrainDB {
         let snapshot_data = self.export_snapshot()?;
         maybe_crash("checkpoint_to_file:after_export");
 
-        let node_count = self.store.node_count() as u64;
-        let edge_count = self.store.edge_count() as u64;
+        let node_count = data.node_count() as u64;
+        let edge_count = data.edge_count() as u64;
 
         fm.write_snapshot(
             &snapshot_data,

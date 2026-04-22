@@ -1250,7 +1250,10 @@ impl super::ObrainDB {
         // up to wal_sequence is safely persisted in the epoch file.
         #[cfg(feature = "wal")]
         if let Some(ref wal) = self.wal {
-            let epoch = self.store.current_epoch();
+            // T17 W3c slice 5a: route current_epoch through data_store() so
+            // substrate mode pins the WAL checkpoint at the real epoch
+            // (self.store is a dummy empty LpgStore in substrate mode).
+            let epoch = self.data_store().current_epoch();
             let tx_id = self
                 .transaction_manager
                 .last_assigned_transaction_id()
