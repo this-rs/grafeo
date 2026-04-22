@@ -35,10 +35,11 @@ fn edge_record_layout_roundtrip() {
             weight_u16: f32_to_q1_15(0.3),
             next_from: U48::from_u64((i as u64) * 32),
             next_to: U48::from_u64((i as u64) * 64),
+            first_prop_off: U48::from_u64((i as u64) * 128),
             ricci_u8: (i % 256) as u8,
             flags: edge_flags::SYNAPSE_ACTIVE,
             engram_tag: i as u16,
-            _pad: [0; 4],
+            _pad: [0; 2],
         })
         .collect::<Vec<_>>();
     let bytes: &[u8] = bytemuck::cast_slice(&edges);

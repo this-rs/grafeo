@@ -42,10 +42,11 @@ fn seed_edges(w: &Writer, n: u64) {
         weight_u16: 0xC000,
         next_from: U48::from_u64(0),
         next_to: U48::from_u64(0),
+        first_prop_off: U48::ZERO,
         ricci_u8: 0,
         flags: 0,
         engram_tag: 0,
-        _pad: [0; 4],
+        _pad: [0; 2],
     };
     for i in 1..=n {
         rec.src = (i & 0xFFFF_FFFF) as u32;

@@ -33,10 +33,11 @@ fn sample_edge(src: u32, dst: u32) -> EdgeRecord {
         weight_u16: f32_to_q1_15(0.9),
         next_from: U48::default(),
         next_to: U48::default(),
+        first_prop_off: U48::ZERO,
         ricci_u8: 128,
         flags: 0,
         engram_tag: 0,
-        _pad: [0; 4],
+        _pad: [0; 2],
     }
 }
 

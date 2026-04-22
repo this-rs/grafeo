@@ -281,21 +281,33 @@ pub struct EdgeRecord {
     pub next_from: U48,
     /// Next `EdgeRecord` offset in the linked list of edges sharing this `dst`.
     pub next_to: U48,
+    /// Offset into the `PropertyPage` array of the first property page for this
+    /// edge (linked list head). `U48::ZERO` ⇒ no properties stored in
+    /// PropsZone v2 yet (legacy DashMap sidecar remains the fallback).
+    ///
+    /// Added in T17f Step 1 (layout bump 32 B → 36 B). Byte offset inside
+    /// the record is **24** — see [`Writer::update_edge_first_prop_off`].
+    pub first_prop_off: U48,
     /// Quantized Ricci-Ollivier curvature in [-1, 1] → (x + 1) × 127.5.
     pub ricci_u8: u8,
     /// See [`edge_flags`].
     pub flags: u8,
     /// Interned engram-cluster id (0 = none).
     pub engram_tag: u16,
-    /// Padding to reach 32 B stride.
-    pub _pad: [u8; 4],
+    /// Padding to reach 36 B stride (align 4).
+    pub _pad: [u8; 2],
 }
 
-const _: [(); 1] = [(); (core::mem::size_of::<EdgeRecord>() == 32) as usize];
+const _: [(); 1] = [(); (core::mem::size_of::<EdgeRecord>() == 36) as usize];
 const _: [(); 1] = [(); (core::mem::align_of::<EdgeRecord>() == 4) as usize];
 
 impl EdgeRecord {
-    pub const SIZE: usize = 32;
+    pub const SIZE: usize = 36;
+
+    /// Byte offset of [`EdgeRecord::first_prop_off`] inside the record.
+    /// Used by `Writer::update_edge_first_prop_off` to patch only 6 bytes
+    /// in place without rewriting the whole record.
+    pub const FIRST_PROP_OFF_BYTES: usize = 24;
 
     #[inline]
     pub fn is_tombstoned(&self) -> bool {
@@ -356,10 +368,24 @@ mod tests {
     #[test]
     fn static_asserts() {
         assert_eq!(core::mem::size_of::<NodeRecord>(), 32);
-        assert_eq!(core::mem::size_of::<EdgeRecord>(), 32);
+        assert_eq!(core::mem::size_of::<EdgeRecord>(), 36);
         assert_eq!(core::mem::align_of::<NodeRecord>(), 8);
         assert_eq!(core::mem::align_of::<EdgeRecord>(), 4);
         assert_eq!(core::mem::size_of::<U48>(), 6);
+        // T17f Step 1 — first_prop_off byte offset must stay at 24 so the
+        // writer's patch-in-place of the 6-byte head pointer stays correct.
+        assert_eq!(EdgeRecord::FIRST_PROP_OFF_BYTES, 24);
+        // Runtime offset check: poke a sentinel pattern into first_prop_off
+        // and verify the bytes land exactly at offset 24.
+        let mut rec = EdgeRecord::default();
+        rec.first_prop_off = U48::from_u64(0x0000_00FF_FFFF_FF00);
+        let bytes = bytemuck::bytes_of(&rec);
+        // Bytes 24..30 must mirror the little-endian encoding of 0x00FFFFFFFF00.
+        assert_eq!(
+            &bytes[24..30],
+            &[0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x00],
+            "first_prop_off field is not at byte offset 24 — layout drifted"
+        );
     }
 
     #[test]
@@ -483,14 +509,59 @@ mod tests {
             weight_u16: 0x8000,
             next_from: U48::from_u64(128),
             next_to: U48::from_u64(256),
+            first_prop_off: U48::from_u64(0x9999),
             ricci_u8: 64,
             flags: edge_flags::SYNAPSE_ACTIVE | edge_flags::COACT,
             engram_tag: 17,
-            _pad: [0; 4],
+            _pad: [0; 2],
         };
         let bytes: &[u8] = bytemuck::bytes_of(&e);
-        assert_eq!(bytes.len(), 32);
+        assert_eq!(bytes.len(), 36);
         let e2: EdgeRecord = *bytemuck::from_bytes::<EdgeRecord>(bytes);
         assert_eq!(e, e2);
+    }
+
+    /// T17f Step 1 — a fresh `EdgeRecord::default()` must have
+    /// `first_prop_off == U48::ZERO`, guaranteeing that existing code paths
+    /// that initialise edges without touching the new field behave exactly
+    /// like the legacy 32 B layout: no property head → DashMap-only edge
+    /// properties.
+    #[test]
+    fn edge_record_default_has_zero_first_prop_off() {
+        let e = EdgeRecord::default();
+        assert_eq!(e.first_prop_off, U48::ZERO);
+        assert!(e.first_prop_off.is_zero());
+    }
+
+    /// T17f Step 1 — round-trip through bytemuck with every byte of every
+    /// field set to a non-trivial value, to prove the 36 B layout is
+    /// stable and that no field aliases another.
+    #[test]
+    fn edge_record_full_byte_roundtrip() {
+        let e = EdgeRecord {
+            src: 0xDEAD_BEEF,
+            dst: 0xCAFE_BABE,
+            edge_type: 0x1234,
+            weight_u16: 0xFEED,
+            next_from: U48::from_u64(0x0000_AABB_CCDD_EEFF),
+            next_to: U48::from_u64(0x0000_1122_3344_5566),
+            first_prop_off: U48::from_u64(0x0000_99AA_BBCC_DDEE),
+            ricci_u8: 0x42,
+            flags: 0x7F,
+            engram_tag: 0x9ABC,
+            _pad: [0xAB, 0xCD],
+        };
+        let bytes = bytemuck::bytes_of(&e).to_vec();
+        assert_eq!(bytes.len(), 36);
+        let decoded: EdgeRecord = *bytemuck::from_bytes::<EdgeRecord>(&bytes);
+        assert_eq!(e, decoded);
+        // Spot-check: src at offset 0, dst at offset 4, first_prop_off at 24.
+        assert_eq!(&bytes[0..4], &0xDEAD_BEEF_u32.to_le_bytes());
+        assert_eq!(&bytes[4..8], &0xCAFE_BABE_u32.to_le_bytes());
+        assert_eq!(
+            &bytes[24..30],
+            &[0xEE, 0xDD, 0xCC, 0xBB, 0xAA, 0x99],
+            "first_prop_off must be at offset 24 in little-endian U48 form"
+        );
     }
 }

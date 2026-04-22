@@ -3103,6 +3103,9 @@ impl SubstrateStore {
             .unwrap_or(EdgeId(0));
 
         // Build the EdgeRecord with both chain pointers set.
+        // `first_prop_off` starts at ZERO — property head gets patched
+        // later by `update_edge_first_prop_off` when the edge gets its
+        // first property via PropsZone v2 (T17f Steps 3-4).
         let edge = EdgeRecord {
             src: src.0 as u32,
             dst: dst.0 as u32,
@@ -3110,10 +3113,11 @@ impl SubstrateStore {
             weight_u16: 0,
             next_from: prev_out_head,
             next_to: Self::edge_slot_to_offset(prev_in_head),
+            first_prop_off: U48::ZERO,
             ricci_u8: 0,
             flags: 0,
             engram_tag: 0,
-            _pad: [0; 4],
+            _pad: [0; 2],
         };
 
         // (3) update src's first_edge_off
