@@ -130,7 +130,7 @@ use crate::record::{
 };
 use crate::props_snapshot::{
     entries_to_map, map_to_entries, PropEntry, PropertiesSnapshotV1,
-    PropertiesStreamingWriter, PROPS_FILENAME,
+    PropertiesStreamingWriter, EDGE_PROPS_FILENAME, PROPS_FILENAME,
 };
 use crate::page::PropertyEntry;
 use crate::props_codec::{decode_value, encode_value};
@@ -406,6 +406,33 @@ impl PropertyKeyRegistry {
         }
         Ok(())
     }
+}
+
+/// Result of [`SubstrateStore::finalize_props_v2`]. Captures the work
+/// done so the migration CLI can log a summary and CI can assert
+/// expected counts (e.g. nodes_processed matches the live-node count
+/// of the source).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PropsV2FinalizeStats {
+    /// Number of nodes whose DashMap entry was re-emitted through
+    /// the v2 path. Equals the number of nodes with at least one
+    /// scalar property on entry.
+    pub nodes_processed: usize,
+    /// Total number of `set_node_property` calls made — roughly the
+    /// number of `(node, key)` pairs on the v2 chain afterward.
+    pub scalars_emitted: usize,
+    /// T17c Step 6 — number of edges whose `edge_properties` DashMap
+    /// entry was serialised into the dedicated edge sidecar
+    /// (`substrate.edge_props`). Edges have no PropsZone v2 path yet
+    /// (EdgeRecord lacks `first_prop_off` — T17f scope), so they are
+    /// preserved as bincode alongside the v2 pages.
+    pub edges_processed: usize,
+    /// T17c Step 6 — total number of `(key, value)` pairs serialised
+    /// into the edge sidecar.
+    pub edge_scalars_emitted: usize,
+    /// T17c Step 6 — bytes written to `substrate.edge_props`.
+    /// Zero when no edge properties were pending.
+    pub edge_sidecar_bytes: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -872,6 +899,27 @@ impl SubstrateStore {
             sub.path().join(PROPS_FILENAME)
         };
         let snap = PropertiesSnapshotV1::load(&path)?;
+
+        // T17c Step 6 — edge-only sidecar path. When
+        // `substrate.edge_props` exists, it is the authoritative
+        // source for edge-property maps (written by
+        // `finalize_props_v2` or `persist_edge_properties_sidecar`).
+        // Its presence means the legacy `substrate.props` sidecar
+        // has either been drained of edges or is absent entirely
+        // (post-`delete_legacy_props_sidecar`). In that case the
+        // `snap.edges` loop below is short-circuited so we don't
+        // double-hydrate.
+        let edge_sidecar_path = {
+            let sub = self.substrate.lock();
+            sub.path().join(EDGE_PROPS_FILENAME)
+        };
+        let edge_sidecar_present = edge_sidecar_path.exists();
+        let edge_snap = if edge_sidecar_present {
+            Some(PropertiesSnapshotV1::load(&edge_sidecar_path)?)
+        } else {
+            None
+        };
+
         let mut nodes_loaded = 0usize;
         let mut edges_loaded = 0usize;
         let mut node_props_skipped = 0usize;
@@ -966,7 +1014,19 @@ impl SubstrateStore {
                 "PropsZone v2 already populated — node sidecar hydration skipped"
             );
         }
-        for e in snap.edges {
+        // T17c Step 6 — when the dedicated edge sidecar is present, it
+        // is the authoritative source. Otherwise fall back to the
+        // combined `snap.edges` from the legacy sidecar (pre-
+        // finalize-v2 bases, fresh stores, etc.).
+        let mut edges_from_new_sidecar = 0usize;
+        let edge_entries: Vec<PropEntry> = match edge_snap {
+            Some(es) => {
+                edges_from_new_sidecar = es.edges.len();
+                es.edges
+            }
+            None => snap.edges,
+        };
+        for e in edge_entries {
             let eid = obrain_common::types::EdgeId(e.id);
             let before = e.props.len();
             let mut scalars: Vec<(String, Value)> = Vec::with_capacity(before);
@@ -1004,7 +1064,8 @@ impl SubstrateStore {
                 "props snapshot: loaded {} node-property maps, {} edge-property maps \
                  (skipped-on-load: {} node-props, {} edge-props — see SKIP_ON_LOAD_PROP_KEYS; \
                  auto-migrated to vec_columns: {} node vectors, {} edge vectors; \
-                 auto-migrated to blob_columns: {} node blobs, {} edge blobs)",
+                 auto-migrated to blob_columns: {} node blobs, {} edge blobs; \
+                 edge_sidecar_present: {}, edges_from_new_sidecar: {})",
                 nodes_loaded,
                 edges_loaded,
                 node_props_skipped,
@@ -1013,6 +1074,8 @@ impl SubstrateStore {
                 edge_vectors_migrated,
                 node_blobs_migrated,
                 edge_blobs_migrated,
+                edge_sidecar_present,
+                edges_from_new_sidecar,
             );
         }
         Ok(())
@@ -1226,6 +1289,277 @@ impl SubstrateStore {
     /// already existed on disk.
     pub fn props_v2_enabled(&self) -> bool {
         self.props_zone.is_some()
+    }
+
+    /// Delete the legacy `substrate.props` sidecar, if present.
+    ///
+    /// Called by the migration tool after
+    /// [`Self::finalize_props_v2`] + [`Self::flush`] have successfully
+    /// drained the sidecar into the v2 chain, so the next open
+    /// doesn't load an out-of-date `PropertiesSnapshotV1` (which
+    /// would no-op anyway thanks to the Step 3d gate, but keeps the
+    /// on-disk footprint honest).
+    ///
+    /// **T17c Step 6 safety gate**: refuses the delete when the
+    /// in-memory `edge_properties` DashMap is non-empty AND the
+    /// dedicated edge sidecar `substrate.edge_props` is absent —
+    /// that combination means the edge properties live only in RAM +
+    /// the legacy sidecar, and dropping the sidecar would lose them.
+    /// Callers must run [`Self::persist_edge_properties_sidecar`]
+    /// (or [`Self::finalize_props_v2`], which does it internally)
+    /// before calling this. The legacy pre-T17c contract (no edge
+    /// sidecar, no guard) would silently lose Wikipedia's 312 edge-
+    /// property maps on migration.
+    ///
+    /// Does NOT delete `substrate.props.v2` / `substrate.props.heap.v2`
+    /// / `substrate.edge_props` — those are the v2 targets.
+    pub fn delete_legacy_props_sidecar(&self) -> SubstrateResult<Option<u64>> {
+        let (legacy_path, edge_path) = {
+            let sub = self.substrate.lock();
+            let base = sub.path();
+            (base.join(PROPS_FILENAME), base.join(EDGE_PROPS_FILENAME))
+        };
+        if !legacy_path.exists() {
+            return Ok(None);
+        }
+        // T17c Step 6 edge-loss gate.
+        let edge_props_pending = self
+            .edge_properties
+            .iter()
+            .any(|entry| !entry.value().is_empty());
+        if edge_props_pending && !edge_path.exists() {
+            return Err(SubstrateError::Internal(format!(
+                "delete_legacy_props_sidecar refused: {} has unsaved edge props \
+                 and {} is absent — run persist_edge_properties_sidecar (or \
+                 finalize_props_v2) first to avoid silent data loss",
+                legacy_path.display(),
+                edge_path.display()
+            )));
+        }
+        let size = std::fs::metadata(&legacy_path).map(|m| m.len()).unwrap_or(0);
+        std::fs::remove_file(&legacy_path).map_err(|e| {
+            SubstrateError::Internal(format!(
+                "delete_legacy_props_sidecar: remove {} failed: {e}",
+                legacy_path.display()
+            ))
+        })?;
+        tracing::info!(
+            sidecar_bytes_freed = size,
+            path = %legacy_path.display(),
+            "legacy substrate.props sidecar deleted"
+        );
+        Ok(Some(size))
+    }
+
+    /// Number of allocated pages in the PropsZone v2. Returns `None`
+    /// when v2 is disabled. Observability helper for the migration
+    /// tool — gives operators a concrete "pages written" number to
+    /// verify progress.
+    pub fn props_v2_page_count(&self) -> Option<u32> {
+        self.props_zone.as_ref().map(|pz| pz.read().allocated_page_count())
+    }
+
+    /// T17c Step 6 — persist the in-memory `edge_properties` DashMap
+    /// to the dedicated edge sidecar `substrate.edge_props`.
+    ///
+    /// Used by [`Self::finalize_props_v2`] and by tests. Returns the
+    /// number of edges and `(key, value)` pairs serialised, plus the
+    /// final file size.
+    ///
+    /// Format: byte-identical to `substrate.props` — the same
+    /// [`PropertiesSnapshotV1`] wrapper is reused with
+    /// `nodes == vec![]` and `edges` carrying the drained entries.
+    /// Atomic tmp-file + rename, so a crash mid-write never leaves a
+    /// half-written sidecar.
+    ///
+    /// Keys are filtered through `SKIP_ON_LOAD_PROP_KEYS` (same
+    /// contract as `persist_properties`) — vector and oversized-blob
+    /// payloads are routed elsewhere and never land in the DashMap,
+    /// but a defensive filter keeps the edge sidecar lean.
+    pub fn persist_edge_properties_sidecar(
+        &self,
+    ) -> SubstrateResult<(usize, usize, u64)> {
+        let is_routed_out = |(_, v): &(String, Value)| {
+            if matches!(v, Value::Vector(_)) {
+                return true;
+            }
+            blob_payload_len(v)
+                .map(|n| n > BLOB_COLUMN_THRESHOLD_BYTES)
+                .unwrap_or(false)
+        };
+
+        let mut snap = PropertiesSnapshotV1::default();
+        let mut scalars_emitted = 0usize;
+        snap.edges.reserve(self.edge_properties.len());
+        for entry in self.edge_properties.iter() {
+            if entry.value().is_empty() {
+                continue;
+            }
+            let props: Vec<(String, Value)> = map_to_entries(entry.value())
+                .into_iter()
+                .filter(|p| !is_routed_out(p))
+                .collect();
+            if props.is_empty() {
+                continue;
+            }
+            scalars_emitted += props.len();
+            snap.edges.push(PropEntry {
+                id: entry.key().as_u64(),
+                props,
+            });
+        }
+        let edges_written = snap.edges.len();
+
+        let path = {
+            let sub = self.substrate.lock();
+            sub.path().join(EDGE_PROPS_FILENAME)
+        };
+        snap.persist(&path)?;
+        let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        tracing::info!(
+            phase = "persist_edge_properties_sidecar",
+            edges_written,
+            scalars_emitted,
+            sidecar_bytes = size,
+            path = %path.display(),
+            "edge properties sidecar written"
+        );
+        Ok((edges_written, scalars_emitted, size))
+    }
+
+    /// Path of the edge-only sidecar (`substrate.edge_props`).
+    /// Observability helper for the migration tool + tests.
+    pub fn edge_props_sidecar_path(&self) -> std::path::PathBuf {
+        let sub = self.substrate.lock();
+        sub.path().join(EDGE_PROPS_FILENAME)
+    }
+
+    /// Number of edge property maps currently held in the in-memory
+    /// `edge_properties` DashMap. Observability helper for the
+    /// migration dry-run path — lets operators see how much edge
+    /// data is about to be written to `substrate.edge_props`.
+    pub fn edge_properties_count(&self) -> Option<usize> {
+        Some(self.edge_properties.len())
+    }
+
+    /// Live-node count estimate based on the slot high-water mark.
+    /// Counts tombstoned slots too (so it's a ceiling, not exact).
+    /// Fine-grained for the dry-run log; a precise count would
+    /// require a zone walk, which isn't worth it here.
+    pub fn node_count_live_estimate(&self) -> u32 {
+        self.slot_high_water().saturating_sub(1)
+    }
+
+    /// T17c Step 4 — finalize the PropsZone v2 migration by draining
+    /// the legacy DashMap sidecar into the v2 chain.
+    ///
+    /// Assumes: v2 is enabled (panics otherwise, per the explicit
+    /// public contract), the store is just opened (so `load_properties`
+    /// has populated `node_properties` from the sidecar), and no
+    /// concurrent writers are running against this handle.
+    ///
+    /// Contract:
+    /// - For every live node with scalar entries in the DashMap,
+    ///   every `(key, value)` is re-emitted through
+    ///   `set_node_property`, which writes to the v2 chain (intern
+    ///   key → append entry → WAL-log head pointer if the head page
+    ///   rotated). The DashMap is overwritten in place with the same
+    ///   value — a no-op from the read side.
+    /// - Vector / blob entries already routed out by
+    ///   `load_properties` are left untouched (they live in
+    ///   `vec_columns` / `blob_columns`).
+    /// - **T17c Step 6** — the `edge_properties` DashMap is persisted
+    ///   to the dedicated edge sidecar `substrate.edge_props` BEFORE
+    ///   returning, so [`Self::delete_legacy_props_sidecar`] can be
+    ///   called safely by the migration tool without losing edge
+    ///   properties (EdgeRecord has no `first_prop_off` — that's T17f
+    ///   scope).
+    /// - The legacy `substrate.props` sidecar is NOT deleted here.
+    ///   The caller (`obrain-migrate --finalize-v2`) is responsible
+    ///   for that after verifying the migration succeeded.
+    ///
+    /// Returns a summary of the work done — number of nodes touched,
+    /// scalar entries re-emitted, plus edge-side counts + edge
+    /// sidecar size. Logs one INFO line per completed decade of nodes
+    /// for progress visibility on Wikipedia-scale inputs.
+    pub fn finalize_props_v2(&self) -> SubstrateResult<PropsV2FinalizeStats> {
+        if !self.props_v2_enabled() {
+            return Err(SubstrateError::Internal(
+                "finalize_props_v2 called without PropsZone v2 enabled \
+                 (set OBRAIN_PROPS_V2=1 before SubstrateStore::open)"
+                    .to_string(),
+            ));
+        }
+
+        // Snapshot the DashMap into a Vec so we can mutate
+        // node_properties through set_node_property without holding
+        // the iterator.
+        let snapshot: Vec<(NodeId, Vec<(String, Value)>)> = self
+            .node_properties
+            .iter()
+            .map(|entry| {
+                let nid = *entry.key();
+                let pairs: Vec<(String, Value)> = entry
+                    .value()
+                    .iter()
+                    .map(|(k, v)| (k.as_str().to_string(), v.clone()))
+                    .collect();
+                (nid, pairs)
+            })
+            .collect();
+
+        let t_start = std::time::Instant::now();
+        let nodes_total = snapshot.len();
+        let mut stats = PropsV2FinalizeStats::default();
+        for (idx, (nid, pairs)) in snapshot.into_iter().enumerate() {
+            for (k, v) in pairs {
+                // set_node_property routes scalars through
+                // append_scalar_to_props_zone_v2 when v2 is enabled,
+                // and is a no-op for tombstoned slots (gated by
+                // is_live_on_disk). Vector/blob entries were already
+                // routed out of the DashMap by load_properties.
+                self.set_node_property(nid, &k, v);
+                stats.scalars_emitted += 1;
+            }
+            stats.nodes_processed += 1;
+            // One log line every 10% of progress (or every 100k
+            // nodes, whichever is larger) so Wikipedia-scale runs
+            // don't flood the journal.
+            let decade_step = (nodes_total / 10).max(100_000);
+            if decade_step > 0 && idx > 0 && idx % decade_step == 0 {
+                tracing::info!(
+                    phase = "finalize_props_v2",
+                    progress_pct = (idx * 100 / nodes_total),
+                    nodes_processed = stats.nodes_processed,
+                    scalars_emitted = stats.scalars_emitted,
+                    elapsed_ms = t_start.elapsed().as_millis() as u64,
+                    "draining legacy sidecar → v2 chain"
+                );
+            }
+        }
+        // T17c Step 6 — persist the edge DashMap to the dedicated
+        // edge sidecar so that `delete_legacy_props_sidecar` is safe
+        // to call next. This guard-rail caught the Wikipedia edge-
+        // loss bug: the legacy sidecar held 312 edge-property maps
+        // that would have vanished when the caller deleted it.
+        let (edges_written, edge_scalars_emitted, edge_sidecar_bytes) =
+            self.persist_edge_properties_sidecar()?;
+        stats.edges_processed = edges_written;
+        stats.edge_scalars_emitted = edge_scalars_emitted;
+        stats.edge_sidecar_bytes = edge_sidecar_bytes;
+
+        tracing::info!(
+            phase = "finalize_props_v2",
+            nodes_processed = stats.nodes_processed,
+            scalars_emitted = stats.scalars_emitted,
+            edges_processed = stats.edges_processed,
+            edge_scalars_emitted = stats.edge_scalars_emitted,
+            edge_sidecar_bytes = stats.edge_sidecar_bytes,
+            v2_pages_allocated = self.props_v2_page_count().unwrap_or(0),
+            elapsed_ms = t_start.elapsed().as_millis() as u64,
+            "PropsZone v2 migration complete"
+        );
+        Ok(stats)
     }
 
     /// T17c Step 3b.2b: encode `value` via the props codec, append a
@@ -6034,6 +6368,113 @@ mod tests {
         );
     }
 
+    // -------------------------------------------------------------------
+    // T17c Step 4 — finalize_props_v2 migration tests.
+    // -------------------------------------------------------------------
+
+    /// End-to-end migration: legacy sidecar → v2 chain → reopen
+    /// without DashMap hydration. Proves that after `finalize_props_v2`
+    /// + `flush` + sidecar delete, a fresh reopen resolves every
+    /// property through the v2 read path.
+    #[test]
+    #[allow(unsafe_code)]
+    fn finalize_props_v2_drains_legacy_sidecar_end_to_end() {
+        let _guard = props_v2_env_lock().lock().unwrap();
+
+        let td = tempfile::tempdir().unwrap();
+        let root = td.path().join("kb");
+
+        // Phase 1: write legacy sidecar (v2 OFF).
+        let a_id;
+        let b_id;
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "0") };
+        {
+            let s = SubstrateStore::create(&root).unwrap();
+            let a = s.create_node(&["Doc"]);
+            let b = s.create_node(&["Doc"]);
+            a_id = a;
+            b_id = b;
+            s.set_node_property(a, "title", Value::String("alpha".into()));
+            s.set_node_property(a, "count", Value::Int64(1));
+            s.set_node_property(b, "title", Value::String("beta".into()));
+            s.set_node_property(b, "count", Value::Int64(2));
+            s.flush().unwrap();
+            assert!(!s.props_v2_enabled());
+        }
+        // Sanity: legacy sidecar exists.
+        let sidecar = root.join(PROPS_FILENAME);
+        assert!(sidecar.exists(), "legacy sidecar written");
+
+        // Phase 2: reopen with v2 ON and migrate.
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "1") };
+        {
+            let s = SubstrateStore::open(&root).unwrap();
+            assert!(s.props_v2_enabled());
+            // Sidecar loaded into DashMap because v2 zone was empty.
+            assert!(s.node_properties.len() > 0);
+            assert_eq!(s.props_v2_page_count(), Some(0));
+
+            // Drain DashMap into v2 chain.
+            let stats = s.finalize_props_v2().unwrap();
+            assert_eq!(stats.nodes_processed, 2);
+            assert_eq!(stats.scalars_emitted, 4);
+            assert!(s.props_v2_page_count().unwrap() > 0);
+
+            s.flush().unwrap();
+
+            // Remove the now-stale sidecar.
+            let freed = s.delete_legacy_props_sidecar().unwrap();
+            assert!(freed.is_some(), "sidecar was present");
+            assert!(!sidecar.exists(), "sidecar deleted after drain");
+        }
+
+        // Phase 3: reopen. Step 3d gate must now skip hydration
+        // (no sidecar + v2 pages present). Reads must still return
+        // everything via v2 chain.
+        unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
+        let s = SubstrateStore::open(&root).unwrap();
+        assert!(s.props_v2_enabled(), "v2 auto-detected on reopen");
+        assert_eq!(
+            s.node_properties.len(),
+            0,
+            "DashMap must stay empty post-migration"
+        );
+        assert_eq!(
+            s.get_node_property(a_id, &PropertyKey::new("title")),
+            Some(Value::String("alpha".into()))
+        );
+        assert_eq!(
+            s.get_node_property(a_id, &PropertyKey::new("count")),
+            Some(Value::Int64(1))
+        );
+        assert_eq!(
+            s.get_node_property(b_id, &PropertyKey::new("title")),
+            Some(Value::String("beta".into()))
+        );
+        assert_eq!(
+            s.get_node_property(b_id, &PropertyKey::new("count")),
+            Some(Value::Int64(2))
+        );
+    }
+
+    /// finalize_props_v2 must err cleanly when v2 is disabled — no
+    /// partial state, just a typed error the migration CLI can
+    /// surface.
+    #[test]
+    #[allow(unsafe_code)]
+    fn finalize_props_v2_errors_when_v2_disabled() {
+        let _guard = props_v2_env_lock().lock().unwrap();
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "0") };
+
+        let td = tempfile::tempdir().unwrap();
+        let s = SubstrateStore::create(td.path().join("kb")).unwrap();
+        let err = s.finalize_props_v2().unwrap_err();
+        assert!(
+            format!("{err}").contains("finalize_props_v2"),
+            "error must mention the function name (got: {err})"
+        );
+    }
+
     /// Multi-page LWW: force a chain spanning two pages and check
     /// that a write on the **newer** head page wins over the older
     /// same-key entry on the tail page. This validates the
@@ -6081,6 +6522,249 @@ mod tests {
             "cross-page LWW: newer head page wins (got: {:?})",
             got
         );
+
+        unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
+    }
+
+    // -------------------------------------------------------------------
+    // T17c Step 6 — edge-property preservation path tests.
+    //
+    // Before Step 6, `finalize_props_v2` drained only `node_properties`
+    // and `delete_legacy_props_sidecar` unconditionally removed the
+    // combined sidecar — any in-memory edge properties (Wikipedia ships
+    // with 312 such entries) vanished silently on the next reopen.
+    // These tests pin the fix in place.
+    // -------------------------------------------------------------------
+
+    /// Core regression: run the full migration flow (legacy sidecar →
+    /// finalize → delete legacy → reopen) with edge properties in
+    /// play, and assert every edge prop survives. Reproduces the
+    /// Wikipedia edge-loss bug that was caught pre-migration.
+    #[test]
+    #[allow(unsafe_code)]
+    fn finalize_props_v2_preserves_edge_properties() {
+        let _guard = props_v2_env_lock().lock().unwrap();
+
+        let td = tempfile::tempdir().unwrap();
+        let root = td.path().join("kb");
+
+        let a_id;
+        let b_id;
+        let e1_id;
+        let e2_id;
+
+        // Phase 1: legacy sidecar write (v2 OFF) — nodes + edges.
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "0") };
+        {
+            let s = SubstrateStore::create(&root).unwrap();
+            let a = s.create_node(&["Doc"]);
+            let b = s.create_node(&["Doc"]);
+            a_id = a;
+            b_id = b;
+            s.set_node_property(a, "title", Value::String("alpha".into()));
+            s.set_node_property(b, "title", Value::String("beta".into()));
+
+            let e1 = s.create_edge(a, b, "LINKS");
+            let e2 = s.create_edge(b, a, "LINKS");
+            e1_id = e1;
+            e2_id = e2;
+            s.set_edge_property(e1, "weight", Value::Float64(0.25));
+            s.set_edge_property(e1, "label", Value::String("forward".into()));
+            s.set_edge_property(e2, "weight", Value::Float64(0.75));
+
+            s.flush().unwrap();
+            assert!(!s.props_v2_enabled());
+        }
+        let legacy_sidecar = root.join(PROPS_FILENAME);
+        let edge_sidecar = root.join(EDGE_PROPS_FILENAME);
+        assert!(legacy_sidecar.exists(), "legacy sidecar written");
+        assert!(!edge_sidecar.exists(), "no edge sidecar pre-finalize");
+
+        // Phase 2: reopen with v2, run finalize — both nodes AND
+        // edges must be handled. Assert the new edge sidecar
+        // appears and the legacy sidecar can be dropped.
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "1") };
+        {
+            let s = SubstrateStore::open(&root).unwrap();
+            assert!(s.props_v2_enabled());
+            assert!(s.node_properties.len() > 0);
+            assert!(s.edge_properties.len() > 0);
+
+            let stats = s.finalize_props_v2().unwrap();
+            assert_eq!(stats.nodes_processed, 2, "2 nodes drained");
+            assert_eq!(stats.scalars_emitted, 2, "2 node scalars");
+            assert_eq!(stats.edges_processed, 2, "2 edges persisted");
+            assert_eq!(stats.edge_scalars_emitted, 3, "3 edge scalars");
+            assert!(
+                stats.edge_sidecar_bytes > 0,
+                "edge sidecar has non-zero footprint"
+            );
+            assert!(
+                edge_sidecar.exists(),
+                "edge sidecar written by finalize_props_v2"
+            );
+
+            s.flush().unwrap();
+
+            // Sidecar drop must now succeed because the edge sidecar
+            // is in place.
+            let freed = s.delete_legacy_props_sidecar().unwrap();
+            assert!(freed.is_some());
+            assert!(!legacy_sidecar.exists());
+            assert!(
+                edge_sidecar.exists(),
+                "edge sidecar preserved post legacy delete"
+            );
+        }
+
+        // Phase 3: reopen. Node hydration is skipped (v2 pages), but
+        // edges must be hydrated from the NEW edge sidecar. Every
+        // edge prop set in Phase 1 must be retrievable.
+        unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
+        let s = SubstrateStore::open(&root).unwrap();
+        assert!(s.props_v2_enabled());
+        assert_eq!(
+            s.node_properties.len(),
+            0,
+            "node DashMap empty (v2 gate)"
+        );
+        assert_eq!(
+            s.edge_properties.len(),
+            2,
+            "edges hydrated from new sidecar"
+        );
+
+        // Node props via v2.
+        assert_eq!(
+            s.get_node_property(a_id, &PropertyKey::new("title")),
+            Some(Value::String("alpha".into()))
+        );
+        assert_eq!(
+            s.get_node_property(b_id, &PropertyKey::new("title")),
+            Some(Value::String("beta".into()))
+        );
+        // Edge props via DashMap (populated from new edge sidecar).
+        assert_eq!(
+            s.get_edge_property(e1_id, &PropertyKey::new("weight")),
+            Some(Value::Float64(0.25))
+        );
+        assert_eq!(
+            s.get_edge_property(e1_id, &PropertyKey::new("label")),
+            Some(Value::String("forward".into()))
+        );
+        assert_eq!(
+            s.get_edge_property(e2_id, &PropertyKey::new("weight")),
+            Some(Value::Float64(0.75))
+        );
+    }
+
+    /// Safety gate: `delete_legacy_props_sidecar` must refuse when
+    /// edge_properties is non-empty AND the edge sidecar is missing.
+    /// Caller has to run `finalize_props_v2` (or the explicit
+    /// `persist_edge_properties_sidecar` helper) first.
+    #[test]
+    #[allow(unsafe_code)]
+    fn delete_legacy_props_sidecar_refuses_when_edges_would_be_lost() {
+        let _guard = props_v2_env_lock().lock().unwrap();
+
+        let td = tempfile::tempdir().unwrap();
+        let root = td.path().join("kb");
+
+        // Build a legacy sidecar carrying edge props.
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "0") };
+        let a_id;
+        let b_id;
+        let e_id;
+        {
+            let s = SubstrateStore::create(&root).unwrap();
+            let a = s.create_node(&["Doc"]);
+            let b = s.create_node(&["Doc"]);
+            a_id = a;
+            b_id = b;
+            s.set_node_property(a, "title", Value::String("alpha".into()));
+            let e = s.create_edge(a, b, "LINKS");
+            e_id = e;
+            s.set_edge_property(e, "weight", Value::Float64(0.5));
+            s.flush().unwrap();
+        }
+        let legacy_sidecar = root.join(PROPS_FILENAME);
+        let edge_sidecar = root.join(EDGE_PROPS_FILENAME);
+        assert!(legacy_sidecar.exists());
+        assert!(!edge_sidecar.exists());
+
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "1") };
+        let s = SubstrateStore::open(&root).unwrap();
+        assert!(s.edge_properties.len() > 0);
+
+        // Direct delete without finalize → must refuse.
+        let err = s.delete_legacy_props_sidecar().unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("unsaved edge props"),
+            "error must name the safety gate (got: {msg})"
+        );
+        assert!(
+            legacy_sidecar.exists(),
+            "legacy sidecar untouched after refusal"
+        );
+
+        // Unblock via the explicit helper + retry. No need to touch
+        // node_properties — finalize_props_v2 isn't required for the
+        // gate-lift path.
+        let (edges_written, scalars, bytes) =
+            s.persist_edge_properties_sidecar().unwrap();
+        assert_eq!(edges_written, 1);
+        assert_eq!(scalars, 1);
+        assert!(bytes > 0);
+        assert!(edge_sidecar.exists());
+
+        let freed = s.delete_legacy_props_sidecar().unwrap();
+        assert!(freed.is_some(), "delete succeeds post edge-sidecar write");
+        assert!(!legacy_sidecar.exists());
+
+        // Reopen: edge prop must survive.
+        drop(s);
+        unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
+        let s = SubstrateStore::open(&root).unwrap();
+        assert_eq!(
+            s.get_edge_property(e_id, &PropertyKey::new("weight")),
+            Some(Value::Float64(0.5)),
+            "edge prop survived legacy-sidecar delete via new edge sidecar"
+        );
+        // Silence unused-var warnings on nodes — they're included to
+        // build a realistic fixture but not asserted here.
+        let _ = (a_id, b_id);
+    }
+
+    /// Empty edge_properties case: finalize_props_v2 must still
+    /// succeed, the edge sidecar is written (empty edges vec), and
+    /// the legacy sidecar delete proceeds normally.
+    #[test]
+    #[allow(unsafe_code)]
+    fn finalize_props_v2_handles_empty_edges_cleanly() {
+        let _guard = props_v2_env_lock().lock().unwrap();
+
+        let td = tempfile::tempdir().unwrap();
+        let root = td.path().join("kb");
+
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "1") };
+        let s = SubstrateStore::create(&root).unwrap();
+        let a = s.create_node(&["Doc"]);
+        s.set_node_property(a, "title", Value::String("solo".into()));
+        s.flush().unwrap();
+        assert_eq!(s.edge_properties.len(), 0);
+
+        let stats = s.finalize_props_v2().unwrap();
+        assert_eq!(stats.edges_processed, 0);
+        assert_eq!(stats.edge_scalars_emitted, 0);
+        // Sidecar is still written (empty edges vec) so the gate on
+        // `delete_legacy_props_sidecar` accepts the drop.
+        let edge_sidecar = s.edge_props_sidecar_path();
+        assert!(edge_sidecar.exists(), "empty edge sidecar still persisted");
+
+        // Legacy sidecar drop must succeed since edge_properties is
+        // empty (no gate violation possible).
+        let _ = s.delete_legacy_props_sidecar();
 
         unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
     }

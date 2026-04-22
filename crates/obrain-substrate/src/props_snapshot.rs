@@ -69,6 +69,24 @@ fn crc32_fast(bytes: &[u8]) -> u32 {
 /// Sidecar filename inside the substrate directory.
 pub const PROPS_FILENAME: &str = "substrate.props";
 
+/// Edge-only sidecar filename (T17c Step 6).
+///
+/// When [`SubstrateStore::finalize_props_v2`](crate::SubstrateStore::finalize_props_v2)
+/// drains the in-memory `node_properties` DashMap into PropsZone v2,
+/// the legacy `substrate.props` bincode sidecar becomes obsolete for
+/// nodes. **Edges**, however, have no v2 path yet (EdgeRecord lacks a
+/// `first_prop_off` field — that's T17f's scope), so edge-property
+/// maps must be preserved to a dedicated sidecar before
+/// [`SubstrateStore::delete_legacy_props_sidecar`](crate::SubstrateStore::delete_legacy_props_sidecar)
+/// is safe to call.
+///
+/// The on-disk format is byte-identical to `substrate.props` — the
+/// same [`PropertiesSnapshotV1`] wrapper is reused, with
+/// `nodes == vec![]` and `edges` carrying the drained entries. This
+/// keeps the loader / persister simple and avoids a parallel format
+/// definition.
+pub const EDGE_PROPS_FILENAME: &str = "substrate.edge_props";
+
 const MAGIC: u32 = 0x5052_4F50; // b"PROP" little-endian
 const FORMAT_VERSION: u32 = 1;
 

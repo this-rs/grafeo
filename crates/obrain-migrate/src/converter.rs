@@ -310,6 +310,251 @@ pub fn migrate(opts: &MigrateOptions) -> Result<()> {
 /// Idempotent by construction: the second `--finalize` run on the same
 /// base is a no-op (`auto_migrated` counters come back zero; sidecar is
 /// already vector-free).
+/// T17c Step 4 — drain a legacy `substrate.props` bincode sidecar
+/// into the PropsZone v2 page chain, then delete the sidecar.
+///
+/// Contract:
+/// 1. Set `OBRAIN_PROPS_V2=1` before opening so the SubstrateStore
+///    materialises the `props_zone` + starts routing scalar writes
+///    to the v2 chain via `set_node_property`.
+/// 2. Open the target directory. `load_properties` hydrates the
+///    legacy sidecar into the in-memory `node_properties` DashMap
+///    (the Step 3d gate is bypassed because the v2 zone is
+///    fresh — `allocated_page_count() == 0`).
+/// 3. Call `SubstrateStore::finalize_props_v2()` which iterates
+///    `node_properties` and re-emits every scalar through the
+///    public setter — a no-op for vec/blob entries already routed
+///    out, a v2-chain append for scalars.
+/// 4. `flush()` — msyncs all zones, persists the updated dict v3
+///    + vec-column specs, writes `substrate.meta`.
+/// 5. `delete_legacy_props_sidecar()` — removes `substrate.props`
+///    so the next open doesn't waste cycles reading a stale file.
+/// 6. Drop the store.
+///
+/// Idempotent: running this twice on the same base drains nothing
+/// on the second run (DashMap is empty because Step 3d gate is now
+/// active — the sidecar is already gone). The second invocation
+/// reports `nodes_processed = 0` and exits cleanly.
+///
+/// Rollback: DO NOT run this against a base you might want to open
+/// with a pre-T17c binary. The sidecar is deleted unconditionally
+/// after a successful drain. If rollback is required, snapshot the
+/// directory before invoking.
+/// Backward-compat shim — delegates to [`finalize_v2_with_opts`]
+/// with default options (dry-run OFF, snapshot ON). External callers
+/// that want the legacy one-arg signature can keep using this.
+#[allow(dead_code)]
+pub fn finalize_v2(substrate_dir: &Path) -> Result<()> {
+    finalize_v2_with_opts(substrate_dir, &FinalizeV2Opts::default())
+}
+
+/// Options for [`finalize_v2_with_opts`].
+///
+/// Unit-struct defaults keep the original single-arg `finalize_v2`
+/// binary-compatible with the T17c Step 4 CLI, while the new surface
+/// covers the T17c Step 7 safety additions: dry-run + pre-flight
+/// snapshot.
+#[derive(Debug, Clone, Default)]
+pub struct FinalizeV2Opts {
+    /// Dry-run: open, introspect, report counts, but DO NOT write
+    /// to PropsZone v2, the edge sidecar, or delete the legacy
+    /// sidecar. Used for Wikipedia rehearsals.
+    pub dry_run: bool,
+    /// Skip the pre-migration snapshot (tar-equivalent copy of the
+    /// substrate directory to `<dir>.bak-YYYYMMDDHHMM`). Default
+    /// behaviour is to take the snapshot — opt-out only when the
+    /// caller has already secured a backup externally.
+    pub skip_backup: bool,
+}
+
+pub fn finalize_v2_with_opts(
+    substrate_dir: &Path,
+    opts: &FinalizeV2Opts,
+) -> Result<()> {
+    if !substrate_dir.exists() {
+        anyhow::bail!(
+            "finalize-v2 target does not exist: {}",
+            substrate_dir.display()
+        );
+    }
+    let props_path = substrate_dir.join("substrate.props");
+    let before_bytes = std::fs::metadata(&props_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
+
+    tracing::info!(
+        "obrain-migrate --finalize-v2: opening {} (substrate.props={} MiB, v2 forced on, dry_run={}, skip_backup={})",
+        substrate_dir.display(),
+        before_bytes / (1024 * 1024),
+        opts.dry_run,
+        opts.skip_backup,
+    );
+
+    // T17c Step 7 — snapshot safety. Unless explicitly opted-out
+    // (caller has an external backup) or in dry-run mode, copy the
+    // substrate directory to `<dir>.bak-YYYYMMDDHHMM` before touching
+    // anything. Recursive copy with checksums is overkill for a
+    // migration snapshot — `fs::copy` over each entry is enough
+    // because substrate files are mmap'd regular files.
+    if !opts.dry_run && !opts.skip_backup {
+        // No chrono dep in this crate — seconds-since-epoch is a
+        // unique-enough suffix for backup naming. Operators who
+        // prefer human-readable timestamps can rename post-hoc.
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs().to_string())
+            .unwrap_or_else(|_| "unknown".to_string());
+        let backup = substrate_dir.with_file_name(format!(
+            "{}.bak-{}",
+            substrate_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("substrate"),
+            suffix
+        ));
+        tracing::info!(
+            "finalize-v2 snapshot: {} → {}",
+            substrate_dir.display(),
+            backup.display()
+        );
+        copy_dir_recursive(substrate_dir, &backup).with_context(|| {
+            format!(
+                "snapshot {} → {}",
+                substrate_dir.display(),
+                backup.display()
+            )
+        })?;
+    }
+
+    // Force-enable v2 for the open → setter → flush → close cycle.
+    // Scoped to this invocation — we restore the previous value on
+    // exit to keep test and CLI invocations idempotent.
+    let prev_env = std::env::var("OBRAIN_PROPS_V2").ok();
+    // SAFETY: single-threaded up until SubstrateStore::open returns;
+    // the env var is only read at open time.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var("OBRAIN_PROPS_V2", "1");
+    }
+    let restore_env = EnvRestorer { prev: prev_env };
+
+    let store = SubstrateStore::open(substrate_dir)
+        .with_context(|| format!("open {}", substrate_dir.display()))?;
+
+    if !store.props_v2_enabled() {
+        anyhow::bail!(
+            "finalize-v2: v2 zone failed to initialise — check OBRAIN_PROPS_V2 \
+             env pass-through or filesystem permissions"
+        );
+    }
+
+    if opts.dry_run {
+        // Dry-run: report counts + estimated work, touch nothing.
+        let nodes_pending = store.node_count_live_estimate();
+        let edges_pending = store
+            .edge_properties_count()
+            .unwrap_or(0);
+        tracing::info!(
+            "finalize-v2 DRY-RUN: would drain ~{} nodes and {} edge-property maps. \
+             Legacy sidecar: {} MiB. No writes performed.",
+            nodes_pending,
+            edges_pending,
+            before_bytes / (1024 * 1024),
+        );
+        drop(store);
+        drop(restore_env);
+        return Ok(());
+    }
+
+    let stats = store
+        .finalize_props_v2()
+        .context("finalize_props_v2 drain")?;
+    tracing::info!(
+        "finalize-v2 drain: {} nodes, {} scalars emitted, {} edges persisted \
+         ({} edge scalars, {} edge-sidecar bytes), {} v2 pages allocated",
+        stats.nodes_processed,
+        stats.scalars_emitted,
+        stats.edges_processed,
+        stats.edge_scalars_emitted,
+        stats.edge_sidecar_bytes,
+        store.props_v2_page_count().unwrap_or(0),
+    );
+
+    store
+        .flush()
+        .context("flush after finalize_props_v2 drain")?;
+
+    // Delete the sidecar only if the drain actually moved something.
+    // A fresh v2 base (nothing to drain) has no legacy sidecar to
+    // delete — the call is a no-op anyway (returns `Ok(None)`).
+    // The T17c Step 6 gate inside `delete_legacy_props_sidecar`
+    // refuses the delete when edge props are unsaved, so even if a
+    // caller bypassed `finalize_props_v2` (e.g. called us on a base
+    // that already had v2 pages), we cannot silently lose edge props.
+    let freed = store
+        .delete_legacy_props_sidecar()
+        .context("delete legacy sidecar")?;
+    drop(store);
+    drop(restore_env);
+
+    let after_bytes = 0u64; // sidecar gone on success
+    tracing::info!(
+        "obrain-migrate --finalize-v2: done. substrate.props: {} MiB → {} MiB \
+         ({} MiB freed)",
+        before_bytes / (1024 * 1024),
+        after_bytes / (1024 * 1024),
+        freed.unwrap_or(0) / (1024 * 1024),
+    );
+    Ok(())
+}
+
+/// Recursive directory copy — enough for the substrate snapshot case
+/// (one flat directory of regular mmap'd files, no symlinks, no
+/// special devices). Creates `dst` with the same mode as `src`.
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_recursive(&from, &to)?;
+        } else if ty.is_file() {
+            std::fs::copy(&from, &to)?;
+        } else {
+            // Skip symlinks / sockets / fifos — not expected in a
+            // substrate directory, but defensive.
+            tracing::warn!(
+                "copy_dir_recursive: skipping non-regular entry {}",
+                from.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// RAII guard that restores `OBRAIN_PROPS_V2` to its previous value
+/// when dropped. Keeps the `finalize_v2` entry point side-effect
+/// free so running it from inside a test process doesn't bleed env
+/// state into the next test.
+struct EnvRestorer {
+    prev: Option<String>,
+}
+
+impl Drop for EnvRestorer {
+    fn drop(&mut self) {
+        // SAFETY: drop runs single-threaded at end of finalize_v2.
+        #[allow(unsafe_code)]
+        unsafe {
+            match &self.prev {
+                Some(v) => std::env::set_var("OBRAIN_PROPS_V2", v),
+                None => std::env::remove_var("OBRAIN_PROPS_V2"),
+            }
+        }
+    }
+}
+
 pub fn finalize(substrate_dir: &Path) -> Result<()> {
     if !substrate_dir.exists() {
         anyhow::bail!(

@@ -68,6 +68,41 @@ struct Cli {
     #[arg(long = "finalize", value_name = "SUBSTRATE_DIR", conflicts_with_all = ["input", "output", "resume"])]
     finalize: Option<PathBuf>,
 
+    /// T17c Step 4 — Drain the legacy `substrate.props` bincode
+    /// sidecar into the `substrate.props.v2` page chain (+ heap v2),
+    /// then delete the sidecar. After this, the next open with the
+    /// default feature set auto-detects v2 and skips legacy
+    /// hydration (`load_properties` short-circuits per Step 3d).
+    ///
+    /// This is the one-shot upgrade path for production bases. Run
+    /// with the service offline. Idempotent — a second run on an
+    /// already-migrated base is a no-op (DashMap is empty because
+    /// the Step 3d gate skipped hydration, so `finalize_props_v2`
+    /// finds nothing to emit).
+    ///
+    /// Mutually exclusive with `--in` / `--out` / `--finalize`.
+    #[arg(
+        long = "finalize-v2",
+        value_name = "SUBSTRATE_DIR",
+        conflicts_with_all = ["input", "output", "resume", "finalize"]
+    )]
+    finalize_v2: Option<PathBuf>,
+
+    /// T17c Step 7 — dry-run mode for `--finalize-v2`: open the
+    /// substrate, report pending-work counts (nodes + edge-property
+    /// maps + sidecar size), and exit without touching anything.
+    /// Use this against a Wikipedia-scale base before the real
+    /// run to confirm the migration plan looks sane.
+    #[arg(long = "dry-run", requires = "finalize_v2")]
+    dry_run: bool,
+
+    /// T17c Step 7 — skip the pre-migration snapshot that
+    /// `--finalize-v2` takes by default (copy to
+    /// `<dir>.bak-YYYYMMDDHHMM`). Opt-out only when the caller has
+    /// secured an external backup.
+    #[arg(long = "no-backup", requires = "finalize_v2")]
+    no_backup: bool,
+
     /// Number of worker threads for edge / property replay phases.
     /// (0 = rayon default = physical core count).
     #[arg(long, default_value_t = 0)]
@@ -138,6 +173,25 @@ fn main() -> Result<()> {
             target.display()
         );
         converter::finalize(&target)?;
+        tracing::info!("obrain-migrate: done");
+        return Ok(());
+    }
+
+    // T17c Step 4 + Step 6 + Step 7 — drain legacy bincode sidecar
+    // into PropsZone v2 (nodes) + persist edge sidecar (edges) +
+    // optional snapshot/dry-run gates. See `converter::finalize_v2`.
+    if let Some(target) = cli.finalize_v2 {
+        tracing::info!(
+            "obrain-migrate --finalize-v2: target={} (dry_run={}, no_backup={})",
+            target.display(),
+            cli.dry_run,
+            cli.no_backup,
+        );
+        let opts = converter::FinalizeV2Opts {
+            dry_run: cli.dry_run,
+            skip_backup: cli.no_backup,
+        };
+        converter::finalize_v2_with_opts(&target, &opts)?;
         tracing::info!("obrain-migrate: done");
         return Ok(());
     }
