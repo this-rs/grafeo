@@ -478,27 +478,36 @@ mod tests {
     use obrain_core::graph::GraphStoreMut;
     use obrain_substrate::SubstrateStore;
 
-    fn create_multi_rel_graph() -> SubstrateStore {
+    /// Build the canonical multi-relational test graph:
+    ///
+    /// ```text
+    ///   nodes[0] --KNOWS--> nodes[1] --KNOWS--> nodes[2]
+    ///   nodes[0] --OWNS-->  nodes[3] --OWNS-->  nodes[4]
+    ///   nodes[1] --WORKS_AT--> nodes[5]
+    /// ```
+    ///
+    /// Returns `(store, nodes)` — callers index into `nodes` rather than assuming
+    /// any particular NodeId allocation (substrate starts at 1, LpgStore at 0).
+    fn create_multi_rel_graph() -> (SubstrateStore, Vec<NodeId>) {
         let store = SubstrateStore::open_tempfile().unwrap();
 
-        // Create a multi-relational graph:
-        //   0 --KNOWS--> 1 --KNOWS--> 2
-        //   0 --OWNS-->  3 --OWNS-->  4
-        //   1 --WORKS_AT--> 5
-        let n0 = store.create_node(&["Person"]);
-        let n1 = store.create_node(&["Person"]);
-        let n2 = store.create_node(&["Person"]);
-        let n3 = store.create_node(&["Company"]);
-        let n4 = store.create_node(&["Product"]);
-        let n5 = store.create_node(&["Organization"]);
+        let labels = [
+            "Person",
+            "Person",
+            "Person",
+            "Company",
+            "Product",
+            "Organization",
+        ];
+        let nodes: Vec<NodeId> = labels.iter().map(|l| store.create_node(&[l])).collect();
 
-        store.create_edge(n0, n1, "KNOWS");
-        store.create_edge(n1, n2, "KNOWS");
-        store.create_edge(n0, n3, "OWNS");
-        store.create_edge(n3, n4, "OWNS");
-        store.create_edge(n1, n5, "WORKS_AT");
+        store.create_edge(nodes[0], nodes[1], "KNOWS");
+        store.create_edge(nodes[1], nodes[2], "KNOWS");
+        store.create_edge(nodes[0], nodes[3], "OWNS");
+        store.create_edge(nodes[3], nodes[4], "OWNS");
+        store.create_edge(nodes[1], nodes[5], "WORKS_AT");
 
-        store
+        (store, nodes)
     }
 
     fn create_star_graph(center_id: NodeId, degree: usize, store: &SubstrateStore) -> Vec<NodeId> {
@@ -513,9 +522,9 @@ mod tests {
 
     #[test]
     fn test_khop_basic() {
-        let store = create_multi_rel_graph();
+        let (store, nodes) = create_multi_rel_graph();
         let config = KHopConfig {
-            center: NodeId::new(0),
+            center: nodes[0],
             k: 1,
             rel_types: None,
             max_neighbors_per_hop: None,
@@ -523,21 +532,21 @@ mod tests {
         };
         let ego = khop_subgraph(&store, &config);
 
-        assert!(ego.nodes.contains(&NodeId::new(0)));
-        assert!(ego.nodes.contains(&NodeId::new(1)));
-        assert!(ego.nodes.contains(&NodeId::new(3)));
-        // Node 2,4,5 are at hop 2+
-        assert!(!ego.nodes.contains(&NodeId::new(2)));
-        assert_eq!(ego.hop_distance(NodeId::new(0)), Some(0));
-        assert_eq!(ego.hop_distance(NodeId::new(1)), Some(1));
-        assert_eq!(ego.hop_distance(NodeId::new(3)), Some(1));
+        assert!(ego.nodes.contains(&nodes[0]));
+        assert!(ego.nodes.contains(&nodes[1]));
+        assert!(ego.nodes.contains(&nodes[3]));
+        // nodes[2], nodes[4], nodes[5] are at hop 2+
+        assert!(!ego.nodes.contains(&nodes[2]));
+        assert_eq!(ego.hop_distance(nodes[0]), Some(0));
+        assert_eq!(ego.hop_distance(nodes[1]), Some(1));
+        assert_eq!(ego.hop_distance(nodes[3]), Some(1));
     }
 
     #[test]
     fn test_khop_2hops() {
-        let store = create_multi_rel_graph();
+        let (store, nodes) = create_multi_rel_graph();
         let config = KHopConfig {
-            center: NodeId::new(0),
+            center: nodes[0],
             k: 2,
             rel_types: None,
             max_neighbors_per_hop: None,
@@ -547,16 +556,16 @@ mod tests {
 
         // All 6 nodes should be reachable within 2 hops
         assert_eq!(ego.node_count(), 6);
-        assert_eq!(ego.hop_distance(NodeId::new(2)), Some(2));
-        assert_eq!(ego.hop_distance(NodeId::new(4)), Some(2));
-        assert_eq!(ego.hop_distance(NodeId::new(5)), Some(2));
+        assert_eq!(ego.hop_distance(nodes[2]), Some(2));
+        assert_eq!(ego.hop_distance(nodes[4]), Some(2));
+        assert_eq!(ego.hop_distance(nodes[5]), Some(2));
     }
 
     #[test]
     fn test_khop_rel_type_filter() {
-        let store = create_multi_rel_graph();
+        let (store, nodes) = create_multi_rel_graph();
         let config = KHopConfig {
-            center: NodeId::new(0),
+            center: nodes[0],
             k: 2,
             rel_types: Some(vec!["KNOWS".to_string()]),
             max_neighbors_per_hop: None,
@@ -565,11 +574,11 @@ mod tests {
         let ego = khop_subgraph(&store, &config);
 
         // Only nodes reachable via KNOWS edges: 0, 1, 2
-        assert!(ego.nodes.contains(&NodeId::new(0)));
-        assert!(ego.nodes.contains(&NodeId::new(1)));
-        assert!(ego.nodes.contains(&NodeId::new(2)));
-        assert!(!ego.nodes.contains(&NodeId::new(3))); // OWNS edge
-        assert!(!ego.nodes.contains(&NodeId::new(4))); // OWNS edge
+        assert!(ego.nodes.contains(&nodes[0]));
+        assert!(ego.nodes.contains(&nodes[1]));
+        assert!(ego.nodes.contains(&nodes[2]));
+        assert!(!ego.nodes.contains(&nodes[3])); // OWNS edge
+        assert!(!ego.nodes.contains(&nodes[4])); // OWNS edge
         // All edges should be KNOWS
         for edge in &ego.edges {
             assert_eq!(edge.edge_type, "KNOWS");
@@ -578,9 +587,9 @@ mod tests {
 
     #[test]
     fn test_khop_multiple_rel_types() {
-        let store = create_multi_rel_graph();
+        let (store, nodes) = create_multi_rel_graph();
         let config = KHopConfig {
-            center: NodeId::new(0),
+            center: nodes[0],
             k: 2,
             rel_types: Some(vec!["KNOWS".to_string(), "WORKS_AT".to_string()]),
             max_neighbors_per_hop: None,
@@ -589,11 +598,11 @@ mod tests {
         let ego = khop_subgraph(&store, &config);
 
         // Reachable: 0 --KNOWS--> 1 --KNOWS--> 2, 1 --WORKS_AT--> 5
-        assert!(ego.nodes.contains(&NodeId::new(0)));
-        assert!(ego.nodes.contains(&NodeId::new(1)));
-        assert!(ego.nodes.contains(&NodeId::new(2)));
-        assert!(ego.nodes.contains(&NodeId::new(5)));
-        assert!(!ego.nodes.contains(&NodeId::new(3))); // OWNS only
+        assert!(ego.nodes.contains(&nodes[0]));
+        assert!(ego.nodes.contains(&nodes[1]));
+        assert!(ego.nodes.contains(&nodes[2]));
+        assert!(ego.nodes.contains(&nodes[5]));
+        assert!(!ego.nodes.contains(&nodes[3])); // OWNS only
     }
 
     #[test]
@@ -633,9 +642,9 @@ mod tests {
 
     #[test]
     fn test_khop_k_zero() {
-        let store = create_multi_rel_graph();
+        let (store, nodes) = create_multi_rel_graph();
         let config = KHopConfig {
-            center: NodeId::new(0),
+            center: nodes[0],
             k: 0,
             rel_types: None,
             max_neighbors_per_hop: None,
@@ -646,7 +655,7 @@ mod tests {
         // k=0 means only center node
         assert_eq!(ego.node_count(), 1);
         assert_eq!(ego.edge_count(), 0);
-        assert_eq!(ego.hop_distance(NodeId::new(0)), Some(0));
+        assert_eq!(ego.hop_distance(nodes[0]), Some(0));
     }
 
     #[test]
@@ -764,13 +773,13 @@ mod tests {
 
     #[test]
     fn test_khop_algorithm_wrapper() {
-        let store = create_multi_rel_graph();
+        let (store, nodes) = create_multi_rel_graph();
         let algo = KHopAlgorithm;
 
         assert_eq!(algo.name(), "subgraph.khop");
 
         let mut params = Parameters::new();
-        params.set_int("center", 0);
+        params.set_int("center", nodes[0].0 as i64);
         params.set_int("k", 1);
 
         let result = algo.execute(&store, &params).unwrap();
@@ -779,11 +788,11 @@ mod tests {
 
     #[test]
     fn test_khop_algorithm_with_rel_filter() {
-        let store = create_multi_rel_graph();
+        let (store, nodes) = create_multi_rel_graph();
         let algo = KHopAlgorithm;
 
         let mut params = Parameters::new();
-        params.set_int("center", 0);
+        params.set_int("center", nodes[0].0 as i64);
         params.set_int("k", 2);
         params.set_string("rel_types", "KNOWS");
 
@@ -794,7 +803,7 @@ mod tests {
 
     #[test]
     fn test_khop_algorithm_missing_params() {
-        let store = create_multi_rel_graph();
+        let (store, _nodes) = create_multi_rel_graph();
         let algo = KHopAlgorithm;
         let params = Parameters::new();
 
@@ -804,11 +813,11 @@ mod tests {
 
     #[test]
     fn test_khop_empty_rel_types_string() {
-        let store = create_multi_rel_graph();
+        let (store, nodes) = create_multi_rel_graph();
         let algo = KHopAlgorithm;
 
         let mut params = Parameters::new();
-        params.set_int("center", 0);
+        params.set_int("center", nodes[0].0 as i64);
         params.set_int("k", 1);
         params.set_string("rel_types", "");
 
@@ -819,11 +828,11 @@ mod tests {
 
     #[test]
     fn test_khop_max_neighbors_zero() {
-        let store = create_multi_rel_graph();
+        let (store, nodes) = create_multi_rel_graph();
         let algo = KHopAlgorithm;
 
         let mut params = Parameters::new();
-        params.set_int("center", 0);
+        params.set_int("center", nodes[0].0 as i64);
         params.set_int("k", 1);
         params.set_int("max_neighbors_per_hop", 0);
 

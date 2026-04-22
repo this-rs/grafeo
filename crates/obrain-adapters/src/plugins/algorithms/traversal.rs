@@ -472,53 +472,55 @@ impl GraphAlgorithm for DfsAlgorithm {
 mod tests {
     use super::*;
 
-    fn create_test_graph() -> SubstrateStore {
+    /// Build the canonical 5-node diamond:
+    ///
+    /// ```text
+    ///   n[0] -> n[1] -> n[2]
+    ///    |       |
+    ///    v       v
+    ///   n[3] -> n[4]
+    /// ```
+    ///
+    /// Returns `(store, nodes)` — callers index into `nodes` rather than assuming
+    /// a particular NodeId allocation scheme (substrate starts at 1, LpgStore at 0).
+    fn create_test_graph() -> (SubstrateStore, Vec<NodeId>) {
         let store = SubstrateStore::open_tempfile().unwrap();
 
-        // Create a simple graph:
-        //   0 -> 1 -> 2
-        //   |    |
-        //   v    v
-        //   3 -> 4
-        let n0 = store.create_node(&["Node"]);
-        let n1 = store.create_node(&["Node"]);
-        let n2 = store.create_node(&["Node"]);
-        let n3 = store.create_node(&["Node"]);
-        let n4 = store.create_node(&["Node"]);
+        let nodes: Vec<NodeId> = (0..5).map(|_| store.create_node(&["Node"])).collect();
 
-        store.create_edge(n0, n1, "EDGE");
-        store.create_edge(n0, n3, "EDGE");
-        store.create_edge(n1, n2, "EDGE");
-        store.create_edge(n1, n4, "EDGE");
-        store.create_edge(n3, n4, "EDGE");
+        store.create_edge(nodes[0], nodes[1], "EDGE");
+        store.create_edge(nodes[0], nodes[3], "EDGE");
+        store.create_edge(nodes[1], nodes[2], "EDGE");
+        store.create_edge(nodes[1], nodes[4], "EDGE");
+        store.create_edge(nodes[3], nodes[4], "EDGE");
 
-        store
+        (store, nodes)
     }
 
     #[test]
     fn test_bfs_simple() {
-        let store = create_test_graph();
-        let visited = bfs(&store, NodeId::new(0));
+        let (store, nodes) = create_test_graph();
+        let visited = bfs(&store, nodes[0]);
 
         assert!(!visited.is_empty());
-        assert_eq!(visited[0], NodeId::new(0));
-        // Node 0 should be first
+        assert_eq!(visited[0], nodes[0]);
+        // Start node should be first
     }
 
     #[test]
     fn test_bfs_layers() {
-        let store = create_test_graph();
-        let layers = bfs_layers(&store, NodeId::new(0));
+        let (store, nodes) = create_test_graph();
+        let layers = bfs_layers(&store, nodes[0]);
 
         assert!(!layers.is_empty());
-        assert_eq!(layers[0], vec![NodeId::new(0)]);
+        assert_eq!(layers[0], vec![nodes[0]]);
         // Distance 0: just the start node
     }
 
     #[test]
     fn test_dfs_simple() {
-        let store = create_test_graph();
-        let finished = dfs(&store, NodeId::new(0));
+        let (store, nodes) = create_test_graph();
+        let finished = dfs(&store, nodes[0]);
 
         assert!(!finished.is_empty());
         // Post-order means leaves are finished first
@@ -540,10 +542,10 @@ mod tests {
 
     #[test]
     fn test_bfs_early_termination() {
-        let store = create_test_graph();
-        let target = NodeId::new(2);
+        let (store, nodes) = create_test_graph();
+        let target = nodes[2];
 
-        let found = bfs_with_visitor(&store, NodeId::new(0), |event| {
+        let found = bfs_with_visitor(&store, nodes[0], |event| {
             if let TraversalEvent::Discover(node) = event
                 && node == target
             {
@@ -557,20 +559,20 @@ mod tests {
 
     #[test]
     fn test_bfs_visits_all_reachable() {
-        let store = create_test_graph();
-        let visited = bfs(&store, NodeId::new(0));
+        let (store, nodes) = create_test_graph();
+        let visited = bfs(&store, nodes[0]);
         // All 5 nodes are reachable from node 0
         assert_eq!(visited.len(), 5);
     }
 
     #[test]
     fn test_bfs_layers_distances() {
-        let store = create_test_graph();
-        let layers = bfs_layers(&store, NodeId::new(0));
+        let (store, nodes) = create_test_graph();
+        let layers = bfs_layers(&store, nodes[0]);
 
-        // Layer 0: node 0
-        // Layer 1: nodes 1, 3 (direct neighbors)
-        // Layer 2: nodes 2, 4 (distance 2)
+        // Layer 0: nodes[0]
+        // Layer 1: nodes[1], nodes[3] (direct neighbors)
+        // Layer 2: nodes[2], nodes[4] (distance 2)
         assert_eq!(layers.len(), 3);
         assert_eq!(layers[0].len(), 1);
         assert_eq!(layers[1].len(), 2);
@@ -603,10 +605,11 @@ mod tests {
 
     #[test]
     fn test_bfs_with_visitor_prune_on_start() {
-        let store = create_test_graph();
-        let result: Option<()> = bfs_with_visitor(&store, NodeId::new(0), |event| {
+        let (store, nodes) = create_test_graph();
+        let start = nodes[0];
+        let result: Option<()> = bfs_with_visitor(&store, start, |event| {
             if let TraversalEvent::Discover(node) = event
-                && node == NodeId::new(0)
+                && node == start
             {
                 return Control::Prune;
             }
@@ -618,26 +621,26 @@ mod tests {
 
     #[test]
     fn test_bfs_with_visitor_collects_tree_edges() {
-        let store = create_test_graph();
+        let (store, nodes) = create_test_graph();
         let mut tree_edges = Vec::new();
 
-        bfs_with_visitor(&store, NodeId::new(0), |event| -> Control<()> {
+        bfs_with_visitor(&store, nodes[0], |event| -> Control<()> {
             if let TraversalEvent::TreeEdge { source, target, .. } = event {
                 tree_edges.push((source, target));
             }
             Control::Continue
         });
 
-        // BFS tree from node 0 has 4 tree edges (one per non-start node)
+        // BFS tree from nodes[0] has 4 tree edges (one per non-start node)
         assert_eq!(tree_edges.len(), 4);
     }
 
     #[test]
     fn test_bfs_with_visitor_detects_non_tree_edges() {
-        let store = create_test_graph();
+        let (store, nodes) = create_test_graph();
         let mut non_tree_edges = Vec::new();
 
-        bfs_with_visitor(&store, NodeId::new(0), |event| -> Control<()> {
+        bfs_with_visitor(&store, nodes[0], |event| -> Control<()> {
             if let TraversalEvent::NonTreeEdge { source, target, .. } = event {
                 non_tree_edges.push((source, target));
             }
@@ -650,53 +653,54 @@ mod tests {
 
     #[test]
     fn test_dfs_visits_all_reachable() {
-        let store = create_test_graph();
-        let finished = dfs(&store, NodeId::new(0));
+        let (store, nodes) = create_test_graph();
+        let finished = dfs(&store, nodes[0]);
         assert_eq!(finished.len(), 5);
     }
 
     #[test]
     fn test_dfs_post_order() {
-        let store = create_test_graph();
-        let finished = dfs(&store, NodeId::new(0));
+        let (store, nodes) = create_test_graph();
+        let finished = dfs(&store, nodes[0]);
         // In post-order, the start node is finished last
-        assert_eq!(*finished.last().unwrap(), NodeId::new(0));
+        assert_eq!(*finished.last().unwrap(), nodes[0]);
     }
 
     #[test]
     fn test_dfs_with_visitor_early_termination() {
-        let store = create_test_graph();
-        let found = dfs_with_visitor(&store, NodeId::new(0), |event| {
+        let (store, nodes) = create_test_graph();
+        let target = nodes[4];
+        let found = dfs_with_visitor(&store, nodes[0], |event| {
             if let TraversalEvent::Discover(node) = event
-                && node == NodeId::new(4)
+                && node == target
             {
                 return Control::Break(node);
             }
             Control::Continue
         });
-        assert_eq!(found, Some(NodeId::new(4)));
+        assert_eq!(found, Some(target));
     }
 
     #[test]
     fn test_dfs_with_visitor_prune() {
-        let store = create_test_graph();
+        let (store, nodes) = create_test_graph();
         let mut discovered = Vec::new();
 
-        dfs_with_visitor(&store, NodeId::new(0), |event| -> Control<()> {
+        dfs_with_visitor(&store, nodes[0], |event| -> Control<()> {
             if let TraversalEvent::Discover(node) = event {
                 discovered.push(node);
-                if node == NodeId::new(1) {
+                if node == nodes[1] {
                     return Control::Prune; // Don't explore node 1's children
                 }
             }
             Control::Continue
         });
 
-        // Node 1 is discovered but its children (2, 4) may not all be
-        assert!(discovered.contains(&NodeId::new(0)));
-        assert!(discovered.contains(&NodeId::new(1)));
-        // Node 2 should not be discovered since we pruned node 1
-        assert!(!discovered.contains(&NodeId::new(2)));
+        // nodes[1] is discovered but its children (2, 4) may not all be
+        assert!(discovered.contains(&nodes[0]));
+        assert!(discovered.contains(&nodes[1]));
+        // nodes[2] should not be discovered since we pruned nodes[1]
+        assert!(!discovered.contains(&nodes[2]));
     }
 
     #[test]
@@ -757,14 +761,14 @@ mod tests {
 
     #[test]
     fn test_bfs_prune_tree_edge() {
-        let store = create_test_graph();
+        let (store, nodes) = create_test_graph();
         let mut discovered = Vec::new();
 
-        bfs_with_visitor(&store, NodeId::new(0), |event| -> Control<()> {
+        bfs_with_visitor(&store, nodes[0], |event| -> Control<()> {
             match event {
                 TraversalEvent::TreeEdge { target, .. } => {
-                    if target == NodeId::new(1) {
-                        return Control::Prune; // Skip node 1
+                    if target == nodes[1] {
+                        return Control::Prune; // Skip nodes[1]
                     }
                     Control::Continue
                 }
@@ -776,17 +780,18 @@ mod tests {
             }
         });
 
-        // Node 1 should not be discovered due to pruned tree edge
-        assert!(discovered.contains(&NodeId::new(0)));
-        assert!(!discovered.contains(&NodeId::new(1)));
+        // nodes[1] should not be discovered due to pruned tree edge
+        assert!(discovered.contains(&nodes[0]));
+        assert!(!discovered.contains(&nodes[1]));
     }
 
     #[test]
     fn test_dfs_with_visitor_prune_start() {
-        let store = create_test_graph();
-        let result: Option<()> = dfs_with_visitor(&store, NodeId::new(0), |event| {
+        let (store, nodes) = create_test_graph();
+        let start = nodes[0];
+        let result: Option<()> = dfs_with_visitor(&store, start, |event| {
             if let TraversalEvent::Discover(node) = event
-                && node == NodeId::new(0)
+                && node == start
             {
                 return Control::Prune;
             }

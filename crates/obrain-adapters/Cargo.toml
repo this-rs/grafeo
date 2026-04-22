@@ -11,6 +11,10 @@ description = "Storage, query language, and plugin adapters for Obrain"
 [dependencies]
 obrain-common.workspace = true
 obrain-core.workspace = true
+# Post-T17 W2b: adapters produce SubstrateStore (e.g. `extract_subgraph`) and
+# W3/W4 will ensure all graph mutations target substrate. obrain-substrate
+# does NOT depend on obrain-adapters, so this dependency is cycle-clear.
+obrain-substrate.workspace = true
 
 # String types
 arcstr.workspace = true
@@ -52,9 +56,6 @@ tracing.workspace = true
 tempfile.workspace = true
 serde_json = "1"
 criterion.workspace = true
-# Post-T17 W2: tests use the canonical substrate backend via a temp-file mmap.
-# obrain-substrate does NOT depend on obrain-adapters, so this is cycle-clear.
-obrain-substrate.workspace = true
 
 [features]
 default = ["gql", "wal", "parallel"]

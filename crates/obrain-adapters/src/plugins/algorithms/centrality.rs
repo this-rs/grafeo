@@ -940,7 +940,7 @@ impl GraphAlgorithm for HitsAlgorithm {
 mod tests {
     use super::*;
 
-    fn create_test_graph() -> SubstrateStore {
+    fn create_test_graph() -> (SubstrateStore, Vec<NodeId>) {
         let store = SubstrateStore::open_tempfile().unwrap();
 
         // Create a simple graph:
@@ -948,19 +948,15 @@ mod tests {
         //   |    |
         //   v    v
         //   3 -> 4
-        let n0 = store.create_node(&["Node"]);
-        let n1 = store.create_node(&["Node"]);
-        let n2 = store.create_node(&["Node"]);
-        let n3 = store.create_node(&["Node"]);
-        let n4 = store.create_node(&["Node"]);
+        let nodes: Vec<NodeId> = (0..5).map(|_| store.create_node(&["Node"])).collect();
 
-        store.create_edge(n0, n1, "EDGE");
-        store.create_edge(n0, n3, "EDGE");
-        store.create_edge(n1, n2, "EDGE");
-        store.create_edge(n1, n4, "EDGE");
-        store.create_edge(n3, n4, "EDGE");
+        store.create_edge(nodes[0], nodes[1], "EDGE");
+        store.create_edge(nodes[0], nodes[3], "EDGE");
+        store.create_edge(nodes[1], nodes[2], "EDGE");
+        store.create_edge(nodes[1], nodes[4], "EDGE");
+        store.create_edge(nodes[3], nodes[4], "EDGE");
 
-        store
+        (store, nodes)
     }
 
     fn create_pagerank_graph() -> SubstrateStore {
@@ -982,20 +978,20 @@ mod tests {
 
     #[test]
     fn test_degree_centrality() {
-        let store = create_test_graph();
+        let (store, nodes) = create_test_graph();
         let result = degree_centrality(&store);
 
         // Node 0 has 2 outgoing edges
-        assert_eq!(*result.out_degree.get(&NodeId::new(0)).unwrap(), 2);
+        assert_eq!(*result.out_degree.get(&nodes[0]).unwrap(), 2);
 
         // Node 4 has 0 outgoing edges but receives from 1 and 3
-        assert_eq!(*result.out_degree.get(&NodeId::new(4)).unwrap(), 0);
-        assert_eq!(*result.in_degree.get(&NodeId::new(4)).unwrap(), 2);
+        assert_eq!(*result.out_degree.get(&nodes[4]).unwrap(), 0);
+        assert_eq!(*result.in_degree.get(&nodes[4]).unwrap(), 2);
     }
 
     #[test]
     fn test_degree_centrality_normalized() {
-        let store = create_test_graph();
+        let (store, _nodes) = create_test_graph();
         let result = degree_centrality_normalized(&store);
 
         // All normalized values should be between 0 and 1
@@ -1046,7 +1042,7 @@ mod tests {
 
     #[test]
     fn test_betweenness_centrality() {
-        let store = create_test_graph();
+        let (store, _nodes) = create_test_graph();
         let scores = betweenness_centrality(&store, false);
 
         assert_eq!(scores.len(), 5);
@@ -1059,7 +1055,7 @@ mod tests {
 
     #[test]
     fn test_betweenness_centrality_normalized() {
-        let store = create_test_graph();
+        let (store, _nodes) = create_test_graph();
         let scores = betweenness_centrality(&store, true);
 
         // Normalized scores should be between 0 and 1
@@ -1070,7 +1066,7 @@ mod tests {
 
     #[test]
     fn test_closeness_centrality() {
-        let store = create_test_graph();
+        let (store, nodes) = create_test_graph();
         let scores = closeness_centrality(&store, false);
 
         assert_eq!(scores.len(), 5);
@@ -1081,12 +1077,12 @@ mod tests {
         }
 
         // Source node (0) should have positive closeness (can reach others)
-        assert!(*scores.get(&NodeId::new(0)).unwrap() > 0.0);
+        assert!(*scores.get(&nodes[0]).unwrap() > 0.0);
     }
 
     #[test]
     fn test_closeness_wf_improved() {
-        let store = create_test_graph();
+        let (store, _nodes) = create_test_graph();
         let scores_standard = closeness_centrality(&store, false);
         let scores_wf = closeness_centrality(&store, true);
 
@@ -1160,7 +1156,7 @@ mod tests {
 
     #[test]
     fn test_betweenness_algorithm_wrapper() {
-        let store = create_test_graph();
+        let (store, _nodes) = create_test_graph();
         let algo = BetweennessCentralityAlgorithm;
 
         // Test trait methods
@@ -1183,7 +1179,7 @@ mod tests {
 
     #[test]
     fn test_closeness_algorithm_wrapper() {
-        let store = create_test_graph();
+        let (store, _nodes) = create_test_graph();
         let algo = ClosenessCentralityAlgorithm;
 
         // Test trait methods
@@ -1206,7 +1202,7 @@ mod tests {
 
     #[test]
     fn test_degree_algorithm_wrapper() {
-        let store = create_test_graph();
+        let (store, _nodes) = create_test_graph();
         let algo = DegreeCentralityAlgorithm;
 
         // Test trait methods
@@ -1375,7 +1371,8 @@ mod tests {
 
     /// Creates a star graph: center → spoke1, center → spoke2, center → spoke3
     /// Center should have high hub score, spokes should have high authority score.
-    fn create_star_graph() -> SubstrateStore {
+    /// Returns (store, [center, s1, s2, s3])
+    fn create_star_graph() -> (SubstrateStore, Vec<NodeId>) {
         let store = SubstrateStore::open_tempfile().unwrap();
         let center = store.create_node(&["Hub"]);
         let s1 = store.create_node(&["Auth"]);
@@ -1384,12 +1381,13 @@ mod tests {
         store.create_edge(center, s1, "LINKS");
         store.create_edge(center, s2, "LINKS");
         store.create_edge(center, s3, "LINKS");
-        store
+        (store, vec![center, s1, s2, s3])
     }
 
     /// Creates a bipartite graph: h1→a1, h1→a2, h2→a1, h2→a2
     /// Both hubs should have equal hub scores, both authorities equal authority scores.
-    fn create_bipartite_graph() -> SubstrateStore {
+    /// Returns (store, [h1, h2, a1, a2])
+    fn create_bipartite_graph() -> (SubstrateStore, Vec<NodeId>) {
         let store = SubstrateStore::open_tempfile().unwrap();
         let h1 = store.create_node(&["Hub"]);
         let h2 = store.create_node(&["Hub"]);
@@ -1399,7 +1397,7 @@ mod tests {
         store.create_edge(h1, a2, "LINKS");
         store.create_edge(h2, a1, "LINKS");
         store.create_edge(h2, a2, "LINKS");
-        store
+        (store, vec![h1, h2, a1, a2])
     }
 
     #[test]
@@ -1423,14 +1421,14 @@ mod tests {
 
     #[test]
     fn test_hits_star_graph() {
-        let store = create_star_graph();
+        let (store, nodes) = create_star_graph();
         let result = hits(&store, 100, 1e-6);
 
         assert!(result.converged);
         assert_eq!(result.hub_scores.len(), 4);
 
-        // Center (node 0) is the only hub → should have hub_score = 1.0
-        let center = NodeId::new(0);
+        // Center (nodes[0]) is the only hub → should have hub_score = 1.0
+        let center = nodes[0];
         let center_hub = *result.hub_scores.get(&center).unwrap();
         assert!(
             center_hub > 0.99,
@@ -1438,8 +1436,7 @@ mod tests {
         );
 
         // Spokes have no outgoing edges → hub score should be 0
-        for id in 1..=3 {
-            let spoke = NodeId::new(id);
+        for &spoke in &nodes[1..=3] {
             let spoke_hub = *result.hub_scores.get(&spoke).unwrap();
             assert!(
                 spoke_hub.abs() < 1e-10,
@@ -1448,9 +1445,9 @@ mod tests {
         }
 
         // All spokes should have equal authority scores
-        let a1 = *result.authority_scores.get(&NodeId::new(1)).unwrap();
-        let a2 = *result.authority_scores.get(&NodeId::new(2)).unwrap();
-        let a3 = *result.authority_scores.get(&NodeId::new(3)).unwrap();
+        let a1 = *result.authority_scores.get(&nodes[1]).unwrap();
+        let a2 = *result.authority_scores.get(&nodes[2]).unwrap();
+        let a3 = *result.authority_scores.get(&nodes[3]).unwrap();
         assert!(
             (a1 - a2).abs() < 1e-10,
             "spokes should have equal auth scores"
@@ -1476,22 +1473,22 @@ mod tests {
 
     #[test]
     fn test_hits_bipartite_graph() {
-        let store = create_bipartite_graph();
+        let (store, nodes) = create_bipartite_graph();
         let result = hits(&store, 100, 1e-6);
 
         assert!(result.converged);
 
         // Symmetric bipartite: h1 and h2 should have equal hub scores
-        let h1_hub = *result.hub_scores.get(&NodeId::new(0)).unwrap();
-        let h2_hub = *result.hub_scores.get(&NodeId::new(1)).unwrap();
+        let h1_hub = *result.hub_scores.get(&nodes[0]).unwrap();
+        let h2_hub = *result.hub_scores.get(&nodes[1]).unwrap();
         assert!(
             (h1_hub - h2_hub).abs() < 1e-10,
             "symmetric hubs should be equal: {h1_hub} vs {h2_hub}"
         );
 
         // a1 and a2 should have equal authority scores
-        let a1_auth = *result.authority_scores.get(&NodeId::new(2)).unwrap();
-        let a2_auth = *result.authority_scores.get(&NodeId::new(3)).unwrap();
+        let a1_auth = *result.authority_scores.get(&nodes[2]).unwrap();
+        let a2_auth = *result.authority_scores.get(&nodes[3]).unwrap();
         assert!(
             (a1_auth - a2_auth).abs() < 1e-10,
             "symmetric authorities should be equal: {a1_auth} vs {a2_auth}"
@@ -1499,12 +1496,12 @@ mod tests {
 
         // Hub scores for hubs should be positive, for authorities should be 0
         assert!(h1_hub > 0.0);
-        let a1_hub = *result.hub_scores.get(&NodeId::new(2)).unwrap();
+        let a1_hub = *result.hub_scores.get(&nodes[2]).unwrap();
         assert!(a1_hub.abs() < 1e-10, "authorities should have 0 hub score");
 
         // Authority scores for authorities should be positive, for hubs should be 0
         assert!(a1_auth > 0.0);
-        let h1_auth = *result.authority_scores.get(&NodeId::new(0)).unwrap();
+        let h1_auth = *result.authority_scores.get(&nodes[0]).unwrap();
         assert!(h1_auth.abs() < 1e-10, "hubs should have 0 authority score");
 
         // L2 norms should be 1.0
@@ -1526,7 +1523,7 @@ mod tests {
 
     #[test]
     fn test_hits_convergence() {
-        let store = create_bipartite_graph();
+        let (store, _nodes) = create_bipartite_graph();
         // Tight tolerance should converge
         let result_tight = hits(&store, 1000, 1e-10);
         assert!(result_tight.converged);
@@ -1539,7 +1536,7 @@ mod tests {
 
     #[test]
     fn test_hits_max_iterations_limit() {
-        let store = create_bipartite_graph();
+        let (store, _nodes) = create_bipartite_graph();
         // With max_iterations=1 and very tight tolerance, should not converge
         let result = hits(&store, 1, 1e-20);
         assert_eq!(result.iterations, 1);
@@ -1549,7 +1546,7 @@ mod tests {
 
     #[test]
     fn test_hits_algorithm_wrapper() {
-        let store = create_star_graph();
+        let (store, _nodes) = create_star_graph();
         let algo = HitsAlgorithm;
 
         assert_eq!(algo.name(), "hits");
