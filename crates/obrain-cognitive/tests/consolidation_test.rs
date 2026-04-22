@@ -7,8 +7,9 @@ use obrain_cognitive::consolidation::{
 };
 use obrain_common::types::NodeId;
 use obrain_common::utils::hash::FxHashMap;
-use obrain_core::LpgStore;
 use obrain_core::graph::Direction;
+use obrain_core::graph::traits::{GraphStore, GraphStoreMut};
+use obrain_substrate::SubstrateStore;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -16,7 +17,7 @@ use obrain_core::graph::Direction;
 
 /// Creates a densely connected cluster of `n` nodes with the given label.
 /// Each node connects to every other node in the cluster → strong community.
-fn create_cluster(store: &LpgStore, label: &str, n: usize, edge_type: &str) -> Vec<NodeId> {
+fn create_cluster(store: &SubstrateStore, label: &str, n: usize, edge_type: &str) -> Vec<NodeId> {
     let mut nodes = Vec::with_capacity(n);
     for _ in 0..n {
         nodes.push(store.create_node(&[label]));
@@ -33,7 +34,7 @@ fn create_cluster(store: &LpgStore, label: &str, n: usize, edge_type: &str) -> V
 }
 
 /// Creates a sparse bridge between two clusters (1-2 edges).
-fn bridge_clusters(store: &LpgStore, cluster_a: &[NodeId], cluster_b: &[NodeId]) {
+fn bridge_clusters(store: &SubstrateStore, cluster_a: &[NodeId], cluster_b: &[NodeId]) {
     // Single weak link between the last node of A and first node of B
     store.create_edge(cluster_a[cluster_a.len() - 1], cluster_b[0], "BRIDGE");
 }
@@ -44,7 +45,7 @@ fn bridge_clusters(store: &LpgStore, cluster_a: &[NodeId], cluster_b: &[NodeId])
 
 #[test]
 fn consolidation_merge_three_clusters() {
-    let store = LpgStore::new().expect("LpgStore::new");
+    let store = SubstrateStore::open_tempfile().expect("SubstrateStore::open_tempfile");
 
     // Create 3 clusters of ~7, ~7, ~6 nodes (= 20 total)
     let cluster_a = create_cluster(&store, "Data", 7, "LINKS");
@@ -128,6 +129,7 @@ fn consolidation_merge_three_clusters() {
         // Should have DERIVED_FROM edges to all originals
         let derived_targets: Vec<NodeId> = store
             .edges_from(condensed_id, Direction::Outgoing)
+            .into_iter()
             .filter_map(|(target, eid)| {
                 store
                     .get_edge(eid)
@@ -149,7 +151,7 @@ fn consolidation_merge_three_clusters() {
 
 #[test]
 fn consolidation_high_pagerank_excluded() {
-    let store = LpgStore::new().expect("LpgStore::new");
+    let store = SubstrateStore::open_tempfile().expect("SubstrateStore::open_tempfile");
 
     // Create a small cluster of 5 nodes
     let cluster = create_cluster(&store, "Module", 5, "DEPENDS");
@@ -201,7 +203,7 @@ fn consolidation_high_pagerank_excluded() {
 
 #[test]
 fn consolidation_label_filter() {
-    let store = LpgStore::new().expect("LpgStore::new");
+    let store = SubstrateStore::open_tempfile().expect("SubstrateStore::open_tempfile");
 
     // Create two clusters with different labels
     let memory_nodes = create_cluster(&store, "Memory", 5, "RECALL");
@@ -254,7 +256,7 @@ fn consolidation_label_filter() {
 
 #[test]
 fn consolidation_synapse_rewire() {
-    let store = LpgStore::new().expect("LpgStore::new");
+    let store = SubstrateStore::open_tempfile().expect("SubstrateStore::open_tempfile");
 
     // Create a cluster of 4 nodes that will be consolidated
     let cluster = create_cluster(&store, "Concept", 4, "RELATED");
@@ -298,7 +300,7 @@ fn consolidation_synapse_rewire() {
 
     // Check that external → condensed SYNAPSE edge exists (rewired from external → cluster[0])
     let outgoing_from_external: Vec<(NodeId, _)> =
-        store.edges_from(external, Direction::Outgoing).collect();
+        store.edges_from(external, Direction::Outgoing);
     let has_synapse_to_condensed = outgoing_from_external.iter().any(|(target, eid)| {
         *target == condensed_id
             && store
@@ -311,9 +313,8 @@ fn consolidation_synapse_rewire() {
     );
 
     // Check that condensed → external SYNAPSE edge exists (rewired from cluster[3] → external)
-    let outgoing_from_condensed: Vec<(NodeId, _)> = store
-        .edges_from(condensed_id, Direction::Outgoing)
-        .collect();
+    let outgoing_from_condensed: Vec<(NodeId, _)> =
+        store.edges_from(condensed_id, Direction::Outgoing);
     let has_synapse_from_condensed = outgoing_from_condensed.iter().any(|(target, eid)| {
         *target == external
             && store

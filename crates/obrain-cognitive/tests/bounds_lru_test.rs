@@ -252,10 +252,10 @@ fn synapse_lru_eviction_caps_cache_size() {
 
 #[test]
 fn energy_lru_evicted_entry_reloaded_from_graph() {
-    use obrain_core::LpgStore;
     use obrain_core::graph::GraphStoreMut;
+    use obrain_substrate::SubstrateStore;
 
-    let graph = Arc::new(LpgStore::new().unwrap());
+    let graph = Arc::new(SubstrateStore::open_tempfile().unwrap());
     let max_entries = 10;
     let config = EnergyConfig {
         max_energy: 10.0,
