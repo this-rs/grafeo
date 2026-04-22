@@ -32,6 +32,19 @@ impl super::ObrainDB {
     /// let nodes = db.find_nodes_by_property("email", &Value::from("alix@example.com"));
     /// ```
     pub fn create_property_index(&self, property: &str) {
+        // T17 W3c slice 5d: property-index registry lives on the dummy
+        // LpgStore in substrate mode (`self.store`). Writing an index there
+        // would succeed silently yet never be consulted — reads route through
+        // `data_store()` / substrate tiers. Make the no-op explicit.
+        if self.substrate_store.is_some() {
+            tracing::warn!(
+                property,
+                "create_property_index is a no-op in substrate mode — the \
+                 LpgStore index registry is not consulted by substrate reads. \
+                 A substrate-native property index is tracked as T17b."
+            );
+            return;
+        }
         self.store.create_property_index(property);
     }
 
@@ -39,12 +52,18 @@ impl super::ObrainDB {
     ///
     /// Returns `true` if the index existed and was removed.
     pub fn drop_property_index(&self, property: &str) -> bool {
+        if self.substrate_store.is_some() {
+            return false; // Substrate has no LpgStore index registry.
+        }
         self.store.drop_property_index(property)
     }
 
     /// Returns `true` if the property has an index.
     #[must_use]
     pub fn has_property_index(&self, property: &str) -> bool {
+        if self.substrate_store.is_some() {
+            return false; // Substrate has no LpgStore index registry.
+        }
         self.store.has_property_index(property)
     }
 
@@ -108,6 +127,22 @@ impl super::ObrainDB {
     ) -> Result<()> {
         use obrain_common::types::{PropertyKey, Value};
         use obrain_core::index::vector::DistanceMetric;
+
+        // T17 W3c slice 5d: the vector-index registry is LpgStore-inherent.
+        // Substrate mode exposes retrieval via SubstrateTieredIndex
+        // (see `ObrainDB::substrate_handle()`) and does not consult this
+        // registry — creating an index on the dummy store would silently
+        // succeed yet never be read. Refuse loudly for symmetry with
+        // `vector_search()` (gated in slice 5c).
+        if self.substrate_store.is_some() {
+            let _ = (label, property, dimensions, metric, m, ef_construction);
+            return Err(obrain_common::utils::error::Error::Internal(
+                "ObrainDB::create_vector_index() is LpgStore-only — substrate \
+                 mode uses SubstrateTieredIndex built at migration time. A \
+                 unified retrieval API is tracked as T17b."
+                    .to_string(),
+            ));
+        }
 
         let metric = match metric {
             Some(m) => DistanceMetric::from_str(m).ok_or_else(|| {
@@ -223,6 +258,9 @@ impl super::ObrainDB {
     /// label+property pair will return an error.
     #[cfg(feature = "vector-index")]
     pub fn drop_vector_index(&self, label: &str, property: &str) -> bool {
+        if self.substrate_store.is_some() {
+            return false; // Substrate has no LpgStore vector-index registry.
+        }
         let removed = self.store.remove_vector_index(label, property);
         if removed {
             tracing::info!("Vector index dropped: :{label}({property})");
@@ -244,6 +282,14 @@ impl super::ObrainDB {
     /// and no dimensions can be inferred).
     #[cfg(feature = "vector-index")]
     pub fn rebuild_vector_index(&self, label: &str, property: &str) -> Result<()> {
+        if self.substrate_store.is_some() {
+            return Err(obrain_common::utils::error::Error::Internal(
+                "ObrainDB::rebuild_vector_index() is LpgStore-only — substrate \
+                 mode rebuilds SubstrateTieredIndex via obrain-migrate. A \
+                 unified retrieval API is tracked as T17b."
+                    .to_string(),
+            ));
+        }
         // Preserve config from existing index if available
         let config = self
             .store
@@ -286,6 +332,16 @@ impl super::ObrainDB {
         use obrain_common::types::{PropertyKey, Value};
         use obrain_core::index::text::{BM25Config, InvertedIndex};
 
+        if self.substrate_store.is_some() {
+            let _ = (label, property);
+            return Err(obrain_common::utils::error::Error::Internal(
+                "ObrainDB::create_text_index() is LpgStore-only — substrate \
+                 mode exposes BM25 retrieval via SubstrateTieredIndex. A \
+                 unified retrieval API is tracked as T17b."
+                    .to_string(),
+            ));
+        }
+
         let mut index = InvertedIndex::new(BM25Config::default());
         let prop_key = PropertyKey::new(property);
 
@@ -315,6 +371,9 @@ impl super::ObrainDB {
     /// Returns `true` if the index existed and was removed.
     #[cfg(feature = "text-index")]
     pub fn drop_text_index(&self, label: &str, property: &str) -> bool {
+        if self.substrate_store.is_some() {
+            return false; // Substrate has no LpgStore text-index registry.
+        }
         self.store.remove_text_index(label, property)
     }
 
@@ -327,6 +386,14 @@ impl super::ObrainDB {
     /// Returns an error if no text index exists for this label+property.
     #[cfg(feature = "text-index")]
     pub fn rebuild_text_index(&self, label: &str, property: &str) -> Result<()> {
+        if self.substrate_store.is_some() {
+            return Err(obrain_common::utils::error::Error::Internal(
+                "ObrainDB::rebuild_text_index() is LpgStore-only — substrate \
+                 mode rebuilds BM25 via obrain-migrate. A unified retrieval \
+                 API is tracked as T17b."
+                    .to_string(),
+            ));
+        }
         self.store.remove_text_index(label, property);
         self.create_text_index(label, property)
     }
