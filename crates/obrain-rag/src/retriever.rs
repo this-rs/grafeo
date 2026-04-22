@@ -19,7 +19,7 @@ use obrain_cognitive::engram::{
 };
 use obrain_cognitive::synapse::SynapseStore;
 use obrain_common::types::NodeId;
-use obrain_core::LpgStore;
+use obrain_core::graph::traits::GraphStore;
 
 use crate::config::RagConfig;
 use crate::error::{RagError, RagResult};
@@ -366,7 +366,7 @@ impl InvertedIndex {
 /// methods to keep the index always up-to-date.
 pub struct EngramRetriever {
     /// The graph store for reading nodes/properties.
-    graph: Arc<LpgStore>,
+    graph: Arc<dyn GraphStore>,
 
     /// The engram store (cognitive memory traces).
     engram_store: Arc<EngramStore>,
@@ -391,13 +391,13 @@ impl EngramRetriever {
     /// all graph nodes. For large graphs, consider `new_lazy()` +
     /// incremental `index_node()` calls instead.
     pub fn new(
-        graph: Arc<LpgStore>,
+        graph: Arc<dyn GraphStore>,
         engram_store: Arc<EngramStore>,
         vector_index: Arc<dyn VectorIndex>,
         spectral: Arc<SpectralEncoder>,
         synapse_store: Option<Arc<SynapseStore>>,
     ) -> Self {
-        let index = Self::build_full_index(&graph);
+        let index = Self::build_full_index(graph.as_ref());
         Self {
             graph,
             engram_store,
@@ -413,11 +413,11 @@ impl EngramRetriever {
     /// This is the simplest setup — useful for testing or when the cognitive
     /// engine hasn't been fully initialized.
     pub fn with_defaults(
-        graph: Arc<LpgStore>,
+        graph: Arc<dyn GraphStore>,
         engram_store: Arc<EngramStore>,
         synapse_store: Option<Arc<SynapseStore>>,
     ) -> Self {
-        let index = Self::build_full_index(&graph);
+        let index = Self::build_full_index(graph.as_ref());
         Self {
             graph,
             engram_store,
@@ -435,7 +435,7 @@ impl EngramRetriever {
     /// This is the preferred constructor for server integration where
     /// the index is built incrementally.
     pub fn new_lazy(
-        graph: Arc<LpgStore>,
+        graph: Arc<dyn GraphStore>,
         engram_store: Arc<EngramStore>,
         synapse_store: Option<Arc<SynapseStore>>,
     ) -> Self {
@@ -450,7 +450,7 @@ impl EngramRetriever {
     }
 
     /// Build the full index by scanning all graph nodes.
-    fn build_full_index(graph: &LpgStore) -> InvertedIndex {
+    fn build_full_index(graph: &dyn GraphStore) -> InvertedIndex {
         let node_ids = graph.node_ids();
         let mut index = InvertedIndex::new();
 
@@ -527,7 +527,7 @@ impl EngramRetriever {
     ///
     /// Useful as a `/reindex` command or after major bulk operations.
     pub fn reindex(&self) {
-        let new_index = Self::build_full_index(&self.graph);
+        let new_index = Self::build_full_index(self.graph.as_ref());
         let mut idx = self.index.write().unwrap();
         *idx = new_index;
     }
@@ -601,6 +601,7 @@ impl EngramRetriever {
         let outgoing: Vec<(String, NodeId)> = self
             .graph
             .edges_from(node_id, obrain_core::graph::Direction::Outgoing)
+            .into_iter()
             .filter_map(|(target, edge_id)| {
                 let edge = self.graph.get_edge(edge_id)?;
                 Some((edge.edge_type.to_string(), target))
@@ -611,6 +612,7 @@ impl EngramRetriever {
         let incoming: Vec<(String, NodeId)> = self
             .graph
             .edges_from(node_id, obrain_core::graph::Direction::Incoming)
+            .into_iter()
             .filter_map(|(source, edge_id)| {
                 let edge = self.graph.get_edge(edge_id)?;
                 Some((edge.edge_type.to_string(), source))
@@ -791,6 +793,7 @@ fn tokenize_query(query: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use obrain_core::LpgStore;
 
     #[test]
     fn inverted_index_add_and_query() {
@@ -1242,7 +1245,7 @@ mod tests {
     // ── EngramRetriever integration tests ───────────────────────
 
     /// Helper: build a small LpgStore with known nodes and edges.
-    fn make_test_graph() -> Arc<LpgStore> {
+    fn make_test_graph() -> Arc<dyn GraphStore> {
         let store = LpgStore::new().unwrap();
 
         let n1 = store.create_node_with_props(
@@ -1288,7 +1291,7 @@ mod tests {
         Arc::new(store)
     }
 
-    fn make_retriever(graph: Arc<LpgStore>) -> EngramRetriever {
+    fn make_retriever(graph: Arc<dyn GraphStore>) -> EngramRetriever {
         let engram_store = Arc::new(EngramStore::new(None));
         EngramRetriever::with_defaults(graph, engram_store, None)
     }
