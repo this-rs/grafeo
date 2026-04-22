@@ -835,6 +835,38 @@ impl SubstrateStore {
     /// gate for the `data` key on pre-T16.7.4 bases in one open-close
     /// cycle.
     fn load_properties(&self) -> SubstrateResult<()> {
+        // T17c Step 3d — When PropsZone v2 is active and has at least
+        // one allocated page, skip **node** hydration from the legacy
+        // sidecar entirely:
+        //
+        // - All node-property reads resolve through
+        //   `lookup_node_property_v2` (walk_chain + LWW), so the
+        //   in-memory DashMap is no longer on the read path.
+        // - Keeping the DashMap empty saves the full bincode decode +
+        //   per-node `DashMap::insert` at open time — the dominant
+        //   term of startup on Wikipedia-scale DBs
+        //   (~4.6 s / 7.46 s observed).
+        // - Edges still hydrate from the sidecar: `EdgeRecord` has
+        //   no `first_prop_off`, so edge properties remain
+        //   DashMap-backed until a dedicated edge-props zone ships
+        //   (out of scope for T17c).
+        //
+        // The "at least one page" gate is important: a v2-enabled
+        // store that has never had a scalar written (fresh open, or a
+        // migration-in-flight that hasn't yet touched the node in
+        // question) MUST still hydrate from the sidecar — otherwise
+        // legacy node properties silently disappear on reopen.
+        //
+        // Once Step 4 ships the `obrain-migrate --finalize-v2` tool
+        // and the sidecar is deleted at the end of migration, this
+        // gate becomes a pure documentation aid (no sidecar → nothing
+        // to load).
+        let v2_has_pages = self
+            .props_zone
+            .as_ref()
+            .map(|pz| pz.read().allocated_page_count() > 0)
+            .unwrap_or(false);
+
         let path = {
             let sub = self.substrate.lock();
             sub.path().join(PROPS_FILENAME)
@@ -866,8 +898,19 @@ impl SubstrateStore {
                 .map(|n| n > BLOB_COLUMN_THRESHOLD_BYTES)
                 .unwrap_or(false)
         };
+        let mut nodes_skipped_v2 = 0usize;
         for e in snap.nodes {
             let nid = obrain_common::types::NodeId(e.id);
+            // T17c Step 3d — when the v2 chain is already populated,
+            // the DashMap is no longer authoritative for node props.
+            // Bincode-decoded the entry (we own `e`) and drop it
+            // without touching any field — the allocation for the
+            // scalar vec / vector / blob split is skipped entirely,
+            // which is exactly the startup speedup we want.
+            if v2_has_pages {
+                nodes_skipped_v2 += 1;
+                continue;
+            }
             let before = e.props.len();
             // Split the sidecar entry four ways (T16.7 Step 4d):
             //   - dropped entirely (SKIP_ON_LOAD keys — rebuildable)
@@ -915,6 +958,13 @@ impl SubstrateStore {
                 self.node_properties.insert(nid, map);
                 nodes_loaded += 1;
             }
+        }
+        if nodes_skipped_v2 > 0 {
+            tracing::info!(
+                phase = "load_properties",
+                nodes_skipped_v2,
+                "PropsZone v2 already populated — node sidecar hydration skipped"
+            );
         }
         for e in snap.edges {
             let eid = obrain_common::types::EdgeId(e.id);
@@ -5845,6 +5895,143 @@ mod tests {
         assert_eq!(got, Some(Value::String("legacy".into())));
 
         unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
+    }
+
+    /// T17c Step 3d — when the v2 zone has at least one allocated
+    /// page on reopen, the node-property DashMap must stay empty
+    /// after `load_properties`. Reads keep working because
+    /// `get_node_property` routes through the v2 chain first.
+    #[test]
+    #[allow(unsafe_code)]
+    fn load_properties_skips_node_hydration_when_v2_has_pages() {
+        let _guard = props_v2_env_lock().lock().unwrap();
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "1") };
+
+        let td = tempfile::tempdir().unwrap();
+        let root = td.path().join("kb");
+        let a_id;
+        {
+            let s = SubstrateStore::create(&root).unwrap();
+            let a = s.create_node(&["Doc"]);
+            a_id = a;
+            s.set_node_property(a, "title", Value::String("v2-native".into()));
+            s.set_node_property(a, "count", Value::Int64(7));
+            s.flush().unwrap();
+        }
+
+        // Reopen without env — auto-detection on substrate.props.v2
+        // existence still activates v2.
+        unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
+        let s = SubstrateStore::open(&root).unwrap();
+        assert!(s.props_v2_enabled(), "v2 must auto-enable on reopen");
+
+        // DashMap must be empty — load_properties short-circuited.
+        assert_eq!(
+            s.node_properties.len(),
+            0,
+            "DashMap must be empty when v2 zone has pages"
+        );
+
+        // Reads still work via the v2 chain.
+        assert_eq!(
+            s.get_node_property(a_id, &PropertyKey::new("title")),
+            Some(Value::String("v2-native".into()))
+        );
+        assert_eq!(
+            s.get_node_property(a_id, &PropertyKey::new("count")),
+            Some(Value::Int64(7))
+        );
+    }
+
+    /// T17c Step 3d — when v2 is enabled but has no allocated pages
+    /// (fresh store, never wrote a scalar), legacy sidecar hydration
+    /// must still run. Otherwise, a legacy-only DB that enables v2 on
+    /// upgrade but hasn't migrated yet would silently lose every
+    /// node property on first reopen.
+    #[test]
+    #[allow(unsafe_code)]
+    fn load_properties_still_hydrates_when_v2_zone_empty() {
+        let _guard = props_v2_env_lock().lock().unwrap();
+        // Phase 1: write WITHOUT v2 — sidecar gets node entries, v2
+        // zone stays empty.
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "0") };
+        let td = tempfile::tempdir().unwrap();
+        let root = td.path().join("kb");
+        let a_id;
+        {
+            let s = SubstrateStore::create(&root).unwrap();
+            let a = s.create_node(&["Doc"]);
+            a_id = a;
+            s.set_node_property(a, "legacy", Value::String("from-sidecar".into()));
+            s.flush().unwrap();
+            assert!(!s.props_v2_enabled());
+        }
+
+        // Phase 2: reopen WITH v2 enabled. Zone is fresh (no pages)
+        // because the prior session had v2 disabled — hydration must
+        // still populate the DashMap so the legacy key is readable.
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "1") };
+        let s = SubstrateStore::open(&root).unwrap();
+        assert!(s.props_v2_enabled(), "v2 active on reopen");
+        let pz = s.props_zone.as_ref().unwrap().read();
+        assert_eq!(
+            pz.allocated_page_count(),
+            0,
+            "v2 zone is fresh — 0 allocated pages"
+        );
+        drop(pz);
+
+        // DashMap must be populated with the legacy key.
+        assert_eq!(
+            s.get_node_property(a_id, &PropertyKey::new("legacy")),
+            Some(Value::String("from-sidecar".into())),
+            "legacy sidecar key must still resolve (fallback path)"
+        );
+
+        unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
+    }
+
+    /// T17c Step 3d — edges always hydrate from the sidecar
+    /// regardless of v2 state. EdgeRecord has no `first_prop_off`,
+    /// so edges have no v2 chain to walk; if we skipped the edge
+    /// loop alongside nodes, we'd lose all edge properties on
+    /// reopen.
+    #[test]
+    #[allow(unsafe_code)]
+    fn load_properties_still_hydrates_edges_when_v2_has_pages() {
+        let _guard = props_v2_env_lock().lock().unwrap();
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "1") };
+
+        let td = tempfile::tempdir().unwrap();
+        let root = td.path().join("kb");
+        let e_id;
+        {
+            let s = SubstrateStore::create(&root).unwrap();
+            let a = s.create_node(&["Doc"]);
+            let b = s.create_node(&["Doc"]);
+            // Write a node prop so v2 zone gets a page.
+            s.set_node_property(a, "title", Value::String("x".into()));
+            let e = s.create_edge(a, b, "LINKS");
+            e_id = e;
+            // Edges still go to the DashMap since EdgeRecord has no
+            // first_prop_off.
+            s.set_edge_property(e, "weight", Value::Float64(0.5));
+            s.flush().unwrap();
+        }
+
+        unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
+        let s = SubstrateStore::open(&root).unwrap();
+
+        // Node DashMap empty (Step 3d gate).
+        assert_eq!(s.node_properties.len(), 0);
+        // Edge DashMap populated (hydrated from sidecar despite v2 gate).
+        let got = s.get_edge_property(e_id, &PropertyKey::new("weight"));
+        assert_eq!(
+            got,
+            Some(Value::Float64(0.5)),
+            "edge prop must survive reopen via sidecar (got: {:?})",
+            got
+        );
     }
 
     /// Multi-page LWW: force a chain spanning two pages and check
