@@ -560,6 +560,579 @@ impl Drop for EnvRestorer {
     }
 }
 
+// ---------------------------------------------------------------------------
+// T17f Step 5 — `obrain-migrate --upgrade-edges-v2`
+//
+// In-place upgrade of a substrate base written before T17f Step 1:
+//   1. Detect `substrate.edges` stride (32 B pre-Step-1 vs 36 B post).
+//   2. If 32 B: atomically rewrite the file to 36 B stride (insert a
+//      zero `first_prop_off: U48` at byte offset 24 of each record and
+//      shrink the trailing pad from 4 B to 2 B).
+//   3. Open the (now Step-1-compatible) store with PropsZone v2 forced
+//      on, drain the `substrate.edge_props` sidecar into the PropsZone
+//      v2 edge chain via `finalize_edge_props_v2`, flush, delete the
+//      sidecar.
+//
+// Snapshot safety is mandatory unless the caller opted out via
+// `--no-backup`. A directory copy → `<dir>.bak-<unix_secs>` guards
+// against partial rewrites — on any failure after snapshot, operators
+// can roll back with a single `rm -rf <dir> && mv <dir>.bak-* <dir>`.
+// ---------------------------------------------------------------------------
+
+/// Pre-Step-1 `EdgeRecord` stride (src=4 + dst=4 + etype=2 + weight=2 +
+/// next_from=6 + next_to=6 + ricci=1 + flags=1 + engram_tag=2 + _pad=4).
+const EDGE_RECORD_OLD_STRIDE: usize = 32;
+
+/// Post-Step-1 `EdgeRecord` stride — same as `EdgeRecord::SIZE` in
+/// obrain-substrate. Duplicated as a local `const` so the migrator
+/// doesn't have to import the record struct.
+const EDGE_RECORD_NEW_STRIDE: usize = 36;
+
+/// Options for [`upgrade_edges_v2_with_opts`].
+#[derive(Debug, Clone, Default)]
+pub struct UpgradeEdgesV2Opts {
+    /// Dry-run: report the detected stride, edge count, sidecar size,
+    /// and pending-work estimate, but perform NO writes — no snapshot,
+    /// no rewrite of `substrate.edges`, no PropsZone v2 drain, no
+    /// sidecar deletion. Use against a production base before the real
+    /// run to confirm the plan looks sane.
+    pub dry_run: bool,
+    /// Skip the pre-upgrade directory snapshot (copy to
+    /// `<dir>.bak-<unix_secs>`). Opt-out only when the caller has
+    /// already secured an external backup.
+    pub skip_backup: bool,
+}
+
+/// Detected stride of a `substrate.edges` zone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EdgesLayout {
+    /// Pre-Step-1 base — edges are 32 B each. Requires a rewrite pass.
+    Pre,
+    /// Post-Step-1 base — edges are already 36 B, no rewrite needed.
+    Post,
+    /// File is empty — nothing to rewrite, and no edge props to drain
+    /// either. Caller is expected to short-circuit on this.
+    Empty,
+}
+
+/// Read the logical `edge_count` from `substrate.meta`. The zone file
+/// itself is zero-padded to a multiple of the OS page, so we can't
+/// derive the stride from `file_len % stride` alone — we go through
+/// the meta header to know how many edges are logically live.
+fn read_meta_edge_count(meta_path: &Path) -> Result<u64> {
+    let bytes = std::fs::read(meta_path)
+        .with_context(|| format!("read {}", meta_path.display()))?;
+    // MetaHeader layout (see obrain_substrate::meta):
+    //   magic[8] + format_version[4] + flags[4] + node_count[8] + edge_count[8] + ...
+    // So edge_count is at byte offset 24..32.
+    if bytes.len() < 32 {
+        anyhow::bail!(
+            "substrate.meta is only {} B — too small to contain an edge_count field",
+            bytes.len()
+        );
+    }
+    // Magic sanity check — the first 8 bytes should be `SUBSTRT\0`.
+    const SUBSTRATE_MAGIC: [u8; 8] = *b"SUBSTRT\0";
+    if bytes[0..8] != SUBSTRATE_MAGIC {
+        anyhow::bail!(
+            "substrate.meta magic mismatch — not a substrate base (got {:?})",
+            &bytes[0..8]
+        );
+    }
+    let edge_count = u64::from_le_bytes(
+        bytes[24..32]
+            .try_into()
+            .expect("slice of exactly 8 bytes is always a [u8; 8]"),
+    );
+    Ok(edge_count)
+}
+
+/// Read `next_edge_id` from `substrate.dict` as a fallback when
+/// `meta.edge_count` is stale (known issue on legacy bases: the meta
+/// header's edge/node/prop counts are not refreshed on close —
+/// tracked separately from T17f).
+///
+/// `next_edge_id` is the slot allocator state: the first unused edge
+/// slot. Slot 0 is the null sentinel, so `next_edge_id - 1` is the
+/// number of allocated edge slots (including deleted/tombstoned —
+/// substrate zones don't compact on delete, so all allocated slots
+/// live in the file contiguously from offset 0).
+fn read_dict_next_edge_id(dict_path: &Path) -> Result<u64> {
+    let bytes = std::fs::read(dict_path)
+        .with_context(|| format!("read {}", dict_path.display()))?;
+    let snap = obrain_substrate::dict::DictSnapshot::from_bytes(&bytes)
+        .map_err(|e| anyhow::anyhow!("parse {}: {e}", dict_path.display()))?;
+    Ok(snap.next_edge_id)
+}
+
+fn detect_edges_layout(substrate_dir: &Path) -> Result<(EdgesLayout, u64, u64)> {
+    let edges_path = substrate_dir.join("substrate.edges");
+    let meta_path = substrate_dir.join("substrate.meta");
+    let dict_path = substrate_dir.join("substrate.dict");
+
+    let file_len = if edges_path.exists() {
+        std::fs::metadata(&edges_path)
+            .with_context(|| format!("stat {}", edges_path.display()))?
+            .len()
+    } else {
+        0
+    };
+    if file_len == 0 {
+        return Ok((EdgesLayout::Empty, 0, 0));
+    }
+
+    // Preferred: `meta.edge_count`. Fallback: `dict.next_edge_id - 1`.
+    // Legacy bases (pre-T17f) have a stale meta header with
+    // `edge_count=0` even when millions of live edges exist. The dict
+    // is authoritative because the slot allocator cannot tolerate
+    // staleness (would corrupt inserts).
+    let meta_edge_count = read_meta_edge_count(&meta_path)?;
+    let edge_count = if meta_edge_count > 0 {
+        meta_edge_count
+    } else if dict_path.exists() {
+        let next_edge_id = read_dict_next_edge_id(&dict_path)?;
+        // `next_edge_id >= 1` is enforced by `DictSnapshot::from_bytes`.
+        // The substrate writes slot 0 (null sentinel) as a zero-filled
+        // record at offset 0, then real edges at slots 1..next_edge_id.
+        // So the file contains `next_edge_id` records total (sentinel
+        // included) — this is the "slots written" count the detector
+        // + rewriter need, NOT `next_edge_id - 1` (which would miss
+        // the sentinel and cause an off-by-one rewrite).
+        let derived = next_edge_id;
+        tracing::warn!(
+            phase = "upgrade_edges_v2::detect",
+            meta_edge_count = meta_edge_count,
+            dict_next_edge_id = next_edge_id,
+            derived_slot_count = derived,
+            "meta.edge_count is stale (known T17f-era meta bug); falling back to \
+             dict.next_edge_id (slot count including null sentinel) for layout detection"
+        );
+        derived
+    } else {
+        0
+    };
+    if edge_count == 0 {
+        // No live edges — no rewrite needed. Default to Post layout
+        // (the current format); the upgrader will short-circuit the
+        // rewrite phase anyway.
+        return Ok((EdgesLayout::Post, file_len, 0));
+    }
+
+    // Content-based stride discrimination, with tail-zero validation.
+    //
+    // Tail-zero alone is not enough: on a small Post file where every
+    // allocated edge has `first_prop_off=0` in the mmap (the DashMap-
+    // only write path that T17f Step 4 left behind for fresh
+    // `set_edge_property` calls), `bytes[n32..n36]` is all zero AND
+    // `bytes[n36..]` is the zone pre-alloc padding — so both a Pre
+    // and a Post interpretation pass a tail-zero check, and Pre wins
+    // by strict-more-restrictive ordering even though the file is
+    // actually Post. This was the exact failure pattern on the
+    // `seed_edge_fixture` tests after the Pre-first swap.
+    //
+    // Canonical discriminator: inspect `bytes[32..36]` when
+    // `edge_count >= 2`. Slot 0 is the null sentinel — always all
+    // zeros in both layouts. So:
+    //   * Pre  file: bytes[32..36] is slot 1's `src` field (u32 LE
+    //                NodeId). Slot 1 is the first real allocated edge;
+    //                its `src` is a real NodeId ≥ 1, so at least one
+    //                of these 4 bytes is nonzero.
+    //   * Post file: bytes[32..36] is the last 4 bytes of the sentinel
+    //                (which spans [0..36]) — always all zeros.
+    //
+    // Nonzero at [32..36] → Pre; all-zero → Post. Tail-zero check is
+    // retained as validation: if the claimed layout picks up stray
+    // nonzero bytes past its zone, the file is corrupt.
+    let bytes = std::fs::read(&edges_path)
+        .with_context(|| format!("read {}", edges_path.display()))?;
+    let file_len_usize = bytes.len();
+
+    let n32 = edge_count as usize * EDGE_RECORD_OLD_STRIDE;
+    let n36 = edge_count as usize * EDGE_RECORD_NEW_STRIDE;
+
+    // A file claiming `edge_count` edges MUST hold at least `n32`
+    // bytes — it's the strictly smaller of the two strides. Anything
+    // smaller is a truncation and we can't safely discriminate.
+    if file_len_usize < n32 {
+        anyhow::bail!(
+            "substrate.edges is {} B, smaller than edge_count={} × min stride \
+             {} B = {} B (file truncated or edge_count is stale beyond recovery)",
+            file_len,
+            edge_count,
+            EDGE_RECORD_OLD_STRIDE,
+            n32,
+        );
+    }
+
+    let is_zero_tail = |offset: usize| -> bool {
+        if offset > file_len_usize {
+            false
+        } else {
+            bytes[offset..].iter().all(|&b| b == 0)
+        }
+    };
+
+    if edge_count < 2 {
+        // Sentinel-only base (no real edges). Nothing discriminable
+        // from the bytes — the sentinel is all zeros in both layouts,
+        // and there's no slot 1 to inspect. Default to Post (the
+        // current format); the upgrader will short-circuit any
+        // rewrite/drain work upstream when there are no real edges.
+        return Ok((EdgesLayout::Post, file_len, edge_count));
+    }
+
+    // Slot 1 occupies bytes[32..64] in Pre and bytes[36..72] in Post.
+    // Bytes[32..36] are the decisive 4-byte window.
+    let slot1_first_word_nonzero = bytes[32..36].iter().any(|&b| b != 0);
+
+    if slot1_first_word_nonzero {
+        // Pre layout claimed. Everything past `n32` must be the zone
+        // pre-allocation tail (all zero). Otherwise the file is
+        // corrupt — most likely a schema mismatch or a partial write.
+        if !is_zero_tail(n32) {
+            anyhow::bail!(
+                "substrate.edges looks like Pre-Step-1 layout (nonzero at \
+                 bytes[32..36], interpreted as slot 1 src) but bytes past \
+                 the 32 B × {} edge boundary ({} B) are not all zero — file \
+                 is corrupt or produced by a foreign format",
+                edge_count,
+                n32,
+            );
+        }
+        return Ok((EdgesLayout::Pre, file_len, edge_count));
+    }
+
+    // Post layout claimed. Need room for the 36 B stride and zone
+    // padding past n36 must be zero.
+    if file_len_usize < n36 {
+        anyhow::bail!(
+            "substrate.edges claims Post layout (bytes[32..36] all zero, \
+             sentinel shape) but is only {} B — smaller than edge_count={} \
+             × {} B = {} B required for Post stride",
+            file_len,
+            edge_count,
+            EDGE_RECORD_NEW_STRIDE,
+            n36,
+        );
+    }
+    if !is_zero_tail(n36) {
+        anyhow::bail!(
+            "substrate.edges looks like Post layout but bytes past the \
+             36 B × {} edge boundary ({} B) are not all zero — file is \
+             corrupt or produced by a foreign format",
+            edge_count,
+            n36,
+        );
+    }
+    Ok((EdgesLayout::Post, file_len, edge_count))
+}
+
+/// Rewrite `substrate.edges` from the pre-Step-1 32 B stride to the
+/// post-Step-1 36 B stride. Writes to a `<dir>/substrate.edges.tmp`
+/// first then renames over the original — so a power loss mid-rewrite
+/// leaves the old file untouched (plus a stray `.tmp` file the next
+/// run can retry over).
+///
+/// `edge_count` is the logical number of edges (as read from
+/// `substrate.meta`). The file may be zero-padded past `edge_count *
+/// 32` due to zone pre-allocation; those bytes are not part of any
+/// record and are dropped on output.
+fn rewrite_edges_32_to_36(edges_path: &Path, edge_count: u64) -> Result<()> {
+    use std::io::{BufWriter, Write};
+
+    let input = std::fs::read(edges_path)
+        .with_context(|| format!("read {}", edges_path.display()))?;
+    let required = (edge_count * EDGE_RECORD_OLD_STRIDE as u64) as usize;
+    anyhow::ensure!(
+        input.len() >= required,
+        "rewrite_edges_32_to_36: input length {} is smaller than expected \
+         {} edges × {} B = {} (file truncated?)",
+        input.len(),
+        edge_count,
+        EDGE_RECORD_OLD_STRIDE,
+        required,
+    );
+
+    let tmp = edges_path.with_extension("edges.tmp");
+    // Clean any leftover `.tmp` from a previous failed run. Safe: we
+    // have the snapshot (unless --no-backup), so worst case operators
+    // restore from `<dir>.bak-<unix_secs>`.
+    if tmp.exists() {
+        std::fs::remove_file(&tmp)
+            .with_context(|| format!("remove stale {}", tmp.display()))?;
+    }
+
+    let out_file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+        .with_context(|| format!("create {}", tmp.display()))?;
+    // Pre-allocate the final size so the BufWriter doesn't bounce the
+    // file size with each flush.
+    out_file
+        .set_len(edge_count * EDGE_RECORD_NEW_STRIDE as u64)
+        .with_context(|| format!("set_len {}", tmp.display()))?;
+    let mut out = BufWriter::with_capacity(8 * 1024 * 1024, out_file);
+
+    // Zero buffers for the inserted 6 B (first_prop_off = 0) and the
+    // trimmed 2 B trailing pad.
+    let first_prop_off_zero = [0u8; 6];
+    let trailing_pad_zero = [0u8; 2];
+
+    let t_start = std::time::Instant::now();
+    let progress_step = (edge_count / 20).max(500_000);
+
+    for i in 0..edge_count as usize {
+        let base = i * EDGE_RECORD_OLD_STRIDE;
+        let old = &input[base..base + EDGE_RECORD_OLD_STRIDE];
+        // Old layout split points:
+        //   [0..24]  src | dst | edge_type | weight | next_from | next_to
+        //   [24..28] ricci | flags | engram_tag
+        //   [28..32] _pad[4]  (discarded)
+        // New layout:
+        //   [0..24]  same as old 0..24
+        //   [24..30] first_prop_off = 0
+        //   [30..34] shifted old [24..28]
+        //   [34..36] _pad[2] = 0
+        out.write_all(&old[0..24])
+            .with_context(|| format!("write prefix of edge {i}"))?;
+        out.write_all(&first_prop_off_zero)
+            .with_context(|| format!("write first_prop_off of edge {i}"))?;
+        out.write_all(&old[24..28])
+            .with_context(|| format!("write tail of edge {i}"))?;
+        out.write_all(&trailing_pad_zero)
+            .with_context(|| format!("write pad of edge {i}"))?;
+
+        if progress_step > 0 && i > 0 && i % progress_step as usize == 0 {
+            tracing::info!(
+                phase = "upgrade_edges_v2::rewrite",
+                progress_pct = (i as u64 * 100 / edge_count),
+                edges_rewritten = i,
+                elapsed_ms = t_start.elapsed().as_millis() as u64,
+                "rewriting substrate.edges 32 B → 36 B"
+            );
+        }
+    }
+
+    let mut out_file = out
+        .into_inner()
+        .map_err(|e| anyhow::anyhow!("flush BufWriter on {}: {e}", tmp.display()))?;
+    out_file.flush().with_context(|| format!("flush {}", tmp.display()))?;
+    out_file
+        .sync_all()
+        .with_context(|| format!("fsync {}", tmp.display()))?;
+    drop(out_file);
+
+    std::fs::rename(&tmp, edges_path).with_context(|| {
+        format!("rename {} → {}", tmp.display(), edges_path.display())
+    })?;
+
+    tracing::info!(
+        phase = "upgrade_edges_v2::rewrite",
+        edges_rewritten = edge_count,
+        elapsed_ms = t_start.elapsed().as_millis() as u64,
+        "substrate.edges rewrite complete (32 B → 36 B stride)"
+    );
+    Ok(())
+}
+
+/// Backward-compat shim — delegates to [`upgrade_edges_v2_with_opts`]
+/// with default options (dry-run OFF, snapshot ON).
+#[allow(dead_code)]
+pub fn upgrade_edges_v2(substrate_dir: &Path) -> Result<()> {
+    upgrade_edges_v2_with_opts(substrate_dir, &UpgradeEdgesV2Opts::default())
+}
+
+pub fn upgrade_edges_v2_with_opts(
+    substrate_dir: &Path,
+    opts: &UpgradeEdgesV2Opts,
+) -> Result<()> {
+    if !substrate_dir.exists() {
+        anyhow::bail!(
+            "upgrade-edges-v2 target does not exist: {}",
+            substrate_dir.display()
+        );
+    }
+
+    let edges_path = substrate_dir.join("substrate.edges");
+    let (layout, edges_bytes, edge_count) = detect_edges_layout(substrate_dir)?;
+
+    let edge_sidecar_path = substrate_dir.join("substrate.edge_props");
+    let sidecar_bytes = std::fs::metadata(&edge_sidecar_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
+
+    tracing::info!(
+        "obrain-migrate --upgrade-edges-v2: opening {} (substrate.edges={} MiB, \
+         layout={:?}, edge_count={}, substrate.edge_props={} MiB, dry_run={}, \
+         skip_backup={})",
+        substrate_dir.display(),
+        edges_bytes / (1024 * 1024),
+        layout,
+        edge_count,
+        sidecar_bytes / (1024 * 1024),
+        opts.dry_run,
+        opts.skip_backup,
+    );
+
+    // Dry-run path — no writes, just introspection. We skip opening
+    // the store on a `Pre` base because the current bytemuck casts
+    // assume 36 B stride; a `Pre` base would bail at open with a
+    // stride error. The file-size-derived `edge_count` is enough for
+    // the rehearsal.
+    if opts.dry_run {
+        match layout {
+            EdgesLayout::Empty => {
+                tracing::info!(
+                    "upgrade-edges-v2 DRY-RUN: substrate.edges is empty. \
+                     Nothing to do."
+                );
+            }
+            EdgesLayout::Pre => {
+                tracing::info!(
+                    "upgrade-edges-v2 DRY-RUN: detected PRE-Step-1 layout. \
+                     Would rewrite {} edges × 32 B → 36 B ({} MiB → {} MiB), \
+                     then drain {} MiB of substrate.edge_props into the \
+                     PropsZone v2 edge chain. No writes performed.",
+                    edge_count,
+                    edges_bytes / (1024 * 1024),
+                    (edge_count * EDGE_RECORD_NEW_STRIDE as u64) / (1024 * 1024),
+                    sidecar_bytes / (1024 * 1024),
+                );
+            }
+            EdgesLayout::Post => {
+                // Safe to open the store on a post-Step-1 base to get
+                // the exact edge-property-map count.
+                let store = SubstrateStore::open(substrate_dir)
+                    .with_context(|| format!("open {}", substrate_dir.display()))?;
+                let edges_pending = store.edge_properties_count().unwrap_or(0);
+                tracing::info!(
+                    "upgrade-edges-v2 DRY-RUN: substrate.edges already at \
+                     36 B stride ({} edges). Would drain {} edge-property \
+                     maps ({} MiB sidecar) into the PropsZone v2 edge chain. \
+                     No writes performed.",
+                    edge_count,
+                    edges_pending,
+                    sidecar_bytes / (1024 * 1024),
+                );
+                drop(store);
+            }
+        }
+        return Ok(());
+    }
+
+    // Real run — snapshot first (unless opted out), then rewrite (if
+    // needed), then drain.
+    if !opts.skip_backup {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs().to_string())
+            .unwrap_or_else(|_| "unknown".to_string());
+        let backup = substrate_dir.with_file_name(format!(
+            "{}.bak-{}",
+            substrate_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("substrate"),
+            suffix
+        ));
+        tracing::info!(
+            "upgrade-edges-v2 snapshot: {} → {}",
+            substrate_dir.display(),
+            backup.display()
+        );
+        copy_dir_recursive(substrate_dir, &backup).with_context(|| {
+            format!(
+                "snapshot {} → {}",
+                substrate_dir.display(),
+                backup.display()
+            )
+        })?;
+    }
+
+    // Phase 1 — rewrite `substrate.edges` to 36 B stride if needed.
+    match layout {
+        EdgesLayout::Empty => {
+            tracing::info!(
+                "upgrade-edges-v2: substrate.edges is empty, nothing to \
+                 rewrite. Sidecar size: {} B.",
+                sidecar_bytes
+            );
+            // Still delete an empty-base stray sidecar if present, for
+            // parity with the post-drain cleanup path.
+            if sidecar_bytes > 0 {
+                std::fs::remove_file(&edge_sidecar_path).with_context(|| {
+                    format!("remove {}", edge_sidecar_path.display())
+                })?;
+                tracing::info!(
+                    "upgrade-edges-v2: removed {} B empty-base edge sidecar",
+                    sidecar_bytes
+                );
+            }
+            return Ok(());
+        }
+        EdgesLayout::Pre => {
+            rewrite_edges_32_to_36(&edges_path, edge_count)?;
+        }
+        EdgesLayout::Post => {
+            tracing::info!(
+                "upgrade-edges-v2: substrate.edges already at 36 B stride, \
+                 skipping rewrite phase."
+            );
+        }
+    }
+
+    // Phase 2 — open store with PropsZone v2 forced on, drain, delete.
+    let prev_env = std::env::var("OBRAIN_PROPS_V2").ok();
+    // SAFETY: single-threaded up to SubstrateStore::open; the env var
+    // is only read at open time.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var("OBRAIN_PROPS_V2", "1");
+    }
+    let restore_env = EnvRestorer { prev: prev_env };
+
+    let store = SubstrateStore::open(substrate_dir)
+        .with_context(|| format!("open {}", substrate_dir.display()))?;
+
+    if !store.props_v2_enabled() {
+        anyhow::bail!(
+            "upgrade-edges-v2: PropsZone v2 failed to initialise — check \
+             OBRAIN_PROPS_V2 env pass-through or filesystem permissions"
+        );
+    }
+
+    let stats = store
+        .finalize_edge_props_v2()
+        .context("finalize_edge_props_v2 drain")?;
+    tracing::info!(
+        "upgrade-edges-v2 drain: {} edges processed, {} scalars emitted, \
+         {} v2 pages allocated",
+        stats.edges_processed,
+        stats.scalars_emitted,
+        store.props_v2_page_count().unwrap_or(0),
+    );
+
+    store
+        .flush()
+        .context("flush after finalize_edge_props_v2 drain")?;
+
+    let freed = store
+        .delete_edge_props_sidecar()
+        .context("delete edge sidecar")?;
+    drop(store);
+    drop(restore_env);
+
+    tracing::info!(
+        "obrain-migrate --upgrade-edges-v2: done. substrate.edge_props: {} MiB \
+         → 0 MiB ({} MiB freed).",
+        sidecar_bytes / (1024 * 1024),
+        freed.unwrap_or(0) / (1024 * 1024),
+    );
+    Ok(())
+}
+
 pub fn finalize(substrate_dir: &Path) -> Result<()> {
     if !substrate_dir.exists() {
         anyhow::bail!(
@@ -1650,6 +2223,427 @@ mod tests {
         assert!(
             super::finalize(&missing).is_err(),
             "finalize should return Err on a missing path"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // T17f Step 5 — `--upgrade-edges-v2` integration tests.
+    //
+    // The fixture builds a real post-Step-1 substrate base via the public
+    // `SubstrateStore` API, writes a handful of edge properties, and
+    // persists the sidecar. Tests then either:
+    //   * exercise the dry-run path (no side effects), or
+    //   * downgrade the edges file to 32 B stride to simulate a
+    //     pre-Step-1 base before calling the upgrader.
+    //
+    // The downgrade helper is the inverse of `rewrite_edges_32_to_36`;
+    // keeping the round-trip guarantees the transform is byte-exact.
+    // -----------------------------------------------------------------------
+
+    use std::path::Path as _TestPath;
+
+    /// Seed a substrate at `dir` with 3 nodes + 2 edges + edge props, flush,
+    /// persist the edge sidecar so it materialises on disk.
+    ///
+    /// Returns the expected (edge_id, [(key, value)]) pairs so the caller
+    /// can verify round-trip after the upgrade.
+    fn seed_edge_fixture(
+        dir: &_TestPath,
+    ) -> (
+        EdgeId,
+        EdgeId,
+        Vec<(PropertyKey, Value)>,
+        Vec<(PropertyKey, Value)>,
+    ) {
+        use obrain_core::graph::traits::GraphStoreMut;
+        use obrain_substrate::SubstrateStore;
+
+        let store = SubstrateStore::create(dir).expect("substrate create");
+
+        let a = store.create_node(&["Person"]);
+        let b = store.create_node(&["Person"]);
+        let c = store.create_node(&["Org"]);
+
+        let e1 = store.create_edge(a, b, "KNOWS");
+        let e2 = store.create_edge(a, c, "WORKS_AT");
+
+        store.set_edge_property(e1, "since", Value::Int64(2019));
+        store.set_edge_property(e1, "strength", Value::Float64(0.85));
+        store.set_edge_property(e2, "role", Value::String("Engineer".into()));
+
+        // Force the sidecar to materialise on disk — the upgrader's
+        // open-path hydrates it back into the DashMap.
+        store
+            .persist_edge_properties_sidecar()
+            .expect("persist edge sidecar");
+        store.flush().expect("flush");
+        drop(store);
+
+        let e1_props = vec![
+            (PropertyKey::from("since"), Value::Int64(2019)),
+            (PropertyKey::from("strength"), Value::Float64(0.85)),
+        ];
+        let e2_props = vec![(
+            PropertyKey::from("role"),
+            Value::String("Engineer".into()),
+        )];
+        (e1, e2, e1_props, e2_props)
+    }
+
+    /// Inverse of `rewrite_edges_32_to_36` — for the first `edge_count`
+    /// records, strips bytes 24..30 (the `first_prop_off` field) and
+    /// re-emits 4 B of trailing pad. Used to synthesise a pre-Step-1
+    /// base for test.
+    ///
+    /// Substrate zones are exponentially pre-allocated (aligned to 4 KiB),
+    /// so the input file will typically be much larger than
+    /// `edge_count * 36` — the remainder is zone padding. We only need
+    /// `edge_count` to locate the real records; the emitted Pre file
+    /// is sized to exactly `edge_count * 32` (the rewrite_edges_32_to_36
+    /// input expects `file_len >= edge_count * 32`, so this is a valid
+    /// minimal Pre base).
+    fn downgrade_edges_to_32b(edges_path: &_TestPath, edge_count: usize) {
+        let input = std::fs::read(edges_path).expect("read edges");
+        let logical_bytes = edge_count * 36;
+        assert!(
+            input.len() >= logical_bytes,
+            "downgrade precondition: file must hold at least {} B for \
+             {} Post records, got {} B",
+            logical_bytes,
+            edge_count,
+            input.len()
+        );
+        let mut out = Vec::with_capacity(edge_count * 32);
+        for i in 0..edge_count {
+            let base = i * 36;
+            let rec = &input[base..base + 36];
+            // Copy 0..24 (src..next_to)
+            out.extend_from_slice(&rec[0..24]);
+            // Skip 24..30 (the inserted first_prop_off)
+            // Copy 30..34 (ricci, flags, engram_tag)
+            out.extend_from_slice(&rec[30..34]);
+            // Emit 4 zero bytes of trailing pad (pre-layout had [u8; 4]).
+            out.extend_from_slice(&[0u8; 4]);
+        }
+        assert_eq!(out.len(), edge_count * 32);
+        std::fs::write(edges_path, &out).expect("write downgraded edges");
+    }
+
+    fn assert_edge_props_visible(
+        dir: &_TestPath,
+        e1: EdgeId,
+        e2: EdgeId,
+        e1_props: &[(PropertyKey, Value)],
+        e2_props: &[(PropertyKey, Value)],
+    ) {
+        use obrain_core::graph::traits::GraphStore;
+        use obrain_substrate::SubstrateStore;
+
+        let store = SubstrateStore::open(dir).expect("reopen substrate");
+        for (k, want) in e1_props {
+            let got = store
+                .get_edge_property(e1, k)
+                .unwrap_or_else(|| panic!("edge e1 prop {k:?} missing after upgrade"));
+            assert_eq!(&got, want, "edge e1 prop {k:?} mismatch");
+        }
+        for (k, want) in e2_props {
+            let got = store
+                .get_edge_property(e2, k)
+                .unwrap_or_else(|| panic!("edge e2 prop {k:?} missing after upgrade"));
+            assert_eq!(&got, want, "edge e2 prop {k:?} mismatch");
+        }
+        drop(store);
+    }
+
+    #[test]
+    fn upgrade_edges_v2_dry_run_on_post_step1_base_is_readonly() {
+        let td = tempfile::tempdir().unwrap();
+        let subs = td.path().join("subs");
+        std::fs::create_dir_all(&subs).unwrap();
+
+        let (_e1, _e2, _, _) = seed_edge_fixture(&subs);
+
+        let edges_path = subs.join("substrate.edges");
+        let sidecar_path = subs.join("substrate.edge_props");
+        let edges_before = std::fs::read(&edges_path).unwrap();
+        let sidecar_before = std::fs::read(&sidecar_path).unwrap();
+        assert!(
+            !sidecar_before.is_empty(),
+            "sidecar should have been persisted"
+        );
+
+        super::upgrade_edges_v2_with_opts(
+            &subs,
+            &super::UpgradeEdgesV2Opts {
+                dry_run: true,
+                skip_backup: true,
+            },
+        )
+        .expect("dry-run upgrade");
+
+        let edges_after = std::fs::read(&edges_path).unwrap();
+        let sidecar_after = std::fs::read(&sidecar_path).unwrap();
+        assert_eq!(
+            edges_before, edges_after,
+            "edges file must not be touched during dry-run"
+        );
+        assert_eq!(
+            sidecar_before, sidecar_after,
+            "sidecar must not be touched during dry-run"
+        );
+    }
+
+    #[test]
+    fn upgrade_edges_v2_real_run_on_post_step1_base_drains_sidecar() {
+        let td = tempfile::tempdir().unwrap();
+        let subs = td.path().join("subs");
+        std::fs::create_dir_all(&subs).unwrap();
+
+        let (e1, e2, e1_props, e2_props) = seed_edge_fixture(&subs);
+        let edges_path = subs.join("substrate.edges");
+        let sidecar_path = subs.join("substrate.edge_props");
+        let edges_before = std::fs::read(&edges_path).unwrap();
+        assert!(sidecar_path.exists(), "sidecar should exist before upgrade");
+
+        super::upgrade_edges_v2_with_opts(
+            &subs,
+            &super::UpgradeEdgesV2Opts {
+                dry_run: false,
+                skip_backup: true,
+            },
+        )
+        .expect("real-run upgrade on post-Step-1 base");
+
+        let edges_after = std::fs::read(&edges_path).unwrap();
+        // The drain phase updates `first_prop_off` in-place for every
+        // edge that had sidecar properties (it's the whole point of
+        // PropsZone v2 — point each edge at its chain head). So the
+        // edges file is NOT byte-identical. What MUST be preserved:
+        //   * overall file length (no rewrite, no resize)
+        //   * structural prefix [0..24] of every record (src..next_to)
+        //   * structural tail [30..34] of every record (ricci..engram_tag)
+        //   * padding beyond `edge_count * 36`
+        // And bytes [24..30] MAY differ (first_prop_off got populated).
+        assert_eq!(
+            edges_before.len(),
+            edges_after.len(),
+            "edges file length must not change on a pure-drain Post upgrade"
+        );
+        // 3 slots: sentinel + 2 edges.
+        let edge_count: usize = 3;
+        for i in 0..edge_count {
+            let base = i * super::EDGE_RECORD_NEW_STRIDE;
+            assert_eq!(
+                &edges_before[base..base + 24],
+                &edges_after[base..base + 24],
+                "edge {i}: 0..24 prefix must not change"
+            );
+            assert_eq!(
+                &edges_before[base + 30..base + 34],
+                &edges_after[base + 30..base + 34],
+                "edge {i}: 30..34 tail must not change"
+            );
+        }
+        // Zone padding past the logical records must remain zero
+        // (bytes past edge_count * 36 B are zone pre-alloc slack).
+        let padding_start = edge_count * super::EDGE_RECORD_NEW_STRIDE;
+        assert!(
+            edges_after[padding_start..].iter().all(|&b| b == 0),
+            "zone padding past n36 must remain all-zero after drain"
+        );
+        assert!(
+            !sidecar_path.exists(),
+            "substrate.edge_props must be deleted after drain"
+        );
+
+        // Props still visible via PropsZone v2 edge chain on reopen.
+        assert_edge_props_visible(&subs, e1, e2, &e1_props, &e2_props);
+    }
+
+    #[test]
+    fn upgrade_edges_v2_rewrites_pre_step1_base_and_drains() {
+        let td = tempfile::tempdir().unwrap();
+        let subs = td.path().join("subs");
+        std::fs::create_dir_all(&subs).unwrap();
+
+        let (e1, e2, e1_props, e2_props) = seed_edge_fixture(&subs);
+        let edges_path = subs.join("substrate.edges");
+        let sidecar_path = subs.join("substrate.edge_props");
+
+        // Capture 36 B layout for round-trip verification. The
+        // substrate zone is exponentially pre-allocated, so the file
+        // is much larger than `edge_count * 36` — we care only about
+        // the first `edge_count` records. edge_count is known from
+        // the fixture: 1 sentinel + 2 real edges = 3 slots.
+        let edges_36_before = std::fs::read(&edges_path).unwrap();
+        let edge_count: usize = 3;
+        assert!(
+            edges_36_before.len() >= edge_count * super::EDGE_RECORD_NEW_STRIDE,
+            "fixture must hold at least {} B of Post records, got {} B",
+            edge_count * super::EDGE_RECORD_NEW_STRIDE,
+            edges_36_before.len()
+        );
+
+        // Downgrade edges → pretend we're a pre-Step-1 base (exactly
+        // `edge_count * 32` B, minimum valid Pre file).
+        downgrade_edges_to_32b(&edges_path, edge_count);
+        let edges_32 = std::fs::read(&edges_path).unwrap();
+        assert_eq!(
+            edges_32.len(),
+            edge_count * super::EDGE_RECORD_OLD_STRIDE,
+            "downgrade must leave the file at 32 B stride"
+        );
+
+        super::upgrade_edges_v2_with_opts(
+            &subs,
+            &super::UpgradeEdgesV2Opts {
+                dry_run: false,
+                skip_backup: true,
+            },
+        )
+        .expect("real-run upgrade on pre-Step-1 base");
+
+        let edges_after = std::fs::read(&edges_path).unwrap();
+        // The rewrite path sizes the tmp file to exactly
+        // `edge_count * 36` B and renames it over the original. The
+        // open + drain phase then mmaps it at that size and writes
+        // `first_prop_off` in-place — the file size is preserved.
+        assert!(
+            edges_after.len() >= edge_count * super::EDGE_RECORD_NEW_STRIDE,
+            "edges must hold at least {} B after upgrade, got {}",
+            edge_count * super::EDGE_RECORD_NEW_STRIDE,
+            edges_after.len()
+        );
+
+        // Structural prefix (src..next_to) and tail (ricci..engram_tag)
+        // must survive the round trip. first_prop_off may be rewritten
+        // by the drain path and is NOT compared here.
+        for i in 0..edge_count {
+            let base = i * super::EDGE_RECORD_NEW_STRIDE;
+            assert_eq!(
+                &edges_36_before[base..base + 24],
+                &edges_after[base..base + 24],
+                "edge {i}: 0..24 prefix mismatch after downgrade→upgrade round trip"
+            );
+            assert_eq!(
+                &edges_36_before[base + 30..base + 34],
+                &edges_after[base + 30..base + 34],
+                "edge {i}: 30..34 tail mismatch after downgrade→upgrade round trip"
+            );
+        }
+
+        assert!(
+            !sidecar_path.exists(),
+            "substrate.edge_props must be deleted after drain"
+        );
+        assert_edge_props_visible(&subs, e1, e2, &e1_props, &e2_props);
+    }
+
+    #[test]
+    fn upgrade_edges_v2_takes_snapshot_by_default() {
+        let td = tempfile::tempdir().unwrap();
+        let subs = td.path().join("subs");
+        std::fs::create_dir_all(&subs).unwrap();
+
+        let (_e1, _e2, _, _) = seed_edge_fixture(&subs);
+        let edges_before = std::fs::read(subs.join("substrate.edges")).unwrap();
+
+        super::upgrade_edges_v2_with_opts(
+            &subs,
+            &super::UpgradeEdgesV2Opts {
+                dry_run: false,
+                skip_backup: false,
+            },
+        )
+        .expect("upgrade with snapshot");
+
+        let parent = td.path();
+        let mut backups: Vec<_> = std::fs::read_dir(parent)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n.starts_with("subs.bak-"))
+                    .unwrap_or(false)
+            })
+            .collect();
+        backups.sort();
+        assert_eq!(
+            backups.len(),
+            1,
+            "exactly one snapshot directory should exist, got {:?}",
+            backups
+        );
+        let backup_edges = std::fs::read(backups[0].join("substrate.edges")).unwrap();
+        assert_eq!(
+            edges_before, backup_edges,
+            "snapshot must preserve pre-upgrade substrate.edges"
+        );
+    }
+
+    #[test]
+    fn upgrade_edges_v2_bails_on_truncated_edges_file() {
+        let td = tempfile::tempdir().unwrap();
+        let subs = td.path().join("subs");
+        std::fs::create_dir_all(&subs).unwrap();
+
+        // Seed a valid Post base (108 B for 3 slots), then truncate the
+        // edges file below `edge_count × 32` B (= 96 B). Neither stride
+        // can be accommodated — the detector must bail. A truncation
+        // is the canonical "corrupt base" the operator should see
+        // flagged (e.g. interrupted rsync, bad drive write).
+        let (_e1, _e2, _, _) = seed_edge_fixture(&subs);
+        let edges_path = subs.join("substrate.edges");
+        let mut bytes = std::fs::read(&edges_path).unwrap();
+        bytes.truncate(50); // < 3 × 32 = 96 B minimum
+        std::fs::write(&edges_path, &bytes).unwrap();
+
+        let err = super::upgrade_edges_v2_with_opts(
+            &subs,
+            &super::UpgradeEdgesV2Opts {
+                dry_run: true,
+                skip_backup: true,
+            },
+        )
+        .expect_err("upgrade must bail on truncated edges file");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("truncated") || msg.contains("smaller than"),
+            "expected truncation-error message, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn upgrade_edges_v2_bails_on_nonzero_tail() {
+        // Same idea but with trailing non-zero garbage: a valid Post
+        // base with a handful of non-zero bytes written past `n36`.
+        // The tail-zero validation must flag this as corrupt even
+        // though the content discriminator correctly identifies Post.
+        let td = tempfile::tempdir().unwrap();
+        let subs = td.path().join("subs");
+        std::fs::create_dir_all(&subs).unwrap();
+
+        let (_e1, _e2, _, _) = seed_edge_fixture(&subs);
+        let edges_path = subs.join("substrate.edges");
+        let mut bytes = std::fs::read(&edges_path).unwrap();
+        // 108 B + 7 bytes of NON-ZERO garbage — sentinel of corruption.
+        bytes.extend_from_slice(&[0xAB, 0xCD, 0xEF, 0x01, 0x02, 0x03, 0x04]);
+        std::fs::write(&edges_path, &bytes).unwrap();
+
+        let err = super::upgrade_edges_v2_with_opts(
+            &subs,
+            &super::UpgradeEdgesV2Opts {
+                dry_run: true,
+                skip_backup: true,
+            },
+        )
+        .expect_err("upgrade must bail on non-zero tail past n36");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("not all zero") || msg.contains("corrupt"),
+            "expected corruption-error message, got: {msg}"
         );
     }
 }

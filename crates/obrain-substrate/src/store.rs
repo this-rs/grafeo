@@ -435,6 +435,21 @@ pub struct PropsV2FinalizeStats {
     pub edge_sidecar_bytes: u64,
 }
 
+/// Result of [`SubstrateStore::finalize_edge_props_v2`] (T17f Step 5).
+/// Parallel to [`PropsV2FinalizeStats`] but edge-chain focused — the
+/// drain writes scalars onto the per-edge v2 chain (addressed by
+/// `EdgeRecord.first_prop_off`) rather than the sidecar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EdgePropsV2FinalizeStats {
+    /// Number of edges whose DashMap entry was re-emitted through
+    /// the v2 edge-chain path. Equals the number of edges with at
+    /// least one scalar property on entry.
+    pub edges_processed: usize,
+    /// Total number of `set_edge_property` calls made — roughly the
+    /// number of `(edge, key)` pairs on the v2 chain afterward.
+    pub scalars_emitted: usize,
+}
+
 // ---------------------------------------------------------------------------
 // SubstrateStore
 // ---------------------------------------------------------------------------
@@ -1560,6 +1575,123 @@ impl SubstrateStore {
             "PropsZone v2 migration complete"
         );
         Ok(stats)
+    }
+
+    /// T17f Step 5 — drain the in-memory `edge_properties` DashMap into
+    /// the PropsZone v2 **edge** chain via the Step 4 route
+    /// (`set_edge_property` → `append_scalar_to_props_zone_v2_edge`).
+    ///
+    /// Pre-T17f bases keep edge scalars in `substrate.edge_props` (the
+    /// T17c Step 6 dedicated sidecar). At open time, `load_properties`
+    /// hydrates them into `edge_properties`. This method re-emits every
+    /// `(edge, key)` pair through the public setter, so after a
+    /// subsequent flush the same values live on the per-edge v2 chain
+    /// addressed by `EdgeRecord.first_prop_off`. The caller (typically
+    /// `obrain-migrate --upgrade-edges-v2`) is then responsible for
+    /// deleting the now-redundant sidecar via
+    /// [`Self::delete_edge_props_sidecar`].
+    ///
+    /// Contract:
+    /// - v2 must be enabled (`OBRAIN_PROPS_V2=1` at open time, or the
+    ///   v2 zone files already present). Otherwise returns `Err`.
+    /// - `set_edge_property` routes `Value::Vector` and oversized
+    ///   blobs to their own columns; scalars land on the edge chain.
+    /// - Tombstoned or deleted edges are silently skipped (the
+    ///   `is_live_edge_on_disk` gate inside `set_edge_property`).
+    /// - The DashMap is left populated — the dual-write contract keeps
+    ///   reads fast during the remainder of the session. The next open
+    ///   sees the deleted sidecar and falls back cleanly to the v2
+    ///   chain (via `lookup_edge_property_v2`).
+    ///
+    /// Returns the number of edges touched and scalars re-emitted.
+    pub fn finalize_edge_props_v2(
+        &self,
+    ) -> SubstrateResult<EdgePropsV2FinalizeStats> {
+        if !self.props_v2_enabled() {
+            return Err(SubstrateError::Internal(
+                "finalize_edge_props_v2 called without PropsZone v2 enabled \
+                 (set OBRAIN_PROPS_V2=1 before SubstrateStore::open)"
+                    .to_string(),
+            ));
+        }
+
+        // Snapshot the DashMap into a Vec so we can mutate edge_properties
+        // through set_edge_property without holding an iterator.
+        let snapshot: Vec<(EdgeId, Vec<(String, Value)>)> = self
+            .edge_properties
+            .iter()
+            .map(|entry| {
+                let eid = *entry.key();
+                let pairs: Vec<(String, Value)> = entry
+                    .value()
+                    .iter()
+                    .map(|(k, v)| (k.as_str().to_string(), v.clone()))
+                    .collect();
+                (eid, pairs)
+            })
+            .collect();
+
+        let t_start = std::time::Instant::now();
+        let edges_total = snapshot.len();
+        let mut stats = EdgePropsV2FinalizeStats::default();
+        for (idx, (eid, pairs)) in snapshot.into_iter().enumerate() {
+            for (k, v) in pairs {
+                // set_edge_property routes scalars through
+                // append_scalar_to_props_zone_v2_edge when v2 is
+                // enabled. Vector/blob payloads are silently routed
+                // to their dedicated columns.
+                self.set_edge_property(eid, &k, v);
+                stats.scalars_emitted += 1;
+            }
+            stats.edges_processed += 1;
+            let decade_step = (edges_total / 10).max(100_000);
+            if decade_step > 0 && idx > 0 && idx % decade_step == 0 {
+                tracing::info!(
+                    phase = "finalize_edge_props_v2",
+                    progress_pct = (idx * 100 / edges_total),
+                    edges_processed = stats.edges_processed,
+                    scalars_emitted = stats.scalars_emitted,
+                    elapsed_ms = t_start.elapsed().as_millis() as u64,
+                    "draining edge sidecar → v2 edge chain"
+                );
+            }
+        }
+
+        tracing::info!(
+            phase = "finalize_edge_props_v2",
+            edges_processed = stats.edges_processed,
+            scalars_emitted = stats.scalars_emitted,
+            v2_pages_allocated = self.props_v2_page_count().unwrap_or(0),
+            elapsed_ms = t_start.elapsed().as_millis() as u64,
+            "edge props v2 drain complete"
+        );
+        Ok(stats)
+    }
+
+    /// Delete the dedicated edge sidecar (`substrate.edge_props`), if
+    /// present. Called by the T17f migration tool AFTER
+    /// [`Self::finalize_edge_props_v2`] + [`Self::flush`] have
+    /// successfully drained the DashMap to the v2 edge chain.
+    ///
+    /// Returns the size of the deleted file (0 when nothing was there).
+    pub fn delete_edge_props_sidecar(&self) -> SubstrateResult<Option<u64>> {
+        let path = self.edge_props_sidecar_path();
+        if !path.exists() {
+            return Ok(None);
+        }
+        let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        std::fs::remove_file(&path).map_err(|e| {
+            SubstrateError::Internal(format!(
+                "delete_edge_props_sidecar: remove {} failed: {e}",
+                path.display()
+            ))
+        })?;
+        tracing::info!(
+            sidecar_bytes_freed = size,
+            path = %path.display(),
+            "edge-only substrate.edge_props sidecar deleted"
+        );
+        Ok(Some(size))
     }
 
     /// T17c Step 3b.2b: encode `value` via the props codec, append a

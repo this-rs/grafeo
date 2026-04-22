@@ -121,7 +121,9 @@ pub use props_snapshot::{PropertiesSnapshotV1, PropertiesStreamingWriter, PROPS_
 pub use props_zone::{
     decode_page_id, encode_page_id, PropsZone, PROPS_HEAP_V2_FILENAME, PROPS_V2_FILENAME,
 };
-pub use store::{PropsV2FinalizeStats, SubstrateStore, SKIP_ON_LOAD_PROP_KEYS};
+pub use store::{
+    EdgePropsV2FinalizeStats, PropsV2FinalizeStats, SubstrateStore, SKIP_ON_LOAD_PROP_KEYS,
+};
 pub use warden::{
     CommunityFragmentation, CommunityWarden, FragmentationReport, DEFAULT_FRAGMENTATION_TRIGGER,
 };
