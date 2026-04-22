@@ -23,7 +23,7 @@ use std::sync::OnceLock;
 use obrain_common::types::{EdgeId, NodeId, PropertyKey, Value};
 use obrain_common::utils::error::Result;
 use obrain_core::graph::lpg::LpgStore;
-use obrain_core::graph::{Direction, GraphStore};
+use obrain_core::graph::{Direction, GraphStore, GraphStoreMut};
 
 use super::super::{AlgorithmResult, ParameterDef, ParameterType, Parameters};
 use super::traits::GraphAlgorithm;
@@ -135,7 +135,7 @@ pub struct ContractionResult {
 ///
 /// O(V_sub + E_sub + E_external)
 pub fn contract_subgraph(
-    store: &LpgStore,
+    store: &dyn GraphStoreMut,
     node_ids: &[NodeId],
     config: &ContractionConfig,
 ) -> Result<ContractionResult> {
@@ -326,9 +326,19 @@ pub fn contract_subgraph(
 /// Restores all original nodes, internal edges, and external edges from the
 /// [`ContractionSnapshot`], then deletes the super-node.
 ///
+/// # Store binding
+///
+/// Unlike [`contract_subgraph`] and [`contract_by_communities`] (which take
+/// `&dyn GraphStoreMut`), this function is bound to `&LpgStore` because it
+/// needs [`LpgStore::create_node_with_id`] to restore the original node IDs
+/// recorded in the snapshot. `GraphStoreMut::create_node` assigns a fresh
+/// ID on every call, which would break external references to the snapshotted
+/// nodes. Adding `create_node_with_id` to the trait (and implementing it on
+/// `SubstrateStore`) is tracked as T17 W3/W4 follow-up.
+///
 /// # Arguments
 ///
-/// * `store` - The graph store
+/// * `store` - The graph store (LpgStore — see note above)
 /// * `supernode_id` - The super-node to expand
 /// * `snapshot` - Snapshot from the original contraction
 ///
@@ -413,7 +423,7 @@ pub fn expand_supernode(
 ///
 /// O(V + E)
 pub fn contract_by_communities(
-    store: &LpgStore,
+    store: &dyn GraphStoreMut,
     communities: &HashMap<NodeId, u64>,
     config: &ContractionConfig,
 ) -> Result<Vec<ContractionResult>> {
