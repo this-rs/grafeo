@@ -778,6 +778,30 @@ fn apply(
             Ok(Applied::Yes)
         }
 
+        WalPayload::EdgePropHeadUpdate {
+            edge_idx,
+            first_prop_off,
+        } => {
+            if edges.is_none() {
+                *edges = Some(substrate.open_zone(Zone::Edges)?);
+            }
+            let zf = edges.as_mut().unwrap();
+            let record_offset = (*edge_idx as usize) * EdgeRecord::SIZE;
+            let field_offset = record_offset + EdgeRecord::FIRST_PROP_OFF_BYTES;
+            if field_offset + 6 > zf.as_slice().len() {
+                // Slot not yet materialised — the matching EdgeInsert has
+                // not been replayed yet, so there is nothing to anchor this
+                // head pointer to. Tolerated as a no-op here; a later
+                // EdgePropHeadUpdate record (records are replayed in LSN
+                // order) re-applies on the now-materialised slot.
+                return Ok(Applied::Yes);
+            }
+            let u48 = U48::from_u64(*first_prop_off);
+            zf.as_slice_mut()[field_offset..field_offset + 6]
+                .copy_from_slice(&u48.0);
+            Ok(Applied::Yes)
+        }
+
         // Markers — no mutation.
         WalPayload::NoOp | WalPayload::EndOfLog | WalPayload::Checkpoint { .. } => {
             Ok(Applied::Yes)

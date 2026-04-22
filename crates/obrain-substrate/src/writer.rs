@@ -352,6 +352,62 @@ impl Writer {
         })
     }
 
+    /// Update only the `first_prop_off` head pointer of the edge at `idx`
+    /// (T17f Step 3). Logs a [`WalPayload::EdgePropHeadUpdate`] before
+    /// mutating the 6-byte `first_prop_off` slice at byte offset
+    /// [`EdgeRecord::FIRST_PROP_OFF_BYTES`] (= 24) within the record — the
+    /// rest of the `EdgeRecord` is left untouched.
+    ///
+    /// This is the WAL-first primitive used by `SubstrateStore` when the v2
+    /// props zone re-anchors an edge's property chain (insert at head of
+    /// linked list). Replay re-applies the same 6 bytes idempotently.
+    ///
+    /// Silently no-ops if the slot is beyond the current zone length — the
+    /// caller has asked to update the head pointer of an edge that does not
+    /// yet exist in the edges zone, which is always a bug, but we prefer to
+    /// let the WAL-only record stand rather than panic (replay will rebuild
+    /// the slot when the matching `EdgeInsert` arrives).
+    ///
+    /// Mirrors [`Writer::update_node_first_prop_off`] for edges — the only
+    /// differences are the WAL payload variant, the record stride
+    /// ([`EdgeRecord::SIZE`] vs [`NodeRecord::SIZE`]), and the field offset
+    /// within the record (24 vs 14).
+    #[tracing::instrument(level = "trace", skip(self))]
+    pub fn update_edge_first_prop_off(
+        &self,
+        idx: u32,
+        new_head: U48,
+    ) -> SubstrateResult<()> {
+        // (1) WAL first.
+        let rec = WalRecord {
+            lsn: 0,
+            timestamp: unix_micros(),
+            flags: 0,
+            payload: WalPayload::EdgePropHeadUpdate {
+                edge_idx: idx,
+                first_prop_off: new_head.to_u64(),
+            },
+        };
+        self.wal.append(rec)?;
+
+        // (2) mmap mutation — 6 bytes at offset (idx * 36 + 24).
+        self.with_edge_zone(|zf| {
+            let record_offset = idx as usize * EdgeRecord::SIZE;
+            let field_offset = record_offset + EdgeRecord::FIRST_PROP_OFF_BYTES;
+            if field_offset + 6 > zf.as_slice().len() {
+                // Slot not materialised yet — leave the WAL record as the
+                // authoritative post-state; the matching EdgeInsert (or a
+                // later EdgeUpdate) will materialise the slot, and this
+                // EdgePropHeadUpdate record will be re-applied at replay in
+                // LSN order to restore the head pointer.
+                return Ok(());
+            }
+            zf.as_slice_mut()[field_offset..field_offset + 6]
+                .copy_from_slice(&new_head.0);
+            Ok(())
+        })
+    }
+
     // ==================================================================
     // Cognitive column primitives (T6)
     // ==================================================================
@@ -2147,6 +2203,105 @@ mod tests {
         assert_eq!(
             got.first_prop_off, new_head,
             "head pointer must survive crash + replay"
+        );
+    }
+
+    #[test]
+    fn update_edge_first_prop_off_mutates_only_the_head_pointer() {
+        // T17f Step 3: mirror of `update_node_first_prop_off_mutates_only_the_head_pointer`
+        // for edges. Setting the first_prop_off head must touch the 6 target
+        // bytes at offset 24 within the EdgeRecord and nothing else, and
+        // must land a dedicated WAL record.
+        let td = tempfile::tempdir().unwrap();
+        let kb = td.path().join("kb");
+        let sub = SubstrateFile::create(&kb).unwrap();
+        let wal_path = sub.wal_path();
+        let w = Writer::new(sub, SyncMode::Never).unwrap();
+
+        // Seed slot 1 with a full known state (every mutable field != default).
+        let mut seed = sample_edge(1);
+        seed.weight_u16 = 0x4321;
+        seed.ricci_u8 = 0xA5;
+        seed.flags = crate::record::edge_flags::SYNAPSE_ACTIVE;
+        seed.engram_tag = 0xBEEF;
+        seed.next_from = U48::from_u64(0x00_1234_5678);
+        seed.next_to = U48::from_u64(0x00_9ABC_DEF0);
+        w.write_edge(1, seed).unwrap();
+        w.commit().unwrap();
+
+        // Now move the head pointer.
+        let new_head = U48::from_u64(0xAA_BBCC_DDEE); // fits in 48 bits
+        w.update_edge_first_prop_off(1, new_head).unwrap();
+        w.commit().unwrap();
+        w.wal().fsync().unwrap();
+
+        // Readback: every unrelated field preserved, first_prop_off flipped.
+        let got = w.read_edge(1).unwrap().unwrap();
+        assert_eq!(got.first_prop_off, new_head, "head pointer must be updated");
+        assert_eq!(got.src, 1);
+        assert_eq!(got.dst, 2);
+        assert_eq!(got.edge_type, 1); // (1 as u16) % 10
+        assert_eq!(got.weight_u16, 0x4321);
+        assert_eq!(got.ricci_u8, 0xA5);
+        assert_eq!(got.flags, crate::record::edge_flags::SYNAPSE_ACTIVE);
+        assert_eq!(got.engram_tag, 0xBEEF);
+        assert_eq!(got.next_from, U48::from_u64(0x00_1234_5678));
+        assert_eq!(got.next_to, U48::from_u64(0x00_9ABC_DEF0));
+
+        // WAL contains exactly one EdgePropHeadUpdate with the right edge+head.
+        drop(w);
+        let r = crate::wal_io::WalReader::open(&wal_path).unwrap();
+        let items: Vec<_> = r.iter_from(0).collect::<Result<Vec<_>, _>>().unwrap();
+        let matches: Vec<_> = items
+            .iter()
+            .filter_map(|(rec, _, _)| match &rec.payload {
+                WalPayload::EdgePropHeadUpdate {
+                    edge_idx,
+                    first_prop_off,
+                } => Some((*edge_idx, *first_prop_off)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(matches.len(), 1, "exactly one EdgePropHeadUpdate expected");
+        assert_eq!(matches[0], (1, new_head.to_u64()));
+    }
+
+    #[test]
+    fn update_edge_first_prop_off_replays_after_mmap_wipe() {
+        // T17f Step 3: mirror of `update_node_first_prop_off_replays_after_mmap_wipe`
+        // for edges. Simulate a crash between WAL-append and mmap flush by
+        // wiping the edges zone then replaying from the WAL.
+        let td = tempfile::tempdir().unwrap();
+        let kb = td.path().join("kb");
+        let sub = SubstrateFile::create(&kb).unwrap();
+        let edges_zone_path = kb.join(crate::file::zone::EDGES);
+        let w = Writer::new(sub, SyncMode::Never).unwrap();
+
+        // Seed + update head pointer, commit, fsync WAL (durable), but
+        // intentionally SKIP msync_zones (simulates crash before flush).
+        w.write_edge(1, sample_edge(1)).unwrap();
+        let new_head = U48::from_u64(0x00_0001_0200); // known U48 value
+        w.update_edge_first_prop_off(1, new_head).unwrap();
+        w.commit().unwrap();
+        w.wal().fsync().unwrap();
+        drop(w);
+
+        // Wipe the edges zone on disk so the mmap state for slot 1 is gone.
+        if edges_zone_path.exists() {
+            std::fs::write(&edges_zone_path, []).unwrap();
+        }
+
+        // Reopen + replay.
+        let sub2 = SubstrateFile::open(&kb).unwrap();
+        let _replay_stats = crate::replay::replay_from(&sub2, 0).unwrap();
+        drop(sub2);
+
+        let sub3 = SubstrateFile::open(&kb).unwrap();
+        let w3 = Writer::new(sub3, SyncMode::Never).unwrap();
+        let got = w3.read_edge(1).unwrap().unwrap();
+        assert_eq!(
+            got.first_prop_off, new_head,
+            "edge head pointer must survive crash + replay"
         );
     }
 

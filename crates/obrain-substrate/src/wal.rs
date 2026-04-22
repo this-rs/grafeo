@@ -48,6 +48,12 @@ pub enum WalKind {
     /// Step 3b.2 so that property-chain mutations are durably replayed
     /// without rewriting the rest of the `NodeRecord`.
     NodePropHeadUpdate = 0x22,
+    /// Mutate only the `first_prop_off` (U48) head pointer of an edge — the
+    /// chain anchor that points into the v2 props zone. Introduced by T17f
+    /// Step 3 (edge-properties migration) to mirror `NodePropHeadUpdate` for
+    /// edges, so that edge-chain mutations are durably replayed without
+    /// rewriting the rest of the `EdgeRecord`.
+    EdgePropHeadUpdate = 0x23,
     StringIntern = 0x30,
     LabelIntern = 0x31,
     KeyIntern = 0x32,
@@ -85,6 +91,7 @@ impl WalKind {
             0x20 => PropSet,
             0x21 => PropDelete,
             0x22 => NodePropHeadUpdate,
+            0x23 => EdgePropHeadUpdate,
             0x30 => StringIntern,
             0x31 => LabelIntern,
             0x32 => KeyIntern,
@@ -300,6 +307,22 @@ pub enum WalPayload {
         node_id: u32,
         first_prop_off: u64,
     },
+    /// Update only the `first_prop_off` head pointer of an edge (T17f
+    /// Step 3). The full U48 value is serialized as `u64` (upper 16 bits
+    /// always zero) for a stable bincode wire width independent of `U48`'s
+    /// internal byte layout.
+    ///
+    /// Idempotent under replay: re-applying overwrites the same 6-byte
+    /// `first_prop_off` slot in the `EdgeRecord` (byte offset 24) with the
+    /// same value, leaving every other field untouched.
+    ///
+    /// **Wire-compat note**: appended at the tail of `WalPayload` — older
+    /// WAL files (written before T17f) do not contain this variant and
+    /// remain decodable because every preceding variant index is stable.
+    EdgePropHeadUpdate {
+        edge_idx: u32,
+        first_prop_off: u64,
+    },
 }
 
 impl WalPayload {
@@ -335,6 +358,7 @@ impl WalPayload {
             CoactDecay { .. } => K::CoactDecay,
             CompactCommunity { .. } => K::CompactCommunity,
             NodePropHeadUpdate { .. } => K::NodePropHeadUpdate,
+            EdgePropHeadUpdate { .. } => K::EdgePropHeadUpdate,
             Checkpoint { .. } => K::Checkpoint,
             NoOp => K::NoOp,
             EndOfLog => K::EndOfLog,
