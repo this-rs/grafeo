@@ -12,13 +12,13 @@ impl super::ObrainDB {
     /// Returns the number of nodes in the database.
     #[must_use]
     pub fn node_count(&self) -> usize {
-        self.store.node_count()
+        self.data_store().node_count()
     }
 
     /// Returns the number of edges in the database.
     #[must_use]
     pub fn edge_count(&self) -> usize {
-        self.store.edge_count()
+        self.data_store().edge_count()
     }
 
     /// Returns the number of distinct labels in the database.
@@ -66,8 +66,8 @@ impl super::ObrainDB {
     pub fn info(&self) -> crate::admin::DatabaseInfo {
         crate::admin::DatabaseInfo {
             mode: crate::admin::DatabaseMode::Lpg,
-            node_count: self.store.node_count(),
-            edge_count: self.store.edge_count(),
+            node_count: self.data_store().node_count(),
+            edge_count: self.data_store().edge_count(),
             is_persistent: self.is_persistent(),
             path: self.config.path.clone(),
             wal_enabled: self.config.wal_enabled,
@@ -137,8 +137,8 @@ impl super::ObrainDB {
         let disk_bytes: Option<usize> = None;
 
         crate::admin::DatabaseStats {
-            node_count: self.store.node_count(),
-            edge_count: self.store.edge_count(),
+            node_count: self.data_store().node_count(),
+            edge_count: self.data_store().edge_count(),
             label_count: self.store.label_count(),
             edge_type_count: self.store.edge_type_count(),
             property_key_count: self.store.property_key_count(),
@@ -241,7 +241,7 @@ impl super::ObrainDB {
 
         // Check for dangling edge references
         for edge in self.store.all_edges() {
-            if self.store.get_node(edge.src).is_none() {
+            if self.data_store().get_node(edge.src).is_none() {
                 result.errors.push(crate::admin::ValidationError {
                     code: "DANGLING_SRC".to_string(),
                     message: format!(
@@ -251,7 +251,7 @@ impl super::ObrainDB {
                     context: Some(format!("edge:{}", edge.id.0)),
                 });
             }
-            if self.store.get_node(edge.dst).is_none() {
+            if self.data_store().get_node(edge.dst).is_none() {
                 result.errors.push(crate::admin::ValidationError {
                     code: "DANGLING_DST".to_string(),
                     message: format!(
@@ -264,7 +264,7 @@ impl super::ObrainDB {
         }
 
         // Add warnings for potential issues
-        if self.store.node_count() > 0 && self.store.edge_count() == 0 {
+        if self.data_store().node_count() > 0 && self.data_store().edge_count() == 0 {
             result.warnings.push(crate::admin::ValidationWarning {
                 code: "NO_EDGES".to_string(),
                 message: "Database has nodes but no edges".to_string(),

@@ -21,7 +21,7 @@ impl super::ObrainDB {
     /// let company = db.create_node(&["Company", "Startup"]);
     /// ```
     pub fn create_node(&self, labels: &[&str]) -> obrain_common::types::NodeId {
-        let id = self.store.create_node(labels);
+        let id = self.data_store().create_node(labels);
 
         // Log to WAL if enabled
         #[cfg(feature = "wal")]
@@ -61,9 +61,7 @@ impl super::ObrainDB {
             .map(|(k, v)| (k.into(), v.into()))
             .collect();
 
-        let id = self
-            .store
-            .create_node_with_props(labels, props.iter().map(|(k, v)| (k.clone(), v.clone())));
+        let id = self.data_store().create_node_with_props(labels, &props);
 
         // Build CDC snapshot before WAL consumes props
         #[cfg(feature = "cdc")]
@@ -107,7 +105,7 @@ impl super::ObrainDB {
 
         // Auto-insert into matching text indexes for the new node
         #[cfg(feature = "text-index")]
-        if let Some(node) = self.store.get_node(id) {
+        if let Some(node) = self.data_store().get_node(id) {
             for label in &node.labels {
                 for (prop_key, prop_val) in &node.properties {
                     if let obrain_common::types::Value::String(text) = prop_val
@@ -129,7 +127,7 @@ impl super::ObrainDB {
         &self,
         id: obrain_common::types::NodeId,
     ) -> Option<obrain_core::graph::lpg::Node> {
-        self.store.get_node(id)
+        self.data_store().get_node(id)
     }
 
     /// Gets a node as it existed at a specific epoch.
@@ -143,7 +141,7 @@ impl super::ObrainDB {
         id: obrain_common::types::NodeId,
         epoch: obrain_common::types::EpochId,
     ) -> Option<obrain_core::graph::lpg::Node> {
-        self.store.get_node_at_epoch(id, epoch)
+        self.data_store().get_node_at_epoch(id, epoch)
     }
 
     /// Gets an edge as it existed at a specific epoch.
@@ -155,7 +153,7 @@ impl super::ObrainDB {
         id: obrain_common::types::EdgeId,
         epoch: obrain_common::types::EpochId,
     ) -> Option<obrain_core::graph::lpg::Edge> {
-        self.store.get_edge_at_epoch(id, epoch)
+        self.data_store().get_edge_at_epoch(id, epoch)
     }
 
     /// Returns all versions of a node with their creation/deletion epochs.
@@ -170,7 +168,7 @@ impl super::ObrainDB {
         Option<obrain_common::types::EpochId>,
         obrain_core::graph::lpg::Node,
     )> {
-        self.store.get_node_history(id)
+        self.data_store().get_node_history(id)
     }
 
     /// Returns all versions of an edge with their creation/deletion epochs.
@@ -185,7 +183,7 @@ impl super::ObrainDB {
         Option<obrain_common::types::EpochId>,
         obrain_core::graph::lpg::Edge,
     )> {
-        self.store.get_edge_history(id)
+        self.data_store().get_edge_history(id)
     }
 
     /// Returns the current epoch of the database.
@@ -200,7 +198,7 @@ impl super::ObrainDB {
     pub fn delete_node(&self, id: obrain_common::types::NodeId) -> bool {
         // Capture properties for CDC before deletion
         #[cfg(feature = "cdc")]
-        let cdc_props = self.store.get_node(id).map(|node| {
+        let cdc_props = self.data_store().get_node(id).map(|node| {
             node.properties
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.clone()))
@@ -247,7 +245,7 @@ impl super::ObrainDB {
             })
             .unwrap_or_default();
 
-        let result = self.store.delete_node(id);
+        let result = self.data_store().delete_node(id);
 
         // Remove from vector indexes after successful deletion
         #[cfg(feature = "vector-index")]
@@ -316,7 +314,7 @@ impl super::ObrainDB {
         #[cfg(feature = "cdc")]
         let cdc_new_value = value.clone();
 
-        self.store.set_node_property(id, key, value);
+        self.data_store().set_node_property(id, key, value);
 
         #[cfg(feature = "cdc")]
         self.cdc_log.record_update(
@@ -330,7 +328,7 @@ impl super::ObrainDB {
         // Auto-insert into matching vector indexes
         #[cfg(feature = "vector-index")]
         if let Some(vec) = vector_data
-            && let Some(node) = self.store.get_node(id)
+            && let Some(node) = self.data_store().get_node(id)
         {
             for label in &node.labels {
                 if let Some(index) = self.store.get_vector_index(label.as_str(), key) {
@@ -343,7 +341,7 @@ impl super::ObrainDB {
 
         // Auto-update matching text indexes
         #[cfg(feature = "text-index")]
-        if let Some(node) = self.store.get_node(id) {
+        if let Some(node) = self.data_store().get_node(id) {
             let text_val = node
                 .properties
                 .get(&obrain_common::types::PropertyKey::new(key))
@@ -382,7 +380,7 @@ impl super::ObrainDB {
     /// assert!(added);
     /// ```
     pub fn add_node_label(&self, id: obrain_common::types::NodeId, label: &str) -> bool {
-        let result = self.store.add_label(id, label);
+        let result = self.data_store().add_label(id, label);
 
         #[cfg(feature = "wal")]
         if result {
@@ -401,7 +399,7 @@ impl super::ObrainDB {
             let prefix = format!("{label}:");
             for (key, index) in self.store.vector_index_entries() {
                 if let Some(property) = key.strip_prefix(&prefix)
-                    && let Some(node) = self.store.get_node(id)
+                    && let Some(node) = self.data_store().get_node(id)
                 {
                     let prop_key = obrain_common::types::PropertyKey::new(property);
                     if let Some(obrain_common::types::Value::Vector(v)) =
@@ -419,7 +417,7 @@ impl super::ObrainDB {
 
         // Auto-insert into text indexes for the newly-added label
         #[cfg(feature = "text-index")]
-        if result && let Some(node) = self.store.get_node(id) {
+        if result && let Some(node) = self.data_store().get_node(id) {
             for (prop_key, prop_val) in &node.properties {
                 if let obrain_common::types::Value::String(text) = prop_val
                     && let Some(index) = self.store.get_text_index(label, prop_key.as_ref())
@@ -464,7 +462,7 @@ impl super::ObrainDB {
                 .collect()
         };
 
-        let result = self.store.remove_label(id, label);
+        let result = self.data_store().remove_label(id, label);
 
         #[cfg(feature = "wal")]
         if result {
@@ -536,7 +534,7 @@ impl super::ObrainDB {
         dst: obrain_common::types::NodeId,
         edge_type: &str,
     ) -> obrain_common::types::EdgeId {
-        let id = self.store.create_edge(src, dst, edge_type);
+        let id = self.data_store().create_edge(src, dst, edge_type);
 
         // Log to WAL if enabled
         #[cfg(feature = "wal")]
@@ -580,12 +578,9 @@ impl super::ObrainDB {
             .map(|(k, v)| (k.into(), v.into()))
             .collect();
 
-        let id = self.store.create_edge_with_props(
-            src,
-            dst,
-            edge_type,
-            props.iter().map(|(k, v)| (k.clone(), v.clone())),
-        );
+        let id = self
+            .data_store()
+            .create_edge_with_props(src, dst, edge_type, &props);
 
         // Build CDC snapshot before WAL consumes props
         #[cfg(feature = "cdc")]
@@ -638,7 +633,7 @@ impl super::ObrainDB {
         &self,
         id: obrain_common::types::EdgeId,
     ) -> Option<obrain_core::graph::lpg::Edge> {
-        self.store.get_edge(id)
+        self.data_store().get_edge(id)
     }
 
     /// Deletes an edge.
@@ -647,14 +642,14 @@ impl super::ObrainDB {
     pub fn delete_edge(&self, id: obrain_common::types::EdgeId) -> bool {
         // Capture properties for CDC before deletion
         #[cfg(feature = "cdc")]
-        let cdc_props = self.store.get_edge(id).map(|edge| {
+        let cdc_props = self.data_store().get_edge(id).map(|edge| {
             edge.properties
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.clone()))
                 .collect::<std::collections::HashMap<String, obrain_common::types::Value>>()
         });
 
-        let result = self.store.delete_edge(id);
+        let result = self.data_store().delete_edge(id);
 
         #[cfg(feature = "wal")]
         if result && let Err(e) = self.log_wal(&WalRecord::DeleteEdge { id }) {
@@ -700,7 +695,7 @@ impl super::ObrainDB {
         #[cfg(feature = "cdc")]
         let cdc_new_value = value.clone();
 
-        self.store.set_edge_property(id, key, value);
+        self.data_store().set_edge_property(id, key, value);
 
         #[cfg(feature = "cdc")]
         self.cdc_log.record_update(
@@ -716,7 +711,7 @@ impl super::ObrainDB {
     ///
     /// Returns true if the property existed and was removed, false otherwise.
     pub fn remove_node_property(&self, id: obrain_common::types::NodeId, key: &str) -> bool {
-        let removed = self.store.remove_node_property(id, key).is_some();
+        let removed = self.data_store().remove_node_property(id, key).is_some();
 
         #[cfg(feature = "wal")]
         if removed
@@ -730,7 +725,7 @@ impl super::ObrainDB {
 
         // Remove from matching text indexes
         #[cfg(feature = "text-index")]
-        if removed && let Some(node) = self.store.get_node(id) {
+        if removed && let Some(node) = self.data_store().get_node(id) {
             for label in &node.labels {
                 if let Some(index) = self.store.get_text_index(label.as_str(), key) {
                     index.write().remove(id);
@@ -745,7 +740,7 @@ impl super::ObrainDB {
     ///
     /// Returns true if the property existed and was removed, false otherwise.
     pub fn remove_edge_property(&self, id: obrain_common::types::EdgeId, key: &str) -> bool {
-        let removed = self.store.remove_edge_property(id, key).is_some();
+        let removed = self.data_store().remove_edge_property(id, key).is_some();
 
         #[cfg(feature = "wal")]
         if removed
@@ -790,10 +785,9 @@ impl super::ObrainDB {
             .into_iter()
             .map(|vec| {
                 let value = Value::Vector(vec.into());
-                let id = self.store.create_node_with_props(
-                    labels,
-                    std::iter::once((prop_key.clone(), value.clone())),
-                );
+                let id = self
+                    .data_store()
+                    .create_node_with_props(labels, &[(prop_key.clone(), value.clone())]);
 
                 // Log to WAL
                 #[cfg(feature = "wal")]
@@ -823,7 +817,7 @@ impl super::ObrainDB {
             let accessor =
                 obrain_core::index::vector::PropertyVectorAccessor::new(&*self.store, property);
             for &id in &ids {
-                if let Some(node) = self.store.get_node(id) {
+                if let Some(node) = self.data_store().get_node(id) {
                     let pk = obrain_common::types::PropertyKey::new(property);
                     if let Some(obrain_common::types::Value::Vector(v)) = node.properties.get(&pk) {
                         index.insert(id, v, &accessor);
