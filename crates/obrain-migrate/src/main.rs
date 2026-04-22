@@ -50,14 +50,22 @@ struct Cli {
     /// Input `.obrain` database (either a directory of epoch files or a
     /// single `GRAF`-magic file). Auto-detected at open time.
     ///
-    /// Unused in `--finalize` mode.
-    #[arg(long = "in", value_name = "PATH", required_unless_present = "finalize")]
+    /// Unused in `--finalize` / `--finalize-v2` modes.
+    #[arg(
+        long = "in",
+        value_name = "PATH",
+        required_unless_present_any = ["finalize", "finalize_v2"],
+    )]
     input: Option<PathBuf>,
 
     /// Output `.obrain` directory (substrate format). Created if absent.
     ///
-    /// Unused in `--finalize` mode.
-    #[arg(long = "out", value_name = "PATH", required_unless_present = "finalize")]
+    /// Unused in `--finalize` / `--finalize-v2` modes.
+    #[arg(
+        long = "out",
+        value_name = "PATH",
+        required_unless_present_any = ["finalize", "finalize_v2"],
+    )]
     output: Option<PathBuf>,
 
     /// Finalize an existing substrate base: open it (which auto-migrates

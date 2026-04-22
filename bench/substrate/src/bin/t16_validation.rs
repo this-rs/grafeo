@@ -126,7 +126,26 @@ struct RssBreakdown {
 struct FileSizes {
     nodes: u64,
     edges: u64,
+    /// Legacy bincode sidecar (`substrate.props`). Post-T17c-Step-4
+    /// migration it's deleted, so this will be 0 on migrated bases.
     props: u64,
+    /// T17c Step 3a: PropsZone v2 node page chain
+    /// (`substrate.props.v2`). 4 KiB pages, one per live node. Mmap'd
+    /// and file-backed — must be included in `file_backed_bytes`
+    /// otherwise post-migration anon estimate is inflated by tens of
+    /// GiB (e.g. 45.6 GiB on megalaw).
+    props_v2: u64,
+    /// T17c Step 3a: PropsZone v2 overflow heap
+    /// (`substrate.props.heap.v2`). Holds PropEntry / StringHeap bytes
+    /// that overflow the 4 KiB page. Same mmap/file-backed rationale
+    /// as `props_v2`.
+    props_heap_v2: u64,
+    /// T17c Step 6: edge properties bincode sidecar
+    /// (`substrate.edge_props`). Persisted by
+    /// `persist_edge_properties_sidecar` before the legacy
+    /// `substrate.props` is deleted. Hydrated on re-open until T17f
+    /// moves edge-props into PropsZone v2 proper.
+    edge_props: u64,
     strings: u64,
     community: u64,
     hilbert: u64,
@@ -308,6 +327,15 @@ fn measure_file_sizes(dir: &Path) -> FileSizes {
     let nodes = read("substrate.nodes");
     let edges = read("substrate.edges");
     let props = read("substrate.props");
+    // T17c Step 3a/6: post-migration PropsZone v2 + edge sidecar.
+    // These are mmap'd and file-backed; on a migrated base
+    // `props_v2 + props_heap_v2 + edge_props` can reach 50 GiB
+    // (megalaw scale), so omitting them from `total` inflates the
+    // anon estimate by the same amount and makes the total-RSS gate
+    // mis-fire.
+    let props_v2 = read("substrate.props.v2");
+    let props_heap_v2 = read("substrate.props.heap.v2");
+    let edge_props = read("substrate.edge_props");
     let strings = read("substrate.strings");
     let community = read("substrate.community");
     let hilbert = read("substrate.hilbert");
@@ -344,6 +372,9 @@ fn measure_file_sizes(dir: &Path) -> FileSizes {
     let total = nodes
         + edges
         + props
+        + props_v2
+        + props_heap_v2
+        + edge_props
         + strings
         + community
         + hilbert
@@ -361,6 +392,9 @@ fn measure_file_sizes(dir: &Path) -> FileSizes {
         nodes,
         edges,
         props,
+        props_v2,
+        props_heap_v2,
+        edge_props,
         strings,
         community,
         hilbert,
@@ -462,6 +496,7 @@ fn print_summary(r: &T16Report) {
     println!("file sizes (bytes):");
     let f = &r.file_sizes;
     println!("  nodes/edges/props : {} / {} / {}", fmt_bytes(f.nodes), fmt_bytes(f.edges), fmt_bytes(f.props));
+    println!("  props.v2/heap/edge: {} / {} / {}", fmt_bytes(f.props_v2), fmt_bytes(f.props_heap_v2), fmt_bytes(f.edge_props));
     println!("  strings/dict      : {} / {}", fmt_bytes(f.strings), fmt_bytes(f.dict));
     println!("  community/hilbert : {} / {}", fmt_bytes(f.community), fmt_bytes(f.hilbert));
     println!("  engram mem/bits   : {} / {}", fmt_bytes(f.engram_members), fmt_bytes(f.engram_bitset));
