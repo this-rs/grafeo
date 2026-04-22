@@ -788,40 +788,31 @@ impl super::ObrainDB {
         Ok(())
     }
 
-    /// Creates an in-memory copy of this database.
+    /// Saves the database to a single `.obrain` file — **retired in T17 W3c**.
     ///
-    /// Returns a new database that is completely independent, including
-    /// all named graph data.
-    /// Useful for:
-    /// Saves the database to a single `.obrain` file using the native v2
-    /// mmap-friendly format (instant load on reopen).
+    /// The v2 `.obrain` snapshot writer sourced data from `self.store` (the
+    /// legacy `LpgStore` field). In substrate mode that field holds a dummy
+    /// empty store, so every invocation silently produced an empty file.
+    /// Rather than leave a landmine, T17 W3c replaces the body with a clear
+    /// error.
     ///
-    /// The v1 bincode export sibling (`save_as_obrain_file_legacy`) was
-    /// removed in T17 W3c (2026-04-22). It was `#[allow(dead_code)]` with
-    /// zero callers across the workspace — kept alive only by a single
-    /// doc-comment reference. The legacy v1 on-disk format is still
-    /// readable via `ObrainFileManager::open` for migration, it just can
-    /// no longer be produced.
+    /// **Read path is preserved**: legacy `.obrain` files on disk remain
+    /// openable via `ObrainFileManager::open` and readable by the migration
+    /// tooling in `obrain-migrate`.
+    ///
+    /// **Restore plan**: T17b will reintroduce a working export via
+    /// `SubstrateStore::snapshot_to_path()` (mmap + WAL tail, no
+    /// LpgStore-shaped intermediary).
+    ///
+    /// Superseded alongside the v1 bincode sibling `save_as_obrain_file_legacy`
+    /// that was deleted in slice 1 (commit 8b57b904).
     #[cfg(feature = "obrain-file")]
-    fn save_as_obrain_file(&self, path: &Path) -> Result<()> {
-        let epoch = self.store.current_epoch();
-        let transaction_id = self
-            .transaction_manager
-            .last_assigned_transaction_id()
-            .map_or(0, |t| t.0);
-
-        #[cfg(feature = "vector-index")]
-        if let Some(hnsw_blob) = super::native_writer::export_hnsw_section(&self.store) {
-            return super::native_writer::write_native_v2_with_hnsw(
-                &self.store,
-                path,
-                epoch.0,
-                transaction_id,
-                &hnsw_blob,
-            );
-        }
-
-        super::native_writer::write_native_v2(&self.store, path, epoch.0, transaction_id)
+    fn save_as_obrain_file(&self, _path: &Path) -> Result<()> {
+        Err(obrain_common::utils::error::Error::Internal(
+            "save_as_obrain_file (v2 .obrain export) retired in T17 W3c — \
+             use SubstrateStore::snapshot_to_path() when T17b lands"
+                .to_string(),
+        ))
     }
 
     /// - Testing modifications without affecting the original

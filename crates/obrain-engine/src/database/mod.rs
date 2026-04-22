@@ -1995,36 +1995,38 @@ impl ObrainDB {
             .map_or(0, |t| t.0);
 
         if fm.file_header().is_native_format() {
-            // v2 native: write directly using native_writer
-            let path = fm.path().to_path_buf();
-
-            #[cfg(feature = "vector-index")]
-            if let Some(hnsw_blob) = native_writer::export_hnsw_section(&self.store) {
-                native_writer::write_native_v2_with_hnsw(
-                    &self.store, &path, epoch.0, transaction_id, &hnsw_blob,
-                )?;
-            } else {
-                native_writer::write_native_v2(&self.store, &path, epoch.0, transaction_id)?;
-            }
-
-            #[cfg(not(feature = "vector-index"))]
-            native_writer::write_native_v2(&self.store, &path, epoch.0, transaction_id)?;
-        } else {
-            // v1 legacy: bincode serialize + write snapshot
-            let snapshot_data = self.export_snapshot()?;
-            maybe_crash("checkpoint_to_file:after_export");
-
-            let node_count = self.store.node_count() as u64;
-            let edge_count = self.store.edge_count() as u64;
-
-            fm.write_snapshot(
-                &snapshot_data,
-                epoch.0,
-                transaction_id,
-                node_count,
-                edge_count,
-            )?;
+            // T17 W3c slice 2: the v2 native checkpoint used to pull data out
+            // of `self.store` (the legacy LpgStore). In substrate mode that
+            // field is a dummy empty store, so every checkpoint silently wrote
+            // an empty file — the very landmine T17 was meant to clear.
+            //
+            // Rather than keep the footgun alive for the (deprecated) LpgStore
+            // mode, we return a clear error. T17b will reintroduce a real v2
+            // checkpoint path via `SubstrateStore::snapshot_to_path()`.
+            return Err(obrain_common::utils::error::Error::Internal(
+                "v2 .obrain checkpoint retired in T17 W3c — \
+                 substrate is mmap + WAL-native; reopen produces the latest \
+                 state without a separate snapshot file. T17b will reintroduce \
+                 an explicit snapshot export via SubstrateStore::snapshot_to_path()"
+                    .to_string(),
+            ));
         }
+
+        // v1 legacy: bincode serialize + write snapshot (read path still live
+        // for `obrain-migrate` — we keep it to avoid breaking migrations).
+        let snapshot_data = self.export_snapshot()?;
+        maybe_crash("checkpoint_to_file:after_export");
+
+        let node_count = self.store.node_count() as u64;
+        let edge_count = self.store.edge_count() as u64;
+
+        fm.write_snapshot(
+            &snapshot_data,
+            epoch.0,
+            transaction_id,
+            node_count,
+            edge_count,
+        )?;
 
         maybe_crash("checkpoint_to_file:after_write_snapshot");
         Ok(())
