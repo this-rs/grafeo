@@ -426,9 +426,32 @@ pub fn finalize_v2_with_opts(
         })?;
     }
 
-    // Force-enable v2 for the open → setter → flush → close cycle.
-    // Scoped to this invocation — we restore the previous value on
-    // exit to keep test and CLI invocations idempotent.
+    // Dry-run short-circuit: open WITHOUT forcing v2 so we don't
+    // silently create empty `substrate.props.v2` + `.heap` zone files
+    // on a base that never had them. `node_count_live_estimate` and
+    // `edge_properties_count` live on the hydrated DashMaps — no v2
+    // zone needed to introspect them.
+    if opts.dry_run {
+        let store = SubstrateStore::open(substrate_dir)
+            .with_context(|| format!("open {}", substrate_dir.display()))?;
+        let nodes_pending = store.node_count_live_estimate();
+        let edges_pending = store
+            .edge_properties_count()
+            .unwrap_or(0);
+        tracing::info!(
+            "finalize-v2 DRY-RUN: would drain ~{} nodes and {} edge-property maps. \
+             Legacy sidecar: {} MiB. No writes performed.",
+            nodes_pending,
+            edges_pending,
+            before_bytes / (1024 * 1024),
+        );
+        drop(store);
+        return Ok(());
+    }
+
+    // Real run — force-enable v2 for the open → setter → flush →
+    // close cycle. Scoped to this invocation — we restore the previous
+    // value on exit to keep test and CLI invocations idempotent.
     let prev_env = std::env::var("OBRAIN_PROPS_V2").ok();
     // SAFETY: single-threaded up until SubstrateStore::open returns;
     // the env var is only read at open time.
@@ -446,24 +469,6 @@ pub fn finalize_v2_with_opts(
             "finalize-v2: v2 zone failed to initialise — check OBRAIN_PROPS_V2 \
              env pass-through or filesystem permissions"
         );
-    }
-
-    if opts.dry_run {
-        // Dry-run: report counts + estimated work, touch nothing.
-        let nodes_pending = store.node_count_live_estimate();
-        let edges_pending = store
-            .edge_properties_count()
-            .unwrap_or(0);
-        tracing::info!(
-            "finalize-v2 DRY-RUN: would drain ~{} nodes and {} edge-property maps. \
-             Legacy sidecar: {} MiB. No writes performed.",
-            nodes_pending,
-            edges_pending,
-            before_bytes / (1024 * 1024),
-        );
-        drop(store);
-        drop(restore_env);
-        return Ok(());
     }
 
     let stats = store
