@@ -56,10 +56,23 @@ sequenceDiagram
 
 ### Storage
 
-1. **LPG Store** - Node and edge storage
-2. **Property Store** - Columnar property storage
-3. **Indexes** - Hash, adjacency, trie, vector (HNSW), text (BM25), ring
-4. **WAL** - Durability and recovery
+Obrain uses **SubstrateStore** (`obrain-substrate`) as its primary storage
+backend — a single mmap'd file where the topology *is* the storage
+(topology-as-storage). See [RFC-SUBSTRATE](../rfc/substrate/format-spec.md)
+and the [MIGRATION guide](../../MIGRATION.md) for details.
+
+1. **SubstrateStore** — 32 B node records + 30 B edge records, WAL-native,
+   index-free adjacency (inline linked lists), column-inline cognitive
+   state (`energy`, `scar_util_affinity`, `community_id`, synapse
+   `weight_u16`).
+2. **Embedding Tiers L0 / L1 / L2** — 128-bit binary scan, 512-bit
+   Hamming re-rank, f16 cosine top-K. Replaces HNSW; preserves recall ≥ 99 %.
+3. **Property Pages** — 4 KiB mmap'd pages, chain-walked per node/edge.
+4. **WAL** — durable by construction; every mutation flushes before the
+   mmap update (crash-safe, replay on open).
+5. **Thinkers** — auto-started background maintainers: LDleiden
+   incremental community detection, Hilbert page compaction, Ricci-Ollivier
+   curvature, heat-kernel diffusion.
 
 ### Memory
 
