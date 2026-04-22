@@ -793,10 +793,15 @@ impl super::ObrainDB {
     /// Returns a new database that is completely independent, including
     /// all named graph data.
     /// Useful for:
-    /// Saves the database to a single `.obrain` file.
+    /// Saves the database to a single `.obrain` file using the native v2
+    /// mmap-friendly format (instant load on reopen).
     ///
-    /// Uses the native v2 mmap-friendly format for instant loading.
-    /// The legacy v1 bincode format is available via [`save_as_obrain_file_legacy`].
+    /// The v1 bincode export sibling (`save_as_obrain_file_legacy`) was
+    /// removed in T17 W3c (2026-04-22). It was `#[allow(dead_code)]` with
+    /// zero callers across the workspace — kept alive only by a single
+    /// doc-comment reference. The legacy v1 on-disk format is still
+    /// readable via `ObrainFileManager::open` for migration, it just can
+    /// no longer be produced.
     #[cfg(feature = "obrain-file")]
     fn save_as_obrain_file(&self, path: &Path) -> Result<()> {
         let epoch = self.store.current_epoch();
@@ -817,35 +822,6 @@ impl super::ObrainDB {
         }
 
         super::native_writer::write_native_v2(&self.store, path, epoch.0, transaction_id)
-    }
-
-    /// Saves the database to a single `.obrain` file using the legacy v1 format.
-    ///
-    /// This uses bincode serialization and produces files compatible with
-    /// older versions of obrain.
-    #[cfg(feature = "obrain-file")]
-    #[allow(dead_code)]
-    fn save_as_obrain_file_legacy(&self, path: &Path) -> Result<()> {
-        use obrain_adapters::storage::file::ObrainFileManager;
-
-        let snapshot_data = self.export_snapshot()?;
-        let epoch = self.store.current_epoch();
-        let transaction_id = self
-            .transaction_manager
-            .last_assigned_transaction_id()
-            .map_or(0, |t| t.0);
-        let node_count = self.store.node_count() as u64;
-        let edge_count = self.store.edge_count() as u64;
-
-        let fm = ObrainFileManager::create(path)?;
-        fm.write_snapshot(
-            &snapshot_data,
-            epoch.0,
-            transaction_id,
-            node_count,
-            edge_count,
-        )?;
-        Ok(())
     }
 
     /// - Testing modifications without affecting the original
