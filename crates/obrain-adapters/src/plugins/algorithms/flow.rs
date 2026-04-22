@@ -12,7 +12,11 @@ use obrain_common::utils::hash::FxHashMap;
 use obrain_core::graph::Direction;
 use obrain_core::graph::GraphStore;
 #[cfg(test)]
-use obrain_core::graph::lpg::LpgStore;
+use obrain_common::types::PropertyKey;
+#[cfg(test)]
+use obrain_core::graph::GraphStoreMut;
+#[cfg(test)]
+use obrain_substrate::SubstrateStore;
 
 use super::super::{AlgorithmResult, ParameterDef, ParameterType, Parameters};
 use super::traits::GraphAlgorithm;
@@ -595,7 +599,7 @@ impl GraphAlgorithm for MinCostFlowAlgorithm {
 mod tests {
     use super::*;
 
-    fn create_simple_flow_graph() -> LpgStore {
+    fn create_simple_flow_graph() -> (SubstrateStore, Vec<NodeId>) {
         // Simple flow network:
         //   0 --[5]--> 1 --[3]--> 3
         //   |          |
@@ -603,28 +607,28 @@ mod tests {
         //   |          |
         //   v          v
         //   2 --[4]--> 3
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
 
         let n0 = store.create_node(&["Node"]); // Source
         let n1 = store.create_node(&["Node"]);
         let n2 = store.create_node(&["Node"]);
         let n3 = store.create_node(&["Node"]); // Sink
 
-        store.create_edge_with_props(n0, n1, "EDGE", [("capacity", Value::Float64(5.0))]);
-        store.create_edge_with_props(n0, n2, "EDGE", [("capacity", Value::Float64(3.0))]);
-        store.create_edge_with_props(n1, n3, "EDGE", [("capacity", Value::Float64(3.0))]);
-        store.create_edge_with_props(n1, n2, "EDGE", [("capacity", Value::Float64(2.0))]);
-        store.create_edge_with_props(n2, n3, "EDGE", [("capacity", Value::Float64(4.0))]);
+        store.create_edge_with_props(n0, n1, "EDGE", &[(PropertyKey::from("capacity"), Value::Float64(5.0))]);
+        store.create_edge_with_props(n0, n2, "EDGE", &[(PropertyKey::from("capacity"), Value::Float64(3.0))]);
+        store.create_edge_with_props(n1, n3, "EDGE", &[(PropertyKey::from("capacity"), Value::Float64(3.0))]);
+        store.create_edge_with_props(n1, n2, "EDGE", &[(PropertyKey::from("capacity"), Value::Float64(2.0))]);
+        store.create_edge_with_props(n2, n3, "EDGE", &[(PropertyKey::from("capacity"), Value::Float64(4.0))]);
 
-        store
+        (store, vec![n0, n1, n2, n3])
     }
 
-    fn create_cost_flow_graph() -> LpgStore {
+    fn create_cost_flow_graph() -> (SubstrateStore, Vec<NodeId>) {
         // Flow network with costs:
         //   0 --[cap:3,cost:1]--> 1 --[cap:2,cost:2]--> 2
         //   |                                           ^
         //   +--[cap:2,cost:5]---------------------------+
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
 
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
@@ -634,37 +638,37 @@ mod tests {
             n0,
             n1,
             "EDGE",
-            [
-                ("capacity", Value::Float64(3.0)),
-                ("cost", Value::Float64(1.0)),
+            &[
+                (PropertyKey::from("capacity"), Value::Float64(3.0)),
+                (PropertyKey::from("cost"), Value::Float64(1.0)),
             ],
         );
         store.create_edge_with_props(
             n1,
             n2,
             "EDGE",
-            [
-                ("capacity", Value::Float64(2.0)),
-                ("cost", Value::Float64(2.0)),
+            &[
+                (PropertyKey::from("capacity"), Value::Float64(2.0)),
+                (PropertyKey::from("cost"), Value::Float64(2.0)),
             ],
         );
         store.create_edge_with_props(
             n0,
             n2,
             "EDGE",
-            [
-                ("capacity", Value::Float64(2.0)),
-                ("cost", Value::Float64(5.0)),
+            &[
+                (PropertyKey::from("capacity"), Value::Float64(2.0)),
+                (PropertyKey::from("cost"), Value::Float64(5.0)),
             ],
         );
 
-        store
+        (store, vec![n0, n1, n2])
     }
 
     #[test]
     fn test_max_flow_basic() {
-        let store = create_simple_flow_graph();
-        let result = max_flow(&store, NodeId::new(0), NodeId::new(3), Some("capacity"));
+        let (store, nodes) = create_simple_flow_graph();
+        let result = max_flow(&store, nodes[0], nodes[3], Some("capacity"));
 
         assert!(result.is_some());
         let result = result.unwrap();
@@ -679,8 +683,8 @@ mod tests {
 
     #[test]
     fn test_max_flow_same_source_sink() {
-        let store = create_simple_flow_graph();
-        let result = max_flow(&store, NodeId::new(0), NodeId::new(0), Some("capacity"));
+        let (store, nodes) = create_simple_flow_graph();
+        let result = max_flow(&store, nodes[0], nodes[0], Some("capacity"));
 
         assert!(result.is_some());
         assert_eq!(result.unwrap().max_flow, 0.0);
@@ -688,31 +692,31 @@ mod tests {
 
     #[test]
     fn test_max_flow_no_path() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Node"]);
-        let _n1 = store.create_node(&["Node"]); // Disconnected
+        let n1 = store.create_node(&["Node"]); // Disconnected
 
-        let result = max_flow(&store, n0, NodeId::new(1), None);
+        let result = max_flow(&store, n0, n1, None);
         assert!(result.is_some());
         assert_eq!(result.unwrap().max_flow, 0.0);
     }
 
     #[test]
     fn test_max_flow_invalid_nodes() {
-        let store = LpgStore::new().unwrap();
-        store.create_node(&["Node"]);
+        let store = SubstrateStore::open_tempfile().unwrap();
+        let n0 = store.create_node(&["Node"]);
 
-        let result = max_flow(&store, NodeId::new(999), NodeId::new(0), None);
+        let result = max_flow(&store, NodeId::new(999), n0, None);
         assert!(result.is_none());
     }
 
     #[test]
     fn test_min_cost_flow_basic() {
-        let store = create_cost_flow_graph();
+        let (store, nodes) = create_cost_flow_graph();
         let result = min_cost_max_flow(
             &store,
-            NodeId::new(0),
-            NodeId::new(2),
+            nodes[0],
+            nodes[2],
             Some("capacity"),
             Some("cost"),
         );
@@ -729,11 +733,11 @@ mod tests {
 
     #[test]
     fn test_min_cost_prefers_cheaper_path() {
-        let store = create_cost_flow_graph();
+        let (store, nodes) = create_cost_flow_graph();
         let result = min_cost_max_flow(
             &store,
-            NodeId::new(0),
-            NodeId::new(2),
+            nodes[0],
+            nodes[2],
             Some("capacity"),
             Some("cost"),
         );
@@ -750,11 +754,11 @@ mod tests {
 
     #[test]
     fn test_min_cost_flow_no_path() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Node"]);
-        let _n1 = store.create_node(&["Node"]);
+        let n1 = store.create_node(&["Node"]);
 
-        let result = min_cost_max_flow(&store, n0, NodeId::new(1), None, None);
+        let result = min_cost_max_flow(&store, n0, n1, None, None);
         assert!(result.is_some());
         assert_eq!(result.unwrap().max_flow, 0.0);
     }
@@ -762,7 +766,7 @@ mod tests {
     #[test]
     fn test_max_flow_default_capacity() {
         // Without capacity property, all edges have capacity 1.0
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         let n2 = store.create_node(&["Node"]);
@@ -780,8 +784,8 @@ mod tests {
 
     #[test]
     fn test_max_flow_flow_edges_populated() {
-        let store = create_simple_flow_graph();
-        let result = max_flow(&store, NodeId::new(0), NodeId::new(3), Some("capacity")).unwrap();
+        let (store, nodes) = create_simple_flow_graph();
+        let result = max_flow(&store, nodes[0], nodes[3], Some("capacity")).unwrap();
 
         // Flow edges should be non-empty if there's positive flow
         assert!(result.max_flow > 0.0);
@@ -795,12 +799,12 @@ mod tests {
 
     #[test]
     fn test_max_flow_int_capacity() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
 
         // Use Int64 capacity values instead of Float64
-        store.create_edge_with_props(n0, n1, "EDGE", [("capacity", Value::Int64(5))]);
+        store.create_edge_with_props(n0, n1, "EDGE", &[(PropertyKey::from("capacity"), Value::Int64(5))]);
 
         let result = max_flow(&store, n0, n1, Some("capacity")).unwrap();
         assert!((result.max_flow - 5.0).abs() < f64::EPSILON);
@@ -808,17 +812,17 @@ mod tests {
 
     #[test]
     fn test_max_flow_parallel_paths() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let s = store.create_node(&["Node"]);
         let a = store.create_node(&["Node"]);
         let b = store.create_node(&["Node"]);
         let t = store.create_node(&["Node"]);
 
         // Two independent paths: s->a->t and s->b->t
-        store.create_edge_with_props(s, a, "EDGE", [("capacity", Value::Float64(3.0))]);
-        store.create_edge_with_props(a, t, "EDGE", [("capacity", Value::Float64(3.0))]);
-        store.create_edge_with_props(s, b, "EDGE", [("capacity", Value::Float64(2.0))]);
-        store.create_edge_with_props(b, t, "EDGE", [("capacity", Value::Float64(2.0))]);
+        store.create_edge_with_props(s, a, "EDGE", &[(PropertyKey::from("capacity"), Value::Float64(3.0))]);
+        store.create_edge_with_props(a, t, "EDGE", &[(PropertyKey::from("capacity"), Value::Float64(3.0))]);
+        store.create_edge_with_props(s, b, "EDGE", &[(PropertyKey::from("capacity"), Value::Float64(2.0))]);
+        store.create_edge_with_props(b, t, "EDGE", &[(PropertyKey::from("capacity"), Value::Float64(2.0))]);
 
         let result = max_flow(&store, s, t, Some("capacity")).unwrap();
         assert!((result.max_flow - 5.0).abs() < f64::EPSILON);
@@ -826,14 +830,14 @@ mod tests {
 
     #[test]
     fn test_max_flow_bottleneck() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let s = store.create_node(&["Node"]);
         let mid = store.create_node(&["Node"]);
         let t = store.create_node(&["Node"]);
 
         // s -> mid has high capacity, mid -> t has low = bottleneck
-        store.create_edge_with_props(s, mid, "EDGE", [("capacity", Value::Float64(100.0))]);
-        store.create_edge_with_props(mid, t, "EDGE", [("capacity", Value::Float64(1.0))]);
+        store.create_edge_with_props(s, mid, "EDGE", &[(PropertyKey::from("capacity"), Value::Float64(100.0))]);
+        store.create_edge_with_props(mid, t, "EDGE", &[(PropertyKey::from("capacity"), Value::Float64(1.0))]);
 
         let result = max_flow(&store, s, t, Some("capacity")).unwrap();
         assert!((result.max_flow - 1.0).abs() < f64::EPSILON);
@@ -841,11 +845,11 @@ mod tests {
 
     #[test]
     fn test_min_cost_flow_same_source_sink() {
-        let store = create_cost_flow_graph();
+        let (store, nodes) = create_cost_flow_graph();
         let result = min_cost_max_flow(
             &store,
-            NodeId::new(0),
-            NodeId::new(0),
+            nodes[0],
+            nodes[0],
             Some("capacity"),
             Some("cost"),
         )
@@ -856,19 +860,19 @@ mod tests {
 
     #[test]
     fn test_min_cost_flow_invalid_nodes() {
-        let store = LpgStore::new().unwrap();
-        store.create_node(&["Node"]);
-        let result = min_cost_max_flow(&store, NodeId::new(999), NodeId::new(0), None, None);
+        let store = SubstrateStore::open_tempfile().unwrap();
+        let n0 = store.create_node(&["Node"]);
+        let result = min_cost_max_flow(&store, NodeId::new(999), n0, None, None);
         assert!(result.is_none());
     }
 
     #[test]
     fn test_min_cost_flow_edges() {
-        let store = create_cost_flow_graph();
+        let (store, nodes) = create_cost_flow_graph();
         let result = min_cost_max_flow(
             &store,
-            NodeId::new(0),
-            NodeId::new(2),
+            nodes[0],
+            nodes[2],
             Some("capacity"),
             Some("cost"),
         )

@@ -341,11 +341,12 @@ impl GraphAlgorithm for HeatKernelAlgorithm {
 mod tests {
     use super::super::hilbert_features::{HilbertFeaturesConfig, hilbert_features};
     use super::*;
-    use obrain_core::graph::lpg::LpgStore;
+    use obrain_core::graph::GraphStoreMut;
+    use obrain_substrate::SubstrateStore;
 
     /// Build a 5-node line graph: A - B - C - D - E (bidirectional edges).
-    fn make_line_graph() -> (LpgStore, Vec<NodeId>) {
-        let store = LpgStore::new().unwrap();
+    fn make_line_graph() -> (SubstrateStore, Vec<NodeId>) {
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["Node"]);
         let b = store.create_node(&["Node"]);
         let c = store.create_node(&["Node"]);
@@ -359,7 +360,7 @@ mod tests {
         (store, vec![a, b, c, d, e])
     }
 
-    fn compute_features(store: &LpgStore) -> (HilbertFeaturesResult, FacetteWeights) {
+    fn compute_features(store: &SubstrateStore) -> (HilbertFeaturesResult, FacetteWeights) {
         let config = HilbertFeaturesConfig::default();
         let features = hilbert_features(store, &config);
         let n_facettes = features
@@ -451,7 +452,7 @@ mod tests {
     #[test]
     fn test_heat_kernel_zero_distance() {
         // Create nodes that will have identical features (isolated nodes with same label)
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["Same"]);
         let b = store.create_node(&["Same"]);
         // Connect them so they are neighbors

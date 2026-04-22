@@ -2294,6 +2294,7 @@ dependencies = [
  "memmap2",
  "obrain-common",
  "obrain-core",
+ "obrain-substrate",
  "parking_lot",
  "rayon",
  "serde",

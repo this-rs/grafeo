@@ -52,6 +52,9 @@ tracing.workspace = true
 tempfile.workspace = true
 serde_json = "1"
 criterion.workspace = true
+# Post-T17 W2: tests use the canonical substrate backend via a temp-file mmap.
+# obrain-substrate does NOT depend on obrain-adapters, so this is cycle-clear.
+obrain-substrate.workspace = true
 
 [features]
 default = ["gql", "wal", "parallel"]

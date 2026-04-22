@@ -7,12 +7,16 @@ use std::collections::BinaryHeap;
 use std::sync::OnceLock;
 
 use obrain_common::types::{NodeId, Value};
+#[cfg(test)]
+use obrain_common::types::PropertyKey;
 use obrain_common::utils::error::{Error, Result};
 use obrain_common::utils::hash::FxHashMap;
 use obrain_core::graph::Direction;
 use obrain_core::graph::GraphStore;
 #[cfg(test)]
-use obrain_core::graph::lpg::LpgStore;
+use obrain_core::graph::GraphStoreMut;
+#[cfg(test)]
+use obrain_substrate::SubstrateStore;
 
 use super::super::{AlgorithmResult, ParameterDef, ParameterType, Parameters};
 use super::traits::{GraphAlgorithm, MinScored};
@@ -902,8 +906,8 @@ impl GraphAlgorithm for FloydWarshallAlgorithm {
 mod tests {
     use super::*;
 
-    fn create_weighted_graph() -> LpgStore {
-        let store = LpgStore::new().unwrap();
+    fn create_weighted_graph() -> (SubstrateStore, Vec<NodeId>) {
+        let store = SubstrateStore::open_tempfile().unwrap();
 
         // Create a weighted graph:
         //   0 --2--> 1 --3--> 2
@@ -921,71 +925,71 @@ mod tests {
         let n4 = store.create_node(&["Node"]);
 
         // Create edges with weights
-        store.create_edge_with_props(n0, n1, "EDGE", [("weight", Value::Float64(2.0))]);
-        store.create_edge_with_props(n1, n2, "EDGE", [("weight", Value::Float64(3.0))]);
-        store.create_edge_with_props(n0, n3, "EDGE", [("weight", Value::Float64(4.0))]);
-        store.create_edge_with_props(n3, n1, "EDGE", [("weight", Value::Float64(1.0))]);
-        store.create_edge_with_props(n2, n4, "EDGE", [("weight", Value::Float64(1.0))]);
+        store.create_edge_with_props(n0, n1, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(2.0))]);
+        store.create_edge_with_props(n1, n2, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(3.0))]);
+        store.create_edge_with_props(n0, n3, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(4.0))]);
+        store.create_edge_with_props(n3, n1, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(1.0))]);
+        store.create_edge_with_props(n2, n4, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(1.0))]);
 
-        store
+        (store, vec![n0, n1, n2, n3, n4])
     }
 
     #[test]
     fn test_dijkstra_basic() {
-        let store = create_weighted_graph();
-        let result = dijkstra(&store, NodeId::new(0), Some("weight"));
+        let (store, nodes) = create_weighted_graph();
+        let result = dijkstra(&store, nodes[0], Some("weight"));
 
         // From the graph: 0->1 cost 2, 0->1->2 cost 5, 0->3 cost 4, 0->3->1 cost 5
-        assert_eq!(result.distance_to(NodeId::new(0)), Some(0.0));
-        assert_eq!(result.distance_to(NodeId::new(1)), Some(2.0));
-        assert_eq!(result.distance_to(NodeId::new(2)), Some(5.0));
-        assert_eq!(result.distance_to(NodeId::new(3)), Some(4.0));
-        assert_eq!(result.distance_to(NodeId::new(4)), Some(6.0)); // 0->1->2->4 = 2+3+1
+        assert_eq!(result.distance_to(nodes[0]), Some(0.0));
+        assert_eq!(result.distance_to(nodes[1]), Some(2.0));
+        assert_eq!(result.distance_to(nodes[2]), Some(5.0));
+        assert_eq!(result.distance_to(nodes[3]), Some(4.0));
+        assert_eq!(result.distance_to(nodes[4]), Some(6.0)); // 0->1->2->4 = 2+3+1
     }
 
     #[test]
     fn test_dijkstra_path() {
-        let store = create_weighted_graph();
-        let result = dijkstra(&store, NodeId::new(0), Some("weight"));
+        let (store, nodes) = create_weighted_graph();
+        let result = dijkstra(&store, nodes[0], Some("weight"));
 
-        let path = result.path_to(NodeId::new(0), NodeId::new(2));
+        let path = result.path_to(nodes[0], nodes[2]);
         assert!(path.is_some());
 
         let path = path.unwrap();
-        assert_eq!(path[0], NodeId::new(0)); // Start
-        assert_eq!(*path.last().unwrap(), NodeId::new(2)); // End
+        assert_eq!(path[0], nodes[0]); // Start
+        assert_eq!(*path.last().unwrap(), nodes[2]); // End
     }
 
     #[test]
     fn test_dijkstra_single_pair() {
-        let store = create_weighted_graph();
-        let result = dijkstra_path(&store, NodeId::new(0), NodeId::new(4), Some("weight"));
+        let (store, nodes) = create_weighted_graph();
+        let result = dijkstra_path(&store, nodes[0], nodes[4], Some("weight"));
 
         assert!(result.is_some());
         let (distance, path) = result.unwrap();
         assert!(distance > 0.0);
-        assert_eq!(path[0], NodeId::new(0));
-        assert_eq!(*path.last().unwrap(), NodeId::new(4));
+        assert_eq!(path[0], nodes[0]);
+        assert_eq!(*path.last().unwrap(), nodes[4]);
     }
 
     #[test]
     fn test_dijkstra_unreachable() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Node"]);
-        let _n1 = store.create_node(&["Node"]); // Disconnected
+        let n1 = store.create_node(&["Node"]); // Disconnected
 
-        let result = dijkstra_path(&store, n0, NodeId::new(1), None);
+        let result = dijkstra_path(&store, n0, n1, None);
         assert!(result.is_none());
     }
 
     #[test]
     fn test_bellman_ford_basic() {
-        let store = create_weighted_graph();
-        let result = bellman_ford(&store, NodeId::new(0), Some("weight"));
+        let (store, nodes) = create_weighted_graph();
+        let result = bellman_ford(&store, nodes[0], Some("weight"));
 
         assert!(!result.has_negative_cycle);
-        assert!(result.distances.contains_key(&NodeId::new(0)));
-        assert_eq!(*result.distances.get(&NodeId::new(0)).unwrap(), 0.0);
+        assert!(result.distances.contains_key(&nodes[0]));
+        assert_eq!(*result.distances.get(&nodes[0]).unwrap(), 0.0);
     }
 
     #[test]
@@ -994,13 +998,13 @@ mod tests {
         //   0 --10--> 1 --(-5)--> 2
         //
         // Shortest: 0 -> 1 -> 2 = 10 + (-5) = 5
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         let n2 = store.create_node(&["Node"]);
 
-        store.create_edge_with_props(n0, n1, "EDGE", [("weight", Value::Float64(10.0))]);
-        store.create_edge_with_props(n1, n2, "EDGE", [("weight", Value::Float64(-5.0))]);
+        store.create_edge_with_props(n0, n1, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(10.0))]);
+        store.create_edge_with_props(n1, n2, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(-5.0))]);
 
         let result = bellman_ford(&store, n0, Some("weight"));
 
@@ -1023,16 +1027,16 @@ mod tests {
         //
         // Direct: 0->1->3 = 8
         // Via negative: 0->2->3 = 3+(-4) = -1  (shorter!)
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         let n2 = store.create_node(&["Node"]);
         let n3 = store.create_node(&["Node"]);
 
-        store.create_edge_with_props(n0, n1, "EDGE", [("weight", Value::Float64(6.0))]);
-        store.create_edge_with_props(n1, n3, "EDGE", [("weight", Value::Float64(2.0))]);
-        store.create_edge_with_props(n0, n2, "EDGE", [("weight", Value::Float64(3.0))]);
-        store.create_edge_with_props(n2, n3, "EDGE", [("weight", Value::Float64(-4.0))]);
+        store.create_edge_with_props(n0, n1, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(6.0))]);
+        store.create_edge_with_props(n1, n3, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(2.0))]);
+        store.create_edge_with_props(n0, n2, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(3.0))]);
+        store.create_edge_with_props(n2, n3, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(-4.0))]);
 
         let result = bellman_ford(&store, n0, Some("weight"));
 
@@ -1051,14 +1055,14 @@ mod tests {
         //            +--(-3)--+
         //
         // Cycle: 1 -> 2 -> 1 with total weight 1 + (-3) = -2 (negative!)
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         let n2 = store.create_node(&["Node"]);
 
-        store.create_edge_with_props(n0, n1, "EDGE", [("weight", Value::Float64(1.0))]);
-        store.create_edge_with_props(n1, n2, "EDGE", [("weight", Value::Float64(1.0))]);
-        store.create_edge_with_props(n2, n1, "EDGE", [("weight", Value::Float64(-3.0))]);
+        store.create_edge_with_props(n0, n1, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(1.0))]);
+        store.create_edge_with_props(n1, n2, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(1.0))]);
+        store.create_edge_with_props(n2, n1, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(-3.0))]);
 
         let result = bellman_ford(&store, n0, Some("weight"));
 
@@ -1070,41 +1074,41 @@ mod tests {
 
     #[test]
     fn test_floyd_warshall_basic() {
-        let store = create_weighted_graph();
+        let (store, nodes) = create_weighted_graph();
         let result = floyd_warshall(&store, Some("weight"));
 
         // Self-distances should be 0
-        assert_eq!(result.distance(NodeId::new(0), NodeId::new(0)), Some(0.0));
-        assert_eq!(result.distance(NodeId::new(1), NodeId::new(1)), Some(0.0));
+        assert_eq!(result.distance(nodes[0], nodes[0]), Some(0.0));
+        assert_eq!(result.distance(nodes[1], nodes[1]), Some(0.0));
 
         // Check some paths exist
-        assert!(result.distance(NodeId::new(0), NodeId::new(2)).is_some());
+        assert!(result.distance(nodes[0], nodes[2]).is_some());
     }
 
     #[test]
     fn test_floyd_warshall_path_reconstruction() {
-        let store = create_weighted_graph();
+        let (store, nodes) = create_weighted_graph();
         let result = floyd_warshall(&store, Some("weight"));
 
-        let path = result.path(NodeId::new(0), NodeId::new(2));
+        let path = result.path(nodes[0], nodes[2]);
         assert!(path.is_some());
 
         let path = path.unwrap();
-        assert_eq!(path[0], NodeId::new(0));
-        assert_eq!(*path.last().unwrap(), NodeId::new(2));
+        assert_eq!(path[0], nodes[0]);
+        assert_eq!(*path.last().unwrap(), nodes[2]);
     }
 
     #[test]
     fn test_astar_basic() {
-        let store = create_weighted_graph();
+        let (store, nodes) = create_weighted_graph();
 
         // Simple heuristic: always return 0 (degenerates to Dijkstra)
         let heuristic = |_: NodeId| 0.0;
 
         let result = astar(
             &store,
-            NodeId::new(0),
-            NodeId::new(4),
+            nodes[0],
+            nodes[4],
             Some("weight"),
             heuristic,
         );
@@ -1112,20 +1116,20 @@ mod tests {
 
         let (distance, path) = result.unwrap();
         assert!(distance > 0.0);
-        assert_eq!(path[0], NodeId::new(0));
-        assert_eq!(*path.last().unwrap(), NodeId::new(4));
+        assert_eq!(path[0], nodes[0]);
+        assert_eq!(*path.last().unwrap(), nodes[4]);
     }
 
     #[test]
     fn test_dijkstra_nonexistent_source() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let result = dijkstra(&store, NodeId::new(999), None);
         assert!(result.distances.is_empty());
     }
 
     #[test]
     fn test_unweighted_defaults() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         let n2 = store.create_node(&["Node"]);
@@ -1140,15 +1144,15 @@ mod tests {
 
     #[test]
     fn test_sssp_with_named_nodes() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         let n2 = store.create_node(&["Node"]);
         store.set_node_property(n0, "name", Value::from("alix"));
         store.set_node_property(n1, "name", Value::from("gus"));
         store.set_node_property(n2, "name", Value::from("harm"));
-        store.create_edge_with_props(n0, n1, "KNOWS", [("weight", Value::Float64(1.0))]);
-        store.create_edge_with_props(n1, n2, "KNOWS", [("weight", Value::Float64(2.0))]);
+        store.create_edge_with_props(n0, n1, "KNOWS", &[(PropertyKey::from("weight"), Value::Float64(1.0))]);
+        store.create_edge_with_props(n1, n2, "KNOWS", &[(PropertyKey::from("weight"), Value::Float64(2.0))]);
 
         let mut params = Parameters::new();
         params.set_string("source", "alix");
@@ -1161,7 +1165,7 @@ mod tests {
 
     #[test]
     fn test_sssp_with_numeric_source() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         store.create_edge(n0, n1, "EDGE");
@@ -1175,7 +1179,7 @@ mod tests {
 
     #[test]
     fn test_sssp_nonexistent_name() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let _n0 = store.create_node(&["Node"]);
 
         let mut params = Parameters::new();
