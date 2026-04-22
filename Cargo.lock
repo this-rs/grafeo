@@ -2573,6 +2573,7 @@ dependencies = [
  "criterion",
  "obrain-common",
  "obrain-core",
+ "obrain-substrate",
  "parking_lot",
  "smallvec",
  "thiserror 2.0.18",

@@ -660,6 +660,18 @@ impl SubstrateStore {
         Self::from_substrate(sub, sync_mode)
     }
 
+    /// Create a throw-away substrate rooted in a fresh temp directory and
+    /// open it in `EveryCommit` mode. The temp directory is owned by the
+    /// underlying [`SubstrateFile`] (via an internal `TempDirGuard`) and
+    /// deleted when this store is dropped.
+    ///
+    /// This is the canonical post-T17 replacement for `LpgStore::new()` in
+    /// unit tests and doctests that do not exercise cross-restart behaviour.
+    pub fn open_tempfile() -> SubstrateResult<Self> {
+        let sub = SubstrateFile::open_tempfile()?;
+        Self::from_substrate(sub, SyncMode::EveryCommit)
+    }
+
     fn from_substrate(
         sub: SubstrateFile,
         sync_mode: SyncMode,
@@ -4037,6 +4049,26 @@ impl GraphStore for SubstrateStore {
         0.0 // step 2 wires real degree stats
     }
 
+    // -- Schema introspection --
+    //
+    // Substrate interns labels / edge types / property keys in dense
+    // registries on every create_* and set_* call (and reloads them from
+    // `DictSnapshot` on open). The trait-default `Vec::new()` would return
+    // an empty list — break `InstrumentedStore` delegation tests and any
+    // query planner that asks \"what labels exist?\". These overrides read
+    // directly from the live registries.
+    fn all_labels(&self) -> Vec<String> {
+        self.labels.read().names()
+    }
+
+    fn all_edge_types(&self) -> Vec<String> {
+        self.edge_types.read().names()
+    }
+
+    fn all_property_keys(&self) -> Vec<String> {
+        self.prop_keys.read().names()
+    }
+
     // -- Epoch --
     fn current_epoch(&self) -> EpochId {
         // No MVCC pre-T5 — a constant zero epoch is visible to everyone.
@@ -4194,6 +4226,14 @@ impl GraphStoreMut for SubstrateStore {
             // LpgStore silently no-ops on missing nodes; match that contract.
             return;
         }
+        // Intern the key in the property-key registry up-front so
+        // `all_property_keys()` reports it regardless of which downstream
+        // path takes the write (dense vec column, blob column, PropsZone
+        // v2, or the DashMap fallback — the last of which would otherwise
+        // bypass the registry entirely). Idempotent; overflow at >u16 keys
+        // is swallowed here to match the best-effort semantics of the
+        // DashMap-fallback path below.
+        let _ = self.prop_keys.write().intern(key);
         // T16.7: `Value::Vector` writes bypass the DashMap + props
         // sidecar and go straight to a dense mmap'd column. This keeps
         // embeddings off the anon heap. Scalar values still take the
@@ -4238,6 +4278,10 @@ impl GraphStoreMut for SubstrateStore {
             // LpgStore silently no-ops on missing edges; match that contract.
             return;
         }
+        // Intern the key up-front (mirrors `set_node_property`; see comment
+        // there). Overflow is swallowed to match best-effort DashMap-fallback
+        // semantics.
+        let _ = self.prop_keys.write().intern(key);
         if let Value::Vector(ref v) = value {
             // EdgeId is u64 in the trait, but `VecColumnWriter::write_slot`
             // takes u32. In practice no substrate deployment has come close
