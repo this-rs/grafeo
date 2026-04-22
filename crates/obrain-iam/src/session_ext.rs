@@ -263,10 +263,11 @@ mod tests {
     use crate::provider::{AuthRequest, ObrainIamProvider};
     use crate::store::IamStore;
     use obrain_core::graph::lpg::LpgStore;
+    use obrain_core::graph::traits::GraphStoreMut;
 
     fn setup() -> (Arc<dyn AuthProvider>, Identity) {
         let lpg = LpgStore::new().expect("LpgStore");
-        let iam_store = Arc::new(IamStore::new(Arc::new(lpg)));
+        let iam_store = Arc::new(IamStore::new(Arc::new(lpg) as Arc<dyn GraphStoreMut>));
 
         // Bootstrap
         iam_store.create_user("u1", "alice", None).unwrap();

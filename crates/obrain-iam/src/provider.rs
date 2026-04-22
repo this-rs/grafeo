@@ -829,10 +829,11 @@ mod tests {
     use super::*;
     use crate::model::PolicyEffect;
     use obrain_core::graph::lpg::LpgStore;
+    use obrain_core::graph::traits::GraphStoreMut;
 
     fn setup() -> ObrainIamProvider {
         let lpg = LpgStore::new().expect("failed to create LpgStore");
-        let iam_store = Arc::new(IamStore::new(Arc::new(lpg)));
+        let iam_store = Arc::new(IamStore::new(Arc::new(lpg) as Arc<dyn GraphStoreMut>));
 
         // Bootstrap: create a user with a role and policy
         iam_store

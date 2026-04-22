@@ -10,8 +10,8 @@
 use std::sync::Arc;
 
 use obrain_common::Value;
-use obrain_common::types::NodeId;
-use obrain_core::graph::lpg::LpgStore;
+use obrain_common::types::{NodeId, PropertyKey};
+use obrain_core::graph::traits::GraphStoreMut;
 
 use crate::error::{IamError, IamResult};
 use crate::model::{
@@ -29,28 +29,38 @@ use crate::policy;
 /// IAM store backed by an LPG graph.
 ///
 /// Operates on the `__system` named graph to isolate IAM data from user data.
+///
+/// The underlying store is accessed via the [`GraphStoreMut`] trait so that
+/// WAL-aware decorators (e.g. `WalGraphStore`) can be plugged in transparently.
+/// Hub-layer constructors should pass `HubWalStore::mutable().clone()` to
+/// guarantee synchronous WAL durability on every IAM mutation.
 pub struct IamStore {
-    /// The underlying LPG store (typically the `__system` named graph).
-    store: Arc<LpgStore>,
+    /// The underlying graph store (typically the `__system` named graph).
+    store: Arc<dyn GraphStoreMut>,
 }
 
 impl std::fmt::Debug for IamStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("IamStore")
-            .field("store", &"<LpgStore>")
+            .field("store", &"<dyn GraphStoreMut>")
             .finish()
     }
 }
 
 impl IamStore {
-    /// Creates a new `IamStore` wrapping the given LPG store.
-    pub fn new(store: Arc<LpgStore>) -> Self {
+    /// Creates a new `IamStore` wrapping the given graph store.
+    pub fn new(store: Arc<dyn GraphStoreMut>) -> Self {
         Self { store }
     }
 
-    /// Returns a reference to the underlying LPG store.
-    pub fn inner(&self) -> &LpgStore {
-        &self.store
+    /// Returns a reference to the underlying graph store.
+    ///
+    /// The trait object exposes both `GraphStore` (read) and `GraphStoreMut`
+    /// (write) operations. Callers that still reach for [`LpgStore`]-specific
+    /// inherent methods (e.g. MVCC replay helpers) must be migrated to trait
+    /// equivalents — see T17 W4 for the open cases.
+    pub fn inner(&self) -> &dyn GraphStoreMut {
+        self.store.as_ref()
     }
 
     // -----------------------------------------------------------------------
@@ -67,17 +77,17 @@ impl IamStore {
         }
 
         let now = now_iso();
-        let mut props: Vec<(&str, Value)> = vec![
-            (props::ID, Value::from(id)),
-            (props::NAME, Value::from(username)),
-            (props::STATUS, Value::from("active")),
-            (props::CREATED_AT, Value::from(now.as_str())),
+        let mut props: Vec<(PropertyKey, Value)> = vec![
+            (props::ID.into(), Value::from(id)),
+            (props::NAME.into(), Value::from(username)),
+            (props::STATUS.into(), Value::from("active")),
+            (props::CREATED_AT.into(), Value::from(now.as_str())),
         ];
         if let Some(e) = email {
-            props.push((props::EMAIL, Value::from(e)));
+            props.push((props::EMAIL.into(), Value::from(e)));
         }
 
-        self.store.create_node_with_props(&[LABEL_USER], props);
+        self.store.create_node_with_props(&[LABEL_USER], &props);
 
         Ok(User {
             id: id.to_string(),
@@ -131,16 +141,16 @@ impl IamStore {
         }
 
         let now = now_iso();
-        let mut role_props: Vec<(&str, Value)> = vec![
-            (props::ID, Value::from(id)),
-            (props::NAME, Value::from(name)),
-            (props::CREATED_AT, Value::from(now.as_str())),
+        let mut role_props: Vec<(PropertyKey, Value)> = vec![
+            (props::ID.into(), Value::from(id)),
+            (props::NAME.into(), Value::from(name)),
+            (props::CREATED_AT.into(), Value::from(now.as_str())),
         ];
         if let Some(d) = description {
-            role_props.push((props::DESCRIPTION, Value::from(d)));
+            role_props.push((props::DESCRIPTION.into(), Value::from(d)));
         }
 
-        self.store.create_node_with_props(&[LABEL_ROLE], role_props);
+        self.store.create_node_with_props(&[LABEL_ROLE], &role_props);
 
         Ok(Role {
             id: id.to_string(),
@@ -238,17 +248,17 @@ impl IamStore {
             .collect::<Vec<_>>()
             .join(",");
 
-        let policy_props: Vec<(&str, Value)> = vec![
-            (props::ID, Value::from(id)),
-            (props::NAME, Value::from(name)),
-            (props::EFFECT, Value::from(effect.to_string().as_str())),
-            (props::ACTIONS, Value::from(actions_csv.as_str())),
-            (props::RESOURCES, Value::from(resources_csv.as_str())),
-            (props::CREATED_AT, Value::from(now.as_str())),
+        let policy_props: Vec<(PropertyKey, Value)> = vec![
+            (props::ID.into(), Value::from(id)),
+            (props::NAME.into(), Value::from(name)),
+            (props::EFFECT.into(), Value::from(effect.to_string().as_str())),
+            (props::ACTIONS.into(), Value::from(actions_csv.as_str())),
+            (props::RESOURCES.into(), Value::from(resources_csv.as_str())),
+            (props::CREATED_AT.into(), Value::from(now.as_str())),
         ];
 
         self.store
-            .create_node_with_props(&[LABEL_POLICY], policy_props);
+            .create_node_with_props(&[LABEL_POLICY], &policy_props);
 
         Ok(Policy {
             id: id.to_string(),
@@ -361,20 +371,20 @@ impl IamStore {
         // Simple expiration calculation (approximate — good enough for now)
         let expires = format!("{}+{ttl_secs}s", &now);
 
-        let cred_props: Vec<(&str, Value)> = vec![
-            (props::ID, Value::from(id)),
+        let cred_props: Vec<(PropertyKey, Value)> = vec![
+            (props::ID.into(), Value::from(id)),
             (
-                props::CRED_TYPE,
+                props::CRED_TYPE.into(),
                 Value::from(cred_type.to_string().as_str()),
             ),
-            (props::TOKEN_HASH, Value::from(token_hash)),
-            (props::CREATED_AT, Value::from(now.as_str())),
-            (props::EXPIRES_AT, Value::from(expires.as_str())),
+            (props::TOKEN_HASH.into(), Value::from(token_hash)),
+            (props::CREATED_AT.into(), Value::from(now.as_str())),
+            (props::EXPIRES_AT.into(), Value::from(expires.as_str())),
         ];
 
         let cred_nid = self
             .store
-            .create_node_with_props(&[LABEL_CREDENTIAL], cred_props);
+            .create_node_with_props(&[LABEL_CREDENTIAL], &cred_props);
         self.store
             .create_edge(user_nid, cred_nid, EDGE_HAS_CREDENTIAL);
 
@@ -408,23 +418,26 @@ impl IamStore {
             PolicyDecision::ImplicitDeny => "implicit_deny",
         };
 
-        let event_props: Vec<(&str, Value)> = vec![
-            (props::ID, Value::from(id)),
+        let event_props: Vec<(PropertyKey, Value)> = vec![
+            (props::ID.into(), Value::from(id)),
             (
-                props::PRINCIPAL,
+                props::PRINCIPAL.into(),
                 Value::from(principal.to_string().as_str()),
             ),
-            (props::ACTION, Value::from(action)),
-            (props::RESOURCE, Value::from(resource.to_string().as_str())),
-            (props::RESULT, Value::from(result_str)),
-            (props::CREATED_AT, Value::from(now.as_str())),
+            (props::ACTION.into(), Value::from(action)),
+            (
+                props::RESOURCE.into(),
+                Value::from(resource.to_string().as_str()),
+            ),
+            (props::RESULT.into(), Value::from(result_str)),
+            (props::CREATED_AT.into(), Value::from(now.as_str())),
         ];
 
         // Find the user node to link the audit event
         // (best-effort — audit event is always created even if user not found)
         let event_nid = self
             .store
-            .create_node_with_props(&[LABEL_AUDIT_EVENT], event_props);
+            .create_node_with_props(&[LABEL_AUDIT_EVENT], &event_props);
 
         // Try to link to user
         if let Some(user_nid) = self.find_user_node_by_principal(principal) {
@@ -784,10 +797,11 @@ fn now_iso() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use obrain_core::graph::lpg::LpgStore;
 
     fn new_store() -> IamStore {
         let store = LpgStore::new().expect("failed to create LpgStore");
-        IamStore::new(Arc::new(store))
+        IamStore::new(Arc::new(store) as Arc<dyn GraphStoreMut>)
     }
 
     // -- Users ---------------------------------------------------------------

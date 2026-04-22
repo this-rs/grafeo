@@ -19,7 +19,7 @@ use crate::model::{LABEL_USER, props};
 use crate::orn::Orn;
 use crate::store::IamStore;
 use obrain_common::Value;
-use obrain_common::types::NodeId;
+use obrain_common::types::{NodeId, PropertyKey};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -324,33 +324,45 @@ impl GdprManager {
             None
         };
 
-        let mut consent_node_props: Vec<(&str, Value)> = vec![
+        let mut consent_node_props: Vec<(PropertyKey, Value)> = vec![
             (
-                consent_props::LEVEL,
+                consent_props::LEVEL.into(),
                 Value::from(level.to_string().as_str()),
             ),
             (
-                consent_props::CATEGORY,
+                consent_props::CATEGORY.into(),
                 Value::from(category.to_string().as_str()),
             ),
             (
-                consent_props::RETENTION_TTL,
+                consent_props::RETENTION_TTL.into(),
                 Value::Int64(retention_ttl_secs as i64),
             ),
             (
-                consent_props::TARGET_NODE_ID,
+                consent_props::TARGET_NODE_ID.into(),
                 Value::from(format!("{}", target_node_id.0).as_str()),
             ),
-            (consent_props::OWNER_USER_ID, Value::from(owner_user_id)),
-            (consent_props::CREATED_AT, Value::from(now.as_str())),
-            (consent_props::UPDATED_AT, Value::from(now.as_str())),
+            (
+                consent_props::OWNER_USER_ID.into(),
+                Value::from(owner_user_id),
+            ),
+            (
+                consent_props::CREATED_AT.into(),
+                Value::from(now.as_str()),
+            ),
+            (
+                consent_props::UPDATED_AT.into(),
+                Value::from(now.as_str()),
+            ),
         ];
 
         if let Some(ref exp) = expires {
-            consent_node_props.push((consent_props::RETENTION_EXPIRES, Value::from(exp.as_str())));
+            consent_node_props.push((
+                consent_props::RETENTION_EXPIRES.into(),
+                Value::from(exp.as_str()),
+            ));
         }
 
-        let consent_nid = lpg.create_node_with_props(&[LABEL_CONSENT], consent_node_props);
+        let consent_nid = lpg.create_node_with_props(&[LABEL_CONSENT], &consent_node_props);
 
         // Link: target -[:HAS_CONSENT]-> consent
         lpg.create_edge(target_node_id, consent_nid, EDGE_HAS_CONSENT);
@@ -733,10 +745,11 @@ mod tests {
     use super::*;
     use crate::model::{PolicyDecision, PolicyEffect};
     use obrain_core::graph::lpg::LpgStore;
+    use obrain_core::graph::traits::GraphStoreMut;
 
     fn setup() -> (GdprManager, Arc<IamStore>) {
         let lpg = LpgStore::new().expect("LpgStore");
-        let iam_store = Arc::new(IamStore::new(Arc::new(lpg)));
+        let iam_store = Arc::new(IamStore::new(Arc::new(lpg) as Arc<dyn GraphStoreMut>));
 
         // Bootstrap: user + role + policy
         iam_store
@@ -767,7 +780,7 @@ mod tests {
         let lpg = iam_store.inner();
 
         // Create a data node to track consent for
-        let data_node = lpg.create_node_with_props(&["DataNode"], Vec::<(&str, Value)>::new());
+        let data_node = lpg.create_node_with_props(&["DataNode"], &[] as &[(PropertyKey, Value)]);
 
         let record = gdpr
             .set_consent(
@@ -794,7 +807,7 @@ mod tests {
     fn update_consent() {
         let (gdpr, iam_store) = setup();
         let lpg = iam_store.inner();
-        let data_node = lpg.create_node_with_props(&["DataNode"], Vec::<(&str, Value)>::new());
+        let data_node = lpg.create_node_with_props(&["DataNode"], &[] as &[(PropertyKey, Value)]);
 
         // Set initial consent
         gdpr.set_consent(
@@ -828,9 +841,9 @@ mod tests {
         let (gdpr, iam_store) = setup();
         let lpg = iam_store.inner();
 
-        let node1 = lpg.create_node_with_props(&["DataNode"], Vec::<(&str, Value)>::new());
-        let node2 = lpg.create_node_with_props(&["DataNode"], Vec::<(&str, Value)>::new());
-        let node3 = lpg.create_node_with_props(&["DataNode"], Vec::<(&str, Value)>::new());
+        let node1 = lpg.create_node_with_props(&["DataNode"], &[] as &[(PropertyKey, Value)]);
+        let node2 = lpg.create_node_with_props(&["DataNode"], &[] as &[(PropertyKey, Value)]);
+        let node3 = lpg.create_node_with_props(&["DataNode"], &[] as &[(PropertyKey, Value)]);
 
         gdpr.set_consent(
             node1,
@@ -879,7 +892,7 @@ mod tests {
         let lpg = iam_store.inner();
 
         // Create some data with consent
-        let data_node = lpg.create_node_with_props(&["DataNode"], Vec::<(&str, Value)>::new());
+        let data_node = lpg.create_node_with_props(&["DataNode"], &[] as &[(PropertyKey, Value)]);
         gdpr.set_consent(
             data_node,
             "u1",
@@ -951,7 +964,7 @@ mod tests {
         let lpg = iam_store.inner();
 
         // Create some consented data
-        let data_node = lpg.create_node_with_props(&["DataNode"], Vec::<(&str, Value)>::new());
+        let data_node = lpg.create_node_with_props(&["DataNode"], &[] as &[(PropertyKey, Value)]);
         gdpr.set_consent(
             data_node,
             "u1",
@@ -998,7 +1011,7 @@ mod tests {
         let (gdpr, iam_store) = setup();
         let lpg = iam_store.inner();
 
-        let data_node = lpg.create_node_with_props(&["DataNode"], Vec::<(&str, Value)>::new());
+        let data_node = lpg.create_node_with_props(&["DataNode"], &[] as &[(PropertyKey, Value)]);
         gdpr.set_consent(
             data_node,
             "u1",
@@ -1030,8 +1043,8 @@ mod tests {
         let lpg = iam_store.inner();
 
         // 1. Create data with consent
-        let node1 = lpg.create_node_with_props(&["DataNode"], Vec::<(&str, Value)>::new());
-        let node2 = lpg.create_node_with_props(&["DataNode"], Vec::<(&str, Value)>::new());
+        let node1 = lpg.create_node_with_props(&["DataNode"], &[] as &[(PropertyKey, Value)]);
+        let node2 = lpg.create_node_with_props(&["DataNode"], &[] as &[(PropertyKey, Value)]);
 
         gdpr.set_consent(
             node1,
