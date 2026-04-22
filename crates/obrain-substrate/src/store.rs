@@ -132,7 +132,9 @@ use crate::props_snapshot::{
     entries_to_map, map_to_entries, PropEntry, PropertiesSnapshotV1,
     PropertiesStreamingWriter, PROPS_FILENAME,
 };
-use crate::props_zone::{PropsZone, PROPS_V2_FILENAME};
+use crate::page::PropertyEntry;
+use crate::props_codec::encode_value;
+use crate::props_zone::{decode_page_id, encode_page_id, PropsZone, PROPS_V2_FILENAME};
 use crate::blob_column_registry::{
     blob_payload_len, encode_blob_payload, BlobColumnRegistry, BLOB_COLUMN_THRESHOLD_BYTES,
 };
@@ -1166,6 +1168,87 @@ impl SubstrateStore {
     /// already existed on disk.
     pub fn props_v2_enabled(&self) -> bool {
         self.props_zone.is_some()
+    }
+
+    /// T17c Step 3b.2b: encode `value` via the props codec, append a
+    /// fresh [`PropertyEntry`] to the PropsZone chain for `id`, and
+    /// WAL-log the new `first_prop_off` head pointer via the writer.
+    ///
+    /// Callers MUST ensure that `self.props_zone.is_some()` before
+    /// invoking — otherwise this function panics on `unwrap`. That
+    /// guarantee comes from the callsite in `set_node_property`.
+    ///
+    /// Semantics:
+    ///
+    /// - The `key` string is interned into
+    ///   [`PropertyKeyRegistry`] for a stable `u16` prop-key id.
+    /// - `encode_value` may intern string / bytes payloads into the
+    ///   heap side-car (`substrate.props.heap.v2`).
+    /// - `PropsZone::append_entry` either appends to the current head
+    ///   page (fast path) or allocates a fresh head page when the
+    ///   current one is full (slow path that writes a brand new 4 KiB
+    ///   page with `next_page = old_head`).
+    /// - When the head page changes, a
+    ///   [`crate::wal::WalPayload::NodePropHeadUpdate`] record is
+    ///   appended to the WAL via `Writer::update_node_first_prop_off`
+    ///   — only the 6 bytes of `first_prop_off` in the NodeRecord are
+    ///   rewritten, leaving every other slot-field intact.
+    ///
+    /// The DashMap sidecar write still happens unconditionally at the
+    /// callsite, keeping reads fast during 3b (the DashMap is the
+    /// authoritative read source until 3c wires the walk_chain read
+    /// path).
+    ///
+    /// Errors propagate verbatim — the callsite in
+    /// `set_node_property` catches them and logs a `tracing::warn!`
+    /// so that a PropsZone failure never loses the underlying write.
+    fn append_scalar_to_props_zone_v2(
+        &self,
+        id: NodeId,
+        key: &str,
+        value: &Value,
+    ) -> SubstrateResult<()> {
+        let pz_lock = self
+            .props_zone
+            .as_ref()
+            .expect("append_scalar_to_props_zone_v2 called without props_zone");
+
+        // 1. Intern the key → u16 prop-key id (reuses the existing
+        //    PropertyKeyRegistry that also backs VecColumnRegistry).
+        let prop_key_id = self.prop_keys.write().intern(key)?;
+
+        // 2. Read the current NodeRecord to pick up the existing head
+        //    pointer. Early-out if the slot is gone — should never
+        //    happen because `is_live_on_disk` already gated the call.
+        let slot = id.0 as u32;
+        let node_rec = match self.writer.read_node(slot)? {
+            Some(rec) => rec,
+            None => {
+                return Err(SubstrateError::Internal(format!(
+                    "set_node_property: node slot {slot} missing from nodes zone"
+                )));
+            }
+        };
+        let current_head = decode_page_id(node_rec.first_prop_off);
+
+        // 3. Encode the Value → PropertyValue + append the entry.
+        //    Holds the PropsZone write lock across encode + append so
+        //    heap interns and page mutations land atomically.
+        let new_head_idx = {
+            let mut pz = pz_lock.write();
+            let pv = encode_value(&mut pz, value)?;
+            let entry = PropertyEntry::new(prop_key_id, pv);
+            pz.append_entry(slot, current_head, &entry)?
+        };
+
+        // 4. If the head page changed (new head allocated), WAL-log
+        //    the new pointer. No-op when the entry fit in the existing
+        //    head page — in that case `first_prop_off` is unchanged.
+        let new_head_u48 = encode_page_id(new_head_idx);
+        if new_head_u48 != node_rec.first_prop_off {
+            self.writer.update_node_first_prop_off(slot, new_head_u48)?;
+        }
+        Ok(())
     }
 
     /// Open a [`PropertiesStreamingWriter`] targeting this store's
@@ -3292,6 +3375,21 @@ impl GraphStoreMut for SubstrateStore {
             self.route_blob_write(EntityKind::Node, id.0 as u32, key, &tagged);
             return;
         }
+        // T17c Step 3b.2b: dual-write into PropsZone v2 when enabled.
+        // Best-effort — if PropsZone fails (e.g. page-size overflow for an
+        // exotic value), we log and still fall back to the DashMap sidecar
+        // so the call is never lost. 3c will remove the DashMap path once
+        // PropsZone is the single source of truth.
+        if self.props_zone.is_some() {
+            if let Err(err) = self.append_scalar_to_props_zone_v2(id, key, &value) {
+                tracing::warn!(
+                    node_id = id.0,
+                    key = %key,
+                    error = %err,
+                    "props zone v2 append failed — falling back to DashMap only"
+                );
+            }
+        }
         self.node_properties
             .entry(id)
             .or_default()
@@ -5354,5 +5452,102 @@ mod tests {
 
         // SAFETY: serialised via `props_v2_env_lock`.
         unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
+    }
+
+    // -------------------------------------------------------------------
+    // T17c Step 3b.2b — PropsZone write-through tests
+    //
+    // These exercise the new `append_scalar_to_props_zone_v2` path:
+    // a `set_node_property` call lands both into the DashMap (read
+    // cache) AND a fresh PropertyEntry on the PropsZone chain, with
+    // the NodeRecord.first_prop_off head pointer updated via WAL.
+    // -------------------------------------------------------------------
+
+    /// Helper: walk the PropsZone chain for node `slot` and return the
+    /// decoded entries in chain order (newest → oldest).
+    fn collect_node_props_v2(
+        s: &SubstrateStore,
+        slot: u32,
+    ) -> Vec<crate::page::PropertyEntry> {
+        let rec = s.writer.read_node(slot).unwrap().unwrap();
+        let head = crate::props_zone::decode_page_id(rec.first_prop_off);
+        let pz = s.props_zone.as_ref().expect("v2 enabled").read();
+        pz.collect_entries(head).unwrap()
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn set_node_property_writes_to_props_zone_v2() {
+        // With OBRAIN_PROPS_V2=1, a scalar set_node_property must land
+        // as a PropertyEntry on the PropsZone chain AND flip the head
+        // pointer on the NodeRecord.
+        let _guard = props_v2_env_lock().lock().unwrap();
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "1") };
+
+        let td = tempfile::tempdir().unwrap();
+        let s = SubstrateStore::create(td.path().join("kb")).unwrap();
+        let a = s.create_node(&["Doc"]);
+        s.set_node_property(a, "title", Value::String("hello".into()));
+        s.set_node_property(a, "count", Value::Int64(42));
+        s.flush().unwrap();
+
+        // Head pointer must now be non-zero.
+        let rec = s.writer.read_node(a.0 as u32).unwrap().unwrap();
+        assert!(
+            !rec.first_prop_off.is_zero(),
+            "first_prop_off must be set after property writes"
+        );
+
+        // Chain contains both entries.
+        let entries = collect_node_props_v2(&s, a.0 as u32);
+        assert_eq!(entries.len(), 2, "got entries: {:?}", entries);
+        // walk_chain emits entries page-by-page (newest → oldest
+        // across pages) but within a page it iterates the cursor in
+        // APPEND order (oldest → newest). When both writes fit into
+        // the first head page, the observed order is [title, count].
+        // The get-side LWW layer (Step 3c) will reverse the semantic
+        // ordering so the *latest* write wins.
+        let title_id = s.prop_keys.write().intern("title").unwrap();
+        let count_id = s.prop_keys.write().intern("count").unwrap();
+        assert_eq!(
+            entries[0].prop_key, title_id,
+            "first append = title"
+        );
+        assert_eq!(
+            entries[1].prop_key, count_id,
+            "second append = count"
+        );
+
+        unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn props_zone_v2_survives_reopen() {
+        // Write a property with v2 enabled, close the store, reopen,
+        // and confirm the PropsZone chain still holds the entry.
+        let _guard = props_v2_env_lock().lock().unwrap();
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "1") };
+
+        let td = tempfile::tempdir().unwrap();
+        let root = td.path().join("kb");
+        let a_raw;
+        {
+            let s = SubstrateStore::create(&root).unwrap();
+            let a = s.create_node(&["Doc"]);
+            a_raw = a.0 as u32;
+            s.set_node_property(a, "title", Value::String("persistent".into()));
+            s.set_node_property(a, "count", Value::Int64(99));
+            s.flush().unwrap();
+            // Drop at end of scope releases mmaps & WAL file handles.
+        }
+
+        // Re-open without env — auto-detection still activates v2.
+        unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
+        let s = SubstrateStore::open(&root).unwrap();
+        assert!(s.props_v2_enabled(), "v2 must auto-enable on reopen");
+
+        let entries = collect_node_props_v2(&s, a_raw);
+        assert_eq!(entries.len(), 2, "entries survived reopen: {:?}", entries);
     }
 }
