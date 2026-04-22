@@ -133,7 +133,7 @@ use crate::props_snapshot::{
     PropertiesStreamingWriter, PROPS_FILENAME,
 };
 use crate::page::PropertyEntry;
-use crate::props_codec::encode_value;
+use crate::props_codec::{decode_value, encode_value};
 use crate::props_zone::{decode_page_id, encode_page_id, PropsZone, PROPS_V2_FILENAME};
 use crate::blob_column_registry::{
     blob_payload_len, encode_blob_payload, BlobColumnRegistry, BLOB_COLUMN_THRESHOLD_BYTES,
@@ -372,6 +372,14 @@ impl PropertyKeyRegistry {
         self.name_to_id.insert(name.clone(), id as u16);
         self.id_to_name.push(name);
         Ok(id as u16)
+    }
+
+    /// Look up an existing interned id without mutating the registry.
+    /// Returns `None` when the name was never interned — safe to call
+    /// from the read path (`get_node_property`) where a missing key
+    /// must not pollute the id space.
+    fn lookup(&self, name: &str) -> Option<u16> {
+        self.name_to_id.get(name).copied()
     }
 
     /// Dump the property-key names in id order for persistence via
@@ -1249,6 +1257,127 @@ impl SubstrateStore {
             self.writer.update_node_first_prop_off(slot, new_head_u48)?;
         }
         Ok(())
+    }
+
+    /// T17c Step 3c — Append a **tombstone** for `(slot, key)` to the
+    /// PropsZone chain and WAL-log the new head pointer if the head
+    /// page rotated. Mirrors `append_scalar_to_props_zone_v2` but
+    /// writes a `PropertyEntry::tombstone(..)` instead of a live value.
+    ///
+    /// Semantics:
+    /// - The key must already be interned — a tombstone for a key the
+    ///   writer never interned is a silent no-op (no chain entry), the
+    ///   read path returns `None` naturally via
+    ///   `lookup_node_property_v2`.
+    /// - On a never-written slot (`first_prop_off == 0`) we still
+    ///   allocate a fresh head page with the tombstone, so a later
+    ///   legacy-hydrated DashMap entry is shadowed by the tombstone on
+    ///   next read. This is required for the LWW contract.
+    fn append_tombstone_to_props_zone_v2(
+        &self,
+        id: NodeId,
+        key: &str,
+    ) -> SubstrateResult<()> {
+        let pz_lock = self
+            .props_zone
+            .as_ref()
+            .expect("append_tombstone_to_props_zone_v2 called without props_zone");
+
+        // Intern the key so a freshly deleted key that was never `set`
+        // before still gets a stable id on the chain. Cheap: the write
+        // lock is held only for the intern call.
+        let prop_key_id = self.prop_keys.write().intern(key)?;
+
+        let slot = id.0 as u32;
+        let node_rec = match self.writer.read_node(slot)? {
+            Some(rec) => rec,
+            None => {
+                return Err(SubstrateError::Internal(format!(
+                    "remove_node_property: node slot {slot} missing from nodes zone"
+                )));
+            }
+        };
+        let current_head = decode_page_id(node_rec.first_prop_off);
+
+        let new_head_idx = {
+            let mut pz = pz_lock.write();
+            let entry = PropertyEntry::tombstone(
+                prop_key_id,
+                crate::page::ValueTag::Null,
+            );
+            pz.append_entry(slot, current_head, &entry)?
+        };
+
+        let new_head_u48 = encode_page_id(new_head_idx);
+        if new_head_u48 != node_rec.first_prop_off {
+            self.writer.update_node_first_prop_off(slot, new_head_u48)?;
+        }
+        Ok(())
+    }
+
+    /// T17c Step 3c — Resolve a scalar property through the PropsZone
+    /// v2 chain, following LWW semantics.
+    ///
+    /// Returns:
+    /// - `Some(Some(value))` — a live entry was found on the chain.
+    /// - `Some(None)` — a tombstone was found on the chain; the key is
+    ///   semantically deleted and callers MUST return `None` **without
+    ///   consulting the DashMap fallback** (LWW: a newer tombstone
+    ///   shadows any older DashMap value).
+    /// - `None` — nothing on the chain about this key. Callers fall
+    ///   back to the DashMap legacy sidecar.
+    ///
+    /// `None` is also returned when:
+    /// - `self.props_zone` is `None` (v2 disabled — legacy mode),
+    /// - the NodeRecord has `first_prop_off == 0` (slot never wrote
+    ///   through v2 — e.g. not-yet-migrated data),
+    /// - the key was never interned (no prop_key_id in the registry),
+    /// - an I/O or decode error occurs (warned via `tracing::warn!` so
+    ///   we degrade to the DashMap path rather than loudly fail the
+    ///   read).
+    fn lookup_node_property_v2(
+        &self,
+        id: NodeId,
+        key: &str,
+    ) -> Option<Option<Value>> {
+        let pz_lock = self.props_zone.as_ref()?;
+        let slot = id.0 as u32;
+        let node_rec = match self.writer.read_node(slot) {
+            Ok(Some(rec)) => rec,
+            _ => return None,
+        };
+        let head = decode_page_id(node_rec.first_prop_off)?;
+        let prop_key_id = self.prop_keys.read().lookup(key)?;
+        let pz = pz_lock.read();
+        let entry = match pz.get_latest_for_key(Some(head), prop_key_id) {
+            Ok(Some(e)) => e,
+            Ok(None) => return None,
+            Err(err) => {
+                tracing::warn!(
+                    node_id = id.0,
+                    key = %key,
+                    error = %err,
+                    "props zone v2 read failed — falling back to DashMap"
+                );
+                return None;
+            }
+        };
+        if entry.is_tombstone() {
+            // LWW: tombstone wins over any DashMap fallback.
+            return Some(None);
+        }
+        match decode_value(&pz, &entry.value) {
+            Ok(v) => Some(Some(v)),
+            Err(err) => {
+                tracing::warn!(
+                    node_id = id.0,
+                    key = %key,
+                    error = %err,
+                    "props zone v2 decode failed — falling back to DashMap"
+                );
+                None
+            }
+        }
     }
 
     /// Open a [`PropertiesStreamingWriter`] targeting this store's
@@ -2810,6 +2939,15 @@ impl GraphStore for SubstrateStore {
         {
             return Some(v);
         }
+        // T17c Step 3c — PropsZone v2 read path with LWW semantics.
+        // `lookup_node_property_v2` returns:
+        //   - Some(Some(v)) → live entry wins
+        //   - Some(None)    → tombstone wins (deleted; skip DashMap)
+        //   - None          → nothing on v2 chain; fall through
+        match self.lookup_node_property_v2(id, key.as_str()) {
+            Some(v) => return v,
+            None => {}
+        }
         let entry = self.node_properties.get(&id)?;
         entry.get(key).cloned()
     }
@@ -3424,6 +3562,21 @@ impl GraphStoreMut for SubstrateStore {
     fn remove_node_property(&self, id: NodeId, key: &str) -> Option<Value> {
         if !self.is_live_on_disk(id) {
             return None;
+        }
+        // T17c Step 3c — write a tombstone to the PropsZone chain so
+        // the LWW read path (get_node_property) sees the deletion
+        // even when the DashMap sidecar no longer has the entry.
+        // Best-effort: a failure here downgrades to DashMap-only
+        // semantics but must not lose the delete.
+        if self.props_zone.is_some() {
+            if let Err(err) = self.append_tombstone_to_props_zone_v2(id, key) {
+                tracing::warn!(
+                    node_id = id.0,
+                    key = %key,
+                    error = %err,
+                    "props zone v2 tombstone append failed — falling back to DashMap only"
+                );
+            }
         }
         self.node_properties
             .get_mut(&id)?
@@ -5549,5 +5702,199 @@ mod tests {
 
         let entries = collect_node_props_v2(&s, a_raw);
         assert_eq!(entries.len(), 2, "entries survived reopen: {:?}", entries);
+    }
+
+    // -------------------------------------------------------------------
+    // T17c Step 3c — PropsZone read-path (LWW) tests.
+    //
+    // These exercise `get_node_property` routing through
+    // `lookup_node_property_v2` (walk_chain + LWW) instead of (or
+    // before) the DashMap fallback.
+    // -------------------------------------------------------------------
+
+    /// LWW: two successive `set_node_property` calls for the same key
+    /// must have the **second write win** via the v2 chain. The read
+    /// path must not return the older value even though both entries
+    /// coexist on the chain.
+    #[test]
+    #[allow(unsafe_code)]
+    fn get_node_property_lww_same_page() {
+        let _guard = props_v2_env_lock().lock().unwrap();
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "1") };
+
+        let td = tempfile::tempdir().unwrap();
+        let s = SubstrateStore::create(td.path().join("kb")).unwrap();
+        let a = s.create_node(&["Doc"]);
+        s.set_node_property(a, "title", Value::String("v1".into()));
+        s.set_node_property(a, "title", Value::String("v2".into()));
+        s.set_node_property(a, "title", Value::String("v3".into()));
+
+        // Chain holds all three writes (append-only).
+        let entries = collect_node_props_v2(&s, a.0 as u32);
+        assert_eq!(
+            entries.len(),
+            3,
+            "append-only chain retains all 3 entries"
+        );
+
+        // Read must surface the latest value.
+        let got = s.get_node_property(a, &PropertyKey::new("title"));
+        assert_eq!(
+            got,
+            Some(Value::String("v3".into())),
+            "LWW: latest write wins (got: {:?})",
+            got
+        );
+
+        unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
+    }
+
+    /// Tombstone: `set` then `remove` must make `get` return `None`
+    /// via the v2 chain, even though the older `set` entry is still
+    /// physically present. The v2 tombstone also shadows the DashMap
+    /// sidecar (which removed the key in the same call).
+    #[test]
+    #[allow(unsafe_code)]
+    fn get_node_property_tombstone_shadows_older_set() {
+        let _guard = props_v2_env_lock().lock().unwrap();
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "1") };
+
+        let td = tempfile::tempdir().unwrap();
+        let s = SubstrateStore::create(td.path().join("kb")).unwrap();
+        let a = s.create_node(&["Doc"]);
+        s.set_node_property(a, "title", Value::String("hello".into()));
+        // Sanity: live read returns the value.
+        assert_eq!(
+            s.get_node_property(a, &PropertyKey::new("title")),
+            Some(Value::String("hello".into()))
+        );
+        s.remove_node_property(a, "title");
+
+        // v2 chain must have both the live entry (old) and a
+        // tombstone (new); tombstone wins.
+        let got = s.get_node_property(a, &PropertyKey::new("title"));
+        assert_eq!(
+            got,
+            None,
+            "tombstone must shadow older live entry (got: {:?})",
+            got
+        );
+
+        unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
+    }
+
+    /// Tombstone persistence: after a drop/reopen cycle, the tombstone
+    /// entry on disk must still shadow the earlier live entry. This
+    /// validates the WAL-logged head pointer update survives a fresh
+    /// mmap open.
+    #[test]
+    #[allow(unsafe_code)]
+    fn get_node_property_tombstone_survives_reopen() {
+        let _guard = props_v2_env_lock().lock().unwrap();
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "1") };
+
+        let td = tempfile::tempdir().unwrap();
+        let root = td.path().join("kb");
+        let a_id;
+        {
+            let s = SubstrateStore::create(&root).unwrap();
+            let a = s.create_node(&["Doc"]);
+            a_id = a;
+            s.set_node_property(a, "title", Value::String("persistent".into()));
+            s.remove_node_property(a, "title");
+            s.flush().unwrap();
+        }
+
+        unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
+        let s = SubstrateStore::open(&root).unwrap();
+        assert!(s.props_v2_enabled(), "v2 must auto-enable on reopen");
+
+        let got = s.get_node_property(a_id, &PropertyKey::new("title"));
+        assert_eq!(
+            got,
+            None,
+            "tombstone survives reopen (got: {:?})",
+            got
+        );
+    }
+
+    /// Legacy fallback: a node whose `first_prop_off == 0` (never
+    /// wrote through v2 — e.g. migrated-in or DashMap-only insertion)
+    /// must still resolve via the DashMap sidecar. This exercises the
+    /// `None` arm of `lookup_node_property_v2`.
+    #[test]
+    #[allow(unsafe_code)]
+    fn get_node_property_falls_back_to_dashmap_when_head_is_zero() {
+        let _guard = props_v2_env_lock().lock().unwrap();
+        // Explicitly disable v2 so `set_node_property` writes only to
+        // the DashMap — the NodeRecord.first_prop_off stays at 0.
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "0") };
+
+        let td = tempfile::tempdir().unwrap();
+        let s = SubstrateStore::create(td.path().join("kb")).unwrap();
+        let a = s.create_node(&["Doc"]);
+        s.set_node_property(a, "title", Value::String("legacy".into()));
+
+        // Sanity: v2 is off, chain head is zero.
+        assert!(!s.props_v2_enabled());
+        let rec = s.writer.read_node(a.0 as u32).unwrap().unwrap();
+        assert!(rec.first_prop_off.is_zero());
+
+        // Read still returns the value via DashMap fallback.
+        let got = s.get_node_property(a, &PropertyKey::new("title"));
+        assert_eq!(got, Some(Value::String("legacy".into())));
+
+        unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
+    }
+
+    /// Multi-page LWW: force a chain spanning two pages and check
+    /// that a write on the **newer** head page wins over the older
+    /// same-key entry on the tail page. This validates the
+    /// page-by-page short-circuit in `get_latest_for_key`.
+    #[test]
+    #[allow(unsafe_code)]
+    fn get_node_property_lww_across_pages() {
+        let _guard = props_v2_env_lock().lock().unwrap();
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "1") };
+
+        let td = tempfile::tempdir().unwrap();
+        let s = SubstrateStore::create(td.path().join("kb")).unwrap();
+        let a = s.create_node(&["Doc"]);
+
+        // First write: short key "K", lands on head page 1.
+        s.set_node_property(a, "K", Value::String("oldest".into()));
+        let head_after_first = decode_page_id(
+            s.writer.read_node(a.0 as u32).unwrap().unwrap().first_prop_off,
+        );
+
+        // Fill the page with filler entries until a fresh head page
+        // gets allocated.
+        let mut filler = 0u32;
+        let original_head = head_after_first;
+        loop {
+            let key = format!("filler_{filler}");
+            s.set_node_property(a, &key, Value::Int64(filler as i64));
+            filler += 1;
+            let cur_head = decode_page_id(
+                s.writer.read_node(a.0 as u32).unwrap().unwrap().first_prop_off,
+            );
+            if cur_head != original_head {
+                break; // New head page allocated.
+            }
+            // Safety net against runaway loops.
+            assert!(filler < 5_000, "failed to rotate head page");
+        }
+
+        // New write on the new head page for the same key.
+        s.set_node_property(a, "K", Value::String("latest".into()));
+        let got = s.get_node_property(a, &PropertyKey::new("K"));
+        assert_eq!(
+            got,
+            Some(Value::String("latest".into())),
+            "cross-page LWW: newer head page wins (got: {:?})",
+            got
+        );
+
+        unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
     }
 }

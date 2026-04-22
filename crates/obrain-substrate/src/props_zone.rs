@@ -375,6 +375,68 @@ impl PropsZone {
         Ok(out)
     }
 
+    /// T17c Step 3c — Resolve the latest entry (live or tombstone) for
+    /// `prop_key` on the chain rooted at `head`, following **LWW
+    /// semantics** over the chain ordering:
+    ///
+    /// - Pages are scanned from `head` (newest page) toward the tail
+    ///   (oldest page).
+    /// - Within each page, the cursor iterates entries in append order
+    ///   (oldest → newest within the page); the last matching entry in
+    ///   the page wins.
+    /// - The first page that contains any match for `prop_key` decides
+    ///   the result; older pages are not consulted (any write on a
+    ///   newer page shadows older writes for the same key).
+    ///
+    /// Returns:
+    /// - `Ok(Some(entry))` when a match is found. The caller inspects
+    ///   `entry.is_tombstone()` to distinguish "deleted" from "live".
+    /// - `Ok(None)` when no entry for `prop_key` exists anywhere on
+    ///   the chain.
+    /// - `Err(..)` on a bad magic or decode error mid-walk.
+    ///
+    /// Unlike [`walk_chain`](Self::walk_chain), this helper surfaces
+    /// tombstones — they are a valid LWW outcome ("this key was
+    /// deleted") that the read path translates into `None`.
+    pub fn get_latest_for_key(
+        &self,
+        head: Option<u32>,
+        prop_key: u16,
+    ) -> SubstrateResult<Option<PropertyEntry>> {
+        let mut cur = head;
+        while let Some(idx) = cur {
+            let bytes = self.page_slice(idx).ok_or_else(|| {
+                SubstrateError::WalBadFrame(format!(
+                    "get_latest_for_key: page {idx} out of range"
+                ))
+            })?;
+            let page: &PropertyPage = bytemuck::from_bytes(bytes);
+            if page.header.magic != PROP_PAGE_MAGIC {
+                return Err(SubstrateError::WalBadFrame(format!(
+                    "get_latest_for_key: page {idx} has bad magic {:#x}",
+                    page.header.magic
+                )));
+            }
+            let mut latest_in_page: Option<PropertyEntry> = None;
+            let cursor: PropertyCursor<'_> = page.cursor();
+            for entry in cursor {
+                let e = entry.map_err(|e| {
+                    SubstrateError::WalBadFrame(format!(
+                        "get_latest_for_key: decode error on page {idx}: {e}"
+                    ))
+                })?;
+                if e.prop_key == prop_key {
+                    latest_in_page = Some(e);
+                }
+            }
+            if latest_in_page.is_some() {
+                return Ok(latest_in_page);
+            }
+            cur = decode_page_id(page.header.next_page);
+        }
+        Ok(None)
+    }
+
     // ---- heap API ------------------------------------------------------
 
     /// Intern arbitrary bytes into the heap zone and return a stable
