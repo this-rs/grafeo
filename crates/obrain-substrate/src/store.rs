@@ -132,6 +132,7 @@ use crate::props_snapshot::{
     entries_to_map, map_to_entries, PropEntry, PropertiesSnapshotV1,
     PropertiesStreamingWriter, PROPS_FILENAME,
 };
+use crate::props_zone::{PropsZone, PROPS_V2_FILENAME};
 use crate::blob_column_registry::{
     blob_payload_len, encode_blob_payload, BlobColumnRegistry, BLOB_COLUMN_THRESHOLD_BYTES,
 };
@@ -559,6 +560,26 @@ pub struct SubstrateStore {
     /// cadence as the dict, the vec-column registry, and the props
     /// sidecar.
     blob_columns: BlobColumnRegistry,
+    /// Optional v2 props zone (T17c Step 3a — plumbing only).
+    ///
+    /// When `Some`, the mmap'd `substrate.props.v2` + `substrate.props.heap.v2`
+    /// pair has been opened. The field is NOT yet wired to
+    /// `set_*_property` / `get_*_property` — Step 3b/3c do that. For
+    /// now, its sole job is to make sure the zone files get created
+    /// (and grown to the initial dummy-sentinel + first-slot size)
+    /// whenever the feature is enabled, so operational tooling can
+    /// inspect the substrate directory and see the migration target.
+    ///
+    /// **Enablement**:
+    /// * `OBRAIN_PROPS_V2=1` in the environment at open time, OR
+    /// * `substrate.props.v2` already exists on disk (auto-detected —
+    ///   once a substrate has been upgraded, it stays upgraded).
+    ///
+    /// Pure feature-flag plumbing: when both conditions are false, this
+    /// stays `None` and the legacy [`Self::load_properties`] /
+    /// [`Self::persist_properties`] bincode sidecar path is the only
+    /// property storage in play.
+    props_zone: Option<RwLock<PropsZone>>,
 }
 
 // T17e Phase 3 — `NodeInMem` and `EdgeInMem` were removed along with
@@ -635,6 +656,35 @@ impl SubstrateStore {
         let writer = Writer::new(sub, sync_mode)?;
         let substrate = writer.substrate();
 
+        // (1c) T17c Step 3a — plumb the v2 props zone.
+        //      Conditional open: either `OBRAIN_PROPS_V2=1` in the env
+        //      at open time, or `substrate.props.v2` already exists on
+        //      disk (once upgraded, always upgraded). When neither is
+        //      true we stay on the legacy props sidecar path.
+        //
+        //      Step 3a is pure plumbing: the zone is opened and held in
+        //      the store skeleton but not yet consulted by any reader or
+        //      writer. Step 3b/3c (write-through + read path) follow.
+        let t_props_v2 = std::time::Instant::now();
+        let props_zone_open_span = tracing::info_span!("props_zone_open").entered();
+        let props_zone = {
+            let sub_guard = substrate.lock();
+            let enable_env = std::env::var("OBRAIN_PROPS_V2").ok().as_deref() == Some("1");
+            let zone_exists = sub_guard.path().join(PROPS_V2_FILENAME).exists();
+            if enable_env || zone_exists {
+                Some(RwLock::new(PropsZone::open(&sub_guard)?))
+            } else {
+                None
+            }
+        };
+        drop(props_zone_open_span);
+        tracing::info!(
+            phase = "props_zone_open",
+            elapsed_ms = t_props_v2.elapsed().as_millis() as u64,
+            enabled = props_zone.is_some(),
+            "v2 props zone open decision"
+        );
+
         let store = Self {
             substrate,
             writer: Arc::new(writer),
@@ -652,6 +702,7 @@ impl SubstrateStore {
             community_first_slots: DashMap::new(),
             vec_columns: VecColumnRegistry::new(),
             blob_columns: BlobColumnRegistry::new(),
+            props_zone,
         };
         drop(writer_span);
         tracing::info!(
@@ -1093,9 +1144,28 @@ impl SubstrateStore {
         self.writer.msync_zones()?;
         self.vec_columns.sync_all()?;
         self.blob_columns.sync_all()?;
+        // T17c Step 3a — flush the v2 props zone when enabled. Pure
+        // plumbing step: no writes go through it yet (3b/3c wire the
+        // setters), so `flush()` is effectively a no-op except for the
+        // first session on an enabled substrate (where the dummy
+        // sentinel page was just mmap-extended and needs to hit disk).
+        if let Some(pz) = self.props_zone.as_ref() {
+            pz.read().flush()?;
+        }
         self.persist_dict()?;
         self.persist_properties()?;
         Ok(())
+    }
+
+    /// Returns `true` when the v2 props zone
+    /// (`substrate.props.v2` + `substrate.props.heap.v2`) has been
+    /// opened for this session.
+    ///
+    /// T17c Step 3a observability hook. Enabled when either
+    /// `OBRAIN_PROPS_V2=1` was set at open time, or the zone file
+    /// already existed on disk.
+    pub fn props_v2_enabled(&self) -> bool {
+        self.props_zone.is_some()
     }
 
     /// Open a [`PropertiesStreamingWriter`] targeting this store's
@@ -5154,5 +5224,135 @@ mod tests {
         s.writer
             .advise_zone_willneed(crate::file::Zone::Community, 0, 4096)
             .unwrap();
+    }
+
+    // ---------------------------------------------------------------
+    // T17c Step 3a — Props-zone plumbing smoke tests.
+    //
+    // These tests verify the gating contract (env OR file) and that the
+    // field is wired through flush() without corrupting the legacy
+    // path. Setters/getters still live on the DashMap route; Step 3b
+    // will move the write path onto PropsZone.
+    // ---------------------------------------------------------------
+
+    /// Serialise access to `OBRAIN_PROPS_V2` across parallel test
+    /// runners — `env::set_var` is process-wide, so two concurrent
+    /// tests would clobber each other's configuration.
+    fn props_v2_env_lock() -> &'static std::sync::Mutex<()> {
+        use std::sync::OnceLock;
+        static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn props_zone_v2_disabled_by_default() {
+        // No env, no pre-existing zone file — open must stay on the
+        // legacy path and the zone files must not be created.
+        let _guard = props_v2_env_lock().lock().unwrap();
+        // Make sure a stray env var from another test can't leak in.
+        // SAFETY: serialised via `props_v2_env_lock`.
+        unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
+
+        let td = tempfile::tempdir().unwrap();
+        let s = SubstrateStore::create(td.path().join("kb")).unwrap();
+        assert!(
+            !s.props_v2_enabled(),
+            "props_v2 must remain disabled when env is unset and no file exists"
+        );
+
+        let root = td.path().join("kb");
+        assert!(
+            !root.join(crate::props_zone::PROPS_V2_FILENAME).exists(),
+            "zone file must not be created when feature is off"
+        );
+        assert!(
+            !root.join(crate::props_zone::PROPS_HEAP_V2_FILENAME).exists(),
+            "heap zone file must not be created when feature is off"
+        );
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn props_zone_v2_env_enables_creation() {
+        // `OBRAIN_PROPS_V2=1` at open time must force-open the zone
+        // files and flip `props_v2_enabled()` to true.
+        let _guard = props_v2_env_lock().lock().unwrap();
+        // SAFETY: serialised via `props_v2_env_lock`.
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "1") };
+
+        let td = tempfile::tempdir().unwrap();
+        let root = td.path().join("kb");
+        let s = SubstrateStore::create(&root).unwrap();
+        assert!(s.props_v2_enabled(), "env must enable props_v2");
+
+        // Flush so the mmap-grown zone files are sized on disk.
+        s.flush().unwrap();
+        assert!(
+            root.join(crate::props_zone::PROPS_V2_FILENAME).exists(),
+            "props.v2 file must exist after create+flush"
+        );
+        assert!(
+            root.join(crate::props_zone::PROPS_HEAP_V2_FILENAME).exists(),
+            "props.heap.v2 file must exist after create+flush"
+        );
+
+        // SAFETY: serialised via `props_v2_env_lock`.
+        unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn props_zone_v2_auto_detected_on_reopen() {
+        // Once the zone file exists on disk, a reopen without env must
+        // still enable the feature — "once upgraded, always upgraded".
+        let _guard = props_v2_env_lock().lock().unwrap();
+
+        let td = tempfile::tempdir().unwrap();
+        let root = td.path().join("kb");
+
+        // Phase 1: create + open with the feature on so the zone file
+        // lands on disk.
+        // SAFETY: serialised via `props_v2_env_lock`.
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "1") };
+        {
+            let s = SubstrateStore::create(&root).unwrap();
+            s.flush().unwrap();
+            assert!(s.props_v2_enabled());
+        }
+        // SAFETY: serialised via `props_v2_env_lock`.
+        unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
+
+        // Phase 2: reopen WITHOUT env — auto-detect must fire.
+        assert!(root.join(crate::props_zone::PROPS_V2_FILENAME).exists());
+        let s = SubstrateStore::open(&root).unwrap();
+        assert!(
+            s.props_v2_enabled(),
+            "existing substrate.props.v2 on disk must re-enable the zone"
+        );
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn props_zone_v2_flush_is_noop_in_step_3a() {
+        // Pure plumbing test: with the zone enabled but no write path
+        // wired yet, flush() must not blow up and must not change the
+        // zone layout (allocated_page_count stays at 0 because no
+        // entries were appended).
+        let _guard = props_v2_env_lock().lock().unwrap();
+        // SAFETY: serialised via `props_v2_env_lock`.
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "1") };
+
+        let td = tempfile::tempdir().unwrap();
+        let s = SubstrateStore::create(td.path().join("kb")).unwrap();
+        s.flush().unwrap();
+        s.flush().unwrap();
+        // Idempotent — zone still empty.
+        let pz = s.props_zone.as_ref().expect("enabled");
+        assert_eq!(pz.read().allocated_page_count(), 0);
+        assert_eq!(pz.read().allocated_heap_page_count(), 0);
+
+        // SAFETY: serialised via `props_v2_env_lock`.
+        unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
     }
 }
