@@ -12,10 +12,15 @@ Core graph storage and execution engine.
 
 ## Graph Storage
 
-```rust
-use obrain_core::graph::lpg::{LpgStore, NodeRecord, EdgeRecord};
+Since the T17 substrate cutover, the canonical backend is `SubstrateStore`
+(mmap + WAL-native) from the `obrain-substrate` crate. It implements the
+`GraphStore` / `GraphStoreMut` traits defined in `obrain-core`.
 
-let store = LpgStore::new();
+```rust
+use obrain_substrate::SubstrateStore;
+use obrain_core::graph::traits::GraphStoreMut;
+
+let store = SubstrateStore::open_tempfile().unwrap();
 let node_id = store.create_node(&["Person"]);
 ```
 

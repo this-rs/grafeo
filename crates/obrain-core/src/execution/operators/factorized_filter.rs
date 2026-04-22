@@ -228,9 +228,10 @@ impl FactorizedPredicate for ColumnPredicate {
 ///
 /// # Performance
 ///
-/// Uses direct property lookup via `LpgStore::get_node_property()` which is
-/// O(1) per entity. This avoids the O(properties) overhead of loading all
-/// properties when only one is needed.
+/// Uses direct property lookup via the backing `GraphStore::get_node_property()`
+/// (post-T17: `obrain_substrate::SubstrateStore` via mmap'd PropsZone v2)
+/// which is O(1) per entity. This avoids the O(properties) overhead of
+/// loading all properties when only one is needed.
 pub struct PropertyPredicate {
     /// The level containing the entity.
     level: usize,

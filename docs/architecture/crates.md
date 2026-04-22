@@ -76,18 +76,46 @@ use obrain_common::memory::Arena;
 
 ## obrain-core
 
-Core data structures and execution engine.
+Core data structures, graph-store traits and execution engine. Since the
+T17 substrate cutover, `obrain-core` owns the abstract traits
+(`GraphStore`, `GraphStoreMut`) and the query-execution pipeline. The
+concrete on-disk backend lives in [obrain-substrate](#obrain-substrate).
 
 | Module | Purpose |
 |--------|---------|
-| `graph/lpg/` | LPG storage (nodes, edges, properties) |
+| `graph/traits.rs` | `GraphStore` / `GraphStoreMut` traits (canonical API) |
+| `graph/lpg/` | Legacy LPG in-memory backend (scheduled for removal in T17 W4) |
 | `index/` | Hash, B-tree, adjacency indexes |
 | `execution/` | DataChunk, operators, pipelines |
 
 ```rust
-use obrain_core::graph::LpgStore;
+use obrain_substrate::SubstrateStore;
+use obrain_core::graph::traits::GraphStoreMut;
 use obrain_core::index::HashIndex;
 use obrain_core::execution::DataChunk;
+
+let store = SubstrateStore::open_tempfile().unwrap();
+```
+
+## obrain-substrate
+
+Canonical on-disk backend for the obrain graph database — a single mmap'd
+file that *is* the topology (records `#[repr(C)]` bytemuck::Pod, inline
+index-free adjacency, WAL-native). Implements `GraphStore` /
+`GraphStoreMut` as a drop-in replacement for the legacy `LpgStore`.
+
+| Module | Purpose |
+|--------|---------|
+| `store.rs` | `SubstrateStore` — open / mmap / WAL entry point |
+| `record.rs` | Fixed-size `NodeRecord` (32 B) / `EdgeRecord` (36 B post-T17f) |
+| `props_zone.rs` | 4 KiB `PropertyPage` mmap-backed property chains |
+| `wal/` | Crash-safe WAL (NodeInsert / EdgeInsert / PropSet / Delete / Checkpoint) |
+| `tiers/` | Retrieval tiers L0 (128-bit) / L1 (512-bit) / L2 (f16 384-dim) |
+
+```rust
+use obrain_substrate::SubstrateStore;
+
+let store = SubstrateStore::open("/path/to/db.obrain").unwrap();
 ```
 
 ## obrain-adapters

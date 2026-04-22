@@ -6,9 +6,9 @@
 //! - **Streaming subscriptions** (T4): notify listeners of mutations in real time
 //! - **Incremental recomputation**: only recalculate features for changed nodes
 //!
-//! The tracker is **opt-in**: when disabled (`None` on `LpgStore`), there is
-//! zero overhead — the `Option::is_none()` branch is eliminated by branch
-//! prediction.
+//! The tracker is **opt-in**: when disabled (`None` on the graph store),
+//! there is zero overhead — the `Option::is_none()` branch is eliminated
+//! by branch prediction.
 //!
 //! # Ring buffer semantics
 //!
@@ -19,8 +19,9 @@
 //! # Thread safety
 //!
 //! The `ChangeTracker` itself is **not** `Sync` — it is wrapped in a
-//! `parking_lot::RwLock` on `LpgStore` (lock order **11**, after
-//! `property_undo_log` at 10).
+//! `parking_lot::RwLock` on the host graph store (lock order **11**,
+//! after `property_undo_log` at 10 on the legacy LPG layout; substrate
+//! preserves the same ordering convention).
 //!
 //! # Example
 //!

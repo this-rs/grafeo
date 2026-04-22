@@ -29,12 +29,16 @@ use crate::index::vector::HnswIndex;
 ///
 /// ```no_run
 /// use obrain_core::execution::operators::{Operator, VectorScanOperator};
+/// use obrain_core::graph::traits::GraphStore;
 /// use obrain_core::index::vector::DistanceMetric;
-/// use obrain_core::graph::lpg::LpgStore;
 /// use std::sync::Arc;
 ///
+/// // Any backend implementing `GraphStore` works here — post-T17 the
+/// // canonical one is `obrain_substrate::SubstrateStore`, but this doc
+/// // stays in `obrain-core` and therefore uses the trait only.
+/// # fn open_store() -> Arc<dyn GraphStore> { unimplemented!() }
 /// # fn example() -> Result<(), obrain_core::execution::operators::OperatorError> {
-/// let store = Arc::new(LpgStore::new().unwrap());
+/// let store = open_store();
 /// let query = vec![0.1f32, 0.2, 0.3];
 /// let mut scan = VectorScanOperator::brute_force(
 ///     store, "embedding", query, 10, DistanceMetric::Cosine,

@@ -7,17 +7,19 @@
 //! - [`GraphStoreMut`]: Write operations (create, delete, mutate)
 //!
 //! Admin operations (index management, MVCC internals, schema introspection,
-//! statistics recomputation, WAL recovery) stay on the concrete [`LpgStore`]
-//! and are not part of these traits.
+//! statistics recomputation, WAL recovery) stay on the concrete store
+//! (post-T17: `obrain_substrate::SubstrateStore`) and are not part of these
+//! traits.
 //!
 //! ## Design rationale
 //!
 //! The traits work with typed graph objects (`Node`, `Edge`, `Value`) rather
-//! than raw bytes. This preserves zero-overhead access for in-memory storage
-//! while allowing future backends (SpilloverStore, disk-backed) to implement
-//! the same interface with transparent serialization where needed.
-//!
-//! [`LpgStore`]: crate::graph::lpg::LpgStore
+//! than raw bytes. Since T17 cutover, `SubstrateStore` (in the
+//! `obrain-substrate` crate) is the canonical backend (mmap + WAL-native).
+//! The traits are kept generic so legacy shims (e.g. the projection adapter)
+//! and future backends can implement the same interface. Intra-doc links
+//! cannot resolve `SubstrateStore` from here because `obrain-core` does not
+//! depend on `obrain-substrate`.
 
 use crate::graph::Direction;
 use crate::graph::lpg::CompareOp;
@@ -145,7 +147,8 @@ pub trait GraphStore: Send + Sync {
 
     /// Returns the count of nodes with a specific label (O(1)).
     fn node_count_by_label(&self, label: &str) -> usize {
-        // Default fallback (O(n) via nodes_by_label), overridden by LpgStore
+        // Default fallback (O(n) via nodes_by_label); concrete backends
+        // (SubstrateStore) override with an O(1) label-index lookup.
         self.nodes_by_label(label).len()
     }
 

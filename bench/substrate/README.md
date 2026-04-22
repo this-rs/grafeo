@@ -8,7 +8,7 @@ dependencies (criterion, sysinfo, clap) out of release builds.
 ## Layout
 
 - `src/lib.rs`                  — shared harness: `BenchResult`, `RssSampler`, `HostInfo`, `Measurement`
-- `src/bench_baseline.rs`       — LpgStore baseline runner (wired in T1-step3)
+- `src/bench_baseline.rs`       — Legacy LPG baseline runner (pre-T17 frozen reference, wired in T1-step3; scheduled for removal once W4 lands)
 - `src/bench_substrate.rs`      — SubstrateStore runner (wired in T3 + T8 + T10)
 - `benches/retrieval.rs`        — criterion micro-bench for retrieval (T8)
 - `benches/activation.rs`       — criterion micro-bench for activation spreading (T11/T12)

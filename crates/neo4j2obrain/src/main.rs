@@ -17,7 +17,8 @@
 //! |     8 | Seed engrams over high-density × high-centrality clusters |
 //!
 //! Replaces the previous `neo4j2obrain` pipeline, which wrote an
-//! intermediate LpgStore and left cognitive init for the caller.
+//! intermediate in-memory graph and left cognitive init for the caller.
+//! Since T17 cutover, the output is a substrate-format `.obrain/` directory.
 //!
 //! Usage:
 //!
@@ -149,8 +150,8 @@ struct Cli {
     /// node; stages 3-8 consult a coverage probe and skip themselves
     /// when already populated.
     ///
-    /// Use case: a base migrated via `obrain-migrate` (LpgStore →
-    /// substrate) has the graph structure but no embeddings, tiers,
+    /// Use case: a base migrated via `obrain-migrate` (legacy .obrain
+    /// → substrate) has the graph structure but no embeddings, tiers,
     /// communities, or engrams. `--enrich-only` adds those without
     /// re-streaming from Neo4j.
     #[arg(long, default_value_t = false)]
