@@ -2335,8 +2335,12 @@ mod tests {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test_db");
 
-        // Create database and add some data
-        {
+        // Create database and add some data.
+        // NodeId allocation is backend-dependent: substrate reserves NodeId(0)
+        // as a sentinel and allocates from 1 upward, whereas the legacy
+        // LpgStore started at 0. Capture the IDs returned by `create_node` so
+        // the assertions below stay portable across backends.
+        let (alix_id, gus_id) = {
             let db = ObrainDB::open(&db_path).unwrap();
 
             let alix = db.create_node(&["Person"]);
@@ -2349,7 +2353,8 @@ mod tests {
 
             // Explicitly close to flush WAL
             db.close().unwrap();
-        }
+            (alix, gus)
+        };
 
         // Reopen and verify data was recovered
         {
@@ -2358,11 +2363,11 @@ mod tests {
             assert_eq!(db.node_count(), 2);
             assert_eq!(db.edge_count(), 1);
 
-            // Verify nodes exist
-            let node0 = db.get_node(obrain_common::types::NodeId::new(0));
+            // Verify nodes exist (use captured IDs — backend-agnostic).
+            let node0 = db.get_node(alix_id);
             assert!(node0.is_some());
 
-            let node1 = db.get_node(obrain_common::types::NodeId::new(1));
+            let node1 = db.get_node(gus_id);
             assert!(node1.is_some());
         }
     }
@@ -2399,33 +2404,38 @@ mod tests {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("multi_session_db");
 
-        // Session 1: Create initial data
-        {
+        // Session 1: Create initial data.
+        // Capture the substrate-allocated IDs so the cross-session assertions
+        // below remain portable (substrate starts at NodeId(1); legacy LpgStore
+        // started at 0).
+        let alix_id = {
             let db = ObrainDB::open(&db_path).unwrap();
             let alix = db.create_node(&["Person"]);
             db.set_node_property(alix, "name", Value::from("Alix"));
             db.close().unwrap();
-        }
+            alix
+        };
 
         // Session 2: Add more data
-        {
+        let gus_id = {
             let db = ObrainDB::open(&db_path).unwrap();
             assert_eq!(db.node_count(), 1); // Previous data recovered
             let gus = db.create_node(&["Person"]);
             db.set_node_property(gus, "name", Value::from("Gus"));
             db.close().unwrap();
-        }
+            gus
+        };
 
         // Session 3: Verify all data
         {
             let db = ObrainDB::open(&db_path).unwrap();
             assert_eq!(db.node_count(), 2);
 
-            // Verify properties were recovered correctly
-            let node0 = db.get_node(obrain_common::types::NodeId::new(0)).unwrap();
+            // Verify properties were recovered correctly (use captured IDs).
+            let node0 = db.get_node(alix_id).unwrap();
             assert!(node0.labels.iter().any(|l| l.as_str() == "Person"));
 
-            let node1 = db.get_node(obrain_common::types::NodeId::new(1)).unwrap();
+            let node1 = db.get_node(gus_id).unwrap();
             assert!(node1.labels.iter().any(|l| l.as_str() == "Person"));
         }
     }
@@ -2440,7 +2450,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("consistency_db");
 
-        {
+        // Capture substrate-allocated IDs so the cross-session assertions
+        // below remain portable across backends (substrate reserves NodeId(0)
+        // as a sentinel).
+        let (a_id, b_id, c_id) = {
             let db = ObrainDB::open(&db_path).unwrap();
 
             // Create nodes
@@ -2461,7 +2474,8 @@ mod tests {
             db.set_node_property(c, "value", Value::Int64(3));
 
             db.close().unwrap();
-        }
+            (a, b, c)
+        };
 
         // Reopen and verify consistency
         {
@@ -2470,14 +2484,14 @@ mod tests {
             // Should have 2 nodes (a and c), b was deleted
             // Note: node_count includes deleted nodes in some implementations
             // What matters is that the non-deleted nodes are accessible
-            let node_a = db.get_node(obrain_common::types::NodeId::new(0));
+            let node_a = db.get_node(a_id);
             assert!(node_a.is_some());
 
-            let node_c = db.get_node(obrain_common::types::NodeId::new(2));
+            let node_c = db.get_node(c_id);
             assert!(node_c.is_some());
 
             // Middle node should be deleted
-            let node_b = db.get_node(obrain_common::types::NodeId::new(1));
+            let node_b = db.get_node(b_id);
             assert!(node_b.is_none());
         }
     }
