@@ -22,21 +22,31 @@ impl super::ObrainDB {
     }
 
     /// Returns the number of distinct labels in the database.
+    ///
+    /// T17 W3c slice 5b: derived from the trait-safe `all_labels()` so
+    /// substrate-backed databases report real counts (previously routed
+    /// through the LpgStore-inherent `label_count()` on the dummy store).
     #[must_use]
     pub fn label_count(&self) -> usize {
-        self.store.label_count()
+        self.data_store().all_labels().len()
     }
 
     /// Returns the number of distinct property keys in the database.
+    ///
+    /// T17 W3c slice 5b: see `label_count` — routes through the trait's
+    /// `all_property_keys()` for substrate parity.
     #[must_use]
     pub fn property_key_count(&self) -> usize {
-        self.store.property_key_count()
+        self.data_store().all_property_keys().len()
     }
 
     /// Returns the number of distinct edge types in the database.
+    ///
+    /// T17 W3c slice 5b: see `label_count` — routes through the trait's
+    /// `all_edge_types()` for substrate parity.
     #[must_use]
     pub fn edge_type_count(&self) -> usize {
-        self.store.edge_type_count()
+        self.data_store().all_edge_types().len()
     }
 
     // =========================================================================
@@ -84,8 +94,31 @@ impl super::ObrainDB {
     pub fn memory_usage(&self) -> crate::memory_usage::MemoryUsage {
         use crate::memory_usage::{BufferManagerMemory, CacheMemory, MemoryUsage};
         use obrain_common::memory::MemoryRegion;
+        use obrain_common::memory::usage::{
+            IndexMemory, MvccMemory, StoreMemory, StringPoolMemory,
+        };
 
-        let (store, indexes, mvcc, string_pool) = self.store.memory_breakdown();
+        // T17 W3c slice 5b: `LpgStore::memory_breakdown()` walks LpgStore-specific
+        // in-memory structures (node/edge VersionChain maps, MVCC chains, property
+        // column DashMaps). In substrate mode storage is mmap-backed zones on disk
+        // plus small in-RAM metadata; those categories don't map cleanly to
+        // StoreMemory/MvccMemory. Until substrate grows a parallel breakdown,
+        // return zeroed sub-totals so admin callers see "unknown" rather than
+        // a silently-wrong empty-LpgStore report.
+        //
+        // TODO(T17 follow-up): add `SubstrateStore::memory_breakdown()` that
+        // reports zone footprints (NodesZone, EdgesZone, PropsZone, WAL tail)
+        // and plumb it here.
+        let (store, indexes, mvcc, string_pool) = if self.substrate_store.is_some() {
+            (
+                StoreMemory::default(),
+                IndexMemory::default(),
+                MvccMemory::default(),
+                StringPoolMemory::default(),
+            )
+        } else {
+            self.store.memory_breakdown()
+        };
 
         let (parsed_bytes, optimized_bytes, cached_plan_count) =
             self.query_cache.heap_memory_bytes();
@@ -136,12 +169,16 @@ impl super::ObrainDB {
         #[cfg(not(feature = "wal"))]
         let disk_bytes: Option<usize> = None;
 
+        // T17 W3c slice 5b: route schema-cardinality reads through data_store()
+        // so substrate mode reports real counts (LpgStore-inherent methods
+        // target the dummy empty store in substrate mode).
+        let data = self.data_store();
         crate::admin::DatabaseStats {
-            node_count: self.data_store().node_count(),
-            edge_count: self.data_store().edge_count(),
-            label_count: self.store.label_count(),
-            edge_type_count: self.store.edge_type_count(),
-            property_key_count: self.store.property_key_count(),
+            node_count: data.node_count(),
+            edge_count: data.edge_count(),
+            label_count: data.all_labels().len(),
+            edge_type_count: data.all_edge_types().len(),
+            property_key_count: data.all_property_keys().len(),
             index_count: self.catalog.index_count(),
             memory_bytes: self.buffer_manager.allocated(),
             disk_bytes,
@@ -245,6 +282,23 @@ impl super::ObrainDB {
     #[must_use]
     pub fn validate(&self) -> crate::admin::ValidationResult {
         let mut result = crate::admin::ValidationResult::default();
+
+        // T17 W3c slice 5b: dangling-edge scan relies on LpgStore-inherent
+        // `all_edges()` iterator. Substrate's edge topology lives in mmap'd
+        // zones accessed by slot index; there is no trait-level iterator yet.
+        // In substrate mode we bail cleanly — substrate's replay+checksum path
+        // already validates on-disk edge integrity, so the admin validator is
+        // informational rather than a correctness primitive there.
+        if self.substrate_store.is_some() {
+            result.warnings.push(crate::admin::ValidationWarning {
+                code: "VALIDATE_SUBSTRATE_SKIPPED".to_string(),
+                message: "Dangling-edge validator not implemented for substrate backend; \
+                          on-disk integrity is verified by WAL replay + zone checksums"
+                    .to_string(),
+                context: None,
+            });
+            return result;
+        }
 
         // Check for dangling edge references
         for edge in self.store.all_edges() {
