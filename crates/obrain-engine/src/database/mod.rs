@@ -22,8 +22,10 @@ mod persistence;
 #[cfg(feature = "obrain-file")]
 #[allow(unsafe_code)]
 pub mod mmap_store;
-#[cfg(feature = "obrain-file")]
-pub mod overlay_store;
+// NOTE (T17 W3a): `overlay_store` (MmapStore base + LpgStore delta) was the T5
+// workaround for lazy-property materialization on large v2 `.obrain` files.
+// Substrate is mmap-native with its own PropsZone v2 overlay, so the module
+// has been deleted. Search archaeology: 177 LOC removed on 2026-04-22.
 #[cfg(feature = "obrain-file")]
 #[allow(unsafe_code)]
 pub mod nocache_reader;
@@ -1313,8 +1315,12 @@ impl ObrainDB {
     /// with heavy vector properties (e.g. 32 GB megalaw: full = 20+ min,
     /// structure-only = ~30s).
     ///
-    /// The caller is expected to use an `OverlayStore` that reads properties
-    /// from the mmap and writes new properties to the LpgStore delta.
+    /// Post-T17: the caller is expected to read properties directly from the
+    /// mmap via `MmapStore::*_property()` accessors. The former
+    /// `OverlayStore` (mmap base + LpgStore delta) shim was deleted in W3a
+    /// because substrate's PropsZone v2 already provides the equivalent
+    /// copy-on-write overlay natively. This helper itself is scheduled for
+    /// removal in W3c alongside the rest of the v2 `.obrain` loader.
     #[cfg(feature = "obrain-file")]
     pub fn materialize_structure_only(
         mmap_store: &mmap_store::MmapStore,
