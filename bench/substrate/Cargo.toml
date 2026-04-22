@@ -37,6 +37,15 @@ path = "src/bin/t16_validation.rs"
 name = "reverse-traversal-bench"
 path = "src/bin/reverse_traversal_bench.rs"
 
+# T17 post-cutover — real-base retrieval validation. Opens a live substrate,
+# loads its tier zones verbatim, samples N real `_st_embedding` vectors, and
+# measures search_top_k p50/p95/p99 + recall@10 vs f32 brute-force ground
+# truth on a subset. This is the "query sur les bases" the retrieval-gate
+# synthetic corpus can't prove.
+[[bin]]
+name = "real-retrieval-bench"
+path = "src/bin/real_retrieval_bench.rs"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -53,7 +62,10 @@ obrain-cognitive = { path = "../../crates/obrain-cognitive", features = ["commun
 # T16 — t16-validation binary needs GraphStore trait methods on SubstrateStore
 # (node_count / node_ids / get_node).
 obrain-core = { path = "../../crates/obrain-core", default-features = false }
+# real-retrieval-bench — needs NodeId / PropertyKey / Value from common types.
+obrain-common = { path = "../../crates/obrain-common" }
 rayon = "1"
+rand = "0.8"
 
 # NOTE: obrain-engine / obrain-core path deps are wired in T3 once the SubstrateStore
 # public surface is defined. Until then, the bench runners are stubs that exercise
