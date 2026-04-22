@@ -12,6 +12,7 @@ use std::sync::Arc;
 use obrain_common::types::{EpochId, TransactionId, Value};
 use obrain_common::utils::error::{Error, Result};
 use obrain_core::graph::GraphStoreMut;
+#[cfg(test)]
 use obrain_core::graph::lpg::LpgStore;
 
 use crate::catalog::Catalog;
@@ -82,22 +83,31 @@ pub type QueryParams = HashMap<String, Value>;
 ///
 /// # Example
 ///
-/// ```no_run
-/// # use std::sync::Arc;
-/// # use obrain_core::graph::lpg::LpgStore;
-/// use obrain_engine::query::processor::{QueryProcessor, QueryLanguage};
+/// Post-T17: the public entry point is [`for_graph_store_with_transaction`],
+/// which accepts any [`GraphStoreMut`] — in production this is a
+/// [`SubstrateStore`](obrain_substrate::SubstrateStore) routed through
+/// [`ObrainDB::graph_store_mut()`](crate::ObrainDB::graph_store_mut).
 ///
-/// # fn main() -> obrain_common::utils::error::Result<()> {
-/// let store = Arc::new(LpgStore::new().unwrap());
-/// let processor = QueryProcessor::for_lpg(store);
-/// let result = processor.process("MATCH (n:Person) RETURN n", QueryLanguage::Gql, None)?;
-/// # Ok(())
-/// # }
+/// ```ignore
+/// use std::sync::Arc;
+/// use obrain_engine::{ObrainDB, query::processor::{QueryProcessor, QueryLanguage}};
+/// use obrain_engine::transaction::TransactionManager;
+///
+/// let db = ObrainDB::new_in_memory();
+/// let store = db.graph_store_mut();
+/// let tm = Arc::new(TransactionManager::new());
+/// let processor = QueryProcessor::for_graph_store_with_transaction(store, tm)?;
+/// let _result = processor.process("MATCH (n:Person) RETURN n", QueryLanguage::Gql, None)?;
+/// # Ok::<(), obrain_common::utils::error::Error>(())
 /// ```
+///
+/// [`for_graph_store_with_transaction`]: Self::for_graph_store_with_transaction
 pub struct QueryProcessor {
-    /// LPG store for property graph queries.
-    lpg_store: Arc<LpgStore>,
     /// Graph store trait object for pluggable storage backends.
+    ///
+    /// T17 cutover: the legacy `lpg_store: Arc<LpgStore>` field is gone. All
+    /// queries now route through this single trait-object; tests that need a
+    /// typed LpgStore construct their own before wrapping it here.
     graph_store: Arc<dyn GraphStoreMut>,
     /// Transaction manager for MVCC operations.
     transaction_manager: Arc<TransactionManager>,
@@ -113,13 +123,20 @@ pub struct QueryProcessor {
 }
 
 impl QueryProcessor {
-    /// Creates a new query processor for LPG queries.
+    /// Creates a new query processor for LPG queries (test-only).
+    ///
+    /// Post-T17 W3b: production code uses [`for_graph_store_with_transaction`]
+    /// exclusively. This helper is kept for in-crate unit tests that still
+    /// construct an `Arc<LpgStore>` directly — non-test callers must go
+    /// through the trait-based constructor.
+    ///
+    /// [`for_graph_store_with_transaction`]: Self::for_graph_store_with_transaction
+    #[cfg(test)]
     #[must_use]
     pub fn for_lpg(store: Arc<LpgStore>) -> Self {
-        let optimizer = Optimizer::from_store(&store);
         let graph_store = Arc::clone(&store) as Arc<dyn GraphStoreMut>;
+        let optimizer = Optimizer::from_graph_store(&*graph_store);
         Self {
-            lpg_store: store,
             graph_store,
             transaction_manager: Arc::new(TransactionManager::new()),
             catalog: Arc::new(Catalog::new()),
@@ -130,16 +147,16 @@ impl QueryProcessor {
         }
     }
 
-    /// Creates a new query processor with a transaction manager.
+    /// Creates a new query processor with a transaction manager (test-only).
+    #[cfg(test)]
     #[must_use]
     pub fn for_lpg_with_transaction(
         store: Arc<LpgStore>,
         transaction_manager: Arc<TransactionManager>,
     ) -> Self {
-        let optimizer = Optimizer::from_store(&store);
         let graph_store = Arc::clone(&store) as Arc<dyn GraphStoreMut>;
+        let optimizer = Optimizer::from_graph_store(&*graph_store);
         Self {
-            lpg_store: store,
             graph_store,
             transaction_manager,
             catalog: Arc::new(Catalog::new()),
@@ -161,7 +178,6 @@ impl QueryProcessor {
     ) -> Result<Self> {
         let optimizer = Optimizer::from_graph_store(&*store);
         Ok(Self {
-            lpg_store: Arc::new(LpgStore::new()?),
             graph_store: store,
             transaction_manager,
             catalog: Arc::new(Catalog::new()),
@@ -348,12 +364,6 @@ impl QueryProcessor {
         }
     }
 
-    /// Returns a reference to the LPG store.
-    #[must_use]
-    pub fn lpg_store(&self) -> &Arc<LpgStore> {
-        &self.lpg_store
-    }
-
     /// Returns a reference to the catalog.
     #[must_use]
     pub fn catalog(&self) -> &Arc<Catalog> {
@@ -381,16 +391,24 @@ impl QueryProcessor {
 
 #[cfg(feature = "rdf")]
 impl QueryProcessor {
-    /// Creates a new query processor with both LPG and RDF stores.
+    /// Creates a new query processor with both LPG and RDF stores (test-only).
+    ///
+    /// Post-T17 W3b: zero non-test call sites. Retained behind `#[cfg(test)]`
+    /// for the RDF integration tests that still construct a typed
+    /// `Arc<LpgStore>` alongside the `RdfStore`. Production code uses
+    /// [`for_graph_store_with_transaction`] and attaches the RDF store via the
+    /// session-level plumbing.
+    ///
+    /// [`for_graph_store_with_transaction`]: Self::for_graph_store_with_transaction
+    #[cfg(test)]
     #[must_use]
     pub fn with_rdf(
         lpg_store: Arc<LpgStore>,
         rdf_store: Arc<obrain_core::graph::rdf::RdfStore>,
     ) -> Self {
-        let optimizer = Optimizer::from_store(&lpg_store);
         let graph_store = Arc::clone(&lpg_store) as Arc<dyn GraphStoreMut>;
+        let optimizer = Optimizer::from_graph_store(&*graph_store);
         Self {
-            lpg_store,
             graph_store,
             transaction_manager: Arc::new(TransactionManager::new()),
             catalog: Arc::new(Catalog::new()),
@@ -1023,9 +1041,13 @@ mod tests {
 
     #[test]
     fn test_processor_creation() {
+        use obrain_core::graph::GraphStore;
         let store = Arc::new(LpgStore::new().unwrap());
-        let processor = QueryProcessor::for_lpg(store);
-        assert!(processor.lpg_store().node_count() == 0);
+        // Keep a direct handle to assert invariants after wrapping it in the
+        // processor — the `lpg_store()` getter was retired in T17 W3b.
+        let store_for_assert = Arc::clone(&store);
+        let _processor = QueryProcessor::for_lpg(store);
+        assert_eq!(store_for_assert.node_count(), 0);
     }
 
     #[cfg(feature = "gql")]

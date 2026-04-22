@@ -75,11 +75,17 @@ impl Optimizer {
         }
     }
 
-    /// Creates an optimizer with cardinality estimates from the store's statistics.
+    /// Creates an optimizer with cardinality estimates from an LpgStore
+    /// (test-only).
     ///
-    /// Pre-populates the cardinality estimator with per-label row counts and
-    /// edge type fanout. Feeds per-edge-type degree stats, label cardinalities,
-    /// and graph totals into the cost model for accurate estimation.
+    /// Post-T17 W3b: production code uses [`from_graph_store`] exclusively.
+    /// This helper is retained behind `#[cfg(test)]` for the LPG unit-test
+    /// fixtures that want the extra `ensure_statistics_fresh()` refresh that
+    /// LpgStore provides (SubstrateStore maintains stats eagerly, so the
+    /// refresh is a no-op anyway).
+    ///
+    /// [`from_graph_store`]: Self::from_graph_store
+    #[cfg(test)]
     #[must_use]
     pub fn from_store(store: &obrain_core::graph::lpg::LpgStore) -> Self {
         store.ensure_statistics_fresh();
