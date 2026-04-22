@@ -626,6 +626,22 @@ impl super::ObrainDB {
     pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
 
+        // T17 W3c slice 4: the legacy `save()` path reads whole-graph state
+        // from `self.store` (LpgStore). In substrate mode that is a dummy
+        // empty store, so the write would silently produce an empty target.
+        // Substrate's native WAL + mmap zones already provide on-disk
+        // durability for the in-place database; a full snapshot-to-path
+        // operation will come back via `SubstrateStore::snapshot_to_path()`
+        // (tracked as T17b).
+        if self.substrate_store.is_some() {
+            return Err(Error::Internal(
+                "ObrainDB::save() legacy WAL-copy path is not supported in \
+                 substrate mode — substrate DBs persist in place via WAL + mmap \
+                 zones. A full snapshot-to-path API will land as T17b."
+                    .to_string(),
+            ));
+        }
+
         // Single-file format: export snapshot directly to a .obrain file
         #[cfg(feature = "obrain-file")]
         if path.extension().is_some_and(|ext| ext == "obrain") {
@@ -933,6 +949,19 @@ impl super::ObrainDB {
     ///
     /// Returns an error if serialization fails.
     pub fn export_snapshot(&self) -> Result<Vec<u8>> {
+        // T17 W3c slice 4: `export_snapshot` serializes `self.store` (LpgStore).
+        // In substrate mode that's an empty dummy; the serialized bytes would
+        // decode to an empty database. Fail loudly instead of corrupting
+        // export/import flows. Substrate snapshot support arrives with T17b.
+        if self.substrate_store.is_some() {
+            return Err(Error::Internal(
+                "ObrainDB::export_snapshot() is not supported in substrate mode \
+                 — reads the legacy LpgStore backend which is a dummy here. \
+                 A substrate-native snapshot API lands as T17b."
+                    .to_string(),
+            ));
+        }
+
         let nodes = collect_snapshot_nodes(&self.store);
         let edges = collect_snapshot_edges(&self.store);
 
@@ -1100,6 +1129,20 @@ impl super::ObrainDB {
     /// Returns an error if the snapshot is invalid, contains dangling edge
     /// references, has duplicate IDs, or deserialization fails.
     pub fn restore_snapshot(&self, data: &[u8]) -> Result<()> {
+        // T17 W3c slice 4: `restore_snapshot` rewrites `self.store` (LpgStore).
+        // In substrate mode that's a dummy store — the restore would succeed
+        // against the dummy but the real substrate backend would be untouched,
+        // silently diverging from the snapshot content. Gate until T17b brings
+        // substrate-native snapshot/restore.
+        if self.substrate_store.is_some() {
+            return Err(Error::Internal(
+                "ObrainDB::restore_snapshot() is not supported in substrate mode \
+                 — rewrites the legacy LpgStore backend which is a dummy here. \
+                 A substrate-native restore API lands as T17b."
+                    .to_string(),
+            ));
+        }
+
         if data.is_empty() {
             return Err(Error::Internal("empty snapshot data".to_string()));
         }

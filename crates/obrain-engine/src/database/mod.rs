@@ -1680,19 +1680,46 @@ impl ObrainDB {
     ///
     /// # Errors
     ///
-    /// Returns an error if arena allocation fails.
+    /// Returns an error if arena allocation fails, or if the database is
+    /// substrate-backed (substrate is a single-graph store — named graphs
+    /// are an LpgStore-only feature; see T17b for future substrate support).
     pub fn create_graph(&self, name: &str) -> Result<bool> {
+        // T17 W3c slice 4: named graphs are an LpgStore-inherent feature
+        // absent from `SubstrateStore`. Creating against the dummy LpgStore
+        // would succeed locally but would not be visible to any substrate
+        // query path. Gate explicitly.
+        if self.substrate_store.is_some() {
+            return Err(obrain_common::utils::error::Error::Internal(
+                "create_graph() is not supported in substrate mode — substrate \
+                 is single-graph by design. Named-graph support is tracked as \
+                 T17b."
+                    .to_string(),
+            ));
+        }
         Ok(self.store.create_graph(name)?)
     }
 
     /// Drops a named graph. Returns `true` if dropped, `false` if it did not exist.
+    ///
+    /// In substrate mode this always returns `false` — substrate is a
+    /// single-graph store with no named graphs to drop.
     pub fn drop_graph(&self, name: &str) -> bool {
+        if self.substrate_store.is_some() {
+            // No named graphs exist on substrate, so there is nothing to drop.
+            return false;
+        }
         self.store.drop_graph(name)
     }
 
     /// Returns all named graph names.
+    ///
+    /// In substrate mode this always returns an empty `Vec` — substrate is
+    /// a single-graph store (only the default graph exists).
     #[must_use]
     pub fn list_graphs(&self) -> Vec<String> {
+        if self.substrate_store.is_some() {
+            return Vec::new();
+        }
         self.store.graph_names()
     }
 
