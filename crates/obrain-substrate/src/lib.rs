@@ -43,6 +43,7 @@ pub mod hilbert;
 pub mod meta;
 pub mod page;
 pub mod popcount;
+pub mod props_codec;
 pub mod props_snapshot;
 pub mod props_zone;
 pub mod record;
@@ -109,6 +110,10 @@ pub use popcount::{
 };
 pub use replay::{replay_from, ReplayStats};
 pub use retrieval::{NodeOffset, SubstrateTieredIndex, VectorIndex};
+pub use props_codec::{
+    decode_value as decode_property_value, encode_value as encode_property_value,
+    BYTES_DISCRIMINATOR_BINCODE, BYTES_DISCRIMINATOR_RAW,
+};
 pub use props_snapshot::{PropertiesSnapshotV1, PropertiesStreamingWriter, PROPS_FILENAME};
 pub use props_zone::{
     decode_page_id, encode_page_id, PropsZone, PROPS_HEAP_V2_FILENAME, PROPS_V2_FILENAME,
