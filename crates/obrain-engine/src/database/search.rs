@@ -92,6 +92,21 @@ impl super::ObrainDB {
         ef: Option<usize>,
         filters: Option<&std::collections::HashMap<String, Value>>,
     ) -> Result<Vec<(obrain_common::types::NodeId, f32)>> {
+        // T17 W3c slice 5c: vector-index operations live on `LpgStore` and are
+        // absent from `SubstrateStore`. Substrate provides its own retrieval
+        // path via `SubstrateTieredIndex` — see `ObrainDB::substrate_handle()`
+        // and the `obrain_substrate::retrieval` module. Fail loudly instead of
+        // silently returning "no index" against the dummy store.
+        if self.substrate_store.is_some() {
+            return Err(obrain_common::utils::error::Error::Internal(
+                "ObrainDB::vector_search() is LpgStore-only — substrate mode \
+                 exposes retrieval via SubstrateTieredIndex (see \
+                 substrate_handle()). A unified retrieval API is tracked as \
+                 T17b."
+                    .to_string(),
+            ));
+        }
+
         let index = self.store.get_vector_index(label, property).ok_or_else(|| {
             obrain_common::utils::error::Error::Internal(format!(
                 "No vector index found for :{label}({property}). Call create_vector_index() first."
@@ -139,6 +154,16 @@ impl super::ObrainDB {
         ef: Option<usize>,
         filters: Option<&std::collections::HashMap<String, Value>>,
     ) -> Result<Vec<Vec<(obrain_common::types::NodeId, f32)>>> {
+        // T17 W3c slice 5c: substrate mode uses its own retrieval path.
+        if self.substrate_store.is_some() {
+            return Err(obrain_common::utils::error::Error::Internal(
+                "ObrainDB::batch_vector_search() is LpgStore-only — substrate \
+                 mode exposes retrieval via SubstrateTieredIndex. Tracked as \
+                 T17b."
+                    .to_string(),
+            ));
+        }
+
         let index = self.store.get_vector_index(label, property).ok_or_else(|| {
             obrain_common::utils::error::Error::Internal(format!(
                 "No vector index found for :{label}({property}). Call create_vector_index() first."
@@ -200,6 +225,15 @@ impl super::ObrainDB {
         filters: Option<&std::collections::HashMap<String, Value>>,
     ) -> Result<Vec<(obrain_common::types::NodeId, f32)>> {
         use obrain_core::index::vector::mmr_select;
+
+        // T17 W3c slice 5c: substrate mode uses its own retrieval path.
+        if self.substrate_store.is_some() {
+            return Err(obrain_common::utils::error::Error::Internal(
+                "ObrainDB::mmr_search() is LpgStore-only — substrate mode \
+                 exposes retrieval via SubstrateTieredIndex. Tracked as T17b."
+                    .to_string(),
+            ));
+        }
 
         let index = self.store.get_vector_index(label, property).ok_or_else(|| {
             obrain_common::utils::error::Error::Internal(format!(
@@ -266,6 +300,17 @@ impl super::ObrainDB {
         query: &str,
         k: usize,
     ) -> Result<Vec<(NodeId, f64)>> {
+        // T17 W3c slice 5c: text-index operations are LpgStore-inherent.
+        // Substrate BM25 support is tracked as part of the retrieval-API
+        // unification (T17b).
+        if self.substrate_store.is_some() {
+            return Err(Error::Internal(
+                "ObrainDB::text_search() is LpgStore-only — substrate BM25 \
+                 support lands with the retrieval-API unification (T17b)."
+                    .to_string(),
+            ));
+        }
+
         let index = self.store.get_text_index(label, property).ok_or_else(|| {
             Error::Internal(format!(
                 "No text index found for :{label}({property}). Call create_text_index() first."
@@ -306,6 +351,15 @@ impl super::ObrainDB {
         fusion: Option<obrain_core::index::text::FusionMethod>,
     ) -> Result<Vec<(NodeId, f64)>> {
         use obrain_core::index::text::fuse_results;
+
+        // T17 W3c slice 5c: both component searches are LpgStore-only.
+        if self.substrate_store.is_some() {
+            return Err(Error::Internal(
+                "ObrainDB::hybrid_search() is LpgStore-only — substrate fused \
+                 retrieval arrives with T17b."
+                    .to_string(),
+            ));
+        }
 
         let fusion_method = fusion.unwrap_or_default();
         let mut sources: Vec<Vec<(NodeId, f64)>> = Vec::new();
