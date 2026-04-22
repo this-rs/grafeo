@@ -19,7 +19,7 @@
 
 use crate::error::SubstrateResult;
 use crate::file::{SubstrateFile, Zone, ZoneFile};
-use crate::record::{EdgeRecord, NodeRecord};
+use crate::record::{EdgeRecord, NodeRecord, U48};
 use crate::wal::{WalPayload, WalRecord};
 use crate::wal_io::WalReader;
 use crate::writer::{
@@ -749,6 +749,32 @@ fn apply(
             // have landed (flag clear) or replay will have reconstructed the
             // correct topology and the next compaction will clear the flag.
 
+            Ok(Applied::Yes)
+        }
+
+        WalPayload::NodePropHeadUpdate {
+            node_id,
+            first_prop_off,
+        } => {
+            if nodes.is_none() {
+                *nodes = Some(substrate.open_zone(Zone::Nodes)?);
+            }
+            let zf = nodes.as_mut().unwrap();
+            let record_offset = (*node_id as usize) * NodeRecord::SIZE;
+            let field_offset = record_offset + 14; // first_prop_off byte offset
+            if field_offset + 6 > zf.as_slice().len() {
+                // Slot not yet materialised — the matching NodeInsert has
+                // not been replayed yet, so there is nothing to anchor this
+                // head pointer to. The next iteration of the replay loop
+                // will typically visit the NodeInsert first (records are
+                // replayed in LSN order), at which point a later
+                // NodePropHeadUpdate re-applies on the now-materialised
+                // slot. Tolerated as a no-op here.
+                return Ok(Applied::Yes);
+            }
+            let u48 = U48::from_u64(*first_prop_off);
+            zf.as_slice_mut()[field_offset..field_offset + 6]
+                .copy_from_slice(&u48.0);
             Ok(Applied::Yes)
         }
 

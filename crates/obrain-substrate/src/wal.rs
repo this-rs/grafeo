@@ -43,6 +43,11 @@ pub enum WalKind {
     EdgeDelete = 0x12,
     PropSet = 0x20,
     PropDelete = 0x21,
+    /// Mutate only the `first_prop_off` (U48) head pointer of a node — the
+    /// chain anchor that points into the v2 props zone. Introduced by T17c
+    /// Step 3b.2 so that property-chain mutations are durably replayed
+    /// without rewriting the rest of the `NodeRecord`.
+    NodePropHeadUpdate = 0x22,
     StringIntern = 0x30,
     LabelIntern = 0x31,
     KeyIntern = 0x32,
@@ -79,6 +84,7 @@ impl WalKind {
             0x12 => EdgeDelete,
             0x20 => PropSet,
             0x21 => PropDelete,
+            0x22 => NodePropHeadUpdate,
             0x30 => StringIntern,
             0x31 => LabelIntern,
             0x32 => KeyIntern,
@@ -278,6 +284,22 @@ pub enum WalPayload {
         relocations: Vec<(u32, u32)>,
         page_range: (u32, u32),
     },
+    /// Update only the `first_prop_off` head pointer of a node (T17c
+    /// Step 3b.2). The full U48 value is serialized as `u64` (upper 16 bits
+    /// always zero) for a stable bincode wire width independent of `U48`'s
+    /// internal byte layout.
+    ///
+    /// Idempotent under replay: re-applying overwrites the same 6-byte
+    /// `first_prop_off` slot in the `NodeRecord` with the same value,
+    /// leaving every other field untouched.
+    ///
+    /// **Wire-compat note**: appended at the tail of `WalPayload` — older
+    /// WAL files (written before T17c) do not contain this variant and
+    /// remain decodable because every preceding variant index is stable.
+    NodePropHeadUpdate {
+        node_id: u32,
+        first_prop_off: u64,
+    },
 }
 
 impl WalPayload {
@@ -312,6 +334,7 @@ impl WalPayload {
             EngramBitsetSet { .. } => K::EngramBitsetSet,
             CoactDecay { .. } => K::CoactDecay,
             CompactCommunity { .. } => K::CompactCommunity,
+            NodePropHeadUpdate { .. } => K::NodePropHeadUpdate,
             Checkpoint { .. } => K::Checkpoint,
             NoOp => K::NoOp,
             EndOfLog => K::EndOfLog,
@@ -644,6 +667,14 @@ mod tests {
                 community_id: 3,
                 relocations: vec![(100, 256), (101, 257), (102, 258)],
                 page_range: (2, 4),
+            },
+            WalPayload::NodePropHeadUpdate {
+                node_id: 42,
+                first_prop_off: (1u64 << 48) - 1, // max U48 value
+            },
+            WalPayload::NodePropHeadUpdate {
+                node_id: 0,
+                first_prop_off: 0,
             },
         ];
         for (i, p) in payloads.into_iter().enumerate() {

@@ -34,7 +34,7 @@ use crate::error::{SubstrateError, SubstrateResult};
 use crate::file::{SubstrateFile, Zone, ZoneFile};
 use crate::hilbert::{compute_hilbert_permutation_page_aligned, hilbert_key_from_features};
 use crate::meta::meta_flags;
-use crate::record::{EdgeRecord, NodeRecord, NODES_PER_PAGE};
+use crate::record::{EdgeRecord, NodeRecord, NODES_PER_PAGE, U48};
 use crate::wal::{WalPayload, WalRecord};
 use crate::wal_io::{SyncMode, WalWriter};
 use parking_lot::Mutex;
@@ -144,6 +144,56 @@ impl Writer {
             ensure_room(zf, offset + NodeRecord::SIZE, self.min_headroom)?;
             let bytes = bytemuck::bytes_of(&node);
             zf.as_slice_mut()[offset..offset + NodeRecord::SIZE].copy_from_slice(bytes);
+            Ok(())
+        })
+    }
+
+    /// Update only the `first_prop_off` head pointer of the node at `idx`
+    /// (T17c Step 3b.2). Logs a [`WalPayload::NodePropHeadUpdate`] before
+    /// mutating the 6-byte `first_prop_off` slice at byte offset 14 within
+    /// the record — the rest of the `NodeRecord` is left untouched.
+    ///
+    /// This is the WAL-first primitive used by `SubstrateStore` when the v2
+    /// props zone re-anchors a node's property chain (insert at head of
+    /// linked list). Replay re-applies the same 6 bytes idempotently.
+    ///
+    /// Silently no-ops if the slot is beyond the current zone length — the
+    /// caller has asked to update the head pointer of a node that does not
+    /// yet exist in the nodes zone, which is always a bug, but we prefer to
+    /// let the WAL-only record stand rather than panic (replay will rebuild
+    /// the slot when the matching `NodeInsert` arrives).
+    #[tracing::instrument(level = "trace", skip(self))]
+    pub fn update_node_first_prop_off(
+        &self,
+        idx: u32,
+        new_head: U48,
+    ) -> SubstrateResult<()> {
+        // (1) WAL first.
+        let rec = WalRecord {
+            lsn: 0,
+            timestamp: unix_micros(),
+            flags: 0,
+            payload: WalPayload::NodePropHeadUpdate {
+                node_id: idx,
+                first_prop_off: new_head.to_u64(),
+            },
+        };
+        self.wal.append(rec)?;
+
+        // (2) mmap mutation — 6 bytes at offset (idx * 32 + 14).
+        self.with_node_zone(|zf| {
+            let record_offset = idx as usize * NodeRecord::SIZE;
+            let field_offset = record_offset + 14; // first_prop_off byte offset inside NodeRecord
+            if field_offset + 6 > zf.as_slice().len() {
+                // Slot not materialised yet — leave the WAL record as the
+                // authoritative post-state; the matching NodeInsert (or a
+                // later NodeUpdate) will materialise the slot, and this
+                // NodePropHeadUpdate record will be re-applied at replay in
+                // LSN order to restore the head pointer.
+                return Ok(());
+            }
+            zf.as_slice_mut()[field_offset..field_offset + 6]
+                .copy_from_slice(&new_head.0);
             Ok(())
         })
     }
@@ -2001,6 +2051,102 @@ mod tests {
             .iter()
             .any(|(rec, _, _)| matches!(rec.payload, WalPayload::EnergyReinforce { .. }));
         assert!(has_reinforce, "EnergyReinforce record missing from WAL");
+    }
+
+    #[test]
+    fn update_node_first_prop_off_mutates_only_the_head_pointer() {
+        // T17c Step 3b.2: setting the first_prop_off head must touch the 6
+        // target bytes and nothing else, and must land a dedicated WAL record.
+        let td = tempfile::tempdir().unwrap();
+        let kb = td.path().join("kb");
+        let sub = SubstrateFile::create(&kb).unwrap();
+        let wal_path = sub.wal_path();
+        let w = Writer::new(sub, SyncMode::Never).unwrap();
+
+        // Seed slot 1 with a full known state.
+        let mut seed = sample_node(1);
+        seed.energy = 0x7FFF;
+        seed.scar_util_affinity = 0xBEEF;
+        seed.centrality_cached = 0xABCD;
+        seed.community_id = 42;
+        seed.flags = crate::record::node_flags::CENTRALITY_STALE;
+        seed.first_edge_off = U48::from_u64(0x00_1234_5678);
+        w.write_node(1, seed).unwrap();
+        w.commit().unwrap();
+
+        // Now move the head pointer.
+        let new_head = U48::from_u64(0xAA_BBCC_DDEE); // fits in 48 bits
+        w.update_node_first_prop_off(1, new_head).unwrap();
+        w.commit().unwrap();
+        w.wal().fsync().unwrap();
+
+        // Readback: every unrelated field preserved, first_prop_off flipped.
+        let got = w.read_node(1).unwrap().unwrap();
+        assert_eq!(got.first_prop_off, new_head, "head pointer must be updated");
+        assert_eq!(got.energy, 0x7FFF, "energy must be preserved");
+        assert_eq!(got.scar_util_affinity, 0xBEEF);
+        assert_eq!(got.centrality_cached, 0xABCD);
+        assert_eq!(got.community_id, 42);
+        assert_eq!(got.flags, crate::record::node_flags::CENTRALITY_STALE);
+        assert_eq!(got.first_edge_off, U48::from_u64(0x00_1234_5678));
+        assert_eq!(got.label_bitset, sample_node(1).label_bitset);
+
+        // WAL contains exactly one NodePropHeadUpdate with the right node+head.
+        drop(w);
+        let r = crate::wal_io::WalReader::open(&wal_path).unwrap();
+        let items: Vec<_> = r.iter_from(0).collect::<Result<Vec<_>, _>>().unwrap();
+        let matches: Vec<_> = items
+            .iter()
+            .filter_map(|(rec, _, _)| match &rec.payload {
+                WalPayload::NodePropHeadUpdate {
+                    node_id,
+                    first_prop_off,
+                } => Some((*node_id, *first_prop_off)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(matches.len(), 1, "exactly one NodePropHeadUpdate expected");
+        assert_eq!(matches[0], (1, new_head.to_u64()));
+    }
+
+    #[test]
+    fn update_node_first_prop_off_replays_after_mmap_wipe() {
+        // T17c Step 3b.2: simulate a crash between WAL-append and mmap flush
+        // by wiping the nodes zone then replaying from the WAL.
+        let td = tempfile::tempdir().unwrap();
+        let kb = td.path().join("kb");
+        let sub = SubstrateFile::create(&kb).unwrap();
+        let nodes_zone_path = kb.join(crate::file::zone::NODES);
+        let w = Writer::new(sub, SyncMode::Never).unwrap();
+
+        // Seed + update head pointer, commit, fsync WAL (durable), but
+        // intentionally SKIP msync_zones (simulates crash before flush).
+        w.write_node(1, sample_node(1)).unwrap();
+        let new_head = U48::from_u64(0x00_0001_0200); // known U48 value
+        w.update_node_first_prop_off(1, new_head).unwrap();
+        w.commit().unwrap();
+        w.wal().fsync().unwrap();
+        drop(w);
+
+        // Wipe the nodes zone on disk so the mmap state for slot 1 is gone.
+        // The zone file is pre-created as a 0-byte file by SubstrateFile::create,
+        // so truncating it is enough to simulate the crash.
+        if nodes_zone_path.exists() {
+            std::fs::write(&nodes_zone_path, []).unwrap();
+        }
+
+        // Reopen + replay.
+        let sub2 = SubstrateFile::open(&kb).unwrap();
+        let _replay_stats = crate::replay::replay_from(&sub2, 0).unwrap();
+        drop(sub2);
+
+        let sub3 = SubstrateFile::open(&kb).unwrap();
+        let w3 = Writer::new(sub3, SyncMode::Never).unwrap();
+        let got = w3.read_node(1).unwrap().unwrap();
+        assert_eq!(
+            got.first_prop_off, new_head,
+            "head pointer must survive crash + replay"
+        );
     }
 
     #[test]
