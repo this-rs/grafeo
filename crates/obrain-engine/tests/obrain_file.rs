@@ -93,33 +93,37 @@ fn insert_close_reopen_persists_data() {
     }
 }
 
+/// Verifies that `db.save(path)` on an in-memory DB returns the expected
+/// "retired" error after T17 W3c slice 2 stubbed the v2 `.obrain` write
+/// path (see commit `beacd400`).
+///
+/// The original test wrote a 2-node DB to a `.obrain` file and re-opened
+/// it. In substrate mode that writer pulled data from `self.store` (the
+/// legacy LpgStore field which is a dummy empty store) and silently
+/// produced an empty file — a corruption landmine we deliberately replaced
+/// with `Error::Internal`. T17b will reintroduce a real writer via
+/// `SubstrateStore::snapshot_to_path()`, at which point this test becomes
+/// a full save+reopen roundtrip again.
 #[test]
-fn save_as_obrain_file_from_in_memory() {
+fn save_as_obrain_file_returns_retired_error() {
     let dir = tempfile::TempDir::new().unwrap();
     let path = dir.path().join("exported.obrain");
 
-    // Create in-memory DB and populate
     let db = ObrainDB::new_in_memory();
     let session = db.session();
     session
         .execute("INSERT (:City {name: 'Amsterdam'})")
         .unwrap();
     session.execute("INSERT (:City {name: 'Berlin'})").unwrap();
-    assert_eq!(db.node_count(), 2);
 
-    // Save as .obrain file
-    db.save(&path).unwrap();
-
-    // Open the file and verify
-    let db2 = ObrainDB::with_config(Config::persistent(&path)).unwrap();
-    assert_eq!(db2.node_count(), 2);
-
-    let session2 = db2.session();
-    let result = session2
-        .execute("MATCH (c:City) RETURN c.name ORDER BY c.name")
-        .unwrap();
-    assert_eq!(extract_strings(&result.rows), vec!["Amsterdam", "Berlin"]);
-    db2.close().unwrap();
+    let err = db
+        .save(&path)
+        .expect_err("save must reject v2 .obrain export after T17 W3c");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("retired in T17 W3c"),
+        "unexpected error message: {msg}"
+    );
 }
 
 #[test]
