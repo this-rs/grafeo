@@ -29,9 +29,11 @@ impl super::ObrainDB {
     ) -> Option<std::collections::HashSet<NodeId>> {
         let filters = filters.filter(|f| !f.is_empty())?;
 
-        // Start with all nodes for this label
+        // Start with all nodes for this label — route via the real backend
+        // (substrate in T17 mode) so the filter allowlist contains live node
+        // IDs, not dummy-store artefacts.
         let label_nodes: std::collections::HashSet<NodeId> =
-            self.store.nodes_by_label(label).into_iter().collect();
+            self.data_store().nodes_by_label(label).into_iter().collect();
 
         let mut allowlist = label_nodes;
 

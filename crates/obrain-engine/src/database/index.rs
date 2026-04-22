@@ -71,7 +71,7 @@ impl super::ObrainDB {
         property: &str,
         value: &obrain_common::types::Value,
     ) -> Vec<obrain_common::types::NodeId> {
-        self.store.find_nodes_by_property(property, value)
+        self.data_store().find_nodes_by_property(property, value)
     }
 
     // =========================================================================
@@ -293,9 +293,14 @@ impl super::ObrainDB {
         // property values at once, which would allocate millions of strings
         // simultaneously for large labels (e.g. 8M+ Document nodes).
         // Each string is dropped after BM25 insert, keeping memory bounded.
-        let nodes = self.store.nodes_by_label(label);
+        // Iterate nodes via the real backend (substrate in T17 mode, else
+        // the LpgStore data store). The text-index registry itself still
+        // lives on `self.store` (LpgStore-only API until the substrate BM25
+        // rewrite lands — see W3b/W4).
+        let data = self.data_store();
+        let nodes = data.nodes_by_label(label);
         for &node_id in &nodes {
-            if let Some(Value::String(text)) = self.store.get_node_property(node_id, &prop_key) {
+            if let Some(Value::String(text)) = data.get_node_property(node_id, &prop_key) {
                 index.insert(node_id, text.as_str());
             }
         }
