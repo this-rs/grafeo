@@ -1764,6 +1764,176 @@ impl SubstrateStore {
         }
     }
 
+    // ==================================================================
+    // T17f Step 4 — Edge mirrors of the PropsZone v2 helpers.
+    //
+    // These are edge-owner-kind equivalents of
+    // `append_scalar_to_props_zone_v2`, `append_tombstone_to_props_zone_v2`,
+    // and `lookup_node_property_v2`. They differ only in:
+    //   (a) reading the head pointer from `EdgeRecord.first_prop_off`
+    //       (U48 at byte offset 24) rather than `NodeRecord.first_prop_off`
+    //       (at byte offset 14),
+    //   (b) using `PropsZone::append_entry_edge` (page magic 0xE507_5FA6),
+    //   (c) emitting `WalPayload::EdgePropHeadUpdate` via
+    //       `Writer::update_edge_first_prop_off`.
+    //
+    // Parity-first implementation — future refactor may genericise over a
+    // `PropertyOwner` trait, but the three-method triplet keeps the
+    // call-site trivially debuggable and the per-kind audit surface small.
+    // ==================================================================
+
+    /// T17f Step 4 — Edge mirror of
+    /// [`Self::append_scalar_to_props_zone_v2`]. Appends a live
+    /// `(prop_key, value)` entry to the edge-owned chain rooted in
+    /// `EdgeRecord.first_prop_off` and WAL-logs the new head pointer via
+    /// `EdgePropHeadUpdate` when the head page rotates.
+    ///
+    /// Caller (`set_edge_property`) MUST check `self.props_zone.is_some()`
+    /// before invoking — otherwise this function panics on `unwrap`.
+    fn append_scalar_to_props_zone_v2_edge(
+        &self,
+        id: EdgeId,
+        key: &str,
+        value: &Value,
+    ) -> SubstrateResult<()> {
+        let pz_lock = self
+            .props_zone
+            .as_ref()
+            .expect("append_scalar_to_props_zone_v2_edge called without props_zone");
+
+        // 1. Intern the key → u16 prop-key id (shared registry with nodes;
+        //    prop keys are owner-agnostic).
+        let prop_key_id = self.prop_keys.write().intern(key)?;
+
+        // 2. Read the current EdgeRecord to pick up the existing head
+        //    pointer. Early-out if the slot is gone — should never happen
+        //    because `is_live_edge_on_disk` already gated the call.
+        let slot = id.0 as u32;
+        let edge_rec = match self.writer.read_edge(id.0)? {
+            Some(rec) => rec,
+            None => {
+                return Err(SubstrateError::Internal(format!(
+                    "set_edge_property: edge slot {slot} missing from edges zone"
+                )));
+            }
+        };
+        let current_head = decode_page_id(edge_rec.first_prop_off);
+
+        // 3. Encode the Value → PropertyValue + append the entry on the
+        //    edge-kind chain (page magic 0xE507_5FA6). Holds the PropsZone
+        //    write lock across encode + append so heap interns and page
+        //    mutations land atomically.
+        let new_head_idx = {
+            let mut pz = pz_lock.write();
+            let pv = encode_value(&mut pz, value)?;
+            let entry = PropertyEntry::new(prop_key_id, pv);
+            pz.append_entry_edge(slot, current_head, &entry)?
+        };
+
+        // 4. If the head page changed (new head allocated), WAL-log the
+        //    new pointer via EdgePropHeadUpdate. No-op when the entry fit
+        //    in the existing head page — in that case `first_prop_off` is
+        //    unchanged.
+        let new_head_u48 = encode_page_id(new_head_idx);
+        if new_head_u48 != edge_rec.first_prop_off {
+            self.writer.update_edge_first_prop_off(slot, new_head_u48)?;
+        }
+        Ok(())
+    }
+
+    /// T17f Step 4 — Edge mirror of
+    /// [`Self::append_tombstone_to_props_zone_v2`]. Appends a tombstone
+    /// entry for `(edge_slot, key)` on the edge-owned chain.
+    fn append_tombstone_to_props_zone_v2_edge(
+        &self,
+        id: EdgeId,
+        key: &str,
+    ) -> SubstrateResult<()> {
+        let pz_lock = self
+            .props_zone
+            .as_ref()
+            .expect("append_tombstone_to_props_zone_v2_edge called without props_zone");
+
+        let prop_key_id = self.prop_keys.write().intern(key)?;
+
+        let slot = id.0 as u32;
+        let edge_rec = match self.writer.read_edge(id.0)? {
+            Some(rec) => rec,
+            None => {
+                return Err(SubstrateError::Internal(format!(
+                    "remove_edge_property: edge slot {slot} missing from edges zone"
+                )));
+            }
+        };
+        let current_head = decode_page_id(edge_rec.first_prop_off);
+
+        let new_head_idx = {
+            let mut pz = pz_lock.write();
+            let entry = PropertyEntry::tombstone(
+                prop_key_id,
+                crate::page::ValueTag::Null,
+            );
+            pz.append_entry_edge(slot, current_head, &entry)?
+        };
+
+        let new_head_u48 = encode_page_id(new_head_idx);
+        if new_head_u48 != edge_rec.first_prop_off {
+            self.writer.update_edge_first_prop_off(slot, new_head_u48)?;
+        }
+        Ok(())
+    }
+
+    /// T17f Step 4 — Edge mirror of [`Self::lookup_node_property_v2`].
+    /// Walks the edge-owner chain and returns LWW semantics:
+    /// - `Some(Some(v))` — live entry wins;
+    /// - `Some(None)` — tombstone wins (deleted; caller returns `None`
+    ///   without consulting the DashMap sidecar);
+    /// - `None` — nothing on the chain for this key; fall back to the
+    ///   DashMap legacy sidecar.
+    fn lookup_edge_property_v2(
+        &self,
+        id: EdgeId,
+        key: &str,
+    ) -> Option<Option<Value>> {
+        let pz_lock = self.props_zone.as_ref()?;
+        let edge_rec = match self.writer.read_edge(id.0) {
+            Ok(Some(rec)) => rec,
+            _ => return None,
+        };
+        let head = decode_page_id(edge_rec.first_prop_off)?;
+        let prop_key_id = self.prop_keys.read().lookup(key)?;
+        let pz = pz_lock.read();
+        let entry = match pz.get_latest_for_key(Some(head), prop_key_id) {
+            Ok(Some(e)) => e,
+            Ok(None) => return None,
+            Err(err) => {
+                tracing::warn!(
+                    edge_id = id.0,
+                    key = %key,
+                    error = %err,
+                    "props zone v2 (edge) read failed — falling back to DashMap"
+                );
+                return None;
+            }
+        };
+        if entry.is_tombstone() {
+            // LWW: tombstone wins over any DashMap fallback.
+            return Some(None);
+        }
+        match decode_value(&pz, &entry.value) {
+            Ok(v) => Some(Some(v)),
+            Err(err) => {
+                tracing::warn!(
+                    edge_id = id.0,
+                    key = %key,
+                    error = %err,
+                    "props zone v2 (edge) decode failed — falling back to DashMap"
+                );
+                None
+            }
+        }
+    }
+
     /// Open a [`PropertiesStreamingWriter`] targeting this store's
     /// `substrate.props` sidecar.
     ///
@@ -3353,6 +3523,15 @@ impl GraphStore for SubstrateStore {
         {
             return Some(v);
         }
+        // T17f Step 4 — PropsZone v2 read path with LWW semantics
+        // (mirror of `get_node_property`):
+        //   - Some(Some(v)) → live entry wins
+        //   - Some(None)    → tombstone wins (deleted; skip DashMap)
+        //   - None          → nothing on v2 chain; fall through
+        match self.lookup_edge_property_v2(id, key.as_str()) {
+            Some(v) => return v,
+            None => {}
+        }
         let entry = self.edge_properties.get(&id)?;
         entry.get(key).cloned()
     }
@@ -3941,6 +4120,20 @@ impl GraphStoreMut for SubstrateStore {
             self.route_blob_write(EntityKind::Edge, slot, key, &tagged);
             return;
         }
+        // T17f Step 4: dual-write into PropsZone v2 (edge-owner chain)
+        // when enabled. Mirrors the node path at `set_node_property`;
+        // best-effort, a PropsZone failure downgrades to DashMap-only
+        // without losing the write.
+        if self.props_zone.is_some() {
+            if let Err(err) = self.append_scalar_to_props_zone_v2_edge(id, key, &value) {
+                tracing::warn!(
+                    edge_id = id.0,
+                    key = %key,
+                    error = %err,
+                    "props zone v2 (edge) append failed — falling back to DashMap only"
+                );
+            }
+        }
         self.edge_properties
             .entry(id)
             .or_default()
@@ -3974,6 +4167,21 @@ impl GraphStoreMut for SubstrateStore {
     fn remove_edge_property(&self, id: EdgeId, key: &str) -> Option<Value> {
         if !self.is_live_edge_on_disk(id) {
             return None;
+        }
+        // T17f Step 4: write a tombstone on the PropsZone v2 edge chain
+        // so the LWW read path (`get_edge_property`) sees the deletion
+        // even when the DashMap sidecar no longer has the entry.
+        // Best-effort: a failure here downgrades to DashMap-only
+        // semantics but must not lose the delete.
+        if self.props_zone.is_some() {
+            if let Err(err) = self.append_tombstone_to_props_zone_v2_edge(id, key) {
+                tracing::warn!(
+                    edge_id = id.0,
+                    key = %key,
+                    error = %err,
+                    "props zone v2 (edge) tombstone append failed — falling back to DashMap only"
+                );
+            }
         }
         self.edge_properties
             .get_mut(&id)?
@@ -6090,6 +6298,262 @@ mod tests {
 
         let entries = collect_node_props_v2(&s, a_raw);
         assert_eq!(entries.len(), 2, "entries survived reopen: {:?}", entries);
+    }
+
+    // -------------------------------------------------------------------
+    // T17f Step 4 — PropsZone v2 edge-parity tests
+    //
+    // Mirror the node-side tests for edges: scalar writes land on the
+    // edge-owner chain (page magic 0xE507_5FA6), LWW semantics hold
+    // across repeated writes, tombstones cover the removal path, and
+    // node + edge chains coexist on the same PropsZone without
+    // cross-kind splicing.
+    // -------------------------------------------------------------------
+
+    /// Helper: walk the PropsZone edge chain for edge `slot` and return
+    /// the decoded entries in chain order (newest → oldest).
+    ///
+    /// Uses [`PropsZone::collect_entries`] which filters tombstones. For
+    /// tests that need to observe tombstones on the chain, use
+    /// [`collect_edge_props_v2_raw`].
+    fn collect_edge_props_v2(
+        s: &SubstrateStore,
+        slot: u64,
+    ) -> Vec<crate::page::PropertyEntry> {
+        let rec = s.writer.read_edge(slot).unwrap().unwrap();
+        let head = crate::props_zone::decode_page_id(rec.first_prop_off);
+        let pz = s.props_zone.as_ref().expect("v2 enabled").read();
+        pz.collect_entries(head).unwrap()
+    }
+
+    /// Helper: tombstone-inclusive walk of the PropsZone edge chain. Used
+    /// by the remove-emits-tombstone test to observe the physical chain
+    /// state (live entries AND tombstones) that `collect_entries` hides.
+    fn collect_edge_props_v2_raw(
+        s: &SubstrateStore,
+        slot: u64,
+    ) -> Vec<crate::page::PropertyEntry> {
+        let rec = s.writer.read_edge(slot).unwrap().unwrap();
+        let mut cur = crate::props_zone::decode_page_id(rec.first_prop_off);
+        let pz = s.props_zone.as_ref().expect("v2 enabled").read();
+        let mut out = Vec::new();
+        while let Some(idx) = cur {
+            let page = pz.read_page_for_test(idx).unwrap();
+            for entry in page.cursor() {
+                out.push(entry.unwrap());
+            }
+            cur = crate::props_zone::decode_page_id(page.header.next_page);
+        }
+        out
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn set_edge_property_writes_to_props_zone_v2() {
+        // With OBRAIN_PROPS_V2=1, a scalar set_edge_property must land
+        // as a PropertyEntry on the edge PropsZone chain AND flip the
+        // head pointer on the EdgeRecord (byte offset 24).
+        let _guard = props_v2_env_lock().lock().unwrap();
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "1") };
+
+        let td = tempfile::tempdir().unwrap();
+        let s = SubstrateStore::create(td.path().join("kb")).unwrap();
+        let a = s.create_node(&["Doc"]);
+        let b = s.create_node(&["Doc"]);
+        let e = s.create_edge(a, b, "LINKS_TO");
+        s.set_edge_property(e, "weight", Value::Float64(0.75));
+        s.set_edge_property(e, "since", Value::Int64(2026));
+        s.flush().unwrap();
+
+        // Head pointer must now be non-zero.
+        let rec = s.writer.read_edge(e.0).unwrap().unwrap();
+        assert!(
+            !rec.first_prop_off.is_zero(),
+            "EdgeRecord.first_prop_off must be set after property writes"
+        );
+
+        // Chain contains both entries (in append order since they fit
+        // on the fresh first head page).
+        let entries = collect_edge_props_v2(&s, e.0);
+        assert_eq!(entries.len(), 2, "got entries: {:?}", entries);
+        let weight_id = s.prop_keys.write().intern("weight").unwrap();
+        let since_id = s.prop_keys.write().intern("since").unwrap();
+        assert_eq!(entries[0].prop_key, weight_id, "first append = weight");
+        assert_eq!(entries[1].prop_key, since_id, "second append = since");
+
+        unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn get_edge_property_lww_latest_wins() {
+        // Three successive set_edge_property calls for the same key —
+        // the LWW read path must surface v3, not v1 or v2.
+        let _guard = props_v2_env_lock().lock().unwrap();
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "1") };
+
+        let td = tempfile::tempdir().unwrap();
+        let s = SubstrateStore::create(td.path().join("kb")).unwrap();
+        let a = s.create_node(&["Doc"]);
+        let b = s.create_node(&["Doc"]);
+        let e = s.create_edge(a, b, "LINKS_TO");
+        s.set_edge_property(e, "label", Value::String("v1".into()));
+        s.set_edge_property(e, "label", Value::String("v2".into()));
+        s.set_edge_property(e, "label", Value::String("v3".into()));
+
+        // Chain holds all three writes (append-only).
+        let entries = collect_edge_props_v2(&s, e.0);
+        assert_eq!(entries.len(), 3, "append-only chain retains all 3 entries");
+
+        let got = s.get_edge_property(e, &PropertyKey::new("label"));
+        assert_eq!(
+            got,
+            Some(Value::String("v3".into())),
+            "LWW on edge props: latest write wins (got: {:?})",
+            got
+        );
+
+        unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn remove_edge_property_emits_tombstone_and_shadows_read() {
+        // `set_edge_property` then `remove_edge_property` must land a
+        // tombstone on the chain, and `get_edge_property` must return
+        // `None` via the LWW read path (NOT fall back to the DashMap,
+        // which would otherwise still have the value in a pre-T17f
+        // implementation — but here the DashMap is also cleared on
+        // remove, so correctness comes from the chain).
+        let _guard = props_v2_env_lock().lock().unwrap();
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "1") };
+
+        let td = tempfile::tempdir().unwrap();
+        let s = SubstrateStore::create(td.path().join("kb")).unwrap();
+        let a = s.create_node(&["Doc"]);
+        let b = s.create_node(&["Doc"]);
+        let e = s.create_edge(a, b, "LINKS_TO");
+        s.set_edge_property(e, "weight", Value::Float64(0.9));
+        // After set: chain should have exactly 1 live entry.
+        let after_set = collect_edge_props_v2_raw(&s, e.0);
+        assert_eq!(after_set.len(), 1, "1 live entry after set");
+        assert!(!after_set[0].is_tombstone(), "first append is live");
+        assert_eq!(
+            s.get_edge_property(e, &PropertyKey::new("weight")),
+            Some(Value::Float64(0.9)),
+        );
+
+        let popped = s.remove_edge_property(e, "weight");
+        assert_eq!(popped, Some(Value::Float64(0.9)), "removed value returned");
+
+        // Tombstone must now be on the chain (raw walk, tombstone-inclusive).
+        let entries = collect_edge_props_v2_raw(&s, e.0);
+        assert_eq!(entries.len(), 2, "2 entries: live + tombstone");
+        assert!(entries[1].is_tombstone(), "last append is a tombstone");
+
+        // Read must return None via the LWW read path.
+        assert_eq!(
+            s.get_edge_property(e, &PropertyKey::new("weight")),
+            None,
+            "tombstone shadows the older live entry on read",
+        );
+
+        unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn edge_props_v2_survives_reopen() {
+        // Write an edge property with v2 enabled, close the store,
+        // reopen, and confirm the chain still holds the entry and the
+        // LWW read still returns the correct value.
+        let _guard = props_v2_env_lock().lock().unwrap();
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "1") };
+
+        let td = tempfile::tempdir().unwrap();
+        let root = td.path().join("kb");
+        let e_raw;
+        {
+            let s = SubstrateStore::create(&root).unwrap();
+            let a = s.create_node(&["Doc"]);
+            let b = s.create_node(&["Doc"]);
+            let e = s.create_edge(a, b, "LINKS_TO");
+            e_raw = e.0;
+            s.set_edge_property(e, "weight", Value::Float64(0.42));
+            s.set_edge_property(e, "note", Value::String("persistent".into()));
+            s.flush().unwrap();
+        }
+
+        unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
+        let s = SubstrateStore::open(&root).unwrap();
+        assert!(s.props_v2_enabled(), "v2 must auto-enable on reopen");
+
+        let entries = collect_edge_props_v2(&s, e_raw);
+        assert_eq!(entries.len(), 2, "entries survived reopen: {:?}", entries);
+
+        // LWW reads also work post-reopen.
+        let got = s.get_edge_property(EdgeId(e_raw), &PropertyKey::new("weight"));
+        assert_eq!(got, Some(Value::Float64(0.42)));
+        let got = s.get_edge_property(EdgeId(e_raw), &PropertyKey::new("note"));
+        assert_eq!(got, Some(Value::String("persistent".into())));
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn node_and_edge_chains_coexist_without_cross_splicing() {
+        // Write properties on both a node and an edge in the same
+        // PropsZone. The two chains must each land on their own
+        // owner-kind pages (node magic 0xF507_5FA6, edge magic
+        // 0xE507_5FA6) — a single PropsZone carrying both owner kinds
+        // was the whole point of T17f Step 2.
+        let _guard = props_v2_env_lock().lock().unwrap();
+        unsafe { std::env::set_var("OBRAIN_PROPS_V2", "1") };
+
+        let td = tempfile::tempdir().unwrap();
+        let s = SubstrateStore::create(td.path().join("kb")).unwrap();
+        let a = s.create_node(&["Doc"]);
+        let b = s.create_node(&["Doc"]);
+        let e = s.create_edge(a, b, "LINKS_TO");
+
+        s.set_node_property(a, "title", Value::String("node-side".into()));
+        s.set_edge_property(e, "label", Value::String("edge-side".into()));
+
+        // Each side reads its own value unaltered.
+        assert_eq!(
+            s.get_node_property(a, &PropertyKey::new("title")),
+            Some(Value::String("node-side".into())),
+        );
+        assert_eq!(
+            s.get_edge_property(e, &PropertyKey::new("label")),
+            Some(Value::String("edge-side".into())),
+        );
+
+        // The node chain head is a node-magic page; the edge chain
+        // head is an edge-magic page.
+        let node_rec = s.writer.read_node(a.0 as u32).unwrap().unwrap();
+        let edge_rec = s.writer.read_edge(e.0).unwrap().unwrap();
+        let node_head = crate::props_zone::decode_page_id(node_rec.first_prop_off)
+            .expect("node chain head allocated");
+        let edge_head = crate::props_zone::decode_page_id(edge_rec.first_prop_off)
+            .expect("edge chain head allocated");
+        assert_ne!(
+            node_head, edge_head,
+            "node and edge chain heads must live on distinct pages"
+        );
+
+        let pz = s.props_zone.as_ref().unwrap().read();
+        assert_eq!(
+            pz.owner_kind_at(node_head),
+            Some(crate::page::OwnerKind::Node),
+            "node chain head page must carry node magic",
+        );
+        assert_eq!(
+            pz.owner_kind_at(edge_head),
+            Some(crate::page::OwnerKind::Edge),
+            "edge chain head page must carry edge magic",
+        );
+
+        unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
     }
 
     // -------------------------------------------------------------------

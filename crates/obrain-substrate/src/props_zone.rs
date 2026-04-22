@@ -234,6 +234,28 @@ impl PropsZone {
         self.heap.as_slice_mut().get_mut(start..end)
     }
 
+    /// Read-only accessor returning the [`OwnerKind`] recorded on the
+    /// page at `page_idx`, or `None` when the page is out of range or
+    /// carries an uninitialised / invalid magic. Introduced by T17f
+    /// Step 4 so that tests and tooling can inspect per-page ownership
+    /// without reaching into the private `read_page` path.
+    pub fn owner_kind_at(&self, page_idx: u32) -> Option<OwnerKind> {
+        self.read_page(page_idx).ok()?.owner_kind()
+    }
+
+    /// Read the raw [`PropertyPage`] at `page_idx` — test-only public
+    /// accessor that allows integration tests to observe tombstones on
+    /// the chain (which [`collect_entries`] transparently filters). The
+    /// signature is owner-agnostic; callers interpret the page's magic
+    /// via [`PropertyPage::owner_kind`] if they care about the owner.
+    #[cfg(test)]
+    pub fn read_page_for_test(
+        &self,
+        page_idx: u32,
+    ) -> SubstrateResult<PropertyPage> {
+        self.read_page(page_idx)
+    }
+
     fn read_page(&self, page_idx: u32) -> SubstrateResult<PropertyPage> {
         let bytes = self.page_slice(page_idx).ok_or_else(|| {
             SubstrateError::WalBadFrame(format!(
