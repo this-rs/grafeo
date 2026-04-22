@@ -35,9 +35,9 @@
 //!
 //! ```no_run
 //! use obrain_adapters::plugins::algorithms::hilbert_features::hilbert_features;
-//! use obrain_core::graph::lpg::LpgStore;
+//! use obrain_substrate::SubstrateStore;
 //!
-//! let store = LpgStore::new().unwrap();
+//! let store = SubstrateStore::open_tempfile().unwrap();
 //! // ... populate graph ...
 //! let config = Default::default();
 //! let result = hilbert_features(&store, &config);
@@ -53,8 +53,10 @@ use obrain_common::types::PropertyKey;
 use obrain_common::types::{NodeId, Value};
 use obrain_common::utils::error::Result;
 #[cfg(test)]
-use obrain_core::graph::lpg::LpgStore;
+use obrain_core::graph::GraphStoreMut;
 use obrain_core::graph::{Direction, GraphStore};
+#[cfg(test)]
+use obrain_substrate::SubstrateStore;
 
 use super::super::{AlgorithmResult, ParameterDef, ParameterType, Parameters};
 use super::centrality::{
@@ -1589,8 +1591,8 @@ pub fn hilbert_distance(a: &[f32], b: &[f32]) -> f32 {
 mod tests {
     use super::*;
 
-    fn make_test_graph() -> LpgStore {
-        let store = LpgStore::new().unwrap();
+    fn make_test_graph() -> SubstrateStore {
+        let store = SubstrateStore::open_tempfile().unwrap();
         // Build a small graph: A-B-C-D-E (chain) + A-E (cycle)
         let a = store.create_node(&["Person"]);
         let b = store.create_node(&["Person"]);
@@ -1605,8 +1607,8 @@ mod tests {
         store
     }
 
-    fn make_two_clusters() -> LpgStore {
-        let store = LpgStore::new().unwrap();
+    fn make_two_clusters() -> SubstrateStore {
+        let store = SubstrateStore::open_tempfile().unwrap();
         // Cluster 1: fully connected (a,b,c)
         let a = store.create_node(&["A"]);
         let b = store.create_node(&["A"]);
@@ -1689,7 +1691,7 @@ mod tests {
 
     #[test]
     fn test_hilbert_features_empty_graph() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let config = HilbertFeaturesConfig::default();
         let result = hilbert_features(&store, &config);
         assert!(result.features.is_empty());
@@ -1786,7 +1788,7 @@ mod tests {
 
     #[test]
     fn test_incremental_preserves_global() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["Person"]);
         let b = store.create_node(&["Person"]);
         let c = store.create_node(&["Document"]);
@@ -1829,7 +1831,7 @@ mod tests {
 
     #[test]
     fn test_incremental_updates_local_for_neighbors() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["A"]);
         let b = store.create_node(&["A"]);
         store.create_edge(a, b, "LINK");
@@ -1859,7 +1861,7 @@ mod tests {
 
     #[test]
     fn test_incremental_dirty_flag() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["X"]);
         let b = store.create_node(&["X"]);
         store.create_edge(a, b, "E");
@@ -1888,7 +1890,7 @@ mod tests {
 
     #[test]
     fn test_temporal_basic() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let now = 1_000_000u64;
         let a = store.create_node(&["A"]);
         let b = store.create_node(&["A"]);
@@ -1936,7 +1938,7 @@ mod tests {
     #[test]
     fn test_temporal_ordering() {
         // Older nodes should have higher age rank
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let old = store.create_node(&["N"]);
         let mid = store.create_node(&["N"]);
         let recent = store.create_node(&["N"]);
@@ -1968,7 +1970,7 @@ mod tests {
     #[test]
     fn test_temporal_opt_in() {
         // enable_temporal=false → stays at 64d even if timestamps exist
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["A"]);
         store.set_node_property(a, "created_at", Value::Int64(1_000_000));
 
@@ -1983,7 +1985,7 @@ mod tests {
     #[test]
     fn test_temporal_partial_coverage() {
         // Some nodes have timestamps, others don't → 72d, missing get default 0.5
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["A"]);
         let b = store.create_node(&["A"]);
         let c = store.create_node(&["A"]);
@@ -2005,7 +2007,7 @@ mod tests {
     #[test]
     fn test_temporal_bridge_variance() {
         // A node bridging old and new clusters should have high neighbor age variance
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let now = 1_000_000u64;
 
         // Old cluster
@@ -2048,7 +2050,7 @@ mod tests {
     #[test]
     fn test_hilbert_features_perf_1000_nodes() {
         // Build a random-ish graph with 1000 nodes
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let mut nodes = Vec::with_capacity(1000);
         for i in 0..1000 {
             let label = if i % 3 == 0 {
@@ -2141,7 +2143,7 @@ mod tests {
     #[test]
     fn test_structural_changes_ranking() {
         // Build a small graph and compute features
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let mut nodes = Vec::new();
         for _ in 0..10 {
             nodes.push(store.create_node(&["N"]));
@@ -2286,7 +2288,7 @@ mod tests {
 
     #[test]
     fn test_raw_facettes_with_temporal() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let now = 1_000_000u64;
         let a = store.create_node(&["A"]);
         let b = store.create_node(&["B"]);
@@ -2328,7 +2330,7 @@ mod tests {
 
     #[test]
     fn test_raw_facettes_incremental() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["A"]);
         let b = store.create_node(&["B"]);
         store.create_edge(a, b, "LINK");
@@ -2394,7 +2396,7 @@ mod tests {
 
     #[test]
     fn test_external_signal_adds_dimensions() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["A"]);
         let b = store.create_node(&["B"]);
         store.create_edge(a, b, "LINK");
@@ -2437,7 +2439,7 @@ mod tests {
     #[test]
     fn test_external_signal_neutral_default() {
         // Nodes not in external_signals get [0.5, 0.5]
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["A"]);
         let b = store.create_node(&["B"]);
         store.create_edge(a, b, "LINK");
@@ -2463,7 +2465,7 @@ mod tests {
     #[test]
     fn test_external_signal_with_temporal() {
         // Both temporal and external signal → 10 facettes × 8 levels = 80d
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let now = 1_000_000u64;
         let a = store.create_node(&["A"]);
         let b = store.create_node(&["B"]);
@@ -2492,7 +2494,7 @@ mod tests {
 
     #[test]
     fn test_external_signal_incremental() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["A"]);
         let b = store.create_node(&["B"]);
         store.create_edge(a, b, "LINK");
@@ -2574,7 +2576,7 @@ mod tests {
 
     #[test]
     fn test_load_features_from_store_empty() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         // Empty store → None
         let result = try_load_hilbert_features_from_store(&store, 0.9);
         assert!(result.is_none());

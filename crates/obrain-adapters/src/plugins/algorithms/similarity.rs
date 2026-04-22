@@ -19,7 +19,9 @@ use obrain_common::utils::hash::FxHashSet;
 use obrain_core::graph::Direction;
 use obrain_core::graph::GraphStore;
 #[cfg(test)]
-use obrain_core::graph::lpg::LpgStore;
+use obrain_core::graph::GraphStoreMut;
+#[cfg(test)]
+use obrain_substrate::SubstrateStore;
 
 use super::super::{AlgorithmResult, ParameterDef, ParameterType, Parameters};
 use super::traits::GraphAlgorithm;
@@ -642,8 +644,8 @@ mod tests {
     ///
     /// Undirected (edges in both directions).
     #[allow(clippy::many_single_char_names)]
-    fn create_test_graph() -> (LpgStore, NodeId, NodeId, NodeId, NodeId, NodeId) {
-        let store = LpgStore::new().unwrap();
+    fn create_test_graph() -> (SubstrateStore, NodeId, NodeId, NodeId, NodeId, NodeId) {
+        let store = SubstrateStore::open_tempfile().unwrap();
 
         let a = store.create_node(&["Node"]);
         let b = store.create_node(&["Node"]);
@@ -681,7 +683,7 @@ mod tests {
     #[test]
     fn test_jaccard_identical_neighborhoods() {
         // Two nodes with identical neighborhoods should have Jaccard = 1.0
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["N"]);
         let b = store.create_node(&["N"]);
         let c = store.create_node(&["N"]);
@@ -704,7 +706,7 @@ mod tests {
 
     #[test]
     fn test_jaccard_no_common_neighbors() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["N"]);
         let b = store.create_node(&["N"]);
         let c = store.create_node(&["N"]);
@@ -722,7 +724,7 @@ mod tests {
 
     #[test]
     fn test_jaccard_isolated_nodes() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["N"]);
         let b = store.create_node(&["N"]);
 
@@ -788,7 +790,7 @@ mod tests {
 
     #[test]
     fn test_overlap_isolated() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["N"]);
         let b = store.create_node(&["N"]);
         let score = overlap_coefficient(&store, a, b);
@@ -798,7 +800,7 @@ mod tests {
     #[test]
     fn test_overlap_subset() {
         // If N(u) ⊂ N(v), overlap should be 1.0
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["N"]);
         let b = store.create_node(&["N"]);
         let c = store.create_node(&["N"]);
@@ -834,7 +836,7 @@ mod tests {
 
     #[test]
     fn test_cosine_isolated() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["N"]);
         let b = store.create_node(&["N"]);
         let score = cosine_similarity(&store, a, b);
@@ -844,7 +846,7 @@ mod tests {
     #[test]
     #[allow(clippy::many_single_char_names)]
     fn test_cosine_hand_computed() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["N"]);
         let b = store.create_node(&["N"]);
         let c = store.create_node(&["N"]);
@@ -881,7 +883,7 @@ mod tests {
 
     #[test]
     fn test_adamic_adar_no_common() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["N"]);
         let b = store.create_node(&["N"]);
         let c = store.create_node(&["N"]);
@@ -898,7 +900,7 @@ mod tests {
 
     #[test]
     fn test_adamic_adar_hand_computed() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["N"]);
         let b = store.create_node(&["N"]);
         let w = store.create_node(&["N"]); // common neighbor
@@ -926,7 +928,7 @@ mod tests {
     #[test]
     fn test_adamic_adar_degree_one_common() {
         // A common neighbor with degree 1 is skipped (log(1) = 0)
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["N"]);
         let b = store.create_node(&["N"]);
         let w = store.create_node(&["N"]);
@@ -953,7 +955,7 @@ mod tests {
 
     #[test]
     fn test_resource_allocation_no_common() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["N"]);
         let b = store.create_node(&["N"]);
         let c = store.create_node(&["N"]);
@@ -970,7 +972,7 @@ mod tests {
 
     #[test]
     fn test_resource_allocation_hand_computed() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["N"]);
         let b = store.create_node(&["N"]);
         let w = store.create_node(&["N"]);
@@ -1117,7 +1119,7 @@ mod tests {
 
     #[test]
     fn test_similarity_algorithm_missing_params() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let algo = NodeSimilarityAlgorithm;
         let params = Parameters::new();
         assert!(algo.execute(&store, &params).is_err());
@@ -1125,7 +1127,7 @@ mod tests {
 
     #[test]
     fn test_similarity_algorithm_invalid_metric() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["N"]);
         let b = store.create_node(&["N"]);
         let algo = NodeSimilarityAlgorithm;
@@ -1163,7 +1165,7 @@ mod tests {
 
     #[test]
     fn test_topk_algorithm_missing_node() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let algo = TopKSimilarAlgorithm;
         let params = Parameters::new();
         assert!(algo.execute(&store, &params).is_err());
@@ -1206,7 +1208,7 @@ mod tests {
 
     #[test]
     fn test_similarity_all_metrics_via_algorithm() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["N"]);
         let b = store.create_node(&["N"]);
         let c = store.create_node(&["N"]);
@@ -1234,7 +1236,7 @@ mod tests {
 
     #[test]
     fn test_topk_all_metrics_via_algorithm() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["N"]);
         let b = store.create_node(&["N"]);
         let c = store.create_node(&["N"]);
@@ -1262,7 +1264,7 @@ mod tests {
 
     #[test]
     fn test_topk_invalid_metric_via_algorithm() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["N"]);
         let algo = TopKSimilarAlgorithm;
 

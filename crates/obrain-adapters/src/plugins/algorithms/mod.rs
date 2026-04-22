@@ -17,10 +17,10 @@
 //!
 //! ```no_run
 //! use obrain_adapters::plugins::algorithms::{bfs, connected_components, dijkstra};
-//! use obrain_core::graph::lpg::LpgStore;
+//! use obrain_substrate::SubstrateStore;
 //! use obrain_common::types::NodeId;
 //!
-//! let store = LpgStore::new().unwrap();
+//! let store = SubstrateStore::open_tempfile().unwrap();
 //! let n0 = store.create_node(&["Node"]);
 //! let n1 = store.create_node(&["Node"]);
 //! store.create_edge(n0, n1, "CONNECTS");
