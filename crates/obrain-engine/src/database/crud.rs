@@ -34,7 +34,7 @@ impl super::ObrainDB {
 
         #[cfg(feature = "cdc")]
         self.cdc_log
-            .record_create_node(id, self.store.current_epoch(), None);
+            .record_create_node(id, self.data_store().current_epoch(), None);
 
         id
     }
@@ -97,7 +97,7 @@ impl super::ObrainDB {
         #[cfg(feature = "cdc")]
         self.cdc_log.record_create_node(
             id,
-            self.store.current_epoch(),
+            self.data_store().current_epoch(),
             if cdc_props.is_empty() {
                 None
             } else {
@@ -191,7 +191,7 @@ impl super::ObrainDB {
     /// Returns the current epoch of the database.
     #[must_use]
     pub fn current_epoch(&self) -> obrain_common::types::EpochId {
-        self.store.current_epoch()
+        self.data_store().current_epoch()
     }
 
     /// Deletes a node and all its edges.
@@ -274,7 +274,7 @@ impl super::ObrainDB {
         if result {
             self.cdc_log.record_delete(
                 crate::cdc::EntityId::Node(id),
-                self.store.current_epoch(),
+                self.data_store().current_epoch(),
                 cdc_props,
             );
         }
@@ -321,7 +321,7 @@ impl super::ObrainDB {
         #[cfg(feature = "cdc")]
         self.cdc_log.record_update(
             crate::cdc::EntityId::Node(id),
-            self.store.current_epoch(),
+            self.data_store().current_epoch(),
             key,
             cdc_old_value,
             cdc_new_value,
@@ -551,7 +551,7 @@ impl super::ObrainDB {
 
         #[cfg(feature = "cdc")]
         self.cdc_log
-            .record_create_edge(id, self.store.current_epoch(), None);
+            .record_create_edge(id, self.data_store().current_epoch(), None);
 
         id
     }
@@ -621,7 +621,7 @@ impl super::ObrainDB {
         #[cfg(feature = "cdc")]
         self.cdc_log.record_create_edge(
             id,
-            self.store.current_epoch(),
+            self.data_store().current_epoch(),
             if cdc_props.is_empty() {
                 None
             } else {
@@ -665,7 +665,7 @@ impl super::ObrainDB {
         if result {
             self.cdc_log.record_delete(
                 crate::cdc::EntityId::Edge(id),
-                self.store.current_epoch(),
+                self.data_store().current_epoch(),
                 cdc_props,
             );
         }
@@ -705,7 +705,7 @@ impl super::ObrainDB {
         #[cfg(feature = "cdc")]
         self.cdc_log.record_update(
             crate::cdc::EntityId::Edge(id),
-            self.store.current_epoch(),
+            self.data_store().current_epoch(),
             key,
             cdc_old_value,
             cdc_new_value,

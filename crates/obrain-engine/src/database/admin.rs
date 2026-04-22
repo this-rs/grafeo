@@ -280,6 +280,10 @@ impl super::ObrainDB {
     /// Returns None if WAL is not enabled.
     #[must_use]
     pub fn wal_status(&self) -> crate::admin::WalStatus {
+        // W3a: route through data_store() so substrate-backed DBs report the
+        // real substrate epoch rather than the dummy LpgStore's zero epoch.
+        // See gotcha note 0b9fcabe-a780-4149-8709-ed32ee9ed82e.
+        let current_epoch = self.data_store().current_epoch().as_u64();
         #[cfg(feature = "wal")]
         if let Some(ref wal) = self.wal {
             return crate::admin::WalStatus {
@@ -288,7 +292,7 @@ impl super::ObrainDB {
                 size_bytes: wal.size_bytes(),
                 record_count: wal.record_count() as usize,
                 last_checkpoint: wal.last_checkpoint_timestamp(),
-                current_epoch: self.store.current_epoch().as_u64(),
+                current_epoch,
             };
         }
 
@@ -298,7 +302,7 @@ impl super::ObrainDB {
             size_bytes: 0,
             record_count: 0,
             last_checkpoint: None,
-            current_epoch: self.store.current_epoch().as_u64(),
+            current_epoch,
         }
     }
 
@@ -312,7 +316,8 @@ impl super::ObrainDB {
     pub fn wal_checkpoint(&self) -> Result<()> {
         #[cfg(feature = "wal")]
         if let Some(ref wal) = self.wal {
-            let epoch = self.store.current_epoch();
+            // W3a: route through data_store() — substrate epoch in substrate mode.
+            let epoch = self.data_store().current_epoch();
             let transaction_id = self
                 .transaction_manager
                 .last_assigned_transaction_id()

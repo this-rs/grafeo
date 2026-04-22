@@ -1690,6 +1690,37 @@ impl ObrainDB {
         self.store.graph_names()
     }
 
+    /// Returns the active data store as a trait object — the single
+    /// authoritative backend for data operations (CRUD, queries, epoch,
+    /// stats).
+    ///
+    /// Resolution priority:
+    /// 1. `substrate_store` — typed substrate handle (preferred when present).
+    /// 2. `external_store` — user-supplied `Arc<dyn GraphStoreMut>` from
+    ///    `with_store()`.
+    /// 3. `self.store` — the legacy `Arc<LpgStore>` field. In substrate
+    ///    mode this holds a **dummy** created in `with_store()` and should
+    ///    never be reached through this path; it is kept only as the
+    ///    LpgStore-backed fallback for `with_config()` and tests.
+    ///
+    /// Use this helper internally in place of `self.store.X()` whenever
+    /// `X` is a trait method (`current_epoch`, `node_count`, `edge_count`,
+    /// `create_node`, `get_node`, ...). That routes the call to the real
+    /// backend instead of the dummy, fixing the latent T17 bug where
+    /// substrate-backed DBs silently returned dummy zeros/no-ops.
+    ///
+    /// See gotcha note `0b9fcabe-a780-4149-8709-ed32ee9ed82e`.
+    #[must_use]
+    pub(super) fn data_store(&self) -> Arc<dyn GraphStoreMut> {
+        if let Some(ref sub) = self.substrate_store {
+            return Arc::clone(sub) as Arc<dyn GraphStoreMut>;
+        }
+        if let Some(ref ext_store) = self.external_store {
+            return Arc::clone(ext_store);
+        }
+        Arc::clone(&self.store) as Arc<dyn GraphStoreMut>
+    }
+
     /// Returns the graph store as a trait object.
     ///
     /// This provides the [`GraphStoreMut`] interface for code that should work
@@ -1699,11 +1730,7 @@ impl ObrainDB {
     /// [`GraphStoreMut`]: obrain_core::graph::GraphStoreMut
     #[must_use]
     pub fn graph_store(&self) -> Arc<dyn GraphStoreMut> {
-        if let Some(ref ext_store) = self.external_store {
-            Arc::clone(ext_store)
-        } else {
-            Arc::clone(&self.store) as Arc<dyn GraphStoreMut>
-        }
+        self.data_store()
     }
 
     /// Garbage collects old MVCC versions that are no longer visible.
