@@ -48,7 +48,8 @@ use crate::error::{SubstrateError, SubstrateResult};
 use crate::file::{SubstrateFile, ZoneFile};
 use crate::heap::{HEAP_PAGE_SIZE, HeapPage};
 use crate::page::{
-    PAGE_SIZE, PROP_PAGE_MAGIC, PropertyCursor, PropertyEntry, PropertyPage,
+    OwnerKind, PAGE_SIZE, PROP_PAGE_MAGIC_EDGE, PROP_PAGE_MAGIC_NODE, PropertyCursor,
+    PropertyEntry, PropertyPage,
 };
 use crate::record::U48;
 use bytemuck;
@@ -117,9 +118,9 @@ impl PropsZone {
     }
 
     fn compute_next_page_idx(zf: &ZoneFile) -> u32 {
-        // Scan from end backwards: the first page with a non-zero magic
-        // marks the highest-allocated slot. Fast-path: if the file is
-        // the initial two-slot size, next = 1.
+        // Scan from end backwards: the first page with a known prop
+        // magic (node OR edge) marks the highest-allocated slot.
+        // Fast-path: if the file is the initial two-slot size, next = 1.
         let bytes = zf.as_slice();
         let total_slots = (bytes.len() / PAGE_SIZE) as u32;
         if total_slots <= 1 {
@@ -129,9 +130,10 @@ impl PropsZone {
         while hi > 1 {
             let idx = hi - 1;
             let slot = &bytes[idx as usize * PAGE_SIZE..(idx as usize + 1) * PAGE_SIZE];
-            // Check magic of the page header.
+            // Check magic of the page header — either prop kind counts
+            // as a live allocation (T17f Step 2 added the edge magic).
             let magic = u32::from_le_bytes(slot[0..4].try_into().unwrap());
-            if magic == PROP_PAGE_MAGIC {
+            if magic == PROP_PAGE_MAGIC_NODE || magic == PROP_PAGE_MAGIC_EDGE {
                 return idx + 1;
             }
             hi -= 1;
@@ -270,16 +272,25 @@ impl PropsZone {
 
     // ---- public append / walk API -------------------------------------
 
-    /// Append a property entry for `node_id`, maintaining the multi-page
-    /// chain rooted at `head`. Returns the new head page idx (may differ
-    /// from the input if a fresh page was allocated).
+    /// Append a property entry for a given owner (node OR edge),
+    /// maintaining the multi-page chain rooted at `head`. Returns the
+    /// new head page idx (may differ from the input if a fresh page
+    /// was allocated).
     ///
     /// The caller stores the returned value into
-    /// [`crate::record::NodeRecord::first_prop_off`] via
+    /// [`crate::record::NodeRecord::first_prop_off`] (node owner) or
+    /// [`crate::record::EdgeRecord::first_prop_off`] (edge owner) via
     /// `encode_page_id(returned_head)`.
-    pub fn append_entry(
+    ///
+    /// Kind safety: when `head` points to an existing page, the kind
+    /// recorded on that page's magic MUST match the `kind` argument.
+    /// A mismatch means the caller is about to splice a chain across
+    /// owner boundaries (a bug that would corrupt reads through
+    /// `walk_chain` for the wrong kind) and is refused loudly.
+    pub fn append_entry_inner(
         &mut self,
-        node_id: u32,
+        owner_id: u32,
+        kind: OwnerKind,
         head: Option<u32>,
         entry: &PropertyEntry,
     ) -> SubstrateResult<u32> {
@@ -291,8 +302,26 @@ impl PropsZone {
             )));
         }
         if let Some(h) = head {
-            // Try to append to the current head.
+            // Read-before-write: guard against the caller handing us a
+            // head from a different owner kind (would yield a silent
+            // cross-kind chain splice otherwise).
             let mut page = self.read_page(h)?;
+            match page.owner_kind() {
+                Some(k) if k == kind => {}
+                Some(other) => {
+                    return Err(SubstrateError::WalBadFrame(format!(
+                        "append_entry_inner: head page {h} is {:?}, caller provided {:?}",
+                        other, kind
+                    )));
+                }
+                None => {
+                    return Err(SubstrateError::WalBadFrame(format!(
+                        "append_entry_inner: head page {h} has invalid magic {:#x}",
+                        page.header.magic
+                    )));
+                }
+            }
+            // Try to append to the current head.
             match page.append_entry(entry) {
                 Ok(_) => {
                     page.seal_crc32();
@@ -315,7 +344,7 @@ impl PropsZone {
             .next_page_idx
             .checked_add(1)
             .ok_or_else(|| SubstrateError::WalBadFrame("props zone page id overflow".into()))?;
-        let mut page = PropertyPage::new(node_id);
+        let mut page = PropertyPage::with_owner(owner_id, kind);
         if let Some(prev) = head {
             page.header.next_page = encode_page_id(prev);
         }
@@ -325,6 +354,44 @@ impl PropsZone {
         page.seal_crc32();
         self.write_page(new_idx, &page)?;
         Ok(new_idx)
+    }
+
+    /// Append a node-owned property entry. See [`append_entry_inner`]
+    /// for full semantics.
+    #[inline]
+    pub fn append_entry_node(
+        &mut self,
+        node_id: u32,
+        head: Option<u32>,
+        entry: &PropertyEntry,
+    ) -> SubstrateResult<u32> {
+        self.append_entry_inner(node_id, OwnerKind::Node, head, entry)
+    }
+
+    /// Append an edge-owned property entry. See [`append_entry_inner`]
+    /// for full semantics.
+    #[inline]
+    pub fn append_entry_edge(
+        &mut self,
+        edge_id: u32,
+        head: Option<u32>,
+        entry: &PropertyEntry,
+    ) -> SubstrateResult<u32> {
+        self.append_entry_inner(edge_id, OwnerKind::Edge, head, entry)
+    }
+
+    /// Back-compat alias for [`append_entry_node`] — preserves the
+    /// pre-T17f single-owner-kind API used by existing `store.rs`
+    /// callsites and tests. New code should prefer the kind-explicit
+    /// variants.
+    #[inline]
+    pub fn append_entry(
+        &mut self,
+        node_id: u32,
+        head: Option<u32>,
+        entry: &PropertyEntry,
+    ) -> SubstrateResult<u32> {
+        self.append_entry_node(node_id, head, entry)
     }
 
     /// Walk the full property chain rooted at `head`, invoking `visit`
@@ -344,7 +411,7 @@ impl PropsZone {
                 ))
             })?;
             let page: &PropertyPage = bytemuck::from_bytes(bytes);
-            if page.header.magic != PROP_PAGE_MAGIC {
+            if !page.has_valid_prop_magic() {
                 return Err(SubstrateError::WalBadFrame(format!(
                     "walk_chain: page {idx} has bad magic {:#x}",
                     page.header.magic
@@ -411,7 +478,7 @@ impl PropsZone {
                 ))
             })?;
             let page: &PropertyPage = bytemuck::from_bytes(bytes);
-            if page.header.magic != PROP_PAGE_MAGIC {
+            if !page.has_valid_prop_magic() {
                 return Err(SubstrateError::WalBadFrame(format!(
                     "get_latest_for_key: page {idx} has bad magic {:#x}",
                     page.header.magic
@@ -774,6 +841,219 @@ mod tests {
         let big = vec![0u8; HEAP_PAGE_SIZE]; // strictly larger than max entry
         let err = pz.intern_bytes(&big).unwrap_err();
         assert!(matches!(err, SubstrateError::WalBadFrame(_)));
+    }
+
+    // ---- T17f Step 2: mixed node + edge owners ---------------------------
+
+    #[test]
+    fn edge_append_allocates_distinct_magic() {
+        let (_sf, mut pz) = open_zone();
+        let entry = PropertyEntry::new(10, PropertyValue::I64(42));
+        let head_e = pz.append_entry_edge(5, None, &entry).unwrap();
+        // Read back through the internal reader to check the magic.
+        let page = pz.read_page(head_e).unwrap();
+        assert_eq!(page.owner_kind(), Some(OwnerKind::Edge));
+        assert_eq!(page.header.node_id, 5, "owner_id stored verbatim");
+    }
+
+    #[test]
+    fn node_and_edge_chains_coexist_on_same_zone() {
+        let (_sf, mut pz) = open_zone();
+        let node_entry = PropertyEntry::new(1, PropertyValue::I64(111));
+        let edge_entry = PropertyEntry::new(2, PropertyValue::I64(222));
+
+        let node_head = pz.append_entry_node(42, None, &node_entry).unwrap();
+        let edge_head = pz.append_entry_edge(7, None, &edge_entry).unwrap();
+        assert_ne!(node_head, edge_head, "fresh heads get distinct slots");
+
+        let np = pz.read_page(node_head).unwrap();
+        let ep = pz.read_page(edge_head).unwrap();
+        assert_eq!(np.owner_kind(), Some(OwnerKind::Node));
+        assert_eq!(ep.owner_kind(), Some(OwnerKind::Edge));
+
+        // Walking either chain surfaces only its own entry (chains are
+        // rooted in distinct records, so they never share pages).
+        let got_node = pz.collect_entries(Some(node_head)).unwrap();
+        let got_edge = pz.collect_entries(Some(edge_head)).unwrap();
+        assert_eq!(got_node, vec![node_entry]);
+        assert_eq!(got_edge, vec![edge_entry]);
+    }
+
+    #[test]
+    fn kind_mismatch_on_append_is_rejected() {
+        let (_sf, mut pz) = open_zone();
+        let entry = PropertyEntry::new(1, PropertyValue::I64(0));
+        let node_head = pz.append_entry_node(1, None, &entry).unwrap();
+        // Splicing a node-kind head as an edge chain would corrupt the
+        // chain — the inner helper must refuse.
+        let err = pz
+            .append_entry_edge(2, Some(node_head), &entry)
+            .unwrap_err();
+        match err {
+            SubstrateError::WalBadFrame(msg) => {
+                assert!(msg.contains("Node") && msg.contains("Edge"));
+            }
+            e => panic!("expected WalBadFrame, got {e:?}"),
+        }
+    }
+
+    #[test]
+    fn edge_chain_overflows_and_preserves_entries() {
+        // Exactly the `overflow_triggers_chain_expansion` coverage, but
+        // for an edge owner. Guards against an asymmetric bug where the
+        // spill path only worked for one kind.
+        let (_sf, mut pz) = open_zone();
+        let big = PropertyValue::ArrI64((0..128).collect());
+        let mut head = None;
+        let mut writes = vec![];
+        for i in 0..8u16 {
+            let e = PropertyEntry::new(i, big.clone());
+            head = Some(pz.append_entry_edge(99, head, &e).unwrap());
+            writes.push(e);
+        }
+        assert!(
+            pz.allocated_page_count() >= 2,
+            "edge chain should have spilled, got {} pages",
+            pz.allocated_page_count()
+        );
+        // Every allocated page belongs to the edge kind.
+        for idx in 1..=pz.allocated_page_count() {
+            let page = pz.read_page(idx).unwrap();
+            assert_eq!(
+                page.owner_kind(),
+                Some(OwnerKind::Edge),
+                "page {idx} on an edge chain unexpectedly decodes as {:?}",
+                page.owner_kind()
+            );
+        }
+        let got = pz.collect_entries(head).unwrap();
+        assert_eq!(got.len(), writes.len());
+    }
+
+    #[test]
+    fn round_trip_10k_mixed_nodes_and_edges() {
+        // T17f Step 2 acceptance: 5 000 nodes + 5 000 edges interleaved,
+        // each with the same three-property mix as the node-only Step 1
+        // test. Verifies chains don't bleed across kinds and that the
+        // heap side-car is kind-agnostic.
+        let (_sf, mut pz) = open_zone();
+        let mut node_heads: Vec<(u32, Option<u32>)> = Vec::with_capacity(5_000);
+        let mut edge_heads: Vec<(u32, Option<u32>)> = Vec::with_capacity(5_000);
+
+        for i in 0..5_000u32 {
+            // -- node chain ------------------------------------------------
+            let mut nh = None;
+            nh = Some(
+                pz.append_entry_node(
+                    i,
+                    nh,
+                    &PropertyEntry::new(1, PropertyValue::I64(i as i64)),
+                )
+                .unwrap(),
+            );
+            let label = format!("node-{i:05}");
+            let href = pz.intern_bytes(label.as_bytes()).unwrap();
+            nh = Some(
+                pz.append_entry_node(
+                    i,
+                    nh,
+                    &PropertyEntry::new(2, PropertyValue::StringRef(href)),
+                )
+                .unwrap(),
+            );
+            nh = Some(
+                pz.append_entry_node(
+                    i,
+                    nh,
+                    &PropertyEntry::new(3, PropertyValue::ArrF64((0..16).map(f64::from).collect())),
+                )
+                .unwrap(),
+            );
+            node_heads.push((i, nh));
+
+            // -- edge chain (distinct owner id namespace) ------------------
+            let eid = i + 1_000_000;
+            let mut eh = None;
+            eh = Some(
+                pz.append_entry_edge(
+                    eid,
+                    eh,
+                    &PropertyEntry::new(10, PropertyValue::I64(-(i as i64))),
+                )
+                .unwrap(),
+            );
+            let etag = format!("edge-{i:05}");
+            let ehref = pz.intern_bytes(etag.as_bytes()).unwrap();
+            eh = Some(
+                pz.append_entry_edge(
+                    eid,
+                    eh,
+                    &PropertyEntry::new(11, PropertyValue::BytesRef(ehref)),
+                )
+                .unwrap(),
+            );
+            eh = Some(
+                pz.append_entry_edge(
+                    eid,
+                    eh,
+                    &PropertyEntry::new(12, PropertyValue::F64(i as f64 * 0.5)),
+                )
+                .unwrap(),
+            );
+            edge_heads.push((eid, eh));
+        }
+
+        // Sample 100 nodes and 100 edges — each chain surfaces its own
+        // three entries, and no kind leaks across.
+        for &(nid, head) in node_heads.iter().step_by(50) {
+            let got = pz.collect_entries(head).unwrap();
+            assert_eq!(got.len(), 3, "node {nid}: expected 3 entries");
+            let mut keys: Vec<u16> = got.iter().map(|e| e.prop_key).collect();
+            keys.sort();
+            assert_eq!(keys, vec![1, 2, 3]);
+            // Every page on this chain is Node-kind.
+            let head_u32 = head.unwrap();
+            let page = pz.read_page(head_u32).unwrap();
+            assert_eq!(page.owner_kind(), Some(OwnerKind::Node));
+        }
+        for &(eid, head) in edge_heads.iter().step_by(50) {
+            let got = pz.collect_entries(head).unwrap();
+            assert_eq!(got.len(), 3, "edge {eid}: expected 3 entries");
+            let mut keys: Vec<u16> = got.iter().map(|e| e.prop_key).collect();
+            keys.sort();
+            assert_eq!(keys, vec![10, 11, 12]);
+            let head_u32 = head.unwrap();
+            let page = pz.read_page(head_u32).unwrap();
+            assert_eq!(page.owner_kind(), Some(OwnerKind::Edge));
+            // Validate the BytesRef resolves through the shared heap.
+            let bytes_entry = got
+                .iter()
+                .find(|e| e.prop_key == 11)
+                .expect("bytesref entry present");
+            if let PropertyValue::BytesRef(href) = bytes_entry.value {
+                let payload = pz.read_heap(href).expect("heap entry resolvable");
+                // Owner id eid = i + 1_000_000 → i = eid - 1_000_000.
+                let i = eid - 1_000_000;
+                assert_eq!(
+                    std::str::from_utf8(&payload).unwrap(),
+                    format!("edge-{i:05}")
+                );
+            } else {
+                panic!("expected BytesRef at key 11");
+            }
+        }
+    }
+
+    #[test]
+    fn back_compat_append_entry_still_allocates_node_kind() {
+        // The unqualified `append_entry` shim must continue to produce
+        // node-kind pages — this is the regression anchor for every
+        // pre-T17f call site (including `store.rs:append_scalar_..`).
+        let (_sf, mut pz) = open_zone();
+        let entry = PropertyEntry::new(1, PropertyValue::I64(7));
+        let head = pz.append_entry(42, None, &entry).unwrap();
+        let page = pz.read_page(head).unwrap();
+        assert_eq!(page.owner_kind(), Some(OwnerKind::Node));
     }
 
     #[test]

@@ -5,8 +5,59 @@
 use crate::record::U48;
 use bytemuck::{Pod, Zeroable};
 
-/// Magic marker for [`PropertyPage`] (FNV-1a of "property").
-pub const PROP_PAGE_MAGIC: u32 = 0xF507_5FA6;
+/// Magic marker for a node-owned [`PropertyPage`] (FNV-1a of "property").
+///
+/// T17f Step 2 — this constant used to be the single `PROP_PAGE_MAGIC`
+/// (there was only one owner kind: nodes). When edge-property pages
+/// were introduced, the legacy value was kept for node pages so
+/// pre-T17f substrates read back bit-for-bit identical, and the new
+/// [`PROP_PAGE_MAGIC_EDGE`] was minted for edge pages. The unqualified
+/// alias below is kept for call-site back-compat.
+pub const PROP_PAGE_MAGIC_NODE: u32 = 0xF507_5FA6;
+
+/// Magic marker for an edge-owned [`PropertyPage`]. See the
+/// [`PROP_PAGE_MAGIC_NODE`] rationale for why this differs from the
+/// node magic by a single nibble (easy to eyeball in a hex dump).
+pub const PROP_PAGE_MAGIC_EDGE: u32 = 0xE507_5FA6;
+
+/// Back-compat alias for [`PROP_PAGE_MAGIC_NODE`]. Prefer the explicit
+/// `_NODE` / `_EDGE` constants in new code.
+pub const PROP_PAGE_MAGIC: u32 = PROP_PAGE_MAGIC_NODE;
+
+/// Which kind of entity owns a [`PropertyPage`].
+///
+/// The on-disk representation is the page magic — there is no per-page
+/// byte on top of the existing header. A page's owner kind is fixed at
+/// allocation and never changes; chains never cross between kinds
+/// because each chain is rooted in a distinct record type
+/// (`NodeRecord.first_prop_off` or `EdgeRecord.first_prop_off`).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum OwnerKind {
+    Node,
+    Edge,
+}
+
+impl OwnerKind {
+    /// Page magic corresponding to this owner kind.
+    #[inline]
+    pub const fn magic(self) -> u32 {
+        match self {
+            Self::Node => PROP_PAGE_MAGIC_NODE,
+            Self::Edge => PROP_PAGE_MAGIC_EDGE,
+        }
+    }
+
+    /// Inverse of [`magic`]: decode a magic word into an owner kind, or
+    /// `None` for unknown/zero magics (uninitialised pages or bit rot).
+    #[inline]
+    pub const fn from_magic(m: u32) -> Option<Self> {
+        match m {
+            PROP_PAGE_MAGIC_NODE => Some(Self::Node),
+            PROP_PAGE_MAGIC_EDGE => Some(Self::Edge),
+            _ => None,
+        }
+    }
+}
 
 /// Size of a property page on disk.
 pub const PAGE_SIZE: usize = 4096;
@@ -62,13 +113,51 @@ impl core::fmt::Debug for PropertyPage {
 }
 
 impl PropertyPage {
-    /// Initialize a fresh page for `node_id`.
-    pub fn new(node_id: u32) -> Self {
+    /// Initialize a fresh page for a given owner (node or edge).
+    ///
+    /// The `owner_id` is stored verbatim in the header's `node_id`
+    /// field (kept under that name for ABI stability — it just means
+    /// "owner id" when the page's magic is [`PROP_PAGE_MAGIC_EDGE`]).
+    /// The owner kind is encoded via the page magic, so a reader can
+    /// recover it with [`Self::owner_kind`] without any payload probe.
+    pub fn with_owner(owner_id: u32, kind: OwnerKind) -> Self {
         let mut page = Self::default();
-        page.header.magic = PROP_PAGE_MAGIC;
-        page.header.node_id = node_id;
+        page.header.magic = kind.magic();
+        page.header.node_id = owner_id;
         page.header.free_offset = 0;
         page
+    }
+
+    /// Convenience: initialise a node-owned page. Equivalent to
+    /// `PropertyPage::with_owner(node_id, OwnerKind::Node)`.
+    ///
+    /// This is the pre-T17f behaviour of the old `PropertyPage::new(id)`
+    /// constructor; callers that don't care about edge props can keep
+    /// using this.
+    pub fn new(node_id: u32) -> Self {
+        Self::with_owner(node_id, OwnerKind::Node)
+    }
+
+    /// Convenience: initialise an edge-owned page.
+    pub fn new_edge(edge_id: u32) -> Self {
+        Self::with_owner(edge_id, OwnerKind::Edge)
+    }
+
+    /// Return the owner kind decoded from the page magic. `None` when
+    /// the magic is neither [`PROP_PAGE_MAGIC_NODE`] nor
+    /// [`PROP_PAGE_MAGIC_EDGE`] — typically a zero-initialised slot.
+    #[inline]
+    pub fn owner_kind(&self) -> Option<OwnerKind> {
+        OwnerKind::from_magic(self.header.magic)
+    }
+
+    /// True when the page's magic matches either the node or edge
+    /// property-page discriminator. Callers that walked a chain off
+    /// some `first_prop_off` head already know the expected kind —
+    /// this helper is the tolerant form used by generic validators.
+    #[inline]
+    pub fn has_valid_prop_magic(&self) -> bool {
+        self.owner_kind().is_some()
     }
 
     /// Compute CRC32 over the page, treating the `crc32` header field as zero.
@@ -535,7 +624,52 @@ mod tests {
     fn fresh_page_has_magic() {
         let p = PropertyPage::new(42);
         assert_eq!(p.header.magic, PROP_PAGE_MAGIC);
+        assert_eq!(p.header.magic, PROP_PAGE_MAGIC_NODE);
         assert_eq!(p.header.node_id, 42);
+        assert_eq!(p.owner_kind(), Some(OwnerKind::Node));
+        assert!(p.has_valid_prop_magic());
+    }
+
+    #[test]
+    fn edge_page_has_distinct_magic() {
+        let p = PropertyPage::new_edge(7);
+        assert_eq!(p.header.magic, PROP_PAGE_MAGIC_EDGE);
+        assert_ne!(p.header.magic, PROP_PAGE_MAGIC_NODE);
+        assert_eq!(p.header.node_id, 7);
+        assert_eq!(p.owner_kind(), Some(OwnerKind::Edge));
+        assert!(p.has_valid_prop_magic());
+    }
+
+    #[test]
+    fn owner_kind_magic_roundtrip() {
+        for kind in [OwnerKind::Node, OwnerKind::Edge] {
+            assert_eq!(OwnerKind::from_magic(kind.magic()), Some(kind));
+        }
+        // Unknown magic (zero / arbitrary) → None
+        assert_eq!(OwnerKind::from_magic(0), None);
+        assert_eq!(OwnerKind::from_magic(0xDEAD_BEEF), None);
+    }
+
+    #[test]
+    fn owner_kind_on_uninit_page_is_none() {
+        // A zero-initialised page (the mmap sentinel pattern) must not
+        // be mis-identified as either a node or an edge page.
+        let p = PropertyPage::default();
+        assert_eq!(p.header.magic, 0);
+        assert_eq!(p.owner_kind(), None);
+        assert!(!p.has_valid_prop_magic());
+    }
+
+    #[test]
+    fn with_owner_matches_specific_constructors() {
+        assert_eq!(
+            PropertyPage::with_owner(123, OwnerKind::Node).header.magic,
+            PROP_PAGE_MAGIC_NODE
+        );
+        assert_eq!(
+            PropertyPage::with_owner(456, OwnerKind::Edge).header.magic,
+            PROP_PAGE_MAGIC_EDGE
+        );
     }
 
     #[test]

@@ -82,7 +82,10 @@ pub use meta::{
     META_FILE_SIZE, META_HEADER_SIZE, MetaHeader, SUBSTRATE_FORMAT_VERSION, SUBSTRATE_MAGIC,
     meta_flags,
 };
-pub use page::{HeapRef, PAGE_SIZE, PROP_PAGE_MAGIC, PropertyPage, PropertyPageHeader, ValueTag};
+pub use page::{
+    HeapRef, OwnerKind, PAGE_SIZE, PROP_PAGE_MAGIC, PROP_PAGE_MAGIC_EDGE, PROP_PAGE_MAGIC_NODE,
+    PropertyPage, PropertyPageHeader, ValueTag,
+};
 pub use record::{
     COACT_EDGE_TYPE_NAME, EdgeRecord, NodeRecord, NODES_PER_PAGE, PackedScarUtilAff,
     SCAR_MAX_INTENSITY_Q5, U48, UTILITY_MAX_SCORE_Q5, affinity_to_q5, edge_flags, f32_to_q1_15,
