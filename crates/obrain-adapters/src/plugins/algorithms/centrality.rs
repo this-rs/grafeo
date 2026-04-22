@@ -12,7 +12,9 @@ use obrain_common::utils::hash::FxHashMap;
 use obrain_core::graph::Direction;
 use obrain_core::graph::GraphStore;
 #[cfg(test)]
-use obrain_core::graph::lpg::LpgStore;
+use obrain_core::graph::GraphStoreMut;
+#[cfg(test)]
+use obrain_substrate::SubstrateStore;
 
 use super::super::{AlgorithmResult, ParameterDef, ParameterType, Parameters};
 use super::traits::{GraphAlgorithm, NodeValueResultBuilder};
@@ -701,9 +703,9 @@ pub struct HitsResult {
 ///
 /// ```no_run
 /// use obrain_adapters::plugins::algorithms::hits;
-/// use obrain_core::graph::lpg::LpgStore;
+/// use obrain_substrate::SubstrateStore;
 ///
-/// let store = LpgStore::new().unwrap();
+/// let store = SubstrateStore::open_tempfile().unwrap();
 /// let a = store.create_node(&["Page"]);
 /// let b = store.create_node(&["Page"]);
 /// store.create_edge(a, b, "LINKS_TO");
@@ -884,9 +886,9 @@ fn hits_params() -> &'static [ParameterDef] {
 /// ```no_run
 /// use obrain_adapters::plugins::algorithms::{HitsAlgorithm, GraphAlgorithm};
 /// use obrain_adapters::plugins::Parameters;
-/// use obrain_core::graph::lpg::LpgStore;
+/// use obrain_substrate::SubstrateStore;
 ///
-/// let store = LpgStore::new().unwrap();
+/// let store = SubstrateStore::open_tempfile().unwrap();
 /// let algo = HitsAlgorithm;
 /// let result = algo.execute(&store, &Parameters::new()).unwrap();
 /// ```
@@ -938,8 +940,8 @@ impl GraphAlgorithm for HitsAlgorithm {
 mod tests {
     use super::*;
 
-    fn create_test_graph() -> LpgStore {
-        let store = LpgStore::new().unwrap();
+    fn create_test_graph() -> SubstrateStore {
+        let store = SubstrateStore::open_tempfile().unwrap();
 
         // Create a simple graph:
         //   0 -> 1 -> 2
@@ -961,11 +963,11 @@ mod tests {
         store
     }
 
-    fn create_pagerank_graph() -> LpgStore {
+    fn create_pagerank_graph() -> SubstrateStore {
         // Simple graph for PageRank testing
         // A -> B -> C
         // A -> C
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
 
         let a = store.create_node(&["Node"]);
         let b = store.create_node(&["Node"]);
@@ -1022,7 +1024,7 @@ mod tests {
     #[test]
     fn test_pagerank_dangling() {
         // Graph with dangling node (no outgoing edges)
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["Node"]);
         let b = store.create_node(&["Node"]);
         store.create_edge(a, b, "EDGE");
@@ -1037,7 +1039,7 @@ mod tests {
 
     #[test]
     fn test_pagerank_empty() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let scores = pagerank(&store, 0.85, 100, 1e-6);
         assert!(scores.is_empty());
     }
@@ -1099,7 +1101,7 @@ mod tests {
     #[test]
     fn test_closeness_disconnected() {
         // Graph with isolated node
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["Node"]);
         let _b = store.create_node(&["Node"]); // Isolated
 
@@ -1111,7 +1113,7 @@ mod tests {
 
     #[test]
     fn test_single_node() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         store.create_node(&["Node"]);
 
         let degree = degree_centrality(&store);
@@ -1229,7 +1231,7 @@ mod tests {
     #[test]
     fn test_betweenness_small_graph() {
         // Test n <= 2 edge case
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["Node"]);
         let b = store.create_node(&["Node"]);
         store.create_edge(a, b, "EDGE");
@@ -1246,7 +1248,7 @@ mod tests {
 
     #[test]
     fn test_closeness_empty_graph() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let scores = closeness_centrality(&store, false);
         assert!(scores.is_empty());
 
@@ -1256,7 +1258,7 @@ mod tests {
 
     #[test]
     fn test_closeness_single_node() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["Node"]);
 
         let scores = closeness_centrality(&store, false);
@@ -1270,7 +1272,7 @@ mod tests {
 
     #[test]
     fn test_degree_empty_graph() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let result = degree_centrality(&store);
         assert!(result.total_degree.is_empty());
 
@@ -1330,7 +1332,7 @@ mod tests {
     fn test_betweenness_linear_graph() {
         // Linear graph: A -> B -> C -> D
         // B and C should have highest betweenness
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["Node"]);
         let b = store.create_node(&["Node"]);
         let c = store.create_node(&["Node"]);
@@ -1354,7 +1356,7 @@ mod tests {
 
     #[test]
     fn test_degree_centrality_with_self_loop() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         store.create_edge(n0, n0, "SELF"); // self-loop
@@ -1373,8 +1375,8 @@ mod tests {
 
     /// Creates a star graph: center → spoke1, center → spoke2, center → spoke3
     /// Center should have high hub score, spokes should have high authority score.
-    fn create_star_graph() -> LpgStore {
-        let store = LpgStore::new().unwrap();
+    fn create_star_graph() -> SubstrateStore {
+        let store = SubstrateStore::open_tempfile().unwrap();
         let center = store.create_node(&["Hub"]);
         let s1 = store.create_node(&["Auth"]);
         let s2 = store.create_node(&["Auth"]);
@@ -1387,8 +1389,8 @@ mod tests {
 
     /// Creates a bipartite graph: h1→a1, h1→a2, h2→a1, h2→a2
     /// Both hubs should have equal hub scores, both authorities equal authority scores.
-    fn create_bipartite_graph() -> LpgStore {
-        let store = LpgStore::new().unwrap();
+    fn create_bipartite_graph() -> SubstrateStore {
+        let store = SubstrateStore::open_tempfile().unwrap();
         let h1 = store.create_node(&["Hub"]);
         let h2 = store.create_node(&["Hub"]);
         let a1 = store.create_node(&["Auth"]);
@@ -1402,7 +1404,7 @@ mod tests {
 
     #[test]
     fn test_hits_empty_graph() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let result = hits(&store, 100, 1e-6);
         assert!(result.hub_scores.is_empty());
         assert!(result.authority_scores.is_empty());
@@ -1412,7 +1414,7 @@ mod tests {
 
     #[test]
     fn test_hits_single_node() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let _n = store.create_node(&["Node"]);
         let result = hits(&store, 100, 1e-6);
         assert_eq!(result.hub_scores.len(), 1);
@@ -1570,7 +1572,7 @@ mod tests {
     #[test]
     fn test_hits_chain_graph() {
         // a → b → c : b is both hub and authority
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["Node"]);
         let b = store.create_node(&["Node"]);
         let c = store.create_node(&["Node"]);
@@ -1598,7 +1600,7 @@ mod tests {
     #[test]
     fn test_hits_cycle_graph() {
         // a → b → c → a : all nodes should have equal scores
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["Node"]);
         let b = store.create_node(&["Node"]);
         let c = store.create_node(&["Node"]);

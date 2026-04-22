@@ -17,10 +17,10 @@
 //! # Example
 //!
 //! ```no_run
-//! use obrain_core::graph::lpg::LpgStore;
+//! use obrain_substrate::SubstrateStore;
 //! use obrain_adapters::plugins::algorithms::{louvain, stabilize_communities};
 //!
-//! let store = LpgStore::new().unwrap();
+//! let store = SubstrateStore::open_tempfile().unwrap();
 //! // ... populate graph ...
 //! let prev = louvain(&store, 1.0);
 //! // ... graph mutates ...
@@ -411,11 +411,12 @@ impl GraphAlgorithm for StableCommunitiesAlgorithm {
 #[cfg(all(test, feature = "algos"))]
 mod tests {
     use super::*;
-    use obrain_core::graph::lpg::LpgStore;
+    use obrain_core::graph::GraphStoreMut;
+    use obrain_substrate::SubstrateStore;
 
     /// Helper: create a simple graph with two cliques connected by a bridge.
-    fn create_two_clique_graph() -> LpgStore {
-        let store = LpgStore::new().unwrap();
+    fn create_two_clique_graph() -> SubstrateStore {
+        let store = SubstrateStore::open_tempfile().unwrap();
 
         // Clique 1: nodes 0-3
         let n: Vec<_> = (0..8).map(|_| store.create_node(&["Node"])).collect();
@@ -453,7 +454,7 @@ mod tests {
     #[test]
     fn test_with_changes() {
         // Modify graph between runs — should retain >70% stability if >50% members remain
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let nodes: Vec<_> = (0..12).map(|_| store.create_node(&["Node"])).collect();
 
         // Clique 1: 0-5
@@ -507,7 +508,7 @@ mod tests {
     #[test]
     fn test_disjoint() {
         // Completely different communities → new IDs assigned
-        let store1 = LpgStore::new().unwrap();
+        let store1 = SubstrateStore::open_tempfile().unwrap();
         let n1: Vec<_> = (0..4).map(|_| store1.create_node(&["Node"])).collect();
         for i in 0..4 {
             for j in (i + 1)..4 {
@@ -518,7 +519,7 @@ mod tests {
         let prev = louvain(&store1, 1.0);
 
         // Completely different graph
-        let store2 = LpgStore::new().unwrap();
+        let store2 = SubstrateStore::open_tempfile().unwrap();
         let n2: Vec<_> = (0..6).map(|_| store2.create_node(&["Node"])).collect();
         for i in 0..3 {
             for j in (i + 1)..3 {
@@ -542,7 +543,7 @@ mod tests {
     #[test]
     fn test_single_community() {
         // k=1 → matching is trivial
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let nodes: Vec<_> = (0..5).map(|_| store.create_node(&["Node"])).collect();
         for i in 0..5 {
             for j in (i + 1)..5 {

@@ -12,7 +12,9 @@ use obrain_common::utils::hash::{FxHashMap, FxHashSet};
 use obrain_core::graph::Direction;
 use obrain_core::graph::GraphStore;
 #[cfg(test)]
-use obrain_core::graph::lpg::LpgStore;
+use obrain_core::graph::GraphStoreMut;
+#[cfg(test)]
+use obrain_substrate::SubstrateStore;
 
 use super::super::{AlgorithmResult, ParameterDef, ParameterType, Parameters};
 use super::traits::{ComponentResultBuilder, GraphAlgorithm};
@@ -397,11 +399,11 @@ pub fn community_count(communities: &FxHashMap<NodeId, u64>) -> usize {
 /// # Example
 ///
 /// ```
-/// use obrain_core::graph::lpg::LpgStore;
+/// use obrain_substrate::SubstrateStore;
 /// use obrain_core::graph::GraphStore;
 /// use obrain_adapters::plugins::algorithms::leiden;
 ///
-/// let store = LpgStore::new().unwrap();
+/// let store = SubstrateStore::open_tempfile().unwrap();
 /// let n0 = store.create_node(&["Node"]);
 /// let n1 = store.create_node(&["Node"]);
 /// let n2 = store.create_node(&["Node"]);
@@ -1019,12 +1021,12 @@ impl GraphAlgorithm for LeidenAlgorithm {
 mod tests {
     use super::*;
 
-    fn create_two_cliques_graph() -> LpgStore {
+    fn create_two_cliques_graph() -> SubstrateStore {
         // Two cliques connected by one edge
         // Clique 1: 0-1-2-3 (fully connected)
         // Clique 2: 4-5-6-7 (fully connected)
         // Bridge: 3-4
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
 
         let nodes: Vec<NodeId> = (0..8).map(|_| store.create_node(&["Node"])).collect();
 
@@ -1051,8 +1053,8 @@ mod tests {
         store
     }
 
-    fn create_simple_graph() -> LpgStore {
-        let store = LpgStore::new().unwrap();
+    fn create_simple_graph() -> SubstrateStore {
+        let store = SubstrateStore::open_tempfile().unwrap();
 
         // Simple chain: 0 -> 1 -> 2
         let n0 = store.create_node(&["Node"]);
@@ -1092,14 +1094,14 @@ mod tests {
 
     #[test]
     fn test_label_propagation_empty() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let communities = label_propagation(&store, 100);
         assert!(communities.is_empty());
     }
 
     #[test]
     fn test_label_propagation_single_node() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         store.create_node(&["Node"]);
 
         let communities = label_propagation(&store, 100);
@@ -1132,7 +1134,7 @@ mod tests {
 
     #[test]
     fn test_louvain_empty() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let result = louvain(&store, 1.0);
 
         assert!(result.communities.is_empty());
@@ -1142,7 +1144,7 @@ mod tests {
 
     #[test]
     fn test_louvain_isolated_nodes() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         store.create_node(&["Node"]);
         store.create_node(&["Node"]);
         store.create_node(&["Node"]);
@@ -1209,7 +1211,7 @@ mod tests {
 
     #[test]
     fn test_leiden_empty() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let result = leiden(&store, 1.0, 0.01);
 
         assert!(result.communities.is_empty());
@@ -1219,7 +1221,7 @@ mod tests {
 
     #[test]
     fn test_leiden_isolated_nodes() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         store.create_node(&["Node"]);
         store.create_node(&["Node"]);
         store.create_node(&["Node"]);
@@ -1234,7 +1236,7 @@ mod tests {
     fn test_leiden_guarantees_connected_communities() {
         // Build a graph where Louvain might create disconnected communities
         // but Leiden should not: two triangles connected by a path
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
 
         // Triangle 1: 0-1-2
         let n0 = store.create_node(&["Node"]);
@@ -1324,7 +1326,7 @@ mod tests {
     #[test]
     fn test_leiden_karate_club() {
         // Zachary's Karate Club graph (34 nodes, 78 edges)
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
 
         let nodes: Vec<NodeId> = (0..34).map(|_| store.create_node(&["Member"])).collect();
 
@@ -1501,7 +1503,7 @@ mod tests {
 
     #[test]
     fn test_leiden_single_node() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         store.create_node(&["Node"]);
 
         let result = leiden(&store, 1.0, 0.01);
@@ -1525,7 +1527,7 @@ mod tests {
 
     #[test]
     fn test_leiden_empty_graph() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let result = leiden(&store, 1.0, 0.01);
         assert!(result.communities.is_empty());
         assert_eq!(result.num_communities, 0);
@@ -1534,7 +1536,7 @@ mod tests {
 
     #[test]
     fn test_leiden_isolated_nodes_all_separate() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         // Create nodes with no edges — total_weight == 0
         for _ in 0..5 {
             store.create_node(&["Node"]);
@@ -1548,7 +1550,7 @@ mod tests {
     #[test]
     fn test_leiden_disconnected_communities() {
         // Two separate cliques with no bridge — tests disconnected split in refinement
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let nodes: Vec<NodeId> = (0..8).map(|_| store.create_node(&["Node"])).collect();
 
         // Clique 1: 0-1-2-3
@@ -1581,7 +1583,7 @@ mod tests {
 
     #[test]
     fn test_louvain_empty_graph() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let result = louvain(&store, 1.0);
         assert!(result.communities.is_empty());
     }
@@ -1616,7 +1618,7 @@ mod tests {
 
     #[test]
     fn test_label_propagation_empty_graph() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let communities = label_propagation(&store, 100);
         assert!(communities.is_empty());
     }
@@ -1632,7 +1634,7 @@ mod tests {
 
     #[test]
     fn test_louvain_single_node() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         store.create_node(&["Node"]);
         let result = louvain(&store, 1.0);
         assert_eq!(result.communities.len(), 1);
@@ -1660,7 +1662,7 @@ mod tests {
 
     #[test]
     fn test_louvain_isolated_nodes_all_separate() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         for _ in 0..5 {
             store.create_node(&["Node"]);
         }
@@ -1682,7 +1684,7 @@ mod tests {
     #[test]
     fn test_leiden_chain_graph() {
         // A long chain exercises the local move heuristic
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let mut nodes = Vec::new();
         for _ in 0..20 {
             nodes.push(store.create_node(&["Node"]));
@@ -1699,7 +1701,7 @@ mod tests {
     #[test]
     fn test_leiden_many_small_cliques() {
         // Multiple small cliques to exercise refinement with sub-partitioning
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let mut all_nodes = Vec::new();
 
         // 5 cliques of 4 nodes each, connected by single edges
@@ -1729,7 +1731,7 @@ mod tests {
 
     #[test]
     fn test_label_propagation_isolated() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         for _ in 0..3 {
             store.create_node(&["Node"]);
         }
@@ -1746,7 +1748,7 @@ mod tests {
 
     #[test]
     fn test_leiden_two_nodes_one_edge() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         store.create_edge(n0, n1, "E");
@@ -1758,7 +1760,7 @@ mod tests {
 
     #[test]
     fn test_louvain_two_nodes_one_edge() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         store.create_edge(n0, n1, "E");
@@ -1770,7 +1772,7 @@ mod tests {
     #[test]
     fn test_leiden_star_graph() {
         // Star graph: center connected to all others
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let center = store.create_node(&["Node"]);
         let mut leaves = Vec::new();
         for _ in 0..10 {

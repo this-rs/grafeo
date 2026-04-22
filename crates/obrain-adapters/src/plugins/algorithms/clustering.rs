@@ -16,7 +16,9 @@ use obrain_common::utils::hash::{FxHashMap, FxHashSet};
 use obrain_core::graph::Direction;
 use obrain_core::graph::GraphStore;
 #[cfg(test)]
-use obrain_core::graph::lpg::LpgStore;
+use obrain_core::graph::GraphStoreMut;
+#[cfg(test)]
+use obrain_substrate::SubstrateStore;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -520,9 +522,9 @@ use super::hilbert_features::HilbertFeaturesResult;
 ///
 /// ```no_run
 /// use obrain_adapters::plugins::algorithms::{hilbert_bank_allocation, hilbert_features, HilbertFeaturesConfig};
-/// use obrain_core::graph::lpg::LpgStore;
+/// use obrain_substrate::SubstrateStore;
 ///
-/// let store = LpgStore::new().unwrap();
+/// let store = SubstrateStore::open_tempfile().unwrap();
 /// // ... populate graph ...
 /// let features = hilbert_features(&store, &HilbertFeaturesConfig::default());
 /// let banks = hilbert_bank_allocation(&features, 8, 50);
@@ -667,9 +669,9 @@ fn sq_dist(a: &[f32], b: &[f32]) -> f32 {
 mod tests {
     use super::*;
 
-    fn create_triangle_graph() -> LpgStore {
+    fn create_triangle_graph() -> SubstrateStore {
         // Simple triangle: 0 - 1 - 2 - 0
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         let n2 = store.create_node(&["Node"]);
@@ -685,10 +687,10 @@ mod tests {
         store
     }
 
-    fn create_star_graph() -> LpgStore {
+    fn create_star_graph() -> SubstrateStore {
         // Star: center (0) connected to leaves (1, 2, 3, 4)
         // No triangles because leaves don't connect to each other
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let center = store.create_node(&["Center"]);
 
         for _ in 0..4 {
@@ -700,9 +702,9 @@ mod tests {
         store
     }
 
-    fn create_complete_graph(n: usize) -> LpgStore {
+    fn create_complete_graph(n: usize) -> SubstrateStore {
         // K_n: complete graph with n nodes (all pairs connected)
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let nodes: Vec<NodeId> = (0..n).map(|_| store.create_node(&["Node"])).collect();
 
         for i in 0..n {
@@ -715,9 +717,9 @@ mod tests {
         store
     }
 
-    fn create_path_graph() -> LpgStore {
+    fn create_path_graph() -> SubstrateStore {
         // Path: 0 - 1 - 2 - 3
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         let n2 = store.create_node(&["Node"]);
@@ -802,7 +804,7 @@ mod tests {
 
     #[test]
     fn test_empty_graph() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let result = clustering_coefficient(&store);
 
         assert!(result.coefficients.is_empty());
@@ -813,7 +815,7 @@ mod tests {
 
     #[test]
     fn test_single_node() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Node"]);
 
         let result = clustering_coefficient(&store);
@@ -825,7 +827,7 @@ mod tests {
 
     #[test]
     fn test_two_connected_nodes() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         store.create_edge(n0, n1, "EDGE");
@@ -962,7 +964,7 @@ mod tests {
         //   0---1
         //    \ /
         //     3
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         let n2 = store.create_node(&["Node"]);
@@ -1013,8 +1015,8 @@ mod tests {
         HilbertFeaturesConfig, HilbertFeaturesResult, hilbert_features,
     };
 
-    fn create_two_cluster_graph() -> (LpgStore, Vec<NodeId>, Vec<NodeId>) {
-        let store = LpgStore::new().unwrap();
+    fn create_two_cluster_graph() -> (SubstrateStore, Vec<NodeId>, Vec<NodeId>) {
+        let store = SubstrateStore::open_tempfile().unwrap();
         // Cluster A: tightly connected
         let a: Vec<NodeId> = (0..5).map(|_| store.create_node(&["A"])).collect();
         for i in 0..5 {

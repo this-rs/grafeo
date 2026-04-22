@@ -55,10 +55,10 @@ pub struct EgoEdge {
 ///
 /// ```no_run
 /// use obrain_adapters::plugins::algorithms::{khop_subgraph, KHopConfig};
-/// use obrain_core::graph::lpg::LpgStore;
+/// use obrain_substrate::SubstrateStore;
 /// use obrain_common::types::NodeId;
 ///
-/// let store = LpgStore::new().unwrap();
+/// let store = SubstrateStore::open_tempfile().unwrap();
 /// let n0 = store.create_node(&["Person"]);
 /// let n1 = store.create_node(&["Person"]);
 /// store.create_edge(n0, n1, "KNOWS");
@@ -181,10 +181,10 @@ pub struct KHopConfig {
 ///
 /// ```no_run
 /// use obrain_adapters::plugins::algorithms::{khop_subgraph, KHopConfig};
-/// use obrain_core::graph::lpg::LpgStore;
+/// use obrain_substrate::SubstrateStore;
 /// use obrain_common::types::NodeId;
 ///
-/// let store = LpgStore::new().unwrap();
+/// let store = SubstrateStore::open_tempfile().unwrap();
 /// let center = store.create_node(&["Person"]);
 /// let friend = store.create_node(&["Person"]);
 /// store.create_edge(center, friend, "KNOWS");
@@ -475,10 +475,11 @@ impl GraphAlgorithm for KHopAlgorithm {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use obrain_core::graph::lpg::LpgStore;
+    use obrain_core::graph::GraphStoreMut;
+    use obrain_substrate::SubstrateStore;
 
-    fn create_multi_rel_graph() -> LpgStore {
-        let store = LpgStore::new().unwrap();
+    fn create_multi_rel_graph() -> SubstrateStore {
+        let store = SubstrateStore::open_tempfile().unwrap();
 
         // Create a multi-relational graph:
         //   0 --KNOWS--> 1 --KNOWS--> 2
@@ -500,7 +501,7 @@ mod tests {
         store
     }
 
-    fn create_star_graph(center_id: NodeId, degree: usize, store: &LpgStore) -> Vec<NodeId> {
+    fn create_star_graph(center_id: NodeId, degree: usize, store: &SubstrateStore) -> Vec<NodeId> {
         let mut leaves = Vec::with_capacity(degree);
         for _ in 0..degree {
             let leaf = store.create_node(&["Leaf"]);
@@ -597,7 +598,7 @@ mod tests {
 
     #[test]
     fn test_khop_sampling() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let center = store.create_node(&["Center"]);
         create_star_graph(center, 20, &store);
 
@@ -617,7 +618,7 @@ mod tests {
 
     #[test]
     fn test_khop_nonexistent_center() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let config = KHopConfig {
             center: NodeId::new(999),
             k: 2,
@@ -650,7 +651,7 @@ mod tests {
 
     #[test]
     fn test_khop_single_node() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Alone"]);
         let config = KHopConfig {
             center: n0,
@@ -666,7 +667,7 @@ mod tests {
 
     #[test]
     fn test_khop_with_properties() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Person"]);
         let n1 = store.create_node(&["Person"]);
         store.create_edge(n0, n1, "KNOWS");
@@ -694,7 +695,7 @@ mod tests {
 
     #[test]
     fn test_khop_with_weighted_edges() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         let e = store.create_edge(n0, n1, "CONNECTS");
@@ -715,7 +716,7 @@ mod tests {
 
     #[test]
     fn test_khop_cycle() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         let n2 = store.create_node(&["Node"]);
@@ -741,7 +742,7 @@ mod tests {
 
     #[test]
     fn test_khop_self_loop() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         store.create_edge(n0, n0, "SELF");
@@ -862,7 +863,7 @@ mod tests {
     #[ignore = "requires large arena — run manually with cargo test -- --ignored"]
     fn test_khop_perf_10k_nodes() {
         // Build a graph with ~10K nodes, moderate connectivity
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let mut nodes = Vec::with_capacity(10_000);
         for _ in 0..10_000 {
             nodes.push(store.create_node(&["Node"]));
