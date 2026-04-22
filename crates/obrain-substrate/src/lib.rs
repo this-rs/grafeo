@@ -44,6 +44,7 @@ pub mod meta;
 pub mod page;
 pub mod popcount;
 pub mod props_snapshot;
+pub mod props_zone;
 pub mod record;
 pub mod replay;
 pub mod retrieval;
@@ -109,6 +110,9 @@ pub use popcount::{
 pub use replay::{replay_from, ReplayStats};
 pub use retrieval::{NodeOffset, SubstrateTieredIndex, VectorIndex};
 pub use props_snapshot::{PropertiesSnapshotV1, PropertiesStreamingWriter, PROPS_FILENAME};
+pub use props_zone::{
+    decode_page_id, encode_page_id, PropsZone, PROPS_HEAP_V2_FILENAME, PROPS_V2_FILENAME,
+};
 pub use store::{SubstrateStore, SKIP_ON_LOAD_PROP_KEYS};
 pub use warden::{
     CommunityFragmentation, CommunityWarden, FragmentationReport, DEFAULT_FRAGMENTATION_TRIGGER,
