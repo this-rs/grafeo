@@ -300,6 +300,49 @@ impl GraphStore for LpgStore {
 }
 
 impl GraphStoreMut for LpgStore {
+    // --- T17 Wave B (2026-04-23): MVCC trait hooks ---
+    //
+    // These delegate to the LpgStore inherent implementations so that
+    // callers holding an `Arc<dyn GraphStoreMut>` still get LpgStore's
+    // real MVCC semantics when the concrete backend is LpgStore. On
+    // substrate these methods fall back to the trait defaults (no-ops)
+    // since topology-as-storage has no per-transaction epoch tracking.
+    fn finalize_version_epochs(&self, transaction_id: TransactionId, commit_epoch: EpochId) {
+        LpgStore::finalize_version_epochs(self, transaction_id, commit_epoch)
+    }
+
+    fn commit_transaction_properties(&self, transaction_id: TransactionId) {
+        LpgStore::commit_transaction_properties(self, transaction_id)
+    }
+
+    fn rollback_transaction_properties(&self, transaction_id: TransactionId) {
+        LpgStore::rollback_transaction_properties(self, transaction_id)
+    }
+
+    fn rollback_transaction_properties_to(
+        &self,
+        transaction_id: TransactionId,
+        since: usize,
+    ) {
+        LpgStore::rollback_transaction_properties_to(self, transaction_id, since)
+    }
+
+    fn sync_epoch(&self, epoch: EpochId) {
+        LpgStore::sync_epoch(self, epoch)
+    }
+
+    fn gc_versions(&self, min_epoch: EpochId) {
+        LpgStore::gc_versions(self, min_epoch)
+    }
+
+    fn peek_next_node_id(&self) -> u64 {
+        LpgStore::peek_next_node_id(self)
+    }
+
+    fn property_undo_log_position(&self, transaction_id: TransactionId) -> usize {
+        LpgStore::property_undo_log_position(self, transaction_id)
+    }
+
     fn create_node(&self, labels: &[&str]) -> NodeId {
         LpgStore::create_node(self, labels)
     }

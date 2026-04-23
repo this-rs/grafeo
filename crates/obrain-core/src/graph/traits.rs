@@ -614,4 +614,67 @@ pub trait GraphStoreMut: GraphStore {
         }
         id
     }
+
+    // --- MVCC hooks (T17 Wave B: 2026-04-23) ---
+    //
+    // These methods were LpgStore-inherent in the legacy design. With
+    // substrate as the single production backend, substrate's
+    // topology-as-storage model no longer tracks per-transaction
+    // epochs, undo logs, or next-id-peek snapshots. The methods below
+    // therefore default to no-ops: substrate inherits the defaults,
+    // LpgStore overrides them (legacy behavior retained for the
+    // archival `legacy-read` code path in obrain-migrate, and for
+    // cognitive sidecars that still persist via the in-memory
+    // LpgStore shadow).
+    //
+    // Moving these onto the trait lets `Session::resolve_store` and
+    // `ObrainDB::store` hold `Arc<dyn GraphStoreMut>` instead of a
+    // concrete `Arc<LpgStore>`, which is what finally unblocks the T17
+    // cutover (the last concrete-type leak on the production path).
+
+    /// Makes all PENDING version records from this transaction visible at
+    /// the given commit epoch. No-op for backends without MVCC.
+    fn finalize_version_epochs(&self, _transaction_id: TransactionId, _commit_epoch: EpochId) {}
+
+    /// Commits property changes from this transaction (discards undo logs,
+    /// making the mutations permanent). No-op for backends without MVCC.
+    fn commit_transaction_properties(&self, _transaction_id: TransactionId) {}
+
+    /// Rolls back property changes from this transaction (replays the undo
+    /// log). No-op for backends without MVCC.
+    fn rollback_transaction_properties(&self, _transaction_id: TransactionId) {}
+
+    /// Rolls back property changes from this transaction back to the given
+    /// undo-log position (savepoint-level rollback). No-op for backends
+    /// without MVCC.
+    fn rollback_transaction_properties_to(
+        &self,
+        _transaction_id: TransactionId,
+        _since: usize,
+    ) {
+    }
+
+    /// Publishes the given epoch as the store's "current" read epoch so that
+    /// convenience lookups surface committed versions immediately. No-op for
+    /// backends without MVCC.
+    fn sync_epoch(&self, _epoch: EpochId) {}
+
+    /// Prunes version records strictly older than `min_epoch` when the
+    /// backend maintains a version history. No-op for backends without MVCC.
+    fn gc_versions(&self, _min_epoch: EpochId) {}
+
+    /// Returns the next node ID that would be allocated by `create_node`.
+    /// Used by savepoint bookkeeping to rewind a pending allocator. Backends
+    /// without a stable next-id peek return `0` — callers must treat a zero
+    /// result as "savepoints unsupported" and skip the rewind path.
+    fn peek_next_node_id(&self) -> u64 {
+        0
+    }
+
+    /// Returns the current position of the property undo log for the given
+    /// transaction. Used by savepoints. Backends without undo logs return
+    /// `0` — callers interpret zero as "no undo log available".
+    fn property_undo_log_position(&self, _transaction_id: TransactionId) -> usize {
+        0
+    }
 }
