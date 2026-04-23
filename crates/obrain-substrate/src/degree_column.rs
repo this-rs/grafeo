@@ -123,13 +123,24 @@ pub struct DegreeColumn {
 }
 
 impl DegreeColumn {
-    /// Create a fresh degree column sized for `n_slots` nodes.
+    /// Create a fresh degree column sized for `n_slots` nodes using
+    /// the default filename (T5 total degree column).
+    pub fn create(sub: &SubstrateFile, n_slots: u32) -> SubstrateResult<Self> {
+        Self::create_by_filename(sub, DEGREE_COLUMN_FILENAME, n_slots)
+    }
+
+    /// Create a fresh degree column at a custom filename (T17h T8 :
+    /// per-edge-type columns use `substrate.degrees.node.<type>.u32`).
     ///
     /// Fills the payload with zeros, writes the header with CRC = 0
     /// (caller fills in the real CRC at flush time via `persist`).
     /// Leaves the file open for subsequent mutations.
-    pub fn create(sub: &SubstrateFile, n_slots: u32) -> SubstrateResult<Self> {
-        let mut zf = sub.open_named_zone(DEGREE_COLUMN_FILENAME)?;
+    pub fn create_by_filename(
+        sub: &SubstrateFile,
+        filename: &str,
+        n_slots: u32,
+    ) -> SubstrateResult<Self> {
+        let mut zf = sub.open_named_zone(filename)?;
         let payload_bytes = (n_slots as usize) * DEGREE_RECORD_SIZE;
         let total_bytes = HEADER_SIZE + payload_bytes;
         ensure_room(&mut zf, total_bytes, 1 << 20)?;
@@ -152,8 +163,13 @@ impl DegreeColumn {
         Ok(Self { zf, n_slots })
     }
 
-    /// Open an existing column and validate magic + version + CRC.
-    /// Returns `None` on :
+    /// Open an existing total-degree column (T5 default filename).
+    pub fn open(sub: &SubstrateFile) -> SubstrateResult<Option<Self>> {
+        Self::open_by_filename(sub, DEGREE_COLUMN_FILENAME)
+    }
+
+    /// Open an existing column at a custom filename and validate
+    /// magic + version + CRC. Returns `None` on :
     /// - file absent (caller should rebuild)
     /// - truncated file (header doesn't fit)
     /// - magic/version mismatch
@@ -162,8 +178,11 @@ impl DegreeColumn {
     /// The caller treats `None` as "no valid sidecar" and rebuilds via
     /// `rebuild_from_scan`. This matches the graceful-degradation
     /// contract of tier zones (never fatal at open).
-    pub fn open(sub: &SubstrateFile) -> SubstrateResult<Option<Self>> {
-        let zf = sub.open_named_zone(DEGREE_COLUMN_FILENAME)?;
+    pub fn open_by_filename(
+        sub: &SubstrateFile,
+        filename: &str,
+    ) -> SubstrateResult<Option<Self>> {
+        let zf = sub.open_named_zone(filename)?;
         if zf.is_empty() {
             return Ok(None);
         }

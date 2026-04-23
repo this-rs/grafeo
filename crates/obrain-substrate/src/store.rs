@@ -273,14 +273,14 @@ impl LabelRegistry {
 // ---------------------------------------------------------------------------
 
 #[derive(Default)]
-struct EdgeTypeRegistry {
+pub(crate) struct EdgeTypeRegistry {
     name_to_id: FxHashMap<ArcStr, u16>,
     id_to_name: Vec<ArcStr>, // indexed by id (u16), len == number of interned types
 }
 
 impl EdgeTypeRegistry {
     /// Register an edge-type name if absent, return its interned id.
-    fn intern(&mut self, name: &str) -> SubstrateResult<u16> {
+    pub(crate) fn intern(&mut self, name: &str) -> SubstrateResult<u16> {
         if let Some(&id) = self.name_to_id.get(name) {
             return Ok(id);
         }
@@ -298,12 +298,11 @@ impl EdgeTypeRegistry {
         Ok(id as u16)
     }
 
-    fn name_for(&self, id: u16) -> Option<ArcStr> {
+    pub(crate) fn name_for(&self, id: u16) -> Option<ArcStr> {
         self.id_to_name.get(id as usize).cloned()
     }
 
-    #[allow(dead_code)] // reserved for future dedup fast-paths
-    fn id_for(&self, name: &str) -> Option<u16> {
+    pub(crate) fn id_for(&self, name: &str) -> Option<u16> {
         self.name_to_id.get(name).copied()
     }
 
@@ -569,7 +568,10 @@ pub struct SubstrateStore {
     labels: RwLock<LabelRegistry>,
     /// Edge-type name ↔ u16 id registry. Persisted via `substrate.dict`
     /// (step 3).
-    edge_types: RwLock<EdgeTypeRegistry>,
+    /// T17h T8 refactor : wrapped in `Arc` so `TypedDegreeRegistry` can
+    /// share the same registry (name → id lookups for filename / Cypher
+    /// type resolution).
+    edge_types: Arc<RwLock<EdgeTypeRegistry>>,
     /// Property-key name ↔ u16 id registry. Persisted via
     /// `substrate.dict` (step 3); actual property-page writes land in
     /// step 4+.
@@ -619,6 +621,11 @@ pub struct SubstrateStore {
     /// block each other, but `ensure_slot` grow calls take an exclusive
     /// write lock. See `degree_column::DegreeColumn`.
     degrees_cell: OnceLock<Arc<RwLock<crate::degree_column::DegreeColumn>>>,
+    /// T17h T8 — per-edge-type degree registry. One column per
+    /// `edge_type_id`, persisted as `substrate.degrees.node.<type>.u32`.
+    /// Enables correct routing of Cypher patterns filtered by edge type
+    /// (e.g. `MATCH (f:File)-[:IMPORTS]->()`). See `typed_degree.rs`.
+    typed_degrees_cell: OnceLock<Arc<crate::typed_degree::TypedDegreeRegistry>>,
     /// Routing table + open-writer cache for `Value::Vector` properties.
     ///
     /// Every `set_node_property(_, _, Value::Vector(_))` and
@@ -802,7 +809,7 @@ impl SubstrateStore {
             edge_properties: DashMap::new(),
             incoming_heads_cell: OnceLock::new(),
             labels: RwLock::new(labels),
-            edge_types: RwLock::new(edge_types),
+            edge_types: Arc::new(RwLock::new(edge_types)),
             prop_keys: RwLock::new(prop_keys),
             stats: Arc::new(Statistics::new()),
             community_ranges_cell: OnceLock::new(),
@@ -811,6 +818,7 @@ impl SubstrateStore {
             label_live_counts: std::array::from_fn(|_| AtomicU64::new(0)),
             edge_type_live_counts: DashMap::new(),
             degrees_cell: OnceLock::new(),
+            typed_degrees_cell: OnceLock::new(),
             vec_columns: VecColumnRegistry::new(),
             blob_columns: BlobColumnRegistry::new(),
             props_zone,
@@ -882,6 +890,23 @@ impl SubstrateStore {
             phase = "init_degrees",
             elapsed_ms = t_degrees.elapsed().as_millis() as u64,
             "degree column ready"
+        );
+
+        // (2d) T17h T8 — eager init of the per-edge-type degree registry.
+        // Same rationale as T5 : must predate any create_edge/delete_edge
+        // that could trigger a lazy rebuild mid-session. Open existing
+        // sidecars if present, otherwise rebuild from edge scan and
+        // persist.
+        let t_typed = std::time::Instant::now();
+        let typed_span = tracing::info_span!("init_typed_degrees").entered();
+        let typed_source = store.init_typed_degrees()?;
+        drop(typed_span);
+        tracing::info!(
+            phase = "init_typed_degrees",
+            elapsed_ms = t_typed.elapsed().as_millis() as u64,
+            source = typed_source,
+            columns = store.typed_degrees().len(),
+            "typed degree registry ready"
         );
 
         // (3) Hydrate the vec-column registry from the persisted specs
@@ -1545,6 +1570,11 @@ impl SubstrateStore {
             let mut col = degrees.write();
             col.persist_header_crc();
             col.msync()?;
+        }
+        // T17h T8: flush the per-edge-type degree columns. Same laziness
+        // contract as T5 — only the materialised columns are touched.
+        if let Some(typed) = self.typed_degrees_cell.get() {
+            typed.flush()?;
         }
         self.persist_dict()?;
         self.persist_properties()?;
@@ -4584,6 +4614,131 @@ impl SubstrateStore {
         self.degrees().read().in_degree(node.0 as u32)
     }
 
+    /// T17h T8 — per-edge-type degree registry accessor (lazy-init).
+    /// Columns are created on first `incr_*` for a type; existing
+    /// columns on disk are picked up on subsequent `incr_*` (or via
+    /// explicit `get_or_create` in the registry).
+    pub(crate) fn typed_degrees(
+        &self,
+    ) -> &Arc<crate::typed_degree::TypedDegreeRegistry> {
+        self.typed_degrees_cell.get_or_init(|| {
+            Arc::new(crate::typed_degree::TypedDegreeRegistry::new(
+                Arc::clone(&self.substrate),
+                Arc::clone(&self.edge_types),
+            ))
+        })
+    }
+
+    /// T17h T8 — eager init of the typed-degree registry at `from_substrate`.
+    /// Mirrors T5's `init_degrees` : must run BEFORE any create/delete
+    /// can fire a lazy rebuild mid-session.
+    ///
+    /// Returns the source used : `"open_existing"` (sidecars on disk,
+    /// O(K) where K = open columns) or `"rebuild_scan"` (no sidecars,
+    /// O(E) edge scan). After rebuild, the columns are persisted
+    /// (CRC + msync) so the next open takes the fast path.
+    fn init_typed_degrees(&self) -> SubstrateResult<&'static str> {
+        let registry = self.typed_degrees().clone();
+        let opened = registry.open_existing_columns()?;
+        if opened > 0 {
+            return Ok("open_existing");
+        }
+        // No persisted sidecars — rebuild from edge zone.
+        self.rebuild_typed_degrees_from_scan()?;
+        registry.flush()?;
+        Ok("rebuild_scan")
+    }
+
+    /// T17h T8 — one-shot edge scan that populates every per-type
+    /// column. Sequential (zone-cache Mutex contention rules out rayon).
+    /// Typical cost : same order as T5's `rebuild_degrees_from_scan`,
+    /// i.e. ≤ 30 s on Wikipedia (119M edges) for each pass — one-shot,
+    /// amortised once across sessions thanks to v5 sidecar persistence.
+    fn rebuild_typed_degrees_from_scan(&self) -> SubstrateResult<()> {
+        let registry = self.typed_degrees().clone();
+        let n_slots_hint = self.next_node_id.load(Ordering::Acquire);
+        let edge_hw = self.next_edge_id.load(Ordering::Acquire);
+        for slot in 1..edge_hw {
+            let Some(rec) = self.writer.read_edge(slot)? else {
+                continue;
+            };
+            if rec.flags & crate::record::edge_flags::TOMBSTONED != 0 {
+                continue;
+            }
+            registry.incr_out(rec.edge_type, rec.src, 1, n_slots_hint)?;
+            registry.incr_in(rec.edge_type, rec.dst, 1, n_slots_hint)?;
+        }
+        Ok(())
+    }
+
+    /// T17h T8 — query out-degree for `(node, edge_type)`. Returns 0
+    /// if the type has no column (rare type never edged).
+    pub fn out_degree_by_type(&self, node: NodeId, edge_type: &str) -> u32 {
+        let reg = self.edge_types.read();
+        let Some(id) = reg.id_for(edge_type) else {
+            return 0;
+        };
+        drop(reg);
+        self.typed_degrees().out_degree(id, node.0 as u32)
+    }
+
+    /// T17h T8 — query in-degree for `(node, edge_type)`.
+    pub fn in_degree_by_type(&self, node: NodeId, edge_type: &str) -> u32 {
+        let reg = self.edge_types.read();
+        let Some(id) = reg.id_for(edge_type) else {
+            return 0;
+        };
+        drop(reg);
+        self.typed_degrees().in_degree(id, node.0 as u32)
+    }
+
+    /// T17h T8 — increment typed out-degree. Hook called from
+    /// `create_edge` alongside the total T5 increment.
+    pub(crate) fn incr_typed_out_degree(
+        &self,
+        edge_type_id: u16,
+        slot: u32,
+        delta: i32,
+    ) {
+        let n_slots_hint = self.next_node_id.load(Ordering::Acquire);
+        if let Err(e) = self.typed_degrees().incr_out(
+            edge_type_id,
+            slot,
+            delta,
+            n_slots_hint,
+        ) {
+            tracing::warn!(
+                error = ?e,
+                edge_type_id,
+                slot,
+                "typed degree incr_out failed"
+            );
+        }
+    }
+
+    /// T17h T8 — increment typed in-degree.
+    pub(crate) fn incr_typed_in_degree(
+        &self,
+        edge_type_id: u16,
+        slot: u32,
+        delta: i32,
+    ) {
+        let n_slots_hint = self.next_node_id.load(Ordering::Acquire);
+        if let Err(e) = self.typed_degrees().incr_in(
+            edge_type_id,
+            slot,
+            delta,
+            n_slots_hint,
+        ) {
+            tracing::warn!(
+                error = ?e,
+                edge_type_id,
+                slot,
+                "typed degree incr_in failed"
+            );
+        }
+    }
+
     /// T17h T1 — snapshot current in-memory counter atomics into a
     /// `PersistedCounters` block suitable for v5 dict serialization.
     /// Called by `build_dict_snapshot` at flush time.
@@ -4657,6 +4812,9 @@ impl GraphStoreMut for SubstrateStore {
         // T17h T5: degree column increments (src.out, dst.in).
         self.incr_out_degree(src.0 as u32, 1);
         self.incr_in_degree(dst.0 as u32, 1);
+        // T17h T8: per-edge-type degree column increments.
+        self.incr_typed_out_degree(edge_type_id, src.0 as u32, 1);
+        self.incr_typed_in_degree(edge_type_id, dst.0 as u32, 1);
         id
     }
 
@@ -4765,6 +4923,9 @@ impl GraphStoreMut for SubstrateStore {
         // T17h T5: degree column decrements.
         self.incr_out_degree(src_slot, -1);
         self.incr_in_degree(dst_slot, -1);
+        // T17h T8: per-edge-type degree column decrements.
+        self.incr_typed_out_degree(edge_type_id, src_slot, -1);
+        self.incr_typed_in_degree(edge_type_id, dst_slot, -1);
         true
     }
 
@@ -5799,6 +5960,105 @@ mod tests {
         assert_eq!(s.out_degree(a), 2);
         assert_eq!(s.out_degree(b), 0);
         assert_eq!(s.in_degree(a), 1);
+    }
+
+    /// T17h T8 — per-edge-type degree counters mirror total T5 counters.
+    /// Invariant : `sum over types (out_by_type[n]) == total_out[n]`.
+    #[test]
+    fn typed_degrees_sum_equals_total() {
+        let (_td, s) = store();
+        let a = s.create_node(&["A"]);
+        let b = s.create_node(&["B"]);
+        let c = s.create_node(&["C"]);
+        // Mixed edge types on the same source.
+        let _ = s.create_edge(a, b, "IMPORTS");
+        let _ = s.create_edge(a, c, "IMPORTS");
+        let _ = s.create_edge(a, b, "CONTAINS");
+        let _ = s.create_edge(c, a, "IMPORTS"); // incoming on a
+        assert_eq!(s.out_degree_by_type(a, "IMPORTS"), 2);
+        assert_eq!(s.out_degree_by_type(a, "CONTAINS"), 1);
+        assert_eq!(s.out_degree_by_type(a, "UNKNOWN"), 0);
+        assert_eq!(s.in_degree_by_type(a, "IMPORTS"), 1);
+        // Sum invariant.
+        let by_type_sum =
+            s.out_degree_by_type(a, "IMPORTS") + s.out_degree_by_type(a, "CONTAINS");
+        assert_eq!(by_type_sum, s.out_degree(a));
+    }
+
+    /// T17h T8 — delete_edge propagates to typed counters.
+    #[test]
+    fn typed_degrees_decrement_on_delete() {
+        let (_td, s) = store();
+        let a = s.create_node(&["A"]);
+        let b = s.create_node(&["B"]);
+        let e = s.create_edge(a, b, "IMPORTS");
+        let _ = s.create_edge(a, b, "IMPORTS");
+        assert_eq!(s.out_degree_by_type(a, "IMPORTS"), 2);
+        assert!(s.delete_edge(e));
+        assert_eq!(s.out_degree_by_type(a, "IMPORTS"), 1);
+        assert_eq!(s.in_degree_by_type(b, "IMPORTS"), 1);
+    }
+
+    /// T17h T8 — typed columns survive close/reopen via the
+    /// `substrate.degrees.node.<type>.u32` sidecars. On reopen,
+    /// `init_typed_degrees` takes the "open_existing" path.
+    #[test]
+    fn typed_degrees_survive_reopen() {
+        let td = tempfile::tempdir().unwrap();
+        let path = td.path().join("kb");
+        let (a_id, b_id) = {
+            let s = SubstrateStore::create(&path).unwrap();
+            let a = s.create_node(&["File"]);
+            let b = s.create_node(&["File"]);
+            let c = s.create_node(&["File"]);
+            let _ = s.create_edge(a, b, "IMPORTS");
+            let _ = s.create_edge(a, c, "IMPORTS");
+            let _ = s.create_edge(a, b, "CONTAINS");
+            s.flush().unwrap();
+            (a, b)
+        };
+        let s = SubstrateStore::open(&path).unwrap();
+        assert_eq!(s.out_degree_by_type(a_id, "IMPORTS"), 2);
+        assert_eq!(s.out_degree_by_type(a_id, "CONTAINS"), 1);
+        assert_eq!(s.in_degree_by_type(b_id, "IMPORTS"), 1);
+        assert_eq!(s.in_degree_by_type(b_id, "CONTAINS"), 1);
+        // Total T5 still consistent.
+        assert_eq!(s.out_degree(a_id), 3);
+    }
+
+    /// T17h T8 — cold rebuild path : a base with edges but no persisted
+    /// typed-column sidecars (simulated by deleting the sidecars on
+    /// disk) must rebuild correctly at reopen.
+    #[test]
+    fn typed_degrees_rebuild_from_scan() {
+        let td = tempfile::tempdir().unwrap();
+        let path = td.path().join("kb");
+        let (a_id, _b_id) = {
+            let s = SubstrateStore::create(&path).unwrap();
+            let a = s.create_node(&["File"]);
+            let b = s.create_node(&["File"]);
+            let _ = s.create_edge(a, b, "IMPORTS");
+            let _ = s.create_edge(a, b, "CONTAINS");
+            s.flush().unwrap();
+            (a, b)
+        };
+        // Delete the typed-column sidecars to simulate a pre-T8 base.
+        for entry in std::fs::read_dir(&path).unwrap().flatten() {
+            let name = entry.file_name();
+            let Some(ns) = name.to_str() else { continue };
+            if ns.starts_with(crate::typed_degree::TYPED_DEGREE_FILENAME_PREFIX)
+                && ns.ends_with(crate::typed_degree::TYPED_DEGREE_FILENAME_SUFFIX)
+                && ns.len()
+                    > crate::typed_degree::TYPED_DEGREE_FILENAME_PREFIX.len()
+                        + crate::typed_degree::TYPED_DEGREE_FILENAME_SUFFIX.len()
+            {
+                std::fs::remove_file(entry.path()).unwrap();
+            }
+        }
+        // Reopen — rebuild path takes over.
+        let s = SubstrateStore::open(&path).unwrap();
+        assert_eq!(s.out_degree_by_type(a_id, "IMPORTS"), 1);
+        assert_eq!(s.out_degree_by_type(a_id, "CONTAINS"), 1);
     }
 
     #[test]
