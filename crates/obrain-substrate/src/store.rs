@@ -451,6 +451,56 @@ pub struct EdgePropsV2FinalizeStats {
 }
 
 // ---------------------------------------------------------------------------
+// CommunityRanges (T17g T1 — lazy build)
+// ---------------------------------------------------------------------------
+
+/// Per-community slot range maps, built lazily on first access.
+///
+/// **T17g T1** — the pair `(placements, first_slots)` was formerly eager at
+/// open time (O(node_high_water) scan in `rebuild_from_zones`). On Megalaw
+/// (5.2M communities) that scan cost ~920 ms / open. Moving to a
+/// `OnceLock`-guarded lazy build mirrors the T17e Phase 4 pattern used for
+/// `incoming_heads`: the scan only runs the first time the CommunityWarden
+/// or `allocate_node_id_in_community` actually needs the data.
+///
+/// The two DashMaps live together because they are populated by the same
+/// Nodes-zone scan and mutated by the same code paths (allocator + compaction
+/// refresh). Keeping them as a pair in a single `OnceLock` avoids duplicate
+/// init barriers.
+#[derive(Debug)]
+pub(crate) struct CommunityRanges {
+    /// `community_id → last live slot` (max slot per cid in an ascending scan).
+    ///
+    /// Drives the fast-path / slow-path decision in
+    /// [`SubstrateStore::allocate_node_id_in_community`] — when the community's
+    /// last slot is the global tail AND still fits in its 4 KiB page, the
+    /// allocator extends in place (fast path). Otherwise it opens a fresh
+    /// page for the community (slow path).
+    pub(crate) placements: DashMap<u32, u32>,
+    /// `community_id → first live slot` (min slot per cid in an ascending scan).
+    ///
+    /// Paired with `placements` (last slot), this forms the bounding slot
+    /// range consumed by [`SubstrateStore::prefetch_community`] to issue
+    /// `madvise(WILLNEED)` over the community's page range. The range is
+    /// a superset of the community's pages pre-compaction; post-compaction
+    /// the CommunityWarden re-runs [`SubstrateStore::refresh_community_ranges`]
+    /// to tighten it.
+    pub(crate) first_slots: DashMap<u32, u32>,
+}
+
+impl CommunityRanges {
+    /// Empty pair — used by the lazy builder and by
+    /// [`SubstrateStore::refresh_community_ranges`] when it needs a fresh
+    /// state post-compaction.
+    fn empty() -> Self {
+        Self {
+            placements: DashMap::new(),
+            first_slots: DashMap::new(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // SubstrateStore
 // ---------------------------------------------------------------------------
 
@@ -527,55 +577,22 @@ pub struct SubstrateStore {
     /// Cached statistics snapshot (cost-based optimizer). Step 4 wires this
     /// to real stats; for now a fresh empty snapshot is returned.
     stats: Arc<Statistics>,
-    /// Per-community slot allocator state (T11 Step 3).
+    /// Per-community slot range state — lazy-built on first access
+    /// (T17g T1).
     ///
-    /// Maps `community_id → last_slot_allocated_for_this_community`. The
-    /// allocator uses this to decide:
+    /// Holds `(placements, first_slots)` — the pair of DashMaps that track
+    /// the last and first live slot per community id. Formerly populated
+    /// eagerly by [`Self::rebuild_from_zones`] (O(node_high_water) scan);
+    /// now built lazily on first call to [`Self::community_ranges`] via
+    /// `OnceLock::get_or_init`. See `CommunityRanges` docs for field
+    /// semantics and [`Self::refresh_community_ranges`] for post-compaction
+    /// rebuild.
     ///
-    /// * **Fast path** — if the community's last slot is the global tail
-    ///   AND lies in the same 4 KiB page as the next allocation would,
-    ///   extend in place (`next_node_id += 1`). Preserves community
-    ///   contiguity at zero cost.
-    /// * **Slow path** — otherwise, round `next_node_id` up to the next
-    ///   page boundary and open a fresh page for this community. Any
-    ///   trailing slots in the previous page are skipped (bounded waste
-    ///   ≤ NODES_PER_PAGE - 1 slots per community transition).
-    ///
-    /// Rebuilt on open by scanning the Nodes zone (one entry per live
-    /// `community_id` observed, pointing at its highest allocated slot).
-    community_placements: DashMap<u32, u32>,
-    /// Per-community **first** allocated slot (T11 Step 5 — prefetch
-    /// companion to `community_placements`).
-    ///
-    /// Maps `community_id → first_slot_ever_allocated_for_this_community`
-    /// that is still live in the current generation of the zone. Together
-    /// with `community_placements` (last slot), this pair forms the
-    /// bounding slot range used by [`Self::prefetch_community`] to issue
-    /// `madvise(WILLNEED)` over the whole community's page range.
-    ///
-    /// * **Rebuild on open** — populated by the ascending-slot scan in
-    ///   [`Self::rebuild_from_zones`] via `entry(cid).or_insert(slot)`.
-    ///   The first live slot observed for a given cid is the oldest page
-    ///   that still holds a node of that community.
-    /// * **Online allocation** — `allocate_node_id_in_community` sets the
-    ///   entry on the slow path for a fresh community (entry was
-    ///   `u32::MAX`). Subsequent slow-path allocations (opening a new
-    ///   page for an existing community) leave it untouched: the
-    ///   community's earliest pages still live on disk, so the bounding
-    ///   range starts there.
-    /// * **Post-compaction** — [`Self::refresh_community_ranges`] is
-    ///   called by the CommunityWarden after a `CompactCommunity` cycle
-    ///   relocates nodes to a new page. This rewrites both maps from the
-    ///   current Nodes zone so the prefetch range tracks the new layout.
-    ///
-    /// The range `[first_slot, last_slot]` is a **superset** of the
-    /// community's actual pages (other communities may have slots
-    /// interleaved mid-range on pre-compaction data). That over-advise is
-    /// bounded — post-compaction the range is tight, pre-compaction it
-    /// is the same bound that `CommunityFragmentation::fragmentation`
-    /// reports. `madvise(WILLNEED)` is a kernel hint, so a loose bound
-    /// wastes no correctness; it just dilutes the page-fault savings.
-    community_first_slots: DashMap<u32, u32>,
+    /// Concurrency mirrors the `incoming_heads_cell` (T17e Phase 4) pattern:
+    /// a concurrent allocator firing `community_ranges()` mid-build blocks
+    /// until the scan completes, then inserts its own placement into the
+    /// now-populated maps.
+    community_ranges_cell: OnceLock<CommunityRanges>,
     /// Routing table + open-writer cache for `Value::Vector` properties.
     ///
     /// Every `set_node_property(_, _, Value::Vector(_))` and
@@ -762,8 +779,7 @@ impl SubstrateStore {
             edge_types: RwLock::new(edge_types),
             prop_keys: RwLock::new(prop_keys),
             stats: Arc::new(Statistics::new()),
-            community_placements: DashMap::new(),
-            community_first_slots: DashMap::new(),
+            community_ranges_cell: OnceLock::new(),
             vec_columns: VecColumnRegistry::new(),
             blob_columns: BlobColumnRegistry::new(),
             props_zone,
@@ -791,8 +807,8 @@ impl SubstrateStore {
             phase = "rebuild_zones",
             elapsed_ms = t_rebuild.elapsed().as_millis() as u64,
             incoming_heads = "lazy",
-            communities = store.community_placements.len(),
-            "side-cars rebuilt (community ranges only; incoming_heads deferred to first access)"
+            communities = "lazy",
+            "side-cars deferred to first access (community ranges + incoming_heads both lazy)"
         );
 
         // (3) Hydrate the vec-column registry from the persisted specs
@@ -1108,54 +1124,32 @@ impl SubstrateStore {
         Ok(())
     }
 
-    /// Walk the Nodes zone and rebuild the minimal in-memory side-cars
-    /// (T17e Phase 4):
+    /// Open-path rebuild of the minimal in-memory side-cars.
     ///
-    /// * `community_placements` / `community_first_slots` — max/min live
-    ///   slot per community id (CommunityWarden + prefetch).
+    /// **T17g T1 update**: the Nodes-zone scan that populated
+    /// `community_placements` / `community_first_slots` has been removed
+    /// — those maps are now built lazily on first access via
+    /// [`Self::community_ranges`] (T17g T1, O(node_hw) parallel scan
+    /// guarded by `OnceLock::get_or_init`).
     ///
-    /// The reverse-chain head map (`incoming_heads_cell`) is **no longer
-    /// populated here**. It is built lazily on first access via
-    /// [`Self::incoming_heads`], which runs a parallel scan of the Edges
-    /// zone under `OnceLock::get_or_init`. This removes the O(E) edge
-    /// scan from the open path — the dominant term on large datasets
-    /// (≈ 99 s / 95% of startup on Wikipedia 119M edges).
+    /// **T17e Phase 4**: the reverse-chain head map (`incoming_heads_cell`)
+    /// was already made lazy — see [`Self::incoming_heads`] for its O(E)
+    /// parallel scan (was the dominant term at 99 s / 95% of startup on
+    /// Wikipedia 119M edges).
     ///
     /// Labels and edge-type ArcStrs are resolved on demand via
     /// [`Self::resolve_node_labels_from_bitset`] and
     /// [`Self::resolve_edge_type_by_id`] straight from the mmap'd zones
     /// + registries.
     ///
-    /// Slots 1..`next_node_id` are considered allocated; anything
-    /// further is zero-initialised mmap padding and ignored.
+    /// Post-T17g-T1 this function is effectively a no-op (both community
+    /// and incoming side-cars are lazy). It is retained as a semantic
+    /// anchor — a future sidecar may still need an open-path rebuild, in
+    /// which case the hook is here.
     fn rebuild_from_zones(&self) -> SubstrateResult<()> {
-        // ---- Nodes: community range maps only ----
-        let node_hw = self.next_node_id.load(Ordering::Acquire);
-        for slot in 1..node_hw {
-            let Some(rec) = self.writer.read_node(slot)? else {
-                // Zone shorter than the persisted high-water mark. This
-                // would indicate corruption; loudly ignore and continue
-                // — replay may still fill the gap.
-                continue;
-            };
-            if rec.flags & crate::record::node_flags::TOMBSTONED != 0 {
-                continue;
-            }
-            // T11 Step 3: community_placements = max live slot per cid.
-            // The scan order is ascending so a simple overwrite trails the
-            // highest-slot-wins invariant without an explicit compare.
-            self.community_placements.insert(rec.community_id, slot);
-            // T11 Step 5: community_first_slots = min live slot per cid.
-            // `entry.or_insert` keeps the first observation — which is the
-            // lowest slot in an ascending scan.
-            self.community_first_slots
-                .entry(rec.community_id)
-                .or_insert(slot);
-        }
-
-        // Edges: `incoming_heads_cell` is lazy — no scan at open time.
-        // See [`Self::incoming_heads`] for the on-demand builder.
-
+        // Nodes: community range maps are lazy — see `community_ranges()`.
+        // Edges: `incoming_heads_cell` is lazy — see `incoming_heads()`.
+        // Nothing to eagerly rebuild at open time.
         Ok(())
     }
 
@@ -1233,6 +1227,100 @@ impl SubstrateStore {
             );
 
             map
+        })
+    }
+
+    /// Return the per-community slot range maps, building them on first
+    /// access.
+    ///
+    /// **T17g T1 — lazy community ranges.**
+    ///
+    /// The pair `(placements, first_slots)` is stored as
+    /// `OnceLock<CommunityRanges>` and built the first time the
+    /// CommunityWarden, the allocator (`allocate_node_id_in_community`),
+    /// or the prefetch hook actually needs it. The build is an
+    /// O(node_high_water) parallel scan of the Nodes zone that computes,
+    /// for each live community, its max live slot (→ `placements`) and
+    /// its min live slot (→ `first_slots`).
+    ///
+    /// Concurrency: `OnceLock::get_or_init` serialises the build — a
+    /// concurrent allocator firing `community_ranges()` mid-build blocks
+    /// until the scan completes, then inserts its own placement into the
+    /// now-live DashMaps. Nodes allocated **after** the scan's
+    /// `next_node_id` snapshot are handled by the allocator's own
+    /// post-init `insert`, so the "live window" is closed by construction.
+    pub(crate) fn community_ranges(&self) -> &CommunityRanges {
+        self.community_ranges_cell.get_or_init(|| {
+            use rayon::prelude::*;
+
+            let t0 = std::time::Instant::now();
+            let node_hw = self.next_node_id.load(Ordering::Acquire);
+            let ranges = CommunityRanges::empty();
+
+            // Parallel scan: each worker folds local (min, max) tables
+            // keyed by community_id; we merge into the final DashMaps.
+            // Reading the Nodes zone under rayon is safe — `writer.read_node`
+            // only touches the mmap, no shared mutable state.
+            //
+            // Return type: Vec<FxHashMap<cid, (min_slot, max_slot)>>
+            type CidRange = (u32, u32); // (min, max)
+            let partials: Vec<FxHashMap<u32, CidRange>> = (1..node_hw)
+                .into_par_iter()
+                .fold(
+                    FxHashMap::<u32, CidRange>::default,
+                    |mut acc, slot| {
+                        if let Ok(Some(rec)) = self.writer.read_node(slot) {
+                            if rec.flags & crate::record::node_flags::TOMBSTONED == 0 {
+                                acc.entry(rec.community_id)
+                                    .and_modify(|(min, max)| {
+                                        if slot < *min {
+                                            *min = slot;
+                                        }
+                                        if slot > *max {
+                                            *max = slot;
+                                        }
+                                    })
+                                    .or_insert((slot, slot));
+                            }
+                        }
+                        acc
+                    },
+                )
+                .collect();
+
+            // Merge partials into the final DashMaps.
+            for partial in partials {
+                for (cid, (min, max)) in partial {
+                    ranges
+                        .first_slots
+                        .entry(cid)
+                        .and_modify(|cur| {
+                            if min < *cur {
+                                *cur = min;
+                            }
+                        })
+                        .or_insert(min);
+                    ranges
+                        .placements
+                        .entry(cid)
+                        .and_modify(|cur| {
+                            if max > *cur {
+                                *cur = max;
+                            }
+                        })
+                        .or_insert(max);
+                }
+            }
+
+            tracing::info!(
+                phase = "community_ranges_lazy_build",
+                elapsed_ms = t0.elapsed().as_millis() as u64,
+                nodes_scanned = node_hw.saturating_sub(1),
+                communities = ranges.placements.len(),
+                "lazy build of community ranges completed"
+            );
+
+            ranges
         })
     }
 
@@ -2262,8 +2350,12 @@ impl SubstrateStore {
     /// Look up the most recently allocated slot for `community_id` (or
     /// `None` if that community has never been used in this store).
     /// Exposed for tests and for the CommunityWarden (Step 4).
+    ///
+    /// **T17g T1**: routes via [`Self::community_ranges`] which lazy-builds
+    /// the range maps on first call.
     pub fn last_slot_for_community(&self, community_id: u32) -> Option<u32> {
-        self.community_placements
+        self.community_ranges()
+            .placements
             .get(&community_id)
             .map(|r| *r.value())
             .filter(|s| *s != u32::MAX)
@@ -2274,10 +2366,15 @@ impl SubstrateStore {
     ///
     /// Companion to [`Self::last_slot_for_community`] — the pair
     /// `(first, last)` is the bounding slot range used by the prefetch
-    /// hook (T11 Step 5). See the docs on `community_first_slots` for
-    /// how this is maintained across online allocation and compaction.
+    /// hook (T11 Step 5). Range maintenance across online allocation and
+    /// compaction: see [`Self::refresh_community_ranges`] and the
+    /// `CommunityRanges` struct docs.
+    ///
+    /// **T17g T1**: routes via [`Self::community_ranges`] which lazy-builds
+    /// the range maps on first call.
     pub fn first_slot_for_community(&self, community_id: u32) -> Option<u32> {
-        self.community_first_slots
+        self.community_ranges()
+            .first_slots
             .get(&community_id)
             .map(|r| *r.value())
             .filter(|s| *s != u32::MAX)
@@ -2391,9 +2488,15 @@ impl SubstrateStore {
     /// layout — online allocation maintains the maps incrementally, but
     /// a `CompactCommunity` cycle moves nodes to fresh slots that the
     /// allocator didn't see. Cost: O(node_high_water) Nodes-zone scan.
+    ///
+    /// **T17g T1**: routes via [`Self::community_ranges`] to force the
+    /// lazy build first (in case this is called before any other accessor),
+    /// then clears and re-scans into the same DashMaps. The `OnceLock`
+    /// stays initialized — only the contents are mutated.
     pub fn refresh_community_ranges(&self) -> SubstrateResult<()> {
-        self.community_placements.clear();
-        self.community_first_slots.clear();
+        let ranges = self.community_ranges();
+        ranges.placements.clear();
+        ranges.first_slots.clear();
         let hw = self.next_node_id.load(Ordering::Acquire);
         for slot in 1..hw {
             let Some(rec) = self.writer.read_node(slot)? else {
@@ -2403,10 +2506,11 @@ impl SubstrateStore {
                 continue;
             }
             // Ascending scan → first_slot takes the min, last_slot the max.
-            self.community_first_slots
+            ranges
+                .first_slots
                 .entry(rec.community_id)
                 .or_insert(slot);
-            self.community_placements.insert(rec.community_id, slot);
+            ranges.placements.insert(rec.community_id, slot);
         }
         Ok(())
     }
@@ -3125,9 +3229,13 @@ impl SubstrateStore {
     /// Full resort requires another call to
     /// [`Writer::bulk_sort_by_hilbert`].
     fn allocate_node_id_in_community(&self, community_id: u32) -> NodeId {
+        // T17g T1: route through the lazy-built community ranges. First
+        // caller triggers the O(node_hw) parallel scan; subsequent calls
+        // hit the DashMap directly.
+        let ranges = self.community_ranges();
         // Acquire the per-community entry BEFORE reading next_node_id so
         // the fast-path check is consistent.
-        let mut entry = self.community_placements.entry(community_id).or_insert(u32::MAX);
+        let mut entry = ranges.placements.entry(community_id).or_insert(u32::MAX);
 
         loop {
             let hw = self.next_node_id.load(Ordering::Acquire);
@@ -3185,7 +3293,7 @@ impl SubstrateStore {
                 // live page, which is where the prefetch range must
                 // start.
                 if was_fresh {
-                    self.community_first_slots.insert(community_id, aligned);
+                    ranges.first_slots.insert(community_id, aligned);
                 }
                 self.clear_hilbert_sorted_flag();
                 return NodeId(aligned as u64);
@@ -6174,9 +6282,11 @@ mod tests {
         let c1 = s.create_node_in_community(&["L"], 3);
         // Manual invariant poisoning to simulate drift (e.g. the maps
         // fell out of sync with disk after a compaction cycle that
-        // bypassed the allocator).
-        s.community_first_slots.insert(1, 9999);
-        s.community_placements.insert(1, 1);
+        // bypassed the allocator). T17g T1: access via lazy accessor so
+        // the OnceLock is triggered before we poison.
+        let ranges = s.community_ranges();
+        ranges.first_slots.insert(1, 9999);
+        ranges.placements.insert(1, 1);
         // After refresh, the maps rebuild from the actual Nodes zone.
         s.refresh_community_ranges().unwrap();
         let (lo1, hi1) = s.community_slot_range(1).unwrap();

@@ -71,10 +71,6 @@ obrain-core = { workspace = true, default-features = false, features = ["regex",
 libc = "0.2"
 
 [[bench]]
-name = "crud_micro"
-harness = false
-
-[[bench]]
 name = "decay_all"
 harness = false
 
