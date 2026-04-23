@@ -3798,7 +3798,7 @@ impl Session {
     /// If a transaction is active, the node will be versioned with the transaction ID.
     pub fn create_node(&self, labels: &[&str]) -> NodeId {
         let (epoch, transaction_id) = self.get_transaction_context();
-        self.active_lpg_store().create_node_versioned(
+        self.active_store().create_node_versioned(
             labels,
             epoch,
             transaction_id.unwrap_or(TransactionId::SYSTEM),
@@ -3808,18 +3808,24 @@ impl Session {
     /// Creates a node with properties.
     ///
     /// If a transaction is active, the node will be versioned with the transaction ID.
+    ///
+    /// T17 Step 24: decomposed into `create_node_versioned` +
+    /// `set_node_property` so this call dispatches entirely through
+    /// `GraphStoreMut` (no LpgStore-inherent
+    /// `create_node_with_props_versioned` required).
     pub fn create_node_with_props<'a>(
         &self,
         labels: &[&str],
         properties: impl IntoIterator<Item = (&'a str, Value)>,
     ) -> NodeId {
         let (epoch, transaction_id) = self.get_transaction_context();
-        self.active_lpg_store().create_node_with_props_versioned(
-            labels,
-            properties,
-            epoch,
-            transaction_id.unwrap_or(TransactionId::SYSTEM),
-        )
+        let tx = transaction_id.unwrap_or(TransactionId::SYSTEM);
+        let store = self.active_store();
+        let id = store.create_node_versioned(labels, epoch, tx);
+        for (key, value) in properties {
+            store.set_node_property(id, key, value);
+        }
+        id
     }
 
     /// Creates an edge between two nodes.
@@ -3833,7 +3839,7 @@ impl Session {
         edge_type: &str,
     ) -> obrain_common::types::EdgeId {
         let (epoch, transaction_id) = self.get_transaction_context();
-        self.active_lpg_store().create_edge_versioned(
+        self.active_store().create_edge_versioned(
             src,
             dst,
             edge_type,
