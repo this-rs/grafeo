@@ -4115,6 +4115,39 @@ impl GraphStore for SubstrateStore {
         count
     }
 
+    // T17h T9 — typed-degree trait methods. O(1) via the per-edge-type
+    // registry built in T8. `edge_type = None` means "sum across all
+    // types" and routes to the total T5 degree column (also O(1)).
+    //
+    // Live-check : `is_live_on_disk` filters tombstoned / out-of-range
+    // slots (the typed registry doesn't carry a liveness bit itself —
+    // incr_in/out are the only mutators, so a tombstoned node's slot
+    // can still hold a stale positive value until the edges pointing
+    // at it are individually deleted ; we never rely on them).
+    fn out_degree_by_type(&self, node: NodeId, edge_type: Option<&str>) -> usize {
+        if !self.is_live_on_disk(node) {
+            return 0;
+        }
+        match edge_type {
+            Some(name) => Self::out_degree_by_type(self, node, name) as usize,
+            None => Self::out_degree(self, node) as usize, // inherent O(1) T5
+        }
+    }
+
+    fn in_degree_by_type(&self, node: NodeId, edge_type: Option<&str>) -> usize {
+        if !self.is_live_on_disk(node) {
+            return 0;
+        }
+        match edge_type {
+            Some(name) => Self::in_degree_by_type(self, node, name) as usize,
+            None => Self::in_degree(self, node) as usize, // inherent O(1) T5
+        }
+    }
+
+    fn supports_typed_degree(&self) -> bool {
+        true
+    }
+
     fn has_backward_adjacency(&self) -> bool {
         // `EdgeRecord` keeps both `next_from` (src chain) and `next_to` (dst
         // chain). The concrete read paths light up in step 2; the answer is

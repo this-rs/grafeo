@@ -122,6 +122,37 @@ pub trait GraphStore: Send + Sync {
     /// Returns the in-degree of a node (number of incoming edges).
     fn in_degree(&self, node: NodeId) -> usize;
 
+    /// Returns the out-degree of a node filtered by edge type. O(1) on
+    /// backends with a per-edge-type degree index (SubstrateStore
+    /// T17h T8) ; default fallback returns 0 for backends that haven't
+    /// wired the index, which pushes the query planner to its legacy
+    /// expand+count path rather than silently dropping edges.
+    ///
+    /// `edge_type = None` means "sum across all types" and is
+    /// equivalent to `out_degree(node)` ; it exists so planner rewrites
+    /// can uniformly route through this method.
+    fn out_degree_by_type(&self, node: NodeId, edge_type: Option<&str>) -> usize {
+        let _ = (node, edge_type);
+        0
+    }
+
+    /// Returns the in-degree of a node filtered by edge type. See
+    /// [`Self::out_degree_by_type`] for contract.
+    fn in_degree_by_type(&self, node: NodeId, edge_type: Option<&str>) -> usize {
+        let _ = (node, edge_type);
+        0
+    }
+
+    /// Returns `true` when this backend supports O(1) typed-degree
+    /// lookups via [`Self::out_degree_by_type`] / [`Self::in_degree_by_type`].
+    /// Query planners use this to gate the typed-degree TopK rewrite —
+    /// backends that return `false` keep the slow expand+count path
+    /// for correctness (the default-0 fallback would otherwise silently
+    /// return empty top-K results).
+    fn supports_typed_degree(&self) -> bool {
+        false
+    }
+
     /// Whether backward adjacency is available for incoming edge queries.
     fn has_backward_adjacency(&self) -> bool;
 
