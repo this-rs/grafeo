@@ -774,8 +774,11 @@ impl Source for PartitionedNodeScanSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::GraphStoreMut;
-    use crate::graph::lpg::LpgStore;
+    // Note: the three `ParallelNodeScanSource` tests that used LpgStore were
+    // relocated to `crates/obrain-substrate/tests/operators_parallel_source.rs`
+    // per T17 Step 3 W2 Class-2 migration (decision `b1dfe229`, dev-dep cycle
+    // gotcha `598dda40`). The remaining tests in this module do not touch any
+    // GraphStore, so `GraphStoreMut` / `LpgStore` imports are no longer needed.
 
     #[test]
     fn test_parallel_vector_source() {
@@ -950,82 +953,5 @@ mod tests {
             total += chunk.len();
         }
         assert_eq!(total, 30);
-    }
-
-    #[test]
-    fn test_parallel_node_scan_source() {
-        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new().unwrap());
-
-        // Add some nodes with labels
-        for i in 0..100 {
-            if i % 2 == 0 {
-                store.create_node(&["Person", "Employee"]);
-            } else {
-                store.create_node(&["Person"]);
-            }
-        }
-
-        // Test scan all nodes
-        let source = ParallelNodeScanSource::new(Arc::clone(&store) as Arc<dyn GraphStore>);
-        assert_eq!(source.total_rows(), Some(100));
-        assert!(source.is_partitionable());
-        assert_eq!(source.num_columns(), 1);
-
-        // Test scan by label
-        let source_person =
-            ParallelNodeScanSource::with_label(Arc::clone(&store) as Arc<dyn GraphStore>, "Person");
-        assert_eq!(source_person.total_rows(), Some(100));
-
-        let source_employee = ParallelNodeScanSource::with_label(
-            Arc::clone(&store) as Arc<dyn GraphStore>,
-            "Employee",
-        );
-        assert_eq!(source_employee.total_rows(), Some(50));
-    }
-
-    #[test]
-    fn test_parallel_node_scan_partition() {
-        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new().unwrap());
-
-        // Add 100 nodes
-        for _ in 0..100 {
-            store.create_node(&[]);
-        }
-
-        let source = ParallelNodeScanSource::new(Arc::clone(&store) as Arc<dyn GraphStore>);
-
-        // Create partition for rows 20-50
-        let morsel = Morsel::new(0, 0, 20, 50);
-        let mut partition = source.create_partition(&morsel);
-
-        // Should produce 30 rows total
-        let mut total = 0;
-        while let Ok(Some(chunk)) = partition.next_chunk(10) {
-            total += chunk.len();
-        }
-        assert_eq!(total, 30);
-    }
-
-    #[test]
-    fn test_parallel_node_scan_morsels() {
-        let store: Arc<dyn GraphStoreMut> = Arc::new(LpgStore::new().unwrap());
-
-        // Add 1000 nodes
-        for _ in 0..1000 {
-            store.create_node(&[]);
-        }
-
-        let source = ParallelNodeScanSource::new(Arc::clone(&store) as Arc<dyn GraphStore>);
-
-        // Generate morsels with size 256
-        let morsels = source.generate_morsels(256, 0);
-        assert_eq!(morsels.len(), 4); // 1000 / 256 = 3 full + 1 partial
-
-        // Verify morsels cover all rows
-        let mut total_rows = 0;
-        for morsel in &morsels {
-            total_rows += morsel.end_row - morsel.start_row;
-        }
-        assert_eq!(total_rows, 1000);
     }
 }
