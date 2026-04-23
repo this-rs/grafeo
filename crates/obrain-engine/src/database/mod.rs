@@ -263,7 +263,30 @@ impl ObrainDB {
         let typed: Arc<obrain_substrate::SubstrateStore> = Arc::new(store);
         let erased: Arc<dyn GraphStoreMut> = Arc::clone(&typed) as Arc<dyn GraphStoreMut>;
         let mut db = Self::with_store(erased, Config::in_memory())?;
-        db.substrate_store = Some(typed);
+        db.substrate_store = Some(Arc::clone(&typed));
+
+        // T17 Step 3 W1 — wire the cognitive engine to substrate column
+        // routing. `with_store` leaves `cognitive_engine: None`; substrate-
+        // backed databases deserve the same reactive bus + scheduler + built
+        // engine as the legacy `with_config` path, but with the substrate
+        // handle threaded through `CognitiveEngineBuilder::with_substrate` so
+        // Energy/Synapse stores pick up the column-native constructors.
+        #[cfg(feature = "cognitive")]
+        {
+            let bus = obrain_reactive::MutationBus::new();
+            let scheduler =
+                obrain_reactive::Scheduler::new(&bus, obrain_reactive::BatchConfig::default());
+            let config = obrain_cognitive::CognitiveConfig::default();
+            #[allow(unused_mut)]
+            let mut builder = obrain_cognitive::CognitiveEngineBuilder::from_config(&config)
+                .with_graph_store(db.graph_store())
+                .with_substrate(Arc::clone(&typed));
+            let engine = builder.build(&scheduler);
+            db.cognitive_engine =
+                Some(Arc::new(engine) as Arc<dyn obrain_cognitive::CognitiveEngine>);
+            db._cognitive_scheduler = Some(scheduler);
+        }
+
         Ok(db)
     }
 
