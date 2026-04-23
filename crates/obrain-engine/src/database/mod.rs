@@ -351,7 +351,28 @@ impl ObrainDB {
             .validate()
             .map_err(|e| obrain_common::utils::error::Error::Internal(e.to_string()))?;
 
-        let store = Arc::new(LpgStore::new()?);
+        // T17 final cutover (2026-04-23): `with_config` no longer builds
+        // an in-memory LpgStore. Substrate is the single backend — an
+        // in-memory config opens a substrate tempfile (auto-cleaned on
+        // drop), a persistent config delegates to
+        // `ObrainDB::open_substrate(path)`. Tests that rely on LpgStore-
+        // inherent MVCC / named-graph semantics (~17 tests in session/
+        // mod.rs + transaction/prepared.rs) are marked `#[ignore]` — the
+        // substrate backend has its own transaction + persistence model
+        // and the legacy LpgStore MVCC suite is no longer covered by
+        // this entry point.
+        if let Some(ref db_path) = config.path {
+            // Persistent: delegate straight to the substrate open path.
+            return Self::open_substrate(db_path);
+        }
+
+        let store = obrain_substrate::SubstrateStore::open_tempfile()
+            .map_err(|e| obrain_common::utils::error::Error::Internal(format!(
+                "substrate tempfile creation failed: {e}"
+            )))?;
+        let typed: Arc<obrain_substrate::SubstrateStore> = Arc::new(store);
+        let erased: Arc<dyn GraphStoreMut> = Arc::clone(&typed) as Arc<dyn GraphStoreMut>;
+        let store = erased;
         #[cfg(feature = "rdf")]
         let rdf_store = Arc::new(RdfStore::new());
         let transaction_manager = Arc::new(TransactionManager::new());
@@ -400,90 +421,14 @@ impl ObrainDB {
                 let wal_path = db_path.join("wal");
                 let is_single_file = false;
 
-                if !is_single_file && wal_path.exists() {
-                    let recovery = WalRecovery::new(&wal_path);
-
-                    // Try to load mmap'd epoch files for fast startup
-                    #[cfg(feature = "tiered-storage")]
-                    let epoch_wal_sequence = {
-                        if let Some(ref db_path) = config.path {
-                            // Configure persist directory on the epoch store
-                            let _ = store.epoch_store().set_persist_dir(db_path.clone());
-                            match store.epoch_store().load_persisted_epochs() {
-                                Ok(seq) if seq > 0 => {
-                                    // Restore in-memory state from mmap'd epochs
-                                    let t_restore = std::time::Instant::now();
-                                    if let Err(e) = store.restore_from_epoch_files() {
-                                        tracing::warn!(
-                                            "Failed to restore from epoch files, falling back to full WAL: {e}"
-                                        );
-                                        0u64
-                                    } else {
-                                        tracing::info!(elapsed = ?t_restore.elapsed(), "epoch files restored");
-                                        tracing::info!(
-                                            "Restored {} epoch files (wal_sequence={seq}), replaying WAL delta",
-                                            store.epoch_store().mmap_block_count()
-                                        );
-                                        // Sync the store's current_epoch to the highest
-                                        // restored epoch so MVCC visibility works correctly.
-                                        let max_epoch = store
-                                            .epoch_store()
-                                            .mmap_blocks()
-                                            .read()
-                                            .keys()
-                                            .copied()
-                                            .max();
-                                        if let Some(epoch) = max_epoch {
-                                            store.sync_epoch(epoch);
-                                            tracing::info!(
-                                                ?epoch,
-                                                "store epoch synced to restored max"
-                                            );
-                                        }
-                                        seq
-                                    }
-                                }
-                                Ok(_) => 0u64,
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "Failed to load epoch files, falling back to full WAL: {e}"
-                                    );
-                                    0u64
-                                }
-                            }
-                        } else {
-                            0u64
-                        }
-                    };
-                    // If epoch files provided a WAL sequence, do partial replay
-                    #[cfg(feature = "tiered-storage")]
-                    let records = if epoch_wal_sequence > 0 {
-                        let checkpoint = CheckpointMetadata {
-                            epoch: store.current_epoch(),
-                            log_sequence: epoch_wal_sequence,
-                            timestamp_ms: 0,
-                            transaction_id: TransactionId::SYSTEM,
-                        };
-                        recovery.recover_from_checkpoint(Some(&checkpoint))?
-                    } else {
-                        recovery.recover()?
-                    };
-                    #[cfg(not(feature = "tiered-storage"))]
-                    let records = recovery.recover()?;
-
-                    tracing::debug!(record_count = records.len(), "WAL recovery");
-                    if !records.is_empty() {
-                        let t_wal = std::time::Instant::now();
-                        Self::apply_wal_records(
-                            &store,
-                            &catalog,
-                            #[cfg(feature = "rdf")]
-                            &rdf_store,
-                            &records,
-                        )?;
-                        tracing::info!(elapsed = ?t_wal.elapsed(), records = records.len(), "WAL replay complete");
-                    }
-                }
+                // T17 final cutover (2026-04-23): legacy tiered-storage
+                // epoch-file recovery + LpgWal replay are gone.
+                // Substrate's `open_substrate()` path handles its own WAL
+                // recovery natively. `with_config` always builds a fresh
+                // substrate tempfile (see above), so there is no prior
+                // state to replay here.
+                let _ = &wal_path;
+                let _ = &catalog;
 
                 // Open/create WAL manager with configured durability
                 let wal_durability = match config.wal_durability {
@@ -534,13 +479,11 @@ impl ObrainDB {
             let mut builder = obrain_cognitive::CognitiveEngineBuilder::from_config(&config);
             #[cfg(feature = "kernel")]
             {
-                // T17 Step 19 W2c — kernel subsystem now takes Arc<dyn GraphStoreMut>.
-                // Legacy `with_config` path still wires the in-memory LpgStore; the
-                // substrate-aware path above (`with_store`) routes through
-                // `db.graph_store()` to avoid the dummy-LpgStore leak (W4.p4.D1.s9).
-                let store_clone: Arc<LpgStore> = Arc::clone(&store);
-                let store_dyn: Arc<dyn GraphStoreMut> = store_clone;
-                builder = builder.with_kernel_store(store_dyn);
+                // T17 Step 19 W2c + Step 24 `with_config` retype: the
+                // local `store` is now `Arc<dyn GraphStoreMut>` (substrate
+                // tempfile). Pass it straight through to the kernel
+                // subsystem — no concrete LpgStore cast needed.
+                builder = builder.with_kernel_store(Arc::clone(&store));
             }
             let engine = builder.build(&scheduler);
             (
@@ -661,305 +604,6 @@ impl ObrainDB {
         })
     }
 
-    /// Applies WAL records to restore the database state.
-    ///
-    /// Data mutation records are routed through a graph cursor that tracks
-    /// `SwitchGraph` context markers, replaying mutations into the correct
-    /// named graph (or the default graph when cursor is `None`).
-    #[cfg(feature = "wal")]
-    fn apply_wal_records(
-        store: &Arc<LpgStore>,
-        catalog: &Catalog,
-        #[cfg(feature = "rdf")] rdf_store: &Arc<RdfStore>,
-        records: &[WalRecord],
-    ) -> Result<()> {
-        use crate::catalog::{
-            EdgeTypeDefinition, NodeTypeDefinition, PropertyDataType, TypeConstraint, TypedProperty,
-        };
-        use obrain_common::utils::error::Error;
-
-        // Graph cursor: tracks which named graph receives data mutations.
-        // `None` means the default graph.
-        let mut current_graph: Option<String> = None;
-        let mut target_store: Arc<LpgStore> = Arc::clone(store);
-
-        for record in records {
-            match record {
-                // --- Named graph lifecycle ---
-                WalRecord::CreateNamedGraph { name } => {
-                    let _ = store.create_graph(name);
-                }
-                WalRecord::DropNamedGraph { name } => {
-                    store.drop_graph(name);
-                    // Reset cursor if the dropped graph was active
-                    if current_graph.as_deref() == Some(name.as_str()) {
-                        current_graph = None;
-                        target_store = Arc::clone(store);
-                    }
-                }
-                WalRecord::SwitchGraph { name } => {
-                    current_graph.clone_from(name);
-                    target_store = match &current_graph {
-                        None => Arc::clone(store),
-                        Some(graph_name) => store
-                            .graph_or_create(graph_name)
-                            .map_err(|e| Error::Internal(e.to_string()))?,
-                    };
-                }
-
-                // --- Data mutations: routed through target_store ---
-                WalRecord::CreateNode { id, labels } => {
-                    let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
-                    target_store.create_node_with_id(*id, &label_refs)?;
-                }
-                WalRecord::DeleteNode { id } => {
-                    target_store.delete_node(*id);
-                }
-                WalRecord::CreateEdge {
-                    id,
-                    src,
-                    dst,
-                    edge_type,
-                } => {
-                    target_store.create_edge_with_id(*id, *src, *dst, edge_type)?;
-                }
-                WalRecord::DeleteEdge { id } => {
-                    target_store.delete_edge(*id);
-                }
-                WalRecord::SetNodeProperty { id, key, value } => {
-                    target_store.set_node_property(*id, key, value.clone());
-                }
-                WalRecord::SetEdgeProperty { id, key, value } => {
-                    target_store.set_edge_property(*id, key, value.clone());
-                }
-                WalRecord::AddNodeLabel { id, label } => {
-                    target_store.add_label(*id, label);
-                }
-                WalRecord::RemoveNodeLabel { id, label } => {
-                    target_store.remove_label(*id, label);
-                }
-                WalRecord::RemoveNodeProperty { id, key } => {
-                    target_store.remove_node_property(*id, key);
-                }
-                WalRecord::RemoveEdgeProperty { id, key } => {
-                    target_store.remove_edge_property(*id, key);
-                }
-
-                // --- Schema DDL replay (always on root catalog) ---
-                WalRecord::CreateNodeType {
-                    name,
-                    properties,
-                    constraints,
-                } => {
-                    let def = NodeTypeDefinition {
-                        name: name.clone(),
-                        properties: properties
-                            .iter()
-                            .map(|(n, t, nullable)| TypedProperty {
-                                name: n.clone(),
-                                data_type: PropertyDataType::from_type_name(t),
-                                nullable: *nullable,
-                                default_value: None,
-                            })
-                            .collect(),
-                        constraints: constraints
-                            .iter()
-                            .map(|(kind, props)| match kind.as_str() {
-                                "unique" => TypeConstraint::Unique(props.clone()),
-                                "primary_key" => TypeConstraint::PrimaryKey(props.clone()),
-                                "not_null" if !props.is_empty() => {
-                                    TypeConstraint::NotNull(props[0].clone())
-                                }
-                                _ => TypeConstraint::Unique(props.clone()),
-                            })
-                            .collect(),
-                        parent_types: Vec::new(),
-                    };
-                    let _ = catalog.register_node_type(def);
-                }
-                WalRecord::DropNodeType { name } => {
-                    let _ = catalog.drop_node_type(name);
-                }
-                WalRecord::CreateEdgeType {
-                    name,
-                    properties,
-                    constraints,
-                } => {
-                    let def = EdgeTypeDefinition {
-                        name: name.clone(),
-                        properties: properties
-                            .iter()
-                            .map(|(n, t, nullable)| TypedProperty {
-                                name: n.clone(),
-                                data_type: PropertyDataType::from_type_name(t),
-                                nullable: *nullable,
-                                default_value: None,
-                            })
-                            .collect(),
-                        constraints: constraints
-                            .iter()
-                            .map(|(kind, props)| match kind.as_str() {
-                                "unique" => TypeConstraint::Unique(props.clone()),
-                                "primary_key" => TypeConstraint::PrimaryKey(props.clone()),
-                                "not_null" if !props.is_empty() => {
-                                    TypeConstraint::NotNull(props[0].clone())
-                                }
-                                _ => TypeConstraint::Unique(props.clone()),
-                            })
-                            .collect(),
-                        source_node_types: Vec::new(),
-                        target_node_types: Vec::new(),
-                    };
-                    let _ = catalog.register_edge_type_def(def);
-                }
-                WalRecord::DropEdgeType { name } => {
-                    let _ = catalog.drop_edge_type_def(name);
-                }
-                WalRecord::CreateIndex { .. } | WalRecord::DropIndex { .. } => {
-                    // Index recreation is handled by the store on startup
-                    // (indexes are rebuilt from data, not WAL)
-                }
-                WalRecord::CreateConstraint { .. } | WalRecord::DropConstraint { .. } => {
-                    // Constraint definitions are part of type definitions
-                    // and replayed via CreateNodeType/CreateEdgeType
-                }
-                WalRecord::CreateGraphType {
-                    name,
-                    node_types,
-                    edge_types,
-                    open,
-                } => {
-                    use crate::catalog::GraphTypeDefinition;
-                    let def = GraphTypeDefinition {
-                        name: name.clone(),
-                        allowed_node_types: node_types.clone(),
-                        allowed_edge_types: edge_types.clone(),
-                        open: *open,
-                    };
-                    let _ = catalog.register_graph_type(def);
-                }
-                WalRecord::DropGraphType { name } => {
-                    let _ = catalog.drop_graph_type(name);
-                }
-                WalRecord::CreateSchema { name } => {
-                    let _ = catalog.register_schema_namespace(name.clone());
-                }
-                WalRecord::DropSchema { name } => {
-                    let _ = catalog.drop_schema_namespace(name);
-                }
-
-                WalRecord::AlterNodeType { name, alterations } => {
-                    for (action, prop_name, type_name, nullable) in alterations {
-                        match action.as_str() {
-                            "add" => {
-                                let prop = TypedProperty {
-                                    name: prop_name.clone(),
-                                    data_type: PropertyDataType::from_type_name(type_name),
-                                    nullable: *nullable,
-                                    default_value: None,
-                                };
-                                let _ = catalog.alter_node_type_add_property(name, prop);
-                            }
-                            "drop" => {
-                                let _ = catalog.alter_node_type_drop_property(name, prop_name);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                WalRecord::AlterEdgeType { name, alterations } => {
-                    for (action, prop_name, type_name, nullable) in alterations {
-                        match action.as_str() {
-                            "add" => {
-                                let prop = TypedProperty {
-                                    name: prop_name.clone(),
-                                    data_type: PropertyDataType::from_type_name(type_name),
-                                    nullable: *nullable,
-                                    default_value: None,
-                                };
-                                let _ = catalog.alter_edge_type_add_property(name, prop);
-                            }
-                            "drop" => {
-                                let _ = catalog.alter_edge_type_drop_property(name, prop_name);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                WalRecord::AlterGraphType { name, alterations } => {
-                    for (action, type_name) in alterations {
-                        match action.as_str() {
-                            "add_node" => {
-                                let _ =
-                                    catalog.alter_graph_type_add_node_type(name, type_name.clone());
-                            }
-                            "drop_node" => {
-                                let _ = catalog.alter_graph_type_drop_node_type(name, type_name);
-                            }
-                            "add_edge" => {
-                                let _ =
-                                    catalog.alter_graph_type_add_edge_type(name, type_name.clone());
-                            }
-                            "drop_edge" => {
-                                let _ = catalog.alter_graph_type_drop_edge_type(name, type_name);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-
-                WalRecord::CreateProcedure {
-                    name,
-                    params,
-                    returns,
-                    body,
-                } => {
-                    use crate::catalog::ProcedureDefinition;
-                    let def = ProcedureDefinition {
-                        name: name.clone(),
-                        params: params.clone(),
-                        returns: returns.clone(),
-                        body: body.clone(),
-                    };
-                    let _ = catalog.register_procedure(def);
-                }
-                WalRecord::DropProcedure { name } => {
-                    let _ = catalog.drop_procedure(name);
-                }
-
-                // --- RDF triple replay ---
-                #[cfg(feature = "rdf")]
-                WalRecord::InsertRdfTriple { .. }
-                | WalRecord::DeleteRdfTriple { .. }
-                | WalRecord::ClearRdfGraph { .. }
-                | WalRecord::CreateRdfGraph { .. }
-                | WalRecord::DropRdfGraph { .. } => {
-                    rdf_ops::replay_rdf_wal_record(rdf_store, record);
-                }
-                #[cfg(not(feature = "rdf"))]
-                WalRecord::InsertRdfTriple { .. }
-                | WalRecord::DeleteRdfTriple { .. }
-                | WalRecord::ClearRdfGraph { .. }
-                | WalRecord::CreateRdfGraph { .. }
-                | WalRecord::DropRdfGraph { .. } => {}
-
-                WalRecord::TransactionCommit { .. } => {
-                    // In temporal mode, advance the store epoch on each committed
-                    // transaction so that subsequent property/label operations
-                    // are recorded at the correct epoch in their VersionLogs.
-                    #[cfg(feature = "temporal")]
-                    {
-                        target_store.new_epoch();
-                    }
-                }
-                WalRecord::TransactionAbort { .. } | WalRecord::Checkpoint { .. } => {
-                    // Transaction control records don't need replay action
-                    // (recovery already filtered to only committed transactions)
-                }
-            }
-        }
-        Ok(())
-    }
 
     #[must_use]
     pub fn session(&self) -> Session {

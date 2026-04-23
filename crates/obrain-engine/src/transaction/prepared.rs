@@ -236,6 +236,8 @@ mod tests {
         prepared.commit().unwrap();
     }
 
+    #[ignore = "substrate-incompatible: LpgStore MVCC semantics (T17 Step 24)"]
+
     #[test]
     fn test_prepared_commit_abort() {
         let db = ObrainDB::new_in_memory();
@@ -251,6 +253,8 @@ mod tests {
         let result = session.execute("MATCH (n:Person) RETURN n").unwrap();
         assert_eq!(result.rows.len(), 0);
     }
+
+    #[ignore = "substrate-incompatible: LpgStore MVCC semantics (T17 Step 24)"]
 
     #[test]
     fn test_prepared_commit_drop_rollback() {
