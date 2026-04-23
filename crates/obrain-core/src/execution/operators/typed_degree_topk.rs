@@ -48,6 +48,31 @@ use obrain_common::types::{LogicalType, NodeId};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Count of times the Cypher planner rewrite
+/// (`try_plan_typed_degree_topk`) has substituted the canonical
+/// `most_connected` pipeline with a [`TypedDegreeTopKOperator`].
+///
+/// Used by the T9b TDD tests to verify that snapshot queries are
+/// routed correctly : EXPLAIN emits the logical plan unchanged after
+/// rewrite (cf. `plan.rs::explain_tree` — logical-level only), so we
+/// cannot snapshot-match on physical operator names. This counter
+/// gives the tests a deterministic signal instead.
+///
+/// Incremented by the planner in T9c. Reset by tests via
+/// [`reset_typed_degree_rewrite_counter`] before each scenario.
+pub static TYPED_DEGREE_REWRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Resets the rewrite counter to 0. For test use only.
+pub fn reset_typed_degree_rewrite_counter() {
+    TYPED_DEGREE_REWRITE_COUNTER.store(0, Ordering::Relaxed);
+}
+
+/// Reads the current value of the rewrite counter.
+pub fn typed_degree_rewrite_counter() -> u64 {
+    TYPED_DEGREE_REWRITE_COUNTER.load(Ordering::Relaxed)
+}
 
 /// Direction of the degree sum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

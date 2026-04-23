@@ -102,7 +102,10 @@ pub use set_ops::{ExceptOperator, IntersectOperator, OtherwiseOperator};
 pub use shortest_path::ShortestPathOperator;
 pub use single_row::{EmptyOperator, NodeListOperator, ScalarResultOperator, SingleRowOperator};
 pub use sort::{NullOrder, SortDirection, SortKey, SortOperator};
-pub use typed_degree_topk::{TypedDegreeDirection, TypedDegreeTopKOperator};
+pub use typed_degree_topk::{
+    TYPED_DEGREE_REWRITE_COUNTER, TypedDegreeDirection, TypedDegreeTopKOperator,
+    reset_typed_degree_rewrite_counter, typed_degree_rewrite_counter,
+};
 pub use union::UnionOperator;
 pub use unwind::UnwindOperator;
 pub use variable_length_expand::{PathMode as ExecutionPathMode, VariableLengthExpandOperator};
