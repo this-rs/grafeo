@@ -28,6 +28,27 @@ fn read_row(chunk: &obrain_core::execution::DataChunk, i: usize) -> (NodeId, i64
     };
     (n, d)
 }
+
+/// Reads a 3-column row (Separate direction output : [Node, Int64 out,
+/// Int64 in]).
+fn read_row_separate(
+    chunk: &obrain_core::execution::DataChunk,
+    i: usize,
+) -> (NodeId, i64, i64) {
+    let col_node = chunk.column(0).expect("node column");
+    let col_out = chunk.column(1).expect("out column");
+    let col_in = chunk.column(2).expect("in column");
+    let n = col_node.get_node_id(i).expect("node id at index");
+    let out = match col_out.get_value(i) {
+        Some(Value::Int64(v)) => v,
+        other => panic!("expected Int64 for out, got {other:?}"),
+    };
+    let inc = match col_in.get_value(i) {
+        Some(Value::Int64(v)) => v,
+        other => panic!("expected Int64 for in, got {other:?}"),
+    };
+    (n, out, inc)
+}
 use obrain_substrate::SubstrateStore;
 use std::sync::Arc;
 
@@ -213,4 +234,73 @@ fn typed_degree_topk_k_larger_than_label_set() {
             (files[0], 0),
         ]
     );
+}
+
+/// T17h T9a — `Direction::Separate` emits 3 columns (node, out, in).
+/// Ranking is on `out + in` (same as `Both`) so the row order matches
+/// the `Both` test above, but the two counts are exposed separately.
+#[test]
+fn typed_degree_topk_separate_outputs_out_and_in() {
+    let (store, files) = setup();
+    let arc_store = store.clone() as Arc<dyn GraphStore>;
+    let mut op = TypedDegreeTopKOperator::new(
+        arc_store,
+        Some("File".to_string()),
+        Some("IMPORTS".to_string()),
+        TypedDegreeDirection::Separate,
+        5,
+    );
+
+    let chunk = op.next().unwrap().expect("one chunk");
+    assert_eq!(chunk.row_count(), 5);
+    assert_eq!(chunk.column_count(), 3, "Separate must emit 3 columns");
+
+    // Expected per-file (out, in) under IMPORTS :
+    //   f0 : (0, 2) total=2
+    //   f1 : (1, 1) total=2
+    //   f2 : (3, 2) total=5
+    //   f3 : (1, 1) total=2
+    //   f4 : (2, 1) total=3
+    // Ranking : total DESC, slot ASC → [f2, f4, f0, f1, f3].
+    let got: Vec<(NodeId, i64, i64)> = (0..5).map(|i| read_row_separate(&chunk, i)).collect();
+    assert_eq!(
+        got,
+        vec![
+            (files[2], 3, 2),
+            (files[4], 2, 1),
+            (files[0], 0, 2),
+            (files[1], 1, 1),
+            (files[3], 1, 1),
+        ]
+    );
+    assert!(op.next().unwrap().is_none());
+}
+
+/// T17h T9a — reset on a Separate operator replays the exact same
+/// 3-column output. Locks in that the triple-layout `results` vec is
+/// rebuilt consistently across invocations.
+#[test]
+fn typed_degree_topk_separate_reset_replays() {
+    let (store, files) = setup();
+    let arc_store = store.clone() as Arc<dyn GraphStore>;
+    let mut op = TypedDegreeTopKOperator::new(
+        arc_store,
+        Some("File".to_string()),
+        Some("IMPORTS".to_string()),
+        TypedDegreeDirection::Separate,
+        2,
+    );
+    let first = op.next().unwrap().expect("chunk 1");
+    assert_eq!(first.row_count(), 2);
+    assert_eq!(first.column_count(), 3);
+    assert!(op.next().unwrap().is_none());
+
+    op.reset();
+    let second = op.next().unwrap().expect("chunk 2");
+    assert_eq!(second.row_count(), 2);
+    assert_eq!(second.column_count(), 3);
+
+    // Top-2 unchanged across reset : [(f2, 3, 2), (f4, 2, 1)].
+    let got: Vec<(NodeId, i64, i64)> = (0..2).map(|i| read_row_separate(&second, i)).collect();
+    assert_eq!(got, vec![(files[2], 3, 2), (files[4], 2, 1)]);
 }

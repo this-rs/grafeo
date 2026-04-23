@@ -52,12 +52,21 @@ use std::sync::Arc;
 /// Direction of the degree sum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TypedDegreeDirection {
-    /// Count only outgoing edges (`(n)-[:TYPE]->()`).
+    /// Count only outgoing edges (`(n)-[:TYPE]->()`). Output schema :
+    /// `[Node, Int64(out_count)]`.
     Outgoing,
-    /// Count only incoming edges (`()-[:TYPE]->(n)`).
+    /// Count only incoming edges (`()-[:TYPE]->(n)`). Output schema :
+    /// `[Node, Int64(in_count)]`.
     Incoming,
-    /// Sum outgoing + incoming (`both`).
+    /// Sum outgoing + incoming (`both`). Output schema :
+    /// `[Node, Int64(out_count + in_count)]`.
     Both,
+    /// Emit out_count and in_count as separate columns (T17h T9a).
+    /// Ranking is on `out + in` (same as `Both`) but the downstream
+    /// consumer gets both counts, which is required by the Cypher
+    /// planner rewrite that recomposes `imports + dependents AS
+    /// connections`. Output schema : `[Node, Int64(out), Int64(in)]`.
+    Separate,
 }
 
 /// Top-K operator driven by per-edge-type degree counters.
@@ -73,9 +82,13 @@ pub struct TypedDegreeTopKOperator {
     direction: TypedDegreeDirection,
     /// Top-K size.
     k: usize,
-    /// Computed top-K rows, ordered by degree DESC. Populated lazily
-    /// on the first `next()` call.
-    results: Vec<(NodeId, i64)>,
+    /// Computed top-K rows, ordered by ranking DESC (ties by slot
+    /// ASC). Each tuple is `(node, out_count, in_count)` so a single
+    /// storage layout covers all four `TypedDegreeDirection` variants :
+    /// Outgoing stores `(n, out, 0)`, Incoming `(n, 0, in)`, Both
+    /// `(n, out+in, 0)`, Separate `(n, out, in)`. `next()` projects
+    /// the right columns based on `direction`.
+    results: Vec<(NodeId, i64, i64)>,
     /// Read position in `results`.
     position: usize,
     /// Per-chunk capacity on output.
@@ -118,31 +131,67 @@ impl TypedDegreeTopKOperator {
         self
     }
 
-    /// Returns the Operator's output schema. Always two columns :
-    /// `[Node, Int64]`.
+    /// Returns the Operator's output schema. Two columns for
+    /// Outgoing / Incoming / Both, three for Separate.
     #[must_use]
-    pub fn output_schema() -> [LogicalType; 2] {
-        [LogicalType::Node, LogicalType::Int64]
+    pub fn output_schema(&self) -> Vec<LogicalType> {
+        match self.direction {
+            TypedDegreeDirection::Separate => vec![
+                LogicalType::Node,
+                LogicalType::Int64,
+                LogicalType::Int64,
+            ],
+            _ => vec![LogicalType::Node, LogicalType::Int64],
+        }
     }
 
-    fn degree(&self, node: NodeId) -> i64 {
+    /// Computes `(out_count, in_count)` for one node. Outgoing /
+    /// Incoming fill the unused slot with 0 so the storage layout is
+    /// uniform across variants. Both and Separate both fetch the two
+    /// counts from the T8 per-edge-type degree registry.
+    fn degree_pair(&self, node: NodeId) -> (i64, i64) {
         let et = self.edge_type.as_deref();
-        let out = matches!(
-            self.direction,
-            TypedDegreeDirection::Outgoing | TypedDegreeDirection::Both
-        );
-        let inc = matches!(
-            self.direction,
-            TypedDegreeDirection::Incoming | TypedDegreeDirection::Both
-        );
-        let mut d: i64 = 0;
-        if out {
-            d += self.store.out_degree_by_type(node, et) as i64;
+        let (fetch_out, fetch_in) = match self.direction {
+            TypedDegreeDirection::Outgoing => (true, false),
+            TypedDegreeDirection::Incoming => (false, true),
+            TypedDegreeDirection::Both | TypedDegreeDirection::Separate => (true, true),
+        };
+        let out = if fetch_out {
+            self.store.out_degree_by_type(node, et) as i64
+        } else {
+            0
+        };
+        let inc = if fetch_in {
+            self.store.in_degree_by_type(node, et) as i64
+        } else {
+            0
+        };
+        (out, inc)
+    }
+
+    /// Ranking key used for top-K selection. Outgoing / Incoming rank
+    /// on their single non-zero count ; Both and Separate rank on the
+    /// sum (so Separate produces the same top-K as Both, only with
+    /// more output columns).
+    fn rank(&self, out: i64, inc: i64) -> i64 {
+        match self.direction {
+            TypedDegreeDirection::Outgoing => out,
+            TypedDegreeDirection::Incoming => inc,
+            TypedDegreeDirection::Both | TypedDegreeDirection::Separate => out + inc,
         }
-        if inc {
-            d += self.store.in_degree_by_type(node, et) as i64;
+    }
+
+    /// Stored value for the "first Int64 column" across variants.
+    /// For Both this is `out + inc` (so the 2-column schema keeps the
+    /// sum) ; for the single-direction variants it's the non-zero
+    /// count ; for Separate it's `out` (the second column will carry
+    /// `inc`).
+    fn stored_first_int(&self, out: i64, inc: i64) -> i64 {
+        match self.direction {
+            TypedDegreeDirection::Both => out + inc,
+            TypedDegreeDirection::Separate | TypedDegreeDirection::Outgoing => out,
+            TypedDegreeDirection::Incoming => inc,
         }
-        d
     }
 
     fn compute_topk(&mut self) {
@@ -161,54 +210,66 @@ impl TypedDegreeTopKOperator {
             None => self.store.node_ids(),
         };
 
-        // Min-heap of size K keyed by degree (ties broken by slot id
-        // DESC so the iteration order is stable across invocations on
-        // the same backend). `Reverse<(degree, slot)>` puts the
-        // smallest at the top of the max-heap, which is what we pop
-        // when evicting.
-        //
-        // Fast-path : K >= |candidates| — skip the heap, sort the full
-        // vec.
+        // Fast-path : K >= |candidates| — skip the heap, materialise
+        // all rows and sort by ranking.
         if candidates.len() <= self.k {
-            let mut rows: Vec<(NodeId, i64)> = candidates
+            let mut rows: Vec<(NodeId, i64, i64)> = candidates
                 .into_iter()
-                .map(|n| (n, self.degree(n)))
+                .map(|n| {
+                    let (out, inc) = self.degree_pair(n);
+                    (n, out, inc)
+                })
                 .collect();
-            rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0 .0.cmp(&b.0 .0)));
+            rows.sort_by(|a, b| {
+                let ra = self.rank(a.1, a.2);
+                let rb = self.rank(b.1, b.2);
+                rb.cmp(&ra).then_with(|| a.0 .0.cmp(&b.0 .0))
+            });
             self.results = rows;
             return;
         }
 
-        // Ranking : `(degree, Reverse<slot>)` — higher is better. Higher
-        // degree wins ; within ties, the smaller slot wins (so the
-        // output order matches the stable final sort). Wrapping the
-        // whole tuple in `Reverse` turns the max-heap into a min-heap
-        // on this ranking, so `peek()` is the weakest candidate.
-        type Rank = (i64, Reverse<u64>);
-        let mut heap: BinaryHeap<Reverse<Rank>> = BinaryHeap::with_capacity(self.k + 1);
+        // Min-heap keyed on `(rank, Reverse<slot>)` — higher rank
+        // wins ; within ties, smaller slot wins (so the output order
+        // matches the stable final sort). Wrapping the whole tuple in
+        // `Reverse` turns the max-heap into a min-heap, making
+        // `peek()` return the weakest candidate for eviction.
+        //
+        // The heap stores the full `(node, out, inc)` triple on the
+        // side in a parallel Vec indexed by slot to keep the heap
+        // payload tiny. Simpler alternative : store the triple in the
+        // heap entry. We pick the latter for clarity — K is bounded
+        // by the user and usually tiny (K ≤ 100).
+        type RankKey = (i64, Reverse<u64>);
+        let mut heap: BinaryHeap<Reverse<(RankKey, i64, i64)>> =
+            BinaryHeap::with_capacity(self.k + 1);
         for node in &candidates {
-            let d = self.degree(*node);
-            let entry: Rank = (d, Reverse(node.0));
+            let (out, inc) = self.degree_pair(*node);
+            let r = self.rank(out, inc);
+            let key: RankKey = (r, Reverse(node.0));
+            let entry = (key, out, inc);
             if heap.len() < self.k {
                 heap.push(Reverse(entry));
             } else if let Some(worst) = heap.peek() {
-                // `worst.0` is the weakest candidate in the heap.
-                // Evict it when the new entry beats it under the
-                // ranking (degree DESC ; slot ASC on ties).
-                if entry > worst.0 {
+                // `worst.0.0` is the ranking key of the weakest
+                // candidate. Evict it when the new entry beats it.
+                if entry.0 > worst.0 .0 {
                     heap.pop();
                     heap.push(Reverse(entry));
                 }
             }
         }
 
-        // Drain into a vec sorted by degree DESC, then by slot ASC for
-        // stability (same order the heap ranking selected for).
-        let mut rows: Vec<(NodeId, i64)> = heap
+        // Drain + sort by ranking DESC / slot ASC for stability.
+        let mut rows: Vec<(NodeId, i64, i64)> = heap
             .into_iter()
-            .map(|Reverse((d, Reverse(slot)))| (NodeId(slot), d))
+            .map(|Reverse(((_, Reverse(slot)), out, inc))| (NodeId(slot), out, inc))
             .collect();
-        rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0 .0.cmp(&b.0 .0)));
+        rows.sort_by(|a, b| {
+            let ra = self.rank(a.1, a.2);
+            let rb = self.rank(b.1, b.2);
+            rb.cmp(&ra).then_with(|| a.0 .0.cmp(&b.0 .0))
+        });
         self.results = rows;
     }
 }
@@ -221,11 +282,12 @@ impl Operator for TypedDegreeTopKOperator {
             return Ok(None);
         }
 
-        let schema = Self::output_schema();
+        let schema = self.output_schema();
         let end = (self.position + self.chunk_capacity).min(self.results.len());
         let count = end - self.position;
         let mut chunk = DataChunk::with_capacity(&schema, self.chunk_capacity);
 
+        // Column 0 : node id (always).
         {
             let node_col = chunk
                 .column_mut(0)
@@ -234,12 +296,24 @@ impl Operator for TypedDegreeTopKOperator {
                 node_col.push_node_id(self.results[i].0);
             }
         }
+        // Column 1 : first Int64 (out / in / out+in depending on
+        // direction, see `stored_first_int`).
         {
-            let deg_col = chunk
+            let col1 = chunk
                 .column_mut(1)
                 .expect("column 1 exists: chunk created with matching schema");
             for i in self.position..end {
-                deg_col.push_int64(self.results[i].1);
+                let (_, out, inc) = self.results[i];
+                col1.push_int64(self.stored_first_int(out, inc));
+            }
+        }
+        // Column 2 (Separate only) : in_count.
+        if matches!(self.direction, TypedDegreeDirection::Separate) {
+            let col2 = chunk
+                .column_mut(2)
+                .expect("column 2 exists: Separate schema has 3 columns");
+            for i in self.position..end {
+                col2.push_int64(self.results[i].2);
             }
         }
         chunk.set_count(count);
