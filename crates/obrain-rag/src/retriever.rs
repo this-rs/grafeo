@@ -793,7 +793,9 @@ fn tokenize_query(query: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use obrain_core::LpgStore;
+    use obrain_common::types::Value;
+    use obrain_core::graph::GraphStoreMut;
+    use obrain_substrate::SubstrateStore;
 
     #[test]
     fn inverted_index_add_and_query() {
@@ -1244,45 +1246,27 @@ mod tests {
 
     // ── EngramRetriever integration tests ───────────────────────
 
-    /// Helper: build a small LpgStore with known nodes and edges.
+    /// Helper: build a small graph store with known nodes and edges.
+    ///
+    /// Uses `SubstrateStore::open_tempfile()` (topology-as-storage, mmap'd
+    /// temp file) exposed as `Arc<dyn GraphStore>` so retriever tests are
+    /// agnostic to the concrete backend. Prior to T17 W4.p1.s2, this fixture
+    /// constructed an `LpgStore`; the migration preserves behaviour because
+    /// `EngramRetriever` only uses trait methods (`node_ids`, `labels`,
+    /// `properties`, `edges_from`).
     fn make_test_graph() -> Arc<dyn GraphStore> {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
 
-        let n1 = store.create_node_with_props(
-            &["Project"],
-            [
-                (
-                    "name".to_string(),
-                    obrain_common::types::Value::from("Obrain"),
-                ),
-                (
-                    "description".to_string(),
-                    obrain_common::types::Value::from("A graph database engine"),
-                ),
-            ],
-        );
+        let n1 = store.create_node(&["Project"]);
+        store.set_node_property(n1, "name", Value::from("Obrain"));
+        store.set_node_property(n1, "description", Value::from("A graph database engine"));
 
-        let n2 = store.create_node_with_props(
-            &["Note", "Gotcha"],
-            [
-                (
-                    "title".to_string(),
-                    obrain_common::types::Value::from("WAL Bug"),
-                ),
-                (
-                    "content".to_string(),
-                    obrain_common::types::Value::from("checkpoint.meta breaks recovery"),
-                ),
-            ],
-        );
+        let n2 = store.create_node(&["Note", "Gotcha"]);
+        store.set_node_property(n2, "title", Value::from("WAL Bug"));
+        store.set_node_property(n2, "content", Value::from("checkpoint.meta breaks recovery"));
 
-        let n3 = store.create_node_with_props(
-            &["Task"],
-            [(
-                "title".to_string(),
-                obrain_common::types::Value::from("Fix WAL recovery"),
-            )],
-        );
+        let n3 = store.create_node(&["Task"]);
+        store.set_node_property(n3, "title", Value::from("Fix WAL recovery"));
 
         // Create edges
         store.create_edge(n1, n2, "HAS_NOTE");

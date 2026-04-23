@@ -48,6 +48,7 @@ tracing.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 tempfile.workspace = true
 obrain = { workspace = true, features = ["embedded", "storage"] }
+obrain-substrate.workspace = true
 
 [[example]]
 name = "rag_demo"
