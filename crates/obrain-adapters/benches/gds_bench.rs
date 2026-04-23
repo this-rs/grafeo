@@ -6,7 +6,8 @@
 //! Run with: cargo bench -p obrain-adapters --features "algos,parallel"
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use obrain_core::LpgStore;
+use obrain_core::graph::traits::{GraphStore, GraphStoreMut};
+use obrain_substrate::SubstrateStore;
 
 use obrain_adapters::plugins::algorithms::{
     ContractionConfig, PprConfig, betweenness_centrality, contract_subgraph, leiden, louvain,
@@ -17,8 +18,8 @@ use obrain_adapters::plugins::algorithms::{
 ///
 /// The BA model produces power-law degree distributions typical of real-world networks
 /// (social graphs, citation networks, the web).
-fn barabasi_albert(n: usize, m: usize) -> LpgStore {
-    let store = LpgStore::new().expect("LpgStore::new failed");
+fn barabasi_albert(n: usize, m: usize) -> SubstrateStore {
+    let store = SubstrateStore::open_tempfile().expect("SubstrateStore::open_tempfile failed");
 
     // Create initial complete graph of m+1 nodes
     let mut node_ids = Vec::with_capacity(n);
@@ -213,16 +214,14 @@ fn bench_contraction(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _| {
             b.iter(|| {
-                // Rebuild graph each iteration since contraction is destructive
+                // Rebuild graph each iteration since contraction is destructive.
+                // barabasi_albert uses a deterministic LCG seeded to 42, so node
+                // IDs are identical across calls — we can reuse `largest` directly
+                // instead of re-indexing through node_ids() (which would be
+                // off-by-one on substrate where NodeIds start at 1).
                 let s = barabasi_albert(size, 3);
-                // Re-use the same node IDs (deterministic BA graph)
-                let ids = s.node_ids();
-                let contract_ids: Vec<obrain_common::types::NodeId> = largest
-                    .iter()
-                    .filter_map(|nid| ids.get(nid.0 as usize).copied())
-                    .collect();
-                if !contract_ids.is_empty() {
-                    let _ = contract_subgraph(&s, &contract_ids, &config);
+                if !largest.is_empty() {
+                    let _ = contract_subgraph(&s, &largest, &config);
                 }
             });
         });
