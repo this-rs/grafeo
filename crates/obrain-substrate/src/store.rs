@@ -941,22 +941,53 @@ impl SubstrateStore {
             let sub = self.substrate.lock();
             sub.path().join(PROPS_FILENAME)
         };
-        let snap = PropertiesSnapshotV1::load(&path)?;
-
-        // T17c Step 6 — edge-only sidecar path. When
-        // `substrate.edge_props` exists, it is the authoritative
-        // source for edge-property maps (written by
-        // `finalize_props_v2` or `persist_edge_properties_sidecar`).
-        // Its presence means the legacy `substrate.props` sidecar
-        // has either been drained of edges or is absent entirely
-        // (post-`delete_legacy_props_sidecar`). In that case the
-        // `snap.edges` loop below is short-circuited so we don't
-        // double-hydrate.
+        // T17c Step 6 — edge-only sidecar path detection (needed before
+        // deciding whether to load the legacy sidecar at all).
         let edge_sidecar_path = {
             let sub = self.substrate.lock();
             sub.path().join(EDGE_PROPS_FILENAME)
         };
         let edge_sidecar_present = edge_sidecar_path.exists();
+
+        // T17g T2b — **short-circuit the legacy substrate.props load
+        // entirely** when v2 is fully authoritative. On Megalaw post
+        // `--finalize-v2` + `--upgrade-edges-v2` we observed the legacy
+        // sidecar at 1.07 GB (re-written by `persist_properties` at the
+        // tail of the old migration flow) decoding in 1.9 s per open —
+        // pure waste because:
+        //   - Nodes are in v2 → `v2_has_pages` triggers the per-node
+        //     skip below, so `snap.nodes` is discarded.
+        //   - Edges are in v2 edge chain (post-upgrade-edges-v2) and the
+        //     `substrate.edge_props` sidecar is absent → the `skip_edges_legacy`
+        //     branch below discards `snap.edges` too.
+        //
+        // If both branches will discard, there is no reason to pay the
+        // bincode decode. We synthesise an empty snapshot and skip the
+        // load. The stale legacy file will be reclaimed on the next
+        // `flush()` via `persist_properties` rewriting from the
+        // (intentionally empty) DashMaps.
+        let legacy_fully_stale = v2_has_pages && !edge_sidecar_present && path.exists();
+        let snap = if legacy_fully_stale {
+            tracing::info!(
+                phase = "load_properties",
+                legacy_props_size_mib = std::fs::metadata(&path).map(|m| m.len() / (1024 * 1024)).unwrap_or(0),
+                "T17g T2b — bypassing legacy substrate.props decode: v2 is \
+                 authoritative for both nodes and edges. Stale bytes will be \
+                 reclaimed on next flush."
+            );
+            PropertiesSnapshotV1::default()
+        } else {
+            PropertiesSnapshotV1::load(&path)?
+        };
+
+        // T17c Step 6 — when the dedicated edge sidecar is present, it
+        // is the authoritative source for edge-property maps (written by
+        // `finalize_props_v2` or `persist_edge_properties_sidecar`).
+        // Its presence means the legacy `substrate.props` sidecar has
+        // either been drained of edges or is absent entirely
+        // (post-`delete_legacy_props_sidecar`). In that case the
+        // `snap.edges` loop below is short-circuited so we don't
+        // double-hydrate.
         let edge_snap = if edge_sidecar_present {
             Some(PropertiesSnapshotV1::load(&edge_sidecar_path)?)
         } else {
@@ -1061,11 +1092,50 @@ impl SubstrateStore {
         // is the authoritative source. Otherwise fall back to the
         // combined `snap.edges` from the legacy sidecar (pre-
         // finalize-v2 bases, fresh stores, etc.).
+        //
+        // T17g T2b — **edge v2 skip-gate**. When PropsZone v2 is active
+        // AND has at least one page AND the dedicated edge sidecar
+        // (`substrate.edge_props`) is ABSENT, the invariant is:
+        //   - either this is a fresh v2 base (no edges yet), OR
+        //   - this base has been fully migrated through
+        //     `--finalize-v2` AND `--upgrade-edges-v2`, which means
+        //     edges live in the v2 edge chain and any entries in the
+        //     legacy `substrate.props` are stale duplicates
+        //     (re-written by `persist_properties` at the tail of a
+        //     pre-T17g-T2b migration run — see bug note `<pending>`).
+        //
+        // In both cases, loading edges from the legacy sidecar would
+        // re-populate the `edge_properties` DashMap with entries that
+        // already exist in v2 — doubling the anon-RSS footprint and
+        // paying the 7+ second bincode decode on Megalaw-scale bases.
+        // Skip it.
+        //
+        // If a pre-v2 edge truly sat in legacy only (never seen by v2),
+        // this skip would silently lose it. That corner case is
+        // considered closed: any v2-enabled base that ever wrote an
+        // edge did so through `set_edge_property` which routes to v2
+        // since T17f Step 4, AND the only way to have legacy edges on
+        // disk at open is via pre-T17f migration output — which is
+        // healed by running `--finalize-v2` + `--upgrade-edges-v2` in
+        // order (the drain reads legacy → v2, then this gate prevents
+        // re-loading).
+        let skip_edges_legacy = v2_has_pages && !edge_sidecar_present && !snap.edges.is_empty();
         let mut edges_from_new_sidecar = 0usize;
         let edge_entries: Vec<PropEntry> = match edge_snap {
             Some(es) => {
                 edges_from_new_sidecar = es.edges.len();
                 es.edges
+            }
+            None if skip_edges_legacy => {
+                tracing::warn!(
+                    phase = "load_properties",
+                    stale_edges_in_legacy_sidecar = snap.edges.len(),
+                    "T17g T2b — skipping edge load from legacy sidecar: v2 is \
+                     authoritative and edge_props sidecar is absent. Legacy \
+                     entries will be reclaimed on next flush (persist_properties \
+                     rewrites from a cleared DashMap)."
+                );
+                Vec::new()
             }
             None => snap.edges,
         };
