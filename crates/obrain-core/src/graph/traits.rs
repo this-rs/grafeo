@@ -200,6 +200,69 @@ pub trait GraphStore: Send + Sync {
         max_inclusive: bool,
     ) -> Vec<NodeId>;
 
+    /// Finds nodes with a substring match on a property, optionally filtered by label.
+    ///
+    /// The search is case-insensitive. `max_scan` caps the total number of nodes
+    /// inspected to prevent worst-case O(N) full scans. Returns early when either
+    /// `limit` results are found **or** `max_scan` nodes have been inspected.
+    ///
+    /// Default implementation returns empty — this is LpgStore-inherent for now.
+    /// SubstrateStore exposes substring search natively through its L2 inverted
+    /// index; this default keeps the trait object-safe while letting concrete
+    /// backends override.
+    fn find_nodes_by_label_property_contains_bounded(
+        &self,
+        _label: Option<&str>,
+        _property: &str,
+        _substring: &str,
+        _limit: usize,
+        _max_scan: usize,
+    ) -> Vec<NodeId> {
+        Vec::new()
+    }
+
+    // --- Auxiliary index registries (text/vector) ---
+
+    /// Returns all registered text (BM25) index entries as `(key, index)` pairs.
+    ///
+    /// The key format is `"label:property"`. Default returns empty for stores
+    /// that do not maintain a BM25 registry. `LpgStore` overrides; in substrate
+    /// mode this stays empty because retrieval is served by the substrate L2
+    /// inverted index + SYNAPSE layer natively.
+    #[cfg(feature = "text-index")]
+    fn text_index_entries(
+        &self,
+    ) -> Vec<(
+        String,
+        Arc<parking_lot::RwLock<crate::index::text::InvertedIndex>>,
+    )> {
+        Vec::new()
+    }
+
+    /// Returns all registered vector (HNSW) index entries as `(key, index)` pairs.
+    ///
+    /// The key format is `"label:property"`. Default returns empty. `LpgStore`
+    /// overrides; substrate-backed stores expose vector retrieval through their
+    /// native L1 vector store instead.
+    #[cfg(feature = "vector-index")]
+    fn vector_index_entries(
+        &self,
+    ) -> Vec<(String, Arc<crate::index::vector::HnswIndex>)> {
+        Vec::new()
+    }
+
+    /// Retrieves the vector index for a label+property pair, if any.
+    ///
+    /// Default returns `None`. LpgStore overrides to look up its HNSW registry.
+    #[cfg(feature = "vector-index")]
+    fn get_vector_index(
+        &self,
+        _label: &str,
+        _property: &str,
+    ) -> Option<Arc<crate::index::vector::HnswIndex>> {
+        None
+    }
+
     // --- Zone maps (skip pruning) ---
 
     /// Returns `true` if a node property predicate might match any nodes.

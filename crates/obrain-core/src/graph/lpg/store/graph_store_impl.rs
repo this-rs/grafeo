@@ -254,6 +254,45 @@ impl GraphStore for LpgStore {
     fn get_edge_history(&self, id: EdgeId) -> Vec<(EpochId, Option<EpochId>, Edge)> {
         LpgStore::get_edge_history(self, id)
     }
+
+    fn find_nodes_by_label_property_contains_bounded(
+        &self,
+        label: Option<&str>,
+        property: &str,
+        substring: &str,
+        limit: usize,
+        max_scan: usize,
+    ) -> Vec<NodeId> {
+        LpgStore::find_nodes_by_label_property_contains_bounded(
+            self, label, property, substring, limit, max_scan,
+        )
+    }
+
+    #[cfg(feature = "text-index")]
+    fn text_index_entries(
+        &self,
+    ) -> Vec<(
+        String,
+        Arc<parking_lot::RwLock<crate::index::text::InvertedIndex>>,
+    )> {
+        LpgStore::text_index_entries(self)
+    }
+
+    #[cfg(feature = "vector-index")]
+    fn vector_index_entries(
+        &self,
+    ) -> Vec<(String, Arc<crate::index::vector::HnswIndex>)> {
+        LpgStore::vector_index_entries(self)
+    }
+
+    #[cfg(feature = "vector-index")]
+    fn get_vector_index(
+        &self,
+        label: &str,
+        property: &str,
+    ) -> Option<Arc<crate::index::vector::HnswIndex>> {
+        LpgStore::get_vector_index(self, label, property)
+    }
 }
 
 impl GraphStoreMut for LpgStore {
