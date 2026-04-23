@@ -5207,11 +5207,12 @@ mod tests {
     #[test]
     fn test_external_store_session() {
         use obrain_core::graph::GraphStoreMut;
+        use obrain_substrate::SubstrateStore;
         use std::sync::Arc;
 
         let config = crate::config::Config::in_memory();
         let store =
-            Arc::new(obrain_core::graph::lpg::LpgStore::new().unwrap()) as Arc<dyn GraphStoreMut>;
+            Arc::new(SubstrateStore::open_tempfile().unwrap()) as Arc<dyn GraphStoreMut>;
         let db = ObrainDB::with_store(store, config).unwrap();
 
         let mut session = db.session();
