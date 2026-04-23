@@ -43,8 +43,6 @@ use std::sync::atomic::AtomicUsize;
 
 use parking_lot::RwLock;
 
-#[cfg(feature = "obrain-file")]
-use obrain_adapters::storage::file::ObrainFileManager;
 #[cfg(all(feature = "wal", feature = "tiered-storage"))]
 use obrain_adapters::storage::wal::CheckpointMetadata;
 #[cfg(feature = "wal")]
@@ -132,12 +130,6 @@ pub struct ObrainDB {
     #[cfg(feature = "embed")]
     pub(super) embedding_models:
         RwLock<hashbrown::HashMap<String, Arc<dyn crate::embedding::EmbeddingModel>>>,
-    /// Single-file database manager (when using `.obrain` format).
-    #[cfg(feature = "obrain-file")]
-    pub(super) file_manager: Option<Arc<ObrainFileManager>>,
-    /// Native v2 mmap-backed store for instant read-only access.
-    #[cfg(feature = "obrain-file")]
-    pub(super) mmap_store: Option<Arc<mmap_store::MmapStore>>,
     /// External graph store (when using with_store()).
     /// When set, sessions route queries through this store instead of the built-in LpgStore.
     pub(super) external_store: Option<Arc<dyn GraphStoreMut>>,
@@ -330,11 +322,6 @@ impl ObrainDB {
     /// // session.execute("INSERT (:Person)") => Err(ReadOnly)
     /// # Ok::<(), obrain_common::utils::error::Error>(())
     /// ```
-    #[cfg(feature = "obrain-file")]
-    pub fn open_read_only(path: impl AsRef<std::path::Path>) -> Result<Self> {
-        Self::with_config(Config::read_only(path.as_ref()))
-    }
-
     /// Creates a database with custom configuration.
     ///
     /// Use this when you need fine-grained control over memory limits,
@@ -387,146 +374,15 @@ impl ObrainDB {
 
         let is_read_only = config.access_mode == crate::config::AccessMode::ReadOnly;
 
-        // --- Single-file format (.obrain) ---
-        //
-        // Two paths depending on format version:
-        // - v1 (legacy): mmap snapshot region → bincode decode into LpgStore
-        // - v2 (native): mmap full file → MmapStore (zero-copy, instant open)
-        #[cfg(feature = "obrain-file")]
-        let mut native_mmap_store: Option<Arc<mmap_store::MmapStore>> = None;
-
-        #[cfg(feature = "obrain-file")]
-        let file_manager: Option<Arc<ObrainFileManager>> = if is_read_only {
-            // Read-only mode: open with shared lock, load snapshot, skip WAL
-            if let Some(ref db_path) = config.path {
-                if db_path.exists() && db_path.is_file() {
-                    let fm = ObrainFileManager::open_read_only(db_path)?;
-
-                    if fm.file_header().is_native_format() {
-                        // ── v2 native: mmap full file → MmapStore (instant) ──
-                        let t_open = std::time::Instant::now();
-                        let mmap = fm.mmap_full_file()?;
-                        let active = fm.active_header();
-                        let epoch = obrain_common::types::EpochId(active.epoch);
-                        let toc_offset = obrain_adapters::storage::file::format::DATA_OFFSET as usize;
-                        let ms = mmap_store::MmapStore::from_mmap(mmap, toc_offset, epoch)
-                            .map_err(|e| obrain_common::utils::error::Error::Internal(
-                                format!("native v2 open failed: {e}"),
-                            ))?;
-                        tracing::info!(
-                            elapsed = ?t_open.elapsed(),
-                            node_slots = ms.node_slot_count(),
-                            edge_slots = ms.edge_slot_count(),
-                            "Instant open via native v2 mmap",
-                        );
-                        native_mmap_store = Some(Arc::new(ms));
-                    } else {
-                        // ── v1 legacy: bincode decode ──
-                        match fm.mmap_snapshot() {
-                            Ok(mmap) => {
-                                Self::apply_snapshot_data(
-                                    &store,
-                                    &catalog,
-                                    #[cfg(feature = "rdf")]
-                                    &rdf_store,
-                                    &mmap,
-                                )?;
-                                fm.verify_mmap_crc(&mmap)?;
-                            }
-                            Err(e) => {
-                                tracing::debug!("No snapshot to mmap (read-only): {e}");
-                            }
-                        }
-                    }
-
-                    Some(Arc::new(fm))
-                } else {
-                    return Err(obrain_common::utils::error::Error::Internal(format!(
-                        "read-only open requires an existing .obrain file: {}",
-                        db_path.display()
-                    )));
-                }
-            } else {
-                return Err(obrain_common::utils::error::Error::Internal(
-                    "read-only mode requires a database path".to_string(),
-                ));
-            }
-        } else if config.wal_enabled {
-            if let Some(ref db_path) = config.path {
-                if Self::should_use_single_file(db_path, config.storage_format) {
-                    let fm = if db_path.exists() && db_path.is_file() {
-                        ObrainFileManager::open(db_path)?
-                    } else if !db_path.exists() {
-                        ObrainFileManager::create(db_path)?
-                    } else {
-                        // Path exists but is not a file (directory, etc.)
-                        return Err(obrain_common::utils::error::Error::Internal(format!(
-                            "path exists but is not a file: {}",
-                            db_path.display()
-                        )));
-                    };
-
-                    // Load snapshot via mmap
-                    if fm.file_header().is_native_format() {
-                        // v2 native: mmap full file, then materialize into LpgStore
-                        // (read-write mode needs mutable in-memory store for mutations)
-                        match fm.mmap_full_file() {
-                            Ok(mmap) => {
-                                let active = fm.active_header();
-                                let epoch = obrain_common::types::EpochId(active.epoch);
-                                let toc_offset = obrain_adapters::storage::file::format::DATA_OFFSET as usize;
-                                let ms = mmap_store::MmapStore::from_mmap(mmap, toc_offset, epoch)
-                                    .map_err(|e| obrain_common::utils::error::Error::Internal(
-                                        format!("native v2 open failed: {e}"),
-                                    ))?;
-                                Self::materialize_mmap_to_lpg(&ms, &store, &catalog)?;
-                            }
-                            Err(e) => {
-                                tracing::debug!("No snapshot to mmap (v2): {e}");
-                            }
-                        }
-                    } else {
-                        // v1 legacy: bincode decode
-                        match fm.mmap_snapshot() {
-                            Ok(mmap) => {
-                                Self::apply_snapshot_data(
-                                    &store,
-                                    &catalog,
-                                    #[cfg(feature = "rdf")]
-                                    &rdf_store,
-                                    &mmap,
-                                )?;
-                                fm.verify_mmap_crc(&mmap)?;
-                            }
-                            Err(e) => {
-                                tracing::debug!("No snapshot to mmap: {e}");
-                            }
-                        }
-                    }
-
-                    // Recover sidecar WAL if present
-                    if fm.has_sidecar_wal() {
-                        let recovery = WalRecovery::new(fm.sidecar_wal_path());
-                        let records = recovery.recover()?;
-                        Self::apply_wal_records(
-                            &store,
-                            &catalog,
-                            #[cfg(feature = "rdf")]
-                            &rdf_store,
-                            &records,
-                        )?;
-                    }
-
-                    Some(Arc::new(fm))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        // T17 final cutover (2026-04-23): the single-file `.obrain`
+        // format handling that lived here (v1 bincode snapshot + v2
+        // mmap native, ~140 LOC) was feature-gated on `obrain-file`
+        // which was retired in commit `b0f5bd11`. The block was
+        // `let file_manager: Option<Arc<ObrainFileManager>>` plus
+        // `let mut native_mmap_store: Option<Arc<mmap_store::MmapStore>>`,
+        // both unreachable once the feature was removed. Substrate is
+        // now the single backend; legacy `.obrain` files are
+        // converted via `obrain-migrate` before opening.
 
         // Determine whether to use the WAL directory path (legacy) or sidecar
         // Read-only mode skips WAL entirely (no recovery, no creation).
@@ -535,28 +391,13 @@ impl ObrainDB {
             None
         } else if config.wal_enabled {
             if let Some(ref db_path) = config.path {
-                // When using single-file format, the WAL is a sidecar directory
-                #[cfg(feature = "obrain-file")]
-                let wal_path = if let Some(ref fm) = file_manager {
-                    let p = fm.sidecar_wal_path();
-                    std::fs::create_dir_all(&p)?;
-                    p
-                } else {
-                    // Legacy: WAL inside the database directory
-                    std::fs::create_dir_all(db_path)?;
-                    db_path.join("wal")
-                };
-
-                #[cfg(not(feature = "obrain-file"))]
-                let wal_path = {
-                    std::fs::create_dir_all(db_path)?;
-                    db_path.join("wal")
-                };
-
-                // For legacy WAL directory format, check if WAL exists and recover
-                #[cfg(feature = "obrain-file")]
-                let is_single_file = file_manager.is_some();
-                #[cfg(not(feature = "obrain-file"))]
+                // T17 final cutover: WAL is always a directory inside
+                // the database path. The pre-cutover sidecar layout
+                // (when the store was a single `.obrain` file) no
+                // longer applies — substrate is directory-based from
+                // the start.
+                std::fs::create_dir_all(db_path)?;
+                let wal_path = db_path.join("wal");
                 let is_single_file = false;
 
                 if !is_single_file && wal_path.exists() {
@@ -727,10 +568,6 @@ impl ObrainDB {
             cdc_log: Arc::new(crate::cdc::CdcLog::new()),
             #[cfg(feature = "embed")]
             embedding_models: RwLock::new(hashbrown::HashMap::new()),
-            #[cfg(feature = "obrain-file")]
-            file_manager,
-            #[cfg(feature = "obrain-file")]
-            mmap_store: native_mmap_store,
             external_store: None,
             substrate_store: None,
             #[cfg(feature = "metrics")]
@@ -811,10 +648,6 @@ impl ObrainDB {
             cdc_log: Arc::new(crate::cdc::CdcLog::new()),
             #[cfg(feature = "embed")]
             embedding_models: RwLock::new(hashbrown::HashMap::new()),
-            #[cfg(feature = "obrain-file")]
-            file_manager: None,
-            #[cfg(feature = "obrain-file")]
-            mmap_store: None,
             external_store: Some(store),
             substrate_store: None,
             #[cfg(feature = "metrics")]
@@ -1128,401 +961,6 @@ impl ObrainDB {
         Ok(())
     }
 
-    // =========================================================================
-    // Single-file format helpers
-    // =========================================================================
-
-    /// Returns `true` if the given path should use single-file format.
-    #[cfg(feature = "obrain-file")]
-    fn should_use_single_file(
-        path: &std::path::Path,
-        configured: crate::config::StorageFormat,
-    ) -> bool {
-        use crate::config::StorageFormat;
-        match configured {
-            StorageFormat::SingleFile => true,
-            StorageFormat::WalDirectory => false,
-            StorageFormat::Auto => {
-                // Existing file: check magic bytes
-                if path.is_file() {
-                    if let Ok(mut f) = std::fs::File::open(path) {
-                        use std::io::Read;
-                        let mut magic = [0u8; 4];
-                        if f.read_exact(&mut magic).is_ok()
-                            && magic == obrain_adapters::storage::file::MAGIC
-                        {
-                            return true;
-                        }
-                    }
-                    return false;
-                }
-                // Existing directory: legacy format
-                if path.is_dir() {
-                    return false;
-                }
-                // New path: check extension
-                path.extension().is_some_and(|ext| ext == "obrain")
-            }
-        }
-    }
-
-    /// Applies snapshot data (from a `.obrain` file) to restore the store and catalog.
-    #[cfg(feature = "obrain-file")]
-    fn apply_snapshot_data(
-        store: &Arc<LpgStore>,
-        catalog: &Arc<crate::catalog::Catalog>,
-        #[cfg(feature = "rdf")] rdf_store: &Arc<RdfStore>,
-        data: &[u8],
-    ) -> Result<()> {
-        persistence::load_snapshot_into_store(
-            store,
-            catalog,
-            #[cfg(feature = "rdf")]
-            rdf_store,
-            data,
-        )
-    }
-
-    /// Materializes a read-only MmapStore into a mutable LpgStore.
-    ///
-    /// This is used when opening a v2 native file in read-write mode: the file
-    /// is mmap'd for fast parsing, then all nodes and edges are copied into the
-    /// in-memory LpgStore so mutations can proceed normally.
-    ///
-    /// The catalog parameter is reserved for future schema restoration.
-    #[cfg(feature = "obrain-file")]
-    fn materialize_mmap_to_lpg(
-        mmap_store: &mmap_store::MmapStore,
-        store: &Arc<LpgStore>,
-        _catalog: &Arc<crate::catalog::Catalog>,
-    ) -> Result<()> {
-        use obrain_common::utils::error::Error;
-
-        let t0 = std::time::Instant::now();
-        let node_count = mmap_store.node_slot_count();
-        let edge_count = mmap_store.edge_slot_count();
-
-        tracing::info!(
-            node_slots = node_count,
-            edge_slots = edge_count,
-            "Materializing mmap v2 → LpgStore..."
-        );
-
-        // Pre-allocate store capacity
-        store.reserve_for_restore(node_count, edge_count);
-
-        // ── Nodes ──
-        let t_nodes = std::time::Instant::now();
-
-        // Collect nodes with owned labels so ArcStr lives long enough
-        let owned_nodes: Vec<(obrain_common::types::NodeId, smallvec::SmallVec<[arcstr::ArcStr; 4]>)> =
-            mmap_store
-                .iter_nodes()
-                .map(|(id, labels, _props)| (id, labels))
-                .collect();
-        let live_nodes = owned_nodes.len();
-
-        // Bulk create nodes with their original IDs
-        const NODE_BATCH: usize = 500_000;
-        for chunk in owned_nodes.chunks(NODE_BATCH) {
-            let refs: Vec<(obrain_common::types::NodeId, Vec<&str>)> = chunk
-                .iter()
-                .map(|(id, labels)| (*id, labels.iter().map(|l| l.as_str()).collect()))
-                .collect();
-            store
-                .bulk_create_nodes_with_id(&refs)
-                .map_err(|e| Error::Internal(format!("materialize nodes: {e}")))?;
-        }
-
-        tracing::info!(
-            live_nodes,
-            elapsed_ms = t_nodes.elapsed().as_millis(),
-            "nodes materialized"
-        );
-
-        // ── Node properties ──
-        let t_props = std::time::Instant::now();
-        for (id, _labels, properties) in mmap_store.iter_nodes() {
-            for (key, value) in properties {
-                store.set_node_property_bulk(id, key.as_str(), value);
-            }
-        }
-        tracing::info!(
-            elapsed_ms = t_props.elapsed().as_millis(),
-            "node properties materialized"
-        );
-
-        // ── Edges ──
-        let t_edges = std::time::Instant::now();
-        // Collect edges with owned ArcStr so edge_type lives long enough for bulk_create
-        let owned_edges: Vec<(
-            obrain_common::types::EdgeId,
-            obrain_common::types::NodeId,
-            obrain_common::types::NodeId,
-            arcstr::ArcStr,
-        )> = mmap_store
-            .iter_edges()
-            .map(|(id, src, dst, edge_type, _props)| (id, src, dst, edge_type))
-            .collect();
-
-        let live_edges = owned_edges.len();
-        const EDGE_BATCH: usize = 2_000_000;
-        for chunk in owned_edges.chunks(EDGE_BATCH) {
-            let refs: Vec<(
-                obrain_common::types::EdgeId,
-                obrain_common::types::NodeId,
-                obrain_common::types::NodeId,
-                &str,
-            )> = chunk
-                .iter()
-                .map(|(id, src, dst, et)| (*id, *src, *dst, et.as_str()))
-                .collect();
-            store
-                .bulk_create_edges_with_id(&refs)
-                .map_err(|e| Error::Internal(format!("materialize edges: {e}")))?;
-        }
-        tracing::info!(
-            live_edges,
-            elapsed_ms = t_edges.elapsed().as_millis(),
-            "edges materialized"
-        );
-
-        // ── Edge properties ──
-        let t_eprops = std::time::Instant::now();
-        let mut edges_with_props = 0usize;
-        for (id, _src, _dst, _et, properties) in mmap_store.iter_edges() {
-            if properties.is_empty() {
-                continue;
-            }
-            edges_with_props += 1;
-            for (key, value) in properties {
-                store.set_edge_property_bulk(id, key.as_str(), value);
-            }
-        }
-        if edges_with_props > 0 {
-            tracing::info!(
-                edges_with_props,
-                elapsed_ms = t_eprops.elapsed().as_millis(),
-                "edge properties materialized"
-            );
-        }
-
-        // Note: labels and edge types are automatically registered in the store
-        // by bulk_create_nodes_with_id and bulk_create_edges_with_id.
-
-        // ── Sync epoch ──
-        #[cfg(feature = "temporal")]
-        store.sync_epoch(mmap_store.epoch());
-
-        // ── HNSW vector indexes ──
-        #[cfg(feature = "vector-index")]
-        if let Some(hnsw_bytes) = mmap_store.hnsw_topology_bytes() {
-            if let Some(indexes) = native_writer::unpack_hnsw_indexes(hnsw_bytes) {
-                let t_hnsw = std::time::Instant::now();
-                let mut restored = 0usize;
-                for (key, topo_bytes) in &indexes {
-                    if let Some(flat) =
-                        obrain_core::index::vector::HnswFlatTopology::from_bytes(topo_bytes)
-                    {
-                        if let Some(hnsw) =
-                            obrain_core::index::vector::HnswIndex::from_flat(&flat)
-                        {
-                            if let Some((label, property)) = key.split_once(':') {
-                                store.add_vector_index(
-                                    label,
-                                    property,
-                                    std::sync::Arc::new(hnsw),
-                                );
-                                restored += 1;
-                            }
-                        }
-                    }
-                }
-                if restored > 0 {
-                    tracing::info!(
-                        restored,
-                        elapsed_ms = t_hnsw.elapsed().as_millis(),
-                        "HNSW vector indexes restored from mmap"
-                    );
-                }
-            }
-        }
-
-        tracing::info!(
-            live_nodes,
-            live_edges,
-            total_ms = t0.elapsed().as_millis(),
-            "Materialization complete (mmap v2 → LpgStore)"
-        );
-
-        Ok(())
-    }
-
-    /// Materialize only the graph structure (nodes + labels, edges + types)
-    /// from an mmap store into an LpgStore, **without copying any properties**.
-    ///
-    /// This is dramatically faster than full materialization for large databases
-    /// with heavy vector properties (e.g. 32 GB megalaw: full = 20+ min,
-    /// structure-only = ~30s).
-    ///
-    /// Post-T17: the caller is expected to read properties directly from the
-    /// mmap via `MmapStore::*_property()` accessors. The former
-    /// `OverlayStore` (mmap base + LpgStore delta) shim was deleted in W3a
-    /// because substrate's PropsZone v2 already provides the equivalent
-    /// copy-on-write overlay natively. This helper itself is scheduled for
-    /// removal in W3c alongside the rest of the v2 `.obrain` loader.
-    #[cfg(feature = "obrain-file")]
-    pub fn materialize_structure_only(
-        mmap_store: &mmap_store::MmapStore,
-        store: &Arc<LpgStore>,
-    ) -> Result<()> {
-        use obrain_common::utils::error::Error;
-
-        let t0 = std::time::Instant::now();
-        let node_count = mmap_store.node_slot_count();
-        let edge_count = mmap_store.edge_slot_count();
-
-        tracing::info!(
-            node_slots = node_count,
-            edge_slots = edge_count,
-            "Materializing structure only (mmap v2 → LpgStore, NO properties)..."
-        );
-
-        store.reserve_for_restore(node_count, edge_count);
-
-        // ── Nodes (labels only, no properties) ──
-        let t_nodes = std::time::Instant::now();
-        let owned_nodes: Vec<(obrain_common::types::NodeId, smallvec::SmallVec<[arcstr::ArcStr; 4]>)> =
-            mmap_store
-                .iter_nodes_structure_only()
-                .collect();
-        let live_nodes = owned_nodes.len();
-
-        const NODE_BATCH: usize = 500_000;
-        for chunk in owned_nodes.chunks(NODE_BATCH) {
-            let refs: Vec<(obrain_common::types::NodeId, Vec<&str>)> = chunk
-                .iter()
-                .map(|(id, labels)| (*id, labels.iter().map(|l| l.as_str()).collect()))
-                .collect();
-            store
-                .bulk_create_nodes_with_id(&refs)
-                .map_err(|e| Error::Internal(format!("materialize nodes: {e}")))?;
-        }
-        tracing::info!(live_nodes, elapsed_ms = t_nodes.elapsed().as_millis(), "nodes materialized (structure only)");
-
-        // ── Edges (type only, no properties) ──
-        let t_edges = std::time::Instant::now();
-        let owned_edges: Vec<(
-            obrain_common::types::EdgeId,
-            obrain_common::types::NodeId,
-            obrain_common::types::NodeId,
-            arcstr::ArcStr,
-        )> = mmap_store
-            .iter_edges_structure_only()
-            .collect();
-        let live_edges = owned_edges.len();
-
-        const EDGE_BATCH: usize = 2_000_000;
-        for chunk in owned_edges.chunks(EDGE_BATCH) {
-            let refs: Vec<(
-                obrain_common::types::EdgeId,
-                obrain_common::types::NodeId,
-                obrain_common::types::NodeId,
-                &str,
-            )> = chunk
-                .iter()
-                .map(|(id, src, dst, et)| (*id, *src, *dst, et.as_str()))
-                .collect();
-            store
-                .bulk_create_edges_with_id(&refs)
-                .map_err(|e| Error::Internal(format!("materialize edges: {e}")))?;
-        }
-        tracing::info!(live_edges, elapsed_ms = t_edges.elapsed().as_millis(), "edges materialized (structure only)");
-
-        // ── Sync epoch ──
-        #[cfg(feature = "temporal")]
-        store.sync_epoch(mmap_store.epoch());
-
-        // ── HNSW vector indexes (restored from mmap, zero property copy) ──
-        #[cfg(feature = "vector-index")]
-        if let Some(hnsw_bytes) = mmap_store.hnsw_topology_bytes() {
-            if let Some(indexes) = native_writer::unpack_hnsw_indexes(hnsw_bytes) {
-                let t_hnsw = std::time::Instant::now();
-                let mut restored = 0usize;
-                for (key, topo_bytes) in &indexes {
-                    if let Some(flat) =
-                        obrain_core::index::vector::HnswFlatTopology::from_bytes(topo_bytes)
-                    {
-                        if let Some(hnsw) =
-                            obrain_core::index::vector::HnswIndex::from_flat(&flat)
-                        {
-                            if let Some((label, property)) = key.split_once(':') {
-                                store.add_vector_index(
-                                    label,
-                                    property,
-                                    std::sync::Arc::new(hnsw),
-                                );
-                                restored += 1;
-                            }
-                        }
-                    }
-                }
-                if restored > 0 {
-                    tracing::info!(
-                        restored,
-                        elapsed_ms = t_hnsw.elapsed().as_millis(),
-                        "HNSW vector indexes restored from mmap (structure-only path)"
-                    );
-                }
-            }
-        }
-
-        tracing::info!(
-            live_nodes,
-            live_edges,
-            total_ms = t0.elapsed().as_millis(),
-            "Structure-only materialization complete (NO properties copied)"
-        );
-
-        Ok(())
-    }
-
-    // `open_overlay` has been removed as part of the T5 substrate migration.
-    //
-    // Rationale: substrate is natively mmap zero-copy, so the overlay
-    // "mmap base + LpgStore delta" trick is no longer needed — `ObrainDB::open`
-    // on a substrate-backed DB doesn't materialize properties into RAM.
-    //
-    // Callers (only obrain-hub/src/knowledge_store.rs) migrated to
-    // `ObrainDB::open` directly.
-
-    // =========================================================================
-    // Session & Configuration
-    // =========================================================================
-
-    /// Opens a new session for running queries.
-    ///
-    /// Sessions are cheap to create: spin up as many as you need. Each
-    /// gets its own transaction context, so concurrent sessions won't
-    /// block each other on reads.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the database was configured with an external graph store and
-    /// the internal arena allocator cannot be initialized (out of memory).
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use obrain_engine::ObrainDB;
-    ///
-    /// let db = ObrainDB::new_in_memory();
-    /// let session = db.session();
-    ///
-    /// // Run queries through the session
-    /// let result = session.execute("MATCH (n) RETURN count(n)")?;
-    /// # Ok::<(), obrain_common::utils::error::Error>(())
-    /// ```
     #[must_use]
     pub fn session(&self) -> Session {
         let session_cfg = || crate::session::SessionConfig {
@@ -1705,15 +1143,6 @@ impl ObrainDB {
 
     /// Returns the read-only mmap store if available (v2 native format).
     ///
-    /// When opened with `Config::read_only()` on a v2 `.obrain` file, the data
-    /// is served directly from mmap without materialization into LpgStore.
-    /// Use this for zero-copy read access (instant open, no RAM overhead).
-    #[cfg(feature = "obrain-file")]
-    #[must_use]
-    pub fn mmap_store(&self) -> Option<&Arc<mmap_store::MmapStore>> {
-        self.mmap_store.as_ref()
-    }
-
     /// Returns the store for the currently active graph.
     ///
     /// If [`current_graph`](Self::current_graph) is `None` or `"default"`, returns
@@ -1879,41 +1308,14 @@ impl ObrainDB {
 
         // Read-only databases: just release the shared lock, no checkpointing
         if self.read_only {
-            #[cfg(feature = "obrain-file")]
-            if let Some(ref fm) = self.file_manager {
-                fm.close()?;
-            }
             *is_open = false;
             return Ok(());
         }
 
-        // For single-file format: checkpoint to .obrain file, then clean up sidecar WAL.
-        // We must do this BEFORE the WAL close path because checkpoint_to_file
-        // removes the sidecar WAL directory.
-        #[cfg(feature = "obrain-file")]
-        let is_single_file = self.file_manager.is_some();
-        #[cfg(not(feature = "obrain-file"))]
+        // T17 final cutover: `is_single_file` is always `false` — substrate
+        // databases are directory-based, legacy single-file `.obrain` v1/v2
+        // was retired (feature `obrain-file` removed in commit `b0f5bd11`).
         let is_single_file = false;
-
-        #[cfg(feature = "obrain-file")]
-        if let Some(ref fm) = self.file_manager {
-            // Flush WAL first so all records are on disk before we snapshot
-            #[cfg(feature = "wal")]
-            if let Some(ref wal) = self.wal {
-                wal.sync()?;
-            }
-            self.checkpoint_to_file(fm)?;
-
-            // Release WAL file handles before removing sidecar directory.
-            // On Windows, open handles prevent directory deletion.
-            #[cfg(feature = "wal")]
-            if let Some(ref wal) = self.wal {
-                wal.close_active_log();
-            }
-
-            fm.remove_sidecar_wal()?;
-            fm.close()?;
-        }
 
         // Commit WAL records (legacy directory format only).
         //
@@ -1967,11 +1369,10 @@ impl ObrainDB {
             wal.flush()?;
         }
 
-        // If we have a file manager, checkpoint the snapshot too
-        #[cfg(feature = "obrain-file")]
-        if let Some(ref fm) = self.file_manager {
-            self.checkpoint_to_file(fm)?;
-        }
+        // T17 final cutover: `file_manager` (single-file `.obrain` v1/v2
+        // format) was retired; no checkpoint_to_file step is needed in
+        // substrate mode — the substrate's own flush below handles
+        // durability for mmap zones and dict columns.
 
         // Substrate dict + mmap zones must be persisted alongside the WAL
         // commit for cross-restart durability (T17 cutover — unconditional).
@@ -2064,70 +1465,13 @@ impl ObrainDB {
         Ok(())
     }
 
-    /// Writes the current database snapshot to the `.obrain` file.
-    ///
-    /// Does NOT remove the sidecar WAL: callers that want to clean up
-    /// the sidecar (e.g. `close()`) should call `fm.remove_sidecar_wal()`
-    /// separately after this returns.
-    #[cfg(feature = "obrain-file")]
-    fn checkpoint_to_file(&self, fm: &ObrainFileManager) -> Result<()> {
-        use obrain_core::testing::crash::maybe_crash;
-
-        maybe_crash("checkpoint_to_file:before_export");
-
-        // T17 W3c slice 5a: route trait reads through data_store() so substrate
-        // mode sees real epoch/counts instead of the dummy LpgStore (zeros).
-        let data = self.data_store();
-        let epoch = data.current_epoch();
-        let transaction_id = self
-            .transaction_manager
-            .last_assigned_transaction_id()
-            .map_or(0, |t| t.0);
-
-        if fm.file_header().is_native_format() {
-            // T17 W3c slice 2: the v2 native checkpoint used to pull data out
-            // of `self.store` (the legacy LpgStore). In substrate mode that
-            // field is a dummy empty store, so every checkpoint silently wrote
-            // an empty file — the very landmine T17 was meant to clear.
-            //
-            // Rather than keep the footgun alive for the (deprecated) LpgStore
-            // mode, we return a clear error. T17b will reintroduce a real v2
-            // checkpoint path via `SubstrateStore::snapshot_to_path()`.
-            return Err(obrain_common::utils::error::Error::Internal(
-                "v2 .obrain checkpoint retired in T17 W3c — \
-                 substrate is mmap + WAL-native; reopen produces the latest \
-                 state without a separate snapshot file. T17b will reintroduce \
-                 an explicit snapshot export via SubstrateStore::snapshot_to_path()"
-                    .to_string(),
-            ));
-        }
-
-        // v1 legacy: bincode serialize + write snapshot (read path still live
-        // for `obrain-migrate` — we keep it to avoid breaking migrations).
-        let snapshot_data = self.export_snapshot()?;
-        maybe_crash("checkpoint_to_file:after_export");
-
-        let node_count = data.node_count() as u64;
-        let edge_count = data.edge_count() as u64;
-
-        fm.write_snapshot(
-            &snapshot_data,
-            epoch.0,
-            transaction_id,
-            node_count,
-            edge_count,
-        )?;
-
-        maybe_crash("checkpoint_to_file:after_write_snapshot");
-        Ok(())
-    }
-
-    /// Returns the file manager if using single-file format.
-    #[cfg(feature = "obrain-file")]
-    #[must_use]
-    pub fn file_manager(&self) -> Option<&Arc<ObrainFileManager>> {
-        self.file_manager.as_ref()
-    }
+    // T17 final cutover (2026-04-23): `checkpoint_to_file` and
+    // `file_manager` accessors were retired with the `obrain-file`
+    // feature (commit `b0f5bd11`). Substrate is mmap + WAL-native and
+    // persists automatically through its own flush path — no separate
+    // single-file snapshot export is needed. A future slice (T17b)
+    // may reintroduce an explicit snapshot export via
+    // `SubstrateStore::snapshot_to_path()`.
 }
 
 impl Drop for ObrainDB {
