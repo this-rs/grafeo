@@ -1,3 +1,4 @@
+#![cfg(feature = "cypher")]
 //! Integration tests for WAL directory-format persistence.
 //!
 //! These tests specifically target the directory WAL format (NOT the `.obrain`

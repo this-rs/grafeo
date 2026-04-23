@@ -1,3 +1,4 @@
+#![cfg(feature = "cypher")]
 //! Integration tests for snapshot export/import.
 
 use obrain_common::types::{EdgeId, EpochId, NodeId, Value};

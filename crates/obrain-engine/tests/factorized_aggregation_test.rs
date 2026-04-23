@@ -1,3 +1,4 @@
+#![cfg(feature = "cypher")]
 //! Tests for factorized aggregation optimization.
 //!
 //! These tests verify that COUNT, SUM, AVG, MIN, MAX aggregates work correctly

@@ -1,3 +1,4 @@
+#![cfg(feature = "cypher")]
 //! Benchmark the bottlenecks in obrain-chat "searching graph..." step
 //! on the megalaw database (~21GB epoch file, 8.1M nodes, 14M edges).
 //!

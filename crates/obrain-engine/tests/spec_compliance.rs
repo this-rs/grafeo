@@ -1,3 +1,4 @@
+#![cfg(feature = "cypher")]
 //! Spec compliance tests for GQL, Cypher, and SPARQL.
 //!
 //! Tests the features added in 0.5.13 for full spec coverage.

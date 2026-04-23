@@ -1,3 +1,4 @@
+#![cfg(feature = "cypher")]
 //! Comparative benchmark: Obrain vs Neo4j for Project Orchestrator workloads.
 //!
 //! Runs the exact Cypher queries used by the PO backend (src/neo4j/*.rs)

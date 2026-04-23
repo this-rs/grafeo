@@ -1,3 +1,4 @@
+#![cfg(feature = "cypher")]
 //! Profiling bench to identify exact bottlenecks in slow PO queries.
 //!
 //! cargo test -p obrain-engine --release --features "cypher,wal,tiered-storage" \

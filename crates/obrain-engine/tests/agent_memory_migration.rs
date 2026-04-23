@@ -1,3 +1,4 @@
+#![cfg(feature = "cypher")]
 //! Integration tests for the agent-memory migration scenario (Discussion #155).
 //!
 //! Verifies: HNSW at scale, persistence, BYOV 384-dim, concurrent reads,

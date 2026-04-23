@@ -1,3 +1,4 @@
+#![cfg(feature = "cypher")]
 //! Integration tests for WAL-based persistence and recovery.
 //!
 //! Covers: save/restore cycle, WAL recovery of nodes/edges/properties/labels,

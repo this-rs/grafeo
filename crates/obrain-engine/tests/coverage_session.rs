@@ -1,3 +1,4 @@
+#![cfg(feature = "cypher")]
 //! Tests for session API coverage gaps.
 //!
 //! Targets: session.rs (73.07%), common.rs optional predicate classification

@@ -1,3 +1,4 @@
+#![cfg(feature = "cypher")]
 //! Tests for startNode(r) and endNode(r) functions (#180).
 //!
 //! ```bash
