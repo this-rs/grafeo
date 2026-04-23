@@ -26,6 +26,7 @@ use crate::graph::lpg::CompareOp;
 use crate::graph::lpg::{Edge, Node};
 use crate::statistics::Statistics;
 use arcstr::ArcStr;
+use obrain_common::memory::arena::AllocError;
 use obrain_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TransactionId, Value};
 use obrain_common::utils::hash::FxHashMap;
 use std::sync::Arc;
@@ -700,5 +701,42 @@ pub trait GraphStoreMut: GraphStore {
         _node_ids: &[NodeId],
         _edge_ids: &[EdgeId],
     ) {
+    }
+
+    // --- Named-graph hooks (T17 Step 24: 2026-04-23) ---
+    //
+    // LpgStore supports named sub-graphs (CREATE GRAPH g / DROP GRAPH g /
+    // USE GRAPH g). The substrate backend does not — one database = one
+    // graph in the topology-as-storage model. Named-graph methods default
+    // to "not supported" values so that the Session layer can drive both
+    // backends through `Arc<dyn GraphStoreMut>`; callers are already
+    // defensive about `None` / empty results (fall back to the root
+    // store when a named graph is missing). A substrate-native
+    // multi-graph story is a separate RFC and is not required for T17.
+
+    /// Returns a named graph by name, or `None` if it does not exist /
+    /// named graphs are not supported by this backend.
+    fn named_graph(&self, _name: &str) -> Option<Arc<dyn GraphStoreMut>> {
+        None
+    }
+
+    /// Creates a named graph. Returns `Ok(true)` on success, `Ok(false)`
+    /// if it already exists. The default implementation returns
+    /// `Ok(false)` — backends without named-graph support treat every
+    /// name as a no-op.
+    fn create_named_graph(&self, _name: &str) -> Result<bool, AllocError> {
+        Ok(false)
+    }
+
+    /// Drops a named graph. Returns `false` if it did not exist / named
+    /// graphs are not supported.
+    fn drop_named_graph(&self, _name: &str) -> bool {
+        false
+    }
+
+    /// Returns the names of all named graphs. Empty for backends without
+    /// named-graph support.
+    fn named_graph_names(&self) -> Vec<String> {
+        Vec::new()
     }
 }

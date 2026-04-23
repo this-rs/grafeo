@@ -360,6 +360,32 @@ impl GraphStoreMut for LpgStore {
         LpgStore::discard_entities_by_id(self, transaction_id, node_ids, edge_ids)
     }
 
+    // --- Named-graph overrides ---
+    //
+    // LpgStore supports named sub-graphs; substrate does not yet. These
+    // overrides keep LpgStore's native API reachable through the trait
+    // so Session / other callers can hold `Arc<dyn GraphStoreMut>` and
+    // still use `CREATE GRAPH g` / `DROP GRAPH g` / `USE GRAPH g` on
+    // the LpgStore code path (legacy-read feature + tests).
+    fn named_graph(&self, name: &str) -> Option<std::sync::Arc<dyn GraphStoreMut>> {
+        LpgStore::graph(self, name).map(|g| g as std::sync::Arc<dyn GraphStoreMut>)
+    }
+
+    fn create_named_graph(
+        &self,
+        name: &str,
+    ) -> Result<bool, obrain_common::memory::arena::AllocError> {
+        LpgStore::create_graph(self, name)
+    }
+
+    fn drop_named_graph(&self, name: &str) -> bool {
+        LpgStore::drop_graph(self, name)
+    }
+
+    fn named_graph_names(&self) -> Vec<String> {
+        LpgStore::graph_names(self)
+    }
+
     fn create_node(&self, labels: &[&str]) -> NodeId {
         LpgStore::create_node(self, labels)
     }
