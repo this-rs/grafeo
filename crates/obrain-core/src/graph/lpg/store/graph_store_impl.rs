@@ -386,6 +386,14 @@ impl GraphStoreMut for LpgStore {
         LpgStore::graph_names(self)
     }
 
+    fn copy_named_graph(
+        &self,
+        source: Option<&str>,
+        dest: Option<&str>,
+    ) -> Result<(), String> {
+        LpgStore::copy_graph(self, source, dest).map_err(|e| e.to_string())
+    }
+
     fn create_node(&self, labels: &[&str]) -> NodeId {
         LpgStore::create_node(self, labels)
     }

@@ -739,4 +739,16 @@ pub trait GraphStoreMut: GraphStore {
     fn named_graph_names(&self) -> Vec<String> {
         Vec::new()
     }
+
+    /// Copies all nodes and edges from the `source` named graph into the
+    /// `dest` named graph (both `None` = root graph). Used by
+    /// `CREATE GRAPH g AS COPY OF h`. The default returns an error for
+    /// backends without named-graph support.
+    fn copy_named_graph(
+        &self,
+        _source: Option<&str>,
+        _dest: Option<&str>,
+    ) -> Result<(), String> {
+        Err("named graphs are not supported by this backend".to_string())
+    }
 }
