@@ -80,9 +80,13 @@ pub(crate) struct SessionConfig {
 /// tracks its own transaction state, so you can have multiple concurrent
 /// sessions without them interfering.
 pub struct Session {
-    /// The underlying store.
-    store: Arc<LpgStore>,
     /// Graph store trait object for pluggable storage backends.
+    ///
+    /// T17 Step 24 (2026-04-23): the previous `store: Arc<LpgStore>`
+    /// field was deleted. MVCC + named-graph bookkeeping now dispatch
+    /// entirely through this `Arc<dyn GraphStoreMut>` handle (the
+    /// trait methods default to substrate-compatible no-ops; LpgStore
+    /// overrides delegate to its inherent impls).
     graph_store: Arc<dyn GraphStoreMut>,
     /// Schema and metadata catalog shared across sessions.
     catalog: Arc<Catalog>,
@@ -194,11 +198,9 @@ struct SavepointState {
 impl Session {
     /// Creates a new session with adaptive execution configuration.
     #[allow(dead_code)]
-    pub(crate) fn with_adaptive(store: Arc<LpgStore>, cfg: SessionConfig) -> Self {
-        let graph_store = Arc::clone(&store) as Arc<dyn GraphStoreMut>;
+    pub(crate) fn with_adaptive(store: Arc<dyn GraphStoreMut>, cfg: SessionConfig) -> Self {
         Self {
-            store,
-            graph_store,
+            graph_store: store,
             catalog: cfg.catalog,
             #[cfg(feature = "rdf")]
             rdf_store: Arc::new(RdfStore::new()),
@@ -251,7 +253,7 @@ impl Session {
     ) {
         // Wrap the graph store so query-engine mutations are WAL-logged
         self.graph_store = Arc::new(crate::database::wal_store::WalGraphStore::new(
-            Arc::clone(&self.store),
+            Arc::clone(&self.graph_store),
             Arc::clone(&wal),
             Arc::clone(&wal_graph_context),
         ));
@@ -294,7 +296,6 @@ impl Session {
         cfg: SessionConfig,
     ) -> Result<Self> {
         Ok(Self {
-            store: Arc::new(LpgStore::new()?),
             graph_store: store,
             catalog: cfg.catalog,
             #[cfg(feature = "rdf")]
@@ -407,7 +408,7 @@ impl Session {
         let key = self.active_graph_storage_key();
         match key {
             None => Arc::clone(&self.graph_store),
-            Some(ref name) => match self.store.graph(name) {
+            Some(ref name) => match self.graph_store.named_graph(name) {
                 Some(named_store) => {
                     #[cfg(feature = "wal")]
                     if let (Some(wal), Some(ctx)) = (&self.wal, &self.wal_graph_context) {
@@ -425,20 +426,13 @@ impl Session {
         }
     }
 
-    /// Returns the concrete `LpgStore` for the currently active graph.
-    ///
-    /// Used by direct CRUD methods that need the concrete store type
-    /// for versioned operations.
-    fn active_lpg_store(&self) -> Arc<LpgStore> {
-        let key = self.active_graph_storage_key();
-        match key {
-            None => Arc::clone(&self.store),
-            Some(ref name) => self
-                .store
-                .graph(name)
-                .unwrap_or_else(|| Arc::clone(&self.store)),
-        }
-    }
+    // T17 Step 24 (2026-04-23): `active_lpg_store()` was deleted.
+    // All call sites were migrated to `active_store()` which returns
+    // `Arc<dyn GraphStoreMut>`; MVCC + named-graph hooks live on the
+    // trait with substrate-compatible defaults. The remaining
+    // LpgStore-specific operations (explicit CREATE VECTOR INDEX /
+    // CREATE INDEX / DROP INDEX) now return a substrate-era error
+    // directly instead of routing to the dummy LpgStore shadow.
 
     /// Resolves a graph name to an `Arc<dyn GraphStoreMut>`.
     /// `None` and `"default"` resolve to the session's root store.
@@ -454,14 +448,12 @@ impl Session {
     /// or `SubstrateStore` (topology-as-storage, no per-tx epochs).
     fn resolve_store(&self, graph_name: &Option<String>) -> Arc<dyn GraphStoreMut> {
         match graph_name {
-            None => Arc::clone(&self.store) as Arc<dyn GraphStoreMut>,
-            Some(name) if name.eq_ignore_ascii_case("default") => {
-                Arc::clone(&self.store) as Arc<dyn GraphStoreMut>
-            }
-            Some(name) => match self.store.graph(name) {
-                Some(g) => g as Arc<dyn GraphStoreMut>,
-                None => Arc::clone(&self.store) as Arc<dyn GraphStoreMut>,
-            },
+            None => Arc::clone(&self.graph_store),
+            Some(name) if name.eq_ignore_ascii_case("default") => Arc::clone(&self.graph_store),
+            Some(name) => self
+                .graph_store
+                .named_graph(name)
+                .unwrap_or_else(|| Arc::clone(&self.graph_store)),
         }
     }
 
@@ -557,7 +549,7 @@ impl Session {
     /// Properties and labels reflect the current state (not versioned per-epoch).
     #[must_use]
     pub fn get_node_history(&self, id: NodeId) -> Vec<(EpochId, Option<EpochId>, Node)> {
-        self.active_lpg_store().get_node_history(id)
+        self.active_store().get_node_history(id)
     }
 
     /// Returns all versions of an edge with their creation/deletion epochs.
@@ -565,7 +557,7 @@ impl Session {
     /// Properties reflect the current state (not versioned per-epoch).
     #[must_use]
     pub fn get_edge_history(&self, id: EdgeId) -> Vec<(EpochId, Option<EpochId>, Edge)> {
-        self.active_lpg_store().get_edge_history(id)
+        self.active_store().get_edge_history(id)
     }
 
     /// Checks that the session's graph model supports LPG operations.
@@ -614,7 +606,7 @@ impl Session {
                 // Validate source graph exists for LIKE / AS COPY OF
                 if let Some(ref src) = like_graph {
                     let src_key = self.effective_graph_key(src);
-                    if self.store.graph(&src_key).is_none() {
+                    if self.graph_store.named_graph(&src_key).is_none() {
                         return Err(Error::Query(QueryError::new(
                             QueryErrorKind::Semantic,
                             format!("Source graph '{src}' does not exist"),
@@ -623,7 +615,7 @@ impl Session {
                 }
                 if let Some(ref src) = copy_of {
                     let src_key = self.effective_graph_key(src);
-                    if self.store.graph(&src_key).is_none() {
+                    if self.graph_store.named_graph(&src_key).is_none() {
                         return Err(Error::Query(QueryError::new(
                             QueryErrorKind::Semantic,
                             format!("Source graph '{src}' does not exist"),
@@ -632,8 +624,8 @@ impl Session {
                 }
 
                 let created = self
-                    .store
-                    .create_graph(&storage_key)
+                    .graph_store
+                    .create_named_graph(&storage_key)
                     .map_err(|e| Error::Internal(e.to_string()))?;
                 if !created && !if_not_exists {
                     return Err(Error::Query(QueryError::new(
@@ -653,9 +645,9 @@ impl Session {
                 // AS COPY OF: copy data from source graph
                 if let Some(ref src) = copy_of {
                     let src_key = self.effective_graph_key(src);
-                    self.store
-                        .copy_graph(Some(&src_key), Some(&storage_key))
-                        .map_err(|e| Error::Internal(e.to_string()))?;
+                    self.graph_store
+                        .copy_named_graph(Some(&src_key), Some(&storage_key))
+                        .map_err(Error::Internal)?;
                 }
 
                 // Bind to graph type if specified
@@ -682,7 +674,7 @@ impl Session {
             }
             SessionCommand::DropGraph { name, if_exists } => {
                 let storage_key = self.effective_graph_key(&name);
-                let dropped = self.store.drop_graph(&storage_key);
+                let dropped = self.graph_store.drop_named_graph(&storage_key);
                 if !dropped && !if_exists {
                     return Err(Error::Query(QueryError::new(
                         QueryErrorKind::Semantic,
@@ -711,7 +703,7 @@ impl Session {
                 // Verify graph exists (resolve within current schema)
                 let effective_key = self.effective_graph_key(&name);
                 if !name.eq_ignore_ascii_case("default")
-                    && self.store.graph(&effective_key).is_none()
+                    && self.graph_store.named_graph(&effective_key).is_none()
                 {
                     return Err(Error::Query(QueryError::new(
                         QueryErrorKind::Semantic,
@@ -727,7 +719,7 @@ impl Session {
                 // ISO/IEC 39075 Section 7.1 GR2: set session graph (resolved within current schema)
                 let effective_key = self.effective_graph_key(&name);
                 if !name.eq_ignore_ascii_case("default")
-                    && self.store.graph(&effective_key).is_none()
+                    && self.graph_store.named_graph(&effective_key).is_none()
                 {
                     return Err(Error::Query(QueryError::new(
                         QueryErrorKind::Semantic,
@@ -977,27 +969,21 @@ impl Session {
                     ))),
                 }
             }
-            SchemaStatement::CreateVectorIndex(stmt) => {
-                Self::create_vector_index_on_store(
-                    &self.active_lpg_store(),
-                    &stmt.node_label,
-                    &stmt.property,
-                    stmt.dimensions,
-                    stmt.metric.as_deref(),
-                )?;
-                wal_log!(
-                    self,
-                    WalRecord::CreateIndex {
-                        name: stmt.name.clone(),
-                        label: stmt.node_label.clone(),
-                        property: stmt.property.clone(),
-                        index_type: "vector".to_string(),
-                    }
-                );
-                Ok(QueryResult::status(format!(
-                    "Created vector index '{}'",
-                    stmt.name
-                )))
+            SchemaStatement::CreateVectorIndex(_stmt) => {
+                // T17 Step 24 (2026-04-23): explicit vector-index
+                // creation via GQL is an LpgStore-era API. Substrate
+                // builds its own tiered-storage vector layout
+                // automatically (L0/L1/L2 zones driven by the
+                // CommunityWarden thinker) — no per-index HNSW graph
+                // to materialise. The GQL statement is retained so
+                // existing scripts parse cleanly but evaluating it
+                // against a substrate-backed session returns an error.
+                Err(Error::Internal(
+                    "CREATE VECTOR INDEX is no longer supported since the T17 substrate \
+                     cutover — substrate builds its own tiered-storage vector layout \
+                     automatically (see CommunityWarden)."
+                        .to_string(),
+                ))
             }
             SchemaStatement::DropNodeType { name, if_exists } => {
                 match self.catalog.drop_node_type(&name) {
@@ -1031,71 +1017,40 @@ impl Session {
                     ))),
                 }
             }
-            SchemaStatement::CreateIndex(stmt) => {
-                use obrain_adapters::query::gql::ast::IndexKind;
-                let active = self.active_lpg_store();
-                let index_type_str = match stmt.index_kind {
-                    IndexKind::Property => "property",
-                    IndexKind::BTree => "btree",
-                    IndexKind::Text => "text",
-                    IndexKind::Vector => "vector",
-                };
-                match stmt.index_kind {
-                    IndexKind::Property | IndexKind::BTree => {
-                        for prop in &stmt.properties {
-                            active.create_property_index(prop);
-                        }
-                    }
-                    IndexKind::Text => {
-                        for prop in &stmt.properties {
-                            Self::create_text_index_on_store(&active, &stmt.label, prop)?;
-                        }
-                    }
-                    IndexKind::Vector => {
-                        for prop in &stmt.properties {
-                            Self::create_vector_index_on_store(
-                                &active,
-                                &stmt.label,
-                                prop,
-                                stmt.options.dimensions,
-                                stmt.options.metric.as_deref(),
-                            )?;
-                        }
-                    }
-                }
-                #[cfg(feature = "wal")]
-                for prop in &stmt.properties {
-                    wal_log!(
-                        self,
-                        WalRecord::CreateIndex {
-                            name: stmt.name.clone(),
-                            label: stmt.label.clone(),
-                            property: prop.clone(),
-                            index_type: index_type_str.to_string(),
-                        }
-                    );
-                }
-                Ok(QueryResult::status(format!(
-                    "Created {} index '{}'",
-                    index_type_str, stmt.name
-                )))
+            SchemaStatement::CreateIndex(_stmt) => {
+                // T17 Step 24 (2026-04-23): `CREATE INDEX` / `CREATE TEXT
+                // INDEX` / `CREATE VECTOR INDEX` were LpgStore-era APIs
+                // that materialised per-label/per-property HNSW or BM25
+                // side-tables. Substrate's tiered-storage layout
+                // subsumes them: embeddings live in L0/L1/L2 zones
+                // built automatically by the CommunityWarden, and the
+                // text index lives in the substrate's inverted-index
+                // column. The GQL statements are retained so existing
+                // scripts parse cleanly but evaluating them returns an
+                // error on substrate-backed sessions.
+                Err(Error::Internal(
+                    "CREATE INDEX is no longer supported since the T17 substrate cutover — \
+                     substrate builds its own tiered-storage / inverted-index layout \
+                     automatically (see CommunityWarden + substrate RetrievalTier)."
+                        .to_string(),
+                ))
             }
             SchemaStatement::DropIndex { name, if_exists } => {
-                // Try to drop property index by name
-                let dropped = self.active_lpg_store().drop_property_index(&name);
-                if dropped || if_exists {
-                    if dropped {
-                        wal_log!(self, WalRecord::DropIndex { name: name.clone() });
-                    }
-                    Ok(QueryResult::status(if dropped {
-                        format!("Dropped index '{name}'")
-                    } else {
-                        "No change".to_string()
-                    }))
+                // T17 Step 24 (2026-04-23): `DROP INDEX` was an
+                // LpgStore-era API. Substrate's tiered storage does
+                // not expose named per-property indexes. Returns Ok
+                // under `IF EXISTS` for idempotent scripts, error
+                // otherwise.
+                if if_exists {
+                    Ok(QueryResult::status("No change"))
                 } else {
                     Err(Error::Query(QueryError::new(
                         QueryErrorKind::Semantic,
-                        format!("Index '{name}' does not exist"),
+                        format!(
+                            "DROP INDEX '{name}' is no longer supported since the T17 \
+                             substrate cutover — substrate does not expose named per-property \
+                             indexes."
+                        ),
                     )))
                 }
             }
@@ -1364,8 +1319,8 @@ impl Session {
                 // ISO/IEC 39075 Section 12.3: schema must be empty before dropping
                 let prefix = format!("{name}/");
                 let has_graphs = self
-                    .store
-                    .graph_names()
+                    .graph_store
+                    .named_graph_names()
                     .iter()
                     .any(|g| g.starts_with(&prefix));
                 if has_graphs {
@@ -1685,107 +1640,16 @@ impl Session {
         result
     }
 
-    /// Creates a vector index on the store by scanning existing nodes.
-    #[cfg(all(feature = "gql", feature = "vector-index"))]
-    fn create_vector_index_on_store(
-        store: &LpgStore,
-        label: &str,
-        property: &str,
-        dimensions: Option<usize>,
-        metric: Option<&str>,
-    ) -> Result<()> {
-        use obrain_common::types::{PropertyKey, Value};
-        use obrain_common::utils::error::Error;
-        use obrain_core::index::vector::{DistanceMetric, HnswConfig, HnswIndex};
-
-        let metric = match metric {
-            Some(m) => DistanceMetric::from_str(m).ok_or_else(|| {
-                Error::Internal(format!(
-                    "Unknown distance metric '{m}'. Use: cosine, euclidean, dot_product, manhattan"
-                ))
-            })?,
-            None => DistanceMetric::Cosine,
-        };
-
-        let prop_key = PropertyKey::new(property);
-        let mut found_dims: Option<usize> = dimensions;
-        let mut vectors: Vec<(obrain_common::types::NodeId, Vec<f32>)> = Vec::new();
-
-        for node in store.nodes_with_label(label) {
-            if let Some(Value::Vector(v)) = node.properties.get(&prop_key) {
-                if let Some(expected) = found_dims {
-                    if v.len() != expected {
-                        return Err(Error::Internal(format!(
-                            "Vector dimension mismatch: expected {expected}, found {} on node {}",
-                            v.len(),
-                            node.id.0
-                        )));
-                    }
-                } else {
-                    found_dims = Some(v.len());
-                }
-                vectors.push((node.id, v.to_vec()));
-            }
-        }
-
-        let Some(dims) = found_dims else {
-            return Err(Error::Internal(format!(
-                "No vector properties found on :{label}({property}) and no dimensions specified"
-            )));
-        };
-
-        let config = HnswConfig::new(dims, metric);
-        let index = HnswIndex::with_capacity(config, vectors.len());
-        let accessor = obrain_core::index::vector::PropertyVectorAccessor::new(store, property);
-        for (node_id, vec) in &vectors {
-            index.insert(*node_id, vec, &accessor);
-        }
-
-        store.add_vector_index(label, property, Arc::new(index));
-        Ok(())
-    }
-
-    /// Stub for when vector-index feature is not enabled.
-    #[cfg(all(feature = "gql", not(feature = "vector-index")))]
-    fn create_vector_index_on_store(
-        _store: &LpgStore,
-        _label: &str,
-        _property: &str,
-        _dimensions: Option<usize>,
-        _metric: Option<&str>,
-    ) -> Result<()> {
-        Err(obrain_common::utils::error::Error::Internal(
-            "Vector index support requires the 'vector-index' feature".to_string(),
-        ))
-    }
-
-    /// Creates a text index on the store by scanning existing nodes.
-    #[cfg(all(feature = "gql", feature = "text-index"))]
-    fn create_text_index_on_store(store: &LpgStore, label: &str, property: &str) -> Result<()> {
-        use obrain_common::types::{PropertyKey, Value};
-        use obrain_core::index::text::{BM25Config, InvertedIndex};
-
-        let mut index = InvertedIndex::new(BM25Config::default());
-        let prop_key = PropertyKey::new(property);
-
-        let nodes = store.nodes_by_label(label);
-        for node_id in nodes {
-            if let Some(Value::String(text)) = store.get_node_property(node_id, &prop_key) {
-                index.insert(node_id, text.as_str());
-            }
-        }
-
-        store.add_text_index(label, property, Arc::new(parking_lot::RwLock::new(index)));
-        Ok(())
-    }
-
-    /// Stub for when text-index feature is not enabled.
-    #[cfg(all(feature = "gql", not(feature = "text-index")))]
-    fn create_text_index_on_store(_store: &LpgStore, _label: &str, _property: &str) -> Result<()> {
-        Err(obrain_common::utils::error::Error::Internal(
-            "Text index support requires the 'text-index' feature".to_string(),
-        ))
-    }
+    // T17 Step 24 (2026-04-23): `create_vector_index_on_store` and
+    // `create_text_index_on_store` were LpgStore-only helpers (they
+    // built HNSW / BM25 side-tables and attached them to the
+    // concrete `LpgStore` via `add_vector_index` / `add_text_index`).
+    // The `CREATE VECTOR INDEX` / `CREATE INDEX` GQL statements that
+    // called these helpers now return a substrate-era error at
+    // dispatch, so the helpers themselves are dead code and have been
+    // removed (-170 LOC). Substrate builds its own tiered-storage
+    // vector + inverted-index layout automatically (L0/L1/L2 zones
+    // driven by the CommunityWarden thinker).
 
     /// Returns a table of all indexes from the catalog.
     fn execute_show_indexes(&self) -> Result<QueryResult> {
@@ -1955,7 +1819,7 @@ impl Session {
     /// without a schema prefix are shown (the default schema).
     fn execute_show_graphs(&self) -> Result<QueryResult> {
         let schema = self.current_schema.lock().clone();
-        let all_names = self.store.graph_names();
+        let all_names = self.graph_store.named_graph_names();
 
         let mut names: Vec<String> = match &schema {
             Some(s) => {
@@ -3059,7 +2923,7 @@ impl Session {
             return Ok(());
         }
 
-        let active = self.active_lpg_store();
+        let active = self.active_store();
         self.transaction_start_node_count
             .store(active.node_count(), Ordering::Relaxed);
         self.transaction_start_edge_count
@@ -3486,7 +3350,7 @@ impl Session {
     pub(crate) fn node_count_delta(&self) -> (usize, usize) {
         (
             self.transaction_start_node_count.load(Ordering::Relaxed),
-            self.active_lpg_store().node_count(),
+            self.active_store().node_count(),
         )
     }
 
@@ -3495,7 +3359,7 @@ impl Session {
     pub(crate) fn edge_count_delta(&self) -> (usize, usize) {
         (
             self.transaction_start_edge_count.load(Ordering::Relaxed),
-            self.active_lpg_store().edge_count(),
+            self.active_store().edge_count(),
         )
     }
 
@@ -3878,7 +3742,7 @@ impl Session {
     #[must_use]
     pub fn get_node(&self, id: NodeId) -> Option<Node> {
         let (epoch, transaction_id) = self.get_transaction_context();
-        self.active_lpg_store().get_node_versioned(
+        self.active_store().get_node_versioned(
             id,
             epoch,
             transaction_id.unwrap_or(TransactionId::SYSTEM),
@@ -3923,7 +3787,7 @@ impl Session {
     #[must_use]
     pub fn get_edge(&self, id: EdgeId) -> Option<Edge> {
         let (epoch, transaction_id) = self.get_transaction_context();
-        self.active_lpg_store().get_edge_versioned(
+        self.active_store().get_edge_versioned(
             id,
             epoch,
             transaction_id.unwrap_or(TransactionId::SYSTEM),
@@ -3957,9 +3821,7 @@ impl Session {
     /// ```
     #[must_use]
     pub fn get_neighbors_outgoing(&self, node: NodeId) -> Vec<(NodeId, EdgeId)> {
-        self.active_lpg_store()
-            .edges_from(node, Direction::Outgoing)
-            .collect()
+        self.active_store().edges_from(node, Direction::Outgoing)
     }
 
     /// Gets incoming neighbors of a node directly, bypassing query planning.
@@ -3972,9 +3834,7 @@ impl Session {
     /// - Uses backward adjacency index for direct access
     #[must_use]
     pub fn get_neighbors_incoming(&self, node: NodeId) -> Vec<(NodeId, EdgeId)> {
-        self.active_lpg_store()
-            .edges_from(node, Direction::Incoming)
-            .collect()
+        self.active_store().edges_from(node, Direction::Incoming)
     }
 
     /// Gets outgoing neighbors filtered by edge type, bypassing query planning.
@@ -3994,8 +3854,9 @@ impl Session {
         node: NodeId,
         edge_type: &str,
     ) -> Vec<(NodeId, EdgeId)> {
-        self.active_lpg_store()
+        self.active_store()
             .edges_from(node, Direction::Outgoing)
+            .into_iter()
             .filter(|(_, edge_id)| {
                 self.get_edge(*edge_id)
                     .is_some_and(|e| e.edge_type.as_str() == edge_type)
@@ -4025,7 +3886,7 @@ impl Session {
     /// Returns (outgoing_degree, incoming_degree).
     #[must_use]
     pub fn get_degree(&self, node: NodeId) -> (usize, usize) {
-        let active = self.active_lpg_store();
+        let active = self.active_store();
         let out = active.out_degree(node);
         let in_degree = active.in_degree(node);
         (out, in_degree)
@@ -4044,7 +3905,7 @@ impl Session {
     pub fn get_nodes_batch(&self, ids: &[NodeId]) -> Vec<Option<Node>> {
         let (epoch, transaction_id) = self.get_transaction_context();
         let tx = transaction_id.unwrap_or(TransactionId::SYSTEM);
-        let active = self.active_lpg_store();
+        let active = self.active_store();
         ids.iter()
             .map(|&id| active.get_node_versioned(id, epoch, tx))
             .collect()

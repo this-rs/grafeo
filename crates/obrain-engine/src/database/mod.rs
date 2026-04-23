@@ -1536,7 +1536,10 @@ impl ObrainDB {
             session_cfg(),
         );
         #[cfg(not(feature = "rdf"))]
-        let mut session = Session::with_adaptive(Arc::clone(&self.store), session_cfg());
+        let mut session = Session::with_adaptive(
+            Arc::clone(&self.store) as Arc<dyn GraphStoreMut>,
+            session_cfg(),
+        );
 
         #[cfg(feature = "wal")]
         if let Some(ref wal) = self.wal {
@@ -1997,7 +2000,7 @@ impl ObrainDB {
         #[cfg(feature = "wal")]
         if let Some(ref wal) = self.wal {
             return Arc::new(wal_store::WalGraphStore::new(
-                Arc::clone(&self.store),
+                Arc::clone(&self.store) as Arc<dyn GraphStoreMut>,
                 Arc::clone(wal),
                 Arc::clone(&self.wal_graph_context),
             ));

@@ -25,7 +25,7 @@ use arcstr::ArcStr;
 /// `wal_graph_context` mutex ensures atomicity of context-switch + mutation
 /// pairs across concurrent sessions.
 pub struct WalGraphStore {
-    inner: Arc<LpgStore>,
+    inner: Arc<dyn GraphStoreMut>,
     wal: Arc<LpgWal>,
     /// Which named graph this store represents (`None` = default graph).
     graph_name: Option<String>,
@@ -37,7 +37,7 @@ pub struct WalGraphStore {
 impl WalGraphStore {
     /// Creates a new WAL-aware store wrapper for the default graph.
     pub fn new(
-        inner: Arc<LpgStore>,
+        inner: Arc<dyn GraphStoreMut>,
         wal: Arc<LpgWal>,
         wal_graph_context: Arc<parking_lot::Mutex<Option<String>>>,
     ) -> Self {
@@ -51,7 +51,7 @@ impl WalGraphStore {
 
     /// Creates a new WAL-aware store wrapper for a named graph.
     pub fn new_for_graph(
-        inner: Arc<LpgStore>,
+        inner: Arc<dyn GraphStoreMut>,
         wal: Arc<LpgWal>,
         graph_name: String,
         wal_graph_context: Arc<parking_lot::Mutex<Option<String>>>,
@@ -420,15 +420,20 @@ impl GraphStoreMut for WalGraphStore {
     }
 
     fn delete_node_edges(&self, node_id: NodeId) {
-        // Collect edge IDs before deletion so we can log them
+        // Collect edge IDs before deletion so we can log them.
+        // T17 Step 24: `edges_from` returns `Vec` on the trait (was
+        // `Iterator` on LpgStore inherent), so `.map(..).collect()`
+        // becomes `.into_iter().map(..).collect()`.
         let outgoing: Vec<EdgeId> = self
             .inner
             .edges_from(node_id, Direction::Outgoing)
+            .into_iter()
             .map(|(_, eid)| eid)
             .collect();
         let incoming: Vec<EdgeId> = self
             .inner
             .edges_from(node_id, Direction::Incoming)
+            .into_iter()
             .map(|(_, eid)| eid)
             .collect();
 
