@@ -829,6 +829,17 @@ pub trait GraphStoreMut: GraphStore {
     // LpgStore overrides each method by delegating to its inherent
     // implementation (legacy-read path + in-memory shadow).
 
+    /// Returns every node in the store. Default iterates through
+    /// `node_ids()` + `get_node()` (hydrating each node on demand).
+    /// Implementations with a faster path (e.g. DashMap iteration)
+    /// may override.
+    fn all_nodes(&self) -> Vec<Node> {
+        self.node_ids()
+            .into_iter()
+            .filter_map(|id| self.get_node(id))
+            .collect()
+    }
+
     /// Returns all nodes carrying the given label. Used by index
     /// builders. Default returns empty — backends that do not maintain
     /// a label→nodes reverse index should populate on demand via

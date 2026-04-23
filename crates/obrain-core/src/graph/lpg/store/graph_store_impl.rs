@@ -442,6 +442,10 @@ impl GraphStoreMut for LpgStore {
     }
 
     // --- LpgStore-legacy inspection overrides ---
+    fn all_nodes(&self) -> Vec<Node> {
+        LpgStore::all_nodes(self).collect()
+    }
+
     fn nodes_with_label(&self, label: &str) -> Vec<Node> {
         LpgStore::nodes_with_label(self, label).collect()
     }

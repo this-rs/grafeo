@@ -96,6 +96,7 @@ impl PyNetworkXAdapter {
         let store = db.store();
         let neighbors: Vec<u64> = store
             .edges_from(NodeId::new(node_id), Direction::Outgoing)
+            .into_iter()
             .map(|(n, _)| n.0)
             .collect();
         Ok(neighbors)
@@ -123,7 +124,7 @@ impl PyNetworkXAdapter {
         let store = db.store();
         Ok(store
             .edges_from(NodeId::new(node_id), Direction::Outgoing)
-            .count())
+            .len())
     }
 
     /// Get degree of a node (in + out for directed, total for undirected).
