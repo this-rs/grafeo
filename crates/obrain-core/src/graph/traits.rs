@@ -677,4 +677,28 @@ pub trait GraphStoreMut: GraphStore {
     fn property_undo_log_position(&self, _transaction_id: TransactionId) -> usize {
         0
     }
+
+    /// Discards all uncommitted (PENDING) version records for the given
+    /// transaction. Used when aborting a transaction. No-op for backends
+    /// without per-transaction version staging.
+    fn discard_uncommitted_versions(&self, _transaction_id: TransactionId) {}
+
+    /// Returns the next edge ID that would be allocated by `create_edge`.
+    /// Used by savepoint bookkeeping. Backends without a stable peek
+    /// return `0` — callers interpret zero as "savepoints unsupported".
+    fn peek_next_edge_id(&self) -> u64 {
+        0
+    }
+
+    /// Discards nodes and edges with the given ID lists for the current
+    /// transaction. Used by savepoint rollback to cull entities allocated
+    /// after the savepoint. No-op for backends without savepoint-level
+    /// discard.
+    fn discard_entities_by_id(
+        &self,
+        _transaction_id: TransactionId,
+        _node_ids: &[NodeId],
+        _edge_ids: &[EdgeId],
+    ) {
+    }
 }

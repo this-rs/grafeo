@@ -440,16 +440,28 @@ impl Session {
         }
     }
 
-    /// Resolves a graph name to a concrete `LpgStore`.
+    /// Resolves a graph name to an `Arc<dyn GraphStoreMut>`.
     /// `None` and `"default"` resolve to the session's root store.
-    fn resolve_store(&self, graph_name: &Option<String>) -> Arc<LpgStore> {
+    ///
+    /// T17 Wave B (2026-04-23): the return type is now the erased trait
+    /// object instead of `Arc<LpgStore>`. MVCC hooks
+    /// (`finalize_version_epochs`, `sync_epoch`, `gc_versions`,
+    /// `rollback_transaction_properties*`, `peek_next_node_id`,
+    /// `property_undo_log_position`) are on the `GraphStoreMut` trait
+    /// with no-op defaults, so callers can drive commit/rollback
+    /// bookkeeping through the trait regardless of whether the
+    /// concrete backend is `LpgStore` (legacy, keeps inherent MVCC)
+    /// or `SubstrateStore` (topology-as-storage, no per-tx epochs).
+    fn resolve_store(&self, graph_name: &Option<String>) -> Arc<dyn GraphStoreMut> {
         match graph_name {
-            None => Arc::clone(&self.store),
-            Some(name) if name.eq_ignore_ascii_case("default") => Arc::clone(&self.store),
-            Some(name) => self
-                .store
-                .graph(name)
-                .unwrap_or_else(|| Arc::clone(&self.store)),
+            None => Arc::clone(&self.store) as Arc<dyn GraphStoreMut>,
+            Some(name) if name.eq_ignore_ascii_case("default") => {
+                Arc::clone(&self.store) as Arc<dyn GraphStoreMut>
+            }
+            Some(name) => match self.store.graph(name) {
+                Some(g) => g as Arc<dyn GraphStoreMut>,
+                None => Arc::clone(&self.store) as Arc<dyn GraphStoreMut>,
+            },
         }
     }
 

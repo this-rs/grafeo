@@ -343,6 +343,23 @@ impl GraphStoreMut for LpgStore {
         LpgStore::property_undo_log_position(self, transaction_id)
     }
 
+    fn discard_uncommitted_versions(&self, transaction_id: TransactionId) {
+        LpgStore::discard_uncommitted_versions(self, transaction_id)
+    }
+
+    fn peek_next_edge_id(&self) -> u64 {
+        LpgStore::peek_next_edge_id(self)
+    }
+
+    fn discard_entities_by_id(
+        &self,
+        transaction_id: TransactionId,
+        node_ids: &[NodeId],
+        edge_ids: &[EdgeId],
+    ) {
+        LpgStore::discard_entities_by_id(self, transaction_id, node_ids, edge_ids)
+    }
+
     fn create_node(&self, labels: &[&str]) -> NodeId {
         LpgStore::create_node(self, labels)
     }
