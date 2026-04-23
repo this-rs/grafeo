@@ -489,6 +489,7 @@ fn execute_projection_list() -> AlgorithmResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use obrain_core::graph::traits::GraphStoreMut;
 
     #[test]
     fn test_registry_has_all_algorithms() {
@@ -583,7 +584,7 @@ mod tests {
 
     #[test]
     fn test_khop_execute_via_registry() {
-        use obrain_core::graph::lpg::LpgStore;
+        use obrain_substrate::SubstrateStore;
 
         let registry = BuiltinProcedures::new();
         let name = vec![
@@ -593,7 +594,7 @@ mod tests {
         ];
         let algo = registry.get(&name).unwrap();
 
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Person"]);
         let n1 = store.create_node(&["Person"]);
         store.create_edge(n0, n1, "KNOWS");
@@ -633,13 +634,13 @@ mod tests {
 
     #[test]
     fn test_leiden_execute_via_registry() {
-        use obrain_core::graph::lpg::LpgStore;
+        use obrain_substrate::SubstrateStore;
 
         let registry = BuiltinProcedures::new();
         let name = vec!["obrain".to_string(), "leiden".to_string()];
         let algo = registry.get(&name).unwrap();
 
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Person"]);
         let n1 = store.create_node(&["Person"]);
         let n2 = store.create_node(&["Person"]);
@@ -701,13 +702,13 @@ mod tests {
 
     #[test]
     fn test_similarity_execute_via_registry() {
-        use obrain_core::graph::lpg::LpgStore;
+        use obrain_substrate::SubstrateStore;
 
         let registry = BuiltinProcedures::new();
         let name = vec!["obrain".to_string(), "similarity".to_string()];
         let algo = registry.get(&name).unwrap();
 
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["Person"]);
         let b = store.create_node(&["Person"]);
         let c = store.create_node(&["Person"]);
@@ -733,7 +734,7 @@ mod tests {
 
     #[test]
     fn test_similarity_topk_execute_via_registry() {
-        use obrain_core::graph::lpg::LpgStore;
+        use obrain_substrate::SubstrateStore;
 
         let registry = BuiltinProcedures::new();
         let name = vec![
@@ -743,7 +744,7 @@ mod tests {
         ];
         let algo = registry.get(&name).unwrap();
 
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["Person"]);
         let b = store.create_node(&["Person"]);
         let c = store.create_node(&["Person"]);
