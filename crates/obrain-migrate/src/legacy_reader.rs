@@ -101,58 +101,21 @@ fn open_legacy_dir(path: &Path) -> Result<Arc<dyn GraphStore>> {
     Ok(Arc::new(store) as Arc<dyn GraphStore>)
 }
 
-/// Opens a single-file `.obrain` (`GRAF`-magic format).
-#[cfg(feature = "single-file-read")]
-fn open_legacy_file(path: &Path) -> Result<Arc<dyn GraphStore>> {
-    use obrain_engine::ObrainDB;
-
-    let db = ObrainDB::open_read_only(path)
-        .with_context(|| format!("ObrainDB::open_read_only failed for {}", path.display()))?;
-
-    // Pick whichever side holds the actual data:
-    //   * v2 native: read-only dispatch in obrain-engine installs the
-    //     mmap-backed `MmapStore`; `store()` stays empty.
-    //   * v1 legacy: the bincode snapshot is materialized into `store()`.
-    let graph: Arc<dyn GraphStore> = if let Some(mmap) = db.mmap_store() {
-        let node_count = mmap.node_count();
-        let edge_count = mmap.edge_count();
-        let g = Arc::clone(mmap) as Arc<dyn GraphStore>;
-        // Keep the ObrainDB (and its file manager / mmap lifetime) alive
-        // for the rest of the process. One-shot CLI, bounded leak.
-        std::mem::forget(db);
-        tracing::info!(
-            path = %path.display(),
-            nodes = node_count,
-            edges = edge_count,
-            format = "v2-native-mmap",
-            "opened single-file `.obrain` (zero-copy mmap)",
-        );
-        g
-    } else {
-        let inner = Arc::clone(db.store());
-        let node_count = inner.node_count();
-        let edge_count = inner.edge_count();
-        std::mem::forget(db);
-        tracing::info!(
-            path = %path.display(),
-            nodes = node_count,
-            edges = edge_count,
-            format = "v1-legacy-bincode",
-            "opened single-file `.obrain` (bincode materialized into LpgStore)",
-        );
-        inner as Arc<dyn GraphStore>
-    };
-
-    Ok(graph)
-}
-
-/// Compiled stub when the `single-file-read` feature is off.
-#[cfg(not(feature = "single-file-read"))]
+/// T17 final cutover (2026-04-23): single-file `.obrain` (`GRAF`-magic)
+/// format is no longer readable. The pre-substrate v1/v2 code paths relied
+/// on obrain-engine's `obrain-file` feature + the LpgStore module, both of
+/// which are being retired. Users with a pre-substrate single-file
+/// database must use obrain-migrate ≤ v0.0.1 to convert to the
+/// directory-based LpgStore format first, then run this version to
+/// convert to substrate. (The intermediate directory format is still
+/// readable via the `legacy-read` feature.)
 fn open_legacy_file(path: &Path) -> Result<Arc<dyn GraphStore>> {
     anyhow::bail!(
-        "legacy input is a single-file `.obrain` ({}) but obrain-migrate was built \
-         without the `single-file-read` feature; rebuild with \
-         `--features single-file-read` (enabled by default) to open this layout",
+        "legacy input is a single-file `.obrain` ({}) — this format is \
+         no longer supported since T17 final cutover. Use \
+         obrain-migrate ≤ v0.0.1 to convert to the directory-based \
+         LpgStore format first, then re-run this version to convert to \
+         substrate.",
         path.display()
     )
 }

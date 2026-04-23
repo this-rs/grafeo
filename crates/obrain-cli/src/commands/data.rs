@@ -27,12 +27,20 @@ pub fn run(cmd: DataCommands, _format: OutputFormat, quiet: bool) -> Result<()> 
             }
 
             let db = super::open_existing(&path)?;
+            let store = db.graph_store();
             let file = std::fs::File::create(&out)
                 .with_context(|| format!("Failed to create output file: {}", out.display()))?;
             let mut writer = std::io::BufWriter::new(file);
 
+            // T17 final cutover (2026-04-23): `ObrainDB::iter_nodes` / `iter_edges`
+            // were removed with the legacy persistence layer. Iterate through
+            // the substrate-routed `GraphStore` trait handle instead: list IDs
+            // via `node_ids()` / `edge_ids()`, then fetch each entity by ID.
             let mut node_count = 0usize;
-            for node in db.iter_nodes() {
+            for id in store.node_ids() {
+                let Some(node) = store.get_node(id) else {
+                    continue;
+                };
                 let labels: Vec<String> = node.labels.iter().map(|s| s.to_string()).collect();
                 let properties: HashMap<String, Value> = node
                     .properties
@@ -51,8 +59,19 @@ pub fn run(cmd: DataCommands, _format: OutputFormat, quiet: bool) -> Result<()> 
                 node_count += 1;
             }
 
+            // Enumerate all edges by walking outgoing edges from each node
+            // (avoids duplicates — edges_from returns only one direction).
             let mut edge_count = 0usize;
-            for edge in db.iter_edges() {
+            let mut edge_ids: Vec<obrain_common::types::EdgeId> = Vec::new();
+            for nid in store.node_ids() {
+                for (_dst, eid) in store.edges_from(nid, obrain_core::graph::Direction::Outgoing) {
+                    edge_ids.push(eid);
+                }
+            }
+            for id in edge_ids {
+                let Some(edge) = store.get_edge(id) else {
+                    continue;
+                };
                 let properties: HashMap<String, Value> = edge
                     .properties
                     .to_btree_map()

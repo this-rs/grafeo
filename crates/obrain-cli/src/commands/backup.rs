@@ -1,55 +1,43 @@
 //! Backup management commands.
+//!
+//! T17 final cutover (2026-04-23): `obrain backup create` and
+//! `obrain backup restore` used `ObrainDB::save()`, which serialized
+//! the in-memory graph as a bincode snapshot into a single `.obrain`
+//! file (v1/v2 legacy format). That format and its support code were
+//! removed as part of the substrate cutover — substrate persists
+//! directly to its directory layout, so a "backup" is just a
+//! filesystem copy of the directory.
+//!
+//! These commands now return a deprecation error and point the caller
+//! at `cp -r`, `tar`, `rsync`, or any filesystem-level copy tool. A
+//! future release may re-introduce backup tooling as a substrate-
+//! native incremental snapshot pipeline (WAL + tier cold copy).
 
-use std::fs;
+use anyhow::Result;
 
-use anyhow::{Context, Result};
-
-use crate::output;
 use crate::{BackupCommands, OutputFormat};
 
 /// Run backup commands.
-pub fn run(cmd: BackupCommands, _format: OutputFormat, quiet: bool) -> Result<()> {
-    match cmd {
-        BackupCommands::Create { path, output: out } => {
-            output::status(&format!("Creating backup of {}...", path.display()), quiet);
+pub fn run(cmd: BackupCommands, _format: OutputFormat, _quiet: bool) -> Result<()> {
+    let (subcmd, detail) = match &cmd {
+        BackupCommands::Create { path, output } => (
+            "create",
+            format!("copy `{}` to `{}`", path.display(), output.display()),
+        ),
+        BackupCommands::Restore { backup, path, .. } => (
+            "restore",
+            format!(
+                "copy `{}` to `{}`",
+                backup.display(),
+                path.display()
+            ),
+        ),
+    };
 
-            let db = super::open_existing(&path)?;
-            db.save(&out)
-                .with_context(|| format!("Failed to create backup at {}", out.display()))?;
-
-            output::success(&format!("Backup created at {}", out.display()), quiet);
-        }
-        BackupCommands::Restore {
-            backup,
-            path,
-            force,
-        } => {
-            if path.exists() && !force {
-                anyhow::bail!(
-                    "Target path {} already exists. Use --force to overwrite.",
-                    path.display()
-                );
-            }
-
-            if path.exists() && force {
-                output::status(
-                    &format!("Removing existing database at {}...", path.display()),
-                    quiet,
-                );
-                fs::remove_dir_all(&path)
-                    .with_context(|| format!("Failed to remove {}", path.display()))?;
-            }
-
-            output::status(&format!("Restoring from {}...", backup.display()), quiet);
-
-            let db = super::open_existing(&backup)
-                .with_context(|| format!("Failed to open backup at {}", backup.display()))?;
-            db.save(&path)
-                .with_context(|| format!("Failed to restore to {}", path.display()))?;
-
-            output::success(&format!("Database restored to {}", path.display()), quiet);
-        }
-    }
-
-    Ok(())
+    anyhow::bail!(
+        "`obrain backup {subcmd}` is no longer supported since the T17 substrate \
+         cutover. Substrate persists directly to its directory layout, so a \
+         backup is just a filesystem copy — use `cp -r`, `tar`, or `rsync` \
+         to {detail}."
+    )
 }

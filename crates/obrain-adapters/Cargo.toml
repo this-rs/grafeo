@@ -67,12 +67,15 @@ graphql = []                  # GraphQL parser (spec-compliant)
 sql-pgq = ["gql"]             # SQL/PGQ parser (SQL:2023 GRAPH_TABLE)
 rdf = ["obrain-core/rdf"]    # RDF graph model support
 wal = ["memmap2", "crc32fast", "tokio", "crossbeam"]  # Write-ahead log storage (requires filesystem)
-obrain-file = ["wal", "fs2"]  # Single-file .obrain format with sidecar WAL
+# T17 final cutover (2026-04-23): `obrain-file` feature removed —
+# substrate is the single storage backend. `ObrainFileManager` and
+# `MmapStore` legacy code paths are being retired; the directory-based
+# substrate format supersedes them.
 parallel = ["rayon", "obrain-core/parallel"]  # Parallel algorithms (rayon)
 algos = []  # Graph algorithm plugin (SSSP, PageRank, centrality, community detection, etc.)
 # Convenience groups
 languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]  # All query language parsers
-full = ["languages", "rdf", "wal", "obrain-file", "parallel", "algos"]
+full = ["languages", "rdf", "wal", "parallel", "algos"]
 
 # Testing utilities (zero overhead when disabled)
 testing-crash-injection = ["obrain-core/testing-crash-injection"]  # Crash injection for recovery testing

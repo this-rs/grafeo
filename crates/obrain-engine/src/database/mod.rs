@@ -18,20 +18,17 @@ mod crud;
 #[cfg(feature = "embed")]
 mod embed;
 mod index;
-mod persistence;
-#[cfg(feature = "obrain-file")]
-#[allow(unsafe_code)]
-pub mod mmap_store;
-// NOTE (T17 W3a): `overlay_store` (MmapStore base + LpgStore delta) was the T5
-// workaround for lazy-property materialization on large v2 `.obrain` files.
-// Substrate is mmap-native with its own PropsZone v2 overlay, so the module
-// has been deleted. Search archaeology: 177 LOC removed on 2026-04-22.
-#[cfg(feature = "obrain-file")]
-#[allow(unsafe_code)]
-pub mod nocache_reader;
-#[cfg(feature = "obrain-file")]
-#[allow(unsafe_code)]
-pub(crate) mod native_writer;
+// T17 final cutover (2026-04-23): the `persistence`, `mmap_store`,
+// `nocache_reader`, and `native_writer` modules were deleted. They
+// implemented the legacy single-file `.obrain` v1 (bincode snapshot)
+// and v2 (mmap native) formats, which are retired in favor of the
+// directory-based substrate backend. Users with a pre-substrate
+// single-file database must use obrain-migrate ≤ v0.0.1 to convert
+// to the directory-based LpgStore layout first, then a current
+// release to convert that into substrate. Search archaeology:
+// persistence.rs (1840 LOC) + mmap_store.rs (1315 LOC) +
+// nocache_reader.rs (104 LOC) + native_writer.rs (133 LOC) +
+// 26 feature-gated blocks in this file removed on 2026-04-23.
 mod query;
 #[cfg(feature = "rdf")]
 mod rdf_ops;

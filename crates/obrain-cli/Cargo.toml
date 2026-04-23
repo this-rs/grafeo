@@ -16,6 +16,7 @@ doc = false
 [dependencies]
 obrain-engine = { workspace = true, features = ["storage", "parallel", "regex"] }
 obrain-common = { workspace = true }
+obrain-core = { workspace = true }
 
 # CLI
 clap = { version = "4", features = ["derive"] }

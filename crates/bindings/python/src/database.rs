@@ -1839,21 +1839,22 @@ impl PyObrainDB {
         Ok(())
     }
 
-    /// Saves the database to a file path.
-    ///
-    /// - If in-memory: creates a new persistent database at path
-    /// - If file-backed: creates a copy at the new path
-    ///
-    /// The original database remains unchanged.
-    ///
-    /// Example:
-    ///     db = ObrainDB()  # in-memory
-    ///     db.create_node(["Person"], {"name": "Alix"})
-    ///     db.save("./mydb")  # save to file
-    fn save(&self, path: String) -> PyResult<()> {
-        let db = self.inner.read();
-        db.save(path).map_err(PyObrainError::from)?;
-        Ok(())
+    /// T17 final cutover (2026-04-23): `save()` raises `ObrainError`.
+    /// The legacy single-file `.obrain` v1/v2 snapshot export surface
+    /// was removed together with the LpgStore module; substrate
+    /// persists directly to its own directory layout. Python clients
+    /// should open with `ObrainDB(path="./mydb")` pointing at a
+    /// directory and let substrate manage persistence, or copy the
+    /// directory at the filesystem level.
+    fn save(&self, _path: String) -> PyResult<()> {
+        Err(PyObrainError::from(
+            obrain_common::utils::error::Error::Internal(
+                "ObrainDB.save() is no longer supported since the T17 substrate \
+                 cutover; substrate persists directly to its directory path"
+                    .to_string(),
+            ),
+        )
+        .into())
     }
 
     /// Creates an in-memory copy of this database.

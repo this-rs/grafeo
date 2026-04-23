@@ -1454,18 +1454,20 @@ pub extern "C" fn obrain_info(db: *mut ObrainDatabase) -> *mut c_char {
     CString::new(s).map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
-/// Save database to a path. Caller provides a path string.
+/// T17 final cutover (2026-04-23): `obrain_save` returns
+/// `ObrainStatus::Unsupported`. The legacy single-file `.obrain` v1/v2
+/// snapshot export surface was removed together with the LpgStore
+/// module; substrate persists directly to its own directory layout. C
+/// clients that need to copy a database should open with
+/// `obrain_open(path)` pointing at the directory and let substrate
+/// manage persistence, or copy the directory at the filesystem level.
 #[unsafe(no_mangle)]
-pub extern "C" fn obrain_save(db: *mut ObrainDatabase, path: *const c_char) -> ObrainStatus {
-    let db = db_ref!(db);
-    let path_str = match str_from_ptr(path) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    match db.inner.read().save(path_str) {
-        Ok(()) => ObrainStatus::Ok,
-        Err(e) => set_error(&e),
-    }
+pub extern "C" fn obrain_save(_db: *mut ObrainDatabase, _path: *const c_char) -> ObrainStatus {
+    set_error(&obrain_common::utils::error::Error::Internal(
+        "obrain_save is no longer supported since the T17 substrate cutover; \
+         substrate persists directly to its directory path"
+            .to_string(),
+    ))
 }
 
 /// Trigger a WAL checkpoint.
