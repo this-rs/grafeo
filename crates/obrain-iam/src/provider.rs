@@ -397,11 +397,11 @@ impl AuthProvider for ObrainIamProvider {
     }
 
     fn revoke_session(&self, _credential_id: &str) -> IamResult<()> {
-        // Credential revocation requires node deletion support in LpgStore,
-        // which is not yet exposed. For now, mark as a no-op and track as
-        // a known limitation.
+        // Credential revocation requires node deletion support in the graph
+        // store, which is not yet uniformly exposed. For now, mark as a no-op
+        // and track as a known limitation.
         //
-        // TODO: implement when LpgStore.delete_node() is available
+        // TODO: implement when GraphStoreMut::delete_node() is available
         Ok(())
     }
 
@@ -609,7 +609,7 @@ impl ObrainIamProvider {
     /// Removes the password credential for a user (if any).
     fn remove_password_credential(&self, user_id: &str) {
         // Mark the old password credential as expired by overwriting the hash.
-        // Full node deletion is not yet available in LpgStore.
+        // Full node deletion is not yet uniformly available in GraphStoreMut.
         if let Some(cred_nid) = self.find_password_credential(user_id) {
             use crate::model::props;
             use obrain_common::Value;
@@ -828,11 +828,11 @@ impl ObrainIamProvider {
 mod tests {
     use super::*;
     use crate::model::PolicyEffect;
-    use obrain_core::graph::lpg::LpgStore;
     use obrain_core::graph::traits::GraphStoreMut;
+    use obrain_substrate::SubstrateStore;
 
     fn setup() -> ObrainIamProvider {
-        let lpg = LpgStore::new().expect("failed to create LpgStore");
+        let lpg = SubstrateStore::open_tempfile().expect("failed to create SubstrateStore");
         let iam_store = Arc::new(IamStore::new(Arc::new(lpg) as Arc<dyn GraphStoreMut>));
 
         // Bootstrap: create a user with a role and policy

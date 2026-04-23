@@ -1,8 +1,8 @@
-//! IAM store backed by an LPG graph.
+//! IAM store backed by a graph store.
 //!
-//! [`IamStore`] wraps an [`LpgStore`] reference (the `__system` named graph)
-//! and provides CRUD operations for IAM entities (users, roles, policies,
-//! credentials, audit events).
+//! [`IamStore`] wraps a [`GraphStoreMut`] reference (the `__system` named
+//! graph) and provides CRUD operations for IAM entities (users, roles,
+//! policies, credentials, audit events).
 //!
 //! All IAM entities are stored as labeled nodes with properties. Relations
 //! (user→role, role→policy, etc.) are stored as edges.
@@ -56,9 +56,9 @@ impl IamStore {
     /// Returns a reference to the underlying graph store.
     ///
     /// The trait object exposes both `GraphStore` (read) and `GraphStoreMut`
-    /// (write) operations. Callers that still reach for [`LpgStore`]-specific
-    /// inherent methods (e.g. MVCC replay helpers) must be migrated to trait
-    /// equivalents — see T17 W4 for the open cases.
+    /// (write) operations. Callers that still reach for backend-specific
+    /// inherent methods (e.g. MVCC replay helpers on LpgStore) must be
+    /// migrated to trait equivalents — see T17 W4 for the open cases.
     pub fn inner(&self) -> &dyn GraphStoreMut {
         self.store.as_ref()
     }
@@ -797,10 +797,10 @@ fn now_iso() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use obrain_core::graph::lpg::LpgStore;
+    use obrain_substrate::SubstrateStore;
 
     fn new_store() -> IamStore {
-        let store = LpgStore::new().expect("failed to create LpgStore");
+        let store = SubstrateStore::open_tempfile().expect("failed to create SubstrateStore");
         IamStore::new(Arc::new(store) as Arc<dyn GraphStoreMut>)
     }
 

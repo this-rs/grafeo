@@ -411,10 +411,10 @@ impl GdprManager {
     ///
     /// Returns an [`ErasureCertificate`] documenting what was erased.
     ///
-    /// **Note**: Actual node deletion requires `LpgStore::delete_node()` which
-    /// is not yet available. For now, we mark nodes as erased by setting their
-    /// status to "erased" and clearing PII properties. Full physical deletion
-    /// will follow when the API is ready.
+    /// **Note**: Actual node deletion requires `GraphStoreMut::delete_node()`
+    /// which is not yet uniformly available across backends. For now, we mark
+    /// nodes as erased by setting their status to "erased" and clearing PII
+    /// properties. Full physical deletion will follow when the API is ready.
     pub fn request_erasure(&self, user_id: &str) -> IamResult<ErasureCertificate> {
         let user = self
             .store
@@ -556,8 +556,8 @@ impl GdprManager {
     ///
     /// Returns the number of expired records found.
     ///
-    /// **Note**: Actual deletion requires `LpgStore::delete_node()`. For now,
-    /// expired records are marked with level="expired".
+    /// **Note**: Actual deletion requires `GraphStoreMut::delete_node()`. For
+    /// now, expired records are marked with level="expired".
     pub fn enforce_retention(&self) -> usize {
         let lpg = self.store.inner();
         let consent_nodes = lpg.nodes_by_label(LABEL_CONSENT);
@@ -744,11 +744,11 @@ fn now_iso() -> String {
 mod tests {
     use super::*;
     use crate::model::{PolicyDecision, PolicyEffect};
-    use obrain_core::graph::lpg::LpgStore;
     use obrain_core::graph::traits::GraphStoreMut;
+    use obrain_substrate::SubstrateStore;
 
     fn setup() -> (GdprManager, Arc<IamStore>) {
-        let lpg = LpgStore::new().expect("LpgStore");
+        let lpg = SubstrateStore::open_tempfile().expect("SubstrateStore");
         let iam_store = Arc::new(IamStore::new(Arc::new(lpg) as Arc<dyn GraphStoreMut>));
 
         // Bootstrap: user + role + policy

@@ -262,11 +262,11 @@ mod tests {
     use crate::model::PolicyEffect;
     use crate::provider::{AuthRequest, ObrainIamProvider};
     use crate::store::IamStore;
-    use obrain_core::graph::lpg::LpgStore;
     use obrain_core::graph::traits::GraphStoreMut;
+    use obrain_substrate::SubstrateStore;
 
     fn setup() -> (Arc<dyn AuthProvider>, Identity) {
-        let lpg = LpgStore::new().expect("LpgStore");
+        let lpg = SubstrateStore::open_tempfile().expect("SubstrateStore");
         let iam_store = Arc::new(IamStore::new(Arc::new(lpg) as Arc<dyn GraphStoreMut>));
 
         // Bootstrap

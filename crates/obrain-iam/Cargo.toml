@@ -31,6 +31,7 @@ smallvec.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+obrain-substrate.workspace = true
 
 [lints]
 workspace = true
