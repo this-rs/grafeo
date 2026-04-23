@@ -182,6 +182,15 @@ pub trait GraphStore: Send + Sync {
         false
     }
 
+    /// Returns only the labels of a node without loading its properties.
+    ///
+    /// The default uses `get_node` and collects labels into a `Vec`; concrete
+    /// backends may override with an O(1) lookup when labels live in a
+    /// separate index.
+    fn get_node_labels(&self, id: NodeId) -> Option<Vec<ArcStr>> {
+        self.get_node(id).map(|n| n.labels.into_iter().collect())
+    }
+
     // --- Filtered search ---
 
     /// Finds all nodes with a specific property value. Uses indexes when available.

@@ -268,6 +268,10 @@ impl GraphStore for LpgStore {
         )
     }
 
+    fn get_node_labels(&self, id: NodeId) -> Option<Vec<ArcStr>> {
+        LpgStore::get_node_labels(self, id)
+    }
+
     #[cfg(feature = "text-index")]
     fn text_index_entries(
         &self,
