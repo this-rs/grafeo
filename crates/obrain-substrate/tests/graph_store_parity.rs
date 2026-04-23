@@ -24,8 +24,8 @@
 //! ```
 
 use obrain_common::types::{EdgeId, NodeId, PropertyKey, Value};
-use obrain_core::LpgStore;
 use obrain_core::graph::Direction;
+use obrain_core::graph::lpg::LpgStore;
 use obrain_core::graph::traits::GraphStoreMut;
 use obrain_substrate::SubstrateStore;
 

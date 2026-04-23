@@ -39,8 +39,8 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use obrain_common::types::{EdgeId, NodeId, PropertyKey, Value};
-use obrain_core::LpgStore;
 use obrain_core::graph::Direction;
+use obrain_core::graph::lpg::LpgStore;
 use obrain_core::graph::traits::{GraphStore, GraphStoreMut};
 use obrain_substrate::SubstrateStore;
 use rand::{RngExt, SeedableRng};
