@@ -12,8 +12,6 @@ use std::sync::Arc;
 use obrain_common::types::{EpochId, TransactionId, Value};
 use obrain_common::utils::error::{Error, Result};
 use obrain_core::graph::GraphStoreMut;
-#[cfg(test)]
-use obrain_core::graph::lpg::LpgStore;
 
 use crate::catalog::Catalog;
 use crate::database::QueryResult;
@@ -125,16 +123,16 @@ pub struct QueryProcessor {
 impl QueryProcessor {
     /// Creates a new query processor for LPG queries (test-only).
     ///
-    /// Post-T17 W3b: production code uses [`for_graph_store_with_transaction`]
-    /// exclusively. This helper is kept for in-crate unit tests that still
-    /// construct an `Arc<LpgStore>` directly — non-test callers must go
+    /// Post-T17 W3b / W4.p4: production code uses
+    /// [`for_graph_store_with_transaction`] exclusively. This helper is kept
+    /// for in-crate unit tests that want a no-transaction processor on top of
+    /// any `GraphStoreMut`-implementing backend — non-test callers must go
     /// through the trait-based constructor.
     ///
     /// [`for_graph_store_with_transaction`]: Self::for_graph_store_with_transaction
     #[cfg(test)]
     #[must_use]
-    pub fn for_lpg(store: Arc<LpgStore>) -> Self {
-        let graph_store = Arc::clone(&store) as Arc<dyn GraphStoreMut>;
+    pub fn for_lpg(graph_store: Arc<dyn GraphStoreMut>) -> Self {
         let optimizer = Optimizer::from_graph_store(&*graph_store);
         Self {
             graph_store,
@@ -150,11 +148,11 @@ impl QueryProcessor {
     /// Creates a new query processor with a transaction manager (test-only).
     #[cfg(test)]
     #[must_use]
+    #[allow(dead_code)]
     pub fn for_lpg_with_transaction(
-        store: Arc<LpgStore>,
+        graph_store: Arc<dyn GraphStoreMut>,
         transaction_manager: Arc<TransactionManager>,
     ) -> Self {
-        let graph_store = Arc::clone(&store) as Arc<dyn GraphStoreMut>;
         let optimizer = Optimizer::from_graph_store(&*graph_store);
         Self {
             graph_store,
@@ -393,20 +391,20 @@ impl QueryProcessor {
 impl QueryProcessor {
     /// Creates a new query processor with both LPG and RDF stores (test-only).
     ///
-    /// Post-T17 W3b: zero non-test call sites. Retained behind `#[cfg(test)]`
-    /// for the RDF integration tests that still construct a typed
-    /// `Arc<LpgStore>` alongside the `RdfStore`. Production code uses
-    /// [`for_graph_store_with_transaction`] and attaches the RDF store via the
-    /// session-level plumbing.
+    /// Post-T17 W3b / W4.p4: zero non-test call sites. Retained behind
+    /// `#[cfg(test)]` + `#[allow(dead_code)]` for future RDF integration tests
+    /// that want a backend-agnostic processor alongside an `RdfStore`.
+    /// Production code uses [`for_graph_store_with_transaction`] and attaches
+    /// the RDF store via the session-level plumbing.
     ///
     /// [`for_graph_store_with_transaction`]: Self::for_graph_store_with_transaction
     #[cfg(test)]
     #[must_use]
+    #[allow(dead_code)]
     pub fn with_rdf(
-        lpg_store: Arc<LpgStore>,
+        graph_store: Arc<dyn GraphStoreMut>,
         rdf_store: Arc<obrain_core::graph::rdf::RdfStore>,
     ) -> Self {
-        let graph_store = Arc::clone(&lpg_store) as Arc<dyn GraphStoreMut>;
         let optimizer = Optimizer::from_graph_store(&*graph_store);
         Self {
             graph_store,
@@ -1028,6 +1026,29 @@ fn substitute_in_expression(expr: &mut LogicalExpression, params: &QueryParams) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use obrain_substrate::SubstrateStore;
+
+    /// Shared fixture builder — wraps a fresh substrate store into the trait
+    /// object expected by [`QueryProcessor::for_lpg`].
+    fn make_store() -> Arc<SubstrateStore> {
+        Arc::new(SubstrateStore::open_tempfile().unwrap())
+    }
+
+    /// Ergonomic bridge over the (slice-of-owned-PropertyKey) trait signature:
+    /// `add_node(&store, &["Label"], &[("key", value), ...])` replaces the old
+    /// `LpgStore::create_node_with_props(labels, IntoIterator<(&str, Value)>)`
+    /// convenience.
+    fn add_node<S: GraphStoreMut + ?Sized>(
+        store: &S,
+        labels: &[&str],
+        props: &[(&str, Value)],
+    ) -> obrain_common::types::NodeId {
+        let id = store.create_node(labels);
+        for (k, v) in props {
+            store.set_node_property(id, k, v.clone());
+        }
+        id
+    }
 
     #[test]
     fn test_query_language_is_lpg() {
@@ -1042,7 +1063,7 @@ mod tests {
     #[test]
     fn test_processor_creation() {
         use obrain_core::graph::GraphStore;
-        let store = Arc::new(LpgStore::new().unwrap());
+        let store = make_store();
         // Keep a direct handle to assert invariants after wrapping it in the
         // processor — the `lpg_store()` getter was retired in T17 W3b.
         let store_for_assert = Arc::clone(&store);
@@ -1053,7 +1074,7 @@ mod tests {
     #[cfg(feature = "gql")]
     #[test]
     fn test_process_simple_gql() {
-        let store = Arc::new(LpgStore::new().unwrap());
+        let store = make_store();
         store.create_node(&["Person"]);
         store.create_node(&["Person"]);
 
@@ -1069,7 +1090,7 @@ mod tests {
     #[cfg(feature = "cypher")]
     #[test]
     fn test_process_simple_cypher() {
-        let store = Arc::new(LpgStore::new().unwrap());
+        let store = make_store();
         store.create_node(&["Person"]);
 
         let processor = QueryProcessor::for_lpg(store);
@@ -1083,10 +1104,10 @@ mod tests {
     #[cfg(feature = "gql")]
     #[test]
     fn test_process_with_params() {
-        let store = Arc::new(LpgStore::new().unwrap());
-        store.create_node_with_props(&["Person"], [("age", Value::Int64(25))]);
-        store.create_node_with_props(&["Person"], [("age", Value::Int64(35))]);
-        store.create_node_with_props(&["Person"], [("age", Value::Int64(45))]);
+        let store = make_store();
+        add_node(&*store, &["Person"], &[("age", Value::Int64(25))]);
+        add_node(&*store, &["Person"], &[("age", Value::Int64(35))]);
+        add_node(&*store, &["Person"], &[("age", Value::Int64(45))]);
 
         let processor = QueryProcessor::for_lpg(store);
 
@@ -1109,7 +1130,7 @@ mod tests {
     #[cfg(feature = "gql")]
     #[test]
     fn test_missing_param_error() {
-        let store = Arc::new(LpgStore::new().unwrap());
+        let store = make_store();
         store.create_node(&["Person"]);
 
         let processor = QueryProcessor::for_lpg(store);
@@ -1136,9 +1157,9 @@ mod tests {
     #[test]
     fn test_params_in_filter_with_property() {
         // Tests parameter substitution in WHERE clause with property comparison
-        let store = Arc::new(LpgStore::new().unwrap());
-        store.create_node_with_props(&["Num"], [("value", Value::Int64(10))]);
-        store.create_node_with_props(&["Num"], [("value", Value::Int64(20))]);
+        let store = make_store();
+        add_node(&*store, &["Num"], &[("value", Value::Int64(10))]);
+        add_node(&*store, &["Num"], &[("value", Value::Int64(20))]);
 
         let processor = QueryProcessor::for_lpg(store);
 
@@ -1163,18 +1184,21 @@ mod tests {
     #[test]
     fn test_params_in_multiple_where_conditions() {
         // Tests multiple parameters in WHERE clause with AND
-        let store = Arc::new(LpgStore::new().unwrap());
-        store.create_node_with_props(
+        let store = make_store();
+        add_node(
+            &*store,
             &["Person"],
-            [("age", Value::Int64(25)), ("score", Value::Int64(80))],
+            &[("age", Value::Int64(25)), ("score", Value::Int64(80))],
         );
-        store.create_node_with_props(
+        add_node(
+            &*store,
             &["Person"],
-            [("age", Value::Int64(35)), ("score", Value::Int64(90))],
+            &[("age", Value::Int64(35)), ("score", Value::Int64(90))],
         );
-        store.create_node_with_props(
+        add_node(
+            &*store,
             &["Person"],
-            [("age", Value::Int64(45)), ("score", Value::Int64(70))],
+            &[("age", Value::Int64(45)), ("score", Value::Int64(70))],
         );
 
         let processor = QueryProcessor::for_lpg(store);
@@ -1199,10 +1223,10 @@ mod tests {
     #[test]
     fn test_params_with_in_list() {
         // Tests parameter as a value checked against IN list
-        let store = Arc::new(LpgStore::new().unwrap());
-        store.create_node_with_props(&["Item"], [("status", Value::String("active".into()))]);
-        store.create_node_with_props(&["Item"], [("status", Value::String("pending".into()))]);
-        store.create_node_with_props(&["Item"], [("status", Value::String("deleted".into()))]);
+        let store = make_store();
+        add_node(&*store, &["Item"], &[("status", Value::String("active".into()))]);
+        add_node(&*store, &["Item"], &[("status", Value::String("pending".into()))]);
+        add_node(&*store, &["Item"], &[("status", Value::String("deleted".into()))]);
 
         let processor = QueryProcessor::for_lpg(store);
 
@@ -1225,9 +1249,9 @@ mod tests {
     #[test]
     fn test_params_same_type_comparison() {
         // Tests that same-type parameter comparisons work correctly
-        let store = Arc::new(LpgStore::new().unwrap());
-        store.create_node_with_props(&["Data"], [("value", Value::Int64(100))]);
-        store.create_node_with_props(&["Data"], [("value", Value::Int64(50))]);
+        let store = make_store();
+        add_node(&*store, &["Data"], &[("value", Value::Int64(100))]);
+        add_node(&*store, &["Data"], &[("value", Value::Int64(50))]);
 
         let processor = QueryProcessor::for_lpg(store);
 
@@ -1251,7 +1275,7 @@ mod tests {
     #[test]
     fn test_process_empty_result_has_columns() {
         // Tests that empty results still have correct column names
-        let store = Arc::new(LpgStore::new().unwrap());
+        let store = make_store();
         // Don't create any nodes
 
         let processor = QueryProcessor::for_lpg(store);
@@ -1273,10 +1297,10 @@ mod tests {
     #[test]
     fn test_params_string_equality() {
         // Tests string parameter equality comparison
-        let store = Arc::new(LpgStore::new().unwrap());
-        store.create_node_with_props(&["Item"], [("name", Value::String("alpha".into()))]);
-        store.create_node_with_props(&["Item"], [("name", Value::String("beta".into()))]);
-        store.create_node_with_props(&["Item"], [("name", Value::String("gamma".into()))]);
+        let store = make_store();
+        add_node(&*store, &["Item"], &[("name", Value::String("alpha".into()))]);
+        add_node(&*store, &["Item"], &[("name", Value::String("beta".into()))]);
+        add_node(&*store, &["Item"], &[("name", Value::String("gamma".into()))]);
 
         let processor = QueryProcessor::for_lpg(store);
 
