@@ -618,8 +618,47 @@ impl GraphAlgorithm for SubgraphContractionAlgorithm {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use obrain_substrate::SubstrateStore;
 
-    fn make_diamond() -> LpgStore {
+    /// Substrate-backed diamond fixture.
+    ///
+    /// Returns `(store, [a, b, c, d])` where `a → b, a → c, b → d, c → d` form
+    /// a diamond shape, plus an internal edge `b → c`. `b` and `c` have
+    /// `weight` properties (10.0 and 20.0 respectively).
+    ///
+    /// T17 Step 3 W2 migration: IDs are captured explicitly instead of
+    /// hardcoded via `store.node_ids()[N]` — substrate reserves `NodeId(0)` as
+    /// a sentinel, so the allocation sequence starts at `NodeId(1)` (see
+    /// gotcha: "NodeId(0) sentinel in SubstrateStore").
+    fn make_diamond_substrate() -> (SubstrateStore, Vec<NodeId>) {
+        // A → B, A → C, B → D, C → D (diamond shape)
+        let store = SubstrateStore::open_tempfile().unwrap();
+        let a = store.create_node(&["Source"]);
+        let b = store.create_node(&["Inner"]);
+        let c = store.create_node(&["Inner"]);
+        let d = store.create_node(&["Sink"]);
+
+        store.create_edge(a, b, "FLOW");
+        store.create_edge(a, c, "FLOW");
+        store.create_edge(b, d, "FLOW");
+        store.create_edge(c, d, "FLOW");
+        // Internal edge between b and c
+        store.create_edge(b, c, "LINK");
+
+        // Set properties
+        store.set_node_property(b, "weight", Value::Float64(10.0));
+        store.set_node_property(c, "weight", Value::Float64(20.0));
+
+        (store, vec![a, b, c, d])
+    }
+
+    /// LpgStore-backed diamond fixture — retained ONLY for `test_expand_restores`.
+    ///
+    /// `expand_supernode` still takes `&LpgStore` concretely (decision
+    /// `4053ca35`: requires `create_node_with_id` which is an LpgStore inherent
+    /// method not on `GraphStoreMut`). Migration of this helper is deferred to
+    /// T17 Step 3 W4 (trait extension + LpgStore production removal).
+    fn make_diamond_lpg() -> LpgStore {
         // A → B, A → C, B → D, C → D (diamond shape)
         let store = LpgStore::new().unwrap();
         let a = store.create_node(&["Source"]);
@@ -643,10 +682,9 @@ mod tests {
 
     #[test]
     fn test_contract_basic() {
-        let store = make_diamond();
-        let node_ids = store.node_ids();
-        let b = node_ids[1];
-        let c = node_ids[2];
+        let (store, ids) = make_diamond_substrate();
+        let b = ids[1];
+        let c = ids[2];
 
         let config = ContractionConfig::default();
         let result = contract_subgraph(&store, &[b, c], &config).unwrap();
@@ -668,19 +706,20 @@ mod tests {
 
     #[test]
     fn test_preserves_external_edges() {
-        let store = make_diamond();
-        let node_ids = store.node_ids();
-        let a = node_ids[0];
-        let b = node_ids[1];
-        let c = node_ids[2];
-        let d = node_ids[3];
+        let (store, ids) = make_diamond_substrate();
+        let a = ids[0];
+        let b = ids[1];
+        let c = ids[2];
+        let d = ids[3];
 
         let config = ContractionConfig::default();
         let result = contract_subgraph(&store, &[b, c], &config).unwrap();
 
         // a should have edges to the super-node
+        // SubstrateStore::edges_from returns Vec (not Iterator); call into_iter().
         let a_out: Vec<NodeId> = store
             .edges_from(a, Direction::Outgoing)
+            .into_iter()
             .map(|(n, _)| n)
             .collect();
         assert!(
@@ -691,6 +730,7 @@ mod tests {
         // super-node should have edges to d
         let super_out: Vec<NodeId> = store
             .edges_from(result.supernode_id, Direction::Outgoing)
+            .into_iter()
             .map(|(n, _)| n)
             .collect();
         assert!(super_out.contains(&d), "super-node should connect to d");
@@ -698,10 +738,9 @@ mod tests {
 
     #[test]
     fn test_aggregation_sum() {
-        let store = make_diamond();
-        let node_ids = store.node_ids();
-        let b = node_ids[1];
-        let c = node_ids[2];
+        let (store, ids) = make_diamond_substrate();
+        let b = ids[1];
+        let c = ids[2];
 
         let config = ContractionConfig {
             aggregation: AggregationStrategy::Sum,
@@ -715,10 +754,9 @@ mod tests {
 
     #[test]
     fn test_aggregation_mean() {
-        let store = make_diamond();
-        let node_ids = store.node_ids();
-        let b = node_ids[1];
-        let c = node_ids[2];
+        let (store, ids) = make_diamond_substrate();
+        let b = ids[1];
+        let c = ids[2];
 
         let config = ContractionConfig {
             aggregation: AggregationStrategy::Mean,
@@ -732,7 +770,9 @@ mod tests {
 
     #[test]
     fn test_expand_restores() {
-        let store = make_diamond();
+        // Retained LpgStore: expand_supernode requires create_node_with_id (LpgStore
+        // inherent method, not on GraphStoreMut) — see decision 4053ca35.
+        let store = make_diamond_lpg();
         let node_ids = store.node_ids();
         let a = node_ids[0];
         let b = node_ids[1];
@@ -764,7 +804,7 @@ mod tests {
     #[test]
     #[allow(clippy::many_single_char_names)]
     fn test_by_communities() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         // Community 0: a, b, c (triangle)
         let a = store.create_node(&["A"]);
         let b = store.create_node(&["A"]);
@@ -808,6 +848,7 @@ mod tests {
         let super1 = results[1].supernode_id;
         let super0_out: Vec<NodeId> = store
             .edges_from(super0, Direction::Outgoing)
+            .into_iter()
             .map(|(n, _)| n)
             .collect();
         assert!(
@@ -819,7 +860,7 @@ mod tests {
     #[test]
     fn test_contract_no_external() {
         // All nodes contracted — no external edges
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["X"]);
         let b = store.create_node(&["X"]);
         store.create_edge(a, b, "E");
@@ -835,7 +876,7 @@ mod tests {
 
     #[test]
     fn test_empty_subgraph() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let config = ContractionConfig::default();
         let result = contract_subgraph(&store, &[], &config);
         assert!(result.is_err());
@@ -844,7 +885,7 @@ mod tests {
     #[test]
     fn test_multi_edges() {
         // Multiple edges between two nodes
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["A"]);
         let b = store.create_node(&["A"]);
         let ext = store.create_node(&["Ext"]);
