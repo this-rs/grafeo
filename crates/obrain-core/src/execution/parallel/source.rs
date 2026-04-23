@@ -603,7 +603,7 @@ impl Source for PartitionedTripleScanSource {
 use crate::graph::GraphStore;
 use obrain_common::types::NodeId;
 
-/// Parallel source for scanning nodes from the LPG store.
+/// Parallel source for scanning nodes from a graph store.
 ///
 /// Enables morsel-driven parallel execution of node scans by label.
 /// Each partition independently scans a range of node IDs, enabling
@@ -611,17 +611,19 @@ use obrain_common::types::NodeId;
 ///
 /// # Example
 ///
-/// ```rust
+/// ```ignore
+/// // Illustrative only — cross-crate doctests (substrate backend) would
+/// // create a dev-dep cycle with obrain-core. Real usage threads any
+/// // `Arc<dyn GraphStore>` through; construct via your preferred backend
+/// // (e.g. `SubstrateStore::open_tempfile()` from `obrain-substrate`).
 /// use obrain_core::execution::parallel::{ParallelNodeScanSource, ParallelSource};
-/// use obrain_core::graph::lpg::LpgStore;
+/// use obrain_core::graph::GraphStore;
 /// use std::sync::Arc;
 ///
-/// let store = Arc::new(LpgStore::new().unwrap());
-/// // ... populate store ...
-///
-/// // Scan all Person nodes in parallel
-/// let source = ParallelNodeScanSource::with_label(store, "Person");
-/// let morsels = source.generate_morsels(4096, 0);
+/// fn scan_in_parallel(store: Arc<dyn GraphStore>) {
+///     let source = ParallelNodeScanSource::with_label(store, "Person");
+///     let morsels = source.generate_morsels(4096, 0);
+/// }
 /// ```
 pub struct ParallelNodeScanSource {
     /// The store to scan from.
