@@ -45,7 +45,9 @@ mod flow;
 pub mod heat_diffusion;
 pub mod hilbert;
 pub mod hilbert_features;
-pub mod hilbert_manager;
+// `hilbert_manager` was removed in T17 W2c (2026-04-23) — had zero production
+// callers; the incremental/subscription wrapper was dead code. Full recompute
+// via `hilbert_features::hilbert_features_incremental()` remains available.
 pub mod kernel;
 pub mod kernel_manager;
 pub mod kernel_math;
@@ -143,8 +145,8 @@ pub use hilbert_features::{
     hilbert_distance, hilbert_features, hilbert_features_incremental, weighted_hilbert_distance,
 };
 
-// Hilbert incremental feature manager
-pub use hilbert_manager::HilbertFeatureManager;
+// Hilbert incremental feature manager re-export removed in T17 W2c — module
+// `hilbert_manager` was deleted (zero production callers).
 
 // Node similarity algorithms
 pub use similarity::{

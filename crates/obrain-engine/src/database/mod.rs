@@ -281,6 +281,16 @@ impl ObrainDB {
             let mut builder = obrain_cognitive::CognitiveEngineBuilder::from_config(&config)
                 .with_graph_store(db.graph_store())
                 .with_substrate(Arc::clone(&typed));
+            // T17 Step 19 W2c — wire the kernel subsystem to the substrate-routed
+            // store (NOT the dummy `db.store()` handle; see gotcha W4.p4.D1.s9).
+            // `db.graph_store()` resolves to the real substrate backend in
+            // substrate mode, giving KernelManager the populated graph instead
+            // of the empty dummy LpgStore. Fixes the latent wiring gap where
+            // the kernel subsystem was never attached in substrate mode.
+            #[cfg(feature = "kernel")]
+            {
+                builder = builder.with_kernel_store(db.graph_store());
+            }
             let engine = builder.build(&scheduler);
             db.cognitive_engine =
                 Some(Arc::new(engine) as Arc<dyn obrain_cognitive::CognitiveEngine>);
@@ -677,7 +687,13 @@ impl ObrainDB {
             let mut builder = obrain_cognitive::CognitiveEngineBuilder::from_config(&config);
             #[cfg(feature = "kernel")]
             {
-                builder = builder.with_lpg_store(Arc::clone(&store));
+                // T17 Step 19 W2c — kernel subsystem now takes Arc<dyn GraphStoreMut>.
+                // Legacy `with_config` path still wires the in-memory LpgStore; the
+                // substrate-aware path above (`with_store`) routes through
+                // `db.graph_store()` to avoid the dummy-LpgStore leak (W4.p4.D1.s9).
+                let store_clone: Arc<LpgStore> = Arc::clone(&store);
+                let store_dyn: Arc<dyn GraphStoreMut> = store_clone;
+                builder = builder.with_kernel_store(store_dyn);
             }
             let engine = builder.build(&scheduler);
             (

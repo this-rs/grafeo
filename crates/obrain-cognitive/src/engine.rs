@@ -32,8 +32,6 @@ use crate::co_change::{CoChangeConfig, CoChangeDetector, CoChangeStore};
 use crate::kernel::KernelListener;
 #[cfg(feature = "kernel")]
 use obrain_adapters::plugins::algorithms::KernelManager;
-#[cfg(feature = "kernel")]
-use obrain_core::graph::lpg::LpgStore;
 
 use crate::tenant::TenantManager;
 use obrain_core::graph::GraphStoreMut;
@@ -283,10 +281,15 @@ pub struct CognitiveEngineBuilder {
     /// Optional backing graph store for write-through persistence.
     graph_store: Option<Arc<dyn GraphStoreMut>>,
 
-    /// Optional LpgStore reference for kernel embedding manager.
-    /// KernelManager requires `Arc<LpgStore>` specifically.
+    /// Optional graph store for kernel embedding manager.
+    ///
+    /// T17 W2c (2026-04-23): retyped from `Arc<LpgStore>` to
+    /// `Arc<dyn GraphStoreMut>` after the subscription-based event loop on
+    /// `KernelManager` was removed (dead code). External callers should pass
+    /// the substrate-aware handle via `db.graph_store()` when available, to
+    /// avoid the historical dummy-LpgStore leak (cf. knowledge_store.rs gotcha).
     #[cfg(feature = "kernel")]
-    lpg_store: Option<Arc<LpgStore>>,
+    kernel_store: Option<Arc<dyn GraphStoreMut>>,
 
     /// Optional substrate handle for column-backed cognitive stores
     /// (T17 cutover — preferred over [`graph_store`] when present).
@@ -322,7 +325,7 @@ impl CognitiveEngineBuilder {
             graph_store: None,
 
             #[cfg(feature = "kernel")]
-            lpg_store: None,
+            kernel_store: None,
 
             #[cfg(feature = "substrate")]
             substrate: None,
@@ -419,22 +422,26 @@ impl CognitiveEngineBuilder {
 
     /// Enables the kernel embedding subsystem with the given configuration.
     ///
-    /// Requires [`with_lpg_store`](Self::with_lpg_store) to also be called,
-    /// since [`KernelManager`] needs a direct `Arc<LpgStore>` reference.
+    /// Requires [`with_kernel_store`](Self::with_kernel_store) to also be
+    /// called so that the [`KernelManager`] has a graph store to operate on.
     #[cfg(feature = "kernel")]
     pub fn with_kernel(mut self, config: KernelConfigToml) -> Self {
         self.kernel_config = Some(config);
         self
     }
 
-    /// Sets the `Arc<LpgStore>` needed by the kernel embedding manager.
+    /// Sets the graph store (`Arc<dyn GraphStoreMut>`) used by the kernel
+    /// embedding manager.
     ///
-    /// The kernel subsystem requires direct access to the `LpgStore` (not
-    /// the `dyn GraphStoreMut` trait object) for subscription-based incremental
-    /// updates. Call this alongside [`with_kernel`](Self::with_kernel).
+    /// T17 W2c (2026-04-23): the former `with_lpg_store` alias has been
+    /// replaced by this generic accessor. Call alongside
+    /// [`with_kernel`](Self::with_kernel). In substrate-backed databases,
+    /// pass the handle returned by `ObrainDB::graph_store()` (the
+    /// substrate-aware accessor) rather than a dummy `LpgStore` reference,
+    /// to avoid the W4.p4.D1.s9 dummy-leak pattern.
     #[cfg(feature = "kernel")]
-    pub fn with_lpg_store(mut self, store: Arc<LpgStore>) -> Self {
-        self.lpg_store = Some(store);
+    pub fn with_kernel_store(mut self, store: Arc<dyn GraphStoreMut>) -> Self {
+        self.kernel_store = Some(store);
         self
     }
 
@@ -593,14 +600,14 @@ impl CognitiveEngineBuilder {
         // Kernel embeddings
         #[cfg(feature = "kernel")]
         let kernel = self.kernel_config.and_then(|config| {
-            let Some(lpg) = self.lpg_store else {
+            let Some(store) = self.kernel_store else {
                 tracing::warn!(
-                    "cognitive: kernel subsystem enabled but no LpgStore provided \
-                     (call with_lpg_store). Kernel embeddings will not be active."
+                    "cognitive: kernel subsystem enabled but no graph store provided \
+                     (call with_kernel_store). Kernel embeddings will not be active."
                 );
                 return None;
             };
-            let mut manager = KernelManager::new_untrained(Arc::clone(&lpg), config.seed);
+            let mut manager = KernelManager::new_untrained(Arc::clone(&store), config.seed);
             manager.set_alpha(config.alpha);
             manager.set_max_neighbors(config.max_neighbors);
             manager.debounce_threshold = config.debounce_threshold;
@@ -675,7 +682,7 @@ impl std::fmt::Debug for CognitiveEngineBuilder {
         d.field("graph_store", &self.graph_store.is_some());
 
         #[cfg(feature = "kernel")]
-        d.field("lpg_store", &self.lpg_store.is_some());
+        d.field("kernel_store", &self.kernel_store.is_some());
 
         #[cfg(feature = "substrate")]
         d.field("substrate", &self.substrate.is_some());
