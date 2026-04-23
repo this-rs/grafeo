@@ -75,45 +75,7 @@ where
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::graph::lpg::LpgStore;
-
-    #[test]
-    fn test_closure_accessor() {
-        let vectors: std::collections::HashMap<NodeId, Arc<[f32]>> = [
-            (NodeId::new(1), Arc::from(vec![1.0_f32, 0.0, 0.0])),
-            (NodeId::new(2), Arc::from(vec![0.0_f32, 1.0, 0.0])),
-        ]
-        .into_iter()
-        .collect();
-
-        let accessor = move |id: NodeId| -> Option<Arc<[f32]>> { vectors.get(&id).cloned() };
-
-        assert!(accessor.get_vector(NodeId::new(1)).is_some());
-        assert_eq!(accessor.get_vector(NodeId::new(1)).unwrap().len(), 3);
-        assert!(accessor.get_vector(NodeId::new(3)).is_none());
-    }
-
-    #[test]
-    fn test_property_vector_accessor() {
-        let store = LpgStore::new().unwrap();
-        let id = store.create_node(&["Test"]);
-        let vec_data: Arc<[f32]> = vec![1.0, 2.0, 3.0].into();
-        store.set_node_property(id, "embedding", Value::Vector(vec_data.clone()));
-
-        let accessor = PropertyVectorAccessor::new(&store, "embedding");
-        let result = accessor.get_vector(id);
-        assert!(result.is_some());
-        assert_eq!(result.unwrap().as_ref(), vec_data.as_ref());
-
-        // Non-existent node
-        assert!(accessor.get_vector(NodeId::new(999)).is_none());
-
-        // Wrong property type
-        store.set_node_property(id, "name", Value::from("hello"));
-        let name_accessor = PropertyVectorAccessor::new(&store, "name");
-        assert!(name_accessor.get_vector(id).is_none());
-    }
-}
+// Integration tests relocated to
+// `crates/obrain-substrate/tests/vector_accessor.rs` as part of T17 W4.p4
+// (substrate-backed fixtures cannot live in `obrain-core` due to the dev-dep
+// cycle — see the `operators_*` migration pattern note).

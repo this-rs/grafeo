@@ -56,6 +56,11 @@ tempfile.workspace = true
 proptest.workspace = true
 rand.workspace = true
 criterion.workspace = true
+# Enable obrain-core's `regex` feature only for tests — the production dep
+# above keeps `default-features = false`. Needed by the relocated
+# `operators_filter` integration tests that exercise `BinaryFilterOp::Regex`
+# and `BinaryFilterOp::Like` (T17 W4.p4).
+obrain-core = { workspace = true, default-features = false, features = ["regex"] }
 # Used only by the T11 Step 5 prefetch bench to read ru_minflt via
 # getrusage. Already transitively present through sha2/cpufeatures —
 # making it an explicit dev-dep keeps the bench self-contained.
