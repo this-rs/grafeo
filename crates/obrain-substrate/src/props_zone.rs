@@ -117,48 +117,88 @@ impl PropsZone {
         })
     }
 
+    /// Find the highest live page index (next allocation target) via
+    /// binary search on the page-magic boundary.
+    ///
+    /// **T17g T2**: formerly a linear scan from end. On large bases with
+    /// exponential-growth pre-allocation padding (e.g. Megalaw 103 GB
+    /// props.v2 with ~1M pages of trailing padding) the linear scan paged
+    /// in the entire padding region, costing hundreds of ms on open.
+    ///
+    /// Binary search takes O(log N) reads instead of O(tail_padding). It
+    /// works because the boundary is sharp by construction: pages
+    /// `1..next_page_idx` have a valid magic (either NODE or EDGE), pages
+    /// `next_page_idx..total` have none (zero-init padding or freshly
+    /// grown allocation). `allocated_page_count` increments monotonically
+    /// via `ensure_page_addressable` — no gaps.
+    ///
+    /// Fast-path: the initial two-slot file returns 1 without any read.
     fn compute_next_page_idx(zf: &ZoneFile) -> u32 {
-        // Scan from end backwards: the first page with a known prop
-        // magic (node OR edge) marks the highest-allocated slot.
-        // Fast-path: if the file is the initial two-slot size, next = 1.
         let bytes = zf.as_slice();
         let total_slots = (bytes.len() / PAGE_SIZE) as u32;
         if total_slots <= 1 {
             return 1;
         }
-        let mut hi = total_slots;
-        while hi > 1 {
-            let idx = hi - 1;
-            let slot = &bytes[idx as usize * PAGE_SIZE..(idx as usize + 1) * PAGE_SIZE];
-            // Check magic of the page header — either prop kind counts
-            // as a live allocation (T17f Step 2 added the edge magic).
+
+        // Binary search for the boundary between live pages (magic present)
+        // and padding (no magic). Invariant throughout the loop:
+        //   - pages `1..=lo` are either known-live or not yet probed
+        //     ⇒ the answer is `>= lo + 1` if we haven't seen an empty page
+        //   - pages `>= hi` are either known-empty or not yet probed
+        // On exit `lo + 1` is the answer (= `next_page_idx`).
+        let mut lo: u32 = 0;          // highest index known to be LIVE (or 0 if none)
+        let mut hi: u32 = total_slots; // lowest index known to be EMPTY (or total if all live)
+        while lo + 1 < hi {
+            let mid = lo + (hi - lo) / 2;
+            debug_assert!(mid >= 1 && mid < total_slots);
+            let slot = &bytes[mid as usize * PAGE_SIZE..(mid as usize + 1) * PAGE_SIZE];
             let magic = u32::from_le_bytes(slot[0..4].try_into().unwrap());
             if magic == PROP_PAGE_MAGIC_NODE || magic == PROP_PAGE_MAGIC_EDGE {
-                return idx + 1;
+                lo = mid;
+            } else {
+                hi = mid;
             }
-            hi -= 1;
         }
-        1
+        // If we never found a live page, lo stays 0 ⇒ next is 1 (sentinel slot).
+        // Otherwise lo is the last live slot ⇒ next is lo + 1.
+        lo.saturating_add(1).max(1)
     }
 
+    /// Heap-zone counterpart of [`Self::compute_next_page_idx`]. Same
+    /// binary-search logic; different magic + page size.
+    ///
+    /// **T17g T2**: O(log N) instead of O(tail_padding) linear scan.
     fn compute_next_heap_page_idx(zf: &ZoneFile) -> u32 {
         let bytes = zf.as_slice();
         let total_slots = (bytes.len() / HEAP_PAGE_SIZE) as u32;
         if total_slots == 0 {
             return 0;
         }
-        let mut hi = total_slots;
-        while hi > 0 {
-            let idx = hi - 1;
-            let slot =
-                &bytes[idx as usize * HEAP_PAGE_SIZE..(idx as usize + 1) * HEAP_PAGE_SIZE];
+
+        let mut lo: u32 = 0;          // highest LIVE (0 if none)
+        let mut hi: u32 = total_slots; // lowest EMPTY (total if all live)
+        // Heap is 0-indexed (no sentinel slot), so probe mid ∈ [0, total_slots-1].
+        // Special-case: lo=0 means "nothing known live yet" — we must probe 0 first.
+        if total_slots >= 1 {
+            let slot0 = &bytes[..HEAP_PAGE_SIZE];
+            let magic0 = u32::from_le_bytes(slot0[0..4].try_into().unwrap());
+            if magic0 != crate::heap::HEAP_PAGE_MAGIC {
+                return 0; // zone is empty
+            }
+            lo = 0; // slot 0 is live; answer is >= 1
+        }
+        while lo + 1 < hi {
+            let mid = lo + (hi - lo) / 2;
+            debug_assert!(mid < total_slots);
+            let slot = &bytes[mid as usize * HEAP_PAGE_SIZE..(mid as usize + 1) * HEAP_PAGE_SIZE];
             let magic = u32::from_le_bytes(slot[0..4].try_into().unwrap());
             if magic == crate::heap::HEAP_PAGE_MAGIC {
-                return idx + 1;
+                lo = mid;
+            } else {
+                hi = mid;
             }
-            hi -= 1;
         }
-        0
+        lo.saturating_add(1)
     }
 
     /// Get the property zone's current length (test/observability).
