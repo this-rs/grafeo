@@ -773,7 +773,12 @@ impl ObrainDB {
             .validate()
             .map_err(|e| obrain_common::utils::error::Error::Internal(e.to_string()))?;
 
-        let dummy_store = Arc::new(LpgStore::new()?);
+        // T17 Step 24 (2026-04-23): the dummy `LpgStore::new()` that used
+        // to shadow the real store in this constructor is gone — the
+        // `store` field is now `Arc<dyn GraphStoreMut>`, so it can hold
+        // the real store directly (legacy or substrate). The legacy
+        // Session path still needs a separate `external_store` handle
+        // for MVCC dispatch, which is kept below.
         let transaction_manager = Arc::new(TransactionManager::new());
 
         let buffer_config = BufferManagerConfig {
@@ -789,7 +794,7 @@ impl ObrainDB {
 
         Ok(Self {
             config,
-            store: dummy_store,
+            store: Arc::clone(&store),
             catalog: Arc::new(Catalog::new()),
             #[cfg(feature = "rdf")]
             rdf_store: Arc::new(RdfStore::new()),
