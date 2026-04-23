@@ -53,7 +53,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use obrain_core::graph::lpg::LpgStore;
 use obrain_core::graph::traits::GraphStore;
 
 /// Opens a legacy `.obrain` input and returns its graph store.
@@ -79,26 +78,16 @@ pub fn open_legacy(path: &Path) -> Result<Arc<dyn GraphStore>> {
     }
 }
 
-/// Opens a directory-layout `.obrain` (LpgStore + epoch files).
+/// T17 final cutover (2026-04-23): directory-layout `.obrain` reads
+/// are no longer supported. The LpgStore backend + epoch-file
+/// recovery were retired with substrate cutover.
 fn open_legacy_dir(path: &Path) -> Result<Arc<dyn GraphStore>> {
-    let store =
-        LpgStore::new().context("failed to construct LpgStore for legacy directory read")?;
-
-    // Wire the persist dir so the epoch store can mmap the files.
-    store
-        .set_persist_dir(path.to_path_buf())
-        .with_context(|| format!("set_persist_dir failed for {}", path.display()))?;
-
-    // Rebuild the in-memory indexes from the mmap'd epoch files.
-    store
-        .restore_from_epoch_files()
-        .with_context(|| format!("restore_from_epoch_files failed for {}", path.display()))?;
-
-    tracing::info!(
-        path = %path.display(),
-        "opened legacy `.obrain` directory (LpgStore hydrated from epoch files)",
-    );
-    Ok(Arc::new(store) as Arc<dyn GraphStore>)
+    anyhow::bail!(
+        "legacy directory-layout `.obrain` read ({}) is no longer supported \
+         since the T17 substrate cutover — LpgStore retired. Use an older \
+         obrain-migrate release to convert the base first.",
+        path.display()
+    )
 }
 
 /// T17 final cutover (2026-04-23): single-file `.obrain` (`GRAF`-magic)

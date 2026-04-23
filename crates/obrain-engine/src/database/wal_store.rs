@@ -9,7 +9,7 @@ use std::sync::Arc;
 use obrain_adapters::storage::wal::{LpgWal, WalRecord};
 use obrain_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TransactionId, Value};
 use obrain_common::utils::hash::FxHashMap;
-use obrain_core::graph::lpg::{CompareOp, Edge, LpgStore, Node};
+use obrain_core::graph::lpg::{CompareOp, Edge, Node};
 use obrain_core::graph::{Direction, GraphStore, GraphStoreMut};
 use obrain_core::statistics::Statistics;
 
@@ -535,7 +535,7 @@ mod tests {
 
     fn setup() -> (WalGraphStore, Arc<LpgWal>) {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(LpgStore::new().unwrap());
+        let store = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap()) as Arc<dyn obrain_core::graph::GraphStoreMut>;
         let wal = Arc::new(TypedWal::open(dir.path()).unwrap());
         let wal_ref = Arc::clone(&wal);
         let ctx = Arc::new(parking_lot::Mutex::new(None));
@@ -710,7 +710,7 @@ mod tests {
 
     fn setup_named_graph() -> (WalGraphStore, Arc<LpgWal>) {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(LpgStore::new().unwrap());
+        let store = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap()) as Arc<dyn obrain_core::graph::GraphStoreMut>;
         let wal = Arc::new(TypedWal::open(dir.path()).unwrap());
         let wal_ref = Arc::clone(&wal);
         let ctx = Arc::new(parking_lot::Mutex::new(None));

@@ -54,7 +54,7 @@ use obrain_common::memory::buffer::{BufferManager, BufferManagerConfig};
 use obrain_common::types::TransactionId;
 use obrain_common::utils::error::Result;
 use obrain_core::graph::GraphStoreMut;
-use obrain_core::graph::lpg::LpgStore;
+
 #[cfg(feature = "rdf")]
 use obrain_core::graph::rdf::RdfStore;
 
@@ -1603,9 +1603,9 @@ mod tests {
 
     #[test]
     fn test_with_store_external_backend() {
-        use obrain_core::graph::lpg::LpgStore;
+        
 
-        let external = Arc::new(LpgStore::new().unwrap());
+        let external = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap()) as Arc<dyn obrain_core::graph::GraphStoreMut>;
 
         // Seed data on the external store directly
         let n1 = external.create_node(&["Person"]);
@@ -1771,9 +1771,9 @@ mod tests {
 
     #[test]
     fn test_with_store_basic() {
-        use obrain_core::graph::lpg::LpgStore;
+        
 
-        let store = Arc::new(LpgStore::new().unwrap());
+        let store = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap()) as Arc<dyn obrain_core::graph::GraphStoreMut>;
         let n1 = store.create_node(&["Person"]);
         store.set_node_property(n1, "name", "Alix".into());
 
@@ -1786,9 +1786,9 @@ mod tests {
 
     #[test]
     fn test_with_store_session() {
-        use obrain_core::graph::lpg::LpgStore;
+        
 
-        let store = Arc::new(LpgStore::new().unwrap());
+        let store = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap()) as Arc<dyn obrain_core::graph::GraphStoreMut>;
         let graph_store = Arc::clone(&store) as Arc<dyn GraphStoreMut>;
         let db = ObrainDB::with_store(graph_store, Config::in_memory()).unwrap();
 
@@ -1799,9 +1799,9 @@ mod tests {
 
     #[test]
     fn test_with_store_mutations() {
-        use obrain_core::graph::lpg::LpgStore;
+        
 
-        let store = Arc::new(LpgStore::new().unwrap());
+        let store = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap()) as Arc<dyn obrain_core::graph::GraphStoreMut>;
         let graph_store = Arc::clone(&store) as Arc<dyn GraphStoreMut>;
         let db = ObrainDB::with_store(graph_store, Config::in_memory()).unwrap();
 

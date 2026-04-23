@@ -15,7 +15,7 @@ use obrain_common::types::{EdgeId, EpochId, NodeId, TransactionId, Value};
 use obrain_common::utils::error::Result;
 use obrain_core::graph::Direction;
 use obrain_core::graph::GraphStoreMut;
-use obrain_core::graph::lpg::{Edge, LpgStore, Node};
+use obrain_core::graph::lpg::{Edge, Node};
 #[cfg(feature = "rdf")]
 use obrain_core::graph::rdf::RdfStore;
 

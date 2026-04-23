@@ -1,0 +1,29 @@
+{
+  "setup": {
+    "nodes": 1000000,
+    "queries": 500,
+    "dim": 384,
+    "seed": 25482235886,
+    "serial": false,
+    "parallel_cascade": true
+  },
+  "recall": {
+    "recall_at_10": 0.9994,
+    "recall_at_100": 1.0
+  },
+  "latency_us": {
+    "mean": 813.9169179999984,
+    "p50": 810.833,
+    "p95": 872.7080000000001,
+    "p99": 894.75,
+    "min": 734.5,
+    "max": 938.166
+  },
+  "gate": {
+    "passed": true,
+    "failures": [],
+    "min_recall_10": 0.99,
+    "min_recall_100": 0.995,
+    "max_p95_us": 1000.0
+  }
+}
