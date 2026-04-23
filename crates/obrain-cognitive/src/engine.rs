@@ -287,6 +287,17 @@ pub struct CognitiveEngineBuilder {
     /// KernelManager requires `Arc<LpgStore>` specifically.
     #[cfg(feature = "kernel")]
     lpg_store: Option<Arc<LpgStore>>,
+
+    /// Optional substrate handle for column-backed cognitive stores
+    /// (T17 cutover — preferred over [`graph_store`] when present).
+    ///
+    /// When set, `EnergyStore::with_substrate` / `SynapseStore::with_substrate`
+    /// / analogous constructors route boost/decay/reinforce through the
+    /// substrate Q1.15 / Q0.16 columns + dedicated WAL records instead of
+    /// the generic property API. This is the supported path since the T17
+    /// substrate cutover.
+    #[cfg(feature = "substrate")]
+    substrate: Option<Arc<obrain_substrate::SubstrateStore>>,
 }
 
 impl CognitiveEngineBuilder {
@@ -312,6 +323,9 @@ impl CognitiveEngineBuilder {
 
             #[cfg(feature = "kernel")]
             lpg_store: None,
+
+            #[cfg(feature = "substrate")]
+            substrate: None,
         }
     }
 
@@ -356,6 +370,22 @@ impl CognitiveEngineBuilder {
     /// of the hot caches on restart.
     pub fn with_graph_store(mut self, store: Arc<dyn GraphStoreMut>) -> Self {
         self.graph_store = Some(store);
+        self
+    }
+
+    /// Sets the substrate handle — the T17-preferred backing for cognitive
+    /// stores that expose column-native writes (energy / synapse / scar /
+    /// utility / affinity).
+    ///
+    /// When both [`with_graph_store`](Self::with_graph_store) and
+    /// [`with_substrate`](Self::with_substrate) are set, the substrate handle
+    /// takes precedence for stores that implement `with_substrate`; fabric
+    /// and co-change stay on the trait-object path (no substrate variant
+    /// yet). For `SynapseStore::with_substrate`, the graph store is still
+    /// required for structural edge creation — pass both.
+    #[cfg(feature = "substrate")]
+    pub fn with_substrate(mut self, store: Arc<obrain_substrate::SubstrateStore>) -> Self {
+        self.substrate = Some(store);
         self
     }
 
@@ -424,37 +454,104 @@ impl CognitiveEngineBuilder {
         #[allow(unused_variables)]
         let gs = self.graph_store;
 
-        // Energy
+        #[cfg(feature = "substrate")]
+        #[allow(unused_variables)]
+        let sub = self.substrate;
+
+        // Energy — prefer substrate (column-native WAL writes) over
+        // graph_store (generic property API) over legacy in-memory.
         #[cfg(feature = "energy")]
         let energy = self.energy_config.map(|config| {
-            let store = match &gs {
-                Some(graph_store) => Arc::new(EnergyStore::with_graph_store(
-                    config,
-                    Arc::clone(graph_store),
-                )),
-                None => Arc::new(EnergyStore::new(config)),
+            let store = {
+                #[cfg(feature = "substrate")]
+                {
+                    match (&sub, &gs) {
+                        (Some(substrate), _) => Arc::new(EnergyStore::with_substrate(
+                            config,
+                            Arc::clone(substrate),
+                        )),
+                        (None, Some(graph_store)) => Arc::new(EnergyStore::with_graph_store(
+                            config,
+                            Arc::clone(graph_store),
+                        )),
+                        (None, None) => Arc::new(EnergyStore::new(config)),
+                    }
+                }
+                #[cfg(not(feature = "substrate"))]
+                {
+                    match &gs {
+                        Some(graph_store) => Arc::new(EnergyStore::with_graph_store(
+                            config,
+                            Arc::clone(graph_store),
+                        )),
+                        None => Arc::new(EnergyStore::new(config)),
+                    }
+                }
             };
             let listener = Arc::new(EnergyListener::new(Arc::clone(&store)));
             scheduler.register_listener(listener);
             active_count += 1;
-            tracing::info!("cognitive: energy subsystem activated");
+            #[cfg(feature = "substrate")]
+            let routed = if store.is_substrate_backed() {
+                "substrate"
+            } else if gs.is_some() {
+                "graph_store"
+            } else {
+                "in_memory"
+            };
+            #[cfg(not(feature = "substrate"))]
+            let routed = if gs.is_some() { "graph_store" } else { "in_memory" };
+            tracing::info!(routed, "cognitive: energy subsystem activated");
             store
         });
 
-        // Synapses
+        // Synapses — substrate variant requires BOTH substrate (weight
+        // column) + graph_store (structural edges).
         #[cfg(feature = "synapse")]
         let synapse = self.synapse_config.map(|config| {
-            let store = match &gs {
-                Some(graph_store) => Arc::new(SynapseStore::with_graph_store(
-                    config,
-                    Arc::clone(graph_store),
-                )),
-                None => Arc::new(SynapseStore::new(config)),
+            let store = {
+                #[cfg(feature = "substrate")]
+                {
+                    match (&sub, &gs) {
+                        (Some(substrate), Some(graph_store)) => {
+                            Arc::new(SynapseStore::with_substrate(
+                                config,
+                                Arc::clone(graph_store),
+                                Arc::clone(substrate),
+                            ))
+                        }
+                        (_, Some(graph_store)) => Arc::new(SynapseStore::with_graph_store(
+                            config,
+                            Arc::clone(graph_store),
+                        )),
+                        (_, None) => Arc::new(SynapseStore::new(config)),
+                    }
+                }
+                #[cfg(not(feature = "substrate"))]
+                {
+                    match &gs {
+                        Some(graph_store) => Arc::new(SynapseStore::with_graph_store(
+                            config,
+                            Arc::clone(graph_store),
+                        )),
+                        None => Arc::new(SynapseStore::new(config)),
+                    }
+                }
             };
             let listener = Arc::new(SynapseListener::new(Arc::clone(&store)));
             scheduler.register_listener(listener);
             active_count += 1;
-            tracing::info!("cognitive: synapse subsystem activated");
+            #[cfg(feature = "substrate")]
+            let routed = if sub.is_some() && gs.is_some() {
+                "substrate+graph"
+            } else if gs.is_some() {
+                "graph_store"
+            } else {
+                "in_memory"
+            };
+            #[cfg(not(feature = "substrate"))]
+            let routed = if gs.is_some() { "graph_store" } else { "in_memory" };
+            tracing::info!(routed, "cognitive: synapse subsystem activated");
             store
         });
 
@@ -579,6 +676,9 @@ impl std::fmt::Debug for CognitiveEngineBuilder {
 
         #[cfg(feature = "kernel")]
         d.field("lpg_store", &self.lpg_store.is_some());
+
+        #[cfg(feature = "substrate")]
+        d.field("substrate", &self.substrate.is_some());
 
         d.finish()
     }
