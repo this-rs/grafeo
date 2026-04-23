@@ -22,7 +22,6 @@ use std::sync::OnceLock;
 
 use obrain_common::types::{EdgeId, NodeId, PropertyKey, Value};
 use obrain_common::utils::error::Result;
-use obrain_core::graph::lpg::LpgStore;
 use obrain_core::graph::{Direction, GraphStore, GraphStoreMut};
 
 use super::super::{AlgorithmResult, ParameterDef, ParameterType, Parameters};
@@ -350,7 +349,7 @@ pub fn contract_subgraph(
 ///
 /// O(V_sub + E_sub + E_external)
 pub fn expand_supernode(
-    store: &LpgStore,
+    store: &dyn GraphStoreMut,
     supernode_id: NodeId,
     snapshot: &ContractionSnapshot,
 ) -> Result<()> {

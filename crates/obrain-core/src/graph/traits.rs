@@ -806,6 +806,20 @@ pub trait GraphStoreMut: GraphStore {
         Vec::new()
     }
 
+    /// Creates a node with a caller-specified `NodeId`. Used by
+    /// reversible contraction (see `expand_supernode`) to restore
+    /// original IDs after a round-trip. Default returns an error —
+    /// substrate allocates monotonically and does not support
+    /// reusing a specific slot; the legacy `LpgStore` backend
+    /// overrides this with its inherent slot-reclamation routine.
+    fn create_node_with_id(
+        &self,
+        _id: NodeId,
+        _labels: &[&str],
+    ) -> Result<(), AllocError> {
+        Err(AllocError::OutOfMemory)
+    }
+
     /// Copies all nodes and edges from the `source` named graph into the
     /// `dest` named graph (both `None` = root graph). Used by
     /// `CREATE GRAPH g AS COPY OF h`. The default returns an error for
