@@ -297,6 +297,53 @@ impl GraphStore for LpgStore {
     ) -> Option<Arc<crate::index::vector::HnswIndex>> {
         LpgStore::get_vector_index(self, label, property)
     }
+
+    #[cfg(feature = "text-index")]
+    fn get_text_index(
+        &self,
+        label: &str,
+        property: &str,
+    ) -> Option<Arc<parking_lot::RwLock<crate::index::text::InvertedIndex>>> {
+        LpgStore::get_text_index(self, label, property)
+    }
+
+    #[cfg(feature = "vector-index")]
+    fn add_vector_index(
+        &self,
+        label: &str,
+        property: &str,
+        index: Arc<crate::index::vector::HnswIndex>,
+    ) {
+        LpgStore::add_vector_index(self, label, property, index)
+    }
+
+    #[cfg(feature = "vector-index")]
+    fn remove_vector_index(&self, label: &str, property: &str) -> bool {
+        LpgStore::remove_vector_index(self, label, property)
+    }
+
+    #[cfg(feature = "text-index")]
+    fn add_text_index(
+        &self,
+        label: &str,
+        property: &str,
+        index: Arc<parking_lot::RwLock<crate::index::text::InvertedIndex>>,
+    ) {
+        LpgStore::add_text_index(self, label, property, index)
+    }
+
+    #[cfg(feature = "text-index")]
+    fn remove_text_index(&self, label: &str, property: &str) -> bool {
+        LpgStore::remove_text_index(self, label, property)
+    }
+
+    fn find_nodes_matching_filter(
+        &self,
+        property: &str,
+        filter_value: &Value,
+    ) -> Vec<NodeId> {
+        LpgStore::find_nodes_matching_filter(self, property, filter_value)
+    }
 }
 
 impl GraphStoreMut for LpgStore {
@@ -392,6 +439,38 @@ impl GraphStoreMut for LpgStore {
         dest: Option<&str>,
     ) -> Result<(), String> {
         LpgStore::copy_graph(self, source, dest).map_err(|e| e.to_string())
+    }
+
+    // --- LpgStore-legacy inspection overrides ---
+    fn nodes_with_label(&self, label: &str) -> Vec<Node> {
+        LpgStore::nodes_with_label(self, label).collect()
+    }
+
+    fn edges_with_type(&self, edge_type: &str) -> Vec<Edge> {
+        LpgStore::edges_with_type(self, edge_type).collect()
+    }
+
+    fn all_edges(&self) -> Vec<Edge> {
+        LpgStore::all_edges(self).collect()
+    }
+
+    fn create_property_index(&self, property: &str) {
+        LpgStore::create_property_index(self, property)
+    }
+
+    fn drop_property_index(&self, property: &str) -> bool {
+        LpgStore::drop_property_index(self, property)
+    }
+
+    fn memory_breakdown(
+        &self,
+    ) -> (
+        obrain_common::memory::usage::StoreMemory,
+        obrain_common::memory::usage::IndexMemory,
+        obrain_common::memory::usage::MvccMemory,
+        obrain_common::memory::usage::StringPoolMemory,
+    ) {
+        LpgStore::memory_breakdown(self)
     }
 
     fn create_node(&self, labels: &[&str]) -> NodeId {

@@ -273,6 +273,72 @@ pub trait GraphStore: Send + Sync {
         None
     }
 
+    /// Retrieves the text (BM25) index for a label+property pair, if any.
+    ///
+    /// Default returns `None`. LpgStore overrides to look up its text-index
+    /// registry. Substrate surfaces equivalent functionality through its
+    /// tiered-storage inverted index — callers interested in full-text
+    /// retrieval should dispatch on `Arc<SubstrateStore>` directly in
+    /// substrate-mode paths.
+    #[cfg(feature = "text-index")]
+    fn get_text_index(
+        &self,
+        _label: &str,
+        _property: &str,
+    ) -> Option<Arc<parking_lot::RwLock<crate::index::text::InvertedIndex>>> {
+        None
+    }
+
+    /// Registers a pre-built vector (HNSW) index for a label+property pair.
+    /// Default no-op — backends without named vector indexes ignore the
+    /// registration.
+    #[cfg(feature = "vector-index")]
+    fn add_vector_index(
+        &self,
+        _label: &str,
+        _property: &str,
+        _index: Arc<crate::index::vector::HnswIndex>,
+    ) {
+    }
+
+    /// Removes the vector index for a label+property pair. Returns `false`
+    /// if none existed. Default returns `false`.
+    #[cfg(feature = "vector-index")]
+    fn remove_vector_index(&self, _label: &str, _property: &str) -> bool {
+        false
+    }
+
+    /// Registers a pre-built text (BM25) index for a label+property pair.
+    /// Default no-op.
+    #[cfg(feature = "text-index")]
+    fn add_text_index(
+        &self,
+        _label: &str,
+        _property: &str,
+        _index: Arc<parking_lot::RwLock<crate::index::text::InvertedIndex>>,
+    ) {
+    }
+
+    /// Removes the text index for a label+property pair. Returns `false`
+    /// if none existed. Default returns `false`.
+    #[cfg(feature = "text-index")]
+    fn remove_text_index(&self, _label: &str, _property: &str) -> bool {
+        false
+    }
+
+    /// Returns node IDs matching an operator-style filter value on a
+    /// given property (`{$gt: 5}`, `{$in: [..]}`, ...). Used by the
+    /// query engine's server-side filter path.
+    /// Default returns empty — backends without operator-filter support
+    /// should fall back to `node_ids()` + manual scan.
+    fn find_nodes_matching_filter(
+        &self,
+        _property: &str,
+        _filter_value: &Value,
+    ) -> Vec<NodeId> {
+        Vec::new()
+    }
+
     // --- Zone maps (skip pruning) ---
 
     /// Returns `true` if a node property predicate might match any nodes.
@@ -750,5 +816,75 @@ pub trait GraphStoreMut: GraphStore {
         _dest: Option<&str>,
     ) -> Result<(), String> {
         Err("named graphs are not supported by this backend".to_string())
+    }
+
+    // --- LpgStore-legacy inspection hooks (T17 Step 24: 2026-04-23) ---
+    //
+    // These methods back the `SHOW DATABASE` / `SHOW INDEXES` admin
+    // paths and the GQL index-management statements that were
+    // LpgStore-inherent. Substrate publishes the same information
+    // through its tiered-storage zone headers + registry, so the
+    // defaults return empty / not-supported values — sufficient for
+    // the admin.rs paths to compile against `Arc<dyn GraphStoreMut>`.
+    // LpgStore overrides each method by delegating to its inherent
+    // implementation (legacy-read path + in-memory shadow).
+
+    /// Returns all nodes carrying the given label. Used by index
+    /// builders. Default returns empty — backends that do not maintain
+    /// a label→nodes reverse index should populate on demand via
+    /// `nodes_by_label` (IDs) + `get_node` (hydration).
+    fn nodes_with_label(&self, _label: &str) -> Vec<Node> {
+        Vec::new()
+    }
+
+    /// Returns all edges carrying the given edge-type. Used by schema
+    /// introspection. Default returns empty.
+    fn edges_with_type(&self, _edge_type: &str) -> Vec<Edge> {
+        Vec::new()
+    }
+
+    /// Returns every edge in the store. Used by schema introspection
+    /// + legacy snapshot paths. Default returns empty — substrate
+    /// surfaces edges through `edges_from(node, direction)` which
+    /// scales to live-graph sizes.
+    fn all_edges(&self) -> Vec<Edge> {
+        Vec::new()
+    }
+
+    /// Creates a property index over the given property name. Default
+    /// no-op — substrate does not maintain property-level side
+    /// indexes; the tiered-storage column layout provides equivalent
+    /// functionality.
+    fn create_property_index(&self, _property: &str) {}
+
+    /// Drops a property index. Default returns `false` ("nothing was
+    /// dropped") — substrate does not maintain named property
+    /// indexes.
+    fn drop_property_index(&self, _property: &str) -> bool {
+        false
+    }
+
+    /// Returns a detailed RAM memory breakdown of the store.
+    ///
+    /// Default returns all-zero totals: this category of
+    /// introspection is LpgStore-specific (VersionChain maps + MVCC
+    /// chains + property DashMaps). Substrate exposes zone footprints
+    /// through a different API (future
+    /// `SubstrateStore::memory_breakdown`) that reports mmap zones
+    /// instead of heap allocations.
+    fn memory_breakdown(
+        &self,
+    ) -> (
+        obrain_common::memory::usage::StoreMemory,
+        obrain_common::memory::usage::IndexMemory,
+        obrain_common::memory::usage::MvccMemory,
+        obrain_common::memory::usage::StringPoolMemory,
+    ) {
+        (
+            obrain_common::memory::usage::StoreMemory::default(),
+            obrain_common::memory::usage::IndexMemory::default(),
+            obrain_common::memory::usage::MvccMemory::default(),
+            obrain_common::memory::usage::StringPoolMemory::default(),
+        )
     }
 }

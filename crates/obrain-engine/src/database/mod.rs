@@ -92,7 +92,16 @@ pub struct ObrainDB {
     /// Database configuration.
     pub(super) config: Config,
     /// The underlying graph store.
-    pub(super) store: Arc<LpgStore>,
+    ///
+    /// T17 Step 24 (2026-04-23): retyped from `Arc<LpgStore>` to the
+    /// erased trait object. In substrate mode this holds a
+    /// substrate-backed store; in the legacy path it holds an
+    /// in-memory `LpgStore`. Both variants dispatch through
+    /// `GraphStoreMut` — MVCC, named-graph, index-management, and
+    /// introspection hooks all live on the trait with
+    /// substrate-compatible defaults (LpgStore overrides delegate to
+    /// its inherent impls).
+    pub(super) store: Arc<dyn GraphStoreMut>,
     /// Schema and metadata catalog shared across sessions.
     pub(super) catalog: Arc<Catalog>,
     /// RDF triple store (if RDF feature is enabled).
@@ -1674,13 +1683,18 @@ impl ObrainDB {
 
     /// Returns the underlying (default) store.
     ///
-    /// This provides direct access to the LPG store for algorithm implementations
-    /// and admin operations (index management, schema introspection, MVCC internals).
+    /// Returns the underlying graph store as `&Arc<dyn GraphStoreMut>`.
     ///
-    /// For code that only needs read/write graph operations, prefer
-    /// [`graph_store()`](Self::graph_store) which returns the trait interface.
+    /// T17 Step 24 (2026-04-23): retyped from the concrete
+    /// `&Arc<LpgStore>` to the trait object. Callers that previously
+    /// relied on LpgStore-inherent methods (memory_breakdown,
+    /// edges_with_type, all_edges, nodes_with_label, create/drop
+    /// property index, named-graph API) now reach the same surface
+    /// through `GraphStoreMut` trait methods — substrate-compatible
+    /// defaults return empty/zero values; LpgStore overrides
+    /// delegate to inherent impls.
     #[must_use]
-    pub fn store(&self) -> &Arc<LpgStore> {
+    pub fn store(&self) -> &Arc<dyn GraphStoreMut> {
         &self.store
     }
 
@@ -1695,20 +1709,20 @@ impl ObrainDB {
         self.mmap_store.as_ref()
     }
 
-    /// Returns the LPG store for the currently active graph.
+    /// Returns the store for the currently active graph.
     ///
     /// If [`current_graph`](Self::current_graph) is `None` or `"default"`, returns
     /// the default store. Otherwise looks up the named graph in the root store.
     /// Falls back to the default store if the named graph does not exist.
     #[allow(dead_code)] // Reserved for future graph-aware CRUD methods
-    fn active_store(&self) -> Arc<LpgStore> {
+    fn active_store(&self) -> Arc<dyn GraphStoreMut> {
         let graph_name = self.current_graph.read().clone();
         match graph_name {
             None => Arc::clone(&self.store),
             Some(ref name) if name.eq_ignore_ascii_case("default") => Arc::clone(&self.store),
             Some(ref name) => self
                 .store
-                .graph(name)
+                .named_graph(name)
                 .unwrap_or_else(|| Arc::clone(&self.store)),
         }
     }
@@ -1735,7 +1749,9 @@ impl ObrainDB {
                     .to_string(),
             ));
         }
-        Ok(self.store.create_graph(name)?)
+        self.store
+            .create_named_graph(name)
+            .map_err(|e| obrain_common::utils::error::Error::Internal(e.to_string()))
     }
 
     /// Drops a named graph. Returns `true` if dropped, `false` if it did not exist.
@@ -1747,7 +1763,7 @@ impl ObrainDB {
             // No named graphs exist on substrate, so there is nothing to drop.
             return false;
         }
-        self.store.drop_graph(name)
+        self.store.drop_named_graph(name)
     }
 
     /// Returns all named graph names.
@@ -1759,7 +1775,7 @@ impl ObrainDB {
         if self.substrate_store.is_some() {
             return Vec::new();
         }
-        self.store.graph_names()
+        self.store.named_graph_names()
     }
 
     /// Returns the active data store as a trait object — the single

@@ -231,7 +231,7 @@ impl super::ObrainDB {
             .map(|name| crate::admin::EdgeTypeInfo {
                 // TODO(T17 W3c slice 5b): add edge_count_by_type to the trait
                 // so substrate-backed ObrainDB can report non-zero counts here.
-                count: self.store.edges_with_type(&name).count(),
+                count: self.store.edges_with_type(&name).len(),
                 name,
             })
             .collect();
