@@ -66,13 +66,58 @@ const MAGIC: u32 = 0xD1C7_0DB1;
 ///   columns (for oversized `Value::String` / `Value::Bytes` payloads).
 ///   Each spec is 3 bytes on wire: `u16 prop_key_id`, `u8 entity_kind`.
 ///   v1 / v2 / v3 dicts load with an empty list.
-const FORMAT_VERSION: u32 = 4;
+/// * v5 (T17h T1): appends a `PersistedCounters` block : total live
+///   nodes (u64), total live edges (u64), fixed 64×u64 label counts,
+///   then u16 entry-count + (u16 type_id, u64 count) entries for
+///   edge-type counters. v1..=v4 load with `counters = None` — the
+///   caller rebuilds from a one-shot zone scan and persists on next
+///   flush (which writes v5).
+const FORMAT_VERSION: u32 = 5;
 
 /// Wire size of one `VecColSpec` in the v3+ tail of the dict.
 const VEC_COL_SPEC_WIRE_SIZE: usize = 2 + 1 + 1 + 4;
 
 /// Wire size of one `BlobColSpec` in the v4+ tail of the dict.
 const BLOB_COL_SPEC_WIRE_SIZE: usize = 2 + 1;
+
+/// T17h T1 — live counters persisted alongside the dict snapshot.
+/// Stored as a single block at the end of the dict file (v5 tail),
+/// absent in v1..=v4 dicts. A `None` load triggers a one-shot rebuild
+/// from the on-disk zones; subsequent flushes write `Some` (v5 bump).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedCounters {
+    /// Total number of non-tombstoned nodes (matches `node_count()`).
+    pub total_live_nodes: u64,
+    /// Total number of non-tombstoned edges (matches `edge_count()`).
+    pub total_live_edges: u64,
+    /// Per-label live count, indexed by label bit (0..=63). Fixed size
+    /// because `NodeRecord.label_bitset` is a u64 bitset. Sparse
+    /// labels have count 0 (cheap on wire — always 8 B × 64 = 512 B).
+    pub label_counts: [u64; 64],
+    /// Per-edge-type live count, indexed by `edge_type_id: u16`. Wire
+    /// format uses a count-prefixed list to avoid writing zeros for
+    /// unused type ids in the sparse u16 id space.
+    pub edge_type_counts: Vec<(u16, u64)>,
+}
+
+impl Default for PersistedCounters {
+    fn default() -> Self {
+        Self {
+            total_live_nodes: 0,
+            total_live_edges: 0,
+            label_counts: [0u64; 64],
+            edge_type_counts: Vec::new(),
+        }
+    }
+}
+
+/// Wire size of the fixed-prefix portion of a `PersistedCounters` block
+/// (total_live_nodes + total_live_edges + 64× label counts + edge-type
+/// entry count prefix). Variable tail = 10 B per edge_type entry.
+const COUNTERS_FIXED_PREFIX_SIZE: usize = 8 + 8 + 64 * 8 + 2;
+
+/// Wire size of one edge-type entry in the v5+ counters tail.
+const EDGE_TYPE_COUNT_ENTRY_SIZE: usize = 2 + 8;
 
 /// All three registries + allocator state captured at one point in time.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,6 +148,12 @@ pub struct DictSnapshot {
     /// and not in the bincode sidecar". Persisted from format v4
     /// (T16.7 Step 4); v1 / v2 / v3 dicts load with an empty list.
     pub blob_columns: Vec<BlobColSpec>,
+    /// Live counters snapshot (T17h T1) — `Some` when loaded from a v5+
+    /// dict, `None` when loaded from v1..=v4. The caller treats `None`
+    /// as "rebuild from zones at open time, persist on next flush".
+    /// Writers always populate this from the in-memory atomics before
+    /// calling [`Self::persist`].
+    pub counters: Option<PersistedCounters>,
 }
 
 impl Default for DictSnapshot {
@@ -116,6 +167,13 @@ impl Default for DictSnapshot {
             next_engram_id: 1,
             vec_columns: Vec::new(),
             blob_columns: Vec::new(),
+            // T17h T1: a default (fresh) snapshot is already v5-compatible.
+            // Producing `Some(Default)` here ensures roundtrip invariance
+            // (write → read → equal) and makes in-memory snapshots consistent
+            // with freshly-written on-disk files. Load of a legacy v1..=v4
+            // file produces `counters: None` (see `from_bytes`) so the store
+            // knows to rebuild.
+            counters: Some(PersistedCounters::default()),
         }
     }
 }
@@ -191,6 +249,38 @@ impl DictSnapshot {
             buf.push(spec.entity_kind as u8);
         }
 
+        // v5: PersistedCounters block. Always write `Default` when
+        // `self.counters` is None so the file format is uniform per
+        // version — the caller can tell "counters present" from the
+        // version field alone (v5 = always present).
+        //
+        // Wire format:
+        //   [u64 total_live_nodes]
+        //   [u64 total_live_edges]
+        //   [64 × u64 label_counts]  (fixed, sparse labels are 0)
+        //   [u16 edge_type_count]
+        //   per entry: [u16 type_id] [u64 count]
+        //
+        // Overall fixed prefix = 530 B + 10 B per edge_type entry.
+        let counters = self.counters.clone().unwrap_or_default();
+        if counters.edge_type_counts.len() > u16::MAX as usize {
+            return Err(SubstrateError::Internal(format!(
+                "dict overflow: {} edge_type_counts (max {})",
+                counters.edge_type_counts.len(),
+                u16::MAX
+            )));
+        }
+        buf.extend_from_slice(&counters.total_live_nodes.to_le_bytes());
+        buf.extend_from_slice(&counters.total_live_edges.to_le_bytes());
+        for c in &counters.label_counts {
+            buf.extend_from_slice(&c.to_le_bytes());
+        }
+        buf.extend_from_slice(&(counters.edge_type_counts.len() as u16).to_le_bytes());
+        for (type_id, count) in &counters.edge_type_counts {
+            buf.extend_from_slice(&type_id.to_le_bytes());
+            buf.extend_from_slice(&count.to_le_bytes());
+        }
+
         // Pad to 4-byte boundary before crc to keep alignment clean.
         while buf.len() % 4 != 0 {
             buf.push(0);
@@ -216,14 +306,15 @@ impl DictSnapshot {
             )));
         }
         let version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
-        // Accept v1, v2, v3, and current version:
-        // * v1 → no `next_engram_id`, no `vec_columns`, no `blob_columns`.
-        // * v2 → `next_engram_id` present, no `vec_columns`, no `blob_columns`.
-        // * v3 → `vec_columns` present, no `blob_columns`.
-        // * v4 → all fields present.
-        if !(version == 1 || version == 2 || version == 3 || version == FORMAT_VERSION) {
+        // Accept all backward-compatible versions:
+        // * v1 → no `next_engram_id`, no `vec_columns`, no `blob_columns`, no counters.
+        // * v2 → `next_engram_id` present, no `vec_columns`, no `blob_columns`, no counters.
+        // * v3 → `vec_columns` present, no `blob_columns`, no counters.
+        // * v4 → all structural fields present, no counters.
+        // * v5 → current: adds `PersistedCounters` block (T17h T1).
+        if !(version >= 1 && version <= FORMAT_VERSION) {
             return Err(SubstrateError::Internal(format!(
-                "dict version {version} unsupported (expected 1, 2, 3, or {FORMAT_VERSION})"
+                "dict version {version} unsupported (expected 1..={FORMAT_VERSION})"
             )));
         }
 
@@ -379,9 +470,65 @@ impl DictSnapshot {
                     entity_kind,
                 });
             }
+            // Advance cursor past the blob_columns payload so v5
+            // counters parsing starts at the right offset.
+            cur = &cur[need..];
             out
         } else {
             Vec::new()
+        };
+
+        // v5+: PersistedCounters block. u64 total_nodes + u64 total_edges
+        // + 64×u64 label_counts + u16 count + (u16, u64) entries.
+        // v1..=v4: counters = None → caller rebuilds.
+        let counters: Option<PersistedCounters> = if version >= 5 {
+            if cur.len() < COUNTERS_FIXED_PREFIX_SIZE {
+                return Err(SubstrateError::Internal(format!(
+                    "dict v5 truncated at counters block (need ≥ {}, have {})",
+                    COUNTERS_FIXED_PREFIX_SIZE,
+                    cur.len()
+                )));
+            }
+            let total_live_nodes = u64::from_le_bytes(cur[0..8].try_into().unwrap());
+            let total_live_edges = u64::from_le_bytes(cur[8..16].try_into().unwrap());
+            let mut label_counts = [0u64; 64];
+            for (i, count) in label_counts.iter_mut().enumerate() {
+                let off = 16 + i * 8;
+                *count = u64::from_le_bytes(cur[off..off + 8].try_into().unwrap());
+            }
+            let entries_off = 16 + 64 * 8;
+            let n_entries =
+                u16::from_le_bytes(cur[entries_off..entries_off + 2].try_into().unwrap())
+                    as usize;
+            let entries_start = entries_off + 2;
+            let need = n_entries * EDGE_TYPE_COUNT_ENTRY_SIZE;
+            if cur.len() < entries_start + need {
+                return Err(SubstrateError::Internal(format!(
+                    "dict v5 truncated at edge_type_counts body (need {need}, have {})",
+                    cur.len().saturating_sub(entries_start)
+                )));
+            }
+            let mut edge_type_counts = Vec::with_capacity(n_entries);
+            for i in 0..n_entries {
+                let base = entries_start + i * EDGE_TYPE_COUNT_ENTRY_SIZE;
+                let type_id = u16::from_le_bytes(cur[base..base + 2].try_into().unwrap());
+                let count =
+                    u64::from_le_bytes(cur[base + 2..base + 10].try_into().unwrap());
+                edge_type_counts.push((type_id, count));
+            }
+            // Advance cursor in case future versions extend the block.
+            cur = &cur[entries_start + need..];
+            // Touch `cur` to silence unused-mut lint; future versions
+            // continue parsing from here.
+            let _ = &cur;
+            Some(PersistedCounters {
+                total_live_nodes,
+                total_live_edges,
+                label_counts,
+                edge_type_counts,
+            })
+        } else {
+            None
         };
 
         Ok(Self {
@@ -393,6 +540,7 @@ impl DictSnapshot {
             next_engram_id,
             vec_columns,
             blob_columns,
+            counters,
         })
     }
 
@@ -524,6 +672,7 @@ mod tests {
             next_engram_id: 4321,
             vec_columns: Vec::new(),
             blob_columns: Vec::new(),
+            counters: Some(PersistedCounters::default()),
         };
         let bytes = s.to_bytes().unwrap();
         let back = DictSnapshot::from_bytes(&bytes).unwrap();
@@ -543,6 +692,7 @@ mod tests {
             next_engram_id: 7,
             vec_columns: Vec::new(),
             blob_columns: Vec::new(),
+            counters: Some(PersistedCounters::default()),
         };
         s.persist(&path).unwrap();
         let back = DictSnapshot::load(&path).unwrap();
@@ -573,6 +723,7 @@ mod tests {
                 },
             ],
             blob_columns: Vec::new(),
+            counters: Some(PersistedCounters::default()),
         };
         let bytes = s.to_bytes().unwrap();
         let back = DictSnapshot::from_bytes(&bytes).unwrap();
@@ -633,6 +784,7 @@ mod tests {
                     entity_kind: EntityKind::Edge,
                 },
             ],
+            counters: Some(PersistedCounters::default()),
         };
         let bytes = s.to_bytes().unwrap();
         let back = DictSnapshot::from_bytes(&bytes).unwrap();
@@ -805,8 +957,16 @@ mod tests {
         let _ = counter_start; // silence unused if we ever skip the search
         let err = DictSnapshot::from_bytes(&bytes).unwrap_err();
         let msg = format!("{err:?}");
+        // After v5 bump (T17h T1), the rposition search for u64(1) may
+        // now overlap next_engram_id + vec_count + blob_count + start of
+        // counters block (all zeros for a default dict), so the corrupted
+        // 8-byte slice can land on any of the three counters depending on
+        // the precise byte layout. All three are legitimate targets of
+        // this invariant check.
         assert!(
-            msg.contains("next_node_id") || msg.contains("next_edge_id"),
+            msg.contains("next_node_id")
+                || msg.contains("next_edge_id")
+                || msg.contains("next_engram_id"),
             "got: {msg}"
         );
     }
@@ -879,6 +1039,7 @@ mod tests {
             next_engram_id: 9999,
             vec_columns: Vec::new(),
             blob_columns: Vec::new(),
+            counters: Some(PersistedCounters::default()),
         };
         let bytes = s.to_bytes().unwrap();
         let back = DictSnapshot::from_bytes(&bytes).unwrap();

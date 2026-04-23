@@ -593,6 +593,22 @@ pub struct SubstrateStore {
     /// until the scan completes, then inserts its own placement into the
     /// now-populated maps.
     community_ranges_cell: OnceLock<CommunityRanges>,
+    /// T17h T1 — total live nodes counter (atomic O(1) replacement for
+    /// the former `node_count()` scan). Maintained by create/delete_node.
+    /// Persisted in `DictSnapshot.counters` (v5+); bases v1..=v4 trigger
+    /// a one-shot rebuild at open, persisted on next flush.
+    total_live_nodes: AtomicU64,
+    /// T17h T1 — total live edges counter (O(1) `edge_count()`).
+    total_live_edges: AtomicU64,
+    /// T17h T1 — per-label live counts, indexed by bit index 0..=63 of
+    /// `NodeRecord.label_bitset`. Fixed-size array (64 entries) because
+    /// the bitset width is hard-capped at u64 — cache-friendly, no hash.
+    label_live_counts: [AtomicU64; 64],
+    /// T17h T1 — per-edge-type live counts. DashMap because the u16
+    /// edge-type id space is open and typically sparse (≤ 128 in practice
+    /// but no hard cap). Fast path reads existing entry; cold path
+    /// inserts on first use via `or_insert_with(AtomicU64::new(0))`.
+    edge_type_live_counts: DashMap<u16, AtomicU64>,
     /// Routing table + open-writer cache for `Value::Vector` properties.
     ///
     /// Every `set_node_property(_, _, Value::Vector(_))` and
@@ -780,6 +796,10 @@ impl SubstrateStore {
             prop_keys: RwLock::new(prop_keys),
             stats: Arc::new(Statistics::new()),
             community_ranges_cell: OnceLock::new(),
+            total_live_nodes: AtomicU64::new(0),
+            total_live_edges: AtomicU64::new(0),
+            label_live_counts: std::array::from_fn(|_| AtomicU64::new(0)),
+            edge_type_live_counts: DashMap::new(),
             vec_columns: VecColumnRegistry::new(),
             blob_columns: BlobColumnRegistry::new(),
             props_zone,
@@ -809,6 +829,31 @@ impl SubstrateStore {
             incoming_heads = "lazy",
             communities = "lazy",
             "side-cars deferred to first access (community ranges + incoming_heads both lazy)"
+        );
+
+        // (2b) T17h T1 — Live counters restoration.
+        //
+        // v5+ dicts carry `PersistedCounters` — restore in O(1). Legacy
+        // v1..=v4 dicts have `counters = None` — one-shot rebuild from
+        // zones (O(N+E) sequential scan), will be persisted on next
+        // flush (v5 bump takes effect).
+        let t_counters = std::time::Instant::now();
+        let counters_span = tracing::info_span!("restore_counters").entered();
+        let counters_source = if let Some(ref persisted) = snapshot.counters {
+            store.restore_counters_from_snapshot(persisted);
+            "snapshot"
+        } else {
+            store.rebuild_live_counters_from_zones()?;
+            "rebuild_scan"
+        };
+        drop(counters_span);
+        tracing::info!(
+            phase = "restore_counters",
+            elapsed_ms = t_counters.elapsed().as_millis() as u64,
+            source = counters_source,
+            total_nodes = store.total_live_nodes.load(Ordering::Relaxed),
+            total_edges = store.total_live_edges.load(Ordering::Relaxed),
+            "live counters initialised"
         );
 
         // (3) Hydrate the vec-column registry from the persisted specs
@@ -1414,6 +1459,10 @@ impl SubstrateStore {
             // `hydrate_from_dict` can reopen the column pair by
             // filename on next open — no directory scan needed.
             blob_columns: self.blob_columns.specs_snapshot(),
+            // T17h T1: live counter snapshot from atomics. Writing v5
+            // format always includes counters so subsequent opens
+            // restore in O(1) (no zone scan).
+            counters: Some(self.snapshot_counters()),
         }
     }
 
@@ -4053,25 +4102,24 @@ impl GraphStore for SubstrateStore {
     }
 
     fn node_count(&self) -> usize {
-        let hw = self.next_node_id.load(Ordering::Acquire);
-        let mut n = 0usize;
-        for slot in 1..hw {
-            if self.is_live_on_disk(NodeId(slot as u64)) {
-                n += 1;
-            }
-        }
-        n
+        // T17h T1: O(1) atomic load (was O(N) scan over live slots).
+        self.total_live_nodes.load(Ordering::Relaxed) as usize
     }
 
     fn edge_count(&self) -> usize {
-        let hw = self.next_edge_id.load(Ordering::Acquire);
-        let mut n = 0usize;
-        for slot in 1..hw {
-            if self.is_live_edge_on_disk(EdgeId(slot)) {
-                n += 1;
-            }
-        }
-        n
+        // T17h T1: O(1) atomic load (was O(N) scan over live slots).
+        self.total_live_edges.load(Ordering::Relaxed) as usize
+    }
+
+    fn node_count_by_label(&self, label: &str) -> usize {
+        // T17h T1: O(1) override of the trait's default O(N) impl.
+        // Unknown label (not interned) → 0, which matches a scan result.
+        let labels = self.labels.read();
+        let Some(bit) = labels.bit_for(label) else {
+            return 0;
+        };
+        drop(labels);
+        self.label_live_counts[bit as usize].load(Ordering::Relaxed) as usize
     }
 
     // -- Entity metadata --
@@ -4258,6 +4306,159 @@ impl GraphStore for SubstrateStore {
 // GraphStoreMut — write side
 // ---------------------------------------------------------------------------
 
+// T17h T1 — Live counter helpers (inherent methods, shared by
+// create_*/delete_* hot paths in the GraphStoreMut impl below).
+impl SubstrateStore {
+    /// Apply delta to an AtomicU64 counter (positive = fetch_add, negative
+    /// = fetch_sub). Relaxed ordering: counters are eventually-consistent
+    /// metrics, no happens-before dependency with NodeRecord/EdgeRecord
+    /// mutations.
+    #[inline]
+    fn apply_counter_delta(atomic: &AtomicU64, delta: i64) {
+        if delta >= 0 {
+            atomic.fetch_add(delta as u64, Ordering::Relaxed);
+        } else {
+            atomic.fetch_sub((-delta) as u64, Ordering::Relaxed);
+        }
+    }
+
+    /// Increment/decrement label counters for every bit set in `bitset`.
+    /// Walks each set bit via `trailing_zeros` + clear-lowest-bit trick
+    /// (compiles to TZCNT/BLSR on x86_64 with BMI1, or CTZ/AND on ARM64).
+    pub(crate) fn incr_label_counts(&self, bitset: u64, delta: i64) {
+        let mut bits = bitset;
+        while bits != 0 {
+            let bit = bits.trailing_zeros() as usize;
+            Self::apply_counter_delta(&self.label_live_counts[bit], delta);
+            bits &= bits - 1;
+        }
+    }
+
+    /// Increment/decrement per-edge-type counter via DashMap. Fast path
+    /// reads existing entry to avoid holding the shard write lock for
+    /// the atomic op.
+    pub(crate) fn incr_edge_type_count(&self, edge_type_id: u16, delta: i64) {
+        if let Some(atomic) = self.edge_type_live_counts.get(&edge_type_id) {
+            Self::apply_counter_delta(&atomic, delta);
+            return;
+        }
+        let entry = self
+            .edge_type_live_counts
+            .entry(edge_type_id)
+            .or_insert_with(|| AtomicU64::new(0));
+        Self::apply_counter_delta(&entry, delta);
+    }
+
+    /// T17h T1 accessor — per-edge-type live count, O(1). Returns 0 for
+    /// unknown edge-type strings (not yet interned).
+    pub fn live_count_by_edge_type(&self, edge_type: &str) -> u64 {
+        let registry = self.edge_types.read();
+        let Some(id) = registry.id_for(edge_type) else {
+            return 0;
+        };
+        drop(registry);
+        self.edge_type_live_counts
+            .get(&id)
+            .map(|a| a.load(Ordering::Relaxed))
+            .unwrap_or(0)
+    }
+
+    /// T17h T1 — one-shot scan that populates counters from the on-disk
+    /// zones. Sequential (rayon contends on the zone cache Mutex). Used
+    /// at open time when the loaded dict snapshot does not carry a
+    /// `counters` block (i.e. a v1..=v4 base). Once persisted in the
+    /// next flush, subsequent opens restore counters in O(1) from the
+    /// v5 snapshot and this scan is never re-run.
+    pub(crate) fn rebuild_live_counters_from_zones(&self) -> SubstrateResult<()> {
+        let node_hw = self.next_node_id.load(Ordering::Acquire);
+        let mut total_nodes: u64 = 0;
+        let mut label_totals: [u64; 64] = [0; 64];
+        for slot in 1..node_hw {
+            let Some(rec) = self.writer.read_node(slot)? else {
+                continue;
+            };
+            if rec.flags & crate::record::node_flags::TOMBSTONED != 0 {
+                continue;
+            }
+            total_nodes += 1;
+            let mut bits = rec.label_bitset;
+            while bits != 0 {
+                let bit = bits.trailing_zeros() as usize;
+                label_totals[bit] += 1;
+                bits &= bits - 1;
+            }
+        }
+        self.total_live_nodes.store(total_nodes, Ordering::Relaxed);
+        for (bit, &count) in label_totals.iter().enumerate() {
+            self.label_live_counts[bit].store(count, Ordering::Relaxed);
+        }
+
+        let edge_hw = self.next_edge_id.load(Ordering::Acquire);
+        let mut total_edges: u64 = 0;
+        let mut edge_type_totals: FxHashMap<u16, u64> = FxHashMap::default();
+        for slot in 1..edge_hw {
+            let Some(rec) = self.writer.read_edge(slot)? else {
+                continue;
+            };
+            if rec.flags & crate::record::edge_flags::TOMBSTONED != 0 {
+                continue;
+            }
+            total_edges += 1;
+            *edge_type_totals.entry(rec.edge_type).or_insert(0) += 1;
+        }
+        self.total_live_edges.store(total_edges, Ordering::Relaxed);
+        self.edge_type_live_counts.clear();
+        for (type_id, count) in edge_type_totals {
+            self.edge_type_live_counts
+                .insert(type_id, AtomicU64::new(count));
+        }
+        Ok(())
+    }
+
+    /// T17h T1 — restore counters from a `PersistedCounters` snapshot
+    /// (v5+ dict). O(1) vs rebuild's O(N+E). Called at open time when
+    /// `DictSnapshot.counters = Some(_)`.
+    pub(crate) fn restore_counters_from_snapshot(
+        &self,
+        counters: &crate::dict::PersistedCounters,
+    ) {
+        self.total_live_nodes
+            .store(counters.total_live_nodes, Ordering::Relaxed);
+        self.total_live_edges
+            .store(counters.total_live_edges, Ordering::Relaxed);
+        for (bit, &count) in counters.label_counts.iter().enumerate() {
+            self.label_live_counts[bit].store(count, Ordering::Relaxed);
+        }
+        self.edge_type_live_counts.clear();
+        for &(type_id, count) in &counters.edge_type_counts {
+            self.edge_type_live_counts
+                .insert(type_id, AtomicU64::new(count));
+        }
+    }
+
+    /// T17h T1 — snapshot current in-memory counter atomics into a
+    /// `PersistedCounters` block suitable for v5 dict serialization.
+    /// Called by `build_dict_snapshot` at flush time.
+    pub(crate) fn snapshot_counters(&self) -> crate::dict::PersistedCounters {
+        let mut label_counts = [0u64; 64];
+        for (bit, atomic) in self.label_live_counts.iter().enumerate() {
+            label_counts[bit] = atomic.load(Ordering::Relaxed);
+        }
+        let mut edge_type_counts: Vec<(u16, u64)> = self
+            .edge_type_live_counts
+            .iter()
+            .map(|e| (*e.key(), e.value().load(Ordering::Relaxed)))
+            .collect();
+        edge_type_counts.sort_by_key(|&(id, _)| id); // stable wire order
+        crate::dict::PersistedCounters {
+            total_live_nodes: self.total_live_nodes.load(Ordering::Relaxed),
+            total_live_edges: self.total_live_edges.load(Ordering::Relaxed),
+            label_counts,
+            edge_type_counts,
+        }
+    }
+}
+
 impl GraphStoreMut for SubstrateStore {
     // -- Node creation --
     fn create_node(&self, labels: &[&str]) -> NodeId {
@@ -4274,6 +4475,9 @@ impl GraphStoreMut for SubstrateStore {
             .expect("write_node failed — WAL append or mmap grow");
         // T17e Phase 3: labels resolve from the mmap'd NodeRecord +
         // registry on demand; no DashMap to populate.
+        // T17h T1: live counter increments (total + per-label).
+        self.total_live_nodes.fetch_add(1, Ordering::Relaxed);
+        self.incr_label_counts(bitset, 1);
         id
     }
 
@@ -4299,6 +4503,9 @@ impl GraphStoreMut for SubstrateStore {
 
         // T17e Phase 3: edge_type resolves from the mmap'd EdgeRecord +
         // registry on demand; no DashMap to populate.
+        // T17h T1: live counter increments (total + per-edge-type).
+        self.total_live_edges.fetch_add(1, Ordering::Relaxed);
+        self.incr_edge_type_count(edge_type_id, 1);
         id
     }
 
@@ -4325,6 +4532,13 @@ impl GraphStoreMut for SubstrateStore {
         if !self.is_live_on_disk(id) {
             return false;
         }
+        // T17h T1: snapshot label_bitset BEFORE tombstone for counter
+        // decrement. Record is still readable post-tombstone but cleaner
+        // to read it now, semantically.
+        let label_bitset = match self.writer.read_node(id.0 as u32).ok().flatten() {
+            Some(rec) => rec.label_bitset,
+            None => 0,
+        };
         // Flip the TOMBSTONED flag in the on-disk slot + journal NodeDelete.
         // T17e Phase 3: the flag flip in the mmap'd record is now the
         // sole source of truth for liveness — `is_live_on_disk` + every
@@ -4338,6 +4552,9 @@ impl GraphStoreMut for SubstrateStore {
         // `persist_properties` doesn't re-serialise a dead entity on the
         // next flush.
         self.node_properties.remove(&id);
+        // T17h T1: live counter decrements.
+        self.total_live_nodes.fetch_sub(1, Ordering::Relaxed);
+        self.incr_label_counts(label_bitset, -1);
         true
     }
 
@@ -4377,6 +4594,8 @@ impl GraphStoreMut for SubstrateStore {
         if rec.flags & edge_flags::TOMBSTONED != 0 {
             return false;
         }
+        // T17h T1: snapshot edge_type BEFORE tombstone for counter decrement.
+        let edge_type_id = rec.edge_type;
         // Splice the edge out of both chains before tombstoning the slot
         // — future walks must never encounter the dead edge.
         self.unlink_edge_from_chains(id, &rec);
@@ -4386,6 +4605,9 @@ impl GraphStoreMut for SubstrateStore {
         // T17e Phase 3: the mmap TOMBSTONED flag is authoritative; only
         // the property map needs explicit cleanup here.
         self.edge_properties.remove(&id);
+        // T17h T1: live counter decrements.
+        self.total_live_edges.fetch_sub(1, Ordering::Relaxed);
+        self.incr_edge_type_count(edge_type_id, -1);
         true
     }
 
