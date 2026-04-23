@@ -31,6 +31,7 @@
 pub mod blob_column;
 pub mod blob_column_registry;
 pub mod checkpoint;
+pub mod degree_column;
 pub mod dict;
 pub mod engram;
 pub mod engram_bitset;

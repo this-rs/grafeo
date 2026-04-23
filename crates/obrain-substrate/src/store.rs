@@ -609,6 +609,16 @@ pub struct SubstrateStore {
     /// but no hard cap). Fast path reads existing entry; cold path
     /// inserts on first use via `or_insert_with(AtomicU64::new(0))`.
     edge_type_live_counts: DashMap<u16, AtomicU64>,
+    /// T17h T5 — per-node in/out degree column, lazy-built on first
+    /// access. Atomic u32 counters maintained by `create_edge` /
+    /// `delete_edge`. Enables O(1) degree queries for `most_connected`
+    /// patterns. Persisted to `substrate.degrees.node.u32` at flush;
+    /// rebuilt from edge scan at open if sidecar absent or CRC invalid.
+    ///
+    /// RwLock wraps the column so atomic increments (read lock) don't
+    /// block each other, but `ensure_slot` grow calls take an exclusive
+    /// write lock. See `degree_column::DegreeColumn`.
+    degrees_cell: OnceLock<Arc<RwLock<crate::degree_column::DegreeColumn>>>,
     /// Routing table + open-writer cache for `Value::Vector` properties.
     ///
     /// Every `set_node_property(_, _, Value::Vector(_))` and
@@ -800,6 +810,7 @@ impl SubstrateStore {
             total_live_edges: AtomicU64::new(0),
             label_live_counts: std::array::from_fn(|_| AtomicU64::new(0)),
             edge_type_live_counts: DashMap::new(),
+            degrees_cell: OnceLock::new(),
             vec_columns: VecColumnRegistry::new(),
             blob_columns: BlobColumnRegistry::new(),
             props_zone,
@@ -854,6 +865,23 @@ impl SubstrateStore {
             total_nodes = store.total_live_nodes.load(Ordering::Relaxed),
             total_edges = store.total_live_edges.load(Ordering::Relaxed),
             "live counters initialised"
+        );
+
+        // (2c) T17h T5 — eager init of the degree column. MUST happen
+        // BEFORE any subsequent create_edge/delete_edge so the lazy
+        // rebuild scan never interleaves with explicit increments
+        // (which would double-count the in-flight edge).
+        //
+        // Cost : O(1) mmap restore if sidecar exists, or O(edges) scan
+        // if absent/corrupt. Amortised once per session.
+        let t_degrees = std::time::Instant::now();
+        let degrees_span = tracing::info_span!("init_degrees").entered();
+        let _ = store.degrees();
+        drop(degrees_span);
+        tracing::info!(
+            phase = "init_degrees",
+            elapsed_ms = t_degrees.elapsed().as_millis() as u64,
+            "degree column ready"
         );
 
         // (3) Hydrate the vec-column registry from the persisted specs
@@ -1508,6 +1536,15 @@ impl SubstrateStore {
         // sentinel page was just mmap-extended and needs to hit disk).
         if let Some(pz) = self.props_zone.as_ref() {
             pz.read().flush()?;
+        }
+        // T17h T5: flush the degree column (header CRC + msync). Only
+        // if the lazy column has been materialised this session; a
+        // read-only query path that never created/deleted edges leaves
+        // it untouched.
+        if let Some(degrees) = self.degrees_cell.get() {
+            let mut col = degrees.write();
+            col.persist_header_crc();
+            col.msync()?;
         }
         self.persist_dict()?;
         self.persist_properties()?;
@@ -4436,6 +4473,117 @@ impl SubstrateStore {
         }
     }
 
+    /// T17h T5 — degree column accessor with lazy build.
+    ///
+    /// First call either opens the persisted sidecar (O(1) mmap) or
+    /// rebuilds it from an edge zone scan (O(edges), one-shot
+    /// amortised, persists on success).
+    ///
+    /// Returns `&Arc<RwLock<_>>` so callers clone the Arc cheaply and
+    /// hold read locks for concurrent atomic increments, or write locks
+    /// for grow/persist.
+    pub(crate) fn degrees(&self) -> &Arc<RwLock<crate::degree_column::DegreeColumn>> {
+        self.degrees_cell.get_or_init(|| {
+            let sub = self.substrate.lock();
+            let opened = crate::degree_column::DegreeColumn::open(&sub);
+            drop(sub);
+            let col = match opened {
+                Ok(Some(col)) => col,
+                _ => self
+                    .rebuild_degrees_from_scan()
+                    .expect("rebuild degree column failed"),
+            };
+            Arc::new(RwLock::new(col))
+        })
+    }
+
+    /// T17h T5 — one-shot scan to rebuild the degree column. Scans the
+    /// edges zone sequentially and populates out/in degrees. Persists
+    /// CRC + msync before returning so the subsequent open (same session
+    /// or next open) finds a valid sidecar.
+    ///
+    /// Sequential because `writer.read_edge` takes the zone-cache mutex
+    /// (rayon would contend). Typical cost : ≤ 30 s on Wikipedia
+    /// (119M edges), one-shot, amortised.
+    fn rebuild_degrees_from_scan(
+        &self,
+    ) -> SubstrateResult<crate::degree_column::DegreeColumn> {
+        let n_slots = self.next_node_id.load(Ordering::Acquire);
+        let sub = self.substrate.lock();
+        let mut col = crate::degree_column::DegreeColumn::create(&sub, n_slots)?;
+        drop(sub);
+        let edge_hw = self.next_edge_id.load(Ordering::Acquire);
+        for slot in 1..edge_hw {
+            let Some(rec) = self.writer.read_edge(slot)? else {
+                continue;
+            };
+            if rec.flags & crate::record::edge_flags::TOMBSTONED != 0 {
+                continue;
+            }
+            // Endpoints must be within n_slots (allocator invariant :
+            // edges never reference unallocated nodes). Defensive
+            // ensure_slot keeps us safe if a test violates this.
+            if rec.src >= n_slots || rec.dst >= n_slots {
+                let max = rec.src.max(rec.dst);
+                col.ensure_slot(max)?;
+            }
+            col.incr_out(rec.src, 1);
+            col.incr_in(rec.dst, 1);
+        }
+        col.persist_header_crc();
+        col.msync()?;
+        Ok(col)
+    }
+
+    /// T17h T5 — increment out-degree for `slot`. Grows column if needed
+    /// (slot past current n_slots). Fast path takes a read lock for the
+    /// atomic op; cold path takes write lock to grow then the atomic op.
+    pub(crate) fn incr_out_degree(&self, slot: u32, delta: i32) {
+        let degrees = self.degrees().clone();
+        {
+            let rl = degrees.read();
+            if slot < rl.n_slots() {
+                rl.incr_out(slot, delta);
+                return;
+            }
+        }
+        let mut wl = degrees.write();
+        if let Err(e) = wl.ensure_slot(slot) {
+            tracing::warn!(error = ?e, slot, "degree column grow failed");
+            return;
+        }
+        wl.incr_out(slot, delta);
+    }
+
+    /// T17h T5 — increment in-degree for `slot`. Same pattern as
+    /// [`Self::incr_out_degree`].
+    pub(crate) fn incr_in_degree(&self, slot: u32, delta: i32) {
+        let degrees = self.degrees().clone();
+        {
+            let rl = degrees.read();
+            if slot < rl.n_slots() {
+                rl.incr_in(slot, delta);
+                return;
+            }
+        }
+        let mut wl = degrees.write();
+        if let Err(e) = wl.ensure_slot(slot) {
+            tracing::warn!(error = ?e, slot, "degree column grow failed");
+            return;
+        }
+        wl.incr_in(slot, delta);
+    }
+
+    /// T17h T5 — query out-degree for a node. O(1) atomic load.
+    pub fn out_degree(&self, node: NodeId) -> u32 {
+        self.degrees().read().out_degree(node.0 as u32)
+    }
+
+    /// T17h T5 — query in-degree for a node. O(1) atomic load.
+    pub fn in_degree(&self, node: NodeId) -> u32 {
+        self.degrees().read().in_degree(node.0 as u32)
+    }
+
     /// T17h T1 — snapshot current in-memory counter atomics into a
     /// `PersistedCounters` block suitable for v5 dict serialization.
     /// Called by `build_dict_snapshot` at flush time.
@@ -4506,6 +4654,9 @@ impl GraphStoreMut for SubstrateStore {
         // T17h T1: live counter increments (total + per-edge-type).
         self.total_live_edges.fetch_add(1, Ordering::Relaxed);
         self.incr_edge_type_count(edge_type_id, 1);
+        // T17h T5: degree column increments (src.out, dst.in).
+        self.incr_out_degree(src.0 as u32, 1);
+        self.incr_in_degree(dst.0 as u32, 1);
         id
     }
 
@@ -4596,6 +4747,9 @@ impl GraphStoreMut for SubstrateStore {
         }
         // T17h T1: snapshot edge_type BEFORE tombstone for counter decrement.
         let edge_type_id = rec.edge_type;
+        // T17h T5: snapshot src/dst BEFORE tombstone for degree decrement.
+        let src_slot = rec.src;
+        let dst_slot = rec.dst;
         // Splice the edge out of both chains before tombstoning the slot
         // — future walks must never encounter the dead edge.
         self.unlink_edge_from_chains(id, &rec);
@@ -4608,6 +4762,9 @@ impl GraphStoreMut for SubstrateStore {
         // T17h T1: live counter decrements.
         self.total_live_edges.fetch_sub(1, Ordering::Relaxed);
         self.incr_edge_type_count(edge_type_id, -1);
+        // T17h T5: degree column decrements.
+        self.incr_out_degree(src_slot, -1);
+        self.incr_in_degree(dst_slot, -1);
         true
     }
 
