@@ -75,30 +75,11 @@ impl Optimizer {
         }
     }
 
-    /// Creates an optimizer with cardinality estimates from an LpgStore
-    /// (test-only).
-    ///
-    /// Post-T17 W3b: production code uses [`from_graph_store`] exclusively.
-    /// This helper is retained behind `#[cfg(test)]` for the LPG unit-test
-    /// fixtures that want the extra `ensure_statistics_fresh()` refresh that
-    /// LpgStore provides (SubstrateStore maintains stats eagerly, so the
-    /// refresh is a no-op anyway).
-    ///
-    /// [`from_graph_store`]: Self::from_graph_store
-    #[cfg(test)]
-    #[must_use]
-    pub fn from_store(store: &obrain_core::graph::lpg::LpgStore) -> Self {
-        store.ensure_statistics_fresh();
-        let stats = store.statistics();
-        Self::from_statistics(&stats)
-    }
-
     /// Creates an optimizer from any GraphStore implementation.
     ///
-    /// Unlike [`from_store`](Self::from_store), this does not call
-    /// `ensure_statistics_fresh()` since external stores manage their own
-    /// statistics. The store's [`statistics()`](obrain_core::graph::GraphStore::statistics) method
-    /// is called directly.
+    /// Post-T17 W4.p4: replaced the LpgStore-typed `from_store` helper
+    /// (zero callers). Any backend that needs `ensure_statistics_fresh()`
+    /// semantics must refresh its own stats before calling this.
     #[must_use]
     pub fn from_graph_store(store: &dyn obrain_core::graph::GraphStore) -> Self {
         let stats = store.statistics();
