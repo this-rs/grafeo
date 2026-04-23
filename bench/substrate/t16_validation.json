@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "label": "megalaw",
+  "db_path": "/Users/triviere/.obrain/db/megalaw",
+  "timestamp_unix": 1776963765,
+  "host": {
+    "os": "macos",
+    "arch": "aarch64",
+    "cpu": "Apple M4 Max",
+    "cores": 16,
+    "total_ram_bytes": 137438953472
+  },
+  "layout": "flat",
+  "counts": {
+    "live_nodes": 8128001,
+    "live_edges": 14682187
+  },
+  "startup_ms": 7965.062749999999,
+  "warmup_ms": 14.10925,
+  "warmup_nodes_touched": 50000,
+  "rss": {
+    "total_bytes": 30333616128,
+    "file_backed_bytes": 184884073497,
+    "anon_estimate_bytes": 0,
+    "pre_open_bytes": 68304896
+  },
+  "file_sizes": {
+    "nodes": 273383424,
+    "edges": 528558768,
+    "props": 1149427815,
+    "props_v2": 110210973696,
+    "props_heap_v2": 1274150912,
+    "edge_props": 0,
+    "strings": 0,
+    "community": 0,
+    "hilbert": 0,
+    "engram_members": 1576960,
+    "engram_bitset": 95301632,
+    "tier0": 0,
+    "tier1": 0,
+    "tier2": 0,
+    "dict": 648,
+    "wal": 3705280122,
+    "meta": 4096,
+    "blob_columns": 19301797888,
+    "vec_columns": 48343617536,
+    "total": 184884073497
+  },
+  "gates": {
+    "startup_ms_le_100": false,
+    "anon_rss_le_1gb": true,
+    "total_rss_le_18gb": false,
+    "all_pass": false
+  }
+}

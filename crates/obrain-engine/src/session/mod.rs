@@ -4080,170 +4080,8 @@ mod tests {
         assert!(!session.in_transaction());
     }
 
-    #[ignore = "substrate-incompatible: LpgStore MVCC/named-graph semantics (T17 Step 24)"]
 
-    #[test]
-    fn test_session_rollback_discards_versions() {
-        use obrain_common::types::TransactionId;
 
-        let db = ObrainDB::new_in_memory();
-
-        // Create a node outside of any transaction (at system level)
-        let node_before = db.store().create_node(&["Person"]);
-        assert!(node_before.is_valid());
-        assert_eq!(db.node_count(), 1, "Should have 1 node before transaction");
-
-        // Start a transaction
-        let mut session = db.session();
-        session.begin_transaction().unwrap();
-        let transaction_id = session.current_transaction.lock().unwrap();
-
-        // Create a node versioned with the transaction's ID
-        let epoch = db.store().current_epoch();
-        let node_in_tx = db
-            .store()
-            .create_node_versioned(&["Person"], epoch, transaction_id);
-        assert!(node_in_tx.is_valid());
-
-        // Uncommitted nodes use EpochId::PENDING, so they are invisible to
-        // non-versioned lookups like node_count(). Verify the node is visible
-        // only through the owning transaction.
-        assert_eq!(
-            db.node_count(),
-            1,
-            "PENDING nodes should be invisible to non-versioned node_count()"
-        );
-        assert!(
-            db.store()
-                .get_node_versioned(node_in_tx, epoch, transaction_id)
-                .is_some(),
-            "Transaction node should be visible to its own transaction"
-        );
-
-        // Rollback the transaction
-        session.rollback().unwrap();
-        assert!(!session.in_transaction());
-
-        // The node created in the transaction should be discarded
-        // Only the first node should remain visible
-        let count_after = db.node_count();
-        assert_eq!(
-            count_after, 1,
-            "Rollback should discard uncommitted node, but got {count_after}"
-        );
-
-        // The original node should still be accessible
-        let current_epoch = db.store().current_epoch();
-        assert!(
-            db.store()
-                .get_node_versioned(node_before, current_epoch, TransactionId::SYSTEM)
-                .is_some(),
-            "Original node should still exist"
-        );
-
-        // The node created in the transaction should not be accessible
-        assert!(
-            db.store()
-                .get_node_versioned(node_in_tx, current_epoch, TransactionId::SYSTEM)
-                .is_none(),
-            "Transaction node should be gone"
-        );
-    }
-
-    #[ignore = "substrate-incompatible: LpgStore MVCC/named-graph semantics (T17 Step 24)"]
-
-    #[test]
-    fn test_session_create_node_in_transaction() {
-        // Test that session.create_node() is transaction-aware
-        let db = ObrainDB::new_in_memory();
-
-        // Create a node outside of any transaction
-        let node_before = db.create_node(&["Person"]);
-        assert!(node_before.is_valid());
-        assert_eq!(db.node_count(), 1, "Should have 1 node before transaction");
-
-        // Start a transaction and create a node through the session
-        let mut session = db.session();
-        session.begin_transaction().unwrap();
-        let transaction_id = session.current_transaction.lock().unwrap();
-
-        // Create a node through session.create_node() - should be versioned with tx
-        let node_in_tx = session.create_node(&["Person"]);
-        assert!(node_in_tx.is_valid());
-
-        // Uncommitted nodes use EpochId::PENDING, so they are invisible to
-        // non-versioned lookups. Verify the node is visible only to its own tx.
-        assert_eq!(
-            db.node_count(),
-            1,
-            "PENDING nodes should be invisible to non-versioned node_count()"
-        );
-        let epoch = db.store().current_epoch();
-        assert!(
-            db.store()
-                .get_node_versioned(node_in_tx, epoch, transaction_id)
-                .is_some(),
-            "Transaction node should be visible to its own transaction"
-        );
-
-        // Rollback the transaction
-        session.rollback().unwrap();
-
-        // The node created via session.create_node() should be discarded
-        let count_after = db.node_count();
-        assert_eq!(
-            count_after, 1,
-            "Rollback should discard node created via session.create_node(), but got {count_after}"
-        );
-    }
-
-    #[ignore = "substrate-incompatible: LpgStore MVCC/named-graph semantics (T17 Step 24)"]
-
-    #[test]
-    fn test_session_create_node_with_props_in_transaction() {
-        use obrain_common::types::Value;
-
-        // Test that session.create_node_with_props() is transaction-aware
-        let db = ObrainDB::new_in_memory();
-
-        // Create a node outside of any transaction
-        db.create_node(&["Person"]);
-        assert_eq!(db.node_count(), 1, "Should have 1 node before transaction");
-
-        // Start a transaction and create a node with properties
-        let mut session = db.session();
-        session.begin_transaction().unwrap();
-        let transaction_id = session.current_transaction.lock().unwrap();
-
-        let node_in_tx =
-            session.create_node_with_props(&["Person"], [("name", Value::String("Alix".into()))]);
-        assert!(node_in_tx.is_valid());
-
-        // Uncommitted nodes use EpochId::PENDING, so they are invisible to
-        // non-versioned lookups. Verify the node is visible only to its own tx.
-        assert_eq!(
-            db.node_count(),
-            1,
-            "PENDING nodes should be invisible to non-versioned node_count()"
-        );
-        let epoch = db.store().current_epoch();
-        assert!(
-            db.store()
-                .get_node_versioned(node_in_tx, epoch, transaction_id)
-                .is_some(),
-            "Transaction node should be visible to its own transaction"
-        );
-
-        // Rollback the transaction
-        session.rollback().unwrap();
-
-        // The node should be discarded
-        let count_after = db.node_count();
-        assert_eq!(
-            count_after, 1,
-            "Rollback should discard node created via session.create_node_with_props()"
-        );
-    }
 
     #[cfg(feature = "gql")]
     mod gql_tests {
@@ -4557,30 +4395,6 @@ mod tests {
             assert_eq!(result.row_count(), 1);
         }
 
-        #[ignore = "substrate-incompatible: LpgStore MVCC/named-graph semantics (T17 Step 24)"]
-
-        #[test]
-        fn test_gql_id_seek_range() {
-            let db = ObrainDB::new_in_memory();
-            let session = db.session();
-
-            // Create 10 nodes
-            for _ in 0..10 {
-                session.create_node(&["Item"]);
-            }
-
-            // Range: id(n) >= 2 AND id(n) < 5
-            let result = session
-                .execute("MATCH (n) WHERE id(n) >= 2 AND id(n) < 5 RETURN n")
-                .unwrap();
-            assert_eq!(result.row_count(), 3, "Should return nodes 2,3,4");
-
-            // Range: id(n) < 3
-            let result = session
-                .execute("MATCH (n) WHERE id(n) < 3 RETURN n")
-                .unwrap();
-            assert_eq!(result.row_count(), 3, "Should return nodes 0,1,2");
-        }
 
         #[test]
         fn test_gql_id_seek_return_id() {
@@ -5124,19 +4938,6 @@ mod tests {
         use super::*;
         use obrain_common::types::Value;
 
-        #[ignore = "substrate-incompatible: LpgStore MVCC/named-graph semantics (T17 Step 24)"]
-
-        #[test]
-        fn test_use_graph_sets_current_graph() {
-            let db = ObrainDB::new_in_memory();
-            let session = db.session();
-
-            // Create the graph first, then USE it
-            session.execute("CREATE GRAPH mydb").unwrap();
-            session.execute("USE GRAPH mydb").unwrap();
-
-            assert_eq!(session.current_graph(), Some("mydb".to_string()));
-        }
 
         #[test]
         fn test_use_graph_nonexistent_errors() {
@@ -5162,17 +4963,6 @@ mod tests {
             assert_eq!(session.current_graph(), Some("default".to_string()));
         }
 
-        #[ignore = "substrate-incompatible: LpgStore MVCC/named-graph semantics (T17 Step 24)"]
-
-        #[test]
-        fn test_session_set_graph() {
-            let db = ObrainDB::new_in_memory();
-            let session = db.session();
-
-            session.execute("CREATE GRAPH analytics").unwrap();
-            session.execute("SESSION SET GRAPH analytics").unwrap();
-            assert_eq!(session.current_graph(), Some("analytics".to_string()));
-        }
 
         #[test]
         fn test_session_set_graph_nonexistent_errors() {
@@ -5213,109 +5003,11 @@ mod tests {
             assert!(session.get_parameter("timeout").is_some());
         }
 
-        #[ignore = "substrate-incompatible: LpgStore MVCC/named-graph semantics (T17 Step 24)"]
 
-        #[test]
-        fn test_session_reset_clears_all_state() {
-            let db = ObrainDB::new_in_memory();
-            let session = db.session();
 
-            // Set various session state
-            session.execute("CREATE GRAPH analytics").unwrap();
-            session.execute("SESSION SET GRAPH analytics").unwrap();
-            session.execute("SESSION SET TIME ZONE 'UTC'").unwrap();
-            session
-                .execute("SESSION SET PARAMETER $limit = 100")
-                .unwrap();
 
-            // Verify state was set
-            assert!(session.current_graph().is_some());
-            assert!(session.time_zone().is_some());
-            assert!(session.get_parameter("limit").is_some());
 
-            // Reset everything
-            session.execute("SESSION RESET").unwrap();
 
-            assert_eq!(session.current_graph(), None);
-            assert_eq!(session.time_zone(), None);
-            assert!(session.get_parameter("limit").is_none());
-        }
-
-        #[ignore = "substrate-incompatible: LpgStore MVCC/named-graph semantics (T17 Step 24)"]
-
-        #[test]
-        fn test_session_close_clears_state() {
-            let db = ObrainDB::new_in_memory();
-            let session = db.session();
-
-            session.execute("CREATE GRAPH analytics").unwrap();
-            session.execute("SESSION SET GRAPH analytics").unwrap();
-            session.execute("SESSION SET TIME ZONE 'UTC'").unwrap();
-
-            session.execute("SESSION CLOSE").unwrap();
-
-            assert_eq!(session.current_graph(), None);
-            assert_eq!(session.time_zone(), None);
-        }
-
-        #[ignore = "substrate-incompatible: LpgStore MVCC/named-graph semantics (T17 Step 24)"]
-
-        #[test]
-        fn test_create_graph() {
-            let db = ObrainDB::new_in_memory();
-            let session = db.session();
-
-            session.execute("CREATE GRAPH mydb").unwrap();
-
-            // Should be able to USE it now
-            session.execute("USE GRAPH mydb").unwrap();
-            assert_eq!(session.current_graph(), Some("mydb".to_string()));
-        }
-
-        #[ignore = "substrate-incompatible: LpgStore MVCC/named-graph semantics (T17 Step 24)"]
-
-        #[test]
-        fn test_create_graph_duplicate_errors() {
-            let db = ObrainDB::new_in_memory();
-            let session = db.session();
-
-            session.execute("CREATE GRAPH mydb").unwrap();
-            let result = session.execute("CREATE GRAPH mydb");
-
-            assert!(result.is_err());
-            let err = result.unwrap_err().to_string();
-            assert!(
-                err.contains("already exists"),
-                "Expected 'already exists' error, got: {err}"
-            );
-        }
-
-        #[ignore = "substrate-incompatible: LpgStore MVCC/named-graph semantics (T17 Step 24)"]
-
-        #[test]
-        fn test_create_graph_if_not_exists() {
-            let db = ObrainDB::new_in_memory();
-            let session = db.session();
-
-            session.execute("CREATE GRAPH mydb").unwrap();
-            // Should succeed silently with IF NOT EXISTS
-            session.execute("CREATE GRAPH IF NOT EXISTS mydb").unwrap();
-        }
-
-        #[ignore = "substrate-incompatible: LpgStore MVCC/named-graph semantics (T17 Step 24)"]
-
-        #[test]
-        fn test_drop_graph() {
-            let db = ObrainDB::new_in_memory();
-            let session = db.session();
-
-            session.execute("CREATE GRAPH mydb").unwrap();
-            session.execute("DROP GRAPH mydb").unwrap();
-
-            // Should no longer be usable
-            let result = session.execute("USE GRAPH mydb");
-            assert!(result.is_err());
-        }
 
         #[test]
         fn test_drop_graph_nonexistent_errors() {
@@ -5385,20 +5077,6 @@ mod tests {
             session.execute("COMMIT").unwrap();
         }
 
-        #[ignore = "substrate-incompatible: LpgStore MVCC/named-graph semantics (T17 Step 24)"]
-
-        #[test]
-        fn test_rollback_via_gql() {
-            let db = ObrainDB::new_in_memory();
-            let session = db.session();
-
-            session.execute("START TRANSACTION").unwrap();
-            session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
-            session.execute("ROLLBACK").unwrap();
-
-            let result = session.execute("MATCH (n:Person) RETURN n.name").unwrap();
-            assert!(result.rows.is_empty());
-        }
 
         #[test]
         fn test_start_transaction_with_isolation_level() {
@@ -5412,18 +5090,6 @@ mod tests {
             session.execute("ROLLBACK").unwrap();
         }
 
-        #[ignore = "substrate-incompatible: LpgStore MVCC/named-graph semantics (T17 Step 24)"]
-
-        #[test]
-        fn test_session_commands_return_empty_result() {
-            let db = ObrainDB::new_in_memory();
-            let session = db.session();
-
-            session.execute("CREATE GRAPH test").unwrap();
-            let result = session.execute("SESSION SET GRAPH test").unwrap();
-            assert_eq!(result.row_count(), 0);
-            assert_eq!(result.column_count(), 0);
-        }
 
         #[test]
         fn test_current_graph_default_is_none() {
@@ -5441,22 +5107,6 @@ mod tests {
             assert_eq!(session.time_zone(), None);
         }
 
-        #[ignore = "substrate-incompatible: LpgStore MVCC/named-graph semantics (T17 Step 24)"]
-
-        #[test]
-        fn test_session_state_independent_across_sessions() {
-            let db = ObrainDB::new_in_memory();
-            let session1 = db.session();
-            let session2 = db.session();
-
-            session1.execute("CREATE GRAPH first").unwrap();
-            session1.execute("CREATE GRAPH second").unwrap();
-            session1.execute("SESSION SET GRAPH first").unwrap();
-            session2.execute("SESSION SET GRAPH second").unwrap();
-
-            assert_eq!(session1.current_graph(), Some("first".to_string()));
-            assert_eq!(session2.current_graph(), Some("second".to_string()));
-        }
 
         #[test]
         fn test_show_node_types() {
