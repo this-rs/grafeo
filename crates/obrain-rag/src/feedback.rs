@@ -6,6 +6,7 @@
 //! loop: concepts that are useful together get stronger connections.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use obrain_cognitive::energy::EnergyStore;
 use obrain_cognitive::synapse::SynapseStore;
@@ -15,6 +16,27 @@ use crate::config::RagConfig;
 use crate::error::RagResult;
 use crate::traits::{FeedbackSink, FeedbackStats, RagContext};
 
+/// Plan 69e59065 T2 — hard cap on the number of pairs reinforced when
+/// the fallback path (no mentions detected) is taken. The previous
+/// behaviour reinforced C(N,2) pairs on every unmatched response, which
+/// on N=100 context nodes meant 4 950 reinforce calls, each triggering
+/// 2 full DashMap scans + 3 LPG property writes in `SynapseStore::reinforce`
+/// → ~10 000 scans + ~15 000 writes per cycle. This is the root cause of
+/// the kernel watchdog timeout documented in gotcha 49938809.
+///
+/// With the cap, the worst-case fallback produces at most
+/// `C(FALLBACK_CAP, 2) = 28` pairs → ~56 scans + ~84 writes. That's a
+/// ~180× reduction and puts the fallback in the same ballpark as the
+/// mentioned-path (which is naturally bounded by how many nodes the LLM
+/// actually referenced in its response).
+///
+/// 8 is chosen because it matches `synapse_store.max_total_outgoing_weight`
+/// being typically hit around 7-9 outgoing synapses — beyond that, the
+/// competitive Hebbian normalization in `reinforce` dampens marginal
+/// contributions anyway, so adding more pairs gives vanishing returns
+/// while paying the full cost.
+const FALLBACK_CAP: usize = 8;
+
 /// Cognitive feedback sink that reinforces synapses and boosts energy.
 pub struct CognitiveFeedback {
     /// Synapse store for Hebbian reinforcement.
@@ -22,6 +44,14 @@ pub struct CognitiveFeedback {
 
     /// Energy store for boosting used nodes.
     energy_store: Option<Arc<EnergyStore>>,
+
+    /// Plan 69e59065 T2 — observability for the fallback-vs-mentions
+    /// selector. Every `feedback()` call increments exactly one of
+    /// these, giving the empirical fallback rate over a conversation.
+    /// Target: fallback_rate should drop sharply once T2 step 2 adds
+    /// cosine-based matching that tolerates paraphrase.
+    mentions_path_total: AtomicU64,
+    fallback_path_total: AtomicU64,
 }
 
 impl CognitiveFeedback {
@@ -33,7 +63,22 @@ impl CognitiveFeedback {
         Self {
             synapse_store,
             energy_store,
+            mentions_path_total: AtomicU64::new(0),
+            fallback_path_total: AtomicU64::new(0),
         }
+    }
+
+    /// Total number of feedback cycles that took the "mentions" branch
+    /// (≥ 2 nodes matched in the response).
+    pub fn mentions_path_total(&self) -> u64 {
+        self.mentions_path_total.load(Ordering::Relaxed)
+    }
+
+    /// Total number of feedback cycles that fell back to the capped
+    /// "top-K pairs" branch. High ratio here = the matching heuristic
+    /// is too strict; will be addressed by T2 step 2 (cosine matching).
+    pub fn fallback_path_total(&self) -> u64 {
+        self.fallback_path_total.load(Ordering::Relaxed)
     }
 
     /// Extract concept identifiers from text by checking which node properties
@@ -96,20 +141,34 @@ impl FeedbackSink for CognitiveFeedback {
 
         // Reinforce synapses only between nodes that were both mentioned
         // in the response (response-aware Hebbian reinforcement).
-        // Falls back to all context pairs if no mentions detected.
+        //
+        // Plan 69e59065 T2 — the fallback "all pairs" path is now CAPPED
+        // at FALLBACK_CAP nodes (= top-K by recency in the context list,
+        // which is already energy-ordered upstream). Without the cap, an
+        // unmentioned response on N=100 context produces 4 950 reinforces,
+        // which collapses the system (gotcha 49938809). With the cap the
+        // fallback peaks at C(8,2) = 28 reinforces — proportional to the
+        // useful signal, not to the entire context budget.
         if let Some(ref synapse_store) = self.synapse_store {
-            let reinforce_set = if mentioned.len() >= 2 {
+            let reinforce_slice: &[NodeId] = if mentioned.len() >= 2 {
+                self.mentions_path_total.fetch_add(1, Ordering::Relaxed);
                 &mentioned
             } else {
-                // Fallback: reinforce all context pairs if we can't detect mentions
-                &context.node_ids
+                // Fallback path. Take the top-FALLBACK_CAP nodes from the
+                // context. Upstream callers populate `node_ids` in
+                // descending relevance/energy order, so the slice prefix
+                // is the most informative subset. Empty context is a
+                // no-op.
+                self.fallback_path_total.fetch_add(1, Ordering::Relaxed);
+                let len = context.node_ids.len().min(FALLBACK_CAP);
+                &context.node_ids[..len]
             };
 
-            for i in 0..reinforce_set.len() {
-                for j in (i + 1)..reinforce_set.len() {
+            for i in 0..reinforce_slice.len() {
+                for j in (i + 1)..reinforce_slice.len() {
                     synapse_store.reinforce(
-                        reinforce_set[i],
-                        reinforce_set[j],
+                        reinforce_slice[i],
+                        reinforce_slice[j],
                         config.feedback_reinforce_amount,
                     );
                     stats.synapses_reinforced += 1;
@@ -331,7 +390,79 @@ mod tests {
         let stats = feedback
             .feedback(&context, "completely unrelated response text here", &config)
             .unwrap();
-        // 3 nodes → C(3,2) = 3 pairs
+        // 3 nodes → C(3,2) = 3 pairs (below FALLBACK_CAP = 8)
         assert_eq!(stats.synapses_reinforced, 3);
+        // Path counters: this was a fallback cycle.
+        assert_eq!(feedback.fallback_path_total(), 1);
+        assert_eq!(feedback.mentions_path_total(), 0);
+    }
+
+    /// Plan 69e59065 T2 — proves the FALLBACK_CAP guards the worst case.
+    /// Without the cap, N=20 unmatched context nodes would reinforce
+    /// C(20,2) = 190 pairs, each costing 2 full DashMap scans + 3 LPG
+    /// writes in `SynapseStore::reinforce`. With the cap, the fallback
+    /// peaks at C(8,2) = 28 pairs regardless of context size.
+    #[test]
+    fn feedback_fallback_capped_at_top_k_pairs() {
+        use obrain_cognitive::synapse::{SynapseConfig, SynapseStore};
+
+        let synapse_store = Arc::new(SynapseStore::new(SynapseConfig::default()));
+        let feedback = CognitiveFeedback::new(Some(Arc::clone(&synapse_store)), None);
+
+        // 20 nodes, all with text too short to match (<=3 chars).
+        let node_ids: Vec<NodeId> = (1..=20).map(NodeId).collect();
+        let node_texts: Vec<(NodeId, Vec<String>)> = node_ids
+            .iter()
+            .map(|nid| (*nid, vec!["xx".into()]))
+            .collect();
+        let context = RagContext {
+            text: "context".into(),
+            estimated_tokens: 10,
+            nodes_included: node_ids.len(),
+            node_ids,
+            node_texts,
+        };
+        let config = RagConfig::default();
+
+        let stats = feedback
+            .feedback(&context, "no node text matches this response at all", &config)
+            .unwrap();
+
+        // Without the cap: C(20,2) = 190 pairs. With the cap (8 nodes):
+        // C(8,2) = 28 pairs. The cap is what stops the cascade.
+        assert_eq!(
+            stats.synapses_reinforced, 28,
+            "fallback should reinforce exactly C(FALLBACK_CAP, 2) = 28 pairs, \
+             got {} (cap broken or N < FALLBACK_CAP)",
+            stats.synapses_reinforced
+        );
+        assert_eq!(feedback.fallback_path_total(), 1);
+    }
+
+    /// Path counter sanity for the mentions branch.
+    #[test]
+    fn feedback_mentions_path_increments_counter() {
+        use obrain_cognitive::synapse::{SynapseConfig, SynapseStore};
+
+        let synapse_store = Arc::new(SynapseStore::new(SynapseConfig::default()));
+        let feedback = CognitiveFeedback::new(Some(Arc::clone(&synapse_store)), None);
+
+        let context = RagContext {
+            text: "context".into(),
+            estimated_tokens: 10,
+            nodes_included: 2,
+            node_ids: vec![NodeId(1), NodeId(2)],
+            node_texts: vec![
+                (NodeId(1), vec!["Obrain database".into()]),
+                (NodeId(2), vec!["WAL recovery".into()]),
+            ],
+        };
+        let config = RagConfig::default();
+
+        let _stats = feedback
+            .feedback(&context, "Obrain database uses WAL recovery", &config)
+            .unwrap();
+        assert_eq!(feedback.mentions_path_total(), 1);
+        assert_eq!(feedback.fallback_path_total(), 0);
     }
 }
