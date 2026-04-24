@@ -260,6 +260,20 @@ pub struct SynapseStore {
     substrate: Option<Arc<obrain_substrate::SubstrateStore>>,
     /// Cross-base synapses between nodes from different databases.
     cross_base: DashMap<(CrossBaseNodeId, CrossBaseNodeId), (f64, u32)>,
+    /// Plan 69e59065 T1 — instrumentation: counts every full DashMap scan
+    /// triggered by `normalize_outgoing`. Each `reinforce(a, b)` increments
+    /// this by 2 (one scan per endpoint), so `dashmap_full_scans_total /
+    /// reinforces_total` should equal 2.0 in the worst case. Exposed via
+    /// [`Self::dashmap_full_scans_total`] for bench/metrics consumers.
+    dashmap_full_scans_total: AtomicU64,
+    /// Plan 69e59065 T1 — instrumentation: counts every `reinforce()` call
+    /// (entry-point granularity, includes both substrate and legacy modes).
+    reinforces_total: AtomicU64,
+    /// Plan 69e59065 T1 — instrumentation: counts every persist_edge_f64
+    /// call issued by `reinforce()` (3 per call when graph_store is set).
+    /// This is the metric that drives the write-amplification ratio:
+    /// `lpg_metadata_writes_total / nodes_recalled_per_feedback`.
+    lpg_metadata_writes_total: AtomicU64,
 }
 
 impl SynapseStore {
@@ -276,6 +290,9 @@ impl SynapseStore {
             #[cfg(feature = "substrate")]
             substrate: None,
             cross_base: DashMap::new(),
+            dashmap_full_scans_total: AtomicU64::new(0),
+            reinforces_total: AtomicU64::new(0),
+            lpg_metadata_writes_total: AtomicU64::new(0),
         }
     }
 
@@ -295,6 +312,9 @@ impl SynapseStore {
             #[cfg(feature = "substrate")]
             substrate: None,
             cross_base: DashMap::new(),
+            dashmap_full_scans_total: AtomicU64::new(0),
+            reinforces_total: AtomicU64::new(0),
+            lpg_metadata_writes_total: AtomicU64::new(0),
         }
     }
 
@@ -333,6 +353,9 @@ impl SynapseStore {
             graph_store: Some(graph_store),
             substrate: Some(substrate),
             cross_base: DashMap::new(),
+            dashmap_full_scans_total: AtomicU64::new(0),
+            reinforces_total: AtomicU64::new(0),
+            lpg_metadata_writes_total: AtomicU64::new(0),
         }
     }
 
@@ -404,6 +427,8 @@ impl SynapseStore {
         if source == target {
             return; // No self-synapses
         }
+        // T1 instrumentation — count every entry to reinforce.
+        self.reinforces_total.fetch_add(1, Ordering::Relaxed);
         let key = SynapseKey::new(source, target);
         let max_w = self.config.max_synapse_weight;
         self.synapses
@@ -449,6 +474,9 @@ impl SynapseStore {
 
             // Persist the raw weight (not decayed) — decay will be recomputed
             // from the epoch timestamp on reload.
+            // T1 instrumentation — 3 LPG metadata writes per reinforce.
+            // Plan 69e59065 T3 will move these into a batched consolidator.
+            self.lpg_metadata_writes_total.fetch_add(3, Ordering::Relaxed);
             persist_edge_f64(gs.as_ref(), eid, PROP_SYNAPSE_WEIGHT, entry.raw_weight());
             // Persist epoch so cross-session decay works correctly.
             let epoch_secs = now_epoch_secs();
@@ -500,6 +528,10 @@ impl SynapseStore {
     /// relative weights are preserved (competitive Hebbian normalization).
     fn normalize_outgoing(&self, node_id: NodeId) {
         let max_total = self.config.max_total_outgoing_weight;
+        // T1 instrumentation — count every full DashMap scan. Plan
+        // 69e59065 T4 will replace this with an O(degré) lookup via an
+        // inverted index `node_to_keys`.
+        self.dashmap_full_scans_total.fetch_add(1, Ordering::Relaxed);
         // Collect all synapse keys involving this node and their current weights
         let entries: Vec<(SynapseKey, f64)> = self
             .synapses
@@ -750,6 +782,35 @@ impl SynapseStore {
             .iter()
             .map(|entry| entry.value().clone())
             .collect()
+    }
+
+    // ------------------------------------------------------------------------
+    // Plan 69e59065 T1 — Instrumentation accessors.
+    //
+    // These compteurs feed the bench `feedback_baseline.rs` and the
+    // `feedback` tracing span to compute the write-amplification ratio
+    // and lock-pressure metrics targeted by the plan.
+    // ------------------------------------------------------------------------
+
+    /// Total number of `reinforce()` invocations since process start.
+    /// Combined with [`Self::lpg_metadata_writes_total`] gives the
+    /// per-call LPG amplification factor (target ≤ 0 after T3).
+    pub fn reinforces_total(&self) -> u64 {
+        self.reinforces_total.load(Ordering::Relaxed)
+    }
+
+    /// Total number of full DashMap scans triggered by
+    /// `normalize_outgoing`. Equals 2 × reinforces_total in the worst
+    /// case. Target ≤ degré_moyen × reinforces_total after T4.
+    pub fn dashmap_full_scans_total(&self) -> u64 {
+        self.dashmap_full_scans_total.load(Ordering::Relaxed)
+    }
+
+    /// Total number of `persist_edge_f64` calls issued by `reinforce()`
+    /// (3 per call when graph_store is wired). T3 target: 0 in the hot
+    /// path, all moved to a background consolidator.
+    pub fn lpg_metadata_writes_total(&self) -> u64 {
+        self.lpg_metadata_writes_total.load(Ordering::Relaxed)
     }
 
     // -- cross-base synapse methods ------------------------------------------
