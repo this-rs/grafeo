@@ -192,43 +192,66 @@ impl Operator for ProjectOperator {
                     let prop_key = PropertyKey::new(property);
                     let epoch = self.viewing_epoch;
                     let tx_id = self.transaction_id;
+                    // T17k: single-property projection. Use the scalar
+                    // `store.get_node_property` / `get_edge_property`
+                    // directly — they do a targeted per-zone lookup
+                    // (O(1)) rather than the O(N) bulk hydrate that
+                    // `get_node` performs (needed for bulk consumers
+                    // like merge / RAG but wasteful for N-row × 1-prop
+                    // projections). MVCC-aware paths still route
+                    // through `get_node_at_epoch` for historical reads.
+                    let has_mvcc = epoch.is_some();
                     for row in input.selected_indices() {
                         let value = if let Some(node_id) = input_col.get_node_id(row) {
-                            let node = if let (Some(ep), Some(tx)) = (epoch, tx_id) {
-                                store.get_node_versioned(node_id, ep, tx)
-                            } else if let Some(ep) = epoch {
-                                store.get_node_at_epoch(node_id, ep)
+                            let prop = if has_mvcc {
+                                let node = if let (Some(ep), Some(tx)) = (epoch, tx_id) {
+                                    store.get_node_versioned(node_id, ep, tx)
+                                } else if let Some(ep) = epoch {
+                                    store.get_node_at_epoch(node_id, ep)
+                                } else {
+                                    None
+                                };
+                                node.and_then(|n| n.get_property(property).cloned())
                             } else {
-                                store.get_node(node_id)
+                                store.get_node_property(node_id, &prop_key)
                             };
-                            if let Some(prop) = node.and_then(|n| n.get_property(property).cloned())
-                            {
-                                prop
+                            if let Some(v) = prop {
+                                v
                             } else if let Some(edge_id) = input_col.get_edge_id(row) {
-                                // Node lookup failed: the ID may belong to an
-                                // edge (common with Generic columns after joins).
+                                if has_mvcc {
+                                    let edge = if let (Some(ep), Some(tx)) = (epoch, tx_id) {
+                                        store.get_edge_versioned(edge_id, ep, tx)
+                                    } else if let Some(ep) = epoch {
+                                        store.get_edge_at_epoch(edge_id, ep)
+                                    } else {
+                                        None
+                                    };
+                                    edge.and_then(|e| e.get_property(property).cloned())
+                                        .unwrap_or(Value::Null)
+                                } else {
+                                    store
+                                        .get_edge_property(edge_id, &prop_key)
+                                        .unwrap_or(Value::Null)
+                                }
+                            } else {
+                                Value::Null
+                            }
+                        } else if let Some(edge_id) = input_col.get_edge_id(row) {
+                            if has_mvcc {
                                 let edge = if let (Some(ep), Some(tx)) = (epoch, tx_id) {
                                     store.get_edge_versioned(edge_id, ep, tx)
                                 } else if let Some(ep) = epoch {
                                     store.get_edge_at_epoch(edge_id, ep)
                                 } else {
-                                    store.get_edge(edge_id)
+                                    None
                                 };
                                 edge.and_then(|e| e.get_property(property).cloned())
                                     .unwrap_or(Value::Null)
                             } else {
-                                Value::Null
+                                store
+                                    .get_edge_property(edge_id, &prop_key)
+                                    .unwrap_or(Value::Null)
                             }
-                        } else if let Some(edge_id) = input_col.get_edge_id(row) {
-                            let edge = if let (Some(ep), Some(tx)) = (epoch, tx_id) {
-                                store.get_edge_versioned(edge_id, ep, tx)
-                            } else if let Some(ep) = epoch {
-                                store.get_edge_at_epoch(edge_id, ep)
-                            } else {
-                                store.get_edge(edge_id)
-                            };
-                            edge.and_then(|e| e.get_property(property).cloned())
-                                .unwrap_or(Value::Null)
                         } else if let Some(Value::Map(map)) = input_col.get_value(row) {
                             map.get(&prop_key).cloned().unwrap_or(Value::Null)
                         } else {

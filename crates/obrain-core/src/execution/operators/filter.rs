@@ -416,21 +416,43 @@ impl ExpressionPredicate {
             FilterExpression::Property { variable, property } => {
                 let col_idx = *self.variable_columns.get(variable)?;
                 let col = chunk.column(col_idx)?;
-                // Try as node first
-                if let Some(node_id) = col.get_node_id(row)
-                    && let Some(node) = self.resolve_node(node_id)
-                {
-                    return node.get_property(property).cloned();
+                // T17k : single-property access. Route directly through
+                // `store.get_node_property` / `get_edge_property` which
+                // do a targeted read (O(1) mmap lookup per zone) instead
+                // of going through `get_node` which bulk-hydrates all
+                // ~N properties of the entity (O(N) lock-per-column).
+                // On wide entities (File with 57 cols), bulk hydration
+                // per-row turns a 21 ms query into 1.4 s. Scalar route
+                // is ~1 μs per cell.
+                let key = obrain_common::types::PropertyKey::new(property);
+                if let Some(node_id) = col.get_node_id(row) {
+                    // Fast path : direct scalar lookup on the store.
+                    if let Some(v) = self.store.get_node_property(node_id, &key) {
+                        return Some(v);
+                    }
+                    // Fall through to MVCC-aware path only when the
+                    // scalar store misses (lets `get_node_at_epoch` kick
+                    // in for historical reads).
+                    if self.viewing_epoch.is_some()
+                        && let Some(node) = self.resolve_node(node_id)
+                    {
+                        return node.get_property(property).cloned();
+                    }
+                    return None;
                 }
-                // Try as edge if node lookup failed
-                if let Some(edge_id) = col.get_edge_id(row)
-                    && let Some(edge) = self.resolve_edge(edge_id)
-                {
-                    return edge.get_property(property).cloned();
+                if let Some(edge_id) = col.get_edge_id(row) {
+                    if let Some(v) = self.store.get_edge_property(edge_id, &key) {
+                        return Some(v);
+                    }
+                    if self.viewing_epoch.is_some()
+                        && let Some(edge) = self.resolve_edge(edge_id)
+                    {
+                        return edge.get_property(property).cloned();
+                    }
+                    return None;
                 }
                 // Try as map value (e.g. from UNWIND with map elements)
                 if let Some(Value::Map(map)) = col.get_value(row) {
-                    let key = obrain_common::types::PropertyKey::new(property);
                     return map.get(&key).cloned();
                 }
                 None
@@ -505,21 +527,21 @@ impl ExpressionPredicate {
                         m.get(&prop_key).cloned()
                     }
                     (_, Value::String(key)) => {
-                        // Node/edge bracket access: n['name'] looks up a property
-                        // via the store when the base variable refers to a node or edge.
+                        // Node/edge bracket access: n['name']. T17k :
+                        // use the scalar store accessor (targeted zone
+                        // lookup) instead of bulk-hydrating via
+                        // `resolve_node` — same rationale as the
+                        // FilterExpression::Property branch above.
                         if let FilterExpression::Variable(var) = base.as_ref()
                             && let Some(&col_idx) = self.variable_columns.get(var)
                             && let Some(col) = chunk.column(col_idx)
                         {
-                            if let Some(node_id) = col.get_node_id(row)
-                                && let Some(node) = self.resolve_node(node_id)
-                            {
-                                return node.get_property(key.as_str()).cloned();
+                            let prop_key = PropertyKey::new(key.as_str());
+                            if let Some(node_id) = col.get_node_id(row) {
+                                return self.store.get_node_property(node_id, &prop_key);
                             }
-                            if let Some(edge_id) = col.get_edge_id(row)
-                                && let Some(edge) = self.resolve_edge(edge_id)
-                            {
-                                return edge.get_property(key.as_str()).cloned();
+                            if let Some(edge_id) = col.get_edge_id(row) {
+                                return self.store.get_edge_property(edge_id, &prop_key);
                             }
                         }
                         None
