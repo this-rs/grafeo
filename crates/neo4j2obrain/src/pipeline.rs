@@ -113,6 +113,12 @@ pub struct PipelineStats {
     pub ricci_refreshed: u64,
     pub coact_edges_added: u64,
     pub engrams_seeded: u64,
+    /// T17l Stage 9 — nodes whose `_hilbert_features` were computed +
+    /// persisted (canonical 64-72d topology signature).
+    pub hilbert_features_computed: u64,
+    /// T17l Stage 10 — nodes whose `_kernel_embedding` were computed
+    /// + persisted (canonical 80d Φ₀ projection, depends on Hilbert).
+    pub kernel_embeddings_computed: u64,
 }
 
 /// Run the full pipeline. Stages 1 runs in its own async task if the
@@ -249,6 +255,34 @@ pub fn run(opts: &PipelineOptions) -> Result<PipelineStats> {
         );
     }
 
+    // -------- Stage 9 (T17l): _hilbert_features 64-72d ----------------
+    // Canonical topology-derived signature consumed by the hub's
+    // `CompositeEmbedding` (obrain-chat retrieval). Depends only on
+    // graph topology — can run before or after any other cognitive
+    // stage. Runs before Stage 10 because Kernel depends on Hilbert.
+    if opts.force_rerun_cognitive || !probe.hilbert_populated {
+        stage_fill_hilbert_features(&substrate, &mut stats)?;
+    } else {
+        tracing::info!(
+            "Stage 9 (hilbert_features): _hilbert_features already populated \
+             on ≥ {:.0}% of nodes — skipping (use --force-rerun-cognitive to recompute)",
+            probe.hilbert_coverage * 100.0
+        );
+    }
+
+    // -------- Stage 10 (T17l): _kernel_embedding 80d ------------------
+    // Canonical Φ₀ projection — depends on `_hilbert_features` being
+    // present on each node. Computed last in the cognitive chain.
+    if opts.force_rerun_cognitive || !probe.kernel_populated {
+        stage_fill_kernel_embeddings(&substrate, &mut stats)?;
+    } else {
+        tracing::info!(
+            "Stage 10 (kernel_embedding): _kernel_embedding already populated \
+             on ≥ {:.0}% of nodes — skipping (use --force-rerun-cognitive to recompute)",
+            probe.kernel_coverage * 100.0
+        );
+    }
+
     substrate.flush().context("final flush")?;
     Ok(stats)
 }
@@ -273,13 +307,20 @@ struct StageProbe {
     coact_populated: bool,
     coact_edge_sample: u64,
     engrams_populated: bool,
+    /// T17l Stage 9 — fraction of sampled nodes carrying `_hilbert_features`
+    /// as a `Value::Vector` property.
+    hilbert_coverage: f64,
+    hilbert_populated: bool,
+    /// T17l Stage 10 — same for `_kernel_embedding`.
+    kernel_coverage: f64,
+    kernel_populated: bool,
 }
 
 impl std::fmt::Display for StageProbe {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "tiers={} community={} (cov={:.0}%) centrality={} (cov={:.0}%) ricci={} coact={} engrams={}",
+            "tiers={} community={} (cov={:.0}%) centrality={} (cov={:.0}%) ricci={} coact={} engrams={} hilbert={} (cov={:.0}%) kernel={} (cov={:.0}%)",
             yes_no(self.tiers_populated),
             yes_no(self.community_populated),
             self.community_coverage * 100.0,
@@ -288,6 +329,10 @@ impl std::fmt::Display for StageProbe {
             yes_no(self.ricci_populated),
             yes_no(self.coact_populated),
             yes_no(self.engrams_populated),
+            yes_no(self.hilbert_populated),
+            self.hilbert_coverage * 100.0,
+            yes_no(self.kernel_populated),
+            self.kernel_coverage * 100.0,
         )
     }
 }
@@ -400,6 +445,33 @@ fn probe_stage_coverage(
     // Ricci runs before COACT in the pipeline, so COACT presence is a
     // sufficient (not necessary) signal. Treat tiers + coact as proxy.
     probe.ricci_populated = probe.coact_populated && probe.tiers_populated;
+
+    // T17l Stage 9+10 — probe `_hilbert_features` (64-72d) and
+    // `_kernel_embedding` (80d) coverage on the same sample. These live
+    // in substrate vec_columns (not NodeRecord bit-packed fields like
+    // community_id / centrality_cached), so we use `get_node_property`.
+    let hilbert_key = obrain_common::PropertyKey::from("_hilbert_features");
+    let kernel_key = obrain_common::PropertyKey::from("_kernel_embedding");
+    let mut hilbert_nonzero = 0usize;
+    let mut kernel_nonzero = 0usize;
+    for &nid in &sample {
+        if matches!(
+            substrate.get_node_property(nid, &hilbert_key),
+            Some(obrain_common::types::Value::Vector(_))
+        ) {
+            hilbert_nonzero += 1;
+        }
+        if matches!(
+            substrate.get_node_property(nid, &kernel_key),
+            Some(obrain_common::types::Value::Vector(_))
+        ) {
+            kernel_nonzero += 1;
+        }
+    }
+    probe.hilbert_coverage = hilbert_nonzero as f64 / n_sample;
+    probe.kernel_coverage = kernel_nonzero as f64 / n_sample;
+    probe.hilbert_populated = probe.hilbert_coverage >= PROBE_POPULATED_THRESHOLD;
+    probe.kernel_populated = probe.kernel_coverage >= PROBE_POPULATED_THRESHOLD;
 
     probe
 }
@@ -1152,6 +1224,113 @@ fn stage_seed_engrams(
         ENGRAM_TOP_K,
         MIN_COMMUNITY_SIZE_FOR_ENGRAM,
         MAX_SEEDED_ENGRAMS,
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// T17l Stage 9 — `_hilbert_features` (canonical 64-72d topology signature)
+// ---------------------------------------------------------------------
+//
+// Delegates to `obrain-adapters::plugins::algorithms::hilbert_features`
+// which is the single canonical producer of this key (same function the
+// runtime `HilbertEnricher` thinker uses as a fallback in the hub fleet).
+// The result map is persisted one-node-at-a-time via
+// `set_node_property` — each write flows through the substrate WAL, so
+// a partial run survives a crash and the next `--enrich-only` resumes
+// from the coverage probe.
+
+fn stage_fill_hilbert_features(
+    substrate: &Arc<SubstrateStore>,
+    stats: &mut PipelineStats,
+) -> Result<()> {
+    use obrain_adapters::plugins::algorithms::hilbert_features::{
+        HilbertFeaturesConfig, hilbert_features,
+    };
+    use obrain_common::types::Value;
+    use obrain_core::graph::{GraphStore, GraphStoreMut};
+
+    let t0 = std::time::Instant::now();
+    let node_count = substrate.node_count();
+    if node_count == 0 {
+        tracing::info!("Stage 9 (hilbert_features): empty graph — skipping");
+        return Ok(());
+    }
+    tracing::info!(
+        "Stage 9 (hilbert_features): computing on {} nodes (canonical 64d topology signature)",
+        node_count
+    );
+
+    let config = HilbertFeaturesConfig::default();
+    let store_ref: &dyn GraphStore = substrate.as_ref();
+    let result = hilbert_features(store_ref, &config);
+
+    let pb = progress_bar(result.features.len() as u64, "hilbert_features");
+    let mut nodes_written = 0u64;
+    for (nid, features) in result.features.iter() {
+        let arc: std::sync::Arc<[f32]> = features.as_slice().into();
+        substrate.set_node_property(*nid, "_hilbert_features", Value::Vector(arc));
+        nodes_written += 1;
+        pb.inc(1);
+    }
+    pb.finish_with_message("hilbert_features done");
+
+    stats.hilbert_features_computed = nodes_written;
+    tracing::info!(
+        "Stage 9 (hilbert_features): {} nodes written, dim {}, elapsed {:.2}s",
+        nodes_written,
+        result.dimensions,
+        t0.elapsed().as_secs_f64()
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// T17l Stage 10 — `_kernel_embedding` (canonical 80d Φ₀ projection)
+// ---------------------------------------------------------------------
+//
+// Depends on `_hilbert_features` being present on every node's
+// neighborhood (kernel reads Hilbert features from each neighbor). Stage
+// 9 produces them ; if a user runs Stage 10 in isolation without
+// Stage 9 having populated the features, `KernelManager::compute_all`
+// returns a partial map (only nodes whose neighborhood has Hilbert
+// features). The dependency ordering in `run()` prevents this from
+// happening in practice.
+
+fn stage_fill_kernel_embeddings(
+    substrate: &Arc<SubstrateStore>,
+    stats: &mut PipelineStats,
+) -> Result<()> {
+    use obrain_adapters::plugins::algorithms::kernel_manager::KernelManager;
+    use obrain_core::graph::GraphStore;
+
+    let t0 = std::time::Instant::now();
+    let node_count = substrate.node_count();
+    if node_count == 0 {
+        tracing::info!("Stage 10 (kernel_embedding): empty graph — skipping");
+        return Ok(());
+    }
+    tracing::info!(
+        "Stage 10 (kernel_embedding): computing on {} nodes (canonical 80d Φ₀ projection, depends on Hilbert)",
+        node_count
+    );
+
+    // `new_untrained` seeds MultiHeadPhi0 with a deterministic RNG — the
+    // resulting projection is reproducible across runs on the same
+    // graph topology. `compute_all` writes `_kernel_embedding` on every
+    // node whose neighborhood has `_hilbert_features` populated.
+    let store_mut: std::sync::Arc<dyn obrain_core::graph::GraphStoreMut> =
+        substrate.clone();
+    let seed: u64 = 42;
+    let mgr = KernelManager::new_untrained(store_mut, seed);
+    mgr.compute_all();
+    let count = mgr.embedding_count() as u64;
+
+    stats.kernel_embeddings_computed = count;
+    tracing::info!(
+        "Stage 10 (kernel_embedding): {} nodes written, elapsed {:.2}s",
+        count,
+        t0.elapsed().as_secs_f64()
     );
     Ok(())
 }
