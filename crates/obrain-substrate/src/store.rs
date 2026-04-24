@@ -4633,6 +4633,161 @@ impl SubstrateStore {
         out
     }
 
+    /// T17j T5 — rebuild every outgoing chain from `EdgeRecord.src`.
+    ///
+    /// Treats `rec.src/dst/edge_type` as authoritative (they're
+    /// immutable per the EdgeRecord contract) and reconstructs every
+    /// `NodeRecord.first_edge_off` + `EdgeRecord.next_from` pointer
+    /// from scratch. Use when chain ↔ edge-record divergence has
+    /// been diagnosed (see `diagnose_chain_vs_rec_src`).
+    ///
+    /// ### Passes
+    ///
+    /// 1. **Reset** — zero every live `NodeRecord.first_edge_off`
+    ///    (tombstoned nodes untouched).
+    /// 2. **Rewire** — for every live edge slot, splice the edge at
+    ///    the head of its `rec.src` node's chain by :
+    ///    - reading `src_rec.first_edge_off` (current head after
+    ///      pass 1 / partial pass 2),
+    ///    - writing `edge.next_from = current_head`,
+    ///    - writing `src_rec.first_edge_off = edge_slot_offset`.
+    /// 3. **Flush** — commit WAL + msync zones.
+    ///
+    /// ### Idempotency & crash-safety
+    ///
+    /// Idempotent : re-running on an already-healthy store produces
+    /// the same link graph (modulo edge-slot iteration order, which
+    /// is deterministic for a fixed zone state).
+    ///
+    /// Crash-safe : every write goes through the WAL. Mid-repair
+    /// crash leaves some chains half-built ; the next open replays
+    /// the committed prefix. Re-running the repair completes it.
+    ///
+    /// ### Cost
+    ///
+    /// O(N + 2·E) with one WAL record per node write (pass 1) + two
+    /// per edge (pass 2 : update_edge + update_node). On PO (1.36M
+    /// nodes, 1.88M edges) : ~8M WAL records. On Wiki (119M edges) :
+    /// ~240M records — multiple minutes in steady state, amortised
+    /// once across subsequent reopens.
+    ///
+    /// Returns `(nodes_reset, edges_rewired)`.
+    pub fn repair_outgoing_chains(&self) -> SubstrateResult<(u64, u64)> {
+        let node_hw = self.next_node_id.load(Ordering::Acquire);
+        let mut nodes_reset = 0u64;
+        for slot in 1..node_hw {
+            let Some(rec) = self.writer.read_node(slot)? else {
+                continue;
+            };
+            if rec.flags & crate::record::node_flags::TOMBSTONED != 0 {
+                continue;
+            }
+            if rec.first_edge_off.is_zero() {
+                continue;
+            }
+            let mut new_rec = rec;
+            new_rec.first_edge_off = crate::record::U48::from_u64(0);
+            self.writer.update_node(slot, new_rec)?;
+            nodes_reset += 1;
+        }
+
+        let edge_hw = self.next_edge_id.load(Ordering::Acquire);
+        let mut edges_rewired = 0u64;
+        for edge_slot in 1..edge_hw {
+            let edge = match self.writer.read_edge(edge_slot)? {
+                Some(e) if e.flags & crate::record::edge_flags::TOMBSTONED == 0 => e,
+                _ => continue,
+            };
+            let src_slot = edge.src;
+            let src_rec = match self.writer.read_node(src_slot)? {
+                Some(r) => r,
+                None => continue, // dangling — skip
+            };
+            let prev_head_off = src_rec.first_edge_off;
+            let new_edge = crate::record::EdgeRecord {
+                next_from: prev_head_off,
+                ..edge
+            };
+            self.writer.update_edge(edge_slot, new_edge)?;
+            let new_src = crate::record::NodeRecord {
+                first_edge_off: Self::edge_slot_to_offset(EdgeId(edge_slot)),
+                ..src_rec
+            };
+            self.writer.update_node(src_slot, new_src)?;
+            edges_rewired += 1;
+        }
+
+        self.writer.commit()?;
+        self.writer.msync_zones()?;
+        Ok((nodes_reset, edges_rewired))
+    }
+
+    /// T17j T5 — diagnostic : walks the outgoing chain of `node_id`
+    /// and returns stats comparing the chain-owner NodeId vs each
+    /// edge's `rec.src` field. Returns `(edges_walked, rec_src_matches,
+    /// rec_src_mismatches, first_mismatch_info)`.
+    ///
+    /// If `rec_src_mismatches > 0`, the chain and edge record fields
+    /// are desynchronised — Cypher sees the edge attributed to the
+    /// chain-owner node, but raw scans see it attributed to whatever
+    /// `rec.src` says.
+    ///
+    /// `first_mismatch_info` is `Some((edge_slot, rec_src))` when a
+    /// mismatch was found, letting the caller inspect the misrouted
+    /// edge manually.
+    pub fn diagnose_chain_vs_rec_src(
+        &self,
+        node_id: NodeId,
+    ) -> (u64, u64, u64, Option<(u64, u32)>) {
+        let mut walked = 0u64;
+        let mut matches = 0u64;
+        let mut mismatches = 0u64;
+        let mut first_mismatch: Option<(u64, u32)> = None;
+        self.walk_outgoing_chain(node_id, |rec, edge_id| {
+            walked += 1;
+            if rec.src as u64 == node_id.0 {
+                matches += 1;
+            } else {
+                mismatches += 1;
+                if first_mismatch.is_none() {
+                    first_mismatch = Some((edge_id.0, rec.src));
+                }
+            }
+        });
+        (walked, matches, mismatches, first_mismatch)
+    }
+
+    /// T17j T5 — diagnostic : for a given label name, sample the first
+    /// N NodeRecords returned by the label index and OR their
+    /// label_bitset together. Returns `(count_sampled, union_bits)`.
+    /// If the union doesn't contain `label`'s bit, the label_index
+    /// and the on-disk NodeRecords diverge (migration bug).
+    pub fn diagnose_label_bitsets_for(
+        &self,
+        label: &str,
+        sample: usize,
+    ) -> SubstrateResult<(usize, u64)> {
+        let bit = {
+            let reg = self.labels.read();
+            match reg.bit_for(label) {
+                Some(b) => b,
+                None => return Ok((0, 0)),
+            }
+        };
+        let nids = self.nodes_by_label(label);
+        let n = nids.len().min(sample);
+        let mut union_bits = 0u64;
+        for nid in nids.iter().take(n) {
+            if let Some(nr) = self.writer.read_node(nid.0 as u32)?
+                && nr.flags & crate::record::node_flags::TOMBSTONED == 0
+            {
+                union_bits |= nr.label_bitset;
+            }
+        }
+        let _ = bit;
+        Ok((n, union_bits))
+    }
+
     /// T17j T4 — deep diagnostic : scan every live edge of `edge_type`
     /// and return the aggregate bitset OR'd across all src / dst
     /// endpoints. This reveals which label bits actually appear in
