@@ -892,22 +892,13 @@ impl SubstrateStore {
             "degree column ready"
         );
 
-        // (2d) T17h T8 — eager init of the per-edge-type degree registry.
-        // Same rationale as T5 : must predate any create_edge/delete_edge
-        // that could trigger a lazy rebuild mid-session. Open existing
-        // sidecars if present, otherwise rebuild from edge scan and
-        // persist.
-        let t_typed = std::time::Instant::now();
-        let typed_span = tracing::info_span!("init_typed_degrees").entered();
-        let typed_source = store.init_typed_degrees()?;
-        drop(typed_span);
-        tracing::info!(
-            phase = "init_typed_degrees",
-            elapsed_ms = t_typed.elapsed().as_millis() as u64,
-            source = typed_source,
-            columns = store.typed_degrees().len(),
-            "typed degree registry ready"
-        );
+        // (2d) T17i T1 — the per-edge-type degree registry is now
+        // **deferred** : no more eager scan at `from_substrate`.
+        // Previously this phase cost ~1.3-4.7 ms per edge_type and
+        // inflated DB open on PO (65 types → +85 ms). The registry
+        // hydrates on the first hot-path call to `typed_degrees()`
+        // via `TypedDegreeRegistry::ensure_initialized`. Idempotent,
+        // race-safe under concurrent `create_edge`.
 
         // (3) Hydrate the vec-column registry from the persisted specs
         //     (dict v3). For each `(prop_key_id, entity_kind, dim, dtype)`
@@ -4647,52 +4638,61 @@ impl SubstrateStore {
         self.degrees().read().in_degree(node.0 as u32)
     }
 
-    /// T17h T8 — per-edge-type degree registry accessor (lazy-init).
-    /// Columns are created on first `incr_*` for a type; existing
-    /// columns on disk are picked up on subsequent `incr_*` (or via
-    /// explicit `get_or_create` in the registry).
+    /// T17h T8 + T17i T1 — per-edge-type degree registry accessor with
+    /// deferred first-init. The registry Arc is materialised once via
+    /// `OnceLock::get_or_init`, then `ensure_initialized` is driven to
+    /// completion on every call (O(1) after first) so callers always
+    /// see a fully-populated registry before they increment counters
+    /// or query degrees.
+    ///
+    /// Why hydrate here rather than in `from_substrate` : the eager
+    /// path opens every persisted sidecar (1.3-4.7 ms/type × 65 types
+    /// on PO = +85 ms DB open). Deferring pushes that cost to the
+    /// first hot-path call — amortised across the session and
+    /// invisible to read-only queries that never touch typed degrees
+    /// (e.g. a `count(n)` / `count(n:Label)` traffic pattern).
     pub(crate) fn typed_degrees(
         &self,
     ) -> &Arc<crate::typed_degree::TypedDegreeRegistry> {
-        self.typed_degrees_cell.get_or_init(|| {
+        let registry = self.typed_degrees_cell.get_or_init(|| {
             Arc::new(crate::typed_degree::TypedDegreeRegistry::new(
                 Arc::clone(&self.substrate),
                 Arc::clone(&self.edge_types),
             ))
-        })
-    }
-
-    /// T17h T8 — eager init of the typed-degree registry at `from_substrate`.
-    /// Mirrors T5's `init_degrees` : must run BEFORE any create/delete
-    /// can fire a lazy rebuild mid-session.
-    ///
-    /// Returns the source used : `"open_existing"` (sidecars on disk,
-    /// O(K) where K = open columns) or `"rebuild_scan"` (no sidecars,
-    /// O(E) edge scan). After rebuild, the columns are persisted
-    /// (CRC + msync) so the next open takes the fast path.
-    fn init_typed_degrees(&self) -> SubstrateResult<&'static str> {
-        let registry = self.typed_degrees().clone();
-        let opened = registry.open_existing_columns()?;
-        if opened > 0 {
-            return Ok("open_existing");
+        });
+        // Race-safe first-init : the closure runs under the registry's
+        // internal mutex. Concurrent callers wait here on the first
+        // call, then get a straight path on every subsequent call.
+        // Errors during init are logged and swallowed — the registry
+        // remains uninitialised and subsequent accesses re-attempt
+        // (a disk glitch should eventually resolve).
+        if let Err(e) =
+            registry.ensure_initialized(|reg| Self::rebuild_typed_degrees_into(reg, self))
+        {
+            tracing::warn!(
+                error = ?e,
+                "typed_degrees ensure_initialized failed — registry may be incomplete"
+            );
         }
-        // No persisted sidecars — rebuild from edge zone.
-        self.rebuild_typed_degrees_from_scan()?;
-        registry.flush()?;
-        Ok("rebuild_scan")
+        registry
     }
 
-    /// T17h T8 — one-shot edge scan that populates every per-type
-    /// column. Sequential (zone-cache Mutex contention rules out rayon).
-    /// Typical cost : same order as T5's `rebuild_degrees_from_scan`,
-    /// i.e. ≤ 30 s on Wikipedia (119M edges) for each pass — one-shot,
-    /// amortised once across sessions thanks to v5 sidecar persistence.
-    fn rebuild_typed_degrees_from_scan(&self) -> SubstrateResult<()> {
-        let registry = self.typed_degrees().clone();
-        let n_slots_hint = self.next_node_id.load(Ordering::Acquire);
-        let edge_hw = self.next_edge_id.load(Ordering::Acquire);
+    /// T17i T1 — one-shot rebuild that populates a given registry from
+    /// the substrate edge zone. Called by `ensure_initialized` when no
+    /// sidecars exist on disk. Sequential (zone-cache Mutex contention
+    /// rules out rayon) ; ~30 s worst-case on Wikipedia (119 M edges).
+    ///
+    /// Associated function rather than a method so the closure passed
+    /// to `ensure_initialized` doesn't capture `self` and form a
+    /// self-reference cycle with the registry.
+    fn rebuild_typed_degrees_into(
+        registry: &crate::typed_degree::TypedDegreeRegistry,
+        store: &Self,
+    ) -> SubstrateResult<()> {
+        let n_slots_hint = store.next_node_id.load(Ordering::Acquire);
+        let edge_hw = store.next_edge_id.load(Ordering::Acquire);
         for slot in 1..edge_hw {
-            let Some(rec) = self.writer.read_edge(slot)? else {
+            let Some(rec) = store.writer.read_edge(slot)? else {
                 continue;
             };
             if rec.flags & crate::record::edge_flags::TOMBSTONED != 0 {
@@ -4701,6 +4701,9 @@ impl SubstrateStore {
             registry.incr_out(rec.edge_type, rec.src, 1, n_slots_hint)?;
             registry.incr_in(rec.edge_type, rec.dst, 1, n_slots_hint)?;
         }
+        // Persist sidecars so subsequent opens take the fast `open_existing`
+        // path inside `ensure_initialized`.
+        registry.flush()?;
         Ok(())
     }
 
@@ -4834,6 +4837,14 @@ impl GraphStoreMut for SubstrateStore {
         let edge_type_id = self
             .intern_edge_type(edge_type)
             .expect("edge-type registry overflow (>65535 types); lifted in step 3");
+        // T17i T1 : pre-hydrate the typed-degree registry **before**
+        // `splice_edge_at_head` writes the new edge to the zone. If
+        // this is the first call on a fresh store (or first post-
+        // upgrade), the rebuild scan inside `ensure_initialized` then
+        // iterates the pre-edge state and doesn't observe the new
+        // edge — so our explicit `incr_typed_*_degree` below is the
+        // single source of increment (no double-count).
+        let _ = self.typed_degrees();
         let id = self.allocate_edge_id();
         let _rec = self.splice_edge_at_head(id, src, dst, edge_type_id);
 
@@ -4941,6 +4952,12 @@ impl GraphStoreMut for SubstrateStore {
         // T17h T5: snapshot src/dst BEFORE tombstone for degree decrement.
         let src_slot = rec.src;
         let dst_slot = rec.dst;
+        // T17i T1 : pre-hydrate typed-degree registry BEFORE the
+        // tombstone write so the rebuild scan (if needed) sees the
+        // still-live edge and accounts for it. Our explicit
+        // `incr_typed_*_degree(-1)` below then decrements it once,
+        // leaving the correct final state.
+        let _ = self.typed_degrees();
         // Splice the edge out of both chains before tombstoning the slot
         // — future walks must never encounter the dead edge.
         self.unlink_edge_from_chains(id, &rec);

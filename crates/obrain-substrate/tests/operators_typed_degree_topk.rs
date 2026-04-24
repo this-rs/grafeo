@@ -304,3 +304,79 @@ fn typed_degree_topk_separate_reset_replays() {
     let got: Vec<(NodeId, i64, i64)> = (0..2).map(|i| read_row_separate(&second, i)).collect();
     assert_eq!(got, vec![(files[2], 3, 2), (files[4], 2, 1)]);
 }
+
+/// T17i T1 — concurrent `create_edge` on a fresh store must not
+/// double-count the typed-degree columns. The deferred
+/// `ensure_initialized` serialises the first init under a mutex ;
+/// pre-init of the registry via `typed_degrees()` at the top of
+/// `create_edge` (before `splice_edge_at_head`) guarantees the
+/// rebuild scan runs on the pre-edge state for exactly one thread
+/// and returns an empty registry for a fresh store, after which
+/// every thread's explicit `incr_typed_*_degree(+1)` is the single
+/// source of truth.
+///
+/// Regression anchor : prior to the T17i T1 fix, the first
+/// `create_edge` path triggered `typed_degrees()` after
+/// `splice_edge_at_head` ; the rebuild scan then found the new
+/// edge already in the zone and incremented its column, and the
+/// subsequent explicit `incr_typed_out_degree(+1)` added a second
+/// unit — yielding 2 for a single `create_edge` call.
+#[test]
+fn typed_degrees_concurrent_init_no_double_count() {
+    use std::sync::Arc;
+    use std::sync::Barrier;
+
+    const THREADS: usize = 8;
+    const EDGES_PER_THREAD: usize = 50;
+
+    let store: Arc<dyn GraphStoreMut> = Arc::new(SubstrateStore::open_tempfile().unwrap());
+    // Allocate a pool of nodes that threads can pair up for edges.
+    let nodes: Vec<NodeId> = (0..(THREADS * 2))
+        .map(|_| store.create_node(&["File"]))
+        .collect();
+
+    let barrier = Arc::new(Barrier::new(THREADS));
+    let mut handles = Vec::new();
+    for t in 0..THREADS {
+        let store = store.clone();
+        let barrier = barrier.clone();
+        let src = nodes[t * 2];
+        let dst = nodes[t * 2 + 1];
+        handles.push(std::thread::spawn(move || {
+            // All threads wait, then release — the first `create_edge`
+            // call races into `typed_degrees()` / `ensure_initialized`.
+            barrier.wait();
+            for _ in 0..EDGES_PER_THREAD {
+                let _ = store.create_edge(src, dst, "IMPORTS");
+            }
+        }));
+    }
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    // For each (src, dst) pair in the thread pool : out_degree must be
+    // exactly EDGES_PER_THREAD (not 2× ; no misses either).
+    let arc_store = store.clone() as Arc<dyn GraphStore>;
+    let mut out_sum: i64 = 0;
+    let mut in_sum: i64 = 0;
+    for t in 0..THREADS {
+        let src = nodes[t * 2];
+        let dst = nodes[t * 2 + 1];
+        let out = arc_store.out_degree_by_type(src, Some("IMPORTS"));
+        let inn = arc_store.in_degree_by_type(dst, Some("IMPORTS"));
+        assert_eq!(
+            out, EDGES_PER_THREAD,
+            "thread {t} src out_degree must be exactly {EDGES_PER_THREAD}"
+        );
+        assert_eq!(
+            inn, EDGES_PER_THREAD,
+            "thread {t} dst in_degree must be exactly {EDGES_PER_THREAD}"
+        );
+        out_sum += out as i64;
+        in_sum += inn as i64;
+    }
+    let expected = (THREADS * EDGES_PER_THREAD) as i64;
+    assert_eq!(out_sum, expected);
+    assert_eq!(in_sum, expected);
+}

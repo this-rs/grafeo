@@ -91,8 +91,39 @@ pub fn filename_for_type(type_name: &str) -> String {
     format!("{TYPED_DEGREE_FILENAME_PREFIX}{safe}{TYPED_DEGREE_FILENAME_SUFFIX}")
 }
 
+/// First-init state for [`TypedDegreeRegistry`] — controls the
+/// T17i T1 deferred initialisation lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InitState {
+    /// Registry has been constructed but `ensure_initialized` hasn't
+    /// been called yet — no sidecars opened, no edge scan performed.
+    Uninitialized,
+    /// Registry is fully hydrated ; subsequent calls to
+    /// `ensure_initialized` are cheap no-ops.
+    Initialized,
+}
+
 /// Registry mapping `edge_type_id` → DegreeColumn. Created once per
 /// store; internal DashMap supports concurrent lazy insertion.
+///
+/// ### T17i T1 deferred initialisation
+///
+/// Prior to T17i, `SubstrateStore::from_substrate` called
+/// `init_typed_degrees` eagerly, which ran `open_existing_columns` —
+/// one CRC header check + mmap per sidecar, observed at
+/// ~1.3-4.7 ms/edge_type on PO/Megalaw respectively. For a hub with
+/// frequent reopens this became the dominant startup cost (PO :
+/// 8 ms → 93 ms).
+///
+/// The registry is now constructed empty at open time, and the
+/// first hot-path call (`typed_degrees()` from `SubstrateStore`
+/// accessor, triggered by create_edge / delete_edge / query
+/// planner) invokes [`Self::ensure_initialized`] which takes an
+/// exclusive lock and does the work exactly once. Concurrent
+/// `create_edge` calls wait on the lock and do not double-count
+/// (the in-flight edge is either fully incremented before the init
+/// completes and included in the rebuild, or happens after the
+/// init finishes and increments its own column).
 pub struct TypedDegreeRegistry {
     /// `edge_type_id → Arc<RwLock<DegreeColumn>>`. `Arc` so callers can
     /// `.clone()` the column handle for short-lived read-lock scopes.
@@ -102,6 +133,11 @@ pub struct TypedDegreeRegistry {
     /// Edge-type name registry for filename resolution at persist /
     /// rebuild time. Same registry as `SubstrateStore::edge_types`.
     edge_type_names: Arc<RwLock<crate::store::EdgeTypeRegistry>>,
+    /// First-init latch (T17i T1). Cheap `parking_lot::Mutex<InitState>` :
+    /// `ensure_initialized` locks, checks, performs the hydration
+    /// body once, and flips to `Initialized`. All subsequent calls
+    /// observe `Initialized` under the lock and return immediately.
+    init_state: parking_lot::Mutex<InitState>,
 }
 
 impl TypedDegreeRegistry {
@@ -115,7 +151,71 @@ impl TypedDegreeRegistry {
             columns: DashMap::new(),
             substrate,
             edge_type_names,
+            init_state: parking_lot::Mutex::new(InitState::Uninitialized),
         }
+    }
+
+    /// T17i T1 — deferred first-init entry point. Exactly one
+    /// caller runs the hydration body, the rest see `Initialized`
+    /// under the lock and return immediately.
+    ///
+    /// ### Body semantics
+    ///
+    /// The `rebuild_scan` closure is invoked **only** when
+    /// [`Self::open_existing_columns`] returns 0 (no sidecars
+    /// persisted on disk yet — a fresh store or a pre-T8 upgrade).
+    /// When sidecars exist, `open_existing_columns` mmaps them in
+    /// place and the rebuild is skipped.
+    ///
+    /// ### Concurrency
+    ///
+    /// The `parking_lot::Mutex` serialises the first init. The two
+    /// reasonable race paths :
+    /// - Thread A locks and starts init ; thread B contends on the
+    ///   mutex until A finishes. After A unlocks, B observes
+    ///   `Initialized` and returns.
+    /// - During A's rebuild scan, a concurrent `create_edge` may
+    ///   call `incr_out`/`incr_in` on a column not-yet-in-scan-range.
+    ///   The DashMap `get_or_create` atomically materialises the
+    ///   column, the increment lands ; A's rebuild iterates the
+    ///   persisted edges zone which already contains that edge
+    ///   (mmap is authoritative), so it increments the same column
+    ///   again — **and we get a double-count**. The caller must
+    ///   therefore ensure `ensure_initialized` is driven to
+    ///   completion **before** any concurrent mutator can fire. In
+    ///   practice this means `SubstrateStore::typed_degrees()`
+    ///   invokes ensure_initialized on every accessor call —
+    ///   before returning, so `incr_typed_out_degree` /
+    ///   `incr_typed_in_degree` always see a fully-initialised
+    ///   registry.
+    ///
+    /// ### Idempotency
+    ///
+    /// Subsequent calls are O(1) lock acquisition + a cheap
+    /// PartialEq compare. No rebuild scan is ever re-run.
+    pub(crate) fn ensure_initialized<F>(&self, rebuild_scan: F) -> SubstrateResult<()>
+    where
+        F: FnOnce(&Self) -> SubstrateResult<()>,
+    {
+        let mut state = self.init_state.lock();
+        if *state == InitState::Initialized {
+            return Ok(());
+        }
+        // First init — do the work under the lock so concurrent
+        // callers wait for us.
+        let opened = self.open_existing_columns()?;
+        if opened == 0 {
+            rebuild_scan(self)?;
+        }
+        *state = InitState::Initialized;
+        Ok(())
+    }
+
+    /// Test-only inspection : `true` once `ensure_initialized` has
+    /// completed at least once on this registry.
+    #[cfg(test)]
+    pub(crate) fn is_initialized_for_test(&self) -> bool {
+        *self.init_state.lock() == InitState::Initialized
     }
 
     /// Retrieve (or lazily create) the column for `edge_type_id`.
