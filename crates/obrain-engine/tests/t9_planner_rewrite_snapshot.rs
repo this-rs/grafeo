@@ -62,12 +62,14 @@ fn open_po_or_skip() -> Option<ObrainDB> {
     Some(ObrainDB::open(&po_path).expect("open PO db"))
 }
 
-/// Canonical bench query (dual OPTIONAL MATCH with peer labels on both
-/// sides) : the rewrite **refuses** to fire because the peer label
-/// `:File` cannot be honoured O(1) by the T8 counter. Slow path
-/// remains. This test locks in the honest limitation.
+/// T17i T3 — canonical bench query with homogeneous peer labels
+/// (`:File` on both `imported` and `dependent`) MUST route through
+/// the typed-degree rewrite. The T2 histogram proves that every
+/// IMPORTS edge on PO lands on a File node (both sides), so the
+/// constraint is semantically redundant and the O(1) lookup
+/// produces the same rows as the slow expand+count path.
 #[test]
-fn canonical_query_with_peer_labels_keeps_slow_path() {
+fn canonical_query_with_peer_labels_routes_to_typed_degree_topk() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(db) = open_po_or_skip() else { return };
     let session = db.session();
@@ -83,14 +85,13 @@ fn canonical_query_with_peer_labels_keeps_slow_path() {
              ORDER BY connections DESC \
              LIMIT 50",
         )
-        .expect("canonical query runs on slow path");
-    assert_eq!(result.rows.len(), 50, "slow path still produces 50 rows");
+        .expect("canonical query routes to typed-degree TopK");
+    assert_eq!(result.rows.len(), 50);
     assert_eq!(
         typed_degree_rewrite_counter(),
-        0,
-        "peer labels :File MUST prevent the rewrite to preserve \
-         filter semantics — T9 intentionally does not fire here. \
-         See module-level docs for the semantic constraint."
+        1,
+        "canonical dual-direction with homogeneous peer labels MUST \
+         fire the T17i T3 rewrite exactly once"
     );
 }
 
@@ -151,9 +152,10 @@ fn single_direction_without_peer_label_routes_to_typed_degree_topk() {
     );
 }
 
-/// Single-direction WITH peer label — must fall back.
+/// T17i T3 — single-direction WITH peer label also routes through
+/// the rewrite once the T2 histogram gate is in place.
 #[test]
-fn single_direction_with_peer_label_keeps_slow_path() {
+fn single_direction_with_peer_label_routes_to_typed_degree_topk() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(db) = open_po_or_skip() else { return };
     let session = db.session();
@@ -168,11 +170,11 @@ fn single_direction_with_peer_label_keeps_slow_path() {
              ORDER BY imports DESC \
              LIMIT 50",
         )
-        .expect("single-direction query with peer label runs");
+        .expect("single-direction query with peer label routes");
     assert_eq!(
         typed_degree_rewrite_counter(),
-        0,
-        "peer label :File on the single-direction variant MUST also block the rewrite"
+        1,
+        "single-direction with homogeneous peer label :File MUST fire the T17i T3 rewrite"
     );
 }
 

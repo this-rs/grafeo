@@ -871,7 +871,27 @@ impl SubstrateStore {
         let counters_span = tracing::info_span!("restore_counters").entered();
         let counters_source = if let Some(ref persisted) = snapshot.counters {
             store.restore_counters_from_snapshot(persisted);
-            "snapshot"
+            // T17i T2 : a v5 dict (loaded from a pre-T17i base) has empty
+            // `edge_type_{target,source}_label_counts` in its persisted
+            // block. Detect this case — `counters.is_some()` but BOTH
+            // histograms are empty AND edge_type_counts is non-empty —
+            // and trigger a one-shot rebuild that only repopulates the
+            // two histograms. First flush persists them as v6. On truly
+            // empty stores (no edges yet) we skip the rebuild — there is
+            // nothing to histogram.
+            if !persisted.edge_type_counts.is_empty()
+                && persisted.edge_type_target_label_counts.is_empty()
+                && persisted.edge_type_source_label_counts.is_empty()
+            {
+                tracing::info!(
+                    "T17i T2: v5 dict detected, rebuilding peer-label \
+                     histograms (one-shot, persisted to v6 on next flush)"
+                );
+                store.rebuild_live_counters_from_zones()?;
+                "snapshot+v5-histogram-rebuild"
+            } else {
+                "snapshot"
+            }
         } else {
             store.rebuild_live_counters_from_zones()?;
             "rebuild_scan"

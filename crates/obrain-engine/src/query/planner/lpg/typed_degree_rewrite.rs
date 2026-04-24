@@ -101,36 +101,109 @@ fn is_count_distinct(a: &AggregateExpr) -> bool {
     matches!(a.function, LogicalAggregateFunction::CountNonNull) && a.distinct
 }
 
-/// Returns the `Expand` directly at the root, **provided** there is
-/// no label constraint on the peer variable — either via a `Filter`
-/// wrapper (e.g. auto-inserted `hasLabel(peer, L)`) or via a
-/// `NodeScan(peer:L)` as the Expand's input.
+/// T17i T3 — gate a peer-label constraint against the store's
+/// T17i T2 histogram. Returns `true` iff the rewrite can safely
+/// substitute an expand+count pipeline that filters the peer on
+/// `peer_label` with a typed-degree lookup that is label-agnostic.
 ///
-/// Rationale : the T8 `out_degree_by_type(node, edge_type)` counts
-/// **every** outgoing edge of that type regardless of the peer's
-/// label. If the Cypher source restricts the peer via `(x:Label)`,
-/// the slow path filters to edges whose peer has that label — the
-/// two semantics diverge whenever the corpus has mixed-label peers
-/// for the given edge type. Reject → fall back to the slow path, so
-/// the matcher never silently returns wrong rows.
-fn extract_expand_underneath(op: &LogicalOperator) -> Option<&ExpandOp> {
-    let expand = match op {
-        LogicalOperator::Expand(e) => e,
+/// The invariant checked : every live edge of `edge_type` in the
+/// given direction lands on a node whose label set is exactly
+/// `{peer_label}`. When the histogram shows a singleton matching,
+/// the count is identical across the two paths.
+///
+/// `direction` here is interpreted **from the anchor's POV** :
+/// Outgoing means the anchor is the source (`edge_target_labels`
+/// applies to the peer) ; Incoming means the anchor is the target
+/// (`edge_source_labels` applies to the peer). `Both` / `Separate`
+/// require BOTH histograms to be singleton matches.
+fn validate_peer_label(
+    store: &dyn obrain_core::graph::GraphStore,
+    edge_type: &str,
+    direction: TypedDegreeDirection,
+    peer_label: &str,
+) -> bool {
+    if !store.supports_edge_label_histogram() {
+        return false;
+    }
+    let singleton_match = |set: std::collections::HashSet<String>| -> bool {
+        set.len() == 1 && set.contains(peer_label)
+    };
+    match direction {
+        TypedDegreeDirection::Outgoing => {
+            singleton_match(store.edge_target_labels(edge_type))
+        }
+        TypedDegreeDirection::Incoming => {
+            singleton_match(store.edge_source_labels(edge_type))
+        }
+        TypedDegreeDirection::Both | TypedDegreeDirection::Separate => {
+            singleton_match(store.edge_target_labels(edge_type))
+                && singleton_match(store.edge_source_labels(edge_type))
+        }
+    }
+}
+
+/// Extracts `hasLabel(<peer_var>, "<label>")` from a FunctionCall
+/// expression. Returns the peer variable name and the label string
+/// if the expression has exactly that shape.
+fn extract_has_label(expr: &LogicalExpression) -> Option<(String, String)> {
+    let LogicalExpression::FunctionCall { name, args, .. } = expr else {
+        return None;
+    };
+    if !name.eq_ignore_ascii_case("hasLabel") || args.len() != 2 {
+        return None;
+    }
+    let var = match &args[0] {
+        LogicalExpression::Variable(v) => v.clone(),
         _ => return None,
     };
-    // Validate the Expand's input : must be a NodeScan with no label,
-    // or a NodeScan whose label matches the anchor (handled by the
-    // caller via `group_var` check). We accept `NodeScan(var:*)` —
-    // no label — as the placeholder under an outgoing Expand. We
-    // reject a `NodeScan(var:L)` with a non-empty label because the
-    // caller cannot check from here whether L matches the anchor
-    // semantically. For safety we only allow the anchor's
-    // `NodeScan` under the top-level LeftJoin branch, never under
-    // an Expand.
-    match expand.input.as_ref() {
-        LogicalOperator::NodeScan(inner) if inner.label.is_none() => Some(expand),
-        _ => None, // any non-bare NodeScan, or any Filter / other wrapper
+    let label = match &args[1] {
+        LogicalExpression::Literal(obrain_common::types::Value::String(s)) => s.to_string(),
+        _ => return None,
+    };
+    Some((var, label))
+}
+
+/// Captured `(expand, peer_label_constraint)` pair. The peer label
+/// constraint is `Some((var, L))` when the source expresses `(x:L)`
+/// via a `Filter(hasLabel(x, L))` wrapper or a `NodeScan(x:L)`
+/// input. The matcher must then check the corpus invariant via
+/// `validate_peer_label` before accepting the rewrite.
+type ExpandWithPeerLabel<'a> = (&'a ExpandOp, Option<(String, String)>);
+
+/// Returns the `Expand` at the root of the branch plus — when
+/// present — the peer-label constraint observed either in a
+/// `Filter(hasLabel(peer, L))` wrapper above the Expand or in a
+/// labelled `NodeScan(peer:L)` that the Expand reads from.
+///
+/// The T17i T3 rewrite passes the constraint (if any) to
+/// `validate_peer_label` which gates the routing decision on the
+/// store's `edge_target_labels` / `edge_source_labels` histograms.
+/// In T17h T9c this function rejected any label constraint outright
+/// for safety ; T17i T3 lifts the restriction, but only when the
+/// T17i T2 histogram proves the constraint matches the corpus.
+fn extract_expand_underneath(op: &LogicalOperator) -> Option<ExpandWithPeerLabel<'_>> {
+    // Case 1 : `Filter(hasLabel(peer, L)) → Expand(...)`.
+    if let LogicalOperator::Filter(filter) = op
+        && let Some((var, label)) = extract_has_label(&filter.predicate)
+        && let LogicalOperator::Expand(expand) = filter.input.as_ref()
+    {
+        return Some((expand, Some((var, label))));
     }
+    // Case 2 : bare `Expand(...)` with a labelled NodeScan as input
+    // (happens for the inverse direction in dual patterns :
+    // `NodeScan(dependent:File) → Expand(dependent → f)`). The label
+    // on the source node is the peer-label constraint from that
+    // branch's perspective.
+    if let LogicalOperator::Expand(expand) = op {
+        if let LogicalOperator::NodeScan(scan) = expand.input.as_ref() {
+            let label = scan.label.clone();
+            return Some((
+                expand,
+                label.map(|l| (scan.variable.clone(), l)),
+            ));
+        }
+    }
+    None
 }
 
 /// Given an Expand anchored on `group_var`, returns the
@@ -158,7 +231,10 @@ fn classify_direction(expand: &ExpandOp, group_var: &str) -> Option<TypedDegreeD
 /// Extracts the top-K pattern rooted at a `LimitOp`, returning the
 /// fully-populated [`TypedDegreePattern`] or `None` if any constraint
 /// is violated. Silent fallback — never panics.
-fn extract_typed_degree_pattern(limit: &LimitOp) -> Option<TypedDegreePattern> {
+fn extract_typed_degree_pattern(
+    store: &dyn obrain_core::graph::GraphStore,
+    limit: &LimitOp,
+) -> Option<TypedDegreePattern> {
     // Limit → Sort
     let sort = match limit.input.as_ref() {
         LogicalOperator::Sort(s) => s,
@@ -226,12 +302,24 @@ fn extract_typed_degree_pattern(limit: &LimitOp) -> Option<TypedDegreePattern> {
             return None;
         }
         let label = scan.label.as_ref()?.clone();
-        let expand = extract_expand_underneath(join.right.as_ref())?;
+        let (expand, peer_label) = extract_expand_underneath(join.right.as_ref())?;
         if expand.edge_types.len() != 1 {
             return None;
         }
         let edge_type = expand.edge_types[0].clone();
         let direction = classify_direction(expand, &group_var)?;
+        // T17i T3 : if the source carries a peer-label constraint,
+        // gate the rewrite on the store's histogram. Only accept when
+        // the histogram proves every edge of this type lands on the
+        // requested label.
+        if let Some((_, pl)) = peer_label {
+            if pl != label {
+                return None; // anchor label and peer label must agree
+            }
+            if !validate_peer_label(store, &edge_type, direction, &pl) {
+                return None;
+            }
+        }
         // Sort key must reference the single count alias.
         let sort_var = match &sort.keys[0].expression {
             LogicalExpression::Variable(v) => v.clone(),
@@ -275,8 +363,8 @@ fn extract_typed_degree_pattern(limit: &LimitOp) -> Option<TypedDegreePattern> {
             return None;
         }
         let label = scan.label.as_ref()?.clone();
-        let expand1 = extract_expand_underneath(inner.right.as_ref())?;
-        let expand2 = extract_expand_underneath(outer.right.as_ref())?;
+        let (expand1, peer_label1) = extract_expand_underneath(inner.right.as_ref())?;
+        let (expand2, peer_label2) = extract_expand_underneath(outer.right.as_ref())?;
         // Both expands must share exactly one edge type.
         if expand1.edge_types.len() != 1 || expand2.edge_types.len() != 1 {
             return None;
@@ -290,6 +378,19 @@ fn extract_typed_degree_pattern(limit: &LimitOp) -> Option<TypedDegreePattern> {
         let dir2 = classify_direction(expand2, &group_var)?;
         if dir1 == dir2 {
             return None;
+        }
+        // T17i T3 : validate each peer-label constraint against the
+        // histogram for its own branch direction. Both branches must
+        // pass (or have no constraint).
+        for (pl_opt, dir) in [(&peer_label1, dir1), (&peer_label2, dir2)] {
+            if let Some((_, pl)) = pl_opt {
+                if *pl != label {
+                    return None;
+                }
+                if !validate_peer_label(store, &edge_type, dir, pl) {
+                    return None;
+                }
+            }
         }
         // Map the two aggregate aliases to out / in depending on which
         // expand contributed to each. The aliases are ordered in
@@ -419,7 +520,12 @@ pub(super) fn try_plan_typed_degree_topk(
         return None;
     }
 
-    let pattern = extract_typed_degree_pattern(limit)?;
+    // T17i T3 : pass the store to the extractor so peer-label
+    // constraints can be gated on the `edge_target_labels` /
+    // `edge_source_labels` histograms.
+    let store_ref: &dyn obrain_core::graph::GraphStore =
+        planner.store.as_ref() as &dyn obrain_core::graph::GraphStore;
+    let pattern = extract_typed_degree_pattern(store_ref, limit)?;
 
     // Build the physical pipeline.
     let store = planner.store.clone() as std::sync::Arc<dyn obrain_core::graph::GraphStore>;
