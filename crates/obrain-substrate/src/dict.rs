@@ -72,7 +72,18 @@ const MAGIC: u32 = 0xD1C7_0DB1;
 ///   edge-type counters. v1..=v4 load with `counters = None` — the
 ///   caller rebuilds from a one-shot zone scan and persists on next
 ///   flush (which writes v5).
-const FORMAT_VERSION: u32 = 5;
+/// * v6 (T17i T2): appends two per-edge-type label-bitset histograms
+///   to the counters block — `edge_type_target_label_counts` and
+///   `edge_type_source_label_counts`. Each is a `u16 n_entries`
+///   prefix followed by `(u16 type_id, [u64; 64] counts)` entries,
+///   encoding the distribution of peer labels observed across every
+///   edge of that type. Enables O(1) introspection
+///   `edge_target_labels(edge_type)` / `edge_source_labels`, which
+///   the T17i T3 Cypher-planner rewrite uses to safely route
+///   peer-label-constrained queries. v5 dicts load these fields as
+///   empty `Vec` and the caller rebuilds them on the next full
+///   counter scan.
+const FORMAT_VERSION: u32 = 6;
 
 /// Wire size of one `VecColSpec` in the v3+ tail of the dict.
 const VEC_COL_SPEC_WIRE_SIZE: usize = 2 + 1 + 1 + 4;
@@ -98,6 +109,18 @@ pub struct PersistedCounters {
     /// format uses a count-prefixed list to avoid writing zeros for
     /// unused type ids in the sparse u16 id space.
     pub edge_type_counts: Vec<(u16, u64)>,
+    /// T17i T2 — per-edge-type histogram of **target** label bits.
+    /// Each entry is `(type_id, [u64; 64])` where slot `i` is the
+    /// count of live edges of `type_id` whose `dst.label_bitset` has
+    /// bit `i` set. Used by `edge_target_labels(edge_type)` to decide
+    /// whether all targets of an edge type share a single label
+    /// (planner-safety gate for peer-label rewrites).
+    pub edge_type_target_label_counts: Vec<(u16, [u64; 64])>,
+    /// T17i T2 — symmetric histogram for **source** labels
+    /// (`src.label_bitset` per edge). Fed by the same delete/create
+    /// hooks as `target` counts, just reading `rec.src` instead of
+    /// `rec.dst`.
+    pub edge_type_source_label_counts: Vec<(u16, [u64; 64])>,
 }
 
 impl Default for PersistedCounters {
@@ -107,6 +130,8 @@ impl Default for PersistedCounters {
             total_live_edges: 0,
             label_counts: [0u64; 64],
             edge_type_counts: Vec::new(),
+            edge_type_target_label_counts: Vec::new(),
+            edge_type_source_label_counts: Vec::new(),
         }
     }
 }
@@ -118,6 +143,10 @@ const COUNTERS_FIXED_PREFIX_SIZE: usize = 8 + 8 + 64 * 8 + 2;
 
 /// Wire size of one edge-type entry in the v5+ counters tail.
 const EDGE_TYPE_COUNT_ENTRY_SIZE: usize = 2 + 8;
+
+/// Wire size of one edge-type × label-histogram entry in the v6+
+/// counters tail : u16 type_id + 64×u64 per-label counts.
+const EDGE_TYPE_LABEL_HIST_ENTRY_SIZE: usize = 2 + 64 * 8;
 
 /// All three registries + allocator state captured at one point in time.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -281,6 +310,28 @@ impl DictSnapshot {
             buf.extend_from_slice(&count.to_le_bytes());
         }
 
+        // v6 (T17i T2): two per-edge-type label histograms — target + source.
+        // Each : [u16 n_entries] [(u16 type_id, [u64; 64] counts)] × n.
+        if counters.edge_type_target_label_counts.len() > u16::MAX as usize
+            || counters.edge_type_source_label_counts.len() > u16::MAX as usize
+        {
+            return Err(SubstrateError::Internal(format!(
+                "dict overflow: label histogram size exceeds u16"
+            )));
+        }
+        for hist in [
+            &counters.edge_type_target_label_counts,
+            &counters.edge_type_source_label_counts,
+        ] {
+            buf.extend_from_slice(&(hist.len() as u16).to_le_bytes());
+            for (type_id, label_counts) in hist {
+                buf.extend_from_slice(&type_id.to_le_bytes());
+                for c in label_counts {
+                    buf.extend_from_slice(&c.to_le_bytes());
+                }
+            }
+        }
+
         // Pad to 4-byte boundary before crc to keep alignment clean.
         while buf.len() % 4 != 0 {
             buf.push(0);
@@ -311,7 +362,8 @@ impl DictSnapshot {
         // * v2 → `next_engram_id` present, no `vec_columns`, no `blob_columns`, no counters.
         // * v3 → `vec_columns` present, no `blob_columns`, no counters.
         // * v4 → all structural fields present, no counters.
-        // * v5 → current: adds `PersistedCounters` block (T17h T1).
+        // * v5 → `PersistedCounters` block (T17h T1).
+        // * v6 → current: adds per-edge-type label histograms (T17i T2).
         if !(version >= 1 && version <= FORMAT_VERSION) {
             return Err(SubstrateError::Internal(format!(
                 "dict version {version} unsupported (expected 1..={FORMAT_VERSION})"
@@ -516,16 +568,61 @@ impl DictSnapshot {
                     u64::from_le_bytes(cur[base + 2..base + 10].try_into().unwrap());
                 edge_type_counts.push((type_id, count));
             }
-            // Advance cursor in case future versions extend the block.
             cur = &cur[entries_start + need..];
-            // Touch `cur` to silence unused-mut lint; future versions
-            // continue parsing from here.
+
+            // v6 : two per-edge-type × label histograms (target + source).
+            // v5 files stop here ; we load empty Vecs and the caller
+            // rebuilds on next scan (first flush bumps to v6).
+            let (edge_type_target_label_counts, edge_type_source_label_counts) = if version
+                >= 6
+            {
+                let mut histograms: [Vec<(u16, [u64; 64])>; 2] =
+                    [Vec::new(), Vec::new()];
+                for h in histograms.iter_mut() {
+                    if cur.len() < 2 {
+                        return Err(SubstrateError::Internal(
+                            "dict v6 truncated at label-histogram n_entries".into(),
+                        ));
+                    }
+                    let n = u16::from_le_bytes(cur[0..2].try_into().unwrap()) as usize;
+                    cur = &cur[2..];
+                    let need = n * EDGE_TYPE_LABEL_HIST_ENTRY_SIZE;
+                    if cur.len() < need {
+                        return Err(SubstrateError::Internal(format!(
+                            "dict v6 truncated at label-histogram body (need {need}, have {})",
+                            cur.len()
+                        )));
+                    }
+                    h.reserve(n);
+                    for i in 0..n {
+                        let base = i * EDGE_TYPE_LABEL_HIST_ENTRY_SIZE;
+                        let type_id =
+                            u16::from_le_bytes(cur[base..base + 2].try_into().unwrap());
+                        let mut arr = [0u64; 64];
+                        for (j, slot) in arr.iter_mut().enumerate() {
+                            let off = base + 2 + j * 8;
+                            *slot = u64::from_le_bytes(
+                                cur[off..off + 8].try_into().unwrap(),
+                            );
+                        }
+                        h.push((type_id, arr));
+                    }
+                    cur = &cur[need..];
+                }
+                let [target, source] = histograms;
+                (target, source)
+            } else {
+                (Vec::new(), Vec::new())
+            };
+            // Touch `cur` so future versions can continue parsing from here.
             let _ = &cur;
             Some(PersistedCounters {
                 total_live_nodes,
                 total_live_edges,
                 label_counts,
                 edge_type_counts,
+                edge_type_target_label_counts,
+                edge_type_source_label_counts,
             })
         } else {
             None

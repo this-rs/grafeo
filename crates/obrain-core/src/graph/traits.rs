@@ -153,6 +153,40 @@ pub trait GraphStore: Send + Sync {
         false
     }
 
+    /// Returns the set of labels observed on the **target** nodes of
+    /// every live edge whose type is `edge_type`. Backends with a
+    /// persistent histogram (SubstrateStore T17i T2) answer in O(K)
+    /// where K ≤ 64 ; the default impl scans every edge once per
+    /// call (O(E)) via `all_edge_ids` + `edge_type` + `edge_endpoints`
+    /// + `labels(node)`, which is correct but expensive — planners
+    /// should gate their use of this method on [`Self::supports_edge_label_histogram`].
+    ///
+    /// Used by the T17i T3 Cypher planner rewrite to decide whether
+    /// a peer-label constraint like `(imported:File)` can be safely
+    /// routed through the typed-degree top-K operator : the rewrite
+    /// is only accepted when the histogram contains exactly one
+    /// entry matching the anchor's label.
+    fn edge_target_labels(&self, edge_type: &str) -> std::collections::HashSet<String> {
+        let _ = edge_type;
+        std::collections::HashSet::new()
+    }
+
+    /// Symmetric accessor for **source** node labels per edge type.
+    /// Same contract as [`Self::edge_target_labels`].
+    fn edge_source_labels(&self, edge_type: &str) -> std::collections::HashSet<String> {
+        let _ = edge_type;
+        std::collections::HashSet::new()
+    }
+
+    /// `true` iff the backend maintains a persistent histogram of
+    /// peer labels per edge type — i.e. `edge_target_labels` /
+    /// `edge_source_labels` are O(1)/O(K) rather than O(E). Planners
+    /// can use the histogram cheaply when this is `true` and should
+    /// skip the feature otherwise.
+    fn supports_edge_label_histogram(&self) -> bool {
+        false
+    }
+
     /// Whether backward adjacency is available for incoming edge queries.
     fn has_backward_adjacency(&self) -> bool;
 

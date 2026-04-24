@@ -611,6 +611,15 @@ pub struct SubstrateStore {
     /// but no hard cap). Fast path reads existing entry; cold path
     /// inserts on first use via `or_insert_with(AtomicU64::new(0))`.
     edge_type_live_counts: DashMap<u16, AtomicU64>,
+    /// T17i T2 — per-edge-type histogram of target-node label bits.
+    /// Key is `(edge_type_id, label_bit)` ; value is the count of live
+    /// edges of `edge_type_id` whose `dst.label_bitset` has `label_bit`
+    /// set. Used by `GraphStore::edge_target_labels(type)` to gate the
+    /// T17i T3 Cypher-planner rewrite on peer-label constraints.
+    edge_type_target_label_counts: DashMap<(u16, u8), AtomicU64>,
+    /// T17i T2 — symmetric histogram for **source-node** label bits,
+    /// used by `GraphStore::edge_source_labels(type)`.
+    edge_type_source_label_counts: DashMap<(u16, u8), AtomicU64>,
     /// T17h T5 — per-node in/out degree column, lazy-built on first
     /// access. Atomic u32 counters maintained by `create_edge` /
     /// `delete_edge`. Enables O(1) degree queries for `most_connected`
@@ -817,6 +826,8 @@ impl SubstrateStore {
             total_live_edges: AtomicU64::new(0),
             label_live_counts: std::array::from_fn(|_| AtomicU64::new(0)),
             edge_type_live_counts: DashMap::new(),
+            edge_type_target_label_counts: DashMap::new(),
+            edge_type_source_label_counts: DashMap::new(),
             degrees_cell: OnceLock::new(),
             typed_degrees_cell: OnceLock::new(),
             vec_columns: VecColumnRegistry::new(),
@@ -4139,6 +4150,22 @@ impl GraphStore for SubstrateStore {
         true
     }
 
+    // T17i T2 — label-histogram trait overrides. Route to the inherent
+    // `edge_target_labels_substrate` / `edge_source_labels_substrate`
+    // methods that read the DashMap counters in O(K ≤ 64). Backends
+    // without a histogram keep the default O(E) scan impl.
+    fn edge_target_labels(&self, edge_type: &str) -> std::collections::HashSet<String> {
+        Self::edge_target_labels_substrate(self, edge_type)
+    }
+
+    fn edge_source_labels(&self, edge_type: &str) -> std::collections::HashSet<String> {
+        Self::edge_source_labels_substrate(self, edge_type)
+    }
+
+    fn supports_edge_label_histogram(&self) -> bool {
+        true
+    }
+
     fn has_backward_adjacency(&self) -> bool {
         // `EdgeRecord` keeps both `next_from` (src chain) and `next_to` (dst
         // chain). The concrete read paths light up in step 2; the answer is
@@ -4454,6 +4481,107 @@ impl SubstrateStore {
             .unwrap_or(0)
     }
 
+    /// T17i T2 — increment/decrement the target-label histogram for
+    /// every bit set in `label_bitset` under `edge_type_id`. Walks
+    /// each set bit via `trailing_zeros` + clear-lowest-bit trick
+    /// (same pattern as `incr_label_counts`). `delta = +1` on
+    /// `create_edge`, `-1` on `delete_edge`.
+    pub(crate) fn incr_edge_type_target_label(
+        &self,
+        edge_type_id: u16,
+        label_bitset: u64,
+        delta: i64,
+    ) {
+        let mut bits = label_bitset;
+        while bits != 0 {
+            let bit = bits.trailing_zeros() as u8;
+            let key = (edge_type_id, bit);
+            if let Some(atomic) = self.edge_type_target_label_counts.get(&key) {
+                Self::apply_counter_delta(&atomic, delta);
+            } else {
+                let entry = self
+                    .edge_type_target_label_counts
+                    .entry(key)
+                    .or_insert_with(|| AtomicU64::new(0));
+                Self::apply_counter_delta(&entry, delta);
+            }
+            bits &= bits - 1;
+        }
+    }
+
+    /// T17i T2 — same as [`Self::incr_edge_type_target_label`] but
+    /// for source labels. Fed by `rec.src` instead of `rec.dst`.
+    pub(crate) fn incr_edge_type_source_label(
+        &self,
+        edge_type_id: u16,
+        label_bitset: u64,
+        delta: i64,
+    ) {
+        let mut bits = label_bitset;
+        while bits != 0 {
+            let bit = bits.trailing_zeros() as u8;
+            let key = (edge_type_id, bit);
+            if let Some(atomic) = self.edge_type_source_label_counts.get(&key) {
+                Self::apply_counter_delta(&atomic, delta);
+            } else {
+                let entry = self
+                    .edge_type_source_label_counts
+                    .entry(key)
+                    .or_insert_with(|| AtomicU64::new(0));
+                Self::apply_counter_delta(&entry, delta);
+            }
+            bits &= bits - 1;
+        }
+    }
+
+    /// T17i T2 — returns the set of labels observed on the target
+    /// nodes of edges of `edge_type`. Used by the T17i T3 Cypher
+    /// planner rewrite to verify corpus invariants before routing
+    /// label-constrained queries. O(K) where K ≤ 64 label bits for
+    /// this edge type.
+    pub fn edge_target_labels_substrate(&self, edge_type: &str) -> std::collections::HashSet<String> {
+        let registry = self.edge_types.read();
+        let Some(type_id) = registry.id_for(edge_type) else {
+            return std::collections::HashSet::new();
+        };
+        drop(registry);
+        let mut out = std::collections::HashSet::new();
+        for bit in 0..64u8 {
+            let key = (type_id, bit);
+            if let Some(atomic) = self.edge_type_target_label_counts.get(&key)
+                && atomic.load(Ordering::Relaxed) > 0
+            {
+                let labels = self.labels.read();
+                if let Some(name) = labels.bit_to_name.get(bit as usize) {
+                    out.insert(name.to_string());
+                }
+            }
+        }
+        out
+    }
+
+    /// T17i T2 — symmetric accessor for source labels.
+    pub fn edge_source_labels_substrate(&self, edge_type: &str) -> std::collections::HashSet<String> {
+        let registry = self.edge_types.read();
+        let Some(type_id) = registry.id_for(edge_type) else {
+            return std::collections::HashSet::new();
+        };
+        drop(registry);
+        let mut out = std::collections::HashSet::new();
+        for bit in 0..64u8 {
+            let key = (type_id, bit);
+            if let Some(atomic) = self.edge_type_source_label_counts.get(&key)
+                && atomic.load(Ordering::Relaxed) > 0
+            {
+                let labels = self.labels.read();
+                if let Some(name) = labels.bit_to_name.get(bit as usize) {
+                    out.insert(name.to_string());
+                }
+            }
+        }
+        out
+    }
+
     /// T17h T1 — one-shot scan that populates counters from the on-disk
     /// zones. Sequential (rayon contends on the zone cache Mutex). Used
     /// at open time when the loaded dict snapshot does not carry a
@@ -4487,6 +4615,10 @@ impl SubstrateStore {
         let edge_hw = self.next_edge_id.load(Ordering::Acquire);
         let mut total_edges: u64 = 0;
         let mut edge_type_totals: FxHashMap<u16, u64> = FxHashMap::default();
+        // T17i T2 — per-edge-type × label-bit histograms populated
+        // alongside the edge-type totals in a single sequential scan.
+        let mut target_hist: FxHashMap<(u16, u8), u64> = FxHashMap::default();
+        let mut source_hist: FxHashMap<(u16, u8), u64> = FxHashMap::default();
         for slot in 1..edge_hw {
             let Some(rec) = self.writer.read_edge(slot)? else {
                 continue;
@@ -4496,12 +4628,50 @@ impl SubstrateStore {
             }
             total_edges += 1;
             *edge_type_totals.entry(rec.edge_type).or_insert(0) += 1;
+            // Fetch endpoint bitsets ; dangling endpoints contribute 0.
+            let src_bitset = self
+                .writer
+                .read_node(rec.src)
+                .ok()
+                .flatten()
+                .map(|r| r.label_bitset)
+                .unwrap_or(0);
+            let dst_bitset = self
+                .writer
+                .read_node(rec.dst)
+                .ok()
+                .flatten()
+                .map(|r| r.label_bitset)
+                .unwrap_or(0);
+            let mut bits = src_bitset;
+            while bits != 0 {
+                let bit = bits.trailing_zeros() as u8;
+                *source_hist.entry((rec.edge_type, bit)).or_insert(0) += 1;
+                bits &= bits - 1;
+            }
+            let mut bits = dst_bitset;
+            while bits != 0 {
+                let bit = bits.trailing_zeros() as u8;
+                *target_hist.entry((rec.edge_type, bit)).or_insert(0) += 1;
+                bits &= bits - 1;
+            }
         }
         self.total_live_edges.store(total_edges, Ordering::Relaxed);
         self.edge_type_live_counts.clear();
         for (type_id, count) in edge_type_totals {
             self.edge_type_live_counts
                 .insert(type_id, AtomicU64::new(count));
+        }
+        // T17i T2 — install the two histograms atomically (clear + insert).
+        self.edge_type_target_label_counts.clear();
+        for (key, count) in target_hist {
+            self.edge_type_target_label_counts
+                .insert(key, AtomicU64::new(count));
+        }
+        self.edge_type_source_label_counts.clear();
+        for (key, count) in source_hist {
+            self.edge_type_source_label_counts
+                .insert(key, AtomicU64::new(count));
         }
         Ok(())
     }
@@ -4524,6 +4694,27 @@ impl SubstrateStore {
         for &(type_id, count) in &counters.edge_type_counts {
             self.edge_type_live_counts
                 .insert(type_id, AtomicU64::new(count));
+        }
+        // T17i T2 — restore the two histograms from the v6 dict block.
+        // Empty (legacy v5 load) → caller is expected to trigger
+        // `rebuild_live_counters_from_zones` to repopulate.
+        self.edge_type_target_label_counts.clear();
+        for &(type_id, ref arr) in &counters.edge_type_target_label_counts {
+            for (bit, &count) in arr.iter().enumerate() {
+                if count > 0 {
+                    self.edge_type_target_label_counts
+                        .insert((type_id, bit as u8), AtomicU64::new(count));
+                }
+            }
+        }
+        self.edge_type_source_label_counts.clear();
+        for &(type_id, ref arr) in &counters.edge_type_source_label_counts {
+            for (bit, &count) in arr.iter().enumerate() {
+                if count > 0 {
+                    self.edge_type_source_label_counts
+                        .insert((type_id, bit as u8), AtomicU64::new(count));
+                }
+            }
         }
     }
 
@@ -4789,11 +4980,45 @@ impl SubstrateStore {
             .map(|e| (*e.key(), e.value().load(Ordering::Relaxed)))
             .collect();
         edge_type_counts.sort_by_key(|&(id, _)| id); // stable wire order
+        // T17i T2 — dump the DashMap counters into the v6 wire format.
+        // Group by edge_type_id and fill a [u64; 64] per type, skipping
+        // types with no observed label bits (sparse on the u16 id space).
+        let mut target_grouped: FxHashMap<u16, [u64; 64]> = FxHashMap::default();
+        for e in self.edge_type_target_label_counts.iter() {
+            let (type_id, bit) = *e.key();
+            let v = e.value().load(Ordering::Relaxed);
+            if v == 0 {
+                continue;
+            }
+            target_grouped
+                .entry(type_id)
+                .or_insert([0u64; 64])[bit as usize] = v;
+        }
+        let mut source_grouped: FxHashMap<u16, [u64; 64]> = FxHashMap::default();
+        for e in self.edge_type_source_label_counts.iter() {
+            let (type_id, bit) = *e.key();
+            let v = e.value().load(Ordering::Relaxed);
+            if v == 0 {
+                continue;
+            }
+            source_grouped
+                .entry(type_id)
+                .or_insert([0u64; 64])[bit as usize] = v;
+        }
+        let mut edge_type_target_label_counts: Vec<(u16, [u64; 64])> =
+            target_grouped.into_iter().collect();
+        edge_type_target_label_counts.sort_by_key(|&(id, _)| id);
+        let mut edge_type_source_label_counts: Vec<(u16, [u64; 64])> =
+            source_grouped.into_iter().collect();
+        edge_type_source_label_counts.sort_by_key(|&(id, _)| id);
+
         crate::dict::PersistedCounters {
             total_live_nodes: self.total_live_nodes.load(Ordering::Relaxed),
             total_live_edges: self.total_live_edges.load(Ordering::Relaxed),
             label_counts,
             edge_type_counts,
+            edge_type_target_label_counts,
+            edge_type_source_label_counts,
         }
     }
 }
@@ -4859,6 +5084,27 @@ impl GraphStoreMut for SubstrateStore {
         // T17h T8: per-edge-type degree column increments.
         self.incr_typed_out_degree(edge_type_id, src.0 as u32, 1);
         self.incr_typed_in_degree(edge_type_id, dst.0 as u32, 1);
+        // T17i T2: per-edge-type × target-label / source-label histograms.
+        // Read the endpoints' label bitsets and increment the two
+        // histograms for each set bit. Dangling endpoints (no NodeRecord)
+        // yield bitset=0 → no increment, consistent with the LpgStore
+        // permissive-endpoint contract.
+        let src_bitset = self
+            .writer
+            .read_node(src.0 as u32)
+            .ok()
+            .flatten()
+            .map(|r| r.label_bitset)
+            .unwrap_or(0);
+        let dst_bitset = self
+            .writer
+            .read_node(dst.0 as u32)
+            .ok()
+            .flatten()
+            .map(|r| r.label_bitset)
+            .unwrap_or(0);
+        self.incr_edge_type_source_label(edge_type_id, src_bitset, 1);
+        self.incr_edge_type_target_label(edge_type_id, dst_bitset, 1);
         id
     }
 
@@ -4976,6 +5222,27 @@ impl GraphStoreMut for SubstrateStore {
         // T17h T8: per-edge-type degree column decrements.
         self.incr_typed_out_degree(edge_type_id, src_slot, -1);
         self.incr_typed_in_degree(edge_type_id, dst_slot, -1);
+        // T17i T2: per-edge-type × target/source label histogram decrements.
+        // Endpoints must be read BEFORE any cleanup that might tombstone
+        // them ; if a caller deletes the edge AFTER deleting its nodes,
+        // the label bitsets are already on tombstoned records (still
+        // readable — tombstone only sets the flag, never wipes fields).
+        let src_bitset = self
+            .writer
+            .read_node(src_slot)
+            .ok()
+            .flatten()
+            .map(|r| r.label_bitset)
+            .unwrap_or(0);
+        let dst_bitset = self
+            .writer
+            .read_node(dst_slot)
+            .ok()
+            .flatten()
+            .map(|r| r.label_bitset)
+            .unwrap_or(0);
+        self.incr_edge_type_source_label(edge_type_id, src_bitset, -1);
+        self.incr_edge_type_target_label(edge_type_id, dst_bitset, -1);
         true
     }
 
