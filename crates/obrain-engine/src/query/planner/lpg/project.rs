@@ -457,6 +457,16 @@ impl super::Planner {
 
     /// Plans a LIMIT operator.
     pub(super) fn plan_limit(&self, limit: &LimitOp) -> Result<(Box<dyn Operator>, Vec<String>)> {
+        // T17h T9c fast-path : try the typed-degree top-K rewrite. On
+        // a match, the entire `Limit → Sort → Return → Aggregate →
+        // LeftJoin(s) → Expand` subtree is substituted with a single
+        // TypedDegreeTopKOperator wrapped in a Project. Silent
+        // fallback : return None → fall through to the generic plan.
+        if let Some(result) = super::typed_degree_rewrite::try_plan_typed_degree_topk(self, limit)
+        {
+            return Ok(result);
+        }
+
         let (input_op, columns) = self.plan_operator(&limit.input)?;
         let schema = self.derive_schema_from_columns(&columns);
         Ok(crate::query::planner::common::build_limit(

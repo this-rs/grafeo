@@ -27,6 +27,14 @@ use obrain_core::execution::operators::{
     reset_typed_degree_rewrite_counter, typed_degree_rewrite_counter,
 };
 use obrain_engine::ObrainDB;
+use std::sync::Mutex;
+
+/// Serializes access to the global `TYPED_DEGREE_REWRITE_COUNTER` so
+/// the variance tests don't race with each other when cargo spawns
+/// them on multiple threads. The counter is process-wide ; without
+/// this guard the reset done by one test can be observed by another
+/// mid-execution, causing false positives / negatives.
+static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 fn open_po_or_skip() -> Option<ObrainDB> {
     let home = std::env::var("HOME").unwrap_or_default();
@@ -43,6 +51,7 @@ fn open_po_or_skip() -> Option<ObrainDB> {
 /// decline to avoid stripping the predicate.
 #[test]
 fn variant_intermediate_where_falls_back() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(db) = open_po_or_skip() else { return };
     let session = db.session();
     reset_typed_degree_rewrite_counter();
@@ -68,6 +77,7 @@ fn variant_intermediate_where_falls_back() {
 /// and must fall back.
 #[test]
 fn variant_three_optional_matches_falls_back() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(db) = open_po_or_skip() else { return };
     let session = db.session();
     reset_typed_degree_rewrite_counter();
@@ -94,6 +104,7 @@ fn variant_three_optional_matches_falls_back() {
 /// decline.
 #[test]
 fn variant_sum_aggregate_falls_back() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(db) = open_po_or_skip() else { return };
     let session = db.session();
     reset_typed_degree_rewrite_counter();
@@ -121,6 +132,7 @@ fn variant_sum_aggregate_falls_back() {
 /// matcher must reject it to avoid emitting a reversed result set.
 #[test]
 fn variant_order_by_asc_falls_back() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(db) = open_po_or_skip() else { return };
     let session = db.session();
     reset_typed_degree_rewrite_counter();
@@ -148,6 +160,7 @@ fn variant_order_by_asc_falls_back() {
 /// MUST stay on the slow path.
 #[test]
 fn variant_count_star_falls_back() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(db) = open_po_or_skip() else { return };
     let session = db.session();
     reset_typed_degree_rewrite_counter();

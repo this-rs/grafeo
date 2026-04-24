@@ -11,6 +11,7 @@ mod join;
 mod mutation;
 mod project;
 mod scan;
+mod typed_degree_rewrite;
 
 #[cfg(feature = "algos")]
 use crate::query::plan::CallProcedureOp;

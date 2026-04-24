@@ -59,6 +59,38 @@ fn explain_most_connected_files() {
 }
 
 #[test]
+fn explain_single_direction_no_peer_label() {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let po_path = std::path::PathBuf::from(&home).join(".obrain/db/po");
+    if !po_path.exists() {
+        return;
+    }
+    let db = ObrainDB::open(&po_path).expect("open PO db");
+    let session = db.session();
+    let result = session
+        .execute_cypher(
+            "EXPLAIN \
+             MATCH (f:File) \
+             OPTIONAL MATCH (f)-[:IMPORTS]->(imported) \
+             WITH f, count(DISTINCT imported) AS imports \
+             RETURN f.path, imports \
+             ORDER BY imports DESC \
+             LIMIT 50",
+        )
+        .expect("explain execute");
+
+    println!("\n=== EXPLAIN OUTPUT (single-direction, NO peer label) ===");
+    for (ri, row) in result.rows.iter().enumerate() {
+        for (ci, val) in row.iter().enumerate() {
+            if let obrain_common::types::Value::String(s) = val {
+                println!("--- row {ri} col {ci} ---\n{s}");
+            }
+        }
+    }
+    println!("=== END EXPLAIN ===");
+}
+
+#[test]
 fn explain_single_direction_variant() {
     let home = std::env::var("HOME").unwrap_or_default();
     let po_path = std::path::PathBuf::from(&home).join(".obrain/db/po");
