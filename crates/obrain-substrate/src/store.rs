@@ -885,10 +885,41 @@ impl SubstrateStore {
             {
                 tracing::info!(
                     "T17i T2: v5 dict detected, rebuilding peer-label \
-                     histograms (one-shot, persisted to v6 on next flush)"
+                     histograms (one-shot, persisted to v6 immediately via T17j T3 auto-flush)"
                 );
                 store.rebuild_live_counters_from_zones()?;
-                "snapshot+v5-histogram-rebuild"
+                // T17j T3 — auto-flush the upgraded dict now so the
+                // next open reads v6 directly (O(M) histogram restore,
+                // no rebuild scan). Without this, the first post-deploy
+                // open of a large v5 base would re-scan edges until the
+                // user-triggered flush eventually persists v6 — on
+                // Wiki (119M edges) that's ~11 s faulting ~4 GB RSS.
+                //
+                // Graceful failure : a flush error (read-only FS, disk
+                // full) logs a warning and returns Ok — the registry
+                // is correct in RAM, the next flush attempt will
+                // retry. Never panic, never block `from_substrate`.
+                let auto_flush_span =
+                    tracing::info_span!("auto_flush_v5_to_v6").entered();
+                let t_flush = std::time::Instant::now();
+                match store.flush() {
+                    Ok(()) => {
+                        tracing::info!(
+                            elapsed_ms = t_flush.elapsed().as_millis() as u64,
+                            "T17j T3: auto-flushed v5→v6 upgrade"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = ?e,
+                            "T17j T3: auto-flush after v5→v6 upgrade failed \
+                             (non-fatal — registry valid in RAM, next flush \
+                             will retry)"
+                        );
+                    }
+                }
+                drop(auto_flush_span);
+                "snapshot+v5-histogram-rebuild-auto-flushed"
             } else {
                 "snapshot"
             }
