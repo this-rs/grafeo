@@ -47,12 +47,16 @@ pub mod consolidator;
 pub mod predictor;
 pub mod dreamer;
 pub mod warden;
+#[cfg(feature = "enrichment")]
+pub mod hilbert_enricher;
 pub mod runtime;
 pub mod config;
 
 pub use config::{ThinkerFleetConfig, ThinkersConfig};
 pub use consolidator::{Consolidator, ConsolidatorConfig, ConsolidatorStats};
 pub use dreamer::{Dreamer, DreamerConfig, DreamerStats};
+#[cfg(feature = "enrichment")]
+pub use hilbert_enricher::{HilbertEnricher, HilbertEnricherConfig, HilbertEnricherStats};
 pub use predictor::{Predictor, PredictorConfig, PredictorStats};
 pub use runtime::{
     NeverOverloadedSensor, PressureSensor, ThinkerHandle, ThinkerRuntime,
@@ -89,6 +93,15 @@ pub fn spawn_standard_fleet(
     if cfg.dreamer.enabled {
         rt.spawn(Dreamer::new(cfg.dreamer.inner()));
     }
+    // T17l — HilbertEnricher (canonical `_hilbert_features` 64-72d)
+    // only compiled when the `enrichment` feature is active. This
+    // pulls obrain-adapters with the `algos` sub-feature. Binary
+    // callers (hub, user-brain) opt in by adding `enrichment` to
+    // their `obrain-cognitive` feature list.
+    #[cfg(feature = "enrichment")]
+    if cfg.hilbert_enricher.enabled {
+        rt.spawn(hilbert_enricher::HilbertEnricher::new(cfg.hilbert_enricher.inner()));
+    }
     rt
 }
 
@@ -100,6 +113,11 @@ pub enum ThinkerKind {
     CommunityWarden,
     Predictor,
     Dreamer,
+    /// T17l — Computes canonical `_hilbert_features` (64-72d) via
+    /// `obrain-adapters::algorithms::hilbert_features`. Gated by the
+    /// `enrichment` feature. First stage of the canonical retrieval
+    /// composite (feeds KernelEnricher + StEnricher).
+    HilbertEnricher,
 }
 
 impl ThinkerKind {
@@ -111,6 +129,7 @@ impl ThinkerKind {
             ThinkerKind::CommunityWarden => "warden",
             ThinkerKind::Predictor => "predictor",
             ThinkerKind::Dreamer => "dreamer",
+            ThinkerKind::HilbertEnricher => "hilbert_enricher",
         }
     }
 }

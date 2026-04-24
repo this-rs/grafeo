@@ -57,6 +57,15 @@ substrate = ["dep:obrain-substrate"]
 # mutations (decay, pruning, compaction).
 thinker = ["substrate"]
 
+# T17l — Enrichment thinkers : HilbertEnricher (+ future KernelEnricher +
+# StEnricher). They call into `obrain-adapters::plugins::algorithms` to
+# compute canonical cognitive features (`_hilbert_features`,
+# `_kernel_embedding`, `_st_embedding`) and persist them on the store.
+# Gated separately from `thinker` so the base fleet stays lean ; opt-in
+# for the hub + user brain where retrieval depends on the canonical
+# composite embedding pipeline.
+enrichment = ["thinker", "dep:obrain-adapters"]
+
 # Future subsystems
 scar = []
 utility = []

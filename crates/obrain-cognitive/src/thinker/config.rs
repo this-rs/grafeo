@@ -87,6 +87,10 @@ pub struct ThinkersConfig {
     pub predictor: ThinkerFleetConfig<PredictorTomlCfg>,
     #[serde(default)]
     pub dreamer: ThinkerFleetConfig<DreamerTomlCfg>,
+    /// T17l — canonical `_hilbert_features` enricher. Only spawned when
+    /// the `enrichment` feature is enabled in this crate.
+    #[serde(default)]
+    pub hilbert_enricher: ThinkerFleetConfig<HilbertEnricherTomlCfg>,
     /// Auxiliary field exposing the shared ring capacity for Predictor
     /// (can also be set per-thinker via [`PredictorTomlCfg`]).
     #[serde(default = "default_topic_ring_capacity")]
@@ -106,6 +110,7 @@ impl Default for ThinkersConfig {
             warden: ThinkerFleetConfig::default(),
             predictor: ThinkerFleetConfig::default(),
             dreamer: ThinkerFleetConfig::default(),
+            hilbert_enricher: ThinkerFleetConfig::default(),
             predictor_topic_ring_capacity: default_topic_ring_capacity(),
             runtime: ThinkerRuntimeConfig::default(),
         };
@@ -238,6 +243,42 @@ impl Default for PredictorTomlCfg {
     }
 }
 
+/// TOML payload for the [`HilbertEnricher`](super::hilbert_enricher::HilbertEnricher)
+/// (T17l canonical feature enrichment — `_hilbert_features` 64-72d).
+///
+/// Gated behind the `enrichment` feature : the struct exists
+/// unconditionally (to keep `ThinkersConfig` field layout stable
+/// across features) but the thinker itself is only spawned when
+/// `enrichment` is active — see `spawn_standard_fleet`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HilbertEnricherTomlCfg {
+    #[serde(default)]
+    pub interval_secs: Option<u64>,
+    #[serde(default)]
+    pub cpu_fraction: Option<f32>,
+    #[serde(default)]
+    pub max_tick_ms: Option<u64>,
+    /// Threshold below which a tick triggers the full Hilbert recompute.
+    /// `Some(0.10)` = skip tick when coverage ≥ 10%.
+    #[serde(default)]
+    pub coverage_threshold: Option<f64>,
+    /// Override for the levels parameter of `HilbertFeaturesConfig`.
+    /// Default 8 → 64 dims (8 levels × 8 base facettes).
+    #[serde(default)]
+    pub levels: Option<usize>,
+}
+impl Default for HilbertEnricherTomlCfg {
+    fn default() -> Self {
+        Self {
+            interval_secs: None,
+            cpu_fraction: None,
+            max_tick_ms: None,
+            coverage_threshold: None,
+            levels: None,
+        }
+    }
+}
+
 /// TOML payload for the Dreamer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DreamerTomlCfg {
@@ -354,6 +395,31 @@ impl ThinkerFleetConfig<DreamerTomlCfg> {
                 .map(Duration::from_secs)
                 .unwrap_or(defaults.interval),
             budget: resolve_budget(t.cpu_fraction, t.max_tick_ms, defaults.budget),
+        }
+    }
+}
+
+#[cfg(feature = "enrichment")]
+impl ThinkerFleetConfig<HilbertEnricherTomlCfg> {
+    /// Resolve TOML overrides against the default
+    /// [`super::hilbert_enricher::HilbertEnricherConfig`]. Any field
+    /// left as `None` inherits the default. The `levels` override
+    /// populates the inner `HilbertFeaturesConfig.levels`.
+    pub fn inner(&self) -> super::hilbert_enricher::HilbertEnricherConfig {
+        let defaults = super::hilbert_enricher::HilbertEnricherConfig::default();
+        let t = &self.inner_toml;
+        let mut hilbert = defaults.hilbert.clone();
+        if let Some(l) = t.levels {
+            hilbert.levels = l;
+        }
+        super::hilbert_enricher::HilbertEnricherConfig {
+            budget: resolve_budget(t.cpu_fraction, t.max_tick_ms, defaults.budget),
+            interval: t
+                .interval_secs
+                .map(Duration::from_secs)
+                .unwrap_or(defaults.interval),
+            coverage_threshold: t.coverage_threshold.unwrap_or(defaults.coverage_threshold),
+            hilbert,
         }
     }
 }
