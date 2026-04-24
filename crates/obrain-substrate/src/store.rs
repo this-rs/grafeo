@@ -4633,6 +4633,113 @@ impl SubstrateStore {
         out
     }
 
+    /// T17j T4 — deep diagnostic : scan every live edge of `edge_type`
+    /// and return the aggregate bitset OR'd across all src / dst
+    /// endpoints. This reveals which label bits actually appear in
+    /// the endpoints (as opposed to what the histogram claims).
+    pub fn diagnose_edge_endpoint_bits(
+        &self,
+        edge_type: &str,
+    ) -> SubstrateResult<(u64, u64, u64)> {
+        let reg = self.edge_types.read();
+        let Some(type_id) = reg.id_for(edge_type) else {
+            return Ok((0, 0, 0));
+        };
+        drop(reg);
+        let edge_hw = self.next_edge_id.load(Ordering::Acquire);
+        let mut total = 0u64;
+        let mut src_union_bits = 0u64;
+        let mut dst_union_bits = 0u64;
+        for slot in 1..edge_hw {
+            let Some(rec) = self.writer.read_edge(slot)? else {
+                continue;
+            };
+            if rec.flags & crate::record::edge_flags::TOMBSTONED != 0 {
+                continue;
+            }
+            if rec.edge_type != type_id {
+                continue;
+            }
+            total += 1;
+            if let Some(nr) = self.writer.read_node(rec.src)?
+                && nr.flags & crate::record::node_flags::TOMBSTONED == 0
+            {
+                src_union_bits |= nr.label_bitset;
+            }
+            if let Some(nr) = self.writer.read_node(rec.dst)?
+                && nr.flags & crate::record::node_flags::TOMBSTONED == 0
+            {
+                dst_union_bits |= nr.label_bitset;
+            }
+        }
+        Ok((total, src_union_bits, dst_union_bits))
+    }
+
+    /// T17j T4 — diagnostic : scan every live edge of `edge_type` and
+    /// return per-endpoint classification stats. Used to investigate
+    /// why the peer-label histogram `edge_source_labels` returns a
+    /// small subset (e.g. only `{File}` on PO's IMPORTS) while
+    /// Cypher counts report many more distinct source labels.
+    ///
+    /// Returns `(total, src_valid_with_labels, src_valid_no_labels,
+    /// src_missing, dst_valid_with_labels, dst_valid_no_labels,
+    /// dst_missing)`.
+    pub fn diagnose_edge_endpoints(
+        &self,
+        edge_type: &str,
+    ) -> SubstrateResult<(u64, u64, u64, u64, u64, u64, u64)> {
+        let reg = self.edge_types.read();
+        let Some(type_id) = reg.id_for(edge_type) else {
+            return Ok((0, 0, 0, 0, 0, 0, 0));
+        };
+        drop(reg);
+        let edge_hw = self.next_edge_id.load(Ordering::Acquire);
+        let mut total = 0u64;
+        let mut src_valid_with = 0u64;
+        let mut src_valid_no = 0u64;
+        let mut src_missing = 0u64;
+        let mut dst_valid_with = 0u64;
+        let mut dst_valid_no = 0u64;
+        let mut dst_missing = 0u64;
+        for slot in 1..edge_hw {
+            let Some(rec) = self.writer.read_edge(slot)? else {
+                continue;
+            };
+            if rec.flags & crate::record::edge_flags::TOMBSTONED != 0 {
+                continue;
+            }
+            if rec.edge_type != type_id {
+                continue;
+            }
+            total += 1;
+            match self.writer.read_node(rec.src)? {
+                None => src_missing += 1,
+                Some(nr) if nr.flags & crate::record::node_flags::TOMBSTONED != 0 => {
+                    src_missing += 1
+                }
+                Some(nr) if nr.label_bitset == 0 => src_valid_no += 1,
+                Some(_) => src_valid_with += 1,
+            }
+            match self.writer.read_node(rec.dst)? {
+                None => dst_missing += 1,
+                Some(nr) if nr.flags & crate::record::node_flags::TOMBSTONED != 0 => {
+                    dst_missing += 1
+                }
+                Some(nr) if nr.label_bitset == 0 => dst_valid_no += 1,
+                Some(_) => dst_valid_with += 1,
+            }
+        }
+        Ok((
+            total,
+            src_valid_with,
+            src_valid_no,
+            src_missing,
+            dst_valid_with,
+            dst_valid_no,
+            dst_missing,
+        ))
+    }
+
     /// T17h T1 — one-shot scan that populates counters from the on-disk
     /// zones. Sequential (rayon contends on the zone cache Mutex). Used
     /// at open time when the loaded dict snapshot does not carry a
