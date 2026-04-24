@@ -221,6 +221,54 @@ impl VecColumnRegistry {
         Some(Arc::from(data))
     }
 
+    /// T17k — bulk iteration of every registered vec column whose
+    /// `EntityKind` matches `ek`, yielding the `(PropertyKey, vector)`
+    /// pair when `slot` has a meaningful value on that column.
+    ///
+    /// **Presence semantics.** Vec columns are dense: writing slot `N`
+    /// grows `n_slots` past any intermediate slots, whose bytes are
+    /// zero-initialised by the mmap. To distinguish "node really has
+    /// an all-zero embedding" from "slot was grown past, never
+    /// written", this iterator uses the all-zero sentinel convention:
+    /// vectors whose every element equals `0.0` are treated as absent.
+    /// In practice legitimate embeddings are never exactly all-zero
+    /// (cosine normalisation would be undefined), so this convention
+    /// matches production use. Callers who need to distinguish the
+    /// two must call [`Self::read`] with the specific key and inspect.
+    ///
+    /// Returns owned pairs because the underlying mmap borrows die
+    /// with the per-column Mutex guard — hot paths that need the
+    /// whole property map of a node call this once and consume.
+    ///
+    /// Cost: `O(num_matching_cols × (lock + dim floats compared))`.
+    /// On PO Node typically ≤ 10 vec columns → ~10 μs.
+    pub(crate) fn iter_props_for_entity(
+        &self,
+        ek: EntityKind,
+        slot: u32,
+    ) -> Vec<(PropertyKey, Arc<[f32]>)> {
+        // Snapshot keys first so we release DashMap iterator locks
+        // before re-entering per-column Mutexes.
+        let keys: Vec<PropertyKey> = self
+            .by_key
+            .iter()
+            .filter(|e| e.key().1 == ek)
+            .map(|e| e.key().0.clone())
+            .collect();
+        keys.into_iter()
+            .filter_map(|k| {
+                let v = self.read(&k, ek, slot)?;
+                if v.iter().all(|x| *x == 0.0) {
+                    // All-zero sentinel: slot grown past but never
+                    // written meaningfully. Treat as absent.
+                    None
+                } else {
+                    Some((k, v))
+                }
+            })
+            .collect()
+    }
+
     /// Iterate every currently-registered spec. Used by
     /// `SubstrateStore::build_dict_snapshot` to populate the v3
     /// `vec_columns` list.
@@ -271,6 +319,46 @@ mod tests {
 
         let got = reg.read(&pk("embedding"), EntityKind::Node, 5).unwrap();
         assert_eq!(got.as_ref(), &v[..]);
+    }
+
+    #[test]
+    fn iter_props_for_entity_round_trip() {
+        let sub = SubstrateFile::open_tempfile().unwrap();
+        let reg = VecColumnRegistry::new();
+        // Three vec columns on Node, one on Edge (must not leak).
+        reg.write(&sub, &pk("embedding"), EntityKind::Node, 0, 7, &vec![1.0_f32; 4]).unwrap();
+        reg.write(&sub, &pk("hilbert"),   EntityKind::Node, 1, 7, &vec![2.0_f32; 4]).unwrap();
+        reg.write(&sub, &pk("kernel"),    EntityKind::Node, 2, 7, &vec![3.0_f32; 4]).unwrap();
+        reg.write(&sub, &pk("edge_vec"),  EntityKind::Edge, 3, 7, &vec![9.0_f32; 4]).unwrap();
+
+        let props = reg.iter_props_for_entity(EntityKind::Node, 7);
+        assert_eq!(props.len(), 3, "expected 3 Node vec props, got {props:?}");
+        let keys: std::collections::HashSet<_> =
+            props.iter().map(|(k, _)| k.as_str().to_string()).collect();
+        assert!(keys.contains("embedding"));
+        assert!(keys.contains("hilbert"));
+        assert!(keys.contains("kernel"));
+        assert!(!keys.contains("edge_vec"), "Edge vec leaked into Node iter");
+    }
+
+    #[test]
+    fn iter_props_for_entity_skips_absent_slots() {
+        let sub = SubstrateFile::open_tempfile().unwrap();
+        let reg = VecColumnRegistry::new();
+        reg.write(&sub, &pk("embedding"), EntityKind::Node, 0, 5, &vec![1.0_f32; 3]).unwrap();
+        reg.write(&sub, &pk("hilbert"),   EntityKind::Node, 1, 9, &vec![2.0_f32; 3]).unwrap();
+        // Slot 5 has "embedding", slot 9 has "hilbert", slot 7 has NEITHER.
+        let props_7 = reg.iter_props_for_entity(EntityKind::Node, 7);
+        assert!(props_7.is_empty(), "slot 7 has no props, got {props_7:?}");
+        let props_5 = reg.iter_props_for_entity(EntityKind::Node, 5);
+        assert_eq!(props_5.len(), 1);
+        assert_eq!(props_5[0].0.as_str(), "embedding");
+    }
+
+    #[test]
+    fn iter_props_empty_registry_returns_empty() {
+        let reg = VecColumnRegistry::new();
+        assert!(reg.iter_props_for_entity(EntityKind::Node, 42).is_empty());
     }
 
     #[test]

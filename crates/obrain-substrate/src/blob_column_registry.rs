@@ -289,6 +289,36 @@ impl BlobColumnRegistry {
         decode_blob_payload(&raw)
     }
 
+    /// T17k — bulk iteration of every registered blob column whose
+    /// `EntityKind` matches `ek`, yielding the `(PropertyKey, Value)`
+    /// pair when `slot` has a live payload on that column. Absent
+    /// payloads (len == 0 sentinel) are skipped.
+    ///
+    /// Unlike vec_columns, blob columns HAVE a presence sentinel
+    /// (idx entry with len==0 = absent), so this iterator is
+    /// unambiguous: only truly-live payloads are surfaced.
+    ///
+    /// Cost: `O(num_matching_cols × (lock + arena read + decode))`.
+    /// On PO Node typically ~30 blob cols → ~30 μs with UTF-8 decodes.
+    pub(crate) fn iter_props_for_entity(
+        &self,
+        ek: EntityKind,
+        slot: u32,
+    ) -> Vec<(PropertyKey, Value)> {
+        let keys: Vec<PropertyKey> = self
+            .by_key
+            .iter()
+            .filter(|e| e.key().1 == ek)
+            .map(|e| e.key().0.clone())
+            .collect();
+        keys.into_iter()
+            .filter_map(|k| {
+                let v = self.read_value(&k, ek, slot)?;
+                Some((k, v))
+            })
+            .collect()
+    }
+
     /// Iterate every currently-registered spec. Used by
     /// `SubstrateStore::build_dict_snapshot` to populate the v4
     /// `blob_columns` list.
@@ -344,6 +374,67 @@ mod tests {
         reg.write(&sub, &pk("data"), EntityKind::Node, 0, 0, &payload)
             .unwrap();
         assert!(reg.read(&pk("unknown"), EntityKind::Node, 0).is_none());
+    }
+
+    #[test]
+    fn iter_props_for_entity_round_trip() {
+        let sub = SubstrateFile::open_tempfile().unwrap();
+        let reg = BlobColumnRegistry::new();
+        // Payloads must exceed BLOB_COLUMN_THRESHOLD_BYTES (256) to
+        // be routed to blob_columns (otherwise encode_blob_payload
+        // returns None, signalling "goes to PropsZone v2 instead").
+        let long_path = format!("/Users/triviere/projects/{}", "a/".repeat(200));
+        let long_title = format!("Incendie du bar Le Constellation {}", "x".repeat(300));
+        let long_fp = format!("[{}]", "0.86,0.81,0.79,".repeat(30));
+        let s = encode_blob_payload(&Value::from(long_path.as_str())).unwrap();
+        reg.write(&sub, &pk("path"), EntityKind::Node, 0, 7, &s).unwrap();
+        let s2 = encode_blob_payload(&Value::from(long_title.as_str())).unwrap();
+        reg.write(&sub, &pk("title"), EntityKind::Node, 1, 7, &s2).unwrap();
+        let s3 = encode_blob_payload(&Value::from(long_fp.as_str())).unwrap();
+        reg.write(&sub, &pk("cc_fingerprint"), EntityKind::Node, 2, 7, &s3).unwrap();
+        let long_edge = format!("CALLS {}", "x".repeat(300));
+        let s4 = encode_blob_payload(&Value::from(long_edge.as_str())).unwrap();
+        reg.write(&sub, &pk("edge_label"), EntityKind::Edge, 3, 7, &s4).unwrap();
+
+        let props = reg.iter_props_for_entity(EntityKind::Node, 7);
+        assert_eq!(props.len(), 3, "expected 3 Node blob props, got {props:?}");
+        let map: std::collections::HashMap<String, Value> = props
+            .into_iter()
+            .map(|(k, v)| (k.as_str().to_string(), v))
+            .collect();
+        assert!(map.contains_key("path"));
+        assert!(map.contains_key("title"));
+        assert!(map.contains_key("cc_fingerprint"));
+        assert!(!map.contains_key("edge_label"));
+        if let Some(Value::String(s)) = map.get("title") {
+            assert!(s.contains("Constellation"));
+        } else {
+            panic!("title is not a String variant");
+        }
+    }
+
+    #[test]
+    fn iter_props_for_entity_skips_absent_slots() {
+        let sub = SubstrateFile::open_tempfile().unwrap();
+        let reg = BlobColumnRegistry::new();
+        let big1 = format!("title-5 {}", "x".repeat(300));
+        let big2 = format!("path-9 {}", "x".repeat(300));
+        let s1 = encode_blob_payload(&Value::from(big1.as_str())).unwrap();
+        let s2 = encode_blob_payload(&Value::from(big2.as_str())).unwrap();
+        reg.write(&sub, &pk("title"), EntityKind::Node, 0, 5, &s1).unwrap();
+        reg.write(&sub, &pk("path"),  EntityKind::Node, 1, 9, &s2).unwrap();
+        // Slot 7 has neither (blob uses len=0 sentinel for absent).
+        let props_7 = reg.iter_props_for_entity(EntityKind::Node, 7);
+        assert!(props_7.is_empty(), "slot 7 should be empty, got {props_7:?}");
+        let props_5 = reg.iter_props_for_entity(EntityKind::Node, 5);
+        assert_eq!(props_5.len(), 1);
+        assert_eq!(props_5[0].0.as_str(), "title");
+    }
+
+    #[test]
+    fn iter_props_empty_registry_returns_empty() {
+        let reg = BlobColumnRegistry::new();
+        assert!(reg.iter_props_for_entity(EntityKind::Node, 42).is_empty());
     }
 
     #[test]

@@ -381,6 +381,15 @@ impl PropertyKeyRegistry {
         self.name_to_id.get(name).copied()
     }
 
+    /// Reverse lookup: resolve a `prop_key_id` back to its interned
+    /// name. Used by T17k `read_all_properties_for_node` to build a
+    /// `PropertyKey` from the `u16` ids surfaced by PropsZone v2 bulk
+    /// walks. `None` when the id is past the end of the id_to_name
+    /// vector (forward-compat drift or a corrupt entry).
+    fn name_for(&self, id: u16) -> Option<ArcStr> {
+        self.id_to_name.get(id as usize).cloned()
+    }
+
     /// Dump the property-key names in id order for persistence via
     /// [`crate::dict::DictSnapshot`].
     fn names(&self) -> Vec<String> {
@@ -3894,6 +3903,169 @@ impl SubstrateStore {
     }
 }
 
+impl SubstrateStore {
+    /// T17k — bulk-read every property of `id` across the four zones
+    /// (`vec_columns`, `blob_columns`, PropsZone v2, DashMap) and merge
+    /// them into a single `PropertyMap` respecting the same LWW order
+    /// as the scalar [`Self::get_node_property`].
+    ///
+    /// **Priority order** (later passes overwrite earlier ones) :
+    /// 1. `node_properties` DashMap (lowest — runtime writes)
+    /// 2. PropsZone v2 : live entries INSERT, tombstones REMOVE
+    /// 3. `blob_columns` (String/Bytes) : overwrites v2 live
+    /// 4. `vec_columns` (Vector) : overwrites everything (highest)
+    ///
+    /// Matches `get_node_property`'s first-hit-wins cascade exactly —
+    /// see the docstring there for the scalar semantics.
+    ///
+    /// Returns an empty map when the node has no properties on any
+    /// zone — NOT when the node is missing (caller checks `live_on_disk`).
+    fn read_all_properties_for_node(
+        &self,
+        id: NodeId,
+        rec: &crate::record::NodeRecord,
+    ) -> PropertyMap {
+        let mut props = PropertyMap::new();
+
+        // Pass 1 (LOWEST priority) — DashMap.
+        if let Some(entry) = self.node_properties.get(&id) {
+            for (k, v) in entry.iter() {
+                props.insert(k.clone(), v.clone());
+            }
+        }
+
+        // Pass 2 — PropsZone v2 : can ADD (live) or REMOVE (tombstone).
+        if let Some(pz_lock) = self.props_zone.as_ref() {
+            if let Some(head) = decode_page_id(rec.first_prop_off) {
+                let pz = pz_lock.read();
+                let mut live: std::collections::HashMap<u16, crate::page::PropertyEntry> =
+                    std::collections::HashMap::new();
+                let mut tombstoned: std::collections::HashSet<u16> =
+                    std::collections::HashSet::new();
+                if let Err(err) = pz.collect_live_props_by_key(
+                    Some(head),
+                    &mut live,
+                    &mut tombstoned,
+                ) {
+                    tracing::warn!(
+                        node_id = id.0,
+                        error = %err,
+                        "T17k: PropsZone v2 bulk collect failed — skipping"
+                    );
+                } else {
+                    let registry = self.prop_keys.read();
+                    for (pk_id, entry) in live {
+                        let Some(name) = registry.name_for(pk_id) else { continue };
+                        let key = PropertyKey::new(name.as_str());
+                        match crate::props_codec::decode_value(&pz, &entry.value) {
+                            Ok(v) => {
+                                props.insert(key, v);
+                            }
+                            Err(err) => {
+                                tracing::warn!(
+                                    node_id = id.0,
+                                    prop_key = %name,
+                                    error = %err,
+                                    "T17k: PropsZone v2 decode failed — skipping key"
+                                );
+                            }
+                        }
+                    }
+                    for pk_id in tombstoned {
+                        let Some(name) = registry.name_for(pk_id) else { continue };
+                        props.remove(&PropertyKey::new(name.as_str()));
+                    }
+                }
+            }
+        }
+
+        // Pass 3 — blob_columns (String/Bytes). Overwrites v2 live.
+        let slot = id.0 as u32;
+        for (key, value) in self
+            .blob_columns
+            .iter_props_for_entity(EntityKind::Node, slot)
+        {
+            props.insert(key, value);
+        }
+
+        // Pass 4 (HIGHEST priority) — vec_columns (geometric features).
+        for (key, arc) in self
+            .vec_columns
+            .iter_props_for_entity(EntityKind::Node, slot)
+        {
+            props.insert(key, Value::Vector(arc));
+        }
+
+        props
+    }
+
+    /// T17k — edge variant of [`Self::read_all_properties_for_node`].
+    /// Reads the head from `EdgeRecord.first_prop_off` + uses the
+    /// `EntityKind::Edge` columns.
+    fn read_all_properties_for_edge(
+        &self,
+        id: EdgeId,
+        rec: &crate::record::EdgeRecord,
+    ) -> PropertyMap {
+        let mut props = PropertyMap::new();
+
+        // Pass 1 — DashMap.
+        if let Some(entry) = self.edge_properties.get(&id) {
+            for (k, v) in entry.iter() {
+                props.insert(k.clone(), v.clone());
+            }
+        }
+
+        // Pass 2 — PropsZone v2 edge chain.
+        if let Some(pz_lock) = self.props_zone.as_ref() {
+            if let Some(head) = decode_page_id(rec.first_prop_off) {
+                let pz = pz_lock.read();
+                let mut live: std::collections::HashMap<u16, crate::page::PropertyEntry> =
+                    std::collections::HashMap::new();
+                let mut tombstoned: std::collections::HashSet<u16> =
+                    std::collections::HashSet::new();
+                if pz
+                    .collect_live_props_by_key(Some(head), &mut live, &mut tombstoned)
+                    .is_ok()
+                {
+                    let registry = self.prop_keys.read();
+                    for (pk_id, entry) in live {
+                        let Some(name) = registry.name_for(pk_id) else { continue };
+                        let key = PropertyKey::new(name.as_str());
+                        if let Ok(v) = crate::props_codec::decode_value(&pz, &entry.value) {
+                            props.insert(key, v);
+                        }
+                    }
+                    for pk_id in tombstoned {
+                        let Some(name) = registry.name_for(pk_id) else { continue };
+                        props.remove(&PropertyKey::new(name.as_str()));
+                    }
+                }
+            }
+        }
+
+        // Pass 3 — blob_columns for Edge. `EdgeId` is `u64`; slots fit
+        // into `u32` by design of the edge zone (capped at ~4 B edges).
+        let slot = id.0 as u32;
+        for (key, value) in self
+            .blob_columns
+            .iter_props_for_entity(EntityKind::Edge, slot)
+        {
+            props.insert(key, value);
+        }
+
+        // Pass 4 — vec_columns for Edge.
+        for (key, arc) in self
+            .vec_columns
+            .iter_props_for_entity(EntityKind::Edge, slot)
+        {
+            props.insert(key, Value::Vector(arc));
+        }
+
+        props
+    }
+}
+
 // ---------------------------------------------------------------------------
 // GraphStore — read side
 // ---------------------------------------------------------------------------
@@ -3915,9 +4087,14 @@ impl GraphStore for SubstrateStore {
         let rec = self.writer.read_node(id.0 as u32).ok().flatten()?;
         let mut n = Node::new(id);
         n.labels = self.resolve_node_labels_from_bitset(rec.label_bitset);
-        if let Some(entry) = self.node_properties.get(&id) {
-            n.properties = entry.clone();
-        }
+        // T17k — bulk-hydrate from all four zones in LWW order matching
+        // `get_node_property`. Before T17k, only `node_properties`
+        // DashMap was consulted, which is EMPTY on substrate bases that
+        // went through T17g T2b legacy sidecar bypass. Consequence :
+        // Cypher `WHERE prop = X`, property projections, RAG bulk
+        // indexing — all returned empty. Fix: read blob/vec/v2 zones,
+        // in the same priority order as the scalar `get_node_property`.
+        n.properties = self.read_all_properties_for_node(id, &rec);
         Some(n)
     }
 
@@ -3933,9 +4110,8 @@ impl GraphStore for SubstrateStore {
             NodeId(rec.dst as u64),
             edge_type,
         );
-        if let Some(entry) = self.edge_properties.get(&id) {
-            e.properties = entry.clone();
-        }
+        // T17k — bulk-hydrate from all four zones, see `get_node` above.
+        e.properties = self.read_all_properties_for_edge(id, &rec);
         Some(e)
     }
 

@@ -504,6 +504,75 @@ impl PropsZone {
         Ok(out)
     }
 
+    /// T17k — LWW-correct bulk collection: for every `prop_key` on the
+    /// chain rooted at `head`, returns whichever entry the scalar
+    /// [`Self::get_latest_for_key`] would return.
+    ///
+    /// Semantics:
+    /// - Pages walked `head` (newest) → tail (oldest).
+    /// - Within a page, append-order cursor; LAST match per key wins.
+    /// - Once a key is decided by the first page that mentions it
+    ///   (live or tombstone), older pages cannot overwrite it.
+    /// - `live` receives keys whose latest entry is a live value.
+    ///   `tombstoned` receives keys whose latest entry is a tombstone.
+    /// - A key present in `tombstoned` is NOT in `live` (the two sets
+    ///   are disjoint).
+    ///
+    /// Cost: `O(num_pages × entries_per_page)`. Typical chain on a
+    /// well-populated node: 1-3 pages, ≤ 100 entries → ~5-10 μs.
+    ///
+    /// Unlike [`Self::walk_chain`], tombstones are surfaced (in
+    /// `tombstoned`) because bulk callers need them to correctly
+    /// shadow lower-priority stores (e.g. the in-memory DashMap).
+    pub fn collect_live_props_by_key(
+        &self,
+        head: Option<u32>,
+        live: &mut std::collections::HashMap<u16, PropertyEntry>,
+        tombstoned: &mut std::collections::HashSet<u16>,
+    ) -> SubstrateResult<()> {
+        let mut cur = head;
+        while let Some(idx) = cur {
+            let bytes = self.page_slice(idx).ok_or_else(|| {
+                SubstrateError::WalBadFrame(format!(
+                    "collect_live_props_by_key: page {idx} out of range"
+                ))
+            })?;
+            let page: &PropertyPage = bytemuck::from_bytes(bytes);
+            if !page.has_valid_prop_magic() {
+                return Err(SubstrateError::WalBadFrame(format!(
+                    "collect_live_props_by_key: page {idx} has bad magic {:#x}",
+                    page.header.magic
+                )));
+            }
+            // Within this page, build a "latest per key" map. Cursor
+            // yields oldest → newest, so later writes overwrite.
+            let mut latest_in_page: std::collections::HashMap<u16, PropertyEntry> =
+                std::collections::HashMap::new();
+            let cursor: PropertyCursor<'_> = page.cursor();
+            for entry in cursor {
+                let e = entry.map_err(|e| {
+                    SubstrateError::WalBadFrame(format!(
+                        "collect_live_props_by_key: decode error on page {idx}: {e}"
+                    ))
+                })?;
+                // Only adopt a key that has not been claimed by a
+                // newer page already.
+                if !live.contains_key(&e.prop_key) && !tombstoned.contains(&e.prop_key) {
+                    latest_in_page.insert(e.prop_key, e);
+                }
+            }
+            for (k, e) in latest_in_page {
+                if e.is_tombstone() {
+                    tombstoned.insert(k);
+                } else {
+                    live.insert(k, e);
+                }
+            }
+            cur = decode_page_id(page.header.next_page);
+        }
+        Ok(())
+    }
+
     /// T17c Step 3c — Resolve the latest entry (live or tombstone) for
     /// `prop_key` on the chain rooted at `head`, following **LWW
     /// semantics** over the chain ordering:
@@ -867,6 +936,78 @@ mod tests {
             for o in &older {
                 assert!(n > o, "newer key {n} should be > older key {o}");
             }
+        }
+    }
+
+    #[test]
+    fn collect_live_props_by_key_lww_semantics() {
+        let (_sf, mut pz) = open_zone();
+        // Write 3 props, update 1, tombstone 1.
+        let e_a = PropertyEntry::new(1, PropertyValue::I64(10));
+        let e_b = PropertyEntry::new(2, PropertyValue::I64(20));
+        let e_c = PropertyEntry::new(3, PropertyValue::I64(30));
+        let e_b_updated = PropertyEntry::new(2, PropertyValue::I64(200));
+        let mut tomb_c = PropertyEntry::new(3, PropertyValue::Null);
+        tomb_c.flags = crate::page::ENTRY_FLAG_TOMBSTONE;
+
+        let mut head = None;
+        head = Some(pz.append_entry(0, head, &e_a).unwrap());
+        head = Some(pz.append_entry(0, head, &e_b).unwrap());
+        head = Some(pz.append_entry(0, head, &e_c).unwrap());
+        head = Some(pz.append_entry(0, head, &e_b_updated).unwrap());
+        head = Some(pz.append_entry(0, head, &tomb_c).unwrap());
+
+        let mut live = std::collections::HashMap::new();
+        let mut tombstoned = std::collections::HashSet::new();
+        pz.collect_live_props_by_key(head, &mut live, &mut tombstoned).unwrap();
+
+        // Key 1 : live with I64(10)
+        assert!(live.contains_key(&1));
+        assert_eq!(live[&1].value, PropertyValue::I64(10));
+        // Key 2 : live with UPDATED I64(200)
+        assert!(live.contains_key(&2));
+        assert_eq!(live[&2].value, PropertyValue::I64(200));
+        // Key 3 : tombstoned, not in live
+        assert!(!live.contains_key(&3));
+        assert!(tombstoned.contains(&3));
+        // No other keys
+        assert_eq!(live.len(), 2);
+        assert_eq!(tombstoned.len(), 1);
+    }
+
+    #[test]
+    fn collect_live_props_by_key_empty_head() {
+        let (_sf, pz) = open_zone();
+        let mut live = std::collections::HashMap::new();
+        let mut tombstoned = std::collections::HashSet::new();
+        pz.collect_live_props_by_key(None, &mut live, &mut tombstoned).unwrap();
+        assert!(live.is_empty());
+        assert!(tombstoned.is_empty());
+    }
+
+    #[test]
+    fn collect_live_props_multi_page_newest_wins() {
+        let (_sf, mut pz) = open_zone();
+        // Write enough to overflow to a second page: each ArrI64(128)
+        // entry is ~1028 B payload, so 3 entries fill the 3072 B page.
+        let big = |v: i64| PropertyEntry::new(1, PropertyValue::ArrI64(vec![v; 128]));
+        let mut head = None;
+        head = Some(pz.append_entry(0, head, &big(1)).unwrap());
+        head = Some(pz.append_entry(0, head, &big(2)).unwrap());
+        head = Some(pz.append_entry(0, head, &big(3)).unwrap());
+        // This likely triggers a new page
+        head = Some(pz.append_entry(0, head, &big(4)).unwrap());
+
+        let mut live = std::collections::HashMap::new();
+        let mut tombstoned = std::collections::HashSet::new();
+        pz.collect_live_props_by_key(head, &mut live, &mut tombstoned).unwrap();
+        // Only 1 key exists (id=1), and its latest value is 4
+        assert_eq!(live.len(), 1);
+        assert!(live.contains_key(&1));
+        if let PropertyValue::ArrI64(v) = &live[&1].value {
+            assert_eq!(v[0], 4, "newest write should win, got {:?}", v[0]);
+        } else {
+            panic!("unexpected value variant");
         }
     }
 
