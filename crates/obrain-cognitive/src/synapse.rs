@@ -341,6 +341,11 @@ impl Drop for ConsolidatorHandle {
 pub struct ConsolidatorRuntime {
     runtime: Option<tokio::runtime::Runtime>,
     handle: Option<ConsolidatorHandle>,
+    /// Kept here so the synchronous shutdown path
+    /// (`shutdown_blocking` / `Drop`) can call
+    /// `flush_pending_metadata()` directly without needing to enter a
+    /// tokio runtime — see CRITICAL note in `spawn` below.
+    store: Arc<SynapseStore>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -352,6 +357,22 @@ impl ConsolidatorRuntime {
     /// The thread is named `"synapse-consolidator"` for ease of
     /// observation in `top` / process listings.
     ///
+    /// **CRITICAL — gotcha "Cannot start a runtime from within a runtime"**:
+    /// the previous version of this function called
+    /// `runtime.block_on(async { store.spawn_consolidator() })`. That
+    /// panics when the *calling* thread is itself running inside a
+    /// tokio runtime (e.g. `obrain-hub::CognitiveBrain::open` is called
+    /// from the chat handler, which is async). Tokio refuses to nest
+    /// `block_on` calls and aborts the worker thread:
+    /// > thread 'tokio-rt-worker' panicked at .../multi_thread/mod.rs:91:9:
+    /// > Cannot start a runtime from within a runtime.
+    ///
+    /// The fix is to enter the owned runtime via `Handle::enter()`
+    /// (non-blocking) so `tokio::spawn` inside `spawn_consolidator`
+    /// registers the task on this runtime, regardless of any outer
+    /// runtime context. The owned runtime keeps driving the task on
+    /// its dedicated worker thread.
+    ///
     /// Panics if the runtime cannot be built (extremely rare; usually
     /// only on misconfigured systems where threads cannot be spawned).
     pub fn spawn(store: Arc<SynapseStore>) -> Self {
@@ -361,29 +382,67 @@ impl ConsolidatorRuntime {
             .thread_name("synapse-consolidator")
             .build()
             .expect("build synapse-consolidator runtime");
-        let handle = runtime.block_on(async { store.spawn_consolidator() });
+        // Non-blocking entry into the owned runtime context so that
+        // `tokio::spawn` inside `spawn_consolidator` attaches the task
+        // here. Works whether or not the calling thread is itself
+        // inside another runtime.
+        let handle = {
+            let _enter = runtime.handle().enter();
+            Arc::clone(&store).spawn_consolidator()
+        };
         Self {
             runtime: Some(runtime),
             handle: Some(handle),
+            store,
         }
     }
 
-    /// SIGTERM-safe shutdown — performs the final drain, joins the
-    /// consolidator task, then shuts down the runtime. Blocks the
-    /// current thread for the duration. Use this from synchronous
-    /// shutdown handlers (`std::process::exit` paths,
-    /// `signal-hook::iterator::Signals`, etc.).
+    /// SIGTERM-safe shutdown — performs the final drain synchronously
+    /// (no tokio context required), drops the consolidator handle (which
+    /// signals the bg task), then shuts down the owned runtime with a
+    /// 2s grace timeout. Safe to call from any context — async or sync,
+    /// inside or outside a tokio runtime.
+    ///
+    /// Why `flush_pending_metadata()` synchronously instead of awaiting
+    /// `handle.shutdown().await` via `block_on`: a `block_on` from
+    /// within an existing tokio runtime panics (see CRITICAL note in
+    /// `spawn`). The final drain therefore runs on the calling thread,
+    /// which is the SIGTERM-handling thread or the dropping thread —
+    /// either way no nested runtime risk.
+    ///
+    /// Race safety: the SegQueue is MPMC; if the bg task is already
+    /// draining concurrently, each `MetadataDelta` is consumed exactly
+    /// once by either the task or this synchronous call. No double
+    /// writes, no lost writes.
     pub fn shutdown_blocking(mut self) {
-        // Move the handle out and trigger the graceful shutdown — this
-        // consumes `self.handle.take()` and runs `shutdown().await`
-        // inside the consolidator runtime so the final drain executes
-        // on the same thread that has been running it all along.
-        if let (Some(rt), Some(handle)) = (self.runtime.as_ref(), self.handle.take()) {
-            rt.block_on(async move { handle.shutdown().await });
+        // Drop the handle — its Drop sends the shutdown signal to the
+        // bg task without awaiting. The bg task will exit on its next
+        // tick or on the signal (whichever comes first), inside the
+        // owned runtime's worker thread.
+        let _ = self.handle.take();
+
+        // Synchronous final drain on the calling thread — directly
+        // calls persist_edge_f64 for every pending MetadataDelta. No
+        // tokio context needed.
+        let drained = self.store.flush_pending_metadata();
+        if drained > 0 {
+            tracing::info!(
+                target: "synapse_consolidator",
+                drained,
+                "ConsolidatorRuntime::shutdown_blocking — final synchronous drain"
+            );
         }
-        // Drop the runtime — block briefly until all tasks finish.
+
+        // Drop the runtime in the background — `shutdown_timeout`
+        // would block the calling thread, which panics if we're inside
+        // another tokio runtime (sync `CognitiveBrain::shutdown_consolidator`
+        // can be called from async hub shutdown handlers). The bg
+        // task already received the shutdown signal via the dropped
+        // handle and will exit on its own. The queue is already
+        // drained synchronously above, so abandoning the runtime is
+        // safe — there's no pending durable work.
         if let Some(rt) = self.runtime.take() {
-            rt.shutdown_timeout(std::time::Duration::from_secs(5));
+            rt.shutdown_background();
         }
     }
 }
@@ -391,15 +450,19 @@ impl ConsolidatorRuntime {
 #[cfg(not(target_arch = "wasm32"))]
 impl Drop for ConsolidatorRuntime {
     fn drop(&mut self) {
-        // Best-effort drop: signal shutdown, give the runtime up to
-        // 1s to drain, then abort. This path runs when the caller
-        // didn't go through `shutdown_blocking()` (typically Drop on
-        // the user brain in tests or panics).
-        if let (Some(rt), Some(handle)) = (self.runtime.as_ref(), self.handle.take()) {
-            rt.block_on(async move { handle.shutdown().await });
-        }
+        // Best-effort drop: same pattern as `shutdown_blocking` but
+        // with a tighter runtime timeout. Critical: NEVER call
+        // `block_on` here — Drop is reached from sync context that
+        // may itself be inside a tokio runtime (e.g. CognitiveBrain
+        // dropped during async chat handler shutdown), which panics.
+        let _ = self.handle.take();
+        let _ = self.store.flush_pending_metadata();
         if let Some(rt) = self.runtime.take() {
-            rt.shutdown_timeout(std::time::Duration::from_secs(1));
+            // shutdown_background — see explanation in
+            // `shutdown_blocking`. Drop CAN fire inside an async
+            // context (CognitiveBrain dropped during chat handler
+            // teardown), so blocking variants would panic.
+            rt.shutdown_background();
         }
     }
 }

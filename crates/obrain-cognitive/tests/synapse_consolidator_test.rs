@@ -152,6 +152,48 @@ fn consolidator_runtime_owned_drains_on_shutdown() {
     );
 }
 
+/// T3 step 3 — REGRESSION GUARD for the "Cannot start a runtime from
+/// within a runtime" panic observed in production 2026-04-25 (PID
+/// 33362, see hub commit e41c21c9). Reproducer: `ConsolidatorRuntime`
+/// is constructed from `CognitiveBrain::open` which is called from
+/// the chat handler — itself running on a tokio worker thread. The
+/// previous implementation called `runtime.block_on(...)` to bootstrap
+/// the consolidator task; tokio refuses to nest `block_on` and aborts
+/// the worker thread.
+///
+/// The fix uses `Handle::enter()` (non-blocking) instead of
+/// `block_on`. This test exercises that exact pattern: spawn a
+/// `ConsolidatorRuntime` from inside a `#[tokio::test(flavor = "multi_thread")]`
+/// — equivalent to a production async hub handler — and verifies it
+/// doesn't panic, drains 100 reinforces, and shuts down cleanly.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn consolidator_runtime_spawn_from_tokio_context_does_not_panic() {
+    // We are inside a tokio runtime here.
+    let (store, _td) = fresh_store(Duration::from_secs(60));
+
+    // This call previously panicked with "Cannot start a runtime from
+    // within a runtime". With the Handle::enter() fix it works.
+    let consolidator =
+        obrain_cognitive::synapse::ConsolidatorRuntime::spawn(Arc::clone(&store));
+
+    // Push 100 reinforces.
+    for i in 1..=100u64 {
+        store.reinforce(NodeId(i), NodeId(i + 1), 0.05);
+    }
+    assert_eq!(store.pending_metadata_writes_count(), 100);
+
+    // Sync shutdown from inside the tokio context — must NOT panic
+    // (the previous shutdown also used block_on, same nested-runtime
+    // issue). The fix flushes synchronously via the SynapseStore.
+    consolidator.shutdown_blocking();
+
+    assert_eq!(
+        store.pending_metadata_writes_count(),
+        0,
+        "shutdown_blocking from tokio context must drain the queue"
+    );
+}
+
 /// T3 step 3 — `Drop` on `ConsolidatorRuntime` is best-effort: it
 /// triggers a synchronous shutdown with a 1s timeout. Verifies no
 /// panic, no hang, and the final drain runs.
