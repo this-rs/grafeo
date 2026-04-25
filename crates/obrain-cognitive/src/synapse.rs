@@ -1376,4 +1376,107 @@ mod substrate_tests {
         assert_eq!(store.len(), 104);
     }
 
+    /// Plan 69e59065 T4 — concurrent mixed-op stress test: 8 threads each
+    /// performing ~1 250 mixed reinforce / decay_all operations (10 000
+    /// total) on a shared RAM-only SynapseStore. Runs in <100 ms.
+    ///
+    /// Each `reinforce` internally calls `normalize_outgoing` for both
+    /// endpoints, which walks the inverted index → this is the read
+    /// path under contention. `decay_all` is a global write/read on
+    /// every synapse, also stressing concurrent iteration.
+    ///
+    /// The test asserts the node_to_keys ↔ synapses invariant holds
+    /// after the storm: every key in `synapses` is reachable via the
+    /// inverted index for both endpoints, and no orphan entry points
+    /// at a missing key. The small NODE_POOL (32 nodes) forces shard
+    /// collisions in DashMap, which would have triggered the prior
+    /// re-entry deadlock immediately.
+    #[test]
+    fn t4_concurrent_mixed_ops_stress_invariant() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const THREADS: usize = 8;
+        const OPS_PER_THREAD: usize = 1_250;
+        const NODE_POOL: u64 = 32;
+
+        let store = Arc::new(SynapseStore::new(SynapseConfig::default()));
+        let ids: Vec<NodeId> = (1..=NODE_POOL).map(NodeId).collect();
+
+        let mut handles = Vec::with_capacity(THREADS);
+        for tid in 0..THREADS {
+            let store = Arc::clone(&store);
+            let ids = ids.clone();
+            handles.push(thread::spawn(move || {
+                // Cheap deterministic LCG seeded by thread id — no rand
+                // dep needed in the test crate.
+                let mut state: u64 = 0x9E37_79B9_7F4A_7C15u64.wrapping_mul(tid as u64 + 1);
+                let next = |s: &mut u64| {
+                    *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                    *s
+                };
+                for _ in 0..OPS_PER_THREAD {
+                    let r = next(&mut state);
+                    let a = ids[((r >> 1) as usize) % ids.len()];
+                    let b = ids[((r >> 33) as usize) % ids.len()];
+                    if a == b {
+                        continue;
+                    }
+                    if r & 0b11 == 0 {
+                        // 25 % decay sweeps the whole synapse map.
+                        store.decay_all(0.999);
+                    } else {
+                        // 75 % reinforce — also fires normalize_outgoing
+                        // twice (once per endpoint), exercising the
+                        // inverted-index read path.
+                        store.reinforce(a, b, 0.05);
+                    }
+                }
+            }));
+        }
+        for h in handles {
+            h.join().expect("worker panicked");
+        }
+
+        // Invariant 1 — every recorded synapse is in the inverted index
+        // for BOTH endpoints.
+        let snap = store.snapshot();
+        for syn in &snap {
+            let key = SynapseKey::new(syn.source, syn.target);
+            for nid in [syn.source, syn.target] {
+                let entry = store.node_to_keys.get(&nid).unwrap_or_else(|| {
+                    panic!(
+                        "post-stress: node {nid:?} missing from inverted index \
+                         (expected to reference key {key:?})"
+                    )
+                });
+                assert!(
+                    entry.iter().any(|k| *k == key),
+                    "post-stress: node_to_keys[{nid:?}] does not contain {key:?}"
+                );
+            }
+        }
+
+        // Invariant 2 — no orphan entries pointing to missing synapses.
+        for entry in store.node_to_keys.iter() {
+            for k in entry.value().iter() {
+                assert!(
+                    store.synapses.contains_key(k),
+                    "post-stress: node_to_keys[{:?}] references missing synapse {k:?}",
+                    entry.key()
+                );
+            }
+        }
+
+        // Sanity bound: with NODE_POOL=32 the full unordered pair space
+        // is C(32, 2) = 496 — competitive normalization plus eviction
+        // keep us at or below that.
+        let max_pairs = (NODE_POOL * (NODE_POOL - 1) / 2) as usize;
+        assert!(
+            store.len() <= max_pairs,
+            "synapse count {} exceeds pair-space upper bound {}",
+            store.len(),
+            max_pairs
+        );
+    }
 }
