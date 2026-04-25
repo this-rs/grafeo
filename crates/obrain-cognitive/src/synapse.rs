@@ -6,6 +6,7 @@
 //! "nodes that fire together, wire together."
 
 use async_trait::async_trait;
+use crossbeam::queue::SegQueue;
 use dashmap::DashMap;
 use obrain_common::types::{EdgeId, NodeId};
 use obrain_reactive::{MutationEvent, MutationListener};
@@ -238,6 +239,22 @@ const SYNAPSE_EDGE_TYPE: &str = "SYNAPSE";
 /// a warm-read accelerator. The `graph_store` is still required in this
 /// mode because edge creation (structural shape) goes through the graph
 /// store; only the weight column is substrate-routed.
+///
+/// Plan 69e59065 T3 — pending metadata write descriptor. Pushed to
+/// `SynapseStore::pending_metadata_writes` (a lock-free MPMC SegQueue)
+/// from the hot path; drained by `flush_pending_metadata()` either on
+/// the SynapseConsolidator background tick (~30s) or via a SIGTERM-safe
+/// shutdown handler. Carries only the LPG metadata that has no
+/// substrate column today (last_reinforced_epoch, reinforcement_count).
+/// The weight is NOT carried — it's already durable on the substrate
+/// column path via `reinforce_edge_synapse_f32`.
+#[derive(Debug, Clone, Copy)]
+struct MetadataDelta {
+    eid: EdgeId,
+    last_reinforced_epoch: f64,
+    reinforcement_count: u32,
+}
+
 pub struct SynapseStore {
     /// Synapses indexed by canonical (source, target) key.
     synapses: DashMap<SynapseKey, Synapse>,
@@ -258,6 +275,16 @@ pub struct SynapseStore {
     /// weights and the DashMap is a thin warm-read accelerator.
     #[cfg(feature = "substrate")]
     substrate: Option<Arc<obrain_substrate::SubstrateStore>>,
+    /// Plan 69e59065 T3 — lock-free MPMC queue of LPG metadata writes
+    /// pending persistence. `reinforce()` pushes a `MetadataDelta` here
+    /// instead of issuing 3 synchronous `persist_edge_f64` calls. The
+    /// consolidator (or SIGTERM handler) drains the queue in batch via
+    /// [`Self::flush_pending_metadata`]. Crossbeam's SegQueue is
+    /// chosen because the push path must be wait-free under the
+    /// 21-thread feedback workload that previously serialised on the
+    /// LPG WAL writer (gotcha 49938809 root cause confirmed by T1
+    /// step 4 lock contention probe, note f1733c03).
+    pending_metadata_writes: SegQueue<MetadataDelta>,
     /// Cross-base synapses between nodes from different databases.
     cross_base: DashMap<(CrossBaseNodeId, CrossBaseNodeId), (f64, u32)>,
     /// Plan 69e59065 T1 — instrumentation: counts every full DashMap scan
@@ -307,6 +334,7 @@ impl SynapseStore {
             reinforces_total: AtomicU64::new(0),
             lpg_metadata_writes_total: AtomicU64::new(0),
             node_to_keys: DashMap::new(),
+            pending_metadata_writes: SegQueue::new(),
         }
     }
 
@@ -330,6 +358,7 @@ impl SynapseStore {
             reinforces_total: AtomicU64::new(0),
             lpg_metadata_writes_total: AtomicU64::new(0),
             node_to_keys: DashMap::new(),
+            pending_metadata_writes: SegQueue::new(),
         }
     }
 
@@ -372,6 +401,7 @@ impl SynapseStore {
             reinforces_total: AtomicU64::new(0),
             lpg_metadata_writes_total: AtomicU64::new(0),
             node_to_keys: DashMap::new(),
+            pending_metadata_writes: SegQueue::new(),
         }
     }
 
@@ -524,50 +554,128 @@ impl SynapseStore {
         self.touch(key);
         self.maybe_evict();
 
-        // Write-through: persist weight, epoch timestamp, and reinforcement count
+        // Write-through: persist weight (substrate column, synchronous)
+        // and queue last_reinforced + count for batched LPG persistence.
+        //
+        // Plan 69e59065 T3 — the prior 3 synchronous `persist_edge_f64`
+        // calls became the dominant lock-contention point under
+        // multi-thread feedback (T1 step 4 verdict, note f1733c03):
+        // single-writer LPG WAL + 21-thread reinforce → p99 330 µs.
+        // We retain ONE durable synchronous write — the substrate
+        // weight column via `reinforce_edge_synapse_f32` — because:
+        //   1. it carries the value users actually see (current weight)
+        //   2. its WAL record is per-edge, not serialised across threads
+        //      the way LPG `set_edge_property` was
+        // The remaining metadata (`last_reinforced_epoch`,
+        // `reinforcement_count`) is enqueued for the Consolidator and
+        // flushed periodically via [`Self::flush_pending_metadata`].
+        // Loss budget on `kill -9` ≤ 30s — within constraint aa932b40.
+        // `kill -TERM` triggers a final drain through the SIGTERM handler.
+        //
+        // PROP_SYNAPSE_WEIGHT (LPG) is no longer written in substrate
+        // mode — the column is authoritative, and reads at line 686 +
+        // line 817 already prefer the column over the property.
+        // Removing the write breaks `load_from_graph` discovery because
+        // it currently gates on `PROP_SYNAPSE_WEIGHT` presence; the
+        // discovery loop is reworked below to be substrate-first.
         if let Some(eid) = self.ensure_edge(key)
-            && let Some(gs) = &self.graph_store
             && let Some(entry) = self.synapses.get(&key)
         {
-            // In substrate mode, route the weight through the EdgeRecord
-            // column — this is the sole durable write path. The graph
-            // store's edge properties become metadata (reinforcement count
-            // + epoch) that stay on the LPG side until T10 expands the
-            // edge record.
+            let mut substrate_active = false;
             #[cfg(feature = "substrate")]
             if let Some(sub) = self.substrate.as_ref() {
                 // Clamp to [0, 1] for the Q0.16 column. Values above 1.0
                 // saturate — expected in high-activity regimes because
                 // `max_synapse_weight` defaults to 10.0 while the column
-                // tops at 1.0. The source-of-truth raw weight stays in
-                // the DashMap + LPG property for cross-session fidelity;
-                // the column is a fast-path gradient used by the
-                // Consolidator and spreading-activation code.
+                // tops at 1.0.
                 let normalized = (entry.raw_weight() / max_w).clamp(0.0, 1.0);
                 let _ = sub.reinforce_edge_synapse_f32(eid, normalized as f32);
+                substrate_active = true;
             }
 
-            // Persist the raw weight (not decayed) — decay will be recomputed
-            // from the epoch timestamp on reload.
-            // T1 instrumentation — 3 LPG metadata writes per reinforce.
-            // Plan 69e59065 T3 will move these into a batched consolidator.
-            self.lpg_metadata_writes_total.fetch_add(3, Ordering::Relaxed);
-            persist_edge_f64(gs.as_ref(), eid, PROP_SYNAPSE_WEIGHT, entry.raw_weight());
-            // Persist epoch so cross-session decay works correctly.
-            let epoch_secs = now_epoch_secs();
-            persist_edge_f64(
-                gs.as_ref(),
+            // T1 instrumentation — counter renamed semantically: now
+            // counts queued metadata writes instead of synchronous
+            // persists. The write_amplification gate from T1 step 3
+            // still uses this counter; the ratio stays meaningful
+            // because we still emit ~2 metadata writes per reinforce
+            // (epoch + count). The 3rd (PROP_SYNAPSE_WEIGHT) is
+            // structurally eliminated in substrate mode.
+            self.lpg_metadata_writes_total
+                .fetch_add(2, Ordering::Relaxed);
+
+            // Always queue the metadata — drained by the consolidator
+            // or by an explicit `flush_pending_metadata` call.
+            self.pending_metadata_writes.push(MetadataDelta {
                 eid,
-                PROP_SYNAPSE_LAST_REINFORCED_EPOCH,
-                epoch_secs,
-            );
-            persist_edge_f64(
-                gs.as_ref(),
-                eid,
-                PROP_SYNAPSE_REINFORCEMENT_COUNT,
-                entry.reinforcement_count as f64,
-            );
+                last_reinforced_epoch: now_epoch_secs(),
+                reinforcement_count: entry.reinforcement_count,
+            });
+
+            // Legacy-mode safety net: when substrate is NOT active, the
+            // LPG `PROP_SYNAPSE_WEIGHT` is the only place the weight
+            // lives. We must persist it synchronously here because the
+            // queue only carries epoch + count. Test-only path; production
+            // always runs in substrate mode.
+            if !substrate_active
+                && let Some(gs) = &self.graph_store
+            {
+                self.lpg_metadata_writes_total.fetch_add(1, Ordering::Relaxed);
+                persist_edge_f64(gs.as_ref(), eid, PROP_SYNAPSE_WEIGHT, entry.raw_weight());
+            }
         }
+    }
+
+    /// Plan 69e59065 T3 — Drain the queued metadata writes
+    /// ([`MetadataDelta`]) to the LPG side. Returns the number of
+    /// deltas flushed. Idempotent and safe to call concurrently with
+    /// `reinforce()` — concurrent pushes that race against the drain
+    /// are not lost; they simply land in the next drain.
+    ///
+    /// Cadence:
+    /// - Background `SynapseConsolidator` (T3 step 2): every ~30s
+    /// - SIGTERM shutdown handler (T3 step 3): final drain before exit
+    /// - Tests / direct callers: on-demand for assertions
+    ///
+    /// Per-delta cost: 2 `persist_edge_f64` calls
+    /// (`PROP_SYNAPSE_LAST_REINFORCED_EPOCH` +
+    /// `PROP_SYNAPSE_REINFORCEMENT_COUNT`). Co-locates with the LPG
+    /// WAL writer — but now in batch mode, single-threaded, **off the
+    /// hot path** so the multi-thread `reinforce()` workload does not
+    /// serialise on the WAL.
+    pub fn flush_pending_metadata(&self) -> usize {
+        let Some(gs) = self.graph_store.as_ref() else {
+            // No graph store wired — drop the queued writes silently.
+            // Pop everything so the queue doesn't grow unboundedly in
+            // tests that never set a graph store.
+            let mut dropped = 0usize;
+            while self.pending_metadata_writes.pop().is_some() {
+                dropped += 1;
+            }
+            return dropped;
+        };
+        let mut flushed = 0usize;
+        while let Some(d) = self.pending_metadata_writes.pop() {
+            persist_edge_f64(
+                gs.as_ref(),
+                d.eid,
+                PROP_SYNAPSE_LAST_REINFORCED_EPOCH,
+                d.last_reinforced_epoch,
+            );
+            persist_edge_f64(
+                gs.as_ref(),
+                d.eid,
+                PROP_SYNAPSE_REINFORCEMENT_COUNT,
+                d.reinforcement_count as f64,
+            );
+            flushed += 1;
+        }
+        flushed
+    }
+
+    /// Plan 69e59065 T3 — number of `MetadataDelta` entries currently
+    /// pending in the consolidator queue. Used by metrics and tests.
+    pub fn pending_metadata_writes_count(&self) -> usize {
+        self.pending_metadata_writes.len()
     }
 
     /// Apply a multiplicative decay to every live synapse weight column
@@ -814,8 +922,32 @@ impl SynapseStore {
                 if self.synapses.contains_key(&key) {
                     continue;
                 }
-                let Some(raw_weight) = load_edge_f64(gs.as_ref(), eid, PROP_SYNAPSE_WEIGHT) else {
-                    continue;
+
+                // Plan 69e59065 T3 — substrate-first weight discovery.
+                // Pre-T3, this loop gated synapse discovery on the
+                // presence of `PROP_SYNAPSE_WEIGHT`; that worked because
+                // every reinforce wrote the property. Post-T3, in
+                // substrate mode the property is no longer written
+                // (column is authoritative). We must therefore prefer
+                // the substrate column for discovery and fall back to
+                // the LPG property only in legacy mode.
+                let raw_weight = {
+                    #[cfg(feature = "substrate")]
+                    let from_substrate = self
+                        .substrate
+                        .as_ref()
+                        .and_then(|sub| sub.get_edge_synapse_weight_f32(eid).ok().flatten())
+                        .map(|w| (w as f64) * self.config.max_synapse_weight);
+                    #[cfg(not(feature = "substrate"))]
+                    let from_substrate: Option<f64> = None;
+
+                    match from_substrate {
+                        Some(w) => w,
+                        None => match load_edge_f64(gs.as_ref(), eid, PROP_SYNAPSE_WEIGHT) {
+                            Some(w) => w,
+                            None => continue, // neither source carries the weight → skip
+                        },
+                    }
                 };
                 let last_reinforced = epoch_to_instant(load_edge_f64(
                     gs.as_ref(),
@@ -825,19 +957,6 @@ impl SynapseStore {
                 let reinforcement_count =
                     load_edge_f64(gs.as_ref(), eid, PROP_SYNAPSE_REINFORCEMENT_COUNT)
                         .map_or(1, |v| v as u32);
-
-                // Substrate is authoritative for weight when set — override
-                // the LPG-persisted value with the column read. Denormalize
-                // from Q0.16 `[0, 1]` back to raw `[0, max_synapse_weight]`.
-                #[cfg(feature = "substrate")]
-                let raw_weight = if let Some(sub) = self.substrate.as_ref() {
-                    match sub.get_edge_synapse_weight_f32(eid) {
-                        Ok(Some(w)) => (w as f64) * self.config.max_synapse_weight,
-                        _ => raw_weight,
-                    }
-                } else {
-                    raw_weight
-                };
 
                 let syn = Synapse {
                     source: key.0,

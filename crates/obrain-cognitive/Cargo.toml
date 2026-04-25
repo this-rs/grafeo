@@ -111,6 +111,9 @@ thiserror.workspace = true
 parking_lot.workspace = true
 dashmap.workspace = true
 rayon = { workspace = true }
+# Plan 69e59065 T3 — crossbeam::queue::SegQueue for the lock-free
+# `pending_metadata_writes` buffer drained by SynapseConsolidator.
+crossbeam = { workspace = true }
 
 # Tracing
 tracing.workspace = true
