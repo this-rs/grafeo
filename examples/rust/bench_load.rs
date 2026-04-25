@@ -30,7 +30,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let file_size = std::fs::metadata(&db_path)?.len();
     println!("=== bench-load ===");
-    println!("File: {} ({:.2} MB)", db_path.display(), file_size as f64 / 1_048_576.0);
+    println!(
+        "File: {} ({:.2} MB)",
+        db_path.display(),
+        file_size as f64 / 1_048_576.0
+    );
     println!();
 
     // ── Measure open time ──
@@ -44,7 +48,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Count nodes and edges
     let t_count = Instant::now();
     let node_count: i64 = session.execute("MATCH (n) RETURN COUNT(n)")?.scalar()?;
-    let edge_count: i64 = session.execute("MATCH ()-[r]->() RETURN COUNT(r)")?.scalar()?;
+    let edge_count: i64 = session
+        .execute("MATCH ()-[r]->() RETURN COUNT(r)")?
+        .scalar()?;
     let count_ms = t_count.elapsed().as_millis();
 
     println!("Open time:   {open_ms:.1}ms");
@@ -58,7 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Query 1: Label distribution
         let t = Instant::now();
         let result = session.execute(
-            "MATCH (n) RETURN labels(n)[0] AS label, COUNT(n) AS cnt ORDER BY cnt DESC LIMIT 10"
+            "MATCH (n) RETURN labels(n)[0] AS label, COUNT(n) AS cnt ORDER BY cnt DESC LIMIT 10",
         )?;
         let ms = t.elapsed().as_millis();
         println!("\nLabel distribution ({ms}ms):");
@@ -69,7 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Query 2: Edge type distribution
         let t = Instant::now();
         let result = session.execute(
-            "MATCH ()-[r]->() RETURN type(r) AS t, COUNT(r) AS cnt ORDER BY cnt DESC LIMIT 10"
+            "MATCH ()-[r]->() RETURN type(r) AS t, COUNT(r) AS cnt ORDER BY cnt DESC LIMIT 10",
         )?;
         let ms = t.elapsed().as_millis();
         println!("\nEdge type distribution ({ms}ms):");
@@ -79,9 +85,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Query 3: Sample traversal
         let t = Instant::now();
-        let result = session.execute(
-            "MATCH (n)-[r]->(m) RETURN n.name, type(r), m.name LIMIT 5"
-        )?;
+        let result =
+            session.execute("MATCH (n)-[r]->(m) RETURN n.name, type(r), m.name LIMIT 5")?;
         let ms = t.elapsed().as_millis();
         println!("\nSample traversal ({ms}ms):");
         for row in &result.rows {

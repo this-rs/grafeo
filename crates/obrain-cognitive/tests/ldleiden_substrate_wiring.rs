@@ -23,9 +23,9 @@
 
 use obrain_cognitive::community::{Graph, LDleiden, LeidenConfig};
 use obrain_substrate::file::Zone;
-use obrain_substrate::record::{f32_to_q1_15, PackedScarUtilAff, U48};
+use obrain_substrate::record::{PackedScarUtilAff, U48, f32_to_q1_15};
 use obrain_substrate::wal_io::SyncMode;
-use obrain_substrate::{replay_from, NodeRecord, SubstrateFile, Writer};
+use obrain_substrate::{NodeRecord, SubstrateFile, Writer, replay_from};
 
 fn sample_node(i: u32, community: u32) -> NodeRecord {
     NodeRecord {
@@ -165,8 +165,7 @@ fn ldleiden_driver_persists_across_crash() {
         }
         Graph::from_edges(n, all_edges)
     };
-    let reloaded_partition: Vec<u32> =
-        (0..n).map(|i| slice[i as usize].community_id).collect();
+    let reloaded_partition: Vec<u32> = (0..n).map(|i| slice[i as usize].community_id).collect();
     let reloaded =
         LDleiden::from_partition(final_graph, reloaded_partition, LeidenConfig::default());
 
@@ -186,8 +185,8 @@ fn ldleiden_driver_persists_across_crash() {
 /// delta produces a `CommunityAssign` record.
 #[test]
 fn each_driver_delta_produces_one_wal_record() {
-    use obrain_substrate::wal_io::WalReader;
     use obrain_substrate::WalPayload;
+    use obrain_substrate::wal_io::WalReader;
 
     let td = tempfile::tempdir().unwrap();
     let sub_path = td.path().join("kb");

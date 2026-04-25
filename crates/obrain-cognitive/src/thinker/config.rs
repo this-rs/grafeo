@@ -49,8 +49,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ConsolidatorConfig, DreamerConfig, PredictorConfig, ThinkerBudget,
-    ThinkerRuntimeConfig, WardenConfig,
+    ConsolidatorConfig, DreamerConfig, PredictorConfig, ThinkerBudget, ThinkerRuntimeConfig,
+    WardenConfig,
 };
 
 const fn default_max_total_cpu_fraction() -> f32 {
@@ -362,9 +362,7 @@ impl ThinkerFleetConfig<PredictorTomlCfg> {
         let defaults = PredictorConfig::default();
         let t = &self.inner_toml;
         PredictorConfig {
-            top_k_communities: t
-                .top_k_communities
-                .unwrap_or(defaults.top_k_communities),
+            top_k_communities: t.top_k_communities.unwrap_or(defaults.top_k_communities),
             min_breadcrumbs: t.min_breadcrumbs.unwrap_or(defaults.min_breadcrumbs),
             interval: t
                 .interval_secs

@@ -39,10 +39,8 @@
 //! non-determinism because the per-shard top-K results are merged in
 //! a deterministic `(distance, node-offset)` order.
 
-use crate::popcount::{
-    t0_hamming, t1_hamming, xor_popcount_t0_scalar, xor_popcount_t1_scalar,
-};
-use crate::tiers::{tier2_cosine, Tier0, Tier1, Tier2};
+use crate::popcount::{t0_hamming, t1_hamming, xor_popcount_t0_scalar, xor_popcount_t1_scalar};
+use crate::tiers::{Tier0, Tier1, Tier2, tier2_cosine};
 
 use rayon::prelude::*;
 
@@ -539,7 +537,11 @@ mod tests {
         assert_eq!(dispatched, scalar, "dispatched cascade != scalar");
         // Top-1 must be the query node itself.
         assert_eq!(dispatched[0].node_offset, q_idx as u32);
-        assert!(dispatched[0].cosine > 0.99, "self-cosine = {}", dispatched[0].cosine);
+        assert!(
+            dispatched[0].cosine > 0.99,
+            "self-cosine = {}",
+            dispatched[0].cosine
+        );
     }
 
     #[test]

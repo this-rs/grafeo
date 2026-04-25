@@ -48,7 +48,7 @@
 #![cfg(feature = "community")]
 
 use obrain_cognitive::community::{
-    leiden_batch, modularity, Graph, LDleiden, LeidenConfig, Partition,
+    Graph, LDleiden, LeidenConfig, Partition, leiden_batch, modularity,
 };
 
 // ---------------------------------------------------------------------------
@@ -214,13 +214,7 @@ struct QualityStats {
     nmi_batch: f64,
 }
 
-fn run_quality_check(
-    n: u32,
-    k: u32,
-    avg_deg: f64,
-    mu: f64,
-    seeds: &[u64],
-) -> Vec<QualityStats> {
+fn run_quality_check(n: u32, k: u32, avg_deg: f64, mu: f64, seeds: &[u64]) -> Vec<QualityStats> {
     let cfg = LeidenConfig::default();
     let mut out = Vec::with_capacity(seeds.len());
 
@@ -234,11 +228,9 @@ fn run_quality_check(
         let nmi_batch = nmi(&p_batch, &planted);
 
         // Incremental: bootstrap + stream + refresh.
-        let (p_refreshed, p_pure_incr, _g) =
-            drive_incremental_then_refine(n, &edges, cfg);
+        let (p_refreshed, p_pure_incr, _g) = drive_incremental_then_refine(n, &edges, cfg);
         let q_refreshed = modularity(&final_graph, &p_refreshed, cfg.resolution);
-        let q_pure_incremental =
-            modularity(&final_graph, &p_pure_incr, cfg.resolution);
+        let q_pure_incremental = modularity(&final_graph, &p_pure_incr, cfg.resolution);
 
         let ratio = q_refreshed / q_batch.max(1e-9);
         let nmi_planted = nmi(&p_refreshed, &planted);
@@ -355,10 +347,7 @@ fn pure_incremental_baseline_report() {
         "  pure-incremental ratios: min={:.4}, avg={:.4} (vs refreshed avg {:.4})",
         min_ratio,
         avg_ratio,
-        results
-            .iter()
-            .map(|r| r.ratio)
-            .sum::<f64>() / results.len() as f64,
+        results.iter().map(|r| r.ratio).sum::<f64>() / results.len() as f64,
     );
 
     // Ensure pure-incremental doesn't collapse entirely (this would
@@ -396,7 +385,9 @@ fn nmi_permutation_invariance_and_zero_baseline() {
     // Random labels vs structured: NMI should be small but not
     // guaranteed zero on small n.
     let mut state = 0xDEAD_BEEF_u64;
-    let rand: Vec<u32> = (0..100).map(|_| (xorshift64(&mut state) % 4) as u32).collect();
+    let rand: Vec<u32> = (0..100)
+        .map(|_| (xorshift64(&mut state) % 4) as u32)
+        .collect();
     let nmi_rand = nmi(&a, &rand);
     assert!(
         nmi_rand < 0.25,

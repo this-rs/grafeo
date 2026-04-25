@@ -6,9 +6,9 @@
 use std::collections::BinaryHeap;
 use std::sync::OnceLock;
 
-use obrain_common::types::{NodeId, Value};
 #[cfg(test)]
 use obrain_common::types::PropertyKey;
+use obrain_common::types::{NodeId, Value};
 use obrain_common::utils::error::{Error, Result};
 use obrain_common::utils::hash::FxHashMap;
 use obrain_core::graph::Direction;
@@ -925,11 +925,36 @@ mod tests {
         let n4 = store.create_node(&["Node"]);
 
         // Create edges with weights
-        store.create_edge_with_props(n0, n1, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(2.0))]);
-        store.create_edge_with_props(n1, n2, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(3.0))]);
-        store.create_edge_with_props(n0, n3, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(4.0))]);
-        store.create_edge_with_props(n3, n1, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(1.0))]);
-        store.create_edge_with_props(n2, n4, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(1.0))]);
+        store.create_edge_with_props(
+            n0,
+            n1,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(2.0))],
+        );
+        store.create_edge_with_props(
+            n1,
+            n2,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(3.0))],
+        );
+        store.create_edge_with_props(
+            n0,
+            n3,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(4.0))],
+        );
+        store.create_edge_with_props(
+            n3,
+            n1,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(1.0))],
+        );
+        store.create_edge_with_props(
+            n2,
+            n4,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(1.0))],
+        );
 
         (store, vec![n0, n1, n2, n3, n4])
     }
@@ -1003,8 +1028,18 @@ mod tests {
         let n1 = store.create_node(&["Node"]);
         let n2 = store.create_node(&["Node"]);
 
-        store.create_edge_with_props(n0, n1, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(10.0))]);
-        store.create_edge_with_props(n1, n2, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(-5.0))]);
+        store.create_edge_with_props(
+            n0,
+            n1,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(10.0))],
+        );
+        store.create_edge_with_props(
+            n1,
+            n2,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(-5.0))],
+        );
 
         let result = bellman_ford(&store, n0, Some("weight"));
 
@@ -1033,10 +1068,30 @@ mod tests {
         let n2 = store.create_node(&["Node"]);
         let n3 = store.create_node(&["Node"]);
 
-        store.create_edge_with_props(n0, n1, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(6.0))]);
-        store.create_edge_with_props(n1, n3, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(2.0))]);
-        store.create_edge_with_props(n0, n2, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(3.0))]);
-        store.create_edge_with_props(n2, n3, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(-4.0))]);
+        store.create_edge_with_props(
+            n0,
+            n1,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(6.0))],
+        );
+        store.create_edge_with_props(
+            n1,
+            n3,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(2.0))],
+        );
+        store.create_edge_with_props(
+            n0,
+            n2,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(3.0))],
+        );
+        store.create_edge_with_props(
+            n2,
+            n3,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(-4.0))],
+        );
 
         let result = bellman_ford(&store, n0, Some("weight"));
 
@@ -1060,9 +1115,24 @@ mod tests {
         let n1 = store.create_node(&["Node"]);
         let n2 = store.create_node(&["Node"]);
 
-        store.create_edge_with_props(n0, n1, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(1.0))]);
-        store.create_edge_with_props(n1, n2, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(1.0))]);
-        store.create_edge_with_props(n2, n1, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(-3.0))]);
+        store.create_edge_with_props(
+            n0,
+            n1,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(1.0))],
+        );
+        store.create_edge_with_props(
+            n1,
+            n2,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(1.0))],
+        );
+        store.create_edge_with_props(
+            n2,
+            n1,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(-3.0))],
+        );
 
         let result = bellman_ford(&store, n0, Some("weight"));
 
@@ -1105,13 +1175,7 @@ mod tests {
         // Simple heuristic: always return 0 (degenerates to Dijkstra)
         let heuristic = |_: NodeId| 0.0;
 
-        let result = astar(
-            &store,
-            nodes[0],
-            nodes[4],
-            Some("weight"),
-            heuristic,
-        );
+        let result = astar(&store, nodes[0], nodes[4], Some("weight"), heuristic);
         assert!(result.is_some());
 
         let (distance, path) = result.unwrap();
@@ -1151,8 +1215,18 @@ mod tests {
         store.set_node_property(n0, "name", Value::from("alix"));
         store.set_node_property(n1, "name", Value::from("gus"));
         store.set_node_property(n2, "name", Value::from("harm"));
-        store.create_edge_with_props(n0, n1, "KNOWS", &[(PropertyKey::from("weight"), Value::Float64(1.0))]);
-        store.create_edge_with_props(n1, n2, "KNOWS", &[(PropertyKey::from("weight"), Value::Float64(2.0))]);
+        store.create_edge_with_props(
+            n0,
+            n1,
+            "KNOWS",
+            &[(PropertyKey::from("weight"), Value::Float64(1.0))],
+        );
+        store.create_edge_with_props(
+            n1,
+            n2,
+            "KNOWS",
+            &[(PropertyKey::from("weight"), Value::Float64(2.0))],
+        );
 
         let mut params = Parameters::new();
         params.set_string("source", "alix");

@@ -18,9 +18,7 @@
 //! ```
 
 use obrain_common::types::{LogicalType, PropertyKey, Value};
-use obrain_core::execution::operators::{
-    MergeConfig, MergeOperator, Operator, PropertySource,
-};
+use obrain_core::execution::operators::{MergeConfig, MergeOperator, Operator, PropertySource};
 use obrain_core::graph::traits::GraphStoreMut;
 use obrain_substrate::SubstrateStore;
 use std::sync::Arc;

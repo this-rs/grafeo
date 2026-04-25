@@ -86,9 +86,8 @@ fn roundtrip_preserves_counts_properties_and_cognitive() {
     // Build a substrate destination and drive the streaming node+edge
     // transfer manually — this is a stand-in for the real phase_nodes /
     // phase_edges pipeline exercised via the CLI.
-    let substrate = Arc::new(
-        SubstrateStore::create(substrate_path.join("substrate.obrain")).unwrap(),
-    );
+    let substrate =
+        Arc::new(SubstrateStore::create(substrate_path.join("substrate.obrain")).unwrap());
 
     let legacy_dyn: Arc<dyn GraphStore> = legacy.clone() as Arc<dyn GraphStore>;
 
@@ -128,10 +127,7 @@ fn roundtrip_preserves_counts_properties_and_cognitive() {
             let edge_type = legacy_dyn.edge_type(edge_id).unwrap();
             let new_edge = substrate.create_edge(new_src, new_dst, edge_type.as_str());
             // Non-cognitive edge props
-            let batch = legacy_dyn.get_edges_properties_selective_batch(
-                &[edge_id],
-                &[],
-            );
+            let batch = legacy_dyn.get_edges_properties_selective_batch(&[edge_id], &[]);
             if let Some(map) = batch.first() {
                 for (k, v) in map.iter() {
                     let ks = k.as_str();
@@ -179,7 +175,10 @@ fn roundtrip_preserves_counts_properties_and_cognitive() {
         (energy - 0.72).abs() < 1e-2,
         "energy not transferred: got {energy}"
     );
-    let scar = substrate.get_node_scar_field_f32(alice_new).unwrap().unwrap();
+    let scar = substrate
+        .get_node_scar_field_f32(alice_new)
+        .unwrap()
+        .unwrap();
     // scar is packed into 5 bits (3×5 bits per u16 for scar/util/affinity),
     // so quantisation step is 1/31 ≈ 0.032 — we tolerate ±0.05.
     assert!(
@@ -285,8 +284,7 @@ fn converter_is_idempotent_on_synthetic_input() {
         let mut edge_types_seen = Vec::new();
         for src_old in &ids {
             let new_src = node_map[&src_old.as_u64()];
-            let mut outs = legacy_dyn
-                .edges_from(*src_old, obrain_core::graph::Direction::Outgoing);
+            let mut outs = legacy_dyn.edges_from(*src_old, obrain_core::graph::Direction::Outgoing);
             outs.sort_by_key(|(_, eid)| eid.as_u64());
             for (dst_old, eid) in outs {
                 let new_dst = node_map[&dst_old.as_u64()];
@@ -400,9 +398,7 @@ fn value_vector_bypasses_props_sidecar_and_roundtrips_via_vec_columns() {
     if props_file.exists() {
         let bytes = std::fs::read(&props_file).unwrap();
         let needle = b"embedding_user";
-        let hit = bytes
-            .windows(needle.len())
-            .any(|w| w == needle);
+        let hit = bytes.windows(needle.len()).any(|w| w == needle);
         assert!(
             !hit,
             "substrate.props must not contain vector property key; sidecar size={} B",
@@ -449,13 +445,11 @@ fn oversize_string_bypasses_props_sidecar_and_roundtrips_via_blob_columns() {
     // a distinctive marker so we can assert byte-exact roundtrip below
     // even in the middle of a 2 KB payload.
     let marker = "MARKER_4E_STEP";
-    let big_data: String = format!(
-        "{}{}{}",
-        "A".repeat(1024),
-        marker,
-        "Z".repeat(1024),
+    let big_data: String = format!("{}{}{}", "A".repeat(1024), marker, "Z".repeat(1024),);
+    assert!(
+        big_data.len() > 256,
+        "sanity: payload must exceed threshold"
     );
-    assert!(big_data.len() > 256, "sanity: payload must exceed threshold");
     substrate.set_node_property(n, "data", Value::String(big_data.clone().into()));
 
     substrate.flush().unwrap();
@@ -505,9 +499,7 @@ fn oversize_string_bypasses_props_sidecar_and_roundtrips_via_blob_columns() {
             "substrate.props SHOULD contain scalar 'title' key (sanity)",
         );
         // Payload must not leak either — marker lives only in the blob.
-        let marker_hit = bytes
-            .windows(marker.len())
-            .any(|w| w == marker.as_bytes());
+        let marker_hit = bytes.windows(marker.len()).any(|w| w == marker.as_bytes());
         assert!(
             !marker_hit,
             "oversize string payload leaked into substrate.props",

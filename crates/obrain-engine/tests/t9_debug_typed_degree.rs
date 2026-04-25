@@ -43,7 +43,10 @@ fn debug_total_imports_file_degree() {
              RETURN max(c) AS max_out",
         )
         .unwrap();
-    println!("Max OPTIONAL MATCH count(DISTINCT imported) for :File : {:?}", r4.rows);
+    println!(
+        "Max OPTIONAL MATCH count(DISTINCT imported) for :File : {:?}",
+        r4.rows
+    );
 
     // 5. Sum out_degree IMPORTS across all Files (slow path total).
     let r5 = session
@@ -60,7 +63,10 @@ fn debug_total_imports_file_degree() {
     // typed out_degree vs manual walk.
     let store = db.store();
     let files = store.nodes_by_label("File");
-    println!("Total File nodes via store.nodes_by_label : {}", files.len());
+    println!(
+        "Total File nodes via store.nodes_by_label : {}",
+        files.len()
+    );
     let mut deg_sum_direct = 0usize;
     let mut deg_sum_typed = 0usize;
     let mut max_direct = 0usize;

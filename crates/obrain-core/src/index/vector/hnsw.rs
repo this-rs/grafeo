@@ -172,10 +172,14 @@ impl HnswFlatTopology {
     pub fn to_bytes(&self) -> Vec<u8> {
         let header_size = std::mem::size_of::<HnswFlatHeader>();
         let total = header_size
-            + 4 + self.node_ids.len() * 8
-            + 4 + self.level_counts.len() * 4
-            + 4 + self.neighbor_offsets.len() * 8
-            + 4 + self.neighbor_list.len();
+            + 4
+            + self.node_ids.len() * 8
+            + 4
+            + self.level_counts.len() * 4
+            + 4
+            + self.neighbor_offsets.len() * 8
+            + 4
+            + self.neighbor_list.len();
 
         let mut buf = Vec::with_capacity(total);
 
@@ -217,15 +221,15 @@ impl HnswFlatTopology {
         }
 
         #[allow(unsafe_code)]
-        let header = unsafe {
-            std::ptr::read_unaligned(data.as_ptr() as *const HnswFlatHeader)
-        };
+        let header = unsafe { std::ptr::read_unaligned(data.as_ptr() as *const HnswFlatHeader) };
 
         let mut pos = header_size;
 
         // Read array helper
         let read_u32 = |p: &mut usize| -> Option<u32> {
-            if *p + 4 > data.len() { return None; }
+            if *p + 4 > data.len() {
+                return None;
+            }
             let v = u32::from_le_bytes(data[*p..*p + 4].try_into().ok()?);
             *p += 4;
             Some(v)
@@ -235,7 +239,9 @@ impl HnswFlatTopology {
         let n_ids = read_u32(&mut pos)? as usize;
         let mut node_ids = Vec::with_capacity(n_ids);
         for _ in 0..n_ids {
-            if pos + 8 > data.len() { return None; }
+            if pos + 8 > data.len() {
+                return None;
+            }
             node_ids.push(u64::from_le_bytes(data[pos..pos + 8].try_into().ok()?));
             pos += 8;
         }
@@ -244,7 +250,9 @@ impl HnswFlatTopology {
         let n_lc = read_u32(&mut pos)? as usize;
         let mut level_counts = Vec::with_capacity(n_lc);
         for _ in 0..n_lc {
-            if pos + 4 > data.len() { return None; }
+            if pos + 4 > data.len() {
+                return None;
+            }
             level_counts.push(u32::from_le_bytes(data[pos..pos + 4].try_into().ok()?));
             pos += 4;
         }
@@ -253,14 +261,18 @@ impl HnswFlatTopology {
         let n_off = read_u32(&mut pos)? as usize;
         let mut neighbor_offsets = Vec::with_capacity(n_off);
         for _ in 0..n_off {
-            if pos + 8 > data.len() { return None; }
+            if pos + 8 > data.len() {
+                return None;
+            }
             neighbor_offsets.push(u64::from_le_bytes(data[pos..pos + 8].try_into().ok()?));
             pos += 8;
         }
 
         // neighbor_list
         let n_nl = read_u32(&mut pos)? as usize;
-        if pos + n_nl > data.len() { return None; }
+        if pos + n_nl > data.len() {
+            return None;
+        }
         let neighbor_list = data[pos..pos + n_nl].to_vec();
 
         Some(Self {
@@ -1321,7 +1333,10 @@ impl HnswIndex {
             .with_ef_construction(flat.header.ef_construction as usize);
 
         let n = flat.header.node_count as usize;
-        if flat.node_ids.len() != n || flat.level_counts.len() != n || flat.neighbor_offsets.len() != n {
+        if flat.node_ids.len() != n
+            || flat.level_counts.len() != n
+            || flat.neighbor_offsets.len() != n
+        {
             return None;
         }
 
@@ -1397,9 +1412,8 @@ impl HnswIndex {
         // SAFETY: HnswFlatHeader is #[repr(C)] with fixed layout.
         // read_unaligned handles potentially unaligned source data.
         #[allow(unsafe_code)]
-        let header = unsafe {
-            std::ptr::read_unaligned(header_bytes.as_ptr() as *const HnswFlatHeader)
-        };
+        let header =
+            unsafe { std::ptr::read_unaligned(header_bytes.as_ptr() as *const HnswFlatHeader) };
 
         let flat = HnswFlatTopology {
             header,
@@ -2473,7 +2487,10 @@ mod tests {
 
         let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
         for i in 0..50u64 {
-            let v: Arc<[f32]> = (0..dim).map(|j| (i * dim as u64 + j as u64) as f32).collect::<Vec<_>>().into();
+            let v: Arc<[f32]> = (0..dim)
+                .map(|j| (i * dim as u64 + j as u64) as f32)
+                .collect::<Vec<_>>()
+                .into();
             map.insert(NodeId::new(i), v.clone());
             let accessor = make_accessor(&map);
             index.insert(NodeId::new(i), &v, &accessor);

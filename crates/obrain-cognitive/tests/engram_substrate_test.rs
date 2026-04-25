@@ -202,5 +202,9 @@ fn recall_filters_bloom_collisions_via_members_table() {
     assert_eq!(got, vec![e1], "collision must be resolved by members table");
 
     let got = store.recall(NodeId(99)).unwrap();
-    assert_eq!(got, vec![e65], "collision must be resolved by members table");
+    assert_eq!(
+        got,
+        vec![e65],
+        "collision must be resolved by members table"
+    );
 }

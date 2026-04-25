@@ -26,11 +26,7 @@ pub fn run(cmd: BackupCommands, _format: OutputFormat, _quiet: bool) -> Result<(
         ),
         BackupCommands::Restore { backup, path, .. } => (
             "restore",
-            format!(
-                "copy `{}` to `{}`",
-                backup.display(),
-                path.display()
-            ),
+            format!("copy `{}` to `{}`", backup.display(), path.display()),
         ),
     };
 

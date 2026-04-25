@@ -366,10 +366,11 @@ impl ObrainDB {
             return Self::open_substrate(db_path);
         }
 
-        let store = obrain_substrate::SubstrateStore::open_tempfile()
-            .map_err(|e| obrain_common::utils::error::Error::Internal(format!(
+        let store = obrain_substrate::SubstrateStore::open_tempfile().map_err(|e| {
+            obrain_common::utils::error::Error::Internal(format!(
                 "substrate tempfile creation failed: {e}"
-            )))?;
+            ))
+        })?;
         let typed: Arc<obrain_substrate::SubstrateStore> = Arc::new(store);
         let erased: Arc<dyn GraphStoreMut> = Arc::clone(&typed) as Arc<dyn GraphStoreMut>;
         let store = erased;
@@ -603,7 +604,6 @@ impl ObrainDB {
             _cognitive_scheduler: None,
         })
     }
-
 
     #[must_use]
     pub fn session(&self) -> Session {
@@ -1603,9 +1603,8 @@ mod tests {
 
     #[test]
     fn test_with_store_external_backend() {
-        
-
-        let external = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap()) as Arc<dyn obrain_core::graph::GraphStoreMut>;
+        let external = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap())
+            as Arc<dyn obrain_core::graph::GraphStoreMut>;
 
         // Seed data on the external store directly
         let n1 = external.create_node(&["Person"]);
@@ -1771,9 +1770,8 @@ mod tests {
 
     #[test]
     fn test_with_store_basic() {
-        
-
-        let store = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap()) as Arc<dyn obrain_core::graph::GraphStoreMut>;
+        let store = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap())
+            as Arc<dyn obrain_core::graph::GraphStoreMut>;
         let n1 = store.create_node(&["Person"]);
         store.set_node_property(n1, "name", "Alix".into());
 
@@ -1786,9 +1784,8 @@ mod tests {
 
     #[test]
     fn test_with_store_session() {
-        
-
-        let store = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap()) as Arc<dyn obrain_core::graph::GraphStoreMut>;
+        let store = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap())
+            as Arc<dyn obrain_core::graph::GraphStoreMut>;
         let graph_store = Arc::clone(&store) as Arc<dyn GraphStoreMut>;
         let db = ObrainDB::with_store(graph_store, Config::in_memory()).unwrap();
 
@@ -1799,9 +1796,8 @@ mod tests {
 
     #[test]
     fn test_with_store_mutations() {
-        
-
-        let store = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap()) as Arc<dyn obrain_core::graph::GraphStoreMut>;
+        let store = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap())
+            as Arc<dyn obrain_core::graph::GraphStoreMut>;
         let graph_store = Arc::clone(&store) as Arc<dyn GraphStoreMut>;
         let db = ObrainDB::with_store(graph_store, Config::in_memory()).unwrap();
 

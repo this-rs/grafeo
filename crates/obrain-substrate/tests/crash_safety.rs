@@ -30,11 +30,9 @@
 //! distribution of WAL sizes and tear points.
 
 use obrain_substrate::file::Zone;
-use obrain_substrate::record::{f32_to_q1_15, PackedScarUtilAff, U48};
+use obrain_substrate::record::{PackedScarUtilAff, U48, f32_to_q1_15};
 use obrain_substrate::wal_io::{SyncMode, WalReader};
-use obrain_substrate::{
-    replay_from, NodeRecord, SubstrateFile, WalPayload, Writer,
-};
+use obrain_substrate::{NodeRecord, SubstrateFile, WalPayload, Writer, replay_from};
 use std::path::Path;
 
 fn sample_node(i: u32) -> NodeRecord {
@@ -88,9 +86,7 @@ fn dropped_writer_replay_reconstructs() {
 
     // Verify the reconstruction.
     let nz = sub.open_zone(Zone::Nodes).unwrap();
-    let slice: &[NodeRecord] = bytemuck::cast_slice(
-        &nz.as_slice()[..1000 * NodeRecord::SIZE],
-    );
+    let slice: &[NodeRecord] = bytemuck::cast_slice(&nz.as_slice()[..1000 * NodeRecord::SIZE]);
     for i in 0..1000u32 {
         assert_eq!(
             slice[i as usize].label_bitset,
@@ -228,9 +224,8 @@ fn torn_wal_plus_wiped_zones_reconstructs_prefix() {
         // Every insert we saw in the WAL must now be durably in the zone.
         if !inserted_ids.is_empty() {
             let max_id = *inserted_ids.iter().max().unwrap();
-            let slice: &[NodeRecord] = bytemuck::cast_slice(
-                &nz.as_slice()[..(max_id as usize + 1) * NodeRecord::SIZE],
-            );
+            let slice: &[NodeRecord] =
+                bytemuck::cast_slice(&nz.as_slice()[..(max_id as usize + 1) * NodeRecord::SIZE]);
             for id in inserted_ids {
                 assert_eq!(
                     slice[id as usize].label_bitset,

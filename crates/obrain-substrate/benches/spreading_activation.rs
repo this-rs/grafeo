@@ -123,8 +123,7 @@ fn build_workload(n: usize) -> Workload {
     // Per-community bucket, so edge generation can pick same-community
     // neighbors by lookup into the bucket (O(1)) rather than slot
     // arithmetic that races the allocator's community-offset math.
-    let mut by_community: Vec<Vec<NodeId>> =
-        (0..=community_count).map(|_| Vec::new()).collect();
+    let mut by_community: Vec<Vec<NodeId>> = (0..=community_count).map(|_| Vec::new()).collect();
     'outer: for cid in 1..=community_count {
         for _ in 0..NODES_PER_COMMUNITY {
             if nodes.len() >= n {
@@ -144,8 +143,7 @@ fn build_workload(n: usize) -> Workload {
         let src = nodes[i];
         // Burst allocation => node[i] is in community `1 + (i / NODES_PER_COMMUNITY)`
         // as long as i < community_count * NODES_PER_COMMUNITY.
-        let src_cid =
-            ((i / NODES_PER_COMMUNITY) as u32 + 1).min(community_count);
+        let src_cid = ((i / NODES_PER_COMMUNITY) as u32 + 1).min(community_count);
         for _ in 0..AVG_DEGREE {
             let cross = rng.range(1_000_000) < CROSS_COMMUNITY_PROB_PPM;
             let dst = if cross {
@@ -247,7 +245,10 @@ fn bench_spreading_activation(c: &mut Criterion) {
     let n = workload_n();
     eprintln!("[spreading_activation] building workload: n = {n}");
     let w = build_workload(n);
-    eprintln!("[spreading_activation] workload ready: {} seeds", w.seeds.len());
+    eprintln!(
+        "[spreading_activation] workload ready: {} seeds",
+        w.seeds.len()
+    );
 
     let mut g = c.benchmark_group(format!("spreading_activation_depth3_{n}"));
     // 1ms target — Criterion's default warm-up and 100-sample config

@@ -317,9 +317,7 @@ impl AffinityStore {
     pub fn load_from_graph(&self) -> usize {
         #[cfg(feature = "substrate")]
         if self.substrate.is_some() {
-            tracing::trace!(
-                "affinity::load_from_graph: no-op (state is column-resident)"
-            );
+            tracing::trace!("affinity::load_from_graph: no-op (state is column-resident)");
             return 0;
         }
 
@@ -337,8 +335,8 @@ impl AffinityStore {
             if score <= 0.0 {
                 continue;
             }
-            let count = load_node_f64(gs.as_ref(), nid, PROP_QUERY_AFFINITY_COUNT)
-                .unwrap_or(1.0) as u32;
+            let count =
+                load_node_f64(gs.as_ref(), nid, PROP_QUERY_AFFINITY_COUNT).unwrap_or(1.0) as u32;
             self.nodes.insert(nid, NodeAffinity { score, count });
             loaded += 1;
         }

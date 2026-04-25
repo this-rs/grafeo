@@ -43,14 +43,14 @@ use std::time::{Duration, Instant};
 
 use obrain_substrate::SubstrateStore;
 
+pub mod config;
 pub mod consolidator;
-pub mod predictor;
 pub mod dreamer;
-pub mod warden;
 #[cfg(feature = "enrichment")]
 pub mod hilbert_enricher;
+pub mod predictor;
 pub mod runtime;
-pub mod config;
+pub mod warden;
 
 pub use config::{ThinkerFleetConfig, ThinkersConfig};
 pub use consolidator::{Consolidator, ConsolidatorConfig, ConsolidatorStats};
@@ -59,8 +59,8 @@ pub use dreamer::{Dreamer, DreamerConfig, DreamerStats};
 pub use hilbert_enricher::{HilbertEnricher, HilbertEnricherConfig, HilbertEnricherStats};
 pub use predictor::{Predictor, PredictorConfig, PredictorStats};
 pub use runtime::{
-    NeverOverloadedSensor, PressureSensor, ThinkerHandle, ThinkerRuntime,
-    ThinkerRuntimeConfig, ThinkerRuntimeStats,
+    NeverOverloadedSensor, PressureSensor, ThinkerHandle, ThinkerRuntime, ThinkerRuntimeConfig,
+    ThinkerRuntimeStats,
 };
 pub use warden::{CommunityWardenThinker, WardenConfig, WardenStats};
 
@@ -100,7 +100,9 @@ pub fn spawn_standard_fleet(
     // their `obrain-cognitive` feature list.
     #[cfg(feature = "enrichment")]
     if cfg.hilbert_enricher.enabled {
-        rt.spawn(hilbert_enricher::HilbertEnricher::new(cfg.hilbert_enricher.inner()));
+        rt.spawn(hilbert_enricher::HilbertEnricher::new(
+            cfg.hilbert_enricher.inner(),
+        ));
     }
     rt
 }
@@ -155,13 +157,19 @@ pub struct ThinkerBudget {
 
 impl ThinkerBudget {
     pub const fn new(cpu_fraction: f32, max_tick_duration: Duration) -> Self {
-        Self { cpu_fraction, max_tick_duration }
+        Self {
+            cpu_fraction,
+            max_tick_duration,
+        }
     }
 
     /// Minimal budget — used by stubs and tests. 1% of one core,
     /// 10 ms per tick.
     pub const fn minimal() -> Self {
-        Self { cpu_fraction: 0.01, max_tick_duration: Duration::from_millis(10) }
+        Self {
+            cpu_fraction: 0.01,
+            max_tick_duration: Duration::from_millis(10),
+        }
     }
 }
 
@@ -202,10 +210,7 @@ pub trait Thinker: Send + Sync + 'static {
     /// but does not stop the Thinker — the runtime retries at the next
     /// tick. Panics are caught by the runtime and convert into
     /// [`ThinkerTickError::Panicked`].
-    fn tick(
-        &self,
-        store: &Arc<SubstrateStore>,
-    ) -> Result<ThinkerTickReport, ThinkerTickError>;
+    fn tick(&self, store: &Arc<SubstrateStore>) -> Result<ThinkerTickReport, ThinkerTickError>;
 }
 
 /// Diagnostic summary returned by a single tick. Every Thinker extends
@@ -316,7 +321,9 @@ mod tests {
     #[test]
     fn noop_thinker_trait_object_is_ok() {
         // Compile-check: trait object construction, object safety.
-        let n: Box<dyn Thinker> = Box::new(NoopThinker { kind: ThinkerKind::Consolidator });
+        let n: Box<dyn Thinker> = Box::new(NoopThinker {
+            kind: ThinkerKind::Consolidator,
+        });
         assert_eq!(n.kind(), ThinkerKind::Consolidator);
         assert_eq!(n.interval(), Duration::from_secs(1));
     }

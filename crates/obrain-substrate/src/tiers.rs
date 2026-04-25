@@ -894,8 +894,7 @@ mod tests {
         // First two u64 of L1 should disagree with L0 in at least
         // ~25% of bits (binomial expectation around 50%; we leave
         // generous slack).
-        let prefix_diff =
-            (p0.0[0] ^ p1.0[0]).count_ones() + (p0.0[1] ^ p1.0[1]).count_ones();
+        let prefix_diff = (p0.0[0] ^ p1.0[0]).count_ones() + (p0.0[1] ^ p1.0[1]).count_ones();
         assert!(
             prefix_diff > 32,
             "L1 prefix matches L0 too closely ({prefix_diff} bit \

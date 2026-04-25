@@ -79,17 +79,9 @@ fn diagnose_imports_endpoints_on_po() {
             "\n{et} live edges = {total}\n  SRC : valid+labels={svw}  valid+NO_labels={svn}  missing={sm}\n  DST : valid+labels={dvw}  valid+NO_labels={dvn}  missing={dm}"
         );
 
-        let (_, src_bits, dst_bits) = subs
-            .diagnose_edge_endpoint_bits(et)
-            .expect("diagnose bits");
-        println!(
-            "  union_src_bits = {:064b} ({:#018x})",
-            src_bits, src_bits
-        );
-        println!(
-            "  union_dst_bits = {:064b} ({:#018x})",
-            dst_bits, dst_bits
-        );
+        let (_, src_bits, dst_bits) = subs.diagnose_edge_endpoint_bits(et).expect("diagnose bits");
+        println!("  union_src_bits = {:064b} ({:#018x})", src_bits, src_bits);
+        println!("  union_dst_bits = {:064b} ({:#018x})", dst_bits, dst_bits);
         // Decode bit positions to label names.
         let labels = subs.all_labels();
         let decode = |bits: u64| {
@@ -205,5 +197,8 @@ fn repair_po_outgoing_chains() {
         "  File (50 sample) : walked={} matches={} mismatches={}",
         walked_after, matches_after, mismatches_after
     );
-    assert_eq!(mismatches_after, 0, "chains still inconsistent after repair");
+    assert_eq!(
+        mismatches_after, 0,
+        "chains still inconsistent after repair"
+    );
 }

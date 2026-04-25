@@ -46,8 +46,8 @@
 
 use obrain_common::{EdgeId, NodeId};
 use obrain_core::graph::GraphStoreMut;
-use obrain_substrate::record::edge_flags;
 use obrain_substrate::SubstrateStore;
+use obrain_substrate::record::edge_flags;
 
 #[test]
 fn cross_session_identity_recall_via_engram_bitset() {
@@ -77,10 +77,8 @@ fn cross_session_identity_recall_via_engram_bitset() {
         // Build a small COACT chain — these survive the close cycle
         // because the underlying primitive logs absolute weights to the WAL.
         let coact_id = s.coact_type_id().unwrap();
-        coact_user_assertion =
-            s.create_edge(user_id, assertion_id, "COACT");
-        coact_assertion_atlas =
-            s.create_edge(assertion_id, atlas_id, "COACT");
+        coact_user_assertion = s.create_edge(user_id, assertion_id, "COACT");
+        coact_assertion_atlas = s.create_edge(assertion_id, atlas_id, "COACT");
         // Sanity: the slots are typed COACT.
         assert_eq!(
             s.coact_weight_f32(coact_user_assertion).unwrap(),
@@ -122,8 +120,7 @@ fn cross_session_identity_recall_via_engram_bitset() {
 
         // The Atlas node's signature must still carry the Identity bit.
         let atlas_bits = s.engram_bitset(atlas_id).unwrap();
-        let identity_mask =
-            obrain_substrate::engram_bit_mask(engram_id);
+        let identity_mask = obrain_substrate::engram_bit_mask(engram_id);
         assert_eq!(
             atlas_bits & identity_mask,
             identity_mask,
@@ -161,8 +158,7 @@ fn cross_session_identity_recall_via_engram_bitset() {
         // Atlas must be in the recalled candidates (every node whose
         // bitset has the Identity bit shows up — the Hopfield primitive
         // is a Bloom-overlap filter; tier resolution comes later).
-        let recalled_ids: Vec<NodeId> =
-            recalled.iter().map(|(nid, _)| *nid).collect();
+        let recalled_ids: Vec<NodeId> = recalled.iter().map(|(nid, _)| *nid).collect();
         assert!(
             recalled_ids.contains(&atlas_id),
             "Atlas node must be recalled from a fresh question that \

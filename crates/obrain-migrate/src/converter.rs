@@ -31,7 +31,7 @@ use obrain_common::types::{EdgeId, NodeId, PropertyKey, Value};
 use obrain_common::utils::hash::{FxBuildHasher, FxHashMap};
 use obrain_core::graph::Direction;
 use obrain_core::graph::traits::{GraphStore, GraphStoreMut};
-use obrain_substrate::{PropertiesStreamingWriter, SubstrateStore, BLOB_COLUMN_THRESHOLD_BYTES};
+use obrain_substrate::{BLOB_COLUMN_THRESHOLD_BYTES, PropertiesStreamingWriter, SubstrateStore};
 
 use crate::checkpoint::{Checkpoint, Phase};
 #[cfg(feature = "legacy-read")]
@@ -54,7 +54,6 @@ pub struct MigrateOptions {
     // articles) this balloons RSS far past available RAM and macOS
     // Jetsam kills the process mid-migration. These filters let the user
     // skip known-heavy keys or any value exceeding a size threshold.
-
     /// Property keys to skip during `phase_nodes` (exact match). Repeatable.
     pub skip_prop_keys: Vec<String>,
     /// Skip any property value whose size hint exceeds this many bytes.
@@ -367,10 +366,7 @@ pub struct FinalizeV2Opts {
     pub skip_backup: bool,
 }
 
-pub fn finalize_v2_with_opts(
-    substrate_dir: &Path,
-    opts: &FinalizeV2Opts,
-) -> Result<()> {
+pub fn finalize_v2_with_opts(substrate_dir: &Path, opts: &FinalizeV2Opts) -> Result<()> {
     if !substrate_dir.exists() {
         anyhow::bail!(
             "finalize-v2 target does not exist: {}",
@@ -378,9 +374,7 @@ pub fn finalize_v2_with_opts(
         );
     }
     let props_path = substrate_dir.join("substrate.props");
-    let before_bytes = std::fs::metadata(&props_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let before_bytes = std::fs::metadata(&props_path).map(|m| m.len()).unwrap_or(0);
 
     tracing::info!(
         "obrain-migrate --finalize-v2: opening {} (substrate.props={} MiB, v2 forced on, dry_run={}, skip_backup={})",
@@ -435,9 +429,7 @@ pub fn finalize_v2_with_opts(
         let store = SubstrateStore::open(substrate_dir)
             .with_context(|| format!("open {}", substrate_dir.display()))?;
         let nodes_pending = store.node_count_live_estimate();
-        let edges_pending = store
-            .edge_properties_count()
-            .unwrap_or(0);
+        let edges_pending = store.edge_properties_count().unwrap_or(0);
         tracing::info!(
             "finalize-v2 DRY-RUN: would drain ~{} nodes and {} edge-property maps. \
              Legacy sidecar: {} MiB. No writes performed.",
@@ -620,8 +612,8 @@ enum EdgesLayout {
 /// derive the stride from `file_len % stride` alone — we go through
 /// the meta header to know how many edges are logically live.
 fn read_meta_edge_count(meta_path: &Path) -> Result<u64> {
-    let bytes = std::fs::read(meta_path)
-        .with_context(|| format!("read {}", meta_path.display()))?;
+    let bytes =
+        std::fs::read(meta_path).with_context(|| format!("read {}", meta_path.display()))?;
     // MetaHeader layout (see obrain_substrate::meta):
     //   magic[8] + format_version[4] + flags[4] + node_count[8] + edge_count[8] + ...
     // So edge_count is at byte offset 24..32.
@@ -658,8 +650,8 @@ fn read_meta_edge_count(meta_path: &Path) -> Result<u64> {
 /// substrate zones don't compact on delete, so all allocated slots
 /// live in the file contiguously from offset 0).
 fn read_dict_next_edge_id(dict_path: &Path) -> Result<u64> {
-    let bytes = std::fs::read(dict_path)
-        .with_context(|| format!("read {}", dict_path.display()))?;
+    let bytes =
+        std::fs::read(dict_path).with_context(|| format!("read {}", dict_path.display()))?;
     let snap = obrain_substrate::dict::DictSnapshot::from_bytes(&bytes)
         .map_err(|e| anyhow::anyhow!("parse {}: {e}", dict_path.display()))?;
     Ok(snap.next_edge_id)
@@ -743,8 +735,8 @@ fn detect_edges_layout(substrate_dir: &Path) -> Result<(EdgesLayout, u64, u64)> 
     // Nonzero at [32..36] → Pre; all-zero → Post. Tail-zero check is
     // retained as validation: if the claimed layout picks up stray
     // nonzero bytes past its zone, the file is corrupt.
-    let bytes = std::fs::read(&edges_path)
-        .with_context(|| format!("read {}", edges_path.display()))?;
+    let bytes =
+        std::fs::read(&edges_path).with_context(|| format!("read {}", edges_path.display()))?;
     let file_len_usize = bytes.len();
 
     let n32 = edge_count as usize * EDGE_RECORD_OLD_STRIDE;
@@ -840,8 +832,8 @@ fn detect_edges_layout(substrate_dir: &Path) -> Result<(EdgesLayout, u64, u64)> 
 fn rewrite_edges_32_to_36(edges_path: &Path, edge_count: u64) -> Result<()> {
     use std::io::{BufWriter, Write};
 
-    let input = std::fs::read(edges_path)
-        .with_context(|| format!("read {}", edges_path.display()))?;
+    let input =
+        std::fs::read(edges_path).with_context(|| format!("read {}", edges_path.display()))?;
     let required = (edge_count * EDGE_RECORD_OLD_STRIDE as u64) as usize;
     anyhow::ensure!(
         input.len() >= required,
@@ -858,8 +850,7 @@ fn rewrite_edges_32_to_36(edges_path: &Path, edge_count: u64) -> Result<()> {
     // have the snapshot (unless --no-backup), so worst case operators
     // restore from `<dir>.bak-<unix_secs>`.
     if tmp.exists() {
-        std::fs::remove_file(&tmp)
-            .with_context(|| format!("remove stale {}", tmp.display()))?;
+        std::fs::remove_file(&tmp).with_context(|| format!("remove stale {}", tmp.display()))?;
     }
 
     let out_file = std::fs::OpenOptions::new()
@@ -918,15 +909,16 @@ fn rewrite_edges_32_to_36(edges_path: &Path, edge_count: u64) -> Result<()> {
     let mut out_file = out
         .into_inner()
         .map_err(|e| anyhow::anyhow!("flush BufWriter on {}: {e}", tmp.display()))?;
-    out_file.flush().with_context(|| format!("flush {}", tmp.display()))?;
+    out_file
+        .flush()
+        .with_context(|| format!("flush {}", tmp.display()))?;
     out_file
         .sync_all()
         .with_context(|| format!("fsync {}", tmp.display()))?;
     drop(out_file);
 
-    std::fs::rename(&tmp, edges_path).with_context(|| {
-        format!("rename {} → {}", tmp.display(), edges_path.display())
-    })?;
+    std::fs::rename(&tmp, edges_path)
+        .with_context(|| format!("rename {} → {}", tmp.display(), edges_path.display()))?;
 
     tracing::info!(
         phase = "upgrade_edges_v2::rewrite",
@@ -944,10 +936,7 @@ pub fn upgrade_edges_v2(substrate_dir: &Path) -> Result<()> {
     upgrade_edges_v2_with_opts(substrate_dir, &UpgradeEdgesV2Opts::default())
 }
 
-pub fn upgrade_edges_v2_with_opts(
-    substrate_dir: &Path,
-    opts: &UpgradeEdgesV2Opts,
-) -> Result<()> {
+pub fn upgrade_edges_v2_with_opts(substrate_dir: &Path, opts: &UpgradeEdgesV2Opts) -> Result<()> {
     if !substrate_dir.exists() {
         anyhow::bail!(
             "upgrade-edges-v2 target does not exist: {}",
@@ -1062,9 +1051,8 @@ pub fn upgrade_edges_v2_with_opts(
             // Still delete an empty-base stray sidecar if present, for
             // parity with the post-drain cleanup path.
             if sidecar_bytes > 0 {
-                std::fs::remove_file(&edge_sidecar_path).with_context(|| {
-                    format!("remove {}", edge_sidecar_path.display())
-                })?;
+                std::fs::remove_file(&edge_sidecar_path)
+                    .with_context(|| format!("remove {}", edge_sidecar_path.display()))?;
                 tracing::info!(
                     "upgrade-edges-v2: removed {} B empty-base edge sidecar",
                     sidecar_bytes
@@ -1143,9 +1131,7 @@ pub fn finalize(substrate_dir: &Path) -> Result<()> {
     // Report sidecar size before the upgrade so the caller can see the
     // shrinkage from the single log output.
     let props_path = substrate_dir.join("substrate.props");
-    let before_bytes = std::fs::metadata(&props_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let before_bytes = std::fs::metadata(&props_path).map(|m| m.len()).unwrap_or(0);
 
     tracing::info!(
         "obrain-migrate --finalize: opening {} (substrate.props={} MiB)",
@@ -1173,9 +1159,7 @@ pub fn finalize(substrate_dir: &Path) -> Result<()> {
     //     `return`.
     drop(store);
 
-    let after_bytes = std::fs::metadata(&props_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let after_bytes = std::fs::metadata(&props_path).map(|m| m.len()).unwrap_or(0);
     let delta_bytes = before_bytes.saturating_sub(after_bytes);
     tracing::info!(
         "obrain-migrate --finalize: done. substrate.props: {} MiB → {} MiB ({} MiB freed)",
@@ -1308,9 +1292,7 @@ fn phase_nodes(
     const HEARTBEAT_EVERY: u64 = 100_000;
 
     if filter.skip_all {
-        tracing::warn!(
-            "Phase::Nodes — --skip-all-props set, copying labels + structure only"
-        );
+        tracing::warn!("Phase::Nodes — --skip-all-props set, copying labels + structure only");
     } else if !filter.skip_keys.is_empty() || filter.max_bytes.is_some() {
         let keys: Vec<_> = filter.skip_keys.iter().cloned().collect();
         tracing::info!(
@@ -1670,13 +1652,7 @@ fn phase_edges(
 
     // Flush final partial chunk.
     if !chunk_pairs.is_empty() {
-        flush_edge_props_chunk(
-            legacy,
-            substrate,
-            &chunk_pairs,
-            &synapse_key,
-            props_writer,
-        )?;
+        flush_edge_props_chunk(legacy, substrate, &chunk_pairs, &synapse_key, props_writer)?;
         chunk_pairs.clear();
     }
 
@@ -1838,8 +1814,8 @@ fn phase_tiers(
     substrate: &Arc<SubstrateStore>,
     node_map: &FxHashMap<u64, NodeId>,
 ) -> Result<()> {
-    use obrain_substrate::retrieval::{NodeOffset, SubstrateTieredIndex, VectorIndex};
     use obrain_substrate::L2_DIM;
+    use obrain_substrate::retrieval::{NodeOffset, SubstrateTieredIndex, VectorIndex};
 
     // Collect every (new_offset, embedding) pair where the legacy node
     // carried an `_st_embedding` Vector property of the expected dim.
@@ -1906,9 +1882,9 @@ fn phase_tiers(
     {
         let sub_mutex = substrate.writer().substrate();
         let sub_guard = sub_mutex.lock();
-        index.persist_to_zones(&sub_guard).with_context(|| {
-            "Phase::Tiers — persisting tier zones to substrate failed"
-        })?;
+        index
+            .persist_to_zones(&sub_guard)
+            .with_context(|| "Phase::Tiers — persisting tier zones to substrate failed")?;
     }
     tracing::info!(
         "Phase::Tiers — persisted {} slots to tier0/1/2 in {:.2} s",
@@ -1926,13 +1902,10 @@ fn phase_cognitive_init(substrate: &Arc<SubstrateStore>) -> Result<()> {
     // we run what we can and log what is deferred.
 
     match obrain_substrate::refresh_all_ricci(substrate) {
-        Ok(stats) => tracing::info!(
-            "Phase::CognitiveInit — Ricci refreshed: {:?}",
-            stats
-        ),
-        Err(e) => tracing::warn!(
-            "Phase::CognitiveInit — refresh_all_ricci failed: {e}; continuing"
-        ),
+        Ok(stats) => tracing::info!("Phase::CognitiveInit — Ricci refreshed: {:?}", stats),
+        Err(e) => {
+            tracing::warn!("Phase::CognitiveInit — refresh_all_ricci failed: {e}; continuing")
+        }
     }
     // `compute_all_node_curvatures` returns `HashMap<NodeId, f32>` —
     // the full map at Wikipedia scale is 4.5 M entries, a Debug format
@@ -1942,9 +1915,7 @@ fn phase_cognitive_init(substrate: &Arc<SubstrateStore>) -> Result<()> {
         Ok(map) => {
             let n = map.len();
             if n == 0 {
-                tracing::info!(
-                    "Phase::CognitiveInit — node curvatures: no nodes"
-                );
+                tracing::info!("Phase::CognitiveInit — node curvatures: no nodes");
             } else {
                 let mut sum = 0.0_f64;
                 let mut kmin = f32::INFINITY;
@@ -1977,9 +1948,7 @@ fn phase_cognitive_init(substrate: &Arc<SubstrateStore>) -> Result<()> {
                 );
             }
         }
-        Err(e) => tracing::warn!(
-            "Phase::CognitiveInit — compute_all_node_curvatures failed: {e}"
-        ),
+        Err(e) => tracing::warn!("Phase::CognitiveInit — compute_all_node_curvatures failed: {e}"),
     }
     tracing::info!(
         "Phase::CognitiveInit — LDleiden + PageRank batch entry points \
@@ -2054,7 +2023,9 @@ fn props_stream_size_mb(out: &Path) -> u64 {
     let p = out
         .join("substrate.obrain")
         .join("substrate.props.stream.tmp");
-    std::fs::metadata(&p).map(|m| m.len() / (1024 * 1024)).unwrap_or(0)
+    std::fs::metadata(&p)
+        .map(|m| m.len() / (1024 * 1024))
+        .unwrap_or(0)
 }
 
 /// Build a progress bar with a uniform style.
@@ -2092,10 +2063,7 @@ fn open_legacy_store(_path: &Path) -> Result<Arc<dyn GraphStore>> {
     );
 }
 
-fn open_or_create_substrate(
-    path: &Path,
-    resume: bool,
-) -> Result<Arc<SubstrateStore>> {
+fn open_or_create_substrate(path: &Path, resume: bool) -> Result<Arc<SubstrateStore>> {
     if path.exists() && !resume {
         anyhow::bail!(
             "output already exists: {} (pass --resume to continue, or remove the file)",
@@ -2283,10 +2251,7 @@ mod tests {
             (PropertyKey::from("since"), Value::Int64(2019)),
             (PropertyKey::from("strength"), Value::Float64(0.85)),
         ];
-        let e2_props = vec![(
-            PropertyKey::from("role"),
-            Value::String("Engineer".into()),
-        )];
+        let e2_props = vec![(PropertyKey::from("role"), Value::String("Engineer".into()))];
         (e1, e2, e1_props, e2_props)
     }
 

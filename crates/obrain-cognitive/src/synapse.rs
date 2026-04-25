@@ -828,10 +828,9 @@ impl SynapseStore {
             // lives. We must persist it synchronously here because the
             // queue only carries epoch + count. Test-only path; production
             // always runs in substrate mode.
-            if !substrate_active
-                && let Some(gs) = &self.graph_store
-            {
-                self.lpg_metadata_writes_total.fetch_add(1, Ordering::Relaxed);
+            if !substrate_active && let Some(gs) = &self.graph_store {
+                self.lpg_metadata_writes_total
+                    .fetch_add(1, Ordering::Relaxed);
                 persist_edge_f64(gs.as_ref(), eid, PROP_SYNAPSE_WEIGHT, entry.raw_weight());
             }
         }
@@ -1002,16 +1001,16 @@ impl SynapseStore {
         // assertions on the 2× ratio still hold), but the underlying
         // operation is no longer a full scan — it's an indexed lookup
         // followed by a bounded iteration.
-        self.dashmap_full_scans_total.fetch_add(1, Ordering::Relaxed);
+        self.dashmap_full_scans_total
+            .fetch_add(1, Ordering::Relaxed);
 
         // Snapshot the keys to avoid holding the index entry across
         // mutations on `self.synapses` (which could deadlock with the
         // get_mut below if the underlying DashMap shards collide).
-        let keys: smallvec::SmallVec<[SynapseKey; 16]> =
-            match self.node_to_keys.get(&node_id) {
-                Some(entry) => entry.iter().copied().collect(),
-                None => return, // node has no recorded synapses → nothing to normalize
-            };
+        let keys: smallvec::SmallVec<[SynapseKey; 16]> = match self.node_to_keys.get(&node_id) {
+            Some(entry) => entry.iter().copied().collect(),
+            None => return, // node has no recorded synapses → nothing to normalize
+        };
 
         let entries: smallvec::SmallVec<[(SynapseKey, f64); 16]> = keys
             .iter()
@@ -1056,13 +1055,13 @@ impl SynapseStore {
         // (substrate edge properties land in a later milestone). In legacy mode,
         // the LPG property is required; missing means no synapse.
         #[cfg(feature = "substrate")]
-        let substrate_weight_raw: Option<f64> = self
-            .substrate
-            .as_ref()
-            .and_then(|sub| match sub.get_edge_synapse_weight_f32(eid) {
-                Ok(Some(w)) => Some((w as f64) * self.config.max_synapse_weight),
-                _ => None,
-            });
+        let substrate_weight_raw: Option<f64> =
+            self.substrate
+                .as_ref()
+                .and_then(|sub| match sub.get_edge_synapse_weight_f32(eid) {
+                    Ok(Some(w)) => Some((w as f64) * self.config.max_synapse_weight),
+                    _ => None,
+                });
         #[cfg(not(feature = "substrate"))]
         let substrate_weight_raw: Option<f64> = None;
 
@@ -1581,11 +1580,8 @@ mod substrate_tests {
     fn substrate_decay_all_halves_every_edge_weight() {
         let (sub, ids, _td) = make_substrate(3);
         let cfg = SynapseConfig::default();
-        let store = SynapseStore::with_substrate(
-            cfg,
-            sub.clone() as Arc<dyn GraphStoreMut>,
-            sub.clone(),
-        );
+        let store =
+            SynapseStore::with_substrate(cfg, sub.clone() as Arc<dyn GraphStoreMut>, sub.clone());
         // Seed three pairwise synapses.
         store.reinforce(ids[0], ids[1], 0.4);
         store.reinforce(ids[0], ids[2], 0.4);
@@ -1604,10 +1600,7 @@ mod substrate_tests {
         store.decay_all(0.5);
 
         for (eid, before_w) in &before {
-            let after = sub
-                .get_edge_synapse_weight_f32(*eid)
-                .unwrap()
-                .unwrap();
+            let after = sub.get_edge_synapse_weight_f32(*eid).unwrap().unwrap();
             let expected = before_w * 0.5;
             assert!(
                 (after - expected).abs() < 1e-3,
@@ -1808,7 +1801,9 @@ mod substrate_tests {
                 // dep needed in the test crate.
                 let mut state: u64 = 0x9E37_79B9_7F4A_7C15u64.wrapping_mul(tid as u64 + 1);
                 let next = |s: &mut u64| {
-                    *s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                    *s = s
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
                     *s
                 };
                 for _ in 0..OPS_PER_THREAD {

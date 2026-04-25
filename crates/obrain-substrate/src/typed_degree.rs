@@ -246,10 +246,7 @@ impl TypedDegreeRegistry {
             let sub = self.substrate.lock();
             // Try open existing first (for bases where the column was
             // persisted previously). Fall back to create.
-            let col = match DegreeColumn::open_by_filename(
-                &sub,
-                &filename_for_type(&type_name),
-            )? {
+            let col = match DegreeColumn::open_by_filename(&sub, &filename_for_type(&type_name))? {
                 Some(c) => c,
                 None => DegreeColumn::create_by_filename(
                     &sub,
@@ -426,8 +423,7 @@ impl TypedDegreeRegistry {
                 // Corrupt CRC or unexpected shape — leave to rebuild.
                 continue;
             };
-            self.columns
-                .insert(type_id, Arc::new(RwLock::new(col)));
+            self.columns.insert(type_id, Arc::new(RwLock::new(col)));
             opened += 1;
         }
         Ok(opened)

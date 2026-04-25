@@ -39,7 +39,7 @@
 #![allow(unsafe_code)]
 
 use crate::error::{SubstrateError, SubstrateResult};
-use crate::meta::{MetaHeader, META_FILE_SIZE, SUBSTRATE_FORMAT_VERSION};
+use crate::meta::{META_FILE_SIZE, MetaHeader, SUBSTRATE_FORMAT_VERSION};
 use memmap2::{Advice, MmapMut, MmapOptions};
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -253,7 +253,11 @@ impl ZoneFile {
         self.file.set_len(new_len)?;
         self.len = new_len;
         // SAFETY: same invariants as `open_or_create`.
-        let m = unsafe { MmapOptions::new().len(new_len as usize).map_mut(&self.file)? };
+        let m = unsafe {
+            MmapOptions::new()
+                .len(new_len as usize)
+                .map_mut(&self.file)?
+        };
         // `madvise(MADV_HUGEPAGE)` must be re-applied after every remap — the
         // hint lives on the VMA, not on the file. A zone that crossed the
         // HUGE_PAGE_MIN_BYTES threshold during this grow will now be eligible
@@ -389,17 +393,13 @@ impl SubstrateFile {
         if meta_path.exists() {
             return Err(SubstrateError::Io(std::io::Error::new(
                 std::io::ErrorKind::AlreadyExists,
-                format!(
-                    "substrate already initialized: {}",
-                    meta_path.display()
-                ),
+                format!("substrate already initialized: {}", meta_path.display()),
             )));
         }
         // Pre-write a blank 4 KiB meta file.
         let header = MetaHeader::new_blank();
         let mut buf = vec![0u8; META_FILE_SIZE];
-        buf[..core::mem::size_of::<MetaHeader>()]
-            .copy_from_slice(bytemuck::bytes_of(&header));
+        buf[..core::mem::size_of::<MetaHeader>()].copy_from_slice(bytemuck::bytes_of(&header));
         std::fs::write(&meta_path, &buf)?;
 
         // Pre-create empty zone files so later opens don't need to special-case
@@ -453,10 +453,7 @@ impl SubstrateFile {
         if file_len < META_FILE_SIZE as u64 {
             return Err(SubstrateError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!(
-                    "meta file too short: {} (< {})",
-                    file_len, META_FILE_SIZE
-                ),
+                format!("meta file too short: {} (< {})", file_len, META_FILE_SIZE),
             )));
         }
 
@@ -464,11 +461,7 @@ impl SubstrateFile {
         // process (the directory is not locked against other processes yet —
         // that is a T4 enhancement once the store takes cross-process locking
         // into account). We never truncate the meta file.
-        let meta_map = unsafe {
-            MmapOptions::new()
-                .len(META_FILE_SIZE)
-                .map_mut(&meta_file)?
-        };
+        let meta_map = unsafe { MmapOptions::new().len(META_FILE_SIZE).map_mut(&meta_file)? };
 
         let sf = Self {
             path,

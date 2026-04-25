@@ -617,8 +617,7 @@ mod tests {
         assert_eq!(idx.len(), 10);
 
         // Rebuild with a totally different set.
-        let pairs: Vec<(NodeOffset, Vec<f32>)> =
-            (100..105).map(|n| (n, emb(n, DIM))).collect();
+        let pairs: Vec<(NodeOffset, Vec<f32>)> = (100..105).map(|n| (n, emb(n, DIM))).collect();
         idx.rebuild(&pairs);
         assert_eq!(idx.len(), 5);
 

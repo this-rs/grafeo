@@ -6,9 +6,9 @@
 use std::collections::BinaryHeap;
 use std::sync::OnceLock;
 
-use obrain_common::types::{EdgeId, NodeId, Value};
 #[cfg(test)]
 use obrain_common::types::PropertyKey;
+use obrain_common::types::{EdgeId, NodeId, Value};
 use obrain_common::utils::error::Result;
 use obrain_common::utils::hash::FxHashMap;
 use obrain_core::graph::Direction;
@@ -420,12 +420,42 @@ mod tests {
         let n1 = store.create_node(&["Node"]);
         let n2 = store.create_node(&["Node"]);
 
-        store.create_edge_with_props(n0, n1, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(1.0))]);
-        store.create_edge_with_props(n1, n0, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(1.0))]);
-        store.create_edge_with_props(n1, n2, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(2.0))]);
-        store.create_edge_with_props(n2, n1, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(2.0))]);
-        store.create_edge_with_props(n0, n2, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(3.0))]);
-        store.create_edge_with_props(n2, n0, "EDGE", &[(PropertyKey::from("weight"), Value::Float64(3.0))]);
+        store.create_edge_with_props(
+            n0,
+            n1,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(1.0))],
+        );
+        store.create_edge_with_props(
+            n1,
+            n0,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(1.0))],
+        );
+        store.create_edge_with_props(
+            n1,
+            n2,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(2.0))],
+        );
+        store.create_edge_with_props(
+            n2,
+            n1,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(2.0))],
+        );
+        store.create_edge_with_props(
+            n0,
+            n2,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(3.0))],
+        );
+        store.create_edge_with_props(
+            n2,
+            n0,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(3.0))],
+        );
 
         store
     }

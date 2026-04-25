@@ -34,7 +34,7 @@ use crate::error::{SubstrateError, SubstrateResult};
 use crate::file::{SubstrateFile, Zone, ZoneFile};
 use crate::hilbert::{compute_hilbert_permutation_page_aligned, hilbert_key_from_features};
 use crate::meta::meta_flags;
-use crate::record::{EdgeRecord, NodeRecord, NODES_PER_PAGE, U48};
+use crate::record::{EdgeRecord, NODES_PER_PAGE, NodeRecord, U48};
 use crate::wal::{WalPayload, WalRecord};
 use crate::wal_io::{SyncMode, WalWriter};
 use parking_lot::Mutex;
@@ -163,11 +163,7 @@ impl Writer {
     /// let the WAL-only record stand rather than panic (replay will rebuild
     /// the slot when the matching `NodeInsert` arrives).
     #[tracing::instrument(level = "trace", skip(self))]
-    pub fn update_node_first_prop_off(
-        &self,
-        idx: u32,
-        new_head: U48,
-    ) -> SubstrateResult<()> {
+    pub fn update_node_first_prop_off(&self, idx: u32, new_head: U48) -> SubstrateResult<()> {
         // (1) WAL first.
         let rec = WalRecord {
             lsn: 0,
@@ -192,8 +188,7 @@ impl Writer {
                 // LSN order to restore the head pointer.
                 return Ok(());
             }
-            zf.as_slice_mut()[field_offset..field_offset + 6]
-                .copy_from_slice(&new_head.0);
+            zf.as_slice_mut()[field_offset..field_offset + 6].copy_from_slice(&new_head.0);
             Ok(())
         })
     }
@@ -373,11 +368,7 @@ impl Writer {
     /// ([`EdgeRecord::SIZE`] vs [`NodeRecord::SIZE`]), and the field offset
     /// within the record (24 vs 14).
     #[tracing::instrument(level = "trace", skip(self))]
-    pub fn update_edge_first_prop_off(
-        &self,
-        idx: u32,
-        new_head: U48,
-    ) -> SubstrateResult<()> {
+    pub fn update_edge_first_prop_off(&self, idx: u32, new_head: U48) -> SubstrateResult<()> {
         // (1) WAL first.
         let rec = WalRecord {
             lsn: 0,
@@ -402,8 +393,7 @@ impl Writer {
                 // LSN order to restore the head pointer.
                 return Ok(());
             }
-            zf.as_slice_mut()[field_offset..field_offset + 6]
-                .copy_from_slice(&new_head.0);
+            zf.as_slice_mut()[field_offset..field_offset + 6].copy_from_slice(&new_head.0);
             Ok(())
         })
     }
@@ -469,11 +459,7 @@ impl Writer {
     /// `high_water` is the exclusive upper bound of live node slots (i.e.
     /// `SubstrateStore::slot_high_water()`). Tombstoned slots are skipped.
     #[tracing::instrument(level = "trace", skip(self))]
-    pub fn decay_all_energy(
-        &self,
-        factor_q16: u16,
-        high_water: u32,
-    ) -> SubstrateResult<()> {
+    pub fn decay_all_energy(&self, factor_q16: u16, high_water: u32) -> SubstrateResult<()> {
         let rec = WalRecord {
             lsn: 0,
             timestamp: unix_micros(),
@@ -597,11 +583,7 @@ impl Writer {
     /// (`SubstrateStore::edge_slot_high_water()`). Tombstoned slots are
     /// skipped. Slot 0 is reserved and never touched.
     #[tracing::instrument(level = "trace", skip(self))]
-    pub fn decay_all_synapse(
-        &self,
-        factor_q16: u16,
-        edge_high_water: u64,
-    ) -> SubstrateResult<()> {
+    pub fn decay_all_synapse(&self, factor_q16: u16, edge_high_water: u64) -> SubstrateResult<()> {
         let rec = WalRecord {
             lsn: 0,
             timestamp: unix_micros(),
@@ -748,10 +730,7 @@ impl Writer {
     ///
     /// WAL payload: [`WalPayload::CentralityUpdate`].
     #[tracing::instrument(level = "trace", skip(self, updates))]
-    pub fn update_centrality_batch(
-        &self,
-        updates: Vec<(u32, u16)>,
-    ) -> SubstrateResult<()> {
+    pub fn update_centrality_batch(&self, updates: Vec<(u32, u16)>) -> SubstrateResult<()> {
         if updates.is_empty() {
             return Ok(());
         }
@@ -792,10 +771,7 @@ impl Writer {
     ///
     /// WAL payload: [`WalPayload::CommunityAssign`].
     #[tracing::instrument(level = "trace", skip(self, updates))]
-    pub fn update_community_batch(
-        &self,
-        updates: Vec<(u32, u32)>,
-    ) -> SubstrateResult<()> {
+    pub fn update_community_batch(&self, updates: Vec<(u32, u32)>) -> SubstrateResult<()> {
         if updates.is_empty() {
             return Ok(());
         }
@@ -940,8 +916,7 @@ impl Writer {
                     && rec.first_prop_off == crate::record::U48::ZERO;
                 communities[idx as usize] = rec.community_id;
                 centrality[idx as usize] = rec.centrality_cached;
-                tombstoned[idx as usize] =
-                    rec.is_tombstoned() || is_zero_sentinel || idx == 0;
+                tombstoned[idx as usize] = rec.is_tombstoned() || is_zero_sentinel || idx == 0;
             }
             Ok(())
         })?;
@@ -1002,8 +977,9 @@ impl Writer {
             let src = &zf.as_slice()[..total];
             for old in 0..n {
                 let new = old_to_new[old] as usize;
-                let rec: &NodeRecord =
-                    bytemuck::from_bytes(&src[old * NodeRecord::SIZE..(old + 1) * NodeRecord::SIZE]);
+                let rec: &NodeRecord = bytemuck::from_bytes(
+                    &src[old * NodeRecord::SIZE..(old + 1) * NodeRecord::SIZE],
+                );
                 buf[new] = *rec;
             }
             zf.as_slice_mut()[..total].copy_from_slice(bytemuck::cast_slice(&buf));
@@ -1049,12 +1025,8 @@ impl Writer {
             let mut cbuf = vec![0u32; node_high_water as usize];
             for old in 0..node_high_water as usize {
                 let new = old_to_new[old] as usize;
-                hbuf[new] = hilbert_key_from_features(
-                    centrality[old],
-                    degrees[old],
-                    order,
-                    max_degree,
-                );
+                hbuf[new] =
+                    hilbert_key_from_features(centrality[old], degrees[old], order, max_degree);
                 cbuf[new] = communities[old];
             }
             hilbert_zone.as_slice_mut()[..(need as usize)]
@@ -1147,9 +1119,8 @@ impl Writer {
                 if offset + NodeRecord::SIZE > zf.as_slice().len() {
                     break;
                 }
-                let rec: &NodeRecord = bytemuck::from_bytes(
-                    &zf.as_slice()[offset..offset + NodeRecord::SIZE],
-                );
+                let rec: &NodeRecord =
+                    bytemuck::from_bytes(&zf.as_slice()[offset..offset + NodeRecord::SIZE]);
                 if rec.is_tombstoned() {
                     continue;
                 }
@@ -1190,9 +1161,9 @@ impl Writer {
         let ppg = NODES_PER_PAGE;
         let new_start = current_node_hw.div_ceil(ppg) * ppg;
         let count = members.len() as u32;
-        let new_end = new_start
-            .checked_add(count)
-            .ok_or_else(|| SubstrateError::Internal("compact_community: slot-id overflow".into()))?;
+        let new_end = new_start.checked_add(count).ok_or_else(|| {
+            SubstrateError::Internal("compact_community: slot-id overflow".into())
+        })?;
         let first_page = new_start / ppg;
         let last_page = new_end.div_ceil(ppg);
 
@@ -1231,8 +1202,7 @@ impl Writer {
                 let src = zf.as_slice();
                 for (old, new) in &relocations {
                     let off = (*old as usize) * NodeRecord::SIZE;
-                    let rec: &NodeRecord =
-                        bytemuck::from_bytes(&src[off..off + NodeRecord::SIZE]);
+                    let rec: &NodeRecord = bytemuck::from_bytes(&src[off..off + NodeRecord::SIZE]);
                     copies.push((*new, *rec));
                 }
             }
@@ -1240,8 +1210,7 @@ impl Writer {
             let zone_mut = zf.as_slice_mut();
             for (new, rec) in &copies {
                 let off = (*new as usize) * NodeRecord::SIZE;
-                zone_mut[off..off + NodeRecord::SIZE]
-                    .copy_from_slice(bytemuck::bytes_of(rec));
+                zone_mut[off..off + NodeRecord::SIZE].copy_from_slice(bytemuck::bytes_of(rec));
             }
             // Zero each old slot (turn into zero-sentinel — safe because we
             // set community_id back to 0, so the warden & bulk_sort will skip
@@ -1249,8 +1218,7 @@ impl Writer {
             let zero = NodeRecord::default();
             for (old, _) in &relocations {
                 let off = (*old as usize) * NodeRecord::SIZE;
-                zone_mut[off..off + NodeRecord::SIZE]
-                    .copy_from_slice(bytemuck::bytes_of(&zero));
+                zone_mut[off..off + NodeRecord::SIZE].copy_from_slice(bytemuck::bytes_of(&zero));
             }
             Ok(())
         })?;
@@ -1358,11 +1326,7 @@ impl Writer {
     /// Passing an empty `members` slice clears the engram's directory entry
     /// (no payload bytes written). `engram_id = 0` is reserved and rejected.
     #[tracing::instrument(level = "trace", skip(self, members))]
-    pub fn set_engram_members(
-        &self,
-        engram_id: u16,
-        members: Vec<u32>,
-    ) -> SubstrateResult<()> {
+    pub fn set_engram_members(&self, engram_id: u16, members: Vec<u32>) -> SubstrateResult<()> {
         // (1) WAL first — payload carries full state for idempotent replay.
         let rec = WalRecord {
             lsn: 0,
@@ -1461,11 +1425,7 @@ impl Writer {
     /// [`Self::engram_members`] before using the candidates as actual
     /// co-members.
     #[tracing::instrument(level = "trace", skip(self))]
-    pub fn hopfield_recall(
-        &self,
-        query_nid: u32,
-        k: usize,
-    ) -> SubstrateResult<Vec<(u32, u32)>> {
+    pub fn hopfield_recall(&self, query_nid: u32, k: usize) -> SubstrateResult<Vec<(u32, u32)>> {
         let query = self.engram_bitset(query_nid)?;
         if query == 0 || k == 0 {
             return Ok(Vec::new());
@@ -1670,8 +1630,7 @@ pub fn apply_energy_decay_to_zone(zf: &mut ZoneFile, factor_q16: u16, high_water
                 continue;
             }
             let off = base + i * stride;
-            let rec: &mut NodeRecord =
-                bytemuck::from_bytes_mut(&mut zone_slice[off..off + stride]);
+            let rec: &mut NodeRecord = bytemuck::from_bytes_mut(&mut zone_slice[off..off + stride]);
             rec.energy = lanes[i];
         }
         slot += 8;
@@ -1737,8 +1696,7 @@ pub fn apply_synapse_decay_to_zone(zf: &mut ZoneFile, factor_q16: u16, high_wate
                 continue;
             }
             let off = base + i * stride;
-            let rec: &mut EdgeRecord =
-                bytemuck::from_bytes_mut(&mut zone_slice[off..off + stride]);
+            let rec: &mut EdgeRecord = bytemuck::from_bytes_mut(&mut zone_slice[off..off + stride]);
             rec.weight_u16 = lanes[i];
         }
         slot += 8;
@@ -1803,8 +1761,7 @@ pub fn apply_coact_decay_to_zone(
                 continue;
             }
             let off = base + i * stride;
-            let rec: &mut EdgeRecord =
-                bytemuck::from_bytes_mut(&mut zone_slice[off..off + stride]);
+            let rec: &mut EdgeRecord = bytemuck::from_bytes_mut(&mut zone_slice[off..off + stride]);
             rec.weight_u16 = lanes[i];
         }
         slot += 8;
@@ -1816,8 +1773,7 @@ pub fn apply_coact_decay_to_zone(
         let offset = slot * stride;
         let rec: &mut EdgeRecord =
             bytemuck::from_bytes_mut(&mut zone_slice[offset..offset + stride]);
-        if rec.flags & crate::record::edge_flags::TOMBSTONED == 0
-            && rec.edge_type == coact_type_id
+        if rec.flags & crate::record::edge_flags::TOMBSTONED == 0 && rec.edge_type == coact_type_id
         {
             rec.weight_u16 = (((rec.weight_u16 as u32) * factor) >> 16) as u16;
         }
@@ -1892,7 +1848,7 @@ fn unix_micros() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::record::{f32_to_q1_15, PackedScarUtilAff, U48};
+    use crate::record::{PackedScarUtilAff, U48, f32_to_q1_15};
 
     fn sample_node(i: u32) -> NodeRecord {
         NodeRecord {
@@ -2043,10 +1999,7 @@ mod tests {
         let items: Vec<_> = r.iter_from(0).collect::<Result<Vec<_>, _>>().unwrap();
         // 5 NodeInsert + 1 NoOp commit
         assert_eq!(items.len(), 6);
-        assert!(matches!(
-            items[0].0.payload,
-            WalPayload::NodeInsert { .. }
-        ));
+        assert!(matches!(items[0].0.payload, WalPayload::NodeInsert { .. }));
         assert!(items.last().unwrap().0.is_commit());
     }
 
@@ -2332,7 +2285,11 @@ mod tests {
                 let expected = f32_to_q1_15(0.4); // 0.8 × 0.5
                 // Q0.16 factor 32768 / 65536 is 0.5 exactly; accept ±1 ULP.
                 let delta = (rec.energy as i32 - expected as i32).abs();
-                assert!(delta <= 1, "slot {i}: energy={} expected≈{expected}", rec.energy);
+                assert!(
+                    delta <= 1,
+                    "slot {i}: energy={} expected≈{expected}",
+                    rec.energy
+                );
             }
         }
     }
@@ -2679,9 +2636,7 @@ mod tests {
         assert_eq!(stats.decode_errors, 0);
 
         let nz = sub2.open_zone(crate::file::Zone::Nodes).unwrap();
-        let slice: &[NodeRecord] = bytemuck::cast_slice(
-            &nz.as_slice()[..4 * NodeRecord::SIZE],
-        );
+        let slice: &[NodeRecord] = bytemuck::cast_slice(&nz.as_slice()[..4 * NodeRecord::SIZE]);
         assert_eq!(slice[1].community_id, 11);
         assert_eq!(slice[2].community_id, 22);
         assert_eq!(slice[3].community_id, 33);
@@ -2706,12 +2661,7 @@ mod tests {
     /// Helper: write an edge slot with a specific edge_type and weight,
     /// using `Writer::write_edge` so the WAL records it. Other fields are
     /// the bog-standard `sample_edge` defaults.
-    fn write_typed_edge(
-        w: &Writer,
-        slot: u64,
-        edge_type: u16,
-        weight_u16: u16,
-    ) {
+    fn write_typed_edge(w: &Writer, slot: u64, edge_type: u16, weight_u16: u16) {
         let mut e = sample_edge(slot);
         e.edge_type = edge_type;
         e.weight_u16 = weight_u16;

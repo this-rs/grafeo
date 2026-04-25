@@ -214,10 +214,7 @@ pub fn compute_ricci_for_edge(
 ///
 /// WAL-logged: a crash mid-refresh replays exactly the ricci_u8 /
 /// flags pair that was in flight, no partial update possible.
-pub fn refresh_edge_ricci(
-    store: &SubstrateStore,
-    edge_id: EdgeId,
-) -> SubstrateResult<Option<f32>> {
+pub fn refresh_edge_ricci(store: &SubstrateStore, edge_id: EdgeId) -> SubstrateResult<Option<f32>> {
     let Some(mut rec) = store.writer().read_edge(edge_id.0)? else {
         return Ok(None);
     };
@@ -398,10 +395,7 @@ pub fn refresh_all_ricci(store: &SubstrateStore) -> SubstrateResult<RicciRefresh
 /// # Complexity
 /// `O(deg(node))` — one chain walk + one `update_edge` per incident
 /// edge (WAL-logged).
-pub fn mark_incident_edges_stale(
-    store: &SubstrateStore,
-    node: NodeId,
-) -> SubstrateResult<u64> {
+pub fn mark_incident_edges_stale(store: &SubstrateStore, node: NodeId) -> SubstrateResult<u64> {
     let mut marked = 0u64;
     for (_nbr, eid) in store.edges_from(node, Direction::Both) {
         let Some(mut rec) = store.writer().read_edge(eid.0)? else {
@@ -507,8 +501,7 @@ pub fn refresh_ricci_for_nodes(
 
         let src = NodeId(rec.src as u64);
         let dst = NodeId(rec.dst as u64);
-        let (k, skipped_dangling) =
-            compute_ricci_from_neighbourhoods(&neighbourhoods, src, dst);
+        let (k, skipped_dangling) = compute_ricci_from_neighbourhoods(&neighbourhoods, src, dst);
         if skipped_dangling {
             stats.edges_skipped_dangling += 1;
         }
@@ -1096,10 +1089,7 @@ pub fn bottleneck_nodes(store: &SubstrateStore, threshold: f32) -> Vec<(NodeId, 
         Ok(m) => m,
         Err(_) => return Vec::new(),
     };
-    let mut out: Vec<(NodeId, f32)> = all
-        .into_iter()
-        .filter(|(_, k)| *k < threshold)
-        .collect();
+    let mut out: Vec<(NodeId, f32)> = all.into_iter().filter(|(_, k)| *k < threshold).collect();
     out.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
     out
 }
@@ -1171,10 +1161,7 @@ pub const HKS_HUTCHINSON_PROBES: usize = 32;
 ///
 /// We use K = [`HKS_HUTCHINSON_PROBES`]. The PRNG is seeded deterministically
 /// from the graph's slot_high_water so tests are reproducible across runs.
-pub fn heat_kernel_signature_with_csr(
-    csr: &CsrAdjacency,
-    t: f32,
-) -> SubstrateResult<Vec<f32>> {
+pub fn heat_kernel_signature_with_csr(csr: &CsrAdjacency, t: f32) -> SubstrateResult<Vec<f32>> {
     let hw = csr.slot_high_water as usize;
     if hw == 0 {
         return Ok(Vec::new());
@@ -1184,8 +1171,7 @@ pub fn heat_kernel_signature_with_csr(
     let mut out: Vec<f32> = vec![0.0; hw];
     // Deterministic Xorshift so tests are reproducible. The specific
     // numeric choices here are not cryptographic — just spread the bits.
-    let mut rng_state: u64 =
-        0x9E37_79B9_7F4A_7C15 ^ (hw as u64).wrapping_mul(0x100_0193);
+    let mut rng_state: u64 = 0x9E37_79B9_7F4A_7C15 ^ (hw as u64).wrapping_mul(0x100_0193);
     let mut next = || {
         rng_state ^= rng_state << 13;
         rng_state ^= rng_state >> 7;
@@ -1228,9 +1214,7 @@ pub fn heat_kernel_signature_with_csr(
 ///
 /// One CSR build, three heat diffusions. The largest `t_global=10.0`
 /// dominates the runtime (~80 steps of 1.4 ms = ~112 ms on 10⁶).
-pub fn compute_hks_descriptors(
-    store: &SubstrateStore,
-) -> SubstrateResult<Vec<[f32; 3]>> {
+pub fn compute_hks_descriptors(store: &SubstrateStore) -> SubstrateResult<Vec<[f32; 3]>> {
     let csr = CsrAdjacency::build(store);
     let h_local = heat_kernel_signature_with_csr(&csr, HKS_T_LOCAL)?;
     let h_meso = heat_kernel_signature_with_csr(&csr, HKS_T_MESO)?;
@@ -1476,11 +1460,7 @@ pub fn effective_resistance_csr(
 /// Convenience wrapper: build a CSR and run CG. Callers doing multiple
 /// resistance queries should reuse [`effective_resistance_csr`] against
 /// a single snapshot.
-pub fn effective_resistance(
-    store: &SubstrateStore,
-    u: NodeId,
-    v: NodeId,
-) -> Option<f32> {
+pub fn effective_resistance(store: &SubstrateStore, u: NodeId, v: NodeId) -> Option<f32> {
     let csr = CsrAdjacency::build(store);
     effective_resistance_csr(&csr, u.0 as u32, v.0 as u32, 200, 1e-5)
 }
@@ -1535,9 +1515,7 @@ mod tests {
     ///
     /// Returns (triangle_edges, bridge_edges) — the concrete
     /// `(src, dst)` pairs the test will query.
-    fn build_trefoil(
-        s: &SubstrateStore,
-    ) -> (Vec<(NodeId, NodeId)>, Vec<(NodeId, NodeId)>) {
+    fn build_trefoil(s: &SubstrateStore) -> (Vec<(NodeId, NodeId)>, Vec<(NodeId, NodeId)>) {
         let a1 = s.create_node_in_community(&["N"], 1);
         let a2 = s.create_node_in_community(&["N"], 1);
         let a3 = s.create_node_in_community(&["N"], 1);
@@ -1977,43 +1955,89 @@ mod tests {
     /// two hubs. The broker nodes that straddle both factions (2, 8,
     /// 13, 31) are well-known high-betweenness bridges — Ollivier-Ricci
     /// theory predicts their aggregated curvature is negative.
-    fn build_karate(
-        s: &SubstrateStore,
-    ) -> Vec<NodeId> {
+    fn build_karate(s: &SubstrateStore) -> Vec<NodeId> {
         let nodes: Vec<NodeId> = (0..34)
             .map(|_| s.create_node_in_community(&["N"], 1))
             .collect();
         // 78 unique undirected edges — Zachary 1977 edge list.
         let edges: &[(usize, usize)] = &[
-            (0, 1), (0, 2), (0, 3), (0, 4), (0, 5), (0, 6), (0, 7), (0, 8),
-            (0, 10), (0, 11), (0, 12), (0, 13), (0, 17), (0, 19), (0, 21),
+            (0, 1),
+            (0, 2),
+            (0, 3),
+            (0, 4),
+            (0, 5),
+            (0, 6),
+            (0, 7),
+            (0, 8),
+            (0, 10),
+            (0, 11),
+            (0, 12),
+            (0, 13),
+            (0, 17),
+            (0, 19),
+            (0, 21),
             (0, 31),
-            (1, 2), (1, 3), (1, 7), (1, 13), (1, 17), (1, 19), (1, 21),
+            (1, 2),
+            (1, 3),
+            (1, 7),
+            (1, 13),
+            (1, 17),
+            (1, 19),
+            (1, 21),
             (1, 30),
-            (2, 3), (2, 7), (2, 8), (2, 9), (2, 13), (2, 27), (2, 28),
+            (2, 3),
+            (2, 7),
+            (2, 8),
+            (2, 9),
+            (2, 13),
+            (2, 27),
+            (2, 28),
             (2, 32),
-            (3, 7), (3, 12), (3, 13),
-            (4, 6), (4, 10),
-            (5, 6), (5, 10), (5, 16),
+            (3, 7),
+            (3, 12),
+            (3, 13),
+            (4, 6),
+            (4, 10),
+            (5, 6),
+            (5, 10),
+            (5, 16),
             (6, 16),
-            (8, 30), (8, 32), (8, 33),
+            (8, 30),
+            (8, 32),
+            (8, 33),
             (9, 33),
             (13, 33),
-            (14, 32), (14, 33),
-            (15, 32), (15, 33),
-            (18, 32), (18, 33),
+            (14, 32),
+            (14, 33),
+            (15, 32),
+            (15, 33),
+            (18, 32),
+            (18, 33),
             (19, 33),
-            (20, 32), (20, 33),
-            (22, 32), (22, 33),
-            (23, 25), (23, 27), (23, 29), (23, 32), (23, 33),
-            (24, 25), (24, 27), (24, 31),
+            (20, 32),
+            (20, 33),
+            (22, 32),
+            (22, 33),
+            (23, 25),
+            (23, 27),
+            (23, 29),
+            (23, 32),
+            (23, 33),
+            (24, 25),
+            (24, 27),
+            (24, 31),
             (25, 31),
-            (26, 29), (26, 33),
+            (26, 29),
+            (26, 33),
             (27, 33),
-            (28, 31), (28, 33),
-            (29, 32), (29, 33),
-            (30, 32), (30, 33),
-            (31, 32), (31, 33),
+            (28, 31),
+            (28, 33),
+            (29, 32),
+            (29, 33),
+            (30, 32),
+            (30, 33),
+            (31, 32),
+            (31, 33),
             (32, 33),
         ];
         for &(a, b) in edges {
@@ -2114,21 +2138,29 @@ mod tests {
             broker_mean < hub_mean,
             "brokers (mean {:.3}: k2={:.3}, k8={:.3}, k13={:.3}, k31={:.3}) \
              should be strictly below faction hubs (mean {:.3}: k0={:.3}, k33={:.3})",
-            broker_mean, k2, k8, k13, k31, hub_mean, k0, k33,
+            broker_mean,
+            k2,
+            k8,
+            k13,
+            k31,
+            hub_mean,
+            k0,
+            k33,
         );
 
         // Claim 3: at least three of the four brokers are
         // individually negative. Guards against the case where
         // one flukey positive outlier could drag the mean below
         // the hubs while hiding the intended signal.
-        let negative_brokers = [k2, k8, k13, k31]
-            .iter()
-            .filter(|&&v| v < 0.0)
-            .count();
+        let negative_brokers = [k2, k8, k13, k31].iter().filter(|&&v| v < 0.0).count();
         assert!(
             negative_brokers >= 3,
             "expected ≥ 3 of {{k2, k8, k13, k31}} to be negative, got {} (values: k2={:.3}, k8={:.3}, k13={:.3}, k31={:.3})",
-            negative_brokers, k2, k8, k13, k31,
+            negative_brokers,
+            k2,
+            k8,
+            k13,
+            k31,
         );
     }
 
@@ -2584,12 +2616,9 @@ mod tests {
         let nodes = build_chain(&s, 10);
         let mid = nodes[5];
         let csr = CsrAdjacency::build(&s);
-        let h_local =
-            heat_kernel_signature_with_csr(&csr, HKS_T_LOCAL).unwrap();
-        let h_meso =
-            heat_kernel_signature_with_csr(&csr, HKS_T_MESO).unwrap();
-        let h_global =
-            heat_kernel_signature_with_csr(&csr, HKS_T_GLOBAL).unwrap();
+        let h_local = heat_kernel_signature_with_csr(&csr, HKS_T_LOCAL).unwrap();
+        let h_meso = heat_kernel_signature_with_csr(&csr, HKS_T_MESO).unwrap();
+        let h_global = heat_kernel_signature_with_csr(&csr, HKS_T_GLOBAL).unwrap();
         let slot = mid.0 as usize;
         assert!(
             h_local[slot] >= h_meso[slot] && h_meso[slot] >= h_global[slot],
@@ -2612,8 +2641,8 @@ mod tests {
         let (_td, s) = store();
         let nodes = build_chain(&s, 6);
         let csr = CsrAdjacency::build(&s);
-        let d = geodesic_distance_csr(&csr, nodes[0].0 as u32, nodes[5].0 as u32)
-            .expect("reachable");
+        let d =
+            geodesic_distance_csr(&csr, nodes[0].0 as u32, nodes[5].0 as u32).expect("reachable");
         assert!(
             (d - 5.0).abs() < 1e-3,
             "6-chain endpoints geodesic should be 5.0, got {}",
@@ -2630,9 +2659,8 @@ mod tests {
         let csr = CsrAdjacency::build(&s);
         let mut prev = -1.0_f32;
         for k in 0..nodes.len() {
-            let d =
-                geodesic_distance_csr(&csr, nodes[0].0 as u32, nodes[k].0 as u32)
-                    .expect("reachable");
+            let d = geodesic_distance_csr(&csr, nodes[0].0 as u32, nodes[k].0 as u32)
+                .expect("reachable");
             assert!(
                 d > prev,
                 "geodesic must be strictly increasing: prev {}, d[n_{}] = {}",
@@ -2668,8 +2696,7 @@ mod tests {
         // 4-hop chain, R(endpoints) = 4 (± CG tolerance).
         let (_td, s) = store();
         let nodes = build_chain(&s, 5);
-        let r = effective_resistance(&s, nodes[0], nodes[4])
-            .expect("resistance defined");
+        let r = effective_resistance(&s, nodes[0], nodes[4]).expect("resistance defined");
         assert!(
             (r - 4.0).abs() < 1e-2,
             "4-hop chain resistance should be 4.0 (± 1e-2), got {}",
@@ -2710,7 +2737,11 @@ mod tests {
         link(&s, n1, n2);
         link(&s, n2, n0);
         let r = effective_resistance(&s, n0, n1).expect("resistance defined");
-        assert!(r < 1.0, "triangle R should be < 1-hop shortest path, got {}", r);
+        assert!(
+            r < 1.0,
+            "triangle R should be < 1-hop shortest path, got {}",
+            r
+        );
     }
 
     #[test]

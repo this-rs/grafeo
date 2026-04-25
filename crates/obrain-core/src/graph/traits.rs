@@ -320,9 +320,7 @@ pub trait GraphStore: Send + Sync {
     /// overrides; substrate-backed stores expose vector retrieval through their
     /// native L1 vector store instead.
     #[cfg(feature = "vector-index")]
-    fn vector_index_entries(
-        &self,
-    ) -> Vec<(String, Arc<crate::index::vector::HnswIndex>)> {
+    fn vector_index_entries(&self) -> Vec<(String, Arc<crate::index::vector::HnswIndex>)> {
         Vec::new()
     }
 
@@ -396,11 +394,7 @@ pub trait GraphStore: Send + Sync {
     /// query engine's server-side filter path.
     /// Default returns empty — backends without operator-filter support
     /// should fall back to `node_ids()` + manual scan.
-    fn find_nodes_matching_filter(
-        &self,
-        _property: &str,
-        _filter_value: &Value,
-    ) -> Vec<NodeId> {
+    fn find_nodes_matching_filter(&self, _property: &str, _filter_value: &Value) -> Vec<NodeId> {
         Vec::new()
     }
 
@@ -779,12 +773,7 @@ pub trait GraphStoreMut: GraphStore {
     /// Rolls back property changes from this transaction back to the given
     /// undo-log position (savepoint-level rollback). No-op for backends
     /// without MVCC.
-    fn rollback_transaction_properties_to(
-        &self,
-        _transaction_id: TransactionId,
-        _since: usize,
-    ) {
-    }
+    fn rollback_transaction_properties_to(&self, _transaction_id: TransactionId, _since: usize) {}
 
     /// Publishes the given epoch as the store's "current" read epoch so that
     /// convenience lookups surface committed versions immediately. No-op for
@@ -877,11 +866,7 @@ pub trait GraphStoreMut: GraphStore {
     /// substrate allocates monotonically and does not support
     /// reusing a specific slot; the legacy `LpgStore` backend
     /// overrides this with its inherent slot-reclamation routine.
-    fn create_node_with_id(
-        &self,
-        _id: NodeId,
-        _labels: &[&str],
-    ) -> Result<(), AllocError> {
+    fn create_node_with_id(&self, _id: NodeId, _labels: &[&str]) -> Result<(), AllocError> {
         Err(AllocError::OutOfMemory)
     }
 
@@ -889,11 +874,7 @@ pub trait GraphStoreMut: GraphStore {
     /// `dest` named graph (both `None` = root graph). Used by
     /// `CREATE GRAPH g AS COPY OF h`. The default returns an error for
     /// backends without named-graph support.
-    fn copy_named_graph(
-        &self,
-        _source: Option<&str>,
-        _dest: Option<&str>,
-    ) -> Result<(), String> {
+    fn copy_named_graph(&self, _source: Option<&str>, _dest: Option<&str>) -> Result<(), String> {
         Err("named graphs are not supported by this backend".to_string())
     }
 

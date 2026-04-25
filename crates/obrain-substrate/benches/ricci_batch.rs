@@ -53,7 +53,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use obrain_common::types::NodeId;
 use obrain_core::graph::traits::{GraphStore, GraphStoreMut};
 use obrain_substrate::store::SubstrateStore;
-use obrain_substrate::{refresh_all_ricci, RicciRefreshStats};
+use obrain_substrate::{RicciRefreshStats, refresh_all_ricci};
 use tempfile::TempDir;
 
 // -----------------------------------------------------------------------
@@ -104,8 +104,7 @@ fn build_workload(n: usize) -> Workload {
 
     let community_count = (n / NODES_PER_COMMUNITY).max(1) as u32;
     let mut nodes: Vec<NodeId> = Vec::with_capacity(n);
-    let mut by_community: Vec<Vec<NodeId>> =
-        (0..=community_count).map(|_| Vec::new()).collect();
+    let mut by_community: Vec<Vec<NodeId>> = (0..=community_count).map(|_| Vec::new()).collect();
     'outer: for cid in 1..=community_count {
         for _ in 0..NODES_PER_COMMUNITY {
             if nodes.len() >= n {
@@ -120,8 +119,7 @@ fn build_workload(n: usize) -> Workload {
     let mut rng = Xorshift64::new(0xC0DE_F00D_F00D_BABE);
     for i in 0..nodes.len() {
         let src = nodes[i];
-        let src_cid =
-            ((i / NODES_PER_COMMUNITY) as u32 + 1).min(community_count);
+        let src_cid = ((i / NODES_PER_COMMUNITY) as u32 + 1).min(community_count);
         for _ in 0..AVG_DEGREE {
             let cross = rng.range(1_000_000) < CROSS_COMMUNITY_PROB_PPM;
             let dst = if cross {

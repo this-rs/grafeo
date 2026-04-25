@@ -242,11 +242,7 @@ pub fn personalized_pagerank(
 /// # Complexity
 ///
 /// O(K log K + K × avg_degree) for sorting + edge induction.
-pub fn extract_subgraph(
-    store: &dyn GraphStore,
-    ppr: &PprResult,
-    budget: usize,
-) -> SubstrateStore {
+pub fn extract_subgraph(store: &dyn GraphStore, ppr: &PprResult, budget: usize) -> SubstrateStore {
     let sub = SubstrateStore::open_tempfile().expect("SubstrateStore::open_tempfile");
 
     if ppr.scores.is_empty() || budget == 0 {

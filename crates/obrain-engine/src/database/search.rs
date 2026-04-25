@@ -1,6 +1,10 @@
 //! Vector, text, and hybrid search operations for ObrainDB.
 
-#[cfg(any(feature = "vector-index", feature = "text-index", feature = "hybrid-search"))]
+#[cfg(any(
+    feature = "vector-index",
+    feature = "text-index",
+    feature = "hybrid-search"
+))]
 use obrain_common::types::NodeId;
 #[cfg(feature = "vector-index")]
 use obrain_common::types::Value;
@@ -32,8 +36,11 @@ impl super::ObrainDB {
         // Start with all nodes for this label — route via the real backend
         // (substrate in T17 mode) so the filter allowlist contains live node
         // IDs, not dummy-store artefacts.
-        let label_nodes: std::collections::HashSet<NodeId> =
-            self.data_store().nodes_by_label(label).into_iter().collect();
+        let label_nodes: std::collections::HashSet<NodeId> = self
+            .data_store()
+            .nodes_by_label(label)
+            .into_iter()
+            .collect();
 
         let mut allowlist = label_nodes;
 

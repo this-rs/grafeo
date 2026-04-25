@@ -1,8 +1,12 @@
-use obrain_engine::ObrainDB;
 use obrain_core::graph::GraphStore;
+use obrain_engine::ObrainDB;
 
 fn main() {
-    let bases = ["/Users/triviere/.obrain/db/po", "/Users/triviere/.obrain/db/megalaw", "/Users/triviere/.obrain/db/wikipedia"];
+    let bases = [
+        "/Users/triviere/.obrain/db/po",
+        "/Users/triviere/.obrain/db/megalaw",
+        "/Users/triviere/.obrain/db/wikipedia",
+    ];
     for path in bases.iter() {
         print!("Opening {path}... ");
         match ObrainDB::open(path) {

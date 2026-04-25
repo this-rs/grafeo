@@ -1224,9 +1224,21 @@ mod tests {
     fn test_params_with_in_list() {
         // Tests parameter as a value checked against IN list
         let store = make_store();
-        add_node(&*store, &["Item"], &[("status", Value::String("active".into()))]);
-        add_node(&*store, &["Item"], &[("status", Value::String("pending".into()))]);
-        add_node(&*store, &["Item"], &[("status", Value::String("deleted".into()))]);
+        add_node(
+            &*store,
+            &["Item"],
+            &[("status", Value::String("active".into()))],
+        );
+        add_node(
+            &*store,
+            &["Item"],
+            &[("status", Value::String("pending".into()))],
+        );
+        add_node(
+            &*store,
+            &["Item"],
+            &[("status", Value::String("deleted".into()))],
+        );
 
         let processor = QueryProcessor::for_lpg(store);
 
@@ -1298,9 +1310,21 @@ mod tests {
     fn test_params_string_equality() {
         // Tests string parameter equality comparison
         let store = make_store();
-        add_node(&*store, &["Item"], &[("name", Value::String("alpha".into()))]);
-        add_node(&*store, &["Item"], &[("name", Value::String("beta".into()))]);
-        add_node(&*store, &["Item"], &[("name", Value::String("gamma".into()))]);
+        add_node(
+            &*store,
+            &["Item"],
+            &[("name", Value::String("alpha".into()))],
+        );
+        add_node(
+            &*store,
+            &["Item"],
+            &[("name", Value::String("beta".into()))],
+        );
+        add_node(
+            &*store,
+            &["Item"],
+            &[("name", Value::String("gamma".into()))],
+        );
 
         let processor = QueryProcessor::for_lpg(store);
 

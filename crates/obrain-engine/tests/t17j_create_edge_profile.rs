@@ -27,7 +27,9 @@ fn fresh_db() -> (tempfile::TempDir, ObrainDB) {
     (td, db)
 }
 
-fn seed_bench_nodes(db: &ObrainDB) -> Vec<(obrain_common::types::NodeId, obrain_common::types::NodeId)> {
+fn seed_bench_nodes(
+    db: &ObrainDB,
+) -> Vec<(obrain_common::types::NodeId, obrain_common::types::NodeId)> {
     let store = db.store();
     (0..N)
         .map(|_| {
@@ -99,7 +101,8 @@ fn profile_cypher_stages() {
             .execute_cypher(&format!("CREATE (:_BenchDst {{id: {i}}})"))
             .unwrap();
     }
-    let query_str = "MATCH (a:_BenchSrc {id: 0}), (b:_BenchDst {id: 0}) CREATE (a)-[:_BENCH_REL]->(b)";
+    let query_str =
+        "MATCH (a:_BenchSrc {id: 0}), (b:_BenchDst {id: 0}) CREATE (a)-[:_BENCH_REL]->(b)";
     let iterations = 50;
     let t0 = Instant::now();
     for _ in 0..iterations {

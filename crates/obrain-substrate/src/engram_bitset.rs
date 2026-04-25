@@ -78,7 +78,11 @@ impl EngramBitsetColumn {
         if offset + BITSET_ENTRY_SIZE > slice.len() {
             return 0;
         }
-        u64::from_le_bytes(slice[offset..offset + BITSET_ENTRY_SIZE].try_into().unwrap())
+        u64::from_le_bytes(
+            slice[offset..offset + BITSET_ENTRY_SIZE]
+                .try_into()
+                .unwrap(),
+        )
     }
 
     /// Write the bitset for `node_id`. Grows the zone with exponential
@@ -254,10 +258,7 @@ mod tests {
         }
         // Re-open through the same substrate (its tempdir guard keeps the directory alive).
         let zf2 = sub.open_zone(Zone::EngramBitset).unwrap();
-        assert_eq!(
-            EngramBitsetColumn::get(&zf2, 999),
-            0xDEAD_BEEF_CAFE_BABE
-        );
+        assert_eq!(EngramBitsetColumn::get(&zf2, 999), 0xDEAD_BEEF_CAFE_BABE);
         assert!(sub_path.exists());
     }
 

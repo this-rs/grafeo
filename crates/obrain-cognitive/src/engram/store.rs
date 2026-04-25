@@ -143,10 +143,7 @@ impl EngramStore {
     /// Serializes an engram into graph node properties.
     fn engram_properties(engram: &Engram) -> HashMap<String, Value> {
         let mut props = HashMap::new();
-        props.insert(
-            PROP_ENGRAM_ID.to_string(),
-            Value::Int64(engram.id.0 as i64),
-        );
+        props.insert(PROP_ENGRAM_ID.to_string(), Value::Int64(engram.id.0 as i64));
         // Full serialization as JSON — simplest path that preserves every
         // field (ensemble, spectral_signature, FSRS state, history, ...).
         match serde_json::to_string(engram) {
@@ -369,9 +366,9 @@ impl EngramStore {
     /// bitset short-circuits to an empty result.
     #[cfg(feature = "substrate")]
     pub fn recall(&self, query_nid: NodeId) -> SubstrateResult<Vec<EngramId>> {
-        let writer = self.substrate_writer().ok_or_else(|| {
-            SubstrateError::WalBadFrame("no substrate writer attached".into())
-        })?;
+        let writer = self
+            .substrate_writer()
+            .ok_or_else(|| SubstrateError::WalBadFrame("no substrate writer attached".into()))?;
         let nid_u32 = Self::node_id_to_u32(query_nid).ok_or_else(|| {
             SubstrateError::WalBadFrame("node id overflows u32 substrate addressing".into())
         })?;
@@ -406,9 +403,9 @@ impl EngramStore {
     /// substrate (never formed, or was cleared via [`Self::remove`]).
     #[cfg(feature = "substrate")]
     pub fn members(&self, eid: EngramId) -> SubstrateResult<Vec<NodeId>> {
-        let writer = self.substrate_writer().ok_or_else(|| {
-            SubstrateError::WalBadFrame("no substrate writer attached".into())
-        })?;
+        let writer = self
+            .substrate_writer()
+            .ok_or_else(|| SubstrateError::WalBadFrame("no substrate writer attached".into()))?;
         let Some(eid_u16) = Self::engram_id_to_u16(eid) else {
             return Ok(Vec::new());
         };
@@ -427,9 +424,9 @@ impl EngramStore {
     /// was allocated externally (used by `form` and by the insert mirror).
     #[cfg(feature = "substrate")]
     fn form_with_id(&self, eid: EngramId, nids: &[NodeId]) -> SubstrateResult<()> {
-        let writer = self.substrate_writer().ok_or_else(|| {
-            SubstrateError::WalBadFrame("no substrate writer attached".into())
-        })?;
+        let writer = self
+            .substrate_writer()
+            .ok_or_else(|| SubstrateError::WalBadFrame("no substrate writer attached".into()))?;
         let eid_u16 = Self::engram_id_to_u16(eid).ok_or_else(|| {
             SubstrateError::WalBadFrame(format!(
                 "engram id {} overflows substrate u16 namespace (max {})",

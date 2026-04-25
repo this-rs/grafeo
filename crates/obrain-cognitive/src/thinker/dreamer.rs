@@ -25,9 +25,7 @@ use std::time::Duration;
 use obrain_substrate::SubstrateStore;
 use parking_lot::Mutex;
 
-use super::{
-    Thinker, ThinkerBudget, ThinkerKind, ThinkerTickError, ThinkerTickReport,
-};
+use super::{Thinker, ThinkerBudget, ThinkerKind, ThinkerTickError, ThinkerTickReport};
 
 /// A single cross-community synapse proposal. Conservative default is
 /// to register-only; a higher-privilege operator can materialise the
@@ -97,7 +95,10 @@ impl Dreamer {
 
     pub fn stats(&self) -> DreamerStats {
         let s = *self.stats.lock();
-        DreamerStats { queue_depth: self.queue.lock().len() as u64, ..s }
+        DreamerStats {
+            queue_depth: self.queue.lock().len() as u64,
+            ..s
+        }
     }
 
     /// Drain the queue of pending proposals (consumes them). Used by
@@ -127,10 +128,7 @@ impl Thinker for Dreamer {
     fn interval(&self) -> Duration {
         self.config.interval
     }
-    fn tick(
-        &self,
-        _store: &Arc<SubstrateStore>,
-    ) -> Result<ThinkerTickReport, ThinkerTickError> {
+    fn tick(&self, _store: &Arc<SubstrateStore>) -> Result<ThinkerTickReport, ThinkerTickError> {
         let mut r = ThinkerTickReport::start();
 
         // Stub tick: the real bottleneck detection + proposal logic
@@ -160,8 +158,7 @@ mod tests {
     #[test]
     fn tick_increments_and_returns_elapsed() {
         let td = TempDir::new().unwrap();
-        let store =
-            Arc::new(SubstrateStore::create(td.path().join("d-test")).unwrap());
+        let store = Arc::new(SubstrateStore::create(td.path().join("d-test")).unwrap());
         let d = Dreamer::new(DreamerConfig::default());
         let _ = d.tick(&store).expect("tick ok");
         let _ = d.tick(&store).expect("tick ok");

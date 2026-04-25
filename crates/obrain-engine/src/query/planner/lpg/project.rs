@@ -462,8 +462,7 @@ impl super::Planner {
         // LeftJoin(s) → Expand` subtree is substituted with a single
         // TypedDegreeTopKOperator wrapped in a Project. Silent
         // fallback : return None → fall through to the generic plan.
-        if let Some(result) = super::typed_degree_rewrite::try_plan_typed_degree_topk(self, limit)
-        {
+        if let Some(result) = super::typed_degree_rewrite::try_plan_typed_degree_topk(self, limit) {
             return Ok(result);
         }
 

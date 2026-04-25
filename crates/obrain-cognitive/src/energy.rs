@@ -505,9 +505,7 @@ impl EnergyStore {
         if self.substrate.is_some() {
             // The substrate column is the source of truth. The cache is a
             // warm-read accelerator populated lazily — no eager fill here.
-            tracing::trace!(
-                "energy::load_from_graph: no-op (state is column-resident)"
-            );
+            tracing::trace!("energy::load_from_graph: no-op (state is column-resident)");
             return 0;
         }
 
@@ -821,7 +819,10 @@ mod substrate_tests {
         // Every node's column should now be ≈ 0.4 (±1 ULP of Q1.15).
         for id in &ids {
             let e = store.get_energy(*id);
-            assert!((e - 0.4).abs() < 5e-3, "node {id:?} energy: {e} (expected ≈ 0.4)");
+            assert!(
+                (e - 0.4).abs() < 5e-3,
+                "node {id:?} energy: {e} (expected ≈ 0.4)"
+            );
         }
     }
 

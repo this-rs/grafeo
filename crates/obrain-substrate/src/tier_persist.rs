@@ -67,8 +67,8 @@ impl TierMagic {
     /// Expected record size in bytes for this tier.
     pub const fn record_size(self) -> u32 {
         match self {
-            TierMagic::Tier0 => 16, // Tier0 = [u64; 2]
-            TierMagic::Tier1 => 64, // Tier1 = [u64; 8]
+            TierMagic::Tier0 => 16,  // Tier0 = [u64; 2]
+            TierMagic::Tier1 => 64,  // Tier1 = [u64; 8]
             TierMagic::Tier2 => 768, // Tier2 = [u16; 384]
         }
     }

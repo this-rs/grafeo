@@ -473,10 +473,9 @@ impl CognitiveEngineBuilder {
                 #[cfg(feature = "substrate")]
                 {
                     match (&sub, &gs) {
-                        (Some(substrate), _) => Arc::new(EnergyStore::with_substrate(
-                            config,
-                            Arc::clone(substrate),
-                        )),
+                        (Some(substrate), _) => {
+                            Arc::new(EnergyStore::with_substrate(config, Arc::clone(substrate)))
+                        }
                         (None, Some(graph_store)) => Arc::new(EnergyStore::with_graph_store(
                             config,
                             Arc::clone(graph_store),
@@ -507,7 +506,11 @@ impl CognitiveEngineBuilder {
                 "in_memory"
             };
             #[cfg(not(feature = "substrate"))]
-            let routed = if gs.is_some() { "graph_store" } else { "in_memory" };
+            let routed = if gs.is_some() {
+                "graph_store"
+            } else {
+                "in_memory"
+            };
             tracing::info!(routed, "cognitive: energy subsystem activated");
             store
         });
@@ -557,7 +560,11 @@ impl CognitiveEngineBuilder {
                 "in_memory"
             };
             #[cfg(not(feature = "substrate"))]
-            let routed = if gs.is_some() { "graph_store" } else { "in_memory" };
+            let routed = if gs.is_some() {
+                "graph_store"
+            } else {
+                "in_memory"
+            };
             tracing::info!(routed, "cognitive: synapse subsystem activated");
             store
         });

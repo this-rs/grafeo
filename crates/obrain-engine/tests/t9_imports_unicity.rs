@@ -55,7 +55,10 @@ fn count_duplicated_imports_pairs() {
     println!("\n=== IMPORTS unicity audit on PO ===");
     println!("Duplicated-pair result rows : {:?}", dup_result.rows);
     println!("Total IMPORTS edges         : {:?}", total_result.rows);
-    println!("Distinct (s,t) pairs        : {:?}", distinct_pairs_result.rows);
+    println!(
+        "Distinct (s,t) pairs        : {:?}",
+        distinct_pairs_result.rows
+    );
 
     // Actionable assertion — if duplicates > 0 the rewrite needs a guard.
     if let Some(row) = dup_result.rows.first()

@@ -53,10 +53,7 @@ fn bench_db_open_three_corpora() {
     let home = std::env::var("HOME").unwrap_or_default();
     println!("\n=== T17i T1 — DB open bench (post T17h eager init) ===");
     println!("Baselines T17g : PO 8ms, Wiki 24ms, Megalaw 42ms");
-    measure_open(
-        "PO",
-        std::path::PathBuf::from(&home).join(".obrain/db/po"),
-    );
+    measure_open("PO", std::path::PathBuf::from(&home).join(".obrain/db/po"));
     measure_open(
         "Wikipedia",
         std::path::PathBuf::from(&home).join(".obrain/db/wikipedia"),

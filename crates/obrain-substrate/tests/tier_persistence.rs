@@ -35,8 +35,7 @@ fn synthetic_embedding(seed: u32) -> Vec<f32> {
     (0..L2_DIM)
         .map(|i| {
             let i = i as f32;
-            ((s * 0.013 + i * 0.0007).sin() * 0.5)
-                + ((s * 0.031 + i * 0.0019).cos() * 0.5)
+            ((s * 0.013 + i * 0.0007).sin() * 0.5) + ((s * 0.031 + i * 0.0019).cos() * 0.5)
         })
         .collect()
 }
@@ -248,7 +247,11 @@ fn mismatched_n_slots_returns_none() {
 /// Flip one bit in the byte at `offset` of `path`. Used to simulate
 /// storage-layer bitrot without pulling in a full fault-injection crate.
 fn flip_byte(path: &Path, offset: u64) {
-    let mut f = OpenOptions::new().read(true).write(true).open(path).unwrap();
+    let mut f = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .unwrap();
     f.seek(SeekFrom::Start(offset)).unwrap();
     let mut buf = [0u8; 1];
     use std::io::Read;

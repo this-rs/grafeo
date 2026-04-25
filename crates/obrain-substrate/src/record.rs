@@ -100,8 +100,7 @@ const _: [(); 1] = [(); (core::mem::align_of::<NodeRecord>() == 8) as usize];
 pub const NODES_PER_PAGE: u32 = 128;
 
 // Compile-time sanity check: adjust if NodeRecord grows / PAGE_SIZE changes.
-const _: [(); 1] =
-    [(); ((4096usize / NodeRecord::SIZE) == NODES_PER_PAGE as usize) as usize];
+const _: [(); 1] = [(); ((4096usize / NodeRecord::SIZE) == NODES_PER_PAGE as usize) as usize];
 
 impl NodeRecord {
     pub const SIZE: usize = 32;

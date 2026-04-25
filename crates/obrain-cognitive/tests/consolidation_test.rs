@@ -299,8 +299,7 @@ fn consolidation_synapse_rewire() {
     let condensed_id = *result.condensed_nodes.keys().next().unwrap();
 
     // Check that external → condensed SYNAPSE edge exists (rewired from external → cluster[0])
-    let outgoing_from_external: Vec<(NodeId, _)> =
-        store.edges_from(external, Direction::Outgoing);
+    let outgoing_from_external: Vec<(NodeId, _)> = store.edges_from(external, Direction::Outgoing);
     let has_synapse_to_condensed = outgoing_from_external.iter().any(|(target, eid)| {
         *target == condensed_id
             && store

@@ -786,7 +786,9 @@ mod tests {
 
         let mut w = VecColumnWriter::create(&sub, spec).unwrap();
         for slot in 0..n {
-            let v: Vec<f32> = (0..spec.dim).map(|i| slot as f32 + i as f32 * 0.125).collect();
+            let v: Vec<f32> = (0..spec.dim)
+                .map(|i| slot as f32 + i as f32 * 0.125)
+                .collect();
             w.write_slot(slot, bytemuck::cast_slice(&v)).unwrap();
         }
         assert_eq!(w.n_slots(), n);
@@ -796,8 +798,9 @@ mod tests {
         assert_eq!(r.n_slots(), n);
         for slot in 0..n {
             let got = r.read_slot_f32(slot).unwrap();
-            let expected: Vec<f32> =
-                (0..spec.dim).map(|i| slot as f32 + i as f32 * 0.125).collect();
+            let expected: Vec<f32> = (0..spec.dim)
+                .map(|i| slot as f32 + i as f32 * 0.125)
+                .collect();
             assert_eq!(got, &expected[..]);
         }
     }
@@ -872,7 +875,11 @@ mod tests {
         // Different dim → different filename entirely (disjoint zones),
         // so the "mismatch" is really "missing". That's expected.
         let spec_other_dim = sample_spec_f32(1, 8);
-        assert!(VecColumnReader::open(&sub, spec_other_dim).unwrap().is_none());
+        assert!(
+            VecColumnReader::open(&sub, spec_other_dim)
+                .unwrap()
+                .is_none()
+        );
 
         // Same filename, but caller asks for a different prop_key_id.
         // We need to forge this by targeting the same on-disk file
@@ -956,10 +963,7 @@ mod tests {
         // Truncate the file below `HEADER_SIZE + n * stride`.
         let expected = HEADER_SIZE + (n as usize) * spec.slot_stride();
         let path = sub.path().join(spec.filename());
-        let f = std::fs::OpenOptions::new()
-            .write(true)
-            .open(&path)
-            .unwrap();
+        let f = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
         f.set_len(expected as u64 - 4).unwrap();
         drop(f);
 
@@ -1045,7 +1049,10 @@ mod tests {
             dim: 4,
             dtype: VecDType::F32,
         };
-        let edge_spec = VecColSpec { entity_kind: EntityKind::Edge, ..node_spec };
+        let edge_spec = VecColSpec {
+            entity_kind: EntityKind::Edge,
+            ..node_spec
+        };
 
         assert_ne!(node_spec.filename(), edge_spec.filename());
 

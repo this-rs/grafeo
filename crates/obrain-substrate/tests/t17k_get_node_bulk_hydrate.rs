@@ -2,8 +2,8 @@
 //! from all four zones (DashMap / PropsZone v2 / blob_columns / vec_columns)
 //! in the correct LWW order. Zero dependency on a local production base.
 
-use obrain_common::types::Value;
 use obrain_common::PropertyKey;
+use obrain_common::types::Value;
 use obrain_core::graph::{GraphStore, traits::GraphStoreMut};
 use obrain_substrate::SubstrateStore;
 
@@ -32,7 +32,12 @@ fn get_node_hydrates_small_scalar_props_via_v2() {
     store.set_node_property(n, "is_test", Value::Bool(true));
 
     let node = store.get_node(n).expect("node exists");
-    assert_eq!(node.properties.len(), 3, "3 scalar props expected, got {:?}", node.properties);
+    assert_eq!(
+        node.properties.len(),
+        3,
+        "3 scalar props expected, got {:?}",
+        node.properties
+    );
     assert_eq!(
         node.properties.get(&PropertyKey::new("line")),
         Some(&Value::Int64(42))

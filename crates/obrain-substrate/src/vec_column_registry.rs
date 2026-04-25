@@ -118,8 +118,7 @@ impl VecColumnRegistry {
             };
             let key = PropertyKey::new(name.as_str());
             let writer = VecColumnWriter::create(sub, *spec)?;
-            self.writers
-                .insert(*spec, Arc::new(Mutex::new(writer)));
+            self.writers.insert(*spec, Arc::new(Mutex::new(writer)));
             self.by_key.insert((key, spec.entity_kind), *spec);
         }
         Ok(())
@@ -206,12 +205,7 @@ impl VecColumnRegistry {
     /// if the slot is past the writer's high-water mark, or if the
     /// dtype is not F32. Other dtypes are not surfaced to
     /// `Value::Vector` today (it is `Arc<[f32]>`).
-    pub(crate) fn read(
-        &self,
-        key: &PropertyKey,
-        ek: EntityKind,
-        slot: u32,
-    ) -> Option<Arc<[f32]>> {
+    pub(crate) fn read(&self, key: &PropertyKey, ek: EntityKind, slot: u32) -> Option<Arc<[f32]>> {
         let spec = self.spec_for(key, ek)?;
         let writer = self.writers.get(&spec)?.clone();
         let guard = writer.lock();
@@ -273,17 +267,9 @@ impl VecColumnRegistry {
     /// `SubstrateStore::build_dict_snapshot` to populate the v3
     /// `vec_columns` list.
     pub(crate) fn specs_snapshot(&self) -> Vec<VecColSpec> {
-        let mut out: Vec<VecColSpec> =
-            self.writers.iter().map(|e| *e.key()).collect();
+        let mut out: Vec<VecColSpec> = self.writers.iter().map(|e| *e.key()).collect();
         // Deterministic order for snapshot roundtrips + easier diffing.
-        out.sort_by_key(|s| {
-            (
-                s.entity_kind as u8,
-                s.prop_key_id,
-                s.dtype as u8,
-                s.dim,
-            )
-        });
+        out.sort_by_key(|s| (s.entity_kind as u8, s.prop_key_id, s.dtype as u8, s.dim));
         out
     }
 
@@ -326,10 +312,42 @@ mod tests {
         let sub = SubstrateFile::open_tempfile().unwrap();
         let reg = VecColumnRegistry::new();
         // Three vec columns on Node, one on Edge (must not leak).
-        reg.write(&sub, &pk("embedding"), EntityKind::Node, 0, 7, &vec![1.0_f32; 4]).unwrap();
-        reg.write(&sub, &pk("hilbert"),   EntityKind::Node, 1, 7, &vec![2.0_f32; 4]).unwrap();
-        reg.write(&sub, &pk("kernel"),    EntityKind::Node, 2, 7, &vec![3.0_f32; 4]).unwrap();
-        reg.write(&sub, &pk("edge_vec"),  EntityKind::Edge, 3, 7, &vec![9.0_f32; 4]).unwrap();
+        reg.write(
+            &sub,
+            &pk("embedding"),
+            EntityKind::Node,
+            0,
+            7,
+            &vec![1.0_f32; 4],
+        )
+        .unwrap();
+        reg.write(
+            &sub,
+            &pk("hilbert"),
+            EntityKind::Node,
+            1,
+            7,
+            &vec![2.0_f32; 4],
+        )
+        .unwrap();
+        reg.write(
+            &sub,
+            &pk("kernel"),
+            EntityKind::Node,
+            2,
+            7,
+            &vec![3.0_f32; 4],
+        )
+        .unwrap();
+        reg.write(
+            &sub,
+            &pk("edge_vec"),
+            EntityKind::Edge,
+            3,
+            7,
+            &vec![9.0_f32; 4],
+        )
+        .unwrap();
 
         let props = reg.iter_props_for_entity(EntityKind::Node, 7);
         assert_eq!(props.len(), 3, "expected 3 Node vec props, got {props:?}");
@@ -345,8 +363,24 @@ mod tests {
     fn iter_props_for_entity_skips_absent_slots() {
         let sub = SubstrateFile::open_tempfile().unwrap();
         let reg = VecColumnRegistry::new();
-        reg.write(&sub, &pk("embedding"), EntityKind::Node, 0, 5, &vec![1.0_f32; 3]).unwrap();
-        reg.write(&sub, &pk("hilbert"),   EntityKind::Node, 1, 9, &vec![2.0_f32; 3]).unwrap();
+        reg.write(
+            &sub,
+            &pk("embedding"),
+            EntityKind::Node,
+            0,
+            5,
+            &vec![1.0_f32; 3],
+        )
+        .unwrap();
+        reg.write(
+            &sub,
+            &pk("hilbert"),
+            EntityKind::Node,
+            1,
+            9,
+            &vec![2.0_f32; 3],
+        )
+        .unwrap();
         // Slot 5 has "embedding", slot 9 has "hilbert", slot 7 has NEITHER.
         let props_7 = reg.iter_props_for_entity(EntityKind::Node, 7);
         assert!(props_7.is_empty(), "slot 7 has no props, got {props_7:?}");
@@ -393,12 +427,8 @@ mod tests {
         reg.write(&sub, &pk("weight"), EntityKind::Edge, 0, 0, &v_edge)
             .unwrap();
 
-        let got_node = reg
-            .read(&pk("weight"), EntityKind::Node, 0)
-            .unwrap();
-        let got_edge = reg
-            .read(&pk("weight"), EntityKind::Edge, 0)
-            .unwrap();
+        let got_node = reg.read(&pk("weight"), EntityKind::Node, 0).unwrap();
+        let got_edge = reg.read(&pk("weight"), EntityKind::Edge, 0).unwrap();
         assert_eq!(got_node.as_ref(), &v_node[..]);
         assert_eq!(got_edge.as_ref(), &v_edge[..]);
     }
@@ -415,10 +445,7 @@ mod tests {
             .write(&sub, &pk("k"), EntityKind::Node, 0, 1, &v3)
             .unwrap_err();
         let msg = format!("{err:?}");
-        assert!(
-            msg.contains("cannot change spec"),
-            "unexpected err: {msg}"
-        );
+        assert!(msg.contains("cannot change spec"), "unexpected err: {msg}");
     }
 
     #[test]
@@ -438,9 +465,12 @@ mod tests {
         let reg = VecColumnRegistry::new();
         let v = vec![0.5_f32; 4];
         // Insert in a scrambled order.
-        reg.write(&sub, &pk("b"), EntityKind::Edge, 2, 0, &v).unwrap();
-        reg.write(&sub, &pk("a"), EntityKind::Node, 0, 0, &v).unwrap();
-        reg.write(&sub, &pk("c"), EntityKind::Node, 1, 0, &v).unwrap();
+        reg.write(&sub, &pk("b"), EntityKind::Edge, 2, 0, &v)
+            .unwrap();
+        reg.write(&sub, &pk("a"), EntityKind::Node, 0, 0, &v)
+            .unwrap();
+        reg.write(&sub, &pk("c"), EntityKind::Node, 1, 0, &v)
+            .unwrap();
 
         let specs = reg.specs_snapshot();
         assert_eq!(specs.len(), 3);

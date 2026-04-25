@@ -12,7 +12,7 @@
 //! `860` page budget. A second test exercises multi-community steady-state
 //! and checks community contiguity at page granularity.
 
-use obrain_substrate::{meta_flags, NODES_PER_PAGE, NodeRecord, SubstrateStore};
+use obrain_substrate::{NODES_PER_PAGE, NodeRecord, SubstrateStore, meta_flags};
 
 const PAGE_SIZE: usize = 4096;
 const NODES_PER_PAGE_USIZE: usize = NODES_PER_PAGE as usize;
@@ -32,8 +32,7 @@ fn single_community_packs_within_budget() {
 
     let hw = store.slot_high_water();
     // Pages touched = ceil(hw * 32 / 4096) = ceil(hw / 128).
-    let pages_touched =
-        ((hw as usize * NodeRecord::SIZE) + PAGE_SIZE - 1) / PAGE_SIZE;
+    let pages_touched = ((hw as usize * NodeRecord::SIZE) + PAGE_SIZE - 1) / PAGE_SIZE;
 
     let perfect = ((n as usize * NodeRecord::SIZE) + PAGE_SIZE - 1) / PAGE_SIZE;
     let budget = (perfect * 110) / 100; // 10% fragmentation headroom.
@@ -61,7 +60,10 @@ fn single_community_packs_within_budget() {
     // reserved → first node lands at slot 1, which is within page 0) can
     // contribute a stray; in a single-community run there is no transition
     // so `wrong` must be zero.
-    assert_eq!(wrong, 0, "single-community run leaked foreign community ids");
+    assert_eq!(
+        wrong, 0,
+        "single-community run leaked foreign community ids"
+    );
 }
 
 /// Multi-community round-robin — each community owns full pages with no
@@ -84,10 +86,8 @@ fn multi_community_pages_are_not_interleaved() {
 
     // Read back all nodes and bucket them by page.
     let hw = store.slot_high_water();
-    let mut page_to_communities: std::collections::BTreeMap<
-        u32,
-        std::collections::BTreeSet<u32>,
-    > = std::collections::BTreeMap::new();
+    let mut page_to_communities: std::collections::BTreeMap<u32, std::collections::BTreeSet<u32>> =
+        std::collections::BTreeMap::new();
     for slot in 1..hw {
         let Some(rec) = store.writer().read_node(slot).unwrap() else {
             continue;
@@ -161,10 +161,7 @@ fn online_insert_invalidates_hilbert_sorted_flag() {
     // alignment may have pushed slots up to page boundaries; use the
     // store's own counter so the sort covers every live slot).
     let hw = store.slot_high_water();
-    store
-        .writer()
-        .bulk_sort_by_hilbert(hw, 0, 3, 16)
-        .unwrap();
+    store.writer().bulk_sort_by_hilbert(hw, 0, 3, 16).unwrap();
 
     // Pre: the flag is set.
     {

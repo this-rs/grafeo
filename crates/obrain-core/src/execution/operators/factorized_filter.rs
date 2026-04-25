@@ -1193,5 +1193,4 @@ mod tests {
     }
 
     // ==================== PropertyPredicate Tests ====================
-
 }

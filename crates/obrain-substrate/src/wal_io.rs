@@ -25,7 +25,7 @@
 //! a clean boundary, not a resynchronization problem).
 
 use crate::error::SubstrateResult;
-use crate::wal::{WalRecord, WAL_HEADER_SIZE};
+use crate::wal::{WAL_HEADER_SIZE, WalRecord};
 use parking_lot::Mutex;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -83,7 +83,11 @@ impl WalWriter {
     /// Open or create the WAL file at `path`. The writer seeks to the end of
     /// the existing file; its LSN counter starts at `next_lsn` (typically the
     /// value replay returned + 1).
-    pub fn open(path: impl AsRef<Path>, sync_mode: SyncMode, next_lsn: u64) -> SubstrateResult<Self> {
+    pub fn open(
+        path: impl AsRef<Path>,
+        sync_mode: SyncMode,
+        next_lsn: u64,
+    ) -> SubstrateResult<Self> {
         let path = path.as_ref().to_path_buf();
         let mut file = OpenOptions::new()
             .read(true)
@@ -391,10 +395,7 @@ mod tests {
 
         assert_eq!(o1, 0);
         let r = WalReader::open(&wal).unwrap();
-        let items: Vec<_> = r
-            .iter_from(o2)
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
+        let items: Vec<_> = r.iter_from(o2).collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].0.lsn, 2);
         assert_eq!(items[1].0.lsn, 3);

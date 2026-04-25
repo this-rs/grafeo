@@ -17,7 +17,7 @@
 //! With 24 bytes per entry and 4080 bytes available, the TOC supports up
 //! to **170 sections** — far more than needed.
 
-use obrain_common::types::flat::{cast_ref, cast_slice, CastError, Pod};
+use obrain_common::types::flat::{CastError, Pod, cast_ref, cast_slice};
 use std::mem;
 
 /// Magic bytes identifying a valid TOC page.
@@ -270,10 +270,7 @@ impl std::fmt::Display for TocError {
                 write!(f, "TOC bad magic: {:?}", actual)
             }
             TocError::TooManySections { count } => {
-                write!(
-                    f,
-                    "TOC section count {count} exceeds max {MAX_SECTIONS}"
-                )
+                write!(f, "TOC section count {count} exceeds max {MAX_SECTIONS}")
             }
             TocError::Truncated { expected, actual } => {
                 write!(f, "TOC truncated: need {expected} bytes, got {actual}")

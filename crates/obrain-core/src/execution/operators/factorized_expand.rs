@@ -714,7 +714,6 @@ impl Operator for LazyFactorizedChainOperator {
     }
 }
 
-
 // NOTE (T17 W4.p4 closure, 2026-04-23): the in-crate `#[cfg(test)] mod tests`
 // block that used to live here has been relocated to
 // `crates/obrain-substrate/tests/operators_factorized_expand.rs`. The private

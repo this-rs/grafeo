@@ -4080,9 +4080,6 @@ mod tests {
         assert!(!session.in_transaction());
     }
 
-
-
-
     #[cfg(feature = "gql")]
     mod gql_tests {
         use super::*;
@@ -4394,7 +4391,6 @@ mod tests {
                 .unwrap();
             assert_eq!(result.row_count(), 1);
         }
-
 
         #[test]
         fn test_gql_id_seek_return_id() {
@@ -4912,8 +4908,7 @@ mod tests {
         use std::sync::Arc;
 
         let config = crate::config::Config::in_memory();
-        let store =
-            Arc::new(SubstrateStore::open_tempfile().unwrap()) as Arc<dyn GraphStoreMut>;
+        let store = Arc::new(SubstrateStore::open_tempfile().unwrap()) as Arc<dyn GraphStoreMut>;
         let db = ObrainDB::with_store(store, config).unwrap();
 
         let mut session = db.session();
@@ -4938,7 +4933,6 @@ mod tests {
         use super::*;
         use obrain_common::types::Value;
 
-
         #[test]
         fn test_use_graph_nonexistent_errors() {
             let db = ObrainDB::new_in_memory();
@@ -4962,7 +4956,6 @@ mod tests {
             session.execute("USE GRAPH default").unwrap();
             assert_eq!(session.current_graph(), Some("default".to_string()));
         }
-
 
         #[test]
         fn test_session_set_graph_nonexistent_errors() {
@@ -5002,12 +4995,6 @@ mod tests {
             // evaluation is not yet wired up)
             assert!(session.get_parameter("timeout").is_some());
         }
-
-
-
-
-
-
 
         #[test]
         fn test_drop_graph_nonexistent_errors() {
@@ -5077,7 +5064,6 @@ mod tests {
             session.execute("COMMIT").unwrap();
         }
 
-
         #[test]
         fn test_start_transaction_with_isolation_level() {
             let db = ObrainDB::new_in_memory();
@@ -5089,7 +5075,6 @@ mod tests {
             assert!(session.in_transaction());
             session.execute("ROLLBACK").unwrap();
         }
-
 
         #[test]
         fn test_current_graph_default_is_none() {
@@ -5106,7 +5091,6 @@ mod tests {
 
             assert_eq!(session.time_zone(), None);
         }
-
 
         #[test]
         fn test_show_node_types() {

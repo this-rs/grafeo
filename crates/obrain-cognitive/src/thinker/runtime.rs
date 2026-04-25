@@ -206,7 +206,8 @@ impl ThinkerRuntime {
             debug_assert!(
                 self.total_cpu_fraction <= self.config.max_total_cpu_fraction,
                 "aggregate thinker cpu_fraction {:.2} exceeds cap {:.2}",
-                self.total_cpu_fraction, self.config.max_total_cpu_fraction
+                self.total_cpu_fraction,
+                self.config.max_total_cpu_fraction
             );
         }
 
@@ -246,8 +247,19 @@ impl ThinkerRuntime {
             .name(name)
             .spawn(move || {
                 run_thinker_loop(
-                    thinker, store, sensor, pause_flag, stop_c, paused_c, cv_c,
-                    interval, ticks_c, errors_c, over_c, paused_count_c, budget.max_tick_duration,
+                    thinker,
+                    store,
+                    sensor,
+                    pause_flag,
+                    stop_c,
+                    paused_c,
+                    cv_c,
+                    interval,
+                    ticks_c,
+                    errors_c,
+                    over_c,
+                    paused_count_c,
+                    budget.max_tick_duration,
                 );
                 // Best-effort signal — the receiver might already be
                 // dropped (shutdown timed out and detached us); that's
@@ -363,10 +375,9 @@ impl ThinkerRuntime {
                     // local sync, completes immediately.
                     if let Some(jh) = h.join.take() {
                         match jh.join() {
-                            Ok(()) => tracing::debug!(
-                                thinker = h.kind.as_str(),
-                                "thinker joined cleanly"
-                            ),
+                            Ok(()) => {
+                                tracing::debug!(thinker = h.kind.as_str(), "thinker joined cleanly")
+                            }
                             Err(e) => tracing::warn!(
                                 thinker = h.kind.as_str(),
                                 ?e,
@@ -448,9 +459,8 @@ fn run_thinker_loop(
 
         // Run tick with panic safety.
         let start = Instant::now();
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            thinker.tick(&store)
-        }));
+        let outcome =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| thinker.tick(&store)));
         let elapsed = start.elapsed();
 
         match outcome {
@@ -495,7 +505,7 @@ fn panic_to_string(p: Box<dyn std::any::Any + Send>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::thinker::{ThinkerBudget};
+    use crate::thinker::ThinkerBudget;
     use obrain_substrate::store::SubstrateStore;
     use std::sync::atomic::AtomicU64;
     use tempfile::TempDir;
@@ -532,11 +542,7 @@ mod tests {
         let store = Arc::new(SubstrateStore::create(td.path().join("rt")).unwrap());
         let mut cfg = ThinkerRuntimeConfig::default();
         cfg.min_tick_interval = Duration::from_millis(50);
-        let mut rt = ThinkerRuntime::new(
-            store,
-            cfg,
-            Arc::new(NeverOverloadedSensor::default()),
-        );
+        let mut rt = ThinkerRuntime::new(store, cfg, Arc::new(NeverOverloadedSensor::default()));
         let counter = Arc::new(AtomicU64::new(0));
         let _ = rt.spawn(CountingThinker {
             kind: ThinkerKind::Consolidator,
@@ -588,16 +594,11 @@ mod tests {
         }
 
         let td = TempDir::new().unwrap();
-        let store =
-            Arc::new(SubstrateStore::create(td.path().join("rt-busy")).unwrap());
+        let store = Arc::new(SubstrateStore::create(td.path().join("rt-busy")).unwrap());
         let mut cfg = ThinkerRuntimeConfig::default();
         cfg.min_tick_interval = Duration::from_millis(50);
         cfg.shutdown_timeout = Duration::from_millis(300);
-        let mut rt = ThinkerRuntime::new(
-            store,
-            cfg,
-            Arc::new(NeverOverloadedSensor::default()),
-        );
+        let mut rt = ThinkerRuntime::new(store, cfg, Arc::new(NeverOverloadedSensor::default()));
         let tick_started = Arc::new(AtomicBool::new(false));
         rt.spawn(LongTickThinker {
             tick_started: tick_started.clone(),
@@ -654,7 +655,10 @@ mod tests {
         let paused_ticks = rt.handles()[0].paused_ticks();
         rt.shutdown();
         assert_eq!(counter.load(Ordering::Relaxed), 0);
-        assert!(paused_ticks >= 1, "expected ≥ 1 paused tick, got {paused_ticks}");
+        assert!(
+            paused_ticks >= 1,
+            "expected ≥ 1 paused tick, got {paused_ticks}"
+        );
     }
 
     #[test]
@@ -663,11 +667,7 @@ mod tests {
         let store = Arc::new(SubstrateStore::create(td.path().join("rt-global")).unwrap());
         let mut cfg = ThinkerRuntimeConfig::default();
         cfg.min_tick_interval = Duration::from_millis(30);
-        let mut rt = ThinkerRuntime::new(
-            store,
-            cfg,
-            Arc::new(NeverOverloadedSensor::default()),
-        );
+        let mut rt = ThinkerRuntime::new(store, cfg, Arc::new(NeverOverloadedSensor::default()));
         let counter = Arc::new(AtomicU64::new(0));
         rt.spawn(CountingThinker {
             kind: ThinkerKind::Dreamer,
@@ -682,6 +682,9 @@ mod tests {
         std::thread::sleep(Duration::from_millis(150));
         let resumed_count = counter.load(Ordering::Relaxed);
         rt.shutdown();
-        assert!(resumed_count > paused_count, "resumed_count={resumed_count} paused_count={paused_count}");
+        assert!(
+            resumed_count > paused_count,
+            "resumed_count={resumed_count} paused_count={paused_count}"
+        );
     }
 }

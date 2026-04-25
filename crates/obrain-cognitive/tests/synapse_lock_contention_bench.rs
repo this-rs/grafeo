@@ -182,8 +182,7 @@ fn run_workload(workload: Workload, n_threads: usize) -> (f64, Vec<u128>, u64) {
         }));
     }
 
-    let mut all_latencies: Vec<u128> =
-        Vec::with_capacity(n_threads * OPS_PER_THREAD);
+    let mut all_latencies: Vec<u128> = Vec::with_capacity(n_threads * OPS_PER_THREAD);
     for h in handles {
         let v = h.join().expect("thread panicked");
         all_latencies.extend(v);
@@ -213,14 +212,7 @@ fn synapse_lock_contention_sweep() {
         );
         eprintln!(
             "{:>6} {:>14} {:>11} {:>11} {:>11} {:>11} {:>11} {:>11}",
-            "threads",
-            "throughput/s",
-            "p50_ns",
-            "p95_ns",
-            "p99_ns",
-            "p999_ns",
-            "p99_ms",
-            "scaling"
+            "threads", "throughput/s", "p50_ns", "p95_ns", "p99_ns", "p999_ns", "p99_ms", "scaling"
         );
 
         let mut wl_report = serde_json::Map::new();
@@ -244,9 +236,7 @@ fn synapse_lock_contention_sweep() {
             let scaling_eff = throughput_at_1
                 .map(|t1| ops_per_sec / (t1 * n as f64))
                 .unwrap_or(1.0);
-            let p99_amp = p99_at_1
-                .map(|p1| p99 as f64 / p1 as f64)
-                .unwrap_or(1.0);
+            let p99_amp = p99_at_1.map(|p1| p99 as f64 / p1 as f64).unwrap_or(1.0);
 
             eprintln!(
                 "{:>6} {:>14.0} {:>11} {:>11} {:>11} {:>11} {:>11.3} {:>5.2}× eff={:.2}",
@@ -273,7 +263,10 @@ fn synapse_lock_contention_sweep() {
 
         // Headline: 21-thread vs 1-thread amplification + scaling.
         if let (Some(p21), Some(t21)) = (
-            wl_report.get("21").and_then(|v| v.get("p99_ns")).and_then(|v| v.as_u64()),
+            wl_report
+                .get("21")
+                .and_then(|v| v.get("p99_ns"))
+                .and_then(|v| v.as_u64()),
             wl_report
                 .get("21")
                 .and_then(|v| v.get("throughput_ops_per_sec"))
@@ -308,8 +301,7 @@ fn synapse_lock_contention_sweep() {
     });
 
     let path = "/tmp/synapse-lock-contention.json";
-    std::fs::write(path, serde_json::to_string_pretty(&final_report).unwrap())
-        .expect("write");
+    std::fs::write(path, serde_json::to_string_pretty(&final_report).unwrap()).expect("write");
     eprintln!("\n[contention] report → {}", path);
 
     // Don't assert. The bench is purely informational — its job is to

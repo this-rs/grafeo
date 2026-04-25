@@ -14,11 +14,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use obrain_substrate::{CommunityWarden, SubstrateStore, DEFAULT_FRAGMENTATION_TRIGGER};
+use obrain_substrate::{CommunityWarden, DEFAULT_FRAGMENTATION_TRIGGER, SubstrateStore};
 
-use super::{
-    Thinker, ThinkerBudget, ThinkerKind, ThinkerTickError, ThinkerTickReport,
-};
+use super::{Thinker, ThinkerBudget, ThinkerKind, ThinkerTickError, ThinkerTickReport};
 
 /// Configuration for the [`CommunityWardenThinker`].
 #[derive(Debug, Clone)]
@@ -58,7 +56,10 @@ pub struct CommunityWardenThinker {
 
 impl CommunityWardenThinker {
     pub fn new(config: WardenConfig) -> Self {
-        Self { config, stats: parking_lot::Mutex::new(WardenStats::default()) }
+        Self {
+            config,
+            stats: parking_lot::Mutex::new(WardenStats::default()),
+        }
     }
 
     pub fn stats(&self) -> WardenStats {
@@ -76,19 +77,14 @@ impl Thinker for CommunityWardenThinker {
     fn interval(&self) -> Duration {
         self.config.interval
     }
-    fn tick(
-        &self,
-        store: &Arc<SubstrateStore>,
-    ) -> Result<ThinkerTickReport, ThinkerTickError> {
+    fn tick(&self, store: &Arc<SubstrateStore>) -> Result<ThinkerTickReport, ThinkerTickError> {
         let mut r = ThinkerTickReport::start();
 
         // Build a warden on each tick — it's cheap (a shared Arc clone)
         // and avoids stale state if the store is reconfigured. The
         // warden is intentionally stateless beyond its trigger.
-        let warden = CommunityWarden::with_trigger(
-            store.clone(),
-            self.config.fragmentation_trigger,
-        );
+        let warden =
+            CommunityWarden::with_trigger(store.clone(), self.config.fragmentation_trigger);
         let compacted = warden.tick()?;
         r.side_counter = compacted.len() as u64;
 
@@ -110,8 +106,7 @@ mod tests {
     #[test]
     fn tick_on_empty_store_is_noop() {
         let td = TempDir::new().unwrap();
-        let store =
-            Arc::new(SubstrateStore::create(td.path().join("w-test")).unwrap());
+        let store = Arc::new(SubstrateStore::create(td.path().join("w-test")).unwrap());
         let w = CommunityWardenThinker::new(WardenConfig::default());
         let r = w.tick(&store).expect("tick ok");
         assert_eq!(r.side_counter, 0);

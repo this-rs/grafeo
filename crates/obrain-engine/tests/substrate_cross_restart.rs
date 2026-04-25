@@ -35,7 +35,12 @@ fn substrate_cross_restart_edge_survives() {
     let db2 = ObrainDB::open(&db_path).unwrap();
     let gs2 = db2.graph_store_mut();
     let outgoing = gs2.edges_from(a, Direction::Outgoing);
-    eprintln!("phase2: a={:?} outgoing.len={} edges={:?}", a, outgoing.len(), outgoing);
+    eprintln!(
+        "phase2: a={:?} outgoing.len={} edges={:?}",
+        a,
+        outgoing.len(),
+        outgoing
+    );
     assert_eq!(
         outgoing.len(),
         1,

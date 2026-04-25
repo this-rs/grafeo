@@ -95,7 +95,13 @@ fn run_scenario(n_nodes: usize) -> (Vec<u128>, /*pre_seeded*/ usize) {
             for &nid in &context {
                 let old = store
                     .get_node_property(nid, &prop_key)
-                    .and_then(|v| if let Value::Float64(f) = v { Some(f) } else { None })
+                    .and_then(|v| {
+                        if let Value::Float64(f) = v {
+                            Some(f)
+                        } else {
+                            None
+                        }
+                    })
                     .unwrap_or(0.0);
                 let new = old * 0.8 + 0.5 * 0.2; // EMA, identical to feedback() formula
                 store.set_node_property(nid, PROP_REWARD, Value::Float64(new));
@@ -119,7 +125,11 @@ fn run_scenario(n_nodes: usize) -> (Vec<u128>, /*pre_seeded*/ usize) {
 
 #[test]
 fn reward_path_baseline_emits_json_and_passes_gate() {
-    let scenarios = [("1k", 1_000usize), ("10k", 10_000usize), ("100k", 100_000usize)];
+    let scenarios = [
+        ("1k", 1_000usize),
+        ("10k", 10_000usize),
+        ("100k", 100_000usize),
+    ];
 
     let mut report = serde_json::Map::new();
     let mut all_ok = true;

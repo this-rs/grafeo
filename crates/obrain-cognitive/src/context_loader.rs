@@ -161,7 +161,14 @@ pub fn load_context_with_curvature(
     curvature: &dyn CurvatureProvider,
     tokens: &dyn TokenEstimator,
 ) -> ContextBundle {
-    load_context_impl(seeds, config, neighbors, communities, Some(curvature), tokens)
+    load_context_impl(
+        seeds,
+        config,
+        neighbors,
+        communities,
+        Some(curvature),
+        tokens,
+    )
 }
 
 fn load_context_impl(
@@ -623,7 +630,9 @@ mod tests {
 
     impl MockCurvature {
         fn new() -> Self {
-            Self { edges: HashMap::new() }
+            Self {
+                edges: HashMap::new(),
+            }
         }
         fn set(&mut self, src: NodeId, dst: NodeId, k: f64) {
             self.edges.insert((src, dst), k);

@@ -91,13 +91,20 @@ pub struct PipelineOptions {
 /// override via CLI `--text-keys` for tighter targeting.
 pub const DEFAULT_TEXT_KEYS: &[&str] = &[
     // Prose / long-form
-    "content", "body", "description", "summary", "text",
+    "content",
+    "body",
+    "description",
+    "summary",
+    "text",
     // Documentation
-    "docstring", "comment", "snippet",
+    "docstring",
+    "comment",
+    "snippet",
     // Chat / events
     "message",
     // Titles / identifiers
-    "title", "name",
+    "title",
+    "name",
 ];
 
 /// Statistics emitted at every stage — used for CLI progress reporting
@@ -395,8 +402,7 @@ fn probe_stage_coverage(
     let writer = substrate.writer();
     let mut community_nonzero = 0usize;
     let mut centrality_nonzero = 0usize;
-    let mut communities_seen: std::collections::HashSet<u32> =
-        std::collections::HashSet::new();
+    let mut communities_seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
     for &nid in &sample {
         if let Ok(Some(rec)) = writer.read_node(nid.0 as u32) {
             if rec.community_id != 0 {
@@ -495,10 +501,7 @@ fn stage_bolt_stream(
             .enable_all()
             .build()
             .context("build tokio runtime for bolt stream")?;
-        let read = runtime.block_on(crate::bolt_reader::stream_into_substrate(
-            opts,
-            _substrate,
-        ))?;
+        let read = runtime.block_on(crate::bolt_reader::stream_into_substrate(opts, _substrate))?;
         stats.nodes_read = read.nodes;
         stats.edges_read = read.edges;
         return Ok(());
@@ -695,7 +698,9 @@ fn stage_fill_embeddings(
         // inside rayon workers are hidden behind a RefCell and we
         // shouldn't reach across threads just for metadata).
         let dim_probe = crate::sentence_transformer::SentenceTransformer::load_with_threads(
-            &model_path, &vocab_path, 1,
+            &model_path,
+            &vocab_path,
+            1,
         )
         .context("load SentenceTransformer (stage 2 probe)")?;
         let embed_dim = dim_probe.embed_dim;
@@ -705,46 +710,39 @@ fn stage_fill_embeddings(
         // the inner push never reallocates. Peak size never exceeds
         // `meta_batch_size` — once filled, the buffer is drained
         // (inferred + written + cleared) and reused in place.
-        let mut batch: Vec<(obrain_common::NodeId, String)> =
-            Vec::with_capacity(meta_batch_size);
+        let mut batch: Vec<(obrain_common::NodeId, String)> = Vec::with_capacity(meta_batch_size);
 
         // Inference + write-back helper. Defined as a closure so it
         // captures `substrate`, paths, and counters — keeps the
         // streaming loop flat and the drain logic DRY between the
         // in-loop drain and the final residual drain.
-        let run_meta_batch =
-            |batch: &mut Vec<(obrain_common::NodeId, String)>,
-             computed: &mut u64|
-             -> Result<()> {
-                if batch.is_empty() {
-                    return Ok(());
-                }
-                let sub_results: Result<Vec<Vec<(obrain_common::NodeId, Vec<f32>)>>> =
-                    batch
-                        .par_chunks(EMBED_BATCH_SIZE)
-                        .map(|sub| -> Result<Vec<(obrain_common::NodeId, Vec<f32>)>> {
-                            embed_sub_batch_tls(&model_path, &vocab_path, sub)
-                        })
-                        .collect();
-                let sub_results = sub_results?;
+        let run_meta_batch = |batch: &mut Vec<(obrain_common::NodeId, String)>,
+                              computed: &mut u64|
+         -> Result<()> {
+            if batch.is_empty() {
+                return Ok(());
+            }
+            let sub_results: Result<Vec<Vec<(obrain_common::NodeId, Vec<f32>)>>> = batch
+                .par_chunks(EMBED_BATCH_SIZE)
+                .map(|sub| -> Result<Vec<(obrain_common::NodeId, Vec<f32>)>> {
+                    embed_sub_batch_tls(&model_path, &vocab_path, sub)
+                })
+                .collect();
+            let sub_results = sub_results?;
 
-                // Serial write-back. Substrate's WAL is single-writer,
-                // so parallelising this block would just contend on
-                // the WAL mutex — the parallelism win lives entirely
-                // in inference.
-                for sub in sub_results {
-                    for (nid, vec) in sub {
-                        substrate.set_node_property(
-                            nid,
-                            "_st_embedding",
-                            Value::Vector(vec.into()),
-                        );
-                        *computed += 1;
-                    }
+            // Serial write-back. Substrate's WAL is single-writer,
+            // so parallelising this block would just contend on
+            // the WAL mutex — the parallelism win lives entirely
+            // in inference.
+            for sub in sub_results {
+                for (nid, vec) in sub {
+                    substrate.set_node_property(nid, "_st_embedding", Value::Vector(vec.into()));
+                    *computed += 1;
                 }
-                batch.clear();
-                Ok(())
-            };
+            }
+            batch.clear();
+            Ok(())
+        };
 
         for nid in &all_nodes {
             pb.inc(1);
@@ -868,8 +866,7 @@ fn embed_sub_batch_tls(
         let mut guard = cell.borrow_mut();
         if guard.is_none() {
             let embedder = crate::sentence_transformer::SentenceTransformer::load_with_threads(
-                model_path,
-                vocab_path,
+                model_path, vocab_path,
                 1, // one intra-op thread per session; rayon owns the parallelism budget
             )
             .context("load SentenceTransformer (stage 2 worker)")?;
@@ -943,13 +940,10 @@ const EMBED_BATCH_SIZE: usize = 64;
 #[cfg(feature = "embed")]
 const EMBED_META_BATCH_FACTOR: usize = 8;
 
-fn stage_build_tiers(
-    substrate: &Arc<SubstrateStore>,
-    stats: &mut PipelineStats,
-) -> Result<()> {
+fn stage_build_tiers(substrate: &Arc<SubstrateStore>, stats: &mut PipelineStats) -> Result<()> {
     use obrain_common::types::{PropertyKey, Value};
-    use obrain_substrate::retrieval::{NodeOffset, SubstrateTieredIndex, VectorIndex};
     use obrain_substrate::L2_DIM;
+    use obrain_substrate::retrieval::{NodeOffset, SubstrateTieredIndex, VectorIndex};
 
     let key = PropertyKey::new("_st_embedding");
     let mut pairs: Vec<(NodeOffset, Vec<f32>)> = Vec::new();
@@ -1036,10 +1030,7 @@ const COACT_IMPORT_WEIGHT: f32 = 0.2;
 /// Needs `community_id` (stage 4) and `centrality_cached` (stage 5)
 /// populated. If both are zero everywhere — e.g. `--no-cognitive` or
 /// an empty graph — the stage emits no edges and logs the reason.
-fn stage_derive_coact(
-    substrate: &Arc<SubstrateStore>,
-    stats: &mut PipelineStats,
-) -> Result<()> {
+fn stage_derive_coact(substrate: &Arc<SubstrateStore>, stats: &mut PipelineStats) -> Result<()> {
     use obrain_core::graph::traits::GraphStoreMut;
     use obrain_substrate::COACT_EDGE_TYPE_NAME;
 
@@ -1106,12 +1097,8 @@ fn stage_derive_coact(
                     obrain_common::types::PropertyKey::new("weight"),
                     obrain_common::types::Value::Float64(COACT_IMPORT_WEIGHT as f64),
                 )];
-                let _ = substrate.create_edge_with_props(
-                    top[i],
-                    top[j],
-                    COACT_EDGE_TYPE_NAME,
-                    &props,
-                );
+                let _ =
+                    substrate.create_edge_with_props(top[i], top[j], COACT_EDGE_TYPE_NAME, &props);
                 edges_added += 1;
             }
         }
@@ -1144,10 +1131,7 @@ fn stage_derive_coact(
 ///
 /// Needs `community_id` (stage 4) and `centrality_cached` (stage 5).
 /// Falls back to zero seeded engrams when those are absent.
-fn stage_seed_engrams(
-    substrate: &Arc<SubstrateStore>,
-    stats: &mut PipelineStats,
-) -> Result<()> {
+fn stage_seed_engrams(substrate: &Arc<SubstrateStore>, stats: &mut PipelineStats) -> Result<()> {
     let node_ids = GraphStore::all_node_ids(&**substrate);
     if node_ids.is_empty() {
         stats.engrams_seeded = 0;
@@ -1319,8 +1303,7 @@ fn stage_fill_kernel_embeddings(
     // resulting projection is reproducible across runs on the same
     // graph topology. `compute_all` writes `_kernel_embedding` on every
     // node whose neighborhood has `_hilbert_features` populated.
-    let store_mut: std::sync::Arc<dyn obrain_core::graph::GraphStoreMut> =
-        substrate.clone();
+    let store_mut: std::sync::Arc<dyn obrain_core::graph::GraphStoreMut> = substrate.clone();
     let seed: u64 = 42;
     let mgr = KernelManager::new_untrained(store_mut, seed);
     mgr.compute_all();
@@ -1342,13 +1325,11 @@ fn stage_fill_kernel_embeddings(
 fn open_or_create_substrate(path: &std::path::Path) -> Result<Arc<SubstrateStore>> {
     if path.exists() {
         Ok(Arc::new(
-            SubstrateStore::open(path)
-                .with_context(|| format!("open {}", path.display()))?,
+            SubstrateStore::open(path).with_context(|| format!("open {}", path.display()))?,
         ))
     } else {
         Ok(Arc::new(
-            SubstrateStore::create(path)
-                .with_context(|| format!("create {}", path.display()))?,
+            SubstrateStore::create(path).with_context(|| format!("create {}", path.display()))?,
         ))
     }
 }

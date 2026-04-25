@@ -19,8 +19,8 @@
 
 use obrain_common::types::Value;
 use obrain_core::execution::operators::{Operator, VectorScanOperator};
-use obrain_core::graph::traits::GraphStoreMut;
 use obrain_core::graph::GraphStore;
+use obrain_core::graph::traits::GraphStoreMut;
 use obrain_core::index::vector::DistanceMetric;
 use obrain_substrate::SubstrateStore;
 use std::sync::Arc;

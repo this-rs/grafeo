@@ -75,10 +75,7 @@ fn bench_ram_three_corpora() {
     let home = std::env::var("HOME").unwrap_or_default();
     println!("\n=== T17i T4 — RAM bench : DB open + first queries ===");
     println!("(RSS values in MB, process-wide ; delta = increment during that phase)");
-    measure(
-        "PO",
-        std::path::PathBuf::from(&home).join(".obrain/db/po"),
-    );
+    measure("PO", std::path::PathBuf::from(&home).join(".obrain/db/po"));
     measure(
         "Wikipedia",
         std::path::PathBuf::from(&home).join(".obrain/db/wikipedia"),

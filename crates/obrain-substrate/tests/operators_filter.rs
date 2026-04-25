@@ -209,7 +209,6 @@ fn test_filter_comparison() {
 
 #[test]
 fn test_regex_operator() {
-    
     // Create a store and expression predicate to test regex
     let store: Arc<dyn GraphStore> = Arc::new(SubstrateStore::open_tempfile().unwrap());
     let variable_columns = HashMap::new();
@@ -251,7 +250,6 @@ fn test_regex_operator() {
 
 #[test]
 fn test_pow_operator() {
-    
     let store: Arc<dyn GraphStore> = Arc::new(SubstrateStore::open_tempfile().unwrap());
     let variable_columns = HashMap::new();
 
@@ -297,7 +295,6 @@ fn test_pow_operator() {
 
 #[test]
 fn test_map_expression() {
-    
     let store: Arc<dyn GraphStore> = Arc::new(SubstrateStore::open_tempfile().unwrap());
     let variable_columns = HashMap::new();
 
@@ -338,7 +335,6 @@ fn test_map_expression() {
 
 #[test]
 fn test_index_access_list() {
-    
     let store: Arc<dyn GraphStore> = Arc::new(SubstrateStore::open_tempfile().unwrap());
     let variable_columns = HashMap::new();
 
@@ -389,7 +385,6 @@ fn test_index_access_list() {
 
 #[test]
 fn test_slice_access() {
-    
     let store: Arc<dyn GraphStore> = Arc::new(SubstrateStore::open_tempfile().unwrap());
     let variable_columns = HashMap::new();
 
@@ -566,8 +561,7 @@ fn test_comparison_float64() {
     let chunk = builder.finish();
 
     // Test float equality (within epsilon)
-    let pred_eq =
-        ComparisonPredicate::new(0, CompareOp::Eq, Value::Float64(std::f64::consts::PI));
+    let pred_eq = ComparisonPredicate::new(0, CompareOp::Eq, Value::Float64(std::f64::consts::PI));
     assert!(pred_eq.evaluate(&chunk, 0));
 
     let pred_ne = ComparisonPredicate::new(0, CompareOp::Ne, Value::Float64(2.71));
@@ -576,8 +570,7 @@ fn test_comparison_float64() {
     let pred_lt = ComparisonPredicate::new(0, CompareOp::Lt, Value::Float64(4.0));
     assert!(pred_lt.evaluate(&chunk, 0));
 
-    let pred_ge =
-        ComparisonPredicate::new(0, CompareOp::Ge, Value::Float64(std::f64::consts::PI));
+    let pred_ge = ComparisonPredicate::new(0, CompareOp::Ge, Value::Float64(std::f64::consts::PI));
     assert!(pred_ge.evaluate(&chunk, 0));
 }
 
@@ -1356,7 +1349,6 @@ fn test_comparison_with_boundary_values() {
 /// `Value::Int64(30)`.  The `values_equal` path must coerce.
 #[test]
 fn test_cross_type_string_int_equality() {
-    
     let store: Arc<dyn GraphStore> = Arc::new(SubstrateStore::open_tempfile().unwrap());
     let vc = HashMap::new();
     let builder = DataChunkBuilder::new(&[LogicalType::Int64]);
@@ -1402,7 +1394,6 @@ fn test_cross_type_string_int_equality() {
 /// String ↔ Float64 equality: "7.25" == Float64(7.25)
 #[test]
 fn test_cross_type_string_float_equality() {
-    
     let store: Arc<dyn GraphStore> = Arc::new(SubstrateStore::open_tempfile().unwrap());
     let vc = HashMap::new();
     let builder = DataChunkBuilder::new(&[LogicalType::Int64]);
@@ -1438,7 +1429,6 @@ fn test_cross_type_string_float_equality() {
 /// so that `FILTER(?age > 25)` works when `?age` is stored as "30".
 #[test]
 fn test_cross_type_string_numeric_ordering() {
-    
     let store: Arc<dyn GraphStore> = Arc::new(SubstrateStore::open_tempfile().unwrap());
     let vc = HashMap::new();
     let builder = DataChunkBuilder::new(&[LogicalType::Int64]);
@@ -1537,7 +1527,6 @@ fn test_stacked_filters_respect_selection_vector() {
 /// Helper: creates an `ExpressionPredicate` wrapping a literal expression,
 /// evaluates it against an empty chunk, and returns the result `Value`.
 fn eval_literal_expr(expr: FilterExpression) -> Option<Value> {
-    
     let store: Arc<dyn GraphStore> = Arc::new(SubstrateStore::open_tempfile().unwrap());
     let pred = ExpressionPredicate::new(expr, HashMap::new(), store);
     let builder = DataChunkBuilder::new(&[LogicalType::Int64]);
@@ -1614,12 +1603,10 @@ fn test_eval_binary_modulo_int() {
 
 #[test]
 fn test_eval_comparison_lt() {
-    let result =
-        eval_literal_expr(binary(Value::Int64(3), BinaryFilterOp::Lt, Value::Int64(5)));
+    let result = eval_literal_expr(binary(Value::Int64(3), BinaryFilterOp::Lt, Value::Int64(5)));
     assert_eq!(result, Some(Value::Bool(true)));
 
-    let result =
-        eval_literal_expr(binary(Value::Int64(5), BinaryFilterOp::Lt, Value::Int64(3)));
+    let result = eval_literal_expr(binary(Value::Int64(5), BinaryFilterOp::Lt, Value::Int64(3)));
     assert_eq!(result, Some(Value::Bool(false)));
 }
 
@@ -1670,21 +1657,17 @@ fn test_eval_comparison_ne() {
 #[test]
 fn test_eval_comparison_le_ge() {
     // <=
-    let result =
-        eval_literal_expr(binary(Value::Int64(5), BinaryFilterOp::Le, Value::Int64(5)));
+    let result = eval_literal_expr(binary(Value::Int64(5), BinaryFilterOp::Le, Value::Int64(5)));
     assert_eq!(result, Some(Value::Bool(true)));
 
-    let result =
-        eval_literal_expr(binary(Value::Int64(6), BinaryFilterOp::Le, Value::Int64(5)));
+    let result = eval_literal_expr(binary(Value::Int64(6), BinaryFilterOp::Le, Value::Int64(5)));
     assert_eq!(result, Some(Value::Bool(false)));
 
     // >=
-    let result =
-        eval_literal_expr(binary(Value::Int64(5), BinaryFilterOp::Ge, Value::Int64(5)));
+    let result = eval_literal_expr(binary(Value::Int64(5), BinaryFilterOp::Ge, Value::Int64(5)));
     assert_eq!(result, Some(Value::Bool(true)));
 
-    let result =
-        eval_literal_expr(binary(Value::Int64(4), BinaryFilterOp::Ge, Value::Int64(5)));
+    let result = eval_literal_expr(binary(Value::Int64(4), BinaryFilterOp::Ge, Value::Int64(5)));
     assert_eq!(result, Some(Value::Bool(false)));
 }
 
@@ -1859,7 +1842,7 @@ fn test_eval_is_not_null() {
 fn test_eval_is_null_on_missing_variable() {
     // Accessing a non-existent variable should produce None,
     // which IS NULL treats as true
-    
+
     let store: Arc<dyn GraphStore> = Arc::new(SubstrateStore::open_tempfile().unwrap());
     let expr = FilterExpression::Unary {
         op: UnaryFilterOp::IsNull,
@@ -1929,7 +1912,6 @@ fn test_eval_contains() {
 
 #[test]
 fn test_eval_in_operator() {
-    
     let store: Arc<dyn GraphStore> = Arc::new(SubstrateStore::open_tempfile().unwrap());
     let builder = DataChunkBuilder::new(&[LogicalType::Int64]);
     let chunk = builder.finish();
@@ -1965,7 +1947,6 @@ fn test_eval_in_operator() {
 
 #[test]
 fn test_eval_in_operator_strings() {
-    
     let store: Arc<dyn GraphStore> = Arc::new(SubstrateStore::open_tempfile().unwrap());
     let builder = DataChunkBuilder::new(&[LogicalType::Int64]);
     let chunk = builder.finish();
@@ -2561,7 +2542,6 @@ fn test_eval_string_negative_index() {
 
 #[test]
 fn test_eval_tostring_types() {
-    
     let store: Arc<dyn GraphStore> = Arc::new(SubstrateStore::open_tempfile().unwrap());
     let vc = HashMap::new();
     let builder = DataChunkBuilder::new(&[LogicalType::Int64]);
@@ -2603,7 +2583,6 @@ fn test_eval_tostring_types() {
 
 #[test]
 fn test_eval_toboolean() {
-    
     let store: Arc<dyn GraphStore> = Arc::new(SubstrateStore::open_tempfile().unwrap());
     let vc = HashMap::new();
     let builder = DataChunkBuilder::new(&[LogicalType::Int64]);
@@ -2642,7 +2621,6 @@ fn test_eval_toboolean() {
 
 #[test]
 fn test_eval_tofloat() {
-    
     let store: Arc<dyn GraphStore> = Arc::new(SubstrateStore::open_tempfile().unwrap());
     let vc = HashMap::new();
     let builder = DataChunkBuilder::new(&[LogicalType::Int64]);
@@ -2675,7 +2653,6 @@ fn test_eval_tofloat() {
 
 #[test]
 fn test_eval_tointeger_from_float() {
-    
     let store: Arc<dyn GraphStore> = Arc::new(SubstrateStore::open_tempfile().unwrap());
     let vc = HashMap::new();
     let builder = DataChunkBuilder::new(&[LogicalType::Int64]);

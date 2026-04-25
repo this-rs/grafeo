@@ -21,9 +21,7 @@ use std::time::Duration;
 use obrain_substrate::SubstrateStore;
 use parking_lot::RwLock;
 
-use super::{
-    Thinker, ThinkerBudget, ThinkerKind, ThinkerTickError, ThinkerTickReport,
-};
+use super::{Thinker, ThinkerBudget, ThinkerKind, ThinkerTickError, ThinkerTickReport};
 
 /// A lock-free ring buffer of recent topic breadcrumbs. Externally
 /// populated by the chat pipeline, externally read by the Predictor.
@@ -79,11 +77,7 @@ impl TopicRing {
     pub fn snapshot(&self) -> Vec<u64> {
         let g = self.inner.read();
         let mut out = Vec::with_capacity(g.len);
-        let start = if g.len < g.capacity {
-            0
-        } else {
-            g.head
-        };
+        let start = if g.len < g.capacity { 0 } else { g.head };
         for i in 0..g.len {
             out.push(g.buf[(start + i) % g.capacity]);
         }
@@ -131,7 +125,11 @@ pub struct Predictor {
 
 impl Predictor {
     pub fn new(config: PredictorConfig, ring: Arc<TopicRing>) -> Self {
-        Self { config, ring, stats: parking_lot::Mutex::new(PredictorStats::default()) }
+        Self {
+            config,
+            ring,
+            stats: parking_lot::Mutex::new(PredictorStats::default()),
+        }
     }
 
     pub fn stats(&self) -> PredictorStats {
@@ -155,10 +153,7 @@ impl Thinker for Predictor {
     fn interval(&self) -> Duration {
         self.config.interval
     }
-    fn tick(
-        &self,
-        _store: &Arc<SubstrateStore>,
-    ) -> Result<ThinkerTickReport, ThinkerTickError> {
+    fn tick(&self, _store: &Arc<SubstrateStore>) -> Result<ThinkerTickReport, ThinkerTickError> {
         let mut r = ThinkerTickReport::start();
         let breadcrumbs = self.ring.snapshot();
         r.nodes_touched = breadcrumbs.len() as u64;
@@ -219,8 +214,7 @@ mod tests {
     #[test]
     fn predictor_skips_tick_on_empty_ring() {
         let td = TempDir::new().unwrap();
-        let store =
-            Arc::new(SubstrateStore::create(td.path().join("p-test")).unwrap());
+        let store = Arc::new(SubstrateStore::create(td.path().join("p-test")).unwrap());
         let ring = Arc::new(TopicRing::with_capacity(64));
         let p = Predictor::new(PredictorConfig::default(), ring);
         let r = p.tick(&store).expect("tick ok");
@@ -231,8 +225,7 @@ mod tests {
     #[test]
     fn predictor_runs_when_ring_filled() {
         let td = TempDir::new().unwrap();
-        let store =
-            Arc::new(SubstrateStore::create(td.path().join("p-filled")).unwrap());
+        let store = Arc::new(SubstrateStore::create(td.path().join("p-filled")).unwrap());
         let ring = Arc::new(TopicRing::with_capacity(64));
         for i in 0..8u64 {
             ring.push(i);

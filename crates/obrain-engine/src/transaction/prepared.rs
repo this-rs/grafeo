@@ -236,8 +236,6 @@ mod tests {
         prepared.commit().unwrap();
     }
 
-
-
     #[test]
     fn test_prepared_commit_no_transaction() {
         let db = ObrainDB::new_in_memory();

@@ -37,11 +37,9 @@
 //! | `ldleiden_like_burst_then_crash` | drop w/o msync, 200-batch LDleiden-style stream, wipe | final partition matches last-committed batch |
 
 use obrain_substrate::file::Zone;
-use obrain_substrate::record::{f32_to_q1_15, PackedScarUtilAff, U48};
+use obrain_substrate::record::{PackedScarUtilAff, U48, f32_to_q1_15};
 use obrain_substrate::wal_io::{SyncMode, WalReader};
-use obrain_substrate::{
-    replay_from, NodeRecord, SubstrateFile, WalPayload, Writer,
-};
+use obrain_substrate::{NodeRecord, SubstrateFile, WalPayload, Writer, replay_from};
 use std::path::Path;
 
 // ---------------------------------------------------------------------------
@@ -211,8 +209,7 @@ fn torn_wal_one_iteration(seed: u64) {
     if wal_bytes.len() < 128 {
         return;
     }
-    let tear_offset =
-        pseudo_random(seed, 1024, wal_bytes.len() as u64 - 8) as usize;
+    let tear_offset = pseudo_random(seed, 1024, wal_bytes.len() as u64 - 8) as usize;
     std::fs::write(&wal_path, &wal_bytes[..tear_offset]).unwrap();
 
     let sub = SubstrateFile::open(&sub_path).unwrap();
@@ -356,8 +353,7 @@ fn interleaved_node_insert_and_community_assign() {
 
     let nz = sub.open_zone(Zone::Nodes).unwrap();
     let total = (N_WAVES * NODES_PER_WAVE) as usize;
-    let slice: &[NodeRecord] =
-        bytemuck::cast_slice(&nz.as_slice()[..total * NodeRecord::SIZE]);
+    let slice: &[NodeRecord] = bytemuck::cast_slice(&nz.as_slice()[..total * NodeRecord::SIZE]);
     for i in 0..total {
         assert_eq!(
             slice[i].community_id, final_community[i],

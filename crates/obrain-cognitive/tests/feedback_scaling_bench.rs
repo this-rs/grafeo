@@ -121,8 +121,10 @@ fn feedback_scaling_finds_safe_fallback_cap() {
         "[scaling] sweep N ∈ {:?}, gate p99 ≤ {:.0} ms, safety threshold {:.2} ms (= gate / {:.0}×)",
         N_SWEEP, GATE_P99_MS, safety_threshold_ms, SAFETY_FACTOR,
     );
-    eprintln!("[scaling] each scenario: {} cycles on a SynapseStore pre-seeded with {} synapses",
-        CYCLES, SEED_SYNAPSES);
+    eprintln!(
+        "[scaling] each scenario: {} cycles on a SynapseStore pre-seeded with {} synapses",
+        CYCLES, SEED_SYNAPSES
+    );
 
     for &n in N_SWEEP {
         let (mut elapsed, scans_delta, reinforces_delta) = run_for_n(n, SEED_SYNAPSES);
@@ -157,9 +159,17 @@ fn feedback_scaling_finds_safe_fallback_cap() {
 
         eprintln!(
             "[scaling] N={:>3} ({:>5} pairs/cycle): p50={:>9} ns p95={:>9} ns p99={:>9} ns ({:>7.3} ms)  → {}",
-            n, pairs_per_cycle, p50, p95, p99, p99_ms,
-            if safe { format!("✓ safe (< {:.2} ms)", safety_threshold_ms) }
-            else { format!("✗ over safety ({:.2} ms)", safety_threshold_ms) },
+            n,
+            pairs_per_cycle,
+            p50,
+            p95,
+            p99,
+            p99_ms,
+            if safe {
+                format!("✓ safe (< {:.2} ms)", safety_threshold_ms)
+            } else {
+                format!("✗ over safety ({:.2} ms)", safety_threshold_ms)
+            },
         );
     }
 

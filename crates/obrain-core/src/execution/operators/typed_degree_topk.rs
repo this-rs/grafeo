@@ -161,11 +161,9 @@ impl TypedDegreeTopKOperator {
     #[must_use]
     pub fn output_schema(&self) -> Vec<LogicalType> {
         match self.direction {
-            TypedDegreeDirection::Separate => vec![
-                LogicalType::Node,
-                LogicalType::Int64,
-                LogicalType::Int64,
-            ],
+            TypedDegreeDirection::Separate => {
+                vec![LogicalType::Node, LogicalType::Int64, LogicalType::Int64]
+            }
             _ => vec![LogicalType::Node, LogicalType::Int64],
         }
     }
@@ -248,7 +246,7 @@ impl TypedDegreeTopKOperator {
             rows.sort_by(|a, b| {
                 let ra = self.rank(a.1, a.2);
                 let rb = self.rank(b.1, b.2);
-                rb.cmp(&ra).then_with(|| a.0 .0.cmp(&b.0 .0))
+                rb.cmp(&ra).then_with(|| a.0.0.cmp(&b.0.0))
             });
             self.results = rows;
             return;
@@ -278,7 +276,7 @@ impl TypedDegreeTopKOperator {
             } else if let Some(worst) = heap.peek() {
                 // `worst.0.0` is the ranking key of the weakest
                 // candidate. Evict it when the new entry beats it.
-                if entry.0 > worst.0 .0 {
+                if entry.0 > worst.0.0 {
                     heap.pop();
                     heap.push(Reverse(entry));
                 }
@@ -293,7 +291,7 @@ impl TypedDegreeTopKOperator {
         rows.sort_by(|a, b| {
             let ra = self.rank(a.1, a.2);
             let rb = self.rank(b.1, b.2);
-            rb.cmp(&ra).then_with(|| a.0 .0.cmp(&b.0 .0))
+            rb.cmp(&ra).then_with(|| a.0.0.cmp(&b.0.0))
         });
         self.results = rows;
     }

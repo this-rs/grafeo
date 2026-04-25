@@ -20,8 +20,8 @@ use obrain_core::execution::chunk::DataChunk;
 use obrain_core::execution::operators::{
     FactorizedExpandChain, FactorizedExpandOperator, Operator, OperatorResult, ScanOperator,
 };
-use obrain_core::graph::traits::GraphStoreMut;
 use obrain_core::graph::Direction;
+use obrain_core::graph::traits::GraphStoreMut;
 use obrain_substrate::SubstrateStore;
 use std::sync::Arc;
 

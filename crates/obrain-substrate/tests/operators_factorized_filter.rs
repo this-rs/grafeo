@@ -89,8 +89,7 @@ fn test_property_predicate_gt_int() {
     let chunk = create_chunk_with_node_ids(&store);
 
     // Predicate: age > 30
-    let pred =
-        PropertyPredicate::new(0, 0, "age", CompareOp::Gt, Value::Int64(30), store.clone());
+    let pred = PropertyPredicate::new(0, 0, "age", CompareOp::Gt, Value::Int64(30), store.clone());
 
     assert!(!pred.evaluate(&chunk, 0, 0)); // 25 > 30 = false
     assert!(pred.evaluate(&chunk, 0, 1)); // 35 > 30 = true
@@ -128,8 +127,7 @@ fn test_property_predicate_ne() {
     let store = create_test_store();
     let chunk = create_chunk_with_node_ids(&store);
 
-    let pred =
-        PropertyPredicate::new(0, 0, "age", CompareOp::Ne, Value::Int64(35), store.clone());
+    let pred = PropertyPredicate::new(0, 0, "age", CompareOp::Ne, Value::Int64(35), store.clone());
 
     assert!(pred.evaluate(&chunk, 0, 0)); // 25 != 35
     assert!(!pred.evaluate(&chunk, 0, 1)); // 35 != 35 = false
@@ -142,8 +140,7 @@ fn test_property_predicate_string() {
     let chunk = create_chunk_with_node_ids(&store);
 
     // name = "Gus"
-    let pred =
-        PropertyPredicate::eq(0, 0, "name", Value::String("Gus".into()), store.clone());
+    let pred = PropertyPredicate::eq(0, 0, "name", Value::String("Gus".into()), store.clone());
 
     assert!(!pred.evaluate(&chunk, 0, 0)); // Alix
     assert!(pred.evaluate(&chunk, 0, 1)); // Gus
@@ -352,8 +349,7 @@ fn test_property_predicate_batch() {
     let chunk = create_chunk_with_node_ids(&store);
 
     // Predicate: age > 30
-    let pred =
-        PropertyPredicate::new(0, 0, "age", CompareOp::Gt, Value::Int64(30), store.clone());
+    let pred = PropertyPredicate::new(0, 0, "age", CompareOp::Gt, Value::Int64(30), store.clone());
 
     let selection = pred.evaluate_batch(&chunk, 0);
 
@@ -370,8 +366,7 @@ fn test_property_predicate_batch_wrong_level() {
     let chunk = create_chunk_with_node_ids(&store);
 
     // Predicate targets level 1
-    let pred =
-        PropertyPredicate::new(1, 0, "age", CompareOp::Gt, Value::Int64(30), store.clone());
+    let pred = PropertyPredicate::new(1, 0, "age", CompareOp::Gt, Value::Int64(30), store.clone());
 
     // Batch evaluate at level 0 - should return all selected
     let selection = pred.evaluate_batch(&chunk, 0);
@@ -384,8 +379,7 @@ fn test_property_predicate_batch_invalid_level() {
     let chunk = create_chunk_with_node_ids(&store);
 
     // Predicate targets level 5 which doesn't exist
-    let pred =
-        PropertyPredicate::new(5, 0, "age", CompareOp::Gt, Value::Int64(30), store.clone());
+    let pred = PropertyPredicate::new(5, 0, "age", CompareOp::Gt, Value::Int64(30), store.clone());
 
     let selection = pred.evaluate_batch(&chunk, 5);
     assert_eq!(selection.selected_count(), 0);
@@ -397,8 +391,7 @@ fn test_property_predicate_batch_invalid_column() {
     let chunk = create_chunk_with_node_ids(&store);
 
     // Column 5 doesn't exist
-    let pred =
-        PropertyPredicate::new(0, 5, "age", CompareOp::Gt, Value::Int64(30), store.clone());
+    let pred = PropertyPredicate::new(0, 5, "age", CompareOp::Gt, Value::Int64(30), store.clone());
 
     let selection = pred.evaluate_batch(&chunk, 0);
     // Should return all false (no matches)
@@ -411,8 +404,7 @@ fn test_property_predicate_type_mismatch() {
     let chunk = create_chunk_with_node_ids(&store);
 
     // age is Int64, but we compare with String
-    let pred =
-        PropertyPredicate::eq(0, 0, "age", Value::String("35".into()), store.clone());
+    let pred = PropertyPredicate::eq(0, 0, "age", Value::String("35".into()), store.clone());
 
     // Type mismatch should return false
     assert!(!pred.evaluate(&chunk, 0, 1));

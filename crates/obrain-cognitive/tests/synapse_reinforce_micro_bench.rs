@@ -86,9 +86,7 @@ fn run_substrate() -> (Duration, u64, Vec<u128>) {
     let queue_count: u64;
     let per_call: Vec<u128>;
     {
-        let substrate = Arc::new(
-            SubstrateStore::create(td.path().join("kb")).expect("substrate"),
-        );
+        let substrate = Arc::new(SubstrateStore::create(td.path().join("kb")).expect("substrate"));
         let graph_store: Arc<dyn obrain_core::graph::GraphStoreMut> = substrate.clone();
         // Pre-create node ids so reinforce has valid endpoints. Use
         // pairs that walk a triangular range so we get a mix of
@@ -259,7 +257,8 @@ fn t3_micro_bench_10k_reinforces() {
     assert!(
         sub_total_ms <= T3_HARD_GATE_MS,
         "substrate 10k reinforces took {:.3} ms — over hard gate {} ms (pre-T3 baseline ~500 ms)",
-        sub_total_ms, T3_HARD_GATE_MS
+        sub_total_ms,
+        T3_HARD_GATE_MS
     );
 
     if sub_total_ms > T3_PLAN_ASPIRATION_MS {
@@ -273,6 +272,7 @@ fn t3_micro_bench_10k_reinforces() {
     eprintln!(
         "[T3.4] projection: at measured per-call cost, a worst-case feedback() with FALLBACK_CAP=32 \
          (C(32,2)=496 reinforces) would take {:.3} ms — × {:.0} under the 50 ms SLA",
-        proj, 50.0 / proj.max(0.001)
+        proj,
+        50.0 / proj.max(0.001)
     );
 }

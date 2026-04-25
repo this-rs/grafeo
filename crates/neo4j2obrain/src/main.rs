@@ -37,12 +37,12 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::Parser;
 
-mod pipeline;
-mod cognitive_init;
 #[cfg(feature = "neo4j-bolt")]
 mod bolt_reader;
+mod cognitive_init;
 #[cfg(feature = "embed")]
 mod embedder;
+mod pipeline;
 #[cfg(feature = "embed")]
 mod sentence_transformer;
 
@@ -201,7 +201,11 @@ fn main() -> Result<()> {
 
     tracing::info!(
         "neo4j2obrain: mode={} out={} (cognitive={}, batch={}, workers={}, force_rerun={})",
-        if cli.enrich_only { "enrich-only" } else { "full-import" },
+        if cli.enrich_only {
+            "enrich-only"
+        } else {
+            "full-import"
+        },
         cli.out.display(),
         cli.cognitive,
         cli.batch_size,

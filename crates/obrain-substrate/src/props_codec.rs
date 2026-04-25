@@ -117,18 +117,12 @@ fn encode_list(
         return Ok(PropertyValue::ArrI64(Vec::new()));
     }
     if xs.iter().all(|v| matches!(v, Value::Int64(_))) {
-        let ints: Vec<i64> = xs
-            .iter()
-            .filter_map(Value::as_int64)
-            .collect();
+        let ints: Vec<i64> = xs.iter().filter_map(Value::as_int64).collect();
         debug_assert_eq!(ints.len(), xs.len());
         return Ok(PropertyValue::ArrI64(ints));
     }
     if xs.iter().all(|v| matches!(v, Value::Float64(_))) {
-        let floats: Vec<f64> = xs
-            .iter()
-            .filter_map(Value::as_float64)
-            .collect();
+        let floats: Vec<f64> = xs.iter().filter_map(Value::as_float64).collect();
         debug_assert_eq!(floats.len(), xs.len());
         return Ok(PropertyValue::ArrF64(floats));
     }
@@ -182,7 +176,7 @@ pub fn decode_value(zone: &PropsZone, pv: &PropertyValue) -> SubstrateResult<Val
                     other => {
                         return Err(SubstrateError::WalBadFrame(format!(
                             "ArrStringRef element decoded to non-String: {other:?}"
-                        )))
+                        )));
                     }
                 }
             }
@@ -198,9 +192,8 @@ fn decode_string_ref(zone: &PropsZone, h: HeapRef) -> SubstrateResult<Value> {
             h.page_id, h.offset
         ))
     })?;
-    let s = std::str::from_utf8(&bytes).map_err(|e| {
-        SubstrateError::WalBadFrame(format!("StringRef payload not utf8: {e}"))
-    })?;
+    let s = std::str::from_utf8(&bytes)
+        .map_err(|e| SubstrateError::WalBadFrame(format!("StringRef payload not utf8: {e}")))?;
     Ok(Value::String(ArcStr::from(s)))
 }
 
@@ -297,7 +290,13 @@ mod tests {
 
     #[test]
     fn string_roundtrips() {
-        let cases = ["", "a", "hello world", "unicode ✓ café 🚀", &"x".repeat(512)];
+        let cases = [
+            "",
+            "a",
+            "hello world",
+            "unicode ✓ café 🚀",
+            &"x".repeat(512),
+        ];
         for s in cases {
             let got = roundtrip(Value::String(ArcStr::from(s)));
             assert_eq!(got, Value::String(ArcStr::from(s)));
@@ -324,9 +323,8 @@ mod tests {
     #[test]
     fn homogeneous_int_list_takes_fast_path() {
         let (_sf, mut pz) = open_zone();
-        let xs: Arc<[Value]> = Arc::from(
-            [Value::Int64(1), Value::Int64(2), Value::Int64(3)].as_slice(),
-        );
+        let xs: Arc<[Value]> =
+            Arc::from([Value::Int64(1), Value::Int64(2), Value::Int64(3)].as_slice());
         let pv = encode_value(&mut pz, &Value::List(xs.clone())).unwrap();
         // Fast path: should be ArrI64, not BytesRef.
         assert!(matches!(pv, PropertyValue::ArrI64(ref v) if v == &vec![1i64, 2, 3]));
@@ -338,7 +336,12 @@ mod tests {
     fn homogeneous_float_list_takes_fast_path() {
         let (_sf, mut pz) = open_zone();
         let xs: Arc<[Value]> = Arc::from(
-            [Value::Float64(1.5), Value::Float64(-2.5), Value::Float64(0.0)].as_slice(),
+            [
+                Value::Float64(1.5),
+                Value::Float64(-2.5),
+                Value::Float64(0.0),
+            ]
+            .as_slice(),
         );
         let pv = encode_value(&mut pz, &Value::List(xs.clone())).unwrap();
         assert!(matches!(pv, PropertyValue::ArrF64(_)));

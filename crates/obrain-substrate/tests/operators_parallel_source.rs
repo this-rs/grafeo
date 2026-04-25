@@ -55,10 +55,8 @@ fn test_parallel_node_scan_source() {
         ParallelNodeScanSource::with_label(Arc::clone(&store) as Arc<dyn GraphStore>, "Person");
     assert_eq!(source_person.total_rows(), Some(100));
 
-    let source_employee = ParallelNodeScanSource::with_label(
-        Arc::clone(&store) as Arc<dyn GraphStore>,
-        "Employee",
-    );
+    let source_employee =
+        ParallelNodeScanSource::with_label(Arc::clone(&store) as Arc<dyn GraphStore>, "Employee");
     assert_eq!(source_employee.total_rows(), Some(50));
 }
 

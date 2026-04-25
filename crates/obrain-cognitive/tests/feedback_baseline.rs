@@ -137,7 +137,11 @@ struct ScenarioCounters {
 #[test]
 fn feedback_baseline_emits_json_and_passes_gates() {
     // Plan-mandated scenarios (T1 step 3): "1k, 10k, 100k synapses".
-    let scenarios = [("1k", 1_000usize), ("10k", 10_000usize), ("100k", 100_000usize)];
+    let scenarios = [
+        ("1k", 1_000usize),
+        ("10k", 10_000usize),
+        ("100k", 100_000usize),
+    ];
 
     let mut report = serde_json::Map::new();
     let mut all_ok = true;
@@ -155,8 +159,8 @@ fn feedback_baseline_emits_json_and_passes_gates() {
         // calls normalize_outgoing twice (once per endpoint), so the
         // expected stable-state ratio is 2.0 ± epsilon — well under the
         // gate of 5.0.
-        let amplification = counters.scans_total_delta as f64
-            / counters.reinforces_total_delta.max(1) as f64;
+        let amplification =
+            counters.scans_total_delta as f64 / counters.reinforces_total_delta.max(1) as f64;
 
         let p99_pass = p99_ms <= GATE_P99_MS;
         let amp_pass = amplification <= GATE_WRITE_AMPLIFICATION;

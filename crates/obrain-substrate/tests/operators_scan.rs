@@ -29,10 +29,10 @@
 //! cargo test -p obrain-substrate --test operators_scan
 //! ```
 
+use obrain_common::types::{EpochId, TransactionId};
 use obrain_core::execution::operators::{Operator, ScanOperator};
 use obrain_core::graph::GraphStore;
 use obrain_core::graph::traits::GraphStoreMut;
-use obrain_common::types::{EpochId, TransactionId};
 use obrain_substrate::SubstrateStore;
 use std::sync::Arc;
 
@@ -129,5 +129,9 @@ fn test_scan_with_mvcc_context_substrate_stub() {
         .with_transaction_context(EpochId::new(5), None);
 
     let chunk_all = scan_all.next().unwrap().unwrap();
-    assert_eq!(chunk_all.row_count(), 3, "Substrate stub: all 3 nodes visible at epoch 5");
+    assert_eq!(
+        chunk_all.row_count(),
+        3,
+        "Substrate stub: all 3 nodes visible at epoch 5"
+    );
 }

@@ -50,9 +50,7 @@ use obrain_common::types::{PropertyKey, Value};
 use obrain_core::graph::{GraphStore, GraphStoreMut};
 use obrain_substrate::SubstrateStore;
 
-use super::{
-    Thinker, ThinkerBudget, ThinkerKind, ThinkerTickError, ThinkerTickReport,
-};
+use super::{Thinker, ThinkerBudget, ThinkerKind, ThinkerTickError, ThinkerTickReport};
 
 const HILBERT_KEY: &str = "_hilbert_features";
 
@@ -161,10 +159,7 @@ impl HilbertEnricher {
         }
 
         if sample_n == 0 {
-            tracing::debug!(
-                kind = "hilbert_enricher",
-                "tick skipped — empty store"
-            );
+            tracing::debug!(kind = "hilbert_enricher", "tick skipped — empty store");
             let mut s = self.stats.lock();
             s.ticks_skipped_coverage += 1;
             return Ok(report.finish());
@@ -234,10 +229,7 @@ impl Thinker for HilbertEnricher {
     fn interval(&self) -> Duration {
         self.config.interval
     }
-    fn tick(
-        &self,
-        store: &Arc<SubstrateStore>,
-    ) -> Result<ThinkerTickReport, ThinkerTickError> {
+    fn tick(&self, store: &Arc<SubstrateStore>) -> Result<ThinkerTickReport, ThinkerTickError> {
         self.tick_impl(store)
     }
 }

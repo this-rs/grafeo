@@ -105,11 +105,7 @@ impl LDleiden {
         Self::from_partition_unchecked(graph, partition, config)
     }
 
-    fn from_partition_unchecked(
-        graph: Graph,
-        partition: Partition,
-        config: LeidenConfig,
-    ) -> Self {
+    fn from_partition_unchecked(graph: Graph, partition: Partition, config: LeidenConfig) -> Self {
         let mut k_c: FxHashMap<u32, f64> = FxHashMap::default();
         let mut members_count: FxHashMap<u32, u32> = FxHashMap::default();
         let mut max_cid = 0u32;
@@ -335,7 +331,10 @@ impl LDleiden {
 
     /// React to `edge(u, v)` gaining weight `w` (creating it if absent).
     pub fn on_edge_add(&mut self, u: u32, v: u32, w: f64) -> (Vec<(u32, u32)>, LDleidenStats) {
-        assert!(w > 0.0, "weight must be positive (use on_edge_remove for deletions)");
+        assert!(
+            w > 0.0,
+            "weight must be positive (use on_edge_remove for deletions)"
+        );
         self.apply_edge_delta(u, v, w)
     }
 
@@ -356,11 +355,7 @@ impl LDleiden {
     }
 
     /// React to full removal of `edge(u, v)`.
-    pub fn on_edge_remove(
-        &mut self,
-        u: u32,
-        v: u32,
-    ) -> (Vec<(u32, u32)>, LDleidenStats) {
+    pub fn on_edge_remove(&mut self, u: u32, v: u32) -> (Vec<(u32, u32)>, LDleidenStats) {
         let w = self.graph.edge_weight(u, v);
         if w == 0.0 {
             return (Vec::new(), LDleidenStats::default());
@@ -537,12 +532,7 @@ impl LDleiden {
     ///
     /// Otherwise, evaluate u and v; if either moves, cascade to its
     /// neighbors (bounded at `max_passes = 2`).
-    fn apply_edge_delta(
-        &mut self,
-        u: u32,
-        v: u32,
-        delta: f64,
-    ) -> (Vec<(u32, u32)>, LDleidenStats) {
+    fn apply_edge_delta(&mut self, u: u32, v: u32, delta: f64) -> (Vec<(u32, u32)>, LDleidenStats) {
         let mut stats = LDleidenStats::default();
         if delta == 0.0 {
             return (Vec::new(), stats);
@@ -702,7 +692,11 @@ mod tests {
         let g = two_bridged_cliques();
         let mut d = LDleiden::bootstrap(g, LeidenConfig::default());
         let (delta, stats) = d.on_edge_add(0, 1, 1.0);
-        assert!(delta.is_empty(), "internal edge should not move anyone; got {:?}", delta);
+        assert!(
+            delta.is_empty(),
+            "internal edge should not move anyone; got {:?}",
+            delta
+        );
         assert_eq!(stats.moves, 0);
     }
 
@@ -849,7 +843,11 @@ mod tests {
         let p = d.partition();
         let c0 = p[0];
         let c3 = p[3];
-        assert_ne!(c0, c3, "communities must split after bridge removal: {:?}", p);
+        assert_ne!(
+            c0, c3,
+            "communities must split after bridge removal: {:?}",
+            p
+        );
         assert_eq!(p[1], c0);
         assert_eq!(p[2], c0);
         assert_eq!(p[4], c3);
@@ -864,10 +862,7 @@ mod tests {
 
     #[test]
     fn remove_internal_edge_without_split_is_noop_or_local() {
-        let g = Graph::from_edges(
-            3,
-            vec![(0, 1, 1.0), (1, 2, 1.0), (0, 2, 1.0)],
-        );
+        let g = Graph::from_edges(3, vec![(0, 1, 1.0), (1, 2, 1.0), (0, 2, 1.0)]);
         let partition = vec![0u32, 0, 0];
         let cfg = LeidenConfig::default();
         let mut d = LDleiden::from_partition(g, partition, cfg);
@@ -882,10 +877,7 @@ mod tests {
         // internal helper so all counters stay consistent — the
         // now-empty community 1 should be reclaimed into the
         // free-list, and the next allocate_cid should return 1.
-        let g = Graph::from_edges(
-            3,
-            vec![(0, 1, 10.0), (1, 2, 0.1)],
-        );
+        let g = Graph::from_edges(3, vec![(0, 1, 10.0), (1, 2, 0.1)]);
         let mut d = LDleiden::from_partition(g, vec![0u32, 1, 2], LeidenConfig::default());
         let k1 = d.graph().strength(1);
         d.move_node(1, 1, 0, k1);
@@ -944,13 +936,8 @@ mod tests {
         let g = Graph::from_edges(n, edges);
         let d = LDleiden::bootstrap(g, LeidenConfig::default());
         let q = d.modularity();
-        let unique: std::collections::HashSet<u32> =
-            d.partition().iter().copied().collect();
-        eprintln!(
-            "SBM quality: Q = {}, num_communities = {}",
-            q,
-            unique.len()
-        );
+        let unique: std::collections::HashSet<u32> = d.partition().iter().copied().collect();
+        eprintln!("SBM quality: Q = {}, num_communities = {}", q, unique.len());
         assert!(q >= 0.40, "SBM modularity {} below 0.40 gate", q);
         assert!(
             unique.len() >= 3 && unique.len() <= 8,
@@ -1038,7 +1025,11 @@ mod tests {
         assert_eq!(d.graph().edge_weight(0, 1), 4.0);
         d.on_edge_remove(0, 1);
         assert_eq!(d.graph().edge_weight(0, 1), 0.0);
-        assert!((d.graph().total_edge_weight() - 1.0).abs() < 1e-9, "m = {}", d.graph().total_edge_weight());
+        assert!(
+            (d.graph().total_edge_weight() - 1.0).abs() < 1e-9,
+            "m = {}",
+            d.graph().total_edge_weight()
+        );
         let _ = m0;
     }
 
@@ -1088,9 +1079,14 @@ mod tests {
             "perf scaling: n=1k {:?} ({} deltas, {:.1} ns/delta), \
              n=5k {:?} ({} deltas, {:.1} ns/delta), \
              per-delta ratio = {:.2}, total ratio = {:.2}",
-            t_small, deltas_small, per_delta_small,
-            t_large, deltas_large, per_delta_large,
-            ratio_per_delta, ratio_total
+            t_small,
+            deltas_small,
+            per_delta_small,
+            t_large,
+            deltas_large,
+            per_delta_large,
+            ratio_per_delta,
+            ratio_total
         );
         // Contract: per-delta cost must not explode. Degree ratio is
         // ~2x between these two scales; we accept up to 5x to allow

@@ -22,9 +22,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use obrain_substrate::{
-    checkpoint, wal_io::SyncMode, writer::Writer, SubstrateFile,
-};
+use obrain_substrate::{SubstrateFile, checkpoint, wal_io::SyncMode, writer::Writer};
 
 fn resolve_substrate_dir(base: &Path) -> PathBuf {
     let nested = base.join("substrate.obrain");
@@ -83,10 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // This is the expensive part — same replay cost that T16 measures on open.
     let t_replay = Instant::now();
     let mut sub2 = SubstrateFile::open(&dir)?;
-    println!(
-        "replay    : {:.2} s",
-        t_replay.elapsed().as_secs_f64()
-    );
+    println!("replay    : {:.2} s", t_replay.elapsed().as_secs_f64());
 
     // --- checkpoint: flush zones, rewrite meta atomically, truncate WAL ------
     let t_ckpt = Instant::now();

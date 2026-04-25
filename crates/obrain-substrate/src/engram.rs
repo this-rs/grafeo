@@ -371,8 +371,14 @@ mod tests {
         EngramZone::set_members_raw(&mut zf, 1, &[100, 200, 300]).unwrap();
         EngramZone::set_members_raw(&mut zf, 2, &[400, 500]).unwrap();
         EngramZone::set_members_raw(&mut zf, 65535, &[999]).unwrap();
-        assert_eq!(EngramZone::members(&zf, 1).unwrap().unwrap(), vec![100, 200, 300]);
-        assert_eq!(EngramZone::members(&zf, 2).unwrap().unwrap(), vec![400, 500]);
+        assert_eq!(
+            EngramZone::members(&zf, 1).unwrap().unwrap(),
+            vec![100, 200, 300]
+        );
+        assert_eq!(
+            EngramZone::members(&zf, 2).unwrap().unwrap(),
+            vec![400, 500]
+        );
         assert_eq!(EngramZone::members(&zf, 65535).unwrap().unwrap(), vec![999]);
         assert!(EngramZone::members(&zf, 3).unwrap().is_none());
         assert_eq!(EngramZone::count(&zf).unwrap(), 3);
@@ -457,6 +463,11 @@ mod tests {
         );
         // Spot-check a few.
         let got = EngramZone::members(&zf, 500).unwrap().unwrap();
-        assert_eq!(got, vec![50000, 50001, 50002, 50003, 50004, 50005, 50006, 50007, 50008, 50009]);
+        assert_eq!(
+            got,
+            vec![
+                50000, 50001, 50002, 50003, 50004, 50005, 50006, 50007, 50008, 50009
+            ]
+        );
     }
 }

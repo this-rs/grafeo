@@ -50,7 +50,10 @@ pub struct CheckpointStats {
 /// The caller owns `substrate` (typically wrapped in an `Arc<Mutex<..>>`) and
 /// `wal` and MUST ensure no concurrent writes are in flight for the duration
 /// of this call. The WAL is truncated and reseeded with a Checkpoint marker.
-pub fn checkpoint(substrate: &mut SubstrateFile, wal: &WalWriter) -> SubstrateResult<CheckpointStats> {
+pub fn checkpoint(
+    substrate: &mut SubstrateFile,
+    wal: &WalWriter,
+) -> SubstrateResult<CheckpointStats> {
     let before = wal.offset();
 
     // ---- (1) Flush zones. Open each zone briefly, msync+fsync. -------------
@@ -167,7 +170,7 @@ fn unix_micros() -> i64 {
 mod tests {
     use super::*;
     use crate::file::SubstrateFile;
-    use crate::record::{f32_to_q1_15, NodeRecord, PackedScarUtilAff, U48};
+    use crate::record::{NodeRecord, PackedScarUtilAff, U48, f32_to_q1_15};
     use crate::wal_io::{SyncMode, WalReader};
     use crate::writer::Writer;
     use tempfile::tempdir;
@@ -239,9 +242,7 @@ mod tests {
         drop(sub2);
         let sub3 = SubstrateFile::open(&sub_path).unwrap();
         let nz = sub3.open_zone(Zone::Nodes).unwrap();
-        let slice: &[NodeRecord] = bytemuck::cast_slice(
-            &nz.as_slice()[..20 * NodeRecord::SIZE],
-        );
+        let slice: &[NodeRecord] = bytemuck::cast_slice(&nz.as_slice()[..20 * NodeRecord::SIZE]);
         for i in 0..20u32 {
             assert_eq!(slice[i as usize].label_bitset, i as u64 + 1);
         }

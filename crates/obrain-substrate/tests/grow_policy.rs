@@ -4,7 +4,7 @@
 //! fixed-size records triggers O(log N) remaps, not O(N).
 
 use obrain_substrate::file::Zone;
-use obrain_substrate::record::{f32_to_q1_15, PackedScarUtilAff, U48};
+use obrain_substrate::record::{PackedScarUtilAff, U48, f32_to_q1_15};
 use obrain_substrate::wal_io::SyncMode;
 use obrain_substrate::{NodeRecord, SubstrateFile, Writer};
 

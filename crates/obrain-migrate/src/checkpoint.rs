@@ -82,8 +82,7 @@ impl Checkpoint {
         if !p.exists() {
             return Ok(None);
         }
-        let bytes = fs::read(&p)
-            .with_context(|| format!("read checkpoint {}", p.display()))?;
+        let bytes = fs::read(&p).with_context(|| format!("read checkpoint {}", p.display()))?;
         let cp: Self = serde_json::from_slice(&bytes)
             .with_context(|| format!("parse checkpoint {}", p.display()))?;
         if cp.version != Self::CURRENT_VERSION {
@@ -99,12 +98,10 @@ impl Checkpoint {
 
     pub fn save(&self, out: &Path) -> Result<()> {
         let p = Self::path(out);
-        let bytes = serde_json::to_vec_pretty(self)
-            .context("serialize checkpoint")?;
+        let bytes = serde_json::to_vec_pretty(self).context("serialize checkpoint")?;
         // Atomic write: tmp file + rename.
         let tmp = p.with_extension("json.tmp");
-        fs::write(&tmp, bytes)
-            .with_context(|| format!("write {}", tmp.display()))?;
+        fs::write(&tmp, bytes).with_context(|| format!("write {}", tmp.display()))?;
         fs::rename(&tmp, &p)
             .with_context(|| format!("rename {} → {}", tmp.display(), p.display()))?;
         Ok(())
@@ -115,8 +112,7 @@ impl Checkpoint {
     pub fn finalize(out: &Path) -> Result<()> {
         let p = Self::path(out);
         if p.exists() {
-            fs::remove_file(&p)
-                .with_context(|| format!("remove {}", p.display()))?;
+            fs::remove_file(&p).with_context(|| format!("remove {}", p.display()))?;
         }
         Ok(())
     }

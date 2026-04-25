@@ -195,18 +195,14 @@ impl PropertiesSnapshotV1 {
 }
 
 /// Helper: turn one entity's `PropertyMap` into a flat `Vec<(String, Value)>`.
-pub fn map_to_entries(
-    map: &obrain_common::types::PropertyMap,
-) -> Vec<(String, Value)> {
+pub fn map_to_entries(map: &obrain_common::types::PropertyMap) -> Vec<(String, Value)> {
     map.iter()
         .map(|(k, v)| (k.as_str().to_string(), v.clone()))
         .collect()
 }
 
 /// Helper: turn a flat `Vec<(String, Value)>` back into a `PropertyMap`.
-pub fn entries_to_map(
-    entries: Vec<(String, Value)>,
-) -> obrain_common::types::PropertyMap {
+pub fn entries_to_map(entries: Vec<(String, Value)>) -> obrain_common::types::PropertyMap {
     let mut m = obrain_common::types::PropertyMap::with_capacity(entries.len());
     for (k, v) in entries {
         m.insert(PropertyKey::new(k), v);
@@ -376,11 +372,7 @@ impl PropertiesStreamingWriter {
     /// matches `persist_properties()`'s "skip entries with no properties"
     /// invariant so the streamed file is byte-compatible with the batch
     /// writer's output for the same input.
-    pub fn append_node(
-        &mut self,
-        id: u64,
-        props: &[(String, Value)],
-    ) -> SubstrateResult<()> {
+    pub fn append_node(&mut self, id: u64, props: &[(String, Value)]) -> SubstrateResult<()> {
         if !matches!(self.phase, WriterPhase::Nodes) {
             return Err(SubstrateError::Internal(format!(
                 "append_node after phase transition ({:?})",
@@ -421,18 +413,15 @@ impl PropertiesStreamingWriter {
         let pos = w.get_mut().stream_position().map_err(SubstrateError::Io)?;
         self.edges_len_offset = Some(pos);
         let w = self.writer_mut();
-        w.write_all(&0u64.to_le_bytes()).map_err(SubstrateError::Io)?;
+        w.write_all(&0u64.to_le_bytes())
+            .map_err(SubstrateError::Io)?;
         self.phase = WriterPhase::Edges;
         Ok(())
     }
 
     /// Append one edge's property map. Transitions into the edges
     /// phase automatically on first call.
-    pub fn append_edge(
-        &mut self,
-        id: u64,
-        props: &[(String, Value)],
-    ) -> SubstrateResult<()> {
+    pub fn append_edge(&mut self, id: u64, props: &[(String, Value)]) -> SubstrateResult<()> {
         if matches!(self.phase, WriterPhase::Nodes) {
             self.begin_edges()?;
         }
@@ -528,8 +517,7 @@ impl PropertiesStreamingWriter {
         drop(file);
 
         // (5) Atomic rename.
-        std::fs::rename(&self.tmp_path, &self.final_path)
-            .map_err(SubstrateError::Io)?;
+        std::fs::rename(&self.tmp_path, &self.final_path).map_err(SubstrateError::Io)?;
 
         self.phase = WriterPhase::Finished;
         Ok(())
@@ -651,9 +639,7 @@ mod tests {
             id: 2,
             props: vec![(
                 "vec".to_string(),
-                Value::Vector(Arc::from(
-                    vec![0.1_f32, -0.2, 0.3].into_boxed_slice(),
-                )),
+                Value::Vector(Arc::from(vec![0.1_f32, -0.2, 0.3].into_boxed_slice())),
             )],
         });
         s.edges.push(PropEntry {
@@ -691,11 +677,8 @@ mod tests {
         let path = dir.path().join(PROPS_FILENAME);
 
         let mut w = PropertiesStreamingWriter::open(&path).unwrap();
-        w.append_node(
-            7,
-            &[("k".to_string(), Value::Int64(99))],
-        )
-        .unwrap();
+        w.append_node(7, &[("k".to_string(), Value::Int64(99))])
+            .unwrap();
         w.finish().unwrap();
 
         let back = PropertiesSnapshotV1::load(&path).unwrap();

@@ -187,18 +187,14 @@ fn bench_gate_most_connected_under_30ms() {
 
     // 5 warmup iterations.
     for _ in 0..5 {
-        let _ = session
-            .execute_cypher(DUAL_QUERY)
-            .expect("warmup run");
+        let _ = session.execute_cypher(DUAL_QUERY).expect("warmup run");
     }
 
     // 10 measured iterations. Compute p50 (median) for the assertion.
     let mut samples_ms: Vec<f64> = Vec::with_capacity(10);
     for _ in 0..10 {
         let t0 = Instant::now();
-        let res = session
-            .execute_cypher(DUAL_QUERY)
-            .expect("bench run");
+        let res = session.execute_cypher(DUAL_QUERY).expect("bench run");
         samples_ms.push(t0.elapsed().as_secs_f64() * 1000.0);
         assert_eq!(res.rows.len(), 50);
     }

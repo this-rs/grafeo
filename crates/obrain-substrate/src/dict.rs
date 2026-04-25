@@ -372,8 +372,7 @@ impl DictSnapshot {
 
         // Separate the CRC tail and validate.
         let body = &bytes[..bytes.len() - 4];
-        let stored_crc =
-            u32::from_le_bytes(bytes[bytes.len() - 4..].try_into().unwrap());
+        let stored_crc = u32::from_le_bytes(bytes[bytes.len() - 4..].try_into().unwrap());
         let computed_crc = crc32c(body);
         if stored_crc != computed_crc {
             return Err(SubstrateError::Internal(format!(
@@ -550,8 +549,7 @@ impl DictSnapshot {
             }
             let entries_off = 16 + 64 * 8;
             let n_entries =
-                u16::from_le_bytes(cur[entries_off..entries_off + 2].try_into().unwrap())
-                    as usize;
+                u16::from_le_bytes(cur[entries_off..entries_off + 2].try_into().unwrap()) as usize;
             let entries_start = entries_off + 2;
             let need = n_entries * EDGE_TYPE_COUNT_ENTRY_SIZE;
             if cur.len() < entries_start + need {
@@ -564,8 +562,7 @@ impl DictSnapshot {
             for i in 0..n_entries {
                 let base = entries_start + i * EDGE_TYPE_COUNT_ENTRY_SIZE;
                 let type_id = u16::from_le_bytes(cur[base..base + 2].try_into().unwrap());
-                let count =
-                    u64::from_le_bytes(cur[base + 2..base + 10].try_into().unwrap());
+                let count = u64::from_le_bytes(cur[base + 2..base + 10].try_into().unwrap());
                 edge_type_counts.push((type_id, count));
             }
             cur = &cur[entries_start + need..];
@@ -573,11 +570,8 @@ impl DictSnapshot {
             // v6 : two per-edge-type × label histograms (target + source).
             // v5 files stop here ; we load empty Vecs and the caller
             // rebuilds on next scan (first flush bumps to v6).
-            let (edge_type_target_label_counts, edge_type_source_label_counts) = if version
-                >= 6
-            {
-                let mut histograms: [Vec<(u16, [u64; 64])>; 2] =
-                    [Vec::new(), Vec::new()];
+            let (edge_type_target_label_counts, edge_type_source_label_counts) = if version >= 6 {
+                let mut histograms: [Vec<(u16, [u64; 64])>; 2] = [Vec::new(), Vec::new()];
                 for h in histograms.iter_mut() {
                     if cur.len() < 2 {
                         return Err(SubstrateError::Internal(
@@ -596,14 +590,11 @@ impl DictSnapshot {
                     h.reserve(n);
                     for i in 0..n {
                         let base = i * EDGE_TYPE_LABEL_HIST_ENTRY_SIZE;
-                        let type_id =
-                            u16::from_le_bytes(cur[base..base + 2].try_into().unwrap());
+                        let type_id = u16::from_le_bytes(cur[base..base + 2].try_into().unwrap());
                         let mut arr = [0u64; 64];
                         for (j, slot) in arr.iter_mut().enumerate() {
                             let off = base + 2 + j * 8;
-                            *slot = u64::from_le_bytes(
-                                cur[off..off + 8].try_into().unwrap(),
-                            );
+                            *slot = u64::from_le_bytes(cur[off..off + 8].try_into().unwrap());
                         }
                         h.push((type_id, arr));
                     }
@@ -713,9 +704,7 @@ fn read_name_list(cur: &mut &[u8]) -> SubstrateResult<Vec<String>> {
             )));
         }
         let name = std::str::from_utf8(&cur[..len]).map_err(|e| {
-            SubstrateError::Internal(format!(
-                "dict entry {i}/{count} is not UTF-8: {e}"
-            ))
+            SubstrateError::Internal(format!("dict entry {i}/{count} is not UTF-8: {e}"))
         })?;
         out.push(name.to_string());
         *cur = &cur[len..];
@@ -1105,13 +1094,7 @@ mod tests {
 
     #[test]
     fn v1_dict_loads_with_default_next_engram_id() {
-        let bytes = build_v1_bytes(
-            &["Person"],
-            &["KNOWS", "COACT"],
-            &["name"],
-            17,
-            42,
-        );
+        let bytes = build_v1_bytes(&["Person"], &["KNOWS", "COACT"], &["name"], 17, 42);
         let snap = DictSnapshot::from_bytes(&bytes).unwrap();
         assert_eq!(snap.labels, vec!["Person".to_string()]);
         assert_eq!(

@@ -72,10 +72,7 @@ fn upgrade_and_measure(name: &str, path: std::path::PathBuf) {
 fn upgrade_then_measure_three_corpora() {
     let home = std::env::var("HOME").unwrap_or_default();
     println!("\n═══ T17i T4 evidence : v5 → v6 upgrade + steady-state ═══");
-    upgrade_and_measure(
-        "PO",
-        std::path::PathBuf::from(&home).join(".obrain/db/po"),
-    );
+    upgrade_and_measure("PO", std::path::PathBuf::from(&home).join(".obrain/db/po"));
     upgrade_and_measure(
         "Wikipedia",
         std::path::PathBuf::from(&home).join(".obrain/db/wikipedia"),

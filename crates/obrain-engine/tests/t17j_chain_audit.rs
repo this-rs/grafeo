@@ -60,8 +60,8 @@ fn audit_imports_source_labels_on_po() {
     //    Obrain has ~64 possible labels ; we only enumerate the top few
     //    to avoid a giant output.
     let known_labels = [
-        "File", "Module", "Function", "Struct", "Trait", "Enum", "Project",
-        "Package", "Impl", "Method", "Class", "Variable",
+        "File", "Module", "Function", "Struct", "Trait", "Enum", "Project", "Package", "Impl",
+        "Method", "Class", "Variable",
     ];
     println!("\n  Source-label histogram (per known label) :");
     for label in known_labels {

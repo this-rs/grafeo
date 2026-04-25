@@ -11,12 +11,18 @@ fn main() {
     let r1 = session
         .execute("INSERT (:Person {name: 'Alice', age: 30})")
         .unwrap();
-    println!("[gql] INSERT 1: {} rows scanned", r1.rows_scanned.unwrap_or(0));
+    println!(
+        "[gql] INSERT 1: {} rows scanned",
+        r1.rows_scanned.unwrap_or(0)
+    );
 
     let r2 = session
         .execute("INSERT (:Person {name: 'Bob', age: 25})")
         .unwrap();
-    println!("[gql] INSERT 2: {} rows scanned", r2.rows_scanned.unwrap_or(0));
+    println!(
+        "[gql] INSERT 2: {} rows scanned",
+        r2.rows_scanned.unwrap_or(0)
+    );
 
     let r3 = session.execute("MATCH (p:Person) RETURN p").unwrap();
     println!("[gql] MATCH all Person: {} rows", r3.rows.len());

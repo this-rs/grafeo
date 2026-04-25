@@ -345,14 +345,8 @@ impl GdprManager {
                 consent_props::OWNER_USER_ID.into(),
                 Value::from(owner_user_id),
             ),
-            (
-                consent_props::CREATED_AT.into(),
-                Value::from(now.as_str()),
-            ),
-            (
-                consent_props::UPDATED_AT.into(),
-                Value::from(now.as_str()),
-            ),
+            (consent_props::CREATED_AT.into(), Value::from(now.as_str())),
+            (consent_props::UPDATED_AT.into(), Value::from(now.as_str())),
         ];
 
         if let Some(ref exp) = expires {

@@ -8,8 +8,8 @@
 //! - a second call is a no-op (idempotency guard).
 
 use obrain_substrate::{
-    f32_to_q1_15, file::Zone, meta::meta_flags, wal_io::SyncMode, EdgeRecord, NodeRecord,
-    PackedScarUtilAff, SubstrateFile, Writer, U48,
+    EdgeRecord, NodeRecord, PackedScarUtilAff, SubstrateFile, U48, Writer, f32_to_q1_15,
+    file::Zone, meta::meta_flags, wal_io::SyncMode,
 };
 
 fn sample_node(community: u32, centrality: u16) -> NodeRecord {
@@ -83,7 +83,8 @@ fn bulk_sort_groups_communities_and_remaps_edges() {
     w.commit().unwrap();
 
     // Sort.
-    w.bulk_sort_by_hilbert(n, edges.len() as u64, 4, 32).unwrap();
+    w.bulk_sort_by_hilbert(n, edges.len() as u64, 4, 32)
+        .unwrap();
 
     // ---- Assert 1: meta flag is set + hilbert_order persisted --------
     let sub_arc = w.substrate();
@@ -148,16 +149,14 @@ fn bulk_sort_groups_communities_and_remaps_edges() {
 
     // ---- Assert 4: side-columns match ------------------------------
     let hz = sub.open_zone(Zone::Hilbert).unwrap();
-    let hilbert_col: &[u32] =
-        bytemuck::cast_slice(&hz.as_slice()[..(n as usize) * 4]);
+    let hilbert_col: &[u32] = bytemuck::cast_slice(&hz.as_slice()[..(n as usize) * 4]);
     // Each new slot's hilbert key should be consistent within its
     // community (key is the Hilbert feature encoding). We just assert
     // the column has n entries and none are u32::MAX (no uninit).
     assert_eq!(hilbert_col.len(), n as usize);
 
     let cz = sub.open_zone(Zone::Community).unwrap();
-    let community_col: &[u32] =
-        bytemuck::cast_slice(&cz.as_slice()[..(n as usize) * 4]);
+    let community_col: &[u32] = bytemuck::cast_slice(&cz.as_slice()[..(n as usize) * 4]);
     for (slot, rec) in post.iter().enumerate() {
         assert_eq!(
             community_col[slot], rec.community_id,
@@ -223,8 +222,7 @@ fn tombstones_sink_to_tail() {
     let sub = w.substrate();
     let s = sub.lock();
     let nz = s.open_zone(Zone::Nodes).unwrap();
-    let post: &[NodeRecord] =
-        bytemuck::cast_slice(&nz.as_slice()[..8 * NodeRecord::SIZE]);
+    let post: &[NodeRecord] = bytemuck::cast_slice(&nz.as_slice()[..8 * NodeRecord::SIZE]);
 
     // Live nodes (6 of them) land at slots 0..6; tombstones at 6..8.
     for (slot, rec) in post.iter().enumerate() {

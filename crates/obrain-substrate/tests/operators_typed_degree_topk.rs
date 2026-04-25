@@ -11,12 +11,10 @@
 //! cargo test -p obrain-substrate --test operators_typed_degree_topk
 //! ```
 
-use obrain_core::execution::operators::{
-    Operator, TypedDegreeDirection, TypedDegreeTopKOperator,
-};
+use obrain_common::types::{NodeId, Value};
+use obrain_core::execution::operators::{Operator, TypedDegreeDirection, TypedDegreeTopKOperator};
 use obrain_core::graph::GraphStore;
 use obrain_core::graph::traits::GraphStoreMut;
-use obrain_common::types::{NodeId, Value};
 
 fn read_row(chunk: &obrain_core::execution::DataChunk, i: usize) -> (NodeId, i64) {
     let col_node = chunk.column(0).expect("node column");
@@ -31,10 +29,7 @@ fn read_row(chunk: &obrain_core::execution::DataChunk, i: usize) -> (NodeId, i64
 
 /// Reads a 3-column row (Separate direction output : [Node, Int64 out,
 /// Int64 in]).
-fn read_row_separate(
-    chunk: &obrain_core::execution::DataChunk,
-    i: usize,
-) -> (NodeId, i64, i64) {
+fn read_row_separate(chunk: &obrain_core::execution::DataChunk, i: usize) -> (NodeId, i64, i64) {
     let col_node = chunk.column(0).expect("node column");
     let col_out = chunk.column(1).expect("out column");
     let col_in = chunk.column(2).expect("in column");

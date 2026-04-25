@@ -461,7 +461,11 @@ mod tests {
         let config = RagConfig::default();
 
         let stats = feedback
-            .feedback(&context, "no node text matches this response at all", &config)
+            .feedback(
+                &context,
+                "no node text matches this response at all",
+                &config,
+            )
             .unwrap();
 
         // Without the cap: C(OVER_CAP, 2) pairs. With the cap:

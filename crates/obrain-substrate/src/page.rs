@@ -70,13 +70,13 @@ pub const PAGE_SIZE: usize = 4096;
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Pod, Zeroable)]
 pub struct PropertyPageHeader {
-    pub magic: u32,        // @0..4
-    pub node_id: u32,      // @4..8
-    pub crc32: u32,        // @8..12
-    pub next_page: U48,    // @12..18
-    pub entry_count: u16,  // @18..20
-    pub free_offset: u16,  // @20..22
-    pub tombstones: u16,   // @22..24
+    pub magic: u32,       // @0..4
+    pub node_id: u32,     // @4..8
+    pub crc32: u32,       // @8..12
+    pub next_page: U48,   // @12..18
+    pub entry_count: u16, // @18..20
+    pub free_offset: u16, // @20..22
+    pub tombstones: u16,  // @22..24
 }
 
 const _: [(); 1] = [(); (core::mem::size_of::<PropertyPageHeader>() == 24) as usize];
@@ -352,10 +352,7 @@ pub enum PropertyCodecError {
     /// The tag byte didn't correspond to any known [`ValueTag`].
     UnknownTag(u8),
     /// Not enough free space in the page to encode the entry.
-    PageFull {
-        needed: usize,
-        available: usize,
-    },
+    PageFull { needed: usize, available: usize },
     /// An array length would overflow the remaining payload.
     InvalidArrayLen(u32),
 }
@@ -480,7 +477,8 @@ pub fn decode_entry(src: &[u8]) -> Result<(PropertyEntry, usize), PropertyCodecE
                 return Err(PropertyCodecError::Truncated);
             }
             let n = u32::from_le_bytes(body[0..4].try_into().unwrap());
-            let need = 4usize.checked_add((n as usize).checked_mul(8).unwrap_or(usize::MAX))
+            let need = 4usize
+                .checked_add((n as usize).checked_mul(8).unwrap_or(usize::MAX))
                 .unwrap_or(usize::MAX);
             if body.len() < need {
                 return Err(PropertyCodecError::InvalidArrayLen(n));
@@ -491,9 +489,7 @@ pub fn decode_entry(src: &[u8]) -> Result<(PropertyEntry, usize), PropertyCodecE
                     let mut v = Vec::with_capacity(n as usize);
                     for i in 0..n as usize {
                         let off = start + i * 8;
-                        v.push(i64::from_le_bytes(
-                            body[off..off + 8].try_into().unwrap(),
-                        ));
+                        v.push(i64::from_le_bytes(body[off..off + 8].try_into().unwrap()));
                     }
                     PropertyValue::ArrI64(v)
                 }
@@ -501,9 +497,7 @@ pub fn decode_entry(src: &[u8]) -> Result<(PropertyEntry, usize), PropertyCodecE
                     let mut v = Vec::with_capacity(n as usize);
                     for i in 0..n as usize {
                         let off = start + i * 8;
-                        v.push(f64::from_le_bytes(
-                            body[off..off + 8].try_into().unwrap(),
-                        ));
+                        v.push(f64::from_le_bytes(body[off..off + 8].try_into().unwrap()));
                     }
                     PropertyValue::ArrF64(v)
                 }
@@ -511,10 +505,8 @@ pub fn decode_entry(src: &[u8]) -> Result<(PropertyEntry, usize), PropertyCodecE
                     let mut v = Vec::with_capacity(n as usize);
                     for i in 0..n as usize {
                         let off = start + i * 8;
-                        let page_id =
-                            u32::from_le_bytes(body[off..off + 4].try_into().unwrap());
-                        let offset =
-                            u32::from_le_bytes(body[off + 4..off + 8].try_into().unwrap());
+                        let page_id = u32::from_le_bytes(body[off..off + 4].try_into().unwrap());
+                        let offset = u32::from_le_bytes(body[off + 4..off + 8].try_into().unwrap());
                         v.push(HeapRef { page_id, offset });
                     }
                     PropertyValue::ArrStringRef(v)
@@ -538,10 +530,7 @@ impl PropertyPage {
     /// Append a new entry to the page, advancing `free_offset` and
     /// incrementing the appropriate counter. Returns the byte offset at
     /// which the entry was written (relative to `payload`).
-    pub fn append_entry(
-        &mut self,
-        entry: &PropertyEntry,
-    ) -> Result<u16, PropertyCodecError> {
+    pub fn append_entry(&mut self, entry: &PropertyEntry) -> Result<u16, PropertyCodecError> {
         let free = self.header.free_offset as usize;
         let room = self.payload.len().saturating_sub(free);
         let need = entry.encoded_len();
@@ -721,7 +710,10 @@ mod tests {
     #[test]
     fn codec_f64() {
         roundtrip(PropertyEntry::new(4, PropertyValue::F64(0.0)));
-        roundtrip(PropertyEntry::new(4, PropertyValue::F64(core::f64::consts::PI)));
+        roundtrip(PropertyEntry::new(
+            4,
+            PropertyValue::F64(core::f64::consts::PI),
+        ));
         roundtrip(PropertyEntry::new(4, PropertyValue::F64(f64::NEG_INFINITY)));
     }
 
@@ -777,9 +769,18 @@ mod tests {
         roundtrip(PropertyEntry::new(
             9,
             PropertyValue::ArrStringRef(vec![
-                HeapRef { page_id: 1, offset: 2 },
-                HeapRef { page_id: 3, offset: 4 },
-                HeapRef { page_id: 5, offset: 6 },
+                HeapRef {
+                    page_id: 1,
+                    offset: 2,
+                },
+                HeapRef {
+                    page_id: 3,
+                    offset: 4,
+                },
+                HeapRef {
+                    page_id: 5,
+                    offset: 6,
+                },
             ]),
         ));
     }
@@ -854,10 +855,7 @@ mod tests {
         }
         assert_eq!(p.header.entry_count as usize, entries.len());
         assert_eq!(p.header.tombstones, 1);
-        let collected: Vec<_> = p
-            .cursor()
-            .map(|r| r.expect("decode"))
-            .collect();
+        let collected: Vec<_> = p.cursor().map(|r| r.expect("decode")).collect();
         assert_eq!(collected, entries);
     }
 
@@ -936,11 +934,17 @@ mod tests {
             PropertyEntry::new(3, PropertyValue::F64(1.25)),
             PropertyEntry::new(
                 4,
-                PropertyValue::StringRef(HeapRef { page_id: 1, offset: 2 }),
+                PropertyValue::StringRef(HeapRef {
+                    page_id: 1,
+                    offset: 2,
+                }),
             ),
             PropertyEntry::new(
                 5,
-                PropertyValue::BytesRef(HeapRef { page_id: 3, offset: 4 }),
+                PropertyValue::BytesRef(HeapRef {
+                    page_id: 3,
+                    offset: 4,
+                }),
             ),
             PropertyEntry::new(6, PropertyValue::ArrI64(vec![1, 2, 3])),
             PropertyEntry::new(7, PropertyValue::ArrF64(vec![1.0, 2.0])),

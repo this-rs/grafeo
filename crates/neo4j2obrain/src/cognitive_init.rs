@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use obrain_adapters::plugins::algorithms::pagerank;
-use obrain_cognitive::community::{leiden_batch, Graph, LeidenConfig};
+use obrain_cognitive::community::{Graph, LeidenConfig, leiden_batch};
 use obrain_common::NodeId;
 use obrain_core::graph::Direction;
 use obrain_core::graph::traits::GraphStore;
@@ -206,13 +206,9 @@ pub fn run_pagerank_batch(
 /// * [`obrain_substrate::compute_all_node_curvatures`] — aggregates the
 ///   per-edge Ricci into a node curvature property (degree-weighted
 ///   mean) for nodes with at least one live incident edge.
-pub fn run_ricci_batch(
-    substrate: &Arc<SubstrateStore>,
-    stats: &mut PipelineStats,
-) -> Result<()> {
+pub fn run_ricci_batch(substrate: &Arc<SubstrateStore>, stats: &mut PipelineStats) -> Result<()> {
     // ---- Edge-level Ricci (authoritative, WAL-logged) ------------------
-    let edge_stats = obrain_substrate::refresh_all_ricci(substrate)
-        .context("refresh_all_ricci")?;
+    let edge_stats = obrain_substrate::refresh_all_ricci(substrate).context("refresh_all_ricci")?;
 
     // The substrate reports: edges_visited, edges_updated,
     // edges_skipped_dangling (+ curvature summary stats). For pipeline

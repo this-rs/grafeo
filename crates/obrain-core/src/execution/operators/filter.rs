@@ -47,13 +47,11 @@ pub trait Predicate: Send + Sync {
     }
 }
 
-
 // The `CompareOp` enum and `ComparisonPredicate` struct that used to live
 // here (as `#[cfg(test)] pub(crate)` helpers) have been relocated to
 // `crates/obrain-substrate/tests/operators_filter.rs` as part of T17 W4.p4
 // — substrate-backed fixtures cannot live in `obrain-core` due to the
 // dev-dep cycle. They were never part of the crate's public or internal API.
-
 
 /// An expression-based predicate that evaluates logical expressions.
 ///

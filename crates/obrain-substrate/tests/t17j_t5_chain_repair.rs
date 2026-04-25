@@ -28,8 +28,7 @@ fn repair_is_idempotent_on_healthy_store() {
 
     // Chain walks should match rec.src for every chain-owner.
     for nid in [a, b, c, d] {
-        let (walked, matches, mismatches, _) =
-            store.diagnose_chain_vs_rec_src(nid);
+        let (walked, matches, mismatches, _) = store.diagnose_chain_vs_rec_src(nid);
         assert_eq!(
             mismatches, 0,
             "chain of {nid:?} has {mismatches} mismatches after repair (walked={walked}, matches={matches})"

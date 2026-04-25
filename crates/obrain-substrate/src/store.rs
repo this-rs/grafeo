@@ -122,21 +122,21 @@ use obrain_core::statistics::Statistics;
 use parking_lot::{Mutex, RwLock};
 use smallvec::SmallVec;
 
+use crate::blob_column_registry::{
+    BLOB_COLUMN_THRESHOLD_BYTES, BlobColumnRegistry, blob_payload_len, encode_blob_payload,
+};
 use crate::error::{SubstrateError, SubstrateResult};
 use crate::file::SubstrateFile;
 use crate::meta::meta_flags;
-use crate::record::{
-    EdgeRecord, NodeRecord, NODES_PER_PAGE, PackedScarUtilAff, U48, edge_flags, f32_to_q1_15,
-};
-use crate::props_snapshot::{
-    entries_to_map, map_to_entries, PropEntry, PropertiesSnapshotV1,
-    PropertiesStreamingWriter, EDGE_PROPS_FILENAME, PROPS_FILENAME,
-};
 use crate::page::PropertyEntry;
 use crate::props_codec::{decode_value, encode_value};
-use crate::props_zone::{decode_page_id, encode_page_id, PropsZone, PROPS_V2_FILENAME};
-use crate::blob_column_registry::{
-    blob_payload_len, encode_blob_payload, BlobColumnRegistry, BLOB_COLUMN_THRESHOLD_BYTES,
+use crate::props_snapshot::{
+    EDGE_PROPS_FILENAME, PROPS_FILENAME, PropEntry, PropertiesSnapshotV1,
+    PropertiesStreamingWriter, entries_to_map, map_to_entries,
+};
+use crate::props_zone::{PROPS_V2_FILENAME, PropsZone, decode_page_id, encode_page_id};
+use crate::record::{
+    EdgeRecord, NODES_PER_PAGE, NodeRecord, PackedScarUtilAff, U48, edge_flags, f32_to_q1_15,
 };
 use crate::vec_column::EntityKind;
 use crate::vec_column_registry::VecColumnRegistry;
@@ -720,10 +720,7 @@ impl SubstrateStore {
     }
 
     /// Open with an explicit sync mode — useful in benches.
-    pub fn open_with_mode(
-        path: impl AsRef<Path>,
-        sync_mode: SyncMode,
-    ) -> SubstrateResult<Self> {
+    pub fn open_with_mode(path: impl AsRef<Path>, sync_mode: SyncMode) -> SubstrateResult<Self> {
         let sub = SubstrateFile::open(path.as_ref())?;
         Self::from_substrate(sub, sync_mode)
     }
@@ -740,10 +737,7 @@ impl SubstrateStore {
         Self::from_substrate(sub, SyncMode::EveryCommit)
     }
 
-    fn from_substrate(
-        sub: SubstrateFile,
-        sync_mode: SyncMode,
-    ) -> SubstrateResult<Self> {
+    fn from_substrate(sub: SubstrateFile, sync_mode: SyncMode) -> SubstrateResult<Self> {
         // T17a — Instrumentation. Each phase emits an `info_span!` scope
         // plus an explicit `elapsed_ms` event so `RUST_LOG=info` gives a
         // full breakdown of cold-open latency. Added to hunt the 79 s
@@ -908,8 +902,7 @@ impl SubstrateStore {
                 // full) logs a warning and returns Ok — the registry
                 // is correct in RAM, the next flush attempt will
                 // retry. Never panic, never block `from_substrate`.
-                let auto_flush_span =
-                    tracing::info_span!("auto_flush_v5_to_v6").entered();
+                let auto_flush_span = tracing::info_span!("auto_flush_v5_to_v6").entered();
                 let t_flush = std::time::Instant::now();
                 match store.flush() {
                     Ok(()) => {
@@ -1130,7 +1123,9 @@ impl SubstrateStore {
         let snap = if legacy_fully_stale {
             tracing::info!(
                 phase = "load_properties",
-                legacy_props_size_mib = std::fs::metadata(&path).map(|m| m.len() / (1024 * 1024)).unwrap_or(0),
+                legacy_props_size_mib = std::fs::metadata(&path)
+                    .map(|m| m.len() / (1024 * 1024))
+                    .unwrap_or(0),
                 "T17g T2b — bypassing legacy substrate.props decode: v2 is \
                  authoritative for both nodes and edges. Stale bytes will be \
                  reclaimed on next flush."
@@ -1415,25 +1410,22 @@ impl SubstrateStore {
             // only touches the mmap — no shared mutable state.
             let partials: Vec<FxHashMap<NodeId, EdgeId>> = (1..edge_hw)
                 .into_par_iter()
-                .fold(
-                    FxHashMap::<NodeId, EdgeId>::default,
-                    |mut acc, slot| {
-                        if let Ok(Some(rec)) = self.writer.read_edge(slot) {
-                            if rec.flags & edge_flags::TOMBSTONED == 0 {
-                                let edge_id = EdgeId(slot);
-                                let dst = NodeId(rec.dst as u64);
-                                acc.entry(dst)
-                                    .and_modify(|cur: &mut EdgeId| {
-                                        if cur.0 < edge_id.0 {
-                                            *cur = edge_id;
-                                        }
-                                    })
-                                    .or_insert(edge_id);
-                            }
+                .fold(FxHashMap::<NodeId, EdgeId>::default, |mut acc, slot| {
+                    if let Ok(Some(rec)) = self.writer.read_edge(slot) {
+                        if rec.flags & edge_flags::TOMBSTONED == 0 {
+                            let edge_id = EdgeId(slot);
+                            let dst = NodeId(rec.dst as u64);
+                            acc.entry(dst)
+                                .and_modify(|cur: &mut EdgeId| {
+                                    if cur.0 < edge_id.0 {
+                                        *cur = edge_id;
+                                    }
+                                })
+                                .or_insert(edge_id);
                         }
-                        acc
-                    },
-                )
+                    }
+                    acc
+                })
                 .collect();
 
             for partial in partials {
@@ -1496,26 +1488,23 @@ impl SubstrateStore {
             type CidRange = (u32, u32); // (min, max)
             let partials: Vec<FxHashMap<u32, CidRange>> = (1..node_hw)
                 .into_par_iter()
-                .fold(
-                    FxHashMap::<u32, CidRange>::default,
-                    |mut acc, slot| {
-                        if let Ok(Some(rec)) = self.writer.read_node(slot) {
-                            if rec.flags & crate::record::node_flags::TOMBSTONED == 0 {
-                                acc.entry(rec.community_id)
-                                    .and_modify(|(min, max)| {
-                                        if slot < *min {
-                                            *min = slot;
-                                        }
-                                        if slot > *max {
-                                            *max = slot;
-                                        }
-                                    })
-                                    .or_insert((slot, slot));
-                            }
+                .fold(FxHashMap::<u32, CidRange>::default, |mut acc, slot| {
+                    if let Ok(Some(rec)) = self.writer.read_node(slot) {
+                        if rec.flags & crate::record::node_flags::TOMBSTONED == 0 {
+                            acc.entry(rec.community_id)
+                                .and_modify(|(min, max)| {
+                                    if slot < *min {
+                                        *min = slot;
+                                    }
+                                    if slot > *max {
+                                        *max = slot;
+                                    }
+                                })
+                                .or_insert((slot, slot));
                         }
-                        acc
-                    },
-                )
+                    }
+                    acc
+                })
                 .collect();
 
             // Merge partials into the final DashMaps.
@@ -1699,7 +1688,9 @@ impl SubstrateStore {
                 edge_path.display()
             )));
         }
-        let size = std::fs::metadata(&legacy_path).map(|m| m.len()).unwrap_or(0);
+        let size = std::fs::metadata(&legacy_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
         std::fs::remove_file(&legacy_path).map_err(|e| {
             SubstrateError::Internal(format!(
                 "delete_legacy_props_sidecar: remove {} failed: {e}",
@@ -1719,7 +1710,9 @@ impl SubstrateStore {
     /// tool — gives operators a concrete "pages written" number to
     /// verify progress.
     pub fn props_v2_page_count(&self) -> Option<u32> {
-        self.props_zone.as_ref().map(|pz| pz.read().allocated_page_count())
+        self.props_zone
+            .as_ref()
+            .map(|pz| pz.read().allocated_page_count())
     }
 
     /// T17c Step 6 — persist the in-memory `edge_properties` DashMap
@@ -1739,9 +1732,7 @@ impl SubstrateStore {
     /// contract as `persist_properties`) — vector and oversized-blob
     /// payloads are routed elsewhere and never land in the DashMap,
     /// but a defensive filter keeps the edge sidecar lean.
-    pub fn persist_edge_properties_sidecar(
-        &self,
-    ) -> SubstrateResult<(usize, usize, u64)> {
+    pub fn persist_edge_properties_sidecar(&self) -> SubstrateResult<(usize, usize, u64)> {
         let is_routed_out = |(_, v): &(String, Value)| {
             if matches!(v, Value::Vector(_)) {
                 return true;
@@ -1952,9 +1943,7 @@ impl SubstrateStore {
     ///   chain (via `lookup_edge_property_v2`).
     ///
     /// Returns the number of edges touched and scalars re-emitted.
-    pub fn finalize_edge_props_v2(
-        &self,
-    ) -> SubstrateResult<EdgePropsV2FinalizeStats> {
+    pub fn finalize_edge_props_v2(&self) -> SubstrateResult<EdgePropsV2FinalizeStats> {
         if !self.props_v2_enabled() {
             return Err(SubstrateError::Internal(
                 "finalize_edge_props_v2 called without PropsZone v2 enabled \
@@ -2137,11 +2126,7 @@ impl SubstrateStore {
     ///   allocate a fresh head page with the tombstone, so a later
     ///   legacy-hydrated DashMap entry is shadowed by the tombstone on
     ///   next read. This is required for the LWW contract.
-    fn append_tombstone_to_props_zone_v2(
-        &self,
-        id: NodeId,
-        key: &str,
-    ) -> SubstrateResult<()> {
+    fn append_tombstone_to_props_zone_v2(&self, id: NodeId, key: &str) -> SubstrateResult<()> {
         let pz_lock = self
             .props_zone
             .as_ref()
@@ -2165,10 +2150,7 @@ impl SubstrateStore {
 
         let new_head_idx = {
             let mut pz = pz_lock.write();
-            let entry = PropertyEntry::tombstone(
-                prop_key_id,
-                crate::page::ValueTag::Null,
-            );
+            let entry = PropertyEntry::tombstone(prop_key_id, crate::page::ValueTag::Null);
             pz.append_entry(slot, current_head, &entry)?
         };
 
@@ -2199,11 +2181,7 @@ impl SubstrateStore {
     /// - an I/O or decode error occurs (warned via `tracing::warn!` so
     ///   we degrade to the DashMap path rather than loudly fail the
     ///   read).
-    fn lookup_node_property_v2(
-        &self,
-        id: NodeId,
-        key: &str,
-    ) -> Option<Option<Value>> {
+    fn lookup_node_property_v2(&self, id: NodeId, key: &str) -> Option<Option<Value>> {
         let pz_lock = self.props_zone.as_ref()?;
         let slot = id.0 as u32;
         let node_rec = match self.writer.read_node(slot) {
@@ -2324,11 +2302,7 @@ impl SubstrateStore {
     /// T17f Step 4 — Edge mirror of
     /// [`Self::append_tombstone_to_props_zone_v2`]. Appends a tombstone
     /// entry for `(edge_slot, key)` on the edge-owned chain.
-    fn append_tombstone_to_props_zone_v2_edge(
-        &self,
-        id: EdgeId,
-        key: &str,
-    ) -> SubstrateResult<()> {
+    fn append_tombstone_to_props_zone_v2_edge(&self, id: EdgeId, key: &str) -> SubstrateResult<()> {
         let pz_lock = self
             .props_zone
             .as_ref()
@@ -2349,10 +2323,7 @@ impl SubstrateStore {
 
         let new_head_idx = {
             let mut pz = pz_lock.write();
-            let entry = PropertyEntry::tombstone(
-                prop_key_id,
-                crate::page::ValueTag::Null,
-            );
+            let entry = PropertyEntry::tombstone(prop_key_id, crate::page::ValueTag::Null);
             pz.append_entry_edge(slot, current_head, &entry)?
         };
 
@@ -2370,11 +2341,7 @@ impl SubstrateStore {
     ///   without consulting the DashMap sidecar);
     /// - `None` — nothing on the chain for this key; fall back to the
     ///   DashMap legacy sidecar.
-    fn lookup_edge_property_v2(
-        &self,
-        id: EdgeId,
-        key: &str,
-    ) -> Option<Option<Value>> {
+    fn lookup_edge_property_v2(&self, id: EdgeId, key: &str) -> Option<Option<Value>> {
         let pz_lock = self.props_zone.as_ref()?;
         let edge_rec = match self.writer.read_edge(id.0) {
             Ok(Some(rec)) => rec,
@@ -2428,9 +2395,7 @@ impl SubstrateStore {
     /// with the in-memory property maps, so reads through
     /// `get_node_property` won't see the streamed values until the
     /// store is reopened.
-    pub fn open_streaming_props_writer(
-        &self,
-    ) -> SubstrateResult<PropertiesStreamingWriter> {
+    pub fn open_streaming_props_writer(&self) -> SubstrateResult<PropertiesStreamingWriter> {
         let path = {
             let sub = self.substrate.lock();
             sub.path().join(PROPS_FILENAME)
@@ -2573,11 +2538,7 @@ impl SubstrateStore {
     /// | page alignment on 1st   | —                        | rounds up to page boundary |
     ///
     /// Returns the fresh [`NodeId`] (always non-zero; slot 0 is reserved).
-    pub fn create_node_in_community(
-        &self,
-        labels: &[&str],
-        community_id: u32,
-    ) -> NodeId {
+    pub fn create_node_in_community(&self, labels: &[&str], community_id: u32) -> NodeId {
         let id = self.allocate_node_id_in_community(community_id);
         let bitset = self
             .intern_labels_to_bitset(labels)
@@ -2754,10 +2715,7 @@ impl SubstrateStore {
                 continue;
             }
             // Ascending scan → first_slot takes the min, last_slot the max.
-            ranges
-                .first_slots
-                .entry(rec.community_id)
-                .or_insert(slot);
+            ranges.first_slots.entry(rec.community_id).or_insert(slot);
             ranges.placements.insert(rec.community_id, slot);
         }
         Ok(())
@@ -2824,8 +2782,7 @@ impl SubstrateStore {
     /// written, then every live slot is rewritten in one pass. `factor` is
     /// clamped to `[0.0, 1.0]`.
     pub fn decay_all_energy(&self, factor: f32) -> SubstrateResult<()> {
-        let factor_q16 =
-            (factor.clamp(0.0, 1.0) * 65536.0).round().min(65535.0) as u16;
+        let factor_q16 = (factor.clamp(0.0, 1.0) * 65536.0).round().min(65535.0) as u16;
         self.writer
             .decay_all_energy(factor_q16, self.slot_high_water())
     }
@@ -2902,10 +2859,7 @@ impl SubstrateStore {
     }
 
     /// Read an edge's synapse weight column (`EdgeRecord.weight_u16`) as `f32`.
-    pub fn get_edge_synapse_weight_f32(
-        &self,
-        id: EdgeId,
-    ) -> SubstrateResult<Option<f32>> {
+    pub fn get_edge_synapse_weight_f32(&self, id: EdgeId) -> SubstrateResult<Option<f32>> {
         if id.0 == 0 || id.0 >= self.edge_slot_high_water() {
             return Ok(None);
         }
@@ -2917,11 +2871,7 @@ impl SubstrateStore {
     }
 
     /// Reinforce an edge's synapse weight column. Clamps to `[0.0, 1.0]`.
-    pub fn reinforce_edge_synapse_f32(
-        &self,
-        id: EdgeId,
-        new_weight: f32,
-    ) -> SubstrateResult<()> {
+    pub fn reinforce_edge_synapse_f32(&self, id: EdgeId, new_weight: f32) -> SubstrateResult<()> {
         let q = (new_weight.clamp(0.0, 1.0) * 65535.0).round() as u16;
         self.writer.reinforce_synapse(id.0, q)?;
         Ok(())
@@ -2954,8 +2904,7 @@ impl SubstrateStore {
     /// `factor` is clamped to `[0.0, 1.0]`. Mirror of
     /// [`Self::decay_all_energy`].
     pub fn decay_all_edge_synapse(&self, factor: f32) -> SubstrateResult<()> {
-        let factor_q16 =
-            (factor.clamp(0.0, 1.0) * 65536.0).round().min(65535.0) as u16;
+        let factor_q16 = (factor.clamp(0.0, 1.0) * 65536.0).round().min(65535.0) as u16;
         self.writer
             .decay_all_synapse(factor_q16, self.edge_slot_high_water())
     }
@@ -2998,11 +2947,7 @@ impl SubstrateStore {
     /// The caller is responsible for ensuring `id` resolves to a live
     /// edge whose `edge_type` is the COACT id (typically because the
     /// Hub allocated the slot itself when first observing the pair).
-    pub fn coact_reinforce_f32(
-        &self,
-        id: EdgeId,
-        delta: f32,
-    ) -> SubstrateResult<f32> {
+    pub fn coact_reinforce_f32(&self, id: EdgeId, delta: f32) -> SubstrateResult<f32> {
         let delta_q16 = (delta.clamp(0.0, 1.0) * 65535.0).round() as u16;
         let new = self.writer.coact_reinforce_at(id.0, delta_q16)?;
         Ok(new as f32 / 65535.0)
@@ -3012,14 +2957,10 @@ impl SubstrateStore {
     /// weight column. Synapse and other edge types are untouched.
     /// `factor` is clamped to `[0.0, 1.0]`.
     pub fn decay_all_coact(&self, factor: f32) -> SubstrateResult<()> {
-        let factor_q16 =
-            (factor.clamp(0.0, 1.0) * 65536.0).round().min(65535.0) as u16;
+        let factor_q16 = (factor.clamp(0.0, 1.0) * 65536.0).round().min(65535.0) as u16;
         let coact_id = self.coact_type_id()?;
-        self.writer.decay_all_coact(
-            factor_q16,
-            self.edge_slot_high_water(),
-            coact_id,
-        )
+        self.writer
+            .decay_all_coact(factor_q16, self.edge_slot_high_water(), coact_id)
     }
 
     /// Read the current weight (`f32` in `[0, 1]`) of a COACT edge slot.
@@ -3033,9 +2974,7 @@ impl SubstrateStore {
         Ok(self
             .writer
             .read_edge(id.0)?
-            .filter(|r| {
-                r.flags & edge_flags::TOMBSTONED == 0 && r.edge_type == coact_id
-            })
+            .filter(|r| r.flags & edge_flags::TOMBSTONED == 0 && r.edge_type == coact_id)
             .map(|r| r.weight_f32()))
     }
 
@@ -3139,8 +3078,7 @@ impl SubstrateStore {
         // 1) Write the membership directory entry.
         //    We hand the Vec to the writer (consumes) and keep our own
         //    copy via `members.iter()` for the bit-OR loop below.
-        let member_u32: Vec<u32> =
-            members.iter().map(|n| n.0 as u32).collect();
+        let member_u32: Vec<u32> = members.iter().map(|n| n.0 as u32).collect();
         self.writer
             .set_engram_members(engram_id, member_u32.clone())?;
 
@@ -3161,10 +3099,7 @@ impl SubstrateStore {
     /// partial state is durable — a subsequent reopen sees exactly the
     /// engrams whose `set_engram_members` had completed. Callers that
     /// want all-or-nothing semantics should pre-validate inputs.
-    pub fn seed_engrams_batch(
-        &self,
-        clusters: &[Vec<NodeId>],
-    ) -> SubstrateResult<Vec<u16>> {
+    pub fn seed_engrams_batch(&self, clusters: &[Vec<NodeId>]) -> SubstrateResult<Vec<u16>> {
         let mut out = Vec::with_capacity(clusters.len());
         for cluster in clusters {
             let id = self.seed_engram(cluster)?;
@@ -3177,9 +3112,7 @@ impl SubstrateStore {
     /// `0` for the null sentinel, for slots past the high-water mark, and
     /// for nodes that belong to no engram.
     pub fn engram_bitset(&self, node_id: NodeId) -> SubstrateResult<u64> {
-        if node_id.0 == 0
-            || node_id.0 as u32 >= self.next_node_id.load(Ordering::Acquire)
-        {
+        if node_id.0 == 0 || node_id.0 as u32 >= self.next_node_id.load(Ordering::Acquire) {
             return Ok(0);
         }
         self.writer.engram_bitset(node_id.0 as u32)
@@ -3194,30 +3127,20 @@ impl SubstrateStore {
     /// — the bitset is a Bloom signature for fast recall, the directory
     /// is the authoritative member list. Callers that want both should
     /// pair this with [`Self::set_engram_members`] on the resolved set.
-    pub fn add_engram_bit(
-        &self,
-        node_id: NodeId,
-        engram_id: u16,
-    ) -> SubstrateResult<()> {
-        if node_id.0 == 0
-            || node_id.0 as u32 >= self.next_node_id.load(Ordering::Acquire)
-        {
+    pub fn add_engram_bit(&self, node_id: NodeId, engram_id: u16) -> SubstrateResult<()> {
+        if node_id.0 == 0 || node_id.0 as u32 >= self.next_node_id.load(Ordering::Acquire) {
             return Err(SubstrateError::Internal(format!(
                 "add_engram_bit: NodeId({}) out of range",
                 node_id.0
             )));
         }
-        self.writer
-            .add_engram_bit(node_id.0 as u32, engram_id)
+        self.writer.add_engram_bit(node_id.0 as u32, engram_id)
     }
 
     /// Read the membership directory entry for `engram_id`. Returns
     /// `Ok(None)` for unknown / cleared / null engrams; otherwise the
     /// list of member node-id slots.
-    pub fn engram_members(
-        &self,
-        engram_id: u16,
-    ) -> SubstrateResult<Option<Vec<NodeId>>> {
+    pub fn engram_members(&self, engram_id: u16) -> SubstrateResult<Option<Vec<NodeId>>> {
         Ok(self
             .writer
             .engram_members(engram_id)?
@@ -3228,11 +3151,7 @@ impl SubstrateStore {
     /// Empty `members` clears the slot. Bitset bits on the affected
     /// nodes are NOT updated by this call — pair with
     /// [`Self::add_engram_bit`] per member if needed.
-    pub fn set_engram_members(
-        &self,
-        engram_id: u16,
-        members: &[NodeId],
-    ) -> SubstrateResult<()> {
+    pub fn set_engram_members(&self, engram_id: u16, members: &[NodeId]) -> SubstrateResult<()> {
         let raw: Vec<u32> = members.iter().map(|n| n.0 as u32).collect();
         self.writer.set_engram_members(engram_id, raw)
     }
@@ -3249,9 +3168,7 @@ impl SubstrateStore {
         query_nid: NodeId,
         k: usize,
     ) -> SubstrateResult<Vec<(NodeId, u32)>> {
-        if query_nid.0 == 0
-            || query_nid.0 as u32 >= self.next_node_id.load(Ordering::Acquire)
-        {
+        if query_nid.0 == 0 || query_nid.0 as u32 >= self.next_node_id.load(Ordering::Acquire) {
             return Ok(Vec::new());
         }
         Ok(self
@@ -3322,10 +3239,7 @@ impl SubstrateStore {
     }
 
     /// Batch-update centrality for a list of nodes (single WAL record).
-    pub fn update_centrality_batch_f32(
-        &self,
-        updates: Vec<(NodeId, f32)>,
-    ) -> SubstrateResult<()> {
+    pub fn update_centrality_batch_f32(&self, updates: Vec<(NodeId, f32)>) -> SubstrateResult<()> {
         let encoded: Vec<(u32, u16)> = updates
             .into_iter()
             .map(|(id, v)| {
@@ -3369,13 +3283,7 @@ impl SubstrateStore {
     /// means the spec drifted (different dim for the same key) or the
     /// zone could not be grown; both are programming bugs and land in
     /// the `error!` log.
-    fn route_vector_write(
-        &self,
-        entity_kind: EntityKind,
-        slot: u32,
-        key: &str,
-        vector: &[f32],
-    ) {
+    fn route_vector_write(&self, entity_kind: EntityKind, slot: u32, key: &str, vector: &[f32]) {
         let prop_key_id = match self.prop_keys.write().intern(key) {
             Ok(id) => id,
             Err(e) => {
@@ -3415,13 +3323,7 @@ impl SubstrateStore {
     /// [`crate::blob_column_registry::encode_blob_payload`]. Callers
     /// must have verified the payload qualifies for routing (length >
     /// [`BLOB_COLUMN_THRESHOLD_BYTES`]) before invoking this helper.
-    fn route_blob_write(
-        &self,
-        entity_kind: EntityKind,
-        slot: u32,
-        key: &str,
-        tagged: &[u8],
-    ) {
+    fn route_blob_write(&self, entity_kind: EntityKind, slot: u32, key: &str, tagged: &[u8]) {
         let prop_key_id = match self.prop_keys.write().intern(key) {
             Ok(id) => id,
             Err(e) => {
@@ -3671,12 +3573,7 @@ impl SubstrateStore {
         src: NodeId,
         mut visit: impl FnMut(&EdgeRecord, EdgeId),
     ) {
-        let Some(src_rec) = self
-            .writer
-            .read_node(src.0 as u32)
-            .ok()
-            .flatten()
-        else {
+        let Some(src_rec) = self.writer.read_node(src.0 as u32).ok().flatten() else {
             return;
         };
         let mut cur = Self::offset_to_edge_id(src_rec.first_edge_off);
@@ -3706,11 +3603,7 @@ impl SubstrateStore {
 
     /// Walk the incoming edge chain of `dst`, skipping tombstoned records.
     /// Entry point: `incoming_heads[dst]`; link field: `next_to`.
-    fn walk_incoming_chain(
-        &self,
-        dst: NodeId,
-        mut visit: impl FnMut(&EdgeRecord, EdgeId),
-    ) {
+    fn walk_incoming_chain(&self, dst: NodeId, mut visit: impl FnMut(&EdgeRecord, EdgeId)) {
         let Some(head_ref) = self.incoming_heads().get(&dst) else {
             return;
         };
@@ -3942,11 +3835,9 @@ impl SubstrateStore {
                     std::collections::HashMap::new();
                 let mut tombstoned: std::collections::HashSet<u16> =
                     std::collections::HashSet::new();
-                if let Err(err) = pz.collect_live_props_by_key(
-                    Some(head),
-                    &mut live,
-                    &mut tombstoned,
-                ) {
+                if let Err(err) =
+                    pz.collect_live_props_by_key(Some(head), &mut live, &mut tombstoned)
+                {
                     tracing::warn!(
                         node_id = id.0,
                         error = %err,
@@ -3955,7 +3846,9 @@ impl SubstrateStore {
                 } else {
                     let registry = self.prop_keys.read();
                     for (pk_id, entry) in live {
-                        let Some(name) = registry.name_for(pk_id) else { continue };
+                        let Some(name) = registry.name_for(pk_id) else {
+                            continue;
+                        };
                         let key = PropertyKey::new(name.as_str());
                         match crate::props_codec::decode_value(&pz, &entry.value) {
                             Ok(v) => {
@@ -3972,7 +3865,9 @@ impl SubstrateStore {
                         }
                     }
                     for pk_id in tombstoned {
-                        let Some(name) = registry.name_for(pk_id) else { continue };
+                        let Some(name) = registry.name_for(pk_id) else {
+                            continue;
+                        };
                         props.remove(&PropertyKey::new(name.as_str()));
                     }
                 }
@@ -4030,14 +3925,18 @@ impl SubstrateStore {
                 {
                     let registry = self.prop_keys.read();
                     for (pk_id, entry) in live {
-                        let Some(name) = registry.name_for(pk_id) else { continue };
+                        let Some(name) = registry.name_for(pk_id) else {
+                            continue;
+                        };
                         let key = PropertyKey::new(name.as_str());
                         if let Ok(v) = crate::props_codec::decode_value(&pz, &entry.value) {
                             props.insert(key, v);
                         }
                     }
                     for pk_id in tombstoned {
-                        let Some(name) = registry.name_for(pk_id) else { continue };
+                        let Some(name) = registry.name_for(pk_id) else {
+                            continue;
+                        };
                         props.remove(&PropertyKey::new(name.as_str()));
                     }
                 }
@@ -4203,18 +4102,13 @@ impl GraphStore for SubstrateStore {
         entry.get(key).cloned()
     }
 
-    fn get_node_property_batch(
-        &self,
-        ids: &[NodeId],
-        key: &PropertyKey,
-    ) -> Vec<Option<Value>> {
-        ids.iter().map(|id| self.get_node_property(*id, key)).collect()
+    fn get_node_property_batch(&self, ids: &[NodeId], key: &PropertyKey) -> Vec<Option<Value>> {
+        ids.iter()
+            .map(|id| self.get_node_property(*id, key))
+            .collect()
     }
 
-    fn get_nodes_properties_batch(
-        &self,
-        ids: &[NodeId],
-    ) -> Vec<FxHashMap<PropertyKey, Value>> {
+    fn get_nodes_properties_batch(&self, ids: &[NodeId]) -> Vec<FxHashMap<PropertyKey, Value>> {
         ids.iter()
             .map(|id| {
                 let mut out = FxHashMap::default();
@@ -4294,11 +4188,7 @@ impl GraphStore for SubstrateStore {
             .collect()
     }
 
-    fn edges_from(
-        &self,
-        node: NodeId,
-        direction: Direction,
-    ) -> Vec<(NodeId, EdgeId)> {
+    fn edges_from(&self, node: NodeId, direction: Direction) -> Vec<(NodeId, EdgeId)> {
         if !self.is_live_on_disk(node) {
             return Vec::new();
         }
@@ -4514,7 +4404,10 @@ impl GraphStore for SubstrateStore {
         if conditions.is_empty() {
             return self.node_ids();
         }
-        let keys: Vec<PropertyKey> = conditions.iter().map(|(k, _)| PropertyKey::new(*k)).collect();
+        let keys: Vec<PropertyKey> = conditions
+            .iter()
+            .map(|(k, _)| PropertyKey::new(*k))
+            .collect();
         let mut out: Vec<NodeId> = self
             .node_properties
             .iter()
@@ -4766,7 +4659,10 @@ impl SubstrateStore {
     /// planner rewrite to verify corpus invariants before routing
     /// label-constrained queries. O(K) where K ≤ 64 label bits for
     /// this edge type.
-    pub fn edge_target_labels_substrate(&self, edge_type: &str) -> std::collections::HashSet<String> {
+    pub fn edge_target_labels_substrate(
+        &self,
+        edge_type: &str,
+    ) -> std::collections::HashSet<String> {
         let registry = self.edge_types.read();
         let Some(type_id) = registry.id_for(edge_type) else {
             return std::collections::HashSet::new();
@@ -4788,7 +4684,10 @@ impl SubstrateStore {
     }
 
     /// T17i T2 — symmetric accessor for source labels.
-    pub fn edge_source_labels_substrate(&self, edge_type: &str) -> std::collections::HashSet<String> {
+    pub fn edge_source_labels_substrate(
+        &self,
+        edge_type: &str,
+    ) -> std::collections::HashSet<String> {
         let registry = self.edge_types.read();
         let Some(type_id) = registry.id_for(edge_type) else {
             return std::collections::HashSet::new();
@@ -4968,10 +4867,7 @@ impl SubstrateStore {
     /// and return the aggregate bitset OR'd across all src / dst
     /// endpoints. This reveals which label bits actually appear in
     /// the endpoints (as opposed to what the histogram claims).
-    pub fn diagnose_edge_endpoint_bits(
-        &self,
-        edge_type: &str,
-    ) -> SubstrateResult<(u64, u64, u64)> {
+    pub fn diagnose_edge_endpoint_bits(&self, edge_type: &str) -> SubstrateResult<(u64, u64, u64)> {
         let reg = self.edge_types.read();
         let Some(type_id) = reg.id_for(edge_type) else {
             return Ok((0, 0, 0));
@@ -5168,10 +5064,7 @@ impl SubstrateStore {
     /// T17h T1 — restore counters from a `PersistedCounters` snapshot
     /// (v5+ dict). O(1) vs rebuild's O(N+E). Called at open time when
     /// `DictSnapshot.counters = Some(_)`.
-    pub(crate) fn restore_counters_from_snapshot(
-        &self,
-        counters: &crate::dict::PersistedCounters,
-    ) {
+    pub(crate) fn restore_counters_from_snapshot(&self, counters: &crate::dict::PersistedCounters) {
         self.total_live_nodes
             .store(counters.total_live_nodes, Ordering::Relaxed);
         self.total_live_edges
@@ -5239,9 +5132,7 @@ impl SubstrateStore {
     /// Sequential because `writer.read_edge` takes the zone-cache mutex
     /// (rayon would contend). Typical cost : ≤ 30 s on Wikipedia
     /// (119M edges), one-shot, amortised.
-    fn rebuild_degrees_from_scan(
-        &self,
-    ) -> SubstrateResult<crate::degree_column::DegreeColumn> {
+    fn rebuild_degrees_from_scan(&self) -> SubstrateResult<crate::degree_column::DegreeColumn> {
         let n_slots = self.next_node_id.load(Ordering::Acquire);
         let sub = self.substrate.lock();
         let mut col = crate::degree_column::DegreeColumn::create(&sub, n_slots)?;
@@ -5331,9 +5222,7 @@ impl SubstrateStore {
     /// first hot-path call — amortised across the session and
     /// invisible to read-only queries that never touch typed degrees
     /// (e.g. a `count(n)` / `count(n:Label)` traffic pattern).
-    pub(crate) fn typed_degrees(
-        &self,
-    ) -> &Arc<crate::typed_degree::TypedDegreeRegistry> {
+    pub(crate) fn typed_degrees(&self) -> &Arc<crate::typed_degree::TypedDegreeRegistry> {
         let registry = self.typed_degrees_cell.get_or_init(|| {
             Arc::new(crate::typed_degree::TypedDegreeRegistry::new(
                 Arc::clone(&self.substrate),
@@ -5410,19 +5299,12 @@ impl SubstrateStore {
 
     /// T17h T8 — increment typed out-degree. Hook called from
     /// `create_edge` alongside the total T5 increment.
-    pub(crate) fn incr_typed_out_degree(
-        &self,
-        edge_type_id: u16,
-        slot: u32,
-        delta: i32,
-    ) {
+    pub(crate) fn incr_typed_out_degree(&self, edge_type_id: u16, slot: u32, delta: i32) {
         let n_slots_hint = self.next_node_id.load(Ordering::Acquire);
-        if let Err(e) = self.typed_degrees().incr_out(
-            edge_type_id,
-            slot,
-            delta,
-            n_slots_hint,
-        ) {
+        if let Err(e) = self
+            .typed_degrees()
+            .incr_out(edge_type_id, slot, delta, n_slots_hint)
+        {
             tracing::warn!(
                 error = ?e,
                 edge_type_id,
@@ -5433,19 +5315,12 @@ impl SubstrateStore {
     }
 
     /// T17h T8 — increment typed in-degree.
-    pub(crate) fn incr_typed_in_degree(
-        &self,
-        edge_type_id: u16,
-        slot: u32,
-        delta: i32,
-    ) {
+    pub(crate) fn incr_typed_in_degree(&self, edge_type_id: u16, slot: u32, delta: i32) {
         let n_slots_hint = self.next_node_id.load(Ordering::Acquire);
-        if let Err(e) = self.typed_degrees().incr_in(
-            edge_type_id,
-            slot,
-            delta,
-            n_slots_hint,
-        ) {
+        if let Err(e) = self
+            .typed_degrees()
+            .incr_in(edge_type_id, slot, delta, n_slots_hint)
+        {
             tracing::warn!(
                 error = ?e,
                 edge_type_id,
@@ -5479,9 +5354,7 @@ impl SubstrateStore {
             if v == 0 {
                 continue;
             }
-            target_grouped
-                .entry(type_id)
-                .or_insert([0u64; 64])[bit as usize] = v;
+            target_grouped.entry(type_id).or_insert([0u64; 64])[bit as usize] = v;
         }
         let mut source_grouped: FxHashMap<u16, [u64; 64]> = FxHashMap::default();
         for e in self.edge_type_source_label_counts.iter() {
@@ -5490,9 +5363,7 @@ impl SubstrateStore {
             if v == 0 {
                 continue;
             }
-            source_grouped
-                .entry(type_id)
-                .or_insert([0u64; 64])[bit as usize] = v;
+            source_grouped.entry(type_id).or_insert([0u64; 64])[bit as usize] = v;
         }
         let mut edge_type_target_label_counts: Vec<(u16, [u64; 64])> =
             target_grouped.into_iter().collect();
@@ -6069,7 +5940,8 @@ mod tests {
 
         // Non-vector key roundtrips through the props sidecar as usual.
         assert!(
-            s.get_node_property(node_id, &PropertyKey::new("title")).is_some(),
+            s.get_node_property(node_id, &PropertyKey::new("title"))
+                .is_some(),
             "scalar key should roundtrip via the props sidecar"
         );
 
@@ -6273,8 +6145,7 @@ mod tests {
         // coming out of `obrain-migrate` on a PO chat history.
         let sidecar_path = path.join(PROPS_FILENAME);
         let big_string: String = "chat payload éclair ".repeat(100); // ~2 KiB
-        let big_bytes: Vec<u8> =
-            (0..2048u32).map(|i| (i & 0xff) as u8).collect();
+        let big_bytes: Vec<u8> = (0..2048u32).map(|i| (i & 0xff) as u8).collect();
         let bytes_arc: Arc<[u8]> = Arc::from(big_bytes.clone());
         assert!(big_string.as_bytes().len() > BLOB_COLUMN_THRESHOLD_BYTES);
         assert!(big_bytes.len() > BLOB_COLUMN_THRESHOLD_BYTES);
@@ -6288,9 +6159,8 @@ mod tests {
                 ),
             ];
             w.append_node(node_id_str.0, &props_a).unwrap();
-            let props_b: Vec<(String, Value)> = vec![
-                ("blob".to_string(), Value::Bytes(bytes_arc.clone())),
-            ];
+            let props_b: Vec<(String, Value)> =
+                vec![("blob".to_string(), Value::Bytes(bytes_arc.clone()))];
             w.append_node(node_id_bytes.0, &props_b).unwrap();
             w.finish().unwrap();
         }
@@ -6365,17 +6235,13 @@ mod tests {
         let s = SubstrateStore::open(&path).unwrap();
         match s.get_node_property(node_id_str, &PropertyKey::new("data")) {
             Some(Value::String(arc)) => assert_eq!(arc.as_str(), big_string),
-            other => panic!(
-                "expected persisted Value::String after second reopen, got {other:?}"
-            ),
+            other => panic!("expected persisted Value::String after second reopen, got {other:?}"),
         }
         match s.get_node_property(node_id_bytes, &PropertyKey::new("blob")) {
             Some(Value::Bytes(arc)) => {
                 assert_eq!(arc.as_ref(), big_bytes.as_slice());
             }
-            other => panic!(
-                "expected persisted Value::Bytes after second reopen, got {other:?}"
-            ),
+            other => panic!("expected persisted Value::Bytes after second reopen, got {other:?}"),
         }
     }
 
@@ -6391,8 +6257,7 @@ mod tests {
         let td = tempfile::tempdir().unwrap();
         let path = td.path().join("kb");
         let big_string: String = "éclair ".repeat(200); // > 256 B
-        let big_bytes: Vec<u8> =
-            (0..1024u32).map(|i| ((i * 7) & 0xff) as u8).collect();
+        let big_bytes: Vec<u8> = (0..1024u32).map(|i| ((i * 7) & 0xff) as u8).collect();
 
         let (nid, eid) = {
             let s = SubstrateStore::create(&path).unwrap();
@@ -6400,11 +6265,7 @@ mod tests {
             let b = s.create_node(&["Doc"]);
             let e = s.create_edge(a, b, "REL");
             s.set_node_property(a, "data", Value::String(big_string.as_str().into()));
-            s.set_edge_property(
-                e,
-                "blob",
-                Value::Bytes(Arc::from(big_bytes.clone())),
-            );
+            s.set_edge_property(e, "blob", Value::Bytes(Arc::from(big_bytes.clone())));
             s.flush().unwrap();
             (a, e)
         };
@@ -6786,8 +6647,7 @@ mod tests {
         assert_eq!(s.out_degree_by_type(a, "UNKNOWN"), 0);
         assert_eq!(s.in_degree_by_type(a, "IMPORTS"), 1);
         // Sum invariant.
-        let by_type_sum =
-            s.out_degree_by_type(a, "IMPORTS") + s.out_degree_by_type(a, "CONTAINS");
+        let by_type_sum = s.out_degree_by_type(a, "IMPORTS") + s.out_degree_by_type(a, "CONTAINS");
         assert_eq!(by_type_sum, s.out_degree(a));
     }
 
@@ -6965,10 +6825,7 @@ mod tests {
         let (a, b) = make_pair(&s);
         let e = s.create_edge(a, b, "R");
         s.set_edge_property(e, "w", Value::Int64(42));
-        assert_eq!(
-            s.remove_edge_property(e, "w"),
-            Some(Value::Int64(42))
-        );
+        assert_eq!(s.remove_edge_property(e, "w"), Some(Value::Int64(42)));
         assert!(s.get_edge_property(e, &PropertyKey::new("w")).is_none());
     }
 
@@ -7072,10 +6929,7 @@ mod tests {
         s.set_edge_property(e0, "w", Value::Int64(10));
         s.set_edge_property(e2, "w", Value::Int64(30));
         // e1 intentionally has no `w`.
-        let res = s.get_edges_properties_selective_batch(
-            &[e0, e1, e2],
-            &[PropertyKey::new("w")],
-        );
+        let res = s.get_edges_properties_selective_batch(&[e0, e1, e2], &[PropertyKey::new("w")]);
         assert_eq!(res.len(), 3);
         assert_eq!(res[0].get(&PropertyKey::new("w")), Some(&Value::Int64(10)));
         assert!(res[1].is_empty());
@@ -7099,14 +6953,22 @@ mod tests {
             let _c = s.create_node(&["C"]);
             s.flush().unwrap();
             // Grab the raw bitset to check later.
-            s.writer.read_node(a.0 as u32).unwrap().unwrap().label_bitset
+            s.writer
+                .read_node(a.0 as u32)
+                .unwrap()
+                .unwrap()
+                .label_bitset
         };
 
         let s2 = SubstrateStore::open(&path).unwrap();
         // Create a new node with the same label — must reuse the bit.
         let a2 = s2.create_node(&["A"]);
-        let new_bitset =
-            s2.writer.read_node(a2.0 as u32).unwrap().unwrap().label_bitset;
+        let new_bitset = s2
+            .writer
+            .read_node(a2.0 as u32)
+            .unwrap()
+            .unwrap()
+            .label_bitset;
         assert_eq!(
             a_bit, new_bitset,
             "label 'A' must occupy the same bit across sessions"
@@ -7143,8 +7005,7 @@ mod tests {
         );
         // And a previously-persisted edge exposes its type name via
         // get_edge after reopen.
-        let edges: Vec<(NodeId, EdgeId)> =
-            s2.edges_from(a_id, Direction::Outgoing);
+        let edges: Vec<(NodeId, EdgeId)> = s2.edges_from(a_id, Direction::Outgoing);
         assert_eq!(edges.len(), 2);
         let types: Vec<String> = edges
             .iter()
@@ -7218,8 +7079,7 @@ mod tests {
 
         let n_b = s2.get_node(b).unwrap();
         assert_eq!(n_b.labels.len(), 2);
-        let b_names: Vec<&str> =
-            n_b.labels.iter().map(|l| l.as_str()).collect();
+        let b_names: Vec<&str> = n_b.labels.iter().map(|l| l.as_str()).collect();
         assert!(b_names.contains(&"P") && b_names.contains(&"M"));
 
         // Edges: edge_type must be recovered via the persisted
@@ -7311,8 +7171,7 @@ mod tests {
         // Exact order depends on next_to linking; the invariant we check
         // is that all three show up and the highest id is the head.
         assert_eq!(in_c[0], e3, "head of incoming chain is newest edge");
-        let set: std::collections::BTreeSet<EdgeId> =
-            in_c.iter().copied().collect();
+        let set: std::collections::BTreeSet<EdgeId> = in_c.iter().copied().collect();
         assert!(set.contains(&e1) && set.contains(&e2) && set.contains(&e3));
         // Silence unused bindings: a, b serve only to make the edges.
         let _ = (a, b);
@@ -7335,8 +7194,7 @@ mod tests {
         );
 
         // Reload the snapshot directly and confirm its contents.
-        let snap =
-            crate::dict::DictSnapshot::load(&path.join(DICT_FILENAME)).unwrap();
+        let snap = crate::dict::DictSnapshot::load(&path.join(DICT_FILENAME)).unwrap();
         assert_eq!(snap.labels, vec!["X".to_string()]);
         assert!(snap.edge_types.is_empty());
         assert!(snap.prop_keys.is_empty());
@@ -7362,8 +7220,7 @@ mod tests {
 
         s.flush().unwrap();
         // The persisted dict carries the name.
-        let snap =
-            crate::dict::DictSnapshot::load(&path.join(DICT_FILENAME)).unwrap();
+        let snap = crate::dict::DictSnapshot::load(&path.join(DICT_FILENAME)).unwrap();
         assert!(
             snap.edge_types
                 .iter()
@@ -7510,8 +7367,7 @@ mod tests {
 
         // Members must round-trip through the EngramZone directory.
         let members = s.writer.engram_members(eid).unwrap().unwrap();
-        let mut expected: Vec<u32> =
-            [n1, n2, n3].iter().map(|n| n.0 as u32).collect();
+        let mut expected: Vec<u32> = [n1, n2, n3].iter().map(|n| n.0 as u32).collect();
         let mut got = members.clone();
         expected.sort();
         got.sort();
@@ -7639,8 +7495,7 @@ mod tests {
 
         let s2 = SubstrateStore::open(&path).unwrap();
         let mut got = s2.writer.engram_members(eid).unwrap().unwrap();
-        let mut expected: Vec<u32> =
-            [n1, n2, n3].iter().map(|n| n.0 as u32).collect();
+        let mut expected: Vec<u32> = [n1, n2, n3].iter().map(|n| n.0 as u32).collect();
         got.sort();
         expected.sort();
         assert_eq!(got, expected);
@@ -7721,7 +7576,8 @@ mod tests {
         let (_td, s) = store();
         // No community 42 has been created — prefetch must swallow
         // silently (best-effort contract).
-        s.prefetch_community(42).expect("empty prefetch must not error");
+        s.prefetch_community(42)
+            .expect("empty prefetch must not error");
     }
 
     #[test]
@@ -7915,7 +7771,9 @@ mod tests {
             "zone file must not be created when feature is off"
         );
         assert!(
-            !root.join(crate::props_zone::PROPS_HEAP_V2_FILENAME).exists(),
+            !root
+                .join(crate::props_zone::PROPS_HEAP_V2_FILENAME)
+                .exists(),
             "heap zone file must not be created when feature is off"
         );
     }
@@ -7941,7 +7799,8 @@ mod tests {
             "props.v2 file must exist after create+flush"
         );
         assert!(
-            root.join(crate::props_zone::PROPS_HEAP_V2_FILENAME).exists(),
+            root.join(crate::props_zone::PROPS_HEAP_V2_FILENAME)
+                .exists(),
             "props.heap.v2 file must exist after create+flush"
         );
 
@@ -8015,10 +7874,7 @@ mod tests {
 
     /// Helper: walk the PropsZone chain for node `slot` and return the
     /// decoded entries in chain order (newest → oldest).
-    fn collect_node_props_v2(
-        s: &SubstrateStore,
-        slot: u32,
-    ) -> Vec<crate::page::PropertyEntry> {
+    fn collect_node_props_v2(s: &SubstrateStore, slot: u32) -> Vec<crate::page::PropertyEntry> {
         let rec = s.writer.read_node(slot).unwrap().unwrap();
         let head = crate::props_zone::decode_page_id(rec.first_prop_off);
         let pz = s.props_zone.as_ref().expect("v2 enabled").read();
@@ -8059,14 +7915,8 @@ mod tests {
         // ordering so the *latest* write wins.
         let title_id = s.prop_keys.write().intern("title").unwrap();
         let count_id = s.prop_keys.write().intern("count").unwrap();
-        assert_eq!(
-            entries[0].prop_key, title_id,
-            "first append = title"
-        );
-        assert_eq!(
-            entries[1].prop_key, count_id,
-            "second append = count"
-        );
+        assert_eq!(entries[0].prop_key, title_id, "first append = title");
+        assert_eq!(entries[1].prop_key, count_id, "second append = count");
 
         unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
     }
@@ -8117,10 +7967,7 @@ mod tests {
     /// Uses [`PropsZone::collect_entries`] which filters tombstones. For
     /// tests that need to observe tombstones on the chain, use
     /// [`collect_edge_props_v2_raw`].
-    fn collect_edge_props_v2(
-        s: &SubstrateStore,
-        slot: u64,
-    ) -> Vec<crate::page::PropertyEntry> {
+    fn collect_edge_props_v2(s: &SubstrateStore, slot: u64) -> Vec<crate::page::PropertyEntry> {
         let rec = s.writer.read_edge(slot).unwrap().unwrap();
         let head = crate::props_zone::decode_page_id(rec.first_prop_off);
         let pz = s.props_zone.as_ref().expect("v2 enabled").read();
@@ -8130,10 +7977,7 @@ mod tests {
     /// Helper: tombstone-inclusive walk of the PropsZone edge chain. Used
     /// by the remove-emits-tombstone test to observe the physical chain
     /// state (live entries AND tombstones) that `collect_entries` hides.
-    fn collect_edge_props_v2_raw(
-        s: &SubstrateStore,
-        slot: u64,
-    ) -> Vec<crate::page::PropertyEntry> {
+    fn collect_edge_props_v2_raw(s: &SubstrateStore, slot: u64) -> Vec<crate::page::PropertyEntry> {
         let rec = s.writer.read_edge(slot).unwrap().unwrap();
         let mut cur = crate::props_zone::decode_page_id(rec.first_prop_off);
         let pz = s.props_zone.as_ref().expect("v2 enabled").read();
@@ -8384,11 +8228,7 @@ mod tests {
 
         // Chain holds all three writes (append-only).
         let entries = collect_node_props_v2(&s, a.0 as u32);
-        assert_eq!(
-            entries.len(),
-            3,
-            "append-only chain retains all 3 entries"
-        );
+        assert_eq!(entries.len(), 3, "append-only chain retains all 3 entries");
 
         // Read must surface the latest value.
         let got = s.get_node_property(a, &PropertyKey::new("title"));
@@ -8427,8 +8267,7 @@ mod tests {
         // tombstone (new); tombstone wins.
         let got = s.get_node_property(a, &PropertyKey::new("title"));
         assert_eq!(
-            got,
-            None,
+            got, None,
             "tombstone must shadow older live entry (got: {:?})",
             got
         );
@@ -8463,12 +8302,7 @@ mod tests {
         assert!(s.props_v2_enabled(), "v2 must auto-enable on reopen");
 
         let got = s.get_node_property(a_id, &PropertyKey::new("title"));
-        assert_eq!(
-            got,
-            None,
-            "tombstone survives reopen (got: {:?})",
-            got
-        );
+        assert_eq!(got, None, "tombstone survives reopen (got: {:?})", got);
     }
 
     /// Legacy fallback: a node whose `first_prop_off == 0` (never
@@ -8761,7 +8595,11 @@ mod tests {
         // First write: short key "K", lands on head page 1.
         s.set_node_property(a, "K", Value::String("oldest".into()));
         let head_after_first = decode_page_id(
-            s.writer.read_node(a.0 as u32).unwrap().unwrap().first_prop_off,
+            s.writer
+                .read_node(a.0 as u32)
+                .unwrap()
+                .unwrap()
+                .first_prop_off,
         );
 
         // Fill the page with filler entries until a fresh head page
@@ -8773,7 +8611,11 @@ mod tests {
             s.set_node_property(a, &key, Value::Int64(filler as i64));
             filler += 1;
             let cur_head = decode_page_id(
-                s.writer.read_node(a.0 as u32).unwrap().unwrap().first_prop_off,
+                s.writer
+                    .read_node(a.0 as u32)
+                    .unwrap()
+                    .unwrap()
+                    .first_prop_off,
             );
             if cur_head != original_head {
                 break; // New head page allocated.
@@ -8892,11 +8734,7 @@ mod tests {
         unsafe { std::env::remove_var("OBRAIN_PROPS_V2") };
         let s = SubstrateStore::open(&root).unwrap();
         assert!(s.props_v2_enabled());
-        assert_eq!(
-            s.node_properties.len(),
-            0,
-            "node DashMap empty (v2 gate)"
-        );
+        assert_eq!(s.node_properties.len(), 0, "node DashMap empty (v2 gate)");
         assert_eq!(
             s.edge_properties.len(),
             2,
@@ -8980,8 +8818,7 @@ mod tests {
         // Unblock via the explicit helper + retry. No need to touch
         // node_properties — finalize_props_v2 isn't required for the
         // gate-lift path.
-        let (edges_written, scalars, bytes) =
-            s.persist_edge_properties_sidecar().unwrap();
+        let (edges_written, scalars, bytes) = s.persist_edge_properties_sidecar().unwrap();
         assert_eq!(edges_written, 1);
         assert_eq!(scalars, 1);
         assert!(bytes > 0);

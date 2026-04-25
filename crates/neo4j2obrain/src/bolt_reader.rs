@@ -37,9 +37,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use obrain_core::graph::traits::GraphStoreMut;
-use obrain_common::types::{PropertyKey, Value};
 use obrain_common::NodeId;
+use obrain_common::types::{PropertyKey, Value};
+use obrain_core::graph::traits::GraphStoreMut;
 use obrain_substrate::SubstrateStore;
 
 use crate::pipeline::PipelineOptions;
@@ -88,12 +88,10 @@ pub async fn stream_into_substrate(
             let labels_raw: Vec<String> = row.get("labels").unwrap_or_default();
             let props_raw: neo4rs::BoltMap = row.get("props").unwrap_or_default();
 
-            let label_refs: Vec<&str> =
-                labels_raw.iter().map(String::as_str).collect();
+            let label_refs: Vec<&str> = labels_raw.iter().map(String::as_str).collect();
             let props = bolt_map_to_props(&props_raw);
 
-            let new_id =
-                substrate.create_node_with_props(&label_refs, &props);
+            let new_id = substrate.create_node_with_props(&label_refs, &props);
             id_map.insert(nid_raw, new_id);
             counts.nodes += 1;
             seen += 1;

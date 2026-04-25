@@ -1263,7 +1263,11 @@ mod tests {
 
         let n2 = store.create_node(&["Note", "Gotcha"]);
         store.set_node_property(n2, "title", Value::from("WAL Bug"));
-        store.set_node_property(n2, "content", Value::from("checkpoint.meta breaks recovery"));
+        store.set_node_property(
+            n2,
+            "content",
+            Value::from("checkpoint.meta breaks recovery"),
+        );
 
         let n3 = store.create_node(&["Task"]);
         store.set_node_property(n3, "title", Value::from("Fix WAL recovery"));

@@ -12,11 +12,11 @@ pub const HEAP_PAGE_SIZE: usize = 4096;
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Pod, Zeroable)]
 pub struct HeapPageHeader {
-    pub magic: u32,        // @0..4
-    pub page_id: u32,      // @4..8
-    pub crc32: u32,        // @8..12
-    pub entry_count: u16,  // @12..14
-    pub free_offset: u16,  // @14..16
+    pub magic: u32,       // @0..4
+    pub page_id: u32,     // @4..8
+    pub crc32: u32,       // @8..12
+    pub entry_count: u16, // @12..14
+    pub free_offset: u16, // @14..16
 }
 
 const _: [(); 1] = [(); (core::mem::size_of::<HeapPageHeader>() == 16) as usize];
@@ -144,7 +144,9 @@ impl StringHeap {
     }
 
     pub fn get(&self, page_id: u32, offset: u32) -> Option<&[u8]> {
-        self.pages.get(page_id as usize).and_then(|p| p.read_at(offset))
+        self.pages
+            .get(page_id as usize)
+            .and_then(|p| p.read_at(offset))
     }
 }
 

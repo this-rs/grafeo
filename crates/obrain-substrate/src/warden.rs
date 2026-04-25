@@ -34,7 +34,7 @@
 use std::sync::Arc;
 
 use crate::error::SubstrateResult;
-use crate::record::{NodeRecord, NODES_PER_PAGE};
+use crate::record::{NODES_PER_PAGE, NodeRecord};
 use crate::store::SubstrateStore;
 
 /// Default fragmentation trigger ratio. A community with more than 30%

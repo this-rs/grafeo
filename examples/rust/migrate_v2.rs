@@ -66,7 +66,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::fs::metadata(&input_path)?.len()
     };
     println!("=== migrate-v2 ===");
-    println!("Input:  {} ({:.2} MB)", input_path.display(), input_size as f64 / 1_048_576.0);
+    println!(
+        "Input:  {} ({:.2} MB)",
+        input_path.display(),
+        input_size as f64 / 1_048_576.0
+    );
     println!("Output: {}", output_path.display());
     println!();
 
@@ -78,7 +82,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let session = db.session();
     let node_count: i64 = session.execute("MATCH (n) RETURN COUNT(n)")?.scalar()?;
-    let edge_count: i64 = session.execute("MATCH ()-[r]->() RETURN COUNT(r)")?.scalar()?;
+    let edge_count: i64 = session
+        .execute("MATCH ()-[r]->() RETURN COUNT(r)")?
+        .scalar()?;
     println!("Opened in {open_ms}ms — {node_count} nodes, {edge_count} edges");
 
     // ── Phase 2: Save as v2 ──
@@ -88,7 +94,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let save_ms = t_save.elapsed().as_millis();
 
     let output_size = std::fs::metadata(&output_path)?.len();
-    println!("Saved in {save_ms}ms — {:.2} MB", output_size as f64 / 1_048_576.0);
+    println!(
+        "Saved in {save_ms}ms — {:.2} MB",
+        output_size as f64 / 1_048_576.0
+    );
 
     // ── Phase 3: Verify round-trip ──
     println!("\nVerifying round-trip...");
@@ -98,7 +107,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let session2 = db2.session();
     let node_count2: i64 = session2.execute("MATCH (n) RETURN COUNT(n)")?.scalar()?;
-    let edge_count2: i64 = session2.execute("MATCH ()-[r]->() RETURN COUNT(r)")?.scalar()?;
+    let edge_count2: i64 = session2
+        .execute("MATCH ()-[r]->() RETURN COUNT(r)")?
+        .scalar()?;
 
     // The v2 writer cleans up orphan edges (edges pointing to deleted nodes
     // whose counters were stale). Node count must match or increase (counter was
@@ -118,12 +129,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("v1 open:  {open_ms}ms");
     println!("v2 save:  {save_ms}ms");
     println!("v2 open:  {verify_open_ms}ms");
-    println!("Size:     {:.2} MB → {:.2} MB ({:+.1}%)",
+    println!(
+        "Size:     {:.2} MB → {:.2} MB ({:+.1}%)",
         input_size as f64 / 1_048_576.0,
         output_size as f64 / 1_048_576.0,
         (output_size as f64 - input_size as f64) / input_size as f64 * 100.0,
     );
-    println!("Speedup:  {:.0}x faster open", open_ms as f64 / verify_open_ms.max(1) as f64);
+    println!(
+        "Speedup:  {:.0}x faster open",
+        open_ms as f64 / verify_open_ms.max(1) as f64
+    );
 
     Ok(())
 }

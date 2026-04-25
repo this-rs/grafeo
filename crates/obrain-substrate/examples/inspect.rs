@@ -42,9 +42,7 @@ fn main() -> Result<(), BoxErr> {
     let mut args = std::env::args().skip(1);
     let path: PathBuf = args
         .next()
-        .ok_or_else(|| -> BoxErr {
-            "usage: inspect <substrate-dir> [sample-size]".into()
-        })?
+        .ok_or_else(|| -> BoxErr { "usage: inspect <substrate-dir> [sample-size]".into() })?
         .into();
     let sample: usize = args
         .next()
@@ -85,7 +83,12 @@ fn main() -> Result<(), BoxErr> {
         node_ids.clone()
     } else {
         let step = node_ids.len() / sample;
-        node_ids.iter().copied().step_by(step.max(1)).take(sample).collect()
+        node_ids
+            .iter()
+            .copied()
+            .step_by(step.max(1))
+            .take(sample)
+            .collect()
     };
 
     println!("sample: {} nodes (full scan over labels)", sample_ids.len());
@@ -106,7 +109,10 @@ fn main() -> Result<(), BoxErr> {
     }
 
     println!();
-    println!("=== labels (top {TOP_K}, over sample={}) ===", sample_ids.len());
+    println!(
+        "=== labels (top {TOP_K}, over sample={}) ===",
+        sample_ids.len()
+    );
     println!("nodes_with_any_label : {nodes_with_any_label}");
     print_top_k(&label_hist, TOP_K);
 
@@ -135,7 +141,10 @@ fn main() -> Result<(), BoxErr> {
     };
 
     println!();
-    println!("=== _st_embedding coverage (sample={}) ===", sample_ids.len());
+    println!(
+        "=== _st_embedding coverage (sample={}) ===",
+        sample_ids.len()
+    );
     println!(
         "present@L2_DIM={L2_DIM} : {emb_present}  ({:.2}%)",
         coverage * 100.0
@@ -143,9 +152,7 @@ fn main() -> Result<(), BoxErr> {
     println!("wrong_shape/type      : {emb_wrong_dim}");
     println!(
         "absent                : {}",
-        sample_ids
-            .len()
-            .saturating_sub(emb_present + emb_wrong_dim)
+        sample_ids.len().saturating_sub(emb_present + emb_wrong_dim)
     );
 
     // ------- Edge-type distribution (over sampled edges via sampled src nodes) -------
@@ -174,7 +181,12 @@ fn main() -> Result<(), BoxErr> {
             continue;
         };
         let labels: Vec<&str> = node.labels.iter().map(|l| -> &str { l.as_ref() }).collect();
-        println!("  [{:?}] labels={:?}  props={}", nid, labels, node.properties.len());
+        println!(
+            "  [{:?}] labels={:?}  props={}",
+            nid,
+            labels,
+            node.properties.len()
+        );
         let mut shown = 0usize;
         for (k, v) in node.properties.iter() {
             if shown >= 6 {

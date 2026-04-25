@@ -369,7 +369,12 @@ mod tests {
         let mut want = vec![0u32; corpus.len()];
         xor_popcount_t0(&corpus, q, &mut got);
         xor_popcount_t0_scalar(&corpus, q, &mut want);
-        assert_eq!(got, want, "dispatched t0 != scalar (backend = {:?})", backend());
+        assert_eq!(
+            got,
+            want,
+            "dispatched t0 != scalar (backend = {:?})",
+            backend()
+        );
     }
 
     #[test]
@@ -389,7 +394,12 @@ mod tests {
         let mut want = vec![0u32; corpus.len()];
         xor_popcount_t1(&corpus, &q, &mut got);
         xor_popcount_t1_scalar(&corpus, &q, &mut want);
-        assert_eq!(got, want, "dispatched t1 != scalar (backend = {:?})", backend());
+        assert_eq!(
+            got,
+            want,
+            "dispatched t1 != scalar (backend = {:?})",
+            backend()
+        );
     }
 
     #[test]
@@ -398,11 +408,11 @@ mod tests {
         // Complement → Hamming 128. Mixed → exact bit count.
         let q = Tier0([0xAAAA_BBBB_CCCC_DDDD, 0x1122_3344_5566_7788]);
         let corpus = vec![
-            q,                                  // identity → 0
-            Tier0([!q.0[0], !q.0[1]]),          // complement → 128
-            Tier0([q.0[0] ^ 1, q.0[1]]),        // flip 1 bit → 1
-            Tier0([0, 0]),                      // popcount(q)
-            Tier0([!0, !0]),                    // 128 - popcount(q)
+            q,                           // identity → 0
+            Tier0([!q.0[0], !q.0[1]]),   // complement → 128
+            Tier0([q.0[0] ^ 1, q.0[1]]), // flip 1 bit → 1
+            Tier0([0, 0]),               // popcount(q)
+            Tier0([!0, !0]),             // 128 - popcount(q)
         ];
         let mut got = vec![0u32; corpus.len()];
         let mut want = vec![0u32; corpus.len()];
@@ -431,10 +441,10 @@ mod tests {
             *w = !*w;
         }
         let corpus = vec![
-            q,                  // 0
-            Tier1(all_inv),     // 512
-            Tier1([0u64; 8]),   // popcount(q)
-            Tier1([!0u64; 8]),  // 512 - popcount(q)
+            q,                 // 0
+            Tier1(all_inv),    // 512
+            Tier1([0u64; 8]),  // popcount(q)
+            Tier1([!0u64; 8]), // 512 - popcount(q)
         ];
         let mut got = vec![0u32; corpus.len()];
         let mut want = vec![0u32; corpus.len()];

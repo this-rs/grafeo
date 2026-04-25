@@ -42,7 +42,7 @@ use memmap2::Mmap;
 
 use obrain_common::types::NodeId;
 use obrain_substrate::{
-    edge_flags, node_flags, q1_15_to_f32, EdgeRecord, NodeRecord, SubstrateStore,
+    EdgeRecord, NodeRecord, SubstrateStore, edge_flags, node_flags, q1_15_to_f32,
 };
 
 type BoxErr = Box<dyn std::error::Error + Send + Sync>;
@@ -111,10 +111,16 @@ fn main() -> Result<(), BoxErr> {
     println!();
     println!("| Metric | Value |");
     println!("|---|---:|");
-    println!("| Total node slots (incl. null sentinel) | {} |", nodes.len());
+    println!(
+        "| Total node slots (incl. null sentinel) | {} |",
+        nodes.len()
+    );
     println!("| Live nodes (non-tombstoned) | {} |", live_nodes.len());
     println!("| Tombstoned nodes | {} |", tombstoned_nodes);
-    println!("| Total edge slots (incl. null sentinel) | {} |", edges.len());
+    println!(
+        "| Total edge slots (incl. null sentinel) | {} |",
+        edges.len()
+    );
     println!("| Live edges (non-tombstoned) | {} |", live_edges.len());
     println!("| Tombstoned edges | {} |", tombstoned_edges);
     println!();
@@ -157,8 +163,7 @@ fn resolve_substrate_dir(input: &Path) -> Result<PathBuf, BoxErr> {
 }
 
 fn mmap_read(path: &Path) -> Result<Mmap, BoxErr> {
-    let file = std::fs::File::open(path)
-        .map_err(|e| format!("open {}: {e}", path.display()))?;
+    let file = std::fs::File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
     // SAFETY: bytemuck::Pod + read-only mapping; no concurrent mutator
     // assumed during dump (inspect-only binary).
     let mmap = unsafe { Mmap::map(&file)? };
@@ -174,10 +179,7 @@ fn trim_to_multiple(bytes: &[u8], stride: usize) -> &[u8] {
 // Section 2 — Community histogram
 // -----------------------------------------------------------------------
 
-fn render_community_section(
-    live_nodes: &[(u32, &NodeRecord)],
-    live_edges: &[&EdgeRecord],
-) {
+fn render_community_section(live_nodes: &[(u32, &NodeRecord)], live_edges: &[&EdgeRecord]) {
     let mut by_community: BTreeMap<u32, usize> = BTreeMap::new();
     for (_, rec) in live_nodes {
         *by_community.entry(rec.community_id).or_insert(0) += 1;
@@ -202,8 +204,14 @@ fn render_community_section(
         slot_to_comm[*slot as usize] = rec.community_id;
     }
     for edge in live_edges {
-        let src_c = slot_to_comm.get(edge.src as usize).copied().unwrap_or(u32::MAX);
-        let dst_c = slot_to_comm.get(edge.dst as usize).copied().unwrap_or(u32::MAX);
+        let src_c = slot_to_comm
+            .get(edge.src as usize)
+            .copied()
+            .unwrap_or(u32::MAX);
+        let dst_c = slot_to_comm
+            .get(edge.dst as usize)
+            .copied()
+            .unwrap_or(u32::MAX);
         if src_c == u32::MAX || dst_c == u32::MAX {
             endpoint_unknown += 1;
         } else if src_c == dst_c {
@@ -284,10 +292,7 @@ fn render_community_section(
         } else {
             0.0
         };
-        println!(
-            "| {} | {} | {} | {:.2}% |",
-            label, n_comm, n_mem, pct
-        );
+        println!("| {} | {} | {} | {:.2}% |", label, n_comm, n_mem, pct);
     }
     println!();
 
@@ -309,13 +314,7 @@ fn render_community_section(
         } else {
             0.0
         };
-        println!(
-            "| {} | {} | {} | {:.2}% |",
-            i + 1,
-            label,
-            size,
-            pct
-        );
+        println!("| {} | {} | {} | {:.2}% |", i + 1, label, size, pct);
     }
     println!();
 }
@@ -346,8 +345,7 @@ fn render_ricci_section(live_edges: &[&EdgeRecord]) {
     let mut sorted = samples.clone();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let p = |frac: f64| -> f32 {
-        let idx = ((frac * (sorted.len() - 1) as f64).round() as usize)
-            .min(sorted.len() - 1);
+        let idx = ((frac * (sorted.len() - 1) as f64).round() as usize).min(sorted.len() - 1);
         sorted[idx]
     };
     let mean: f32 = samples.iter().sum::<f32>() / samples.len() as f32;
@@ -452,7 +450,10 @@ fn render_engrams_section(
     println!("| Metric | Value |");
     println!("|---|---:|");
     println!("| next_engram_id high-water | {} |", hw);
-    println!("| Seeded engrams with ≥ 1 live member | {} |", engrams.len());
+    println!(
+        "| Seeded engrams with ≥ 1 live member | {} |",
+        engrams.len()
+    );
     println!(
         "| Nodes flagged `ENGRAM_SEED` | {} ({:.2}%) |",
         seed_flagged,
@@ -496,13 +497,7 @@ fn render_engrams_section(
     println!("|---:|---:|---:|---|");
     for (i, (eid, members)) in engrams.iter().take(TOP_K_ENGRAMS).enumerate() {
         let labels = sample_label_mix(all_nodes, members, LABEL_SAMPLE_PER_ENGRAM);
-        println!(
-            "| {} | {} | {} | {} |",
-            i + 1,
-            eid,
-            members.len(),
-            labels
-        );
+        println!("| {} | {} | {} | {} |", i + 1, eid, members.len(), labels);
     }
     println!();
 
@@ -513,11 +508,7 @@ fn render_engrams_section(
     );
     println!();
     for (eid, members) in engrams.iter().take(ENGRAM_SAMPLE_MEMBERS_PRINTED) {
-        println!(
-            "#### Engram {} ({} members)",
-            eid,
-            members.len()
-        );
+        println!("#### Engram {} ({} members)", eid, members.len());
         println!();
         println!("| NodeId | community_id | labels | centrality (Q0.16) |");
         println!("|---:|---:|---|---:|");
@@ -567,11 +558,7 @@ fn labels_of(store: &SubstrateStore, nid: NodeId) -> String {
 /// Returns a "lbl=count, lbl2=count2" summary string for up to `k` distinct
 /// labels observed across the given engram members. We read labels via the
 /// bitset → dictionary path indirectly by resolving each member node.
-fn sample_label_mix(
-    _all_nodes: &[NodeRecord],
-    members: &[NodeId],
-    k: usize,
-) -> String {
+fn sample_label_mix(_all_nodes: &[NodeRecord], members: &[NodeId], k: usize) -> String {
     // We cannot map `label_bitset` bits back to strings without the label
     // dictionary, which lives inside SubstrateStore. The detail table per
     // engram resolves labels properly; here we emit a distribution of

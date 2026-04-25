@@ -105,11 +105,13 @@ impl SentenceTransformer {
             .with_intra_threads(intra_threads)
             .map_err(ort_err)?
             .commit_from_file(model_path)
-            .map_err(|e| anyhow::anyhow!(
-                "ort: failed to load ONNX model at {}: {}",
-                model_path.display(),
-                e
-            ))?;
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "ort: failed to load ONNX model at {}: {}",
+                    model_path.display(),
+                    e
+                )
+            })?;
 
         // MiniLM-L6-v2 fixed output dim. If we ever plug in a different
         // model we can probe the output shape lazily on first inference,
@@ -240,11 +242,9 @@ impl SentenceTransformer {
             all_token_type_ids.extend_from_slice(&types);
         }
 
-        let input_ids = ort::value::Tensor::from_array((
-            [n, seq_len],
-            all_input_ids.into_boxed_slice(),
-        ))
-        .map_err(ort_err)?;
+        let input_ids =
+            ort::value::Tensor::from_array(([n, seq_len], all_input_ids.into_boxed_slice()))
+                .map_err(ort_err)?;
 
         let attention_mask_tensor = ort::value::Tensor::from_array((
             [n, seq_len],
@@ -252,16 +252,18 @@ impl SentenceTransformer {
         ))
         .map_err(ort_err)?;
 
-        let token_type_ids = ort::value::Tensor::from_array((
-            [n, seq_len],
-            all_token_type_ids.into_boxed_slice(),
-        ))
-        .map_err(ort_err)?;
+        let token_type_ids =
+            ort::value::Tensor::from_array(([n, seq_len], all_token_type_ids.into_boxed_slice()))
+                .map_err(ort_err)?;
 
         // SAFETY: single-threaded access, the pipeline owns this session.
         let session = unsafe { &mut *self.session.get() };
         let outputs = session
-            .run(ort::inputs![input_ids, attention_mask_tensor, token_type_ids])
+            .run(ort::inputs![
+                input_ids,
+                attention_mask_tensor,
+                token_type_ids
+            ])
             .map_err(ort_err)?;
 
         let (shape, raw) = outputs[0].try_extract_tensor::<f32>().map_err(ort_err)?;

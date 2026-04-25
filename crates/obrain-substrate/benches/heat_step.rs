@@ -48,8 +48,8 @@ use obrain_core::graph::traits::{GraphStore, GraphStoreMut};
 use obrain_substrate::record::EdgeRecord;
 use obrain_substrate::store::SubstrateStore;
 use obrain_substrate::{
-    heat_step_unweighted, heat_step_unweighted_csr, heat_step_weighted,
-    heat_step_weighted_csr, CsrAdjacency,
+    CsrAdjacency, heat_step_unweighted, heat_step_unweighted_csr, heat_step_weighted,
+    heat_step_weighted_csr,
 };
 use tempfile::TempDir;
 
@@ -102,8 +102,7 @@ fn build_workload(n: usize, seed_with_weights: bool) -> Workload {
 
     let community_count = (n / NODES_PER_COMMUNITY).max(1) as u32;
     let mut nodes: Vec<NodeId> = Vec::with_capacity(n);
-    let mut by_community: Vec<Vec<NodeId>> =
-        (0..=community_count).map(|_| Vec::new()).collect();
+    let mut by_community: Vec<Vec<NodeId>> = (0..=community_count).map(|_| Vec::new()).collect();
     'outer: for cid in 1..=community_count {
         for _ in 0..NODES_PER_COMMUNITY {
             if nodes.len() >= n {
@@ -119,8 +118,7 @@ fn build_workload(n: usize, seed_with_weights: bool) -> Workload {
     let mut edge_ids = Vec::new();
     for i in 0..nodes.len() {
         let src = nodes[i];
-        let src_cid =
-            ((i / NODES_PER_COMMUNITY) as u32 + 1).min(community_count);
+        let src_cid = ((i / NODES_PER_COMMUNITY) as u32 + 1).min(community_count);
         for _ in 0..AVG_DEGREE {
             let cross = rng.range(1_000_000) < CROSS_COMMUNITY_PROB_PPM;
             let dst = if cross {
@@ -169,7 +167,11 @@ fn build_workload(n: usize, seed_with_weights: bool) -> Workload {
         state[n0.0 as usize] = 1.0;
     }
 
-    Workload { _td: td, store, state }
+    Workload {
+        _td: td,
+        store,
+        state,
+    }
 }
 
 // -----------------------------------------------------------------------

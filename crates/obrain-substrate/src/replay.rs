@@ -23,8 +23,7 @@ use crate::record::{EdgeRecord, NodeRecord, U48};
 use crate::wal::{WalPayload, WalRecord};
 use crate::wal_io::WalReader;
 use crate::writer::{
-    apply_coact_decay_to_zone, apply_energy_decay_to_zone, apply_synapse_decay_to_zone,
-    ensure_room,
+    apply_coact_decay_to_zone, apply_energy_decay_to_zone, apply_synapse_decay_to_zone, ensure_room,
 };
 use tracing::{debug, warn};
 
@@ -161,9 +160,8 @@ fn apply(
             // the rest of the NodeRecord is filled in later by subsequent
             // records (NodeUpdate, EnergyReinforce, etc.). Idempotent: writing
             // the same label_bitset twice is a no-op.
-            let existing: &NodeRecord = bytemuck::from_bytes(
-                &zf.as_slice()[offset..offset + NodeRecord::SIZE],
-            );
+            let existing: &NodeRecord =
+                bytemuck::from_bytes(&zf.as_slice()[offset..offset + NodeRecord::SIZE]);
             let mut updated = *existing;
             updated.label_bitset = *label_bitset;
             zf.as_slice_mut()[offset..offset + NodeRecord::SIZE]
@@ -186,9 +184,8 @@ fn apply(
             let zf = nodes.as_mut().unwrap();
             let offset = (*node_id as usize) * NodeRecord::SIZE;
             ensure_room(zf, offset + NodeRecord::SIZE, 1 << 20)?;
-            let existing: &NodeRecord = bytemuck::from_bytes(
-                &zf.as_slice()[offset..offset + NodeRecord::SIZE],
-            );
+            let existing: &NodeRecord =
+                bytemuck::from_bytes(&zf.as_slice()[offset..offset + NodeRecord::SIZE]);
             let mut updated = *existing;
             updated.label_bitset = *label_bitset;
             updated.energy = *energy;
@@ -214,9 +211,8 @@ fn apply(
             let zf = edges.as_mut().unwrap();
             let offset = (*edge_id as usize) * EdgeRecord::SIZE;
             ensure_room(zf, offset + EdgeRecord::SIZE, 1 << 20)?;
-            let existing: &EdgeRecord = bytemuck::from_bytes(
-                &zf.as_slice()[offset..offset + EdgeRecord::SIZE],
-            );
+            let existing: &EdgeRecord =
+                bytemuck::from_bytes(&zf.as_slice()[offset..offset + EdgeRecord::SIZE]);
             let mut updated = *existing;
             updated.src = *src;
             updated.dst = *dst;
@@ -237,9 +233,8 @@ fn apply(
                 // Slot never materialised — tombstone is implicit.
                 return Ok(Applied::Yes);
             }
-            let existing: &NodeRecord = bytemuck::from_bytes(
-                &zf.as_slice()[offset..offset + NodeRecord::SIZE],
-            );
+            let existing: &NodeRecord =
+                bytemuck::from_bytes(&zf.as_slice()[offset..offset + NodeRecord::SIZE]);
             let mut updated = *existing;
             updated.set_tombstoned();
             zf.as_slice_mut()[offset..offset + NodeRecord::SIZE]
@@ -263,9 +258,8 @@ fn apply(
                 // Slot never materialised; skip silently.
                 return Ok(Applied::Yes);
             }
-            let existing: &EdgeRecord = bytemuck::from_bytes(
-                &zf.as_slice()[offset..offset + EdgeRecord::SIZE],
-            );
+            let existing: &EdgeRecord =
+                bytemuck::from_bytes(&zf.as_slice()[offset..offset + EdgeRecord::SIZE]);
             let mut updated = *existing;
             updated.weight_u16 = *weight_u16;
             updated.ricci_u8 = *ricci_u8;
@@ -285,9 +279,8 @@ fn apply(
             if offset + EdgeRecord::SIZE > zf.as_slice().len() {
                 return Ok(Applied::Yes);
             }
-            let existing: &EdgeRecord = bytemuck::from_bytes(
-                &zf.as_slice()[offset..offset + EdgeRecord::SIZE],
-            );
+            let existing: &EdgeRecord =
+                bytemuck::from_bytes(&zf.as_slice()[offset..offset + EdgeRecord::SIZE]);
             let mut updated = *existing;
             updated.flags |= crate::record::edge_flags::TOMBSTONED;
             zf.as_slice_mut()[offset..offset + EdgeRecord::SIZE]
@@ -296,7 +289,6 @@ fn apply(
         }
 
         // ---- Cognitive column payloads (T6) --------------------------------
-
         WalPayload::EnergyReinforce {
             node_id,
             new_energy,
@@ -307,9 +299,8 @@ fn apply(
             let zf = nodes.as_mut().unwrap();
             let offset = (*node_id as usize) * NodeRecord::SIZE;
             ensure_room(zf, offset + NodeRecord::SIZE, 1 << 20)?;
-            let existing: &NodeRecord = bytemuck::from_bytes(
-                &zf.as_slice()[offset..offset + NodeRecord::SIZE],
-            );
+            let existing: &NodeRecord =
+                bytemuck::from_bytes(&zf.as_slice()[offset..offset + NodeRecord::SIZE]);
             let mut updated = *existing;
             updated.energy = *new_energy;
             zf.as_slice_mut()[offset..offset + NodeRecord::SIZE]
@@ -341,9 +332,8 @@ fn apply(
             let zf = edges.as_mut().unwrap();
             let offset = (*edge_id as usize) * EdgeRecord::SIZE;
             ensure_room(zf, offset + EdgeRecord::SIZE, 1 << 20)?;
-            let existing: &EdgeRecord = bytemuck::from_bytes(
-                &zf.as_slice()[offset..offset + EdgeRecord::SIZE],
-            );
+            let existing: &EdgeRecord =
+                bytemuck::from_bytes(&zf.as_slice()[offset..offset + EdgeRecord::SIZE]);
             let mut updated = *existing;
             updated.weight_u16 = *new_weight;
             zf.as_slice_mut()[offset..offset + EdgeRecord::SIZE]
@@ -384,9 +374,8 @@ fn apply(
             let zf = nodes.as_mut().unwrap();
             let offset = (*node_id as usize) * NodeRecord::SIZE;
             ensure_room(zf, offset + NodeRecord::SIZE, 1 << 20)?;
-            let existing: &NodeRecord = bytemuck::from_bytes(
-                &zf.as_slice()[offset..offset + NodeRecord::SIZE],
-            );
+            let existing: &NodeRecord =
+                bytemuck::from_bytes(&zf.as_slice()[offset..offset + NodeRecord::SIZE]);
             let mut updated = *existing;
             updated.scar_util_affinity = *packed;
             zf.as_slice_mut()[offset..offset + NodeRecord::SIZE]
@@ -402,9 +391,8 @@ fn apply(
             for (node_id, centrality) in updates {
                 let offset = (*node_id as usize) * NodeRecord::SIZE;
                 ensure_room(zf, offset + NodeRecord::SIZE, 1 << 20)?;
-                let existing: &NodeRecord = bytemuck::from_bytes(
-                    &zf.as_slice()[offset..offset + NodeRecord::SIZE],
-                );
+                let existing: &NodeRecord =
+                    bytemuck::from_bytes(&zf.as_slice()[offset..offset + NodeRecord::SIZE]);
                 let mut updated = *existing;
                 updated.centrality_cached = *centrality;
                 updated.flags &= !crate::record::node_flags::CENTRALITY_STALE;
@@ -426,9 +414,8 @@ fn apply(
             for (node_id, community_id) in updates {
                 let offset = (*node_id as usize) * NodeRecord::SIZE;
                 ensure_room(zf, offset + NodeRecord::SIZE, 1 << 20)?;
-                let existing: &NodeRecord = bytemuck::from_bytes(
-                    &zf.as_slice()[offset..offset + NodeRecord::SIZE],
-                );
+                let existing: &NodeRecord =
+                    bytemuck::from_bytes(&zf.as_slice()[offset..offset + NodeRecord::SIZE]);
                 let mut updated = *existing;
                 updated.community_id = *community_id;
                 zf.as_slice_mut()[offset..offset + NodeRecord::SIZE]
@@ -438,10 +425,7 @@ fn apply(
         }
 
         // Engram-membership side-table (T7).
-        WalPayload::EngramMembersSet {
-            engram_id,
-            members,
-        } => {
+        WalPayload::EngramMembersSet { engram_id, members } => {
             if engram_members.is_none() {
                 *engram_members = Some(substrate.open_zone(Zone::EngramMembers)?);
             }
@@ -477,9 +461,8 @@ fn apply(
         // out-of-place journal so the replay handler becomes a true
         // "re-run the whole thing" without pre-state assumptions.
         WalPayload::HilbertRepermute { permutation } => {
-            let already_sorted = substrate.meta_header().flags
-                & crate::meta::meta_flags::HILBERT_SORTED
-                != 0;
+            let already_sorted =
+                substrate.meta_header().flags & crate::meta::meta_flags::HILBERT_SORTED != 0;
             if already_sorted {
                 return Ok(Applied::Skipped);
             }
@@ -492,10 +475,8 @@ fn apply(
             let zf = nodes.as_mut().unwrap();
             let total = n * NodeRecord::SIZE;
             ensure_room(zf, total, 1 << 20)?;
-            let src: Vec<NodeRecord> = bytemuck::cast_slice::<u8, NodeRecord>(
-                &zf.as_slice()[..total],
-            )
-            .to_vec();
+            let src: Vec<NodeRecord> =
+                bytemuck::cast_slice::<u8, NodeRecord>(&zf.as_slice()[..total]).to_vec();
             let mut dst = vec![NodeRecord::default(); n];
             for old in 0..n {
                 let new = permutation[old] as usize;
@@ -675,8 +656,7 @@ fn apply(
                 let dst = zf.as_slice_mut();
                 for idx in 0..edge_slots {
                     let off = idx * EdgeRecord::SIZE;
-                    let rec: EdgeRecord =
-                        *bytemuck::from_bytes(&dst[off..off + EdgeRecord::SIZE]);
+                    let rec: EdgeRecord = *bytemuck::from_bytes(&dst[off..off + EdgeRecord::SIZE]);
                     if rec.is_tombstoned() {
                         continue;
                     }
@@ -696,8 +676,7 @@ fn apply(
                             updated.dst = nd;
                         }
                     }
-                    dst[off..off + EdgeRecord::SIZE]
-                        .copy_from_slice(bytemuck::bytes_of(&updated));
+                    dst[off..off + EdgeRecord::SIZE].copy_from_slice(bytemuck::bytes_of(&updated));
                 }
             }
 
@@ -773,8 +752,7 @@ fn apply(
                 return Ok(Applied::Yes);
             }
             let u48 = U48::from_u64(*first_prop_off);
-            zf.as_slice_mut()[field_offset..field_offset + 6]
-                .copy_from_slice(&u48.0);
+            zf.as_slice_mut()[field_offset..field_offset + 6].copy_from_slice(&u48.0);
             Ok(Applied::Yes)
         }
 
@@ -797,15 +775,12 @@ fn apply(
                 return Ok(Applied::Yes);
             }
             let u48 = U48::from_u64(*first_prop_off);
-            zf.as_slice_mut()[field_offset..field_offset + 6]
-                .copy_from_slice(&u48.0);
+            zf.as_slice_mut()[field_offset..field_offset + 6].copy_from_slice(&u48.0);
             Ok(Applied::Yes)
         }
 
         // Markers — no mutation.
-        WalPayload::NoOp | WalPayload::EndOfLog | WalPayload::Checkpoint { .. } => {
-            Ok(Applied::Yes)
-        }
+        WalPayload::NoOp | WalPayload::EndOfLog | WalPayload::Checkpoint { .. } => Ok(Applied::Yes),
 
         // Payload variants that depend on subsystems not yet implemented.
         // Property pages / string heap land in their own tasks; community /
@@ -824,7 +799,7 @@ fn apply(
 mod tests {
     use super::*;
     use crate::file::SubstrateFile;
-    use crate::record::{f32_to_q1_15, EdgeRecord, NodeRecord, PackedScarUtilAff, U48};
+    use crate::record::{EdgeRecord, NodeRecord, PackedScarUtilAff, U48, f32_to_q1_15};
     use crate::wal_io::SyncMode;
     use crate::writer::Writer;
     use tempfile::tempdir;
@@ -901,16 +876,12 @@ mod tests {
         // Verify the nodes zone now reflects the inserts.
         let nz = sub2.open_zone(Zone::Nodes).unwrap();
         assert!(nz.len() >= 10 * NodeRecord::SIZE as u64);
-        let slice: &[NodeRecord] = bytemuck::cast_slice(
-            &nz.as_slice()[..10 * NodeRecord::SIZE],
-        );
+        let slice: &[NodeRecord] = bytemuck::cast_slice(&nz.as_slice()[..10 * NodeRecord::SIZE]);
         for i in 0..10u32 {
             assert_eq!(slice[i as usize].label_bitset, 1u64 << (i % 8));
         }
         let ez = sub2.open_zone(Zone::Edges).unwrap();
-        let eslice: &[EdgeRecord] = bytemuck::cast_slice(
-            &ez.as_slice()[..5 * EdgeRecord::SIZE],
-        );
+        let eslice: &[EdgeRecord] = bytemuck::cast_slice(&ez.as_slice()[..5 * EdgeRecord::SIZE]);
         for i in 0..5u64 {
             assert_eq!(eslice[i as usize].src, i as u32);
             assert_eq!(eslice[i as usize].dst, (i + 1) as u32);
@@ -940,9 +911,7 @@ mod tests {
 
         // Bytes still correct.
         let nz = sub.open_zone(Zone::Nodes).unwrap();
-        let slice: &[NodeRecord] = bytemuck::cast_slice(
-            &nz.as_slice()[..5 * NodeRecord::SIZE],
-        );
+        let slice: &[NodeRecord] = bytemuck::cast_slice(&nz.as_slice()[..5 * NodeRecord::SIZE]);
         for i in 0..5u32 {
             assert_eq!(slice[i as usize].label_bitset, i as u64 + 1);
         }
@@ -1020,9 +989,7 @@ mod tests {
         assert!(stats.applied > 0);
 
         let nz = sub2.open_zone(Zone::Nodes).unwrap();
-        let slice: &[NodeRecord] = bytemuck::cast_slice(
-            &nz.as_slice()[..4 * NodeRecord::SIZE],
-        );
+        let slice: &[NodeRecord] = bytemuck::cast_slice(&nz.as_slice()[..4 * NodeRecord::SIZE]);
 
         // Node 1: seed 0.4 → decay ×0.5 → 0.2 (±1 ULP).
         let e1 = crate::record::q1_15_to_f32(slice[1].energy);
@@ -1047,8 +1014,7 @@ mod tests {
             let weight = (0.77_f32 * 65535.0).round() as u16;
             w.reinforce_synapse(1, weight).unwrap();
             // Set packed scar/util/affinity.
-            let packed =
-                crate::record::PackedScarUtilAff::new(9, 13, 25, false).pack();
+            let packed = crate::record::PackedScarUtilAff::new(9, 13, 25, false).pack();
             w.set_scar_util_affinity(1, packed).unwrap();
             // Centrality batch.
             w.update_centrality_batch(vec![(1, 0xABCD)]).unwrap();
@@ -1064,18 +1030,15 @@ mod tests {
         assert_eq!(stats.decode_errors, 0);
 
         let nz = sub2.open_zone(Zone::Nodes).unwrap();
-        let n_slice: &[NodeRecord] =
-            bytemuck::cast_slice(&nz.as_slice()[..2 * NodeRecord::SIZE]);
-        let unpacked =
-            crate::record::PackedScarUtilAff::unpack(n_slice[1].scar_util_affinity);
+        let n_slice: &[NodeRecord] = bytemuck::cast_slice(&nz.as_slice()[..2 * NodeRecord::SIZE]);
+        let unpacked = crate::record::PackedScarUtilAff::unpack(n_slice[1].scar_util_affinity);
         assert_eq!(unpacked.scar, 9);
         assert_eq!(unpacked.utility, 13);
         assert_eq!(unpacked.affinity, 25);
         assert_eq!(n_slice[1].centrality_cached, 0xABCD);
 
         let ez = sub2.open_zone(Zone::Edges).unwrap();
-        let e_slice: &[EdgeRecord] =
-            bytemuck::cast_slice(&ez.as_slice()[..2 * EdgeRecord::SIZE]);
+        let e_slice: &[EdgeRecord] = bytemuck::cast_slice(&ez.as_slice()[..2 * EdgeRecord::SIZE]);
         let expected_weight = (0.77_f32 * 65535.0).round() as u16;
         assert_eq!(e_slice[1].weight_u16, expected_weight);
     }
@@ -1113,11 +1076,7 @@ mod tests {
     /// fsync'd to match. The caller can then append a CompactCommunity
     /// record (or run `compact_community`) to set up the specific crash
     /// window under test.
-    fn seed_community(
-        sub_path: &std::path::Path,
-        old_slots: &[u32; 3],
-        cid: u32,
-    ) -> Writer {
+    fn seed_community(sub_path: &std::path::Path, old_slots: &[u32; 3], cid: u32) -> Writer {
         let sub = SubstrateFile::create(sub_path).unwrap();
         let w = Writer::new(sub, SyncMode::EveryCommit).unwrap();
         for (i, &slot) in old_slots.iter().enumerate() {
@@ -1169,10 +1128,7 @@ mod tests {
         }
         for (i, &new) in new_slots.iter().enumerate() {
             let rec = &nodes[new as usize];
-            assert_eq!(
-                rec.community_id, cid,
-                "new slot {new} must carry cid={cid}"
-            );
+            assert_eq!(rec.community_id, cid, "new slot {new} must carry cid={cid}");
             assert_eq!(
                 rec.label_bitset,
                 (i as u64) + 1,
@@ -1186,8 +1142,7 @@ mod tests {
 
         // Edges.
         let ez = sub.open_zone(Zone::Edges).unwrap();
-        let edges: &[EdgeRecord] =
-            bytemuck::cast_slice(&ez.as_slice()[..3 * EdgeRecord::SIZE]);
+        let edges: &[EdgeRecord] = bytemuck::cast_slice(&ez.as_slice()[..3 * EdgeRecord::SIZE]);
         assert_eq!(edges[0].src, new_slots[0], "edge 0 src remapped");
         assert_eq!(edges[0].dst, new_slots[1], "edge 0 dst remapped");
         assert_eq!(edges[1].src, new_slots[1], "edge 1 src remapped");
@@ -1202,8 +1157,7 @@ mod tests {
         for &old in old_slots {
             let off = (old as usize) * 4;
             if off + 4 <= cbytes.len() {
-                let v =
-                    u32::from_le_bytes(cbytes[off..off + 4].try_into().unwrap());
+                let v = u32::from_le_bytes(cbytes[off..off + 4].try_into().unwrap());
                 assert_eq!(v, 0, "community col at old slot {old} must be 0");
             }
         }
@@ -1213,8 +1167,7 @@ mod tests {
                 off + 4 <= cbytes.len(),
                 "community zone must be sized up to cover new slot {new}"
             );
-            let v =
-                u32::from_le_bytes(cbytes[off..off + 4].try_into().unwrap());
+            let v = u32::from_le_bytes(cbytes[off..off + 4].try_into().unwrap());
             assert_eq!(v, cid, "community col at new slot {new} must be {cid}");
         }
     }
@@ -1318,12 +1271,7 @@ mod tests {
                 1 << 20,
             )
             .unwrap();
-            crate::writer::ensure_room(
-                &mut cz,
-                (new_slots[2] as usize + 1) * 4,
-                1 << 20,
-            )
-            .unwrap();
+            crate::writer::ensure_room(&mut cz, (new_slots[2] as usize + 1) * 4, 1 << 20).unwrap();
             // Partial relocation: first two pairs.
             for (old, new) in relocations.iter().take(2) {
                 let old_off = (*old as usize) * NodeRecord::SIZE;
@@ -1335,8 +1283,7 @@ mod tests {
                     out
                 };
                 let zero = NodeRecord::default();
-                nz.as_slice_mut()[new_off..new_off + NodeRecord::SIZE]
-                    .copy_from_slice(&rec_bytes);
+                nz.as_slice_mut()[new_off..new_off + NodeRecord::SIZE].copy_from_slice(&rec_bytes);
                 nz.as_slice_mut()[old_off..old_off + NodeRecord::SIZE]
                     .copy_from_slice(bytemuck::bytes_of(&zero));
                 // Community col partial rewrite.

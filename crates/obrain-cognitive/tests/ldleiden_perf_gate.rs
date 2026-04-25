@@ -55,7 +55,8 @@ fn sparse_sbm(
     let p_out = target_inter_deg / (n as f64 - block_size as f64).max(1.0);
 
     let mut state = seed;
-    let mut edges = Vec::with_capacity(((n as f64) * (target_intra_deg + target_inter_deg) / 2.0) as usize);
+    let mut edges =
+        Vec::with_capacity(((n as f64) * (target_intra_deg + target_inter_deg) / 2.0) as usize);
 
     // Intra-block edges: iterate only inside each block — O(n · block_size).
     for block in 0..n_blocks {
@@ -78,8 +79,7 @@ fn sparse_sbm(
     // if `rand < p_out`. For n=10⁶, total inter-block pairs ≈ 5e11 —
     // still infeasible to scan linearly. We use the skip approach:
     // advance the pair index by a geometric jump and emit at each stop.
-    let total_inter_pairs =
-        (n as u64) * (n as u64 - block_size as u64) / 2;
+    let total_inter_pairs = (n as u64) * (n as u64 - block_size as u64) / 2;
     let expected_inter = (total_inter_pairs as f64) * p_out;
     // Safety: cap inter-edge count at 5× expected to bound worst case.
     let inter_cap = ((expected_inter * 5.0) as usize).max(1024);
@@ -183,8 +183,8 @@ fn perf_gate_1e6_per_delta_under_1us() {
     let stream_time = t3.elapsed();
 
     let per_delta_ns = stream_time.as_nanos() as f64 / deltas.len() as f64;
-    let full_10pct_ms = (stream_time.as_nanos() as f64 / 1e6)
-        * (deltas.len() as f64 / delta_count as f64);
+    let full_10pct_ms =
+        (stream_time.as_nanos() as f64 / 1e6) * (deltas.len() as f64 / delta_count as f64);
 
     eprintln!(
         "\n[result] n=10⁶  |E|={}M  {} deltas  stream={:?}  per-delta={:.1} ns  full-10%={:.1} ms",
@@ -194,10 +194,7 @@ fn perf_gate_1e6_per_delta_under_1us() {
         per_delta_ns,
         full_10pct_ms,
     );
-    eprintln!(
-        "[result] bootstrap (one-shot): {:?}",
-        bootstrap_time
-    );
+    eprintln!("[result] bootstrap (one-shot): {:?}", bootstrap_time);
     eprintln!(
         "[gate  ] target: ≤ 1000 ns/delta  →  observed: {:.1} ns  ({})",
         per_delta_ns,

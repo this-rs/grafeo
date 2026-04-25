@@ -26,9 +26,7 @@ use std::time::Duration;
 
 use obrain_substrate::SubstrateStore;
 
-use super::{
-    Thinker, ThinkerBudget, ThinkerKind, ThinkerTickError, ThinkerTickReport,
-};
+use super::{Thinker, ThinkerBudget, ThinkerKind, ThinkerTickError, ThinkerTickReport};
 
 /// Configuration for the [`Consolidator`] — resolved from
 /// `HubConfig.substrate.thinkers.consolidator` at Thinker construction.
@@ -82,7 +80,10 @@ pub struct Consolidator {
 
 impl Consolidator {
     pub fn new(config: ConsolidatorConfig) -> Self {
-        Self { config, stats: parking_lot::Mutex::new(ConsolidatorStats::default()) }
+        Self {
+            config,
+            stats: parking_lot::Mutex::new(ConsolidatorStats::default()),
+        }
     }
 
     pub fn stats(&self) -> ConsolidatorStats {
@@ -120,10 +121,7 @@ impl Thinker for Consolidator {
     fn interval(&self) -> Duration {
         self.config.interval
     }
-    fn tick(
-        &self,
-        store: &Arc<SubstrateStore>,
-    ) -> Result<ThinkerTickReport, ThinkerTickError> {
+    fn tick(&self, store: &Arc<SubstrateStore>) -> Result<ThinkerTickReport, ThinkerTickError> {
         let report = self.tick_impl(store)?;
         self.stats.lock().last_tick_elapsed_ms = report.elapsed.as_millis() as u64;
         Ok(report)
@@ -139,8 +137,7 @@ mod tests {
     #[test]
     fn tick_increments_stats_and_reports_elapsed() {
         let td = TempDir::new().unwrap();
-        let store =
-            Arc::new(SubstrateStore::create(td.path().join("c-test")).unwrap());
+        let store = Arc::new(SubstrateStore::create(td.path().join("c-test")).unwrap());
         let c = Consolidator::new(ConsolidatorConfig::default());
         let r = c.tick(&store).expect("tick ok");
         let s = c.stats();

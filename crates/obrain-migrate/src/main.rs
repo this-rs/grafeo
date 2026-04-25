@@ -199,10 +199,7 @@ fn main() -> Result<()> {
     // pipeline and runs the in-place auto-migration on an existing base.
     // See `converter::finalize` for the contract.
     if let Some(target) = cli.finalize {
-        tracing::info!(
-            "obrain-migrate --finalize: target={}",
-            target.display()
-        );
+        tracing::info!("obrain-migrate --finalize: target={}", target.display());
         converter::finalize(&target)?;
         tracing::info!("obrain-migrate: done");
         return Ok(());

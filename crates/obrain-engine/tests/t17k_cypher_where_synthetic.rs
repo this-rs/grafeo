@@ -33,7 +33,12 @@ fn cypher_where_eq_on_v2_scalar() {
     let r = session
         .execute_cypher("MATCH (f:File) WHERE f.kind = 'rust' RETURN f.kind")
         .expect("cypher");
-    assert_eq!(r.rows.len(), 5, "expected 5 rust files, got {}", r.rows.len());
+    assert_eq!(
+        r.rows.len(),
+        5,
+        "expected 5 rust files, got {}",
+        r.rows.len()
+    );
     for row in &r.rows {
         assert_eq!(row.first(), Some(&Value::from("rust")));
     }
@@ -75,7 +80,9 @@ fn cypher_return_vector_property() {
     // 3 Decisions with 80-dim non-zero embeddings.
     for i in 0..3 {
         let nid = store.create_node(&["Decision"]);
-        let vec: Vec<f32> = (0..80).map(|j| 0.01 + (i as f32) + (j as f32) * 0.001).collect();
+        let vec: Vec<f32> = (0..80)
+            .map(|j| 0.01 + (i as f32) + (j as f32) * 0.001)
+            .collect();
         store.set_node_property(
             nid,
             "embedding",
@@ -113,6 +120,11 @@ fn cypher_where_on_edge_property() {
     let r = session
         .execute_cypher("MATCH ()-[r:CALLS]->() WHERE r.line = 42 RETURN r.line")
         .expect("cypher");
-    assert_eq!(r.rows.len(), 1, "expected 1 edge with line=42, got {}", r.rows.len());
+    assert_eq!(
+        r.rows.len(),
+        1,
+        "expected 1 edge with line=42, got {}",
+        r.rows.len()
+    );
     assert_eq!(r.rows[0].first(), Some(&Value::Int64(42)));
 }

@@ -6,13 +6,13 @@
 use std::collections::VecDeque;
 use std::sync::OnceLock;
 
+#[cfg(test)]
+use obrain_common::types::PropertyKey;
 use obrain_common::types::{EdgeId, NodeId, Value};
 use obrain_common::utils::error::{Error, Result};
 use obrain_common::utils::hash::FxHashMap;
 use obrain_core::graph::Direction;
 use obrain_core::graph::GraphStore;
-#[cfg(test)]
-use obrain_common::types::PropertyKey;
 #[cfg(test)]
 use obrain_core::graph::GraphStoreMut;
 #[cfg(test)]
@@ -614,11 +614,36 @@ mod tests {
         let n2 = store.create_node(&["Node"]);
         let n3 = store.create_node(&["Node"]); // Sink
 
-        store.create_edge_with_props(n0, n1, "EDGE", &[(PropertyKey::from("capacity"), Value::Float64(5.0))]);
-        store.create_edge_with_props(n0, n2, "EDGE", &[(PropertyKey::from("capacity"), Value::Float64(3.0))]);
-        store.create_edge_with_props(n1, n3, "EDGE", &[(PropertyKey::from("capacity"), Value::Float64(3.0))]);
-        store.create_edge_with_props(n1, n2, "EDGE", &[(PropertyKey::from("capacity"), Value::Float64(2.0))]);
-        store.create_edge_with_props(n2, n3, "EDGE", &[(PropertyKey::from("capacity"), Value::Float64(4.0))]);
+        store.create_edge_with_props(
+            n0,
+            n1,
+            "EDGE",
+            &[(PropertyKey::from("capacity"), Value::Float64(5.0))],
+        );
+        store.create_edge_with_props(
+            n0,
+            n2,
+            "EDGE",
+            &[(PropertyKey::from("capacity"), Value::Float64(3.0))],
+        );
+        store.create_edge_with_props(
+            n1,
+            n3,
+            "EDGE",
+            &[(PropertyKey::from("capacity"), Value::Float64(3.0))],
+        );
+        store.create_edge_with_props(
+            n1,
+            n2,
+            "EDGE",
+            &[(PropertyKey::from("capacity"), Value::Float64(2.0))],
+        );
+        store.create_edge_with_props(
+            n2,
+            n3,
+            "EDGE",
+            &[(PropertyKey::from("capacity"), Value::Float64(4.0))],
+        );
 
         (store, vec![n0, n1, n2, n3])
     }
@@ -713,13 +738,7 @@ mod tests {
     #[test]
     fn test_min_cost_flow_basic() {
         let (store, nodes) = create_cost_flow_graph();
-        let result = min_cost_max_flow(
-            &store,
-            nodes[0],
-            nodes[2],
-            Some("capacity"),
-            Some("cost"),
-        );
+        let result = min_cost_max_flow(&store, nodes[0], nodes[2], Some("capacity"), Some("cost"));
 
         assert!(result.is_some());
         let result = result.unwrap();
@@ -734,13 +753,7 @@ mod tests {
     #[test]
     fn test_min_cost_prefers_cheaper_path() {
         let (store, nodes) = create_cost_flow_graph();
-        let result = min_cost_max_flow(
-            &store,
-            nodes[0],
-            nodes[2],
-            Some("capacity"),
-            Some("cost"),
-        );
+        let result = min_cost_max_flow(&store, nodes[0], nodes[2], Some("capacity"), Some("cost"));
 
         assert!(result.is_some());
         let result = result.unwrap();
@@ -804,7 +817,12 @@ mod tests {
         let n1 = store.create_node(&["Node"]);
 
         // Use Int64 capacity values instead of Float64
-        store.create_edge_with_props(n0, n1, "EDGE", &[(PropertyKey::from("capacity"), Value::Int64(5))]);
+        store.create_edge_with_props(
+            n0,
+            n1,
+            "EDGE",
+            &[(PropertyKey::from("capacity"), Value::Int64(5))],
+        );
 
         let result = max_flow(&store, n0, n1, Some("capacity")).unwrap();
         assert!((result.max_flow - 5.0).abs() < f64::EPSILON);
@@ -819,10 +837,30 @@ mod tests {
         let t = store.create_node(&["Node"]);
 
         // Two independent paths: s->a->t and s->b->t
-        store.create_edge_with_props(s, a, "EDGE", &[(PropertyKey::from("capacity"), Value::Float64(3.0))]);
-        store.create_edge_with_props(a, t, "EDGE", &[(PropertyKey::from("capacity"), Value::Float64(3.0))]);
-        store.create_edge_with_props(s, b, "EDGE", &[(PropertyKey::from("capacity"), Value::Float64(2.0))]);
-        store.create_edge_with_props(b, t, "EDGE", &[(PropertyKey::from("capacity"), Value::Float64(2.0))]);
+        store.create_edge_with_props(
+            s,
+            a,
+            "EDGE",
+            &[(PropertyKey::from("capacity"), Value::Float64(3.0))],
+        );
+        store.create_edge_with_props(
+            a,
+            t,
+            "EDGE",
+            &[(PropertyKey::from("capacity"), Value::Float64(3.0))],
+        );
+        store.create_edge_with_props(
+            s,
+            b,
+            "EDGE",
+            &[(PropertyKey::from("capacity"), Value::Float64(2.0))],
+        );
+        store.create_edge_with_props(
+            b,
+            t,
+            "EDGE",
+            &[(PropertyKey::from("capacity"), Value::Float64(2.0))],
+        );
 
         let result = max_flow(&store, s, t, Some("capacity")).unwrap();
         assert!((result.max_flow - 5.0).abs() < f64::EPSILON);
@@ -836,8 +874,18 @@ mod tests {
         let t = store.create_node(&["Node"]);
 
         // s -> mid has high capacity, mid -> t has low = bottleneck
-        store.create_edge_with_props(s, mid, "EDGE", &[(PropertyKey::from("capacity"), Value::Float64(100.0))]);
-        store.create_edge_with_props(mid, t, "EDGE", &[(PropertyKey::from("capacity"), Value::Float64(1.0))]);
+        store.create_edge_with_props(
+            s,
+            mid,
+            "EDGE",
+            &[(PropertyKey::from("capacity"), Value::Float64(100.0))],
+        );
+        store.create_edge_with_props(
+            mid,
+            t,
+            "EDGE",
+            &[(PropertyKey::from("capacity"), Value::Float64(1.0))],
+        );
 
         let result = max_flow(&store, s, t, Some("capacity")).unwrap();
         assert!((result.max_flow - 1.0).abs() < f64::EPSILON);
@@ -846,14 +894,8 @@ mod tests {
     #[test]
     fn test_min_cost_flow_same_source_sink() {
         let (store, nodes) = create_cost_flow_graph();
-        let result = min_cost_max_flow(
-            &store,
-            nodes[0],
-            nodes[0],
-            Some("capacity"),
-            Some("cost"),
-        )
-        .unwrap();
+        let result =
+            min_cost_max_flow(&store, nodes[0], nodes[0], Some("capacity"), Some("cost")).unwrap();
         assert_eq!(result.max_flow, 0.0);
         assert_eq!(result.total_cost, 0.0);
     }
@@ -869,14 +911,8 @@ mod tests {
     #[test]
     fn test_min_cost_flow_edges() {
         let (store, nodes) = create_cost_flow_graph();
-        let result = min_cost_max_flow(
-            &store,
-            nodes[0],
-            nodes[2],
-            Some("capacity"),
-            Some("cost"),
-        )
-        .unwrap();
+        let result =
+            min_cost_max_flow(&store, nodes[0], nodes[2], Some("capacity"), Some("cost")).unwrap();
 
         // Flow edges should have both flow and cost info
         for (_, _, flow, _cost) in &result.flow_edges {

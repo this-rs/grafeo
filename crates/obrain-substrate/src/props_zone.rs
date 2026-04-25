@@ -146,7 +146,7 @@ impl PropsZone {
         //     ⇒ the answer is `>= lo + 1` if we haven't seen an empty page
         //   - pages `>= hi` are either known-empty or not yet probed
         // On exit `lo + 1` is the answer (= `next_page_idx`).
-        let mut lo: u32 = 0;          // highest index known to be LIVE (or 0 if none)
+        let mut lo: u32 = 0; // highest index known to be LIVE (or 0 if none)
         let mut hi: u32 = total_slots; // lowest index known to be EMPTY (or total if all live)
         while lo + 1 < hi {
             let mid = lo + (hi - lo) / 2;
@@ -175,7 +175,7 @@ impl PropsZone {
             return 0;
         }
 
-        let mut lo: u32 = 0;          // highest LIVE (0 if none)
+        let mut lo: u32 = 0; // highest LIVE (0 if none)
         let mut hi: u32 = total_slots; // lowest EMPTY (total if all live)
         // Heap is 0-indexed (no sentinel slot), so probe mid ∈ [0, total_slots-1].
         // Special-case: lo=0 means "nothing known live yet" — we must probe 0 first.
@@ -289,10 +289,7 @@ impl PropsZone {
     /// signature is owner-agnostic; callers interpret the page's magic
     /// via [`PropertyPage::owner_kind`] if they care about the owner.
     #[cfg(test)]
-    pub fn read_page_for_test(
-        &self,
-        page_idx: u32,
-    ) -> SubstrateResult<PropertyPage> {
+    pub fn read_page_for_test(&self, page_idx: u32) -> SubstrateResult<PropertyPage> {
         self.read_page(page_idx)
     }
 
@@ -308,7 +305,9 @@ impl PropsZone {
 
     fn write_page(&mut self, page_idx: u32, page: &PropertyPage) -> SubstrateResult<()> {
         self.ensure_page_addressable(page_idx)?;
-        let slot = self.page_slice_mut(page_idx).expect("just ensured addressable");
+        let slot = self
+            .page_slice_mut(page_idx)
+            .expect("just ensured addressable");
         slot.copy_from_slice(bytemuck::bytes_of(page));
         Ok(())
     }
@@ -468,9 +467,7 @@ impl PropsZone {
         let mut cur = head;
         while let Some(idx) = cur {
             let bytes = self.page_slice(idx).ok_or_else(|| {
-                SubstrateError::WalBadFrame(format!(
-                    "walk_chain: page {idx} out of range"
-                ))
+                SubstrateError::WalBadFrame(format!("walk_chain: page {idx} out of range"))
             })?;
             let page: &PropertyPage = bytemuck::from_bytes(bytes);
             if !page.has_valid_prop_magic() {
@@ -604,9 +601,7 @@ impl PropsZone {
         let mut cur = head;
         while let Some(idx) = cur {
             let bytes = self.page_slice(idx).ok_or_else(|| {
-                SubstrateError::WalBadFrame(format!(
-                    "get_latest_for_key: page {idx} out of range"
-                ))
+                SubstrateError::WalBadFrame(format!("get_latest_for_key: page {idx} out of range"))
             })?;
             let page: &PropertyPage = bytemuck::from_bytes(bytes);
             if !page.has_valid_prop_magic() {
@@ -664,11 +659,14 @@ impl PropsZone {
         }
         // Allocate a new heap page.
         let new_idx = self.next_heap_page_idx;
-        self.next_heap_page_idx = self.next_heap_page_idx.checked_add(1).ok_or_else(|| {
-            SubstrateError::WalBadFrame("heap zone page id overflow".into())
-        })?;
+        self.next_heap_page_idx = self
+            .next_heap_page_idx
+            .checked_add(1)
+            .ok_or_else(|| SubstrateError::WalBadFrame("heap zone page id overflow".into()))?;
         let mut page = HeapPage::new(new_idx);
-        let off = page.append(bytes).expect("fresh heap page fits single entry");
+        let off = page
+            .append(bytes)
+            .expect("fresh heap page fits single entry");
         page.seal_crc32();
         self.write_heap_page(new_idx, &page)?;
         Ok(crate::page::HeapRef {
@@ -959,7 +957,8 @@ mod tests {
 
         let mut live = std::collections::HashMap::new();
         let mut tombstoned = std::collections::HashSet::new();
-        pz.collect_live_props_by_key(head, &mut live, &mut tombstoned).unwrap();
+        pz.collect_live_props_by_key(head, &mut live, &mut tombstoned)
+            .unwrap();
 
         // Key 1 : live with I64(10)
         assert!(live.contains_key(&1));
@@ -980,7 +979,8 @@ mod tests {
         let (_sf, pz) = open_zone();
         let mut live = std::collections::HashMap::new();
         let mut tombstoned = std::collections::HashSet::new();
-        pz.collect_live_props_by_key(None, &mut live, &mut tombstoned).unwrap();
+        pz.collect_live_props_by_key(None, &mut live, &mut tombstoned)
+            .unwrap();
         assert!(live.is_empty());
         assert!(tombstoned.is_empty());
     }
@@ -1000,7 +1000,8 @@ mod tests {
 
         let mut live = std::collections::HashMap::new();
         let mut tombstoned = std::collections::HashSet::new();
-        pz.collect_live_props_by_key(head, &mut live, &mut tombstoned).unwrap();
+        pz.collect_live_props_by_key(head, &mut live, &mut tombstoned)
+            .unwrap();
         // Only 1 key exists (id=1), and its latest value is 4
         assert_eq!(live.len(), 1);
         assert!(live.contains_key(&1));
@@ -1147,12 +1148,8 @@ mod tests {
             // -- node chain ------------------------------------------------
             let mut nh = None;
             nh = Some(
-                pz.append_entry_node(
-                    i,
-                    nh,
-                    &PropertyEntry::new(1, PropertyValue::I64(i as i64)),
-                )
-                .unwrap(),
+                pz.append_entry_node(i, nh, &PropertyEntry::new(1, PropertyValue::I64(i as i64)))
+                    .unwrap(),
             );
             let label = format!("node-{i:05}");
             let href = pz.intern_bytes(label.as_bytes()).unwrap();

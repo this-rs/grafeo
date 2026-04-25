@@ -108,8 +108,8 @@ unsafe fn decay_u16x8_sse2(values: &mut [u16; 8], factor_q16: u16) {
 #[inline]
 unsafe fn decay_u16x8_neon(values: &mut [u16; 8], factor_q16: u16) {
     use core::arch::aarch64::{
-        vcombine_u16, vdup_n_u16, vld1q_u16, vmull_u16, vst1q_u16,
-        vget_high_u16, vget_low_u16, vshrn_n_u32,
+        vcombine_u16, vdup_n_u16, vget_high_u16, vget_low_u16, vld1q_u16, vmull_u16, vshrn_n_u32,
+        vst1q_u16,
     };
 
     // Load 8 u16s and broadcast the factor.
@@ -142,7 +142,9 @@ mod tests {
 
     #[test]
     fn zero_factor_zeros_every_lane() {
-        let input = [0x1234, 0xFFFF, 0x8000, 0x0001, 0xABCD, 0x4242, 0x0F0F, 0xDEAD];
+        let input = [
+            0x1234, 0xFFFF, 0x8000, 0x0001, 0xABCD, 0x4242, 0x0F0F, 0xDEAD,
+        ];
         let mut got = input;
         decay_u16x8(&mut got, 0);
         assert_eq!(got, [0u16; 8]);
@@ -171,9 +173,7 @@ mod tests {
     #[test]
     fn saturation_edge_cases_match_scalar() {
         // Boundary inputs: 0, 1, 0x7FFF, 0x8000, 0xFFFE, 0xFFFF, and two random.
-        let boundary = [
-            0u16, 1, 0x7FFF, 0x8000, 0xFFFE, 0xFFFF, 0x1234, 0xDEAD,
-        ];
+        let boundary = [0u16, 1, 0x7FFF, 0x8000, 0xFFFE, 0xFFFF, 0x1234, 0xDEAD];
         for factor in [0u16, 1, 0x7FFF, 0x8000, 0xCCCC, 0xFFFF] {
             let mut got = boundary;
             decay_u16x8(&mut got, factor);

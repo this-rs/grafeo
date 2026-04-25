@@ -195,8 +195,7 @@ fn test_expand_reset() {
 fn test_expand_name() {
     let (_store, dyn_store) = test_store();
     let scan = Box::new(ScanOperator::with_label(Arc::clone(&dyn_store), "Person"));
-    let expand =
-        ExpandOperator::new(Arc::clone(&dyn_store), scan, 0, Direction::Outgoing, vec![]);
+    let expand = ExpandOperator::new(Arc::clone(&dyn_store), scan, 0, Direction::Outgoing, vec![]);
     assert_eq!(expand.name(), "Expand");
 }
 

@@ -36,9 +36,8 @@ fn fresh_store(interval: Duration) -> (Arc<SynapseStore>, tempfile::TempDir) {
     use obrain_substrate::SubstrateStore;
 
     let td = tempfile::tempdir().expect("tempdir");
-    let substrate = Arc::new(
-        SubstrateStore::create(td.path().join("kb")).expect("create substrate"),
-    );
+    let substrate =
+        Arc::new(SubstrateStore::create(td.path().join("kb")).expect("create substrate"));
 
     // SubstrateStore implements GraphStoreMut directly — same pattern
     // as the other substrate_tests in synapse.rs.
@@ -53,11 +52,7 @@ fn fresh_store(interval: Duration) -> (Arc<SynapseStore>, tempfile::TempDir) {
         consolidator_interval: interval,
         ..SynapseConfig::default()
     };
-    let store = Arc::new(SynapseStore::with_substrate(
-        config,
-        graph_store,
-        substrate,
-    ));
+    let store = Arc::new(SynapseStore::with_substrate(config, graph_store, substrate));
     (store, td)
 }
 
@@ -133,8 +128,7 @@ fn consolidator_runtime_owned_drains_on_shutdown() {
 
     // Spawn the consolidator on its own owned runtime — works from
     // sync context (no tokio runtime around this test).
-    let consolidator =
-        obrain_cognitive::synapse::ConsolidatorRuntime::spawn(Arc::clone(&store));
+    let consolidator = obrain_cognitive::synapse::ConsolidatorRuntime::spawn(Arc::clone(&store));
 
     // Push 150 reinforces.
     for i in 1..=150u64 {
@@ -173,8 +167,7 @@ async fn consolidator_runtime_spawn_from_tokio_context_does_not_panic() {
 
     // This call previously panicked with "Cannot start a runtime from
     // within a runtime". With the Handle::enter() fix it works.
-    let consolidator =
-        obrain_cognitive::synapse::ConsolidatorRuntime::spawn(Arc::clone(&store));
+    let consolidator = obrain_cognitive::synapse::ConsolidatorRuntime::spawn(Arc::clone(&store));
 
     // Push 100 reinforces.
     for i in 1..=100u64 {

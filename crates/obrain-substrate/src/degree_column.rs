@@ -158,8 +158,7 @@ impl DegreeColumn {
             flags: 0,
             _reserved: [0u32; 10],
         };
-        zf.as_slice_mut()[..HEADER_SIZE]
-            .copy_from_slice(bytemuck::bytes_of(&header));
+        zf.as_slice_mut()[..HEADER_SIZE].copy_from_slice(bytemuck::bytes_of(&header));
         Ok(Self { zf, n_slots })
     }
 
@@ -178,10 +177,7 @@ impl DegreeColumn {
     /// The caller treats `None` as "no valid sidecar" and rebuilds via
     /// `rebuild_from_scan`. This matches the graceful-degradation
     /// contract of tier zones (never fatal at open).
-    pub fn open_by_filename(
-        sub: &SubstrateFile,
-        filename: &str,
-    ) -> SubstrateResult<Option<Self>> {
+    pub fn open_by_filename(sub: &SubstrateFile, filename: &str) -> SubstrateResult<Option<Self>> {
         let zf = sub.open_named_zone(filename)?;
         if zf.is_empty() {
             return Ok(None);
@@ -190,8 +186,7 @@ impl DegreeColumn {
         if slice.len() < HEADER_SIZE {
             return Ok(None);
         }
-        let header: &DegreeHeader =
-            bytemuck::from_bytes(&slice[..HEADER_SIZE]);
+        let header: &DegreeHeader = bytemuck::from_bytes(&slice[..HEADER_SIZE]);
         if header.magic != DEGREE_MAGIC {
             return Ok(None);
         }
@@ -233,9 +228,7 @@ impl DegreeColumn {
             return 0;
         }
         let offset = HEADER_SIZE + (slot as usize) * DEGREE_RECORD_SIZE;
-        let ptr = unsafe {
-            self.zf.as_slice().as_ptr().add(offset) as *const u32 as *mut u32
-        };
+        let ptr = unsafe { self.zf.as_slice().as_ptr().add(offset) as *const u32 as *mut u32 };
         // SAFETY: the mmap region is live for as long as `&self`, the
         // offset is 4-byte aligned (HEADER_SIZE=64 aligned, slot*8
         // aligned), and all writes go through AtomicU32 → no data race.
@@ -248,9 +241,7 @@ impl DegreeColumn {
             return 0;
         }
         let offset = HEADER_SIZE + (slot as usize) * DEGREE_RECORD_SIZE + 4;
-        let ptr = unsafe {
-            self.zf.as_slice().as_ptr().add(offset) as *const u32 as *mut u32
-        };
+        let ptr = unsafe { self.zf.as_slice().as_ptr().add(offset) as *const u32 as *mut u32 };
         unsafe { AtomicU32::from_ptr(ptr) }.load(Ordering::Relaxed)
     }
 
@@ -259,14 +250,17 @@ impl DegreeColumn {
     /// — callers that may grow past `n_slots` should call `ensure_slot`
     /// first.
     pub fn incr_out(&self, slot: u32, delta: i32) {
-        debug_assert!(slot < self.n_slots, "incr_out: slot {} >= n_slots {}", slot, self.n_slots);
+        debug_assert!(
+            slot < self.n_slots,
+            "incr_out: slot {} >= n_slots {}",
+            slot,
+            self.n_slots
+        );
         if slot >= self.n_slots {
             return;
         }
         let offset = HEADER_SIZE + (slot as usize) * DEGREE_RECORD_SIZE;
-        let ptr = unsafe {
-            self.zf.as_slice().as_ptr().add(offset) as *const u32 as *mut u32
-        };
+        let ptr = unsafe { self.zf.as_slice().as_ptr().add(offset) as *const u32 as *mut u32 };
         let atomic = unsafe { AtomicU32::from_ptr(ptr) };
         if delta >= 0 {
             atomic.fetch_add(delta as u32, Ordering::Relaxed);
@@ -278,14 +272,17 @@ impl DegreeColumn {
     /// Atomically increment in-degree for `slot` by `delta`. Same as
     /// `incr_out` but for the second u32 of the record.
     pub fn incr_in(&self, slot: u32, delta: i32) {
-        debug_assert!(slot < self.n_slots, "incr_in: slot {} >= n_slots {}", slot, self.n_slots);
+        debug_assert!(
+            slot < self.n_slots,
+            "incr_in: slot {} >= n_slots {}",
+            slot,
+            self.n_slots
+        );
         if slot >= self.n_slots {
             return;
         }
         let offset = HEADER_SIZE + (slot as usize) * DEGREE_RECORD_SIZE + 4;
-        let ptr = unsafe {
-            self.zf.as_slice().as_ptr().add(offset) as *const u32 as *mut u32
-        };
+        let ptr = unsafe { self.zf.as_slice().as_ptr().add(offset) as *const u32 as *mut u32 };
         let atomic = unsafe { AtomicU32::from_ptr(ptr) };
         if delta >= 0 {
             atomic.fetch_add(delta as u32, Ordering::Relaxed);
@@ -321,8 +318,7 @@ impl DegreeColumn {
             flags: 0,
             _reserved: [0u32; 10],
         };
-        self.zf.as_slice_mut()[..HEADER_SIZE]
-            .copy_from_slice(bytemuck::bytes_of(&header));
+        self.zf.as_slice_mut()[..HEADER_SIZE].copy_from_slice(bytemuck::bytes_of(&header));
         Ok(())
     }
 
@@ -341,9 +337,9 @@ impl DegreeColumn {
 
     /// Flush dirty pages to disk (msync).
     pub fn msync(&self) -> SubstrateResult<()> {
-        self.zf.msync().map_err(|e| {
-            SubstrateError::Internal(format!("degree_column msync failed: {e}"))
-        })
+        self.zf
+            .msync()
+            .map_err(|e| SubstrateError::Internal(format!("degree_column msync failed: {e}")))
     }
 }
 

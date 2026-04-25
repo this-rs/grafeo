@@ -535,7 +535,8 @@ mod tests {
 
     fn setup() -> (WalGraphStore, Arc<LpgWal>) {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap()) as Arc<dyn obrain_core::graph::GraphStoreMut>;
+        let store = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap())
+            as Arc<dyn obrain_core::graph::GraphStoreMut>;
         let wal = Arc::new(TypedWal::open(dir.path()).unwrap());
         let wal_ref = Arc::clone(&wal);
         let ctx = Arc::new(parking_lot::Mutex::new(None));
@@ -710,7 +711,8 @@ mod tests {
 
     fn setup_named_graph() -> (WalGraphStore, Arc<LpgWal>) {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap()) as Arc<dyn obrain_core::graph::GraphStoreMut>;
+        let store = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap())
+            as Arc<dyn obrain_core::graph::GraphStoreMut>;
         let wal = Arc::new(TypedWal::open(dir.path()).unwrap());
         let wal_ref = Arc::clone(&wal);
         let ctx = Arc::new(parking_lot::Mutex::new(None));

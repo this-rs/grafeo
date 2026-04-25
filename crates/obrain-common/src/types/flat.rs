@@ -63,10 +63,7 @@ impl std::fmt::Display for CastError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CastError::Alignment { required, actual } => {
-                write!(
-                    f,
-                    "alignment error: required {required}, got {actual}"
-                )
+                write!(f, "alignment error: required {required}, got {actual}")
             }
             CastError::Size {
                 type_size,
@@ -606,8 +603,7 @@ mod tests {
         let data = [0u8; 25]; // 25 is not a multiple of 24
         // Use aligned memory
         let aligned: Vec<u64> = vec![0; 4]; // 32 bytes, aligned to 8
-        let bytes =
-            &unsafe { std::slice::from_raw_parts(aligned.as_ptr() as *const u8, 32) }[..25];
+        let bytes = &unsafe { std::slice::from_raw_parts(aligned.as_ptr() as *const u8, 32) }[..25];
         let result = cast_slice::<NodeSlot>(bytes);
         let _ = data; // suppress unused
         assert!(result.is_err());

@@ -28,11 +28,11 @@
 
 use std::sync::atomic::Ordering;
 
+use obrain_common::types::LogicalType;
 use obrain_core::execution::operators::{
     BinaryFilterOp, FilterExpression, Operator, ProjectExpr, ProjectOperator,
     TYPED_DEGREE_REWRITE_COUNTER, TypedDegreeDirection, TypedDegreeTopKOperator,
 };
-use obrain_common::types::LogicalType;
 
 use super::{
     AggregateOp, BinaryOp, ExpandDirection, ExpandOp, LimitOp, LogicalAggregateFunction,
@@ -129,12 +129,8 @@ fn validate_peer_label(
         set.len() == 1 && set.contains(peer_label)
     };
     match direction {
-        TypedDegreeDirection::Outgoing => {
-            singleton_match(store.edge_target_labels(edge_type))
-        }
-        TypedDegreeDirection::Incoming => {
-            singleton_match(store.edge_source_labels(edge_type))
-        }
+        TypedDegreeDirection::Outgoing => singleton_match(store.edge_target_labels(edge_type)),
+        TypedDegreeDirection::Incoming => singleton_match(store.edge_source_labels(edge_type)),
         TypedDegreeDirection::Both | TypedDegreeDirection::Separate => {
             singleton_match(store.edge_target_labels(edge_type))
                 && singleton_match(store.edge_source_labels(edge_type))
@@ -197,10 +193,7 @@ fn extract_expand_underneath(op: &LogicalOperator) -> Option<ExpandWithPeerLabel
     if let LogicalOperator::Expand(expand) = op {
         if let LogicalOperator::NodeScan(scan) = expand.input.as_ref() {
             let label = scan.label.clone();
-            return Some((
-                expand,
-                label.map(|l| (scan.variable.clone(), l)),
-            ));
+            return Some((expand, label.map(|l| (scan.variable.clone(), l))));
         }
     }
     None
@@ -213,7 +206,10 @@ fn extract_expand_underneath(op: &LogicalOperator) -> Option<ExpandWithPeerLabel
 ///   `Incoming` (it's an incoming edge from `group`'s POV)
 /// - Any other arrangement : `None`
 fn classify_direction(expand: &ExpandOp, group_var: &str) -> Option<TypedDegreeDirection> {
-    match (expand.from_variable == group_var, expand.to_variable == group_var) {
+    match (
+        expand.from_variable == group_var,
+        expand.to_variable == group_var,
+    ) {
         (true, false) => match expand.direction {
             ExpandDirection::Outgoing => Some(TypedDegreeDirection::Outgoing),
             ExpandDirection::Incoming => Some(TypedDegreeDirection::Incoming),
@@ -421,14 +417,13 @@ fn extract_typed_degree_pattern(
             &alias_vars[0].1 == expand2_target,
             &alias_vars[1].1 == expand1_target,
         );
-        let (alias_for_dir1, alias_for_dir2) =
-            if alias1_matches_expand1 && alias2_matches_expand2 {
-                (alias_vars[0].0.clone(), alias_vars[1].0.clone())
-            } else if alias1_matches_expand2 && alias2_matches_expand1 {
-                (alias_vars[1].0.clone(), alias_vars[0].0.clone())
-            } else {
-                return None;
-            };
+        let (alias_for_dir1, alias_for_dir2) = if alias1_matches_expand1 && alias2_matches_expand2 {
+            (alias_vars[0].0.clone(), alias_vars[1].0.clone())
+        } else if alias1_matches_expand2 && alias2_matches_expand1 {
+            (alias_vars[1].0.clone(), alias_vars[0].0.clone())
+        } else {
+            return None;
+        };
         let (out_alias, in_alias) = match (dir1, dir2) {
             (TypedDegreeDirection::Outgoing, TypedDegreeDirection::Incoming) => {
                 (alias_for_dir1, alias_for_dir2)
@@ -492,11 +487,7 @@ fn extract_single_property_from_return(
 /// Scans `ret.items` for a `Binary(Add, Variable(a), Variable(b))` item
 /// (commutative) where {a, b} = {`out_alias`, `in_alias`}. Returns the
 /// item's alias on success.
-fn find_add_alias(
-    ret: &ReturnOp,
-    out_alias: &str,
-    in_alias: &str,
-) -> Option<String> {
+fn find_add_alias(ret: &ReturnOp, out_alias: &str, in_alias: &str) -> Option<String> {
     for item in &ret.items {
         if is_binary_add_of(&item.expression, out_alias, in_alias) {
             return item.alias.clone();
@@ -565,12 +556,8 @@ fn build_replacement(
                 ProjectExpr::Column(1),
             ];
             let output_types = vec![LogicalType::Any, LogicalType::Int64];
-            let project = ProjectOperator::with_store(
-                Box::new(scan),
-                projections,
-                output_types,
-                store,
-            );
+            let project =
+                ProjectOperator::with_store(Box::new(scan), projections, output_types, store);
             let cols = vec![
                 format!("{}_{}", pattern.prop_var, pattern.prop_name),
                 count_alias.clone(),
@@ -617,12 +604,8 @@ fn build_replacement(
                 LogicalType::Int64,
                 LogicalType::Int64,
             ];
-            let project = ProjectOperator::with_store(
-                Box::new(scan),
-                projections,
-                output_types,
-                store,
-            );
+            let project =
+                ProjectOperator::with_store(Box::new(scan), projections, output_types, store);
             let cols = vec![
                 format!("{}_{}", pattern.prop_var, pattern.prop_name),
                 out_alias.clone(),

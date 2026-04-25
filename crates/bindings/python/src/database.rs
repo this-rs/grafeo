@@ -1847,14 +1847,14 @@ impl PyObrainDB {
     /// directory and let substrate manage persistence, or copy the
     /// directory at the filesystem level.
     fn save(&self, _path: String) -> PyResult<()> {
-        Err(PyObrainError::from(
-            obrain_common::utils::error::Error::Internal(
+        Err(
+            PyObrainError::from(obrain_common::utils::error::Error::Internal(
                 "ObrainDB.save() is no longer supported since the T17 substrate \
                  cutover; substrate persists directly to its directory path"
                     .to_string(),
-            ),
+            ))
+            .into(),
         )
-        .into())
     }
 
     /// T17 final cutover (2026-04-23): `to_memory()` raises `ObrainError`.
@@ -1863,15 +1863,15 @@ impl PyObrainDB {
     /// in-memory working copy, open a fresh substrate directory in a
     /// tempdir and copy the data manually.
     fn to_memory(&self) -> PyResult<Self> {
-        Err(PyObrainError::from(
-            obrain_common::utils::error::Error::Internal(
+        Err(
+            PyObrainError::from(obrain_common::utils::error::Error::Internal(
                 "ObrainDB.to_memory() is no longer supported since the T17 substrate \
                  cutover — substrate persists directly to its directory path; for a \
                  working copy, create a fresh substrate database in a tempdir."
                     .to_string(),
-            ),
+            ))
+            .into(),
         )
-        .into())
     }
 
     /// T17 final cutover (2026-04-23): `open_in_memory()` raises
@@ -1880,15 +1880,15 @@ impl PyObrainDB {
     /// `ObrainDB(path=...)` to open a substrate directory directly.
     #[staticmethod]
     fn open_in_memory(_path: String) -> PyResult<Self> {
-        Err(PyObrainError::from(
-            obrain_common::utils::error::Error::Internal(
+        Err(
+            PyObrainError::from(obrain_common::utils::error::Error::Internal(
                 "ObrainDB.open_in_memory() is no longer supported since the T17 \
                  substrate cutover — substrate persists directly to its directory \
                  path."
                     .to_string(),
-            ),
+            ))
+            .into(),
         )
-        .into())
     }
 
     /// Returns true if this database is backed by a file (persistent).

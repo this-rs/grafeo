@@ -34,7 +34,6 @@
 //! both arches to the scalar path — the compiler does a better job than
 //! hand-written intrinsics here.
 
-
 /// Scalar reference: for each slot `i`, write
 /// `(column[i] & query).count_ones()` into `out[i]`. Panics if lengths differ.
 #[inline(always)]
@@ -281,7 +280,13 @@ mod tests {
 
     #[test]
     fn full_query_counts_each_columns_ones() {
-        let col = vec![0u64, 1, 0b1011, 0xFFFF_FFFF_FFFF_FFFF, 0x8000_0000_0000_0001];
+        let col = vec![
+            0u64,
+            1,
+            0b1011,
+            0xFFFF_FFFF_FFFF_FFFF,
+            0x8000_0000_0000_0001,
+        ];
         let mut out = vec![0u32; col.len()];
         scan_overlap(&col, u64::MAX, &mut out);
         assert_eq!(out, vec![0, 1, 3, 64, 2]);
@@ -300,7 +305,14 @@ mod tests {
             0x8000_0000_0000_0001,
             0x0001_0002_0004_0008,
         ];
-        for &q in &[0u64, 1, u64::MAX, 0xAAAA_AAAA_AAAA_AAAAu64, 0x5555_5555_5555_5555, 0xFEED_FACE_CAFE_BABE] {
+        for &q in &[
+            0u64,
+            1,
+            u64::MAX,
+            0xAAAA_AAAA_AAAA_AAAAu64,
+            0x5555_5555_5555_5555,
+            0xFEED_FACE_CAFE_BABE,
+        ] {
             let expected = scalar_reference(&col, q);
             let mut got = vec![0u32; col.len()];
             scan_overlap(&col, q, &mut got);
@@ -323,19 +335,22 @@ mod tests {
             let expected = scalar_reference(&col, query);
             let mut got = vec![0u32; len];
             scan_overlap(&col, query, &mut got);
-            assert_eq!(got, expected, "parity fail at len={len}, query=0x{query:016X}");
+            assert_eq!(
+                got, expected,
+                "parity fail at len={len}, query=0x{query:016X}"
+            );
         }
     }
 
     #[test]
     fn top_k_returns_descending_overlap() {
         let col = vec![
-            0x00u64,                 // idx 0 — overlap 0, filtered
-            0x01,                    // idx 1 — overlap 1
-            0x03,                    // idx 2 — overlap 2
-            0x07,                    // idx 3 — overlap 3
-            0x0F,                    // idx 4 — overlap 4
-            0x1F,                    // idx 5 — overlap 5
+            0x00u64, // idx 0 — overlap 0, filtered
+            0x01,    // idx 1 — overlap 1
+            0x03,    // idx 2 — overlap 2
+            0x07,    // idx 3 — overlap 3
+            0x0F,    // idx 4 — overlap 4
+            0x1F,    // idx 5 — overlap 5
         ];
         let query = u64::MAX;
         let got = top_k_by_overlap(&col, query, 3);

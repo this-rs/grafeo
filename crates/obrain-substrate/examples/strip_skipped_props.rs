@@ -64,7 +64,9 @@ fn resolve_substrate_dir(base: &std::path::Path) -> PathBuf {
 fn main() -> Result<(), BoxErr> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() {
-        return Err("usage: strip_skipped_props <substrate-dir> [--dry-run] [--keys k1,k2,...]".into());
+        return Err(
+            "usage: strip_skipped_props <substrate-dir> [--dry-run] [--keys k1,k2,...]".into(),
+        );
     }
     let base: PathBuf = PathBuf::from(args.remove(0));
 
@@ -93,8 +95,10 @@ fn main() -> Result<(), BoxErr> {
     }
 
     // Build the effective skip set.
-    let default_keys: Vec<String> =
-        SKIP_ON_LOAD_PROP_KEYS.iter().map(|s| s.to_string()).collect();
+    let default_keys: Vec<String> = SKIP_ON_LOAD_PROP_KEYS
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     let keys: Vec<String> = custom_keys.unwrap_or(default_keys);
     if keys.is_empty() {
         return Err("no keys to strip (empty --keys)".into());
@@ -104,9 +108,7 @@ fn main() -> Result<(), BoxErr> {
     let props_path = dir.join("substrate.props");
 
     if !props_path.exists() {
-        return Err(
-            format!("no substrate.props at {}", props_path.display()).into(),
-        );
+        return Err(format!("no substrate.props at {}", props_path.display()).into());
     }
 
     let size_before = std::fs::metadata(&props_path)?.len();
@@ -128,8 +130,7 @@ fn main() -> Result<(), BoxErr> {
 
     // Strip. Linear scan over a small SKIP set is the fastest approach
     // for <10 short strings; any hash overhead would dominate.
-    let skip_fn =
-        |k: &str| keys.iter().any(|s| s.as_str() == k);
+    let skip_fn = |k: &str| keys.iter().any(|s| s.as_str() == k);
 
     let mut stripped_node_props = 0usize;
     let mut stripped_node_entries = 0usize;

@@ -101,45 +101,37 @@ fn bench_cascade(c: &mut Criterion) {
         parallel_threshold: usize::MAX,
         ..ScanConfig::default()
     };
-    g.bench_with_input(
-        BenchmarkId::new("single_thread", n),
-        &n,
-        |b, _| {
-            b.iter(|| {
-                let hits = scan_tiered(
-                    black_box(&q),
-                    black_box(&l0),
-                    black_box(&l1),
-                    black_box(&l2),
-                    10,
-                    cfg_serial,
-                );
-                black_box(hits)
-            });
-        },
-    );
+    g.bench_with_input(BenchmarkId::new("single_thread", n), &n, |b, _| {
+        b.iter(|| {
+            let hits = scan_tiered(
+                black_box(&q),
+                black_box(&l0),
+                black_box(&l1),
+                black_box(&l2),
+                10,
+                cfg_serial,
+            );
+            black_box(hits)
+        });
+    });
 
     // Multi-threaded: rayon's global pool (≈ num_cpus). The parallel
     // threshold stays at the default 64 K so rayon kicks in as soon
     // as the corpus is worth sharding.
     let cfg_parallel = ScanConfig::default();
-    g.bench_with_input(
-        BenchmarkId::new("rayon_pool", n),
-        &n,
-        |b, _| {
-            b.iter(|| {
-                let hits = scan_tiered(
-                    black_box(&q),
-                    black_box(&l0),
-                    black_box(&l1),
-                    black_box(&l2),
-                    10,
-                    cfg_parallel,
-                );
-                black_box(hits)
-            });
-        },
-    );
+    g.bench_with_input(BenchmarkId::new("rayon_pool", n), &n, |b, _| {
+        b.iter(|| {
+            let hits = scan_tiered(
+                black_box(&q),
+                black_box(&l0),
+                black_box(&l1),
+                black_box(&l2),
+                10,
+                cfg_parallel,
+            );
+            black_box(hits)
+        });
+    });
 
     g.finish();
 }

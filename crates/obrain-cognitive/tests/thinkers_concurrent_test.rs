@@ -24,9 +24,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
-use obrain_cognitive::thinker::{
-    spawn_standard_fleet, NeverOverloadedSensor, ThinkersConfig,
-};
+use obrain_cognitive::thinker::{NeverOverloadedSensor, ThinkersConfig, spawn_standard_fleet};
 use obrain_core::graph::traits::{GraphStore, GraphStoreMut};
 use obrain_substrate::store::SubstrateStore;
 use tempfile::TempDir;
@@ -104,9 +102,7 @@ fn thinkers_concurrent_with_crud_preserves_invariants() {
                                     let i = (rng.next() as usize) % created.len();
                                     let j = (rng.next() as usize) % created.len();
                                     if i != j {
-                                        let _ = store.create_edge(
-                                            created[i], created[j], "R",
-                                        );
+                                        let _ = store.create_edge(created[i], created[j], "R");
                                     }
                                 }
                             }

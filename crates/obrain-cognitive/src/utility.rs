@@ -367,9 +367,7 @@ impl UtilityStore {
     pub fn load_from_graph(&self) -> usize {
         #[cfg(feature = "substrate")]
         if self.substrate.is_some() {
-            tracing::trace!(
-                "utility::load_from_graph: no-op (state is column-resident)"
-            );
+            tracing::trace!("utility::load_from_graph: no-op (state is column-resident)");
             return 0;
         }
 
@@ -387,8 +385,7 @@ impl UtilityStore {
             if score <= 0.0 {
                 continue;
             }
-            let count =
-                load_node_f64(gs.as_ref(), nid, PROP_UTILITY_COUNT).unwrap_or(1.0) as u32;
+            let count = load_node_f64(gs.as_ref(), nid, PROP_UTILITY_COUNT).unwrap_or(1.0) as u32;
             let epoch = load_node_f64(gs.as_ref(), nid, PROP_UTILITY_LAST_UPDATED_EPOCH);
             let last_updated = crate::store_trait::epoch_to_instant(epoch);
             let utility = NodeUtility {
@@ -573,7 +570,11 @@ mod substrate_tests {
         store.boost(id, 2.5);
         let packed = sub.get_node_scar_util_affinity(id).unwrap().unwrap();
         // utility_to_q5(2.5) = (2.5 / 5 * 31).round() = 16
-        assert!((15..=17).contains(&packed.utility), "got {}", packed.utility);
+        assert!(
+            (15..=17).contains(&packed.utility),
+            "got {}",
+            packed.utility
+        );
         assert!(packed.dirty);
     }
 

@@ -31,8 +31,8 @@
 //! `local_move` picks the lowest community id. No RNG is used, so the
 //! algorithm is byte-for-byte reproducible.
 
-pub mod leiden;
 pub mod ldleiden;
+pub mod leiden;
 
 pub use ldleiden::{LDleiden, LDleidenStats};
 pub use leiden::{Graph, LeidenConfig, Partition, leiden_batch, modularity};

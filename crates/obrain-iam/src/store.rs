@@ -150,7 +150,8 @@ impl IamStore {
             role_props.push((props::DESCRIPTION.into(), Value::from(d)));
         }
 
-        self.store.create_node_with_props(&[LABEL_ROLE], &role_props);
+        self.store
+            .create_node_with_props(&[LABEL_ROLE], &role_props);
 
         Ok(Role {
             id: id.to_string(),
@@ -251,7 +252,10 @@ impl IamStore {
         let policy_props: Vec<(PropertyKey, Value)> = vec![
             (props::ID.into(), Value::from(id)),
             (props::NAME.into(), Value::from(name)),
-            (props::EFFECT.into(), Value::from(effect.to_string().as_str())),
+            (
+                props::EFFECT.into(),
+                Value::from(effect.to_string().as_str()),
+            ),
             (props::ACTIONS.into(), Value::from(actions_csv.as_str())),
             (props::RESOURCES.into(), Value::from(resources_csv.as_str())),
             (props::CREATED_AT.into(), Value::from(now.as_str())),

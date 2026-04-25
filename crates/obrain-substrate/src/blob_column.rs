@@ -187,8 +187,7 @@ pub struct BlobColumnHeader {
 }
 
 // Compile-time sanity: the header is exactly 64 B.
-const _: [(); 1] =
-    [(); (core::mem::size_of::<BlobColumnHeader>() == BLOB_HEADER_SIZE) as usize];
+const _: [(); 1] = [(); (core::mem::size_of::<BlobColumnHeader>() == BLOB_HEADER_SIZE) as usize];
 
 impl BlobColumnHeader {
     fn new(spec: &BlobColSpec, n_slots: u32, arena_bytes: u64) -> Self {
@@ -252,8 +251,7 @@ pub struct BlobSlotEntry {
     pub _pad: u32,
 }
 
-const _: [(); 1] =
-    [(); (core::mem::size_of::<BlobSlotEntry>() == BLOB_SLOT_STRIDE) as usize];
+const _: [(); 1] = [(); (core::mem::size_of::<BlobSlotEntry>() == BLOB_SLOT_STRIDE) as usize];
 
 // ---------------------------------------------------------------------------
 // Writer
@@ -327,8 +325,7 @@ impl BlobColumnWriter {
     pub fn write_slot(&mut self, slot: u32, bytes: &[u8]) -> SubstrateResult<()> {
         if bytes.is_empty() {
             return Err(SubstrateError::WalBadFrame(
-                "blob_column: cannot store empty payload (len=0 is the absence marker)"
-                    .into(),
+                "blob_column: cannot store empty payload (len=0 is the absence marker)".into(),
             ));
         }
         if bytes.len() > u32::MAX as usize {
@@ -392,10 +389,9 @@ impl BlobColumnWriter {
         if slot_end > idx_slice.len() {
             return None;
         }
-        let entry = bytemuck::try_pod_read_unaligned::<BlobSlotEntry>(
-            &idx_slice[slot_offset..slot_end],
-        )
-        .ok()?;
+        let entry =
+            bytemuck::try_pod_read_unaligned::<BlobSlotEntry>(&idx_slice[slot_offset..slot_end])
+                .ok()?;
         if entry.len == 0 {
             return None;
         }
@@ -414,8 +410,7 @@ impl BlobColumnWriter {
     /// Called from `SubstrateStore::flush`.
     pub fn sync(&mut self) -> SubstrateResult<()> {
         // Ensure idx file has room for the header + all slots.
-        let idx_end =
-            BLOB_HEADER_SIZE + (self.n_slots as usize) * BLOB_SLOT_STRIDE;
+        let idx_end = BLOB_HEADER_SIZE + (self.n_slots as usize) * BLOB_SLOT_STRIDE;
         ensure_room(&mut self.idx, idx_end, 0)?;
 
         // Ensure dat file has room for the live arena.
@@ -439,8 +434,7 @@ impl BlobColumnWriter {
             h.finalize()
         };
 
-        let mut header =
-            BlobColumnHeader::new(&self.spec, self.n_slots, self.arena_end);
+        let mut header = BlobColumnHeader::new(&self.spec, self.n_slots, self.arena_end);
         header.idx_crc32 = idx_crc;
         header.arena_crc32 = arena_crc;
         {
@@ -530,8 +524,7 @@ impl BlobColumnReader {
         }
 
         // Length checks.
-        let idx_end =
-            BLOB_HEADER_SIZE + (header.n_slots as usize) * BLOB_SLOT_STRIDE;
+        let idx_end = BLOB_HEADER_SIZE + (header.n_slots as usize) * BLOB_SLOT_STRIDE;
         if idx_slice.len() < idx_end {
             return Ok(None);
         }
@@ -598,10 +591,9 @@ impl BlobColumnReader {
         if slot_end > idx_slice.len() {
             return None;
         }
-        let entry = bytemuck::try_pod_read_unaligned::<BlobSlotEntry>(
-            &idx_slice[slot_offset..slot_end],
-        )
-        .ok()?;
+        let entry =
+            bytemuck::try_pod_read_unaligned::<BlobSlotEntry>(&idx_slice[slot_offset..slot_end])
+                .ok()?;
         if entry.len == 0 {
             return None;
         }
@@ -701,8 +693,9 @@ mod tests {
         let mut w = BlobColumnWriter::create(&sub, spec).unwrap();
         let mut expected: Vec<Vec<u8>> = Vec::with_capacity(n as usize);
         for slot in 0..n {
-            let payload: Vec<u8> =
-                (0..(slot as u8 + 1) * 3).map(|i| i.wrapping_add(slot as u8)).collect();
+            let payload: Vec<u8> = (0..(slot as u8 + 1) * 3)
+                .map(|i| i.wrapping_add(slot as u8))
+                .collect();
             expected.push(payload.clone());
             w.write_slot(slot, &payload).unwrap();
         }
@@ -879,10 +872,7 @@ mod tests {
         // Truncate the idx file below its expected length.
         let expected = BLOB_HEADER_SIZE + (n as usize) * BLOB_SLOT_STRIDE;
         let path = sub.path().join(spec.idx_filename());
-        let f = std::fs::OpenOptions::new()
-            .write(true)
-            .open(&path)
-            .unwrap();
+        let f = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
         f.set_len(expected as u64 - 4).unwrap();
         drop(f);
 
@@ -894,15 +884,13 @@ mod tests {
         let sub = SubstrateFile::open_tempfile().unwrap();
         let spec = sample_spec(1);
         let mut w = BlobColumnWriter::create(&sub, spec).unwrap();
-        w.write_slot(0, b"a-fairly-long-payload-to-truncate").unwrap();
+        w.write_slot(0, b"a-fairly-long-payload-to-truncate")
+            .unwrap();
         w.sync().unwrap();
 
         // Truncate the dat file below arena_bytes.
         let path = sub.path().join(spec.dat_filename());
-        let f = std::fs::OpenOptions::new()
-            .write(true)
-            .open(&path)
-            .unwrap();
+        let f = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
         f.set_len(5).unwrap();
         drop(f);
 

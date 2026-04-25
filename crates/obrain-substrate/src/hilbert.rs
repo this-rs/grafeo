@@ -153,10 +153,12 @@ pub fn compute_hilbert_permutation(
                 order,
                 max_degree,
             );
-            let tomb = if tombstoned[old as usize] { 1u128 } else { 0u128 };
-            let key = (tomb << 64)
-                | ((communities[old as usize] as u128) << 32)
-                | (hkey as u128);
+            let tomb = if tombstoned[old as usize] {
+                1u128
+            } else {
+                0u128
+            };
+            let key = (tomb << 64) | ((communities[old as usize] as u128) << 32) | (hkey as u128);
             (key, old)
         })
         .collect();
@@ -261,9 +263,7 @@ pub fn compute_hilbert_permutation_page_aligned(
         }
     }
     // Stable sort: (community_id, hilbert_key, old_slot).
-    live_entries.sort_by(|a, b| {
-        a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2))
-    });
+    live_entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
 
     let mut old_to_new = vec![u32::MAX; n];
     let mut taken = vec![false; n];
@@ -279,7 +279,10 @@ pub fn compute_hilbert_permutation_page_aligned(
         let community_changed = prev_cid.map_or(true, |p: u32| p != *cid);
         if community_changed && counter % ppg != 0 {
             // Needed padding to reach next page boundary.
-            let pad_end = counter.checked_add(ppg - 1).map(|v| (v / ppg) * ppg).unwrap_or(counter);
+            let pad_end = counter
+                .checked_add(ppg - 1)
+                .map(|v| (v / ppg) * ppg)
+                .unwrap_or(counter);
             let pad_count = (pad_end - counter) as usize;
             // Only pad if we have enough tombstones to fill the holes. Otherwise
             // fall back to contiguous placement (still correct, just unaligned).
@@ -318,9 +321,7 @@ pub fn compute_hilbert_permutation_page_aligned(
     // runs if the padding path truncated live placement (degenerate case) or
     // if tombs ran out before holes were fully filled. Guaranteed to produce
     // a valid bijection because |unassigned_olds| == |unfilled_news| always.
-    let unfilled: Vec<u32> = (0..n as u32)
-        .filter(|ns| !taken[*ns as usize])
-        .collect();
+    let unfilled: Vec<u32> = (0..n as u32).filter(|ns| !taken[*ns as usize]).collect();
     let unassigned: Vec<u32> = (0..n as u32)
         .filter(|os| old_to_new[*os as usize] == u32::MAX)
         .collect();
@@ -481,8 +482,12 @@ mod tests {
         // dummy community for it and verify contiguity only over slots
         // [1, n).
         let n = 13;
-        let communities = vec![9u32, /* slot 0 = sentinel */ 2, 0, 2, 1, 0, 1, 2, 0, 1, 0, 2, 1];
-        let centrality = vec![0u16, 1000, 2000, 3000, 500, 1500, 800, 2500, 100, 9000, 1200, 4000, 6000];
+        let communities = vec![
+            9u32, /* slot 0 = sentinel */ 2, 0, 2, 1, 0, 1, 2, 0, 1, 0, 2, 1,
+        ];
+        let centrality = vec![
+            0u16, 1000, 2000, 3000, 500, 1500, 800, 2500, 100, 9000, 1200, 4000, 6000,
+        ];
         let degrees = vec![0u32, 5, 10, 3, 8, 2, 15, 4, 1, 7, 12, 6, 9];
         let tombstoned = vec![false; n];
         let perm = compute_hilbert_permutation(
@@ -521,14 +526,8 @@ mod tests {
         let centrality = vec![100u16; n];
         let degrees = vec![1u32; n];
         let tombstoned = vec![false, true, false, true, false, false];
-        let perm = compute_hilbert_permutation(
-            &communities,
-            &centrality,
-            &degrees,
-            &tombstoned,
-            3,
-            16,
-        );
+        let perm =
+            compute_hilbert_permutation(&communities, &centrality, &degrees, &tombstoned, 3, 16);
         // Live slots (0, 2, 4, 5) must land in [0..4), tombstones (1, 3) in [4..6).
         for old in 0..n {
             let new = perm[old] as usize;
@@ -547,14 +546,8 @@ mod tests {
         let centrality: Vec<u16> = (0..n).map(|i| ((i * 983) % 65535) as u16).collect();
         let degrees: Vec<u32> = (0..n).map(|i| ((i * 31) % 50) as u32).collect();
         let tombstoned = vec![false; n];
-        let perm = compute_hilbert_permutation(
-            &communities,
-            &centrality,
-            &degrees,
-            &tombstoned,
-            5,
-            64,
-        );
+        let perm =
+            compute_hilbert_permutation(&communities, &centrality, &degrees, &tombstoned, 5, 64);
         let mut seen = vec![false; n];
         for &new in &perm {
             assert!(!seen[new as usize], "permutation collision at {new}");
@@ -572,14 +565,8 @@ mod tests {
         let centrality = vec![32_000u16; n];
         let degrees = vec![5u32; n];
         let tombstoned = vec![false; n];
-        let perm = compute_hilbert_permutation(
-            &communities,
-            &centrality,
-            &degrees,
-            &tombstoned,
-            4,
-            32,
-        );
+        let perm =
+            compute_hilbert_permutation(&communities, &centrality, &degrees, &tombstoned, 4, 32);
         for i in 0..n {
             assert_eq!(perm[i], i as u32, "tie-break at slot {i}: got {}", perm[i]);
         }

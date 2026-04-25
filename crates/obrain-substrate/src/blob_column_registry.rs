@@ -193,8 +193,7 @@ impl BlobColumnRegistry {
             };
             let key = PropertyKey::new(name.as_str());
             let writer = BlobColumnWriter::create(sub, *spec)?;
-            self.writers
-                .insert(*spec, Arc::new(Mutex::new(writer)));
+            self.writers.insert(*spec, Arc::new(Mutex::new(writer)));
             self.by_key.insert((key, spec.entity_kind), *spec);
         }
         Ok(())
@@ -261,12 +260,7 @@ impl BlobColumnRegistry {
     /// cannot escape the Mutex guard. Callers that want a fully
     /// reconstructed [`Value`] should use [`Self::read_value`] instead,
     /// which strips the tag.
-    pub(crate) fn read(
-        &self,
-        key: &PropertyKey,
-        ek: EntityKind,
-        slot: u32,
-    ) -> Option<Arc<[u8]>> {
+    pub(crate) fn read(&self, key: &PropertyKey, ek: EntityKind, slot: u32) -> Option<Arc<[u8]>> {
         let spec = self.spec_for(key, ek)?;
         let writer = self.writers.get(&spec)?.clone();
         let guard = writer.lock();
@@ -279,12 +273,7 @@ impl BlobColumnRegistry {
     /// the slot is absent, the tag is unknown, or a `String` payload is
     /// not valid UTF-8 (treated as "absent" rather than a hard error —
     /// same degradation policy as [`Self::read`]).
-    pub(crate) fn read_value(
-        &self,
-        key: &PropertyKey,
-        ek: EntityKind,
-        slot: u32,
-    ) -> Option<Value> {
+    pub(crate) fn read_value(&self, key: &PropertyKey, ek: EntityKind, slot: u32) -> Option<Value> {
         let raw = self.read(key, ek, slot)?;
         decode_blob_payload(&raw)
     }
@@ -323,8 +312,7 @@ impl BlobColumnRegistry {
     /// `SubstrateStore::build_dict_snapshot` to populate the v4
     /// `blob_columns` list.
     pub(crate) fn specs_snapshot(&self) -> Vec<BlobColSpec> {
-        let mut out: Vec<BlobColSpec> =
-            self.writers.iter().map(|e| *e.key()).collect();
+        let mut out: Vec<BlobColSpec> = self.writers.iter().map(|e| *e.key()).collect();
         // Deterministic order: (entity_kind, prop_key_id) matches the
         // vec-column snapshot convention for easier diffing.
         out.sort_by_key(|s| (s.entity_kind as u8, s.prop_key_id));
@@ -387,14 +375,18 @@ mod tests {
         let long_title = format!("Incendie du bar Le Constellation {}", "x".repeat(300));
         let long_fp = format!("[{}]", "0.86,0.81,0.79,".repeat(30));
         let s = encode_blob_payload(&Value::from(long_path.as_str())).unwrap();
-        reg.write(&sub, &pk("path"), EntityKind::Node, 0, 7, &s).unwrap();
+        reg.write(&sub, &pk("path"), EntityKind::Node, 0, 7, &s)
+            .unwrap();
         let s2 = encode_blob_payload(&Value::from(long_title.as_str())).unwrap();
-        reg.write(&sub, &pk("title"), EntityKind::Node, 1, 7, &s2).unwrap();
+        reg.write(&sub, &pk("title"), EntityKind::Node, 1, 7, &s2)
+            .unwrap();
         let s3 = encode_blob_payload(&Value::from(long_fp.as_str())).unwrap();
-        reg.write(&sub, &pk("cc_fingerprint"), EntityKind::Node, 2, 7, &s3).unwrap();
+        reg.write(&sub, &pk("cc_fingerprint"), EntityKind::Node, 2, 7, &s3)
+            .unwrap();
         let long_edge = format!("CALLS {}", "x".repeat(300));
         let s4 = encode_blob_payload(&Value::from(long_edge.as_str())).unwrap();
-        reg.write(&sub, &pk("edge_label"), EntityKind::Edge, 3, 7, &s4).unwrap();
+        reg.write(&sub, &pk("edge_label"), EntityKind::Edge, 3, 7, &s4)
+            .unwrap();
 
         let props = reg.iter_props_for_entity(EntityKind::Node, 7);
         assert_eq!(props.len(), 3, "expected 3 Node blob props, got {props:?}");
@@ -421,11 +413,16 @@ mod tests {
         let big2 = format!("path-9 {}", "x".repeat(300));
         let s1 = encode_blob_payload(&Value::from(big1.as_str())).unwrap();
         let s2 = encode_blob_payload(&Value::from(big2.as_str())).unwrap();
-        reg.write(&sub, &pk("title"), EntityKind::Node, 0, 5, &s1).unwrap();
-        reg.write(&sub, &pk("path"),  EntityKind::Node, 1, 9, &s2).unwrap();
+        reg.write(&sub, &pk("title"), EntityKind::Node, 0, 5, &s1)
+            .unwrap();
+        reg.write(&sub, &pk("path"), EntityKind::Node, 1, 9, &s2)
+            .unwrap();
         // Slot 7 has neither (blob uses len=0 sentinel for absent).
         let props_7 = reg.iter_props_for_entity(EntityKind::Node, 7);
-        assert!(props_7.is_empty(), "slot 7 should be empty, got {props_7:?}");
+        assert!(
+            props_7.is_empty(),
+            "slot 7 should be empty, got {props_7:?}"
+        );
         let props_5 = reg.iter_props_for_entity(EntityKind::Node, 5);
         assert_eq!(props_5.len(), 1);
         assert_eq!(props_5[0].0.as_str(), "title");
@@ -459,12 +456,8 @@ mod tests {
         reg.write(&sub, &pk("data"), EntityKind::Edge, 0, 0, &edge_payload)
             .unwrap();
 
-        let got_node = reg
-            .read(&pk("data"), EntityKind::Node, 0)
-            .unwrap();
-        let got_edge = reg
-            .read(&pk("data"), EntityKind::Edge, 0)
-            .unwrap();
+        let got_node = reg.read(&pk("data"), EntityKind::Node, 0).unwrap();
+        let got_edge = reg.read(&pk("data"), EntityKind::Edge, 0).unwrap();
         assert_eq!(got_node.as_ref(), &node_payload[..]);
         assert_eq!(got_edge.as_ref(), &edge_payload[..]);
     }
@@ -494,8 +487,14 @@ mod tests {
         reg.write(&sub, &pk("data"), EntityKind::Node, 0, 1, &long)
             .unwrap();
 
-        assert_eq!(reg.read(&pk("data"), EntityKind::Node, 0).unwrap().as_ref(), &short[..]);
-        assert_eq!(reg.read(&pk("data"), EntityKind::Node, 1).unwrap().as_ref(), &long[..]);
+        assert_eq!(
+            reg.read(&pk("data"), EntityKind::Node, 0).unwrap().as_ref(),
+            &short[..]
+        );
+        assert_eq!(
+            reg.read(&pk("data"), EntityKind::Node, 1).unwrap().as_ref(),
+            &long[..]
+        );
         // Only one spec registered for the key.
         assert_eq!(reg.specs_snapshot().len(), 1);
     }
@@ -528,9 +527,12 @@ mod tests {
         let reg = BlobColumnRegistry::new();
         let payload = b"some bytes to store".to_vec();
         // Insert in a scrambled order: edge key 2, node key 0, node key 1.
-        reg.write(&sub, &pk("b"), EntityKind::Edge, 2, 0, &payload).unwrap();
-        reg.write(&sub, &pk("a"), EntityKind::Node, 0, 0, &payload).unwrap();
-        reg.write(&sub, &pk("c"), EntityKind::Node, 1, 0, &payload).unwrap();
+        reg.write(&sub, &pk("b"), EntityKind::Edge, 2, 0, &payload)
+            .unwrap();
+        reg.write(&sub, &pk("a"), EntityKind::Node, 0, 0, &payload)
+            .unwrap();
+        reg.write(&sub, &pk("c"), EntityKind::Node, 1, 0, &payload)
+            .unwrap();
 
         let specs = reg.specs_snapshot();
         assert_eq!(specs.len(), 3);
@@ -714,7 +716,10 @@ mod tests {
         let payload_b = encode_blob_payload(&big_b).unwrap();
         reg.write(&sub, &pk("greeting"), EntityKind::Node, 3, 8, &payload_b)
             .unwrap();
-        match reg.read_value(&pk("greeting"), EntityKind::Node, 8).unwrap() {
+        match reg
+            .read_value(&pk("greeting"), EntityKind::Node, 8)
+            .unwrap()
+        {
             Value::Bytes(b) => assert_eq!(b.as_ref(), raw.as_slice()),
             other => panic!("expected Bytes, got {other:?}"),
         }

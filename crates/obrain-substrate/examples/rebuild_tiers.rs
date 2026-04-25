@@ -35,9 +35,7 @@ fn main() -> Result<(), BoxErr> {
     let mut args = std::env::args().skip(1);
     let path: PathBuf = args
         .next()
-        .ok_or_else(|| -> BoxErr {
-            "usage: rebuild_tiers <substrate-dir> [--dry-run]".into()
-        })?
+        .ok_or_else(|| -> BoxErr { "usage: rebuild_tiers <substrate-dir> [--dry-run]".into() })?
         .into();
     let dry_run = args.next().map(|s| s == "--dry-run").unwrap_or(false);
 
