@@ -40,6 +40,13 @@ pub struct SynapseConfig {
     /// Maximum total outgoing weight from a single node.
     /// When exceeded, all outgoing weights are normalized proportionally (competitive Hebbian).
     pub max_total_outgoing_weight: f64,
+    /// Plan 69e59065 T3 — `SynapseConsolidator` background tick cadence.
+    /// Default 30s. The task drains `pending_metadata_writes` on each
+    /// tick; a missed tick at most loses 30s of metadata on `kill -9`,
+    /// which is within the plan's crash-safety constraint (aa932b40).
+    /// Set to a small Duration (e.g. 50ms) in tests so assertions on
+    /// the post-flush queue length resolve quickly.
+    pub consolidator_interval: Duration,
 }
 
 impl Default for SynapseConfig {
@@ -51,6 +58,7 @@ impl Default for SynapseConfig {
             min_weight: 0.01,
             max_synapse_weight: 10.0,
             max_total_outgoing_weight: 100.0,
+            consolidator_interval: Duration::from_secs(30),
         }
     }
 }
@@ -253,6 +261,65 @@ struct MetadataDelta {
     eid: EdgeId,
     last_reinforced_epoch: f64,
     reinforcement_count: u32,
+}
+
+/// Plan 69e59065 T3 step 2 — handle for the SynapseConsolidator
+/// background task. Returned by [`SynapseStore::spawn_consolidator`].
+///
+/// Two shutdown paths:
+/// - `handle.shutdown().await` — graceful: signals the task, awaits
+///   its final drain, returns. Use from async hub shutdown handlers
+///   for SIGTERM-safe persistence (T3 step 3).
+/// - `drop(handle)` — best effort: signals the task and abandons it.
+///   The task will drain on its current tick or on the shutdown
+///   signal (whichever fires first). Use when no async context is
+///   available (e.g. test teardown, panic unwind).
+///
+/// Cloning is intentionally not implemented; only one owner controls
+/// shutdown. If the user needs multiple owners (rare), wrap in
+/// `Arc<Mutex<Option<ConsolidatorHandle>>>`.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct ConsolidatorHandle {
+    join: Option<tokio::task::JoinHandle<()>>,
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl ConsolidatorHandle {
+    /// Signal the consolidator to drain and exit, then await its
+    /// completion. Returns once the task is fully joined — at which
+    /// point the queue is guaranteed empty (modulo any reinforces
+    /// that race after the shutdown signal, which the next call to
+    /// `flush_pending_metadata` would catch).
+    pub async fn shutdown(mut self) {
+        if let Some(tx) = self.shutdown.take() {
+            let _ = tx.send(());
+        }
+        if let Some(join) = self.join.take()
+            && let Err(e) = join.await
+        {
+            tracing::warn!(
+                target: "synapse_consolidator",
+                error = %e,
+                "consolidator task join error during shutdown"
+            );
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for ConsolidatorHandle {
+    fn drop(&mut self) {
+        // Best-effort signal — the task may or may not see it before
+        // the runtime is dropped, but a final drain on tick still
+        // catches anything queued before the signal.
+        if let Some(tx) = self.shutdown.take() {
+            let _ = tx.send(());
+        }
+        // We intentionally do NOT abort() the JoinHandle here — letting
+        // the task complete its final drain is the whole point.
+        // Callers who want immediate shutdown should use `shutdown().await`.
+    }
 }
 
 pub struct SynapseStore {
@@ -676,6 +743,71 @@ impl SynapseStore {
     /// pending in the consolidator queue. Used by metrics and tests.
     pub fn pending_metadata_writes_count(&self) -> usize {
         self.pending_metadata_writes.len()
+    }
+
+    /// Plan 69e59065 T3 step 2 — spawn the SynapseConsolidator
+    /// background task. Returns a [`ConsolidatorHandle`] that, when
+    /// dropped, signals the task to perform a final drain and exit.
+    ///
+    /// The task ticks on `config.consolidator_interval` (default 30s)
+    /// and calls [`Self::flush_pending_metadata`] on each tick. There
+    /// is no threshold-based eager flush in this iteration — the timer
+    /// alone is the primary mechanism, and the queue is unbounded so
+    /// growth between ticks is bounded only by reinforce throughput
+    /// (~3M ops/s × 30s = 90M entries × 24 B = ~2.1 GB worst case,
+    /// vastly less in practice because production workloads do not
+    /// sustain peak reinforce throughput).
+    ///
+    /// MUST be called from within a tokio runtime context. Pattern:
+    /// ```ignore
+    /// let store: Arc<SynapseStore> = ...;
+    /// let consolidator = Arc::clone(&store).spawn_consolidator();
+    /// // ... at shutdown:
+    /// consolidator.shutdown().await;
+    /// ```
+    ///
+    /// Native targets only — wasm32 has no `tokio::time::interval`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn spawn_consolidator(self: Arc<Self>) -> ConsolidatorHandle {
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let store = Arc::clone(&self);
+        let interval = store.config.consolidator_interval;
+        let join = tokio::spawn(async move {
+            let mut tick = tokio::time::interval(interval);
+            // First tick fires immediately — skip it so we don't drain
+            // an empty queue before any reinforce had a chance to run.
+            tick.tick().await;
+            loop {
+                tokio::select! {
+                    _ = tick.tick() => {
+                        let n = store.flush_pending_metadata();
+                        if n > 0 {
+                            tracing::trace!(
+                                target: "synapse_consolidator",
+                                drained = n,
+                                "consolidator tick drained metadata writes"
+                            );
+                        }
+                    }
+                    _ = &mut shutdown_rx => {
+                        // Final drain on shutdown signal — guarantees
+                        // SIGTERM handlers see an empty queue once the
+                        // consolidator is awaited.
+                        let n = store.flush_pending_metadata();
+                        tracing::debug!(
+                            target: "synapse_consolidator",
+                            final_drain = n,
+                            "consolidator shutdown drain complete"
+                        );
+                        break;
+                    }
+                }
+            }
+        });
+        ConsolidatorHandle {
+            join: Some(join),
+            shutdown: Some(shutdown_tx),
+        }
     }
 
     /// Apply a multiplicative decay to every live synapse weight column

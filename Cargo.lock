@@ -2358,6 +2358,7 @@ dependencies = [
  "bincode",
  "bytemuck",
  "criterion",
+ "crossbeam",
  "dashmap",
  "obrain-adapters",
  "obrain-common",

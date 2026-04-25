@@ -110,14 +110,18 @@ impl SynapseConfigToml {
     /// Converts to the runtime `SynapseConfig` used by the synapse subsystem.
     #[cfg(feature = "synapse")]
     pub fn to_runtime(&self) -> crate::synapse::SynapseConfig {
-        crate::synapse::SynapseConfig {
-            initial_weight: self.initial_weight,
-            reinforce_amount: self.reinforce_amount,
-            default_half_life: Duration::from_secs(self.half_life_secs),
-            min_weight: self.min_weight,
-            max_synapse_weight: self.max_synapse_weight,
-            max_total_outgoing_weight: self.max_total_outgoing_weight,
-        }
+        // Plan 69e59065 T3 — `consolidator_interval` is intentionally
+        // not exposed in TOML (it's a runtime tuning knob, not a user
+        // config). Take the default; the hub may override at construction
+        // time if a different cadence is needed for that environment.
+        let mut cfg = crate::synapse::SynapseConfig::default();
+        cfg.initial_weight = self.initial_weight;
+        cfg.reinforce_amount = self.reinforce_amount;
+        cfg.default_half_life = Duration::from_secs(self.half_life_secs);
+        cfg.min_weight = self.min_weight;
+        cfg.max_synapse_weight = self.max_synapse_weight;
+        cfg.max_total_outgoing_weight = self.max_total_outgoing_weight;
+        cfg
     }
 }
 
