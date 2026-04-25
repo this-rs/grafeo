@@ -36,6 +36,8 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use crossbeam::channel::{self, RecvTimeoutError};
+
 use obrain_substrate::SubstrateStore;
 use parking_lot::{Condvar, Mutex};
 
@@ -101,6 +103,21 @@ pub struct ThinkerRuntimeStats {
 pub struct ThinkerHandle {
     pub kind: ThinkerKind,
     join: Option<JoinHandle<()>>,
+    /// Plan bb94e44b U2 — completion channel paired with the thread.
+    /// The spawned thread sends `()` immediately before exiting, so
+    /// `shutdown` can `recv_timeout` and enforce its deadline. This
+    /// replaces the prior `jh.join()` pattern which blocked forever
+    /// when a Thinker was inside a long tick (e.g. HilbertEnricher
+    /// iterating 8M nodes), causing the post-clean-shutdown hang
+    /// observed 2026-04-25.
+    ///
+    /// `None` is impossible after `spawn` returns; the field is
+    /// `Option` only because shutdown takes the receiver out before
+    /// detaching the JoinHandle. `crossbeam::channel::Receiver` is
+    /// used (instead of `std::sync::mpsc::Receiver`) because the
+    /// latter is `!Sync`, which breaks `ThinkerHandle` being shared
+    /// across threads via `KnowledgeStoreManager`'s `Arc<RwLock<...>>`.
+    completion: Option<channel::Receiver<()>>,
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     cv: Arc<(Mutex<()>, Condvar)>,
@@ -213,6 +230,17 @@ impl ThinkerRuntime {
         let paused_count_c = paused_ticks.clone();
         let thinker = Arc::new(thinker);
 
+        // Plan bb94e44b U2 — completion channel for timed shutdown.
+        // The thread sends `()` after `run_thinker_loop` returns so
+        // `shutdown` can `recv_timeout` instead of blocking on
+        // `jh.join()` forever. If the thread panics, the sender is
+        // dropped and `recv_timeout` returns
+        // `RecvTimeoutError::Disconnected` — also handled in
+        // `shutdown`. `crossbeam::channel` is Sync (unlike
+        // `std::sync::mpsc::Receiver`), required because
+        // `ThinkerHandle` is shared across threads.
+        let (completion_tx, completion_rx) = channel::bounded::<()>(1);
+
         let name = format!("thinker-{}", kind.as_str());
         let join = thread::Builder::new()
             .name(name)
@@ -221,12 +249,17 @@ impl ThinkerRuntime {
                     thinker, store, sensor, pause_flag, stop_c, paused_c, cv_c,
                     interval, ticks_c, errors_c, over_c, paused_count_c, budget.max_tick_duration,
                 );
+                // Best-effort signal — the receiver might already be
+                // dropped (shutdown timed out and detached us); that's
+                // fine, the thread can exit silently.
+                let _ = completion_tx.send(());
             })
             .expect("thinker thread spawn");
 
         self.handles.push(ThinkerHandle {
             kind,
             join: Some(join),
+            completion: Some(completion_rx),
             stop,
             paused: paused_individual,
             cv,
@@ -264,35 +297,107 @@ impl ThinkerRuntime {
         &self.handles
     }
 
-    /// Cooperatively stop every Thinker and join with timeout.
+    /// Cooperatively stop every Thinker and join with **enforced**
+    /// timeout.
+    ///
+    /// ## Plan bb94e44b U2 — fix for `jh.join()` ignoring the deadline
+    ///
+    /// Pre-fix: this method used `jh.join()` which is **blocking
+    /// without timeout** in stable Rust. The deadline was checked
+    /// once before `jh.join()` was called, but once entered, `join`
+    /// would wait forever for the thread to exit naturally. With a
+    /// Thinker like `HilbertEnricher` running a single tick that
+    /// could take many minutes on megalaw 8M nodes (and explicitly
+    /// not cancellable mid-tick), shutdown blocked the whole runtime
+    /// drop indefinitely.
+    ///
+    /// Cascade impact: `Drop for CachedStore` in `obrain-hub` calls
+    /// `rt.shutdown()` per KB ; with 3 KBs each in a long tick, hub
+    /// SIGINT could hang for tens of minutes after "clean shutdown"
+    /// was logged (observed 2026-04-25 on PID 38955).
+    ///
+    /// Post-fix: each Thinker thread sends `()` on a `mpsc::channel`
+    /// when `run_thinker_loop` returns (see `spawn`). Shutdown waits
+    /// via `recv_timeout(remaining)` which **does** enforce the
+    /// deadline. On timeout, the JoinHandle is detached (the OS thread
+    /// keeps running until it eventually checks the stop flag, but
+    /// the runtime drop is no longer blocked).
     pub fn shutdown(mut self) {
         let timeout = self.config.shutdown_timeout;
-        // Phase 1: signal stop to everyone.
+        // Phase 1: signal stop to everyone + wake from any condvar wait.
         for h in &self.handles {
             h.stop.store(true, Ordering::Release);
             let (_, cv) = &*h.cv;
             cv.notify_all();
         }
-        // Phase 2: join with a shared deadline.
+        // Phase 2: bounded wait via the per-thread completion channel.
         let deadline = Instant::now() + timeout;
         for h in self.handles.iter_mut() {
-            let Some(jh) = h.join.take() else {
+            let Some(rx) = h.completion.take() else {
+                // Already shutdown? Defensive — should not happen since
+                // shutdown consumes self.
                 continue;
             };
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
-                // Deadline exceeded — detach and warn.
-                tracing::warn!(thinker = h.kind.as_str(), "shutdown deadline exceeded — thread detached");
-                std::mem::drop(jh);
+                // Deadline exceeded BEFORE this thread's turn. Detach
+                // both the join handle and receiver — thread keeps
+                // running until next stop check, but runtime drop
+                // returns now.
+                tracing::warn!(
+                    thinker = h.kind.as_str(),
+                    "shutdown deadline exceeded — thread detached (no wait)"
+                );
+                if let Some(jh) = h.join.take() {
+                    std::mem::drop(jh);
+                }
+                std::mem::drop(rx);
                 continue;
             }
-            // `JoinHandle` has no timed join in stable Rust; we rely on
-            // the fact that every Thinker is a sleep/tick loop that
-            // checks the stop flag at every wakeup. In practice the
-            // threads exit within milliseconds of the notify_all above.
-            match jh.join() {
-                Ok(()) => tracing::debug!(thinker = h.kind.as_str(), "thinker joined cleanly"),
-                Err(e) => tracing::warn!(thinker = h.kind.as_str(), ?e, "thinker panicked on shutdown"),
+            // Bounded wait — `recv_timeout` enforces `remaining` and
+            // returns Err(Timeout) if the thread hasn't exited yet.
+            match rx.recv_timeout(remaining) {
+                Ok(()) => {
+                    // Thread sent its completion signal — its
+                    // `run_thinker_loop` returned. Joining now is a
+                    // local sync, completes immediately.
+                    if let Some(jh) = h.join.take() {
+                        match jh.join() {
+                            Ok(()) => tracing::debug!(
+                                thinker = h.kind.as_str(),
+                                "thinker joined cleanly"
+                            ),
+                            Err(e) => tracing::warn!(
+                                thinker = h.kind.as_str(),
+                                ?e,
+                                "thinker panicked on shutdown"
+                            ),
+                        }
+                    }
+                }
+                Err(RecvTimeoutError::Timeout) => {
+                    // Thread is still in a long tick — detach.
+                    tracing::warn!(
+                        thinker = h.kind.as_str(),
+                        timeout_ms = timeout.as_millis() as u64,
+                        "shutdown timeout exceeded — thread detached (will exit on next stop check)"
+                    );
+                    if let Some(jh) = h.join.take() {
+                        std::mem::drop(jh);
+                    }
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    // Sender dropped without sending — thread panicked
+                    // before reaching the send site. Reap the join
+                    // handle to surface the panic.
+                    tracing::warn!(
+                        thinker = h.kind.as_str(),
+                        "thinker disconnected without completion signal — likely panicked"
+                    );
+                    if let Some(jh) = h.join.take() {
+                        let _ = jh.join();
+                    }
+                }
             }
         }
     }
@@ -444,6 +549,83 @@ mod tests {
         rt.shutdown();
         let ticks = counter.load(Ordering::Relaxed);
         assert!(ticks >= 1, "expected ≥ 1 tick, got {ticks}");
+    }
+
+    /// Plan bb94e44b U2 — regression guard for the `jh.join()`
+    /// blocking-without-timeout bug. A Thinker that ignores its `stop`
+    /// flag and stays inside `tick` for several seconds must NOT block
+    /// `shutdown` past its declared timeout. Pre-fix this test would
+    /// hang for 5+ seconds; post-fix it returns within
+    /// `shutdown_timeout + 200ms slack`.
+    #[test]
+    fn shutdown_enforces_timeout_when_thinker_is_busy() {
+        struct LongTickThinker {
+            tick_started: Arc<AtomicBool>,
+        }
+        impl Thinker for LongTickThinker {
+            fn kind(&self) -> ThinkerKind {
+                ThinkerKind::Dreamer
+            }
+            fn budget(&self) -> ThinkerBudget {
+                ThinkerBudget::minimal()
+            }
+            fn interval(&self) -> Duration {
+                Duration::from_millis(50)
+            }
+            fn tick(
+                &self,
+                _store: &Arc<SubstrateStore>,
+            ) -> Result<ThinkerTickReport, ThinkerTickError> {
+                self.tick_started.store(true, Ordering::Release);
+                // Simulate a long-running tick (e.g. HilbertEnricher
+                // iterating millions of nodes). This deliberately
+                // does NOT poll `stop` mid-tick — that's the whole
+                // point: the Thinker contract allows long uninterruptible
+                // ticks, and `shutdown` must still respect its timeout.
+                std::thread::sleep(Duration::from_secs(5));
+                Ok(ThinkerTickReport::start().finish())
+            }
+        }
+
+        let td = TempDir::new().unwrap();
+        let store =
+            Arc::new(SubstrateStore::create(td.path().join("rt-busy")).unwrap());
+        let mut cfg = ThinkerRuntimeConfig::default();
+        cfg.min_tick_interval = Duration::from_millis(50);
+        cfg.shutdown_timeout = Duration::from_millis(300);
+        let mut rt = ThinkerRuntime::new(
+            store,
+            cfg,
+            Arc::new(NeverOverloadedSensor::default()),
+        );
+        let tick_started = Arc::new(AtomicBool::new(false));
+        rt.spawn(LongTickThinker {
+            tick_started: tick_started.clone(),
+        });
+        // Wait until the tick is in progress so `shutdown` is forced
+        // to time out (otherwise it might catch the thread between
+        // ticks).
+        let wait_deadline = Instant::now() + Duration::from_secs(2);
+        while !tick_started.load(Ordering::Acquire) && Instant::now() < wait_deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            tick_started.load(Ordering::Acquire),
+            "tick should have started within 2s"
+        );
+
+        // Now shutdown — must return within shutdown_timeout (300ms)
+        // + slack (~200ms for thread housekeeping). Pre-fix this took
+        // 5s because `jh.join()` waited for the long tick to complete.
+        let t = Instant::now();
+        rt.shutdown();
+        let elapsed = t.elapsed();
+        assert!(
+            elapsed <= Duration::from_millis(800),
+            "shutdown took {:?}, expected ≤ 800ms (timeout 300ms + 500ms slack). \
+             Pre-bb94e44b U2 fix this would hang ~5s. The bug is back.",
+            elapsed
+        );
     }
 
     #[test]
