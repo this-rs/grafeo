@@ -322,6 +322,88 @@ impl Drop for ConsolidatorHandle {
     }
 }
 
+/// Plan 69e59065 T3 step 3 — owned-runtime variant of
+/// [`ConsolidatorHandle`] for callers that don't have a tokio runtime
+/// in scope (e.g. `obrain-hub::CognitiveBrain::open`, which is
+/// synchronous and does not run inside a tokio context).
+///
+/// Mirrors the pattern used by `obrain_substrate::ThinkerRuntime` /
+/// `spawn_standard_fleet`: encapsulates a dedicated single-thread
+/// tokio runtime that hosts the consolidator task. The runtime is
+/// joined when this struct is dropped, and the inner consolidator
+/// `shutdown_blocking()` performs a final SIGTERM-safe drain before
+/// the runtime exits.
+///
+/// Thread cost: 1 OS thread permanently dedicated to this consolidator.
+/// CPU cost: a single `tokio::time::interval` tick every 30 s — well
+/// under 0.01% CPU on a typical workload.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct ConsolidatorRuntime {
+    runtime: Option<tokio::runtime::Runtime>,
+    handle: Option<ConsolidatorHandle>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl ConsolidatorRuntime {
+    /// Spawn a dedicated single-thread runtime and start the consolidator
+    /// on it. Returns immediately — the consolidator's first drain runs
+    /// on the runtime's worker thread on its first tick.
+    ///
+    /// The thread is named `"synapse-consolidator"` for ease of
+    /// observation in `top` / process listings.
+    ///
+    /// Panics if the runtime cannot be built (extremely rare; usually
+    /// only on misconfigured systems where threads cannot be spawned).
+    pub fn spawn(store: Arc<SynapseStore>) -> Self {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_time()
+            .thread_name("synapse-consolidator")
+            .build()
+            .expect("build synapse-consolidator runtime");
+        let handle = runtime.block_on(async { store.spawn_consolidator() });
+        Self {
+            runtime: Some(runtime),
+            handle: Some(handle),
+        }
+    }
+
+    /// SIGTERM-safe shutdown — performs the final drain, joins the
+    /// consolidator task, then shuts down the runtime. Blocks the
+    /// current thread for the duration. Use this from synchronous
+    /// shutdown handlers (`std::process::exit` paths,
+    /// `signal-hook::iterator::Signals`, etc.).
+    pub fn shutdown_blocking(mut self) {
+        // Move the handle out and trigger the graceful shutdown — this
+        // consumes `self.handle.take()` and runs `shutdown().await`
+        // inside the consolidator runtime so the final drain executes
+        // on the same thread that has been running it all along.
+        if let (Some(rt), Some(handle)) = (self.runtime.as_ref(), self.handle.take()) {
+            rt.block_on(async move { handle.shutdown().await });
+        }
+        // Drop the runtime — block briefly until all tasks finish.
+        if let Some(rt) = self.runtime.take() {
+            rt.shutdown_timeout(std::time::Duration::from_secs(5));
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for ConsolidatorRuntime {
+    fn drop(&mut self) {
+        // Best-effort drop: signal shutdown, give the runtime up to
+        // 1s to drain, then abort. This path runs when the caller
+        // didn't go through `shutdown_blocking()` (typically Drop on
+        // the user brain in tests or panics).
+        if let (Some(rt), Some(handle)) = (self.runtime.as_ref(), self.handle.take()) {
+            rt.block_on(async move { handle.shutdown().await });
+        }
+        if let Some(rt) = self.runtime.take() {
+            rt.shutdown_timeout(std::time::Duration::from_secs(1));
+        }
+    }
+}
+
 pub struct SynapseStore {
     /// Synapses indexed by canonical (source, target) key.
     synapses: DashMap<SynapseKey, Synapse>,

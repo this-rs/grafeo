@@ -122,12 +122,65 @@ async fn consolidator_shutdown_drains_queue_on_signal() {
     );
 }
 
-/// T3 step 3 — the Drop path is best-effort: signals the task but
-/// doesn't await. A subsequent `flush_pending_metadata()` call must
-/// still see whatever was queued (possibly empty if the task ticked
-/// in between, possibly populated if the task hasn't run yet).
-/// Either way, no panics, no hangs, no lost writes after a final
-/// manual flush.
+/// T3 step 3 — `ConsolidatorRuntime::shutdown_blocking()` is the
+/// SIGTERM-safe entry point usable from synchronous code (the hub's
+/// `CognitiveBrain::open` is sync, so it cannot await). The runtime
+/// owns its own tokio scheduler on a dedicated worker thread,
+/// independent of the caller's runtime.
+#[test]
+fn consolidator_runtime_owned_drains_on_shutdown() {
+    let (store, _td) = fresh_store(Duration::from_secs(60));
+
+    // Spawn the consolidator on its own owned runtime — works from
+    // sync context (no tokio runtime around this test).
+    let consolidator =
+        obrain_cognitive::synapse::ConsolidatorRuntime::spawn(Arc::clone(&store));
+
+    // Push 150 reinforces.
+    for i in 1..=150u64 {
+        store.reinforce(NodeId(i), NodeId(i + 1), 0.05);
+    }
+    assert_eq!(store.pending_metadata_writes_count(), 150);
+
+    // Synchronous shutdown — drains the queue, joins the runtime.
+    consolidator.shutdown_blocking();
+
+    assert_eq!(
+        store.pending_metadata_writes_count(),
+        0,
+        "ConsolidatorRuntime::shutdown_blocking must persist every queued delta"
+    );
+}
+
+/// T3 step 3 — `Drop` on `ConsolidatorRuntime` is best-effort: it
+/// triggers a synchronous shutdown with a 1s timeout. Verifies no
+/// panic, no hang, and the final drain runs.
+#[test]
+fn consolidator_runtime_drop_is_safe() {
+    let (store, _td) = fresh_store(Duration::from_secs(60));
+
+    {
+        let _consolidator =
+            obrain_cognitive::synapse::ConsolidatorRuntime::spawn(Arc::clone(&store));
+        for i in 1..=75u64 {
+            store.reinforce(NodeId(i), NodeId(i + 1), 0.05);
+        }
+        // Drop the runtime — should drain on the way out.
+    }
+
+    assert_eq!(
+        store.pending_metadata_writes_count(),
+        0,
+        "ConsolidatorRuntime::drop must drain remaining writes"
+    );
+}
+
+/// T3 step 3 — the Drop path on the inner ConsolidatorHandle is
+/// best-effort: signals the task but doesn't await. A subsequent
+/// `flush_pending_metadata()` call must still see whatever was queued
+/// (possibly empty if the task ticked in between, possibly populated
+/// if the task hasn't run yet). Either way, no panics, no hangs, no
+/// lost writes after a final manual flush.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn consolidator_drop_path_is_safe() {
     let (store, _td) = fresh_store(Duration::from_millis(50));

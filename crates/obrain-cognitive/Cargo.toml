@@ -131,8 +131,10 @@ toml = "0.8"
 web-time = "1"
 
 # Native-only: full tokio runtime for memory manager periodic sweep etc.
+# `rt-multi-thread` is needed by `ConsolidatorRuntime` (T3 step 3) so the
+# hub-side wrapper can build a dedicated worker-thread runtime.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1", features = ["sync", "time", "rt", "macros", "fs"] }
+tokio = { version = "1", features = ["sync", "time", "rt", "rt-multi-thread", "macros", "fs"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
