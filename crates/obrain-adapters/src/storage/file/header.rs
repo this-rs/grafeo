@@ -54,11 +54,11 @@ pub fn validate_file_header(header: &FileHeader) -> Result<()> {
             MAGIC, header.magic
         )));
     }
-    if header.format_version > super::format::FORMAT_VERSION {
+    if header.format_version > super::format::FORMAT_VERSION_NATIVE {
         return Err(Error::Internal(format!(
             "unsupported format version {} (max supported: {})",
             header.format_version,
-            super::format::FORMAT_VERSION
+            super::format::FORMAT_VERSION_NATIVE
         )));
     }
     Ok(())

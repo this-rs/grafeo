@@ -153,19 +153,17 @@ mod tests {
     use obrain_adapters::plugins::algorithms::kernel::{D_MODEL, HILBERT_FEATURES_KEY};
     use obrain_adapters::plugins::algorithms::kernel_math::Rng;
     use obrain_common::types::Value;
-    use obrain_core::graph::lpg::LpgStore;
+    use obrain_core::graph::GraphStoreMut;
     use obrain_reactive::{EdgeSnapshot, NodeSnapshot};
+    use obrain_substrate::SubstrateStore;
 
-    /// Create a test store with tracking.
-    fn test_store() -> Arc<LpgStore> {
-        let mut store = LpgStore::new().unwrap();
-        store.enable_tracking(1000);
-        store.enable_subscriptions();
-        Arc::new(store)
+    /// Create a test store (SubstrateStore — T17 W2c migration from LpgStore).
+    fn test_store() -> Arc<dyn GraphStoreMut> {
+        Arc::new(SubstrateStore::open_tempfile().unwrap())
     }
 
     /// Create a graph with Hilbert features.
-    fn populate_graph(store: &LpgStore, n: usize) -> Vec<NodeId> {
+    fn populate_graph(store: &Arc<dyn GraphStoreMut>, n: usize) -> Vec<NodeId> {
         let mut rng = Rng::new(42);
         let mut nodes = Vec::with_capacity(n);
 
@@ -187,7 +185,7 @@ mod tests {
         nodes
     }
 
-    fn make_manager(store: Arc<LpgStore>) -> Arc<KernelManager> {
+    fn make_manager(store: Arc<dyn GraphStoreMut>) -> Arc<KernelManager> {
         let manager = KernelManager::new_untrained(store, 42);
         manager.compute_all();
         Arc::new(manager)

@@ -8,6 +8,7 @@
 mod cognitive_integration {
     use obrain_cognitive::{CognitiveConfig, CognitiveEngine, CognitiveEngineBuilder};
     use obrain_common::types::NodeId;
+    use obrain_core::graph::traits::{GraphStore, GraphStoreMut};
     use obrain_reactive::{
         BatchConfig, MutationBatch, MutationBus, MutationEvent, NodeSnapshot, Scheduler,
     };
@@ -192,9 +193,9 @@ enabled = false
     #[tokio::test]
     async fn write_through_energy_persists_and_reloads() {
         use obrain_cognitive::energy::{EnergyConfig, EnergyStore};
-        use obrain_core::LpgStore;
+        use obrain_substrate::SubstrateStore;
 
-        let lpg = std::sync::Arc::new(LpgStore::new().unwrap());
+        let lpg = std::sync::Arc::new(SubstrateStore::open_tempfile().unwrap());
 
         // Create nodes in the graph so properties can be set
         let n1 = lpg.create_node(&["Test"]);
@@ -235,15 +236,16 @@ enabled = false
     #[tokio::test]
     async fn write_through_synapse_persists_and_reloads() {
         use obrain_cognitive::synapse::{SynapseConfig, SynapseStore};
-        use obrain_core::LpgStore;
+        use obrain_core::graph::Direction;
+        use obrain_substrate::SubstrateStore;
 
-        let lpg = std::sync::Arc::new(LpgStore::new().unwrap());
+        let lpg = std::sync::Arc::new(SubstrateStore::open_tempfile().unwrap());
 
-        // Create nodes in the graph
-        let _n1 = lpg.create_node(&["Test"]);
-        let _n2 = lpg.create_node(&["Test"]);
-        let n1 = NodeId(0);
-        let n2 = NodeId(1);
+        // Use the actual ids returned by create_node. LpgStore started ids at 0,
+        // but SubstrateStore reserves slot 0 as a sentinel — so hardcoding
+        // NodeId(0)/NodeId(1) no longer works post-T17 cutover.
+        let n1 = lpg.create_node(&["Test"]);
+        let n2 = lpg.create_node(&["Test"]);
 
         let config = SynapseConfig::default();
         let store1 = SynapseStore::with_graph_store(config.clone(), lpg.clone());
@@ -266,9 +268,15 @@ enabled = false
         // The edge was created during reinforce
         let edges = lpg.edge_count();
         assert!(edges >= 1, "should have at least 1 synapse edge");
-        // Verify the property exists on the edge
+        // Verify the property exists on the edge — scan outgoing edges of n1
+        // to locate the synapse edge without hardcoding edge ids.
         let pk = PropertyKey::from("_cog_synapse_weight");
-        let edge_id = obrain_common::types::EdgeId::new(0);
+        let outgoing = lpg.edges_from(n1, Direction::Outgoing);
+        let (_, edge_id) = outgoing
+            .iter()
+            .find(|(_, eid)| lpg.get_edge_property(*eid, &pk).is_some())
+            .copied()
+            .expect("exactly one outgoing edge of n1 should carry the synapse weight");
         let val = lpg.get_edge_property(edge_id, &pk);
         assert!(
             val.is_some(),
@@ -286,9 +294,9 @@ enabled = false
     #[tokio::test]
     async fn write_through_engine_end_to_end() {
         use obrain_common::types::PropertyKey;
-        use obrain_core::LpgStore;
+        use obrain_substrate::SubstrateStore;
 
-        let lpg = std::sync::Arc::new(LpgStore::new().unwrap());
+        let lpg = std::sync::Arc::new(SubstrateStore::open_tempfile().unwrap());
 
         // Create nodes in the graph
         let n1 = lpg.create_node(&["File"]);

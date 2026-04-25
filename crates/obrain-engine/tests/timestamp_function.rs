@@ -1,3 +1,4 @@
+#![cfg(feature = "cypher")]
 //! Integration tests for the `timestamp()` function.
 //!
 //! `timestamp()` follows Neo4j semantics: returns the current time as

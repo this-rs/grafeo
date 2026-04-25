@@ -373,7 +373,8 @@ See [obrain-mcp](https://github.com/this-rs/obrain-mcp) for configuration and us
 │   Push-based vectorized execution │ Morsel-driven parallelism   │
 ├──────────────────────────────────────────────────────────────────┤
 │                     Graph Storage                               │
-│   LPG Store (CSR adjacency)  │  RDF Store (SPO/POS/OSP)        │
+│   SubstrateStore (mmap, topology-as-storage, WAL-native)        │
+│   32 B node records │ 30 B edge records │ inline column state  │
 │   MVCC Transactions          │  Snapshot Isolation              │
 │   Columnar + compressed      │  WAL + checkpoint               │
 ├──────────────────────────────────────────────────────────────────┤
@@ -384,13 +385,13 @@ See [obrain-mcp](https://github.com/this-rs/obrain-mcp) for configuration and us
 │                   Cognitive Layer                                │
 │   ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐          │
 │   │  Energy   │ │ Synapse  │ │  Scar    │ │  Fabric  │          │
-│   │  Store    │ │  Store   │ │  Store   │ │  Store   │          │
+│   │  (col view)│ │(col view)│ │(col view)│ │  Store   │          │
 │   └──────────┘ └──────────┘ └──────────┘ └──────────┘          │
 │   Spreading Activation │ Co-Change Detection │ Stagnation       │
 │   GDS Refresh (PageRank, Louvain, Betweenness) │ Memory Mgmt   │
 ├──────────────────────────────────────────────────────────────────┤
 │                    Index Layer                                  │
-│   HNSW (vectors) │ BM25 (text) │ Bloom filters │ Zone maps     │
+│   L0 / L1 / L2 tiers (vectors) │ BM25 (text) │ Zone maps       │
 ├──────────────────────────────────────────────────────────────────┤
 │                   Bindings & Integrations                       │
 │   Python │ Node.js │ Go │ C │ C# │ Dart │ WASM │ MCP           │
@@ -432,7 +433,7 @@ Cognitive stores updated → risk recalculated
 ### Vector Search & AI
 
 - **Vector as a first-class type**: `Value::Vector(Arc<[f32]>)` stored alongside graph data
-- **HNSW index**: O(log n) approximate nearest neighbor search with tunable recall
+- **Tiered vector retrieval (L0 / L1 / L2)**: 128-bit binary scan → 512-bit Hamming re-rank → f16 cosine top-K. Replaces HNSW while preserving ≥ 99 % recall (p95 ≤ 1 ms on 10⁶ nodes).
 - **Distance functions**: Cosine, Euclidean, Dot Product, Manhattan (SIMD-accelerated: AVX2, SSE, NEON)
 - **Vector quantization**: Scalar (f32 → u8), Binary (1-bit) and Product Quantization (8-32x compression)
 - **BM25 text search**: Full-text inverted index with Unicode tokenizer and stop word removal

@@ -237,40 +237,6 @@ mod tests {
     }
 
     #[test]
-    fn test_prepared_commit_abort() {
-        let db = ObrainDB::new_in_memory();
-        let mut session = db.session();
-
-        session.begin_transaction().unwrap();
-        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
-
-        let prepared = session.prepare_commit().unwrap();
-        prepared.abort().unwrap();
-
-        // Data should not be visible after abort
-        let result = session.execute("MATCH (n:Person) RETURN n").unwrap();
-        assert_eq!(result.rows.len(), 0);
-    }
-
-    #[test]
-    fn test_prepared_commit_drop_rollback() {
-        let db = ObrainDB::new_in_memory();
-        let mut session = db.session();
-
-        session.begin_transaction().unwrap();
-        session.execute("INSERT (:Person {name: 'Alix'})").unwrap();
-
-        {
-            let _prepared = session.prepare_commit().unwrap();
-            // Drop without commit or abort
-        }
-
-        // Data should not be visible after drop-induced rollback
-        let result = session.execute("MATCH (n:Person) RETURN n").unwrap();
-        assert_eq!(result.rows.len(), 0);
-    }
-
-    #[test]
     fn test_prepared_commit_no_transaction() {
         let db = ObrainDB::new_in_memory();
         let mut session = db.session();

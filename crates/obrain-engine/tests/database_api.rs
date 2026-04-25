@@ -1,3 +1,4 @@
+#![cfg(feature = "cypher")]
 //! Integration tests for ObrainDB public API methods that lacked coverage.
 //!
 //! Covers: edge operations, property indexes, label management,

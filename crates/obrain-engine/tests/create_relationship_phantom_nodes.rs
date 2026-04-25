@@ -1,3 +1,4 @@
+#![cfg(feature = "cypher")]
 //! Regression tests for issue #181: phantom node creation on MATCH...CREATE
 //! relationship patterns.
 //!

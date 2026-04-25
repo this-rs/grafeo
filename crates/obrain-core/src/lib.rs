@@ -30,7 +30,13 @@ pub mod testing;
 
 // Re-export the types you'll use most often
 pub use change_tracker::{ChangeTracker, EntityRef, GraphDiff, GraphEvent};
-pub use graph::lpg::{Edge, LpgStore, Node};
+// T17 Step 15 slice: drop `LpgStore` from the root re-export. Consumers
+// still needing the legacy in-memory LpgStore must import it via the
+// fully qualified `obrain_core::graph::lpg::LpgStore` path (no caller
+// uses the root re-export — audited 2026-04-23, 0 hits for
+// `use obrain_core::LpgStore`). `Edge` and `Node` stay re-exported as
+// structural data types are stable across backends.
+pub use graph::lpg::{Edge, Node};
 pub use index::adjacency::ChunkedAdjacency;
 pub use statistics::{ColumnStatistics, Histogram, LabelStatistics, Statistics};
 pub use storage::{DictionaryBuilder, DictionaryEncoding};

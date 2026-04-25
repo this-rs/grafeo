@@ -1,3 +1,4 @@
+#![cfg(feature = "cypher")]
 //! Coverage tests targeting the Grafeo→Obrain rebrand diff.
 //!
 //! These tests exercise renamed types, constructors, and public APIs

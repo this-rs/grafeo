@@ -9,7 +9,9 @@ use obrain_common::utils::hash::{FxHashMap, FxHashSet};
 use obrain_core::graph::Direction;
 use obrain_core::graph::GraphStore;
 #[cfg(test)]
-use obrain_core::graph::lpg::LpgStore;
+use obrain_core::graph::GraphStoreMut;
+#[cfg(test)]
+use obrain_substrate::SubstrateStore;
 
 use super::super::{AlgorithmResult, ParameterDef, Parameters};
 use super::traits::{ComponentResultBuilder, GraphAlgorithm};
@@ -460,8 +462,8 @@ impl GraphAlgorithm for TopologicalSortAlgorithm {
 mod tests {
     use super::*;
 
-    fn create_dag() -> LpgStore {
-        let store = LpgStore::new().unwrap();
+    fn create_dag() -> SubstrateStore {
+        let store = SubstrateStore::open_tempfile().unwrap();
 
         // Create a DAG:
         //   0 -> 1 -> 3
@@ -483,8 +485,8 @@ mod tests {
         store
     }
 
-    fn create_cyclic_graph() -> LpgStore {
-        let store = LpgStore::new().unwrap();
+    fn create_cyclic_graph() -> SubstrateStore {
+        let store = SubstrateStore::open_tempfile().unwrap();
 
         // Create a cycle: 0 -> 1 -> 2 -> 0
         let n0 = store.create_node(&["Node"]);
@@ -498,8 +500,8 @@ mod tests {
         store
     }
 
-    fn create_disconnected_graph() -> LpgStore {
-        let store = LpgStore::new().unwrap();
+    fn create_disconnected_graph() -> SubstrateStore {
+        let store = SubstrateStore::open_tempfile().unwrap();
 
         // Two disconnected components: {0, 1} and {2, 3}
         let n0 = store.create_node(&["Node"]);

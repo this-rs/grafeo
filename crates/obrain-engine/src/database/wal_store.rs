@@ -9,7 +9,7 @@ use std::sync::Arc;
 use obrain_adapters::storage::wal::{LpgWal, WalRecord};
 use obrain_common::types::{EdgeId, EpochId, NodeId, PropertyKey, TransactionId, Value};
 use obrain_common::utils::hash::FxHashMap;
-use obrain_core::graph::lpg::{CompareOp, Edge, LpgStore, Node};
+use obrain_core::graph::lpg::{CompareOp, Edge, Node};
 use obrain_core::graph::{Direction, GraphStore, GraphStoreMut};
 use obrain_core::statistics::Statistics;
 
@@ -24,8 +24,8 @@ use arcstr::ArcStr;
 /// when the WAL context differs from this store's graph. The shared
 /// `wal_graph_context` mutex ensures atomicity of context-switch + mutation
 /// pairs across concurrent sessions.
-pub(crate) struct WalGraphStore {
-    inner: Arc<LpgStore>,
+pub struct WalGraphStore {
+    inner: Arc<dyn GraphStoreMut>,
     wal: Arc<LpgWal>,
     /// Which named graph this store represents (`None` = default graph).
     graph_name: Option<String>,
@@ -37,7 +37,7 @@ pub(crate) struct WalGraphStore {
 impl WalGraphStore {
     /// Creates a new WAL-aware store wrapper for the default graph.
     pub fn new(
-        inner: Arc<LpgStore>,
+        inner: Arc<dyn GraphStoreMut>,
         wal: Arc<LpgWal>,
         wal_graph_context: Arc<parking_lot::Mutex<Option<String>>>,
     ) -> Self {
@@ -51,7 +51,7 @@ impl WalGraphStore {
 
     /// Creates a new WAL-aware store wrapper for a named graph.
     pub fn new_for_graph(
-        inner: Arc<LpgStore>,
+        inner: Arc<dyn GraphStoreMut>,
         wal: Arc<LpgWal>,
         graph_name: String,
         wal_graph_context: Arc<parking_lot::Mutex<Option<String>>>,
@@ -420,15 +420,20 @@ impl GraphStoreMut for WalGraphStore {
     }
 
     fn delete_node_edges(&self, node_id: NodeId) {
-        // Collect edge IDs before deletion so we can log them
+        // Collect edge IDs before deletion so we can log them.
+        // T17 Step 24: `edges_from` returns `Vec` on the trait (was
+        // `Iterator` on LpgStore inherent), so `.map(..).collect()`
+        // becomes `.into_iter().map(..).collect()`.
         let outgoing: Vec<EdgeId> = self
             .inner
             .edges_from(node_id, Direction::Outgoing)
+            .into_iter()
             .map(|(_, eid)| eid)
             .collect();
         let incoming: Vec<EdgeId> = self
             .inner
             .edges_from(node_id, Direction::Incoming)
+            .into_iter()
             .map(|(_, eid)| eid)
             .collect();
 
@@ -530,7 +535,8 @@ mod tests {
 
     fn setup() -> (WalGraphStore, Arc<LpgWal>) {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(LpgStore::new().unwrap());
+        let store = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap())
+            as Arc<dyn obrain_core::graph::GraphStoreMut>;
         let wal = Arc::new(TypedWal::open(dir.path()).unwrap());
         let wal_ref = Arc::clone(&wal);
         let ctx = Arc::new(parking_lot::Mutex::new(None));
@@ -705,7 +711,8 @@ mod tests {
 
     fn setup_named_graph() -> (WalGraphStore, Arc<LpgWal>) {
         let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(LpgStore::new().unwrap());
+        let store = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap())
+            as Arc<dyn obrain_core::graph::GraphStoreMut>;
         let wal = Arc::new(TypedWal::open(dir.path()).unwrap());
         let wal_ref = Arc::clone(&wal);
         let ctx = Arc::new(parking_lot::Mutex::new(None));

@@ -43,7 +43,7 @@ embed = ["obrain-engine/embed"]  # Opt-in ONNX embedding generation (~17MB)
 # Convenience groups
 languages = ["gql", "cypher", "sparql", "gremlin", "graphql", "sql-pgq"]  # All query languages
 ai = ["vector-index", "text-index", "hybrid-search", "cdc"]  # All AI/RAG features
-storage = ["wal", "obrain-file", "spill", "mmap"]  # Persistent storage (WAL, single-file, disk spill, mmap)
+storage = ["wal", "spill", "mmap"]  # Persistent storage (WAL, disk spill, mmap). Substrate is the single backend since T17 final cutover.
 algos = ["obrain-engine/algos"]  # Graph algorithms (SSSP, PageRank, etc.)
 rdf = ["obrain-engine/rdf"]  # RDF triple store
 regex = ["obrain-engine/regex"]  # Full regex (default for non-WASM)
@@ -63,7 +63,9 @@ spill = ["obrain-engine/spill"]
 mmap = ["obrain-engine/mmap"]
 temporal = ["obrain-engine/temporal"]  # Append-only versioned properties
 tiered-storage = ["obrain-engine/tiered-storage"]  # Hot/cold tiered storage with mmap epoch files
-obrain-file = ["obrain-engine/obrain-file"]  # Single-file .obrain database format
+# T17 final cutover (2026-04-23): obrain-file feature removed — substrate
+# is the single storage backend. Legacy `.obrain` files migrated one-shot
+# via `obrain-migrate`, then opened as substrate via `ObrainDB::open`.
 
 # Enable platform-optimized memory allocator (10-20% faster allocations)
 jemalloc = ["tikv-jemallocator"]

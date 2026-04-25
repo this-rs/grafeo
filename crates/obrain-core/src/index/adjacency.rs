@@ -216,7 +216,7 @@ struct SkipIndexEntry {
 /// - **Delta buffer**: Very recent insertions, not yet compacted
 /// - **Skip index**: Zone map over cold chunks for O(log n) point lookups
 #[derive(Debug)]
-struct AdjacencyList {
+pub(crate) struct AdjacencyList {
     /// Hot chunks (mutable, uncompressed) - for recent data.
     hot_chunks: Vec<AdjacencyChunk>,
     /// Cold chunks (immutable, compressed) - for older data.
@@ -235,7 +235,7 @@ struct AdjacencyList {
 }
 
 impl AdjacencyList {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             hot_chunks: Vec::new(),
             cold_chunks: Vec::new(),
@@ -245,7 +245,7 @@ impl AdjacencyList {
         }
     }
 
-    fn add_edge(&mut self, dst: NodeId, edge_id: EdgeId) {
+    pub(crate) fn add_edge(&mut self, dst: NodeId, edge_id: EdgeId) {
         // Try to add to the last hot chunk
         if let Some(last) = self.hot_chunks.last_mut()
             && last.push(dst, edge_id)
@@ -524,7 +524,8 @@ impl AdjacencyList {
 /// ```
 pub struct ChunkedAdjacency {
     /// Adjacency lists indexed by source node.
-    /// Lock order: 10 (nested, acquired via LpgStore::forward_adj/backward_adj)
+    /// Lock order: 10 (nested, acquired via the host store's forward_adj /
+    /// backward_adj accessors — preserved across the T17 substrate cutover).
     lists: RwLock<FxHashMap<NodeId, AdjacencyList>>,
     /// Chunk capacity for new chunks.
     chunk_capacity: usize,
@@ -587,6 +588,44 @@ impl ChunkedAdjacency {
                 list.compact(self.chunk_capacity);
             }
         }
+    }
+
+    /// Inserts edges without post-insert compaction scan.
+    ///
+    /// Like `batch_add_edges` but skips the O(N_sources) compaction scan at
+    /// the end. Call `compact_if_needed()` once after all bulk inserts are done.
+    /// This avoids the exponential slowdown when restoring 100M+ edges in chunks.
+    pub fn bulk_load(&self, edges: &[(NodeId, NodeId, EdgeId)]) {
+        if edges.is_empty() {
+            return;
+        }
+        let mut lists = self.lists.write();
+        for &(src, dst, edge_id) in edges {
+            lists
+                .entry(src)
+                .or_insert_with(AdjacencyList::new)
+                .add_edge(dst, edge_id);
+        }
+        self.edge_count.fetch_add(edges.len(), Ordering::Relaxed);
+    }
+
+    /// Returns a write-locked reference to the internal lists for direct manipulation.
+    ///
+    /// Used by `bulk_create_edges_with_id` to avoid creating intermediate Vec allocations.
+    /// The caller is responsible for updating `edge_count` via `add_to_edge_count`.
+    #[doc(hidden)]
+    #[allow(dead_code)]
+    pub(crate) fn lists_write(
+        &self,
+    ) -> parking_lot::RwLockWriteGuard<'_, FxHashMap<NodeId, AdjacencyList>> {
+        self.lists.write()
+    }
+
+    /// Adds to the edge count atomically. Used with `lists_write()`.
+    #[doc(hidden)]
+    #[allow(dead_code)]
+    pub(crate) fn add_to_edge_count(&self, count: usize) {
+        self.edge_count.fetch_add(count, Ordering::Relaxed);
     }
 
     /// Marks an edge as deleted.

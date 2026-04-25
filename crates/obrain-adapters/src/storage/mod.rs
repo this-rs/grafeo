@@ -2,8 +2,8 @@
 //!
 //! | Backend | Speed | Durability | Use when |
 //! | ------- | ----- | ---------- | -------- |
-//! | [`memory`] | Fastest | None (data lost on restart) | Testing, prototyping |
 //! | `wal` (feature-gated) | Fast | Survives crashes | Production workloads |
+//! | `file` (feature-gated) | Fast | Crash-safe `.obrain` single-file | Shipping data snapshots |
 //!
 //! The WAL (Write-Ahead Log) writes changes to disk before applying them,
 //! so you can recover after crashes without losing committed transactions.
@@ -11,15 +11,18 @@
 //!
 //! The `file` module (requires `obrain-file` feature) implements a single-file
 //! `.obrain` format with dual-header crash safety and sidecar WAL.
+//!
+//! > **Note (T17 W4.p4)**: the historical in-memory `MemoryBackend` (a thin
+//! > `Arc<LpgStore>` wrapper) was removed as part of the substrate cutover.
+//! > For in-memory / test usage, construct a `SubstrateStore` directly via
+//! > `SubstrateStore::open_tempfile()` from the `obrain-substrate` crate.
 
 #[cfg(feature = "obrain-file")]
 pub mod file;
-pub mod memory;
 #[cfg(feature = "wal")]
 pub mod wal;
 
 #[cfg(feature = "obrain-file")]
 pub use file::ObrainFileManager;
-pub use memory::MemoryBackend;
 #[cfg(feature = "wal")]
 pub use wal::WalManager;

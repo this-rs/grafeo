@@ -10,7 +10,7 @@
 //! 4. **Node extraction**: extract text content from all activated nodes.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, LazyLock, RwLock};
+use std::sync::{Arc, RwLock};
 
 use obrain_cognitive::activation::{SpreadConfig, SynapseActivationSource, spread};
 use obrain_cognitive::engram::{
@@ -19,7 +19,7 @@ use obrain_cognitive::engram::{
 };
 use obrain_cognitive::synapse::SynapseStore;
 use obrain_common::types::NodeId;
-use obrain_core::LpgStore;
+use obrain_core::graph::traits::GraphStore;
 
 use crate::config::RagConfig;
 use crate::error::{RagError, RagResult};
@@ -280,6 +280,60 @@ impl InvertedIndex {
         scored
     }
 
+    /// Query the index scoped to nodes with a specific label.
+    ///
+    /// Like `query()` but only returns nodes that have the given label.
+    /// Cardinality dampening is skipped since we're already filtering by label.
+    fn query_by_label(
+        &self,
+        terms: &[String],
+        label: &str,
+        max_results: usize,
+    ) -> Vec<(NodeId, f64)> {
+        if terms.is_empty() || self.total_nodes == 0 {
+            return Vec::new();
+        }
+
+        let lower_label = label.to_lowercase();
+
+        // Get nodes with this label
+        let label_nodes: HashSet<NodeId> = self
+            .label_entries
+            .get(&lower_label)
+            .map(|ids| ids.iter().copied().collect())
+            .unwrap_or_default();
+
+        if label_nodes.is_empty() {
+            return Vec::new();
+        }
+
+        let n = self.total_nodes as f64;
+        let mut node_scores: HashMap<NodeId, f64> = HashMap::new();
+
+        for term in terms {
+            if let Some(entries) = self.text_entries.get(term.as_str()) {
+                let df = self
+                    .term_doc_freq
+                    .get(term.as_str())
+                    .copied()
+                    .unwrap_or(1)
+                    .max(1) as f64;
+                let idf = (n / df).ln().max(0.1);
+
+                for entry in entries {
+                    if label_nodes.contains(&entry.node_id) {
+                        *node_scores.entry(entry.node_id).or_default() += entry.tf * idf;
+                    }
+                }
+            }
+        }
+
+        let mut scored: Vec<(NodeId, f64)> = node_scores.into_iter().collect();
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(max_results);
+        scored
+    }
+
     /// Return diagnostics: (total_nodes, distinct_terms, label_distribution).
     fn stats(&self) -> (usize, usize, Vec<(String, usize, f64)>) {
         let total = self.total_nodes.max(1);
@@ -312,7 +366,7 @@ impl InvertedIndex {
 /// methods to keep the index always up-to-date.
 pub struct EngramRetriever {
     /// The graph store for reading nodes/properties.
-    graph: Arc<LpgStore>,
+    graph: Arc<dyn GraphStore>,
 
     /// The engram store (cognitive memory traces).
     engram_store: Arc<EngramStore>,
@@ -337,13 +391,13 @@ impl EngramRetriever {
     /// all graph nodes. For large graphs, consider `new_lazy()` +
     /// incremental `index_node()` calls instead.
     pub fn new(
-        graph: Arc<LpgStore>,
+        graph: Arc<dyn GraphStore>,
         engram_store: Arc<EngramStore>,
         vector_index: Arc<dyn VectorIndex>,
         spectral: Arc<SpectralEncoder>,
         synapse_store: Option<Arc<SynapseStore>>,
     ) -> Self {
-        let index = Self::build_full_index(&graph);
+        let index = Self::build_full_index(graph.as_ref());
         Self {
             graph,
             engram_store,
@@ -359,11 +413,11 @@ impl EngramRetriever {
     /// This is the simplest setup — useful for testing or when the cognitive
     /// engine hasn't been fully initialized.
     pub fn with_defaults(
-        graph: Arc<LpgStore>,
+        graph: Arc<dyn GraphStore>,
         engram_store: Arc<EngramStore>,
         synapse_store: Option<Arc<SynapseStore>>,
     ) -> Self {
-        let index = Self::build_full_index(&graph);
+        let index = Self::build_full_index(graph.as_ref());
         Self {
             graph,
             engram_store,
@@ -381,7 +435,7 @@ impl EngramRetriever {
     /// This is the preferred constructor for server integration where
     /// the index is built incrementally.
     pub fn new_lazy(
-        graph: Arc<LpgStore>,
+        graph: Arc<dyn GraphStore>,
         engram_store: Arc<EngramStore>,
         synapse_store: Option<Arc<SynapseStore>>,
     ) -> Self {
@@ -396,7 +450,7 @@ impl EngramRetriever {
     }
 
     /// Build the full index by scanning all graph nodes.
-    fn build_full_index(graph: &LpgStore) -> InvertedIndex {
+    fn build_full_index(graph: &dyn GraphStore) -> InvertedIndex {
         let node_ids = graph.node_ids();
         let mut index = InvertedIndex::new();
 
@@ -473,7 +527,7 @@ impl EngramRetriever {
     ///
     /// Useful as a `/reindex` command or after major bulk operations.
     pub fn reindex(&self) {
-        let new_index = Self::build_full_index(&self.graph);
+        let new_index = Self::build_full_index(self.graph.as_ref());
         let mut idx = self.index.write().unwrap();
         *idx = new_index;
     }
@@ -487,6 +541,36 @@ impl EngramRetriever {
     pub fn index_stats(&self) -> (usize, usize, Vec<(String, usize, f64)>) {
         let idx = self.index.read().unwrap();
         idx.stats()
+    }
+
+    // ── Label-scoped recall ───────────────────────────────────
+
+    /// Recall nodes with a specific label, bypassing engram matching.
+    ///
+    /// This is the direct-match path: queries the inverted index for nodes
+    /// of the given label and returns them with full content extracted.
+    /// Useful for recalling raw messages (`CogMessage`) or identity nodes
+    /// (`Identity`) that haven't yet formed into engrams.
+    pub fn recall_by_label(
+        &self,
+        query: &str,
+        label: &str,
+        max_results: usize,
+    ) -> Vec<RetrievedNode> {
+        let terms = tokenize_query(query);
+        let idx = self.index.read().unwrap();
+        let hits = idx.query_by_label(&terms, label, max_results);
+        drop(idx);
+
+        let mut nodes = Vec::with_capacity(hits.len());
+        for (node_id, score) in hits {
+            if let Some(mut retrieved) = self.extract_node_content(node_id) {
+                retrieved.score = score;
+                retrieved.source = RetrievalSource::DirectMatch { text_score: score };
+                nodes.push(retrieved);
+            }
+        }
+        nodes
     }
 
     // ── Internal helpers ────────────────────────────────────────
@@ -517,6 +601,7 @@ impl EngramRetriever {
         let outgoing: Vec<(String, NodeId)> = self
             .graph
             .edges_from(node_id, obrain_core::graph::Direction::Outgoing)
+            .into_iter()
             .filter_map(|(target, edge_id)| {
                 let edge = self.graph.get_edge(edge_id)?;
                 Some((edge.edge_type.to_string(), target))
@@ -527,6 +612,7 @@ impl EngramRetriever {
         let incoming: Vec<(String, NodeId)> = self
             .graph
             .edges_from(node_id, obrain_core::graph::Direction::Incoming)
+            .into_iter()
             .filter_map(|(source, edge_id)| {
                 let edge = self.graph.get_edge(edge_id)?;
                 Some((edge.edge_type.to_string(), source))
@@ -621,19 +707,21 @@ impl Retriever for EngramRetriever {
             }
         }
 
-        // Also add cue nodes themselves (direct text matches)
+        // Also add cue nodes themselves (direct text matches).
+        // These are first-class results — no score penalty.
+        // When no engrams exist, direct matches ARE the recall path.
         for (node_id, text_score) in &cue_nodes {
-            if !activated_nodes.contains_key(node_id) {
-                activated_nodes.insert(
-                    *node_id,
-                    (
-                        *text_score * 0.5,
-                        RetrievalSource::SpreadingActivation {
-                            depth: 0,
-                            activation: *text_score,
-                        },
-                    ),
-                );
+            let direct_source = RetrievalSource::DirectMatch {
+                text_score: *text_score,
+            };
+            match activated_nodes.get(node_id) {
+                Some((existing_score, _)) if *existing_score >= *text_score => {
+                    // Engram/activation already found this with higher score — keep it
+                }
+                _ => {
+                    // Direct match is stronger or node not yet seen — use it
+                    activated_nodes.insert(*node_id, (*text_score, direct_source));
+                }
             }
         }
 
@@ -680,35 +768,15 @@ impl Retriever for EngramRetriever {
 // Tokenization
 // ─────────────────────────────────────────────────────────────────
 
-/// Static stop word set — built once, reused across all queries.
-static STOP_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-    [
-        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
-        "do", "does", "did", "will", "would", "could", "should", "may", "might", "shall", "can",
-        "need", "dare", "ought", "used", "to", "of", "in", "for", "on", "with", "at", "by", "from",
-        "as", "into", "through", "during", "before", "after", "above", "below", "between", "out",
-        "off", "over", "under", "again", "further", "then", "once", "and", "but", "or", "nor",
-        "not", "so", "yet", "both", "each", "few", "more", "most", "other", "some", "such", "no",
-        "than", "too", "very", "just", "about", "also", "this", "that", "these", "those", "it",
-        "its", "my", "your", "his", "her", "our", "their", "what", "which", "who", "whom", "where",
-        "when", "why", "how", // French stop words
-        "le", "la", "les", "un", "une", "des", "du", "de", "et", "est", "en", "que", "qui", "dans",
-        "pour", "par", "sur", "avec", "ce", "se", "son", "sa", "ses", "au", "aux", "ne", "pas",
-        "plus", "sont", "ont", "fait", "être", "avoir", "il", "elle", "nous", "vous", "ils",
-        "elles", "je", "tu", "on", "me", "te", "lui", "leur", "y", "si", "ou", "mais", "donc",
-        "car", "ni", "quels", "quelles", "quel", "quelle", "comment", "combien",
-    ]
-    .into_iter()
-    .collect()
-});
-
 /// Tokenize a text string into lowercase normalized terms.
 ///
-/// Filters out common stop words (EN+FR) and very short terms (< 2 chars).
+/// No stop word filtering — everything emerges from the graph.
+/// TF-IDF naturally dampens common terms (high document frequency → low IDF).
+/// Only single characters are filtered as noise.
 fn tokenize_text(text: &str) -> Vec<String> {
     text.to_lowercase()
         .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
-        .filter(|w| w.len() >= 2 && !STOP_WORDS.contains(w))
+        .filter(|w| w.len() >= 2)
         .map(String::from)
         .collect()
 }
@@ -725,6 +793,9 @@ fn tokenize_query(query: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use obrain_common::types::Value;
+    use obrain_core::graph::GraphStoreMut;
+    use obrain_substrate::SubstrateStore;
 
     #[test]
     fn inverted_index_add_and_query() {
@@ -1175,45 +1246,31 @@ mod tests {
 
     // ── EngramRetriever integration tests ───────────────────────
 
-    /// Helper: build a small LpgStore with known nodes and edges.
-    fn make_test_graph() -> Arc<LpgStore> {
-        let store = LpgStore::new().unwrap();
+    /// Helper: build a small graph store with known nodes and edges.
+    ///
+    /// Uses `SubstrateStore::open_tempfile()` (topology-as-storage, mmap'd
+    /// temp file) exposed as `Arc<dyn GraphStore>` so retriever tests are
+    /// agnostic to the concrete backend. Prior to T17 W4.p1.s2, this fixture
+    /// constructed an `LpgStore`; the migration preserves behaviour because
+    /// `EngramRetriever` only uses trait methods (`node_ids`, `labels`,
+    /// `properties`, `edges_from`).
+    fn make_test_graph() -> Arc<dyn GraphStore> {
+        let store = SubstrateStore::open_tempfile().unwrap();
 
-        let n1 = store.create_node_with_props(
-            &["Project"],
-            [
-                (
-                    "name".to_string(),
-                    obrain_common::types::Value::from("Obrain"),
-                ),
-                (
-                    "description".to_string(),
-                    obrain_common::types::Value::from("A graph database engine"),
-                ),
-            ],
+        let n1 = store.create_node(&["Project"]);
+        store.set_node_property(n1, "name", Value::from("Obrain"));
+        store.set_node_property(n1, "description", Value::from("A graph database engine"));
+
+        let n2 = store.create_node(&["Note", "Gotcha"]);
+        store.set_node_property(n2, "title", Value::from("WAL Bug"));
+        store.set_node_property(
+            n2,
+            "content",
+            Value::from("checkpoint.meta breaks recovery"),
         );
 
-        let n2 = store.create_node_with_props(
-            &["Note", "Gotcha"],
-            [
-                (
-                    "title".to_string(),
-                    obrain_common::types::Value::from("WAL Bug"),
-                ),
-                (
-                    "content".to_string(),
-                    obrain_common::types::Value::from("checkpoint.meta breaks recovery"),
-                ),
-            ],
-        );
-
-        let n3 = store.create_node_with_props(
-            &["Task"],
-            [(
-                "title".to_string(),
-                obrain_common::types::Value::from("Fix WAL recovery"),
-            )],
-        );
+        let n3 = store.create_node(&["Task"]);
+        store.set_node_property(n3, "title", Value::from("Fix WAL recovery"));
 
         // Create edges
         store.create_edge(n1, n2, "HAS_NOTE");
@@ -1222,7 +1279,7 @@ mod tests {
         Arc::new(store)
     }
 
-    fn make_retriever(graph: Arc<LpgStore>) -> EngramRetriever {
+    fn make_retriever(graph: Arc<dyn GraphStore>) -> EngramRetriever {
         let engram_store = Arc::new(EngramStore::new(None));
         EngramRetriever::with_defaults(graph, engram_store, None)
     }

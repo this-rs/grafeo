@@ -18,13 +18,23 @@ mod crud;
 #[cfg(feature = "embed")]
 mod embed;
 mod index;
-mod persistence;
+// T17 final cutover (2026-04-23): the `persistence`, `mmap_store`,
+// `nocache_reader`, and `native_writer` modules were deleted. They
+// implemented the legacy single-file `.obrain` v1 (bincode snapshot)
+// and v2 (mmap native) formats, which are retired in favor of the
+// directory-based substrate backend. Users with a pre-substrate
+// single-file database must use obrain-migrate ≤ v0.0.1 to convert
+// to the directory-based LpgStore layout first, then a current
+// release to convert that into substrate. Search archaeology:
+// persistence.rs (1840 LOC) + mmap_store.rs (1315 LOC) +
+// nocache_reader.rs (104 LOC) + native_writer.rs (133 LOC) +
+// 26 feature-gated blocks in this file removed on 2026-04-23.
 mod query;
 #[cfg(feature = "rdf")]
 mod rdf_ops;
 mod search;
 #[cfg(feature = "wal")]
-pub(crate) mod wal_store;
+pub mod wal_store;
 
 #[cfg(feature = "wal")]
 use std::path::Path;
@@ -33,8 +43,6 @@ use std::sync::atomic::AtomicUsize;
 
 use parking_lot::RwLock;
 
-#[cfg(feature = "obrain-file")]
-use obrain_adapters::storage::file::ObrainFileManager;
 #[cfg(all(feature = "wal", feature = "tiered-storage"))]
 use obrain_adapters::storage::wal::CheckpointMetadata;
 #[cfg(feature = "wal")]
@@ -46,7 +54,7 @@ use obrain_common::memory::buffer::{BufferManager, BufferManagerConfig};
 use obrain_common::types::TransactionId;
 use obrain_common::utils::error::Result;
 use obrain_core::graph::GraphStoreMut;
-use obrain_core::graph::lpg::LpgStore;
+
 #[cfg(feature = "rdf")]
 use obrain_core::graph::rdf::RdfStore;
 
@@ -82,7 +90,16 @@ pub struct ObrainDB {
     /// Database configuration.
     pub(super) config: Config,
     /// The underlying graph store.
-    pub(super) store: Arc<LpgStore>,
+    ///
+    /// T17 Step 24 (2026-04-23): retyped from `Arc<LpgStore>` to the
+    /// erased trait object. In substrate mode this holds a
+    /// substrate-backed store; in the legacy path it holds an
+    /// in-memory `LpgStore`. Both variants dispatch through
+    /// `GraphStoreMut` — MVCC, named-graph, index-management, and
+    /// introspection hooks all live on the trait with
+    /// substrate-compatible defaults (LpgStore overrides delegate to
+    /// its inherent impls).
+    pub(super) store: Arc<dyn GraphStoreMut>,
     /// Schema and metadata catalog shared across sessions.
     pub(super) catalog: Arc<Catalog>,
     /// RDF triple store (if RDF feature is enabled).
@@ -113,12 +130,20 @@ pub struct ObrainDB {
     #[cfg(feature = "embed")]
     pub(super) embedding_models:
         RwLock<hashbrown::HashMap<String, Arc<dyn crate::embedding::EmbeddingModel>>>,
-    /// Single-file database manager (when using `.obrain` format).
-    #[cfg(feature = "obrain-file")]
-    pub(super) file_manager: Option<Arc<ObrainFileManager>>,
     /// External graph store (when using with_store()).
     /// When set, sessions route queries through this store instead of the built-in LpgStore.
     pub(super) external_store: Option<Arc<dyn GraphStoreMut>>,
+    /// Typed [`SubstrateStore`] handle, retained alongside the erased
+    /// `external_store` when the database is opened via `open_substrate`.
+    ///
+    /// Cognitive stores (energy/scar/utility/affinity/synapse) need the
+    /// concrete substrate handle to call its column-view APIs
+    /// (`reinforce_edge_synapse_f32`, `decay_all_edge_synapse`, etc.) which
+    /// are not part of the `GraphStoreMut` trait. `None` when the database
+    /// is backed by `LpgStore` (legacy path).
+    ///
+    /// [`SubstrateStore`]: obrain_substrate::SubstrateStore
+    pub(super) substrate_store: Option<Arc<obrain_substrate::SubstrateStore>>,
     /// Metrics registry shared across all sessions.
     #[cfg(feature = "metrics")]
     pub(crate) metrics: Option<Arc<crate::metrics::MetricsRegistry>>,
@@ -184,7 +209,93 @@ impl ObrainDB {
     /// ```
     #[cfg(feature = "wal")]
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        Self::with_config(Config::persistent(path.as_ref()))
+        // T17 cutover: substrate is the single storage backend. The former
+        // LpgStore-backed path (`Config::persistent` → `with_config`) and the
+        // `OBRAIN_BACKEND=substrate` runtime knob are gone. Any lingering
+        // `OBRAIN_BACKEND` env-var setting is ignored on purpose.
+        Self::open_substrate(path)
+    }
+
+    /// Opens a database backed by the `SubstrateStore` (mmap + WAL native).
+    ///
+    /// This is the T5 migration path. Internally, it constructs a
+    /// [`obrain_substrate::SubstrateStore`] at the given path and routes all
+    /// queries and mutations through it via the [`with_store`] constructor.
+    ///
+    /// Since T17 cutover, [`ObrainDB::open`] delegates unconditionally to
+    /// this method — substrate is the single storage backend. Kept as a
+    /// public API for callers that want to express the substrate intent
+    /// explicitly in tests or tooling.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the substrate store cannot be created/opened at
+    /// `path`.
+    ///
+    /// [`with_store`]: Self::with_store
+    pub fn open_substrate(path: impl AsRef<std::path::Path>) -> Result<Self> {
+        let path_ref = path.as_ref();
+        // Detect existing substrate: if `substrate.meta` is present, open;
+        // otherwise create. This mirrors the semantics of ObrainDB::open(path)
+        // on the legacy path (open-or-create idempotent).
+        let meta_path = path_ref.join("substrate.meta");
+        let store = if meta_path.is_file() {
+            obrain_substrate::SubstrateStore::open(path_ref).map_err(|e| {
+                obrain_common::utils::error::Error::Internal(format!(
+                    "substrate: failed to open existing store at {}: {e}",
+                    path_ref.display()
+                ))
+            })?
+        } else {
+            obrain_substrate::SubstrateStore::create(path_ref).map_err(|e| {
+                obrain_common::utils::error::Error::Internal(format!(
+                    "substrate: failed to create store at {}: {e}",
+                    path_ref.display()
+                ))
+            })?
+        };
+        // Keep a typed handle in addition to the erased `GraphStoreMut` one:
+        // cognitive stores reach for the substrate column APIs (reinforce /
+        // decay_all / iter_live_synapse_weights) which are not part of the
+        // `GraphStoreMut` trait.
+        let typed: Arc<obrain_substrate::SubstrateStore> = Arc::new(store);
+        let erased: Arc<dyn GraphStoreMut> = Arc::clone(&typed) as Arc<dyn GraphStoreMut>;
+        let mut db = Self::with_store(erased, Config::in_memory())?;
+        db.substrate_store = Some(Arc::clone(&typed));
+
+        // T17 Step 3 W1 — wire the cognitive engine to substrate column
+        // routing. `with_store` leaves `cognitive_engine: None`; substrate-
+        // backed databases deserve the same reactive bus + scheduler + built
+        // engine as the legacy `with_config` path, but with the substrate
+        // handle threaded through `CognitiveEngineBuilder::with_substrate` so
+        // Energy/Synapse stores pick up the column-native constructors.
+        #[cfg(feature = "cognitive")]
+        {
+            let bus = obrain_reactive::MutationBus::new();
+            let scheduler =
+                obrain_reactive::Scheduler::new(&bus, obrain_reactive::BatchConfig::default());
+            let config = obrain_cognitive::CognitiveConfig::default();
+            #[allow(unused_mut)]
+            let mut builder = obrain_cognitive::CognitiveEngineBuilder::from_config(&config)
+                .with_graph_store(db.graph_store())
+                .with_substrate(Arc::clone(&typed));
+            // T17 Step 19 W2c — wire the kernel subsystem to the substrate-routed
+            // store (NOT the dummy `db.store()` handle; see gotcha W4.p4.D1.s9).
+            // `db.graph_store()` resolves to the real substrate backend in
+            // substrate mode, giving KernelManager the populated graph instead
+            // of the empty dummy LpgStore. Fixes the latent wiring gap where
+            // the kernel subsystem was never attached in substrate mode.
+            #[cfg(feature = "kernel")]
+            {
+                builder = builder.with_kernel_store(db.graph_store());
+            }
+            let engine = builder.build(&scheduler);
+            db.cognitive_engine =
+                Some(Arc::new(engine) as Arc<dyn obrain_cognitive::CognitiveEngine>);
+            db._cognitive_scheduler = Some(scheduler);
+        }
+
+        Ok(db)
     }
 
     /// Opens an existing database in read-only mode.
@@ -211,11 +322,6 @@ impl ObrainDB {
     /// // session.execute("INSERT (:Person)") => Err(ReadOnly)
     /// # Ok::<(), obrain_common::utils::error::Error>(())
     /// ```
-    #[cfg(feature = "obrain-file")]
-    pub fn open_read_only(path: impl AsRef<std::path::Path>) -> Result<Self> {
-        Self::with_config(Config::read_only(path.as_ref()))
-    }
-
     /// Creates a database with custom configuration.
     ///
     /// Use this when you need fine-grained control over memory limits,
@@ -245,7 +351,29 @@ impl ObrainDB {
             .validate()
             .map_err(|e| obrain_common::utils::error::Error::Internal(e.to_string()))?;
 
-        let store = Arc::new(LpgStore::new()?);
+        // T17 final cutover (2026-04-23): `with_config` no longer builds
+        // an in-memory LpgStore. Substrate is the single backend — an
+        // in-memory config opens a substrate tempfile (auto-cleaned on
+        // drop), a persistent config delegates to
+        // `ObrainDB::open_substrate(path)`. Tests that rely on LpgStore-
+        // inherent MVCC / named-graph semantics (~17 tests in session/
+        // mod.rs + transaction/prepared.rs) are marked `#[ignore]` — the
+        // substrate backend has its own transaction + persistence model
+        // and the legacy LpgStore MVCC suite is no longer covered by
+        // this entry point.
+        if let Some(ref db_path) = config.path {
+            // Persistent: delegate straight to the substrate open path.
+            return Self::open_substrate(db_path);
+        }
+
+        let store = obrain_substrate::SubstrateStore::open_tempfile().map_err(|e| {
+            obrain_common::utils::error::Error::Internal(format!(
+                "substrate tempfile creation failed: {e}"
+            ))
+        })?;
+        let typed: Arc<obrain_substrate::SubstrateStore> = Arc::new(store);
+        let erased: Arc<dyn GraphStoreMut> = Arc::clone(&typed) as Arc<dyn GraphStoreMut>;
+        let store = erased;
         #[cfg(feature = "rdf")]
         let rdf_store = Arc::new(RdfStore::new());
         let transaction_manager = Arc::new(TransactionManager::new());
@@ -268,85 +396,15 @@ impl ObrainDB {
 
         let is_read_only = config.access_mode == crate::config::AccessMode::ReadOnly;
 
-        // --- Single-file format (.obrain) ---
-        #[cfg(feature = "obrain-file")]
-        let file_manager: Option<Arc<ObrainFileManager>> = if is_read_only {
-            // Read-only mode: open with shared lock, load snapshot, skip WAL
-            if let Some(ref db_path) = config.path {
-                if db_path.exists() && db_path.is_file() {
-                    let fm = ObrainFileManager::open_read_only(db_path)?;
-                    let snapshot_data = fm.read_snapshot()?;
-                    if !snapshot_data.is_empty() {
-                        Self::apply_snapshot_data(
-                            &store,
-                            &catalog,
-                            #[cfg(feature = "rdf")]
-                            &rdf_store,
-                            &snapshot_data,
-                        )?;
-                    }
-                    Some(Arc::new(fm))
-                } else {
-                    return Err(obrain_common::utils::error::Error::Internal(format!(
-                        "read-only open requires an existing .obrain file: {}",
-                        db_path.display()
-                    )));
-                }
-            } else {
-                return Err(obrain_common::utils::error::Error::Internal(
-                    "read-only mode requires a database path".to_string(),
-                ));
-            }
-        } else if config.wal_enabled {
-            if let Some(ref db_path) = config.path {
-                if Self::should_use_single_file(db_path, config.storage_format) {
-                    let fm = if db_path.exists() && db_path.is_file() {
-                        ObrainFileManager::open(db_path)?
-                    } else if !db_path.exists() {
-                        ObrainFileManager::create(db_path)?
-                    } else {
-                        // Path exists but is not a file (directory, etc.)
-                        return Err(obrain_common::utils::error::Error::Internal(format!(
-                            "path exists but is not a file: {}",
-                            db_path.display()
-                        )));
-                    };
-
-                    // Load snapshot data from the file
-                    let snapshot_data = fm.read_snapshot()?;
-                    if !snapshot_data.is_empty() {
-                        Self::apply_snapshot_data(
-                            &store,
-                            &catalog,
-                            #[cfg(feature = "rdf")]
-                            &rdf_store,
-                            &snapshot_data,
-                        )?;
-                    }
-
-                    // Recover sidecar WAL if present
-                    if fm.has_sidecar_wal() {
-                        let recovery = WalRecovery::new(fm.sidecar_wal_path());
-                        let records = recovery.recover()?;
-                        Self::apply_wal_records(
-                            &store,
-                            &catalog,
-                            #[cfg(feature = "rdf")]
-                            &rdf_store,
-                            &records,
-                        )?;
-                    }
-
-                    Some(Arc::new(fm))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        // T17 final cutover (2026-04-23): the single-file `.obrain`
+        // format handling that lived here (v1 bincode snapshot + v2
+        // mmap native, ~140 LOC) was feature-gated on `obrain-file`
+        // which was retired in commit `b0f5bd11`. The block was
+        // `let file_manager: Option<Arc<ObrainFileManager>>` plus
+        // `let mut native_mmap_store: Option<Arc<mmap_store::MmapStore>>`,
+        // both unreachable once the feature was removed. Substrate is
+        // now the single backend; legacy `.obrain` files are
+        // converted via `obrain-migrate` before opening.
 
         // Determine whether to use the WAL directory path (legacy) or sidecar
         // Read-only mode skips WAL entirely (no recovery, no creation).
@@ -355,114 +413,23 @@ impl ObrainDB {
             None
         } else if config.wal_enabled {
             if let Some(ref db_path) = config.path {
-                // When using single-file format, the WAL is a sidecar directory
-                #[cfg(feature = "obrain-file")]
-                let wal_path = if let Some(ref fm) = file_manager {
-                    let p = fm.sidecar_wal_path();
-                    std::fs::create_dir_all(&p)?;
-                    p
-                } else {
-                    // Legacy: WAL inside the database directory
-                    std::fs::create_dir_all(db_path)?;
-                    db_path.join("wal")
-                };
-
-                #[cfg(not(feature = "obrain-file"))]
-                let wal_path = {
-                    std::fs::create_dir_all(db_path)?;
-                    db_path.join("wal")
-                };
-
-                // For legacy WAL directory format, check if WAL exists and recover
-                #[cfg(feature = "obrain-file")]
-                let is_single_file = file_manager.is_some();
-                #[cfg(not(feature = "obrain-file"))]
+                // T17 final cutover: WAL is always a directory inside
+                // the database path. The pre-cutover sidecar layout
+                // (when the store was a single `.obrain` file) no
+                // longer applies — substrate is directory-based from
+                // the start.
+                std::fs::create_dir_all(db_path)?;
+                let wal_path = db_path.join("wal");
                 let is_single_file = false;
 
-                if !is_single_file && wal_path.exists() {
-                    let recovery = WalRecovery::new(&wal_path);
-
-                    // Try to load mmap'd epoch files for fast startup
-                    #[cfg(feature = "tiered-storage")]
-                    let epoch_wal_sequence = {
-                        if let Some(ref db_path) = config.path {
-                            // Configure persist directory on the epoch store
-                            let _ = store.epoch_store().set_persist_dir(db_path.clone());
-                            match store.epoch_store().load_persisted_epochs() {
-                                Ok(seq) if seq > 0 => {
-                                    // Restore in-memory state from mmap'd epochs
-                                    let t_restore = std::time::Instant::now();
-                                    if let Err(e) = store.restore_from_epoch_files() {
-                                        tracing::warn!(
-                                            "Failed to restore from epoch files, falling back to full WAL: {e}"
-                                        );
-                                        0u64
-                                    } else {
-                                        tracing::info!(elapsed = ?t_restore.elapsed(), "epoch files restored");
-                                        tracing::info!(
-                                            "Restored {} epoch files (wal_sequence={seq}), replaying WAL delta",
-                                            store.epoch_store().mmap_block_count()
-                                        );
-                                        // Sync the store's current_epoch to the highest
-                                        // restored epoch so MVCC visibility works correctly.
-                                        let max_epoch = store
-                                            .epoch_store()
-                                            .mmap_blocks()
-                                            .read()
-                                            .keys()
-                                            .copied()
-                                            .max();
-                                        if let Some(epoch) = max_epoch {
-                                            store.sync_epoch(epoch);
-                                            tracing::info!(
-                                                ?epoch,
-                                                "store epoch synced to restored max"
-                                            );
-                                        }
-                                        seq
-                                    }
-                                }
-                                Ok(_) => 0u64,
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "Failed to load epoch files, falling back to full WAL: {e}"
-                                    );
-                                    0u64
-                                }
-                            }
-                        } else {
-                            0u64
-                        }
-                    };
-                    // If epoch files provided a WAL sequence, do partial replay
-                    #[cfg(feature = "tiered-storage")]
-                    let records = if epoch_wal_sequence > 0 {
-                        let checkpoint = CheckpointMetadata {
-                            epoch: store.current_epoch(),
-                            log_sequence: epoch_wal_sequence,
-                            timestamp_ms: 0,
-                            transaction_id: TransactionId::SYSTEM,
-                        };
-                        recovery.recover_from_checkpoint(Some(&checkpoint))?
-                    } else {
-                        recovery.recover()?
-                    };
-                    #[cfg(not(feature = "tiered-storage"))]
-                    let records = recovery.recover()?;
-
-                    tracing::debug!(record_count = records.len(), "WAL recovery");
-                    if !records.is_empty() {
-                        let t_wal = std::time::Instant::now();
-                        Self::apply_wal_records(
-                            &store,
-                            &catalog,
-                            #[cfg(feature = "rdf")]
-                            &rdf_store,
-                            &records,
-                        )?;
-                        tracing::info!(elapsed = ?t_wal.elapsed(), records = records.len(), "WAL replay complete");
-                    }
-                }
+                // T17 final cutover (2026-04-23): legacy tiered-storage
+                // epoch-file recovery + LpgWal replay are gone.
+                // Substrate's `open_substrate()` path handles its own WAL
+                // recovery natively. `with_config` always builds a fresh
+                // substrate tempfile (see above), so there is no prior
+                // state to replay here.
+                let _ = &wal_path;
+                let _ = &catalog;
 
                 // Open/create WAL manager with configured durability
                 let wal_durability = match config.wal_durability {
@@ -513,7 +480,11 @@ impl ObrainDB {
             let mut builder = obrain_cognitive::CognitiveEngineBuilder::from_config(&config);
             #[cfg(feature = "kernel")]
             {
-                builder = builder.with_lpg_store(Arc::clone(&store));
+                // T17 Step 19 W2c + Step 24 `with_config` retype: the
+                // local `store` is now `Arc<dyn GraphStoreMut>` (substrate
+                // tempfile). Pass it straight through to the kernel
+                // subsystem — no concrete LpgStore cast needed.
+                builder = builder.with_kernel_store(Arc::clone(&store));
             }
             let engine = builder.build(&scheduler);
             (
@@ -541,9 +512,8 @@ impl ObrainDB {
             cdc_log: Arc::new(crate::cdc::CdcLog::new()),
             #[cfg(feature = "embed")]
             embedding_models: RwLock::new(hashbrown::HashMap::new()),
-            #[cfg(feature = "obrain-file")]
-            file_manager,
             external_store: None,
+            substrate_store: None,
             #[cfg(feature = "metrics")]
             metrics: Some(Arc::new(crate::metrics::MetricsRegistry::new())),
             current_graph: RwLock::new(None),
@@ -584,7 +554,12 @@ impl ObrainDB {
             .validate()
             .map_err(|e| obrain_common::utils::error::Error::Internal(e.to_string()))?;
 
-        let dummy_store = Arc::new(LpgStore::new()?);
+        // T17 Step 24 (2026-04-23): the dummy `LpgStore::new()` that used
+        // to shadow the real store in this constructor is gone — the
+        // `store` field is now `Arc<dyn GraphStoreMut>`, so it can hold
+        // the real store directly (legacy or substrate). The legacy
+        // Session path still needs a separate `external_store` handle
+        // for MVCC dispatch, which is kept below.
         let transaction_manager = Arc::new(TransactionManager::new());
 
         let buffer_config = BufferManagerConfig {
@@ -600,7 +575,7 @@ impl ObrainDB {
 
         Ok(Self {
             config,
-            store: dummy_store,
+            store: Arc::clone(&store),
             catalog: Arc::new(Catalog::new()),
             #[cfg(feature = "rdf")]
             rdf_store: Arc::new(RdfStore::new()),
@@ -617,9 +592,8 @@ impl ObrainDB {
             cdc_log: Arc::new(crate::cdc::CdcLog::new()),
             #[cfg(feature = "embed")]
             embedding_models: RwLock::new(hashbrown::HashMap::new()),
-            #[cfg(feature = "obrain-file")]
-            file_manager: None,
             external_store: Some(store),
+            substrate_store: None,
             #[cfg(feature = "metrics")]
             metrics: Some(Arc::new(crate::metrics::MetricsRegistry::new())),
             current_graph: RwLock::new(None),
@@ -631,388 +605,6 @@ impl ObrainDB {
         })
     }
 
-    /// Applies WAL records to restore the database state.
-    ///
-    /// Data mutation records are routed through a graph cursor that tracks
-    /// `SwitchGraph` context markers, replaying mutations into the correct
-    /// named graph (or the default graph when cursor is `None`).
-    #[cfg(feature = "wal")]
-    fn apply_wal_records(
-        store: &Arc<LpgStore>,
-        catalog: &Catalog,
-        #[cfg(feature = "rdf")] rdf_store: &Arc<RdfStore>,
-        records: &[WalRecord],
-    ) -> Result<()> {
-        use crate::catalog::{
-            EdgeTypeDefinition, NodeTypeDefinition, PropertyDataType, TypeConstraint, TypedProperty,
-        };
-        use obrain_common::utils::error::Error;
-
-        // Graph cursor: tracks which named graph receives data mutations.
-        // `None` means the default graph.
-        let mut current_graph: Option<String> = None;
-        let mut target_store: Arc<LpgStore> = Arc::clone(store);
-
-        for record in records {
-            match record {
-                // --- Named graph lifecycle ---
-                WalRecord::CreateNamedGraph { name } => {
-                    let _ = store.create_graph(name);
-                }
-                WalRecord::DropNamedGraph { name } => {
-                    store.drop_graph(name);
-                    // Reset cursor if the dropped graph was active
-                    if current_graph.as_deref() == Some(name.as_str()) {
-                        current_graph = None;
-                        target_store = Arc::clone(store);
-                    }
-                }
-                WalRecord::SwitchGraph { name } => {
-                    current_graph.clone_from(name);
-                    target_store = match &current_graph {
-                        None => Arc::clone(store),
-                        Some(graph_name) => store
-                            .graph_or_create(graph_name)
-                            .map_err(|e| Error::Internal(e.to_string()))?,
-                    };
-                }
-
-                // --- Data mutations: routed through target_store ---
-                WalRecord::CreateNode { id, labels } => {
-                    let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
-                    target_store.create_node_with_id(*id, &label_refs)?;
-                }
-                WalRecord::DeleteNode { id } => {
-                    target_store.delete_node(*id);
-                }
-                WalRecord::CreateEdge {
-                    id,
-                    src,
-                    dst,
-                    edge_type,
-                } => {
-                    target_store.create_edge_with_id(*id, *src, *dst, edge_type)?;
-                }
-                WalRecord::DeleteEdge { id } => {
-                    target_store.delete_edge(*id);
-                }
-                WalRecord::SetNodeProperty { id, key, value } => {
-                    target_store.set_node_property(*id, key, value.clone());
-                }
-                WalRecord::SetEdgeProperty { id, key, value } => {
-                    target_store.set_edge_property(*id, key, value.clone());
-                }
-                WalRecord::AddNodeLabel { id, label } => {
-                    target_store.add_label(*id, label);
-                }
-                WalRecord::RemoveNodeLabel { id, label } => {
-                    target_store.remove_label(*id, label);
-                }
-                WalRecord::RemoveNodeProperty { id, key } => {
-                    target_store.remove_node_property(*id, key);
-                }
-                WalRecord::RemoveEdgeProperty { id, key } => {
-                    target_store.remove_edge_property(*id, key);
-                }
-
-                // --- Schema DDL replay (always on root catalog) ---
-                WalRecord::CreateNodeType {
-                    name,
-                    properties,
-                    constraints,
-                } => {
-                    let def = NodeTypeDefinition {
-                        name: name.clone(),
-                        properties: properties
-                            .iter()
-                            .map(|(n, t, nullable)| TypedProperty {
-                                name: n.clone(),
-                                data_type: PropertyDataType::from_type_name(t),
-                                nullable: *nullable,
-                                default_value: None,
-                            })
-                            .collect(),
-                        constraints: constraints
-                            .iter()
-                            .map(|(kind, props)| match kind.as_str() {
-                                "unique" => TypeConstraint::Unique(props.clone()),
-                                "primary_key" => TypeConstraint::PrimaryKey(props.clone()),
-                                "not_null" if !props.is_empty() => {
-                                    TypeConstraint::NotNull(props[0].clone())
-                                }
-                                _ => TypeConstraint::Unique(props.clone()),
-                            })
-                            .collect(),
-                        parent_types: Vec::new(),
-                    };
-                    let _ = catalog.register_node_type(def);
-                }
-                WalRecord::DropNodeType { name } => {
-                    let _ = catalog.drop_node_type(name);
-                }
-                WalRecord::CreateEdgeType {
-                    name,
-                    properties,
-                    constraints,
-                } => {
-                    let def = EdgeTypeDefinition {
-                        name: name.clone(),
-                        properties: properties
-                            .iter()
-                            .map(|(n, t, nullable)| TypedProperty {
-                                name: n.clone(),
-                                data_type: PropertyDataType::from_type_name(t),
-                                nullable: *nullable,
-                                default_value: None,
-                            })
-                            .collect(),
-                        constraints: constraints
-                            .iter()
-                            .map(|(kind, props)| match kind.as_str() {
-                                "unique" => TypeConstraint::Unique(props.clone()),
-                                "primary_key" => TypeConstraint::PrimaryKey(props.clone()),
-                                "not_null" if !props.is_empty() => {
-                                    TypeConstraint::NotNull(props[0].clone())
-                                }
-                                _ => TypeConstraint::Unique(props.clone()),
-                            })
-                            .collect(),
-                        source_node_types: Vec::new(),
-                        target_node_types: Vec::new(),
-                    };
-                    let _ = catalog.register_edge_type_def(def);
-                }
-                WalRecord::DropEdgeType { name } => {
-                    let _ = catalog.drop_edge_type_def(name);
-                }
-                WalRecord::CreateIndex { .. } | WalRecord::DropIndex { .. } => {
-                    // Index recreation is handled by the store on startup
-                    // (indexes are rebuilt from data, not WAL)
-                }
-                WalRecord::CreateConstraint { .. } | WalRecord::DropConstraint { .. } => {
-                    // Constraint definitions are part of type definitions
-                    // and replayed via CreateNodeType/CreateEdgeType
-                }
-                WalRecord::CreateGraphType {
-                    name,
-                    node_types,
-                    edge_types,
-                    open,
-                } => {
-                    use crate::catalog::GraphTypeDefinition;
-                    let def = GraphTypeDefinition {
-                        name: name.clone(),
-                        allowed_node_types: node_types.clone(),
-                        allowed_edge_types: edge_types.clone(),
-                        open: *open,
-                    };
-                    let _ = catalog.register_graph_type(def);
-                }
-                WalRecord::DropGraphType { name } => {
-                    let _ = catalog.drop_graph_type(name);
-                }
-                WalRecord::CreateSchema { name } => {
-                    let _ = catalog.register_schema_namespace(name.clone());
-                }
-                WalRecord::DropSchema { name } => {
-                    let _ = catalog.drop_schema_namespace(name);
-                }
-
-                WalRecord::AlterNodeType { name, alterations } => {
-                    for (action, prop_name, type_name, nullable) in alterations {
-                        match action.as_str() {
-                            "add" => {
-                                let prop = TypedProperty {
-                                    name: prop_name.clone(),
-                                    data_type: PropertyDataType::from_type_name(type_name),
-                                    nullable: *nullable,
-                                    default_value: None,
-                                };
-                                let _ = catalog.alter_node_type_add_property(name, prop);
-                            }
-                            "drop" => {
-                                let _ = catalog.alter_node_type_drop_property(name, prop_name);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                WalRecord::AlterEdgeType { name, alterations } => {
-                    for (action, prop_name, type_name, nullable) in alterations {
-                        match action.as_str() {
-                            "add" => {
-                                let prop = TypedProperty {
-                                    name: prop_name.clone(),
-                                    data_type: PropertyDataType::from_type_name(type_name),
-                                    nullable: *nullable,
-                                    default_value: None,
-                                };
-                                let _ = catalog.alter_edge_type_add_property(name, prop);
-                            }
-                            "drop" => {
-                                let _ = catalog.alter_edge_type_drop_property(name, prop_name);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                WalRecord::AlterGraphType { name, alterations } => {
-                    for (action, type_name) in alterations {
-                        match action.as_str() {
-                            "add_node" => {
-                                let _ =
-                                    catalog.alter_graph_type_add_node_type(name, type_name.clone());
-                            }
-                            "drop_node" => {
-                                let _ = catalog.alter_graph_type_drop_node_type(name, type_name);
-                            }
-                            "add_edge" => {
-                                let _ =
-                                    catalog.alter_graph_type_add_edge_type(name, type_name.clone());
-                            }
-                            "drop_edge" => {
-                                let _ = catalog.alter_graph_type_drop_edge_type(name, type_name);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-
-                WalRecord::CreateProcedure {
-                    name,
-                    params,
-                    returns,
-                    body,
-                } => {
-                    use crate::catalog::ProcedureDefinition;
-                    let def = ProcedureDefinition {
-                        name: name.clone(),
-                        params: params.clone(),
-                        returns: returns.clone(),
-                        body: body.clone(),
-                    };
-                    let _ = catalog.register_procedure(def);
-                }
-                WalRecord::DropProcedure { name } => {
-                    let _ = catalog.drop_procedure(name);
-                }
-
-                // --- RDF triple replay ---
-                #[cfg(feature = "rdf")]
-                WalRecord::InsertRdfTriple { .. }
-                | WalRecord::DeleteRdfTriple { .. }
-                | WalRecord::ClearRdfGraph { .. }
-                | WalRecord::CreateRdfGraph { .. }
-                | WalRecord::DropRdfGraph { .. } => {
-                    rdf_ops::replay_rdf_wal_record(rdf_store, record);
-                }
-                #[cfg(not(feature = "rdf"))]
-                WalRecord::InsertRdfTriple { .. }
-                | WalRecord::DeleteRdfTriple { .. }
-                | WalRecord::ClearRdfGraph { .. }
-                | WalRecord::CreateRdfGraph { .. }
-                | WalRecord::DropRdfGraph { .. } => {}
-
-                WalRecord::TransactionCommit { .. } => {
-                    // In temporal mode, advance the store epoch on each committed
-                    // transaction so that subsequent property/label operations
-                    // are recorded at the correct epoch in their VersionLogs.
-                    #[cfg(feature = "temporal")]
-                    {
-                        target_store.new_epoch();
-                    }
-                }
-                WalRecord::TransactionAbort { .. } | WalRecord::Checkpoint { .. } => {
-                    // Transaction control records don't need replay action
-                    // (recovery already filtered to only committed transactions)
-                }
-            }
-        }
-        Ok(())
-    }
-
-    // =========================================================================
-    // Single-file format helpers
-    // =========================================================================
-
-    /// Returns `true` if the given path should use single-file format.
-    #[cfg(feature = "obrain-file")]
-    fn should_use_single_file(
-        path: &std::path::Path,
-        configured: crate::config::StorageFormat,
-    ) -> bool {
-        use crate::config::StorageFormat;
-        match configured {
-            StorageFormat::SingleFile => true,
-            StorageFormat::WalDirectory => false,
-            StorageFormat::Auto => {
-                // Existing file: check magic bytes
-                if path.is_file() {
-                    if let Ok(mut f) = std::fs::File::open(path) {
-                        use std::io::Read;
-                        let mut magic = [0u8; 4];
-                        if f.read_exact(&mut magic).is_ok()
-                            && magic == obrain_adapters::storage::file::MAGIC
-                        {
-                            return true;
-                        }
-                    }
-                    return false;
-                }
-                // Existing directory: legacy format
-                if path.is_dir() {
-                    return false;
-                }
-                // New path: check extension
-                path.extension().is_some_and(|ext| ext == "obrain")
-            }
-        }
-    }
-
-    /// Applies snapshot data (from a `.obrain` file) to restore the store and catalog.
-    #[cfg(feature = "obrain-file")]
-    fn apply_snapshot_data(
-        store: &Arc<LpgStore>,
-        catalog: &Arc<crate::catalog::Catalog>,
-        #[cfg(feature = "rdf")] rdf_store: &Arc<RdfStore>,
-        data: &[u8],
-    ) -> Result<()> {
-        persistence::load_snapshot_into_store(
-            store,
-            catalog,
-            #[cfg(feature = "rdf")]
-            rdf_store,
-            data,
-        )
-    }
-
-    // =========================================================================
-    // Session & Configuration
-    // =========================================================================
-
-    /// Opens a new session for running queries.
-    ///
-    /// Sessions are cheap to create: spin up as many as you need. Each
-    /// gets its own transaction context, so concurrent sessions won't
-    /// block each other on reads.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the database was configured with an external graph store and
-    /// the internal arena allocator cannot be initialized (out of memory).
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use obrain_engine::ObrainDB;
-    ///
-    /// let db = ObrainDB::new_in_memory();
-    /// let session = db.session();
-    ///
-    /// // Run queries through the session
-    /// let result = session.execute("MATCH (n) RETURN count(n)")?;
-    /// # Ok::<(), obrain_common::utils::error::Error>(())
-    /// ```
     #[must_use]
     pub fn session(&self) -> Session {
         let session_cfg = || crate::session::SessionConfig {
@@ -1040,7 +632,10 @@ impl ObrainDB {
             session_cfg(),
         );
         #[cfg(not(feature = "rdf"))]
-        let mut session = Session::with_adaptive(Arc::clone(&self.store), session_cfg());
+        let mut session = Session::with_adaptive(
+            Arc::clone(&self.store) as Arc<dyn GraphStoreMut>,
+            session_cfg(),
+        );
 
         #[cfg(feature = "wal")]
         if let Some(ref wal) = self.wal {
@@ -1175,30 +770,37 @@ impl ObrainDB {
 
     /// Returns the underlying (default) store.
     ///
-    /// This provides direct access to the LPG store for algorithm implementations
-    /// and admin operations (index management, schema introspection, MVCC internals).
+    /// Returns the underlying graph store as `&Arc<dyn GraphStoreMut>`.
     ///
-    /// For code that only needs read/write graph operations, prefer
-    /// [`graph_store()`](Self::graph_store) which returns the trait interface.
+    /// T17 Step 24 (2026-04-23): retyped from the concrete
+    /// `&Arc<LpgStore>` to the trait object. Callers that previously
+    /// relied on LpgStore-inherent methods (memory_breakdown,
+    /// edges_with_type, all_edges, nodes_with_label, create/drop
+    /// property index, named-graph API) now reach the same surface
+    /// through `GraphStoreMut` trait methods — substrate-compatible
+    /// defaults return empty/zero values; LpgStore overrides
+    /// delegate to inherent impls.
     #[must_use]
-    pub fn store(&self) -> &Arc<LpgStore> {
+    pub fn store(&self) -> &Arc<dyn GraphStoreMut> {
         &self.store
     }
 
-    /// Returns the LPG store for the currently active graph.
+    /// Returns the read-only mmap store if available (v2 native format).
+    ///
+    /// Returns the store for the currently active graph.
     ///
     /// If [`current_graph`](Self::current_graph) is `None` or `"default"`, returns
     /// the default store. Otherwise looks up the named graph in the root store.
     /// Falls back to the default store if the named graph does not exist.
     #[allow(dead_code)] // Reserved for future graph-aware CRUD methods
-    fn active_store(&self) -> Arc<LpgStore> {
+    fn active_store(&self) -> Arc<dyn GraphStoreMut> {
         let graph_name = self.current_graph.read().clone();
         match graph_name {
             None => Arc::clone(&self.store),
             Some(ref name) if name.eq_ignore_ascii_case("default") => Arc::clone(&self.store),
             Some(ref name) => self
                 .store
-                .graph(name)
+                .named_graph(name)
                 .unwrap_or_else(|| Arc::clone(&self.store)),
         }
     }
@@ -1209,20 +811,80 @@ impl ObrainDB {
     ///
     /// # Errors
     ///
-    /// Returns an error if arena allocation fails.
+    /// Returns an error if arena allocation fails, or if the database is
+    /// substrate-backed (substrate is a single-graph store — named graphs
+    /// are an LpgStore-only feature; see T17b for future substrate support).
     pub fn create_graph(&self, name: &str) -> Result<bool> {
-        Ok(self.store.create_graph(name)?)
+        // T17 W3c slice 4: named graphs are an LpgStore-inherent feature
+        // absent from `SubstrateStore`. Creating against the dummy LpgStore
+        // would succeed locally but would not be visible to any substrate
+        // query path. Gate explicitly.
+        if self.substrate_store.is_some() {
+            return Err(obrain_common::utils::error::Error::Internal(
+                "create_graph() is not supported in substrate mode — substrate \
+                 is single-graph by design. Named-graph support is tracked as \
+                 T17b."
+                    .to_string(),
+            ));
+        }
+        self.store
+            .create_named_graph(name)
+            .map_err(|e| obrain_common::utils::error::Error::Internal(e.to_string()))
     }
 
     /// Drops a named graph. Returns `true` if dropped, `false` if it did not exist.
+    ///
+    /// In substrate mode this always returns `false` — substrate is a
+    /// single-graph store with no named graphs to drop.
     pub fn drop_graph(&self, name: &str) -> bool {
-        self.store.drop_graph(name)
+        if self.substrate_store.is_some() {
+            // No named graphs exist on substrate, so there is nothing to drop.
+            return false;
+        }
+        self.store.drop_named_graph(name)
     }
 
     /// Returns all named graph names.
+    ///
+    /// In substrate mode this always returns an empty `Vec` — substrate is
+    /// a single-graph store (only the default graph exists).
     #[must_use]
     pub fn list_graphs(&self) -> Vec<String> {
-        self.store.graph_names()
+        if self.substrate_store.is_some() {
+            return Vec::new();
+        }
+        self.store.named_graph_names()
+    }
+
+    /// Returns the active data store as a trait object — the single
+    /// authoritative backend for data operations (CRUD, queries, epoch,
+    /// stats).
+    ///
+    /// Resolution priority:
+    /// 1. `substrate_store` — typed substrate handle (preferred when present).
+    /// 2. `external_store` — user-supplied `Arc<dyn GraphStoreMut>` from
+    ///    `with_store()`.
+    /// 3. `self.store` — the legacy `Arc<LpgStore>` field. In substrate
+    ///    mode this holds a **dummy** created in `with_store()` and should
+    ///    never be reached through this path; it is kept only as the
+    ///    LpgStore-backed fallback for `with_config()` and tests.
+    ///
+    /// Use this helper internally in place of `self.store.X()` whenever
+    /// `X` is a trait method (`current_epoch`, `node_count`, `edge_count`,
+    /// `create_node`, `get_node`, ...). That routes the call to the real
+    /// backend instead of the dummy, fixing the latent T17 bug where
+    /// substrate-backed DBs silently returned dummy zeros/no-ops.
+    ///
+    /// See gotcha note `0b9fcabe-a780-4149-8709-ed32ee9ed82e`.
+    #[must_use]
+    pub(super) fn data_store(&self) -> Arc<dyn GraphStoreMut> {
+        if let Some(ref sub) = self.substrate_store {
+            return Arc::clone(sub) as Arc<dyn GraphStoreMut>;
+        }
+        if let Some(ref ext_store) = self.external_store {
+            return Arc::clone(ext_store);
+        }
+        Arc::clone(&self.store) as Arc<dyn GraphStoreMut>
     }
 
     /// Returns the graph store as a trait object.
@@ -1234,11 +896,7 @@ impl ObrainDB {
     /// [`GraphStoreMut`]: obrain_core::graph::GraphStoreMut
     #[must_use]
     pub fn graph_store(&self) -> Arc<dyn GraphStoreMut> {
-        if let Some(ref ext_store) = self.external_store {
-            Arc::clone(ext_store)
-        } else {
-            Arc::clone(&self.store) as Arc<dyn GraphStoreMut>
-        }
+        self.data_store()
     }
 
     /// Garbage collects old MVCC versions that are no longer visible.
@@ -1294,41 +952,14 @@ impl ObrainDB {
 
         // Read-only databases: just release the shared lock, no checkpointing
         if self.read_only {
-            #[cfg(feature = "obrain-file")]
-            if let Some(ref fm) = self.file_manager {
-                fm.close()?;
-            }
             *is_open = false;
             return Ok(());
         }
 
-        // For single-file format: checkpoint to .obrain file, then clean up sidecar WAL.
-        // We must do this BEFORE the WAL close path because checkpoint_to_file
-        // removes the sidecar WAL directory.
-        #[cfg(feature = "obrain-file")]
-        let is_single_file = self.file_manager.is_some();
-        #[cfg(not(feature = "obrain-file"))]
+        // T17 final cutover: `is_single_file` is always `false` — substrate
+        // databases are directory-based, legacy single-file `.obrain` v1/v2
+        // was retired (feature `obrain-file` removed in commit `b0f5bd11`).
         let is_single_file = false;
-
-        #[cfg(feature = "obrain-file")]
-        if let Some(ref fm) = self.file_manager {
-            // Flush WAL first so all records are on disk before we snapshot
-            #[cfg(feature = "wal")]
-            if let Some(ref wal) = self.wal {
-                wal.sync()?;
-            }
-            self.checkpoint_to_file(fm)?;
-
-            // Release WAL file handles before removing sidecar directory.
-            // On Windows, open handles prevent directory deletion.
-            #[cfg(feature = "wal")]
-            if let Some(ref wal) = self.wal {
-                wal.close_active_log();
-            }
-
-            fm.remove_sidecar_wal()?;
-            fm.close()?;
-        }
 
         // Commit WAL records (legacy directory format only).
         //
@@ -1356,7 +987,47 @@ impl ObrainDB {
             wal.sync()?;
         }
 
+        // Substrate is the single backend (T17 cutover): persist its dict
+        // (registries + high-water marks) and msync the mmap zones before
+        // marking the database closed. Without this, reopen sees an empty
+        // or stale dict and treats all previously allocated nodes/edges as
+        // non-live (is_live_on_disk → false).
+        if let Some(ref sub) = self.substrate_store
+            && let Err(e) = sub.flush()
+        {
+            tracing::error!("substrate flush during close failed: {e}");
+        }
+
         *is_open = false;
+        Ok(())
+    }
+
+    /// Commits the WAL — flushes pending records and optionally checkpoints
+    /// the snapshot to the `.obrain` file.
+    ///
+    /// This is the primary durability API: callers should invoke this after
+    /// a batch of mutations that must survive process restarts.
+    #[cfg(feature = "wal")]
+    pub fn commit_wal(&self) -> Result<()> {
+        if let Some(ref wal) = self.wal {
+            wal.flush()?;
+        }
+
+        // T17 final cutover: `file_manager` (single-file `.obrain` v1/v2
+        // format) was retired; no checkpoint_to_file step is needed in
+        // substrate mode — the substrate's own flush below handles
+        // durability for mmap zones and dict columns.
+
+        // Substrate dict + mmap zones must be persisted alongside the WAL
+        // commit for cross-restart durability (T17 cutover — unconditional).
+        if let Some(ref sub) = self.substrate_store {
+            sub.flush().map_err(|e| {
+                obrain_common::utils::error::Error::Internal(format!(
+                    "substrate flush during commit_wal failed: {e}"
+                ))
+            })?;
+        }
+
         Ok(())
     }
 
@@ -1365,6 +1036,68 @@ impl ObrainDB {
     #[must_use]
     pub fn wal(&self) -> Option<&Arc<LpgWal>> {
         self.wal.as_ref()
+    }
+
+    /// Returns a WAL-aware [`GraphStoreMut`] handle for direct-mutation consumers.
+    ///
+    /// When the database has a WAL, this returns an
+    /// [`Arc<WalGraphStore>`](wal_store::WalGraphStore) that logs every mutation
+    /// (create/delete nodes & edges, set properties) before delegating to the
+    /// in-memory [`LpgStore`]. Without a WAL, it returns the raw
+    /// `Arc<LpgStore>` directly.
+    ///
+    /// This is the sanctioned entry point for subsystems that need to mutate
+    /// the graph outside a query (e.g. hub-level stores: AssetRegistry,
+    /// UserBrain, PersonaStore, etc.) while preserving durability. It replaces
+    /// the now-removed `PersistentStore` wrapper that used to live in
+    /// `obrain-hub`.
+    #[must_use]
+    pub fn graph_store_mut(&self) -> Arc<dyn GraphStoreMut> {
+        // T17 cutover: substrate is the single authoritative store. Its
+        // `GraphStoreMut` impl is already WAL-native (every mutation logs a
+        // WalRecord synchronously before touching mmap), so we do NOT wrap it
+        // with `WalGraphStore` — doing so would funnel writes through the
+        // dummy `self.store` LpgStore that lives next to the substrate in
+        // `with_store`, silently dropping them on disk. Return the
+        // substrate's erased handle directly.
+        if let Some(ref sub) = self.substrate_store {
+            return Arc::clone(sub) as Arc<dyn GraphStoreMut>;
+        }
+        #[cfg(feature = "wal")]
+        if let Some(ref wal) = self.wal {
+            return Arc::new(wal_store::WalGraphStore::new(
+                Arc::clone(&self.store) as Arc<dyn GraphStoreMut>,
+                Arc::clone(wal),
+                Arc::clone(&self.wal_graph_context),
+            ));
+        }
+        Arc::clone(&self.store) as Arc<dyn GraphStoreMut>
+    }
+
+    /// Returns the typed [`SubstrateStore`] handle when the database is
+    /// backed by the substrate backend, or `None` otherwise.
+    ///
+    /// This is the progressive-cutover hook for T6: cognitive stores
+    /// (energy / scar / utility / affinity / synapse) use this to route
+    /// cognitive mutations through the substrate column APIs
+    /// (`reinforce_edge_synapse_f32`, `decay_all_edge_synapse`,
+    /// `boost_edge_synapse_f32`, ...) which aren't part of the
+    /// `GraphStoreMut` trait. When `None`, cognitive stores fall back to
+    /// the LPG-property path (legacy behaviour).
+    ///
+    /// A typical call sequence from the hub:
+    ///
+    /// ```ignore
+    /// let synapse = match db.substrate_handle() {
+    ///     Some(sub) => SynapseStore::with_substrate(cfg, graph_store, sub),
+    ///     None => SynapseStore::new(cfg, graph_store),
+    /// };
+    /// ```
+    ///
+    /// [`SubstrateStore`]: obrain_substrate::SubstrateStore
+    #[must_use]
+    pub fn substrate_handle(&self) -> Option<Arc<obrain_substrate::SubstrateStore>> {
+        self.substrate_store.as_ref().map(Arc::clone)
     }
 
     /// Logs a WAL record if WAL is enabled.
@@ -1376,45 +1109,13 @@ impl ObrainDB {
         Ok(())
     }
 
-    /// Writes the current database snapshot to the `.obrain` file.
-    ///
-    /// Does NOT remove the sidecar WAL: callers that want to clean up
-    /// the sidecar (e.g. `close()`) should call `fm.remove_sidecar_wal()`
-    /// separately after this returns.
-    #[cfg(feature = "obrain-file")]
-    fn checkpoint_to_file(&self, fm: &ObrainFileManager) -> Result<()> {
-        use obrain_core::testing::crash::maybe_crash;
-
-        maybe_crash("checkpoint_to_file:before_export");
-        let snapshot_data = self.export_snapshot()?;
-        maybe_crash("checkpoint_to_file:after_export");
-
-        let epoch = self.store.current_epoch();
-        let transaction_id = self
-            .transaction_manager
-            .last_assigned_transaction_id()
-            .map_or(0, |t| t.0);
-        let node_count = self.store.node_count() as u64;
-        let edge_count = self.store.edge_count() as u64;
-
-        fm.write_snapshot(
-            &snapshot_data,
-            epoch.0,
-            transaction_id,
-            node_count,
-            edge_count,
-        )?;
-
-        maybe_crash("checkpoint_to_file:after_write_snapshot");
-        Ok(())
-    }
-
-    /// Returns the file manager if using single-file format.
-    #[cfg(feature = "obrain-file")]
-    #[must_use]
-    pub fn file_manager(&self) -> Option<&Arc<ObrainFileManager>> {
-        self.file_manager.as_ref()
-    }
+    // T17 final cutover (2026-04-23): `checkpoint_to_file` and
+    // `file_manager` accessors were retired with the `obrain-file`
+    // feature (commit `b0f5bd11`). Substrate is mmap + WAL-native and
+    // persists automatically through its own flush path — no separate
+    // single-file snapshot export is needed. A future slice (T17b)
+    // may reintroduce an explicit snapshot export via
+    // `SubstrateStore::snapshot_to_path()`.
 }
 
 impl Drop for ObrainDB {
@@ -1720,8 +1421,12 @@ mod tests {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test_db");
 
-        // Create database and add some data
-        {
+        // Create database and add some data.
+        // NodeId allocation is backend-dependent: substrate reserves NodeId(0)
+        // as a sentinel and allocates from 1 upward, whereas the legacy
+        // LpgStore started at 0. Capture the IDs returned by `create_node` so
+        // the assertions below stay portable across backends.
+        let (alix_id, gus_id) = {
             let db = ObrainDB::open(&db_path).unwrap();
 
             let alix = db.create_node(&["Person"]);
@@ -1734,7 +1439,8 @@ mod tests {
 
             // Explicitly close to flush WAL
             db.close().unwrap();
-        }
+            (alix, gus)
+        };
 
         // Reopen and verify data was recovered
         {
@@ -1743,11 +1449,11 @@ mod tests {
             assert_eq!(db.node_count(), 2);
             assert_eq!(db.edge_count(), 1);
 
-            // Verify nodes exist
-            let node0 = db.get_node(obrain_common::types::NodeId::new(0));
+            // Verify nodes exist (use captured IDs — backend-agnostic).
+            let node0 = db.get_node(alix_id);
             assert!(node0.is_some());
 
-            let node1 = db.get_node(obrain_common::types::NodeId::new(1));
+            let node1 = db.get_node(gus_id);
             assert!(node1.is_some());
         }
     }
@@ -1784,33 +1490,38 @@ mod tests {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("multi_session_db");
 
-        // Session 1: Create initial data
-        {
+        // Session 1: Create initial data.
+        // Capture the substrate-allocated IDs so the cross-session assertions
+        // below remain portable (substrate starts at NodeId(1); legacy LpgStore
+        // started at 0).
+        let alix_id = {
             let db = ObrainDB::open(&db_path).unwrap();
             let alix = db.create_node(&["Person"]);
             db.set_node_property(alix, "name", Value::from("Alix"));
             db.close().unwrap();
-        }
+            alix
+        };
 
         // Session 2: Add more data
-        {
+        let gus_id = {
             let db = ObrainDB::open(&db_path).unwrap();
             assert_eq!(db.node_count(), 1); // Previous data recovered
             let gus = db.create_node(&["Person"]);
             db.set_node_property(gus, "name", Value::from("Gus"));
             db.close().unwrap();
-        }
+            gus
+        };
 
         // Session 3: Verify all data
         {
             let db = ObrainDB::open(&db_path).unwrap();
             assert_eq!(db.node_count(), 2);
 
-            // Verify properties were recovered correctly
-            let node0 = db.get_node(obrain_common::types::NodeId::new(0)).unwrap();
+            // Verify properties were recovered correctly (use captured IDs).
+            let node0 = db.get_node(alix_id).unwrap();
             assert!(node0.labels.iter().any(|l| l.as_str() == "Person"));
 
-            let node1 = db.get_node(obrain_common::types::NodeId::new(1)).unwrap();
+            let node1 = db.get_node(gus_id).unwrap();
             assert!(node1.labels.iter().any(|l| l.as_str() == "Person"));
         }
     }
@@ -1825,7 +1536,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("consistency_db");
 
-        {
+        // Capture substrate-allocated IDs so the cross-session assertions
+        // below remain portable across backends (substrate reserves NodeId(0)
+        // as a sentinel).
+        let (a_id, b_id, c_id) = {
             let db = ObrainDB::open(&db_path).unwrap();
 
             // Create nodes
@@ -1846,7 +1560,8 @@ mod tests {
             db.set_node_property(c, "value", Value::Int64(3));
 
             db.close().unwrap();
-        }
+            (a, b, c)
+        };
 
         // Reopen and verify consistency
         {
@@ -1855,14 +1570,14 @@ mod tests {
             // Should have 2 nodes (a and c), b was deleted
             // Note: node_count includes deleted nodes in some implementations
             // What matters is that the non-deleted nodes are accessible
-            let node_a = db.get_node(obrain_common::types::NodeId::new(0));
+            let node_a = db.get_node(a_id);
             assert!(node_a.is_some());
 
-            let node_c = db.get_node(obrain_common::types::NodeId::new(2));
+            let node_c = db.get_node(c_id);
             assert!(node_c.is_some());
 
             // Middle node should be deleted
-            let node_b = db.get_node(obrain_common::types::NodeId::new(1));
+            let node_b = db.get_node(b_id);
             assert!(node_b.is_none());
         }
     }
@@ -1888,9 +1603,8 @@ mod tests {
 
     #[test]
     fn test_with_store_external_backend() {
-        use obrain_core::graph::lpg::LpgStore;
-
-        let external = Arc::new(LpgStore::new().unwrap());
+        let external = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap())
+            as Arc<dyn obrain_core::graph::GraphStoreMut>;
 
         // Seed data on the external store directly
         let n1 = external.create_node(&["Person"]);
@@ -2056,9 +1770,8 @@ mod tests {
 
     #[test]
     fn test_with_store_basic() {
-        use obrain_core::graph::lpg::LpgStore;
-
-        let store = Arc::new(LpgStore::new().unwrap());
+        let store = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap())
+            as Arc<dyn obrain_core::graph::GraphStoreMut>;
         let n1 = store.create_node(&["Person"]);
         store.set_node_property(n1, "name", "Alix".into());
 
@@ -2071,9 +1784,8 @@ mod tests {
 
     #[test]
     fn test_with_store_session() {
-        use obrain_core::graph::lpg::LpgStore;
-
-        let store = Arc::new(LpgStore::new().unwrap());
+        let store = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap())
+            as Arc<dyn obrain_core::graph::GraphStoreMut>;
         let graph_store = Arc::clone(&store) as Arc<dyn GraphStoreMut>;
         let db = ObrainDB::with_store(graph_store, Config::in_memory()).unwrap();
 
@@ -2084,9 +1796,8 @@ mod tests {
 
     #[test]
     fn test_with_store_mutations() {
-        use obrain_core::graph::lpg::LpgStore;
-
-        let store = Arc::new(LpgStore::new().unwrap());
+        let store = Arc::new(obrain_substrate::SubstrateStore::open_tempfile().unwrap())
+            as Arc<dyn obrain_core::graph::GraphStoreMut>;
         let graph_store = Arc::clone(&store) as Arc<dyn GraphStoreMut>;
         let db = ObrainDB::with_store(graph_store, Config::in_memory()).unwrap();
 

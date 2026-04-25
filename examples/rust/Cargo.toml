@@ -51,7 +51,17 @@ name = "multi_language"
 path = "multi_language.rs"
 required-features = ["full"]
 
+[[bin]]
+name = "migrate-v2"
+path = "migrate_v2.rs"
+required-features = ["storage"]
+
+[[bin]]
+name = "bench-load"
+path = "bench_load.rs"
+required-features = ["storage"]
+
 [features]
 default = []
-storage = ["obrain/storage"]
+storage = ["obrain/storage", "obrain/tiered-storage"]
 full = ["obrain/full"]

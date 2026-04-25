@@ -1,3 +1,4 @@
+#![cfg(feature = "cypher")]
 //! One-shot helper to generate the v1 snapshot fixture.
 //!
 //! Run with: cargo test --all-features -p obrain-engine --test generate_fixture -- --ignored

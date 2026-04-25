@@ -6,13 +6,17 @@
 use std::collections::BinaryHeap;
 use std::sync::OnceLock;
 
+#[cfg(test)]
+use obrain_common::types::PropertyKey;
 use obrain_common::types::{EdgeId, NodeId, Value};
 use obrain_common::utils::error::Result;
 use obrain_common::utils::hash::FxHashMap;
 use obrain_core::graph::Direction;
 use obrain_core::graph::GraphStore;
 #[cfg(test)]
-use obrain_core::graph::lpg::LpgStore;
+use obrain_core::graph::GraphStoreMut;
+#[cfg(test)]
+use obrain_substrate::SubstrateStore;
 
 use super::super::{AlgorithmResult, ParameterDef, ParameterType, Parameters};
 use super::components::UnionFind;
@@ -405,30 +409,60 @@ impl GraphAlgorithm for PrimAlgorithm {
 mod tests {
     use super::*;
 
-    fn create_weighted_triangle() -> LpgStore {
+    fn create_weighted_triangle() -> SubstrateStore {
         // Triangle: 0-1-2 with edges
         // 0-1: weight 1
         // 1-2: weight 2
         // 0-2: weight 3
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
 
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
         let n2 = store.create_node(&["Node"]);
 
-        store.create_edge_with_props(n0, n1, "EDGE", [("weight", Value::Float64(1.0))]);
-        store.create_edge_with_props(n1, n0, "EDGE", [("weight", Value::Float64(1.0))]);
-        store.create_edge_with_props(n1, n2, "EDGE", [("weight", Value::Float64(2.0))]);
-        store.create_edge_with_props(n2, n1, "EDGE", [("weight", Value::Float64(2.0))]);
-        store.create_edge_with_props(n0, n2, "EDGE", [("weight", Value::Float64(3.0))]);
-        store.create_edge_with_props(n2, n0, "EDGE", [("weight", Value::Float64(3.0))]);
+        store.create_edge_with_props(
+            n0,
+            n1,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(1.0))],
+        );
+        store.create_edge_with_props(
+            n1,
+            n0,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(1.0))],
+        );
+        store.create_edge_with_props(
+            n1,
+            n2,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(2.0))],
+        );
+        store.create_edge_with_props(
+            n2,
+            n1,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(2.0))],
+        );
+        store.create_edge_with_props(
+            n0,
+            n2,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(3.0))],
+        );
+        store.create_edge_with_props(
+            n2,
+            n0,
+            "EDGE",
+            &[(PropertyKey::from("weight"), Value::Float64(3.0))],
+        );
 
         store
     }
 
-    fn create_simple_chain() -> LpgStore {
+    fn create_simple_chain() -> SubstrateStore {
         // Chain: 0 - 1 - 2 - 3
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
 
         let n0 = store.create_node(&["Node"]);
         let n1 = store.create_node(&["Node"]);
@@ -471,7 +505,7 @@ mod tests {
 
     #[test]
     fn test_kruskal_empty() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let result = kruskal(&store, None);
 
         assert!(result.edges.is_empty());
@@ -480,7 +514,7 @@ mod tests {
 
     #[test]
     fn test_kruskal_single_node() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         store.create_node(&["Node"]);
 
         let result = kruskal(&store, None);
@@ -521,7 +555,7 @@ mod tests {
 
     #[test]
     fn test_prim_empty() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let result = prim(&store, None, None);
 
         assert!(result.edges.is_empty());

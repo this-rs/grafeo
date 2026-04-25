@@ -19,8 +19,11 @@ use serde::{Deserialize, Serialize};
 /// 4-byte file magic identifying a `.obrain` database file.
 pub const MAGIC: [u8; 4] = *b"GRAF";
 
-/// Current on-disk format version. Bump when the layout changes incompatibly.
+/// Legacy on-disk format version (bincode-encoded snapshot).
 pub const FORMAT_VERSION: u32 = 1;
+
+/// Native mmap-friendly format version (zero-copy, instant load).
+pub const FORMAT_VERSION_NATIVE: u32 = 2;
 
 /// Size of the file header region (bytes).
 pub const FILE_HEADER_SIZE: u64 = 4096;
@@ -48,8 +51,21 @@ pub struct FileHeader {
 
 impl FileHeader {
     /// Creates a new file header with the current timestamp and crate version.
+    /// Uses the legacy bincode format (v1).
     #[must_use]
     pub fn new() -> Self {
+        Self::with_version(FORMAT_VERSION)
+    }
+
+    /// Creates a new file header for the native mmap format (v2).
+    #[must_use]
+    pub fn new_native() -> Self {
+        Self::with_version(FORMAT_VERSION_NATIVE)
+    }
+
+    /// Creates a new file header with a specific format version.
+    #[must_use]
+    fn with_version(version: u32) -> Self {
         let mut creator_version = [0u8; 32];
         let version_bytes = env!("CARGO_PKG_VERSION").as_bytes();
         let copy_len = version_bytes.len().min(32);
@@ -62,11 +78,25 @@ impl FileHeader {
 
         Self {
             magic: MAGIC,
-            format_version: FORMAT_VERSION,
+            format_version: version,
             page_size: FILE_HEADER_SIZE as u32,
             creation_timestamp_ms,
             creator_version,
         }
+    }
+
+    /// Returns `true` if this header indicates the native mmap format (v2+).
+    #[inline]
+    #[must_use]
+    pub fn is_native_format(&self) -> bool {
+        self.format_version >= FORMAT_VERSION_NATIVE
+    }
+
+    /// Returns `true` if this header indicates the legacy bincode format (v1).
+    #[inline]
+    #[must_use]
+    pub fn is_legacy_format(&self) -> bool {
+        self.format_version == FORMAT_VERSION
     }
 }
 
@@ -165,5 +195,23 @@ mod tests {
     fn data_offset_is_12kib() {
         assert_eq!(DATA_OFFSET, 12288);
         assert_eq!(DATA_OFFSET, 3 * 4096);
+    }
+
+    #[test]
+    fn native_header_has_version_2() {
+        let header = FileHeader::new_native();
+        assert_eq!(header.format_version, FORMAT_VERSION_NATIVE);
+        assert_eq!(header.format_version, 2);
+        assert!(header.is_native_format());
+        assert!(!header.is_legacy_format());
+    }
+
+    #[test]
+    fn legacy_header_has_version_1() {
+        let header = FileHeader::new();
+        assert_eq!(header.format_version, FORMAT_VERSION);
+        assert_eq!(header.format_version, 1);
+        assert!(!header.is_native_format());
+        assert!(header.is_legacy_format());
     }
 }

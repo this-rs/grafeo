@@ -73,10 +73,13 @@ cargo tarpaulin --workspace --out Html
 #[cfg(test)]
 mod tests {
     use super::*;
+    use obrain_substrate::SubstrateStore;
 
     #[test]
     fn test_node_creation() {
-        let store = LpgStore::new();
+        // Post-T17: tests use the canonical substrate backend via a
+        // temp-file mmap (dropped automatically at the end of the test).
+        let store = SubstrateStore::open_tempfile().unwrap();
         let id = store.create_node(&["Person"], Default::default());
         assert!(store.get_node(id).is_some());
     }

@@ -1,3 +1,4 @@
+#![cfg(feature = "cypher")]
 //! Quick Rosetta tests for cross-language query comparison.
 
 use obrain_engine::ObrainDB;

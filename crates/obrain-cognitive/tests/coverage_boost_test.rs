@@ -29,6 +29,7 @@ use obrain_cognitive::search::{
 use obrain_cognitive::synapse::{SynapseConfig, SynapseStore};
 use obrain_cognitive::tenant::{TenantError, TenantManager};
 use obrain_common::types::NodeId;
+use obrain_core::graph::traits::GraphStoreMut;
 
 fn nid(id: u64) -> NodeId {
     NodeId(id)
@@ -472,9 +473,10 @@ fn tenant_exists_and_count() {
 #[test]
 fn store_trait_load_persist_node_f64() {
     use obrain_cognitive::store_trait::{load_node_f64, persist_node_f64};
-    use obrain_core::LpgStore;
+    use obrain_substrate::SubstrateStore;
 
-    let store = LpgStore::new().expect("LpgStore::new should succeed");
+    let store =
+        SubstrateStore::open_tempfile().expect("SubstrateStore::open_tempfile should succeed");
     let node_id = store.create_node(&["TestNode"]);
 
     // Initially no property
@@ -492,9 +494,10 @@ fn store_trait_load_persist_node_f64() {
 #[test]
 fn store_trait_load_persist_edge_f64() {
     use obrain_cognitive::store_trait::{load_edge_f64, persist_edge_f64};
-    use obrain_core::LpgStore;
+    use obrain_substrate::SubstrateStore;
 
-    let store = LpgStore::new().expect("LpgStore::new should succeed");
+    let store =
+        SubstrateStore::open_tempfile().expect("SubstrateStore::open_tempfile should succeed");
     let n1 = store.create_node(&["A"]);
     let n2 = store.create_node(&["B"]);
     let edge_id = store.create_edge(n1, n2, "CONNECTS");
@@ -514,9 +517,10 @@ fn store_trait_load_persist_edge_f64() {
 #[test]
 fn store_trait_overwrite_node_f64() {
     use obrain_cognitive::store_trait::{load_node_f64, persist_node_f64};
-    use obrain_core::LpgStore;
+    use obrain_substrate::SubstrateStore;
 
-    let store = LpgStore::new().expect("LpgStore::new should succeed");
+    let store =
+        SubstrateStore::open_tempfile().expect("SubstrateStore::open_tempfile should succeed");
     let node_id = store.create_node(&["TestNode"]);
 
     persist_node_f64(&store, node_id, "_score", 1.0);
@@ -530,9 +534,10 @@ fn store_trait_overwrite_node_f64() {
 #[test]
 fn store_trait_load_nonexistent_node() {
     use obrain_cognitive::store_trait::load_node_f64;
-    use obrain_core::LpgStore;
+    use obrain_substrate::SubstrateStore;
 
-    let store = LpgStore::new().expect("LpgStore::new should succeed");
+    let store =
+        SubstrateStore::open_tempfile().expect("SubstrateStore::open_tempfile should succeed");
     // Node 99999 does not exist
     let result = load_node_f64(&store, nid(99999), "_score");
     assert!(result.is_none());
@@ -663,9 +668,11 @@ fn provenance_multiple_event_types_on_same_node() {
 #[test]
 fn scar_store_with_graph_store() {
     use obrain_cognitive::store_trait::{PROP_SCAR_COUNT, PROP_SCAR_INTENSITY, load_node_f64};
-    use obrain_core::LpgStore;
+    use obrain_substrate::SubstrateStore;
 
-    let gs = Arc::new(LpgStore::new().expect("LpgStore::new should succeed"));
+    let gs = Arc::new(
+        SubstrateStore::open_tempfile().expect("SubstrateStore::open_tempfile should succeed"),
+    );
     let node_id = gs.create_node(&["ScarNode"]);
 
     let store = ScarStore::with_graph_store(ScarConfig::default(), gs.clone());
@@ -686,9 +693,11 @@ fn scar_store_with_graph_store() {
 #[test]
 fn scar_store_persist_scar_summary_multiple_scars() {
     use obrain_cognitive::store_trait::{PROP_SCAR_COUNT, load_node_f64};
-    use obrain_core::LpgStore;
+    use obrain_substrate::SubstrateStore;
 
-    let gs = Arc::new(LpgStore::new().expect("LpgStore::new should succeed"));
+    let gs = Arc::new(
+        SubstrateStore::open_tempfile().expect("SubstrateStore::open_tempfile should succeed"),
+    );
     let node_id = gs.create_node(&["ScarNode"]);
 
     let store = ScarStore::with_graph_store(ScarConfig::default(), gs.clone());
@@ -709,9 +718,11 @@ fn scar_store_persist_scar_summary_multiple_scars() {
 #[test]
 fn scar_store_persist_after_heal() {
     use obrain_cognitive::store_trait::{PROP_SCAR_COUNT, load_node_f64};
-    use obrain_core::LpgStore;
+    use obrain_substrate::SubstrateStore;
 
-    let gs = Arc::new(LpgStore::new().expect("LpgStore::new should succeed"));
+    let gs = Arc::new(
+        SubstrateStore::open_tempfile().expect("SubstrateStore::open_tempfile should succeed"),
+    );
     let node_id = gs.create_node(&["ScarNode"]);
 
     let store = ScarStore::with_graph_store(ScarConfig::default(), gs.clone());

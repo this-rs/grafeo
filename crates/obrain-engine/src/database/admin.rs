@@ -12,31 +12,41 @@ impl super::ObrainDB {
     /// Returns the number of nodes in the database.
     #[must_use]
     pub fn node_count(&self) -> usize {
-        self.store.node_count()
+        self.data_store().node_count()
     }
 
     /// Returns the number of edges in the database.
     #[must_use]
     pub fn edge_count(&self) -> usize {
-        self.store.edge_count()
+        self.data_store().edge_count()
     }
 
     /// Returns the number of distinct labels in the database.
+    ///
+    /// T17 W3c slice 5b: derived from the trait-safe `all_labels()` so
+    /// substrate-backed databases report real counts (previously routed
+    /// through the LpgStore-inherent `label_count()` on the dummy store).
     #[must_use]
     pub fn label_count(&self) -> usize {
-        self.store.label_count()
+        self.data_store().all_labels().len()
     }
 
     /// Returns the number of distinct property keys in the database.
+    ///
+    /// T17 W3c slice 5b: see `label_count` — routes through the trait's
+    /// `all_property_keys()` for substrate parity.
     #[must_use]
     pub fn property_key_count(&self) -> usize {
-        self.store.property_key_count()
+        self.data_store().all_property_keys().len()
     }
 
     /// Returns the number of distinct edge types in the database.
+    ///
+    /// T17 W3c slice 5b: see `label_count` — routes through the trait's
+    /// `all_edge_types()` for substrate parity.
     #[must_use]
     pub fn edge_type_count(&self) -> usize {
-        self.store.edge_type_count()
+        self.data_store().all_edge_types().len()
     }
 
     // =========================================================================
@@ -66,8 +76,8 @@ impl super::ObrainDB {
     pub fn info(&self) -> crate::admin::DatabaseInfo {
         crate::admin::DatabaseInfo {
             mode: crate::admin::DatabaseMode::Lpg,
-            node_count: self.store.node_count(),
-            edge_count: self.store.edge_count(),
+            node_count: self.data_store().node_count(),
+            edge_count: self.data_store().edge_count(),
             is_persistent: self.is_persistent(),
             path: self.config.path.clone(),
             wal_enabled: self.config.wal_enabled,
@@ -84,8 +94,31 @@ impl super::ObrainDB {
     pub fn memory_usage(&self) -> crate::memory_usage::MemoryUsage {
         use crate::memory_usage::{BufferManagerMemory, CacheMemory, MemoryUsage};
         use obrain_common::memory::MemoryRegion;
+        use obrain_common::memory::usage::{
+            IndexMemory, MvccMemory, StoreMemory, StringPoolMemory,
+        };
 
-        let (store, indexes, mvcc, string_pool) = self.store.memory_breakdown();
+        // T17 W3c slice 5b: `LpgStore::memory_breakdown()` walks LpgStore-specific
+        // in-memory structures (node/edge VersionChain maps, MVCC chains, property
+        // column DashMaps). In substrate mode storage is mmap-backed zones on disk
+        // plus small in-RAM metadata; those categories don't map cleanly to
+        // StoreMemory/MvccMemory. Until substrate grows a parallel breakdown,
+        // return zeroed sub-totals so admin callers see "unknown" rather than
+        // a silently-wrong empty-LpgStore report.
+        //
+        // TODO(T17 follow-up): add `SubstrateStore::memory_breakdown()` that
+        // reports zone footprints (NodesZone, EdgesZone, PropsZone, WAL tail)
+        // and plumb it here.
+        let (store, indexes, mvcc, string_pool) = if self.substrate_store.is_some() {
+            (
+                StoreMemory::default(),
+                IndexMemory::default(),
+                MvccMemory::default(),
+                StringPoolMemory::default(),
+            )
+        } else {
+            self.store.memory_breakdown()
+        };
 
         let (parsed_bytes, optimized_bytes, cached_plan_count) =
             self.query_cache.heap_memory_bytes();
@@ -136,12 +169,16 @@ impl super::ObrainDB {
         #[cfg(not(feature = "wal"))]
         let disk_bytes: Option<usize> = None;
 
+        // T17 W3c slice 5b: route schema-cardinality reads through data_store()
+        // so substrate mode reports real counts (LpgStore-inherent methods
+        // target the dummy empty store in substrate mode).
+        let data = self.data_store();
         crate::admin::DatabaseStats {
-            node_count: self.store.node_count(),
-            edge_count: self.store.edge_count(),
-            label_count: self.store.label_count(),
-            edge_type_count: self.store.edge_type_count(),
-            property_key_count: self.store.property_key_count(),
+            node_count: data.node_count(),
+            edge_count: data.edge_count(),
+            label_count: data.all_labels().len(),
+            edge_type_count: data.all_edge_types().len(),
+            property_key_count: data.all_property_keys().len(),
             index_count: self.catalog.index_count(),
             memory_bytes: self.buffer_manager.allocated(),
             disk_bytes,
@@ -172,27 +209,34 @@ impl super::ObrainDB {
     /// For RDF mode, returns predicate and named graph information.
     #[must_use]
     pub fn schema(&self) -> crate::admin::SchemaInfo {
-        let labels = self
-            .store
+        // T17 W3c slice 5a: trait reads route through data_store() so substrate
+        // mode returns real labels/types/keys (previously self.store was the
+        // dummy LpgStore → empty results). Per-label counts use the trait's
+        // node_count_by_label (substrate overrides with O(1) label-index).
+        // Edge-type counts still go through self.store.edges_with_type() —
+        // no trait equivalent yet; slice 5b adds substrate parity.
+        let data = self.data_store();
+        let labels = data
             .all_labels()
             .into_iter()
             .map(|name| crate::admin::LabelInfo {
-                name: name.clone(),
-                count: self.store.nodes_with_label(&name).count(),
+                count: data.node_count_by_label(&name),
+                name,
             })
             .collect();
 
-        let edge_types = self
-            .store
+        let edge_types = data
             .all_edge_types()
             .into_iter()
             .map(|name| crate::admin::EdgeTypeInfo {
-                name: name.clone(),
-                count: self.store.edges_with_type(&name).count(),
+                // TODO(T17 W3c slice 5b): add edge_count_by_type to the trait
+                // so substrate-backed ObrainDB can report non-zero counts here.
+                count: self.store.edges_with_type(&name).len(),
+                name,
             })
             .collect();
 
-        let property_keys = self.store.all_property_keys();
+        let property_keys = data.all_property_keys();
 
         crate::admin::SchemaInfo::Lpg(crate::admin::LpgSchemaInfo {
             labels,
@@ -239,9 +283,26 @@ impl super::ObrainDB {
     pub fn validate(&self) -> crate::admin::ValidationResult {
         let mut result = crate::admin::ValidationResult::default();
 
+        // T17 W3c slice 5b: dangling-edge scan relies on LpgStore-inherent
+        // `all_edges()` iterator. Substrate's edge topology lives in mmap'd
+        // zones accessed by slot index; there is no trait-level iterator yet.
+        // In substrate mode we bail cleanly — substrate's replay+checksum path
+        // already validates on-disk edge integrity, so the admin validator is
+        // informational rather than a correctness primitive there.
+        if self.substrate_store.is_some() {
+            result.warnings.push(crate::admin::ValidationWarning {
+                code: "VALIDATE_SUBSTRATE_SKIPPED".to_string(),
+                message: "Dangling-edge validator not implemented for substrate backend; \
+                          on-disk integrity is verified by WAL replay + zone checksums"
+                    .to_string(),
+                context: None,
+            });
+            return result;
+        }
+
         // Check for dangling edge references
         for edge in self.store.all_edges() {
-            if self.store.get_node(edge.src).is_none() {
+            if self.data_store().get_node(edge.src).is_none() {
                 result.errors.push(crate::admin::ValidationError {
                     code: "DANGLING_SRC".to_string(),
                     message: format!(
@@ -251,7 +312,7 @@ impl super::ObrainDB {
                     context: Some(format!("edge:{}", edge.id.0)),
                 });
             }
-            if self.store.get_node(edge.dst).is_none() {
+            if self.data_store().get_node(edge.dst).is_none() {
                 result.errors.push(crate::admin::ValidationError {
                     code: "DANGLING_DST".to_string(),
                     message: format!(
@@ -264,7 +325,7 @@ impl super::ObrainDB {
         }
 
         // Add warnings for potential issues
-        if self.store.node_count() > 0 && self.store.edge_count() == 0 {
+        if self.data_store().node_count() > 0 && self.data_store().edge_count() == 0 {
             result.warnings.push(crate::admin::ValidationWarning {
                 code: "NO_EDGES".to_string(),
                 message: "Database has nodes but no edges".to_string(),
@@ -280,6 +341,10 @@ impl super::ObrainDB {
     /// Returns None if WAL is not enabled.
     #[must_use]
     pub fn wal_status(&self) -> crate::admin::WalStatus {
+        // W3a: route through data_store() so substrate-backed DBs report the
+        // real substrate epoch rather than the dummy LpgStore's zero epoch.
+        // See gotcha note 0b9fcabe-a780-4149-8709-ed32ee9ed82e.
+        let current_epoch = self.data_store().current_epoch().as_u64();
         #[cfg(feature = "wal")]
         if let Some(ref wal) = self.wal {
             return crate::admin::WalStatus {
@@ -288,7 +353,7 @@ impl super::ObrainDB {
                 size_bytes: wal.size_bytes(),
                 record_count: wal.record_count() as usize,
                 last_checkpoint: wal.last_checkpoint_timestamp(),
-                current_epoch: self.store.current_epoch().as_u64(),
+                current_epoch,
             };
         }
 
@@ -298,7 +363,7 @@ impl super::ObrainDB {
             size_bytes: 0,
             record_count: 0,
             last_checkpoint: None,
-            current_epoch: self.store.current_epoch().as_u64(),
+            current_epoch,
         }
     }
 
@@ -312,7 +377,8 @@ impl super::ObrainDB {
     pub fn wal_checkpoint(&self) -> Result<()> {
         #[cfg(feature = "wal")]
         if let Some(ref wal) = self.wal {
-            let epoch = self.store.current_epoch();
+            // W3a: route through data_store() — substrate epoch in substrate mode.
+            let epoch = self.data_store().current_epoch();
             let transaction_id = self
                 .transaction_manager
                 .last_assigned_transaction_id()

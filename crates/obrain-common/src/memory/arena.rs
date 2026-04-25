@@ -26,15 +26,20 @@ use crate::types::EpochId;
 /// in simple HashMaps. Chunks grow as needed via `alloc()`.
 const DEFAULT_CHUNK_SIZE: usize = 1024 * 1024;
 
-/// Chunk size for tiered-storage arenas (2 GB).
+/// Chunk size for tiered-storage arenas (8 GB).
 ///
-/// With tiered-storage, `alloc_value_with_offset` requires all allocations
-/// in a single contiguous primary chunk for stable u32 offsets. 2 GB handles
-/// up to ~32M records (at ~64 bytes each). On modern OSes, `alloc` for large
-/// sizes uses mmap(MAP_ANON) internally — pages are allocated lazily on first
-/// touch, so virtual memory cost is near-zero until data is written.
+/// With tiered-storage, `alloc_value_with_offset` stores records in chunked
+/// arenas addressed by u64 offsets (high 16 bits = chunk index, low 48 bits
+/// = offset within chunk). 8 GB per chunk handles ~128M records (at ~64 bytes
+/// each). On modern OSes, `alloc` for large sizes uses mmap(MAP_ANON)
+/// internally — pages are allocated lazily on first touch, so virtual memory
+/// cost is near-zero until data is written.
+///
+/// If the primary chunk fills up, new chunks are allocated transparently.
+/// With 16-bit chunk indices and 48-bit offsets, the theoretical maximum is
+/// 65536 chunks × 256 TB per chunk — effectively unlimited.
 #[cfg(feature = "tiered-storage")]
-const TIERED_CHUNK_SIZE: usize = 2 * 1024 * 1024 * 1024; // 2 GB
+const TIERED_CHUNK_SIZE: usize = 8 * 1024 * 1024 * 1024; // 8 GB
 
 /// Errors from arena allocation operations.
 #[derive(Debug, Clone)]
@@ -112,7 +117,7 @@ impl Chunk {
     /// Tries to allocate `size` bytes with the given alignment.
     /// Returns (offset, ptr) where offset is the aligned offset within this chunk.
     /// Returns None if there's not enough space.
-    fn try_alloc_with_offset(&self, size: usize, align: usize) -> Option<(u32, NonNull<u8>)> {
+    fn try_alloc_with_offset(&self, size: usize, align: usize) -> Option<(u64, NonNull<u8>)> {
         loop {
             let current = self.offset.load(Ordering::Relaxed);
 
@@ -134,7 +139,7 @@ impl Chunk {
                 Ok(_) => {
                     // SAFETY: We've reserved this range exclusively
                     let ptr = unsafe { self.ptr.as_ptr().add(aligned) };
-                    return Some((aligned as u32, NonNull::new(ptr)?));
+                    return Some((aligned as u64, NonNull::new(ptr)?));
                 }
                 Err(_) => continue, // Retry
             }
@@ -266,39 +271,89 @@ impl Arena {
         })
     }
 
-    /// Allocates a value and returns its offset within the primary chunk.
+    /// Allocates a value and returns a composite u64 offset.
     ///
-    /// This is used by tiered storage to store values in the arena and track
-    /// their locations via compact u32 offsets in `HotVersionRef`.
+    /// The offset encodes both the chunk index and the position within that
+    /// chunk: `(chunk_index << 48) | offset_in_chunk`.  This allows addressing
+    /// across multiple chunks, removing the previous 2 GB / 4 GB ceiling.
+    ///
+    /// The allocator tries existing chunks (newest first for locality), then
+    /// grows a new chunk if none have space.
     ///
     /// # Errors
     ///
-    /// Returns `AllocError::InsufficientSpace` if the primary chunk does not
-    /// have enough room. Increase the chunk size for your use case.
+    /// Returns `AllocError::OutOfMemory` if the system allocator cannot
+    /// provide a new chunk.
     #[cfg(feature = "tiered-storage")]
-    pub fn alloc_value_with_offset<T>(&self, value: T) -> Result<(u32, &mut T), AllocError> {
+    pub fn alloc_value_with_offset<T>(&self, value: T) -> Result<(u64, &mut T), AllocError> {
         let size = std::mem::size_of::<T>();
         let align = std::mem::align_of::<T>();
 
-        // Try to allocate in the first chunk to get a stable offset
-        let chunks = self.chunks.read();
-        let chunk = chunks
-            .first()
-            .expect("Arena should have at least one chunk");
+        // Try to allocate in an existing chunk (newest first for cache locality)
+        {
+            let chunks = self.chunks.read();
+            for (chunk_idx, chunk) in chunks.iter().enumerate().rev() {
+                if let Some((offset_in_chunk, ptr)) = chunk.try_alloc_with_offset(size, align) {
+                    let composite = Self::encode_offset(chunk_idx, offset_in_chunk);
+                    // SAFETY: We've allocated the correct size and alignment
+                    return Ok(unsafe {
+                        let typed_ptr = ptr.as_ptr().cast::<T>();
+                        typed_ptr.write(value);
+                        (composite, &mut *typed_ptr)
+                    });
+                }
+            }
+        }
 
-        let (offset, ptr) = chunk
+        // No existing chunk has space — grow a new one
+        let chunk_size = self.chunk_size.max(size + align);
+        let new_chunk = Chunk::new(chunk_size)?;
+        self.total_allocated
+            .fetch_add(chunk_size, Ordering::Relaxed);
+
+        let (offset_in_chunk, ptr) = new_chunk
             .try_alloc_with_offset(size, align)
-            .ok_or(AllocError::InsufficientSpace)?;
+            .expect("fresh chunk sized to fit");
 
+        let mut chunks = self.chunks.write();
+        let chunk_idx = chunks.len();
+        chunks.push(new_chunk);
+
+        let composite = Self::encode_offset(chunk_idx, offset_in_chunk);
         // SAFETY: We've allocated the correct size and alignment
         Ok(unsafe {
             let typed_ptr = ptr.as_ptr().cast::<T>();
             typed_ptr.write(value);
-            (offset, &mut *typed_ptr)
+            (composite, &mut *typed_ptr)
         })
     }
 
-    /// Reads a value at the given offset in the primary chunk.
+    /// Encodes a (chunk_index, offset_in_chunk) pair into a single u64.
+    /// Layout: bits [63..48] = chunk_index (16 bits), bits [47..0] = offset (48 bits).
+    #[cfg(feature = "tiered-storage")]
+    #[inline]
+    fn encode_offset(chunk_idx: usize, offset_in_chunk: u64) -> u64 {
+        debug_assert!(chunk_idx < (1 << 16), "chunk index overflow: {chunk_idx}");
+        debug_assert!(
+            offset_in_chunk < (1u64 << 48),
+            "offset overflow: {offset_in_chunk}"
+        );
+        ((chunk_idx as u64) << 48) | offset_in_chunk
+    }
+
+    /// Decodes a composite u64 offset into (chunk_index, offset_in_chunk).
+    #[cfg(feature = "tiered-storage")]
+    #[inline]
+    fn decode_offset(composite: u64) -> (usize, usize) {
+        let chunk_idx = (composite >> 48) as usize;
+        let offset = (composite & ((1u64 << 48) - 1)) as usize;
+        (chunk_idx, offset)
+    }
+
+    /// Reads a value at the given composite offset.
+    ///
+    /// The offset must have been returned by `alloc_value_with_offset`.
+    /// It encodes both the chunk index and the position within that chunk.
     ///
     /// # Safety
     ///
@@ -306,36 +361,36 @@ impl Arena {
     /// - The type T must match what was stored at that offset
     /// - The arena must not have been dropped
     #[cfg(feature = "tiered-storage")]
-    pub unsafe fn read_at<T>(&self, offset: u32) -> &T {
+    pub unsafe fn read_at<T>(&self, offset: u64) -> &T {
+        let (chunk_idx, offset_in_chunk) = Self::decode_offset(offset);
         let chunks = self.chunks.read();
-        let chunk = chunks
-            .first()
-            .expect("Arena should have at least one chunk");
+        let chunk = &chunks[chunk_idx];
 
         debug_assert!(
-            (offset as usize) + std::mem::size_of::<T>() <= chunk.used(),
-            "read_at: offset {} + size_of::<{}>() = {} exceeds chunk used bytes {}",
-            offset,
+            offset_in_chunk + std::mem::size_of::<T>() <= chunk.used(),
+            "read_at: chunk[{}] offset {} + size_of::<{}>() = {} exceeds chunk used bytes {}",
+            chunk_idx,
+            offset_in_chunk,
             std::any::type_name::<T>(),
-            (offset as usize) + std::mem::size_of::<T>(),
+            offset_in_chunk + std::mem::size_of::<T>(),
             chunk.used()
         );
         debug_assert!(
-            (offset as usize).is_multiple_of(std::mem::align_of::<T>()),
+            offset_in_chunk.is_multiple_of(std::mem::align_of::<T>()),
             "read_at: offset {} is not aligned for {} (alignment {})",
-            offset,
+            offset_in_chunk,
             std::any::type_name::<T>(),
             std::mem::align_of::<T>()
         );
 
         // SAFETY: Caller guarantees offset is valid and T matches stored type
         unsafe {
-            let ptr = chunk.ptr.as_ptr().add(offset as usize).cast::<T>();
+            let ptr = chunk.ptr.as_ptr().add(offset_in_chunk).cast::<T>();
             &*ptr
         }
     }
 
-    /// Reads a value mutably at the given offset in the primary chunk.
+    /// Reads a value mutably at the given composite offset.
     ///
     /// # Safety
     ///
@@ -344,31 +399,31 @@ impl Arena {
     /// - The arena must not have been dropped
     /// - No other references to this value may exist
     #[cfg(feature = "tiered-storage")]
-    pub unsafe fn read_at_mut<T>(&self, offset: u32) -> &mut T {
+    pub unsafe fn read_at_mut<T>(&self, offset: u64) -> &mut T {
+        let (chunk_idx, offset_in_chunk) = Self::decode_offset(offset);
         let chunks = self.chunks.read();
-        let chunk = chunks
-            .first()
-            .expect("Arena should have at least one chunk");
+        let chunk = &chunks[chunk_idx];
 
         debug_assert!(
-            (offset as usize) + std::mem::size_of::<T>() <= chunk.capacity,
-            "read_at_mut: offset {} + size_of::<{}>() = {} exceeds chunk capacity {}",
-            offset,
+            offset_in_chunk + std::mem::size_of::<T>() <= chunk.capacity,
+            "read_at_mut: chunk[{}] offset {} + size_of::<{}>() = {} exceeds chunk capacity {}",
+            chunk_idx,
+            offset_in_chunk,
             std::any::type_name::<T>(),
-            (offset as usize) + std::mem::size_of::<T>(),
+            offset_in_chunk + std::mem::size_of::<T>(),
             chunk.capacity
         );
         debug_assert!(
-            (offset as usize).is_multiple_of(std::mem::align_of::<T>()),
+            offset_in_chunk.is_multiple_of(std::mem::align_of::<T>()),
             "read_at_mut: offset {} is not aligned for {} (alignment {})",
-            offset,
+            offset_in_chunk,
             std::any::type_name::<T>(),
             std::mem::align_of::<T>()
         );
 
         // SAFETY: Caller guarantees offset is valid, T matches, and no aliasing
         unsafe {
-            let ptr = chunk.ptr.as_ptr().add(offset as usize).cast::<T>();
+            let ptr = chunk.ptr.as_ptr().add(offset_in_chunk).cast::<T>();
             &mut *ptr
         }
     }
@@ -438,7 +493,7 @@ pub struct ArenaStats {
 pub struct ArenaAllocator {
     /// Map of epochs to arenas.  Multiple epochs may share the same
     /// `Arc<Arena>` to avoid allocating a huge chunk per epoch (critical
-    /// for tiered-storage where each chunk is 2 GB).
+    /// for tiered-storage where each chunk is 8 GB).
     arenas: RwLock<hashbrown::HashMap<EpochId, Arc<Arena>>>,
     /// Current epoch.
     current_epoch: AtomicUsize,
@@ -537,7 +592,7 @@ impl ArenaAllocator {
     /// Returns whether a new arena was created.
     ///
     /// Multiple epochs **share** the same physical arena to avoid
-    /// allocating a 2 GB mmap per auto-committed transaction.  A fresh
+    /// allocating an 8 GB mmap per auto-committed transaction.  A fresh
     /// arena is only created when the active one is full.
     ///
     /// # Errors
@@ -774,7 +829,7 @@ mod tiered_storage_tests {
         assert_eq!(offset1, 0);
         // Second allocation should be after the first
         assert!(offset2 > offset1);
-        assert!(offset2 >= std::mem::size_of::<u64>() as u32);
+        assert!(offset2 >= std::mem::size_of::<u64>() as u64);
 
         // Values should be correct
         assert_eq!(*val1, 42);
@@ -971,16 +1026,26 @@ mod tiered_storage_tests {
     }
 
     #[test]
-    fn test_alloc_value_with_offset_insufficient_space() {
-        // Create a tiny arena where a large allocation will fail
+    fn test_alloc_value_with_offset_grows_chunks() {
+        // Create a tiny arena where a single chunk won't fit everything
         let arena = Arena::with_chunk_size(EpochId::INITIAL, 64).unwrap();
 
-        // Fill up the chunk
-        let _ = arena.alloc_value_with_offset([0u8; 48]).unwrap();
+        // Fill up the first chunk
+        let (offset1, _) = arena.alloc_value_with_offset([0u8; 48]).unwrap();
+        // Chunk 0, low offset
+        assert_eq!(offset1 >> 48, 0); // chunk index = 0
 
-        // This should return InsufficientSpace, not panic
-        let result = arena.alloc_value_with_offset([0u8; 32]);
-        assert!(result.is_err());
+        // This overflows chunk 0 → should transparently allocate chunk 1
+        let (offset2, val2) = arena.alloc_value_with_offset([42u8; 32]).unwrap();
+        assert_eq!(offset2 >> 48, 1); // chunk index = 1
+        assert_eq!(*val2, [42u8; 32]);
+
+        // Read back from chunk 1
+        let read_back: &[u8; 32] = unsafe { arena.read_at(offset2) };
+        assert_eq!(*read_back, [42u8; 32]);
+
+        // Arena should now have 2 chunks
+        assert_eq!(arena.stats().chunk_count, 2);
     }
 
     #[test]

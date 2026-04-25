@@ -1839,56 +1839,56 @@ impl PyObrainDB {
         Ok(())
     }
 
-    /// Saves the database to a file path.
-    ///
-    /// - If in-memory: creates a new persistent database at path
-    /// - If file-backed: creates a copy at the new path
-    ///
-    /// The original database remains unchanged.
-    ///
-    /// Example:
-    ///     db = ObrainDB()  # in-memory
-    ///     db.create_node(["Person"], {"name": "Alix"})
-    ///     db.save("./mydb")  # save to file
-    fn save(&self, path: String) -> PyResult<()> {
-        let db = self.inner.read();
-        db.save(path).map_err(PyObrainError::from)?;
-        Ok(())
+    /// T17 final cutover (2026-04-23): `save()` raises `ObrainError`.
+    /// The legacy single-file `.obrain` v1/v2 snapshot export surface
+    /// was removed together with the LpgStore module; substrate
+    /// persists directly to its own directory layout. Python clients
+    /// should open with `ObrainDB(path="./mydb")` pointing at a
+    /// directory and let substrate manage persistence, or copy the
+    /// directory at the filesystem level.
+    fn save(&self, _path: String) -> PyResult<()> {
+        Err(
+            PyObrainError::from(obrain_common::utils::error::Error::Internal(
+                "ObrainDB.save() is no longer supported since the T17 substrate \
+                 cutover; substrate persists directly to its directory path"
+                    .to_string(),
+            ))
+            .into(),
+        )
     }
 
-    /// Creates an in-memory copy of this database.
-    ///
-    /// Returns a new database that is completely independent.
-    /// Changes to the copy do not affect the original.
-    ///
-    /// Example:
-    ///     file_db = ObrainDB("./production.db")
-    ///     test_db = file_db.to_memory()  # safe copy
-    ///     test_db.create_node(...)  # doesn't affect production
+    /// T17 final cutover (2026-04-23): `to_memory()` raises `ObrainError`.
+    /// The in-memory copy surface relied on the legacy bincode snapshot
+    /// flow which was retired with the `.obrain` v1/v2 format. For an
+    /// in-memory working copy, open a fresh substrate directory in a
+    /// tempdir and copy the data manually.
     fn to_memory(&self) -> PyResult<Self> {
-        let db = self.inner.read();
-        let new_db = db.to_memory().map_err(PyObrainError::from)?;
-
-        Ok(Self {
-            inner: Arc::new(RwLock::new(new_db)),
-        })
+        Err(
+            PyObrainError::from(obrain_common::utils::error::Error::Internal(
+                "ObrainDB.to_memory() is no longer supported since the T17 substrate \
+                 cutover — substrate persists directly to its directory path; for a \
+                 working copy, create a fresh substrate database in a tempdir."
+                    .to_string(),
+            ))
+            .into(),
+        )
     }
 
-    /// Opens a database file and loads it entirely into memory.
-    ///
-    /// The returned database has no connection to the original file.
-    /// Changes will NOT be written back to the file.
-    ///
-    /// Example:
-    ///     db = ObrainDB.open_in_memory("./mydb")
-    ///     db.create_node(...)  # doesn't affect file
+    /// T17 final cutover (2026-04-23): `open_in_memory()` raises
+    /// `ObrainError`. The file → memory loading surface relied on the
+    /// legacy single-file `.obrain` format which has been retired. Use
+    /// `ObrainDB(path=...)` to open a substrate directory directly.
     #[staticmethod]
-    fn open_in_memory(path: String) -> PyResult<Self> {
-        let db = obrain_engine::ObrainDB::open_in_memory(path).map_err(PyObrainError::from)?;
-
-        Ok(Self {
-            inner: Arc::new(RwLock::new(db)),
-        })
+    fn open_in_memory(_path: String) -> PyResult<Self> {
+        Err(
+            PyObrainError::from(obrain_common::utils::error::Error::Internal(
+                "ObrainDB.open_in_memory() is no longer supported since the T17 \
+                 substrate cutover — substrate persists directly to its directory \
+                 path."
+                    .to_string(),
+            ))
+            .into(),
+        )
     }
 
     /// Returns true if this database is backed by a file (persistent).
@@ -2039,7 +2039,9 @@ impl PyObrainDB {
         let store = db.store();
 
         // Collect all nodes and discover property keys
-        let nodes: Vec<_> = store.all_nodes().collect();
+        // T17 Step 24 (2026-04-23): `all_nodes` is now a trait method
+        // returning Vec (was iterator on LpgStore inherent).
+        let nodes: Vec<_> = store.all_nodes();
         let mut prop_keys: Vec<String> = Vec::new();
         let mut prop_key_set = std::collections::HashSet::new();
         for node in &nodes {
@@ -2110,7 +2112,8 @@ impl PyObrainDB {
         let store = db.store();
 
         // Collect all edges and discover property keys
-        let edges: Vec<_> = store.all_edges().collect();
+        // T17 Step 24: `all_edges` trait method returns Vec directly.
+        let edges: Vec<_> = store.all_edges();
         let mut prop_keys: Vec<String> = Vec::new();
         let mut prop_key_set = std::collections::HashSet::new();
         for edge in &edges {

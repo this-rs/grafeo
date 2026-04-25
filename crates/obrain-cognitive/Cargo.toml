@@ -31,22 +31,56 @@ hopfield = ["engram"]
 immune = []
 
 # Epigenetic layer (Layer 5: cross-instance transgenerational memory)
-epigenetic = ["dep:serde_json"]
+epigenetic = []
 
 # Kernel embeddings (irreducible kernel C = Φ₀ ∘ A¹(H^∞))
 kernel = ["dep:obrain-adapters"]
 
+# Kernel parameters — cognitive parameters as graph nodes
+kernel-params = []
+
+# Session metrics — performance signals from work sessions (Noyau Cognitif T2)
+session-metrics = ["kernel-params"]
+
 # Cognitive Persona — database-native knowledge lens
 persona = ["synapse", "energy"]
 
+# IAM — Identity & Access Management (ORN system, policy evaluation)
+iam = ["dep:obrain-iam"]
+
+# Substrate — topology-as-storage column-view backend (T6)
+substrate = ["dep:obrain-substrate"]
+
+# Thinkers — self-maintaining background agents (T13): Consolidator,
+# CommunityWarden, Predictor, Dreamer. All implementations live under
+# the `thinker` module gate; pulls in substrate for direct column-view
+# mutations (decay, pruning, compaction).
+thinker = ["substrate"]
+
+# T17l — Enrichment thinkers : HilbertEnricher (+ future KernelEnricher +
+# StEnricher). They call into `obrain-adapters::plugins::algorithms` to
+# compute canonical cognitive features (`_hilbert_features`,
+# `_kernel_embedding`, `_st_embedding`) and persist them on the store.
+# Gated separately from `thinker` so the base fleet stays lean ; opt-in
+# for the hub + user brain where retrieval depends on the canonical
+# composite embedding pipeline.
+enrichment = ["thinker", "dep:obrain-adapters"]
+
 # Future subsystems
 scar = []
+utility = []
+affinity = []
 memory = ["energy"]
 stagnation = []
 fingerprint = []
-distillation = ["energy", "synapse", "fingerprint", "dep:serde_json", "dep:bincode"]
+distillation = ["energy", "synapse", "fingerprint", "dep:bincode"]
 episodic = []
 consolidation = ["energy", "fabric", "gds-refresh"]
+
+# Community detection — batch Leiden (Traag-Waltman) + incremental LDleiden.
+# Standalone (no obrain-adapters dependency): maintains node→community_id online
+# in response to edge add/remove/reweight, with substrate persistence via T10 Step 3.
+community = []
 
 # Convenience feature groups (3 progressive levels)
 # Level 1: minimum viable cognitive — energy + synapses
@@ -54,13 +88,15 @@ cognitive = ["energy", "synapse"]
 # Level 2: + fabric scoring, co-change detection, GDS refresh
 cognitive-fabric = ["cognitive", "fabric", "co-change", "gds-refresh"]
 # Level 3: all cognitive subsystems
-cognitive-full = ["cognitive-fabric", "kernel", "scar", "memory", "stagnation", "fingerprint", "distillation", "episodic", "consolidation", "persona"]
+cognitive-full = ["cognitive-fabric", "kernel", "kernel-params", "session-metrics", "scar", "memory", "stagnation", "fingerprint", "distillation", "episodic", "consolidation", "persona"]
 
 [dependencies]
 obrain-common.workspace = true
 obrain-core = { workspace = true, default-features = false }
 obrain-reactive.workspace = true
 obrain-adapters = { workspace = true, optional = true, default-features = false, features = ["algos"] }
+obrain-iam = { workspace = true, optional = true }
+obrain-substrate = { workspace = true, optional = true }
 
 # Async runtime — only sync feature for all targets (WASM-compatible).
 # NOTE: we don't use `workspace = true` because the workspace tokio
@@ -74,6 +110,10 @@ thiserror.workspace = true
 # Concurrency
 parking_lot.workspace = true
 dashmap.workspace = true
+rayon = { workspace = true }
+# Plan 69e59065 T3 — crossbeam::queue::SegQueue for the lock-free
+# `pending_metadata_writes` buffer drained by SynapseConsolidator.
+crossbeam = { workspace = true }
 
 # Tracing
 tracing.workspace = true
@@ -81,9 +121,9 @@ tracing.workspace = true
 # Data structures
 smallvec.workspace = true
 
-# Serialization (for CognitiveConfig TOML support)
+# Serialization (for CognitiveConfig TOML support + engram persistence)
 serde.workspace = true
-serde_json = { workspace = true, optional = true }
+serde_json.workspace = true
 bincode = { workspace = true, optional = true }
 toml = "0.8"
 
@@ -91,17 +131,22 @@ toml = "0.8"
 web-time = "1"
 
 # Native-only: full tokio runtime for memory manager periodic sweep etc.
+# `rt-multi-thread` is needed by `ConsolidatorRuntime` (T3 step 3) so the
+# hub-side wrapper can build a dedicated worker-thread runtime.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
+tokio = { version = "1", features = ["sync", "time", "rt", "rt-multi-thread", "macros", "fs"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 arcstr.workspace = true
 serde_json.workspace = true
 bincode.workspace = true
+bytemuck = { workspace = true, features = ["derive"] }
 criterion.workspace = true
 smallvec.workspace = true
 proptest.workspace = true
+tempfile.workspace = true
+obrain-substrate.workspace = true
 
 [lints]
 workspace = true

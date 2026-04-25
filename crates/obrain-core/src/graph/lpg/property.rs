@@ -426,6 +426,7 @@ impl<Id: EntityId> PropertyStorage<Id> {
     #[must_use]
     pub fn get_batch(&self, ids: &[Id], key: &PropertyKey) -> Vec<Option<Value>> {
         let columns = self.columns.read();
+        #[allow(unused_mut)]
         let mut results: Vec<Option<Value>> = match columns.get(key) {
             Some(col) => ids.iter().map(|&id| col.get(id)).collect(),
             None => vec![None; ids.len()],

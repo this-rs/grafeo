@@ -3,7 +3,61 @@
 use arcstr::ArcStr;
 use obrain_common::types::{EdgeId, NodeId, PropertyKey, Value};
 use smallvec::SmallVec;
+use std::sync::Arc;
 use web_time::Instant;
+
+/// Authentication/tenant context carried by mutation events.
+///
+/// When mutations are performed through an [`AuthenticatedSession`],
+/// the context is attached to the resulting [`MutationBatch`]. Listeners
+/// can use this to filter events by tenant or principal.
+#[derive(Debug, Clone)]
+pub struct EventContext {
+    /// The tenant (named graph) that produced this mutation.
+    pub tenant_id: Option<String>,
+    /// The principal ARN/ORN of the authenticated user.
+    pub principal_arn: Option<String>,
+    /// The session ID that produced this mutation.
+    pub session_id: Option<String>,
+}
+
+impl EventContext {
+    /// Creates a new `EventContext` with the given fields.
+    pub fn new(
+        tenant_id: Option<String>,
+        principal_arn: Option<String>,
+        session_id: Option<String>,
+    ) -> Self {
+        Self {
+            tenant_id,
+            principal_arn,
+            session_id,
+        }
+    }
+
+    /// Creates an `EventContext` from WAMI JWT claims.
+    ///
+    /// Maps JWT fields to event context:
+    /// - `tenant_id` → tenant
+    /// - `sub` (subject) → principal ARN
+    /// - `jti` (JWT ID) → session ID
+    pub fn from_wami(tenant_id: Option<String>, sub: String, jti: String) -> Self {
+        Self {
+            tenant_id,
+            principal_arn: Some(sub),
+            session_id: Some(jti),
+        }
+    }
+
+    /// Creates an `EventContext` with only the tenant ID set.
+    pub fn tenant(tenant_id: impl Into<String>) -> Self {
+        Self {
+            tenant_id: Some(tenant_id.into()),
+            principal_arn: None,
+            session_id: None,
+        }
+    }
+}
 
 /// Snapshot of a node's state at a point in time.
 #[derive(Debug, Clone)]
@@ -120,14 +174,28 @@ pub struct MutationBatch {
     pub events: Vec<MutationEvent>,
     /// When the batch was created (for latency tracking).
     pub timestamp: Instant,
+    /// Optional authentication/tenant context for this batch.
+    ///
+    /// `None` in bootstrap mode or unauthenticated contexts.
+    pub context: Option<Arc<EventContext>>,
 }
 
 impl MutationBatch {
-    /// Creates a new batch from a list of events.
+    /// Creates a new batch from a list of events (no context).
     pub fn new(events: Vec<MutationEvent>) -> Self {
         Self {
             events,
             timestamp: Instant::now(),
+            context: None,
+        }
+    }
+
+    /// Creates a new batch with an attached [`EventContext`].
+    pub fn with_context(events: Vec<MutationEvent>, context: Arc<EventContext>) -> Self {
+        Self {
+            events,
+            timestamp: Instant::now(),
+            context: Some(context),
         }
     }
 

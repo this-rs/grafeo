@@ -1,23 +1,14 @@
-//! Labeled Property Graph (LPG) storage.
+//! Graph entity types shared by the query engine and all graph backends.
 //!
-//! This is Obrain's primary graph model - the same model used by Neo4j,
-//! TigerGraph, and most modern graph databases. If you're used to working
-//! with nodes, relationships, and properties, you're in the right place.
-//!
-//! ## What you get
-//!
-//! - **Nodes** with labels (like "Person", "Company") and properties (like "name", "age")
-//! - **Edges** that connect nodes, with types (like "KNOWS", "WORKS_AT") and their own properties
-//! - **Indexes** that make lookups fast
-//!
-//! Start with [`LpgStore`] - that's where everything lives.
+//! T17 final cutover (2026-04-23): the in-memory `LpgStore` backend
+//! (~13 000 LOC under `store/`) was retired — substrate is the single
+//! production backend. Only value types (`Node`, `Edge`, records,
+//! `PropertyStorage`, `CompareOp`) remain.
 
 mod edge;
 mod node;
 mod property;
-mod store;
 
 pub use edge::{Edge, EdgeFlags, EdgeRecord};
 pub use node::{Node, NodeFlags, NodeRecord};
 pub use property::{CompareOp, PropertyStorage};
-pub use store::{LpgStore, PropertyUndoEntry};

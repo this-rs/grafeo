@@ -1,3 +1,4 @@
+#![cfg(feature = "cypher")]
 //! End-to-end integration test for the GDS pipeline.
 //!
 //! Validates that all 5 GDS bricks work together in the real PO pipeline:

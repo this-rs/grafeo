@@ -1,0 +1,75 @@
+# T9 retrieval gate — validates recall@10 / recall@100 / p95 latency on the
+# L0 / L1 / L2 cascade over a 1M-node synthetic corpus with planted neighbors.
+#
+# Why a dedicated workflow:
+#   - Corpus build at N=1M takes ~2 min; recall pass + 1000 latency samples
+#     adds another ~5 s. The total is small enough to run on every PR that
+#     touches the substrate retrieval stack.
+#   - The gate is a hard CI contract: recall@10 ≥ 99%, recall@100 ≥ 99.5%,
+#     p95 (parallel) ≤ 1 ms. A regression in SRP seeds / popcount kernels /
+#     scan widths breaks this gate before it can ship.
+#
+# Scope: only runs on PRs touching the retrieval surface. Full nightly run at
+# the same scale as part of the main CI is wired separately.
+name: retrieval-gate
+
+on:
+  pull_request:
+    paths:
+      - 'crates/obrain-substrate/**'
+      - 'bench/substrate/**'
+      - '.github/workflows/retrieval-gate.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'crates/obrain-substrate/**'
+      - 'bench/substrate/**'
+      - '.github/workflows/retrieval-gate.yml'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  gate:
+    name: retrieval-gate N=1M (parallel)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+
+      - name: Cache cargo registry + build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            bench/substrate/target
+          key: retrieval-gate-${{ runner.os }}-${{ hashFiles('bench/substrate/Cargo.toml', 'crates/obrain-substrate/Cargo.toml') }}
+
+      - name: Build retrieval-gate (release)
+        working-directory: bench/substrate
+        run: cargo build --release --bin retrieval-gate
+
+      - name: Run gate at N=1M, 1000 queries (parallel cascade)
+        working-directory: bench/substrate
+        run: |
+          mkdir -p target/gate-reports
+          ./target/release/retrieval-gate \
+            --nodes 1000000 \
+            --queries 1000 \
+            --seed 0x5EED_C0FEE \
+            --out target/gate-reports/gate.json
+
+      - name: Upload gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: retrieval-gate-report
+          path: bench/substrate/target/gate-reports/gate.json

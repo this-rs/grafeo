@@ -1,3 +1,4 @@
+#![cfg(feature = "cypher")]
 //! Regression tests for SET/REMOVE label variable binding preservation.
 //!
 //! Covers issues #178 and #182: SET n:Label and REMOVE n:Label operators

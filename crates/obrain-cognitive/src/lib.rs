@@ -58,6 +58,12 @@ pub mod gds_refresh;
 #[cfg(feature = "scar")]
 pub mod scar;
 
+#[cfg(feature = "utility")]
+pub mod utility;
+
+#[cfg(feature = "affinity")]
+pub mod affinity;
+
 #[cfg(feature = "memory")]
 pub mod memory;
 
@@ -80,6 +86,38 @@ pub mod consolidation;
 #[cfg(feature = "kernel")]
 pub mod kernel;
 
+// Kernel parameters — cognitive parameters as graph nodes
+#[cfg(feature = "kernel-params")]
+pub mod kernel_params;
+
+// Session metrics — performance signals from work sessions (T2)
+#[cfg(feature = "session-metrics")]
+pub mod session_metrics;
+
+// Kernel adaptation — feedback loop adjusting KernelParams from SessionMetrics (T3)
+#[cfg(feature = "kernel-params")]
+pub mod kernel_adaptation;
+
+// HMR Context Loader — community-aware spreading activation (T4)
+#[cfg(feature = "kernel-params")]
+pub mod context_loader;
+
+// Adaptive scaffolding — scaffolding level from kernel config (T5)
+#[cfg(feature = "kernel-params")]
+pub mod scaffolding;
+
+// Automatic crystallization — stable community detection and skill materialization (T6)
+#[cfg(feature = "kernel-params")]
+pub mod cristallization;
+
+// Native protocol FSM — protocol states as graph nodes (T7)
+#[cfg(feature = "kernel-params")]
+pub mod protocol_native;
+
+// Triphasic bootstrap — cold/warm/hot kernel loading (T8)
+#[cfg(feature = "kernel-params")]
+pub mod kernel_bootstrap;
+
 // Stigmergy — diffuse pheromone memory on edges (Layer 2)
 #[cfg(feature = "stigmergy")]
 pub mod stigmergy;
@@ -95,6 +133,15 @@ pub mod epigenetic;
 // Cognitive Persona — database-native knowledge lens
 #[cfg(feature = "persona")]
 pub mod persona;
+
+// Community detection — batch Leiden + incremental LDleiden (T10)
+#[cfg(feature = "community")]
+pub mod community;
+
+// Thinkers — self-maintaining background agents (T13):
+// Consolidator / CommunityWarden / Predictor / Dreamer.
+#[cfg(feature = "thinker")]
+pub mod thinker;
 
 // Engram system — biomimetic memory traces (Layer 0+)
 pub mod engram;
@@ -148,7 +195,8 @@ pub use gds_refresh::{GdsRefreshConfig, GdsRefreshScheduler};
 
 #[cfg(feature = "synapse")]
 pub use synapse::{
-    Synapse, SynapseConfig, SynapseListener, SynapseStore, mutation_frequency_score, synapse_score,
+    CrossBaseNodeId, CrossBaseSynapse, Synapse, SynapseConfig, SynapseListener, SynapseStore,
+    mutation_frequency_score, synapse_score,
 };
 
 #[cfg(feature = "scar")]
@@ -211,6 +259,46 @@ pub use engram::{
 
 #[cfg(feature = "kernel")]
 pub use kernel::KernelListener;
+
+#[cfg(feature = "kernel-params")]
+pub use kernel_params::{
+    CognitiveKernelConfig, KernelParam, KernelParamDef, KernelParamStore, LABEL_KERNEL_PARAM,
+};
+
+#[cfg(feature = "session-metrics")]
+pub use session_metrics::{
+    EDGE_MEASURES, LABEL_SESSION_METRIC, METRIC_PARAM_MAP, SessionMetric, SessionMetricCollector,
+    SessionMetricStore,
+};
+
+#[cfg(feature = "kernel-params")]
+pub use kernel_adaptation::{
+    AdaptationHistory, AdaptationResult, MetaEvent, ParamAdjustment, ParamGradient,
+    SessionFeedback, adapt, compute_gradients,
+};
+
+#[cfg(feature = "kernel-params")]
+pub use context_loader::{
+    ActivatedNode, ActivationSource as ContextActivationSource, CommunityProvider, ContextBundle,
+    FixedTokenEstimator, NeighborProvider, TokenEstimator, load_context,
+};
+
+#[cfg(feature = "kernel-params")]
+pub use scaffolding::ScaffoldingLevel;
+
+#[cfg(feature = "kernel-params")]
+pub use cristallization::{
+    CommunitySnapshot, CristallizationCandidate, CristallizationType, StabilityTracker,
+    should_crystallize, should_dissolve,
+};
+
+#[cfg(feature = "kernel-params")]
+pub use protocol_native::{
+    NativeProtocol, ProtocolRun, ProtocolState, ProtocolTransition, RunStatus, StateType,
+};
+
+#[cfg(feature = "kernel-params")]
+pub use kernel_bootstrap::{BootstrapMode, BootstrapResult, bootstrap};
 
 #[cfg(feature = "stigmergy")]
 pub use stigmergy::{

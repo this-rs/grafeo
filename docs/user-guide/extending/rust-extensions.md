@@ -35,7 +35,6 @@ obrain-engine = "0.5"
 ### Extension Code
 
 ```rust
-use obrain_core::graph::LpgStore;
 use obrain_engine::{ObrainDB, Session};
 
 /// Custom graph analysis function
@@ -67,10 +66,15 @@ pub struct ConnectivityReport {
 
 ### Graph Store
 
-```rust
-use obrain_core::graph::lpg::LpgStore;
+Post-T17, extensions should target the `GraphStore` trait rather than a
+concrete backend. The canonical implementation is `SubstrateStore`
+(mmap + WAL-native) from the `obrain-substrate` crate, but writing against
+the trait keeps your extension portable across future backends.
 
-fn process_graph(store: &LpgStore) {
+```rust
+use obrain_core::graph::traits::GraphStore;
+
+fn process_graph<S: GraphStore>(store: &S) {
     // Iterate over nodes
     for node in store.nodes() {
         println!("Node: {:?}", node.id());

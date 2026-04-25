@@ -13,14 +13,14 @@ use obrain_cognitive::engine::{CognitiveEngine, CognitiveEngineBuilder};
 use obrain_cognitive::fabric::FabricStore;
 use obrain_cognitive::synapse::{SynapseConfig, SynapseStore};
 use obrain_common::types::PropertyKey;
-use obrain_core::LpgStore;
-use obrain_core::graph::GraphStoreMut;
+use obrain_core::graph::{GraphStore, GraphStoreMut};
 use obrain_reactive::{BatchConfig, MutationBus, Scheduler};
+use obrain_substrate::SubstrateStore;
 use std::sync::Arc;
 use std::time::Duration;
 
-fn make_graph_store() -> Arc<LpgStore> {
-    Arc::new(LpgStore::new().expect("LpgStore::new should succeed"))
+fn make_graph_store() -> Arc<SubstrateStore> {
+    Arc::new(SubstrateStore::open_tempfile().expect("SubstrateStore::open_tempfile should succeed"))
 }
 
 fn make_scheduler() -> (MutationBus, Scheduler) {

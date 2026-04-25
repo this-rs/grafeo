@@ -1,3 +1,4 @@
+#![cfg(feature = "cypher")]
 //! Property index validation & benchmark on real Project Orchestrator database.
 //!
 //! This test validates:

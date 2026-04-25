@@ -27,10 +27,10 @@
 //!
 //! ```no_run
 //! use obrain_adapters::plugins::algorithms::projection::ProjectionBuilder;
-//! use obrain_core::graph::lpg::LpgStore;
+//! use obrain_substrate::SubstrateStore;
 //! use obrain_core::graph::GraphStore;
 //!
-//! let store = LpgStore::new().unwrap();
+//! let store = SubstrateStore::open_tempfile().unwrap();
 //! // ... populate store ...
 //!
 //! // Project only File and Function nodes with IMPORTS edges
@@ -523,10 +523,10 @@ impl EdgeFilter {
 ///
 /// ```no_run
 /// use obrain_adapters::plugins::algorithms::projection::ProjectionBuilder;
-/// use obrain_core::graph::lpg::LpgStore;
+/// use obrain_substrate::SubstrateStore;
 /// use obrain_core::graph::GraphStore;
 ///
-/// let store = LpgStore::new().unwrap();
+/// let store = SubstrateStore::open_tempfile().unwrap();
 /// // ... populate the store with nodes and edges ...
 ///
 /// // Create a projection for code analysis
@@ -572,9 +572,9 @@ impl<'a> GraphProjection<'a> {
     /// use obrain_adapters::plugins::algorithms::projection::{
     ///     GraphProjection, NodeFilter, EdgeFilter,
     /// };
-    /// use obrain_core::graph::lpg::LpgStore;
+    /// use obrain_substrate::SubstrateStore;
     ///
-    /// let store = LpgStore::new().unwrap();
+    /// let store = SubstrateStore::open_tempfile().unwrap();
     /// let projection = GraphProjection::new(
     ///     &store,
     ///     NodeFilter::new().labels(vec!["Person".into()]),
@@ -1254,11 +1254,11 @@ impl GraphStore for GraphProjection<'_> {
 ///
 /// ```no_run
 /// use obrain_adapters::plugins::algorithms::projection::ProjectionBuilder;
-/// use obrain_core::graph::lpg::LpgStore;
+/// use obrain_substrate::SubstrateStore;
 /// use obrain_core::graph::GraphStore;
 /// use obrain_common::types::Value;
 ///
-/// let store = LpgStore::new().unwrap();
+/// let store = SubstrateStore::open_tempfile().unwrap();
 ///
 /// let projection = ProjectionBuilder::new(&store)
 ///     .with_node_labels(&["File", "Function"])
@@ -1293,9 +1293,9 @@ impl<'a> ProjectionBuilder<'a> {
     ///
     /// ```no_run
     /// use obrain_adapters::plugins::algorithms::projection::ProjectionBuilder;
-    /// use obrain_core::graph::lpg::LpgStore;
+    /// use obrain_substrate::SubstrateStore;
     ///
-    /// let store = LpgStore::new().unwrap();
+    /// let store = SubstrateStore::open_tempfile().unwrap();
     /// let builder = ProjectionBuilder::new(&store);
     /// ```
     pub fn new(store: &'a dyn GraphStore) -> Self {
@@ -1324,9 +1324,9 @@ impl<'a> ProjectionBuilder<'a> {
     ///
     /// ```no_run
     /// use obrain_adapters::plugins::algorithms::projection::ProjectionBuilder;
-    /// use obrain_core::graph::lpg::LpgStore;
+    /// use obrain_substrate::SubstrateStore;
     ///
-    /// let store = LpgStore::new().unwrap();
+    /// let store = SubstrateStore::open_tempfile().unwrap();
     /// let builder = ProjectionBuilder::new(&store)
     ///     .with_node_labels(&["Person", "Company"]);
     /// ```
@@ -1353,9 +1353,9 @@ impl<'a> ProjectionBuilder<'a> {
     ///
     /// ```no_run
     /// use obrain_adapters::plugins::algorithms::projection::ProjectionBuilder;
-    /// use obrain_core::graph::lpg::LpgStore;
+    /// use obrain_substrate::SubstrateStore;
     ///
-    /// let store = LpgStore::new().unwrap();
+    /// let store = SubstrateStore::open_tempfile().unwrap();
     /// let builder = ProjectionBuilder::new(&store)
     ///     .with_edge_types(&["KNOWS", "WORKS_AT"]);
     /// ```
@@ -1386,10 +1386,10 @@ impl<'a> ProjectionBuilder<'a> {
     ///
     /// ```no_run
     /// use obrain_adapters::plugins::algorithms::projection::ProjectionBuilder;
-    /// use obrain_core::graph::lpg::LpgStore;
+    /// use obrain_substrate::SubstrateStore;
     /// use obrain_common::types::Value;
     ///
-    /// let store = LpgStore::new().unwrap();
+    /// let store = SubstrateStore::open_tempfile().unwrap();
     /// let builder = ProjectionBuilder::new(&store)
     ///     .with_node_property("score", |v: &Value| {
     ///         matches!(v, Value::Float64(s) if *s > 0.5)
@@ -1427,10 +1427,10 @@ impl<'a> ProjectionBuilder<'a> {
     ///
     /// ```no_run
     /// use obrain_adapters::plugins::algorithms::projection::ProjectionBuilder;
-    /// use obrain_core::graph::lpg::LpgStore;
+    /// use obrain_substrate::SubstrateStore;
     /// use obrain_common::types::Value;
     ///
-    /// let store = LpgStore::new().unwrap();
+    /// let store = SubstrateStore::open_tempfile().unwrap();
     /// let builder = ProjectionBuilder::new(&store)
     ///     .with_edge_property("weight", |v: &Value| {
     ///         matches!(v, Value::Float64(w) if *w > 0.1)
@@ -1460,10 +1460,10 @@ impl<'a> ProjectionBuilder<'a> {
     ///
     /// ```no_run
     /// use obrain_adapters::plugins::algorithms::projection::ProjectionBuilder;
-    /// use obrain_core::graph::lpg::LpgStore;
+    /// use obrain_substrate::SubstrateStore;
     /// use obrain_core::graph::GraphStore;
     ///
-    /// let store = LpgStore::new().unwrap();
+    /// let store = SubstrateStore::open_tempfile().unwrap();
     /// let projection = ProjectionBuilder::new(&store)
     ///     .with_node_labels(&["Person"])
     ///     .build();
@@ -1631,10 +1631,10 @@ impl ProjectionConfig {
     ///
     /// ```no_run
     /// use obrain_adapters::plugins::algorithms::projection::ProjectionConfig;
-    /// use obrain_core::graph::lpg::LpgStore;
+    /// use obrain_substrate::SubstrateStore;
     /// use obrain_core::graph::GraphStore;
     ///
-    /// let store = LpgStore::new().unwrap();
+    /// let store = SubstrateStore::open_tempfile().unwrap();
     /// let config = ProjectionConfig::new("view")
     ///     .node_labels(vec!["Person".into()]);
     /// let projection = config.to_projection(&store);
@@ -1848,14 +1848,15 @@ impl Default for ProjectionRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use obrain_core::graph::lpg::LpgStore;
+    use obrain_core::graph::GraphStoreMut;
+    use obrain_substrate::SubstrateStore;
     /// Creates a test graph with multiple labels and edge types:
     ///
     /// (File:f1) --IMPORTS--> (Function:fn1) --CALLS--> (Function:fn2)
     /// (Note:n1) --SYNAPSE--> (Note:n2)
     /// (File:f1) --CONTAINS--> (Function:fn1)
-    fn create_test_graph() -> LpgStore {
-        let store = LpgStore::new().unwrap();
+    fn create_test_graph() -> SubstrateStore {
+        let store = SubstrateStore::open_tempfile().unwrap();
 
         let f1 = store.create_node(&["File"]);
         store.set_node_property(f1, "name", Value::from("main.rs"));
@@ -1984,7 +1985,7 @@ mod tests {
         let f1 = store.node_ids()[0]; // First node (File)
 
         // Without filter: f1 has 2 outgoing neighbors (fn1 via IMPORTS, fn1 via CONTAINS)
-        let all_neighbors: Vec<NodeId> = store.neighbors(f1, Direction::Outgoing).collect();
+        let all_neighbors: Vec<NodeId> = store.neighbors(f1, Direction::Outgoing);
         assert!(!all_neighbors.is_empty());
 
         // With edge type filter: only IMPORTS
@@ -2323,8 +2324,8 @@ mod tests {
     /// Code layer: File --IMPORTS--> Function --CALLS--> Function (4 nodes, 4 edges)
     /// Knowledge layer: Note --SYNAPSE--> Note (3 nodes, 3 edges)
     /// Cross-layer: File --DOCUMENTS--> Note (1 edge)
-    fn create_algo_test_graph() -> LpgStore {
-        let store = LpgStore::new().unwrap();
+    fn create_algo_test_graph() -> SubstrateStore {
+        let store = SubstrateStore::open_tempfile().unwrap();
 
         // Code layer
         let f1 = store.create_node(&["File"]);
@@ -2454,7 +2455,7 @@ mod tests {
     #[test]
     fn test_projection_overhead_minimal() {
         // Benchmark: projection with no filters should have minimal overhead
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
 
         // Create a graph with 100 nodes
         let mut nodes = Vec::new();
@@ -2484,7 +2485,7 @@ mod tests {
 
     #[test]
     fn test_projection_get_node_property() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["Note"]);
         store.set_node_property(n0, "path", Value::from("main.rs"));
@@ -2505,7 +2506,7 @@ mod tests {
 
     #[test]
     fn test_projection_get_node_and_edge() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["Function"]);
         let n2 = store.create_node(&["Note"]);
@@ -2529,7 +2530,7 @@ mod tests {
 
     #[test]
     fn test_projection_node_count_edge_count() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["File"]);
         let n2 = store.create_node(&["Note"]);
@@ -2547,7 +2548,7 @@ mod tests {
 
     #[test]
     fn test_projection_edges_from_filtered_node() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["Note"]);
         let n1 = store.create_node(&["File"]);
         store.create_edge(n0, n1, "IMPORTS");
@@ -2567,7 +2568,7 @@ mod tests {
 
     #[test]
     fn test_projection_out_degree_in_degree() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["File"]);
         let n2 = store.create_node(&["File"]);
@@ -2585,7 +2586,7 @@ mod tests {
 
     #[test]
     fn test_projection_all_labels_and_edge_types() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         store.create_node(&["File"]);
         store.create_node(&["Note"]);
 
@@ -2604,7 +2605,7 @@ mod tests {
 
     #[test]
     fn test_projection_nodes_by_label() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let _n1 = store.create_node(&["Note"]);
         let n2 = store.create_node(&["File"]);
@@ -2625,7 +2626,7 @@ mod tests {
 
     #[test]
     fn test_projection_all_node_ids() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let _n1 = store.create_node(&["Note"]);
 
@@ -2640,7 +2641,7 @@ mod tests {
 
     #[test]
     fn test_projection_edge_type() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["File"]);
         let e0 = store.create_edge(n0, n1, "IMPORTS");
@@ -2655,7 +2656,7 @@ mod tests {
 
     #[test]
     fn test_projection_get_node_property_batch() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["Note"]);
         store.set_node_property(n0, "path", Value::from("a.rs"));
@@ -2672,7 +2673,7 @@ mod tests {
 
     #[test]
     fn test_projection_get_nodes_properties_batch() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["Note"]);
         store.set_node_property(n0, "path", Value::from("a.rs"));
@@ -2689,7 +2690,7 @@ mod tests {
 
     #[test]
     fn test_projection_find_nodes_by_property() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let _n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["File"]);
         store.set_node_property(n1, "path", Value::from("main.rs"));
@@ -2704,7 +2705,7 @@ mod tests {
 
     #[test]
     fn test_projection_statistics_and_schema() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         store.create_node(&["File"]);
 
         let projection = ProjectionBuilder::new(&store)
@@ -2722,7 +2723,7 @@ mod tests {
 
     #[test]
     fn test_projection_visibility_checks() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["Note"]);
         let e0 = store.create_edge(n0, n1, "SYNAPSE");
@@ -2741,7 +2742,7 @@ mod tests {
 
     #[test]
     fn test_projection_filter_visible_node_ids() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["Note"]);
 
@@ -2757,7 +2758,7 @@ mod tests {
 
     #[test]
     fn test_projection_get_node_history() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["Note"]);
 
@@ -2765,16 +2766,23 @@ mod tests {
             .with_node_labels(&["File"])
             .build();
 
-        let history = projection.get_node_history(n0);
-        assert!(!history.is_empty());
+        // Projection must be a pass-through for filter-allowed nodes: the history
+        // matches whatever the backend returns. SubstrateStore is topology-as-storage
+        // (no MVCC version tracking) so the default trait impl returns empty, and
+        // both sides of the equality are empty. On an MVCC backend this would be
+        // non-empty; the invariant we verify is *filter semantics*, not depth.
+        let filtered_history = projection.get_node_history(n0);
+        let store_history = <SubstrateStore as GraphStore>::get_node_history(&store, n0);
+        assert_eq!(filtered_history.len(), store_history.len());
 
+        // Note label is filtered out → must be empty regardless of backend.
         let history = projection.get_node_history(n1);
-        assert!(history.is_empty()); // Note filtered out
+        assert!(history.is_empty());
     }
 
     #[test]
     fn test_projection_get_edge_history() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["File"]);
         let n2 = store.create_node(&["Note"]);
@@ -2786,17 +2794,21 @@ mod tests {
             .with_edge_types(&["IMPORTS"])
             .build();
 
-        let history = projection.get_edge_history(e0);
-        assert!(!history.is_empty());
+        // Allowed edge: projection is a pass-through (same depth as backend).
+        // On SubstrateStore history depth is 0 (topology-as-storage, no MVCC);
+        // we still verify filter semantics by comparing lengths.
+        let filtered_history = projection.get_edge_history(e0);
+        let store_history = <SubstrateStore as GraphStore>::get_edge_history(&store, e0);
+        assert_eq!(filtered_history.len(), store_history.len());
 
-        // Edge to Note with SYNAPSE type should be filtered
+        // Edge to Note with SYNAPSE type should be filtered regardless of backend.
         let history = projection.get_edge_history(e1);
         assert!(history.is_empty());
     }
 
     #[test]
     fn test_projection_get_edge_property() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["File"]);
         let e0 = store.create_edge(n0, n1, "IMPORTS");
@@ -2812,7 +2824,7 @@ mod tests {
 
     #[test]
     fn test_projection_node_property_predicates() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["File"]);
         store.set_node_property(n0, "active", Value::Bool(true));
@@ -2830,7 +2842,7 @@ mod tests {
 
     #[test]
     fn test_projection_nodes_by_label_with_property_predicates() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["File"]);
         store.set_node_property(n0, "size", Value::Int64(100));
@@ -2848,7 +2860,7 @@ mod tests {
 
     #[test]
     fn test_projection_get_nodes_properties_selective_batch() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["Note"]);
         store.set_node_property(n0, "path", Value::from("a.rs"));
@@ -2867,7 +2879,7 @@ mod tests {
 
     #[test]
     fn test_projection_get_edges_properties_selective_batch() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["File"]);
         let e0 = store.create_edge(n0, n1, "IMPORTS");
@@ -2887,7 +2899,7 @@ mod tests {
 
     #[test]
     fn test_projection_find_nodes_by_properties() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let _n1 = store.create_node(&["Note"]);
         store.set_node_property(n0, "lang", Value::from("rust"));
@@ -2902,7 +2914,7 @@ mod tests {
 
     #[test]
     fn test_projection_find_nodes_in_range() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["Note"]);
         store.set_node_property(n0, "size", Value::Int64(50));
@@ -2924,7 +2936,7 @@ mod tests {
     fn test_projection_zone_map_delegates() {
         use obrain_core::graph::lpg::CompareOp;
 
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         store.set_node_property(n0, "size", Value::Int64(42));
 
@@ -2943,7 +2955,7 @@ mod tests {
 
     #[test]
     fn test_projection_estimate_avg_degree() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["File"]);
         store.create_edge(n0, n1, "IMPORTS");
@@ -2958,7 +2970,7 @@ mod tests {
     #[test]
     fn test_projection_edge_only_filter() {
         // Node filter empty, edge filter set
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["File"]);
         store.create_edge(n0, n1, "IMPORTS");
@@ -2975,7 +2987,7 @@ mod tests {
     #[test]
     fn test_projection_node_only_filter() {
         // Node filter set, edge filter empty
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["Note"]);
         store.create_edge(n0, n1, "IMPORTS");
@@ -2995,7 +3007,7 @@ mod tests {
 
     #[test]
     fn test_edge_passes_with_edge_property_filter() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["File"]);
         let e_heavy = store.create_edge(n0, n1, "IMPORTS");
@@ -3024,7 +3036,7 @@ mod tests {
 
     #[test]
     fn test_get_edge_property_through_projection() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["File"]);
         let n2 = store.create_node(&["Note"]);
@@ -3171,7 +3183,7 @@ mod tests {
 
     #[test]
     fn test_projection_builder_chaining_multiple_filters() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
 
         // Create nodes with different labels and properties
         let f1 = store.create_node(&["File"]);
@@ -3233,7 +3245,7 @@ mod tests {
     fn test_projection_versioned_methods() {
         use obrain_common::types::{EpochId, TransactionId};
 
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let n0 = store.create_node(&["File"]);
         let n1 = store.create_node(&["Note"]);
         let e0 = store.create_edge(n0, n1, "SYNAPSE");

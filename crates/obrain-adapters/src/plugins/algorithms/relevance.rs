@@ -26,10 +26,11 @@
 //! # Example
 //!
 //! ```no_run
-//! use obrain_core::graph::lpg::LpgStore;
+//! use obrain_core::graph::GraphStoreMut;
+//! use obrain_substrate::SubstrateStore;
 //! use obrain_adapters::plugins::algorithms::relevance::{personalized_pagerank, PprConfig};
 //!
-//! let store = LpgStore::new().unwrap();
+//! let store = SubstrateStore::open_tempfile().unwrap();
 //! // ... populate graph ...
 //! let seeds = vec![store.create_node(&["Seed"])];
 //! let config = PprConfig::default();
@@ -43,8 +44,8 @@ use std::sync::OnceLock;
 use obrain_common::types::{NodeId, Value};
 use obrain_common::utils::error::Result;
 use obrain_common::utils::hash::FxHashMap;
-use obrain_core::graph::lpg::LpgStore;
-use obrain_core::graph::{Direction, GraphStore};
+use obrain_core::graph::{Direction, GraphStore, GraphStoreMut};
+use obrain_substrate::SubstrateStore;
 
 use super::super::{AlgorithmResult, ParameterDef, ParameterType, Parameters};
 use super::traits::GraphAlgorithm;
@@ -236,13 +237,13 @@ pub fn personalized_pagerank(
 ///
 /// # Returns
 ///
-/// A new `LpgStore` containing the top-K nodes and all edges between them.
+/// A new `SubstrateStore` containing the top-K nodes and all edges between them.
 ///
 /// # Complexity
 ///
 /// O(K log K + K × avg_degree) for sorting + edge induction.
-pub fn extract_subgraph(store: &dyn GraphStore, ppr: &PprResult, budget: usize) -> LpgStore {
-    let sub = LpgStore::new().expect("LpgStore::new");
+pub fn extract_subgraph(store: &dyn GraphStore, ppr: &PprResult, budget: usize) -> SubstrateStore {
+    let sub = SubstrateStore::open_tempfile().expect("SubstrateStore::open_tempfile");
 
     if ppr.scores.is_empty() || budget == 0 {
         return sub;
@@ -390,11 +391,10 @@ impl GraphAlgorithm for PersonalizedPageRankAlgorithm {
 #[cfg(all(test, feature = "algos"))]
 mod tests {
     use super::*;
-    use obrain_core::graph::lpg::LpgStore;
 
     /// Star graph: center connected to n leaves.
-    fn create_star(n: usize) -> (LpgStore, NodeId, Vec<NodeId>) {
-        let store = LpgStore::new().unwrap();
+    fn create_star(n: usize) -> (SubstrateStore, NodeId, Vec<NodeId>) {
+        let store = SubstrateStore::open_tempfile().unwrap();
         let center = store.create_node(&["Center"]);
         let leaves: Vec<NodeId> = (0..n)
             .map(|_| {
@@ -430,7 +430,7 @@ mod tests {
     #[test]
     fn test_ppr_multi_seed() {
         // Two clusters, seed in each
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         // Cluster A
         let a: Vec<_> = (0..5).map(|_| store.create_node(&["A"])).collect();
         for i in 0..5 {
@@ -471,7 +471,7 @@ mod tests {
     #[test]
     fn test_ppr_disconnected() {
         // Two disconnected components, seed in one
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a0 = store.create_node(&["A"]);
         let a1 = store.create_node(&["A"]);
         store.create_edge(a0, a1, "LINK");

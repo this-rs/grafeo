@@ -4,6 +4,7 @@
 
 use obrain_cognitive::fabric::FabricStore;
 use obrain_cognitive::gds_refresh::{GdsRefreshConfig, GdsRefreshScheduler};
+use obrain_core::graph::traits::GraphStoreMut;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -267,8 +268,8 @@ fn debug_formatting_zero_mutations() {
 
 #[test]
 fn refresh_with_graph_store() {
-    use obrain_core::LpgStore;
-    let store = LpgStore::new().expect("LpgStore::new");
+    use obrain_substrate::SubstrateStore;
+    let store = SubstrateStore::open_tempfile().expect("SubstrateStore::open_tempfile");
 
     // Create a small graph: A -> B -> C, A -> C
     let a = store.create_node(&["Component"]);
@@ -340,9 +341,9 @@ fn refresh_with_graph_store() {
 
 #[test]
 fn refresh_empty_graph_does_not_panic() {
-    use obrain_core::LpgStore;
+    use obrain_substrate::SubstrateStore;
 
-    let store = LpgStore::new().expect("LpgStore::new");
+    let store = SubstrateStore::open_tempfile().expect("SubstrateStore::open_tempfile");
     let fabric = Arc::new(FabricStore::new());
     let config = GdsRefreshConfig::default();
     let sched = GdsRefreshScheduler::new(Arc::clone(&fabric), config);
@@ -358,9 +359,9 @@ fn refresh_empty_graph_does_not_panic() {
 
 #[test]
 fn refresh_single_node_no_edges() {
-    use obrain_core::LpgStore;
+    use obrain_substrate::SubstrateStore;
 
-    let store = LpgStore::new().expect("LpgStore::new");
+    let store = SubstrateStore::open_tempfile().expect("SubstrateStore::open_tempfile");
     let _a = store.create_node(&["Isolated"]);
 
     let fabric = Arc::new(FabricStore::new());
@@ -376,9 +377,9 @@ fn refresh_single_node_no_edges() {
 
 #[test]
 fn refresh_resets_mutation_count_even_if_above_threshold() {
-    use obrain_core::LpgStore;
+    use obrain_substrate::SubstrateStore;
 
-    let store = LpgStore::new().expect("LpgStore::new");
+    let store = SubstrateStore::open_tempfile().expect("SubstrateStore::open_tempfile");
     let fabric = Arc::new(FabricStore::new());
     let config = GdsRefreshConfig {
         mutation_threshold: 10,
@@ -400,8 +401,8 @@ fn refresh_resets_mutation_count_even_if_above_threshold() {
 
 #[test]
 fn refresh_updates_metrics_for_larger_graph() {
-    use obrain_core::LpgStore;
-    let store = LpgStore::new().expect("LpgStore::new");
+    use obrain_substrate::SubstrateStore;
+    let store = SubstrateStore::open_tempfile().expect("SubstrateStore::open_tempfile");
 
     // Build a star graph: center -> spoke1, center -> spoke2, ..., center -> spoke5
     let center = store.create_node(&["Hub"]);

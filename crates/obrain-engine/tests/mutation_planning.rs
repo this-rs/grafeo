@@ -1,3 +1,4 @@
+#![cfg(feature = "cypher")]
 //! Integration tests for mutation-related planning paths.
 //!
 //! Targets low-coverage areas in `planner/mutation.rs`:

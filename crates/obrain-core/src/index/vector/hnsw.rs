@@ -113,6 +113,178 @@ struct HnswNode {
     neighbors: Vec<Vec<NodeId>>,
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Flat HNSW format — for mmap-friendly persistence
+// ─────────────────────────────────────────────────────────────────────
+
+/// Fixed-size header for the flat HNSW topology section.
+///
+/// Written at the start of the HNSW section in the v2 `.obrain` file.
+/// All fields are little-endian.
+#[derive(Debug, Clone, Copy, Default)]
+#[repr(C)]
+pub struct HnswFlatHeader {
+    /// Node ID of the entry point (u64::MAX if empty).
+    pub entry_point: u64,
+    /// Current maximum layer in the index.
+    pub max_level: u32,
+    /// Number of nodes in the index.
+    pub node_count: u32,
+    /// Vector dimensions (for validation).
+    pub dimensions: u32,
+    /// Distance metric (0=Cosine, 1=Euclidean, 2=DotProduct, 3=Manhattan).
+    pub metric: u8,
+    /// M parameter (max links per node at layers > 0).
+    pub m: u16,
+    /// ef_construction parameter.
+    pub ef_construction: u16,
+    /// Padding to 8-byte alignment.
+    _pad: [u8; 3],
+}
+
+/// The exported flat HNSW topology.
+///
+/// Contains the header plus three arrays that together encode the full
+/// multi-layer neighbor graph:
+///
+/// - `node_ids[i]`: the NodeId of the i-th node
+/// - `level_counts[i]`: number of layers for the i-th node (level+1)
+/// - `neighbor_offsets[i]`: byte offset into `neighbor_list` where this node's neighbors start
+/// - `neighbor_list`: concatenation of all neighbor NodeIds, all layers, with a u32 count prefix per layer
+pub struct HnswFlatTopology {
+    pub header: HnswFlatHeader,
+    /// NodeId for each node (ordered by insertion).
+    pub node_ids: Vec<u64>,
+    /// Number of layers for each node (layer_count = max_layer + 1).
+    pub level_counts: Vec<u32>,
+    /// Offset into `neighbor_list` for each node.
+    pub neighbor_offsets: Vec<u64>,
+    /// Flattened neighbor data: for each node, for each layer:
+    /// `[count: u32, neighbor_id_0: u64, neighbor_id_1: u64, ...]`.
+    pub neighbor_list: Vec<u8>,
+}
+
+impl HnswFlatTopology {
+    /// Serializes the entire topology into a single byte buffer.
+    ///
+    /// Layout: `[header] [node_ids as u64[]] [level_counts as u32[]] [neighbor_offsets as u64[]] [neighbor_list as u8[]]`
+    /// with u32 sizes before each array.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let header_size = std::mem::size_of::<HnswFlatHeader>();
+        let total = header_size
+            + 4
+            + self.node_ids.len() * 8
+            + 4
+            + self.level_counts.len() * 4
+            + 4
+            + self.neighbor_offsets.len() * 8
+            + 4
+            + self.neighbor_list.len();
+
+        let mut buf = Vec::with_capacity(total);
+
+        // Header (raw bytes)
+        let hdr_ptr = &self.header as *const HnswFlatHeader as *const u8;
+        #[allow(unsafe_code)]
+        buf.extend_from_slice(unsafe { std::slice::from_raw_parts(hdr_ptr, header_size) });
+
+        // node_ids
+        buf.extend_from_slice(&(self.node_ids.len() as u32).to_le_bytes());
+        for &id in &self.node_ids {
+            buf.extend_from_slice(&id.to_le_bytes());
+        }
+
+        // level_counts
+        buf.extend_from_slice(&(self.level_counts.len() as u32).to_le_bytes());
+        for &lc in &self.level_counts {
+            buf.extend_from_slice(&lc.to_le_bytes());
+        }
+
+        // neighbor_offsets
+        buf.extend_from_slice(&(self.neighbor_offsets.len() as u32).to_le_bytes());
+        for &off in &self.neighbor_offsets {
+            buf.extend_from_slice(&off.to_le_bytes());
+        }
+
+        // neighbor_list
+        buf.extend_from_slice(&(self.neighbor_list.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&self.neighbor_list);
+
+        buf
+    }
+
+    /// Deserializes a topology from bytes produced by [`to_bytes`].
+    pub fn from_bytes(data: &[u8]) -> Option<Self> {
+        let header_size = std::mem::size_of::<HnswFlatHeader>();
+        if data.len() < header_size {
+            return None;
+        }
+
+        #[allow(unsafe_code)]
+        let header = unsafe { std::ptr::read_unaligned(data.as_ptr() as *const HnswFlatHeader) };
+
+        let mut pos = header_size;
+
+        // Read array helper
+        let read_u32 = |p: &mut usize| -> Option<u32> {
+            if *p + 4 > data.len() {
+                return None;
+            }
+            let v = u32::from_le_bytes(data[*p..*p + 4].try_into().ok()?);
+            *p += 4;
+            Some(v)
+        };
+
+        // node_ids
+        let n_ids = read_u32(&mut pos)? as usize;
+        let mut node_ids = Vec::with_capacity(n_ids);
+        for _ in 0..n_ids {
+            if pos + 8 > data.len() {
+                return None;
+            }
+            node_ids.push(u64::from_le_bytes(data[pos..pos + 8].try_into().ok()?));
+            pos += 8;
+        }
+
+        // level_counts
+        let n_lc = read_u32(&mut pos)? as usize;
+        let mut level_counts = Vec::with_capacity(n_lc);
+        for _ in 0..n_lc {
+            if pos + 4 > data.len() {
+                return None;
+            }
+            level_counts.push(u32::from_le_bytes(data[pos..pos + 4].try_into().ok()?));
+            pos += 4;
+        }
+
+        // neighbor_offsets
+        let n_off = read_u32(&mut pos)? as usize;
+        let mut neighbor_offsets = Vec::with_capacity(n_off);
+        for _ in 0..n_off {
+            if pos + 8 > data.len() {
+                return None;
+            }
+            neighbor_offsets.push(u64::from_le_bytes(data[pos..pos + 8].try_into().ok()?));
+            pos += 8;
+        }
+
+        // neighbor_list
+        let n_nl = read_u32(&mut pos)? as usize;
+        if pos + n_nl > data.len() {
+            return None;
+        }
+        let neighbor_list = data[pos..pos + n_nl].to_vec();
+
+        Some(Self {
+            header,
+            node_ids,
+            level_counts,
+            neighbor_offsets,
+            neighbor_list,
+        })
+    }
+}
+
 /// HNSW (Hierarchical Navigable Small World) index.
 ///
 /// Thread-safe approximate nearest neighbor index supporting concurrent
@@ -1072,6 +1244,186 @@ impl HnswIndex {
                 .map(|query| self.search_with_ef_and_filter(query, k, ef, allowlist, accessor))
                 .collect()
         }
+    }
+
+    // ========================================================================
+    // Flat topology export / import (for mmap persistence)
+    // ========================================================================
+
+    /// Exports the HNSW topology as a flat, mmap-friendly structure.
+    ///
+    /// The exported data can be written to the HNSW section of a v2 `.obrain`
+    /// file and later imported via [`from_flat`](Self::from_flat) to restore
+    /// the index without rebuilding.
+    pub fn export_flat(&self) -> HnswFlatTopology {
+        use super::DistanceMetric;
+
+        let nodes = self.nodes.read();
+        let entry_point = self.entry_point.read();
+        let max_level = *self.max_level.read();
+
+        let metric_byte = match self.config.metric {
+            DistanceMetric::Cosine => 0u8,
+            DistanceMetric::Euclidean => 1,
+            DistanceMetric::DotProduct => 2,
+            DistanceMetric::Manhattan => 3,
+        };
+
+        let header = HnswFlatHeader {
+            entry_point: entry_point.map_or(u64::MAX, |ep| ep.0),
+            max_level: max_level as u32,
+            node_count: nodes.len() as u32,
+            dimensions: self.config.dimensions as u32,
+            metric: metric_byte,
+            m: self.config.m as u16,
+            ef_construction: self.config.ef_construction as u16,
+            _pad: [0; 3],
+        };
+
+        let mut node_ids = Vec::with_capacity(nodes.len());
+        let mut level_counts = Vec::with_capacity(nodes.len());
+        let mut neighbor_offsets = Vec::with_capacity(nodes.len());
+        let mut neighbor_list: Vec<u8> = Vec::with_capacity(nodes.len() * 32);
+
+        for (&id, node) in nodes.iter() {
+            node_ids.push(id.0);
+            level_counts.push(node.neighbors.len() as u32);
+            neighbor_offsets.push(neighbor_list.len() as u64);
+
+            // For each layer, write: [count: u32] [neighbor_ids: u64...]
+            for layer_neighbors in &node.neighbors {
+                let count: u32 = layer_neighbors.len() as u32;
+                neighbor_list.extend_from_slice(&count.to_le_bytes());
+                for &nid in layer_neighbors {
+                    neighbor_list.extend_from_slice(&nid.0.to_le_bytes());
+                }
+            }
+        }
+
+        HnswFlatTopology {
+            header,
+            node_ids,
+            level_counts,
+            neighbor_offsets,
+            neighbor_list,
+        }
+    }
+
+    /// Reconstructs an HnswIndex from a flat topology export.
+    ///
+    /// This rebuilds the internal HashMap from the flat arrays in O(n),
+    /// restoring the full HNSW graph structure without re-inserting vectors.
+    ///
+    /// # Errors
+    ///
+    /// Returns `None` if the data is malformed (truncated neighbor list, etc.).
+    pub fn from_flat(flat: &HnswFlatTopology) -> Option<Self> {
+        use super::DistanceMetric;
+
+        let metric = match flat.header.metric {
+            0 => DistanceMetric::Cosine,
+            1 => DistanceMetric::Euclidean,
+            2 => DistanceMetric::DotProduct,
+            3 => DistanceMetric::Manhattan,
+            _ => return None,
+        };
+
+        let config = HnswConfig::new(flat.header.dimensions as usize, metric)
+            .with_m(flat.header.m as usize)
+            .with_ef_construction(flat.header.ef_construction as usize);
+
+        let n = flat.header.node_count as usize;
+        if flat.node_ids.len() != n
+            || flat.level_counts.len() != n
+            || flat.neighbor_offsets.len() != n
+        {
+            return None;
+        }
+
+        let mut nodes = HashMap::with_capacity(n);
+        let data = &flat.neighbor_list;
+
+        for i in 0..n {
+            let id = NodeId::new(flat.node_ids[i]);
+            let num_layers = flat.level_counts[i] as usize;
+            let mut offset = flat.neighbor_offsets[i] as usize;
+
+            let mut neighbors = Vec::with_capacity(num_layers);
+
+            for _ in 0..num_layers {
+                // Read count (u32)
+                if offset + 4 > data.len() {
+                    return None;
+                }
+                let count = u32::from_le_bytes(data[offset..offset + 4].try_into().ok()?) as usize;
+                offset += 4;
+
+                // Read neighbor IDs (u64 each)
+                let bytes_needed = count * 8;
+                if offset + bytes_needed > data.len() {
+                    return None;
+                }
+
+                let layer: Vec<NodeId> = (0..count)
+                    .map(|j| {
+                        let start = offset + j * 8;
+                        let nid = u64::from_le_bytes(data[start..start + 8].try_into().unwrap());
+                        NodeId::new(nid)
+                    })
+                    .collect();
+                offset += bytes_needed;
+
+                neighbors.push(layer);
+            }
+
+            nodes.insert(id, HnswNode { neighbors });
+        }
+
+        let entry_point = if flat.header.entry_point == u64::MAX {
+            None
+        } else {
+            Some(NodeId::new(flat.header.entry_point))
+        };
+
+        Some(Self {
+            config,
+            nodes: RwLock::new(nodes),
+            entry_point: RwLock::new(entry_point),
+            max_level: RwLock::new(flat.header.max_level as usize),
+            rng: RwLock::new(rand::rngs::StdRng::from_rng(&mut rand::rng())),
+        })
+    }
+
+    /// Reconstructs an HnswIndex from raw flat arrays (as read from mmap).
+    ///
+    /// This is the zero-copy-friendly variant: takes slices directly from
+    /// the mmap rather than a pre-parsed `HnswFlatTopology`.
+    pub fn from_flat_raw(
+        header_bytes: &[u8],
+        node_ids: &[u64],
+        level_counts: &[u32],
+        neighbor_offsets: &[u64],
+        neighbor_data: &[u8],
+    ) -> Option<Self> {
+        if header_bytes.len() < std::mem::size_of::<HnswFlatHeader>() {
+            return None;
+        }
+
+        // SAFETY: HnswFlatHeader is #[repr(C)] with fixed layout.
+        // read_unaligned handles potentially unaligned source data.
+        #[allow(unsafe_code)]
+        let header =
+            unsafe { std::ptr::read_unaligned(header_bytes.as_ptr() as *const HnswFlatHeader) };
+
+        let flat = HnswFlatTopology {
+            header,
+            node_ids: node_ids.to_vec(),
+            level_counts: level_counts.to_vec(),
+            neighbor_offsets: neighbor_offsets.to_vec(),
+            neighbor_list: neighbor_data.to_vec(),
+        };
+
+        Self::from_flat(&flat)
     }
 }
 
@@ -2050,5 +2402,125 @@ mod tests {
         }
         // Node 3 should be closest among allowed
         assert_eq!(results[0].0, NodeId::new(3));
+    }
+
+    #[test]
+    fn test_hnsw_flat_roundtrip() {
+        let dim = 16;
+        let n = 200;
+        let config = HnswConfig::new(dim, DistanceMetric::Cosine).with_m(8);
+        let index = HnswIndex::with_seed(config, 42);
+
+        // Build index with test vectors
+        let vectors = create_test_vectors(n, dim);
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+        for (i, v) in vectors.iter().enumerate() {
+            let id = NodeId::new(i as u64);
+            let arc: Arc<[f32]> = v.clone().into();
+            map.insert(id, arc.clone());
+            let accessor = make_accessor(&map);
+            index.insert(id, &arc, &accessor);
+        }
+        let accessor = make_accessor(&map);
+
+        assert_eq!(index.len(), n);
+
+        // Export to flat topology
+        let flat = index.export_flat();
+        assert_eq!(flat.header.node_count, n as u32);
+        assert_eq!(flat.header.dimensions, dim as u32);
+        assert_eq!(flat.header.metric, 0); // Cosine
+        assert_eq!(flat.header.m, 8);
+
+        // Import from flat topology
+        let restored = HnswIndex::from_flat(&flat).expect("from_flat should succeed");
+        assert_eq!(restored.len(), n);
+        assert_eq!(restored.config().dimensions, dim);
+        assert_eq!(restored.config().m, 8);
+
+        // Verify search results are identical
+        let query: Vec<f32> = (0..dim).map(|i| i as f32 / dim as f32).collect();
+        let k = 10;
+        let original_results = index.search(&query, k, &accessor);
+        let restored_results = restored.search(&query, k, &accessor);
+
+        assert_eq!(
+            original_results.len(),
+            restored_results.len(),
+            "result count mismatch"
+        );
+
+        // Same nodes should be returned (topology preserved)
+        let orig_ids: Vec<NodeId> = original_results.iter().map(|(id, _)| *id).collect();
+        let rest_ids: Vec<NodeId> = restored_results.iter().map(|(id, _)| *id).collect();
+        assert_eq!(orig_ids, rest_ids, "search results differ after roundtrip");
+
+        // Distances should be identical (same topology = same traversal)
+        for (orig, rest) in original_results.iter().zip(restored_results.iter()) {
+            assert!(
+                (orig.1 - rest.1).abs() < 1e-6,
+                "distance mismatch: {} vs {}",
+                orig.1,
+                rest.1
+            );
+        }
+    }
+
+    #[test]
+    fn test_hnsw_flat_empty_roundtrip() {
+        let config = HnswConfig::new(4, DistanceMetric::Euclidean);
+        let index = HnswIndex::new(config);
+
+        let flat = index.export_flat();
+        assert_eq!(flat.header.node_count, 0);
+        assert_eq!(flat.header.entry_point, u64::MAX);
+
+        let restored = HnswIndex::from_flat(&flat).expect("from_flat empty should succeed");
+        assert!(restored.is_empty());
+    }
+
+    #[test]
+    fn test_hnsw_flat_raw_roundtrip() {
+        let dim = 8;
+        let config = HnswConfig::new(dim, DistanceMetric::Euclidean).with_m(4);
+        let index = HnswIndex::with_seed(config, 123);
+
+        let mut map: HashMap<NodeId, Arc<[f32]>> = HashMap::new();
+        for i in 0..50u64 {
+            let v: Arc<[f32]> = (0..dim)
+                .map(|j| (i * dim as u64 + j as u64) as f32)
+                .collect::<Vec<_>>()
+                .into();
+            map.insert(NodeId::new(i), v.clone());
+            let accessor = make_accessor(&map);
+            index.insert(NodeId::new(i), &v, &accessor);
+        }
+
+        let flat = index.export_flat();
+
+        // Serialize header to bytes
+        let header_bytes: Vec<u8> = {
+            let ptr = &flat.header as *const HnswFlatHeader as *const u8;
+            let size = std::mem::size_of::<HnswFlatHeader>();
+            #[allow(unsafe_code)]
+            unsafe { std::slice::from_raw_parts(ptr, size) }.to_vec()
+        };
+
+        let restored = HnswIndex::from_flat_raw(
+            &header_bytes,
+            &flat.node_ids,
+            &flat.level_counts,
+            &flat.neighbor_offsets,
+            &flat.neighbor_list,
+        )
+        .expect("from_flat_raw should succeed");
+
+        assert_eq!(restored.len(), 50);
+
+        // Verify search works
+        let accessor = make_accessor(&map);
+        let query: Vec<f32> = (0..dim).map(|j| j as f32 * 2.0).collect();
+        let results = restored.search(&query, 5, &accessor);
+        assert_eq!(results.len(), 5);
     }
 }

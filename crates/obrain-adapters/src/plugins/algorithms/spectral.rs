@@ -18,9 +18,9 @@
 //!
 //! ```no_run
 //! use obrain_adapters::plugins::algorithms::spectral_embedding;
-//! use obrain_core::graph::lpg::LpgStore;
+//! use obrain_substrate::SubstrateStore;
 //!
-//! let store = LpgStore::new().unwrap();
+//! let store = SubstrateStore::open_tempfile().unwrap();
 //! // ... populate graph ...
 //! let embeddings = spectral_embedding(&store, 4, None);
 //! // embeddings: HashMap<NodeId, Vec<f64>> with 4 dimensions per node
@@ -32,8 +32,10 @@ use std::sync::OnceLock;
 use obrain_common::types::{NodeId, PropertyKey, Value};
 use obrain_common::utils::error::Result;
 #[cfg(test)]
-use obrain_core::graph::lpg::LpgStore;
+use obrain_core::graph::GraphStoreMut;
 use obrain_core::graph::{Direction, GraphStore};
+#[cfg(test)]
+use obrain_substrate::SubstrateStore;
 
 use super::super::{AlgorithmResult, ParameterDef, ParameterType, Parameters};
 use super::traits::GraphAlgorithm;
@@ -364,8 +366,8 @@ impl GraphAlgorithm for SpectralEmbeddingAlgorithm {
 mod tests {
     use super::*;
 
-    fn make_star_graph(n: usize) -> LpgStore {
-        let store = LpgStore::new().unwrap();
+    fn make_star_graph(n: usize) -> SubstrateStore {
+        let store = SubstrateStore::open_tempfile().unwrap();
         let center = store.create_node(&["Center"]);
         for _ in 1..n {
             let leaf = store.create_node(&["Leaf"]);
@@ -375,8 +377,8 @@ mod tests {
         store
     }
 
-    fn make_ring_graph(n: usize) -> LpgStore {
-        let store = LpgStore::new().unwrap();
+    fn make_ring_graph(n: usize) -> SubstrateStore {
+        let store = SubstrateStore::open_tempfile().unwrap();
         let nodes: Vec<NodeId> = (0..n).map(|_| store.create_node(&["Node"])).collect();
         for i in 0..n {
             let j = (i + 1) % n;
@@ -386,8 +388,8 @@ mod tests {
         store
     }
 
-    fn make_grid_graph(rows: usize, cols: usize) -> LpgStore {
-        let store = LpgStore::new().unwrap();
+    fn make_grid_graph(rows: usize, cols: usize) -> SubstrateStore {
+        let store = SubstrateStore::open_tempfile().unwrap();
         let mut nodes = Vec::new();
         for _ in 0..rows {
             let mut row = Vec::new();
@@ -446,7 +448,7 @@ mod tests {
 
     #[test]
     fn test_spectral_single_node() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         store.create_node(&["Alone"]);
         let result = spectral_embedding(&store, 2, None);
         assert_eq!(result.embeddings.len(), 1);
@@ -457,7 +459,7 @@ mod tests {
 
     #[test]
     fn test_spectral_two_nodes() {
-        let store = LpgStore::new().unwrap();
+        let store = SubstrateStore::open_tempfile().unwrap();
         let a = store.create_node(&["A"]);
         let b = store.create_node(&["B"]);
         store.create_edge(a, b, "LINK");

@@ -153,30 +153,15 @@ impl Database {
     /// Returns a `Uint8Array` that can be stored in IndexedDB, localStorage,
     /// or sent over the network. Restore with `Database.importSnapshot()`.
     ///
-    /// ```js
-    /// const bytes = db.exportSnapshot();
-    /// // Store in IndexedDB, download as file, etc.
-    /// ```
-    #[wasm_bindgen(js_name = "exportSnapshot")]
-    pub fn export_snapshot(&self) -> Result<Vec<u8>, JsError> {
-        self.inner
-            .export_snapshot()
-            .map_err(|e| JsError::new(&e.to_string()))
-    }
-
-    /// Creates a database from a binary snapshot.
-    ///
-    /// The `data` must have been produced by `exportSnapshot()`.
-    ///
-    /// ```js
-    /// const db = Database.importSnapshot(bytes);
-    /// ```
-    #[wasm_bindgen(js_name = "importSnapshot")]
-    pub fn import_snapshot(data: &[u8]) -> Result<Database, JsError> {
-        utils::set_panic_hook();
-        let inner = ObrainDB::import_snapshot(data).map_err(|e| JsError::new(&e.to_string()))?;
-        Ok(Database { inner })
-    }
+    /// T17 final cutover (2026-04-23): the bincode snapshot export/import
+    /// surface was removed together with the legacy `.obrain` v1/v2
+    /// formats. The substrate backend persists directly via its own
+    /// directory layout, so snapshot bytes are no longer a first-class
+    /// WASM I/O primitive. Applications that need to move a database
+    /// across a WASM boundary should serialize the directory contents
+    /// themselves (e.g. via IndexedDB or a tarball of the substrate
+    /// files) and reopen with `Database::new()` pointed at the restored
+    /// directory.
 
     /// Returns schema information about the database.
     ///

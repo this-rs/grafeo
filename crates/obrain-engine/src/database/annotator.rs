@@ -24,7 +24,9 @@ impl EdgeAnnotator for super::ObrainDB {
     /// doesn't exist.
     fn get_annotation(&self, edge: EdgeId, key: &str) -> Option<f64> {
         let prop_key = format!("{ANNOTATION_PREFIX}{key}");
-        let edge = self.store.get_edge(edge)?;
+        // Route via the real backend so annotation reads see substrate edge
+        // properties (not the dummy LpgStore) when T17 substrate mode is on.
+        let edge = self.data_store().get_edge(edge)?;
         edge.get_property(&prop_key)?.as_float64()
     }
 

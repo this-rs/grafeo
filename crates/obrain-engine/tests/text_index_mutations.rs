@@ -1,3 +1,4 @@
+#![cfg(feature = "cypher")]
 //! Tests for text index mutation hooks.
 //!
 //! These verify that text indexes are automatically kept in sync

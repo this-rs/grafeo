@@ -34,8 +34,8 @@ mod store;
 
 pub use bus::MutationBus;
 pub use error::ReactiveError;
-pub use event::{EdgeSnapshot, MutationBatch, MutationEvent, NodeSnapshot};
-pub use listener::MutationListener;
+pub use event::{EdgeSnapshot, EventContext, MutationBatch, MutationEvent, NodeSnapshot};
+pub use listener::{MutationListener, TenantFilteredListener};
 pub use scheduler::{BatchConfig, Scheduler};
 pub use store::InstrumentedStore;
 

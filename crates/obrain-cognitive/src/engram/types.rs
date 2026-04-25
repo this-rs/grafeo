@@ -77,6 +77,12 @@ pub struct Engram {
     /// Number of times this engram has been recalled.
     pub recall_count: u32,
 
+    /// Source databases that contributed nodes to this engram's ensemble.
+    /// When an engram is formed from nodes across multiple knowledge bases,
+    /// this tracks which databases were involved (e.g., ["megalaw", "chess-kb"]).
+    #[serde(default)]
+    pub db_sources: Vec<String>,
+
     /// Predictive model — P(outcome | context) for this engram.
     /// Stores mean + variance of observed outcomes. Used by the predictive
     /// coding layer (Layer 3+4) to compute prediction errors.
@@ -103,9 +109,24 @@ impl Engram {
             last_activated: now,
             fsrs_state: FsrsState::default(),
             recall_count: 0,
+            db_sources: Vec::new(),
             #[cfg(feature = "engram")]
             predictive_model: None,
         }
+    }
+
+    /// Create a new engram from nodes across multiple databases.
+    ///
+    /// This is used when an engram's ensemble spans nodes from different
+    /// knowledge bases (e.g., cross-base synapses formed via retrieval).
+    pub fn new_multi_base(
+        id: EngramId,
+        ensemble: Vec<(NodeId, f64)>,
+        db_sources: Vec<String>,
+    ) -> Self {
+        let mut engram = Self::new(id, ensemble);
+        engram.db_sources = db_sources;
+        engram
     }
 
     /// Returns the nodes in this engram's ensemble.

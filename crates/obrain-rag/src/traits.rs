@@ -57,6 +57,14 @@ pub enum RetrievalSource {
         /// Activation energy at this node.
         activation: f64,
     },
+    /// Direct text match from the inverted index (no engram intermediary).
+    ///
+    /// These nodes matched query terms directly via BM25 scoring.
+    /// Used when engram recall yields nothing or as a complementary path.
+    DirectMatch {
+        /// The BM25 text score from the inverted index.
+        text_score: f64,
+    },
 }
 
 /// The result of a retrieval operation.

@@ -43,6 +43,8 @@ tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 criterion.workspace = true
+# Post-T17: tests use the canonical substrate backend via a temp-file mmap.
+obrain-substrate.workspace = true
 
 [features]
 default = []

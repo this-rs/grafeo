@@ -12,12 +12,19 @@
 //! - **Zero overhead** when no subscribers are registered (`Option::is_none()`)
 //! - **Panic isolation** — a panicking callback doesn't block other subscribers
 //!
-//! ## Usage
+//! ## Usage (historical — LpgStore-coupled)
 //!
-//! ```
+//! The observer pattern below is exposed by the `LpgStore` backend via
+//! `enable_tracking`, `enable_subscriptions`, and `subscribe` (inherent
+//! methods). `SubstrateStore` does not currently implement this observer
+//! surface — a stream-based replacement driven by the substrate WAL is
+//! tracked under T17 W2c (kernel_manager / hilbert_manager degeneralisation).
+//!
+//! ```ignore
+//! // LpgStore-only example — kept for illustration; does not run under
+//! // `cargo test --doc` because `SubstrateStore` has no equivalent API yet.
 //! use obrain_core::graph::lpg::LpgStore;
 //! use obrain_core::subscription::{EventFilter, EventType};
-//! use obrain_core::change_tracker::GraphEvent;
 //! use std::sync::Arc;
 //! use std::sync::atomic::{AtomicUsize, Ordering};
 //!
@@ -28,7 +35,6 @@
 //! let counter = Arc::new(AtomicUsize::new(0));
 //! let counter_clone = counter.clone();
 //!
-//! // Subscribe to node creation events only
 //! let filter = EventFilter {
 //!     event_types: Some([EventType::NodeCreated].into_iter().collect()),
 //!     ..Default::default()
@@ -171,7 +177,8 @@ impl EventFilter {
 
 /// Manages event subscriptions and dispatches notifications.
 ///
-/// Thread-safe: designed to be held in a `parking_lot::RwLock` on `LpgStore`.
+/// Thread-safe: designed to be held in a `parking_lot::RwLock` on the host
+/// graph store (currently `LpgStore`; substrate equivalent tracked under T17 W2c).
 /// The `notify()` path uses a read lock; `subscribe()`/`unsubscribe()` use write.
 pub struct SubscriptionManager {
     subscribers: Vec<(
@@ -198,7 +205,7 @@ impl SubscriptionManager {
     ///
     /// # Warning
     ///
-    /// The callback **MUST NOT** call mutation methods on the `LpgStore` — doing
+    /// The callback **MUST NOT** call mutation methods on the host graph store — doing
     /// so will deadlock (the notification path holds a read lock on the store's
     /// internal structures, and mutations require write locks).
     pub fn subscribe(

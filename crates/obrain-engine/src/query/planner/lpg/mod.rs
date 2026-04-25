@@ -11,6 +11,7 @@ mod join;
 mod mutation;
 mod project;
 mod scan;
+mod typed_degree_rewrite;
 
 #[cfg(feature = "algos")]
 use crate::query::plan::CallProcedureOp;
@@ -772,10 +773,10 @@ mod tests {
     use obrain_common::types::Value;
     use obrain_core::execution::operators::AggregateFunction as PhysicalAggregateFunction;
     use obrain_core::graph::GraphStoreMut;
-    use obrain_core::graph::lpg::LpgStore;
+    use obrain_substrate::SubstrateStore;
 
     fn create_test_store() -> Arc<dyn GraphStoreMut> {
-        let store = Arc::new(LpgStore::new().unwrap());
+        let store = Arc::new(SubstrateStore::open_tempfile().unwrap());
         store.create_node(&["Person"]);
         store.create_node(&["Person"]);
         store.create_node(&["Company"]);

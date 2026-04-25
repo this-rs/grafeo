@@ -87,6 +87,17 @@ pub struct CoActivationDetector {
     node_episodes: DashMap<NodeId, u32>,
 }
 
+/// Serializable snapshot of a [`CoActivationDetector`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoActivationSnapshot {
+    /// Co-occurrence pairs: ((node_a_raw, node_b_raw), count).
+    pub co_occurrences: Vec<((u64, u64), u32)>,
+    /// Total number of episodes observed.
+    pub episode_count: u32,
+    /// Per-node episode counts: (node_raw, count).
+    pub node_episodes: Vec<(u64, u32)>,
+}
+
 impl CoActivationDetector {
     /// Creates a new empty detector.
     pub fn new() -> Self {
@@ -94,6 +105,40 @@ impl CoActivationDetector {
             co_occurrences: DashMap::new(),
             episode_count: 0,
             node_episodes: DashMap::new(),
+        }
+    }
+
+    /// Creates a serializable snapshot of the current state.
+    pub fn snapshot(&self) -> CoActivationSnapshot {
+        CoActivationSnapshot {
+            co_occurrences: self
+                .co_occurrences
+                .iter()
+                .map(|e| ((e.key().0.0, e.key().1.0), *e.value()))
+                .collect(),
+            episode_count: self.episode_count,
+            node_episodes: self
+                .node_episodes
+                .iter()
+                .map(|e| (e.key().0, *e.value()))
+                .collect(),
+        }
+    }
+
+    /// Restores state from a snapshot.
+    pub fn restore(snapshot: &CoActivationSnapshot) -> Self {
+        let co_occurrences = DashMap::new();
+        for &((a, b), count) in &snapshot.co_occurrences {
+            co_occurrences.insert((NodeId(a), NodeId(b)), count);
+        }
+        let node_episodes = DashMap::new();
+        for &(nid, count) in &snapshot.node_episodes {
+            node_episodes.insert(NodeId(nid), count);
+        }
+        Self {
+            co_occurrences,
+            episode_count: snapshot.episode_count,
+            node_episodes,
         }
     }
 
@@ -389,6 +434,36 @@ impl HebbianWithSurprise {
         self.surprise_accumulator = 0.0;
         self.activation_count = 0;
     }
+
+    /// Creates a serializable snapshot of the full formation state.
+    pub fn snapshot(&self) -> FormationSnapshot {
+        FormationSnapshot {
+            detector: self.detector.snapshot(),
+            surprise_accumulator: self.surprise_accumulator,
+            activation_count: self.activation_count,
+        }
+    }
+
+    /// Restores a `HebbianWithSurprise` from a snapshot + config.
+    pub fn restore(config: FormationConfig, snapshot: &FormationSnapshot) -> Self {
+        Self {
+            config,
+            detector: CoActivationDetector::restore(&snapshot.detector),
+            surprise_accumulator: snapshot.surprise_accumulator,
+            activation_count: snapshot.activation_count,
+        }
+    }
+}
+
+/// Serializable snapshot of a [`HebbianWithSurprise`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FormationSnapshot {
+    /// Co-activation detector snapshot.
+    pub detector: CoActivationSnapshot,
+    /// Accumulated surprise score.
+    pub surprise_accumulator: f64,
+    /// Total activation count.
+    pub activation_count: u32,
 }
 
 #[cfg(test)]

@@ -440,10 +440,10 @@ impl OptionalEpochId {
 /// # Memory Layout
 /// - `epoch`: 8 bytes
 /// - `arena_epoch`: 8 bytes
-/// - `arena_offset`: 4 bytes
+/// - `arena_offset`: 8 bytes (composite: chunk_idx[63:48] | offset[47:0])
 /// - `created_by`: 8 bytes
 /// - `deleted_epoch`: 4 bytes
-/// - Total: 32 bytes
+/// - Total: 40 bytes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg(feature = "tiered-storage")]
 pub struct HotVersionRef {
@@ -456,8 +456,11 @@ pub struct HotVersionRef {
     ///
     /// Always the real epoch (never PENDING), used for arena lookups.
     pub arena_epoch: EpochId,
-    /// Offset within the epoch's arena where the data is stored.
-    pub arena_offset: u32,
+    /// Composite offset within the epoch's arena.
+    ///
+    /// Encodes `(chunk_index << 48) | offset_in_chunk` to address across
+    /// multiple arena chunks. Supports up to 65536 chunks × 256 TB each.
+    pub arena_offset: u64,
     /// Transaction that created this version.
     pub created_by: TransactionId,
     /// Epoch when this version was deleted (NONE if still alive).
@@ -476,7 +479,7 @@ impl HotVersionRef {
     pub fn new(
         epoch: EpochId,
         arena_epoch: EpochId,
-        arena_offset: u32,
+        arena_offset: u64,
         created_by: TransactionId,
     ) -> Self {
         Self {
@@ -1315,7 +1318,7 @@ mod tiered_storage_tests {
             index.add_hot(HotVersionRef::new(
                 EpochId::new(epoch),
                 EpochId::new(epoch),
-                epoch as u32 * 100,
+                epoch * 100,
                 TransactionId::new(epoch),
             ));
         }
@@ -1374,7 +1377,7 @@ mod tiered_storage_tests {
             index.add_hot(HotVersionRef::new(
                 EpochId::new(i),
                 EpochId::new(i),
-                i as u32,
+                i,
                 TransactionId::new(i),
             ));
         }

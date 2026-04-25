@@ -48,6 +48,33 @@ pub const PROP_FABRIC_MUTATION_FREQ: &str = "_cog_mutation_frequency";
 /// Node property key for fabric annotation density.
 pub const PROP_FABRIC_ANNOTATION_DENSITY: &str = "_cog_annotation_density";
 
+/// Edge property key for the epoch timestamp of the last synapse reinforcement.
+/// Stored as `f64` seconds since `UNIX_EPOCH` — allows cross-session decay
+/// calculation since `std::time::Instant` is monotonic and doesn't survive restarts.
+pub const PROP_SYNAPSE_LAST_REINFORCED_EPOCH: &str = "_cog_synapse_last_reinforced_epoch";
+
+/// Edge property key for the synapse reinforcement count.
+pub const PROP_SYNAPSE_REINFORCEMENT_COUNT: &str = "_cog_synapse_reinforcement_count";
+
+/// Node property key for the epoch timestamp of the last energy activation.
+/// Same rationale as `PROP_SYNAPSE_LAST_REINFORCED_EPOCH`.
+pub const PROP_ENERGY_LAST_ACTIVATED_EPOCH: &str = "_cog_energy_last_activated_epoch";
+
+/// Node property key for utility score.
+pub const PROP_UTILITY_SCORE: &str = "_cog_utility_score";
+
+/// Node property key for utility activation count.
+pub const PROP_UTILITY_COUNT: &str = "_cog_utility_count";
+
+/// Node property key for utility last updated epoch timestamp.
+pub const PROP_UTILITY_LAST_UPDATED_EPOCH: &str = "_cog_utility_last_updated_epoch";
+
+/// Node property key for query affinity score.
+pub const PROP_QUERY_AFFINITY: &str = "_cog_query_affinity";
+
+/// Node property key for query affinity count.
+pub const PROP_QUERY_AFFINITY_COUNT: &str = "_cog_query_affinity_count";
+
 // ---------------------------------------------------------------------------
 // CognitiveStore trait
 // ---------------------------------------------------------------------------
@@ -120,3 +147,48 @@ pub fn persist_edge_f64(
 /// Wraps an optional `Arc<dyn GraphStoreMut>` for stores that may or may not
 /// have a backing graph. When `None`, write-through is silently skipped.
 pub type OptionalGraphStore = Option<Arc<dyn GraphStoreMut>>;
+
+// ---------------------------------------------------------------------------
+// Epoch ↔ Instant conversion helpers
+// ---------------------------------------------------------------------------
+
+/// Converts a persisted epoch-seconds value to an [`Instant`].
+///
+/// `std::time::Instant` is monotonic and process-local — it cannot be
+/// serialized. We persist `SystemTime` as epoch-seconds (`f64`) and
+/// reconstruct an `Instant` by computing the delta between persisted epoch
+/// and *current* epoch, then subtracting that delta from `Instant::now()`.
+///
+/// If `epoch_opt` is `None` (legacy data) we return `Instant::now()`,
+/// meaning no cross-session decay will be applied on first reload.
+///
+/// Protections:
+/// - Negative delta (clock skew / future timestamp) → clamp to 0 (i.e.
+///   `Instant::now()`).
+/// - Very large delta → capped at 365 days to avoid `Instant` underflow on
+///   platforms with limited monotonic clock range.
+pub fn epoch_to_instant(epoch_opt: Option<f64>) -> std::time::Instant {
+    use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+    let Some(epoch_secs) = epoch_opt else {
+        return Instant::now();
+    };
+
+    let now_epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64();
+
+    let delta_secs = (now_epoch - epoch_secs).clamp(0.0, 365.0 * 86400.0);
+    Instant::now()
+        .checked_sub(std::time::Duration::from_secs_f64(delta_secs))
+        .unwrap()
+}
+
+/// Returns the current time as epoch-seconds (`f64`).
+pub fn now_epoch_secs() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64()
+}
