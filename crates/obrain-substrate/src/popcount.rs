@@ -110,22 +110,27 @@ unsafe fn xor_popcount_t1_avx512(corpus: &[Tier1], q: &Tier1, out: &mut [u32]) {
 #[target_feature(enable = "avx512f,avx512vpopcntdq")]
 #[inline]
 unsafe fn xor_popcount_t0_avx512(corpus: &[Tier0], q: Tier0, out: &mut [u32]) {
-    use core::arch::x86_64::{
-        _mm_loadu_si128, _mm_popcnt_u64, _mm_storeu_si128, _mm_xor_si128,
-    };
+    use core::arch::x86_64::{_mm_loadu_si128, _mm_storeu_si128, _mm_xor_si128};
     // Tier0 is 16 B (128 bits) — too small to fill a zmm by itself, so
-    // we drop down to the SSE2 path with the 64-bit popcnt. (vpopcntq
+    // we drop down to the SSE2 path with portable popcount. (vpopcntq
     // on a single xmm would actually need AVX-512+VL; keeping this
     // conservative.)
+    //
+    // 2026-04-25 — replaced `core::arch::x86_64::_mm_popcnt_u64` with
+    // `u64::count_ones()` for compatibility with rustc 1.95 where
+    // `_mm_popcnt_u64` was removed/relocated. `count_ones` is portable,
+    // safe, and LLVM lowers it to `popcntq` on x86_64 with `popcnt`
+    // feature (avx512vpopcntdq is a strict superset).
+    //
     // SAFETY: Tier0 is `#[repr(C)] [u64; 2]`, 16 B contiguous; valid
-    // for unaligned 128-bit load. `_mm_popcnt_u64` is a register op.
+    // for unaligned 128-bit load.
     let q_v = unsafe { _mm_loadu_si128(q.0.as_ptr() as *const _) };
     for (i, c) in corpus.iter().enumerate() {
         let v = unsafe { _mm_loadu_si128(c.0.as_ptr() as *const _) };
         let xored = unsafe { _mm_xor_si128(v, q_v) };
         let mut buf = [0u64; 2];
         unsafe { _mm_storeu_si128(buf.as_mut_ptr() as *mut _, xored) };
-        out[i] = unsafe { _mm_popcnt_u64(buf[0]) as u32 + _mm_popcnt_u64(buf[1]) as u32 };
+        out[i] = buf[0].count_ones() + buf[1].count_ones();
     }
 }
 
@@ -140,12 +145,12 @@ unsafe fn xor_popcount_t0_avx512(corpus: &[Tier0], q: Tier0, out: &mut [u32]) {
 #[target_feature(enable = "avx2,popcnt")]
 #[inline]
 unsafe fn xor_popcount_t1_avx2(corpus: &[Tier1], q: &Tier1, out: &mut [u32]) {
-    use core::arch::x86_64::_mm_popcnt_u64;
-    // SAFETY: `_mm_popcnt_u64` is a register-only op; no memory hazards.
+    // u64::count_ones() lowers to popcntq under #[target_feature(popcnt)]
+    // on x86_64. Replaces _mm_popcnt_u64 (removed in rustc 1.95).
     for (i, c) in corpus.iter().enumerate() {
         let mut sum = 0u32;
         for k in 0..8 {
-            sum += unsafe { _mm_popcnt_u64(c.0[k] ^ q.0[k]) as u32 };
+            sum += (c.0[k] ^ q.0[k]).count_ones();
         }
         out[i] = sum;
     }
@@ -155,11 +160,9 @@ unsafe fn xor_popcount_t1_avx2(corpus: &[Tier1], q: &Tier1, out: &mut [u32]) {
 #[target_feature(enable = "avx2,popcnt")]
 #[inline]
 unsafe fn xor_popcount_t0_avx2(corpus: &[Tier0], q: Tier0, out: &mut [u32]) {
-    use core::arch::x86_64::_mm_popcnt_u64;
-    // SAFETY: same as above.
     for (i, c) in corpus.iter().enumerate() {
-        let a = unsafe { _mm_popcnt_u64(c.0[0] ^ q.0[0]) as u32 };
-        let b = unsafe { _mm_popcnt_u64(c.0[1] ^ q.0[1]) as u32 };
+        let a = (c.0[0] ^ q.0[0]).count_ones();
+        let b = (c.0[1] ^ q.0[1]).count_ones();
         out[i] = a + b;
     }
 }
