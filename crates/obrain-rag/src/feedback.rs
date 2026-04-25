@@ -19,23 +19,51 @@ use crate::traits::{FeedbackSink, FeedbackStats, RagContext};
 /// Plan 69e59065 T2 — hard cap on the number of pairs reinforced when
 /// the fallback path (no mentions detected) is taken. The previous
 /// behaviour reinforced C(N,2) pairs on every unmatched response, which
-/// on N=100 context nodes meant 4 950 reinforce calls, each triggering
-/// 2 full DashMap scans + 3 LPG property writes in `SynapseStore::reinforce`
-/// → ~10 000 scans + ~15 000 writes per cycle. This is the root cause of
-/// the kernel watchdog timeout documented in gotcha 49938809.
+/// on N=100 context nodes meant 4 950 reinforce calls → kernel watchdog
+/// timeout (gotcha 49938809).
 ///
-/// With the cap, the worst-case fallback produces at most
-/// `C(FALLBACK_CAP, 2) = 28` pairs → ~56 scans + ~84 writes. That's a
-/// ~180× reduction and puts the fallback in the same ballpark as the
-/// mentioned-path (which is naturally bounded by how many nodes the LLM
-/// actually referenced in its response).
+/// ## History of the cap value
 ///
-/// 8 is chosen because it matches `synapse_store.max_total_outgoing_weight`
-/// being typically hit around 7-9 outgoing synapses — beyond that, the
-/// competitive Hebbian normalization in `reinforce` dampens marginal
-/// contributions anyway, so adding more pairs gives vanishing returns
-/// while paying the full cost.
-const FALLBACK_CAP: usize = 8;
+/// - **Initial T2 cap = 8** — emergency value picked right after the
+///   incident, with no measurement. C(8,2) = 28 reinforces / cycle.
+///   Conservative: stops the bleeding but throws away most of the
+///   recall context (a `thorough` retrieve returns up to 50 nodes,
+///   we'd ignore all but the top 8 for Hebbian reinforcement).
+///
+/// - **Revised cap = 32** (2026-04-25) — empirically calibrated by
+///   `feedback_scaling_bench.rs` which sweeps N ∈ {8, 16, 24, 32, 48,
+///   64, 100, 200} on a 10 k-synapse store post-T0+T2+T4 fixes.
+///   Measured p99 / cycle (release, single thread):
+///
+///   | N    | pairs | p99       | verdict                    |
+///   |------|-------|-----------|----------------------------|
+///   | 8    |   28  | 0.41 ms   | × 30 under safety          |
+///   | 16   |  120  | 1.69 ms   |                            |
+///   | 24   |  276  | 3.44 ms   |                            |
+///   | **32** | **496** | **6.27 ms** | **× 8 under 50 ms gate**   |
+///   | 48   | 1128  | 16.06 ms  | over safety, under gate    |
+///   | 64   | 2016  | 26.74 ms  |                            |
+///   | 100  | 4950  | 86.59 ms  | OVER GATE — never ship     |
+///   | 200  |19900  | 607.59 ms | catastrophic               |
+///
+///   32 is the largest N whose p99 stays under `gate / 4×` (= 12.5 ms)
+///   on the synapse loop alone, leaving headroom for the rest of
+///   `feedback()` (energy boost, reward write, mention scan, T6 chain
+///   walks). 17.7× more pairs explored than the conservative cap.
+///
+/// ## Why not higher
+///
+/// At N=48 the synapse loop alone takes 16 ms p99 — already eats most
+/// of the 50 ms budget once `find_mentioned`, `expand_by_affinity`,
+/// chain walks and persist hits are added. At N=100 the loop ALONE
+/// breaches the gate. The cap remains the watchdog: any `thorough`
+/// retrieve up to 50 nodes is fed to the loop, but only the top 32 by
+/// upstream relevance/energy ordering get Hebbian reinforcement.
+///
+/// `pub(crate)` so internal tests can reference the constant rather
+/// than hard-coding `C(32, 2) = 496`. Bench gate is
+/// `feedback_scaling_bench.rs` (re-run before changing this value).
+pub(crate) const FALLBACK_CAP: usize = 32;
 
 /// Cognitive feedback sink that reinforces synapses and boosts energy.
 pub struct CognitiveFeedback {
@@ -390,7 +418,7 @@ mod tests {
         let stats = feedback
             .feedback(&context, "completely unrelated response text here", &config)
             .unwrap();
-        // 3 nodes → C(3,2) = 3 pairs (below FALLBACK_CAP = 8)
+        // 3 nodes → C(3,2) = 3 pairs (well below FALLBACK_CAP, no clamping).
         assert_eq!(stats.synapses_reinforced, 3);
         // Path counters: this was a fallback cycle.
         assert_eq!(feedback.fallback_path_total(), 1);
@@ -398,19 +426,27 @@ mod tests {
     }
 
     /// Plan 69e59065 T2 — proves the FALLBACK_CAP guards the worst case.
-    /// Without the cap, N=20 unmatched context nodes would reinforce
-    /// C(20,2) = 190 pairs, each costing 2 full DashMap scans + 3 LPG
-    /// writes in `SynapseStore::reinforce`. With the cap, the fallback
-    /// peaks at C(8,2) = 28 pairs regardless of context size.
+    /// Without the cap, N=`OVER_CAP` unmatched context nodes would
+    /// reinforce C(N,2) pairs, each costing a normalize_outgoing call
+    /// in `SynapseStore::reinforce`. With the cap, the fallback peaks
+    /// at C(FALLBACK_CAP, 2) pairs regardless of context size. The
+    /// expected pair count is computed from the constant so the test
+    /// stays valid if the cap is re-tuned (see `feedback_scaling_bench.rs`).
     #[test]
     fn feedback_fallback_capped_at_top_k_pairs() {
         use obrain_cognitive::synapse::{SynapseConfig, SynapseStore};
 
+        // Pick a context size strictly above the cap to ensure clamping
+        // actually fires.
+        const OVER_CAP: usize = FALLBACK_CAP + 8;
+        const EXPECTED_PAIRS: usize = FALLBACK_CAP * (FALLBACK_CAP - 1) / 2;
+
         let synapse_store = Arc::new(SynapseStore::new(SynapseConfig::default()));
         let feedback = CognitiveFeedback::new(Some(Arc::clone(&synapse_store)), None);
 
-        // 20 nodes, all with text too short to match (<=3 chars).
-        let node_ids: Vec<NodeId> = (1..=20).map(NodeId).collect();
+        // OVER_CAP nodes, all with text too short to match (<=3 chars),
+        // so the fallback path always fires.
+        let node_ids: Vec<NodeId> = (1..=OVER_CAP as u64).map(NodeId).collect();
         let node_texts: Vec<(NodeId, Vec<String>)> = node_ids
             .iter()
             .map(|nid| (*nid, vec!["xx".into()]))
@@ -428,13 +464,13 @@ mod tests {
             .feedback(&context, "no node text matches this response at all", &config)
             .unwrap();
 
-        // Without the cap: C(20,2) = 190 pairs. With the cap (8 nodes):
-        // C(8,2) = 28 pairs. The cap is what stops the cascade.
+        // Without the cap: C(OVER_CAP, 2) pairs. With the cap:
+        // C(FALLBACK_CAP, 2) pairs. The cap is what stops the cascade.
         assert_eq!(
-            stats.synapses_reinforced, 28,
-            "fallback should reinforce exactly C(FALLBACK_CAP, 2) = 28 pairs, \
-             got {} (cap broken or N < FALLBACK_CAP)",
-            stats.synapses_reinforced
+            stats.synapses_reinforced, EXPECTED_PAIRS,
+            "fallback should reinforce exactly C(FALLBACK_CAP={}, 2) = {} pairs, \
+             got {} (cap broken or context smaller than expected)",
+            FALLBACK_CAP, EXPECTED_PAIRS, stats.synapses_reinforced
         );
         assert_eq!(feedback.fallback_path_total(), 1);
     }

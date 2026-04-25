@@ -1,11 +1,16 @@
 //! Plan 69e59065 T1 step 3 — feedback baseline bench-as-test.
 //!
 //! Measures the hot path that T0+T2(cap)+T4 fixed: a 100-cycle loop of
-//! "reinforce 8 context pairs" (the post-T2 worst case = `FALLBACK_CAP`
-//! pairs from `feedback.rs`) on a `SynapseStore` pre-loaded with 1k,
-//! 10k, and 100k synapses. Emits per-scenario p50/p95/p99 plus
+//! "reinforce N context pairs" with N = `FALLBACK_CAP` (the post-T2
+//! worst case from `feedback.rs`) on a `SynapseStore` pre-loaded with
+//! 1k, 10k, and 100k synapses. Emits per-scenario p50/p95/p99 plus
 //! delta-counter snapshots to `/tmp/feedback-baseline.json` and asserts
 //! the plan-level performance gates.
+//!
+//! `NODES_PER_CYCLE` tracks `FALLBACK_CAP` directly so the bench
+//! re-asserts the SLA at whatever cap value `feedback.rs` is using.
+//! 2026-04-25: cap raised from 8 → 32 after `feedback_scaling_bench`
+//! showed N=32 stays at 6.27 ms p99 (× 8 under the 50 ms gate).
 //!
 //! Why a focused micro-bench instead of the full `CognitiveFeedback`
 //! stack: the substrate-resident gains (T0 reload + T4 inverted index)
@@ -37,10 +42,17 @@ use serde_json::json;
 /// Number of feedback cycles to run per scenario.
 const CYCLES: usize = 100;
 
-/// Context size per cycle. Plan 69e59065 T2 caps the fallback at
-/// FALLBACK_CAP = 8 nodes, producing C(8, 2) = 28 reinforces per
-/// cycle in the worst case. We use the cap value directly.
-const NODES_PER_CYCLE: usize = 8;
+/// Context size per cycle = `FALLBACK_CAP` from `feedback.rs`.
+/// Tracking the cap means this bench measures the actual production
+/// worst-case fallback (post-T2). With FALLBACK_CAP = 32 (calibrated
+/// 2026-04-25 via `feedback_scaling_bench`) we get C(32,2) = 496
+/// reinforces per cycle. p99 measured at ~6.3 ms, × 8 under the 50 ms
+/// gate.
+///
+/// If `feedback.rs` re-tunes the cap, update this constant in lockstep
+/// (or expose `pub use FALLBACK_CAP from rag` if cross-crate import
+/// is desired — currently kept local to avoid an extra dep edge).
+const NODES_PER_CYCLE: usize = 32;
 
 /// Plan-level performance gates (constraints aa932b40 / f629192f /
 /// 40943e4e). Numbers are inclusive upper bounds.
